@@ -56,6 +56,7 @@ import {
 import {
   entityId,
   factGroups,
+  heldClaimDocs,
   mentionsByDocument,
   parseEntityId,
   propertyViews,
@@ -340,18 +341,22 @@ function Entity({
     enabled: !!selection.scope && !!page?.facts.some((f) => f.factKey),
   });
   // What holds its held claims: the names their documents linked on less
-  // than a name, whose reviews this page doesn't list.
+  // than a name, whose reviews this page doesn't list. While another set of
+  // documents is read, the load's last answer stands for those it covers.
+  const heldDocs = heldClaimDocs(page?.reviews ?? []);
   const nameLinksRead = readQueries.nameLinks(
     id,
     o,
     reader,
     scope,
     identity,
-    page?.reviews,
+    heldDocs,
   );
   const nameLinks = useQuery({
     ...nameLinksRead,
     enabled: !!selection.scope && nameLinksRead.enabled,
+    placeholderData: (previous, query) =>
+      query?.queryKey[4] === scope.id ? previous : undefined,
   });
   // What the load's rules derive about it: only for a version with rules.
   const version = useQuery({
@@ -481,13 +486,18 @@ function Entity({
     );
   const facts = page.facts,
     mentions = page.mentions,
+    // Until the names that hold its held claims are read, no card or Approve
+    // all could say what an approval writes now: the held claims wait.
+    holdsKnown =
+      !nameLinksRead.enabled ||
+      heldDocs.every((d) => nameLinks.data?.docs.includes(d)),
     reviews = unrejected(
-      markDiffering(page.reviews, nameLinks.data ?? []),
+      markDiffering(page.reviews, nameLinks.data?.links ?? []),
       decisions.data ?? [],
     ),
-    // Until the names that hold its held claims are read, no card or Approve
-    // all can say which an approval writes now.
-    holdsKnown = !nameLinksRead.enabled || nameLinks.isSuccess;
+    listed = holdsKnown
+      ? reviews
+      : reviews.filter((r) => r.settle?.kind !== "release");
   const props = propertyViews(e.props, page.rows, page.propEvidence);
   // The tables (by the rows that state it) and documents (by where they
   // name it) it comes from, each once.
@@ -969,15 +979,14 @@ function Entity({
             it breaks show here.
           </p>
         )}
-        {nameLinks.error && (
+        {!holdsKnown && nameLinks.error && (
           <div role="alert" className="on-stack">
             <p className="on-error-text">
-              Couldn’t read which names hold these claims:{" "}
+              Couldn’t read which names hold its held claims:{" "}
               {nameLinks.error.message}
             </p>
             <p className="on-muted">
-              A card may not say that a name holds its claim, and Approve all is
-              off until they’re read.{" "}
+              They show once that’s read.{" "}
               <Button size="sm" onClick={() => void nameLinks.refetch()}>
                 Retry
               </Button>
@@ -996,10 +1005,14 @@ function Entity({
         ) : (
           <Panel>
             <ul className="dc-doc-list" aria-label="Needs review">
+              {!holdsKnown && !nameLinks.error && (
+                <li aria-label="Reading its held claims">
+                  <SkeletonText lines={3} />
+                </li>
+              )}
               <ReviewGroups
-                reviews={reviews}
+                reviews={listed}
                 naming={naming}
-                approveAll={holdsKnown}
                 load={
                   selection.choice.kind === "load"
                     ? selection.choice.load

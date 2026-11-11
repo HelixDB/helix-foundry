@@ -34,21 +34,18 @@ const APPROVE_AT_ONCE = 4;
  * page's compact row for each review (`row`, which draws its `<li>` and its
  * settle controls). Managers get Approve all on a group of held claims and Add
  * these links on the group of relationships the ontology doesn't have, both on
- * the load a person can settle (`load`, current). `approveAll` false withholds
- * Approve all: the page doesn't know yet which names hold its claims.
+ * the load a person can settle (`load`, current).
  */
 export function ReviewGroups<R extends Review>({
   reviews,
   load,
   naming,
-  approveAll = true,
   row,
 }: {
   reviews: readonly R[];
   load?: FoundryLoad;
   // The rules of the page's version: which links hold one value.
   naming: Naming;
-  approveAll?: boolean;
   row: (review: R, index: number) => ReactNode;
 }) {
   return reviewGroups(reviews).map((g) => {
@@ -60,9 +57,7 @@ export function ReviewGroups<R extends Review>({
             {g.title} <span className="dc-review-count">{g.items.length}</span>
           </h3>
           <p>{g.text}</p>
-          {approveAll && (
-            <ApproveAll reviews={members} load={load} naming={naming} />
-          )}
+          <ApproveAll reviews={members} load={load} naming={naming} />
           {g.reason === "unmatched" && (
             <AddLinks reviews={members} load={load} />
           )}

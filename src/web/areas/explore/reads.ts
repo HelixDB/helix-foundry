@@ -27,7 +27,6 @@ import {
   type Fact,
 } from "./model";
 import { NO_NAMING, namingKeys, readable, type Naming } from "./naming";
-import type { Settleable } from "../reviews/model";
 import { entityNamesRequest, parseEntityNames, refKey } from "./rule-breaks";
 import {
   entityPlan,
@@ -250,23 +249,22 @@ export const readQueries = {
     },
     ...readOptions,
   }),
-  // The reviews of names linked on less than a name in the documents of its
-  // held claims (nameLinksRequest), which its page marks them with: a held
-  // claim's other end has its review there. Its own query, so a page that
-  // shows no reviews never reads it, and a failure leaves the page up.
-  // Reviews aren't shared through grants.
+  // The reviews of names linked on less than a name in `docs`, the
+  // documents of its held claims (nameLinksRequest), which its page marks
+  // them with: a held claim's other end has its review there. Its own query,
+  // so a page that shows no reviews never reads it, and a failure leaves the
+  // page up; it answers with the documents it read, so a page knows which of
+  // its claims an answer covers. Reviews aren't shared through grants.
   nameLinks: (
     ws: string,
     o: string,
     reader: GraphReader,
     scope: Scope,
     identity: EntityIdentity,
-    reviews: readonly Settleable[] | undefined,
+    docs: readonly string[],
   ) => {
     const req =
-      reader.kind === "database" && reviews
-        ? nameLinksRequest(scope, reviews)
-        : null;
+      reader.kind === "database" ? nameLinksRequest(scope, docs) : null;
     return {
       queryKey: [
         ws,
@@ -277,13 +275,16 @@ export const readQueries = {
         "entity",
         identity,
         "name-links",
-        req?.parameters,
+        docs,
       ],
       enabled: !!req,
-      queryFn: async ({ signal }: { signal?: AbortSignal }) =>
-        reader.kind === "database" && req
-          ? parseNameLinks(await runRead(reader.read, req, signal))
-          : [],
+      queryFn: async ({ signal }: { signal?: AbortSignal }) => ({
+        docs,
+        links:
+          reader.kind === "database" && req
+            ? parseNameLinks(await runRead(reader.read, req, signal))
+            : [],
+      }),
       ...readOptions,
     };
   },

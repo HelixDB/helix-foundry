@@ -872,29 +872,37 @@ export function entityRequest(
 }
 
 /**
- * A read of the reviews of names a load linked on less than a name
- * (`WEAK_LINKS`) in the documents of the held claims among `reviews`, which
- * mark the claims they hold (markDiffering). An entity's page needs it: it
- * reads only the reviews that concern its entity, and such a review concerns
- * only the row it linked, so the name at a held claim's other end has its
- * review elsewhere. Each document is one lookup of the load's reviews by
- * `doc_id`, which the engine indexes, and holds one such review per name it
- * linked so. None when no review is a held claim's.
+ * The documents of the held claims among `reviews`, each once, in order.
  *
  * @example
- * nameLinksRequest(scope, page.reviews); // a read, or null with no held claim
+ * heldClaimDocs(page.reviews); // ["doc_1"]
  */
-export function nameLinksRequest(
-  scope: Scope,
-  reviews: readonly Settleable[],
-): DynamicQueryRequest | null {
-  const docs = [
+export const heldClaimDocs = (reviews: readonly Settleable[]) =>
+  [
     ...new Set(
       reviews.flatMap(({ settle: s }) =>
         s?.kind === "release" ? [s.docId] : [],
       ),
     ),
-  ];
+  ].sort();
+
+/**
+ * A read of the reviews of names a load linked on less than a name
+ * (`WEAK_LINKS`) in `docs`, the documents of a page's held claims
+ * (heldClaimDocs), which mark the claims they hold (markDiffering). An
+ * entity's page needs it: it reads only the reviews that concern its entity,
+ * and such a review concerns only the row it linked, so the name at a held
+ * claim's other end has its review elsewhere. Each document is one lookup of
+ * the load's reviews by `doc_id`, which the engine indexes, and holds one such
+ * review per name it linked so. None for no document.
+ *
+ * @example
+ * nameLinksRequest(scope, heldClaimDocs(page.reviews)); // a read, or null with no held claim
+ */
+export function nameLinksRequest(
+  scope: Scope,
+  docs: readonly string[],
+): DynamicQueryRequest | null {
   if (!docs.length) return null;
   return readRequest(
     "foundry_name_links",

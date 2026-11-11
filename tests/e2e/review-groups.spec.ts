@@ -238,6 +238,52 @@ test("leaves claims held for a name out of Approve all, on the page of their oth
   ).toContainText("Linked to:");
 });
 
+test("keeps an entity's page up when the names holding its claims can't be read, and lists the claims once they are", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "part_name" });
+  await reviewed(
+    page,
+    "# Hedged deal\n\nGlobex Corporation and Initech may have signed.\n",
+  );
+  // Only the read of the names' reviews fails.
+  const names = "**/databases:query-read";
+  await page.route(names, async (route) => {
+    const { queryJson } = route.request().postDataJSON() as {
+      queryJson?: string;
+    };
+    if (queryJson?.includes("foundry_name_links"))
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ code: 14, message: "unavailable" }),
+      });
+    await route.continue();
+  });
+  await page.goto(entity("Contract", "n:hedged deal"));
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Couldn’t read which names hold its held claims",
+  );
+  // No held claim is offered while what holds it isn't known.
+  await expect(group(page, HELD).rows).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
+  // The rest of the page stands: the entity, and where documents name it.
+  await expect(page.getByRole("tab", { name: /^Mentions/ })).toBeVisible();
+  await expect(page.getByText("Couldn’t read this entity")).toHaveCount(0);
+  await page.unroute(names);
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await page.getByRole("button", { name: "Retry" }).click();
+  const { head, rows } = group(page, HELD);
+  await expect(rows).toHaveCount(2);
+  await expect(
+    rows.filter({ hasText: "Globex Corporation (Customer)" }),
+  ).toContainText("Settle that name too, or this stays held.");
+  await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(
+    0,
+  );
+});
+
 test("rejects a held claim: its card and its count go, Approve all leaves it out, and removing the decision lists it again", async ({
   page,
 }) => {

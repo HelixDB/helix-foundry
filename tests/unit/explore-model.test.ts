@@ -31,6 +31,7 @@ import {
   parseEntity,
   parseEntityId,
   parseFactEvidence,
+  heldClaimDocs,
   isLayoutProp,
   nameLinksRequest,
   parseNameLinks,
@@ -930,7 +931,7 @@ describe("a held claim's other end, on an entity's page", () => {
       "low_confidence",
     ]);
     const links = parseNameLinks(
-      read(db, nameLinksRequest(SCOPE, page.reviews)!),
+      read(db, nameLinksRequest(SCOPE, heldClaimDocs(page.reviews))!),
     );
     expect(links.map((l) => [l.reason, l.settle?.kind])).toEqual([
       ["part_name", "resolve"],
@@ -954,7 +955,12 @@ describe("a held claim's other end, on an entity's page", () => {
   });
 
   it("reads only the load's reviews of such links, and nothing with no held claim", () => {
-    const other = nameLinksRequest({ id: "load_2" }, page.reviews)!;
+    // One document, however many of its claims are held.
+    expect(heldClaimDocs(page.reviews)).toEqual(["doc_1"]);
+    const other = nameLinksRequest(
+      { id: "load_2" },
+      heldClaimDocs(page.reviews),
+    )!;
     expect(parseNameLinks(read(db, other))).toEqual([]);
     expect(nameLinksRequest(SCOPE, [])).toBeNull();
     const globex = parseEntity(
@@ -966,11 +972,8 @@ describe("a held claim's other end, on an entity's page", () => {
       "part_name",
     ]);
     expect(
-      nameLinksRequest(
-        SCOPE,
-        globex.reviews.filter((r) => r.settle?.kind !== "release"),
-      ),
-    ).toBeNull();
+      heldClaimDocs(globex.reviews.filter((r) => r.settle?.kind !== "release")),
+    ).toEqual([]);
     // What it reads is never trusted: a review missing its place is left out.
     expect(
       parseNameLinks({
