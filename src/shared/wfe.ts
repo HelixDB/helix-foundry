@@ -2675,9 +2675,11 @@ export type ReviewDecision =
  * `refused` when it stays held (`reason` says why, in the engine's word or the
  * backend's, and may be one this site doesn't know), `missed` when that load
  * holds no review at its place, `unconfirmed` when the job that applies it
- * failed before saying what became of it (it may or may not be written, no
- * job is coming, and approving it again finishes it), and empty when the load
- * read it as it was created and no job has said what became of it.
+ * failed before saying what became of it (it may or may not be written, and
+ * no job is coming; approving it again finishes it while its review is still
+ * in the load, and if the claim was written there is no review left to
+ * approve, only the fact), and empty when the load read it as it was created
+ * and no job has said what became of it.
  */
 export type DecisionApplied = {
   status?: "pending" | "written" | "refused" | "missed" | "unconfirmed" | "";
