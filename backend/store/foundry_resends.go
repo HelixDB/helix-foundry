@@ -302,20 +302,21 @@ WHERE load_id=? AND kind='release' AND applied_status IN ('pending', 'carried')
 
 // recordFoundryReleaseOutcomes records what the engine said of the release
 // decisions a job sent with a document of loadID, each on the decision as the
-// load holds it under the hash the job sent (model.FoundryReleaseStatus.After).
+// load holds it under the hash the job sent (model.FoundryDecisionApplied.After).
 // The caller runs it in the transaction that records the document.
 func (s *mysqlDB) recordFoundryReleaseOutcomes(ctx context.Context, loadID string, outcomes []model.FoundryReleaseOutcome) error {
 	for _, o := range outcomes {
-		var current sql.NullString
-		err := s.db.QueryRowContext(ctx, `SELECT applied_status FROM foundry_load_decisions
-WHERE load_id=? AND id=? AND kind='release' AND statement_hash=? FOR UPDATE`, loadID, o.DecisionID, o.StatementHash).Scan(&current)
+		var current, currentReason sql.NullString
+		err := s.db.QueryRowContext(ctx, `SELECT applied_status, applied_reason FROM foundry_load_decisions
+WHERE load_id=? AND id=? AND kind='release' AND statement_hash=? FOR UPDATE`, loadID, o.DecisionID, o.StatementHash).Scan(&current, &currentReason)
 		if err == sql.ErrNoRows {
 			continue
 		}
 		if err != nil {
 			return err
 		}
-		status, reason, ok := model.FoundryReleaseStatus(current.String).After(o)
+		applied := model.FoundryDecisionApplied{Status: model.FoundryReleaseStatus(current.String), Reason: currentReason.String}
+		status, reason, ok := applied.After(o)
 		if !ok {
 			continue
 		}

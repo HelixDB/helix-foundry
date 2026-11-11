@@ -5,33 +5,42 @@ import "testing"
 // What a decision's status becomes once the engine has said what it did with
 // it: every outcome ends a wait, and a release sent again changes nothing a
 // job already said.
-func TestFoundryReleaseStatusAfter(t *testing.T) {
+func TestFoundryDecisionAppliedAfter(t *testing.T) {
 	outcome := func(kind FoundryReleaseOutcomeKind, reason string) FoundryReleaseOutcome {
 		return FoundryReleaseOutcome{DecisionID: "d", StatementHash: "h", Kind: kind, Reason: reason}
 	}
+	failed := FoundryReleaseJobFailed
 	for name, tc := range map[string]struct {
-		from    FoundryReleaseStatus
+		from    FoundryDecisionApplied
 		outcome FoundryReleaseOutcome
 		to      FoundryReleaseStatus
 		reason  string
 		ok      bool
 	}{
-		"written":                        {FoundryReleasePending, outcome(FoundryReleaseOutcomeWritten, ""), FoundryReleaseWritten, "", true},
-		"a copied decision written":      {"", outcome(FoundryReleaseOutcomeWritten, ""), FoundryReleaseWritten, "", true},
-		"refused, with the reason":       {FoundryReleasePending, outcome(FoundryReleaseOutcomeRefused, "unresolved"), FoundryReleaseRefused, "unresolved", true},
-		"refused, then written":          {FoundryReleaseRefused, outcome(FoundryReleaseOutcomeWritten, ""), FoundryReleaseWritten, "", true},
-		"missed at its commit":           {"", outcome(FoundryReleaseOutcomeMissed, ""), FoundryReleaseMissed, "", true},
-		"sent again, settled here":       {FoundryReleasePending, outcome(FoundryReleaseOutcomeNotHeld, ""), FoundryReleaseWritten, "", true},
-		"sent again, carried":            {FoundryReleaseCarried, outcome(FoundryReleaseOutcomeNotHeld, ""), FoundryReleaseMissed, "", true},
-		"sent again, written before":     {FoundryReleaseWritten, outcome(FoundryReleaseOutcomeNotHeld, ""), FoundryReleaseWritten, "", false},
-		"sent again, refused before":     {FoundryReleaseRefused, outcome(FoundryReleaseOutcomeNotHeld, ""), FoundryReleaseRefused, "", false},
-		"sent again, never reported":     {"", outcome(FoundryReleaseOutcomeNotHeld, ""), "", "", false},
-		"an outcome of a later contract": {FoundryReleasePending, outcome("deferred", ""), FoundryReleaseRefused, "deferred", true},
+		"written":                        {FoundryDecisionApplied{Status: FoundryReleasePending}, outcome(FoundryReleaseOutcomeWritten, ""), FoundryReleaseWritten, "", true},
+		"a copied decision written":      {FoundryDecisionApplied{}, outcome(FoundryReleaseOutcomeWritten, ""), FoundryReleaseWritten, "", true},
+		"refused, with the reason":       {FoundryDecisionApplied{Status: FoundryReleasePending}, outcome(FoundryReleaseOutcomeRefused, "unresolved"), FoundryReleaseRefused, "unresolved", true},
+		"refused, then written":          {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: "unresolved"}, outcome(FoundryReleaseOutcomeWritten, ""), FoundryReleaseWritten, "", true},
+		"missed at its commit":           {FoundryDecisionApplied{}, outcome(FoundryReleaseOutcomeMissed, ""), FoundryReleaseMissed, "", true},
+		"sent again, settled here":       {FoundryDecisionApplied{Status: FoundryReleasePending}, outcome(FoundryReleaseOutcomeNotHeld, ""), FoundryReleaseWritten, "", true},
+		"sent again, carried":            {FoundryDecisionApplied{Status: FoundryReleaseCarried}, outcome(FoundryReleaseOutcomeNotHeld, ""), FoundryReleaseMissed, "", true},
+		"sent again, written before":     {FoundryDecisionApplied{Status: FoundryReleaseWritten}, outcome(FoundryReleaseOutcomeNotHeld, ""), FoundryReleaseWritten, "", false},
+		"sent again, refused before":     {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: "conflict"}, outcome(FoundryReleaseOutcomeNotHeld, ""), FoundryReleaseRefused, "conflict", false},
+		"sent again, never reported":     {FoundryDecisionApplied{}, outcome(FoundryReleaseOutcomeNotHeld, ""), "", "", false},
+		"an outcome of a later contract": {FoundryDecisionApplied{Status: FoundryReleasePending}, outcome("deferred", ""), FoundryReleaseRefused, "deferred", true},
+		// A job that failed may have written the claim first. Settled here,
+		// no review left means it did; carried, it says nothing: the load
+		// may never have held the claim.
+		"its job failed, settled here, sent again":   {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: failed}, outcome(FoundryReleaseOutcomeNotHeld, ""), FoundryReleaseWritten, "", true},
+		"its job failed, carried, sent again":        {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: failed}, outcome(FoundryReleaseOutcomeNotHeld, ""), FoundryReleaseCarried, failed, false},
+		"its job failed, carried, written this time": {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: failed}, outcome(FoundryReleaseOutcomeWritten, ""), FoundryReleaseWritten, "", true},
+		"its job failed, carried, refused this time": {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: failed}, outcome(FoundryReleaseOutcomeRefused, "conflict"), FoundryReleaseRefused, "conflict", true},
+		"its job failed, carried, missed this time":  {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: failed}, outcome(FoundryReleaseOutcomeMissed, ""), FoundryReleaseMissed, "", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			to, reason, ok := tc.from.After(tc.outcome)
 			if to != tc.to || reason != tc.reason || ok != tc.ok {
-				t.Fatalf("%q after %+v = (%q, %q, %t), want (%q, %q, %t)", tc.from, tc.outcome, to, reason, ok, tc.to, tc.reason, tc.ok)
+				t.Fatalf("%+v after %+v = (%q, %q, %t), want (%q, %q, %t)", tc.from, tc.outcome, to, reason, ok, tc.to, tc.reason, tc.ok)
 			}
 			if ok && to.Waits() {
 				t.Fatalf("%q still waits", to)

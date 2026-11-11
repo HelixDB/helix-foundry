@@ -129,35 +129,6 @@ type FoundryReleaseOutcome struct {
 	Reason string
 }
 
-// After is the status and reason a decision at s has once the engine said o
-// of it. A release sent again finds no review (not_held): for a decision
-// settled against a review of this load (pending) the review has gone since,
-// which only a release does in place, so it was written, as when the event
-// that said so was lost; for a carried one no review of this load was ever
-// read, so the load holds none (missed); any other status is what an earlier
-// event said, and stays: ok is false, and nothing changes. An outcome the
-// backend doesn't know wrote nothing it can vouch for: the decision is
-// refused, with the outcome's name as its reason, so none waits for ever.
-func (s FoundryReleaseStatus) After(o FoundryReleaseOutcome) (status FoundryReleaseStatus, reason string, ok bool) {
-	switch o.Kind {
-	case FoundryReleaseOutcomeWritten:
-		return FoundryReleaseWritten, "", true
-	case FoundryReleaseOutcomeRefused:
-		return FoundryReleaseRefused, o.Reason, true
-	case FoundryReleaseOutcomeMissed:
-		return FoundryReleaseMissed, "", true
-	case FoundryReleaseOutcomeNotHeld:
-		switch s {
-		case FoundryReleasePending:
-			return FoundryReleaseWritten, "", true
-		case FoundryReleaseCarried:
-			return FoundryReleaseMissed, "", true
-		}
-		return s, "", false
-	}
-	return FoundryReleaseRefused, string(o.Kind), true
-}
-
 // FoundryDecisionApplied is what became of a decision in the ontology's
 // current load.
 type FoundryDecisionApplied struct {
@@ -180,7 +151,40 @@ const FoundryReleaseUnconfirmed = "unconfirmed"
 // job failed, and the event that said so was never recorded. No job is
 // queued for it, so no reader waits; the next resend of its document, as
 // approving it again queues, says what became of it
-// (FoundryReleaseStatus.After).
+// (FoundryDecisionApplied.After), where it can: a carried one the engine
+// holds no review for stays unconfirmed, as that is true both of one it
+// wrote and of one this load never held.
 func (a FoundryDecisionApplied) Unconfirmed() bool {
 	return a.Status.Waits() && a.Reason == FoundryReleaseJobFailed
+}
+
+// After is the status and reason a decision at a has once the engine said o
+// of it. A release sent again finds no review (not_held): for a decision
+// settled against a review of this load (pending) the review has gone since,
+// which only a release does in place, so it was written, as when the event
+// that said so was lost; for a carried one no review of this load was ever
+// read, so the load holds none (missed), unless the job that sent it failed
+// (Unconfirmed): the engine may have written it before that, which leaves no
+// review either, so it stays unconfirmed; any other status is what an
+// earlier event said, and stays: ok is false, and nothing changes. An outcome
+// the backend doesn't know wrote nothing it can vouch for: the decision is
+// refused, with the outcome's name as its reason, so none waits for ever.
+func (a FoundryDecisionApplied) After(o FoundryReleaseOutcome) (status FoundryReleaseStatus, reason string, ok bool) {
+	switch o.Kind {
+	case FoundryReleaseOutcomeWritten:
+		return FoundryReleaseWritten, "", true
+	case FoundryReleaseOutcomeRefused:
+		return FoundryReleaseRefused, o.Reason, true
+	case FoundryReleaseOutcomeMissed:
+		return FoundryReleaseMissed, "", true
+	case FoundryReleaseOutcomeNotHeld:
+		switch {
+		case a.Status == FoundryReleasePending:
+			return FoundryReleaseWritten, "", true
+		case a.Status == FoundryReleaseCarried && !a.Unconfirmed():
+			return FoundryReleaseMissed, "", true
+		}
+		return a.Status, a.Reason, false
+	}
+	return FoundryReleaseRefused, string(o.Kind), true
 }

@@ -1101,6 +1101,8 @@ func TestFoundryResendFailsAfterTheEngineWrote(t *testing.T) {
 
 // A carried approval whose resend job failed is unconfirmed too, and is not
 // owed again at each job's end: a job that can't succeed would follow itself.
+// A later resend of its document that finds no review for it leaves it
+// unconfirmed.
 func TestFoundryCarriedReleaseWhoseJobFailed(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "RCFAIL")
@@ -1128,6 +1130,22 @@ func TestFoundryCarriedReleaseWhoseJobFailed(t *testing.T) {
 	assert.Empty(t, f.owed(t))
 	assert.Nil(t, f.liveJob(t))
 	assert.Equal(t, map[string]string{d.ID: "carried/job_failed"}, f.applied(t, d))
+
+	// Another claim of its document is approved, and the resend finds no
+	// review for the carried one. The failed job may have written it, and
+	// the load may never have held it: nothing tells the two apart, so it is
+	// not recorded as missed.
+	later := f.held(f.a, 1, readA)
+	require.True(t, f.approve(t, "2", later))
+	job = f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	f.sent(t, job, owed[0], 1, notHeld(d), written(later))
+	assert.Equal(t, map[string]string{d.ID: "carried/job_failed", later.ID: "written"}, f.applied(t, d, later))
+	got, err := f.db.ListFoundryDecisionsApplied(ctx, f.ontology.ID, []string{d.ID})
+	require.NoError(t, err)
+	assert.True(t, got[d.ID].Unconfirmed())
 }
 
 // A claim two reviews held is one fact once it is released: the document's
