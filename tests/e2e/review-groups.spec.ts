@@ -201,6 +201,45 @@ test("approves every held claim of a group at once, and says which couldn't be",
   await expect(saved).toHaveCount(3);
 });
 
+test("leaves claims held for a name out of Approve all, on the page of their other end too", async ({
+  page,
+}) => {
+  // Each customer is linked by part of its name: that link's review
+  // concerns the customer alone, so the contract's page reads it apart.
+  await mock.configure({ documentHeld: "part_name" });
+  const doc = await reviewed(
+    page,
+    "# Hedged deal\n\nGlobex Corporation and Initech may have signed.\n",
+  );
+  const { head, rows } = group(page, HELD);
+  await expect(rows).toHaveCount(2);
+  await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(
+    0,
+  );
+  await page.goto(entity("Contract", "n:hedged deal"));
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(rows).toHaveCount(2);
+  const globex = rows.filter({ hasText: "Globex Corporation (Customer)" });
+  await expect(globex).toContainText(
+    "“Globex Corporation” is linked only by part of a row’s name. Settle that name too, or this stays held.",
+  );
+  await expect(globex).toContainText(
+    "the first load after that name is settled writes it",
+  );
+  await expect(globex).not.toContainText("written to this load at once");
+  await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(
+    0,
+  );
+  // Its way to the name's review leads to the document, at the name.
+  await globex.getByRole("link", { name: "Review that name" }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`${doc}\\?tab=review.*#s\\d+-\\d+$`),
+  );
+  await expect(
+    reviews(page).getByRole("list", { name: "Linked by part of a name" }),
+  ).toContainText("Linked to:");
+});
+
 test("rejects a held claim: its card and its count go, Approve all leaves it out, and removing the decision lists it again", async ({
   page,
 }) => {

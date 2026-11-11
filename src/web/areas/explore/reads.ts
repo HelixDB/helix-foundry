@@ -13,10 +13,12 @@ import {
   documentRequest,
   entityRequest,
   factEvidenceRequest,
+  nameLinksRequest,
   parseDocument,
   parseDocumentFacts,
   parseEntity,
   parseFactEvidence,
+  parseNameLinks,
   type DocumentGraph,
   type EntityGraph,
   type EntityIdentity,
@@ -25,6 +27,7 @@ import {
   type Fact,
 } from "./model";
 import { NO_NAMING, namingKeys, readable, type Naming } from "./naming";
+import { markDiffering } from "../reviews/model";
 import { entityNamesRequest, parseEntityNames, refKey } from "./rule-breaks";
 import {
   entityPlan,
@@ -112,6 +115,40 @@ export async function runRead(
   const result = await read(request, { signal });
   if (!result.ok) throw new ReadFailed(result);
   return result.body;
+}
+
+/**
+ * An entity's page from the database: its read, then, where it lists held
+ * claims, the reviews of names linked on less than a name in their
+ * documents (nameLinksRequest), with which its reviews are marked
+ * (markDiffering): a held claim's other end has its review there, so its
+ * card and Approve all know what holds it. A page with no held claim has
+ * nothing to mark.
+ */
+async function databaseEntity(
+  read: QueryExecutor,
+  scope: Scope,
+  identity: EntityIdentity,
+  naming: Naming,
+  signal?: AbortSignal,
+): Promise<EntityGraph> {
+  const page = parseEntity(
+    await runRead(
+      read,
+      entityRequest(scope, identity, namingKeys(naming)),
+      signal,
+    ),
+  );
+  const names = nameLinksRequest(scope, page.reviews);
+  return names
+    ? {
+        ...page,
+        reviews: markDiffering(
+          page.reviews,
+          parseNameLinks(await runRead(read, names, signal)),
+        ),
+      }
+    : page;
 }
 
 // An entity of a type the version knows takes its readable name; any other
@@ -224,13 +261,7 @@ export const readQueries = {
               signal,
               createdAt: reader.createdAt,
             })
-          : parseEntity(
-              await runRead(
-                reader.read,
-                entityRequest(scope, identity, namingKeys(naming)),
-                signal,
-              ),
-            );
+          : await databaseEntity(reader.read, scope, identity, naming, signal);
       return {
         ...page,
         entity: page.entity && named(naming, page.entity),
