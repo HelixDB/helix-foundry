@@ -602,7 +602,7 @@ export function SavedDecisions({
                           );
                         setNotice(
                           d.kind === "prop"
-                            ? "Decision removed. This load is taking the value back now; later loads won’t read it."
+                            ? "Decision removed. This load is taking the value back now; later loads won’t read it. A conflict this load didn’t list is listed again from the next load."
                             : d.kind === "reject"
                               ? "Decision removed. The claim is listed for review again."
                               : "Decision removed. Reload to apply.",
