@@ -931,7 +931,7 @@ func TestFoundryReleaseTakenBackAfterTheLoadsWord(t *testing.T) {
 	assert.Equal(t, "missed", got[missed.ID])
 	assert.Equal(t, "", got[unreported.ID])
 	assert.Equal(t, "refused/conflict", got[refusedOne.ID])
-	assert.NotEqual(t, "written", got[failed.ID])
+	assert.Equal(t, "pending/job_failed", got[failed.ID])
 	assert.Equal(t, "written", got[kept.ID])
 	require.Len(t, got, 5, "the load's list holds each")
 
