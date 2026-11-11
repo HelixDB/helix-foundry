@@ -105,7 +105,10 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 		return nil, status.Error(codes.FailedPrecondition, "the review type is not in the loaded version")
 	}
 	switch text("reason") {
-	case "unresolved", "ambiguous", "collision", "identifier_conflict", "adjudicated", "legal_form":
+	// A name the load matched to no one row, or linked on less than a person's
+	// word: by the model, by its legal form, by part of a row's name, or by an
+	// identifier that is the name the text calls it by.
+	case "unresolved", "ambiguous", "collision", "identifier_conflict", "adjudicated", "legal_form", "part_name", "own_name":
 		choice := req.GetDecision().GetResolve()
 		if choice == nil {
 			return nil, status.Error(codes.InvalidArgument, "this review requires a resolve decision")

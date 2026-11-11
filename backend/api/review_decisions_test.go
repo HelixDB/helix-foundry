@@ -224,7 +224,7 @@ func settleRequest(choice *foundryv1.FoundryReviewChoice) *foundryv1.SettleFound
 }
 
 func TestSettleFoundryReview(t *testing.T) {
-	for _, reason := range []string{"unresolved", "ambiguous", "collision", "identifier_conflict", "adjudicated", "legal_form"} {
+	for _, reason := range []string{"unresolved", "ambiguous", "collision", "identifier_conflict", "adjudicated", "legal_form", "part_name", "own_name"} {
 		for _, choice := range []*foundryv1.FoundryReviewChoice{resolveChoice("customer-1"), noneChoice()} {
 			t.Run(reason+choice.String(), func(t *testing.T) {
 				review := `{"items":[{"reason":"` + reason + `","type":"Customer","doc_id":"doc-a","norm_name":"variant","entity_key":"previous-link","confidence":0.98}]}`
