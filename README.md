@@ -99,7 +99,7 @@ The local install is for one person on their own computer. There is no sign-in, 
 - The store listens on `127.0.0.1:8333`, for the uploads Foundry signs.
 - The first start writes the install's secrets into the `secrets` volume; nothing is printed or written to the checkout. Every credential you enter is sealed with its connector key.
 - Ollama in Docker listens on the ontology agent's loopback only, so no other container and nothing outside Docker can reach it.
-- The site tells Helix, anonymously, how Foundry is used, and sends nothing of what Foundry holds. To turn it off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env`: [Usage analytics](local/README.md#usage-analytics).
+- The site and the bundled HelixDB tell Helix, anonymously, how Foundry is used, and send nothing of what Foundry holds. To turn it off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env`: [Usage analytics](local/README.md#usage-analytics).
 
 ## Documentation
 

@@ -260,7 +260,12 @@ services:
     image: *helix-image
     environment:
       HELIX_DATA_DIR: /var/lib/helix
-      HELIX_TELEMETRY_LEVEL: "off"
+      # HelixDB tells Helix, anonymously, how its queries run: their shape
+      # with every value taken out, how long they took and whether they
+      # failed, marked as Foundry's by foundry's user agent. The site's
+      # switch turns it off too: FOUNDRY_TELEMETRY=off or DO_NOT_TRACK=1.
+      HELIX_TELEMETRY_LEVEL: ${FOUNDRY_TELEMETRY:-basic}
+      DO_NOT_TRACK: ${DO_NOT_TRACK:-}
     volumes: ["helix:/var/lib/helix"]
     depends_on: *secrets-first
     restart: unless-stopped

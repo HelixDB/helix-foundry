@@ -55,6 +55,19 @@ func TestClientQuery(t *testing.T) {
 		}
 	})
 
+	// HelixDB's telemetry tells Foundry's queries apart by the user agent, which a caller cannot replace.
+	t.Run("names Foundry and its version in the user agent", func(t *testing.T) {
+		d := &doer{response: answer(200, `{}`, 2)}
+		c := Client{HTTP: d, Keyless: true, MaxResponseBytes: 64}
+		extra := http.Header{"User-Agent": {"theirs/1"}}
+		if _, err := c.Query(context.Background(), "http://helix:8080/v2/query", "", []byte(`{}`), extra); err != nil {
+			t.Fatal(err)
+		}
+		if got := d.got.Header.Values("User-Agent"); len(got) != 1 || got[0] != "helix-foundry/dev" {
+			t.Fatalf("user agent = %q", got)
+		}
+	})
+
 	// A dedicated cluster's database has no tenant header.
 	t.Run("sends no tenant header without a tenant", func(t *testing.T) {
 		d := &doer{response: answer(200, `{}`, 2)}
