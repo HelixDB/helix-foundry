@@ -726,8 +726,9 @@ export function waiting<D extends Pick<FoundryReviewDecision, "applied">>(
 /**
  * Why an approved claim stays held, for its card, from the reason the load's
  * job gave a refusal (FoundryDecisionApplied.reason): what a person can do
- * about it where there is something. `formed` is the name a legal form linked, if the
- * card knows it. A reason this site doesn't know reads as it came.
+ * about it where there is something. `formed` is the name a legal form
+ * linked, if the card knows it. A reason this site doesn't know reads as it
+ * came.
  *
  * @example
  * refusalText("unresolved"); // "A name in it isn’t matched to one record in your data. …"

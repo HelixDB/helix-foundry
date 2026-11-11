@@ -8674,7 +8674,7 @@ type FoundryReviewChoice_Release struct {
 	// current load at once: a job replays the claim's document from its saved
 	// extraction, at no model cost, and writes what the review states as a
 	// fact, or keeps it held and says why (FoundryReviewDecision.applied).
-	// Later loads write it too.
+	// Later loads read it too, and each says what it made of it.
 	Release *FoundryReleaseChoice `protobuf:"bytes,4,opt,name=release,proto3,oneof"`
 }
 
@@ -9028,8 +9028,8 @@ func (x *FoundryDecisionApplied) GetAt() *timestamppb.Timestamp {
 }
 
 // A durable ontology-wide override. A resolve or prop decision applies from
-// the next load; a release applies to the current load at once, and to later
-// loads as they are made.
+// the next load; a release applies to the current load at once, and later
+// loads read it as they are made.
 type FoundryReviewDecision struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache

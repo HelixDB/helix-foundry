@@ -7208,7 +7208,7 @@
         },
         "release": {
           "$ref": "#/definitions/v1FoundryReleaseChoice",
-          "description": "A person's word that what the review holds back holds. It applies to the\ncurrent load at once: a job replays the claim's document from its saved\nextraction, at no model cost, and writes what the review states as a\nfact, or keeps it held and says why (FoundryReviewDecision.applied).\nLater loads write it too."
+          "description": "A person's word that what the review holds back holds. It applies to the\ncurrent load at once: a job replays the claim's document from its saved\nextraction, at no model cost, and writes what the review states as a\nfact, or keeps it held and says why (FoundryReviewDecision.applied).\nLater loads read it too, and each says what it made of it."
         }
       },
       "description": "A user choice. Review identity is always derived by the backend."
@@ -7272,7 +7272,7 @@
           "description": "A release decision's state in the ontology's current load; unset for\nother kinds, and when that load's decisions don't hold it yet (one saved\nwhile another load was current joins them when a job of the ontology next\nends)."
         }
       },
-      "description": "A durable ontology-wide override. A resolve or prop decision applies from\nthe next load; a release applies to the current load at once, and to later\nloads as they are made."
+      "description": "A durable ontology-wide override. A resolve or prop decision applies from\nthe next load; a release applies to the current load at once, and later\nloads read it as they are made."
     },
     "v1FoundryReviewDecisionResponse": {
       "type": "object",
