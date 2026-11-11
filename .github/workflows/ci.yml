@@ -61,7 +61,11 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       # Next.js's build cache for the two e2e builds (their NEXT_DIST_DIR in
       # playwright.config.ts), kept from the last run on the same lockfile.
-      - uses: actions/cache@v4
+      # Every run restores it; only merges into dev and main save it (below),
+      # once per commit: a PR reads its base branch's copy, and per-branch and
+      # per-PR copies (about 200 MB each) no longer fill the repository's
+      # cache and push out the entries other jobs need.
+      - uses: actions/cache/restore@v4
         with:
           path: |
             .next-e2e/cache
@@ -70,6 +74,14 @@ jobs:
           restore-keys: next-e2e-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-
       # Builds the app against the mock WFE: no secrets needed.
       - run: pnpm e2e --shard=${{ matrix.shard }}/4
+      # Every shard builds the same app, so one copy is enough.
+      - if: github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') && matrix.shard == 1
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .next-e2e/cache
+            .next-e2e-local/cache
+          key: next-e2e-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
       - if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
