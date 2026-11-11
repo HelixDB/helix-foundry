@@ -190,9 +190,10 @@ func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.Foundr
 
 // SettleFoundryReleases settles release decisions, each read from a review of
 // load loadID, and applies them to that load at once: under the ontology's
-// lock each is saved as SettleFoundryReviewDecision saves one, joins the
-// load's own list as pending (in place of any earlier decision the list holds
-// for its claim), and its document is owed a resend (oweFoundryResends).
+// lock each is saved as SettleFoundryReviewDecision saves one, in place of a
+// rejection of its claim, joins the load's own list as pending (in place of
+// any earlier decision the list holds for its claim), and its document is
+// owed a resend (oweFoundryResends).
 // Then resend is queued, or left to the live job's end
 // (queueFoundryResendBehind). queued reports a job queued here. Each decision
 // comes back as stored, with what the load holds of it (Applied). ErrConflict
@@ -234,6 +235,12 @@ func (s *mysqlDB) SettleFoundryReleases(ctx context.Context, workspaceID, loadID
 				return err
 			}
 			span := d.ClaimSpan
+			// A claim is approved or rejected, never both.
+			if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_review_decisions
+WHERE ontology_id=? AND kind='reject' AND doc_id=? AND claim_key=? AND claim_section=? AND claim_start=? AND claim_end=?`,
+				ontologyID, d.DocID, d.ClaimKey, span.Section, span.Start, span.End); err != nil {
+				return err
+			}
 			// One decision a claim in a load's list: the engine refuses an
 			// Extract that lists a release twice.
 			if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
@@ -259,6 +266,65 @@ ON DUPLICATE KEY UPDATE statement_hash=VALUES(statement_hash), decided_by_user_i
 		return err
 	})
 	return queued, err
+}
+
+// SettleFoundryReject settles a reject decision, read from a review of load
+// loadID: a person's word that the claim the review holds back is wrong. It
+// is saved as SettleFoundryReviewDecision saves one and goes nowhere else:
+// no load's list takes it, nothing is sent to the engine and no job is
+// queued, so the graph is as it was. Readers leave the claim's card out of
+// this load and every later one while the decision stands
+// (ListFoundryReviewDecisions), and removing it brings the card back.
+//
+// A claim is approved or rejected, never both: an approval saved for the
+// claim goes, and its copy in the load's list with it, as removing it would
+// take it (DeleteFoundryReviewDecision). ErrConflict means loadID is no
+// longer the ontology's current load, or that load wrote the claim on an
+// approval since the review was read, so it holds no claim there to reject;
+// ErrNotFound that the ontology is not live.
+func (s *mysqlDB) SettleFoundryReject(ctx context.Context, workspaceID, loadID string, d *model.FoundryReviewDecision) error {
+	if err := d.Validate(); err != nil {
+		return err
+	}
+	if d.Kind != model.FoundryReviewReject {
+		return fmt.Errorf("decision %s is not a reject", d.ID)
+	}
+	return s.WithTx(ctx, func(db Store) error {
+		tx := db.(*mysqlDB)
+		o, err := tx.lockLiveFoundryOntology(ctx, workspaceID, d.OntologyID)
+		if err != nil {
+			return err
+		}
+		if o.CurrentLoadID == nil || *o.CurrentLoadID != loadID {
+			return ErrConflict
+		}
+		// The live job's row before any decision's, as every settle takes them.
+		if _, err := tx.liveFoundryGraphJob(ctx, d.OntologyID); err != nil {
+			return err
+		}
+		span := d.ClaimSpan
+		claim := []any{d.DocID, d.ClaimKey, span.Section, span.Start, span.End}
+		var written bool
+		if err := tx.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_decisions
+WHERE load_id=? AND kind='release' AND doc_id=? AND claim_key=? AND claim_section=? AND claim_start=? AND claim_end=? AND applied_status='written')`,
+			append([]any{loadID}, claim...)...).Scan(&written); err != nil {
+			return err
+		}
+		if written {
+			return ErrConflict
+		}
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
+WHERE load_id=? AND kind='release' AND doc_id=? AND claim_key=? AND claim_section=? AND claim_start=? AND claim_end=?`,
+			append([]any{loadID}, claim...)...); err != nil {
+			return err
+		}
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_review_decisions
+WHERE ontology_id=? AND kind='release' AND doc_id=? AND claim_key=? AND claim_section=? AND claim_start=? AND claim_end=?`,
+			append([]any{d.OntologyID}, claim...)...); err != nil {
+			return err
+		}
+		return tx.saveFoundryReviewDecision(ctx, d)
+	})
 }
 
 // ListFoundryReviewDecisions uses id keyset paging. A nil documentIDs lists all
@@ -305,7 +371,8 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 
 // DeleteFoundryReviewDecision removes a decision from those later loads
 // copy, and takes it back from the loads that hold it as far as each kind
-// can be. A resolve stays in the loads that copied it, with what it wrote.
+// can be. A resolve stays in the loads that copied it, with what it wrote. A
+// reject is in no load: with it gone, its claim's card is listed again.
 //
 // The current load's copy of a release it has not written goes with it,
 // whatever a job said of it (waiting, refused, missed, or nothing yet): a

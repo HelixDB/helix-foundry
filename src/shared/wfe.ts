@@ -2637,9 +2637,23 @@ export type FoundryReviewChoice =
         | { notInData: true; entityKey?: never };
       prop?: never;
       release?: never;
+      reject?: never;
     }
-  | { prop: FoundryPropValue; resolve?: never; release?: never }
-  | { release: { statementHash: string }; resolve?: never; prop?: never };
+  | { prop: FoundryPropValue; resolve?: never; release?: never; reject?: never }
+  | {
+      release: { statementHash: string };
+      resolve?: never;
+      prop?: never;
+      reject?: never;
+    }
+  // A held claim a person says is wrong, bound to what they read as a release
+  // is: nothing is written, and its card leaves Needs review.
+  | {
+      reject: { statementHash: string };
+      resolve?: never;
+      prop?: never;
+      release?: never;
+    };
 export type ReviewDecision =
   | {
       kind: "resolve";
@@ -2667,6 +2681,19 @@ export type ReviewDecision =
       claimStart: number;
       claimEnd: number;
       // What the person read, hashed (reviews/model.ts statementHash).
+      statementHash: string;
+    }
+  // A person's word that one review's held claim is wrong, named as a release
+  // names its review. No load is told: pages leave the claim's card out
+  // (reviews/model.ts unrejected) until the decision is removed.
+  | {
+      kind: "reject";
+      type: "";
+      docId: string;
+      claimKey: string;
+      claimSection: number;
+      claimStart: number;
+      claimEnd: number;
       statementHash: string;
     };
 /**

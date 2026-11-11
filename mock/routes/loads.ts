@@ -491,11 +491,15 @@ function applyReleases(ontologyId: string, now = Date.now()) {
 
 /**
  * What became of a decision in the ontology's current load: unset for one
- * that load's list doesn't hold, and for a resolve.
+ * that load's list doesn't hold, and for a resolve or a reject.
  */
 export function appliedOf(ontologyId: string, d: FoundryReviewDecision) {
   const l = loadById(currentLoadId(ontologyId) || "");
-  if (d.kind === "resolve" || !l?.decisions.some((x) => x.id === d.id))
+  if (
+    d.kind === "resolve" ||
+    d.kind === "reject" ||
+    !l?.decisions.some((x) => x.id === d.id)
+  )
     return undefined;
   return state.applied.get(appliedKey(l.id, d.id)) ?? { status: "" as const };
 }

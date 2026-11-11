@@ -4207,7 +4207,7 @@
           "$ref": "#/definitions/v1FoundryReviewChoice"
         }
       },
-      "description": "Reads the current load's review and stores a decision. A resolve decision\napplies from the next load; a release or a prop decision applies to the\ncurrent load at once (FoundryReviewChoice.release, FoundryReviewChoice.prop)."
+      "description": "Reads the current load's review and stores a decision. A resolve decision\napplies from the next load; a release or a prop decision applies to the\ncurrent load at once (FoundryReviewChoice.release, FoundryReviewChoice.prop);\na reject changes no load (FoundryReviewChoice.reject)."
     },
     "FoundryServiceStartConnectorSignInBody": {
       "type": "object",
@@ -6601,7 +6601,7 @@
         "reviews": {
           "type": "string",
           "format": "int64",
-          "description": "The reviews its documents left when the load last wrote each, of every\nkind: statements held back instead of written as facts (scored under the\nbar, unverified, conflicting, breaking a rule), names matched to no one\nrecord, property values held back or in conflict, statements that fit no\nlink, and links it did write that a person can undo. It is not the\nnumber of open reviews: a review a person settles stays counted until\nthe load writes the decision, which moves a released statement to facts."
+          "description": "The reviews its documents left when the load last wrote each, of every\nkind: statements held back instead of written as facts (scored under the\nbar, unverified, conflicting, breaking a rule), names matched to no one\nrecord, property values held back or in conflict, statements that fit no\nlink, and links it did write that a person can undo. It is not the\nnumber of open reviews: a review a person settles stays counted until\nthe load writes the decision, which moves a released statement to facts,\nand one a person rejects stays counted, as a rejection writes nothing."
         },
         "unresolved": {
           "type": "string",
@@ -7175,6 +7175,16 @@
       "default": "FOUNDRY_READ_KIND_UNSPECIFIED",
       "description": "FoundryReadKind is how ontologies read a type of document.\n\n - FOUNDRY_READ_KIND_TEXT: Markdown, MDX and plain text: extracted as text through routes.\n - FOUNDRY_READ_KIND_TABLE: CSV, TSV, JSON, JSONL and Parquet: read once, at upload, as a table of\nits own, which mappings name by the document's id.\n - FOUNDRY_READ_KIND_PDF: PDF: read once, at upload, to its text (each page's, a form feed\nbetween pages), then extracted as that text through routes. One with no\ntext layer (a scan), encrypted or damaged can't be read."
     },
+    "v1FoundryRejectChoice": {
+      "type": "object",
+      "properties": {
+        "statementHash": {
+          "type": "string",
+          "description": "SHA-256, in lowercase hexadecimal, of the review's suggested_link, a unit\nseparator (0x1f) and its stored statement."
+        }
+      },
+      "description": "A rejection of the statement a person read: a review that reads otherwise\nnow is refused, as an approval of it would be."
+    },
     "v1FoundryReleaseChoice": {
       "type": "object",
       "properties": {
@@ -7210,6 +7220,10 @@
         "release": {
           "$ref": "#/definitions/v1FoundryReleaseChoice",
           "description": "A person's word that what the review holds back holds. It applies to the\ncurrent load at once: a job replays the claim's document from its saved\nextraction, at no model cost, and writes what the review states as a\nfact, or keeps it held and says why (FoundryReviewDecision.applied).\nLater loads read it too, and each says what it made of it."
+        },
+        "reject": {
+          "$ref": "#/definitions/v1FoundryRejectChoice",
+          "description": "A person's word that what the review holds back is wrong. Nothing is\nwritten and nothing is sent to the engine: the review stays in the\nload, and readers leave it out of what needs review in this load and\nevery later one while the decision stands. It takes the place of an\napproval of the same claim, as an approval takes its place; removing\nit lists the claim for review again."
         }
       },
       "description": "A user choice. Review identity is always derived by the backend."
@@ -7221,7 +7235,8 @@
           "type": "string"
         },
         "kind": {
-          "type": "string"
+          "type": "string",
+          "description": "resolve, prop, release or reject."
         },
         "type": {
           "type": "string"
@@ -7251,7 +7266,7 @@
         },
         "claimKey": {
           "type": "string",
-          "description": "The review a release decision releases, as it stores them: its claim's\nkey, its quote's section and byte range in the section, and the hash of\nthe statement the person read."
+          "description": "The review a release decision releases, or a reject decision rejects, as\nit stores them: its claim's key, its quote's section and byte range in\nthe section, and the hash of the statement the person read. A reader\nleaves out of what needs review each review of a held claim that a\nreject names by its document, claim key and place."
         },
         "claimSection": {
           "type": "integer",
@@ -7273,7 +7288,7 @@
           "description": "A release or prop decision's state in the ontology's current load; unset\nfor a resolve, and when that load's decisions don't hold it yet (one\nsaved while another load was current joins them when a job of the\nontology next ends)."
         }
       },
-      "description": "A durable ontology-wide override. A resolve decision applies from the next\nload; a release or a prop decision applies to the current load at once,\nand later loads read it as they are made. Removing a prop decision\nwithdraws it from the current load at once too."
+      "description": "A durable ontology-wide override. A resolve decision applies from the next\nload; a release or a prop decision applies to the current load at once,\nand later loads read it as they are made. Removing a prop decision\nwithdraws it from the current load at once too. A reject changes no load:\nit tells readers which held claims a person said are wrong."
     },
     "v1FoundryReviewDecisionResponse": {
       "type": "object",

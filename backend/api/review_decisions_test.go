@@ -34,9 +34,11 @@ type decisionStore struct {
 	deleted  string
 	// releasedTo is the load SettleFoundryReleases or SettleFoundryValue
 	// applied its decisions to, and resends the resend jobs they and
-	// DeleteFoundryReviewDecision were handed; applied is what
+	// DeleteFoundryReviewDecision were handed; rejectedOn is the load
+	// SettleFoundryReject read its review from; applied is what
 	// ListFoundryDecisionsApplied answers.
 	releasedTo string
+	rejectedOn string
 	resends    []*foundrymodel.FoundryGraphJob
 	applied    map[string]foundrymodel.FoundryDecisionApplied
 }
@@ -97,6 +99,17 @@ func (s *decisionStore) SettleFoundryValue(_ context.Context, ws, load string, d
 	d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
 	s.saved, s.releasedTo, s.resends = append(s.saved, d), load, append(s.resends, resend)
 	return true, nil
+}
+func (s *decisionStore) SettleFoundryReject(_ context.Context, ws, load string, d *foundrymodel.FoundryReviewDecision) error {
+	if ws != s.ontology.WorkspaceID {
+		return foundrystore.ErrNotFound
+	}
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	d.DecidedAt = time.Now()
+	s.saved, s.rejectedOn = append(s.saved, d), load
+	return nil
 }
 func (s *decisionStore) ListFoundryDecisionsApplied(_ context.Context, o string, ids []string) (map[string]foundrymodel.FoundryDecisionApplied, error) {
 	if o != s.ontology.ID {
@@ -180,6 +193,10 @@ func propBoolean(b bool) *foundryv1.FoundryPropValue {
 func propNull() *foundryv1.FoundryPropValue {
 	return &foundryv1.FoundryPropValue{Value: &foundryv1.FoundryPropValue_Null{}}
 }
+func rejectChoice(hash string) *foundryv1.FoundryReviewChoice {
+	return &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Reject{Reject: &foundryv1.FoundryRejectChoice{StatementHash: hash}}}
+}
+
 func releaseChoice(hash string) *foundryv1.FoundryReviewChoice {
 	return &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Release{Release: &foundryv1.FoundryReleaseChoice{StatementHash: hash}}}
 }
@@ -304,6 +321,58 @@ func TestSettleHeldClaim(t *testing.T) {
 	}
 }
 
+// A rejection of a held claim names the review as an approval does, bound to
+// what the person read, and is only saved: no load is told, no job is
+// handed over, and the answer says nothing of a load.
+func TestRejectHeldClaim(t *testing.T) {
+	for _, reason := range []string{"low_confidence", "unverified"} {
+		s, db, queries := reviewService(t, heldReview(reason, testClaimKey))
+		out, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(rejectChoice(testRead)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := out.Decision
+		if len(db.saved) != 1 || d.Kind != "reject" || d.GetType() != "" || d.GetDocId() != "doc-a" || d.GetClaimKey() != testClaimKey ||
+			d.GetStatementHash() != testRead || d.EntityKey != nil || d.GetDecidedByUserId() != "user-a" {
+			t.Fatalf("%+v saved %v", d, db.saved)
+		}
+		if d.ClaimSection == nil || d.GetClaimSection() != 2 || d.GetClaimStart() != 10 || d.GetClaimEnd() != 25 {
+			t.Fatalf("not pinned to its place: %+v", d)
+		}
+		if len(*queries) != 1 {
+			t.Fatalf("read %d times: %v", len(*queries), *queries)
+		}
+		if db.rejectedOn != "load-1" || db.releasedTo != "" || len(db.resends) != 0 || d.Applied != nil {
+			t.Fatalf("rejected on %q, released to %q, resends %v, applied %v", db.rejectedOn, db.releasedTo, db.resends, d.Applied)
+		}
+	}
+	// A claim that reads otherwise now is not the one the person rejected,
+	// and a load that changed, or wrote the claim since, holds no such review.
+	s, db, _ := reviewService(t, heldReview("low_confidence", testClaimKey))
+	_, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(rejectChoice(strings.Repeat("0", 64))))
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "reads differently now") || len(db.saved) != 0 {
+		t.Fatalf("%v", err)
+	}
+	s, db, _ = reviewService(t, heldReview("low_confidence", testClaimKey))
+	db.saveErr = foundrystore.ErrConflict
+	_, err = s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(rejectChoice(testRead)))
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "reload the review") {
+		t.Fatalf("%v", err)
+	}
+	// Only a held claim is rejected: a name or a value takes its own decision.
+	for _, review := range []string{
+		`{"items":[{"reason":"unresolved","type":"Customer","doc_id":"doc-a","norm_name":"variant"}]}`,
+		`{"items":[{"reason":"prop_conflict","type":"Customer","entity_key":"customer-1","prop":"name"}]}`,
+		`{"items":[{"reason":"conflict","doc_id":"doc-a"}]}`,
+	} {
+		s, db, _ := reviewService(t, review)
+		_, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(rejectChoice(testRead)))
+		if status.Code(err) != codes.InvalidArgument && status.Code(err) != codes.FailedPrecondition || len(db.saved) != 0 {
+			t.Fatalf("%s: %v", review, err)
+		}
+	}
+}
+
 // The current load changed between the review's read and the settle: its
 // reviews are no longer the ones to settle, and the card must be read again.
 func TestSettleHeldClaimOnAnotherLoad(t *testing.T) {
@@ -385,6 +454,8 @@ func TestSettleHeldClaimValidation(t *testing.T) {
 		"a resolve of a held claim": {heldReview("low_confidence", testClaimKey), noneChoice(), codes.InvalidArgument},
 		"a value of a held claim":   {heldReview("low_confidence", testClaimKey), propChoice(propText("x")), codes.InvalidArgument},
 		"no release":                {heldReview("low_confidence", testClaimKey), &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Release{}}, codes.InvalidArgument},
+		"no reject":                 {heldReview("low_confidence", testClaimKey), &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Reject{}}, codes.InvalidArgument},
+		"a reject with no hash":     {heldReview("low_confidence", testClaimKey), rejectChoice(""), codes.FailedPrecondition},
 		"no hash":                   {heldReview("low_confidence", testClaimKey), releaseChoice(""), codes.FailedPrecondition},
 		"a card read before a load": {heldStatement("low_confidence", testClaimKey, `{"other":"reading"}`), releaseChoice(testRead), codes.FailedPrecondition},
 		"another link":              {strings.Replace(heldReview("low_confidence", testClaimKey), "promised_to", "partner_of", 1), releaseChoice(testRead), codes.FailedPrecondition},

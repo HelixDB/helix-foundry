@@ -201,6 +201,117 @@ test("approves every held claim of a group at once, and says which couldn't be",
   await expect(saved).toHaveCount(3);
 });
 
+test("rejects a held claim: its card and its count go, Approve all leaves it out, and removing the decision lists it again", async ({
+  page,
+}) => {
+  const doc = await reviewed(
+    page,
+    "# Hedged deal\n\nGlobex Corporation, Initech, Elstree Media Group and Lockhart Shipping plc may have signed.\n",
+  );
+  const { head, rows } = group(page, HELD);
+  await expect(rows).toHaveCount(4);
+  const approveAll = head.getByRole("button", { name: /^Approve all/ });
+  await expect(approveAll).toHaveText("Approve all (4)");
+  const tab = page.getByRole("tab", { name: /^Needs review/ });
+  const listed = async () =>
+    Number((await tab.locator(".hf-tab-count").innerText()).replace(/\D/g, ""));
+  const before = await listed();
+  // From here the page is never loaded again until it says so.
+  let loads = 0;
+  page.on("load", () => (loads += 1));
+
+  // Rejected, bound to what its card shows. Nothing is written, so no job
+  // runs: the card goes at once, and every count with it.
+  const globex = rows.filter({ hasText: "Globex Corporation (Customer)" });
+  await expect(globex).toContainText(
+    "Reject it if it’s wrong: nothing is written, and it leaves Needs review in this load and later ones.",
+  );
+  const sent = page.waitForRequest(
+    (r) => r.method() === "POST" && /\/reviews\/[^/]+:settle$/.test(r.url()),
+  );
+  await globex.getByRole("button", { name: "Reject", exact: true }).click();
+  expect((await sent).postDataJSON()).toEqual({
+    decision: { reject: { statementHash: hashOf("Globex Corporation") } },
+  });
+  await expect(rows).toHaveCount(3);
+  await expect(globex).toHaveCount(0);
+  await expect(head.getByRole("heading")).toHaveText(`${HELD} 3`);
+  expect(await listed()).toBe(before - 1);
+  await expect(approveAll).toHaveText("Approve all (3)");
+  const saved = page
+    .getByRole("list", { name: "Saved decisions" })
+    .getByRole("listitem");
+  await expect(saved.filter({ hasText: /^Rejected: “/ })).toHaveCount(1);
+  await expect(page.getByText("Writing it to this load")).toHaveCount(0);
+
+  // Approve all approves the three left, and never the one rejected.
+  const approved: string[] = [];
+  await page.route("**/papi/**/reviews/*:settle", async (route) => {
+    approved.push(
+      route.request().postDataJSON().decision.release.statementHash,
+    );
+    await route.continue();
+  });
+  await approveAll.click();
+  await page
+    .getByRole("dialog", { name: "Approve 3 claims?" })
+    .getByRole("button", { name: "Approve all" })
+    .click();
+  await expect(rows).toHaveCount(0);
+  expect(approved.sort()).toEqual(
+    ["Initech LLC", "Elstree Media Group", "Lockhart Shipping plc"]
+      .map(hashOf)
+      .sort(),
+  );
+  await page.unroute("**/papi/**/reviews/*:settle");
+  expect(await listed()).toBe(before - 4);
+  await expect(saved.filter({ hasText: /^Approved: “/ })).toHaveCount(3);
+  await expect(saved.filter({ hasText: /^Rejected: “/ })).toHaveCount(1);
+  // The rejected claim was written nowhere.
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  const facts = page.getByRole("list", { name: "Facts" });
+  await expect(facts).toContainText(/signed_with\s*Initech LLC/);
+  await expect(facts).not.toContainText(/signed_with\s*Globex Corporation/);
+  expect(loads).toBe(0);
+
+  // A later load holds the claim again, and its card stays out.
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(saved.filter({ hasText: /^Rejected: “/ })).toHaveCount(1);
+  await expect(rows).toHaveCount(0);
+  await expect(
+    reviews(page).getByText("Globex Corporation (Customer)"),
+  ).toHaveCount(0);
+  const hidden = await listed();
+
+  // The decision removed, the claim is listed again, to approve or reject.
+  await saved
+    .filter({ hasText: /^Rejected: “/ })
+    .getByRole("button", { name: "Remove decision" })
+    .click();
+  await expect(
+    page.getByText("Decision removed. The claim is listed for review again."),
+  ).toBeVisible();
+  await expect(rows).toHaveCount(1);
+  await expect(globex).toContainText("Approving writes:");
+  await expect(
+    globex.getByRole("button", { name: "Approve", exact: true }),
+  ).toBeVisible();
+  await expect(
+    globex.getByRole("button", { name: "Reject", exact: true }),
+  ).toBeVisible();
+  expect(await listed()).toBe(hidden + 1);
+
+  // A member reads the card and can't reject it.
+  await page.context().clearCookies();
+  await signIn(page, "alan@example.com");
+  await page.goto(`${doc}?tab=review`);
+  await expect(globex).toContainText("Approving writes:");
+  await expect(
+    globex.getByRole("button", { name: "Reject", exact: true }),
+  ).toHaveCount(0);
+});
+
 test("offers Approve all and Add these links to managers only", async ({
   page,
 }) => {

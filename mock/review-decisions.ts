@@ -11,10 +11,12 @@ import { onReset } from "./state";
 // load, extract and retry jobs all read that copy, so settling or removing
 // one never changes a load already started.
 export const decisions = new Map<string, FoundryReviewDecision[]>();
-/** A copy of an ontology's decisions now, for a load being created. */
-export const decisionsFor = (o: string): FoundryReviewDecision[] => [
-  ...(decisions.get(o) || []),
-];
+/**
+ * A copy of an ontology's decisions now, for a load being created: every one
+ * an Extract takes. A rejection is the pages' to read, and no load holds one.
+ */
+export const decisionsFor = (o: string): FoundryReviewDecision[] =>
+  (decisions.get(o) || []).filter((d) => d.kind !== "reject");
 onReset(() => decisions.clear());
 
 export type DecisionTypes = Record<
@@ -144,7 +146,7 @@ export function decisionFits(
   d: FoundryReviewDecision,
   types: DecisionTypes,
 ): boolean {
-  if (d.kind === "release")
+  if (d.kind === "release" || d.kind === "reject")
     return (
       !!d.docId.trim() &&
       !!d.claimKey &&

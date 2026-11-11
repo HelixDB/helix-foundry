@@ -142,7 +142,8 @@ export type Statement = {
  *   conflict, so it is the table's, and a chosen document value replaces it
  *   in this load and every later one;
  * - `release`: approve one review of a claim code holds back, so the current
- *   load writes what it states as a fact, at once. `statement` is what that is, and
+ *   load writes what it states as a fact, at once, or reject it, which hides
+ *   its card and writes nothing. `statement` is what that is, and
  *   `stored` it as the review keeps it, which its hash reads. `named` is
  *   whether the review names both its ends: if not, an end isn't in the graph
  *   yet. `differs` is whether another review at its place states something
@@ -494,10 +495,44 @@ export function reviewGroups<
   return [...groups.values()].sort((a, b) => rank(a) - rank(b));
 }
 
+/** Whether a saved decision names this held claim's review: a release or a reject of it. */
+const ofClaim = (d: ReviewDecision, s: Extract<Settle, { kind: "release" }>) =>
+  (d.kind === "release" || d.kind === "reject") &&
+  d.docId === s.docId &&
+  d.claimKey === s.claimKey &&
+  d.claimSection === s.section &&
+  d.claimStart === s.start &&
+  d.claimEnd === s.end;
+
+/**
+ * `reviews` without the held claims a person rejected: each review of a held
+ * claim that a saved reject names by its document, its claim's key and its
+ * quote's place. A rejection changes no load, so the review is still in the
+ * graph: leaving it out here is what hides its card, drops it from a page's
+ * counts and keeps Approve all from it, in this load and every later one,
+ * until the decision is removed. It hides the claim however it reads now: a
+ * person said that claim at that place is wrong.
+ *
+ * @example
+ * unrejected([held, other], [{ kind: "reject", ...placeOf(held) }]); // [other]
+ */
+export function unrejected<R extends Settleable>(
+  reviews: readonly R[],
+  decisions: readonly ReviewDecision[],
+): R[] {
+  const rejects = decisions.filter((d) => d.kind === "reject");
+  if (!rejects.length) return [...reviews];
+  return reviews.filter(({ settle: s }) => {
+    if (s?.kind !== "release") return true;
+    return !rejects.some((d) => ofClaim(d, s));
+  });
+}
+
 /**
  * The held claims of `reviews` that Approve all approves: each settled by a
  * release a person could approve on its card now, with no decision saved for
- * it (not even one of what it said before: that card asks to be read again),
+ * it (not a rejection, nor an approval of what it said before: that card
+ * asks to be read again),
  * not read two ways (`differs`), and not naming a name only a legal form
  * linked on a link that holds one value (`single`), which stays held until
  * that name is settled. A stale review settles by no release, so it's never
@@ -515,7 +550,7 @@ export function approvable(
     s?.kind === "release" &&
     !s.differs &&
     !(s.formed && single(s.link)) &&
-    !decisions.some((d) => matchesReview(d, s))
+    !decisions.some((d) => ofClaim(d, s))
       ? [s]
       : [],
   );

@@ -87,7 +87,9 @@ export const settleReview = async (
       ? "prop"
       : body.decision.release
         ? "release"
-        : "resolve",
+        : body.decision.reject
+          ? "reject"
+          : "resolve",
   });
   return r;
 };

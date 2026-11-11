@@ -33,7 +33,9 @@ import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { useDocumentNames } from "../documents/documents-api";
 import { spanAnchor } from "../documents/model";
+import { reviewQueries } from "../reviews/api";
 import { ReviewGroups } from "../reviews/groups";
+import { unrejected } from "../reviews/model";
 import { SavedDecisions, SettleReview } from "../reviews/settle";
 import { AskDrawer } from "../ontology/ask";
 import { ENRICHMENT_SOURCE } from "../ontology/enrichment-fields";
@@ -307,6 +309,12 @@ function Entity({
     { id: o, ontology } = useOntology();
   const { access, reader } = useGraphReader(),
     shared = access === "grants";
+  // The held claims a person rejected leave the page. Decisions aren't
+  // shared through grants, and neither are the reviews they name.
+  const decisions = useQuery({
+    ...reviewQueries.list(id, o),
+    enabled: !shared,
+  });
   // Through grants the WFE reads the load; else the user's own database.
   const tenant = shared ? o : ontology.tenantId || "";
   const selection = useLoadSelection(),
@@ -459,7 +467,7 @@ function Entity({
     );
   const facts = page.facts,
     mentions = page.mentions,
-    reviews = page.reviews;
+    reviews = unrejected(page.reviews, decisions.data ?? []);
   const props = propertyViews(e.props, page.rows, page.propEvidence);
   // The tables (by the rows that state it) and documents (by where they
   // name it) it comes from, each once.

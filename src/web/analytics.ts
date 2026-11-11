@@ -169,7 +169,7 @@ export type AnalyticsEvents = {
   // An ontology's versions, loads and reviews.
   version_made_current: undefined;
   load_made_current: undefined;
-  review_settled: { kind: "resolve" | "prop" | "release" };
+  review_settled: { kind: "resolve" | "prop" | "release" | "reject" };
   review_decision_removed: undefined;
   graph_exported: undefined;
 

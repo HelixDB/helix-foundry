@@ -2845,7 +2845,7 @@ describe("review decisions", () => {
     ).toEqual([400, "this review kind cannot be settled"]);
     expect(
       refusal(await settle({ reason: "unverified" }, body.decision)),
-    ).toEqual([400, "this review requires a release decision"]);
+    ).toEqual([400, "this review requires a release or a reject decision"]);
     const held = (key = "a".repeat(64)) => ({
       reason: "low_confidence",
       type: "",
@@ -2866,8 +2866,39 @@ describe("review decisions", () => {
     ]);
     expect(refusal(await settle(held(), release))).toEqual([
       400,
-      "this claim reads differently now; reload the review and approve what it says",
+      "this claim reads differently now; reload the review and decide on what it says",
     ]);
+    // A rejection is bound to what was read as an approval is, and is one
+    // choice: never with another.
+    expect(
+      refusal(
+        await settle(held(), { reject: { statementHash: "0".repeat(64) } }),
+      ),
+    ).toEqual([
+      400,
+      "this claim reads differently now; reload the review and decide on what it says",
+    ]);
+    for (const choice of [
+      { reject: true },
+      { reject: {} },
+      { reject: { statementHash: "0".repeat(64) }, ...release },
+      {
+        reject: { statementHash: "0".repeat(64) },
+        resolve: { notInData: true },
+      },
+    ])
+      expect(
+        (await settle(held(), choice)).status,
+        JSON.stringify(choice),
+      ).toBe(400);
+    expect(
+      refusal(
+        await settle(
+          { reason: "unresolved" },
+          { reject: { statementHash: "0".repeat(64) } },
+        ),
+      ),
+    ).toEqual([400, "this review requires a resolve decision"]);
     expect(refusal(await settle({ reason: "unresolved" }, release))).toEqual([
       400,
       "this review requires a resolve decision",
@@ -3198,6 +3229,88 @@ describe("review decisions", () => {
       })
     ).body.decision;
     expect(resolved.applied).toBeUndefined();
+  });
+
+  it("saves a rejection of a held claim, and tells no load", async () => {
+    await uploaded(
+      "variant.md",
+      Buffer.from("# Hedged deal\n\nGlobex Corporation may have signed.\n"),
+    );
+    const g = await loaded("first");
+    const held = () =>
+      reviews(g).filter((n) => n.props.reason === "low_confidence");
+    const rv = held()[0]!;
+    const statementHash = createHash("sha256")
+      .update(`signed_with\u001f${String(rv.props.statement)}`)
+      .digest("hex");
+    const settle = (kind: "release" | "reject") =>
+      call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+        decision: { [kind]: { statementHash } },
+      });
+    const listed = async () =>
+      (await call("GET", `${O}/review-decisions`)).body.decisions;
+    const facts = () =>
+      [...g.nodes()].filter(
+        (n) =>
+          n.label === FOUNDRY_NODES.Evidence && n.props.link === "signed_with",
+      );
+    const before = [...g.nodes()].length;
+
+    // The decision names the review as an approval does, and says nothing of
+    // a load: no job, and the graph as it was.
+    const rejected = (await settle("reject")).body.decision;
+    expect(rejected).toMatchObject({
+      kind: "reject",
+      type: "",
+      docId: rv.props.doc_id,
+      claimKey: rv.props.claim_key,
+      claimSection: rv.props.section,
+      claimStart: rv.props.start,
+      claimEnd: rv.props.end,
+      statementHash,
+    });
+    expect(rejected.applied).toBeUndefined();
+    expect((await call("GET", O)).body.ontology.activeJob).toBeNull();
+    vi.setSystemTime(Date.now() + 10_000);
+    expect((await listed()).map((d: { kind: string }) => d.kind)).toEqual([
+      "reject",
+    ]);
+    expect(held()).toHaveLength(1);
+    expect(facts()).toHaveLength(0);
+    expect([...g.nodes()]).toHaveLength(before);
+    // Rejected again, it is the same decision.
+    expect((await settle("reject")).body.decision.id).toBe(rejected.id);
+
+    // Approved instead, the rejection gives way, and the claim is written.
+    const approved = (await settle("release")).body.decision;
+    expect(approved.applied).toEqual({ status: "pending" });
+    expect((await listed()).map((d: { kind: string }) => d.kind)).toEqual([
+      "release",
+    ]);
+    // Rejected before its job ran, the approval is taken back: nothing is
+    // written of a claim a person said is wrong.
+    const again = (await settle("reject")).body.decision;
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(
+      (await listed()).map((d: { id: string; kind: string }) => [d.id, d.kind]),
+    ).toEqual([[again.id, "reject"]]);
+    expect(held()).toHaveLength(1);
+    expect(facts()).toHaveLength(0);
+
+    // A later load holds the claim again and copies no rejection: the
+    // decision is still the ontology's, for pages to read.
+    const next = await loaded("next");
+    expect(
+      reviews(next).filter((n) => n.props.reason === "low_confidence"),
+    ).toHaveLength(1);
+    expect((await listed())[0]).toMatchObject({ id: again.id, kind: "reject" });
+    expect((await listed())[0].applied).toBeUndefined();
+
+    // Removed, nothing is left of it.
+    expect(
+      (await call("DELETE", `${O}/review-decisions/${again.id}`)).status,
+    ).toBe(200);
+    expect(await listed()).toEqual([]);
   });
 
   it("applies a chosen value to the current load at once, and takes it back", async () => {

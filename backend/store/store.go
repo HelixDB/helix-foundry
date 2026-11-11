@@ -280,6 +280,7 @@ type Store interface {
 		resend *model.FoundryGraphJob) (queued bool, err error)
 	SettleFoundryValue(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision,
 		resend *model.FoundryGraphJob) (queued bool, err error)
+	SettleFoundryReject(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision) error
 	ListFoundryDecisionsApplied(ctx context.Context, ontologyID string, ids []string) (map[string]model.FoundryDecisionApplied, error)
 	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
 	FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error)

@@ -28,7 +28,9 @@ import (
 // decision, a value a person chose: the same job sends the load its
 // decisions, and the engine sets the value (SettleFoundryValue). The
 // decision returned says so (applied), and ListFoundryReviewDecisions what
-// became of it.
+// became of it. A reject, a person's word that a held claim is wrong, is
+// only saved: nothing is written or sent, and readers leave the claim out
+// of what needs review (SettleFoundryReject).
 func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.SettleFoundryReviewRequest) (*foundryv1.FoundryReviewDecisionResponse, error) {
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
@@ -69,6 +71,12 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	case "low_confidence", "unverified":
 		if err := settleHeldClaim(req, d, review); err != nil {
 			return nil, err
+		}
+		if d.Kind == foundrymodel.FoundryReviewReject {
+			if err := s.deps.DB.SettleFoundryReject(ctx, o.WorkspaceID, load.ID, d); err != nil {
+				return nil, settleFoundryReviewError(err)
+			}
+			return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
 		}
 		userID := actor(ctx).UserID
 		resend := &foundrymodel.FoundryGraphJob{ID: id.New(), RequestedByUserID: &userID}
@@ -201,16 +209,29 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	return s.saveFoundryReviewDecision(ctx, o, d)
 }
 
-// settleHeldClaim makes d the release of the one review it reads, by its
-// claim's key and its quote's place, of the statement the person read: a load
-// since may read the claim otherwise, and they haven't seen that. The engine
-// writes what the review states once its ends resolve, and keeps it held if a
-// name no rung resolved is yet to be settled, saying why. A review written
-// before claims had keys and statements is released by a new load's.
+// settleHeldClaim makes d the release or the reject of the one review it
+// reads, as the request chose, by its claim's key and its quote's place, of
+// the statement the person read: a load since may read the claim otherwise,
+// and they haven't seen that. The engine writes what a released review
+// states once its ends resolve, and keeps it held if a name no rung resolved
+// is yet to be settled, saying why; a rejected one it never hears of. A
+// review written before claims had keys and statements is settled by a new
+// load's.
 func settleHeldClaim(req *foundryv1.SettleFoundryReviewRequest, d *foundrymodel.FoundryReviewDecision, review map[string]json.RawMessage) error {
-	release := req.GetDecision().GetRelease()
-	if release == nil {
-		return status.Error(codes.InvalidArgument, "this review requires a release decision")
+	var read string
+	switch choice := req.GetDecision().GetChoice().(type) {
+	case *foundryv1.FoundryReviewChoice_Release:
+		if choice.Release == nil {
+			return status.Error(codes.InvalidArgument, "this review requires a release or a reject decision")
+		}
+		d.Kind, read = foundrymodel.FoundryReviewRelease, choice.Release.GetStatementHash()
+	case *foundryv1.FoundryReviewChoice_Reject:
+		if choice.Reject == nil {
+			return status.Error(codes.InvalidArgument, "this review requires a release or a reject decision")
+		}
+		d.Kind, read = foundrymodel.FoundryReviewReject, choice.Reject.GetStatementHash()
+	default:
+		return status.Error(codes.InvalidArgument, "this review requires a release or a reject decision")
 	}
 	var doc, claimKey, link, statement string
 	var span foundrymodel.FoundryClaimSpan
@@ -222,12 +243,12 @@ func settleHeldClaim(req *foundryv1.SettleFoundryReviewRequest, d *foundrymodel.
 	_ = json.Unmarshal(review["suggested_link"], &link)
 	_ = json.Unmarshal(review["statement"], &statement)
 	hash := foundrymodel.FoundryStatementHash(link, statement)
-	d.Kind, d.Type, d.DocID, d.ClaimKey, d.ClaimSpan, d.StatementHash = foundrymodel.FoundryReviewRelease, "", &doc, &claimKey, &span, &hash
+	d.Type, d.DocID, d.ClaimKey, d.ClaimSpan, d.StatementHash = "", &doc, &claimKey, &span, &hash
 	if err := d.Validate(); err != nil || link == "" || statement == "" {
 		return status.Error(codes.FailedPrecondition, "this review is missing its identity; start a new load before settling it")
 	}
-	if release.GetStatementHash() != hash {
-		return status.Error(codes.FailedPrecondition, "this claim reads differently now; reload the review and approve what it says")
+	if read != hash {
+		return status.Error(codes.FailedPrecondition, "this claim reads differently now; reload the review and decide on what it says")
 	}
 	return nil
 }
@@ -241,9 +262,9 @@ func (s *Service) saveFoundryReviewDecision(ctx context.Context, o *foundrymodel
 }
 
 // settleFoundryReviewError maps a settle the store refused to its status: the
-// current load changed since the review was read, its version no longer
-// takes the decision, or the ontology takes no value decision of another
-// property.
+// current load changed since the review was read (or wrote the claim a
+// rejection names), its version no longer takes the decision, or the
+// ontology takes no value decision of another property.
 func settleFoundryReviewError(err error) error {
 	if errors.Is(err, foundrystore.ErrConflict) {
 		return status.Error(codes.FailedPrecondition, "the current load changed, or its version no longer has this review's type or property; reload the review and try again")

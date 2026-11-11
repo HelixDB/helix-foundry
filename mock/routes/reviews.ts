@@ -45,6 +45,9 @@ import { isRecord } from "../../src/shared/json";
 // and so does a chosen value, which a removal takes back at once
 // (owePendingValue, forgetValue): each decision says what became of it
 // there (`applied`). The mock sets no limit on how many values are decided.
+// A rejection of a held claim is only saved: no load is told. A claim has an
+// approval or a rejection, never both: settling one removes the other, and
+// a claim the current load already wrote on an approval is not rejected.
 
 const BASE = "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}";
 const PAGE = 100;
@@ -76,13 +79,18 @@ function propValue(v: unknown): v is FoundryPropValue {
 /** The mock enforces protobuf's oneofs, including an explicit false refusal. */
 function valid(b: unknown): b is FoundryReviewChoice {
   if (!isRecord(b)) return false;
-  if ("release" in b)
-    return (
-      typeof (b.release as { statementHash?: unknown } | undefined)
-        ?.statementHash === "string" &&
-      !("resolve" in b) &&
-      !("prop" in b)
-    );
+  for (const [arm, other] of [
+    ["release", "reject"],
+    ["reject", "release"],
+  ] as const)
+    if (arm in b)
+      return (
+        typeof (b[arm] as { statementHash?: unknown } | undefined)
+          ?.statementHash === "string" &&
+        !(other in b) &&
+        !("resolve" in b) &&
+        !("prop" in b)
+      );
   if ("prop" in b) return !("resolve" in b) && propValue(b.prop);
   if (!isRecord(b.resolve)) return false;
   const r = b.resolve;
@@ -95,8 +103,8 @@ function valid(b: unknown): b is FoundryReviewChoice {
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 /** The decision for the same identity, which settling again replaces. */
 const sameIdentity = (a: ReviewDecision, b: ReviewDecision) =>
-  a.kind === "release"
-    ? b.kind === "release" &&
+  a.kind === "release" || a.kind === "reject"
+    ? b.kind === a.kind &&
       a.docId === b.docId &&
       a.claimKey === b.claimKey &&
       a.claimSection === b.claimSection &&
@@ -163,10 +171,11 @@ export const reviewRoutes: MockRoute[] = [
       // A held claim names no type: the engine reads what it states from its
       // document.
       if (["low_confidence", "unverified"].includes(text(r.reason))) {
-        if (!choice.release)
+        const read = (choice.release ?? choice.reject)?.statementHash;
+        if (read === undefined)
           return fail(
             "INVALID_ARGUMENT",
-            "this review requires a release decision",
+            "this review requires a release or a reject decision",
           );
         const docId = text(r.doc_id),
           claimKey = text(r.claim_key),
@@ -180,23 +189,41 @@ export const reviewRoutes: MockRoute[] = [
         const statementHash = createHash("sha256")
           .update(`${link}\u001f${stored}`)
           .digest("hex");
-        if (choice.release.statementHash !== statementHash)
+        if (read !== statementHash)
           return fail(
             "FAILED_PRECONDITION",
-            "this claim reads differently now; reload the review and approve what it says",
+            "this claim reads differently now; reload the review and decide on what it says",
           );
+        // The other decision of this claim gives way: an approval the load
+        // has not written leaves its list too.
+        const claim = {
+          docId,
+          claimKey,
+          claimSection: Number(r.section),
+          claimStart: Number(r.start),
+          claimEnd: Number(r.end),
+        };
+        const kind = choice.reject ? "reject" : "release";
+        const other = (decisions.get(s.o.id) || []).find(
+          (d) =>
+            (d.kind === "release" || d.kind === "reject") &&
+            d.kind !== kind &&
+            d.docId === claim.docId &&
+            d.claimKey === claim.claimKey &&
+            d.claimSection === claim.claimSection &&
+            d.claimStart === claim.claimStart &&
+            d.claimEnd === claim.claimEnd,
+        );
+        if (other) {
+          forgetRelease(s.o.id, other.id);
+          decisions.set(
+            s.o.id,
+            (decisions.get(s.o.id) || []).filter((d) => d.id !== other.id),
+          );
+        }
         const { decision: saved } = save(
           s.o.id,
-          {
-            kind: "release",
-            type: "",
-            docId,
-            claimKey,
-            claimSection: Number(r.section),
-            claimStart: Number(r.start),
-            claimEnd: Number(r.end),
-            statementHash,
-          },
+          { kind, type: "", ...claim, statementHash },
           req.principal.user.id,
         );
         if (saved.kind === "release") owePendingRelease(s.o.id, saved);

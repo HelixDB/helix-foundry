@@ -480,6 +480,32 @@ test("says why the load kept an approved claim held", async ({ page }) => {
   );
 });
 
+test("rejects a claim the load kept held, in place of its approval", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "refused" });
+  const { held } = await hedged(page);
+  // While it is being written it can't be rejected: its job may have sent it.
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText("kept it held");
+  const saved = page
+    .getByRole("list", { name: "Saved decisions" })
+    .getByRole("listitem");
+  await expect(
+    saved.filter({ hasText: /^Approved, not written: “/ }),
+  ).toHaveCount(1);
+  // The load refused it; the person says it is wrong after all.
+  await held.getByRole("button", { name: "Reject", exact: true }).click();
+  await expect(held).toHaveCount(0);
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await expect(saved).toHaveCount(1);
+  await expect(saved).toContainText(/^Rejected: “/);
+  // It stays out when the page is loaded again.
+  await page.reload();
+  await expect(saved).toContainText(/^Rejected: “/);
+  await expect(held).toHaveCount(0);
+});
+
 test("says what may have kept a claim held when its load never said", async ({
   page,
 }) => {

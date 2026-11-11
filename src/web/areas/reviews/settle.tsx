@@ -127,7 +127,9 @@ function ClaimWritten({
  * job is running, then the claim is a fact and the card goes, or the card
  * says why the load kept it held. A chosen value goes the same way: the job
  * sends the load its decisions, the card says so, and the value shows
- * wherever the page reads it, with no reload.
+ * wherever the page reads it, with no reload. A held claim can be rejected
+ * instead: that only saves the person's word, and the page that lists the
+ * card leaves it out from then on (`unrejected`).
  */
 export function SettleReview({
   review,
@@ -220,6 +222,14 @@ export function SettleReview({
     unread = isRelease && editable && !!saved && !applied,
     missed = applied?.status === "missed",
     retry = applied?.status === "unconfirmed";
+  // Approve where a card could be approved now; Reject on any held claim
+  // that isn't being written or written: its job may have sent it.
+  const approves =
+      isRelease && (!saved || moved || unread || missed || retry) && !s.differs,
+    rejects =
+      isRelease &&
+      applied?.status !== "pending" &&
+      applied?.status !== "written";
   const save = async (choice: FoundryReviewChoice) => {
     if (pending) return;
     setPending(true);
@@ -319,23 +329,36 @@ export function SettleReview({
           the names in it has changed since. Approve it again to write it.
         </p>
       )}
-      {canManage(role) &&
-        editable &&
-        isRelease &&
-        (!saved || moved || unread || missed || retry) &&
-        !s.differs && (
-          <div className="on-stack">
+      {canManage(role) && editable && (approves || rejects) && (
+        <div className="on-stack">
+          {approves && (
             <p className="on-muted">
               On your word, from this sentence alone. It’s written to this load
               at once. Later loads read the approval too, and each says what it
               made of it.
             </p>
-            {(error || query.error) && (
-              <p role="alert" className="hf-form-error">
-                {error || query.error?.message}
-              </p>
+          )}
+          {(error || query.error) && (
+            <p role="alert" className="hf-form-error">
+              {error || query.error?.message}
+            </p>
+          )}
+          <div className="hf-form-actions">
+            {rejects && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={pending || !read.data}
+                onClick={() =>
+                  void (
+                    read.data && save({ reject: { statementHash: read.data } })
+                  )
+                }
+              >
+                Reject
+              </Button>
             )}
-            <div className="hf-form-actions">
+            {approves && (
               <Button
                 size="sm"
                 disabled={pending || !read.data}
@@ -348,9 +371,17 @@ export function SettleReview({
               >
                 Approve
               </Button>
-            </div>
+            )}
           </div>
-        )}
+          {rejects && (
+            <p className="on-muted">
+              Reject it if it’s wrong: nothing is written, and it leaves Needs
+              review in this load and later ones. Remove the decision under
+              Saved decisions to list it again.
+            </p>
+          )}
+        </div>
+      )}
       {canManage(role) && editable && !isRelease && (
         <form
           className="on-stack"
@@ -513,9 +544,9 @@ export function SavedDecisions({
   const [error, setError] = useState("");
   const relevant = (d: ReviewDecision) =>
     documentId
-      ? (d.kind === "resolve" || d.kind === "release") && d.docId === documentId
+      ? d.kind !== "prop" && d.docId === documentId
       : entity &&
-        d.kind !== "release" &&
+        (d.kind === "resolve" || d.kind === "prop") &&
         d.type === entity.type &&
         d.entityKey === entity.key;
   const own = query.data?.filter((d) => relevant(d)) || [];
@@ -533,8 +564,8 @@ export function SavedDecisions({
             {own.map((d) => (
               <li key={d.id} className="dc-review">
                 <p>
-                  {d.kind === "release"
-                    ? `${approvedLine(d, statusOf?.(d) ?? "unknown")}: “${quoteOf?.(d.claimSection, d.claimStart, d.claimEnd) ?? `section ${d.claimSection + 1}`}”`
+                  {d.kind === "release" || d.kind === "reject"
+                    ? `${d.kind === "reject" ? "Rejected" : approvedLine(d, statusOf?.(d) ?? "unknown")}: “${quoteOf?.(d.claimSection, d.claimStart, d.claimEnd) ?? `section ${d.claimSection + 1}`}”`
                     : d.kind === "resolve"
                       ? `${d.type} · ${d.normName} → ${d.entityKey ?? "Not in data"}`
                       : chosenLine(d)}
@@ -572,7 +603,9 @@ export function SavedDecisions({
                         setNotice(
                           d.kind === "prop"
                             ? "Decision removed. This load is taking the value back now; later loads won’t read it."
-                            : "Decision removed. Reload to apply.",
+                            : d.kind === "reject"
+                              ? "Decision removed. The claim is listed for review again."
+                              : "Decision removed. Reload to apply.",
                         );
                       } catch (e) {
                         setError((e as Error).message);
@@ -590,7 +623,8 @@ export function SavedDecisions({
           <p className="on-muted">
             An approval or a chosen value applies to the current load at once,
             and removing a chosen value takes it back at once. A linked name
-            applies to future loads.
+            applies to future loads. A rejected claim stays out of Needs review
+            until its decision is removed.
           </p>
           <ButtonLink to={paths.loads(o)} size="sm">
             Loads

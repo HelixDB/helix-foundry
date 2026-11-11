@@ -1196,7 +1196,8 @@ message FoundryLoadDocumentSet {
   // record, property values held back or in conflict, statements that fit no
   // link, and links it did write that a person can undo. It is not the
   // number of open reviews: a review a person settles stays counted until
-  // the load writes the decision, which moves a released statement to facts.
+  // the load writes the decision, which moves a released statement to facts,
+  // and one a person rejects stays counted, as a rejection writes nothing.
   int64 reviews = 10;
   // The names in its documents the load matched to no one record: none
   // matched, several did, or its identifiers disagree. A statement about one
@@ -1440,11 +1441,25 @@ message FoundryReviewChoice {
     // fact, or keeps it held and says why (FoundryReviewDecision.applied).
     // Later loads read it too, and each says what it made of it.
     FoundryReleaseChoice release = 4;
+    // A person's word that what the review holds back is wrong. Nothing is
+    // written and nothing is sent to the engine: the review stays in the
+    // load, and readers leave it out of what needs review in this load and
+    // every later one while the decision stands. It takes the place of an
+    // approval of the same claim, as an approval takes its place; removing
+    // it lists the claim for review again.
+    FoundryRejectChoice reject = 5;
   }
 }
 // A release of the statement a person read. A review that reads otherwise now
 // is refused, and so is a load that reads it otherwise.
 message FoundryReleaseChoice {
+  // SHA-256, in lowercase hexadecimal, of the review's suggested_link, a unit
+  // separator (0x1f) and its stored statement.
+  string statement_hash = 1;
+}
+// A rejection of the statement a person read: a review that reads otherwise
+// now is refused, as an approval of it would be.
+message FoundryRejectChoice {
   // SHA-256, in lowercase hexadecimal, of the review's suggested_link, a unit
   // separator (0x1f) and its stored statement.
   string statement_hash = 1;
@@ -1515,9 +1530,11 @@ message FoundryDecisionApplied {
 // A durable ontology-wide override. A resolve decision applies from the next
 // load; a release or a prop decision applies to the current load at once,
 // and later loads read it as they are made. Removing a prop decision
-// withdraws it from the current load at once too.
+// withdraws it from the current load at once too. A reject changes no load:
+// it tells readers which held claims a person said are wrong.
 message FoundryReviewDecision {
   string id = 1;
+  // resolve, prop, release or reject.
   string kind = 2;
   string type = 3;
   optional string doc_id = 4;
@@ -1530,9 +1547,11 @@ message FoundryReviewDecision {
   FoundryPropValue value = 11;
   string decided_by_user_id = 9;
   google.protobuf.Timestamp decided_at = 10;
-  // The review a release decision releases, as it stores them: its claim's
-  // key, its quote's section and byte range in the section, and the hash of
-  // the statement the person read.
+  // The review a release decision releases, or a reject decision rejects, as
+  // it stores them: its claim's key, its quote's section and byte range in
+  // the section, and the hash of the statement the person read. A reader
+  // leaves out of what needs review each review of a held claim that a
+  // reject names by its document, claim key and place.
   optional string claim_key = 12;
   optional uint32 claim_section = 13;
   optional uint32 claim_start = 14;

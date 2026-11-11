@@ -62,6 +62,10 @@ func (r *runner) decisions(ctx context.Context, job *model.FoundryGraphJob, onto
 				decision.DocID, decision.NormName = *d.DocID, *d.NormName
 			case model.FoundryReviewProp:
 				decision.Prop, decision.Value = *d.Prop, d.Value
+			case model.FoundryReviewReject:
+				// No load's list holds one: it is a person's word to the
+				// site, and the engine knows no such decision.
+				continue
 			case model.FoundryReviewRelease:
 				if !sent[*d.DocID] {
 					continue

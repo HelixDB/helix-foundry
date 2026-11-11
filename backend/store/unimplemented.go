@@ -52,6 +52,10 @@ func (u Unimplemented) SettleFoundryValue(context.Context, string, string, *mode
 	u.unimplemented("SettleFoundryValue")
 	return false, nil
 }
+func (u Unimplemented) SettleFoundryReject(context.Context, string, string, *model.FoundryReviewDecision) error {
+	u.unimplemented("SettleFoundryReject")
+	return nil
+}
 func (u Unimplemented) ListFoundryDecisionsApplied(context.Context, string, []string) (map[string]model.FoundryDecisionApplied, error) {
 	u.unimplemented("ListFoundryDecisionsApplied")
 	return nil, nil

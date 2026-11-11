@@ -227,6 +227,85 @@ describe("what Approve all approves", () => {
       "held-0",
     ]);
   });
+  it("leaves out a claim a person rejected", () => {
+    const reviews = [settled(held(0)), settled(held(20))];
+    expect(
+      ids(
+        model.approvable(
+          reviews,
+          [{ ...approved(0), kind: "reject" as const }],
+          many,
+        ),
+      ),
+    ).toEqual(["held-20"]);
+  });
+});
+
+describe("the reviews a page lists once claims are rejected", () => {
+  const rejected = (start: number) =>
+    ({
+      ...approved(start),
+      kind: "reject" as const,
+    }) satisfies ReviewDecision;
+  const name = settled({
+    review_key: "r",
+    reason: "unresolved",
+    type: "Customer",
+    doc_id: "doc",
+    norm_name: "umbrella holdings",
+    candidates: [],
+  });
+  it("are all of them while none is rejected", () => {
+    const reviews = [settled(held(0)), name, settled(held(20))];
+    expect(model.unrejected(reviews, [])).toEqual(reviews);
+    // An approval hides nothing: its card says what became of it.
+    expect(model.unrejected(reviews, [approved(0)])).toEqual(reviews);
+  });
+  it("leave out each held claim a reject names, and keep their order", () => {
+    const reviews = [
+      settled(held(0)),
+      name,
+      settled(held(20)),
+      settled(held(40, "Globex", "unverified")),
+    ];
+    const left = model.unrejected(reviews, [rejected(0), rejected(40)]);
+    expect(left).toEqual([name, reviews[2]]);
+    // So a page's count, its groups and Approve all follow.
+    expect(model.reviewGroups(left).map((g) => g.items.length)).toEqual([1, 1]);
+    expect(
+      ids(model.approvable(left, [rejected(0), rejected(40)], many)),
+    ).toEqual(["held-20"]);
+  });
+  it("go by the claim's document, key and place", () => {
+    const reviews = [settled(held(0))];
+    for (const other of [
+      { ...rejected(0), docId: "other" },
+      { ...rejected(0), claimKey: "c".repeat(64) },
+      { ...rejected(0), claimSection: 1 },
+      { ...rejected(0), claimStart: 1 },
+      { ...rejected(0), claimEnd: 11 },
+    ] satisfies ReviewDecision[])
+      expect(model.unrejected(reviews, [other])).toEqual(reviews);
+    // However it reads now: the person said that claim there is wrong.
+    expect(
+      model.unrejected(reviews, [{ ...rejected(0), statementHash: "0" }]),
+    ).toEqual([]);
+  });
+  it("hide every reading of a sentence read two ways", () => {
+    const twice = model.markDiffering([
+      settled(held(0, "Initech LLC")),
+      settled(held(0, "Globex")),
+    ]);
+    expect(model.unrejected(twice, [rejected(0)])).toEqual([]);
+  });
+  it("keep a review no reject can name", () => {
+    const { statement: _, ...unstated } = held(0);
+    const stale = settled(unstated);
+    expect(model.unrejected([stale, name], [rejected(0)])).toEqual([
+      stale,
+      name,
+    ]);
+  });
 });
 
 const unmatched = (suggestedLink: string | undefined, quote: string) => ({
