@@ -50,8 +50,9 @@ import type { LoadGraph, Props, Value } from "./store";
 //   -FOUNDRY_FROM_SECTION-> FoundrySection, -FOUNDRY_CONCERNS-> its
 //   candidates (stored customers sharing a word of it, by their stored
 //   identity) and the Contract. Text never creates a keyed entity. With
-//   `adjudicate`, its first candidate links it instead, and the review is
-//   that rung's ("adjudicated" or "legal_form"), naming that one only.
+//   `linkedBy`, its first candidate links it instead, and the review is that
+//   rung's ("adjudicated", "legal_form", "part_name" or "own_name"), naming
+//   that one only; only the model's link has a confidence.
 // - When the scope lets documents create Contracts, a document naming a
 //   company is a Contract {norm_name, name, foundry_part: "<load>:documents"}
 //   named by its first heading (or file name), signed_with every company it
@@ -764,6 +765,16 @@ export type ExtractOutcome =
   | { kind: "already_ingested" }
   | { kind: "duplicate"; of: string };
 
+/**
+ * A link on less than a name or a verified identifier, as the engine's
+ * resolution names it: each has a review a person can overturn, and holds an
+ * approval at its end.
+ */
+export type WeakLink = "legal_form" | "part_name" | "own_name";
+const WEAK_LINKS: readonly WeakLink[] = ["legal_form", "part_name", "own_name"];
+/** A link the load made that a person can undo: the model's, or a weak one. */
+export type UndoableLink = "adjudicated" | WeakLink;
+
 /** What extraction reads of the version's ontology.toml. */
 export type ExtractOntology = {
   types: Set<string>;
@@ -785,16 +796,18 @@ export function extractDocument(
   ontology: ExtractOntology,
   scope: Scope,
   decisions: ReviewDecision[] = [],
-  adjudicate?: "adjudicated" | "legal_form",
+  // How a name no row holds exactly links to its first candidate, if at all.
+  linkedBy?: UndoableLink,
   // What the engine would make of a hedged claim, for a page to show:
-  // "refused" holds it however it's approved; "legal_form" too, with its name
-  // linked by form; "differs" gives its place a review stating something else,
-  // and refuses it; "unverified" is one no verifier judged, written at no
-  // confidence; "one_end" names one of its ends; "no_statement" is one an
-  // older load held, with no statement to approve.
+  // "refused" holds it however it's approved; "legal_form", "part_name" and
+  // "own_name" too, with its name linked that way and that link's review;
+  // "differs" gives its place a review stating something else, and refuses
+  // it; "unverified" is one no verifier judged, written at no confidence;
+  // "one_end" names one of its ends; "no_statement" is one an older load
+  // held, with no statement to approve.
   held?:
     | "refused"
-    | "legal_form"
+    | WeakLink
     | "differs"
     | "unverified"
     | "one_end"
@@ -976,12 +989,12 @@ export function extractDocument(
   const unresolved = unknown.filter((u) => {
     const d = resolution(u.name, "Customer");
     if (d?.kind !== "resolve") {
-      const e = adjudicate ? candidates(u.name)[0] : undefined;
+      const e = linkedBy ? candidates(u.name)[0] : undefined;
       if (!e) return true;
       found.push({
         e,
-        hits: [{ s: u.s, i: u.i, surface: u.name, by: adjudicate! }],
-        resolvedBy: adjudicate!,
+        hits: [{ s: u.s, i: u.i, surface: u.name, by: linkedBy! }],
+        resolvedBy: linkedBy!,
       });
       adjudicated.push(u);
       return false;
@@ -1168,7 +1181,7 @@ export function extractDocument(
       confidence =
         resolvedBy === "identifier" ||
         resolvedBy === "adjudicated" ||
-        resolvedBy === "legal_form"
+        WEAK_LINKS.some((w) => w === resolvedBy)
           ? 0.95
           : resolvedBy === "name"
             ? 0.93
@@ -1204,8 +1217,9 @@ export function extractDocument(
           d.claimEnd === place.end &&
           d.statementHash === sha256(`signed_with\u001f${statement}`),
       );
-      const refused =
-        held === "refused" || held === "legal_form" || held === "differs";
+      // The link its name stands on, where that holds the claim.
+      const weak = WEAK_LINKS.find((w) => w === held);
+      const refused = held === "refused" || !!weak || held === "differs";
       if (!released || refused) {
         const r = g.addNode(N.Review, {
           review_key: sha256(`${doc.id}\u001f${claimKey}`),
@@ -1239,14 +1253,14 @@ export function extractDocument(
           g.addEdge(E.CONCERNS, other, e.id);
           counts.reviews += 1;
         }
-        if (held === "legal_form") {
+        if (weak) {
           const key = String(g.node(e.id)!.props.entity_key);
           const linked = g.addNode(N.Review, {
             review_key: sha256(`${doc.id}\u001f${claimKey}\u001fform`),
             doc_id: doc.id,
             section: first.s.ordinal,
             ...place,
-            reason: "legal_form",
+            reason: weak,
             type: "Customer",
             norm_name: normName(e.name || first.surface),
             entity_key: key,
@@ -1294,7 +1308,7 @@ export function extractDocument(
       doc_id: doc.id,
       section: u.s.ordinal,
       ...q,
-      reason: adjudicated.includes(u) ? adjudicate! : "unresolved",
+      reason: adjudicated.includes(u) ? linkedBy! : "unresolved",
       ...(adjudicated.includes(u)
         ? {
             entity_key: String(
@@ -1309,7 +1323,12 @@ export function extractDocument(
         .slice(0, adjudicated.includes(u) ? 1 : undefined)
         .map((e) => String(g.node(e.id)!.props.entity_key)),
       suggested_link: "signed_with",
-      confidence: adjudicated.includes(u) ? 0.95 : 0.88,
+      // A link on less than a name was judged by no model.
+      ...(!adjudicated.includes(u)
+        ? { confidence: 0.88 }
+        : linkedBy === "adjudicated"
+          ? { confidence: 0.95 }
+          : {}),
     });
     g.addEdge(E.FROM_SECTION, r, u.s.node);
     if (contract !== undefined) g.addEdge(E.CONCERNS, r, contract);

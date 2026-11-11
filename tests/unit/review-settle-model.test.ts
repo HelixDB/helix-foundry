@@ -352,11 +352,115 @@ describe("a claim at the same place", () => {
         },
       ])[0]!.settle;
     expect(formed("A", "doc")).toMatchObject({
-      formed: "halvorsen freight ltd",
+      unsettled: { name: "halvorsen freight ltd", by: "legal_form" },
     });
     // A name resolves per document and type, so a link elsewhere holds nothing.
-    expect(formed("A", "other-doc")).not.toHaveProperty("formed");
-    expect(formed("B", "doc")).not.toHaveProperty("formed");
+    expect(formed("A", "other-doc")).not.toHaveProperty("unsettled");
+    expect(formed("B", "doc")).not.toHaveProperty("unsettled");
+  });
+  // A link by part of a row's name, or by an identifier the text uses as a
+  // name (contract 4.13.0), and where its own review is.
+  const linkedEnd = (
+    reason: string,
+    type: string,
+    normName: string,
+    at?: { section: number; start: number },
+  ) => ({
+    reason,
+    candidates: [],
+    ...at,
+    settle: {
+      kind: "resolve" as const,
+      reviewId: `r-${reason}`,
+      type,
+      docId: "doc",
+      normName,
+    },
+  });
+  const claimOf = (subject: string, object: string) => ({
+    reason: "low_confidence",
+    ...model.settleable(
+      {
+        ...held,
+        statement: JSON.stringify({
+          subject: { type: "A", name: subject },
+          object: { type: "B", name: object },
+          props: {},
+        }),
+      },
+      [],
+    ),
+  });
+  it.each(["part_name", "own_name"] as const)(
+    "names an end linked by %s, and where its review is",
+    (by) => {
+      const [claim] = model.markDiffering([
+        claimOf("Westmere", "b"),
+        linkedEnd(by, "A", "westmere", { section: 3, start: 41 }),
+      ]);
+      expect(claim!.settle).toMatchObject({
+        unsettled: { name: "westmere", by, at: { section: 3, start: 41 } },
+      });
+    },
+  );
+  it("names no place a page didn't read", () => {
+    const [claim] = model.markDiffering([
+      claimOf("Westmere", "b"),
+      linkedEnd("part_name", "A", "westmere"),
+    ]);
+    expect(claim!.settle).toMatchObject({
+      unsettled: { name: "westmere", by: "part_name" },
+    });
+    expect(
+      (claim!.settle as { unsettled: model.Unsettled }).unsettled,
+    ).not.toHaveProperty("at");
+  });
+  it("names the end the engine refuses first: part of a name before a legal form", () => {
+    const [claim] = model.markDiffering([
+      claimOf("Halvorsen Freight Ltd.", "Westmere"),
+      linkedEnd("legal_form", "A", "halvorsen freight ltd"),
+      linkedEnd("part_name", "B", "westmere"),
+    ]);
+    expect(claim!.settle).toMatchObject({
+      unsettled: { name: "westmere", by: "part_name" },
+    });
+  });
+  it("leaves a name the model matched, or no one linked, alone", () => {
+    for (const reason of ["adjudicated", "unresolved", "ambiguous"]) {
+      const [claim] = model.markDiffering([
+        claimOf("Westmere", "b"),
+        linkedEnd(reason, "A", "westmere"),
+      ]);
+      expect(claim!.settle).not.toHaveProperty("unsettled");
+    }
+  });
+});
+
+describe("a link on less than a name", () => {
+  it("is one by legal form, part of a name or an own-name identifier", () => {
+    for (const r of ["legal_form", "part_name", "own_name"])
+      expect([model.isWeakLink(r), model.isUndoableLink(r)]).toEqual([
+        true,
+        true,
+      ]);
+    expect([
+      model.isWeakLink("adjudicated"),
+      model.isUndoableLink("adjudicated"),
+    ]).toEqual([false, true]);
+    for (const r of ["name", "identifier", "alias", "user", "later", undefined])
+      expect([model.isWeakLink(r), model.isUndoableLink(r)]).toEqual([
+        false,
+        false,
+      ]);
+  });
+  it("holds an approval whatever its link holds, but a legal form only a one-valued one", () => {
+    const end = (by: model.WeakLink) => ({ name: "n", by });
+    for (const single of [true, false]) {
+      expect(model.holdsRelease(end("part_name"), single)).toBe(true);
+      expect(model.holdsRelease(end("own_name"), single)).toBe(true);
+      expect(model.holdsRelease(end("legal_form"), single)).toBe(single);
+      expect(model.holdsRelease(undefined, single)).toBe(false);
+    }
   });
 });
 
@@ -368,6 +472,8 @@ describe("what settles a review", () => {
     "identifier_conflict",
     "adjudicated",
     "legal_form",
+    "part_name",
+    "own_name",
   ])("a %s review with its identity takes a resolve choice", (reason) => {
     expect(model.settleable({ ...name, reason }, [globex])).toEqual({
       candidates: [
@@ -697,6 +803,19 @@ describe("why a load kept an approved claim held", () => {
       "“globex corporation” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.",
     );
     expect(model.refusalText("legal_form")).toMatch(/^A name in it is linked/);
+  });
+  it("says a name linked by part of a name, or by an own-name identifier, is settled first", () => {
+    expect(model.refusalText("part_name", "westmere")).toBe(
+      "“westmere” is linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
+    );
+    expect(model.refusalText("own_name", "inc-2031-0042")).toBe(
+      "“inc-2031-0042” is linked only by an identifier the text uses as its name, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
+    );
+    for (const reason of ["part_name", "own_name"]) {
+      expect(model.refusalText(reason)).toMatch(/^A name in it is linked only/);
+      // Unlike a legal form's, it holds whatever the link holds.
+      expect(model.refusalText(reason)).not.toContain("holds one value");
+    }
   });
   it("says what the backend found when the engine was never asked", () => {
     expect(model.refusalText("not_replayed")).toContain(

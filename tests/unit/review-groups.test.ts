@@ -19,6 +19,8 @@ describe("Needs review's groups", () => {
         review("unresolved"),
         review("unmatched"),
         review("prop_conflict"),
+        review("own_name"),
+        review("part_name"),
         review("legal_form"),
         review("unverified"),
         review("low_confidence"),
@@ -28,6 +30,8 @@ describe("Needs review's groups", () => {
       "low_confidence",
       "unverified",
       "legal_form",
+      "part_name",
+      "own_name",
       "prop_conflict",
       "unmatched",
       "violation",
@@ -181,7 +185,9 @@ describe("what Approve all approves", () => {
         },
       },
     ]);
-    expect(claim!.settle).toMatchObject({ formed: "initech llc" });
+    expect(claim!.settle).toMatchObject({
+      unsettled: { name: "initech llc", by: "legal_form" },
+    });
     expect(model.approvable([claim!], [], () => true)).toEqual([]);
     // A link that holds many writes it anyway: the card offers it too.
     expect(ids(model.approvable([claim!], [], many))).toEqual(["held-0"]);
@@ -190,6 +196,28 @@ describe("what Approve all approves", () => {
       ids(model.approvable([claim!], [], (link) => link !== "signed_with")),
     ).toEqual(["held-0"]);
   });
+  it.each(["part_name", "own_name"])(
+    "leaves out a name linked by %s, whatever its link holds",
+    (reason) => {
+      const [claim] = model.markDiffering([
+        settled(held(0, "Initech LLC")),
+        {
+          reason,
+          candidates: [],
+          settle: {
+            kind: "resolve",
+            reviewId: "part",
+            type: "Customer",
+            docId: "doc",
+            normName: "initech llc",
+          },
+        },
+      ]);
+      expect(model.approvable([claim!], [], () => true)).toEqual([]);
+      // The engine refuses it on a link that holds many too.
+      expect(model.approvable([claim!], [], many)).toEqual([]);
+    },
+  );
   it("leaves out a stale claim, and reviews no release settles", () => {
     const { statement: _, ...unstated } = held(0);
     expect(

@@ -693,6 +693,27 @@ describe("document states", () => {
     expect(copy).not.toEqual(reviewCopy("unverified"));
   });
 
+  it("says what linked a name by part of a name or by an own-name identifier, and why a person is asked", () => {
+    const part = reviewCopy("part_name"),
+      own = reviewCopy("own_name");
+    expect(part.title).toBe("Linked by part of a name");
+    expect(part.text).toContain("part of one row’s name");
+    expect(own.title).toBe("Linked by an identifier used as its name");
+    expect(own.text).toContain("identifier that one row holds");
+    for (const copy of [part, own]) {
+      expect(copy.text).toContain("can be wrong, so it waits for you");
+      expect(copy.text).toContain("undo the link");
+      expect(copy).not.toEqual(reviewCopy("something new"));
+    }
+  });
+
+  it("reads one offered row as an offer, not as a link made", () => {
+    const offer = reviewCopy("ambiguous", 1);
+    expect(offer.text).toContain("not firmly enough");
+    expect(offer.text).toContain("if it’s the one meant");
+    expect(offer.text).not.toContain("was linked");
+  });
+
   it("says why a 4.9.0 identity review was held, not that a model couldn't confirm it", () => {
     const copy = reviewCopy("identity");
     expect(copy).not.toEqual(reviewCopy("unverified"));

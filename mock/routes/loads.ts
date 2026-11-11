@@ -45,6 +45,8 @@ import {
   type ExtractOntology,
   type ProfileRow,
   type Row,
+  type UndoableLink,
+  type WeakLink,
 } from "../graph/extract";
 import {
   answer,
@@ -134,7 +136,10 @@ import { sourceId } from "./ontology-agent";
 // load ran) or "budget_exhausted" (the spending cap stops it after one
 // document), `documentOutcome` "fail" (reading a document fails),
 // `documentUnmatched` (a sentence stating a relationship no link covers,
-// such as "supplies", is an "unmatched" review) and
+// such as "supplies", is an "unmatched" review), `documentLinked` (a name no
+// row holds exactly links to its first candidate that way, "adjudicated",
+// "legal_form", "part_name" or "own_name", with that link's review),
+// `documentHeld` (what becomes of a hedged claim, ../graph/extract.ts) and
 // `deleteOutcome` "fail" (a delete fails for good: delete_failed). A
 // database still starting (`startingQueries` in ./databases.ts) refuses an
 // ingest's first write: the attempt fails, and the load waits, queued with
@@ -165,13 +170,14 @@ type Knobs = {
   loadStepMs?: number;
   loadOutcome?: Outcome;
   documentOutcome?: "succeed" | "fail";
-  documentAdjudicated?: boolean;
-  documentLegalForm?: boolean;
+  // A name no row holds exactly links to its first candidate this way, with
+  // that link's review.
+  documentLinked?: UndoableLink;
   // Sentences stating a relationship no link covers are "unmatched" reviews.
   documentUnmatched?: boolean;
   documentHeld?:
     | "refused"
-    | "legal_form"
+    | WeakLink
     | "differs"
     | "unverified"
     | "one_end"
@@ -345,8 +351,7 @@ onReset(() => {
   delete knobs.loadStepMs;
   delete knobs.loadOutcome;
   delete knobs.documentOutcome;
-  delete knobs.documentAdjudicated;
-  delete knobs.documentLegalForm;
+  delete knobs.documentLinked;
   delete knobs.documentHeld;
   delete knobs.documentUnmatched;
   delete knobs.deleteOutcome;
@@ -422,14 +427,20 @@ function heldReview(l: StoredLoad, d: Release) {
  * Why the engine would keep an approved claim held, from what the mock was
  * told to make of hedged claims (`documentHeld`): none when it writes it.
  */
-const refusal = () =>
-  knobs.documentHeld === "refused"
-    ? "conflict"
-    : knobs.documentHeld === "legal_form"
-      ? "legal_form"
-      : knobs.documentHeld === "differs"
-        ? "differs"
-        : undefined;
+const refusal = () => {
+  switch (knobs.documentHeld) {
+    case "refused":
+      return "conflict";
+    // The engine's word for a name linked on less than a name is the link's.
+    case "legal_form":
+    case "part_name":
+    case "own_name":
+    case "differs":
+      return knobs.documentHeld;
+    default:
+      return undefined;
+  }
+};
 
 const appliedKey = (loadId: string, decisionId: string) =>
   `${loadId}\u001f${decisionId}`;
@@ -1380,11 +1391,7 @@ function read(j: StoredJob, documentId: string, at: string) {
     ontology,
     scope,
     loadById(j.loadId)?.decisions || [],
-    knobs.documentLegalForm
-      ? "legal_form"
-      : knobs.documentAdjudicated
-        ? "adjudicated"
-        : undefined,
+    knobs.documentLinked,
     knobs.documentHeld,
     {
       model: aiModel(j.workspaceId, "extract") || MODEL,

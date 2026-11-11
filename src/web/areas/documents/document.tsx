@@ -67,7 +67,7 @@ import {
 } from "../ontology/load-selection";
 import { POLL_MS, ontologyQueries } from "../ontology/queries";
 import { reviewQueries } from "../reviews/api";
-import { releaseStatus, unrejected } from "../reviews/model";
+import { isUndoableLink, releaseStatus, unrejected } from "../reviews/model";
 import { ReviewGroups } from "../reviews/groups";
 import { SavedDecisions, SettleReview } from "../reviews/settle";
 import { ontologyName, useOntology } from "../ontology/scope";
@@ -1044,8 +1044,7 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                               .filter(
                                 (m) =>
                                   m.entity.id === e.id &&
-                                  (m.resolvedBy === "adjudicated" ||
-                                    m.resolvedBy === "legal_form"),
+                                  isUndoableLink(m.resolvedBy),
                               )
                               .map((m) => (
                                 <Link

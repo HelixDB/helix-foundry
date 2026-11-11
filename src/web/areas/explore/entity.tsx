@@ -35,7 +35,7 @@ import { useDocumentNames } from "../documents/documents-api";
 import { spanAnchor } from "../documents/model";
 import { reviewQueries } from "../reviews/api";
 import { ReviewGroups } from "../reviews/groups";
-import { unrejected } from "../reviews/model";
+import { isUndoableLink, unrejected } from "../reviews/model";
 import { SavedDecisions, SettleReview } from "../reviews/settle";
 import { AskDrawer } from "../ontology/ask";
 import { ENRICHMENT_SOURCE } from "../ontology/enrichment-fields";
@@ -919,8 +919,7 @@ function Entity({
                             {resolvedByText(m.resolvedBy) &&
                               ` · ${resolvedByText(m.resolvedBy)!.toLowerCase()}`}
                           </small>
-                          {(m.resolvedBy === "adjudicated" ||
-                            m.resolvedBy === "legal_form") && (
+                          {isUndoableLink(m.resolvedBy) && (
                             <Link
                               to={
                                 link(

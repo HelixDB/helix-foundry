@@ -44,16 +44,17 @@ export const mock = {
     loadStepMs?: number;
     loadOutcome?: "succeed" | "fail" | "sources_changed" | "budget_exhausted";
     documentOutcome?: "succeed" | "fail";
-    // Seeds an adjudicated variant and its informational review (off by default).
-    documentAdjudicated?: boolean;
-    // Seeds the same variant linked by legal form, with its review.
-    documentLegalForm?: boolean;
+    // Seeds a variant of a customer's name linked to that customer this way,
+    // with the link's review (off by default).
+    documentLinked?: "adjudicated" | "legal_form" | "part_name" | "own_name";
     // Sentences stating a relationship no link covers are "unmatched" reviews.
     documentUnmatched?: boolean;
     // What the engine would make of a hedged claim (mock/graph/extract.ts).
     documentHeld?:
       | "refused"
       | "legal_form"
+      | "part_name"
+      | "own_name"
       | "differs"
       | "unverified"
       | "one_end"

@@ -1445,7 +1445,9 @@ export type ReviewReason =
   | "identifier_conflict"
   | "identity"
   | "adjudicated"
-  | "legal_form";
+  | "legal_form"
+  | "part_name"
+  | "own_name";
 
 const reviews: Record<ReviewReason, { title: string; text: string }> = {
   unresolved: {
@@ -1488,6 +1490,14 @@ const reviews: Record<ReviewReason, { title: string; text: string }> = {
     title: "Linked by its legal form",
     text: "This name and its row differ only in a legal form, such as Ltd and Limited, and no other row fits, so it was linked to that row, without the document’s values for it. Link it to the row to store them, or undo the link; the next load then leaves the name unlinked.",
   },
+  part_name: {
+    title: "Linked by part of a name",
+    text: "This name is part of one row’s name, and the words it leaves out only say what kind of thing the row is, so it was linked to that row, without the document’s values for it. A link made this way can be wrong, so it waits for you: link it to the row to keep it and store them, or undo the link; the next load then leaves the name unlinked.",
+  },
+  own_name: {
+    title: "Linked by an identifier used as its name",
+    text: "The text calls this only by an identifier that one row holds, and the check of that identifier wasn’t sure of it, so it was linked to that row, without the document’s values for it. A link made this way can be wrong, so it waits for you: link it to the row to keep it and store them, or undo the link; the next load then leaves the name unlinked.",
+  },
   prop_conflict: {
     title: "Disagrees on a value",
     text: "Documents state different values for this property, or one the tables don’t hold, so the stored value is the table’s or none.",
@@ -1505,11 +1515,13 @@ const reviews: Record<ReviewReason, { title: string; text: string }> = {
     text: "A verified identifier leads to one entity and the names to another, so the claim was held back and nothing was stored.",
   },
 };
-// An ambiguous review offering one row: a link too weak for this fact, not a
-// name several entities share.
+// An ambiguous review offering one row: a link too weak to make, or for this
+// fact, not a name several entities share. The engine offers the row where
+// the name is only part of its name, or the link is one a fact that holds
+// one value doesn't stand on.
 const oneCandidate = {
   title: "May be this entity",
-  text: "The name points at one entity, but not firmly enough to store this fact on it. Link the name to store it.",
+  text: "The name points at one entity, but not firmly enough to store what the document says of it here: it may be only part of that entity’s name, or linked on less than its name. Link the name to that entity if it’s the one meant, and the next load stores it.",
 };
 // A reason a newer engine gives: nothing is known of it but that it waits.
 const newReason = {
