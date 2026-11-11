@@ -949,6 +949,64 @@ for (const [linked, how, title] of [
     await expect(name).toContainText("Decision saved. Reload to apply.");
   });
 
+test("promises no write in this load, and offers no approval it would refuse, for a claim a name holds", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "part_name" });
+  const { held } = await hedged(
+    page,
+    "Reportedly, Globex Corporation may have signed.",
+  );
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText("kept it held");
+  // What the load made of the saved approval, as the decisions say it.
+  const decisions = /\/review-decisions(\?|$)/;
+  const reads = async (applied?: { status: string; reason?: string }) => {
+    await page.unroute(decisions);
+    await page.route(decisions, async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as ListReviewDecisionsResponse;
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          decisions: body.decisions?.map(({ applied: _, ...d }) =>
+            applied ? { ...d, applied } : d,
+          ),
+        },
+      });
+    });
+    await page.reload();
+  };
+  // Its job yet to run: the card doesn't say it is being written.
+  await reads({ status: "pending" });
+  await expect(held.getByRole("status")).toContainText(
+    "Approved. This load keeps it held: the first load after that name is settled writes it.",
+  );
+  await expect(held.getByRole("status")).not.toContainText(
+    "Writing it to this load",
+  );
+  // Saved while another load was current, its job failed before saying,
+  // or it found no claim: approving again here would only be refused.
+  for (const applied of [
+    undefined,
+    { status: "unconfirmed", reason: "job_failed" },
+    { status: "missed" },
+  ]) {
+    await reads(applied);
+    await expect(held.getByRole("status")).toContainText(
+      "An approval of this is saved, and the claim stays held. “Globex Corporation” is linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
+    );
+    await expect(
+      held.getByRole("button", { name: "Approve", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      held.getByRole("status").getByRole("link", { name: "Review that name" }),
+    ).toBeVisible();
+  }
+  await page.unroute(decisions);
+});
+
 test("members can read candidate reviews but cannot settle or remove decisions", async ({
   page,
 }) => {

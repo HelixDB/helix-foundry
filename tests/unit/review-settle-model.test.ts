@@ -906,18 +906,36 @@ describe("why a load kept an approved claim held", () => {
       "“Westmere” and “Tarnwick” are each linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle those names, and the next load writes this.",
     );
   });
-  it("says where to settle a name a load before such links left unmatched", () => {
+  it("says where to settle a name the load has no review of the link for", () => {
     for (const reason of ["part_name", "own_name"]) {
       expect(model.refusalText(reason)).toContain(
-        "A load made before such links lists that name as not in your data, or as one that could mean more than one entity: settle it there.",
+        "Where this load has no review of such a link, it lists that name as not in your data, or as one that could mean more than one entity: settle it there.",
       );
       expect(
         model.refusalText(reason, [end("Westmere", reason as model.WeakLink)]),
-      ).not.toContain("made before such links");
+      ).not.toContain("no review of such a link");
     }
     expect(model.refusalText("legal_form")).not.toContain(
-      "made before such links",
+      "no review of such a link",
     );
+  });
+  it("promises the next load only with every name that holds the claim", () => {
+    // Refused for one name, while another holds it too: both are settled
+    // before a load writes it.
+    expect(
+      model.refusalText("part_name", [
+        end("Westmere", "part_name"),
+        end("Halvorsen Freight Ltd.", "legal_form"),
+      ]),
+    ).toBe(
+      "“Westmere” is linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle that name and “Halvorsen Freight Ltd.”, which holds it too, and the next load writes this.",
+    );
+    expect(
+      model.refusalText("own_name", [
+        end("INC-2031-0042", "own_name"),
+        end("Westmere", "part_name"),
+      ]),
+    ).toContain("Settle that name and “Westmere”, which holds it too,");
   });
   it("says what the backend found when the engine was never asked", () => {
     expect(model.refusalText("not_replayed")).toContain(

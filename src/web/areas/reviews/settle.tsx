@@ -24,6 +24,7 @@ import {
   holdingEnds,
   holdsDecided,
   isUndoableLink,
+  isWeakLink,
   loadRead,
   matchesReview,
   propValueText,
@@ -287,20 +288,20 @@ export function SettleReview({
       applied?.status !== "written";
   // Why the load holds a saved approval, where a name may: its word, or
   // where it gave none, the way the engine refuses the claim's names first.
-  // The card names, and links to, the names linked that way.
+  // The card names, and links to, the names linked that way, and every
+  // other name that holds the claim: each is settled before a load writes it.
   const heldFor =
-      !editable ||
-      !saved ||
-      moved ||
-      applied?.status === "pending" ||
-      applied?.status === "written"
+      !editable || !saved || moved || applied?.status === "written"
         ? undefined
         : applied?.status === "refused"
           ? applied.reason
           : unsettled[0]?.by,
-    heldBy = isRelease
-      ? (s.unsettled ?? []).filter((u) => u.by === heldFor)
-      : [];
+    heldBy =
+      isRelease && isWeakLink(heldFor)
+        ? (s.unsettled ?? []).filter(
+            (u) => u.by === heldFor || unsettled.includes(u),
+          )
+        : [];
   const save = async (choice: FoundryReviewChoice) => {
     if (pending) return;
     setPending(true);
@@ -376,7 +377,9 @@ export function SettleReview({
             ? "A decision is saved for this review."
             : isRelease
               ? applied?.status === "pending"
-                ? waitingText(ontology.activeJob?.kind)
+                ? unsettled.length
+                  ? `Approved. This load keeps it held: the first load after ${unsettled.length > 1 ? "those names are" : "that name is"} settled writes it.`
+                  : waitingText(ontology.activeJob?.kind)
                 : applied?.status === "written"
                   ? "Approved, and written to this load."
                   : applied?.status === "refused"

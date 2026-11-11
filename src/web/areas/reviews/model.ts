@@ -881,27 +881,34 @@ export const WEAK_LINK_TEXT: Record<WeakLink, string> = {
 /**
  * Why an approved claim stays held, for its card, from the reason the load's
  * job gave a refusal (FoundryDecisionApplied.reason): what a person can do
- * about it where there is something. `ends` are the claim's names the load
- * linked on less than a name, as far as the card knows them: the refusal
- * names those linked the way it says, as the engine doesn't say which end
- * it refused for, and no name where none was. A reason this site doesn't
- * know reads as it came.
+ * about it where there is something. `ends` are the claim's names that hold
+ * it, as far as the card knows them (holdingEnds, and those linked the way
+ * the refusal says): it names those linked the way it says, as the engine
+ * doesn't say which end it refused for, and no name where none was; any
+ * other is a name to settle too before a load writes it. A reason this site
+ * doesn't know reads as it came.
  *
  * @example
  * refusalText("unresolved"); // "A name in it isn’t matched to one record in your data. …"
  * refusalText("part_name", [{ name: "Westmere", by: "part_name" }]); // "“Westmere” is linked only by part of a row’s name, …"
- * refusalText("part_name", [{ name: "Globex Ltd", by: "legal_form" }]); // "A name in it is linked only by part of a row’s name, …"
+ * refusalText("part_name", [{ name: "Globex Ltd", by: "legal_form" }]); // "A name in it is linked only by part of a row’s name, … Settle that name and “Globex Ltd”, which holds it too, …"
  * refusalText("a_new_reason"); // "The load kept it held (a_new_reason)."
  */
 export function refusalText(
   reason: string | undefined,
   ends: readonly Unsettled[] = [],
 ) {
-  const names = ends.filter((u) => u.by === reason).map((u) => `“${u.name}”`);
+  const quoted = (by: (u: Unsettled) => boolean) =>
+    ends.filter(by).map((u) => `“${u.name}”`);
+  const names = quoted((u) => u.by === reason),
+    others = quoted((u) => u.by !== reason);
   const named = names.length
       ? `${names.join(" and ")} ${names.length > 1 ? "are each" : "is"}`
       : "A name in it is",
-    settle = `Settle ${names.length > 1 ? "those names" : "that name"}, and the next load writes this.`;
+    too = others.length
+      ? ` and ${others.join(" and ")}, which ${others.length > 1 ? "hold" : "holds"} it too`
+      : "",
+    settle = `Settle ${names.length > 1 ? "those names" : "that name"}${too}, and the next load writes this.`;
   switch (reason) {
     case "unresolved":
       return "A name in it isn’t matched to one record in your data. Settle that name and load again; if it’s still held then, approve it there.";
@@ -909,12 +916,13 @@ export function refusalText(
       return `${named} ${WEAK_LINK_TEXT.legal_form}, which doesn’t write a link that holds one value. ${settle}`;
     case "part_name":
     case "own_name":
-      // A load an engine before these links made lists such a name as one
-      // it couldn't match, and has no review of the link (contract 4.13.0).
+      // With no review of the link in this load (an engine before these
+      // links made it, or the row came after the document), it lists the
+      // name as one it couldn't match.
       return `${named} ${WEAK_LINK_TEXT[reason]}, and an approval doesn’t stand on such a link. ${settle}${
         names.length
           ? ""
-          : " A load made before such links lists that name as not in your data, or as one that could mean more than one entity: settle it there."
+          : " Where this load has no review of such a link, it lists that name as not in your data, or as one that could mean more than one entity: settle it there."
       }`;
     case "changed":
       return "It reads differently now from what was approved. Read it again and approve what it says.";
