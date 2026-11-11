@@ -71,7 +71,8 @@ import {
   type Grant,
   type Principal,
 } from "./access-model";
-import { DASHBOARD_URL, membersQuery } from "./members";
+import { DirectoryPanel, NoSourcesNudge } from "./access-directory";
+import { membersQuery } from "./members";
 import { initials, roleLabel } from "./people";
 
 // Settings › Access (hosted, owners and admins): what agents, people and
@@ -1168,7 +1169,7 @@ function TeamDialog({
 }
 
 function TeamsPanel({ data }: { data: AccessData }) {
-  const { id, slug, notify } = useWorkspace(),
+  const { id, notify } = useWorkspace(),
     qc = useQueryClient();
   const [making, setMaking] = useState(false),
     [changing, setChanging] = useState<FoundryTeam>(),
@@ -1196,6 +1197,7 @@ function TeamsPanel({ data }: { data: AccessData }) {
   });
   return (
     <>
+      <DirectoryPanel />
       <Panel
         title="Teams"
         subtitle={`Give a team sources once, and every member of it can read what they cover.${teams.some((t) => t.directory) ? " Teams synced from a directory follow its groups." : ""}`}
@@ -1211,6 +1213,11 @@ function TeamsPanel({ data }: { data: AccessData }) {
         }
         padded={false}
       >
+        <NoSourcesNudge
+          teams={teams}
+          grants={data.access.data?.grants || []}
+          onSources={setEditing}
+        />
         {teams.length ? (
           <ul className="wk-members" aria-label="Teams" data-replay-block>
             {teams.map((t) => {
@@ -1283,19 +1290,6 @@ function TeamsPanel({ data }: { data: AccessData }) {
           />
         )}
       </Panel>
-      <p className="wk-note">
-        {teams.some((t) => t.directory)
-          ? "Directory sync makes a team of each group your IT admin assigns. An owner connects the directory, and sets roles from its groups, in the "
-          : "To make teams of your company’s directory groups (Okta, Microsoft Entra and others), an owner connects the directory in the "}
-        <a
-          href={`${DASHBOARD_URL}/${encodeURIComponent(slug)}/settings`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Helix dashboard’s Settings
-        </a>
-        .
-      </p>
       {(making || changing) && (
         <TeamDialog
           data={data}

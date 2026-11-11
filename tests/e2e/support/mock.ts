@@ -102,6 +102,11 @@ export const mock = {
     // Acme's Okta directory synced: Engineering (Ada, Alan) and Finance
     // (Alan, Eve).
     directoryTeams?: boolean;
+    // Acme is entitled to directory sync (SSO) with nothing connected yet;
+    // what its directory reports; how long a sync asked for runs.
+    directoryEntitled?: boolean;
+    directoryIssues?: { kind: string; displayName?: string; email?: string }[];
+    directorySyncMs?: number;
     // People enrichment: a batch of lookups (and the wait for a slot), and
     // how the lookups stop: the credit cap, context.dev, the time limit, or
     // no free slot.

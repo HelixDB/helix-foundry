@@ -205,6 +205,102 @@ export type InviteWorkspaceMemberRequest = {
   role: WorkspaceRole;
 };
 
+// ---------------------------------------------------------------- Directory sync
+
+/**
+ * v1WorkspaceDirectory: GET /v1/workspaces/{workspaceId}/directory, the
+ * workspace's directory (SCIM through WorkOS) as its last sync saw it. Needs
+ * workspace.members.manage (owners and admins). A workspace without the SSO
+ * entitlement answers `{workspaceId}` alone (`entitled` false); `directory`
+ * is unset until an IT admin connects one in the Admin Portal. Roles from
+ * groups stay in the Helix dashboard: Foundry reads `groups` only to count
+ * them.
+ */
+export type WorkspaceDirectory = {
+  workspaceId?: string;
+  entitled?: boolean;
+  directory?: DirectoryConnection;
+  rolesFromDirectory?: boolean;
+  groups?: DirectoryGroup[];
+  issues?: DirectoryIssue[];
+  syncState?: DirectorySyncState;
+  syncError?: string;
+  lastSyncedAt?: string;
+  userCount?: number;
+  managedMemberCount?: number;
+};
+
+/** v1DirectoryConnection: `provider` is the name people know ("Okta"), or empty. */
+export type DirectoryConnection = {
+  id?: string;
+  type?: string;
+  provider?: string;
+  name?: string;
+  state?: DirectoryState;
+};
+
+export type DirectoryState =
+  | "DIRECTORY_STATE_UNSPECIFIED"
+  | "DIRECTORY_STATE_LINKED"
+  | "DIRECTORY_STATE_VALIDATING"
+  | "DIRECTORY_STATE_INVALID_CREDENTIALS"
+  | "DIRECTORY_STATE_UNLINKED"
+  | "DIRECTORY_STATE_DELETING";
+
+export type DirectorySyncState =
+  | "DIRECTORY_SYNC_STATE_UNSPECIFIED"
+  | "DIRECTORY_SYNC_STATE_IDLE"
+  | "DIRECTORY_SYNC_STATE_PENDING"
+  | "DIRECTORY_SYNC_STATE_FAILED";
+
+/** v1DirectoryGroup: `foundryTeamId` is the team it syncs to. */
+export type DirectoryGroup = {
+  id?: string;
+  name?: string;
+  memberCount?: number;
+  role?: WorkspaceRole;
+  foundryTeamId?: string;
+};
+
+/** v1DirectoryIssue: about a person (email, userId, displayName) or a group. */
+export type DirectoryIssue = {
+  kind?: DirectoryIssueKind;
+  email?: string;
+  userId?: string;
+  displayName?: string;
+  groupId?: string;
+  groupName?: string;
+};
+
+export type DirectoryIssueKind =
+  | "DIRECTORY_ISSUE_KIND_UNSPECIFIED"
+  | "DIRECTORY_ISSUE_KIND_NO_EMAIL"
+  | "DIRECTORY_ISSUE_KIND_NOT_PROVISIONED"
+  | "DIRECTORY_ISSUE_KIND_PENDING_INVITATION"
+  | "DIRECTORY_ISSUE_KIND_OWNER_KEPT"
+  | "DIRECTORY_ISSUE_KIND_TOO_MANY_GROUPS"
+  | "DIRECTORY_ISSUE_KIND_GROUP_TOO_LARGE"
+  | "DIRECTORY_ISSUE_KIND_LEFT_OUT_RAW_ACCESS";
+
+/**
+ * WfeServiceCreateDirectoryPortalLinkBody: POST
+ * /v1/workspaces/{workspaceId}/directory/portal-link. Needs
+ * workspace.sso.manage (owners) and the entitlement (else
+ * FAILED_PRECONDITION). `returnUrl`, an http(s) URL, is where the portal's
+ * back link goes.
+ */
+export type CreateDirectoryPortalLinkRequest = { returnUrl?: string };
+
+/** v1CreateDirectoryPortalLinkResponse: a single-use link, valid for minutes. */
+export type CreateDirectoryPortalLinkResponse = { link?: string };
+
+/**
+ * POST /v1/workspaces/{workspaceId}/directory:sync with `{}`: asks for a sync
+ * now (owners), answered with the WorkspaceDirectory. FAILED_PRECONDITION
+ * when no directory is connected.
+ */
+export type SyncWorkspaceDirectoryRequest = Record<string, never>;
+
 // ---------------------------------------------------------------- Plan and billing
 
 /**

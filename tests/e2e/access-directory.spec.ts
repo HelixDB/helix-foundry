@@ -99,3 +99,112 @@ test("a restricted member who holds nothing is lifted in one click", async ({
     page.getByRole("switch", { name: "Restrict Eve Adler" }),
   ).not.toBeChecked();
 });
+
+// Directory sync above the teams: an owner connects the directory through
+// WorkOS's Admin Portal (the mock's /mock/directory-portal), its groups become
+// teams, and the teams that read nothing yet ask for sources first.
+test("an owner connects a directory, and its teams ask for sources", async ({
+  page,
+}) => {
+  await signIn(page);
+  const read = page.waitForResponse((r) =>
+    r.url().endsWith("/papi/v1/workspaces/ws_acme/directory"),
+  );
+  await page.goto("/settings/access?tab=teams");
+  await read;
+  await expect(
+    page.getByRole("heading", { name: "Teams", exact: true }),
+  ).toBeVisible();
+  // Not entitled to SSO: nothing about directories.
+  await expect(
+    page.getByRole("heading", { name: "Directory sync" }),
+  ).toHaveCount(0);
+
+  await mock.configure({ directoryEntitled: true, directorySyncMs: 300 });
+  await page.reload();
+  const panel = page
+    .locator(".hf-panel")
+    .filter({ has: page.getByRole("heading", { name: "Directory sync" }) });
+  await expect(panel).toContainText("Connect your company’s directory");
+  const opened = page.waitForEvent("popup");
+  await panel.getByRole("button", { name: "Connect your directory" }).click();
+  const portal = await opened;
+  await expect(
+    portal.getByRole("heading", { name: "Set up directory sync" }),
+  ).toBeVisible();
+  await portal.getByRole("button", { name: "Connect Okta" }).click();
+  await expect(
+    portal.getByRole("heading", { name: "Okta is connected" }),
+  ).toBeVisible();
+  await expect(
+    portal.getByRole("link", { name: "Return to Helix Foundry" }),
+  ).toHaveAttribute("href", /\/settings\/access\?tab=teams$/);
+  await portal.close();
+
+  // The panel reads again until the directory shows.
+  await expect(panel).toContainText("Connected", { timeout: 10_000 });
+  await expect(panel).toContainText("3 people · 2 groups");
+  await expect(
+    panel.getByRole("link", { name: "Helix dashboard’s Settings" }),
+  ).toHaveAttribute("href", /\/acme\/settings$/);
+  await expect(page.getByRole("listitem", { name: "Finance" })).toContainText(
+    "Synced from Okta",
+  );
+
+  const nudge = page
+    .getByRole("status")
+    .filter({ hasText: "were synced from Okta but read nothing yet" });
+  await expect(nudge).toContainText("Engineering and Finance");
+  await nudge
+    .getByRole("button", { name: "Choose what Engineering reads" })
+    .click();
+  const sources = page.getByRole("dialog", { name: "Sources for Engineering" });
+  await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await page
+    .getByRole("dialog", { name: "Leave Alan Turing out of Engineering?" })
+    .getByRole("button", { name: "Save" })
+    .click();
+  await expect(
+    page.getByText("Saved what Engineering can read."),
+  ).toBeVisible();
+  await sources.getByRole("button", { name: "Close" }).first().click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "synced from Okta" }),
+  ).toContainText("Finance was synced from Okta but reads nothing yet");
+
+  await panel.getByRole("button", { name: "Sync now" }).click();
+  await expect(panel.getByRole("button", { name: "Syncing…" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Sync now" })).toBeEnabled({
+    timeout: 10_000,
+  });
+  await expect(panel).toContainText("Synced just now");
+});
+
+test("an admin sees directory sync and what needs attention, without its buttons", async ({
+  page,
+}) => {
+  await mock.configure({
+    directoryTeams: true,
+    alanRole: "WORKSPACE_ROLE_ADMIN",
+    directoryIssues: [
+      {
+        kind: "DIRECTORY_ISSUE_KIND_NOT_PROVISIONED",
+        displayName: "Bea Guest",
+      },
+    ],
+  });
+  await signIn(page, "alan@example.com");
+  await page.goto("/settings/access?tab=teams");
+  const panel = page
+    .locator(".hf-panel")
+    .filter({ has: page.getByRole("heading", { name: "Directory sync" }) });
+  await expect(panel).toContainText("Okta · Acme");
+  await expect(
+    panel.getByRole("list", { name: "Needs attention" }),
+  ).toContainText("1 person in Okta has no Helix account yet.");
+  await expect(panel).toContainText(
+    "Only workspace owners can sync or change the directory.",
+  );
+  await expect(panel.getByRole("button")).toHaveCount(0);
+});
