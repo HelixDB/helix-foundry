@@ -90,8 +90,10 @@ type Invocation func(context.Context, *Call) (any, int, error)
 type Runner func(context.Context, string, Invocation) (*mcp.CallToolResult, any, error)
 
 type Service struct {
-	Foundry                 FoundryBackendAPI
-	Actions                 FoundryActionAPI
+	Foundry FoundryBackendAPI
+	Actions FoundryActionAPI
+	// Workflows is the backend's workflow RPCs; nil leaves the workflow tools out.
+	Workflows               FoundryWorkflowBackendAPI
 	Directory               Directory
 	Confirmations           Confirmations
 	Documents               config.DocumentsConfig

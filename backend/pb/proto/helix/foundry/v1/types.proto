@@ -1982,3 +1982,103 @@ message FoundryHealRun {
   // told apart from none.
   bool rows_measured = 8;
 }
+
+// FoundryWorkflow is an agent's task over one ontology. Each of its runs
+// records the agent's request, what the agent read of the ontology's loads
+// and wrote to Foundry while answering it, and its answer, so the runs show
+// what the ontology gave the agent.
+message FoundryWorkflow {
+  string id          = 1;
+  string ontology_id = 2;
+  string name        = 3;
+  string description = 4;
+  string created_by_user_id = 5;
+  google.protobuf.Timestamp created_at = 6;
+  // Its runs kept, and how many of them finished.
+  int64 runs          = 7;
+  int64 finished_runs = 8;
+  // When its newest run started; absent before any.
+  google.protobuf.Timestamp last_run_at = 9;
+}
+
+// FoundryWorkflowRun is one run of a workflow: open while it records the
+// calls made with its id, finished once its answer is in, after which it
+// records nothing more.
+message FoundryWorkflowRun {
+  string id          = 1;
+  string workflow_id = 2;
+  // open or finished.
+  string status = 3;
+  // The initial request: empty until sent, at start or finish.
+  string input = 4;
+  // The final answer: empty while open.
+  string output = 5;
+  // Who started it: a user, or an agent's service credential.
+  string started_by_user_id               = 6;
+  string started_by_service_credential_id = 7;
+  google.protobuf.Timestamp started_at  = 8;
+  google.protobuf.Timestamp finished_at = 9;
+  FoundryWorkflowRunCounts counts = 10;
+}
+
+// FoundryWorkflowRunCounts counts what a run recorded, at most 1,000 calls.
+message FoundryWorkflowRunCounts {
+  int32 accesses  = 1;
+  int32 reads     = 2;
+  int32 questions = 3;
+  int32 sends     = 4;
+  int32 uploads   = 5;
+  // The pieces its sends carried.
+  int32 pieces = 6;
+  // Reads whose result it left out (FoundryWorkflowRead.result_omitted).
+  int32 results_omitted = 7;
+}
+
+// FoundryWorkflowAccess is one call a run recorded: exactly one of read,
+// question, send and upload.
+message FoundryWorkflowAccess {
+  // Its place in the run, from 1.
+  int32 seq = 1;
+  google.protobuf.Timestamp at = 2;
+  oneof access {
+    FoundryWorkflowRead     read     = 3;
+    FoundryWorkflowQuestion question = 4;
+    FoundryWorkflowSend     send     = 5;
+    FoundryWorkflowUpload   upload   = 6;
+  }
+}
+
+// FoundryWorkflowRead is a read of a load (ReadFoundryGraph) and what it
+// returned.
+message FoundryWorkflowRead {
+  string load_id    = 1;
+  // The reads asked, as sent.
+  string reads_json = 2;
+  // The result returned (read_result.json); empty when left out.
+  string result_json = 3;
+  // Whether the result was left out: one over 256 KiB, or past the run's
+  // 8 MiB of results.
+  bool result_omitted = 4;
+}
+
+// FoundryWorkflowQuestion is a question asked of a load
+// (AskFoundryQuestion). Its answer and steps are the question's own.
+message FoundryWorkflowQuestion {
+  string load_id     = 1;
+  string question_id = 2;
+}
+
+// FoundryWorkflowSend is a send to an API source (SendFoundryEvents).
+message FoundryWorkflowSend {
+  string connector_id = 1;
+  // The send's number in the source.
+  int64 seq = 2;
+  repeated string piece_ids = 3;
+}
+
+// FoundryWorkflowUpload is a document whose upload completed
+// (CompleteFoundryOntologyDocumentUpload).
+message FoundryWorkflowUpload {
+  string document_id = 1;
+  string set_id      = 2;
+}

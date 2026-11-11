@@ -173,8 +173,9 @@ type GetFoundryVersionInput struct {
 
 type ReadFoundryGraphInput struct {
 	OntologyInput
-	LoadID string           `json:"load_id,omitempty" jsonschema:"Load to read; the ontology's current load when empty."`
-	Reads  []map[string]any `json:"reads" jsonschema:"1 to 20 reads, each an object with exactly one key: entity, pattern, explain, violations, evidence or query. helix_foundry_read_guide returns their schema."`
+	LoadID        string           `json:"load_id,omitempty" jsonschema:"Load to read; the ontology's current load when empty."`
+	Reads         []map[string]any `json:"reads" jsonschema:"1 to 20 reads, each an object with exactly one key: entity, pattern, explain, violations, evidence or query. helix_foundry_read_guide returns their schema."`
+	WorkflowRunID string           `json:"workflow_run_id,omitempty" jsonschema:"An open run of a workflow (helix_foundry_start_workflow_run) to record this call under; empty for none."`
 }
 
 type FoundryEntityInput struct {
@@ -184,11 +185,12 @@ type FoundryEntityInput struct {
 
 type AskFoundryInput struct {
 	OntologyInput
-	Question    string              `json:"question" jsonschema:"The question, in plain language."`
-	ClientToken string              `json:"client_token" jsonschema:"A unique string of at most 64 characters. The same token returns the same question instead of asking again, so a retry is safe."`
-	ThreadID    string              `json:"thread_id,omitempty" jsonschema:"A question's thread_id, to continue that conversation; empty starts a new one."`
-	Focus       *FoundryEntityInput `json:"focus,omitempty" jsonschema:"The entity the question is about."`
-	LoadID      string              `json:"load_id,omitempty" jsonschema:"Load to ask; the ontology's current load when empty."`
+	Question      string              `json:"question" jsonschema:"The question, in plain language."`
+	ClientToken   string              `json:"client_token" jsonschema:"A unique string of at most 64 characters. The same token returns the same question instead of asking again, so a retry is safe."`
+	ThreadID      string              `json:"thread_id,omitempty" jsonschema:"A question's thread_id, to continue that conversation; empty starts a new one."`
+	Focus         *FoundryEntityInput `json:"focus,omitempty" jsonschema:"The entity the question is about."`
+	LoadID        string              `json:"load_id,omitempty" jsonschema:"Load to ask; the ontology's current load when empty."`
+	WorkflowRunID string              `json:"workflow_run_id,omitempty" jsonschema:"An open run of a workflow (helix_foundry_start_workflow_run) to record this call under; empty for none."`
 }
 
 type GetFoundryQuestionInput struct {
@@ -892,6 +894,10 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 		addFoundryTool(s, server, identity, tool(toolFoundryListReviewDecisions,
 			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release) and a chosen value (prop) also apply to the current load at once. A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review."), s.ListFoundryReviewDecisions)
 	}
+	if s.Workflows != nil && browse {
+		// Restricted callers, whose reads only source grants admit, may not use workflows.
+		s.addFoundryWorkflowTools(server, identity, identity.HasPermission(PermissionDatabaseQueryRead))
+	}
 	s.AddFoundryActionTools(server, identity)
 }
 
@@ -1305,7 +1311,7 @@ func (s *Service) ReadFoundryGraph(
 	ctx context.Context, identity *Identity, call *Call, input ReadFoundryGraphInput,
 ) (ReadFoundryGraphOutput, int, error) {
 	call.ResourceKind, call.ResourceID = "ontology", input.OntologyID
-	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID}, input.LoadID) {
+	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID}, input.LoadID, input.WorkflowRunID) {
 		return ReadFoundryGraphOutput{}, 0, errCodeInvalidArguments
 	}
 	reads, err := json.Marshal(input.Reads)
@@ -1316,7 +1322,9 @@ func (s *Service) ReadFoundryGraph(
 	if _, err := ontologyagent.ParseReads(string(reads)); err != nil {
 		return ReadFoundryGraphOutput{}, 0, detailedToolError{code: errCodeInvalidArguments, message: err.Error()}
 	}
-	req := &foundryv1.ReadFoundryGraphRequest{WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, LoadId: input.LoadID, ReadsJson: string(reads)}
+	req := &foundryv1.ReadFoundryGraphRequest{
+		WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, LoadId: input.LoadID, ReadsJson: string(reads), WorkflowRunId: input.WorkflowRunID,
+	}
 	if err := s.AuthorizeFoundry(ctx, identity, req, QueryRead,
 		"ReadFoundryGraph", "GetFoundryOntology", "GetFoundryLoad"); err != nil {
 		return ReadFoundryGraphOutput{}, 0, err
@@ -1356,13 +1364,13 @@ func (s *Service) AskFoundryQuestion(
 ) (FoundryQuestionOutput, int, error) {
 	started := time.Now() // the wait is bounded from here
 	call.ResourceKind, call.ResourceID = "ontology", input.OntologyID
-	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID}, input.ThreadID, input.LoadID) ||
+	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID}, input.ThreadID, input.LoadID, input.WorkflowRunID) ||
 		strings.TrimSpace(input.Question) == "" || input.ClientToken == "" {
 		return FoundryQuestionOutput{}, 0, errCodeInvalidArguments
 	}
 	req := &foundryv1.AskFoundryQuestionRequest{
 		WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, LoadId: input.LoadID, ThreadId: input.ThreadID,
-		Question: input.Question, ClientToken: input.ClientToken,
+		Question: input.Question, ClientToken: input.ClientToken, WorkflowRunId: input.WorkflowRunID,
 	}
 	if input.Focus != nil {
 		focus, _ := json.Marshal(input.Focus) // two strings: it can't fail

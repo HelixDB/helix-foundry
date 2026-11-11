@@ -242,6 +242,47 @@ service FoundryService {
       body: "*"
     };
   }
+
+  // Workflows: an agent's task over an ontology, whose runs record what the
+  // agent read of the ontology and wrote to Foundry between its request and
+  // its answer. Owners and admins create and delete workflows; a caller that
+  // may read the ontology's database starts and finishes runs, and reads
+  // them.
+  rpc CreateFoundryWorkflow(CreateFoundryWorkflowRequest) returns (FoundryWorkflowResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/workflows" body: "*" };
+  }
+  rpc ListFoundryWorkflows(ListFoundryWorkflowsRequest) returns (ListFoundryWorkflowsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/workflows" };
+  }
+  rpc GetFoundryWorkflow(GetFoundryWorkflowRequest) returns (FoundryWorkflowResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/workflows/{id}" };
+  }
+  rpc DeleteFoundryWorkflow(DeleteFoundryWorkflowRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/workflows/{id}" };
+  }
+  rpc StartFoundryWorkflowRun(StartFoundryWorkflowRunRequest) returns (FoundryWorkflowRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/workflows/{workflow_id}/runs"
+      body: "*"
+    };
+  }
+  rpc ListFoundryWorkflowRuns(ListFoundryWorkflowRunsRequest) returns (ListFoundryWorkflowRunsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/workflows/{workflow_id}/runs" };
+  }
+  rpc GetFoundryWorkflowRun(GetFoundryWorkflowRunRequest) returns (FoundryWorkflowRunResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/workflows/{workflow_id}/runs/{id}" };
+  }
+  rpc FinishFoundryWorkflowRun(FinishFoundryWorkflowRunRequest) returns (FoundryWorkflowRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/workflows/{workflow_id}/runs/{id}:finish"
+      body: "*"
+    };
+  }
+  rpc ListFoundryWorkflowRunAccesses(ListFoundryWorkflowRunAccessesRequest) returns (ListFoundryWorkflowRunAccessesResponse) {
+    option (google.api.http) = {
+      get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/workflows/{workflow_id}/runs/{id}/accesses"
+    };
+  }
   // An ontology's documents, read only: what its current load holds and
   // what its reading version's scope holds, each with its extraction there.
   rpc ListFoundryOntologyDocuments(ListFoundryOntologyDocumentsRequest) returns (ListFoundryDocumentsResponse) {
@@ -1007,6 +1048,9 @@ message CompleteFoundryOntologyDocumentUploadRequest {
   string workspace_id = 1;
   string ontology_id  = 2;
   string id           = 3;
+  // An open run of a workflow of this ontology to record the upload under;
+  // empty for none. Completing it again records it once.
+  string workflow_run_id = 4;
 }
 message DeleteFoundryOntologyDocumentRequest {
   string workspace_id = 1;
@@ -1113,6 +1157,10 @@ message AskFoundryQuestionRequest {
   // empty for none.
   string focus_json   = 6;
   string client_token = 7;
+  // An open run of a workflow of this ontology to record the question
+  // under; empty for none. A retry with the same client_token records it
+  // once.
+  string workflow_run_id = 8;
 }
 message FoundryQuestionResponse {
   FoundryQuestion question = 1;
@@ -1180,6 +1228,10 @@ message ReadFoundryGraphRequest {
   string ontology_id  = 2;
   string load_id      = 3;
   string reads_json   = 4;
+  // An open run of a workflow of this ontology to record the read under,
+  // with its result; empty for none. NOT_FOUND for a run the ontology has
+  // not, FAILED_PRECONDITION for one that finished.
+  string workflow_run_id = 5;
 }
 // ReadFoundryGraphResponse is the agent's ReadResult (read_result.json): one
 // result per read, in order, each its value or its own error.
@@ -1356,4 +1408,105 @@ message DismissFoundryHealFindingRequest {
 }
 message FoundryHealFindingResponse {
   FoundryHealFinding finding = 1;
+}
+
+// CreateFoundryWorkflowRequest makes a workflow of a live ontology. The same
+// client_token returns the workflow it made. FAILED_PRECONDITION past
+// FoundryWorkflow's cap of 100 an ontology.
+message CreateFoundryWorkflowRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  // 1 to 100 characters, trimmed.
+  string name = 3;
+  // What the agent does, at most 2,000 characters; optional.
+  string description  = 4;
+  string client_token = 5;
+}
+message FoundryWorkflowResponse {
+  FoundryWorkflow workflow = 1;
+}
+// ListFoundryWorkflowsRequest lists an ontology's workflows, newest first, 50
+// a page.
+message ListFoundryWorkflowsRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string page_token   = 3;
+}
+message ListFoundryWorkflowsResponse {
+  repeated FoundryWorkflow workflows = 1;
+  string next_page_token = 2;
+}
+message GetFoundryWorkflowRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+}
+// DeleteFoundryWorkflowRequest deletes a workflow with its runs and what
+// they recorded. Calls that name one of its runs afterwards are NOT_FOUND.
+message DeleteFoundryWorkflowRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+}
+// StartFoundryWorkflowRunRequest opens a run of a workflow: its id is what
+// the agent passes as workflow_run_id to the calls it makes for the run. The
+// same client_token returns the run it opened. A workflow keeps its newest
+// 1,000 runs: starting one past that deletes the oldest.
+message StartFoundryWorkflowRunRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string workflow_id  = 3;
+  // The run's initial request, at most 64 KiB; optional here, when the
+  // agent sends it with its answer instead.
+  string input        = 4;
+  string client_token = 5;
+}
+message FoundryWorkflowRunResponse {
+  FoundryWorkflowRun run = 1;
+}
+// ListFoundryWorkflowRunsRequest lists a workflow's runs, newest first, 50 a
+// page, without their accesses.
+message ListFoundryWorkflowRunsRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string workflow_id  = 3;
+  string page_token   = 4;
+}
+message ListFoundryWorkflowRunsResponse {
+  repeated FoundryWorkflowRun runs = 1;
+  string next_page_token = 2;
+}
+message GetFoundryWorkflowRunRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string workflow_id  = 3;
+  string id           = 4;
+}
+// FinishFoundryWorkflowRunRequest closes an open run with its answer: it
+// records nothing more. Finishing a finished run again with the same input
+// and output returns it; with others, FAILED_PRECONDITION.
+message FinishFoundryWorkflowRunRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string workflow_id  = 3;
+  string id           = 4;
+  // The run's initial request, at most 64 KiB: required unless the run was
+  // started with it, and then, if sent, the same.
+  string input = 5;
+  // The agent's final answer, 1 byte to 256 KiB.
+  string output = 6;
+}
+// ListFoundryWorkflowRunAccessesRequest returns up to 100 of a run's
+// accesses after after_seq, in order.
+message ListFoundryWorkflowRunAccessesRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string workflow_id  = 3;
+  string id           = 4;
+  int32  after_seq    = 5;
+}
+message ListFoundryWorkflowRunAccessesResponse {
+  repeated FoundryWorkflowAccess accesses = 1;
+  // Whether accesses follow the last one returned.
+  bool more = 2;
 }

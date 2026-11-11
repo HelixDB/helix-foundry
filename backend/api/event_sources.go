@@ -407,7 +407,15 @@ func (e *eventSends) drop(ctx context.Context, key string) {
 // failed after step 4 gives its limits back. Every send is logged and
 // counted, by its outcome and by the front end it came through (via: the MCP,
 // the HTTP door or another), never with its pieces' content.
+//
+// With workflow_run_id, the send is recorded, with its pieces' ids, under that
+// open run of a workflow of the source's workspace (trackedRun, checked
+// before the send), once however often its client token replays it.
 func (s *Service) SendFoundryEvents(ctx context.Context, req *foundryv1.SendFoundryEventsRequest) (*foundryv1.SendFoundryEventsResponse, error) {
+	run, err := s.trackedRun(ctx, req.GetWorkspaceId(), "", req.GetWorkflowRunId())
+	if err != nil {
+		return nil, err
+	}
 	resp, err := s.sendFoundryEvents(ctx, req)
 	outcome := eventSendOutcome(resp, err)
 	caller := actor(ctx)
@@ -440,7 +448,17 @@ func (s *Service) SendFoundryEvents(ctx context.Context, req *foundryv1.SendFoun
 		eventNearFullTotal.Inc()
 	}
 	log.From(ctx).Info("foundry event send", attrs...)
-	return resp, err
+	if err != nil {
+		return resp, err
+	}
+	ids := make([]string, len(req.GetPieces()))
+	for i, p := range req.GetPieces() {
+		ids[i] = p.GetId()
+	}
+	if err := s.track(ctx, run, &foundrymodel.FoundryWorkflowSend{ConnectorID: req.GetConnectorId(), Seq: resp.GetBatch().GetSeq(), PieceIDs: ids}); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func (s *Service) sendFoundryEvents(ctx context.Context, req *foundryv1.SendFoundryEventsRequest) (*foundryv1.SendFoundryEventsResponse, error) {

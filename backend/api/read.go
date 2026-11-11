@@ -25,6 +25,9 @@ import (
 //  3. foundry-read evaluates the reads with the load's version's rules; its
 //     statuses (the workspace's read limit, a paused database, a load the
 //     database doesn't hold) are the caller's.
+//  4. With workflow_run_id, the reads and their result are recorded under
+//     that open run of the ontology's workflow (trackedRun, checked before
+//     the read).
 func (s *Service) ReadFoundryGraph(ctx context.Context, req *foundryv1.ReadFoundryGraphRequest) (*foundryv1.ReadFoundryGraphResponse, error) {
 	if s.deps.FoundryRead == nil {
 		return nil, status.Error(codes.Unavailable, "graph reads are not available here")
@@ -36,6 +39,10 @@ func (s *Service) ReadFoundryGraph(ctx context.Context, req *foundryv1.ReadFound
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
+	if err != nil {
+		return nil, err
+	}
+	run, err := s.trackedRun(ctx, o.WorkspaceID, o.ID, req.GetWorkflowRunId())
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +79,11 @@ func (s *Service) ReadFoundryGraph(ctx context.Context, req *foundryv1.ReadFound
 	}
 	out, err := s.deps.FoundryRead.Read(ctx, read)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.track(ctx, run, &foundrymodel.FoundryWorkflowRead{
+		LoadID: load.ID, Reads: json.RawMessage(req.GetReadsJson()), Result: json.RawMessage(out.GetResultJson()),
+	}); err != nil {
 		return nil, err
 	}
 	return &foundryv1.ReadFoundryGraphResponse{ResultJson: out.GetResultJson()}, nil

@@ -123,6 +123,11 @@ WHERE ontology_id=? AND active_key=1`, id); err != nil {
 				return fmt.Errorf("delete the ontology's %s: %w", table, err)
 			}
 		}
+		// Its workflows' runs hold what was read of its loads: they go with
+		// it.
+		if err := tx.deleteFoundryWorkflowRows(ctx, "ontology_id", id); err != nil {
+			return err
+		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting', finished_at=COALESCE(finished_at, NOW(6))
 WHERE ontology_id=? AND status NOT IN ('deleting', 'deleted')`, id); err != nil {
 			return err

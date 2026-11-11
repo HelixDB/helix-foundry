@@ -72,6 +72,10 @@ message SendFoundryEventsRequest {
   // is refused.
   string client_token = 4;
   repeated FoundryEventPiece pieces = 5;
+  // An open run of a workflow of the source's workspace to record the send
+  // under, with its pieces' ids; empty for none. A replayed send records it
+  // once.
+  string workflow_run_id = 6;
 }
 message SendFoundryEventsResponse {
   FoundryEventBatch batch = 1;

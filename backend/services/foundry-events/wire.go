@@ -23,6 +23,9 @@ import (
 type body struct {
 	ClientToken string      `json:"client_token"`
 	Pieces      []bodyPiece `json:"pieces"`
+	// WorkflowRunID is an open run of a workflow of the source's workspace to record the send
+	// under; optional.
+	WorkflowRunID string `json:"workflow_run_id"`
 }
 
 // bodyPiece is one piece as sent: its data is kept as written, so its number literals and string
@@ -106,7 +109,7 @@ func sendRequest(b body, workspaceID, connectorID string, limits events.Limits) 
 		return nil, refused(err)
 	}
 	req := &foundryv1.SendFoundryEventsRequest{
-		WorkspaceId: workspaceID, ConnectorId: connectorID, ClientToken: b.ClientToken,
+		WorkspaceId: workspaceID, ConnectorId: connectorID, ClientToken: b.ClientToken, WorkflowRunId: b.WorkflowRunID,
 		Pieces: make([]*foundryv1.FoundryEventPiece, len(pieces)),
 	}
 	for i, p := range pieces {

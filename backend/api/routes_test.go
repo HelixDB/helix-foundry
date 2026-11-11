@@ -15,6 +15,7 @@ import (
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
@@ -240,6 +241,51 @@ func (r *routeRecorder) DismissFoundryHealFinding(_ context.Context, req *foundr
 	return &foundryv1.FoundryHealFindingResponse{}, nil
 }
 
+func (r *routeRecorder) CreateFoundryWorkflow(_ context.Context, req *foundryv1.CreateFoundryWorkflowRequest) (*foundryv1.FoundryWorkflowResponse, error) {
+	r.hit("CreateFoundryWorkflow", req, req.GetName()+"/"+req.GetDescription()+"/"+req.GetClientToken())
+	return &foundryv1.FoundryWorkflowResponse{}, nil
+}
+
+func (r *routeRecorder) ListFoundryWorkflows(_ context.Context, req *foundryv1.ListFoundryWorkflowsRequest) (*foundryv1.ListFoundryWorkflowsResponse, error) {
+	r.hit("ListFoundryWorkflows", req, req.GetPageToken())
+	return &foundryv1.ListFoundryWorkflowsResponse{}, nil
+}
+
+func (r *routeRecorder) GetFoundryWorkflow(_ context.Context, req *foundryv1.GetFoundryWorkflowRequest) (*foundryv1.FoundryWorkflowResponse, error) {
+	r.hit("GetFoundryWorkflow", req, req.GetId())
+	return &foundryv1.FoundryWorkflowResponse{}, nil
+}
+
+func (r *routeRecorder) DeleteFoundryWorkflow(_ context.Context, req *foundryv1.DeleteFoundryWorkflowRequest) (*emptypb.Empty, error) {
+	r.hit("DeleteFoundryWorkflow", req, req.GetId())
+	return &emptypb.Empty{}, nil
+}
+
+func (r *routeRecorder) StartFoundryWorkflowRun(_ context.Context, req *foundryv1.StartFoundryWorkflowRunRequest) (*foundryv1.FoundryWorkflowRunResponse, error) {
+	r.hit("StartFoundryWorkflowRun", req, req.GetWorkflowId()+"/"+req.GetInput()+"/"+req.GetClientToken())
+	return &foundryv1.FoundryWorkflowRunResponse{}, nil
+}
+
+func (r *routeRecorder) ListFoundryWorkflowRuns(_ context.Context, req *foundryv1.ListFoundryWorkflowRunsRequest) (*foundryv1.ListFoundryWorkflowRunsResponse, error) {
+	r.hit("ListFoundryWorkflowRuns", req, req.GetWorkflowId()+"/"+req.GetPageToken())
+	return &foundryv1.ListFoundryWorkflowRunsResponse{}, nil
+}
+
+func (r *routeRecorder) GetFoundryWorkflowRun(_ context.Context, req *foundryv1.GetFoundryWorkflowRunRequest) (*foundryv1.FoundryWorkflowRunResponse, error) {
+	r.hit("GetFoundryWorkflowRun", req, req.GetWorkflowId()+"/"+req.GetId())
+	return &foundryv1.FoundryWorkflowRunResponse{}, nil
+}
+
+func (r *routeRecorder) FinishFoundryWorkflowRun(_ context.Context, req *foundryv1.FinishFoundryWorkflowRunRequest) (*foundryv1.FoundryWorkflowRunResponse, error) {
+	r.hit("FinishFoundryWorkflowRun", req, req.GetWorkflowId()+"/"+req.GetId()+"/"+req.GetInput()+"/"+req.GetOutput())
+	return &foundryv1.FoundryWorkflowRunResponse{}, nil
+}
+
+func (r *routeRecorder) ListFoundryWorkflowRunAccesses(_ context.Context, req *foundryv1.ListFoundryWorkflowRunAccessesRequest) (*foundryv1.ListFoundryWorkflowRunAccessesResponse, error) {
+	r.hit("ListFoundryWorkflowRunAccesses", req, fmt.Sprintf("%s/%s/%d", req.GetWorkflowId(), req.GetId(), req.GetAfterSeq()))
+	return &foundryv1.ListFoundryWorkflowRunAccessesResponse{}, nil
+}
+
 func (r *routeRecorder) CreateFoundryLoad(_ context.Context, req *foundryv1.CreateFoundryLoadRequest) (*foundryv1.FoundryLoadResponse, error) {
 	r.hit("CreateFoundryLoad", req, req.GetVersionId())
 	return &foundryv1.FoundryLoadResponse{}, nil
@@ -406,6 +452,17 @@ func TestFoundryRoutes(t *testing.T) {
 		{http.MethodDelete, o + "/ont-1/review-decisions/d-1", "", "DeleteFoundryReviewDecision ws-1 ont-1 d-1"},
 		{http.MethodGet, o + "/ont-1/heal-findings", "", "ListFoundryHealFindings ws-1 ont-1 "},
 		{http.MethodPost, o + "/ont-1/heal-findings/ab12:dismiss", "{}", "DismissFoundryHealFinding ws-1 ont-1 ab12"},
+		{http.MethodPost, o + "/ont-1/workflows", `{"name":"Triage","description":"tickets","clientToken":"t"}`,
+			"CreateFoundryWorkflow ws-1 ont-1 Triage/tickets/t"},
+		{http.MethodGet, o + "/ont-1/workflows?pageToken=p", "", "ListFoundryWorkflows ws-1 ont-1 p"},
+		{http.MethodGet, o + "/ont-1/workflows/wf-1", "", "GetFoundryWorkflow ws-1 ont-1 wf-1"},
+		{http.MethodDelete, o + "/ont-1/workflows/wf-1", "", "DeleteFoundryWorkflow ws-1 ont-1 wf-1"},
+		{http.MethodPost, o + "/ont-1/workflows/wf-1/runs", `{"input":"hi","clientToken":"c"}`, "StartFoundryWorkflowRun ws-1 ont-1 wf-1/hi/c"},
+		{http.MethodGet, o + "/ont-1/workflows/wf-1/runs?pageToken=p", "", "ListFoundryWorkflowRuns ws-1 ont-1 wf-1/p"},
+		{http.MethodGet, o + "/ont-1/workflows/wf-1/runs/r-1", "", "GetFoundryWorkflowRun ws-1 ont-1 wf-1/r-1"},
+		{http.MethodPost, o + "/ont-1/workflows/wf-1/runs/r-1:finish", `{"input":"q","output":"a"}`,
+			"FinishFoundryWorkflowRun ws-1 ont-1 wf-1/r-1/q/a"},
+		{http.MethodGet, o + "/ont-1/workflows/wf-1/runs/r-1/accesses?afterSeq=3", "", "ListFoundryWorkflowRunAccesses ws-1 ont-1 wf-1/r-1/3"},
 		{http.MethodPost, w + "/documents", `{"name":"a.md","setId":"s-1"}`, "CreateFoundryDocument ws-1 - a.md in s-1"},
 		{http.MethodGet, w + "/documents?setId=s-1&pageToken=p", "", "ListFoundryDocuments ws-1 - s-1/p/"},
 		{http.MethodGet, w + "/documents?ids=d-2&ids=d-1", "", "ListFoundryDocuments ws-1 - //d-2,d-1"},

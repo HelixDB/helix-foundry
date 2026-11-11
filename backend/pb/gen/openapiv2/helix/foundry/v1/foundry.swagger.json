@@ -3508,6 +3508,429 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryWorkflows",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryWorkflowsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageToken",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "post": {
+        "summary": "Workflows: an agent's task over an ontology, whose runs record what the\nagent read of the ontology and wrote to Foundry between its request and\nits answer. Owners and admins create and delete workflows; a caller that\nmay read the ontology's database starts and finishes runs, and reads\nthem.",
+        "operationId": "FoundryService_CreateFoundryWorkflow",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCreateFoundryWorkflowBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{id}": {
+      "get": {
+        "operationId": "FoundryService_GetFoundryWorkflow",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "delete": {
+        "operationId": "FoundryService_DeleteFoundryWorkflow",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryWorkflowRuns",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryWorkflowRunsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageToken",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "post": {
+        "operationId": "FoundryService_StartFoundryWorkflowRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceStartFoundryWorkflowRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}": {
+      "get": {
+        "operationId": "FoundryService_GetFoundryWorkflowRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}/accesses": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryWorkflowRunAccesses",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryWorkflowRunAccessesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "afterSeq",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}:finish": {
+      "post": {
+        "operationId": "FoundryService_FinishFoundryWorkflowRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceFinishFoundryWorkflowRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}:generate": {
       "post": {
         "operationId": "FoundryService_GenerateOntology",
@@ -3861,6 +4284,10 @@
         },
         "clientToken": {
           "type": "string"
+        },
+        "workflowRunId": {
+          "type": "string",
+          "description": "An open run of a workflow of this ontology to record the question\nunder; empty for none. A retry with the same client_token records it\nonce."
         }
       },
       "description": "AskFoundryQuestionRequest queues a question of a ready or partial load\n(FAILED_PRECONDITION otherwise, or when the workspace has spent this\nmonth's questions budget; RESOURCE_EXHAUSTED past its questions an hour).\nThe same client_token returns the question it queued."
@@ -3883,7 +4310,13 @@
       "description": "CompleteFoundryDocumentUploadRequest checks the bytes PUT to the upload\nURL and marks the document uploaded. Every ontology whose live or current\nload reads its set then reads it, where the caller may write the\nontology's database; reads says what happened for each."
     },
     "FoundryServiceCompleteFoundryOntologyDocumentUploadBody": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "workflowRunId": {
+          "type": "string",
+          "description": "An open run of a workflow of this ontology to record the upload under;\nempty for none. Completing it again records it once."
+        }
+      }
     },
     "FoundryServiceCreateConnectorBody": {
       "type": "object",
@@ -4019,6 +4452,23 @@
       },
       "description": "CreateFoundryTeamRequest makes a team of members. Names are unique in the\nworkspace (ALREADY_EXISTS otherwise), 1 to 120 characters."
     },
+    "FoundryServiceCreateFoundryWorkflowBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "1 to 100 characters, trimmed."
+        },
+        "description": {
+          "type": "string",
+          "description": "What the agent does, at most 2,000 characters; optional."
+        },
+        "clientToken": {
+          "type": "string"
+        }
+      },
+      "description": "CreateFoundryWorkflowRequest makes a workflow of a live ontology. The same\nclient_token returns the workflow it made. FAILED_PRECONDITION past\nFoundryWorkflow's cap of 100 an ontology."
+    },
     "FoundryServiceCreateOntologyVersionBody": {
       "type": "object",
       "properties": {
@@ -4047,6 +4497,20 @@
           "description": "The callback's error when it was given no code, such as access_denied."
         }
       }
+    },
+    "FoundryServiceFinishFoundryWorkflowRunBody": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "string",
+          "description": "The run's initial request, at most 64 KiB: required unless the run was\nstarted with it, and then, if sent, the same."
+        },
+        "output": {
+          "type": "string",
+          "description": "The agent's final answer, 1 byte to 256 KiB."
+        }
+      },
+      "description": "FinishFoundryWorkflowRunRequest closes an open run with its answer: it\nrecords nothing more. Finishing a finished run again with the same input\nand output returns it; with others, FAILED_PRECONDITION."
     },
     "FoundryServiceGenerateOntologyBody": {
       "type": "object",
@@ -4137,6 +4601,10 @@
       "properties": {
         "readsJson": {
           "type": "string"
+        },
+        "workflowRunId": {
+          "type": "string",
+          "description": "An open run of a workflow of this ontology to record the read under,\nwith its result; empty for none. NOT_FOUND for a run the ontology has\nnot, FAILED_PRECONDITION for one that finished."
         }
       },
       "description": "ReadFoundryGraphRequest reads a load of the ontology's database: entities\nwith the facts its version's rules derive, patterns, explanations (\"why\"),\nrule breaks and evidence. reads_json is a JSON array of 1 to 20 reads, each\nthe `reads` item of the ontology agent's read_request.json. NOT_FOUND for a\nload of another ontology or one deleted; FAILED_PRECONDITION while it is\nbeing deleted; RESOURCE_EXHAUSTED while the workspace has as many reads\nrunning as it may."
@@ -4231,6 +4699,19 @@
           "description": "Makes a retry return the sign-in the first attempt started."
         }
       }
+    },
+    "FoundryServiceStartFoundryWorkflowRunBody": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "string",
+          "description": "The run's initial request, at most 64 KiB; optional here, when the\nagent sends it with its answer instead."
+        },
+        "clientToken": {
+          "type": "string"
+        }
+      },
+      "description": "StartFoundryWorkflowRunRequest opens a run of a workflow: its id is what\nthe agent passes as workflow_run_id to the calls it makes for the run. The\nsame client_token returns the run it opened. A workflow keeps its newest\n1,000 runs: starting one past that deletes the oldest."
     },
     "FoundryServiceStopFoundryLoadEnrichmentBody": {
       "type": "object",
@@ -7475,6 +7956,231 @@
       "default": "FOUNDRY_USAGE_TASK_UNSPECIFIED",
       "description": "FoundryUsageTask is a kind of model work a workspace's month of AI spend\nis broken down by (FoundryUsage). Ontology drafts (generations and\nrevisions) are not among them: they record tokens, not dollars; nor are\ngeneration titles, which record no spend at all.\n\n - FOUNDRY_USAGE_TASK_LOADS: Loads and extracts of the workspace's ontologies, created this month:\nreading documents into their graphs, which is all of a load's model\nspend (tables load at no model cost). Capped by foundry.graph.monthly_usd\n(config.FoundryGraphConfig.MonthBudget), the budget the graph worker\nchecks.\n - FOUNDRY_USAGE_TASK_API_SOURCES: What work no person started (refreshes, and extracts no one asked for)\nspent extracting the workspace's API sources' pieces this month, its\ndeleted sources' included. Capped by\nfoundry.events.max_system_usd_per_workspace_month. Part of LOADS' spend,\nso FoundryUsage.total_usd_micros counts it once, there.\n - FOUNDRY_USAGE_TASK_QUESTIONS: Questions charged this month (claimed in it, whenever asked), as the\nquestions budget counts them (FoundryQuestionBudget). Capped by\nfoundry.ask.monthly_usd."
     },
+    "v1FoundryWorkflow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "ontologyId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "createdByUserId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "runs": {
+          "type": "string",
+          "format": "int64",
+          "description": "Its runs kept, and how many of them finished."
+        },
+        "finishedRuns": {
+          "type": "string",
+          "format": "int64"
+        },
+        "lastRunAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When its newest run started; absent before any."
+        }
+      },
+      "description": "FoundryWorkflow is an agent's task over one ontology. Each of its runs\nrecords the agent's request, what the agent read of the ontology's loads\nand wrote to Foundry while answering it, and its answer, so the runs show\nwhat the ontology gave the agent."
+    },
+    "v1FoundryWorkflowAccess": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Its place in the run, from 1."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "read": {
+          "$ref": "#/definitions/v1FoundryWorkflowRead"
+        },
+        "question": {
+          "$ref": "#/definitions/v1FoundryWorkflowQuestion"
+        },
+        "send": {
+          "$ref": "#/definitions/v1FoundryWorkflowSend"
+        },
+        "upload": {
+          "$ref": "#/definitions/v1FoundryWorkflowUpload"
+        }
+      },
+      "description": "FoundryWorkflowAccess is one call a run recorded: exactly one of read,\nquestion, send and upload."
+    },
+    "v1FoundryWorkflowQuestion": {
+      "type": "object",
+      "properties": {
+        "loadId": {
+          "type": "string"
+        },
+        "questionId": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryWorkflowQuestion is a question asked of a load\n(AskFoundryQuestion). Its answer and steps are the question's own."
+    },
+    "v1FoundryWorkflowRead": {
+      "type": "object",
+      "properties": {
+        "loadId": {
+          "type": "string"
+        },
+        "readsJson": {
+          "type": "string",
+          "description": "The reads asked, as sent."
+        },
+        "resultJson": {
+          "type": "string",
+          "description": "The result returned (read_result.json); empty when left out."
+        },
+        "resultOmitted": {
+          "type": "boolean",
+          "description": "Whether the result was left out: one over 256 KiB, or past the run's\n8 MiB of results."
+        }
+      },
+      "description": "FoundryWorkflowRead is a read of a load (ReadFoundryGraph) and what it\nreturned."
+    },
+    "v1FoundryWorkflowResponse": {
+      "type": "object",
+      "properties": {
+        "workflow": {
+          "$ref": "#/definitions/v1FoundryWorkflow"
+        }
+      }
+    },
+    "v1FoundryWorkflowRun": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workflowId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "open or finished."
+        },
+        "input": {
+          "type": "string",
+          "description": "The initial request: empty until sent, at start or finish."
+        },
+        "output": {
+          "type": "string",
+          "description": "The final answer: empty while open."
+        },
+        "startedByUserId": {
+          "type": "string",
+          "description": "Who started it: a user, or an agent's service credential."
+        },
+        "startedByServiceCredentialId": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "counts": {
+          "$ref": "#/definitions/v1FoundryWorkflowRunCounts"
+        }
+      },
+      "description": "FoundryWorkflowRun is one run of a workflow: open while it records the\ncalls made with its id, finished once its answer is in, after which it\nrecords nothing more."
+    },
+    "v1FoundryWorkflowRunCounts": {
+      "type": "object",
+      "properties": {
+        "accesses": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "reads": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "questions": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "sends": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "uploads": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "pieces": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The pieces its sends carried."
+        },
+        "resultsOmitted": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Reads whose result it left out (FoundryWorkflowRead.result_omitted)."
+        }
+      },
+      "description": "FoundryWorkflowRunCounts counts what a run recorded, at most 1,000 calls."
+    },
+    "v1FoundryWorkflowRunResponse": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/v1FoundryWorkflowRun"
+        }
+      }
+    },
+    "v1FoundryWorkflowSend": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "string",
+          "format": "int64",
+          "description": "The send's number in the source."
+        },
+        "pieceIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "FoundryWorkflowSend is a send to an API source (SendFoundryEvents)."
+    },
+    "v1FoundryWorkflowUpload": {
+      "type": "object",
+      "properties": {
+        "documentId": {
+          "type": "string"
+        },
+        "setId": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryWorkflowUpload is a document whose upload completed\n(CompleteFoundryOntologyDocumentUpload)."
+    },
     "v1GetFoundryDocumentBytesResponse": {
       "type": "object",
       "properties": {
@@ -7849,6 +8555,52 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1FoundryReviewDecision"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ListFoundryWorkflowRunAccessesResponse": {
+      "type": "object",
+      "properties": {
+        "accesses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowAccess"
+          }
+        },
+        "more": {
+          "type": "boolean",
+          "description": "Whether accesses follow the last one returned."
+        }
+      }
+    },
+    "v1ListFoundryWorkflowRunsResponse": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowRun"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ListFoundryWorkflowsResponse": {
+      "type": "object",
+      "properties": {
+        "workflows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflow"
           }
         },
         "nextPageToken": {
