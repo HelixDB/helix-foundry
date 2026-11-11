@@ -58,7 +58,7 @@ const nextConfig: NextConfig = {
     // Where role changes, member removal and invitations live.
     NEXT_PUBLIC_HELIX_DASHBOARD_URL:
       appEnv === "prod"
-        ? "https://prod.app.helix-db.com"
+        ? "https://app.helix-db.com"
         : "https://dev.app.helix-db.com",
     // The Helix MCP, which "Set up with your agent"'s prompt has agents add.
     NEXT_PUBLIC_HELIX_MCP_URL:
