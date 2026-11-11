@@ -123,7 +123,8 @@ func (s *Service) AddFoundrySendTool(server *mcp.Server, identity *Identity) {
 		return
 	}
 	destructive, no := true, false
-	description := "Send pieces of data, JSON objects with an id, to a Foundry API source (a connector of kind events). " +
+	description := "Remember something for later in a business's Foundry ontology: what an agent learned, decided or did, sent as JSON pieces that the ontologies reading the source take into their graph, to read and ask about later. " +
+		"Send pieces of data, JSON objects with an id, to a Foundry API source (a connector of kind events). " +
 		"It adds pieces, and replaces any piece already in the source with the same id. Not confirmed: it only writes data to a source a person made. " +
 		"Anyone who can send to the source can replace any of its pieces by id, or blank its fields by sending {}."
 	// A send token sees this tool alone, so the sentence stands on its own and names no other tool.

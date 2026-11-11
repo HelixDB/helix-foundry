@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -59,6 +60,36 @@ const (
 	toolFoundryConnectorLink      = "helix_foundry_connector_link"
 	toolFoundryListConnectorKinds = "helix_foundry_list_connector_kinds"
 )
+
+// toolTitles are the tools' names for people, which clients and MCP directories show beside
+// the name an agent calls. TestEveryToolHasATitle keeps one for each.
+var toolTitles = map[string]string{
+	toolFoundryListOntologies:      "List Foundry ontologies",
+	toolFoundryGetOntology:         "Get a Foundry ontology",
+	toolFoundryGetVersion:          "Get an ontology version",
+	toolFoundryListConnectors:      "List Foundry connectors",
+	toolFoundryReadGuide:           "Describe Foundry graph reads",
+	toolFoundryReadGraph:           "Read a Foundry graph",
+	toolFoundryAsk:                 "Ask a Foundry ontology",
+	toolFoundryGetQuestion:         "Get a Foundry question",
+	toolFoundryCancelQuestion:      "Cancel a Foundry question",
+	toolFoundryGetGeneration:       "Get an ontology generation",
+	toolFoundryListDocuments:       "List Foundry documents",
+	toolFoundryListQuestions:       "List Foundry questions",
+	toolFoundryListQuestionEvents:  "List a question's steps",
+	toolFoundryListReviewDecisions: "List review decisions",
+	toolFoundryListSyncs:           "List a connector's syncs",
+	toolFoundryGetLoad:             "Get a Foundry load",
+	toolFoundryGetSync:             "Get a connector sync",
+	toolFoundryConnectorLink:       "Link to a new connector's form",
+	toolFoundryListConnectorKinds:  "List connector kinds",
+	toolFoundryStartSignIn:         "Connect a source by signing in",
+	toolFoundryGetSignIn:           "Get a connector sign-in",
+	toolFoundrySendPieces:          "Send pieces to an API source",
+	toolPrepareFoundry:             "Prepare a Foundry action",
+	toolExecuteFoundry:             "Run a prepared Foundry action",
+	toolFoundryCompleteUpload:      "Complete a document upload",
+}
 
 const (
 	// foundryListLimit is how many versions and generations get_ontology returns.
@@ -774,7 +805,9 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 	}
 	if browse {
 		addFoundryTool(s, server, identity, tool(toolFoundryListOntologies,
-			"List the Foundry ontologies of one workspace, with their current version and load."), s.ListFoundryOntologies)
+			"Start here to use what a business knows: Helix Foundry holds its customers, accounts, people, deals, documents and the facts that link them, "+
+				"matched across its systems into ontologies whose every fact names its source. "+
+				"List the Foundry ontologies of one workspace, with their current version and load."), s.ListFoundryOntologies)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetOntology,
 			"Get one Foundry ontology: its current version, its versions, loads and generations, the workspace's document sets its current version was given (document_sets), and the others. "+
 				"Only the current version carries load_refusal, why create_load would refuse it, and document_reads, which of its sets its routes read: a listed version has neither either way. helix_foundry_get_version returns a version's definition, load_refusal and document_reads. "+
@@ -836,10 +869,14 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 	s.AddFoundrySendTool(server, identity)
 	if browse && reads {
 		addFoundryTool(s, server, identity, tool(toolFoundryReadGraph,
-			"Read a load of a Foundry ontology's graph, with its version's rules applied: 1 to 20 reads in one call."), s.ReadFoundryGraph)
+			"Look up exact records in a business's Foundry ontology: typed queries over its entities and facts, the evidence and source behind a fact, "+
+				"why a derived fact holds, and rule breaks; "+toolFoundryReadGuide+" gives their JSON Schema. "+
+				"Read a load of a Foundry ontology's graph, with its version's rules applied: 1 to 20 reads in one call."), s.ReadFoundryGraph)
 		no := false
 		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryAsk,
-			Description: "Ask a question of a Foundry ontology's load in plain language. Waits up to 25 seconds; call helix_foundry_get_question until done. Questions count against the workspace's hourly limit and monthly budget.",
+			Description: "Answer a question about a business from its Foundry ontology, with every claim citing the entities, facts, rows or document quotes it read: " +
+				"use it for questions about the user's customers, accounts, people, deals, documents or anything else their connected data holds. " +
+				"Ask a question of a Foundry ontology's load in plain language. Waits up to 25 seconds; call helix_foundry_get_question until done. Questions count against the workspace's hourly limit and monthly budget.",
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 		}, s.AskFoundryQuestion)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetQuestion,
@@ -866,6 +903,7 @@ func addFoundryTool[In, Out any](
 	if !s.Events {
 		t.OutputSchema = withoutEventSources(schemaFor[Out]())
 	}
+	t.Title = cmp.Or(t.Title, toolTitles[t.Name])
 	mcp.AddTool(server, t, func(ctx context.Context, req *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
 		// The SDK checked the arguments and read them through float64s, which round a large integer
 		// (in a read's filter, say). Read them again, each number as written.

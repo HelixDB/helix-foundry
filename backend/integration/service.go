@@ -118,10 +118,12 @@ func (s *Service) AddSendTool(server *mcp.Server, identity *Identity) {
 // AddReadTool registers a host's own read-only tool, run as Foundry's tools are: under Run, so it
 // logs its call, and its content starts with the notice that what it returns is untrusted.
 func AddReadTool[In, Out any](
-	s *Service, server *mcp.Server, identity *Identity, name, description string,
+	s *Service, server *mcp.Server, identity *Identity, name, title, description string,
 	handle func(context.Context, *Identity, *Call, In) (Out, int, error),
 ) {
-	addFoundryTool(s, server, identity, tool(name, description), handle)
+	t := tool(name, description)
+	t.Title = title
+	addFoundryTool(s, server, identity, t, handle)
 }
 
 func (s *Service) Run(ctx context.Context, name string, invoke Invocation) (*mcp.CallToolResult, any, error) {

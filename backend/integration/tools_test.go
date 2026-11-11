@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,6 +73,61 @@ func TestToolsNameAPISourcesOnlyOnAHostWithThem(t *testing.T) {
 		assert.Contains(t, hosted, word)
 	}
 	assert.Contains(t, hosted, "One of 13 operations: create_ontology, create_event_source, sync_connector,")
+}
+
+// Clients and MCP directories show a tool's title beside its name: every Foundry tool has one,
+// wherever it is offered.
+func TestEveryToolHasATitle(t *testing.T) {
+	var names []string
+	for _, s := range []*Service{
+		{FoundryURL: "http://localhost:3000"},
+		{FoundryURL: "https://foundry.example", Events: true, SignIn: true},
+	} {
+		listed, err := connect(t, s, everyTool()).ListTools(context.Background(), nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, listed.Tools)
+		names = names[:0]
+		for _, tool := range listed.Tools {
+			assert.NotEmpty(t, tool.Title, tool.Name)
+			names = append(names, tool.Name)
+		}
+	}
+	// The host with every tool lists each title's tool: none is left over.
+	titled := make([]string, 0, len(toolTitles))
+	for name := range toolTitles {
+		titled = append(titled, name)
+	}
+	assert.ElementsMatch(t, titled, names)
+}
+
+// An agent picks a tool by its description, so the ones it starts from say first what they are
+// for: the business's knowledge, to ask, look up and add to.
+func TestEntryToolsSayWhatTheyAreFor(t *testing.T) {
+	listed, err := connect(t, &Service{FoundryURL: "https://foundry.example", Events: true}, everyTool()).ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	tools := map[string]string{}
+	for _, tool := range listed.Tools {
+		tools[tool.Name] = tool.Description
+	}
+	for name, lead := range map[string]string{
+		toolFoundryListOntologies: "Start here to use what a business knows: Helix Foundry holds its customers, accounts, people, deals, documents",
+		toolFoundryAsk:            "Answer a question about a business from its Foundry ontology, with every claim citing",
+		toolFoundryReadGraph:      "Look up exact records in a business's Foundry ontology:",
+		toolFoundrySendPieces:     "Remember something for later in a business's Foundry ontology:",
+	} {
+		assert.True(t, strings.HasPrefix(tools[name], lead), name)
+	}
+	// What each did before follows unchanged.
+	assert.Contains(t, tools[toolFoundryListOntologies], "List the Foundry ontologies of one workspace, with their current version and load.")
+	assert.Contains(t, tools[toolFoundryReadGraph], "Read a load of a Foundry ontology's graph, with its version's rules applied: 1 to 20 reads in one call.")
+	assert.Contains(t, tools[toolFoundryAsk], "Ask a question of a Foundry ontology's load in plain language.")
+	assert.Contains(t, tools[toolFoundrySendPieces], "Send pieces of data, JSON objects with an id, to a Foundry API source (a connector of kind events).")
+	// A send token sees the send tool alone, so its description names no other.
+	for name := range tools {
+		if name != toolFoundrySendPieces {
+			assert.NotContains(t, tools[toolFoundrySendPieces], name)
+		}
+	}
 }
 
 // The default runner answers clients that read only content, not just those
@@ -399,7 +455,7 @@ func TestAddReadToolRunsUnderRun(t *testing.T) {
 		Hello string `json:"hello"`
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-	AddReadTool(s, server, everyTool(), "host_tool", "A host's tool.", func(_ context.Context, _ *Identity, call *Call, in input) (output, int, error) {
+	AddReadTool(s, server, everyTool(), "host_tool", "Host tool", "A host's tool.", func(_ context.Context, _ *Identity, call *Call, in input) (output, int, error) {
 		call.ResourceKind, call.ResourceID = "thing", in.Name
 		if in.Name == "bad" {
 			return output{}, 0, status.Error(codes.Internal, "private")
@@ -418,6 +474,7 @@ func TestAddReadToolRunsUnderRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, listed.Tools, 1)
 	assert.True(t, listed.Tools[0].Annotations.ReadOnlyHint)
+	assert.Equal(t, "Host tool", listed.Tools[0].Title)
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "host_tool", Arguments: map[string]any{"name": "ada"}})
 	require.NoError(t, err)
