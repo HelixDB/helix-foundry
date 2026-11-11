@@ -19,7 +19,9 @@
 -- 'carried' (saved before this load became current and not in its list until
 -- then; a resend owes it), 'written', 'refused' (applied_reason says why, in
 -- the engine's word or one of the backend's) or 'missed' (this load holds no
--- review at its key and place).
+-- review at its key and place). A 'pending' or 'carried' one whose resend job
+-- failed keeps its status with applied_reason 'job_failed': whether it was
+-- written is not known, and no resend is owed for it.
 --
 -- Rollback. A deploy request carries schema only and a rollback restores the
 -- binary, not the schema, so the table and the columns stay, and an older

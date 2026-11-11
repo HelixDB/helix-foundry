@@ -21,6 +21,19 @@ import (
 // load. One job at a time writes an ontology's database, so an approval that
 // lands while a job is live stays owed, and that job's end queues the resend
 // (queueAfterFoundryGraphJob).
+//
+// A load brought up to date this way is not always the load a rebuild
+// makes. The engine admits a released claim against what the load holds
+// when the release runs: here that is when the person approves, while a new
+// load releases every approval once all its documents have committed, in
+// document order. Claims that agree end the same either way. Claims that
+// conflict on a link holding one value can end differently, and nothing
+// flags it: an approval written here is refused as a conflict by a rebuild
+// that committed a later document stating otherwise first, and two
+// conflicting approvals are written here in the order they were approved,
+// there in document order. This is accepted, not guarded against: each load
+// says what it made of an approval (applied_status), and none promises what
+// the next will.
 
 // oweFoundryResends owes each of documentIDs a resend into loadID for reason,
 // or owes it again: a request a running job hasn't read stays owed when that
