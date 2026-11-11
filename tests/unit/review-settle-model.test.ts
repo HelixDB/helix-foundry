@@ -351,8 +351,9 @@ describe("a claim at the same place", () => {
           },
         },
       ])[0]!.settle;
+    // Named as the document writes it, not by the key it's matched on.
     expect(formed("A", "doc")).toMatchObject({
-      unsettled: { name: "halvorsen freight ltd", by: "legal_form" },
+      unsettled: [{ name: "Halvorsen Freight Ltd.", by: "legal_form" }],
     });
     // A name resolves per document and type, so a link elsewhere holds nothing.
     expect(formed("A", "other-doc")).not.toHaveProperty("unsettled");
@@ -399,31 +400,88 @@ describe("a claim at the same place", () => {
         linkedEnd(by, "A", "westmere", { section: 3, start: 41 }),
       ]);
       expect(claim!.settle).toMatchObject({
-        unsettled: { name: "westmere", by, at: { section: 3, start: 41 } },
+        unsettled: [{ name: "Westmere", by, at: { section: 3, start: 41 } }],
       });
     },
   );
+  it("keeps an own-name identifier as the document writes it", () => {
+    const [claim] = model.markDiffering([
+      claimOf("INC-2031-0042", "b"),
+      linkedEnd("own_name", "A", "inc 2031 0042"),
+    ]);
+    expect(claim!.settle).toMatchObject({
+      unsettled: [{ name: "INC-2031-0042", by: "own_name" }],
+    });
+  });
+  it("names a link it reads apart from the page's reviews: the other end's, on an entity's page", () => {
+    const [claim, ...rest] = model.markDiffering(
+      [claimOf("Halvorsen Freight Ltd.", "Westmere")],
+      [linkedEnd("part_name", "B", "westmere", { section: 1, start: 7 })],
+    );
+    expect(rest).toEqual([]);
+    expect(claim!.settle).toMatchObject({
+      unsettled: [
+        { name: "Westmere", by: "part_name", at: { section: 1, start: 7 } },
+      ],
+    });
+  });
+  it("names an entity a claim states of itself once", () => {
+    const [claim] = model.markDiffering([
+      {
+        reason: "low_confidence",
+        ...model.settleable(
+          {
+            ...held,
+            statement: JSON.stringify({
+              subject: { type: "A", name: "Westmere" },
+              object: { type: "A", name: "Westmere" },
+              props: {},
+            }),
+          },
+          [],
+        ),
+      },
+      linkedEnd("part_name", "A", "westmere"),
+    ]);
+    expect(
+      (claim!.settle as { unsettled: model.Unsettled[] }).unsettled,
+    ).toHaveLength(1);
+  });
   it("names no place a page didn't read", () => {
     const [claim] = model.markDiffering([
       claimOf("Westmere", "b"),
       linkedEnd("part_name", "A", "westmere"),
     ]);
     expect(claim!.settle).toMatchObject({
-      unsettled: { name: "westmere", by: "part_name" },
+      unsettled: [{ name: "Westmere", by: "part_name" }],
     });
     expect(
-      (claim!.settle as { unsettled: model.Unsettled }).unsettled,
+      (claim!.settle as { unsettled: model.Unsettled[] }).unsettled[0],
     ).not.toHaveProperty("at");
   });
-  it("names the end the engine refuses first: part of a name before a legal form", () => {
+  it("lists both ends in the order the engine refuses them: part of a name before a legal form", () => {
     const [claim] = model.markDiffering([
       claimOf("Halvorsen Freight Ltd.", "Westmere"),
       linkedEnd("legal_form", "A", "halvorsen freight ltd"),
       linkedEnd("part_name", "B", "westmere"),
     ]);
     expect(claim!.settle).toMatchObject({
-      unsettled: { name: "westmere", by: "part_name" },
+      unsettled: [
+        { name: "Westmere", by: "part_name" },
+        { name: "Halvorsen Freight Ltd.", by: "legal_form" },
+      ],
     });
+    // Of two such links, subject before object.
+    const [two] = model.markDiffering([
+      claimOf("Tarnwick", "Westmere"),
+      linkedEnd("part_name", "B", "westmere"),
+      linkedEnd("own_name", "A", "tarnwick"),
+    ]);
+    expect(
+      (two!.settle as { unsettled: model.Unsettled[] }).unsettled.map(
+        (u) => u.name,
+      ),
+    ).toEqual(["Tarnwick", "Westmere"]);
   });
   it("leaves a name the model matched, or no one linked, alone", () => {
     for (const reason of ["adjudicated", "unresolved", "ambiguous"]) {
@@ -456,11 +514,18 @@ describe("a link on less than a name", () => {
   it("holds an approval whatever its link holds, but a legal form only a one-valued one", () => {
     const end = (by: model.WeakLink) => ({ name: "n", by });
     for (const single of [true, false]) {
-      expect(model.holdsRelease(end("part_name"), single)).toBe(true);
-      expect(model.holdsRelease(end("own_name"), single)).toBe(true);
-      expect(model.holdsRelease(end("legal_form"), single)).toBe(single);
-      expect(model.holdsRelease(undefined, single)).toBe(false);
+      expect(model.holdingEnds([end("part_name")], single)).toHaveLength(1);
+      expect(model.holdingEnds([end("own_name")], single)).toHaveLength(1);
+      expect(model.holdingEnds([end("legal_form")], single)).toHaveLength(
+        single ? 1 : 0,
+      );
+      expect(model.holdingEnds(undefined, single)).toEqual([]);
+      expect(model.holdingEnds([], single)).toEqual([]);
     }
+    // Both ends, in order, where both hold.
+    const both = [end("part_name"), end("legal_form")];
+    expect(model.holdingEnds(both, true)).toEqual(both);
+    expect(model.holdingEnds(both, false)).toEqual([end("part_name")]);
   });
 });
 
@@ -798,24 +863,66 @@ describe("why a load kept an approved claim held", () => {
     expect(said("not_stated")).toContain("no longer states it");
     expect(said("too_large")).toContain("more held claims");
   });
+  const end = (name: string, by: model.WeakLink) => ({ name, by });
   it("names the name a legal form linked, when the card knows it", () => {
-    expect(model.refusalText("legal_form", "globex corporation")).toBe(
-      "“globex corporation” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.",
+    expect(
+      model.refusalText("legal_form", [
+        end("Globex Corporation", "legal_form"),
+      ]),
+    ).toBe(
+      "“Globex Corporation” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.",
     );
     expect(model.refusalText("legal_form")).toMatch(/^A name in it is linked/);
   });
   it("says a name linked by part of a name, or by an own-name identifier, is settled first", () => {
-    expect(model.refusalText("part_name", "westmere")).toBe(
-      "“westmere” is linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
+    expect(
+      model.refusalText("part_name", [end("Westmere", "part_name")]),
+    ).toBe(
+      "“Westmere” is linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
     );
-    expect(model.refusalText("own_name", "inc-2031-0042")).toBe(
-      "“inc-2031-0042” is linked only by an identifier the text uses as its name, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
+    expect(
+      model.refusalText("own_name", [end("INC-2031-0042", "own_name")]),
+    ).toBe(
+      "“INC-2031-0042” is linked only by a code the document calls it by, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
     );
     for (const reason of ["part_name", "own_name"]) {
       expect(model.refusalText(reason)).toMatch(/^A name in it is linked only/);
       // Unlike a legal form's, it holds whatever the link holds.
       expect(model.refusalText(reason)).not.toContain("holds one value");
     }
+  });
+  it("names only the ends linked the way the engine refused, both where both are", () => {
+    const halvorsen = end("Halvorsen Freight Ltd.", "legal_form"),
+      westmere = end("Westmere", "part_name");
+    // The engine refused for the end the card didn't mark: no name, no
+    // wrong one.
+    expect(model.refusalText("part_name", [halvorsen])).toMatch(
+      /^A name in it is linked only by part of a row’s name/,
+    );
+    expect(model.refusalText("part_name", [halvorsen, westmere])).toMatch(
+      /^“Westmere” is linked only by part/,
+    );
+    expect(
+      model.refusalText("part_name", [
+        westmere,
+        end("Tarnwick", "part_name"),
+      ]),
+    ).toBe(
+      "“Westmere” and “Tarnwick” are each linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle those names, and the next load writes this.",
+    );
+  });
+  it("says where to settle a name a load before such links left unmatched", () => {
+    for (const reason of ["part_name", "own_name"]) {
+      expect(model.refusalText(reason)).toContain(
+        "A load made before such links lists that name as not in your data, or as one that could mean more than one entity: settle it there.",
+      );
+      expect(
+        model.refusalText(reason, [end("Westmere", reason as model.WeakLink)]),
+      ).not.toContain("made before such links");
+    }
+    expect(model.refusalText("legal_form")).not.toContain(
+      "made before such links",
+    );
   });
   it("says what the backend found when the engine was never asked", () => {
     expect(model.refusalText("not_replayed")).toContain(

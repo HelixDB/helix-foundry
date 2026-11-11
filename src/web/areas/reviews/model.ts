@@ -111,7 +111,11 @@ const RELEASE_REASONS: ReadonlySet<ReviewReason> = new Set<ReviewReason>([
  * decision confirms or overturns.
  */
 export type WeakLink = "legal_form" | "part_name" | "own_name";
-const WEAK_LINKS: readonly WeakLink[] = ["legal_form", "part_name", "own_name"];
+export const WEAK_LINKS: readonly WeakLink[] = [
+  "legal_form",
+  "part_name",
+  "own_name",
+];
 
 /**
  * Whether `reason` (a review's, or a mention's `resolved_by`) is a link made
@@ -148,8 +152,9 @@ const RESOLVE_REASONS: ReadonlySet<ReviewReason> = new Set<ReviewReason>([
 
 /**
  * An end of a held claim whose name the load linked on less than a name:
- * the name as the review keeps it, how it was linked, and where that link's
- * review is in the document's text (`at`, when the page read its place).
+ * the name as the document writes it (the claim's statement), how it was
+ * linked, and where that link's review is in the document's text (`at`,
+ * when the page read its place).
  */
 export type Unsettled = {
   name: string;
@@ -158,18 +163,22 @@ export type Unsettled = {
 };
 
 /**
- * Whether the engine refuses an approval at such an end until a person
- * settles the name: always for a link by part of a name or by an own-name
- * identifier, and for a link by legal form only where the claim's link holds
- * one value (`single`).
+ * The ends of a held claim (`unsettled`, in the order the engine refuses
+ * them) for which the engine refuses an approval until a person settles the
+ * name: always one linked by part of a name or by an own-name identifier,
+ * and one linked by legal form only where the claim's link holds one value
+ * (`single`). None: an approval can be written at once.
  *
  * @example
- * holdsRelease({ name: "westmere", by: "part_name" }, false); // true
- * holdsRelease({ name: "globex ltd", by: "legal_form" }, false); // false
- * holdsRelease(undefined, true); // false
+ * holdingEnds([{ name: "Westmere", by: "part_name" }], false).length; // 1
+ * holdingEnds([{ name: "Globex Ltd", by: "legal_form" }], false).length; // 0
+ * holdingEnds(undefined, true).length; // 0
  */
-export const holdsRelease = (u: Unsettled | undefined, single: boolean) =>
-  !!u && (u.by !== "legal_form" || single);
+export const holdingEnds = (
+  unsettled: readonly Unsettled[] | undefined,
+  single: boolean,
+): Unsettled[] =>
+  (unsettled ?? []).filter((u) => u.by !== "legal_form" || single);
 
 /**
  * An entity a resolve review suggests: its identity as the graph stores it
@@ -205,9 +214,10 @@ export type Statement = {
  *   `stored` it as the review keeps it, which its hash reads. `named` is
  *   whether the review names both its ends: if not, an end isn't in the graph
  *   yet. `differs` is whether another review at its place states something
- *   else: no approval says which, so the engine refuses both. `unsettled` is
- *   an end whose name the load linked on less than a name, which a person
- *   settles before the claim is written (holdsRelease);
+ *   else: no approval says which, so the engine refuses both. `unsettled` are
+ *   the ends whose names the load linked on less than a name, in the order
+ *   the engine refuses them, which a person settles before the claim is
+ *   written where they hold it (holdingEnds);
  * - `stale`: a reason a decision settles, on a review written without the
  *   identity the backend reads (a load from before decisions) or whose
  *   entity this read doesn't find. A new load writes it again.
@@ -243,7 +253,8 @@ export type Settle =
       stored: string;
       named: boolean;
       differs?: boolean;
-      unsettled?: Unsettled;
+      // Never empty: a claim with no such end has none.
+      unsettled?: Unsettled[];
     }
   | { kind: "stale" };
 
@@ -443,23 +454,29 @@ export async function statementHash(
     .join("");
 }
 
+/** A review as markDiffering reads it: what settles it, its reason and its place. */
+type Placed = Settleable & { reason?: string; section?: number; start?: number };
+
 /**
  * Marks the held claims of `reviews` whose approval the engine would refuse or
  * hold: those that share a place and a key with a review of any reason that
  * states something else, as no approval says which (`differs`), and those
  * naming an entity by a name the load linked on less than a name in that
- * document (`unsettled`). Where both ends are such names, the one the engine
- * refuses first is named: a link by part of a name or by an own-name
- * identifier, before one by legal form.
+ * document (`unsettled`), found among `reviews` and `names` (the reviews of
+ * such links a page read apart: an entity's page lists only the reviews that
+ * concern its entity, and such a review concerns only the row it linked).
+ * Ends go in the order the engine refuses them: a link by part of a name or
+ * by an own-name identifier before one by legal form, subject before object.
  *
  * @example
  * markDiffering([one, sameKeyAndPlaceOtherStatement]); // both settle with `differs: true`
- * markDiffering([heldClaimOfWestmere, partNameReviewOfWestmere])[0].settle.unsettled;
- * // { name: "westmere", by: "part_name", at: { section: 0, start: 12 } }
+ * markDiffering([heldClaimOfWestmere], [partNameReviewOfWestmere])[0].settle.unsettled;
+ * // [{ name: "Westmere", by: "part_name", at: { section: 0, start: 12 } }]
  */
-export function markDiffering<
-  T extends Settleable & { reason?: string; section?: number; start?: number },
->(reviews: T[]): T[] {
+export function markDiffering<T extends Placed>(
+  reviews: T[],
+  names: readonly Placed[] = [],
+): T[] {
   const stated = new Map<string, Set<string>>();
   for (const { claim } of reviews) {
     if (!claim) continue;
@@ -470,7 +487,7 @@ export function markDiffering<
   const end = (docId: string, type: string, name: string) =>
     JSON.stringify([docId, type, name]);
   const linked = new Map(
-    reviews.flatMap((r) =>
+    [...reviews, ...names].flatMap((r) =>
       isWeakLink(r.reason) && r.settle?.kind === "resolve"
         ? [
             [
@@ -489,22 +506,27 @@ export function markDiffering<
   return reviews.map((r) => {
     const s = r.settle;
     if (s?.kind !== "release") return r;
-    const differs = (stated.get(r.claim?.place ?? "")?.size ?? 0) > 1,
-      ends = [s.statement.subject, s.statement.object].flatMap(
-        ({ type, name }): Unsettled[] => {
-          const norm = normalizeName(name),
-            link = linked.get(end(s.docId, type, norm));
-          return link ? [{ name: norm, ...link }] : [];
-        },
-      ),
-      unsettled = ends.find((u) => u.by !== "legal_form") ?? ends[0];
-    return differs || unsettled
+    const differs = (stated.get(r.claim?.place ?? "")?.size ?? 0) > 1;
+    // Each name once: a claim of an entity with itself names it twice.
+    const unsettled = [
+      ...new Map(
+        [s.statement.subject, s.statement.object].flatMap(({ type, name }) => {
+          const key = end(s.docId, type, normalizeName(name)),
+            link = linked.get(key);
+          return link ? [[key, { name, ...link }] as const] : [];
+        }),
+      ).values(),
+    ].sort(
+      // Stable: subject before object within each.
+      (a, b) => Number(a.by === "legal_form") - Number(b.by === "legal_form"),
+    );
+    return differs || unsettled.length
       ? {
           ...r,
           settle: {
             ...s,
             ...(differs ? { differs } : {}),
-            ...(unsettled ? { unsettled } : {}),
+            ...(unsettled.length ? { unsettled } : {}),
           },
         }
       : r;
@@ -613,10 +635,10 @@ export function unrejected<R extends Settleable>(
  * it (not a rejection, nor an approval of what it said before: that card
  * asks to be read again),
  * not read two ways (`differs`), and not naming a name the load linked on
- * less than a name where the engine holds the claim for it (holdsRelease;
- * `single` is whether a link holds one value), which stays held until that
- * name is settled. A stale review settles by no release, so it's never one
- * of them.
+ * less than a name where the engine holds the claim for it (holdingEnds;
+ * `single` is whether a link holds one value): the engine would refuse it
+ * until that name is settled, and only a later load can write it. A stale
+ * review settles by no release, so it's never one of them.
  *
  * @example
  * approvable([held, readTwoWays, alreadyApproved], decisions, () => false); // [held.settle]
@@ -629,7 +651,7 @@ export function approvable(
   return reviews.flatMap(({ settle: s }) =>
     s?.kind === "release" &&
     !s.differs &&
-    !holdsRelease(s.unsettled, single(s.link)) &&
+    !holdingEnds(s.unsettled, single(s.link)).length &&
     !decisions.some((d) => ofClaim(d, s))
       ? [s]
       : [],
@@ -849,31 +871,47 @@ export function waiting<D extends Pick<FoundryReviewDecision, "applied">>(
 export const WEAK_LINK_TEXT: Record<WeakLink, string> = {
   legal_form: "linked only by its legal form",
   part_name: "linked only by part of a row’s name",
-  own_name: "linked only by an identifier the text uses as its name",
+  own_name: "linked only by a code the document calls it by",
 };
 
 /**
  * Why an approved claim stays held, for its card, from the reason the load's
  * job gave a refusal (FoundryDecisionApplied.reason): what a person can do
- * about it where there is something. `name` is the name the load linked on
- * less than a name, if the card knows it. A reason this site doesn't know
- * reads as it came.
+ * about it where there is something. `ends` are the claim's names the load
+ * linked on less than a name, as far as the card knows them: the refusal
+ * names those linked the way it says, as the engine doesn't say which end
+ * it refused for, and no name where none was. A reason this site doesn't
+ * know reads as it came.
  *
  * @example
  * refusalText("unresolved"); // "A name in it isn’t matched to one record in your data. …"
- * refusalText("part_name", "westmere"); // "“westmere” is linked only by part of a row’s name. …"
+ * refusalText("part_name", [{ name: "Westmere", by: "part_name" }]); // "“Westmere” is linked only by part of a row’s name, …"
+ * refusalText("part_name", [{ name: "Globex Ltd", by: "legal_form" }]); // "A name in it is linked only by part of a row’s name, …"
  * refusalText("a_new_reason"); // "The load kept it held (a_new_reason)."
  */
-export function refusalText(reason: string | undefined, name?: string) {
-  const named = name ? `“${name}”` : "A name in it";
+export function refusalText(
+  reason: string | undefined,
+  ends: readonly Unsettled[] = [],
+) {
+  const names = ends.filter((u) => u.by === reason).map((u) => `“${u.name}”`);
+  const named = names.length
+      ? `${names.join(" and ")} ${names.length > 1 ? "are each" : "is"}`
+      : "A name in it is",
+    settle = `Settle ${names.length > 1 ? "those names" : "that name"}, and the next load writes this.`;
   switch (reason) {
     case "unresolved":
       return "A name in it isn’t matched to one record in your data. Settle that name and load again; if it’s still held then, approve it there.";
     case "legal_form":
-      return `${named} is ${WEAK_LINK_TEXT.legal_form}, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`;
+      return `${named} ${WEAK_LINK_TEXT.legal_form}, which doesn’t write a link that holds one value. ${settle}`;
     case "part_name":
     case "own_name":
-      return `${named} is ${WEAK_LINK_TEXT[reason]}, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.`;
+      // A load an engine before these links made lists such a name as one
+      // it couldn't match, and has no review of the link (contract 4.13.0).
+      return `${named} ${WEAK_LINK_TEXT[reason]}, and an approval doesn’t stand on such a link. ${settle}${
+        names.length
+          ? ""
+          : " A load made before such links lists that name as not in your data, or as one that could mean more than one entity: settle it there."
+      }`;
     case "changed":
       return "It reads differently now from what was approved. Read it again and approve what it says.";
     case "differs":
