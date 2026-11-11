@@ -66,7 +66,8 @@ import {
   useLoadSelection,
 } from "../ontology/load-selection";
 import { POLL_MS, ontologyQueries } from "../ontology/queries";
-import { releaseStatus } from "../reviews/model";
+import { reviewQueries } from "../reviews/api";
+import { releaseStatus, unrejected } from "../reviews/model";
 import { ReviewGroups } from "../reviews/groups";
 import { SavedDecisions, SettleReview } from "../reviews/settle";
 import { ontologyName, useOntology } from "../ontology/scope";
@@ -626,14 +627,25 @@ export function DocumentPage({ documentId }: { documentId: string }) {
     ...graphRead,
     enabled: read && !!ontology.tenantId && ready,
   });
-  const x = read && graph.data?.stored ? graph.data : undefined;
+  const stored = read && graph.data?.stored ? graph.data : undefined;
+  // The held claims a person rejected leave the page: their cards, their
+  // marks in the text and its counts. The load still holds their reviews.
+  const decisions = useQuery(reviewQueries.list(id, o));
+  const x = useMemo(
+    () =>
+      stored && {
+        ...stored,
+        reviews: unrejected(stored.reviews, decisions.data ?? []),
+      },
+    [stored, decisions.data],
+  );
   const factsRead = readQueries.documentFacts(
     id,
     o,
     readDb,
     scope,
     documentId,
-    x,
+    stored,
     naming,
   );
   const facts = useQuery(factsRead);

@@ -679,6 +679,30 @@ function settle(
 }
 
 /**
+ * Applies a load's value decisions to the entity of `type` and `key` (its
+ * `entity_key`, or a named type's `norm_name`), as the engine does when an
+ * Extract carries them: a decision of `prop` sets its value (null removes
+ * it), and with none the prop is what its evidence gives. A value a table
+ * row set is the row's again only on the next load: the mock keeps no
+ * history of it, where the engine restores it at once. False when the load
+ * holds no such entity.
+ */
+export function decideValue(
+  g: LoadGraph,
+  type: string,
+  key: string,
+  prop: string,
+  decisions: ReviewDecision[],
+): boolean {
+  for (const n of g.nodes())
+    if (n.label === type && (n.props.entity_key ?? n.props.norm_name) === key) {
+      settle(g, n.id, prop, decisions);
+      return true;
+    }
+  return false;
+}
+
+/**
  * An entity text can name: a keyed entity of a scope type, by its `names`
  * prop or by the stored values of its identifier props.
  */

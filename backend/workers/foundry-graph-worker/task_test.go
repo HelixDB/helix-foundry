@@ -379,11 +379,19 @@ type memStore struct {
 	removed   []string
 	forgotten []string
 	// resends are the documents the job's load owes a resend
-	// (ListFoundryLoadResends), and ended the requests EndFoundryLoadResend
-	// ended, in order; endErr fails every end.
-	resends []*model.FoundryLoadResend
-	ended   []model.FoundryResendEnd
-	endErr  error
+	// (ListFoundryLoadResends), owedDecisions the request it owes its own
+	// decisions for (FoundryLoadDecisionsOwed), and ended the requests
+	// EndFoundryLoadResend ended, in order; endErr fails every end.
+	resends       []*model.FoundryLoadResend
+	owedDecisions *model.FoundryLoadResend
+	ended         []model.FoundryResendEnd
+	endErr        error
+}
+
+func (s *memStore) FoundryLoadDecisionsOwed(context.Context, string) (*model.FoundryLoadResend, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.owedDecisions, nil
 }
 
 func (s *memStore) ListFoundryLoadResends(context.Context, string) ([]*model.FoundryLoadResend, error) {
@@ -3116,6 +3124,11 @@ func TestExtractReviewDecisions(t *testing.T) {
 	stale := resolve("8", "doc-a")
 	stale.NormName, stale.EntityKey = ptr("stale variant"), ptr("s42|i7")
 	h.store.decisions = append(h.store.decisions, stale)
+	// No load's list holds a rejection; one that did, as a load an older
+	// binary made, is never sent: the engine knows no such decision.
+	rejected := approval("9", "doc-a", hashA)
+	rejected.Kind = model.FoundryReviewReject
+	h.store.decisions = append(h.store.decisions, rejected)
 	outcome := h.run(t, extractJob())
 	if outcome.Status != model.FoundryGraphJobSucceeded {
 		t.Fatalf("%+v", outcome)
@@ -3151,8 +3164,8 @@ func TestExtractReviewDecisions(t *testing.T) {
 			t.Fatalf("decision %d = %s at %s, want %s at %s", i, req.Decisions[i].DecisionID, at, want.id, want.at)
 		}
 	}
-	if strings.Contains(calls[0], `"decided_by_user_id"`) || strings.Contains(calls[0], "other-doc") {
-		t.Fatal("audit or other-document data sent")
+	if strings.Contains(calls[0], `"decided_by_user_id"`) || strings.Contains(calls[0], "other-doc") || strings.Contains(calls[0], `"reject"`) {
+		t.Fatal("audit, other-document data or a rejection sent")
 	}
 }
 

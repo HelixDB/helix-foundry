@@ -890,7 +890,7 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 		}, s.CancelFoundryQuestion)
 		addFoundryTool(s, server, identity, tool(toolFoundryListReviewDecisions,
-			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies."), s.ListFoundryReviewDecisions)
+			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release) and a chosen value (prop) also apply to the current load at once. A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review."), s.ListFoundryReviewDecisions)
 	}
 	s.AddFoundryActionTools(server, identity)
 }

@@ -25,7 +25,9 @@ import {
   currentLoadId,
   currentLoadVersionId,
   forgetRelease,
+  forgetValue,
   owePendingRelease,
+  owePendingValue,
 } from "./loads";
 import { isScope, ontologyOf } from "./ontologies";
 import { ontologyVersion } from "./ontology";
@@ -37,10 +39,15 @@ import { isRecord } from "../../src/shared/json";
 // the choice against the loaded version's ontology.toml, and saves one
 // decision per identity with its value as the engine keeps it (trimmed
 // strings, UTC datetimes); the list pages 100 at a time by id; a removed
-// decision is gone for later loads only. Making a version current drops
+// name is gone for later loads only. Making a version current drops
 // the decisions it doesn't take (pruneDecisions). An approval of a held
-// claim applies to the current load at once (./loads.ts owePendingRelease):
-// its decision says what became of it there (`applied`).
+// claim applies to the current load at once (./loads.ts owePendingRelease),
+// and so does a chosen value, which a removal takes back at once
+// (owePendingValue, forgetValue): each decision says what became of it
+// there (`applied`). The mock sets no limit on how many values are decided.
+// A rejection of a held claim is only saved: no load is told. A claim has an
+// approval or a rejection, never both: settling one removes the other, and
+// a claim the current load already wrote on an approval is not rejected.
 
 const BASE = "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}";
 const PAGE = 100;
@@ -72,13 +79,18 @@ function propValue(v: unknown): v is FoundryPropValue {
 /** The mock enforces protobuf's oneofs, including an explicit false refusal. */
 function valid(b: unknown): b is FoundryReviewChoice {
   if (!isRecord(b)) return false;
-  if ("release" in b)
-    return (
-      typeof (b.release as { statementHash?: unknown } | undefined)
-        ?.statementHash === "string" &&
-      !("resolve" in b) &&
-      !("prop" in b)
-    );
+  for (const [arm, other] of [
+    ["release", "reject"],
+    ["reject", "release"],
+  ] as const)
+    if (arm in b)
+      return (
+        typeof (b[arm] as { statementHash?: unknown } | undefined)
+          ?.statementHash === "string" &&
+        !(other in b) &&
+        !("resolve" in b) &&
+        !("prop" in b)
+      );
   if ("prop" in b) return !("resolve" in b) && propValue(b.prop);
   if (!isRecord(b.resolve)) return false;
   const r = b.resolve;
@@ -91,8 +103,8 @@ function valid(b: unknown): b is FoundryReviewChoice {
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 /** The decision for the same identity, which settling again replaces. */
 const sameIdentity = (a: ReviewDecision, b: ReviewDecision) =>
-  a.kind === "release"
-    ? b.kind === "release" &&
+  a.kind === "release" || a.kind === "reject"
+    ? b.kind === a.kind &&
       a.docId === b.docId &&
       a.claimKey === b.claimKey &&
       a.claimSection === b.claimSection &&
@@ -108,7 +120,13 @@ const sameIdentity = (a: ReviewDecision, b: ReviewDecision) =>
         a.entityKey === b.entityKey &&
         a.prop === b.prop;
 
-/** Saves `decision`, replacing the one of its identity, as settling again does. */
+/**
+ * Saves `decision`, replacing the one of its identity, as settling again
+ * does. A value is the exception, as in the backend's SettleFoundryValue:
+ * the engine keeps a decision once, by its id, so another value for a
+ * property is a new decision under a new id, and the same value chosen
+ * again is the decision that stands, with its id, its time and who made it.
+ */
 function save(
   ontology: string,
   decision: ReviewDecision,
@@ -116,13 +134,22 @@ function save(
 ): ReviewDecisionResponse {
   const own = decisions.get(ontology) || [];
   const previous = own.find((d) => sameIdentity(d, decision));
+  const value = previous?.kind === "prop" && decision.kind === "prop";
+  if (
+    value &&
+    JSON.stringify(previous.value) === JSON.stringify(decision.value)
+  )
+    return { decision: previous };
   const saved = {
     ...decision,
-    id: previous?.id || id("decision"),
+    id: (!value && previous?.id) || id("decision"),
     decidedByUserId: user,
     decidedAt: now(),
   };
-  decisions.set(ontology, [...own.filter((d) => d.id !== saved.id), saved]);
+  decisions.set(ontology, [
+    ...own.filter((d) => d !== previous && d.id !== saved.id),
+    saved,
+  ]);
   return { decision: saved };
 }
 
@@ -159,10 +186,11 @@ export const reviewRoutes: MockRoute[] = [
       // A held claim names no type: the engine reads what it states from its
       // document.
       if (["low_confidence", "unverified"].includes(text(r.reason))) {
-        if (!choice.release)
+        const read = (choice.release ?? choice.reject)?.statementHash;
+        if (read === undefined)
           return fail(
             "INVALID_ARGUMENT",
-            "this review requires a release decision",
+            "this review requires a release or a reject decision",
           );
         const docId = text(r.doc_id),
           claimKey = text(r.claim_key),
@@ -176,23 +204,41 @@ export const reviewRoutes: MockRoute[] = [
         const statementHash = createHash("sha256")
           .update(`${link}\u001f${stored}`)
           .digest("hex");
-        if (choice.release.statementHash !== statementHash)
+        if (read !== statementHash)
           return fail(
             "FAILED_PRECONDITION",
-            "this claim reads differently now; reload the review and approve what it says",
+            "this claim reads differently now; reload the review and decide on what it says",
           );
+        // The other decision of this claim gives way: an approval the load
+        // has not written leaves its list too.
+        const claim = {
+          docId,
+          claimKey,
+          claimSection: Number(r.section),
+          claimStart: Number(r.start),
+          claimEnd: Number(r.end),
+        };
+        const kind = choice.reject ? "reject" : "release";
+        const other = (decisions.get(s.o.id) || []).find(
+          (d) =>
+            (d.kind === "release" || d.kind === "reject") &&
+            d.kind !== kind &&
+            d.docId === claim.docId &&
+            d.claimKey === claim.claimKey &&
+            d.claimSection === claim.claimSection &&
+            d.claimStart === claim.claimStart &&
+            d.claimEnd === claim.claimEnd,
+        );
+        if (other) {
+          forgetRelease(s.o.id, other.id);
+          decisions.set(
+            s.o.id,
+            (decisions.get(s.o.id) || []).filter((d) => d.id !== other.id),
+          );
+        }
         const { decision: saved } = save(
           s.o.id,
-          {
-            kind: "release",
-            type: "",
-            docId,
-            claimKey,
-            claimSection: Number(r.section),
-            claimStart: Number(r.start),
-            claimEnd: Number(r.end),
-            statementHash,
-          },
+          { kind, type: "", ...claim, statementHash },
           req.principal.user.id,
         );
         if (saved.kind === "release") owePendingRelease(s.o.id, saved);
@@ -300,13 +346,16 @@ export const reviewRoutes: MockRoute[] = [
           "FAILED_PRECONDITION",
           "the current load's version no longer has this review's type or property; reload the review and try again",
         );
-      return ok(
-        save(
-          s.o.id,
-          decision,
-          req.principal.user.id,
-        ) satisfies ReviewDecisionResponse,
+      const { decision: stored } = save(
+        s.o.id,
+        decision,
+        req.principal.user.id,
       );
+      if (stored.kind === "prop") owePendingValue(s.o.id, stored);
+      const applied = appliedOf(s.o.id, stored);
+      return ok({
+        decision: applied ? { ...stored, applied } : stored,
+      } satisfies ReviewDecisionResponse);
     },
   },
   {
@@ -343,8 +392,10 @@ export const reviewRoutes: MockRoute[] = [
       const own = decisions.get(s.o.id) || [];
       if (!own.some((d) => d.id === req.params.id))
         return fail("NOT_FOUND", "review decision not found");
-      // One the current load has not written is taken back from it too.
+      // One the current load has not written is taken back from it too, and
+      // a chosen value from every load that holds it.
       forgetRelease(s.o.id, req.params.id!);
+      forgetValue(s.o.id, req.params.id!);
       decisions.set(
         s.o.id,
         own.filter((d) => d.id !== req.params.id),

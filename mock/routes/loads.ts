@@ -6,7 +6,7 @@ import {
   type AgentBinding,
 } from "../../src/web/areas/ontology/model";
 import { CREDITS_PER_PROFILE } from "../../src/web/areas/ontology/enrichment-fields";
-import { decisionsFor } from "../review-decisions";
+import { decisions as saved, decisionsFor } from "../review-decisions";
 import { FOUNDRY_NODES as N } from "../../src/shared/foundry-labels";
 import { parse } from "smol-toml";
 import type {
@@ -29,12 +29,14 @@ import type {
   ReadFoundryGraphRequest,
   ReadFoundryGraphResponse,
 } from "../../src/shared/wfe";
+import type { Value } from "../graph/store";
 import stripeRows from "../fixtures/stripe-rows.json";
 import { PEOPLE, type PersonRow } from "../fixtures/sales-graph";
 import {
   MODEL,
   VERIFIER,
   applyProfiles,
+  decideValue,
   extractDocument,
   ingestChunk,
   markLoad,
@@ -317,12 +319,26 @@ const state = {
   // id (appliedKey), and the approvals waiting to be applied.
   applied: new Map<string, DecisionApplied>(),
   resends: [] as { loadId: string; decisionId: string; due: number }[],
+  // The loads that owe the engine their value decisions again: a resend job
+  // sends them. What each property held before a value was decided in place
+  // (`was`, by load and property), and the properties whose decision a load
+  // no longer sends (`withdrawn`, by load). The id of the decision the
+  // engine keeps for each property a job sent it (`kept`, by load and
+  // property): it keeps a decision once, by its id.
+  valuesOwed: new Set<string>(),
+  was: new Map<string, { value?: Value }>(),
+  withdrawn: new Map<string, Decided[]>(),
+  kept: new Map<string, string>(),
 };
 onReset(() => {
   state.loads = [];
   state.jobs = [];
   state.applied.clear();
   state.resends = [];
+  state.valuesOwed.clear();
+  state.was.clear();
+  state.withdrawn.clear();
+  state.kept.clear();
   state.current.clear();
   state.owed.clear();
   state.purgesOwed.clear();
@@ -479,11 +495,15 @@ function applyReleases(ontologyId: string, now = Date.now()) {
 
 /**
  * What became of a decision in the ontology's current load: unset for one
- * that load's list doesn't hold, and for any decision but a release.
+ * that load's list doesn't hold, and for a resolve or a reject.
  */
 export function appliedOf(ontologyId: string, d: FoundryReviewDecision) {
   const l = loadById(currentLoadId(ontologyId) || "");
-  if (d.kind !== "release" || !l?.decisions.some((x) => x.id === d.id))
+  if (
+    d.kind === "resolve" ||
+    d.kind === "reject" ||
+    !l?.decisions.some((x) => x.id === d.id)
+  )
     return undefined;
   return state.applied.get(appliedKey(l.id, d.id)) ?? { status: "" as const };
 }
@@ -503,6 +523,157 @@ export function forgetRelease(ontologyId: string, decisionId: string) {
   l.decisions = l.decisions.filter((x) => x.id !== decisionId);
   state.applied.delete(appliedKey(l.id, decisionId));
 }
+// A value a person chose applies to the current load at once, as the
+// backend's does (store/foundry_resends.go): the decision joins the load's
+// own list as pending, and a resend job sends the load its decisions. The
+// job takes two steps; with another job live it waits for that job's end.
+// When it ends, each decided property holds its value, each property whose
+// decision was removed goes back to what it held, and the decisions that
+// waited are applied. A job that fails (`loadOutcome` "fail") leaves them
+// unconfirmed. A property review stays in the load: it was written when its
+// document was read. A decision made, changed or removed while another load
+// was current reaches a load when it becomes current by a job's end. As the
+// engine does, the job keeps a decision once, by its id: one sent again
+// under an id it holds sets nothing, whatever its value, which is why a
+// changed value is a new decision (`mock/routes/reviews.ts` `save`).
+
+type Chosen = Extract<FoundryReviewDecision, { kind: "prop" }>;
+/** A property a value decision decides. */
+type Decided = Pick<Chosen, "type" | "entityKey" | "prop">;
+const sameProperty = (a: Decided, b: Decided) =>
+  a.type === b.type && a.entityKey === b.entityKey && a.prop === b.prop;
+const propertyKey = (loadId: string, d: Decided) =>
+  [loadId, d.type, d.entityKey, d.prop].join("\u001f");
+
+/** Has a load owe its decisions, and queues the resend when nothing is in its way. */
+function oweValues(l: StoredLoad) {
+  state.valuesOwed.add(l.id);
+  if (currentLoadId(l.ontologyId) !== l.id) return;
+  // A live job's end queues it; a queued resend sends the list as it then is.
+  if (jobsOf(l.ontologyId).some(live)) return;
+  create(l.ontologyId, l, "resend", "person");
+}
+
+/**
+ * Joins a value decision just settled to the ontology's current load, in
+ * place of any the load holds for its property, to be sent by a resend job.
+ */
+export function owePendingValue(ontologyId: string, d: Chosen) {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  if (!l) return;
+  l.decisions = [
+    ...l.decisions.filter((x) => !(x.kind === "prop" && sameProperty(x, d))),
+    d,
+  ];
+  state.applied.set(appliedKey(l.id, d.id), { status: "pending" });
+  oweValues(l);
+}
+
+/**
+ * Takes a removed value decision out of every load's list, under its id or
+ * the one its property's decision had before its value changed: each owes
+ * the engine its decisions again, and the current one is sent them at once.
+ */
+export function forgetValue(ontologyId: string, decisionId: string) {
+  const removed = (saved.get(ontologyId) || []).find(
+    (x): x is Chosen => x.id === decisionId && x.kind === "prop",
+  );
+  if (!removed) return;
+  for (const l of loadsOf(ontologyId)) {
+    const d = l.decisions.find(
+      (x): x is Chosen => x.kind === "prop" && sameProperty(x, removed),
+    );
+    if (!d) continue;
+    l.decisions = l.decisions.filter((x) => x !== d);
+    state.applied.delete(appliedKey(l.id, d.id));
+    state.withdrawn.set(l.id, [...(state.withdrawn.get(l.id) || []), d]);
+    oweValues(l);
+  }
+}
+
+/**
+ * Brings the ontology's current load the value decisions saved while another
+ * load was current: each it lacks, or holds under the id its property's
+ * decision had before a person chose another value, joins its list as
+ * pending, and the load owes its decisions.
+ */
+function carryValues(ontologyId: string) {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  if (!l) return;
+  for (const d of saved.get(ontologyId) || []) {
+    if (d.kind !== "prop") continue;
+    const held = l.decisions.find(
+      (x) => x.kind === "prop" && sameProperty(x, d),
+    );
+    if (held?.id === d.id) continue;
+    l.decisions = [...l.decisions.filter((x) => x !== held), d];
+    state.applied.set(appliedKey(l.id, d.id), { status: "pending" });
+    state.valuesOwed.add(l.id);
+  }
+}
+
+/** What a resend job does when it ends: the load's decisions, sent. */
+function sendValues(l: StoredLoad, at: number) {
+  state.valuesOwed.delete(l.id);
+  const g = tenantGraph(l.tenantId).view(l.id);
+  const entity = (d: Decided) =>
+    [...g.nodes()].find(
+      (n) =>
+        n.label === d.type &&
+        (n.props.entity_key ?? n.props.norm_name) === d.entityKey,
+    );
+  // A decision the load no longer sends is withdrawn: its property holds
+  // what it held before, or what its evidence gives.
+  for (const d of state.withdrawn.get(l.id) || []) {
+    if (l.decisions.some((x) => x.kind === "prop" && sameProperty(x, d)))
+      continue;
+    const was = state.was.get(propertyKey(l.id, d)),
+      node = entity(d);
+    state.was.delete(propertyKey(l.id, d));
+    state.kept.delete(propertyKey(l.id, d));
+    if (node && was?.value !== undefined) node.props[d.prop] = was.value;
+    else decideValue(g, d.type, d.entityKey, d.prop, l.decisions);
+  }
+  state.withdrawn.delete(l.id);
+  for (const d of l.decisions) {
+    if (d.kind !== "prop") continue;
+    const waits =
+      state.applied.get(appliedKey(l.id, d.id))?.status === "pending" ||
+      state.applied.get(appliedKey(l.id, d.id))?.status === "unconfirmed";
+    if (!waits) continue;
+    const node = entity(d),
+      key = propertyKey(l.id, d);
+    // A decision under an id the engine holds is not news: nothing is set.
+    if (state.kept.get(key) !== d.id) {
+      if (node && !state.was.has(key))
+        state.was.set(
+          key,
+          d.prop in node.props ? { value: node.props[d.prop]! } : {},
+        );
+      decideValue(g, d.type, d.entityKey, d.prop, l.decisions);
+      state.kept.set(key, d.id);
+    }
+    state.applied.set(appliedKey(l.id, d.id), {
+      status: "applied",
+      at: iso(at),
+    });
+  }
+}
+
+/** A resend job that failed: what waited for it is not confirmed as sent. */
+function failValues(l: StoredLoad) {
+  state.valuesOwed.delete(l.id);
+  for (const d of l.decisions)
+    if (
+      d.kind === "prop" &&
+      state.applied.get(appliedKey(l.id, d.id))?.status === "pending"
+    )
+      state.applied.set(appliedKey(l.id, d.id), {
+        status: "unconfirmed",
+        reason: "job_failed",
+      });
+}
+
 /** The version of an ontology's current load, if it has one. */
 export const currentLoadVersionId = (ontologyId: string) =>
   loadById(currentLoadId(ontologyId) || "")?.versionId;
@@ -1363,6 +1534,12 @@ function chain(ontologyId: string, at: number) {
     create(ontologyId, current, "extract", "system", at);
     return;
   }
+  // The value decisions the current load has yet to be sent.
+  carryValues(ontologyId);
+  if (current && state.valuesOwed.has(current.id)) {
+    create(ontologyId, current, "resend", "system", at);
+    return;
+  }
   const deleting = loadsOf(ontologyId)
     .filter((l) => l.status === "deleting")
     .at(-1);
@@ -1495,6 +1672,16 @@ function advance(j: StoredJob) {
         break;
       }
       case "finishing": {
+        // A resend sends what its load holds, and reads no new document.
+        if (j.kind === "resend") {
+          const l = loadById(j.loadId);
+          if (j.plan.outcome === "fail") {
+            if (l) failValues(l);
+            return finish(j, "failed", due, "the agent stopped answering");
+          }
+          if (l) sendValues(l, due);
+          return finish(j, "succeeded", due);
+        }
         // Documents uploaded while it ran are read into the load before it
         // finishes, when that load is (or now becomes) current.
         const current =
@@ -1575,7 +1762,7 @@ function create(
     versionId: load.versionId,
     status: "queued",
     phase:
-      kind === "extract"
+      kind === "extract" || kind === "resend"
         ? "documents"
         : kind === "delete"
           ? "deleting"

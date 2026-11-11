@@ -137,10 +137,34 @@ func TestFoundryReleaseDecision(t *testing.T) {
 			t.Fatalf("%s passed", name)
 		}
 	}
-	// Only a release names a claim.
+	// A reject has a release's shape, fits every version, and is told from
+	// one by its kind alone.
+	reject := release
+	reject.Kind = FoundryReviewReject
+	if err := reject.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !reject.OfClaim() || !release.OfClaim() || !reject.Fits(nil) || !reject.Extractable(nil) {
+		t.Fatal("a reject names a claim and no type")
+	}
+	for name, change := range map[string]func(*FoundryReviewDecision){
+		"a type":    func(d *FoundryReviewDecision) { d.Type = "Customer" },
+		"no key":    func(d *FoundryReviewDecision) { d.ClaimKey = nil },
+		"no place":  func(d *FoundryReviewDecision) { d.ClaimSpan = nil },
+		"no hash":   func(d *FoundryReviewDecision) { d.StatementHash = nil },
+		"an entity": func(d *FoundryReviewDecision) { d.EntityKey = &doc },
+		"a value":   func(d *FoundryReviewDecision) { d.Value = json.RawMessage(`1`) },
+	} {
+		broken := reject
+		change(&broken)
+		if err := broken.Validate(); err == nil || !strings.Contains(err.Error(), "reject") {
+			t.Fatalf("a reject with %s: %v", name, err)
+		}
+	}
+	// Only a release or a reject names a claim.
 	name := "n"
 	resolve := FoundryReviewDecision{ID: "d", OntologyID: "o", Kind: FoundryReviewResolve, Type: "T", DocID: &doc, NormName: &name, ClaimKey: &key, DecidedByUserID: "u"}
-	if resolve.Validate() == nil {
+	if resolve.Validate() == nil || resolve.OfClaim() {
 		t.Fatal("a resolve took a claim key")
 	}
 	resolve.ClaimKey, resolve.ClaimSpan = nil, &FoundryClaimSpan{End: 1}

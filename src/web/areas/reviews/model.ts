@@ -1,4 +1,5 @@
 import type {
+  DecisionApplied,
   FoundryPropValue,
   FoundryReviewChoice,
   FoundryReviewDecision,
@@ -136,11 +137,13 @@ export type Statement = {
  * - `resolve`: link the document's name to a candidate, or say it is not in
  *   the data;
  * - `prop`: choose a value of an entity's property that documents state
- *   differently. `table` is the value stored for it, if any: only a table
- *   row's value survives a conflict, so it is the table's, and a
- *   chosen document value replaces it in every later load;
+ *   differently, which the current load is sent at once. `table` is the
+ *   value stored for it, if any: only a table row's value survives a
+ *   conflict, so it is the table's, and a chosen document value replaces it
+ *   in this load and every later one;
  * - `release`: approve one review of a claim code holds back, so the current
- *   load writes what it states as a fact, at once. `statement` is what that is, and
+ *   load writes what it states as a fact, at once, or reject it, which hides
+ *   its card and writes nothing. `statement` is what that is, and
  *   `stored` it as the review keeps it, which its hash reads. `named` is
  *   whether the review names both its ends: if not, an end isn't in the graph
  *   yet. `differs` is whether another review at its place states something
@@ -492,10 +495,44 @@ export function reviewGroups<
   return [...groups.values()].sort((a, b) => rank(a) - rank(b));
 }
 
+/** Whether a saved decision names this held claim's review: a release or a reject of it. */
+const ofClaim = (d: ReviewDecision, s: Extract<Settle, { kind: "release" }>) =>
+  (d.kind === "release" || d.kind === "reject") &&
+  d.docId === s.docId &&
+  d.claimKey === s.claimKey &&
+  d.claimSection === s.section &&
+  d.claimStart === s.start &&
+  d.claimEnd === s.end;
+
+/**
+ * `reviews` without the held claims a person rejected: each review of a held
+ * claim that a saved reject names by its document, its claim's key and its
+ * quote's place. A rejection changes no load, so the review is still in the
+ * graph: leaving it out here is what hides its card, drops it from a page's
+ * counts and keeps Approve all from it, in this load and every later one,
+ * until the decision is removed. It hides the claim however it reads now: a
+ * person said that claim at that place is wrong.
+ *
+ * @example
+ * unrejected([held, other], [{ kind: "reject", ...placeOf(held) }]); // [other]
+ */
+export function unrejected<R extends Settleable>(
+  reviews: readonly R[],
+  decisions: readonly ReviewDecision[],
+): R[] {
+  const rejects = decisions.filter((d) => d.kind === "reject");
+  if (!rejects.length) return [...reviews];
+  return reviews.filter(({ settle: s }) => {
+    if (s?.kind !== "release") return true;
+    return !rejects.some((d) => ofClaim(d, s));
+  });
+}
+
 /**
  * The held claims of `reviews` that Approve all approves: each settled by a
  * release a person could approve on its card now, with no decision saved for
- * it (not even one of what it said before: that card asks to be read again),
+ * it (not a rejection, nor an approval of what it said before: that card
+ * asks to be read again),
  * not read two ways (`differs`), and not naming a name only a legal form
  * linked on a link that holds one value (`single`), which stays held until
  * that name is settled. A stale review settles by no release, so it's never
@@ -513,7 +550,7 @@ export function approvable(
     s?.kind === "release" &&
     !s.differs &&
     !(s.formed && single(s.link)) &&
-    !decisions.some((d) => matchesReview(d, s))
+    !decisions.some((d) => ofClaim(d, s))
       ? [s]
       : [],
   );
@@ -711,8 +748,8 @@ export function approvalOf<D extends ReviewDecision>(
 }
 
 /**
- * The approvals a job has yet to apply to the current load: while there are
- * any, the page reads the decisions again.
+ * The approvals and chosen values a job has yet to apply to the current
+ * load: while there are any, the page reads the decisions again.
  *
  * @example
  * waiting([{ applied: { status: "pending" } }, { applied: { status: "written" } }]).length; // 1
@@ -768,24 +805,87 @@ export function refusalText(reason: string | undefined, formed?: string) {
 }
 
 /**
- * What a card says while an approval waits for its job. One job at a time
- * writes an ontology's database, so with another job live (`live`, the kind
- * of the ontology's active job) the approval waits for that job's end rather
- * than being written now; behind a new load it is written to whichever load
- * is current when that one ends.
+ * What a card says while an approval, or a chosen value (`kind` "prop"),
+ * waits for its job. One job at a time writes an ontology's database, so
+ * with another job live (`live`, the kind of the ontology's active job) the
+ * decision waits for that job's end rather than being applied now; behind a
+ * new load it is applied to whichever load is current when that one ends.
  *
  * @example
  * waitingText(); // "Approved. Writing it to this load…"
  * waitingText("extract"); // "Approved. Another job is running, so this waits: …"
+ * waitingText(null, "prop"); // "Decision saved. Sending it to this load…"
  */
-export function waitingText(live?: string | null) {
+export function waitingText(
+  live?: string | null,
+  kind: "release" | "prop" = "release",
+) {
+  const value = kind === "prop";
   switch (live || "resend") {
     case "resend":
-      return "Approved. Writing it to this load…";
+      return value
+        ? "Decision saved. Sending it to this load…"
+        : "Approved. Writing it to this load…";
     case "load":
-      return "Approved. A load is running, so this waits: it’s written when that ends, to the load that is current then.";
+      return value
+        ? "Decision saved. A load is running, so this waits: it’s applied when that ends, to the load that is current then."
+        : "Approved. A load is running, so this waits: it’s written when that ends, to the load that is current then.";
     default:
-      return "Approved. Another job is running, so this waits: it’s written to this load when that ends.";
+      return value
+        ? "Decision saved. Another job is running, so this waits: it’s applied to this load when that ends."
+        : "Approved. Another job is running, so this waits: it’s written to this load when that ends.";
+  }
+}
+
+/**
+ * Whether the value an entity stores for a property (`stored`) is the one a
+ * decision chose: the load holds the decision, so the stored value is no
+ * table's to keep, and its card offers another choice rather than to replace
+ * a table's value. An integer past 2^53 compares as the number it rounds to.
+ *
+ * @example
+ * holdsDecided({ integer: "36" }, 36); // true
+ * holdsDecided({ text: "GBP" }, "usd"); // false
+ */
+export function holdsDecided(
+  chosen: FoundryPropValue,
+  stored: string | number | boolean | undefined,
+): boolean {
+  if (stored === undefined || chosen.null !== undefined) return false;
+  if (chosen.text !== undefined) return chosen.text === stored;
+  if (chosen.boolean !== undefined) return chosen.boolean === stored;
+  return Number(chosen.integer ?? chosen.number) === stored;
+}
+
+/**
+ * What a property review's card says of the value saved for it (`value`, as
+ * the page shows one), from what the current load made of the decision
+ * (`applied`; unset when that load's list doesn't hold it). The load says
+ * only that it was sent the value: a review still listed was written when
+ * the documents were read, before the decision, and a document dated after
+ * the decision still wins.
+ *
+ * @example
+ * decidedText({ status: "applied" }, "36"); // "Decided: 36. This load was sent the decision, …"
+ * decidedText(undefined, "36"); // "A decision is saved (36), and this load hasn’t read it. …"
+ */
+export function decidedText(
+  applied: DecisionApplied | null | undefined,
+  value: string,
+  live?: string | null,
+) {
+  const shown = value || "no value";
+  switch (applied?.status) {
+    case "pending":
+      return waitingText(live, "prop");
+    case "applied":
+      return `Decided: ${shown}. This load was sent the decision, and holds that value unless a document dated after the decision states another. The review stays listed here: it was written before the decision.`;
+    case "unconfirmed":
+      return `Decided: ${shown}, but the job that sends it to this load failed. Choose it again to send it.`;
+    case "":
+      return "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision.";
+    default:
+      return `A decision is saved (${shown}), and this load hasn’t read it. Choose it again to apply it now.`;
   }
 }
 
@@ -845,11 +945,12 @@ export function releaseStatus(
 }
 
 /**
- * Whether a load read a resolve or prop decision. A load reads the decisions
- * saved when it starts (the backend snapshots them), and replacing one saves
- * it anew, so one saved before the load started is in it, and one saved after
+ * Whether a load read a resolve decision. A load reads the decisions saved
+ * when it starts (the backend snapshots them), and replacing one saves it
+ * anew, so one saved before the load started is in it, and one saved after
  * waits for the next load. A load whose start isn't known read none. (A
- * release says what its load made of it: FoundryReviewDecision.applied.)
+ * release or a chosen value says what its load made of it:
+ * FoundryReviewDecision.applied.)
  *
  * @example
  * loadRead({ decidedAt: "2026-10-20T10:00:00Z" }, "2026-10-20T11:00:00Z"); // true

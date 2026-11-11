@@ -612,6 +612,71 @@ describe("an approval the current load has yet to apply", () => {
     expect(model.waiting(decisions).map((d) => d.id)).toEqual(["a"]);
     expect(model.waiting([])).toEqual([]);
   });
+  it("is a chosen value the load has yet to be sent, too", () => {
+    const decisions = [
+      { id: "a", kind: "prop", applied: { status: "pending" as const } },
+      { id: "b", kind: "prop", applied: { status: "applied" as const } },
+      { id: "c", kind: "prop", applied: { status: "unconfirmed" as const } },
+    ];
+    expect(model.waiting(decisions).map((d) => d.id)).toEqual(["a"]);
+  });
+});
+
+describe("whether a stored value is the one a decision chose", () => {
+  it("compares each kind of value as it is stored", () => {
+    expect(model.holdsDecided({ integer: "36" }, 36)).toBe(true);
+    expect(model.holdsDecided({ number: 1.5 }, 1.5)).toBe(true);
+    expect(model.holdsDecided({ text: "GBP" }, "GBP")).toBe(true);
+    expect(model.holdsDecided({ boolean: false }, false)).toBe(true);
+    expect(model.holdsDecided({ text: "GBP" }, "usd")).toBe(false);
+    expect(model.holdsDecided({ integer: "36" }, "36")).toBe(false);
+    expect(model.holdsDecided({ integer: "36" }, 24)).toBe(false);
+  });
+  it("is never so for a value removed, or a property that holds none", () => {
+    expect(model.holdsDecided({ null: null }, "usd")).toBe(false);
+    expect(model.holdsDecided({ text: "GBP" }, undefined)).toBe(false);
+  });
+});
+
+describe("what a card says of a value chosen for its property", () => {
+  it("says it is on its way, and what it waits behind", () => {
+    const sending = "Decision saved. Sending it to this load…";
+    expect(model.waitingText(undefined, "prop")).toBe(sending);
+    expect(model.waitingText("resend", "prop")).toBe(sending);
+    expect(model.decidedText({ status: "pending" }, "36")).toBe(sending);
+    expect(model.decidedText({ status: "pending" }, "36", "extract")).toBe(
+      "Decision saved. Another job is running, so this waits: it’s applied to this load when that ends.",
+    );
+    expect(model.decidedText({ status: "pending" }, "36", "load")).toBe(
+      "Decision saved. A load is running, so this waits: it’s applied when that ends, to the load that is current then.",
+    );
+  });
+  it("says only what the load knows once it was sent", () => {
+    const text = model.decidedText({ status: "applied" }, "36");
+    expect(text).toBe(
+      "Decided: 36. This load was sent the decision, and holds that value unless a document dated after the decision states another. The review stays listed here: it was written before the decision.",
+    );
+    // A value removed shows as none.
+    expect(model.decidedText({ status: "applied" }, "")).toMatch(
+      /^Decided: no value\./,
+    );
+  });
+  it("asks for the choice again when its job failed", () => {
+    expect(
+      model.decidedText({ status: "unconfirmed", reason: "job_failed" }, "36"),
+    ).toBe(
+      "Decided: 36, but the job that sends it to this load failed. Choose it again to send it.",
+    );
+  });
+  it("tells a load that read it when it was made from one that hasn't", () => {
+    expect(model.decidedText({ status: "" }, "36")).toContain(
+      "This load read the saved decision, and the review is still open",
+    );
+    for (const unread of [undefined, null])
+      expect(model.decidedText(unread, "36")).toBe(
+        "A decision is saved (36), and this load hasn’t read it. Choose it again to apply it now.",
+      );
+  });
 });
 
 describe("why a load kept an approved claim held", () => {

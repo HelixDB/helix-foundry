@@ -394,6 +394,24 @@ func TestGranteeDeniedMethods(t *testing.T) {
 	}
 }
 
+// A rejection is a settle: a grantee, whose access to an ontology is partial,
+// never reaches it, whichever decision the request carries.
+func TestGranteeRejectsNoClaim(t *testing.T) {
+	s, _ := accessService(t)
+	conn, as := served(t, s)
+	client := foundryv1.NewFoundryServiceClient(conn)
+	for _, who := range []ports.Actor{agent, member} {
+		for _, choice := range []*foundryv1.FoundryReviewChoice{rejectChoice(testRead), releaseChoice(testRead)} {
+			_, err := client.SettleFoundryReview(as(who), &foundryv1.SettleFoundryReviewRequest{
+				WorkspaceId: "ws-1", OntologyId: "ont-1", ReviewId: "review-1", Decision: choice,
+			})
+			if status.Code(err) != codes.PermissionDenied {
+				t.Errorf("%+v settling %v: %v", who, choice, err)
+			}
+		}
+	}
+}
+
 func TestGranteeAdmission(t *testing.T) {
 	s, _ := accessService(t)
 	conn, as := served(t, s)

@@ -325,7 +325,9 @@ ON DUPLICATE KEY UPDATE usd_micros=usd_micros+VALUES(usd_micros)`, utcMonth(time
 //     failing that, a resend into the current load of the documents it owes
 //     one (queueFoundryResend), the approvals it hasn't read carried over
 //     first; a resend job that ended without succeeding ends what its load
-//     owed, so none follows it;
+//     owed, so none follows it; the value decisions and withdrawals a
+//     resend that failed earlier left unsent are owed again by any job's
+//     end after it, as nothing else would send a withdrawal;
 //     failing that, a delete of the oldest load being deleted. A deleted
 //     ontology's job only queues the next delete, and with none left the
 //     ontology lets go of its database, unless a load whose delete failed
@@ -388,6 +390,18 @@ func (s *mysqlDB) FinishFoundryGraphJob(ctx context.Context, jobID, workerID str
   attempts=GREATEST(attempts-?, 0), `+attempt+` WHERE id=?`,
 				append(append([]any{outcome.RetryAt.UTC(), string(phase), givenBack}, attemptArgs...), jobID)...)
 			return err
+		}
+		// A value decision, or one taken back, that an earlier resend failed
+		// to send the current load waits again from here, so what this job's
+		// end queues sends the load its list (carryFoundryValues). Before
+		// this job's own end is recorded: a resend that failed just now
+		// marks them afresh, and so is never followed by another.
+		if o.CurrentLoadID != nil {
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_reason=NULL
+WHERE load_id=? AND kind='prop' AND applied_status IN ('pending', 'carried', 'removed') AND applied_reason=?`,
+				*o.CurrentLoadID, model.FoundryReleaseJobFailed); err != nil {
+				return err
+			}
 		}
 		if err := tx.endFoundryLoadWork(ctx, o, job, outcome.Status, outcome.IngestDone, outcome.HeldSets); err != nil {
 			return err

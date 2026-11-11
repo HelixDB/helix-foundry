@@ -1771,14 +1771,15 @@ const phaseLabels: Record<JobPhase, string> = {
 /**
  * What a job does, in words: a load reads the tables then the documents, an
  * extract (queued by an upload or by making a load current) only the
- * documents its load hasn't read, a resend writes the claims a person
- * approved, a delete removes the load.
+ * documents its load hasn't read, a resend applies a person's decisions
+ * (the claims they approved, the values they chose), a delete removes the
+ * load.
  */
 export const kindLabel = (j: GraphJob) =>
   j.kind === "extract"
     ? "New documents"
     : j.kind === "resend"
-      ? "Approved claims"
+      ? "Decisions"
       : j.kind === "delete"
         ? "Delete"
         : "Tables and documents";

@@ -1,6 +1,7 @@
 package foundrygraphworker
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -368,6 +369,194 @@ func writesAll(t *testing.T) func(string, agentv1.Agent_ExtractServer) error {
 	}
 }
 
+// chosen is a value decision of customer's name, as a load's list holds it.
+func chosen(id, customer, name string) *model.FoundryReviewDecision {
+	value, _ := json.Marshal(name)
+	prop := "name"
+	return &model.FoundryReviewDecision{
+		ID: id, OntologyID: "ont-1", Kind: model.FoundryReviewProp, Type: "Customer", EntityKey: &customer, Prop: &prop,
+		Value: value, DecidedByUserID: "user", DecidedAt: settledAt,
+	}
+}
+
+// namedCustomers gives the harness's version a Customer with a name, which
+// the value decisions of these tests decide.
+func namedCustomers(t *testing.T, h *harness) {
+	t.Helper()
+	var def ontologyagent.Definition
+	if err := json.Unmarshal(h.store.version.Definition, &def); err != nil {
+		t.Fatal(err)
+	}
+	def.OntologyTOML = "[types.Customer]\nprops = { name = \"string\" }"
+	h.store.version.Definition, _ = json.Marshal(def)
+}
+
+// A person chose a value, or took a choice back: the load owes the engine
+// its decisions, and no document. Every Extract carries the load's value
+// decisions, so the job's Extract, of its documents or of none, answers it.
+func TestResendCarriesTheLoadsDecisions(t *testing.T) {
+	done := func(_ string, stream agentv1.Agent_ExtractServer) error {
+		return extractEvents(stream, []string{`{"event":"extract_finished"}`}, `{"status":"done","totals":`+totals+`}`)
+	}
+	owedDecisions := func(requests int) *model.FoundryLoadResend {
+		return &model.FoundryLoadResend{LoadID: "load-0", Reason: model.FoundryResendDecisions, Requests: requests}
+	}
+
+	// One Extract of no documents, with every value decision of the load and
+	// nothing to spend: the engine sets what it is sent.
+	t.Run("a value alone goes in an Extract of no documents", func(t *testing.T) {
+		h := newHarness(t)
+		namedCustomers(t, h)
+		owes(h)
+		h.store.owedDecisions = owedDecisions(3)
+		h.store.decisions = []*model.FoundryReviewDecision{chosen("1", "customer 1", "Acme"), approval("2", "doc-a", hashA), chosen("3", "customer 2", "Globex")}
+		h.agent.extract = done
+		outcome := h.run(t, resendJob())
+		if outcome.Status != model.FoundryGraphJobSucceeded || outcome.Error != "" {
+			t.Fatalf("%+v", outcome)
+		}
+		_, calls := h.agent.calls()
+		if len(calls) != 1 {
+			t.Fatalf("%d extracts, want one", len(calls))
+		}
+		req := decodeExtract(t, calls[0])
+		if req.Load != "load-0" || req.Limits.MaxUSD != 0 || len(req.Remove) != 0 || req.RequestID != "job-4" {
+			t.Fatalf("sent load %s, max_usd %v, remove %v as %s", req.Load, req.Limits.MaxUSD, req.Remove, req.RequestID)
+		}
+		if !strings.Contains(calls[0], `"documents":[]`) {
+			t.Fatalf("the request lists no documents as JSON []: %s", calls[0])
+		}
+		// The value decisions, and no document's approval.
+		if len(req.Decisions) != 2 || req.Decisions[0].DecisionID != "1" || req.Decisions[1].DecisionID != "3" ||
+			req.Decisions[0].Kind != model.FoundryReviewProp || string(req.Decisions[1].Value) != `"Globex"` {
+			t.Fatalf("decisions %+v", req.Decisions)
+		}
+		want := []model.FoundryResendEnd{{Reason: model.FoundryResendDecisions, Requests: 3}}
+		if !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+		if last := h.store.lastUpdate(); last.Phase != model.FoundryGraphJobFinishing || last.Progress.DocumentsTotal != 0 {
+			t.Fatalf("last update %+v", last)
+		}
+	})
+
+	// A choice taken back leaves the list: an Extract with no decisions is
+	// what tells the engine to withdraw it.
+	t.Run("the last value removed sends an Extract with no decisions", func(t *testing.T) {
+		h := newHarness(t)
+		namedCustomers(t, h)
+		owes(h)
+		h.store.owedDecisions = owedDecisions(2)
+		h.agent.extract = done
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		_, calls := h.agent.calls()
+		if len(calls) != 1 || len(decodeExtract(t, calls[0]).Decisions) != 0 {
+			t.Fatalf("calls %v", calls)
+		}
+		if want := []model.FoundryResendEnd{{Reason: model.FoundryResendDecisions, Requests: 2}}; !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+	})
+
+	// With a document owed too, its Extract carries the list: one Extract
+	// answers both, and the load's request ends after the document's.
+	t.Run("a document's Extract carries them: no second Extract", func(t *testing.T) {
+		h := newHarness(t)
+		namedCustomers(t, h)
+		owes(h, "doc-a")
+		h.store.owedDecisions = owedDecisions(1)
+		h.store.decisions = []*model.FoundryReviewDecision{approval("1", "doc-a", hashA), chosen("2", "customer 1", "Acme")}
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{
+				extracted[0], resent("doc-a", 1, `[{"decision_id":"1","outcome":{"kind":"written"}}]`), `{"event":"extract_finished"}`,
+			}, `{"status":"done","totals":`+totals+`}`)
+		}
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		_, calls := h.agent.calls()
+		if len(calls) != 1 {
+			t.Fatalf("%d extracts, want one", len(calls))
+		}
+		if req := decodeExtract(t, calls[0]); len(req.Documents) != 1 || len(req.Decisions) != 2 {
+			t.Fatalf("sent %+v with %+v", req.Documents, req.Decisions)
+		}
+		want := []model.FoundryResendEnd{
+			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1},
+			{Reason: model.FoundryResendDecisions, Requests: 1},
+		}
+		if !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+	})
+
+	// A document the load can't send is sent in no Extract, so the list
+	// still needs one of its own.
+	t.Run("with no document to send, the list goes alone", func(t *testing.T) {
+		h := newHarness(t)
+		namedCustomers(t, h)
+		owes(h, "doc-a")
+		h.store.resends[0].Document = nil
+		h.store.owedDecisions = owedDecisions(1)
+		h.store.decisions = []*model.FoundryReviewDecision{chosen("2", "customer 1", "Acme")}
+		h.agent.extract = done
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		if _, calls := h.agent.calls(); len(calls) != 1 || len(decodeExtract(t, calls[0]).Documents) != 0 {
+			t.Fatalf("calls %v", calls)
+		}
+		want := []model.FoundryResendEnd{
+			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseDocumentGone},
+			{Reason: model.FoundryResendDecisions, Requests: 1},
+		}
+		if !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+	})
+
+	// A run that doesn't reach its end says nothing of the decisions: the
+	// request stays owed, and the retry sends the list again.
+	t.Run("a run that stops leaves the request owed, and is retried", func(t *testing.T) {
+		h := newHarness(t)
+		namedCustomers(t, h)
+		owes(h)
+		h.store.owedDecisions = owedDecisions(1)
+		h.store.decisions = []*model.FoundryReviewDecision{chosen("1", "customer 1", "Acme")}
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, nil, `{"status":"store_failed","error":"the database refused a write"}`)
+		}
+		outcome := h.run(t, resendJob())
+		if outcome.RetryAt == nil {
+			t.Fatalf("%+v", outcome)
+		}
+		if len(h.store.ended) != 0 {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+	})
+
+	// More value decisions than one Extract takes can't be sent at all, with
+	// or without documents: the job fails for good and says so.
+	t.Run("more decisions than an Extract takes fail the job", func(t *testing.T) {
+		h := newHarness(t)
+		namedCustomers(t, h)
+		owes(h)
+		h.store.owedDecisions = owedDecisions(1)
+		for i := 0; i <= maxExtractDecisions; i++ {
+			h.store.decisions = append(h.store.decisions, chosen(fmt.Sprintf("%026d", i+1), fmt.Sprint("customer ", i), "Acme"))
+		}
+		outcome := h.run(t, resendJob())
+		if outcome.Status != model.FoundryGraphJobFailed || outcome.RetryAt != nil || !strings.Contains(outcome.Error, "review decisions") {
+			t.Fatalf("%+v", outcome)
+		}
+		if _, calls := h.agent.calls(); len(calls) != 0 || len(h.store.ended) != 0 {
+			t.Fatalf("%d extracts, ended %+v", len(calls), h.store.ended)
+		}
+	})
+}
+
 // A mass of approvals, as the first carry after a deploy or a large Approve
 // all brings, is past what one Extract takes in decisions. The resend sends
 // its documents in as few Extracts as take them, in the load's order, rather
@@ -500,6 +689,117 @@ func TestResendSplitsWhatOneExtractCannotTake(t *testing.T) {
 			if got := h.store.extractions[doc]; got == nil || len(got.Releases) != 10 {
 				t.Fatalf("%s recorded %+v", doc, got)
 			}
+		}
+	})
+}
+
+// The load's own request beside the documents' handling: each Extract a
+// resend sends carries the load's value decisions, so the halves of a split
+// answer the request with no Extract of their own; a document refused as too
+// large was in no Extract, so the list still goes in one of no documents;
+// and when that one is too large too, the value decisions alone are past
+// what an Extract takes, and the job fails rather than read a document of an
+// empty batch.
+func TestResendSendsTheListBesideWhatItSplitsOrRefuses(t *testing.T) {
+	owedDecisions := func(requests int) *model.FoundryLoadResend {
+		return &model.FoundryLoadResend{LoadID: "load-0", Reason: model.FoundryResendDecisions, Requests: requests}
+	}
+	values := func(calls []string, i int) []string {
+		var ids []string
+		for _, d := range decodeExtract(t, calls[i]).Decisions {
+			if d.Kind == model.FoundryReviewProp {
+				ids = append(ids, d.DecisionID)
+			}
+		}
+		return ids
+	}
+
+	t.Run("each half of a split carries the list: no Extract of no documents", func(t *testing.T) {
+		h := newHarness(t)
+		namedCustomers(t, h)
+		owes(h, "doc-a", "doc-b", "doc-c")
+		massApproved(h, 3400, "doc-a", "doc-b", "doc-c")
+		h.store.decisions = append(h.store.decisions, chosen("zz-value", "customer 1", "Acme"))
+		h.store.owedDecisions = owedDecisions(4)
+		h.agent.extract = writesAll(t)
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded || outcome.Error != "" {
+			t.Fatalf("%+v", outcome)
+		}
+		_, calls := h.agent.calls()
+		if len(calls) != 2 {
+			t.Fatalf("%d extracts, want two", len(calls))
+		}
+		for i := range calls {
+			if got := values(calls, i); !reflect.DeepEqual(got, []string{"zz-value"}) {
+				t.Fatalf("extract %d carried the values %v", i, got)
+			}
+		}
+		want := []model.FoundryResendEnd{
+			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1},
+			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2},
+			{DocumentID: "doc-c", Reason: model.FoundryResendApproval, Requests: 3},
+			{Reason: model.FoundryResendDecisions, Requests: 4},
+		}
+		if !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+	})
+
+	t.Run("a document refused as too large leaves the list to an Extract of no documents", func(t *testing.T) {
+		h := newHarness(t)
+		namedCustomers(t, h)
+		owes(h, "doc-a")
+		massApproved(h, maxExtractDecisions+1, "doc-a")
+		h.store.decisions = append(h.store.decisions, chosen("zz-value", "customer 1", "Acme"))
+		h.store.owedDecisions = owedDecisions(2)
+		h.agent.extract = writesAll(t)
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded || outcome.Error != "" {
+			t.Fatalf("%+v", outcome)
+		}
+		_, calls := h.agent.calls()
+		if len(calls) != 1 {
+			t.Fatalf("%d extracts, want one", len(calls))
+		}
+		if req := decodeExtract(t, calls[0]); len(req.Documents) != 0 || len(req.Decisions) != 1 || req.RequestID != "job-4" {
+			t.Fatalf("sent %+v with %d decisions as %s", req.Documents, len(req.Decisions), req.RequestID)
+		}
+		if !strings.Contains(calls[0], `"documents":[]`) {
+			t.Fatalf("the request lists no documents as JSON []: %s", calls[0])
+		}
+		want := []model.FoundryResendEnd{
+			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseTooLarge},
+			{Reason: model.FoundryResendDecisions, Requests: 2},
+		}
+		if !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+	})
+
+	t.Run("a list too large by itself fails the job after its documents are refused", func(t *testing.T) {
+		h := newHarness(t)
+		namedCustomers(t, h)
+		owes(h, "doc-a", "doc-b")
+		h.store.decisions = []*model.FoundryReviewDecision{approval("00-approval-a", "doc-a", hashA), approval("00-approval-b", "doc-b", hashA)}
+		for i := 0; i <= maxExtractDecisions; i++ {
+			h.store.decisions = append(h.store.decisions, chosen(fmt.Sprintf("%026d", i+1), fmt.Sprint("customer ", i), "Acme"))
+		}
+		h.store.owedDecisions = owedDecisions(3)
+		h.agent.extract = writesAll(t)
+		outcome := h.run(t, resendJob())
+		if outcome.Status != model.FoundryGraphJobFailed || outcome.RetryAt != nil || !strings.Contains(outcome.Error, "review decisions") {
+			t.Fatalf("%+v", outcome)
+		}
+		if _, calls := h.agent.calls(); len(calls) != 0 {
+			t.Fatalf("%d extracts, want none", len(calls))
+		}
+		// Each document was more than an Extract takes with the list beside
+		// it; the list's own request stays owed, for the failed job's end.
+		want := []model.FoundryResendEnd{
+			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseTooLarge},
+			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2, Refused: model.FoundryReleaseTooLarge},
+		}
+		if !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
 		}
 	})
 }

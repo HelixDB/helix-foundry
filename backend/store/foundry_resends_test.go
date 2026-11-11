@@ -855,13 +855,13 @@ func TestFoundryReleaseTakenBack(t *testing.T) {
 	f.end(t, job, "done", model.FoundryGraphJobSucceeded)
 	require.True(t, f.approve(t, "2", waits))
 
-	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.ID, waits.ID))
-	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.ID, done.ID))
+	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, waits.ID, nil))
+	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, done.ID, nil))
 	list, err := f.db.ListFoundryLoadDecisions(ctx, f.load, "", nil, 100)
 	require.NoError(t, err)
 	require.Len(t, list, 1, "the one it wrote stays")
 	assert.Equal(t, done.ID, list[0].ID)
-	assert.ErrorIs(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.ID, waits.ID), store.ErrNotFound)
+	assert.ErrorIs(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, waits.ID, nil), store.ErrNotFound)
 
 	// The queued resend still sends the document: its Extract carries no
 	// decision of it, and the engine says nothing of one.
@@ -936,7 +936,7 @@ func TestFoundryReleaseTakenBackAfterTheLoadsWord(t *testing.T) {
 	require.Len(t, got, 5, "the load's list holds each")
 
 	for _, d := range []*model.FoundryReviewDecision{missed, unreported, refusedOne, failed, kept} {
-		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.ID, d.ID))
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID, nil))
 	}
 	list, err := f.db.ListFoundryLoadDecisions(ctx, f.load, "", nil, 100)
 	require.NoError(t, err)
@@ -1013,7 +1013,7 @@ func TestFoundryReleaseTakenBackWhileAnotherLoadIsCurrent(t *testing.T) {
 	// The person takes both back. They leave the current load's list; the
 	// first load keeps its copies, and still owes the document.
 	for _, d := range []*model.FoundryReviewDecision{turnedDown, waits} {
-		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.ID, d.ID))
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID, nil))
 	}
 	assert.Empty(t, f.applied(t, turnedDown, waits))
 	var left int

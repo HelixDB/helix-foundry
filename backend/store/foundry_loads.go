@@ -194,8 +194,10 @@ VALUES (?, ?, ?, ?, 'writing', ?, ?)`, job.ID, job.WorkspaceID, job.OntologyID, 
 	if err := s.snapshotFoundryLoadDocuments(ctx, job.LoadID); err != nil {
 		return err
 	}
+	// Every decision an Extract takes: a reject is the site's to read, and is
+	// sent to no engine.
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`)
-SELECT ?, `+foundryReviewDecisionColumns+` FROM foundry_review_decisions WHERE ontology_id=?`, job.LoadID, job.OntologyID); err != nil {
+SELECT ?, `+foundryReviewDecisionColumns+` FROM foundry_review_decisions WHERE ontology_id=? AND kind<>'reject'`, job.LoadID, job.OntologyID); err != nil {
 		return err
 	}
 	// Made since grants could cover a load: the decisions it copied had

@@ -17,6 +17,7 @@ import {
 } from "../../mock/review-decisions";
 import { routes } from "../../mock/routes";
 import { tenantGraph } from "../../mock/routes/databases";
+import { owePendingValue } from "../../mock/routes/loads";
 import { MAX_PAGES, textPdf } from "../../mock/pdf-text";
 import { FORMATS, handleDocumentUpload } from "../../mock/routes/documents";
 import { sendPieces } from "../../mock/routes/event-sources";
@@ -2668,7 +2669,12 @@ describe("review decisions", () => {
       prop: "term_months",
       value: { integer: "36" },
     });
+    // It joins the load's decisions, and waits for its job.
+    expect(saved.body.decision.applied).toEqual({ status: "pending" });
     expect(contract.props.term_months).toBeUndefined();
+    vi.setSystemTime(Date.now() + 10_000);
+    await call("GET", `${O}/review-decisions`);
+    expect(contract.props.term_months).toBe(36);
     const next = await loaded("next");
     expect(
       next.find("Contract", "norm_name", "master services agreement")!.props
@@ -2840,7 +2846,7 @@ describe("review decisions", () => {
     ).toEqual([400, "this review kind cannot be settled"]);
     expect(
       refusal(await settle({ reason: "unverified" }, body.decision)),
-    ).toEqual([400, "this review requires a release decision"]);
+    ).toEqual([400, "this review requires a release or a reject decision"]);
     const held = (key = "a".repeat(64)) => ({
       reason: "low_confidence",
       type: "",
@@ -2861,8 +2867,39 @@ describe("review decisions", () => {
     ]);
     expect(refusal(await settle(held(), release))).toEqual([
       400,
-      "this claim reads differently now; reload the review and approve what it says",
+      "this claim reads differently now; reload the review and decide on what it says",
     ]);
+    // A rejection is bound to what was read as an approval is, and is one
+    // choice: never with another.
+    expect(
+      refusal(
+        await settle(held(), { reject: { statementHash: "0".repeat(64) } }),
+      ),
+    ).toEqual([
+      400,
+      "this claim reads differently now; reload the review and decide on what it says",
+    ]);
+    for (const choice of [
+      { reject: true },
+      { reject: {} },
+      { reject: { statementHash: "0".repeat(64) }, ...release },
+      {
+        reject: { statementHash: "0".repeat(64) },
+        resolve: { notInData: true },
+      },
+    ])
+      expect(
+        (await settle(held(), choice)).status,
+        JSON.stringify(choice),
+      ).toBe(400);
+    expect(
+      refusal(
+        await settle(
+          { reason: "unresolved" },
+          { reject: { statementHash: "0".repeat(64) } },
+        ),
+      ),
+    ).toEqual([400, "this review requires a resolve decision"]);
     expect(refusal(await settle({ reason: "unresolved" }, release))).toEqual([
       400,
       "this review requires a resolve decision",
@@ -2953,9 +2990,12 @@ describe("review decisions", () => {
       kind: "prop",
       value: { null: null },
     });
-    // The removal applies from the next load.
+    // The removal applies to this load at once, and to the next.
     const contract = g.find("Contract", "norm_name", "variant contract")!;
     contract.props.signed_on = "2026-01-01";
+    vi.setSystemTime(Date.now() + 10_000);
+    await call("GET", `${O}/review-decisions`);
+    expect(contract.props).not.toHaveProperty("signed_on");
     const next = await loaded("next");
     expect(
       next.find("Contract", "norm_name", "variant contract")!.props,
@@ -3043,6 +3083,10 @@ describe("review decisions", () => {
       { decision: { prop: { text: "GBP" } } },
     );
     expect(saved.status).toBe(200);
+    // This load is sent it at once, and the next reads it.
+    vi.setSystemTime(Date.now() + 10_000);
+    await call("GET", `${O}/review-decisions`);
+    expect(customer.props.currency).toBe("GBP");
     const next = await loaded("next");
     expect(
       next.find("Customer", "entity_key", "cus_GLOBEX01")!.props.currency,
@@ -3188,6 +3232,326 @@ describe("review decisions", () => {
     expect(resolved.applied).toBeUndefined();
   });
 
+  it("saves a rejection of a held claim, and tells no load", async () => {
+    await uploaded(
+      "variant.md",
+      Buffer.from("# Hedged deal\n\nGlobex Corporation may have signed.\n"),
+    );
+    const g = await loaded("first");
+    const held = () =>
+      reviews(g).filter((n) => n.props.reason === "low_confidence");
+    const rv = held()[0]!;
+    const statementHash = createHash("sha256")
+      .update(`signed_with\u001f${String(rv.props.statement)}`)
+      .digest("hex");
+    const settle = (kind: "release" | "reject") =>
+      call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+        decision: { [kind]: { statementHash } },
+      });
+    const listed = async () =>
+      (await call("GET", `${O}/review-decisions`)).body.decisions;
+    const facts = () =>
+      [...g.nodes()].filter(
+        (n) =>
+          n.label === FOUNDRY_NODES.Evidence && n.props.link === "signed_with",
+      );
+    const before = [...g.nodes()].length;
+
+    // The decision names the review as an approval does, and says nothing of
+    // a load: no job, and the graph as it was.
+    const rejected = (await settle("reject")).body.decision;
+    expect(rejected).toMatchObject({
+      kind: "reject",
+      type: "",
+      docId: rv.props.doc_id,
+      claimKey: rv.props.claim_key,
+      claimSection: rv.props.section,
+      claimStart: rv.props.start,
+      claimEnd: rv.props.end,
+      statementHash,
+    });
+    expect(rejected.applied).toBeUndefined();
+    expect((await call("GET", O)).body.ontology.activeJob).toBeNull();
+    vi.setSystemTime(Date.now() + 10_000);
+    expect((await listed()).map((d: { kind: string }) => d.kind)).toEqual([
+      "reject",
+    ]);
+    expect(held()).toHaveLength(1);
+    expect(facts()).toHaveLength(0);
+    expect([...g.nodes()]).toHaveLength(before);
+    // Rejected again, it is the same decision.
+    expect((await settle("reject")).body.decision.id).toBe(rejected.id);
+
+    // Approved instead, the rejection gives way, and the claim is written.
+    const approved = (await settle("release")).body.decision;
+    expect(approved.applied).toEqual({ status: "pending" });
+    expect((await listed()).map((d: { kind: string }) => d.kind)).toEqual([
+      "release",
+    ]);
+    // Rejected before its job ran, the approval is taken back: nothing is
+    // written of a claim a person said is wrong.
+    const again = (await settle("reject")).body.decision;
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(
+      (await listed()).map((d: { id: string; kind: string }) => [d.id, d.kind]),
+    ).toEqual([[again.id, "reject"]]);
+    expect(held()).toHaveLength(1);
+    expect(facts()).toHaveLength(0);
+
+    // A later load holds the claim again and copies no rejection: the
+    // decision is still the ontology's, for pages to read.
+    const next = await loaded("next");
+    expect(
+      reviews(next).filter((n) => n.props.reason === "low_confidence"),
+    ).toHaveLength(1);
+    expect((await listed())[0]).toMatchObject({ id: again.id, kind: "reject" });
+    expect((await listed())[0].applied).toBeUndefined();
+
+    // Removed, nothing is left of it.
+    expect(
+      (await call("DELETE", `${O}/review-decisions/${again.id}`)).status,
+    ).toBe(200);
+    expect(await listed()).toEqual([]);
+  });
+
+  it("applies a chosen value to the current load at once, and takes it back", async () => {
+    await uploaded("contract.md", CONTRACT);
+    await uploaded(
+      "amendment.md",
+      Buffer.from(
+        "# Master services agreement\n\nGlobex Corporation signed. The Agreement runs for 36 months.\n",
+      ),
+    );
+    const g = await loaded("first");
+    const rv = reviews(g).find((n) => n.props.reason === "prop_conflict")!;
+    const contract = g.find(
+      "Contract",
+      "norm_name",
+      "master services agreement",
+    )!;
+    const choose = async (months: string) =>
+      (
+        await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+          decision: { prop: { integer: months } },
+        })
+      ).body.decision;
+    const listed = async () =>
+      (await call("GET", `${O}/review-decisions`)).body.decisions;
+    const live = async () => (await call("GET", O)).body.ontology.activeJob;
+    const jobs = async () =>
+      (await call("GET", `${O}/loads`)).body.loads[0].jobs.map(
+        (j: { kind: string; status: string }) => [j.kind, j.status],
+      );
+    expect(await live()).toBeNull();
+
+    // One job sends the load its decisions: the value shows in the same load.
+    const saved = await choose("36");
+    expect(saved.applied).toEqual({ status: "pending" });
+    expect(await live()).toMatchObject({ kind: "resend" });
+    expect(contract.props.term_months).toBeUndefined();
+    vi.setSystemTime(Date.now() + 10_000);
+    expect((await listed())[0].applied).toEqual({
+      status: "applied",
+      at: expect.any(String),
+    });
+    expect(contract.props.term_months).toBe(36);
+    expect(await live()).toBeNull();
+    expect(await jobs()).toEqual([
+      ["resend", "succeeded"],
+      ["load", "succeeded"],
+    ]);
+    // Its review was written when the documents were read, and stays.
+    expect(reviews(g).some((n) => n.props.reason === "prop_conflict")).toBe(
+      true,
+    );
+
+    // Another value chosen: a new decision in place of the first, since the
+    // engine keeps a decision once, by its id.
+    const again = await choose("24");
+    expect(again.id).not.toBe(saved.id);
+    expect(again.applied).toEqual({ status: "pending" });
+    expect((await listed()).map((d: { id: string }) => d.id)).toEqual([
+      again.id,
+    ]);
+    expect(contract.props.term_months).toBe(36);
+    vi.setSystemTime(Date.now() + 10_000);
+    expect((await listed())[0].applied).toMatchObject({ status: "applied" });
+    expect(contract.props.term_months).toBe(24);
+
+    // The same value chosen again is the decision that stands, sent again.
+    const same = await choose("24");
+    expect(same).toMatchObject({
+      id: again.id,
+      decidedAt: again.decidedAt,
+      applied: { status: "pending" },
+    });
+    vi.setSystemTime(Date.now() + 10_000);
+    expect((await listed())[0].applied).toMatchObject({ status: "applied" });
+    expect(contract.props.term_months).toBe(24);
+
+    // Removed: a job sends the load its decisions without it, and the
+    // property holds what its documents give again, which is nothing.
+    await call("DELETE", `${O}/review-decisions/${again.id}`);
+    expect(await listed()).toEqual([]);
+    expect(await live()).toMatchObject({ kind: "resend" });
+    expect(contract.props.term_months).toBe(24);
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(await live()).toBeNull();
+    expect(contract.props.term_months).toBeUndefined();
+
+    // Removed before its job ran, it changes nothing.
+    const brief = await choose("36");
+    await call("DELETE", `${O}/review-decisions/${brief.id}`);
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(await listed()).toEqual([]);
+    expect(contract.props.term_months).toBeUndefined();
+  });
+
+  it("keeps a value decision once, by its id, as the engine does", async () => {
+    await uploaded("contract.md", CONTRACT);
+    await uploaded(
+      "amendment.md",
+      Buffer.from(
+        "# Master services agreement\n\nGlobex Corporation signed. The Agreement runs for 36 months.\n",
+      ),
+    );
+    const g = await loaded("first");
+    const rv = reviews(g).find((n) => n.props.reason === "prop_conflict")!;
+    const contract = g.find(
+      "Contract",
+      "norm_name",
+      "master services agreement",
+    )!;
+    const saved = (
+      await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+        decision: { prop: { integer: "36" } },
+      })
+    ).body.decision;
+    vi.setSystemTime(Date.now() + 10_000);
+    await call("GET", `${O}/review-decisions`);
+    expect(contract.props.term_months).toBe(36);
+
+    // The load is sent another value under the id it holds, as a backend
+    // that kept the id of a changed decision would send it: the job ends,
+    // the decision reads applied, and the property holds what it held.
+    owePendingValue("ont_acme_contracts", {
+      ...saved,
+      value: { integer: "24" },
+    });
+    vi.setSystemTime(Date.now() + 10_000);
+    const [sent] = (await call("GET", `${O}/review-decisions`)).body.decisions;
+    expect(sent.applied).toMatchObject({ status: "applied" });
+    expect(contract.props.term_months).toBe(36);
+  });
+
+  it("gives a table's value back when the value chosen over it is removed", async () => {
+    await uploaded(
+      "billing.md",
+      Buffer.from(
+        "# Billing terms\n\nGlobex Corporation is billed in GBP. Globex Corporation signed.\n",
+      ),
+    );
+    const g = await loaded("first");
+    const rv = reviews(g).find((n) => n.props.reason === "prop_conflict")!;
+    const globex = g.find("Customer", "entity_key", "cus_GLOBEX01")!;
+    expect(globex.props.currency).toBe("usd");
+    const saved = (
+      await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+        decision: { prop: { text: "GBP" } },
+      })
+    ).body.decision;
+    vi.setSystemTime(Date.now() + 10_000);
+    await call("GET", `${O}/review-decisions`);
+    expect(globex.props.currency).toBe("GBP");
+    await call("DELETE", `${O}/review-decisions/${saved.id}`);
+    vi.setSystemTime(Date.now() + 10_000);
+    await call("GET", `${O}/review-decisions`);
+    expect(globex.props.currency).toBe("usd");
+  });
+
+  it("leaves a chosen value unconfirmed when its job fails, until it is chosen again", async () => {
+    await uploaded("contract.md", CONTRACT);
+    await uploaded(
+      "amendment.md",
+      Buffer.from(
+        "# Master services agreement\n\nGlobex Corporation signed. The Agreement runs for 36 months.\n",
+      ),
+    );
+    const g = await loaded("first");
+    const rv = reviews(g).find((n) => n.props.reason === "prop_conflict")!;
+    const contract = g.find(
+      "Contract",
+      "norm_name",
+      "master services agreement",
+    )!;
+    const choose = () =>
+      call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+        decision: { prop: { integer: "36" } },
+      });
+    Object.assign(config, { loadOutcome: "fail" });
+    await choose();
+    vi.setSystemTime(Date.now() + 10_000);
+    const [failed] = (await call("GET", `${O}/review-decisions`)).body
+      .decisions;
+    expect(failed.applied).toEqual({
+      status: "unconfirmed",
+      reason: "job_failed",
+    });
+    expect(contract.props.term_months).toBeUndefined();
+    expect((await call("GET", O)).body.ontology.activeJob).toBeNull();
+    Object.assign(config, { loadOutcome: "succeed" });
+    await choose();
+    vi.setSystemTime(Date.now() + 10_000);
+    const [sent] = (await call("GET", `${O}/review-decisions`)).body.decisions;
+    expect(sent.applied).toMatchObject({ status: "applied" });
+    expect(contract.props.term_months).toBe(36);
+  });
+
+  it("carries a value chosen while a load is written to that load", async () => {
+    await uploaded("contract.md", CONTRACT);
+    await uploaded(
+      "amendment.md",
+      Buffer.from(
+        "# Master services agreement\n\nGlobex Corporation signed. The Agreement runs for 36 months.\n",
+      ),
+    );
+    const g = await loaded("first");
+    const rv = reviews(g).find((n) => n.props.reason === "prop_conflict")!;
+    const writing = (
+      await call("POST", `${O}/loads`, {
+        versionId: "ver_seed_3",
+        clientToken: "second",
+      })
+    ).body.load;
+    const saved = (
+      await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+        decision: { prop: { integer: "36" } },
+      })
+    ).body.decision;
+    // The load job holds the database: the value waits for its end.
+    expect(saved.applied).toEqual({ status: "pending" });
+    expect((await call("GET", O)).body.ontology.activeJob).toMatchObject({
+      kind: "load",
+    });
+    vi.setSystemTime(Date.now() + 30_000);
+    const [carried] = (await call("GET", `${O}/review-decisions`)).body
+      .decisions;
+    expect(carried.applied).toMatchObject({ status: "applied" });
+    expect((await call("GET", O)).body.ontology.currentLoad.id).toBe(
+      writing.id,
+    );
+    const second = tenantGraph("ten_acme_contracts").view(writing.id);
+    expect(
+      second.find("Contract", "norm_name", "master services agreement")!.props
+        .term_months,
+    ).toBe(36);
+    // The load it was chosen on never got it: it is no longer current.
+    expect(
+      g.find("Contract", "norm_name", "master services agreement")!.props
+        .term_months,
+    ).toBeUndefined();
+  });
+
   it("reads into a load the decisions saved when it was created, catch-up extracts included", async () => {
     await uploaded("contract.md", CONTRACT);
     await uploaded(
@@ -3205,7 +3569,8 @@ describe("review decisions", () => {
         })
       ).status,
     ).toBe(200);
-    // An upload reads into the current load, with the decisions it started with.
+    // An upload reads into the current load, with the decisions it holds by
+    // then: the value chosen stands over the one the new document states.
     await uploaded(
       "third.md",
       Buffer.from(
@@ -3223,13 +3588,13 @@ describe("review decisions", () => {
       "norm_name",
       "master services agreement",
     )!;
-    expect(contract.props.term_months).toBeUndefined();
+    expect(contract.props.term_months).toBe(36);
     expect(
       JSON.parse(String(rv.props.values)).map(
         (v: { value: number }) => v.value,
       ),
-    ).toEqual([24, 36, 48]);
-    // The next load applies it.
+    ).toEqual([24, 36]);
+    // The next load reads it too.
     expect(
       (await loaded("next")).find(
         "Contract",

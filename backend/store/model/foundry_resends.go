@@ -8,9 +8,10 @@ import "time"
 // puts it off again by this much, so they go in one job.
 const FoundryResendSettle = 2 * time.Second
 
-// FoundryResendReason is why a load owes a document a resend
+// FoundryResendReason is why a load owes the engine a resend
 // (foundry_load_resends.reason). It decides what a resend may spend: an
-// approval's spends nothing, as the document's saved extraction replays.
+// approval's spends nothing, as the document's saved extraction replays, and
+// the load's decisions travel with an Extract that sends no document.
 type FoundryResendReason string
 
 // FoundryResendApproval is a person's approval of a claim the document's
@@ -18,9 +19,28 @@ type FoundryResendReason string
 // was committed.
 const FoundryResendApproval FoundryResendReason = "approval"
 
-// FoundryLoadResend is a document a load owes a resend, for a reason.
+// FoundryResendDecisions is a change to the load's own list of value
+// decisions since the engine was last sent it: a person chose a value, or
+// took a choice back. It names no document (FoundryLoadResend.DocumentID is
+// empty): every Extract of a load carries all of its value decisions, and
+// the engine sets each one's value and withdraws those it is no longer sent,
+// so any Extract that ends answers the request, one of no documents included.
+const FoundryResendDecisions FoundryResendReason = "decisions"
+
+// FoundryExtractDecisionsMax is the most decisions one Extract takes (the
+// engine's Decisions). Every value decision of a load goes with every one of
+// its Extracts, so an ontology takes no more value decisions than this
+// (store.FoundryValueDecisionsFull): one more and no Extract of a load that
+// holds them could be sent. At the limit itself an Extract still goes, but
+// only with documents that have no decision of their own: a name settled or
+// a claim approved in one makes it one too many.
+const FoundryExtractDecisionsMax = 10000
+
+// FoundryLoadResend is a document a load owes a resend, for a reason, or the
+// load's own decisions (FoundryResendDecisions), which name no document.
 type FoundryLoadResend struct {
-	LoadID     string
+	LoadID string
+	// DocumentID is empty for FoundryResendDecisions.
 	DocumentID string
 	Reason     FoundryResendReason
 	// Requests is how often the row was owed: EndFoundryLoadResend ends only
@@ -46,9 +66,12 @@ type FoundryResendEnd struct {
 	Refused string
 }
 
-// FoundryReleaseStatus is what became of a release decision in a load
-// (foundry_load_decisions.applied_status). The empty status is a decision the
-// load copied when it was created and no job has reported on yet.
+// FoundryReleaseStatus is what became of a release or a value decision in a
+// load (foundry_load_decisions.applied_status). The empty status is a decision
+// the load copied when it was created and no job has reported on yet. A
+// release ends written, refused or missed, as the engine says of each; a
+// value decision ends applied, which is all a load can say of one, and one
+// taken back is removed until the load is told.
 type FoundryReleaseStatus string
 
 const (
@@ -69,6 +92,23 @@ const (
 	// FoundryReleaseMissed is a decision this load holds no review for: its
 	// claim has another key or place here.
 	FoundryReleaseMissed FoundryReleaseStatus = "missed"
+	// FoundryValueApplied is a value decision an Extract of the load carried
+	// to its end. The engine reports nothing of a value decision, so this is
+	// what is known: the load was sent it and the run succeeded. The engine
+	// then holds it as a statement of the property from when it was decided,
+	// which a document dated later still beats, and writes nothing for an
+	// entity the load doesn't hold.
+	FoundryValueApplied FoundryReleaseStatus = "applied"
+	// FoundryValueRemoved is a value decision a person took back, of which
+	// the load has yet to be told: the decision is gone, and its copy stays
+	// in the load's list under this status until an Extract without it has
+	// ended (the load's own request, FoundryResendDecisions). No Extract
+	// sends it, so the engine withdraws the value. Until then the load still
+	// holds that value, so a reader with partial access is withheld the
+	// property as while the decision stood (the access rules read the
+	// list). A resend job that failed leaves it with FoundryReleaseJobFailed,
+	// and the end of the next job of the ontology sends the list again.
+	FoundryValueRemoved FoundryReleaseStatus = "removed"
 )
 
 // Waits reports a decision the engine has yet to say anything of.
