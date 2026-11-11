@@ -7,12 +7,13 @@ import (
 )
 
 // foundryReminders creates foundry_reminders.
-const foundryReminders = 20261116000000
+const foundryReminders = 20261117000000
 
 // The reminders' table goes up and down cleanly, keeps one row per address
 // byte for byte, and its checks refuse what no layer writes: a schedule with
 // no time, an end with one, a stop with no reason, a failure with no error,
-// a claim of a schedule that ended, and reminders sent with no time.
+// a claim of a schedule that ended (but one stopped while it sent), and
+// reminders sent with no time.
 func TestFoundryRemindersMigration(t *testing.T) {
 	db := isolatedTestDB(t)
 	if err := setup(db); err != nil {
@@ -80,6 +81,10 @@ VALUES (?, ?, 'Europe/London', 'remind-v1', ?, ?, ?, ?, ?)`, id, email, status, 
 	}
 	if err := exec(`UPDATE foundry_reminders SET status='done', next_send_at=NULL, claim_token='t', claimed_until=NOW(6) WHERE id='r-1'`); err == nil {
 		t.Fatal("a claim of a schedule that ended")
+	}
+	if err := exec(`UPDATE foundry_reminders SET status='stopped', next_send_at=NULL, stopped_at=NOW(6), stop_reason='signed_in',
+  claim_token='t', claimed_until=NOW(6), client_key='q3ZyY1J8b0m2Xw' WHERE id='r-1'`); err != nil {
+		t.Fatalf("a schedule stopped while its reminder is sent keeps the claim: %v", err)
 	}
 	if err := goose.DownTo(db, ".", foundryReminders-1); err != nil {
 		t.Fatal(err)

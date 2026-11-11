@@ -3,6 +3,7 @@ import { compileTemplate, matchTemplate } from "../src/shared/route-template";
 import { fail, type MockReply, type Principal } from "./http";
 import { handleReminders, mockReminders } from "./reminders";
 import { routes } from "./routes";
+import { handleDirectoryPage } from "./routes/access";
 import { handleBillingPage } from "./routes/billing";
 import { handleDocumentUpload } from "./routes/documents";
 import { sendPieces } from "./routes/event-sources";
@@ -37,12 +38,15 @@ import { handleWorkos } from "./workos";
 // aiDefaultKind, aiDefaultNamed, aiDetect, ollamaBundled, aiKinds,
 // memberQueryRead, invoiceOnlyCustomers, healEnabled, healRun, healDismiss,
 // healRowsMeasured, freshInstall, signIn, signInsRunOut, accountBroken,
-// githubInstalled, remindersPerHour, remindersPerClientPerHour }.
+// githubInstalled, directoryTeams, directoryEntitled, directoryIssues,
+// directorySyncMs, remindersPerHour, remindersPerClientPerHour }.
 //
 // POST /v1/reminders and /v1/reminders/stop are Foundry's door's, not the
 // WFE's: the landing page's reminders (./reminders.ts), which the site's
 // server calls with the mock's secret. GET /__mock/reminders lists them.
 //
+// /mock/directory-portal is WorkOS's Admin Portal for directory sync
+// (./routes/access.ts).
 // /mock/connect is a provider's consent page for connecting a source by
 // signing in (./routes/sign-ins.ts), as /mock/checkout is Stripe Checkout.
 //
@@ -152,6 +156,7 @@ const server = createServer(async (req, res) => {
     if (await handleWorkos(req, res, url, raw)) return;
     if (handleBillingPage(req, res, url, raw)) return;
     if (handleConnectPage(req, res, url, raw)) return;
+    if (handleDirectoryPage(req, res, url)) return;
     // Foundry's door's reminder routes (ingest.helix-db.com), not the WFE's.
     if (handleReminders(req, res, url, raw)) return;
     const reply = url.pathname.startsWith("/v1/")

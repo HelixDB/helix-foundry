@@ -229,6 +229,21 @@ func (s *accessStore) UpdateFoundryTeam(_ context.Context, workspaceID, teamID, 
 	return foundrystore.ErrNotFound
 }
 
+// WithTx runs fn on the store itself: the fake has no transactions.
+func (s *accessStore) WithTx(_ context.Context, fn func(foundrystore.Store) error) error {
+	return fn(s)
+}
+
+func (s *accessStore) LeaveOutFoundryTeamMembers(_ context.Context, workspaceID, teamID string, userIDs []string) error {
+	for i := range s.teams {
+		if t := &s.teams[i]; t.ID == teamID && t.WorkspaceID == workspaceID && t.Directory != nil {
+			t.MemberUserIDs = slices.DeleteFunc(slices.Clone(t.MemberUserIDs), func(u string) bool { return slices.Contains(userIDs, u) })
+			t.Directory.LeftOutUserIDs = append(t.Directory.LeftOutUserIDs, userIDs...)
+		}
+	}
+	return nil
+}
+
 func (s *accessStore) DeleteFoundryTeam(_ context.Context, workspaceID, teamID string) error {
 	n := len(s.teams)
 	s.teams = slices.DeleteFunc(s.teams, func(t foundrymodel.FoundryTeam) bool { return t.ID == teamID && t.WorkspaceID == workspaceID })
@@ -263,7 +278,7 @@ func accessService(t *testing.T) (*Service, *accessStore) {
 	store.loads = append(store.loads, &foundrymodel.FoundryLoad{ID: "load-3", OntologyID: "ont-3", VersionID: "ver-3", Status: foundrymodel.FoundryLoadReady})
 	store.versions = append(store.versions,
 		&foundrymodel.OntologyVersion{ID: "ver-1", WorkspaceID: "ws-1", OntologyID: "ont-1", Format: foundrymodel.OntologyFormatAgentBundle,
-			Definition: json.RawMessage(`{"format":"agent_bundle","ontology_toml":"","draft":{"draft":{"items":{"Customer":{"card":{"rows":3}},"Plan":{}}}}}`)},
+			Definition: json.RawMessage(`{"format":"agent_bundle","ontology_toml":"","draft":{"draft":{"items":{"Customer":{"card":{"rows":3}},"Plan":{}},"left_out":[{"what":"src_02 hr.salaries","reason":"No question needs pay."}]}}}`)},
 		&foundrymodel.OntologyVersion{ID: "ver-0", WorkspaceID: "ws-1", OntologyID: "ont-1", Format: foundrymodel.OntologyFormatAgentBundle,
 			Definition: json.RawMessage(`{"format":"agent_bundle"}`)},
 		&foundrymodel.OntologyVersion{ID: "ver-3", WorkspaceID: "ws-1", OntologyID: "ont-3", Format: foundrymodel.OntologyFormatAgentBundle,
@@ -471,6 +486,10 @@ func TestGranteeAnswers(t *testing.T) {
 		if !got.GetVersion().GetEvidenceWithheld() || strings.Contains(fmt.Sprint(got.GetVersion().GetDefinition()), "card") {
 			t.Fatalf("%v", got.GetVersion().GetDefinition())
 		}
+		// What the draft left out names sources the load may not hold.
+		if strings.Contains(fmt.Sprint(got.GetVersion().GetDefinition()), "salaries") {
+			t.Fatalf("a grantee reads what the draft left out: %v", got.GetVersion().GetDefinition())
+		}
 		for _, id := range []string{"ver-0", "ver-404"} {
 			if _, err := client.GetOntologyVersion(ctx, &foundryv1.GetOntologyVersionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: id}); status.Code(err) != codes.NotFound {
 				t.Fatalf("%s: %v", id, err)
@@ -480,8 +499,9 @@ func TestGranteeAnswers(t *testing.T) {
 			t.Fatalf("current version: %v", err)
 		}
 		host, err := client.GetOntologyVersion(as(person), &foundryv1.GetOntologyVersionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "ver-1"})
-		if err != nil || !strings.Contains(fmt.Sprint(host.GetVersion().GetDefinition()), "card") {
-			t.Fatalf("the host's caller keeps a draft's cards: %v", err)
+		if err != nil || !strings.Contains(fmt.Sprint(host.GetVersion().GetDefinition()), "card") ||
+			!strings.Contains(fmt.Sprint(host.GetVersion().GetDefinition()), "salaries") {
+			t.Fatalf("the host's caller keeps a draft's cards and what it left out: %v", err)
 		}
 	})
 	t.Run("the current load only, without its jobs", func(t *testing.T) {
@@ -493,9 +513,20 @@ func TestGranteeAnswers(t *testing.T) {
 		if l.GetId() != "load-1" || !l.GetCurrent() || l.GetJobs() != nil || l.GetUsdMicros() != 0 || l.GetSources() != nil {
 			t.Fatalf("%+v", l)
 		}
+		// What the load made of its documents counts every set it holds, which
+		// a grantee may not see: only the host's caller gets it.
+		documents, members := store.documents, store.members["load-1"]
+		defer func() { store.documents, store.members["load-1"] = documents, members }()
+		store.documents = append(slices.Clone(documents), &foundrymodel.FoundryDocument{ID: "doc-counted", WorkspaceID: "ws-1", SetID: "set-counted",
+			Status: foundrymodel.FoundryDocumentUploaded})
+		store.members["load-1"] = append(slices.Clone(members), "doc-counted")
 		one, err := client.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "load-1"})
-		if err != nil || one.GetLoad().GetId() != "load-1" {
+		if err != nil || one.GetLoad().GetId() != "load-1" || one.GetLoad().GetDocumentSets() != nil {
 			t.Fatalf("%+v, %v", one, err)
+		}
+		host, err := client.GetFoundryLoad(as(person), &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "load-1"})
+		if err != nil || len(host.GetLoad().GetDocumentSets()) == 0 {
+			t.Fatalf("the host's caller counts the load's documents: %+v, %v", host, err)
 		}
 		if _, err := client.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "load-0"}); status.Code(err) != codes.NotFound {
 			t.Fatal(err)
@@ -1429,6 +1460,63 @@ func TestFoundryTeams(t *testing.T) {
 	s.deps.People = nil
 	if _, err := s.CreateFoundryTeam(ctx, &foundryv1.CreateFoundryTeamRequest{WorkspaceId: "ws-1", Name: "Y", MemberUserIds: []string{"ada"}}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("an install has no members: %v", err)
+	}
+}
+
+// A team synced from a directory group keeps its name and members as the
+// group has them: only its grants are the workspace's to change, and giving
+// it some leaves out the members they can't confine instead of refusing.
+func TestSyncedFoundryTeams(t *testing.T) {
+	s, store := accessService(t)
+	ctx := ports.WithActor(context.Background(), person)
+	s.deps.People = accessPeople{"ada": {Role: ports.RoleMember}, "querying": {Role: ports.RoleMember, RawAccess: true},
+		"admin": {Role: ports.RoleAdmin, RawAccess: true}}
+	synced := foundrymodel.FoundryTeam{ID: "team-okta", WorkspaceID: "ws-1", Name: "Finance", MemberUserIDs: []string{"ada", "querying", "admin"},
+		Directory: &foundrymodel.FoundryTeamDirectory{DirectoryID: "directory_1", GroupID: "directory_group_1", Provider: "Okta"}}
+	store.teams = append(store.teams, synced)
+
+	for name, call := range map[string]func() error{
+		"renamed": func() error {
+			_, err := s.UpdateFoundryTeam(ctx, &foundryv1.UpdateFoundryTeamRequest{WorkspaceId: "ws-1", TeamId: "team-okta", Name: "Billing", MemberUserIds: []string{"ada"}})
+			return err
+		},
+		"deleted": func() error {
+			_, err := s.DeleteFoundryTeam(ctx, &foundryv1.DeleteFoundryTeamRequest{WorkspaceId: "ws-1", TeamId: "team-okta"})
+			return err
+		},
+	} {
+		err := call()
+		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "synced from Okta") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	got, err := s.SetFoundryAccessGrants(ctx, &foundryv1.SetFoundryAccessGrantsRequest{WorkspaceId: "ws-1",
+		Principal: &foundryv1.FoundryPrincipal{Kind: foundryv1.FoundryPrincipal_KIND_TEAM, Id: "team-okta"},
+		Targets:   []*foundryv1.FoundryAccessTarget{{Kind: foundryv1.FoundryAccessTarget_KIND_CONNECTOR, ConnectorId: "conn-1"}}})
+	if err != nil || len(got.GetGrants()) != 1 {
+		t.Fatalf("a synced team with a member who has raw access is given grants: %+v, %v", got, err)
+	}
+	listed, err := s.ListFoundryAccess(ctx, &foundryv1.ListFoundryAccessRequest{WorkspaceId: "ws-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(listed.GetTeams(), func(t *foundryv1.FoundryTeam) bool { return t.GetId() == "team-okta" })
+	team := listed.GetTeams()[i]
+	if d := team.GetDirectory(); d.GetProvider() != "Okta" || d.GetGroupId() != "directory_group_1" || !slices.Equal(d.GetLeftOutUserIds(), []string{"querying"}) {
+		t.Fatalf("the directory and whom it leaves out: %+v", d)
+	}
+	if !slices.Equal(team.GetMemberUserIds(), []string{"ada", "admin"}) {
+		t.Fatalf("members: %v", team.GetMemberUserIds())
+	}
+
+	// Synced teams don't count toward the teams made by hand.
+	for len(store.teams) < maxFoundryTeams+1 {
+		store.teams = append(store.teams, foundrymodel.FoundryTeam{ID: fmt.Sprint(len(store.teams)), WorkspaceID: "ws-1", Name: fmt.Sprint(len(store.teams)),
+			Directory: &foundrymodel.FoundryTeamDirectory{DirectoryID: "directory_1", GroupID: fmt.Sprint(len(store.teams))}})
+	}
+	if _, err := s.CreateFoundryTeam(ctx, &foundryv1.CreateFoundryTeamRequest{WorkspaceId: "ws-1", Name: "By hand"}); err != nil {
+		t.Fatalf("a team by hand beside %d synced ones: %v", maxFoundryTeams, err)
 	}
 }
 

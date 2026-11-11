@@ -7,6 +7,7 @@ import type {
   FoundryLoadAccessInputs,
   FoundryPrincipal,
   FoundryPrincipalKind,
+  FoundryTeam,
   ListFoundryAccessResponse,
   ResourceScope,
   WorkspaceMember,
@@ -450,20 +451,28 @@ export function restrictable(
     : { ok: true };
 }
 
+/** The team a principal is, if it is one of the workspace's. */
+const teamOf = (access: ListFoundryAccessResponse, principal: Principal) =>
+  principal.kind === "KIND_TEAM"
+    ? (access.teams || []).find((t) => t.id === principal.id)
+    : undefined;
+
+/** A plain member with raw access, whom grants can't confine (the backend's unconfinable). */
+const unconfinable = (m: WorkspaceMember) =>
+  m.role === "WORKSPACE_ROLE_MEMBER" && holdsRawAccess(m);
+
 /**
  * Who saving sources for this principal would restrict, as people: a member
  * given sources, or a team's members, while not restricted yet. An owner or
- * admin on a team stays as they are.
+ * admin on a team stays as they are, and a synced team leaves out the plain
+ * members with raw access rather than restricting them (`leftOutBy`).
  */
 export function newlyRestricted(
   access: ListFoundryAccessResponse,
   people: readonly WorkspaceMember[],
   principal: Principal,
 ): WorkspaceMember[] {
-  const team =
-      principal.kind === "KIND_TEAM"
-        ? (access.teams || []).find((t) => t.id === principal.id)
-        : undefined,
+  const team = teamOf(access, principal),
     reached = (id: string) =>
       principal.kind === "KIND_USER"
         ? id === principal.id
@@ -472,8 +481,89 @@ export function newlyRestricted(
     (m) =>
       m.role === "WORKSPACE_ROLE_MEMBER" &&
       reached(m.user?.id || "") &&
-      !access.restrictedUserIds?.includes(m.user?.id || ""),
+      !access.restrictedUserIds?.includes(m.user?.id || "") &&
+      !(team?.directory && unconfinable(m)),
   );
+}
+
+/**
+ * Whether `chosen` gives what `saved` doesn't: only that has to confine whoever
+ * holds it (the backend checks the grantee then), as taking sources away is
+ * always allowed. A table its saved connector covers is nothing new.
+ *
+ *     addsSources([{ kind: "connector", connectorId: "c" }], [{ kind: "table", connectorId: "c", table: "t" }]) // false
+ */
+export function addsSources(
+  saved: readonly Grant[],
+  chosen: readonly Grant[],
+): boolean {
+  const held = new Set(saved.map(grantKey));
+  return chosen.some(
+    (g) =>
+      !held.has(grantKey(g)) &&
+      !(
+        g.kind === "table" &&
+        held.has(grantKey({ kind: "connector", connectorId: g.connectorId }))
+      ),
+  );
+}
+
+// ---------------------------------------------------------------- directory teams
+
+/**
+ * The directory a synced team follows, as the words about it name it ("Okta",
+ * else "your directory"); undefined for a team made by hand.
+ */
+export const syncedFrom = (team: FoundryTeam): string | undefined =>
+  team.directory ? team.directory.provider || "your directory" : undefined;
+
+/**
+ * Whom giving a synced team sources leaves out, as people: its plain members
+ * with raw access, whom its grants can't confine. They come off the team
+ * (`directory.leftOutUserIds`) instead of the save being refused, as it is for
+ * a team made by hand, which leaves out no one.
+ */
+export function leftOutBy(
+  access: ListFoundryAccessResponse,
+  people: readonly WorkspaceMember[],
+  principal: Principal,
+): WorkspaceMember[] {
+  const team = teamOf(access, principal);
+  if (!team?.directory) return [];
+  return people.filter(
+    (m) => team.memberUserIds?.includes(m.user?.id || "") && unconfinable(m),
+  );
+}
+
+/**
+ * What a synced team says of whom it left out: "Left out: Alan Turing, who
+ * writes a project or queries its databases outside Foundry, so the team’s
+ * sources can’t confine them."; nothing for no one.
+ */
+export function leftOutText(names: readonly string[]): string {
+  if (!names.length) return "";
+  const one = names.length === 1;
+  return `Left out: ${names.join(", ")}, who ${one ? "writes a project or queries its" : "write a project or query its"} databases outside Foundry, so the team’s sources can’t confine them.`;
+}
+
+/**
+ * The plain members who are restricted and hold no sources, their own or a
+ * team's, so read nothing in Foundry: leaving a synced team that held sources
+ * keeps them restricted, and lifting it is the workspace's to do.
+ */
+export function restrictedHoldingNothing(
+  access: ListFoundryAccessResponse,
+  people: readonly WorkspaceMember[],
+): WorkspaceMember[] {
+  const restricted = new Set(access.restrictedUserIds || []);
+  return people.filter((m) => {
+    const id = m.user?.id || "";
+    return (
+      m.role === "WORKSPACE_ROLE_MEMBER" &&
+      restricted.has(id) &&
+      heldGrants(access, { kind: "KIND_USER", id }).length === 0
+    );
+  });
 }
 
 // ---------------------------------------------------------------- restricted mode

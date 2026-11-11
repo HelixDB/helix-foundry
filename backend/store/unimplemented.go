@@ -722,6 +722,10 @@ func (u Unimplemented) ListFoundryLoadSources(context.Context, []string) (map[st
 	u.unimplemented("ListFoundryLoadSources")
 	return nil, nil
 }
+func (u Unimplemented) ListFoundryLoadDocumentSets(context.Context, string) ([]model.FoundryLoadDocumentSet, error) {
+	u.unimplemented("ListFoundryLoadDocumentSets")
+	return nil, nil
+}
 func (u Unimplemented) GetLatestFoundryEnrichmentResults(context.Context, string) (*model.FoundryLoadEnrichment, error) {
 	u.unimplemented("GetLatestFoundryEnrichmentResults")
 	return nil, nil
@@ -987,6 +991,18 @@ func (u Unimplemented) DeleteFoundryTeam(context.Context, string, string) error 
 
 func (u Unimplemented) RemoveFoundryAccessMember(context.Context, string, string) error {
 	u.unimplemented("RemoveFoundryAccessMember")
+	return nil
+}
+func (u Unimplemented) SyncFoundryDirectoryTeams(context.Context, string, string, string, []model.FoundryDirectoryTeam) (model.FoundryDirectorySync, error) {
+	u.unimplemented("SyncFoundryDirectoryTeams")
+	return model.FoundryDirectorySync{}, nil
+}
+func (u Unimplemented) ReleaseFoundryDirectoryTeams(context.Context, string, string) error {
+	u.unimplemented("ReleaseFoundryDirectoryTeams")
+	return nil
+}
+func (u Unimplemented) LeaveOutFoundryTeamMembers(context.Context, string, string, []string) error {
+	u.unimplemented("LeaveOutFoundryTeamMembers")
 	return nil
 }
 func (u Unimplemented) ListFoundryHealFindings(context.Context, string) ([]*model.FoundryHealFinding, error) {

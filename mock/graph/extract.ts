@@ -595,13 +595,18 @@ export function applyProfiles(
 
 // ---------------------------------------------------------------- Extract
 
-/** What reading a document stored: the counts its document row keeps. */
+/**
+ * What reading a document stored: the counts its document row keeps, and
+ * `unresolved`, the names it matched to no record, which only its load's
+ * totals show.
+ */
 export type ExtractCounts = {
   sections: number;
   entities: number;
   mentions: number;
   facts: number;
   reviews: number;
+  unresolved: number;
 };
 
 /**
@@ -773,7 +778,7 @@ export function extractDocument(
   if (isEmpty(scope))
     return {
       kind: "out_of_scope",
-      counts: { ...empty, facts: 0, reviews: 0 },
+      counts: { ...empty, facts: 0, reviews: 0, unresolved: 0 },
     };
 
   // Keyed entities of the scope's types text can name: by their `names`
@@ -922,7 +927,12 @@ export function extractDocument(
     return false;
   });
 
-  const counts: ExtractCounts = { ...empty, facts: 0, reviews: 0 };
+  const counts: ExtractCounts = {
+    ...empty,
+    facts: 0,
+    reviews: 0,
+    unresolved: unresolved.length,
+  };
   const mention = (
     s: (typeof sections)[number],
     i: number,

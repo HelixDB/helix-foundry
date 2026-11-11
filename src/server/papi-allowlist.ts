@@ -16,7 +16,8 @@ import {
 // is not in the WFE contract. Do not add routes the UI does not call, and
 // never add sign-in, SSO management, role changes or member removal (they
 // stay in the dashboard). A connector's sign-in at its provider is not that
-// sign-in (see Data).
+// sign-in (see Data). Connecting a directory is the one exception to SSO
+// management (see Workspace): its roles from groups stay in the dashboard.
 
 export type PapiArea =
   | "auth"
@@ -50,6 +51,24 @@ export const papiRoutes = [
     area: "workspace",
     method: "POST",
     path: "/v1/workspaces/{workspaceId}/members:invite",
+  },
+  // Directory sync (Settings › Access › Teams): its status, the WorkOS Admin
+  // Portal link an owner connects a directory through, and a sync now. Its
+  // roles from groups are not here: they stay in the dashboard.
+  {
+    area: "workspace",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/directory",
+  },
+  {
+    area: "workspace",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/directory/portal-link",
+  },
+  {
+    area: "workspace",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/directory:sync",
   },
   // Foundry plan and billing: Free or Pro, checkout, cancel, resume, and the
   // hosted billing portal of the workspace's billing customer.

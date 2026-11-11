@@ -11,7 +11,7 @@ It opens in your first workspace, **My workspace**, made as the install first st
 
 **Secrets.** The first start writes this install's secrets (the site's token, the store's secret, MySQL's password and the connector key) into the Compose volume `secrets`, and every start reads them from there; nothing is printed or written to the checkout. Keep that volume: the connector key seals every database password and API key you give Foundry, is never made again once written, and losing it makes them unreadable. `docker compose down -v` deletes it with the data. Back it up with the data: [Back up and restore](#back-up-and-restore).
 
-**No analytics.** A local build loads no tracker and sends no usage data anywhere; only the hosted site, foundry.helix-db.com, records product analytics.
+**Usage analytics.** The site tells Helix, anonymously, how Foundry is used, and sends nothing of what Foundry holds. To turn it off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env`: [Usage analytics](#usage-analytics) says what is sent.
 
 **An install set up with `setup.sh`** (before 0.1.1) keeps its `local/.env`: its first start of this version copies the `FOUNDRY_*` secrets there into the volume, so MySQL's password and the key that sealed its credentials still match. Keep running it from `local/` if its `.env` sets `COMPOSE_PROFILES` or `COMPOSE_FILE` (Ollama in Docker, the GPU file): Compose reads those from the project's own `.env` only.
 
@@ -75,11 +75,13 @@ A read stopped at a cap fails its step, which says which cap and its value, and 
 | `too broad: the query would read … matches into memory, more than limits.read.scan_entities, 100000, allows` | `foundry.ask.read_scan_entities`                                     |
 | `the store did not answer within 30s: each graph request ends at helix.timeout_secs`                         | `foundry.ask.helix_timeout_secs`                                     |
 
-To change one, add its variable to foundry's `environment` in `local/compose.yaml` (`HELIX_FOUNDRY__ASK__READ_WALL_MS`, `HELIX_FOUNDRY__ASK__READ_SCAN_ENTITIES`, `HELIX_FOUNDRY__ASK__HELIX_TIMEOUT_SECS`) and run `docker compose up -d` again. A read's wall time past the Helix timeout helps only a read of several requests, so raise both together. The question's lease, `foundry.ask.lease` (3 minutes), must stay at least twice the Helix timeout, or foundry won't start: past 90 s, raise it too (`HELIX_FOUNDRY__ASK__LEASE`, such as `5m`). More matches take more memory, and the answer to one Helix request is at most 32 MiB. These caps need a `foundry` image and an `ontology-agent` newer than the release's: `foundry` 0.1.1 and `ontology-agent` 0.1.0 read every question with the agent's own caps.
+To change one, add its variable to foundry's `environment` in `local/compose.yaml` (`HELIX_FOUNDRY__ASK__READ_WALL_MS`, `HELIX_FOUNDRY__ASK__READ_SCAN_ENTITIES`, `HELIX_FOUNDRY__ASK__HELIX_TIMEOUT_SECS`) and run `docker compose up -d` again. A read's wall time past the Helix timeout helps only a read of several requests, so raise both together. The question's lease, `foundry.ask.lease` (3 minutes), must stay at least twice the Helix timeout, or foundry won't start: past 90 s, raise it too (`HELIX_FOUNDRY__ASK__LEASE`, such as `5m`). More matches take more memory, and the answer to one Helix request is at most 32 MiB. These caps need `foundry` 0.1.2 and `ontology-agent` 0.1.1 or newer: older images read every question with the agent's own caps.
 
 ## Images
 
-`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.2, `foundry` 0.1.1 and `ontology-agent` 0.1.0. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
+`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.4, `foundry` 0.1.3 and `ontology-agent` 0.1.2. `foundry` and `ontology-agent` are released as a pair, on one agent contract (4.11.0 for these). To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
+
+An older `FOUNDRY_IMAGE` or `FOUNDRY_AGENT_IMAGE` left in `local/.env` still starts, and then fails every draft, load and question with a contract mismatch (`the ontology agent speaks contract 4.7.0, not 4.11.0`). Remove the override, or set both to one release's images, and run `docker compose up -d` again.
 
 ## Back up and restore
 
@@ -157,7 +159,7 @@ The site must stay on `http://localhost:3000` and the store on `http://localhost
 
 ## Connect your agent
 
-These need images newer than the ones `docker compose up` pulls today (`foundry` 0.1.1 and `foundry-site` 0.1.2, which have no MCP and no **Set up with your agent**). Until a release moves those, run both built from this checkout, as [Images](#images) says. `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 where the MCP is served, and 404 where it isn't: don't publish the port for an image that prints 404, which serves its probes and metrics there without a token.
+These need `foundry` 0.1.2 and `foundry-site` 0.1.3 or newer, the images `docker compose up` pulls: older ones have no MCP and no **Set up with your agent**. `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 where the MCP is served, and 404 where it isn't: don't publish the port for an image that prints 404, which serves its probes and metrics there without a token.
 
 The MCP and HTTP Ask aren't published until you ask, so a port taken here never stops the app. From `local/`:
 

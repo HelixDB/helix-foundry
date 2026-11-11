@@ -32,6 +32,8 @@ import {
   readAgentBundle,
   readFoundry,
   scopeNames,
+  scopeReads,
+  scopeReadsText,
   sourceMatrix,
   type AgentBundle,
   type FoundryView,
@@ -186,6 +188,13 @@ export function VersionPage({ versionId }: { versionId: string }) {
   const currentId = ontology.currentVersionId || "";
   const isCurrent = currentId === v.id;
   const title = `Version ${v.version ?? "?"}`;
+  // Which sets of its scope an agent draft's routes read.
+  const reads = scopeReads(
+    v.documentSetIds || [],
+    r.format === "agent_bundle" && r.bundle.routes.ok
+      ? r.bundle.routes.value
+      : [],
+  );
   return (
     <Page>
       <PageHeader
@@ -206,11 +215,25 @@ export function VersionPage({ versionId }: { versionId: string }) {
             </span>
             {sets.data && (
               <Tag icon={FolderOpen}>
-                <span title="The document sets its loads read">
-                  {v.documentSetIds?.length
-                    ? `Reads ${andList(scopeNames(v.documentSetIds, sets.data))}`
-                    : "Reads no documents"}
-                </span>
+                {r.format === "agent_bundle" && r.bundle.routes.ok ? (
+                  // An agent draft reads the sets its routes name: the rest
+                  // of what it was given, its loads only store.
+                  <span
+                    title={
+                      reads.unread.length
+                        ? `Its loads read these for facts. They store ${andList(scopeNames(reads.unread, sets.data))} without reading ${reads.unread.length === 1 ? "it" : "them"}: no route of its mappings names ${reads.unread.length === 1 ? "that set" : "those sets"}.`
+                        : "The document sets its loads read"
+                    }
+                  >
+                    {scopeReadsText(reads, (ids) => scopeNames(ids, sets.data))}
+                  </span>
+                ) : (
+                  <span title="The document sets its loads read">
+                    {v.documentSetIds?.length
+                      ? `Reads ${andList(scopeNames(v.documentSetIds, sets.data))}`
+                      : "Reads no documents"}
+                  </span>
+                )}
               </Tag>
             )}
             {v.generationId &&

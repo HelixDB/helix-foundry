@@ -6,6 +6,7 @@ import {
   CircleCheck,
   CircleGauge,
   DatabaseZap,
+  FolderOpen,
   GitCompareArrows,
   LoaderCircle,
   MoreHorizontal,
@@ -79,7 +80,10 @@ import {
   loadRefusal,
   loadRetry,
   loadDocumentPlan,
+  loadDocumentTotals,
+  loadDocumentsOutcome,
   loadDocumentsText,
+  loadSetsLine,
   loadSources,
   ruleEvaluationRefusal,
   scopeNames,
@@ -977,6 +981,13 @@ export function LoadPage({ loadId }: { loadId: string }) {
   const j =
     l?.jobs?.find(isLiveJob) || l?.jobs?.find((x) => x.kind !== "delete");
   const documents = useQuery(documentQueries.list(id, o));
+  // The sets' names, for those the load's version doesn't read: read only
+  // when it has such documents. A grantee's load counts none, and a grantee
+  // may not list the sets.
+  const sets = useQuery({
+    ...documentSetQueries.list(id),
+    enabled: !!l?.documentSets?.some((s) => (s.notRead || 0) > 0),
+  });
   const now = useNow(tick(isLiveJob(j)));
   const version = useQuery({
     ...ontologyQueries.version(id, o, l?.versionId || ""),
@@ -1093,6 +1104,9 @@ export function LoadPage({ loadId }: { loadId: string }) {
   );
   const retry = loadRetry(j, ontology.createdAt, now);
   const loadBadgeShown = loadBadge(l);
+  // What the load made of every document it holds, as the WFE counted it: a
+  // job's progress counts a document it only stored as done.
+  const totals = loadDocumentTotals(l);
   return (
     <Page>
       <PageHeader
@@ -1240,6 +1254,26 @@ export function LoadPage({ loadId }: { loadId: string }) {
             }
           />
         )}
+        {totals && (
+          <Callout
+            icon={FolderOpen}
+            tone={totals.notRead ? undefined : "muted"}
+            title={loadSetsLine(totals)}
+            text={loadDocumentsOutcome(
+              totals,
+              // Unnamed until the sets are read: an unknown id reads as deleted.
+              sets.data ? scopeNames(totals.unreadSetIds, sets.data) : [],
+            )}
+            action={
+              totals.notRead > 0 &&
+              l.current && (
+                <ButtonLink size="sm" to={paths.documents(o, "out_of_scope")}>
+                  See what wasn’t read
+                </ButtonLink>
+              )
+            }
+          />
+        )}
         <DataFeed
           items={[...tableItems, ...docItems]}
           steps={loadSteps(j, tableItems.length, e, stoppedWaiting(l))}
@@ -1265,7 +1299,9 @@ export function LoadPage({ loadId }: { loadId: string }) {
               { label: "Took", value: jobDuration(j, now) },
               { label: "Chunks loaded", value: String(p.chunksDone || 0) },
               {
-                label: "Documents read",
+                // What this job got through: a document it only stored
+                // counts, so "read" is the load's own count below.
+                label: "Documents done",
                 // What the ontology reads, and how its current load holds each.
                 value: (
                   <Link
@@ -1276,6 +1312,33 @@ export function LoadPage({ loadId }: { loadId: string }) {
                   </Link>
                 ),
               },
+              ...(totals
+                ? [
+                    {
+                      label: "Documents read for facts",
+                      value: `${formatNumber(totals.read)} of ${formatNumber(totals.documents)}`,
+                    },
+                    {
+                      label: "Not read by this version",
+                      value: formatNumber(totals.notRead),
+                    },
+                    {
+                      // Once for each document that states the fact.
+                      label: "Fact writes from documents",
+                      value: formatNumber(totals.facts),
+                    },
+                    {
+                      // As the load wrote each document, settled since or not.
+                      label: "Reviews left by documents",
+                      value: formatNumber(totals.reviews),
+                    },
+                    {
+                      // Nearly all of them are among the reviews.
+                      label: "Names matched to no one record",
+                      value: formatNumber(totals.unresolved),
+                    },
+                  ]
+                : []),
               {
                 label: "Spent reading documents",
                 value: formatUsd(j.usdMicros),
@@ -1336,7 +1399,7 @@ export function LoadPage({ loadId }: { loadId: string }) {
               },
               {
                 key: "documents",
-                label: "Documents read",
+                label: "Documents done",
                 width: 130,
                 type: "integer",
                 sortValue: (x) => x.progress?.documentsDone || 0,

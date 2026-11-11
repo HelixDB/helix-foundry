@@ -13,11 +13,18 @@ on:
       - .github/workflows/backend.yml
 permissions:
   contents: read
+# A newer push to the same pull request cancels the run it replaces.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 defaults:
   run:
     working-directory: backend
 jobs:
   test:
+    # On GitHub's runner until Crucible's guest DNS answers NXDOMAIN for names that do not exist:
+    # connector's TestS3Security expects bucket.nonexistent.invalid to fail DNS, and Crucible's VM
+    # resolves every name to an address its egress proxy serves.
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -33,7 +40,7 @@ jobs:
         env:
           HELIX_TEST_ROOT_DSN: root:helix@tcp(127.0.0.1:3307)/
   image:
-    runs-on: ubuntu-latest
+    runs-on: crucible-4vcpu-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: docker build --tag helix-foundry/foundry:ci .
