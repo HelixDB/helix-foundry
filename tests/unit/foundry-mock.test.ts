@@ -17,6 +17,7 @@ import {
 } from "../../mock/review-decisions";
 import { routes } from "../../mock/routes";
 import { tenantGraph } from "../../mock/routes/databases";
+import { owePendingValue } from "../../mock/routes/loads";
 import { MAX_PAGES, textPdf } from "../../mock/pdf-text";
 import { FORMATS, handleDocumentUpload } from "../../mock/routes/documents";
 import { sendPieces } from "../../mock/routes/event-sources";
@@ -3364,18 +3365,33 @@ describe("review decisions", () => {
       true,
     );
 
-    // Chosen again: the same decision, with the value chosen last.
+    // Another value chosen: a new decision in place of the first, since the
+    // engine keeps a decision once, by its id.
     const again = await choose("24");
-    expect(again.id).toBe(saved.id);
+    expect(again.id).not.toBe(saved.id);
     expect(again.applied).toEqual({ status: "pending" });
+    expect((await listed()).map((d: { id: string }) => d.id)).toEqual([
+      again.id,
+    ]);
     expect(contract.props.term_months).toBe(36);
+    vi.setSystemTime(Date.now() + 10_000);
+    expect((await listed())[0].applied).toMatchObject({ status: "applied" });
+    expect(contract.props.term_months).toBe(24);
+
+    // The same value chosen again is the decision that stands, sent again.
+    const same = await choose("24");
+    expect(same).toMatchObject({
+      id: again.id,
+      decidedAt: again.decidedAt,
+      applied: { status: "pending" },
+    });
     vi.setSystemTime(Date.now() + 10_000);
     expect((await listed())[0].applied).toMatchObject({ status: "applied" });
     expect(contract.props.term_months).toBe(24);
 
     // Removed: a job sends the load its decisions without it, and the
     // property holds what its documents give again, which is nothing.
-    await call("DELETE", `${O}/review-decisions/${saved.id}`);
+    await call("DELETE", `${O}/review-decisions/${again.id}`);
     expect(await listed()).toEqual([]);
     expect(await live()).toMatchObject({ kind: "resend" });
     expect(contract.props.term_months).toBe(24);
@@ -3389,6 +3405,43 @@ describe("review decisions", () => {
     vi.setSystemTime(Date.now() + 10_000);
     expect(await listed()).toEqual([]);
     expect(contract.props.term_months).toBeUndefined();
+  });
+
+  it("keeps a value decision once, by its id, as the engine does", async () => {
+    await uploaded("contract.md", CONTRACT);
+    await uploaded(
+      "amendment.md",
+      Buffer.from(
+        "# Master services agreement\n\nGlobex Corporation signed. The Agreement runs for 36 months.\n",
+      ),
+    );
+    const g = await loaded("first");
+    const rv = reviews(g).find((n) => n.props.reason === "prop_conflict")!;
+    const contract = g.find(
+      "Contract",
+      "norm_name",
+      "master services agreement",
+    )!;
+    const saved = (
+      await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+        decision: { prop: { integer: "36" } },
+      })
+    ).body.decision;
+    vi.setSystemTime(Date.now() + 10_000);
+    await call("GET", `${O}/review-decisions`);
+    expect(contract.props.term_months).toBe(36);
+
+    // The load is sent another value under the id it holds, as a backend
+    // that kept the id of a changed decision would send it: the job ends,
+    // the decision reads applied, and the property holds what it held.
+    owePendingValue("ont_acme_contracts", {
+      ...saved,
+      value: { integer: "24" },
+    });
+    vi.setSystemTime(Date.now() + 10_000);
+    const [sent] = (await call("GET", `${O}/review-decisions`)).body.decisions;
+    expect(sent.applied).toMatchObject({ status: "applied" });
+    expect(contract.props.term_months).toBe(36);
   });
 
   it("gives a table's value back when the value chosen over it is removed", async () => {

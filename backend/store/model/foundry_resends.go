@@ -70,7 +70,8 @@ type FoundryResendEnd struct {
 // load (foundry_load_decisions.applied_status). The empty status is a decision
 // the load copied when it was created and no job has reported on yet. A
 // release ends written, refused or missed, as the engine says of each; a
-// value decision ends applied, which is all a load can say of one.
+// value decision ends applied, which is all a load can say of one, and one
+// taken back is removed until the load is told.
 type FoundryReleaseStatus string
 
 const (
@@ -98,6 +99,16 @@ const (
 	// which a document dated later still beats, and writes nothing for an
 	// entity the load doesn't hold.
 	FoundryValueApplied FoundryReleaseStatus = "applied"
+	// FoundryValueRemoved is a value decision a person took back, of which
+	// the load has yet to be told: the decision is gone, and its copy stays
+	// in the load's list under this status until an Extract without it has
+	// ended (the load's own request, FoundryResendDecisions). No Extract
+	// sends it, so the engine withdraws the value. Until then the load still
+	// holds that value, so a reader with partial access is withheld the
+	// property as while the decision stood (the access rules read the
+	// list). A resend job that failed leaves it with FoundryReleaseJobFailed,
+	// and the end of the next job of the ontology sends the list again.
+	FoundryValueRemoved FoundryReleaseStatus = "removed"
 )
 
 // Waits reports a decision the engine has yet to say anything of.

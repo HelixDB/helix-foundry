@@ -46,7 +46,7 @@ func (s *mysqlDB) SettleFoundryReviewDecision(ctx context.Context, workspaceID s
 		if takes, err := tx.foundryLoadTakes(ctx, *o.CurrentLoadID, d); err != nil || !takes {
 			return cmp.Or(err, ErrConflict)
 		}
-		return tx.saveFoundryReviewDecision(ctx, d)
+		return tx.saveFoundryReviewDecision(ctx, d, false)
 	})
 }
 
@@ -81,6 +81,19 @@ JOIN foundry_ontology_versions v ON v.id = l.version_id WHERE l.id=?`, loadID).S
 // queues one (queueFoundryResendBehind): one Extract of no documents carries
 // the list, and the engine sets the value. queued reports a job queued here.
 // d comes back as stored, with what the load holds of it (Applied).
+//
+// The engine keeps a decision once, by its id: one it is sent again under
+// an id it holds is not news, whatever its value, and sets nothing. So a
+// property decided again with another value is a new decision, under d's id,
+// and the earlier one goes: the engine withdraws the id it is no longer sent
+// and sets the new one. The same value chosen again is the decision that
+// stands, with its id and the time it was decided, so a load it is applied
+// to in place and a rebuild weigh it from the same time; it is only sent
+// again. A load that copied this id with another value, as before a changed
+// value had a new id, can't be told the value under it: there too the
+// decision is new. The new decision keeps the documents the ones it replaces
+// were decided from, so no reader covers the property by fewer documents
+// than before.
 // ErrConflict means loadID is no longer the ontology's current load, or its
 // version doesn't take d; ErrNotFound that the ontology is not live;
 // FoundryValueDecisionsFull that the ontology takes no value decision of
@@ -111,16 +124,42 @@ func (s *mysqlDB) SettleFoundryValue(ctx context.Context, workspaceID, loadID st
 		if err != nil {
 			return err
 		}
-		var decided bool
-		var held int
-		if err := tx.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(type=? AND entity_key=? AND prop=?), 0) > 0
-FROM foundry_review_decisions WHERE ontology_id=? AND kind='prop'`, d.Type, d.EntityKey, d.Prop, d.OntologyID).Scan(&held, &decided); err != nil {
+		// The property's decision so far, and whether it stands: it chose
+		// this value, and the load holds no copy of its id from another time.
+		var prior string
+		var stands bool
+		switch err := tx.db.QueryRowContext(ctx, `SELECT r.id, COALESCE(r.value = CAST(? AS JSON), FALSE) AND NOT EXISTS (
+  SELECT 1 FROM foundry_load_decisions l WHERE l.load_id=? AND l.id=r.id AND l.kind='prop' AND l.decided_at<>r.decided_at)
+FROM foundry_review_decisions r WHERE r.ontology_id=? AND r.kind='prop' AND r.type=? AND r.entity_key=? AND r.prop=? FOR UPDATE`,
+			string(d.Value), loadID, d.OntologyID, d.Type, d.EntityKey, d.Prop).Scan(&prior, &stands); {
+		case err == sql.ErrNoRows:
+			var held int
+			if err := tx.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_review_decisions WHERE ontology_id=? AND kind='prop'`,
+				d.OntologyID).Scan(&held); err != nil {
+				return err
+			}
+			if held >= model.FoundryExtractDecisionsMax {
+				return FoundryValueDecisionsFull
+			}
+		case err != nil:
+			return err
+		case !stands:
+			if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_review_decisions WHERE ontology_id=? AND id=?`, d.OntologyID, prior); err != nil {
+				return err
+			}
+		}
+		if err := tx.saveFoundryReviewDecision(ctx, d, stands); err != nil {
 			return err
 		}
-		if !decided && held >= model.FoundryExtractDecisionsMax {
-			return FoundryValueDecisionsFull
-		}
-		if err := tx.saveFoundryReviewDecision(ctx, d); err != nil {
+		// What the decisions it replaces were decided from: the one that
+		// stood, and the load's copies of the property, one a person took back
+		// that the load still holds the value of (model.FoundryValueRemoved)
+		// included.
+		if _, err := tx.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_review_decision_documents (decision_id, document_id)
+SELECT ?, dd.document_id FROM foundry_review_decision_documents dd
+WHERE dd.decision_id<>? AND (dd.decision_id=? OR dd.decision_id IN (
+  SELECT l.id FROM foundry_load_decisions l WHERE l.load_id=? AND l.kind='prop' AND l.type=? AND l.entity_key=? AND l.prop=?))`,
+			d.ID, d.ID, prior, loadID, d.Type, d.EntityKey, d.Prop); err != nil {
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
@@ -144,9 +183,11 @@ ON DUPLICATE KEY UPDATE value=VALUES(value), decided_by_user_id=VALUES(decided_b
 }
 
 // saveFoundryReviewDecision writes d, or replaces the choice of its identity,
-// keeping that one's id, and reads it back into d. The caller holds the
-// ontology's lock and has checked d.
-func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.FoundryReviewDecision) error {
+// keeping that one's id, and reads it back into d. With stands, the choice of
+// its identity is d's already and is left as it is, with who made it and
+// when: only d's documents are added to it. The caller holds the ontology's
+// lock and has checked d.
+func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.FoundryReviewDecision, stands bool) error {
 	var value, section, start, end any
 	if len(d.Value) > 0 {
 		value = string(d.Value)
@@ -154,14 +195,15 @@ func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.Foundr
 	if span := d.ClaimSpan; span != nil {
 		section, start, end = span.Section, span.Start, span.End
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO foundry_review_decisions
+	if !stands {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_review_decisions
  (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id)
  VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)
  ON DUPLICATE KEY UPDATE entity_key=VALUES(entity_key), value=VALUES(value), statement_hash=VALUES(statement_hash),
  decided_by_user_id=VALUES(decided_by_user_id), decided_at=NOW(6)`,
-		d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID)
-	if err != nil {
-		return err
+			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID); err != nil {
+			return err
+		}
 	}
 	// <=> is NULL-safe equality; resolve's chosen entity is not its identity.
 	stored, err := scanFoundryReviewDecision(s.db.QueryRowContext(ctx, "SELECT "+foundryReviewDecisionColumns+`
@@ -231,7 +273,7 @@ func (s *mysqlDB) SettleFoundryReleases(ctx context.Context, workspaceID, loadID
 		}
 		var documents []string
 		for _, d := range decisions {
-			if err := tx.saveFoundryReviewDecision(ctx, d); err != nil {
+			if err := tx.saveFoundryReviewDecision(ctx, d, false); err != nil {
 				return err
 			}
 			span := d.ClaimSpan
@@ -323,7 +365,7 @@ WHERE ontology_id=? AND kind='release' AND doc_id=? AND claim_key=? AND claim_se
 			append([]any{d.OntologyID}, claim...)...); err != nil {
 			return err
 		}
-		return tx.saveFoundryReviewDecision(ctx, d)
+		return tx.saveFoundryReviewDecision(ctx, d, false)
 	})
 }
 
@@ -337,8 +379,10 @@ func (s *mysqlDB) ListFoundryReviewDecisions(ctx context.Context, ontologyID, af
 // ListFoundryLoadDecisions reads the decisions a load sends the engine: those
 // the ontology held when the load was created, the releases and value
 // decisions settled against it or carried to it since, and no value decision
-// removed since. A resolve replaced or removed, and schema pruning, affect
-// only future loads.
+// removed since: one the load has yet to be told is gone stays in its list
+// (model.FoundryValueRemoved) and is left out here, which is what tells the
+// engine to withdraw it. A resolve replaced or removed, and schema pruning,
+// affect only future loads.
 func (s *mysqlDB) ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error) {
 	return s.listFoundryDecisions(ctx, "foundry_load_decisions", "load_id", loadID, afterID, documentIDs, limit)
 }
@@ -349,6 +393,10 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 		return nil, fmt.Errorf("decision limit must be 1..10001")
 	}
 	query := "SELECT " + foundryReviewDecisionColumns + " FROM " + table + " WHERE " + key + "=? AND id>?"
+	if table == "foundry_load_decisions" {
+		// <=> is NULL-safe: a copy no job has reported on has no status.
+		query += " AND NOT (applied_status <=> '" + string(model.FoundryValueRemoved) + "')"
+	}
 	args := []any{ontologyID, afterID}
 	if documentIDs != nil {
 		query += " AND (kind='prop'"
@@ -384,15 +432,23 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 // here: it goes when that load is made current again, before any resend of
 // it is queued (carryFoundryReleases).
 //
-// A value decision leaves the list of every load of the ontology that holds
-// it, and each of those owes the engine its decisions again
-// (model.FoundryResendDecisions): the engine withdraws a value decision it is
-// no longer sent, and the property goes back to what its other statements
-// give. The current load is sent its list at once, by resend, queued as a
-// settle queues one (queueFoundryResendBehind); a load being written sends
-// its list with what it has yet to send, and once more when its job ends
-// and it is current; any other is sent it if it is made current. So no load
-// goes on applying a decision that no longer exists.
+// A value decision is sent to no load again: its copy in every load of the
+// ontology that holds one, under its id or one the property's decision had
+// before its value changed, is marked removed (model.FoundryValueRemoved),
+// which no Extract sends, and each of those owes the engine its decisions
+// again (model.FoundryResendDecisions): the engine withdraws a value decision
+// it is no longer sent, and the property goes back to what its other
+// statements give. The current load is sent its list at once, by resend,
+// queued as a settle queues one (queueFoundryResendBehind); a load being
+// written sends its list with what it has yet to send, and once more when
+// its job ends and it is current; any other is sent it if it is made
+// current. So no load goes on applying a decision that no longer exists.
+// The copy itself stays until the load's request ends (EndFoundryLoadResend):
+// until then the load holds the value, and what a reader with partial access
+// is withheld is read from the list, so the property stays withheld for as
+// long as the value is there. A resend that fails leaves the copy, marked
+// so, and the end of the ontology's next job sends the list again
+// (FinishFoundryGraphJob), so a withdrawal is never dropped unsaid.
 //
 // It holds the ontology's lock, as every writer of a load's decisions does,
 // so the current load is the same throughout. ErrNotFound means the ontology
@@ -409,9 +465,10 @@ func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, workspaceID, 
 		if err != nil {
 			return err
 		}
-		var kind string
-		if err := tx.db.QueryRowContext(ctx, `SELECT kind FROM foundry_review_decisions WHERE ontology_id=? AND id=? FOR UPDATE`, ontologyID, id).
-			Scan(&kind); err != nil {
+		var kind, ty string
+		var entity, prop sql.NullString
+		if err := tx.db.QueryRowContext(ctx, `SELECT kind, type, entity_key, prop FROM foundry_review_decisions WHERE ontology_id=? AND id=? FOR UPDATE`,
+			ontologyID, id).Scan(&kind, &ty, &entity, &prop); err != nil {
 			if err == sql.ErrNoRows {
 				return ErrNotFound
 			}
@@ -430,10 +487,12 @@ func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, workspaceID, 
 WHERE load_id=? AND id=? AND kind='release' AND NOT (applied_status <=> 'written')`, *o.CurrentLoadID, id)
 			return err
 		case model.FoundryReviewProp:
-			// Retention keeps an ontology's loads few.
-			rows, err := tx.db.QueryContext(ctx, `SELECT d.load_id FROM foundry_loads l
-JOIN foundry_load_decisions d ON d.load_id=l.id AND d.id=? AND d.kind='prop'
-WHERE l.ontology_id=? AND l.status<>'deleted' ORDER BY l.id`, id, ontologyID)
+			// Every copy of the property's decision, under this id or one it
+			// had before its value changed: a load that is not current may
+			// hold an earlier one. Retention keeps an ontology's loads few.
+			rows, err := tx.db.QueryContext(ctx, `SELECT DISTINCT d.load_id FROM foundry_loads l
+JOIN foundry_load_decisions d ON d.load_id=l.id AND d.kind='prop' AND d.type=? AND d.entity_key=? AND d.prop=?
+WHERE l.ontology_id=? AND l.status<>'deleted' ORDER BY d.load_id`, ty, entity, prop, ontologyID)
 			if err != nil {
 				return err
 			}
@@ -451,7 +510,8 @@ WHERE l.ontology_id=? AND l.status<>'deleted' ORDER BY l.id`, id, ontologyID)
 				return err
 			}
 			for _, load := range loads {
-				if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions WHERE load_id=? AND id=? AND kind='prop'`, load, id); err != nil {
+				if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_status=?, applied_reason=NULL, applied_at=NULL
+WHERE load_id=? AND kind='prop' AND type=? AND entity_key=? AND prop=?`, string(model.FoundryValueRemoved), load, ty, entity, prop); err != nil {
 					return err
 				}
 				if err := tx.oweFoundryResends(ctx, load, model.FoundryResendDecisions, []string{""}); err != nil {

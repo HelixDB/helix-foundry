@@ -322,10 +322,13 @@ const state = {
   // The loads that owe the engine their value decisions again: a resend job
   // sends them. What each property held before a value was decided in place
   // (`was`, by load and property), and the properties whose decision a load
-  // no longer sends (`withdrawn`, by load).
+  // no longer sends (`withdrawn`, by load). The id of the decision the
+  // engine keeps for each property a job sent it (`kept`, by load and
+  // property): it keeps a decision once, by its id.
   valuesOwed: new Set<string>(),
   was: new Map<string, { value?: Value }>(),
   withdrawn: new Map<string, Decided[]>(),
+  kept: new Map<string, string>(),
 };
 onReset(() => {
   state.loads = [];
@@ -335,6 +338,7 @@ onReset(() => {
   state.valuesOwed.clear();
   state.was.clear();
   state.withdrawn.clear();
+  state.kept.clear();
   state.current.clear();
   state.owed.clear();
   state.purgesOwed.clear();
@@ -528,7 +532,10 @@ export function forgetRelease(ontologyId: string, decisionId: string) {
 // waited are applied. A job that fails (`loadOutcome` "fail") leaves them
 // unconfirmed. A property review stays in the load: it was written when its
 // document was read. A decision made, changed or removed while another load
-// was current reaches a load when it becomes current by a job's end.
+// was current reaches a load when it becomes current by a job's end. As the
+// engine does, the job keeps a decision once, by its id: one sent again
+// under an id it holds sets nothing, whatever its value, which is why a
+// changed value is a new decision (`mock/routes/reviews.ts` `save`).
 
 type Chosen = Extract<FoundryReviewDecision, { kind: "prop" }>;
 /** A property a value decision decides. */
@@ -563,17 +570,22 @@ export function owePendingValue(ontologyId: string, d: Chosen) {
 }
 
 /**
- * Takes a removed value decision out of every load's list: each owes the
- * engine its decisions again, and the current one is sent them at once.
+ * Takes a removed value decision out of every load's list, under its id or
+ * the one its property's decision had before its value changed: each owes
+ * the engine its decisions again, and the current one is sent them at once.
  */
 export function forgetValue(ontologyId: string, decisionId: string) {
+  const removed = (saved.get(ontologyId) || []).find(
+    (x): x is Chosen => x.id === decisionId && x.kind === "prop",
+  );
+  if (!removed) return;
   for (const l of loadsOf(ontologyId)) {
     const d = l.decisions.find(
-      (x): x is Chosen => x.id === decisionId && x.kind === "prop",
+      (x): x is Chosen => x.kind === "prop" && sameProperty(x, removed),
     );
     if (!d) continue;
-    l.decisions = l.decisions.filter((x) => x.id !== decisionId);
-    state.applied.delete(appliedKey(l.id, decisionId));
+    l.decisions = l.decisions.filter((x) => x !== d);
+    state.applied.delete(appliedKey(l.id, d.id));
     state.withdrawn.set(l.id, [...(state.withdrawn.get(l.id) || []), d]);
     oweValues(l);
   }
@@ -581,8 +593,9 @@ export function forgetValue(ontologyId: string, decisionId: string) {
 
 /**
  * Brings the ontology's current load the value decisions saved while another
- * load was current: each it lacks, or holds as it was before a person chose
- * again, joins its list as pending, and the load owes its decisions.
+ * load was current: each it lacks, or holds under the id its property's
+ * decision had before a person chose another value, joins its list as
+ * pending, and the load owes its decisions.
  */
 function carryValues(ontologyId: string) {
   const l = loadById(currentLoadId(ontologyId) || "");
@@ -592,7 +605,7 @@ function carryValues(ontologyId: string) {
     const held = l.decisions.find(
       (x) => x.kind === "prop" && sameProperty(x, d),
     );
-    if (held?.id === d.id && held.decidedAt === d.decidedAt) continue;
+    if (held?.id === d.id) continue;
     l.decisions = [...l.decisions.filter((x) => x !== held), d];
     state.applied.set(appliedKey(l.id, d.id), { status: "pending" });
     state.valuesOwed.add(l.id);
@@ -617,6 +630,7 @@ function sendValues(l: StoredLoad, at: number) {
     const was = state.was.get(propertyKey(l.id, d)),
       node = entity(d);
     state.was.delete(propertyKey(l.id, d));
+    state.kept.delete(propertyKey(l.id, d));
     if (node && was?.value !== undefined) node.props[d.prop] = was.value;
     else decideValue(g, d.type, d.entityKey, d.prop, l.decisions);
   }
@@ -629,12 +643,16 @@ function sendValues(l: StoredLoad, at: number) {
     if (!waits) continue;
     const node = entity(d),
       key = propertyKey(l.id, d);
-    if (node && !state.was.has(key))
-      state.was.set(
-        key,
-        d.prop in node.props ? { value: node.props[d.prop]! } : {},
-      );
-    decideValue(g, d.type, d.entityKey, d.prop, l.decisions);
+    // A decision under an id the engine holds is not news: nothing is set.
+    if (state.kept.get(key) !== d.id) {
+      if (node && !state.was.has(key))
+        state.was.set(
+          key,
+          d.prop in node.props ? { value: node.props[d.prop]! } : {},
+        );
+      decideValue(g, d.type, d.entityKey, d.prop, l.decisions);
+      state.kept.set(key, d.id);
+    }
     state.applied.set(appliedKey(l.id, d.id), {
       status: "applied",
       at: iso(at),

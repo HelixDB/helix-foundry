@@ -120,7 +120,13 @@ const sameIdentity = (a: ReviewDecision, b: ReviewDecision) =>
         a.entityKey === b.entityKey &&
         a.prop === b.prop;
 
-/** Saves `decision`, replacing the one of its identity, as settling again does. */
+/**
+ * Saves `decision`, replacing the one of its identity, as settling again
+ * does. A value is the exception, as in the backend's SettleFoundryValue:
+ * the engine keeps a decision once, by its id, so another value for a
+ * property is a new decision under a new id, and the same value chosen
+ * again is the decision that stands, with its id, its time and who made it.
+ */
 function save(
   ontology: string,
   decision: ReviewDecision,
@@ -128,13 +134,22 @@ function save(
 ): ReviewDecisionResponse {
   const own = decisions.get(ontology) || [];
   const previous = own.find((d) => sameIdentity(d, decision));
+  const value = previous?.kind === "prop" && decision.kind === "prop";
+  if (
+    value &&
+    JSON.stringify(previous.value) === JSON.stringify(decision.value)
+  )
+    return { decision: previous };
   const saved = {
     ...decision,
-    id: previous?.id || id("decision"),
+    id: (!value && previous?.id) || id("decision"),
     decidedByUserId: user,
     decidedAt: now(),
   };
-  decisions.set(ontology, [...own.filter((d) => d.id !== saved.id), saved]);
+  decisions.set(ontology, [
+    ...own.filter((d) => d !== previous && d.id !== saved.id),
+    saved,
+  ]);
   return { decision: saved };
 }
 

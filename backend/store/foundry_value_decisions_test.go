@@ -78,8 +78,9 @@ func (f resendFixture) carry(t *testing.T, job *model.FoundryGraphJob, requests 
 
 // A value a person chose joins the current load's list and queues one resend
 // job, which sends the load's decisions and no document; once its Extract
-// ends, the decision is applied. Choosing again for the same property is the
-// same decision with the new value, and goes the same way.
+// ends, the decision is applied. Choosing another value for the same property
+// is a new decision in its place, and goes the same way
+// (TestFoundryValueDecidedAgain).
 func TestFoundryValueAppliesAtOnce(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "VNOW")
@@ -109,15 +110,15 @@ func TestFoundryValueAppliesAtOnce(t *testing.T) {
 	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "now", model.FoundryGraphJobSucceeded))
 	assert.Nil(t, f.liveJob(t), "nothing is owed: no job follows")
 
-	// Chosen again: the same decision, with the value chosen last.
+	// Another value chosen: a new decision, in place of the first.
 	again := f.value("3", "acme", "platinum")
 	require.True(t, f.decide(t, "3", again))
-	assert.Equal(t, d.ID, again.ID)
-	assert.Equal(t, map[string]string{d.ID: "pending", other.ID: "applied"}, f.applied(t, d, other))
+	assert.NotEqual(t, d.ID, again.ID)
+	assert.Equal(t, map[string]string{again.ID: "pending", other.ID: "applied"}, f.applied(t, d, again, other))
 	assert.Equal(t, map[string]string{"acme": "platinum", "globex": "silver"}, f.values(t, f.load))
 	job = f.claim(t)
 	f.carry(t, job, f.requests(t, f.load))
-	assert.Equal(t, map[string]string{d.ID: "applied"}, f.applied(t, d))
+	assert.Equal(t, map[string]string{again.ID: "applied"}, f.applied(t, d, again))
 	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "again", model.FoundryGraphJobSucceeded))
 
 	// Only a value decision is settled this way, and only against the load
@@ -217,7 +218,7 @@ func TestFoundryValueCarriedToTheNextLoad(t *testing.T) {
 	require.False(t, f.decide(t, "late", late), "the load job goes on")
 	again := f.value("5", "globex", "platinum")
 	require.False(t, f.decide(t, "again", again))
-	require.Equal(t, changed.ID, again.ID)
+	require.NotEqual(t, changed.ID, again.ID, "another value is a new decision")
 	f.remove(t, "gone", removed)
 	assert.Equal(t, map[string]string{"acme": "gold", "globex": "platinum", "umbrella": "gold"}, f.values(t, first))
 	assert.Equal(t, map[string]string{"acme": "gold", "globex": "silver"}, f.values(t, second),
@@ -241,9 +242,9 @@ func TestFoundryValueCarriedToTheNextLoad(t *testing.T) {
 	assert.Nil(t, f.liveJob(t), "carried once: nothing more is owed")
 }
 
-// Removing a value decision takes it out of every load's list, and each of
-// those owes the engine its decisions again, so the engine withdraws it: the
-// current load at once, another when it is made current.
+// Removing a value decision takes it out of what every load sends, and each
+// of those owes the engine its decisions again, so the engine withdraws it:
+// the current load at once, another when it is made current.
 func TestFoundryValueRemoved(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "VBACK")
@@ -317,8 +318,10 @@ func TestFoundryValueRemoved(t *testing.T) {
 
 // A resend job that fails for good leaves the value decisions it was to
 // carry unconfirmed: the load's list holds them, so some Extract may have
-// carried them, and no job is coming to say so. Choosing a value again
-// queues one, and its end marks every one that waited.
+// carried them, and the failed job is followed by no other. Choosing a value
+// again queues one, and its end marks every one that waited. So does the end
+// of the ontology's next job, of any kind: sending the list again costs
+// nothing, and a decision with no card left could not be chosen again.
 func TestFoundryValueWhoseJobFailed(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "VFAIL")
@@ -332,24 +335,42 @@ func TestFoundryValueWhoseJobFailed(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got[d.ID].Unconfirmed())
 	assert.Zero(t, f.requests(t, f.load))
-	assert.Nil(t, f.liveJob(t), "nothing is queued for a decision whose job failed")
+	assert.Nil(t, f.liveJob(t), "the failed job is followed by no other")
 	assert.Equal(t, map[string]string{"acme": "gold", "globex": "silver"}, f.values(t, f.load), "they stay in the list")
 
-	// Nor does a later job's end queue one.
-	c := f.uploaded(t, "VFAIL-c")
-	job = f.claim(t)
-	require.Equal(t, model.FoundryGraphJobExtract, job.Kind)
-	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, extracted(c), false))
-	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "vfail-up", model.FoundryGraphJobSucceeded))
-	assert.Nil(t, f.liveJob(t))
-
+	// The same value chosen again is the decision that stands, sent again.
 	again := f.value("3", "acme", "gold")
 	require.True(t, f.decide(t, "3", again))
+	assert.Equal(t, d.ID, again.ID)
 	assert.Equal(t, map[string]string{d.ID: "pending", other.ID: "pending/job_failed"}, f.applied(t, d, other))
 	job = f.claim(t)
 	f.carry(t, job, f.requests(t, f.load))
 	assert.Equal(t, map[string]string{d.ID: "applied", other.ID: "applied"}, f.applied(t, d, other),
 		"the Extract that ended carried the whole list")
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "vfail-again", model.FoundryGraphJobSucceeded))
+	require.Nil(t, f.liveJob(t))
+
+	// With no one choosing again, the next job's end sends the list.
+	left := f.value("4", "initech", "bronze")
+	require.True(t, f.decide(t, "4", left))
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, f.claim(t), "vfail2", model.FoundryGraphJobFailed))
+	require.Equal(t, map[string]string{left.ID: "pending/job_failed"}, f.applied(t, left))
+	require.Nil(t, f.liveJob(t))
+	c := f.uploaded(t, "VFAIL-c")
+	job = f.claim(t)
+	require.Equal(t, model.FoundryGraphJobExtract, job.Kind)
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, extracted(c), false))
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "vfail-up", model.FoundryGraphJobSucceeded))
+	resend := f.liveJob(t)
+	require.NotNil(t, resend, "the extract's end queues the resend")
+	assert.Equal(t, model.FoundryGraphJobResend, resend.Kind)
+	assert.Equal(t, map[string]string{left.ID: "pending"}, f.applied(t, left), "a job is coming again")
+	assert.NotZero(t, f.requests(t, f.load))
+
+	// That one fails too: it is followed by none, and nothing waits.
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, f.claim(t), "vfail3", model.FoundryGraphJobFailed))
+	assert.Equal(t, map[string]string{left.ID: "pending/job_failed"}, f.applied(t, left))
+	assert.Nil(t, f.liveJob(t))
 }
 
 // An approval's document and the load's decisions go in one job: each
@@ -408,8 +429,10 @@ func TestFoundryValueNeverDecidesAPropertyTwice(t *testing.T) {
 
 // Every value decision goes with every Extract, which takes
 // model.FoundryExtractDecisionsMax decisions: the ontology takes no more
-// value decisions than that, so no load is made unsendable by one. A property
-// already decided can still be decided again.
+// value decisions than that, so the value decisions alone never make an
+// Extract too large. A document's own decisions on top of them still can
+// (model.FoundryExtractDecisionsMax). A property already decided can still be
+// decided again.
 func TestFoundryValueDecisionsFull(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "VFULL")
@@ -435,7 +458,7 @@ WHERE a.n + 10*b.n + 100*c.n + 1000*e.n < ?`, f.ontology.ID, id26("user"), model
 	again := f.value("4", "acme", "platinum")
 	_, err = f.db.SettleFoundryValue(ctx, f.ontology.WorkspaceID, f.load, again, resendJob("VFULL-c"))
 	require.NoError(t, err, "a property already decided is decided again")
-	assert.Equal(t, d.ID, again.ID)
+	assert.NotEqual(t, d.ID, again.ID)
 	// Removing one makes room.
 	f.remove(t, "1", last)
 	_, err = f.db.SettleFoundryValue(ctx, f.ontology.WorkspaceID, f.load, over, resendJob("VFULL-d"))

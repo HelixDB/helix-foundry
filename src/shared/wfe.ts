@@ -2708,8 +2708,9 @@ export type ReviewDecision =
  * saying what became of it (it may or may not be written or sent, and no job
  * is coming; approving it again finishes it while its review is still in the
  * load, and if the claim was written there is no review left to approve,
- * only the fact; choosing a value again finishes a value), and empty when
- * the load read it as it was created and no job has said what became of it.
+ * only the fact; choosing a value again finishes a value, as the end of the
+ * ontology's next job does), and empty when the load read it as it was
+ * created and no job has said what became of it.
  */
 export type DecisionApplied = {
   status?:

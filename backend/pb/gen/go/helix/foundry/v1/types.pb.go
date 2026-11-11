@@ -9033,12 +9033,14 @@ type FoundryDecisionApplied struct {
 	// unconfirmed (the job that applies it failed before the engine's word on
 	// it was recorded, reason job_failed: the claim may or may not have been
 	// written, or the value sent, and no job is coming. Approving it again
-	// finishes it while the load still holds the claim's review, and choosing
-	// a value again finishes a value. If the engine wrote the claim before the
-	// job failed, that review is gone and there is nothing to approve: the
-	// fact is in the load, and the decision stays unconfirmed until another
-	// approval of the same document sends it again), or empty: the load read
-	// the decision when it was created, and no job has said what became of it.
+	// finishes it while the load still holds the claim's review; choosing a
+	// value again finishes a value, and so does the end of the ontology's next
+	// job, which sends the load its values again. If the engine wrote the
+	// claim before the job failed, that review is gone and there is nothing
+	// to approve: the fact is in the load, and the decision stays unconfirmed
+	// until another approval of the same document sends it again), or empty:
+	// the load read the decision when it was created, and no job has said
+	// what became of it.
 	Status string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	// Why a refused claim stays held. The engine's reasons: unresolved (a name
 	// in it is matched to no one record: settle that name), legal_form (a name
