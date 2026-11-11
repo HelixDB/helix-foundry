@@ -73,6 +73,20 @@ func TestWorkflowToolsByIdentity(t *testing.T) {
 		assert.NotContains(t, toolNames(t, &Service{}, everyTool()), name)
 	}
 
+	// Only a host with API sources names the send tool.
+	describe := func(s *Service) string {
+		listed, err := connect(t, s, everyTool()).ListTools(context.Background(), nil)
+		require.NoError(t, err)
+		for _, tool := range listed.Tools {
+			if tool.Name == toolFoundryStartWorkflowRun {
+				return tool.Description
+			}
+		}
+		return ""
+	}
+	assert.NotContains(t, describe(with), toolFoundrySendPieces)
+	assert.Contains(t, describe(&Service{Workflows: &workflowBackend{}, Events: true}), toolFoundrySendPieces)
+
 	key := &Identity{ServiceKey: true, HasPermission: func(p Permission) bool { return p == PermissionDatabaseQueryRead }}
 	names := toolNames(t, with, key)
 	assert.Subset(t, names, workflowTools[1:])

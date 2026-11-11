@@ -137,9 +137,14 @@ func (s *Service) addFoundryWorkflowTools(server *mcp.Server, identity *Identity
 	}
 	addFoundryTool(s, server, identity, tool(toolFoundryListWorkflows,
 		"List a Foundry ontology's workflows, newest first, with how many runs each kept."), s.ListFoundryWorkflows)
+	// A host without API sources names no send tool.
+	tracked := toolFoundryReadGraph + ", " + toolFoundryAsk + " and " + toolFoundryCompleteUpload
+	if s.Events {
+		tracked = toolFoundryReadGraph + ", " + toolFoundryAsk + ", " + toolFoundrySendPieces + " and " + toolFoundryCompleteUpload
+	}
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryStartWorkflowRun,
-		Description: "Start a run of a Foundry workflow when the agent takes on a request. Pass the run's id as workflow_run_id to helix_foundry_read_graph, helix_foundry_ask, " +
-			"helix_foundry_send_pieces and helix_foundry_complete_document_upload while working on it: each records what it read or wrote under the run. " +
+		Description: "Start a run of a Foundry workflow when the agent takes on a request. Pass the run's id as workflow_run_id to " + tracked +
+			" while working on it: each records what it read or wrote under the run. " +
 			"Finish it with " + toolFoundryFinishWorkflowRun + " and the agent's answer.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.StartFoundryWorkflowRun)
@@ -213,7 +218,7 @@ func (s *Service) StartFoundryWorkflowRun(
 		return FoundryWorkflowRunOutput{}, 0, FoundryError(err)
 	}
 	out := FoundryWorkflowRun(response.GetRun())
-	out.Next = "Pass workflow_run_id " + out.ID + " to every Foundry read, question, send and upload made for this request, then call " +
+	out.Next = "Pass workflow_run_id " + out.ID + " to every Foundry call made for this request, then call " +
 		toolFoundryFinishWorkflowRun + " with the answer."
 	return out, 1, nil
 }
