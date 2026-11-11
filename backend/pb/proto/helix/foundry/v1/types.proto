@@ -2044,7 +2044,8 @@ message FoundryWorkflowAssessment {
   // Once done: the engine's Assessment (assess_result.json
   // $defs/Assessment), as JSON.
   string assessment_json = 3;
-  // Once done: the calls whose results were left out to fit the model.
+  // Once done: the calls whose results, or the whole calls, were left out
+  // to fit the model.
   repeated int32 left_out = 4;
   // Failed or skipped, or queued for a retry: why, for a person.
   string error = 5;

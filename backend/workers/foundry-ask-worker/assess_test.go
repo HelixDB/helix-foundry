@@ -105,10 +105,12 @@ func (s *assessStoreFake) GetActiveFoundryAIConfig(context.Context, string) (*mo
 
 // assessAgentFake answers Assess with result, or err, and keeps the request.
 type assessAgentFake struct {
-	result  string
-	err     error
-	request sentAssess
-	raw     map[string]any
+	result string
+	err    error
+	// contract is what Info reports; empty for this backend's.
+	contract string
+	request  sentAssess
+	raw      map[string]any
 }
 
 // sentAssess is what the tests read of a request the agent was sent.
@@ -125,7 +127,11 @@ type sentAssess struct {
 }
 
 func (a *assessAgentFake) Info(context.Context) (*agentv1.GetInfoResponse, error) {
-	return &agentv1.GetInfoResponse{ContractVersion: ontologyagent.ContractVersion, Providers: []string{"anthropic"}}, nil
+	contract := a.contract
+	if contract == "" {
+		contract = ontologyagent.ContractVersion
+	}
+	return &agentv1.GetInfoResponse{ContractVersion: contract, Providers: []string{"anthropic"}}, nil
 }
 func (a *assessAgentFake) Assess(_ context.Context, request []byte, _ ontologyagent.ModelKey) (json.RawMessage, error) {
 	if err := json.Unmarshal(request, &a.request); err != nil {
@@ -272,4 +278,33 @@ func TestAssessCallsAreTheContractsShape(t *testing.T) {
 	}
 	_, err := json.Marshal(ontologyagent.AssessCall{Call: "later"})
 	assert.Error(t, err)
+}
+
+func TestAssessorWaitsForAnAgentThatCantAssess(t *testing.T) {
+	for name, agent := range map[string]*assessAgentFake{
+		"an older contract": {result: assessed, contract: "4.11.0"},
+		"no Assess to call": {err: status.Error(codes.Unimplemented, "unknown method Assess")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &assessStoreFake{}
+			a := newAssessor(t, store, agent)
+			store.queue[0].Attempts = a.cfg.MaxAttempts
+			a.tick(context.Background())
+			require.Len(t, store.outcomes, 1)
+			o := store.outcomes[0]
+			assert.Equal(t, model.FoundryWorkflowAssessmentQueued, o.Status, "never failed for it")
+			assert.True(t, o.Uncounted)
+			assert.NotEmpty(t, o.Error)
+		})
+	}
+}
+
+func TestAssessorGivesUpOnAttemptsThatKeptStopping(t *testing.T) {
+	store, agent := &assessStoreFake{}, &assessAgentFake{result: assessed}
+	a := newAssessor(t, store, agent)
+	store.queue[0].Attempts = a.cfg.MaxAttempts + 1
+	a.tick(context.Background())
+	require.Len(t, store.outcomes, 1)
+	assert.Equal(t, model.FoundryWorkflowAssessmentFailed, store.outcomes[0].Status)
+	assert.Empty(t, agent.request.RequestID, "the agent isn't called")
 }

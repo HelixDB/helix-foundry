@@ -11482,7 +11482,8 @@ type FoundryWorkflowAssessment struct {
 	// Once done: the engine's Assessment (assess_result.json
 	// $defs/Assessment), as JSON.
 	AssessmentJson string `protobuf:"bytes,3,opt,name=assessment_json,json=assessmentJson,proto3" json:"assessment_json,omitempty"`
-	// Once done: the calls whose results were left out to fit the model.
+	// Once done: the calls whose results, or the whole calls, were left out
+	// to fit the model.
 	LeftOut []int32 `protobuf:"varint,4,rep,packed,name=left_out,json=leftOut,proto3" json:"left_out,omitempty"`
 	// Failed or skipped, or queued for a retry: why, for a person.
 	Error string `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`

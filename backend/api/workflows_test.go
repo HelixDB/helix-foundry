@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -594,24 +595,14 @@ func TestTrackedRun(t *testing.T) {
 	_, err = s.trackedRun(ctx, "ws-1", "ont-1", run.GetId())
 	wantCode(t, err, codes.FailedPrecondition)
 
-	// A call recorded under a run that changed meanwhile says it was made.
+	// A call recorded under a run that changed meanwhile, or by a store that
+	// failed, is done all the same: nothing is the call's error.
 	r := &foundrymodel.FoundryWorkflowRun{ID: run.GetId()}
-	for recordErr, want := range map[error]codes.Code{
-		foundrystore.ErrNotFound:            codes.NotFound,
-		foundrystore.ErrWorkflowRunFinished: codes.FailedPrecondition,
-		foundrystore.ErrLimitExceeded:       codes.ResourceExhausted,
-		errors.New("outage"):                codes.Internal,
-	} {
+	for _, recordErr := range []error{foundrystore.ErrNotFound, foundrystore.ErrWorkflowRunFinished, foundrystore.ErrLimitExceeded, errors.New("outage")} {
 		store.recordErr = recordErr
-		err := s.track(ctx, r, &foundrymodel.FoundryWorkflowUpload{DocumentID: "d"})
-		wantCode(t, err, want)
-		if !strings.Contains(status.Convert(err).Message(), "the call was made") {
-			t.Fatalf("message = %q", status.Convert(err).Message())
-		}
+		s.track(ctx, r, &foundrymodel.FoundryWorkflowUpload{DocumentID: "d"})
 	}
-	if err := s.track(ctx, nil, &foundrymodel.FoundryWorkflowUpload{DocumentID: "d"}); err != nil {
-		t.Fatal(err)
-	}
+	s.track(ctx, nil, &foundrymodel.FoundryWorkflowUpload{DocumentID: "d"})
 }
 
 // TestFoundryWorkflowTracking records each kind of call under a run as its
@@ -652,9 +643,11 @@ func TestFoundryWorkflowTracking(t *testing.T) {
 		if len(reader.requests) != 1 {
 			t.Fatalf("a bad run still read: %d reads", len(reader.requests))
 		}
-		// A read the run can't take after the fact fails, though made.
+		// A read the run can't take after the fact is made all the same.
 		store.recordErr = foundrystore.ErrWorkflowRunFinished
-		wantCode(t, readWith(run.GetId()), codes.FailedPrecondition)
+		if err := readWith(run.GetId()); err != nil {
+			t.Fatal(err)
+		}
 	})
 
 	t.Run("a question, once per client token", func(t *testing.T) {
@@ -828,4 +821,53 @@ func must[T any](v T, err error) T {
 		panic(err)
 	}
 	return v
+}
+
+func TestFoundryWorkflowListsStayInsideAResponse(t *testing.T) {
+	if got := previewText(strings.Repeat("é", 500)); got != strings.Repeat("é", 500) {
+		t.Fatalf("a 500-character text is cut: %d", utf8.RuneCountInString(got))
+	}
+	if got := previewText(strings.Repeat("é", 501)); utf8.RuneCountInString(got) != 500 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("preview = %d characters", utf8.RuneCountInString(got))
+	}
+	s, store := workflowService(t)
+	run := startRun(t, s, strings.Repeat("q", 2000))
+	runs := must(s.ListFoundryWorkflowRuns(asPerson(), &foundryv1.ListFoundryWorkflowRunsRequest{
+		WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: run.GetWorkflowId(),
+	}))
+	if got := runs.GetRuns()[0].GetInput(); utf8.RuneCountInString(got) != 500 {
+		t.Fatalf("a list's input is %d characters", utf8.RuneCountInString(got))
+	}
+	whole := must(s.GetFoundryWorkflowRun(asPerson(), &foundryv1.GetFoundryWorkflowRunRequest{
+		WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: run.GetWorkflowId(), Id: run.GetId(),
+	}))
+	if len(whole.GetRun().GetInput()) != 2000 {
+		t.Fatalf("one run's input is %d bytes", len(whole.GetRun().GetInput()))
+	}
+
+	// Results of 1.5 MiB: a page ends once it passes 2 MiB, keeping at least one.
+	big := json.RawMessage(`"` + strings.Repeat("x", 3<<19) + `"`)
+	for range 3 {
+		if _, err := store.RecordFoundryWorkflowAccess(context.Background(), run.GetId(), &foundrymodel.FoundryWorkflowRead{LoadID: "l", Reads: json.RawMessage(`[]`), Result: big}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page := func(after int32) *foundryv1.ListFoundryWorkflowRunAccessesResponse {
+		return must(s.ListFoundryWorkflowRunAccesses(asPerson(), &foundryv1.ListFoundryWorkflowRunAccessesRequest{
+			WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: run.GetWorkflowId(), Id: run.GetId(), AfterSeq: after,
+		}))
+	}
+	for after, want := range map[int32]struct {
+		seqs []int32
+		more bool
+	}{0: {[]int32{1}, true}, 1: {[]int32{2}, true}, 2: {[]int32{3}, false}} {
+		got := page(after)
+		var seqs []int32
+		for _, a := range got.GetAccesses() {
+			seqs = append(seqs, a.GetSeq())
+		}
+		if !slices.Equal(seqs, want.seqs) || got.GetMore() != want.more {
+			t.Fatalf("after %d: %v, more %v", after, seqs, got.GetMore())
+		}
+	}
 }

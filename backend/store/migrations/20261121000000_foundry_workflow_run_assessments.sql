@@ -8,9 +8,9 @@
 -- counting, and left_out, the calls whose results didn't fit the model),
 -- failed (failure, the engine's ModelFailure, or error alone for a failure
 -- of Foundry's), or skipped when the workspace's month of assessments is
--- spent (error says so). usd_micros is what its attempts spent, counted
--- against foundry.workflows.assess.monthly_usd from charged_at. It goes
--- with its run.
+-- spent (error says so). usd_micros is what its attempts spent; the month's
+-- budget counts foundry_workflow_assessment_spend, which outlives the
+-- assessment. It goes with its run.
 CREATE TABLE foundry_workflow_run_assessments (
   run_id          CHAR(26)     NOT NULL PRIMARY KEY,
   workspace_id    CHAR(26)     NOT NULL,
@@ -27,12 +27,10 @@ CREATE TABLE foundry_workflow_run_assessments (
   failure         VARCHAR(32)  CHARACTER SET ascii COLLATE ascii_bin NULL,
   error           TEXT         NULL,
   usd_micros      BIGINT       NOT NULL DEFAULT 0,
-  charged_at      DATETIME(6)  NULL,
   queued_at       DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   finished_at     DATETIME(6)  NULL,
   -- Claims read due ones in this order.
   INDEX foundry_workflow_run_assessments_due_idx (status, next_attempt_at),
-  INDEX foundry_workflow_run_assessments_spend_idx (workspace_id, charged_at),
   INDEX foundry_workflow_run_assessments_workflow_idx (workflow_id, verdict),
   CONSTRAINT foundry_workflow_run_assessments_status_chk CHECK (status IN ('queued', 'running', 'done', 'failed', 'skipped')),
   CONSTRAINT foundry_workflow_run_assessments_shape_chk CHECK (
@@ -45,5 +43,17 @@ CREATE TABLE foundry_workflow_run_assessments (
   CONSTRAINT foundry_workflow_run_assessments_spend_chk CHECK (usd_micros >= 0 AND attempts >= 0)
 );
 
+-- What a workspace's assessments spent, by the UTC month they were charged
+-- in: foundry.workflows.assess.monthly_usd's ledger, which deleting a run, a
+-- workflow or an ontology leaves as it is.
+CREATE TABLE foundry_workflow_assessment_spend (
+  workspace_id CHAR(26) NOT NULL,
+  month        DATE     NOT NULL,
+  usd_micros   BIGINT   NOT NULL DEFAULT 0,
+  PRIMARY KEY (workspace_id, month),
+  CONSTRAINT foundry_workflow_assessment_spend_chk CHECK (usd_micros >= 0 AND DAY(month) = 1)
+);
+
 -- +goose Down
+DROP TABLE foundry_workflow_assessment_spend;
 DROP TABLE foundry_workflow_run_assessments;

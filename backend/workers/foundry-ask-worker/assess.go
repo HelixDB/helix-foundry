@@ -125,6 +125,12 @@ func (a *assessor) run(ctx context.Context, claimed *model.FoundryWorkflowAssess
 // attempt runs one attempt: skipped when the month's budget can't cover it,
 // else the agent's Assess of the run.
 func (a *assessor) attempt(ctx context.Context, claimed *model.FoundryWorkflowAssessment) model.FoundryWorkflowAssessmentOutcome {
+	if claimed.Attempts > a.cfg.MaxAttempts {
+		// Its earlier attempts' workers stopped before storing what came of
+		// them, as many times as a failure gets.
+		return model.FoundryWorkflowAssessmentOutcome{Status: model.FoundryWorkflowAssessmentFailed,
+			Error: "the assessment kept stopping before it finished"}
+	}
 	spent, err := a.db.SumFoundryWorkflowAssessmentSpend(ctx, claimed.WorkspaceID, a.month(a.now()))
 	if err != nil {
 		return a.retry(claimed, 0, "the month's spend couldn't be read; Helix will retry")
@@ -140,6 +146,11 @@ func (a *assessor) attempt(ctx context.Context, claimed *model.FoundryWorkflowAs
 	info, err := a.agent.Info(ctx)
 	if err != nil {
 		return a.retry(claimed, 0, "the ontology agent is unavailable; Helix will retry")
+	}
+	if info.GetContractVersion() != ontologyagent.ContractVersion {
+		// A sidecar from before this backend: waiting costs no attempt.
+		return a.waitForAgent(fmt.Sprintf("the ontology agent speaks contract %s, not %s; Helix will retry",
+			info.GetContractVersion(), ontologyagent.ContractVersion))
 	}
 	resolved, err := a.ai.ResolveServed(ctx, claimed.WorkspaceID, info.GetProviders())
 	if err != nil {
@@ -158,6 +169,8 @@ func (a *assessor) attempt(ctx context.Context, claimed *model.FoundryWorkflowAs
 	raw, err := a.agent.Assess(ctx, body, resolved.Key)
 	switch status.Code(err) {
 	case codes.OK:
+	case codes.Unimplemented:
+		return a.waitForAgent("the ontology agent doesn't assess runs yet; Helix will retry")
 	case codes.InvalidArgument, codes.FailedPrecondition:
 		log.From(ctx).Error("foundry assess: the agent refused the request", "run", claimed.RunID, "err", err)
 		return model.FoundryWorkflowAssessmentOutcome{Status: model.FoundryWorkflowAssessmentFailed,
@@ -184,6 +197,14 @@ func (a *assessor) attempt(ctx context.Context, claimed *model.FoundryWorkflowAs
 	}
 	return model.FoundryWorkflowAssessmentOutcome{Status: model.FoundryWorkflowAssessmentDone, Verdict: result.Verdict,
 		Assessment: result.Assessment, LeftOut: result.LeftOut, USDMicros: spentNow}
+}
+
+// waitForAgent queues the assessment again after retry_backoff without
+// counting the attempt: the ontology agent beside this worker can't assess
+// runs yet, which no attempt changes.
+func (a *assessor) waitForAgent(why string) model.FoundryWorkflowAssessmentOutcome {
+	return model.FoundryWorkflowAssessmentOutcome{Status: model.FoundryWorkflowAssessmentQueued, Error: why,
+		RetryAt: a.now().Add(a.cfg.RetryBackoff), Uncounted: true}
 }
 
 // retry queues the assessment again after retry_backoff, or fails it once

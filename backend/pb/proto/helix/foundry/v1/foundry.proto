@@ -1472,7 +1472,8 @@ message FoundryWorkflowRunResponse {
   FoundryWorkflowRun run = 1;
 }
 // ListFoundryWorkflowRunsRequest lists a workflow's runs, newest first, 50 a
-// page, without their accesses.
+// page, without their accesses, and with their input and output cut to 500
+// characters (GetFoundryWorkflowRun returns them whole).
 message ListFoundryWorkflowRunsRequest {
   string workspace_id = 1;
   string ontology_id  = 2;
@@ -1504,7 +1505,8 @@ message FinishFoundryWorkflowRunRequest {
   string output = 6;
 }
 // ListFoundryWorkflowRunAccessesRequest returns up to 100 of a run's
-// accesses after after_seq, in order.
+// accesses after after_seq, in order, fewer once their reads and results
+// pass 2 MiB (always at least one).
 message ListFoundryWorkflowRunAccessesRequest {
   string workspace_id = 1;
   string ontology_id  = 2;

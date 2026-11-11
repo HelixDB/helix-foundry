@@ -81,10 +81,8 @@ func (s *Service) ReadFoundryGraph(ctx context.Context, req *foundryv1.ReadFound
 	if err != nil {
 		return nil, err
 	}
-	if err := s.track(ctx, run, &foundrymodel.FoundryWorkflowRead{
+	s.track(ctx, run, &foundrymodel.FoundryWorkflowRead{
 		LoadID: load.ID, Reads: json.RawMessage(req.GetReadsJson()), Result: json.RawMessage(out.GetResultJson()),
-	}); err != nil {
-		return nil, err
-	}
+	})
 	return &foundryv1.ReadFoundryGraphResponse{ResultJson: out.GetResultJson()}, nil
 }

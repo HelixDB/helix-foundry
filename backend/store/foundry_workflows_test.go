@@ -564,9 +564,24 @@ func TestFoundryWorkflowRunAssessments(t *testing.T) {
 		spent, err := f.db.SumFoundryWorkflowAssessmentSpend(ctx, f.ontology.WorkspaceID, time.Now().Add(-time.Hour))
 		require.NoError(t, err)
 		assert.EqualValues(t, 350, spent)
-		spent, err = f.db.SumFoundryWorkflowAssessmentSpend(ctx, f.ontology.WorkspaceID, time.Now().Add(time.Hour))
+		spent, err = f.db.SumFoundryWorkflowAssessmentSpend(ctx, f.ontology.WorkspaceID, time.Now().AddDate(0, 1, 0))
 		require.NoError(t, err)
-		assert.Zero(t, spent)
+		assert.Zero(t, spent, "next month has spent nothing")
+	})
+
+	t.Run("an attempt given back isn't counted", func(t *testing.T) {
+		back := finished("BACK")
+		claimed, err := f.db.ClaimFoundryWorkflowRunAssessment(ctx, "w1", time.Minute)
+		require.NoError(t, err)
+		require.Equal(t, back.ID, claimed.RunID)
+		require.NoError(t, f.db.FinishFoundryWorkflowRunAssessment(ctx, back.ID, "w1", model.FoundryWorkflowAssessmentOutcome{
+			Status: model.FoundryWorkflowAssessmentQueued, Error: "no Assess yet", RetryAt: time.Now(), Uncounted: true,
+		}))
+		got, err := f.db.GetFoundryWorkflowRunAssessment(ctx, back.ID)
+		require.NoError(t, err)
+		assert.Zero(t, got.Attempts)
+		_, err = testDB.Exec(`DELETE FROM foundry_workflow_run_assessments WHERE run_id=?`, back.ID)
+		require.NoError(t, err)
 	})
 
 	t.Run("a lapsed lease is claimed again", func(t *testing.T) {
@@ -600,6 +615,7 @@ func TestFoundryWorkflowRunAssessments(t *testing.T) {
 	t.Run("outcomes the table can't hold are refused", func(t *testing.T) {
 		for _, o := range []model.FoundryWorkflowAssessmentOutcome{
 			{Status: model.FoundryWorkflowAssessmentRunning},
+			{Status: model.FoundryWorkflowAssessmentFailed, Error: "x", Uncounted: true},
 			{Status: model.FoundryWorkflowAssessmentDone, Verdict: "great", Assessment: json.RawMessage(`{}`)},
 			{Status: model.FoundryWorkflowAssessmentDone, Verdict: "helpful"},
 			{Status: model.FoundryWorkflowAssessmentFailed},
@@ -625,5 +641,71 @@ func TestFoundryWorkflowRunAssessments(t *testing.T) {
 
 		require.NoError(t, f.db.DeleteFoundryWorkflow(ctx, f.ontology.ID, w.ID))
 		assert.Zero(t, countRows(t, "foundry_workflow_run_assessments", "workflow_id=?", w.ID))
+		// What they spent stays the month's.
+		spent, err := f.db.SumFoundryWorkflowAssessmentSpend(ctx, f.ontology.WorkspaceID, time.Now())
+		require.NoError(t, err)
+		assert.EqualValues(t, 350, spent)
 	})
+}
+
+// TestFoundryWorkflowPrunesSpareAgentsAtWork keeps a run an agent started in
+// the last day while it is open, past the cap, and prunes one left open
+// longer, and finished ones.
+func TestFoundryWorkflowPrunesSpareAgentsAtWork(t *testing.T) {
+	ctx := context.Background()
+	f := newFoundryFixture(t, "WFP")
+	w := f.workflow(t, "A")
+	fresh := f.run(t, w, "FRESH", nil)
+	stale := f.run(t, w, "STALE", nil)
+	_, err := testDB.Exec(`UPDATE foundry_workflow_runs SET started_at=NOW(6) - INTERVAL 3 DAY WHERE id=?`, stale.ID)
+	require.NoError(t, err)
+	_, err = testDB.Exec(`UPDATE foundry_workflow_runs SET started_at=NOW(6) - INTERVAL 1 HOUR WHERE id=?`, fresh.ID)
+	require.NoError(t, err)
+	var values []string
+	var args []any
+	for i := 1; i < model.FoundryWorkflowRunsKept; i++ {
+		values = append(values, "(?, ?, ?, ?, 'finished', '', '', ?, ?, NOW(6) + INTERVAL ? MICROSECOND, NOW(6))")
+		args = append(args, id26(fmt.Sprintf("FR-P%04dX", i)), w.ID, w.WorkspaceID, w.OntologyID, fmt.Sprintf("p%d", i), id26("U-ADA"), i)
+	}
+	_, err = testDB.Exec(`INSERT INTO foundry_workflow_runs
+  (id, workflow_id, workspace_id, ontology_id, status, input, output, client_token, started_by_user_id, started_at, finished_at) VALUES `+
+		strings.Join(values, ", "), args...)
+	require.NoError(t, err)
+	f.run(t, w, "NEWEST", nil)
+	_, err = f.db.GetFoundryWorkflowRun(ctx, f.ontology.ID, fresh.ID)
+	assert.NoError(t, err, "an agent at work keeps its run")
+	_, err = f.db.GetFoundryWorkflowRun(ctx, f.ontology.ID, stale.ID)
+	assert.ErrorIs(t, err, store.ErrNotFound, "a run left open for days goes")
+}
+
+// TestFoundryWorkflowPurgesInBatches deletes more accesses than one purge
+// statement takes.
+func TestFoundryWorkflowPurgesInBatches(t *testing.T) {
+	ctx := context.Background()
+	f := newFoundryFixture(t, "WFG")
+	w := f.workflow(t, "A")
+	var runs []string
+	for i := range 6 {
+		r := f.run(t, w, fmt.Sprintf("G%dX", i), nil)
+		runs = append(runs, r.ID)
+		var values []string
+		var args []any
+		for seq := 1; seq <= 1000; seq++ {
+			values = append(values, `(?, ?, 'read', '{"load_id":"l","reads":[]}')`)
+			args = append(args, r.ID, seq)
+		}
+		_, err := testDB.Exec(`INSERT INTO foundry_workflow_run_accesses (run_id, seq, kind, detail) VALUES `+strings.Join(values, ", "), args...)
+		require.NoError(t, err)
+	}
+	require.NoError(t, f.db.DeleteFoundryWorkflow(ctx, f.ontology.ID, w.ID))
+	assert.Zero(t, countRows(t, "foundry_workflow_run_accesses", "run_id IN (?, ?, ?, ?, ?, ?)", toAny(runs)...))
+	assert.Zero(t, countRows(t, "foundry_workflow_runs", "workflow_id=?", w.ID))
+}
+
+func toAny(ids []string) []any {
+	out := make([]any, len(ids))
+	for i, id := range ids {
+		out[i] = id
+	}
+	return out
 }

@@ -539,8 +539,13 @@ export function WorkflowRunPage() {
     run = useQuery(workflowQueries.run(ws, o, workflowId, runId)),
     r = run.data?.run,
     // An open run's calls are asked again whenever the run is.
+    // Asked again whenever the run counts another call, and every few
+    // seconds while it is open, keeping what it showed until then.
+    accessesQuery = workflowQueries.accesses(ws, o, workflowId, runId),
     accesses = useQuery({
-      ...workflowQueries.accesses(ws, o, workflowId, runId),
+      ...accessesQuery,
+      queryKey: [...accessesQuery.queryKey, r?.counts?.accesses ?? 0],
+      placeholderData: (previous) => previous,
       enabled: !!r,
       refetchInterval: r?.status === "open" ? OPEN_RUN_POLL_MS : false,
     });
@@ -866,7 +871,7 @@ function AssessmentPanel({
           )}
           {!!a.leftOut?.length && (
             <p className="on-muted">
-              Left out to fit the model: the results of calls{" "}
+              Left out to fit the model (their results, or the whole call):{" "}
               {a.leftOut.map((n) => `#${n}`).join(", ")}.
             </p>
           )}

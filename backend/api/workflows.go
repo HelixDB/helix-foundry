@@ -8,12 +8,14 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/helixdb/helix-foundry/backend/access"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -24,6 +26,12 @@ const (
 	workflowsPage        = 50
 	workflowRunsPage     = 50
 	workflowAccessesPage = 100
+	// workflowAccessesPageBytes ends a page of accesses early, well inside a
+	// response's 4 MiB: a run keeps up to 4 MiB of results.
+	workflowAccessesPageBytes = 2 << 20
+	// listPreviewRunes is how much of a run's request and answer a list
+	// returns; GetFoundryWorkflowRun returns them whole.
+	listPreviewRunes = 500
 )
 
 // CreateFoundryWorkflow makes a workflow of a live ontology for the calling
@@ -204,7 +212,10 @@ func (s *Service) ListFoundryWorkflowRuns(ctx context.Context, req *foundryv1.Li
 	}
 	out := &foundryv1.ListFoundryWorkflowRunsResponse{NextPageToken: next}
 	for _, r := range runs {
-		out.Runs = append(out.Runs, foundryWorkflowRunToProto(r, assessments[r.ID]))
+		run := foundryWorkflowRunToProto(r, assessments[r.ID])
+		// A page of whole requests and answers could pass a response's limit.
+		run.Input, run.Output = previewText(run.Input), previewText(run.Output)
+		out.Runs = append(out.Runs, run)
 	}
 	return out, nil
 }
@@ -275,8 +286,16 @@ func (s *Service) ListFoundryWorkflowRunAccesses(ctx context.Context, req *found
 		return nil, status.Errorf(codes.Internal, "list workflow run accesses: %v", err)
 	}
 	out := &foundryv1.ListFoundryWorkflowRunAccessesResponse{More: more}
-	for _, a := range accesses {
-		out.Accesses = append(out.Accesses, foundryWorkflowAccessToProto(a))
+	size := 0
+	for i, a := range accesses {
+		p := foundryWorkflowAccessToProto(a)
+		size += proto.Size(p)
+		if i > 0 && size > workflowAccessesPageBytes {
+			// The rest are the next page's.
+			out.More = true
+			break
+		}
+		out.Accesses = append(out.Accesses, p)
 	}
 	return out, nil
 }
@@ -315,25 +334,19 @@ func (s *Service) trackedRun(ctx context.Context, workspaceID, ontologyID, runID
 	return r, nil
 }
 
-// track records call under run, if any, once the call succeeded. A run that
-// finished, filled or went meanwhile refuses it: the call itself is done,
-// which the refusal says.
-func (s *Service) track(ctx context.Context, run *foundrymodel.FoundryWorkflowRun, call foundrymodel.FoundryWorkflowCall) error {
+// track records call under run, if any, once the call succeeded. The call
+// is done whatever the run does: a run that finished, filled or went since
+// trackedRun checked it, or a store that failed, leaves it unrecorded,
+// which is logged, never the call's error, so a retry neither fails nor
+// repeats what it did.
+func (s *Service) track(ctx context.Context, run *foundrymodel.FoundryWorkflowRun, call foundrymodel.FoundryWorkflowCall) {
 	if run == nil {
-		return nil
+		return
 	}
-	switch _, err := s.deps.DB.RecordFoundryWorkflowAccess(ctx, run.ID, call); {
-	case errors.Is(err, foundrystore.ErrNotFound):
-		return status.Error(codes.NotFound, "the call was made, but its workflow run was deleted meanwhile")
-	case errors.Is(err, foundrystore.ErrWorkflowRunFinished):
-		return status.Error(codes.FailedPrecondition, "the call was made, but its workflow run finished meanwhile and recorded nothing")
-	case errors.Is(err, foundrystore.ErrLimitExceeded):
-		return status.Errorf(codes.ResourceExhausted, "the call was made, but its workflow run already recorded %d calls",
-			foundrymodel.FoundryWorkflowRunMaxAccesses)
-	case err != nil:
-		return status.Errorf(codes.Internal, "the call was made, but recording it in its workflow run failed: %v", err)
+	if _, err := s.deps.DB.RecordFoundryWorkflowAccess(ctx, run.ID, call); err != nil {
+		log.From(ctx).Warn("foundry workflow: a call was made but its run recorded nothing", "run", run.ID,
+			"kind", call.Kind(), "err", err)
 	}
-	return nil
 }
 
 func (s *Service) foundryWorkflow(ctx context.Context, ontologyID, workflowID string) (*foundrymodel.FoundryWorkflow, error) {
@@ -498,4 +511,13 @@ func foundryWorkflowAccessToProto(a *foundrymodel.FoundryWorkflowAccess) *foundr
 		}}
 	}
 	return out
+}
+
+// previewText is text cut to listPreviewRunes characters, with an ellipsis
+// when it was cut.
+func previewText(text string) string {
+	if utf8.RuneCountInString(text) <= listPreviewRunes {
+		return text
+	}
+	return string([]rune(text)[:listPreviewRunes-1]) + "…"
 }

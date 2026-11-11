@@ -58,9 +58,7 @@ func (s *Service) AskFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 		return nil, err
 	}
 	q := out.GetQuestion()
-	if err := s.track(ctx, run, &foundrymodel.FoundryWorkflowQuestion{LoadID: q.GetLoadId(), QuestionID: q.GetId()}); err != nil {
-		return nil, err
-	}
+	s.track(ctx, run, &foundrymodel.FoundryWorkflowQuestion{LoadID: q.GetLoadId(), QuestionID: q.GetId()})
 	return out, nil
 }
 

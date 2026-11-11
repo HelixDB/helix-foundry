@@ -37,9 +37,7 @@ func (s *Service) CompleteFoundryOntologyDocumentUpload(ctx context.Context, req
 		return nil, err
 	}
 	doc := out.GetDocument()
-	if err := s.track(ctx, run, &foundrymodel.FoundryWorkflowUpload{DocumentID: doc.GetId(), SetID: doc.GetSetId()}); err != nil {
-		return nil, err
-	}
+	s.track(ctx, run, &foundrymodel.FoundryWorkflowUpload{DocumentID: doc.GetId(), SetID: doc.GetSetId()})
 	return out, nil
 }
 

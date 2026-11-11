@@ -113,6 +113,9 @@ func (s *mysqlDB) ListFoundryWorkflows(ctx context.Context, ontologyID, pageToke
 // DeleteFoundryWorkflow deletes one of an ontology's workflows with its runs
 // and their accesses. ErrNotFound when the ontology has no such workflow.
 func (s *mysqlDB) DeleteFoundryWorkflow(ctx context.Context, ontologyID, id string) error {
+	if err := s.purgeFoundryWorkflowAccesses(ctx, "workflow_id", id, "ontology_id", ontologyID); err != nil {
+		return err
+	}
 	return s.inTx(ctx, func(tx *mysqlDB) error {
 		var locked string
 		err := tx.db.QueryRowContext(ctx, `SELECT id FROM foundry_workflows WHERE id=? AND ontology_id=? FOR UPDATE`, id, ontologyID).Scan(&locked)
@@ -124,6 +127,31 @@ func (s *mysqlDB) DeleteFoundryWorkflow(ctx context.Context, ontologyID, id stri
 		}
 		return tx.deleteFoundryWorkflowRows(ctx, "workflow_id", id)
 	})
+}
+
+// purgeBatch is how many accesses one statement of a purge deletes.
+const purgeBatch = 5000
+
+// purgeFoundryWorkflowAccesses deletes the accesses of one workflow's runs
+// (column workflow_id, within its ontology) or of every workflow of an
+// ontology (ontology_id, within its workspace), purgeBatch at a time, each
+// statement on its own, before the transaction that deletes the rest: a long
+// history never holds its locks all at once. Only inside a host's
+// transaction (InTx) does it leave them to it.
+func (s *mysqlDB) purgeFoundryWorkflowAccesses(ctx context.Context, column, id, within, scope string) error {
+	if s.root == nil {
+		return nil
+	}
+	for {
+		res, err := s.db.ExecContext(ctx, `DELETE FROM foundry_workflow_run_accesses WHERE run_id IN (
+  SELECT id FROM foundry_workflow_runs WHERE `+column+`=? AND `+within+`=?) LIMIT `+fmt.Sprint(purgeBatch), id, scope)
+		if err != nil {
+			return fmt.Errorf("purge workflow accesses: %w", err)
+		}
+		if n, err := res.RowsAffected(); err != nil || n < purgeBatch {
+			return err
+		}
+	}
 }
 
 // deleteFoundryWorkflowRows deletes one workflow (column workflow_id) or
@@ -239,13 +267,26 @@ VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
 		if err != nil {
 			return err
 		}
-		rows, err := tx.db.QueryContext(ctx, `SELECT id FROM foundry_workflow_runs WHERE workflow_id=?
-ORDER BY started_at DESC, id DESC LIMIT 18446744073709551615 OFFSET ? FOR UPDATE`, r.WorkflowID, model.FoundryWorkflowRunsKept)
+		// A run started in the last day that is still open is an agent's at
+		// work: it outlives the cap until it finishes or the day is out.
+		rows, err := tx.db.QueryContext(ctx, `SELECT id FROM (
+  SELECT id, status, started_at FROM foundry_workflow_runs WHERE workflow_id=?
+  ORDER BY started_at DESC, id DESC LIMIT 18446744073709551615 OFFSET ?) old
+WHERE status='finished' OR started_at < NOW(6) - INTERVAL 1 DAY`, r.WorkflowID, model.FoundryWorkflowRunsKept)
 		if err != nil {
 			return err
 		}
 		old, err := scanStrings(rows)
 		if err != nil || len(old) == 0 {
+			return err
+		}
+		// Runs before their accesses, as RecordFoundryWorkflowAccess locks them.
+		lockedRuns, err := tx.db.QueryContext(ctx, `SELECT id FROM foundry_workflow_runs WHERE id IN (`+idPlaceholders(len(old))+`) FOR UPDATE`,
+			toAnySlice(old)...)
+		if err != nil {
+			return err
+		}
+		if _, err := scanStrings(lockedRuns); err != nil {
 			return err
 		}
 		for _, q := range []string{
@@ -570,11 +611,38 @@ func (s *mysqlDB) FinishFoundryWorkflowRunAssessment(ctx context.Context, runID,
 	} else {
 		finished = next
 	}
-	return execOrNotFound(ctx, s.db, `UPDATE foundry_workflow_run_assessments
+	uncounted := 0
+	if o.Uncounted {
+		uncounted = 1
+	}
+	return s.inTx(ctx, func(tx *mysqlDB) error {
+		var workspaceID string
+		err := tx.db.QueryRowContext(ctx, `SELECT workspace_id FROM foundry_workflow_run_assessments
+WHERE run_id=? AND status='running' AND lease_owner=? FOR UPDATE`, runID, owner).Scan(&workspaceID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_workflow_run_assessments
 SET status=?, lease_owner=NULL, lease_until=NULL, verdict=?, assessment=?, left_out=?, failure=?, error=?,
-  usd_micros=usd_micros+?, charged_at=IF(? > 0, NOW(6), charged_at), finished_at=?, next_attempt_at=?
-WHERE run_id=? AND status='running' AND lease_owner=?`,
-		string(o.Status), verdict, assessment, leftOut, failure, why, o.USDMicros, o.USDMicros, finished, next, runID, owner)
+  usd_micros=usd_micros+?, attempts=GREATEST(attempts-?, 0), finished_at=?, next_attempt_at=?
+WHERE run_id=?`, string(o.Status), verdict, assessment, leftOut, failure, why, o.USDMicros, uncounted, finished, next, runID); err != nil {
+			return err
+		}
+		if o.USDMicros == 0 {
+			return nil
+		}
+		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_workflow_assessment_spend (workspace_id, month, usd_micros)
+VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE usd_micros=usd_micros+VALUES(usd_micros)`, workspaceID, monthOf(time.Now()), o.USDMicros)
+		return err
+	})
+}
+
+// monthOf is the first day of t's UTC month, as the spend ledger keys it.
+func monthOf(t time.Time) string {
+	return t.UTC().Format("2006-01") + "-01"
 }
 
 // GetFoundryWorkflowRunAssessment reads a run's assessment: ErrNotFound when
@@ -631,11 +699,11 @@ WHERE status='done' AND workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) GR
 }
 
 // SumFoundryWorkflowAssessmentSpend is what a workspace's assessments
-// charged since since. An assessment queued again keeps its earlier spend,
-// counted in the month of its latest charge.
+// charged in the UTC months from since's on, from the ledger, which keeps
+// the spend of runs, workflows and ontologies deleted since.
 func (s *mysqlDB) SumFoundryWorkflowAssessmentSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error) {
 	var spent int64
-	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(usd_micros), 0) FROM foundry_workflow_run_assessments
-WHERE workspace_id=? AND charged_at >= ?`, workspaceID, since.UTC()).Scan(&spent)
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(usd_micros), 0) FROM foundry_workflow_assessment_spend
+WHERE workspace_id=? AND month >= ?`, workspaceID, monthOf(since)).Scan(&spent)
 	return spent, err
 }

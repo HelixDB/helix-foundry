@@ -8113,7 +8113,7 @@
             "type": "integer",
             "format": "int32"
           },
-          "description": "Once done: the calls whose results were left out to fit the model."
+          "description": "Once done: the calls whose results, or the whole calls, were left out\nto fit the model."
         },
         "error": {
           "type": "string",

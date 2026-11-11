@@ -254,6 +254,10 @@ type FoundryWorkflowAssessmentOutcome struct {
 	USDMicros  int64
 	// RetryAt is when a queued (retried) one is tried again.
 	RetryAt time.Time
+	// Uncounted gives the attempt back: it couldn't run for a reason of
+	// Helix's (an ontology agent not serving Assess yet), so it doesn't
+	// count towards the attempts a failure gets.
+	Uncounted bool
 }
 
 // Check holds the outcome to the shapes the table takes.
@@ -263,6 +267,8 @@ func (o FoundryWorkflowAssessmentOutcome) Check() error {
 	switch {
 	case o.USDMicros < 0:
 		return fmt.Errorf("an assessment spends no less than nothing")
+	case o.Uncounted && o.Status != FoundryWorkflowAssessmentQueued:
+		return fmt.Errorf("only an assessment queued again gives its attempt back")
 	case o.Status == FoundryWorkflowAssessmentDone && (len(o.Assessment) == 0 || !slices.Contains(FoundryWorkflowVerdicts, o.Verdict)):
 		return fmt.Errorf("a done assessment has an assessment and a verdict, not %q", o.Verdict)
 	case o.Status == FoundryWorkflowAssessmentFailed || o.Status == FoundryWorkflowAssessmentSkipped || o.Status == FoundryWorkflowAssessmentQueued:

@@ -455,9 +455,7 @@ func (s *Service) SendFoundryEvents(ctx context.Context, req *foundryv1.SendFoun
 	for i, p := range req.GetPieces() {
 		ids[i] = p.GetId()
 	}
-	if err := s.track(ctx, run, &foundrymodel.FoundryWorkflowSend{ConnectorID: req.GetConnectorId(), Seq: resp.GetBatch().GetSeq(), PieceIDs: ids}); err != nil {
-		return nil, err
-	}
+	s.track(ctx, run, &foundrymodel.FoundryWorkflowSend{ConnectorID: req.GetConnectorId(), Seq: resp.GetBatch().GetSeq(), PieceIDs: ids})
 	return resp, nil
 }
 

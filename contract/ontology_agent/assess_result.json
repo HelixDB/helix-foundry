@@ -34,7 +34,7 @@
                   "$ref": "#/$defs/Assessment"
                 },
                 "left_out": {
-                  "description": "The calls whose results were left out to fit the model's context ([`fit`]).",
+                  "description": "The calls whose results, or the whole calls, were left out to fit the model's\ncontext ([`fit`]).",
                   "type": "array",
                   "items": {
                     "type": "integer",

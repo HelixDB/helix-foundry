@@ -9262,7 +9262,8 @@ func (x *FoundryWorkflowRunResponse) GetRun() *FoundryWorkflowRun {
 }
 
 // ListFoundryWorkflowRunsRequest lists a workflow's runs, newest first, 50 a
-// page, without their accesses.
+// page, without their accesses, and with their input and output cut to 500
+// characters (GetFoundryWorkflowRun returns them whole).
 type ListFoundryWorkflowRunsRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -9546,7 +9547,8 @@ func (x *FinishFoundryWorkflowRunRequest) GetOutput() string {
 }
 
 // ListFoundryWorkflowRunAccessesRequest returns up to 100 of a run's
-// accesses after after_seq, in order.
+// accesses after after_seq, in order, fewer once their reads and results
+// pass 2 MiB (always at least one).
 type ListFoundryWorkflowRunAccessesRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
