@@ -90,6 +90,12 @@ const (
 	FoundryReleaseDocumentUnread = "document_unread"
 	// FoundryReleaseDocumentFailed: the engine failed the document.
 	FoundryReleaseDocumentFailed = "document_failed"
+	// FoundryReleaseTooLarge: the document, with the decisions that go with
+	// it, is more than one Extract takes, so it was not sent. The engine
+	// gives the same reason to a release it can't match among a document's
+	// held claims: either way the document holds too much for the approval
+	// to be applied.
+	FoundryReleaseTooLarge = "too_large"
 	// FoundryReleaseJobFailed: the resend job that sent the decision ended
 	// failed before the engine's word on it was recorded. It refuses nothing:
 	// the engine may have written the claim, so the decision keeps its

@@ -954,7 +954,8 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 // one request takes in decisions or bytes (failure.TooLarge): its documents
 // then go in halves, in the load's order, each split again while it is too
 // large, so no approval fails for the company it keeps. A single document
-// too large for an Extract fails the job, as it would a load.
+// too large for an Extract is not sent: its approvals are refused as
+// too_large, and the resend goes on with the rest.
 //
 // A document whose saved extraction doesn't replay (it is gone, or the
 // models or the engine's prompts changed since) would need a model call the
@@ -963,12 +964,13 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 // not_replayed, as a new load is what applies them. One the load can no
 // longer send refuses them as document_gone (deleted, out of the load, or
 // its text gone) or as document_unread (the load holds it, but no extraction
-// of it to replay), one the engine failed as document_failed. Each ends its
-// request, so a job never sends a document twice for one request, and one
-// owed again while the job ran stays owed for the job that follows
-// (EndFoundryLoadResend). A run that stops ends nothing it hadn't heard of,
-// and the retry sends those again: the engine writes a release once, and a
-// decision sent again finds no review (model.FoundryReleaseStatus.After).
+// of it to replay), one the engine failed as document_failed, one too large
+// to send as too_large. Each ends its request, so a job never sends a
+// document twice for one request, and one owed again while the job ran stays
+// owed for the job that follows (EndFoundryLoadResend). A run that stops
+// ends nothing it hadn't heard of, and the retry sends those again: the
+// engine writes a release once, and a decision sent again finds no review
+// (model.FoundryDecisionApplied.After).
 //
 // Every reason so far spends nothing (model.FoundryResendApproval). A reason
 // that may spend, as a backfill of documents whose model calls a new version
@@ -1047,16 +1049,26 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 		}
 		_, err := r.send(ctx, job, def, binding, target, ontologyVersion, requestID, call, batch, nil, 0, providers, a)
 		var f *failure
-		if errors.As(err, &f) && f.TooLarge && len(batch) > 1 {
+		switch {
+		case err == nil:
+			sent++
+			return nil
+		case !errors.As(err, &f) || !f.TooLarge:
+			return err
+		case len(batch) > 1:
 			if err := sendAll(batch[:len(batch)/2]); err != nil {
 				return err
 			}
 			return sendAll(batch[len(batch)/2:])
 		}
-		if err == nil {
-			sent++
+		// One document no Extract takes: failing the job for it would leave
+		// every document after it unsent, and their approvals unconfirmed.
+		doc := batch[0].DocID
+		if err := end(a.resends[doc], model.FoundryReleaseTooLarge); err != nil {
+			return err
 		}
-		return err
+		delete(a.resends, doc)
+		return nil
 	}
 	if len(documents) > 0 {
 		if err := sendAll(documents); err != nil {

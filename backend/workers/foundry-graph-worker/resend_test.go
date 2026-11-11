@@ -458,27 +458,48 @@ func TestResendSplitsWhatOneExtractCannotTake(t *testing.T) {
 		}
 	})
 
-	// One document whose own decisions are past the cap can't be split: the
-	// job fails for good, as a load of it would, having sent what it could.
-	t.Run("a single document too large fails the job after the rest is sent", func(t *testing.T) {
+	// One document whose own decisions are past the cap can't be split, and
+	// is not sent: its approvals are refused as too large, and the documents
+	// before and after it in the load's order go as they would without it.
+	t.Run("a single document too large is refused and the rest is sent", func(t *testing.T) {
 		h := newHarness(t)
-		owes(h, "doc-a", "doc-b")
+		owes(h, "doc-a", "doc-b", "doc-c")
 		massApproved(h, 10, "doc-a")
 		massApproved(h, maxExtractDecisions+1, "doc-b")
 		for _, d := range h.store.decisions[10:] {
 			d.ID = "1" + d.ID[1:]
 		}
+		massApproved(h, 10, "doc-c")
+		for _, d := range h.store.decisions[10+maxExtractDecisions+1:] {
+			d.ID = "2" + d.ID[1:]
+		}
 		h.agent.extract = writesAll(t)
 		outcome := h.run(t, resendJob())
-		if outcome.Status != model.FoundryGraphJobFailed || outcome.RetryAt != nil || !strings.Contains(outcome.Error, "review decisions") {
+		if outcome.Status != model.FoundryGraphJobSucceeded || outcome.Error != "" {
 			t.Fatalf("%+v", outcome)
 		}
 		_, calls := h.agent.calls()
-		if len(calls) != 1 || !reflect.DeepEqual(docIDs(decodeExtract(t, calls[0])), []string{"doc-a"}) {
-			t.Fatalf("%d extracts", len(calls))
+		if len(calls) != 2 {
+			t.Fatalf("%d extracts, want two", len(calls))
 		}
-		if want := []model.FoundryResendEnd{{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1}}; !reflect.DeepEqual(h.store.ended, want) {
+		if got := [][]string{docIDs(decodeExtract(t, calls[0])), docIDs(decodeExtract(t, calls[1]))}; !reflect.DeepEqual(got, [][]string{{"doc-a"}, {"doc-c"}}) {
+			t.Fatalf("sent %v", got)
+		}
+		want := []model.FoundryResendEnd{
+			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1},
+			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2, Refused: model.FoundryReleaseTooLarge},
+			{DocumentID: "doc-c", Reason: model.FoundryResendApproval, Requests: 3},
+		}
+		if !reflect.DeepEqual(h.store.ended, want) {
 			t.Fatalf("ended %+v", h.store.ended)
+		}
+		if h.store.extractions["doc-b"] != nil {
+			t.Fatalf("doc-b recorded %+v, though it was never sent", h.store.extractions["doc-b"])
+		}
+		for _, doc := range []string{"doc-a", "doc-c"} {
+			if got := h.store.extractions[doc]; got == nil || len(got.Releases) != 10 {
+				t.Fatalf("%s recorded %+v", doc, got)
+			}
 		}
 	})
 }
