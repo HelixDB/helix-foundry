@@ -319,11 +319,18 @@ ON DUPLICATE KEY UPDATE statement_hash=VALUES(statement_hash), decided_by_user_i
 // (ListFoundryReviewDecisions), and removing it brings the card back.
 //
 // A claim is approved or rejected, never both: an approval saved for the
-// claim goes, and its copy in the load's list with it, as removing it would
-// take it (DeleteFoundryReviewDecision). ErrConflict means loadID is no
-// longer the ontology's current load, or that load wrote the claim on an
+// claim goes, and with it its copy in every load of the ontology that has
+// not written it. The current load's would be sent by the next resend of
+// its document; a load being written copied the approval when it was
+// created and would release it at the end of its run; a load that is not
+// current would send its copy if it were made current again. One a load
+// wrote stays in that load: the fact is there. ErrConflict means loadID is
+// no longer the ontology's current load; or that load wrote the claim on an
 // approval since the review was read, so it holds no claim there to reject;
-// ErrNotFound that the ontology is not live.
+// or a resend of that load is running while the claim's approval waits for
+// it, so the engine may be writing the claim now: once that job has ended
+// the claim is a fact, or its review can be rejected. ErrNotFound means the
+// ontology is not live.
 func (s *mysqlDB) SettleFoundryReject(ctx context.Context, workspaceID, loadID string, d *model.FoundryReviewDecision) error {
 	if err := d.Validate(); err != nil {
 		return err
@@ -341,23 +348,30 @@ func (s *mysqlDB) SettleFoundryReject(ctx context.Context, workspaceID, loadID s
 			return ErrConflict
 		}
 		// The live job's row before any decision's, as every settle takes them.
-		if _, err := tx.liveFoundryGraphJob(ctx, d.OntologyID); err != nil {
+		live, err := tx.liveFoundryGraphJob(ctx, d.OntologyID)
+		if err != nil {
 			return err
 		}
 		span := d.ClaimSpan
 		claim := []any{d.DocID, d.ClaimKey, span.Section, span.Start, span.End}
-		var written bool
-		if err := tx.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_decisions
-WHERE load_id=? AND kind='release' AND doc_id=? AND claim_key=? AND claim_section=? AND claim_start=? AND claim_end=? AND applied_status='written')`,
-			append([]any{loadID}, claim...)...).Scan(&written); err != nil {
+		// What the current load's list says of the claim's approval: written,
+		// or waiting for a job with nothing said of it yet.
+		var written, waits bool
+		if err := tx.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(applied_status='written'), 0) > 0,
+  COALESCE(SUM(applied_status IN ('pending', 'carried') AND applied_reason IS NULL), 0) > 0 FROM foundry_load_decisions
+WHERE load_id=? AND kind='release' AND doc_id=? AND claim_key=? AND claim_section=? AND claim_start=? AND claim_end=?`,
+			append([]any{loadID}, claim...)...).Scan(&written, &waits); err != nil {
 			return err
 		}
-		if written {
+		if written || waits && live != nil && live.Kind == model.FoundryGraphJobResend && live.LoadID == loadID &&
+			live.Status == model.FoundryGraphJobRunning {
 			return ErrConflict
 		}
-		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
-WHERE load_id=? AND kind='release' AND doc_id=? AND claim_key=? AND claim_section=? AND claim_start=? AND claim_end=?`,
-			append([]any{loadID}, claim...)...); err != nil {
+		// <=> is NULL-safe: a copy no job has reported on has no status. A
+		// deleted load's list went with it.
+		if _, err := tx.db.ExecContext(ctx, `DELETE d FROM foundry_load_decisions d JOIN foundry_loads l ON l.id=d.load_id
+WHERE l.ontology_id=? AND d.kind='release' AND d.doc_id=? AND d.claim_key=? AND d.claim_section=? AND d.claim_start=? AND d.claim_end=?
+  AND NOT (d.applied_status <=> 'written')`, append([]any{d.OntologyID}, claim...)...); err != nil {
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_review_decisions

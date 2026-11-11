@@ -175,3 +175,124 @@ func TestFoundryRejectAndApprovalExcludeEachOther(t *testing.T) {
 	f.reject(t, f.rejected(f.b, 1, readA))
 	assert.Len(t, f.kinds(t), 3)
 }
+
+// A rejection takes the claim's approval from every load that has not
+// written it, not only the current one.
+func TestFoundryRejectTakesTheApprovalFromEveryLoad(t *testing.T) {
+	ctx := context.Background()
+
+	// A load being written copied the approval when it was created, and
+	// would release it at the end of its run: exactly where a rebuild admits
+	// what the current load refused.
+	t.Run("a load being written", func(t *testing.T) {
+		f := newResendFixture(t, "XWRITE")
+		first := f.load
+		x := f.held(f.a, 0, readA)
+		require.True(t, f.approve(t, "1", x))
+		job := f.claim(t)
+		owed, err := f.db.ListFoundryLoadResends(ctx, first)
+		require.NoError(t, err)
+		f.sent(t, job, owed[0], 0, refused(x, "conflict"))
+		f.end(t, job, "refused", model.FoundryGraphJobSucceeded)
+		f.draftVersion(t, "XWRITE2", customerTOML)
+		require.NoError(t, f.db.CreateFoundryLoad(ctx, loadJob(f.ontology, "XWRITE2")))
+		second := id26("FJ-XWRITE2")
+		require.Equal(t, []string{x.ID}, f.listed(t, second), "the new load copied the approval")
+
+		no := f.rejected(f.a, 0, readA)
+		f.reject(t, no)
+		assert.Equal(t, map[string]model.FoundryReviewDecisionKind{no.ID: model.FoundryReviewReject}, f.kinds(t))
+		assert.Empty(t, f.copies(t, first))
+		assert.Empty(t, f.copies(t, second), "the load being written releases nothing of it")
+
+		f.loaded(t, f.worker, f.a, f.b)
+		require.Equal(t, second, *f.ontologyNow(t).CurrentLoadID)
+		assert.Empty(t, f.copies(t, second))
+		assert.Nil(t, f.liveJob(t), "and nothing is carried to it")
+	})
+
+	// A copy that waits in a load that is not current would be sent if that
+	// load were made current again.
+	t.Run("an older load made current again", func(t *testing.T) {
+		f := newResendFixture(t, "XOLD")
+		first := f.load
+		f.draftVersion(t, "XOLD2", customerTOML)
+		require.NoError(t, f.db.CreateFoundryLoad(ctx, loadJob(f.ontology, "XOLD2")))
+		x := f.held(f.a, 0, readA)
+		require.False(t, f.approve(t, "1", x), "the load job goes on")
+		f.loaded(t, f.worker, f.a, f.b)
+		second := id26("FJ-XOLD2")
+		f.load = second
+		job := f.claim(t)
+		require.Equal(t, model.FoundryGraphJobResend, job.Kind)
+		owed, err := f.db.ListFoundryLoadResends(ctx, second)
+		require.NoError(t, err)
+		require.Len(t, owed, 1)
+		f.sent(t, job, owed[0], 0, refused(x, "conflict"))
+		f.end(t, job, "second", model.FoundryGraphJobSucceeded)
+		require.Equal(t, map[string]string{x.ID: "pending"}, f.copies(t, first), "the first load's copy still waits")
+
+		f.reject(t, f.rejected(f.a, 0, readA))
+		assert.Empty(t, f.copies(t, first), "taken from the load that is not current too")
+		assert.Empty(t, f.copies(t, second))
+
+		// Made current again, the first load sends the document it owed,
+		// with nothing to release.
+		_, err = f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, first, extractJob("XOLD"), resendJob("XOLD"), noBudget)
+		require.NoError(t, err)
+		f.load = first
+		assert.Empty(t, f.listed(t, first))
+		job = f.claim(t)
+		require.Equal(t, id26("FR-XOLD"), job.ID)
+		owed, err = f.db.ListFoundryLoadResends(ctx, first)
+		require.NoError(t, err)
+		require.Len(t, owed, 1)
+		f.sent(t, job, owed[0], 0)
+		assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "back", model.FoundryGraphJobSucceeded))
+		assert.Nil(t, f.liveJob(t))
+	})
+
+	// A load that wrote the claim keeps its copy: the fact is there.
+	t.Run("a load that wrote it keeps its word", func(t *testing.T) {
+		f := newResendFixture(t, "XFACT")
+		first := f.load
+		x := f.held(f.b, 0, readA)
+		require.True(t, f.approve(t, "1", x))
+		job := f.claim(t)
+		owed, err := f.db.ListFoundryLoadResends(ctx, first)
+		require.NoError(t, err)
+		f.sent(t, job, owed[0], 1, written(x))
+		f.end(t, job, "written", model.FoundryGraphJobSucceeded)
+		f.draftVersion(t, "XFACT2", customerTOML)
+		require.NoError(t, f.db.CreateFoundryLoad(ctx, loadJob(f.ontology, "XFACT2")))
+		f.loaded(t, f.worker, f.a, f.b)
+		second := id26("FJ-XFACT2")
+		f.load = second
+		require.Equal(t, map[string]string{x.ID: ""}, f.copies(t, second))
+
+		f.reject(t, f.rejected(f.b, 0, readA))
+		assert.Equal(t, map[string]string{x.ID: "written"}, f.copies(t, first))
+		assert.Empty(t, f.copies(t, second))
+	})
+
+	// While a resend of the load runs with the approval waiting for it, the
+	// engine may be writing the claim: the rejection is refused until the
+	// job has said what became of it.
+	t.Run("not while a resend is writing it", func(t *testing.T) {
+		f := newResendFixture(t, "XRUN")
+		x := f.held(f.a, 0, readA)
+		require.True(t, f.approve(t, "1", x))
+		no := f.rejected(f.a, 0, readA)
+		job := f.claim(t)
+		assert.ErrorIs(t, f.db.SettleFoundryReject(ctx, f.ontology.WorkspaceID, f.load, no), store.ErrConflict)
+		assert.Equal(t, map[string]model.FoundryReviewDecisionKind{x.ID: model.FoundryReviewRelease}, f.kinds(t))
+		assert.Equal(t, map[string]string{x.ID: "pending"}, f.copies(t, f.load))
+
+		owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+		require.NoError(t, err)
+		f.sent(t, job, owed[0], 0, refused(x, "conflict"))
+		f.reject(t, no)
+		assert.Equal(t, map[string]model.FoundryReviewDecisionKind{no.ID: model.FoundryReviewReject}, f.kinds(t))
+		assert.Empty(t, f.copies(t, f.load))
+	})
+}
