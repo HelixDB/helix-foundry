@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
-import { cx, useTitle } from "./util";
+import { useTitle } from "./hooks";
+import { cx } from "./util";
 
 export type Crumb = { label: ReactNode; to?: string };
 export type PageWidth = "narrow" | "default" | "wide" | "full";

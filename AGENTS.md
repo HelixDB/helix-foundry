@@ -43,17 +43,17 @@ When a result looks wrong, an error is unclear, something is slow or missing, or
 
 ## Layout
 
-| Path                      | Contents                                                                                                                                                     |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Path                      | Contents                                                                                                                                                                                                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/app`                 | Next routes only: `auth/login`, `auth/logout`, `login/callback`, `papi/[...path]`, `(landing)` (`/`), the files for agents and crawlers (`llms.txt`, `llms-full.txt`, `index.md`, `.well-known/`, `robots.ts`, `sitemap.ts`) and `(app)/[...slug]`, which mounts the SPA client-only |
-| `src/landing`             | The hosted site's landing page (its README says what it shows and where it came from)                                                                        |
-| `src/server`              | Server-only code: auth config, cookies, sessions and single-flight refresh, CSRF, the BFF handler and **the allowlist** (`papi-allowlist.ts`)                |
-| `src/shared`              | Used by both sides: `wfe.ts` (every WFE payload type), route templates, return paths, the CSRF contract                                                      |
-| `src/web`                 | The SPA: `main.tsx`, `api.ts`, `paths.ts`, `ui.tsx`, `kit/`, `shell/`, `areas/<area>/`, the sign-in pages and the global CSS                                 |
-| `mock`                    | The mock WFE (`server.ts`), its state, tokens, the WorkOS stand-in and `routes/`                                                                             |
-| `contract`                | The vendored WFE swagger and the commit it came from; `ontology_agent/`, the agent's Read and Ask schemas                                                    |
-| `tests/unit`, `tests/e2e` | Vitest and Playwright                                                                                                                                        |
-| `tests/docs`              | The docs' captures: one spec per docs section, `support.ts` for screenshots, the recorded pointer and captions                                               |
+| `src/landing`             | The hosted site's landing page (its README says what it shows and where it came from)                                                                                                                                                                                                |
+| `src/server`              | Server-only code: auth config, cookies, sessions and single-flight refresh, CSRF, the BFF handler and **the allowlist** (`papi-allowlist.ts`)                                                                                                                                        |
+| `src/shared`              | Used by both sides: `wfe.ts` (every WFE payload type), route templates, return paths, the CSRF contract                                                                                                                                                                              |
+| `src/web`                 | The SPA: `main.tsx`, `api.ts`, `paths.ts`, `ui.tsx`, `kit/`, `shell/`, `areas/<area>/`, the sign-in pages and the global CSS                                                                                                                                                         |
+| `mock`                    | The mock WFE (`server.ts`), its state, tokens, the WorkOS stand-in and `routes/`                                                                                                                                                                                                     |
+| `contract`                | The vendored WFE swagger and the commit it came from; `ontology_agent/`, the agent's Read and Ask schemas                                                                                                                                                                            |
+| `tests/unit`, `tests/e2e` | Vitest and Playwright                                                                                                                                                                                                                                                                |
+| `tests/docs`              | The docs' captures: one spec per docs section, `support.ts` for screenshots, the recorded pointer and captions                                                                                                                                                                       |
 
 ## Rules
 

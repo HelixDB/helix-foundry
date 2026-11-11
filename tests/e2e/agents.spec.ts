@@ -48,9 +48,7 @@ test("tells agents what Foundry is for and how to connect", async ({
     links: { llms: `${APP_ORIGIN}/llms.txt` },
   });
   const catalog = await request.get("/.well-known/ai-catalog.json");
-  expect(catalog.headers()["content-type"]).toBe(
-    "application/ai-catalog+json",
-  );
+  expect(catalog.headers()["content-type"]).toBe("application/ai-catalog+json");
   expect((await catalog.json()).entries).toHaveLength(2);
 });
 

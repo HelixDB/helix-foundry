@@ -8,8 +8,7 @@
 export const LANDING_COPY = {
   heading: "Your company’s data, connected into one ontology",
   sub: "Connect your database, Stripe, WorkOS, PostHog and your files. Foundry suggests one ontology across them that you explore and ask questions of.",
-  schema:
-    "A suggested ontology that matches the same records across sources.",
+  schema: "A suggested ontology that matches the same records across sources.",
   explorer: [
     "Everything a load wrote: its entities and facts.",
     "Open a record to see its properties and every relationship, in and out, with the load and the version that wrote it.",
