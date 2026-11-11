@@ -204,11 +204,14 @@ func (s *Service) SetCurrentFoundryLoad(ctx context.Context, req *foundryv1.SetC
 	if req.GetId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
-	extract := &foundrymodel.FoundryGraphJob{ID: id.New()}
+	// What may follow: an extract of the documents the load waits for, or a
+	// resend of those whose approvals it hasn't read.
+	extract, resend := &foundrymodel.FoundryGraphJob{ID: id.New()}, &foundrymodel.FoundryGraphJob{ID: id.New()}
 	if userID := actor(ctx).UserID; userID != "" {
-		extract.RequestedByUserID = &userID
+		extract.RequestedByUserID, resend.RequestedByUserID = &userID, &userID
 	}
-	if _, err := s.deps.DB.SetCurrentFoundryLoad(ctx, o.WorkspaceID, o.ID, req.GetId(), extract, s.deps.Cfg.Foundry.Graph.MonthBudget(time.Now())); err != nil {
+	if _, err := s.deps.DB.SetCurrentFoundryLoad(ctx, o.WorkspaceID, o.ID, req.GetId(), extract, resend,
+		s.deps.Cfg.Foundry.Graph.MonthBudget(time.Now())); err != nil {
 		return nil, foundryLoadError("set the current load", err)
 	}
 	o, err = s.liveFoundryOntology(ctx, o.WorkspaceID, o.ID)

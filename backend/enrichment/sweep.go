@@ -32,7 +32,7 @@ type SweepStore interface {
 	ListFoundryEnrichmentSweeps(ctx context.Context, callsBefore, supersededBefore, wholeBefore time.Time, limit int) ([]model.FoundryEnrichmentSweep, error)
 	ClearFoundryEnrichmentFiles(ctx context.Context, sweep model.FoundryEnrichmentSweep) error
 	ListFoundryEnrichmentPurges(ctx context.Context, maxAttempts, limit int) ([]*model.FoundryEnrichmentPurge, error)
-	AdvanceFoundryEnrichmentPurge(ctx context.Context, ontologyID string, load *model.FoundryGraphJob, deleteJobID string,
+	AdvanceFoundryEnrichmentPurge(ctx context.Context, ontologyID string, load *model.FoundryGraphJob, nextJobID string,
 		retryAfter time.Duration, maxAttempts int) (model.FoundryEnrichmentPurgeStep, error)
 }
 

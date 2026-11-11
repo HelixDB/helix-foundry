@@ -7277,7 +7277,9 @@ func (x *ReadFoundryGraphResponse) GetResultJson() string {
 	return ""
 }
 
-// Reads the current load's review. Stores a decision for the next load only.
+// Reads the current load's review and stores a decision. A resolve or prop
+// decision applies from the next load; a release applies to the current load
+// at once (FoundryReviewChoice.release).
 type SettleFoundryReviewRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache

@@ -3083,6 +3083,111 @@ describe("review decisions", () => {
     expect(settled.status).toBe(200);
   });
 
+  it("applies an approval of a held claim to the current load at once", async () => {
+    const hedged = Buffer.from(
+      "# Hedged deal\n\nGlobex Corporation may have signed.\n",
+    );
+    await uploaded("variant.md", hedged);
+    const g = await loaded("first");
+    const held = () =>
+      reviews(g).filter((n) => n.props.reason === "low_confidence");
+    const rv = held()[0]!;
+    const statementHash = createHash("sha256")
+      .update(`signed_with\u001f${String(rv.props.statement)}`)
+      .digest("hex");
+    const approve = () =>
+      call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+        decision: { release: { statementHash } },
+      });
+    const listed = async () =>
+      (await call("GET", `${O}/review-decisions`)).body.decisions;
+    const facts = () =>
+      [...g.nodes()].filter(
+        (n) =>
+          n.label === FOUNDRY_NODES.Evidence && n.props.link === "signed_with",
+      );
+    const document = async () =>
+      (await call("GET", `${O}/documents`)).body.documents.find(
+        (d: { name: string }) => d.name === "variant.md",
+      ).extraction;
+    expect(await document()).toMatchObject({ facts: 0, reviews: 1 });
+
+    // It joins the load's decisions, and waits for its job.
+    const saved = (await approve()).body.decision;
+    expect(saved.applied).toEqual({ status: "pending" });
+    expect((await listed())[0].applied).toEqual({ status: "pending" });
+    expect(held()).toHaveLength(1);
+    expect(facts()).toHaveLength(0);
+    // Taken back before the job ran, it is written nowhere.
+    await call("DELETE", `${O}/review-decisions/${saved.id}`);
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(await listed()).toEqual([]);
+    expect(held()).toHaveLength(1);
+
+    // Approved again: a job's step later the claim is a fact of the same
+    // load, its review gone, and the document counts it.
+    const again = (await approve()).body.decision;
+    vi.setSystemTime(Date.now() + 10_000);
+    const [written] = await listed();
+    expect(written.id).toBe(again.id);
+    expect(written.applied).toEqual({
+      status: "written",
+      at: expect.any(String),
+    });
+    expect(held()).toHaveLength(0);
+    expect(facts()).toHaveLength(1);
+    expect(facts()[0]!.props).toMatchObject({
+      doc_id: rv.props.doc_id,
+      quote: "Globex Corporation may have signed.",
+      confidence: 0.72,
+    });
+    expect(await document()).toMatchObject({ facts: 1, reviews: 0 });
+    // Its review is gone, so it can't be approved twice.
+    expect(refusal(await approve())).toEqual([
+      404,
+      "review not found in the current load",
+    ]);
+
+    // A later load copies the decision, and its commit says what became of it.
+    const next = await loaded("next");
+    expect(reviews(next).filter((n) => n.props.claim_key)).toHaveLength(0);
+    expect((await listed())[0].applied).toMatchObject({ status: "written" });
+  });
+
+  it("says why the current load kept an approved claim held", async () => {
+    Object.assign(config, { documentHeld: "legal_form" });
+    await uploaded(
+      "variant.md",
+      Buffer.from("# Hedged deal\n\nGlobex Corporation may have signed.\n"),
+    );
+    const g = await loaded("first");
+    const rv = reviews(g).find((n) => n.props.reason === "low_confidence")!;
+    const statementHash = createHash("sha256")
+      .update(`signed_with\u001f${String(rv.props.statement)}`)
+      .digest("hex");
+    await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+      decision: { release: { statementHash } },
+    });
+    vi.setSystemTime(Date.now() + 10_000);
+    const [d] = (await call("GET", `${O}/review-decisions`)).body.decisions;
+    expect(d.applied).toEqual({
+      status: "refused",
+      reason: "legal_form",
+      at: expect.any(String),
+    });
+    expect(
+      reviews(g).filter((n) => n.props.reason === "low_confidence"),
+    ).toHaveLength(1);
+    // A decision of another kind says nothing of a load.
+    const name = reviews(g).find((n) => n.props.reason === "legal_form")!;
+    const resolved = (
+      await call("POST", `${O}/reviews/${name.props.review_key}:settle`, {
+        decision: { resolve: { notInData: true } },
+      })
+    ).body.decision;
+    expect(resolved.applied).toBeUndefined();
+  });
+
   it("reads into a load the decisions saved when it was created, catch-up extracts included", async () => {
     await uploaded("contract.md", CONTRACT);
     await uploaded(

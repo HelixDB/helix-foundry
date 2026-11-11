@@ -174,7 +174,7 @@ func deleteDone(req string, stream agentv1.Agent_DeleteLoadServer) error {
 		return status.Error(codes.Internal, err.Error())
 	}
 	return deleteEvents(stream, []string{
-		`{"event":"delete_started","contract_version":"4.11.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
+		`{"event":"delete_started","contract_version":"4.12.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
 		`{"event":"deleted","label":"Customer","element":"node","count":1}`, `{"event":"delete_finished"}`,
 	}, `{"status":"done","nodes":1,"edges":2}`)
 }
@@ -229,7 +229,7 @@ const (
 )
 
 func documentEvent(doc, outcome, use string) string {
-	return `{"event":"document","doc_id":"` + doc + `","outcome":` + outcome + `,"text_bytes":120,"sections":2,` + counts + `,` + use + `}`
+	return `{"event":"document","doc_id":"` + doc + `","outcome":` + outcome + `,"text_bytes":120,"sections":2,` + counts + `,` + use + `,"releases":[]}`
 }
 
 // ingestReport is the ingest crate's report of the customers mapping: its
@@ -254,7 +254,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 			return status.Error(codes.Internal, err.Error())
 		}
 		return ingestEvents(stream, []string{
-			`{"event":"ingest_started","contract_version":"4.11.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.12.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":2}}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"resolve","rows":2}}`,
 			`{"event":"sweep_page","entities":2}`, `{"event":"ingest_finished"}`,
@@ -265,7 +265,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 // extracted ends doc-a ingested with an artifact, doc-b a duplicate of it,
 // doc-c failed retryably and doc-d already held.
 var extracted = []string{
-	`{"event":"extract_started","contract_version":"4.11.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
+	`{"event":"extract_started","contract_version":"4.12.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
 	`{"event":"artifact","doc_id":"doc-a","key":"key_a","json":"{\"sections\":[1]}"}`,
 	documentEvent("doc-a", `{"kind":"ingested"}`, usage),
 	documentEvent("doc-b", `{"kind":"duplicate","of":"doc-a"}`, noUsage),
@@ -378,6 +378,28 @@ type memStore struct {
 	// those RecordFoundryDocumentRemoval forgot, in order.
 	removed   []string
 	forgotten []string
+	// resends are the documents the job's load owes a resend
+	// (ListFoundryLoadResends), and ended the requests EndFoundryLoadResend
+	// ended, in order; endErr fails every end.
+	resends []*model.FoundryLoadResend
+	ended   []model.FoundryResendEnd
+	endErr  error
+}
+
+func (s *memStore) ListFoundryLoadResends(context.Context, string) ([]*model.FoundryLoadResend, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resends, nil
+}
+
+func (s *memStore) EndFoundryLoadResend(_ context.Context, _, _ string, end model.FoundryResendEnd) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.endErr != nil {
+		return s.endErr
+	}
+	s.ended = append(s.ended, end)
+	return nil
 }
 
 // spendRead is one FoundryDocumentSetSpend read.
@@ -3144,25 +3166,41 @@ func TestExtractReviewDecisions(t *testing.T) {
 // more. An already_ingested document's event has zero counts, however many it
 // released, and its stored row stays.
 func TestExtractRecordsWhatAReleaseMoved(t *testing.T) {
-	released := func(reviews, facts, written int, outcome string) string {
+	// released is doc-a's event: its commit counted reviews and facts, and its
+	// releases moved so many reviews, writing the decisions of written.
+	released := func(reviews, facts, moved int, outcome string, written ...string) string {
 		c := strings.Replace(counts, `"reviews":1`, fmt.Sprintf(`"reviews":%d`, reviews), 1)
 		c = strings.Replace(c, `"facts":1`, fmt.Sprintf(`"facts":%d`, facts), 1)
-		c = strings.Replace(c, `"released":0`, fmt.Sprintf(`"released":%d`, written), 1)
-		return `{"event":"document","doc_id":"doc-a","outcome":` + outcome + `,"text_bytes":120,"sections":2,` + c + `,` + noUsage + `}`
+		c = strings.Replace(c, `"released":0`, fmt.Sprintf(`"released":%d`, moved), 1)
+		var releases []string
+		for _, id := range written {
+			releases = append(releases, `{"decision_id":"`+id+`","outcome":{"kind":"written"}}`)
+		}
+		return `{"event":"document","doc_id":"doc-a","outcome":` + outcome + `,"text_bytes":120,"sections":2,` + c + `,` + noUsage +
+			`,"releases":[` + strings.Join(releases, ",") + `]}`
 	}
 	for name, tc := range map[string]struct {
 		event          string
 		reviews, facts int
+		moved          int
 		kept           bool
 	}{
-		"a review released":    {released(2, 3, 1, `{"kind":"ingested"}`), 1, 4, false},
-		"all of them":          {released(1, 0, 1, `{"kind":"ingested"}`), 0, 1, false},
-		"none":                 {released(2, 3, 0, `{"kind":"ingested"}`), 2, 3, false},
-		"a held document":      {released(0, 0, 1, `{"kind":"already_ingested"}`), 0, 1, true},
-		"more than it reviews": {released(1, 0, 3, `{"kind":"ingested"}`), 0, 3, false},
+		"a review released": {released(2, 3, 1, `{"kind":"ingested"}`, "1"), 1, 4, 1, false},
+		"all of them":       {released(1, 0, 1, `{"kind":"ingested"}`, "1"), 0, 1, 1, false},
+		"none":              {released(2, 3, 0, `{"kind":"ingested"}`), 2, 3, 0, false},
+		"a held document":   {released(0, 0, 1, `{"kind":"already_ingested"}`, "1"), 0, 1, 1, true},
+		// One claim two reviews held is one fact: the reviews leave, and the
+		// facts gain what the decisions wrote.
+		"two reviews of one claim":          {released(3, 2, 2, `{"kind":"ingested"}`, "1"), 1, 3, 2, false},
+		"two reviews, a held document":      {released(0, 0, 2, `{"kind":"already_ingested"}`, "1"), 0, 1, 2, true},
+		"two decisions, three reviews":      {released(4, 0, 3, `{"kind":"ingested"}`, "1", "2"), 1, 2, 3, false},
+		"more released than it reviews":     {released(1, 0, 3, `{"kind":"ingested"}`, "1", "2"), 0, 2, 3, false},
+		"a decision the worker didn't send": {released(2, 3, 1, `{"kind":"ingested"}`, "9"), 1, 3, 1, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t)
+			h.store.decisions = []*model.FoundryReviewDecision{approval("1", "doc-a", hashA), approval("2", "doc-a", hashB)}
+			h.store.decisions[1].ClaimSpan = &model.FoundryClaimSpan{Section: 1, Start: 0, End: 4}
 			h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
 				events := []string{extracted[0], tc.event}
 				for _, doc := range []string{"doc-b", "doc-c", "doc-d"} {
@@ -3174,7 +3212,8 @@ func TestExtractRecordsWhatAReleaseMoved(t *testing.T) {
 				t.Fatalf("%+v", outcome)
 			}
 			got := h.store.extractions["doc-a"]
-			if got == nil || got.Counts.Reviews != tc.reviews || got.Counts.Facts != tc.facts || h.store.kept["doc-a"] != tc.kept {
+			if got == nil || got.Counts.Reviews != tc.reviews || got.Counts.Facts != tc.facts || got.Released != tc.moved ||
+				h.store.kept["doc-a"] != tc.kept {
 				t.Fatalf("recorded %+v", got)
 			}
 		})

@@ -315,9 +315,13 @@ WHERE m.load_id=? GROUP BY m.set_id ORDER BY m.set_id`, loadID)
 // may lack documents uploaded since it was written, or hold retryable
 // failures: with no job live, an extract (extract's id and requester) is
 // queued for them within budget; with one live, its end owes it. queued
-// reports an extract queued here. ErrNotFound means the ontology is not live
-// or has no such load not yet deleted.
-func (s *mysqlDB) SetCurrentFoundryLoad(ctx context.Context, workspaceID, ontologyID, loadID string, extract *model.FoundryGraphJob,
+// reports an extract queued here. The load's list also lacks the approvals
+// saved since it copied its decisions: with no job live and no extract
+// queued, they are carried to it and a resend (resend's id and requester)
+// queued for their documents, as a job's end does (queueFoundryResend); a
+// live or queued job's end carries them otherwise. ErrNotFound means the
+// ontology is not live or has no such load not yet deleted.
+func (s *mysqlDB) SetCurrentFoundryLoad(ctx context.Context, workspaceID, ontologyID, loadID string, extract, resend *model.FoundryGraphJob,
 	budget model.FoundryGraphBudget) (queued bool, err error) {
 	err = s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -358,6 +362,10 @@ FROM foundry_load_enrichments WHERE load_id=?`, loadID).Scan(&purged); {
 		}
 		if live == nil {
 			queued, err = tx.queueFoundryExtract(ctx, o, extract, budget)
+			if err != nil || queued {
+				return err
+			}
+			_, err = tx.queueFoundryResend(ctx, o, resend, 0)
 			return err
 		}
 		waiting, err := tx.countWaitingFoundryDocuments(ctx, loadID)

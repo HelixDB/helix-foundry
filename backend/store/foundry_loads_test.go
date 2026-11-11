@@ -459,11 +459,11 @@ func TestFoundryLoadDeletes(t *testing.T) {
 		f.finish(t, "w1", "a", model.FoundryGraphJobFailed)
 
 		// An extract into the first load, made current again, targets it.
-		_, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, first, extractJob("sc"), noBudget)
+		_, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, first, extractJob("sc"), resendJob("sc"), noBudget)
 		require.NoError(t, err)
 		f.uploaded(t, "a")
 		require.Equal(t, first, f.liveJob(t).LoadID)
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, current, extractJob("sc2"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, current, extractJob("sc2"), resendJob("sc2"), noBudget)
 		require.NoError(t, err)
 		assert.ErrorIs(t, f.db.DeleteFoundryLoad(ctx, ws, o, first, id26("FN-D-3")), store.FoundryLoadBusy, "a live job targets it")
 
@@ -576,7 +576,7 @@ func TestFoundryLoadSetCurrent(t *testing.T) {
 		require.NotNil(t, extract)
 		require.Equal(t, newer, extract.LoadID)
 
-		queued, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc"), noBudget)
+		queued, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc"), resendJob("sc"), noBudget)
 		require.NoError(t, err)
 		assert.False(t, queued, "a job is live")
 		assert.Equal(t, old, *f.ontologyNow(t).CurrentLoadID)
@@ -605,24 +605,24 @@ func TestFoundryLoadSetCurrent(t *testing.T) {
 		f.loaded(t, "w1", a)
 		newer := f.load(t, "L2")
 		f.loaded(t, "w1", a)
-		queued, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc1"), noBudget)
+		queued, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc1"), resendJob("sc1"), noBudget)
 		require.NoError(t, err)
 		assert.False(t, queued, "the old load holds every document")
 		assert.Nil(t, f.liveJob(t))
 
 		// A document only the newer load holds.
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, newer, extractJob("sc2"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, newer, extractJob("sc2"), resendJob("sc2"), noBudget)
 		require.NoError(t, err)
 		b := f.uploaded(t, "b")
 		f.finish(t, "w1", "b", model.FoundryGraphJobSucceeded, b)
 		require.Nil(t, f.liveJob(t))
 
-		queued, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc3"), model.FoundryGraphBudget{Since: time.Unix(0, 0), CapMicros: 0})
+		queued, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc3"), resendJob("sc3"), model.FoundryGraphBudget{Since: time.Unix(0, 0), CapMicros: 0})
 		require.NoError(t, err)
 		assert.False(t, queued, "the month is spent")
 		assert.Equal(t, old, *f.ontologyNow(t).CurrentLoadID, "the load is current all the same")
 
-		queued, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc4"), noBudget)
+		queued, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc4"), resendJob("sc4"), noBudget)
 		require.NoError(t, err)
 		assert.True(t, queued)
 		catchUp := f.liveJob(t)
@@ -642,18 +642,18 @@ func TestFoundryLoadSetCurrent(t *testing.T) {
 		f.load(t, "L2")
 		f.loaded(t, "w1")
 		failed := f.load(t, "L3")
-		_, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, failed, extractJob("a"), noBudget)
+		_, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, failed, extractJob("a"), resendJob("a"), noBudget)
 		assert.ErrorIs(t, err, store.FoundryLoadNotServable, "a load being written")
 		f.finish(t, "w1", "a", model.FoundryGraphJobFailed)
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, failed, extractJob("b"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, failed, extractJob("b"), resendJob("b"), noBudget)
 		assert.ErrorIs(t, err, store.FoundryLoadNotServable, "a failed load")
 		require.NoError(t, f.db.DeleteFoundryLoad(ctx, ws, o, first, id26("FN-D-user")))
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, first, extractJob("c"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, first, extractJob("c"), resendJob("c"), noBudget)
 		assert.ErrorIs(t, err, store.FoundryLoadNotServable, "a load being deleted")
 		f.ended(t, "w1", f.claimed(t, "w1", id26("FN-D-user")).ID, model.FoundryGraphJobFailed, next("d"))
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, first, extractJob("e"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, first, extractJob("e"), resendJob("e"), noBudget)
 		assert.ErrorIs(t, err, store.FoundryLoadNotServable, "a load whose delete failed")
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, id26("FJ-none"), extractJob("f"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, id26("FJ-none"), extractJob("f"), resendJob("f"), noBudget)
 		assert.ErrorIs(t, err, store.ErrNotFound)
 		assert.Equal(t, id26("FJ-L2"), *f.ontologyNow(t).CurrentLoadID, "every refusal leaves the current load")
 	})
@@ -674,7 +674,7 @@ func TestFoundryLoadSetCurrent(t *testing.T) {
 			wg.Add(2)
 			go func() {
 				defer wg.Done()
-				_, setErr = f.db.SetCurrentFoundryLoad(ctx, ws, o, target, extractJob(fmt.Sprintf("r%d", round)), noBudget)
+				_, setErr = f.db.SetCurrentFoundryLoad(ctx, ws, o, target, extractJob(fmt.Sprintf("r%d", round)), resendJob(fmt.Sprintf("r%d", round)), noBudget)
 			}()
 			go func() {
 				defer wg.Done()
@@ -711,7 +711,7 @@ func TestFoundryLoadSetCurrent(t *testing.T) {
 			wg.Add(2)
 			go func() {
 				defer wg.Done()
-				_, setErr = f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob(fmt.Sprintf("r%d", round)), noBudget)
+				_, setErr = f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob(fmt.Sprintf("r%d", round)), resendJob(fmt.Sprintf("r%d", round)), noBudget)
 			}()
 			go func() {
 				defer wg.Done()

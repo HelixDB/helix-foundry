@@ -2,6 +2,7 @@ package foundrygraphworker
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,6 +69,8 @@ type store interface {
 	FoundryDocumentSetSpend(ctx context.Context, workspaceID string, setIDs []string, month time.Time) (map[string]model.FoundryDocumentSetSpend, error)
 	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
 	ListFoundryDocumentExtractions(ctx context.Context, loadID string, documentIDs []string) (map[string]*model.FoundryDocumentExtraction, error)
+	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
+	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
 }
 
 // agent is the sidecar; *ontologyagent.Client calls it.
@@ -105,7 +109,10 @@ type failure struct {
 	Internal  bool
 	// Unsupported is an apply the agent can't do in place (unsupported).
 	Unsupported bool
-	Err         error
+	// TooLarge is an Extract that was never sent, as it is past what one
+	// request takes (tooLarge): a resend sends its documents in smaller ones.
+	TooLarge bool
+	Err      error
 }
 
 func (f *failure) Error() string {
@@ -130,6 +137,13 @@ func retry(message string, err error) error { return &failure{Message: message, 
 
 func permanent(message string, err error) error {
 	return &failure{Message: message, Permanent: true, Err: err}
+}
+
+// tooLarge fails for good an Extract past what one request takes, in
+// decisions (maxExtractDecisions) or in bytes (runner.maxRequestBytes),
+// before it is sent: no retry of the same documents sends less.
+func tooLarge(message string, err error) error {
+	return &failure{Message: message, Permanent: true, TooLarge: true, Err: err}
 }
 
 // unsupported ends an apply the agent can't bring up to date in place; the
@@ -159,6 +173,11 @@ type attempt struct {
 	// held are the sets with an allowance whose documents a budget stop of
 	// the attempt left unrecorded (extract), which its outcome hands on.
 	held []string
+	// resends are the documents a resend job's Extract was sent and has not
+	// ended yet, each with the request it read (resend); nil in any other job.
+	resends map[string]*model.FoundryLoadResend
+	// resendFailed are those of resends the engine failed.
+	resendFailed map[string]bool
 }
 
 // report is the job's report: each call's result, the ingest report cut to
@@ -222,7 +241,10 @@ type runner struct {
 //  4. Bind a proxy to the ontology's database and, unless the tables are
 //     in, Ingest the generation's tables through the mappings, with the
 //     profiles chosen, creating the job's load.
-//  5. Extract the documents the load waits for, each with its set and every
+//  5. A resend job sends the documents its load owes one, each with every
+//     artifact saved for it and nothing to spend, and ends there (resend).
+//     Otherwise:
+//  6. Extract the documents the load waits for, each with its set and every
 //     artifact saved for it, under what is left of the job's and the month's
 //     budget, on the models and key the workspace's AI setting resolves to,
 //     of a provider the agent calls. The version's mappings go with them:
@@ -301,6 +323,10 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 			return a, err
 		}
 		a.ingestDone = true
+	}
+	if job.Kind == model.FoundryGraphJobResend {
+		defer r.timeStep("resend", r.now())
+		return a, r.resend(ctx, job, def, binding, target, ontologyVersion, info.GetProviders(), a)
 	}
 	extractStart := r.now()
 	err = r.extract(ctx, job, def, binding, target, ontologyVersion, info.GetProviders(), a)
@@ -914,6 +940,158 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 	return r.update(ctx, job, model.FoundryGraphJobFinishing, a)
 }
 
+// resend sends the documents the job's load owes a resend
+// (ListFoundryLoadResends) to Extract, each with every artifact saved for
+// it and the load's decisions of it, with nothing to spend: the load holds
+// them, so the engine commits none again and takes none out. It replays each
+// one's model work from its artifacts and writes what the decisions release,
+// and each document's event says what became of every one (recordDocument).
+// So a person's approval of a held claim is a fact of the load within one
+// job, at no model cost, and the document is never out of the load.
+//
+// They go in one Extract where one takes them. A mass of approvals, as the
+// first carry after a deploy or a large Approve all brings, may be past what
+// one request takes in decisions or bytes (failure.TooLarge): its documents
+// then go in halves, in the load's order, each split again while it is too
+// large, so no approval fails for the company it keeps. A single document
+// too large for an Extract is not sent: its approvals are refused as
+// too_large, and the resend goes on with the rest.
+//
+// A document whose saved extraction doesn't replay (it is gone, or the
+// models or the engine's prompts changed since) would need a model call the
+// run has no money for: the engine sends no event for it and ends
+// budget_exhausted, and the approvals that waited for it are refused as
+// not_replayed, as a new load is what applies them. One the load can no
+// longer send refuses them as document_gone (deleted, out of the load, or
+// its text gone) or as document_unread (the load holds it, but no extraction
+// of it to replay), one the engine failed as document_failed, one too large
+// to send as too_large. Each ends its request, so a job never sends a
+// document twice for one request, and one owed again while the job ran stays
+// owed for the job that follows (EndFoundryLoadResend). A run that stops
+// ends nothing it hadn't heard of, and the retry sends those again: the
+// engine writes a release once, and a decision sent again finds no review
+// (model.FoundryDecisionApplied.After).
+//
+// Every reason so far spends nothing (model.FoundryResendApproval). A reason
+// that may spend, as a backfill of documents whose model calls a new version
+// changes, passes its budget where this passes none.
+func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition,
+	binding graphproxy.Binding, target ontologyagent.HelixTarget, ontologyVersion string, providers []string, a *attempt) error {
+	if err := r.update(ctx, job, model.FoundryGraphJobDocuments, a); err != nil {
+		return err
+	}
+	owed, err := r.db.ListFoundryLoadResends(ctx, job.LoadID)
+	if err != nil {
+		return retry("could not list the documents to send again; Helix will retry", err)
+	}
+	end := func(o *model.FoundryLoadResend, refused string) error {
+		err := r.db.EndFoundryLoadResend(ctx, job.ID, r.workerID, model.FoundryResendEnd{
+			DocumentID: o.DocumentID, Reason: o.Reason, Requests: o.Requests, Refused: refused,
+		})
+		if errors.Is(err, foundrystore.ErrNotFound) {
+			return retry("the job's lease was lost", err)
+		}
+		if err != nil {
+			return retry("could not record a document sent again; Helix will retry", err)
+		}
+		if refused != "" {
+			resendsRefused.WithLabelValues(refused).Inc()
+			log.From(ctx).Warn("graph job: a document's approvals were not applied", "job", job.ID, "document", o.DocumentID, "reason", refused)
+		}
+		return nil
+	}
+	a.resends, a.resendFailed = map[string]*model.FoundryLoadResend{}, map[string]bool{}
+	var docs []*model.FoundryDocument
+	for _, o := range owed {
+		if o.Document == nil {
+			if err := end(o, cmp.Or(o.Unsendable, model.FoundryReleaseDocumentGone)); err != nil {
+				return err
+			}
+			continue
+		}
+		a.resends[o.DocumentID] = o
+		docs = append(docs, o.Document)
+	}
+	if len(docs) == 0 {
+		return r.update(ctx, job, model.FoundryGraphJobFinishing, a)
+	}
+	jobDir := filepath.Join(jobsDir, job.ID)
+	if err := os.RemoveAll(filepath.Join(r.snapshots.WorkDir, jobDir)); err != nil {
+		return retry("could not prepare the documents; Helix will retry", err)
+	}
+	defer func() { _ = os.RemoveAll(filepath.Join(r.snapshots.WorkDir, jobDir)) }() // best-effort: the next attempt starts afresh
+	documents, err := r.stage(ctx, job, jobDir, docs)
+	if err != nil {
+		return err
+	}
+	staged := map[string]bool{}
+	for _, d := range documents {
+		staged[d.DocID] = true
+	}
+	// stage leaves out a document whose text is gone.
+	for _, doc := range docs {
+		if staged[doc.ID] {
+			continue
+		}
+		if err := end(a.resends[doc.ID], model.FoundryReleaseDocumentGone); err != nil {
+			return err
+		}
+		delete(a.resends, doc.ID)
+	}
+	// sent counts the Extracts sent: each has its own request id and call.
+	sent := 0
+	var sendAll func(batch []ontologyagent.ExtractDocument) error
+	sendAll = func(batch []ontologyagent.ExtractDocument) error {
+		requestID, call := job.ID, "resend"
+		if sent > 0 {
+			n := strconv.Itoa(sent + 1)
+			requestID, call = job.ID+":"+n, "resend:"+n
+		}
+		_, err := r.send(ctx, job, def, binding, target, ontologyVersion, requestID, call, batch, nil, 0, providers, a)
+		var f *failure
+		switch {
+		case err == nil:
+			sent++
+			return nil
+		case !errors.As(err, &f) || !f.TooLarge:
+			return err
+		case len(batch) > 1:
+			if err := sendAll(batch[:len(batch)/2]); err != nil {
+				return err
+			}
+			return sendAll(batch[len(batch)/2:])
+		}
+		// One document no Extract takes: failing the job for it would leave
+		// every document after it unsent, and their approvals unconfirmed.
+		doc := batch[0].DocID
+		if err := end(a.resends[doc], model.FoundryReleaseTooLarge); err != nil {
+			return err
+		}
+		delete(a.resends, doc)
+		return nil
+	}
+	if len(documents) > 0 {
+		if err := sendAll(documents); err != nil {
+			return err
+		}
+	}
+	// Each run reached its end: what it sent no event for needed a model call.
+	for _, d := range documents {
+		o, waiting := a.resends[d.DocID]
+		if !waiting {
+			continue
+		}
+		refused := model.FoundryReleaseNotReplayed
+		if a.resendFailed[d.DocID] {
+			refused = model.FoundryReleaseDocumentFailed
+		}
+		if err := end(o, refused); err != nil {
+			return err
+		}
+	}
+	return r.update(ctx, job, model.FoundryGraphJobFinishing, a)
+}
+
 // partition splits the documents a job sends. For a job no person started,
 // those of each set whose connector's kind has an allowance
 // (config.Foundry.SetAllowances: an API source's) go to that set's
@@ -1014,17 +1192,16 @@ func allowanceSpent(spend model.FoundryDocumentSetSpend, a model.FoundrySetAllow
 // runs on the models and key the workspace's AI setting resolves to just
 // before the call, of one of providers, the ones the agent calls.
 // Each artifact the agent sends is saved before its document commits, and
-// each document's end is recorded as it comes. Exhausted means the run
+// each document's end is recorded as it comes, with what became of each
+// release decision sent with it. Exhausted means the run
 // ended budget_exhausted, what it did not finish waiting; a done run must
 // have ended every document it was sent. Any other end is the attempt's
-// failure, and a request past the agent's message limit fails for good.
+// failure, and a request past the agent's message limit, or with more
+// decisions than an Extract takes, fails for good before it is sent
+// (failure.TooLarge).
 func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
 	target ontologyagent.HelixTarget, ontologyVersion, requestID, call string, documents []ontologyagent.ExtractDocument, remove []string,
 	maxUSD float64, providers []string, a *attempt) (exhausted bool, err error) {
-	a.progress.DocumentsTotal += len(documents)
-	if err := r.update(ctx, job, model.FoundryGraphJobDocuments, a); err != nil {
-		return false, err
-	}
 	decisions, err := r.decisions(ctx, job, def.OntologyTOML, documents)
 	if err != nil {
 		return false, err
@@ -1049,12 +1226,25 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	}
 	if len(body) > r.maxRequestBytes {
 		// gRPC would refuse it as a full agent, and every retry would too.
-		return false, permanent("this version reads more documents than one load can send",
+		return false, tooLarge("this version reads more documents than one load can send",
 			fmt.Errorf("the extract request is %d bytes; the agent takes %d", len(body), r.maxRequestBytes))
+	}
+	// The job's total counts the documents of the Extracts it sends: one too
+	// large to send, which a resend splits, counts none.
+	a.progress.DocumentsTotal += len(documents)
+	if err := r.update(ctx, job, model.FoundryGraphJobDocuments, a); err != nil {
+		return false, err
 	}
 	sent := map[string]bool{}
 	for _, d := range documents {
 		sent[d.DocID] = true
+	}
+	// released is each release decision sent, by its id.
+	released := map[string]sentRelease{}
+	for _, d := range decisions {
+		if d.Kind == model.FoundryReviewRelease {
+			released[d.DecisionID] = sentRelease{doc: d.DocID, hash: d.StatementHash}
+		}
 	}
 	artifacts := map[string]string{}
 	done := a.progress.DocumentsDone
@@ -1068,7 +1258,7 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 		case "artifact":
 			r.saveArtifact(ctx, job, e, sent, artifacts)
 		case "document":
-			return r.recordDocument(ctx, job, e, sent, artifacts, resolved, a)
+			return r.recordDocument(ctx, job, e, sent, artifacts, released, resolved, a)
 		case "document_removed":
 			var removed ontologyagent.DocumentRemoved
 			if err := json.Unmarshal(e, &removed); err != nil || !removing[removed.DocID] {
@@ -1121,6 +1311,10 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 		return false, retry("the database refused a write; Helix will retry", errors.New(result.Error))
 	}
 }
+
+// sentRelease is a release decision an Extract sent: its document, and the
+// statement it binds.
+type sentRelease struct{ doc, hash string }
 
 // recordRemoval forgets a document the agent took out of the job's load,
 // once: a lost lease ends the attempt, and any other failure leaves it for
@@ -1321,8 +1515,17 @@ func (r *runner) saveArtifact(ctx context.Context, job *model.FoundryGraphJob, e
 // document would meet (its key, account, models or endpoint), the load then
 // stops as partial, worded as ai.DocumentFailure says, and the documents it
 // didn't reach wait for the next load.
+//
+// What the run did with each release decision sent with the document
+// (released) is recorded on the load's decisions with it. A document a resend
+// job sent ends its request too (attempt.resends), and one the engine failed
+// there is recorded nowhere: its row says what its commit put in the load,
+// which a failure to replay it doesn't change, and resend ends its request
+// once the run has. A decision a resend sent that the engine's event says
+// nothing of is refused as unanswered, so its card never waits for a word
+// that isn't coming.
 func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob, e json.RawMessage, sent map[string]bool,
-	artifacts map[string]string, resolved ai.Resolved, a *attempt) error {
+	artifacts map[string]string, released map[string]sentRelease, resolved ai.Resolved, a *attempt) error {
 	event, err := ontologyagent.DecodeDocumentEvent(e)
 	if err != nil {
 		return permanent("the ontology agent sent a document Helix can't read", err)
@@ -1336,7 +1539,9 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		log.From(ctx).Warn("graph job: an approved claim wasn't written", "job", job.ID, "document", event.DocID,
 			"refused", c.ReleaseRefused, "missed", c.ReleaseMissed)
 	}
-	// A release moved these from the reviews the commit counted to the facts. An
+	// A release moved these from the reviews the commit counted. What they
+	// became is counted below, by decision: c.Released counts reviews, and
+	// several can hold one claim, which is written as one fact. An
 	// already_ingested event counts nothing, whatever it released.
 	moved := min(c.Released, c.Reviews)
 	extraction := &model.FoundryDocumentExtraction{
@@ -1347,13 +1552,53 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 			ResolvedUser: int(c.Resolved.User), ResolvedAdjudicated: int(c.Resolved.Adjudicated),
 			ResolvedIdentifier: int(c.Resolved.Identifier), ResolvedName: int(c.Resolved.Name),
 			ResolvedAlias: int(c.Resolved.Alias), ResolvedCreated: int(c.Resolved.Created),
-			Sections: int(event.Sections), Entities: int(c.Entities), Mentions: int(c.Mentions), Facts: int(c.Facts + c.Released),
+			Sections: int(event.Sections), Entities: int(c.Entities), Mentions: int(c.Mentions), Facts: int(c.Facts),
 			Reviews: int(c.Reviews - moved), Unresolved: int(c.Unresolved), Rejected: int(c.Rejected),
 		},
 		USDMicros: int64(u.USDMicros), InputTokens: int64(u.InputTokens), OutputTokens: int64(u.OutputTokens),
+		Released: int(c.Released),
 	}
 	if key, ok := artifacts[event.DocID]; ok {
 		extraction.ArtifactKey = &key
+	}
+	said := map[string]bool{}
+	for _, release := range event.Releases {
+		of, ok := released[release.DecisionID]
+		if !ok || of.doc != event.DocID {
+			log.From(ctx).Warn("graph job: the ontology agent said what became of a release Helix didn't send with the document", "job", job.ID,
+				"document", event.DocID, "decision", release.DecisionID)
+			continue
+		}
+		said[release.DecisionID] = true
+		releases.WithLabelValues(string(release.Outcome.Kind), release.Outcome.Reason).Inc()
+		// A decision written is one claim written: one fact, however many
+		// reviews held it.
+		if release.Outcome.Kind == model.FoundryReleaseOutcomeWritten {
+			extraction.Counts.Facts++
+		}
+		extraction.Releases = append(extraction.Releases, model.FoundryReleaseOutcome{
+			DecisionID: release.DecisionID, StatementHash: of.hash, Kind: release.Outcome.Kind, Reason: release.Outcome.Reason,
+		})
+	}
+	owed := a.resends[event.DocID]
+	if owed != nil && event.Outcome.Kind != ontologyagent.OutcomeFailed {
+		for id, of := range released {
+			if of.doc != event.DocID || said[id] {
+				continue
+			}
+			log.From(ctx).Error("graph job: the ontology agent said nothing of a release sent with a document", "job", job.ID,
+				"document", event.DocID, "decision", id)
+			extraction.Releases = append(extraction.Releases, model.FoundryReleaseOutcome{
+				DecisionID: id, StatementHash: of.hash, Kind: model.FoundryReleaseOutcomeRefused, Reason: model.FoundryReleaseUnanswered,
+			})
+		}
+	}
+	if owed != nil && event.Outcome.Kind == ontologyagent.OutcomeFailed {
+		log.From(ctx).Warn("graph job: the ontology agent failed a document sent again", "job", job.ID, "document", event.DocID,
+			"code", event.Outcome.Code, "retryable", event.Outcome.Retryable)
+		a.resendFailed[event.DocID] = true
+		a.progress.DocumentsDone++
+		return r.update(ctx, job, model.FoundryGraphJobDocuments, a)
 	}
 	switch event.Outcome.Kind {
 	case ontologyagent.OutcomeOutOfScope:
@@ -1374,6 +1619,18 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 	}
 	if err != nil {
 		return retry("could not record a document; Helix will retry", err)
+	}
+	if owed != nil {
+		err := r.db.EndFoundryLoadResend(ctx, job.ID, r.workerID, model.FoundryResendEnd{
+			DocumentID: owed.DocumentID, Reason: owed.Reason, Requests: owed.Requests,
+		})
+		if errors.Is(err, foundrystore.ErrNotFound) {
+			return retry("the job's lease was lost", err)
+		}
+		if err != nil {
+			return retry("could not record a document sent again; Helix will retry", err)
+		}
+		delete(a.resends, event.DocID)
 	}
 	a.progress.DocumentsDone++
 	a.spent += extraction.USDMicros

@@ -203,7 +203,7 @@ test("picks a property conflict value and keeps its quotes after reload", async 
   ).toContainText("term_months: 36");
 });
 
-test("approves a held claim, and the next load writes it as a fact", async ({
+test("approves a held claim, and the load writes it as a fact at once", async ({
   page,
 }) => {
   const old = await setup(page, [
@@ -223,6 +223,12 @@ test("approves a held claim, and the next load writes it as a fact", async ({
     "Approving writes: Hedged deal (Contract) → signed_with → Globex Corporation (Customer)",
   );
   await expect(held).toContainText("from this sentence alone");
+  await expect(held).toContainText("written to this load at once");
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  await expect(page.getByRole("list", { name: "Facts" })).toHaveCount(0);
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  // The job that writes it takes a moment: the card says it is on its way.
+  await mock.configure({ loadStepMs: 1500 });
   const settled = page.waitForRequest(
     (r) => r.method() === "POST" && /\/reviews\/[^/]+:settle$/.test(r.url()),
   );
@@ -233,12 +239,45 @@ test("approves a held claim, and the next load writes it as a fact", async ({
     },
   });
   await expect(held.getByRole("status")).toContainText(
-    "Decision saved. Reload to apply.",
+    "Approved. Writing it to this load…",
   );
   await expect(
     held.getByRole("button", { name: "Approve", exact: true }),
   ).toHaveCount(0);
-  // An approval of what the claim said before doesn't stand: the card asks again.
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved, being written: “Globex Corporation may have");
+  // The load writes it: its card goes and its fact shows, with no new load
+  // and the page never loaded again.
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved: “Globex Corporation may have signed.”");
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  await expect(page.getByRole("list", { name: "Facts" })).toContainText(
+    "signed_with",
+  );
+  // A later load writes it too, and has no review of it.
+  await mock.configure({ loadStepMs: 200 });
+  const next = await loadVersion3(page);
+  expect(next).not.toBe(old);
+  await page.goto(`${doc}?tab=review`);
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved: “Globex Corporation may have signed.”");
+});
+
+test("asks again when an approval was of what the claim said before", async ({
+  page,
+}) => {
+  // The load keeps this one held, so its card stays to be read again.
+  await mock.configure({ documentHeld: "refused" });
+  const { held } = await hedged(page);
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText(
+    "this load kept it held",
+  );
   const decisions = /\/review-decisions(\?|$)/;
   await page.route(decisions, async (route) => {
     const response = await route.fetch();
@@ -258,19 +297,9 @@ test("approves a held claim, and the next load writes it as a fact", async ({
   await expect(held.getByRole("status")).toContainText(
     "reads differently from what was approved",
   );
-  await page.unroute(decisions);
-  await held.getByRole("button", { name: "Approve", exact: true }).click();
-  await expect(held.getByRole("status")).toContainText(
-    "Decision saved. Reload to apply.",
-  );
-  // The next load writes it, and has no review of it.
-  const next = await loadVersion3(page);
-  expect(next).not.toBe(old);
-  await page.goto(`${doc}?tab=review`);
-  await expect(page.getByText("Nothing needs review.")).toBeVisible();
   await expect(
-    page.getByRole("list", { name: "Saved decisions" }),
-  ).toContainText("Approved: “Globex Corporation may have signed.”");
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toBeVisible();
 });
 
 /** Serves the contracts ontology with signed_with holding one value. */
@@ -302,23 +331,169 @@ async function hedged(
     });
   return { doc, held };
 }
+/** Approves a held claim on its card: the load applies it a moment later. */
 const approve = async (card: ReturnType<Page["locator"]>) => {
   await card.getByRole("button", { name: "Approve", exact: true }).click();
-  await expect(card.getByRole("status")).toContainText("Decision saved");
 };
 
-test("says why a load kept an approved claim held", async ({ page }) => {
+test("says why the load kept an approved claim held", async ({ page }) => {
   await mock.configure({ documentHeld: "refused" });
   const { doc, held } = await hedged(page);
   await approve(held);
-  await loadVersion3(page);
-  await page.goto(`${doc}?tab=review`);
+  // The load's own reason, on the card, with no new load.
   await expect(held.getByRole("status")).toContainText(
-    "This load read the approval, and the claim stays held",
+    "Approved, and this load kept it held. It conflicts with what the graph holds for this link",
   );
+  await expect(
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("list", { name: "Saved decisions" }),
   ).toContainText("Approved, not written: “");
+  // A later load reads the approval as it commits the document, and says the same.
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(held.getByRole("status")).toContainText(
+    "this load kept it held. It conflicts with what the graph holds",
+  );
+});
+
+test("says what may have kept a claim held when its load never said", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "refused" });
+  const { held } = await hedged(page);
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText("kept it held");
+  // A load made before loads said what became of an approval: it read the
+  // decision, and reported nothing.
+  await page.route(/\/review-decisions(\?|$)/, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as ListReviewDecisionsResponse;
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        decisions: body.decisions?.map((d) => ({
+          ...d,
+          applied: { status: "" },
+        })),
+      },
+    });
+  });
+  await page.reload();
+  await expect(held.getByRole("status")).toContainText(
+    "This load read the approval, and the claim stays held: a name in it isn’t in your data",
+  );
+});
+
+test("offers to write an approval the current load hasn't read", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "refused" });
+  const { held } = await hedged(page);
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText("kept it held");
+  // Saved while another load was current: this load's decisions lack it.
+  const decisions = /\/review-decisions(\?|$)/;
+  await page.route(decisions, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as ListReviewDecisionsResponse;
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        decisions: body.decisions?.map(({ applied: _, ...d }) => d),
+      },
+    });
+  });
+  await page.reload();
+  await expect(held.getByRole("status")).toContainText(
+    "An approval of this is saved, and this load hasn’t read it. Approve it to write it now.",
+  );
+  await page.unroute(decisions);
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText("kept it held");
+});
+
+test("says an approval's job failed before saying what became of it, and finishes it", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "refused" });
+  const { held } = await hedged(page);
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText("kept it held");
+  // The job that applies it failed for good before the load said anything:
+  // the claim may or may not be written, and no job is coming.
+  const decisions = /\/review-decisions(\?|$)/;
+  await page.route(decisions, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as ListReviewDecisionsResponse;
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        decisions: body.decisions?.map((d) => ({
+          ...d,
+          applied: { status: "unconfirmed", reason: "job_failed" },
+        })),
+      },
+    });
+  });
+  await page.reload();
+  await expect(held.getByRole("status")).toContainText(
+    "Approved, but the job that writes it failed before it said whether this was written. Approve it again to finish.",
+  );
+  // Nothing says the load kept it held: no one knows that.
+  await expect(held.getByRole("status")).not.toContainText("kept it held");
+  await page.unroute(decisions);
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText("kept it held");
+});
+
+test("says what an approval waits behind while another job is running", async ({
+  page,
+}) => {
+  const { held } = await hedged(page);
+  // Another job holds the database, so the approval's own job has yet to run.
+  await mock.configure({ loadStepMs: 60_000 });
+  let kind = "extract";
+  await page.route(
+    /\/foundry\/ontologies\/ont_acme_contracts(\?|$)/,
+    async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          ontology: {
+            ...body.ontology,
+            activeJob: {
+              kind,
+              loadId: body.ontology.currentLoad?.id,
+              phase: "documents",
+            },
+          },
+        },
+      });
+    },
+  );
+  await page.reload();
+  await expect(held).toContainText(
+    "It’s written to this load at once. Later loads read the approval too",
+  );
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText(
+    "Approved. Another job is running, so this waits: it’s written to this load when that ends.",
+  );
+  // Behind a new load, it goes to whichever load is current when that ends.
+  kind = "load";
+  await page.reload();
+  await expect(held.getByRole("status")).toContainText(
+    "Approved. A load is running, so this waits: it’s written when that ends, to the load that is current then.",
+  );
 });
 
 test("names the name a legal form linked when it holds a one-valued claim", async ({
@@ -326,34 +501,19 @@ test("names the name a legal form linked when it holds a one-valued claim", asyn
 }) => {
   await oneValued(page);
   await mock.configure({ documentHeld: "legal_form" });
-  const { doc, held } = await hedged(page);
+  const { held } = await hedged(page);
   await expect(held).toContainText("Settle that name too");
   await approve(held);
-  await loadVersion3(page);
-  await page.goto(`${doc}?tab=review`);
   await expect(held.getByRole("status")).toContainText(
-    "“globex corporation” is linked only by its legal form",
+    "this load kept it held. “globex corporation” is linked only by its legal form",
+  );
+  await expect(held.getByRole("status")).toContainText(
+    "Settle that name, and the next load writes this.",
   );
   await expect(held.getByRole("status")).not.toContainText(
     "isn’t in your data",
   );
   await expect(reviews(page)).toContainText("Linked by its legal form");
-});
-
-test("doesn't blame a legal form for a many-valued claim that stays held", async ({
-  page,
-}) => {
-  await mock.configure({ documentHeld: "legal_form" });
-  const { doc, held } = await hedged(page);
-  await approve(held);
-  await loadVersion3(page);
-  await page.goto(`${doc}?tab=review`);
-  await expect(held.getByRole("status")).toContainText(
-    "This load read the approval, and the claim stays held",
-  );
-  await expect(held.getByRole("status")).not.toContainText(
-    "“globex corporation”",
-  );
 });
 
 test("sends a review with no statement to a new load, or to the current one", async ({
@@ -397,10 +557,9 @@ test("says an end isn't in the graph yet", async ({ page }) => {
 
 test("shows no percentage on a claim no verifier judged", async ({ page }) => {
   await mock.configure({ documentHeld: "unverified" });
-  const { doc, held } = await hedged(page);
+  const { held } = await hedged(page);
   await approve(held);
-  await loadVersion3(page);
-  await page.goto(doc);
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
   await page.getByRole("tab", { name: /^Facts/ }).click();
   await expect(page.getByText("signed_with").first()).toBeVisible();
   await expect(page.getByText(/\b0% confident/)).toHaveCount(0);
@@ -419,9 +578,11 @@ test("doesn't tell one claim of a sentence about another's approval", async ({
     .locator(":scope > li");
   await expect(held).toHaveCount(2);
   await approve(held.first());
-  await expect(held.last()).not.toContainText("earlier approval");
+  // The load writes the one approved; the other's card is as it was.
+  await expect(held).toHaveCount(1);
+  await expect(held).not.toContainText("earlier approval");
   await expect(
-    held.last().getByRole("button", { name: "Approve", exact: true }),
+    held.getByRole("button", { name: "Approve", exact: true }),
   ).toBeVisible();
   await loadVersion3(page);
   await page.goto(`${doc}?tab=review`);

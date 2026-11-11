@@ -96,9 +96,10 @@ func (f foundryFixture) fan(tag string) model.FoundryDocumentFanOut {
 }
 
 // next is what a worker hands a finish: ids for the jobs it may queue after
-// (FN-X-<tag>, FN-D-<tag>), no monthly limit, and five loads kept.
+// (FN-X-<tag>, FN-D-<tag>, FN-R-<tag>), no monthly limit, and five loads kept.
 func next(tag string) model.FoundryGraphNext {
-	return model.FoundryGraphNext{ExtractID: id26("FN-X-" + tag), DeleteID: id26("FN-D-" + tag), Budget: noBudget, RetainLoads: 5}
+	return model.FoundryGraphNext{ExtractID: id26("FN-X-" + tag), DeleteID: id26("FN-D-" + tag), ResendID: id26("FN-R-" + tag), Budget: noBudget,
+		RetainLoads: 5}
 }
 
 // finish claims the due job as worker, records the documents as extracted
@@ -176,6 +177,11 @@ func extractJob(tag string) *model.FoundryGraphJob {
 	return &model.FoundryGraphJob{ID: id26("FX-" + tag)}
 }
 
+// resendJob is the resend a change of current load may queue, FR-<tag>.
+func resendJob(tag string) *model.FoundryGraphJob {
+	return &model.FoundryGraphJob{ID: id26("FR-" + tag)}
+}
+
 var noBudget = model.FoundryGraphBudget{Since: time.Unix(0, 0), CapMicros: 1 << 62}
 
 var noCap = model.FoundryDocumentCap{Max: 1 << 30, PendingSince: time.Unix(0, 0)}
@@ -238,7 +244,7 @@ func TestFoundryKeptFailedRow(t *testing.T) {
 	retried := func(doc string, released int) *model.FoundryDocumentExtraction {
 		e := extracted(doc)
 		e.USDMicros, e.InputTokens, e.OutputTokens = 0, 0, 0
-		e.Counts = model.FoundryExtractionCounts{Sections: 2, Facts: released}
+		e.Counts, e.Released = model.FoundryExtractionCounts{Sections: 2, Facts: released}, released
 		return e
 	}
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", retried(counted, 1), true))
@@ -945,7 +951,7 @@ func TestFoundryGraphJobFinish(t *testing.T) {
 			assert.Equal(t, model.FoundryGraphJobEnded, finish, "nothing it could send is unrecorded")
 		}
 		assert.Nil(t, f.liveJob(t))
-		queued, err := f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, jobID, extractJob("F2m"), noBudget)
+		queued, err := f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, jobID, extractJob("F2m"), resendJob("F2m"), noBudget)
 		require.NoError(t, err)
 		require.True(t, queued, "the upload joins the load it waits for")
 		pending, err := f.db.ListPendingFoundryDocuments(ctx, jobID)
