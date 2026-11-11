@@ -647,6 +647,11 @@ type FoundryDocumentExtraction struct {
 	// sent with the document, which RecordFoundryDocumentExtraction records
 	// on the load's decisions; nothing reads them back.
 	Releases []FoundryReleaseOutcome
+	// Released are the reviews the run's releases wrote as facts. On a row
+	// that stays (a document the load held already) they leave its reviews;
+	// the facts they became are in Counts.Facts, one a decision written,
+	// which several reviews of one claim share. Nothing reads it back.
+	Released int
 }
 
 // FoundryGraphJobKind is what a graph job does.

@@ -244,7 +244,7 @@ func TestFoundryKeptFailedRow(t *testing.T) {
 	retried := func(doc string, released int) *model.FoundryDocumentExtraction {
 		e := extracted(doc)
 		e.USDMicros, e.InputTokens, e.OutputTokens = 0, 0, 0
-		e.Counts = model.FoundryExtractionCounts{Sections: 2, Facts: released}
+		e.Counts, e.Released = model.FoundryExtractionCounts{Sections: 2, Facts: released}, released
 		return e
 	}
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", retried(counted, 1), true))

@@ -236,14 +236,16 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 			// A failed row of a document the load holds after all ends the failure
 			// and keeps what it counted: a run that stopped before a release left
 			// what the commit wrote there, and its retry's facts are what it
-			// released (recordDocument), which were reviews. A commit that landed
-			// and failed to say so counted nothing.
+			// released (recordDocument): the reviews that held them
+			// (e.Released) leave the row's reviews, and they may be more than
+			// the facts, as several reviews can hold one claim. A commit that
+			// landed and failed to say so counted nothing.
 			ended, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_extractions
  SET job_id=?, status=?, error_code=NULL, error_retryable=NULL, sections=GREATEST(sections, ?), facts=facts+?,
   reviews=GREATEST(reviews-?, 0), usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+?,
   artifact_key=COALESCE(?, artifact_key), finished_at=NOW(6)
  WHERE load_id=? AND document_id=? AND status='failed'`,
-				jobID, string(e.Status), c.Sections, c.Facts, c.Facts, e.USDMicros, e.InputTokens, e.OutputTokens,
+				jobID, string(e.Status), c.Sections, c.Facts, e.Released, e.USDMicros, e.InputTokens, e.OutputTokens,
 				e.ArtifactKey, loadID, e.DocumentID)
 			if err != nil {
 				return err
@@ -256,11 +258,11 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 			// of the document: an approval settled after its commit moves a
 			// review to the facts (a resend's, mostly). A release sent again
 			// writes and counts nothing, so a retry adds nothing twice.
-			if wasFailed == 0 && (c.Facts > 0 || e.USDMicros > 0 || e.InputTokens > 0 || e.OutputTokens > 0) {
+			if wasFailed == 0 && (c.Facts > 0 || e.Released > 0 || e.USDMicros > 0 || e.InputTokens > 0 || e.OutputTokens > 0) {
 				if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_extractions
  SET facts=facts+?, reviews=GREATEST(reviews-?, 0), usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+?
  WHERE load_id=? AND document_id=?`,
-					c.Facts, c.Facts, e.USDMicros, e.InputTokens, e.OutputTokens, loadID, e.DocumentID); err != nil {
+					c.Facts, e.Released, e.USDMicros, e.InputTokens, e.OutputTokens, loadID, e.DocumentID); err != nil {
 					return err
 				}
 			}

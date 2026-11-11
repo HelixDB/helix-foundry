@@ -1526,7 +1526,9 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		log.From(ctx).Warn("graph job: an approved claim wasn't written", "job", job.ID, "document", event.DocID,
 			"refused", c.ReleaseRefused, "missed", c.ReleaseMissed)
 	}
-	// A release moved these from the reviews the commit counted to the facts. An
+	// A release moved these from the reviews the commit counted. What they
+	// became is counted below, by decision: c.Released counts reviews, and
+	// several can hold one claim, which is written as one fact. An
 	// already_ingested event counts nothing, whatever it released.
 	moved := min(c.Released, c.Reviews)
 	extraction := &model.FoundryDocumentExtraction{
@@ -1537,10 +1539,11 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 			ResolvedUser: int(c.Resolved.User), ResolvedAdjudicated: int(c.Resolved.Adjudicated),
 			ResolvedIdentifier: int(c.Resolved.Identifier), ResolvedName: int(c.Resolved.Name),
 			ResolvedAlias: int(c.Resolved.Alias), ResolvedCreated: int(c.Resolved.Created),
-			Sections: int(event.Sections), Entities: int(c.Entities), Mentions: int(c.Mentions), Facts: int(c.Facts + c.Released),
+			Sections: int(event.Sections), Entities: int(c.Entities), Mentions: int(c.Mentions), Facts: int(c.Facts),
 			Reviews: int(c.Reviews - moved), Unresolved: int(c.Unresolved), Rejected: int(c.Rejected),
 		},
 		USDMicros: int64(u.USDMicros), InputTokens: int64(u.InputTokens), OutputTokens: int64(u.OutputTokens),
+		Released: int(c.Released),
 	}
 	if key, ok := artifacts[event.DocID]; ok {
 		extraction.ArtifactKey = &key
@@ -1555,6 +1558,11 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		}
 		said[release.DecisionID] = true
 		releases.WithLabelValues(string(release.Outcome.Kind), release.Outcome.Reason).Inc()
+		// A decision written is one claim written: one fact, however many
+		// reviews held it.
+		if release.Outcome.Kind == model.FoundryReleaseOutcomeWritten {
+			extraction.Counts.Facts++
+		}
 		extraction.Releases = append(extraction.Releases, model.FoundryReleaseOutcome{
 			DecisionID: release.DecisionID, StatementHash: of.hash, Kind: release.Outcome.Kind, Reason: release.Outcome.Reason,
 		})

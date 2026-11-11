@@ -86,7 +86,7 @@ func (f resendFixture) sent(t *testing.T, job *model.FoundryGraphJob, r *model.F
 	ctx := context.Background()
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, &model.FoundryDocumentExtraction{
 		DocumentID: r.DocumentID, Status: model.FoundryExtractionExtracted, Counts: model.FoundryExtractionCounts{Facts: released},
-		Releases: outcomes,
+		Releases: outcomes, Released: released,
 	}, true))
 	require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
 		DocumentID: r.DocumentID, Reason: r.Reason, Requests: r.Requests,
@@ -955,6 +955,31 @@ func TestFoundryCarriedReleaseWhoseJobFailed(t *testing.T) {
 	assert.Empty(t, f.owed(t))
 	assert.Nil(t, f.liveJob(t))
 	assert.Equal(t, map[string]string{d.ID: "carried/job_failed"}, f.applied(t, d))
+}
+
+// A claim two reviews held is one fact once it is released: the document's
+// row gains the fact the decision wrote and loses both reviews.
+func TestFoundryResendCountsFactsByDecision(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "RFACT")
+	_, err := testDB.Exec(`UPDATE foundry_load_extractions SET reviews=3 WHERE load_id=? AND document_id=?`, f.load, f.a)
+	require.NoError(t, err)
+	d := f.held(f.a, 0, readA)
+	require.True(t, f.approve(t, "1", d))
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, &model.FoundryDocumentExtraction{
+		DocumentID: f.a, Status: model.FoundryExtractionExtracted, Counts: model.FoundryExtractionCounts{Facts: 1},
+		Releases: []model.FoundryReleaseOutcome{written(d)}, Released: 2,
+	}, true))
+	require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
+		DocumentID: f.a, Reason: owed[0].Reason, Requests: owed[0].Requests,
+	}))
+	row, err := f.db.GetFoundryDocumentExtraction(ctx, f.load, f.a)
+	require.NoError(t, err)
+	assert.Equal(t, 2, row.Counts.Facts, "the commit's fact, and the one the decision wrote")
+	assert.Equal(t, 1, row.Counts.Reviews, "both reviews of the claim left")
 }
 
 // An approval that lands while a resend runs. The job read its documents and

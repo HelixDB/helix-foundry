@@ -3166,25 +3166,41 @@ func TestExtractReviewDecisions(t *testing.T) {
 // more. An already_ingested document's event has zero counts, however many it
 // released, and its stored row stays.
 func TestExtractRecordsWhatAReleaseMoved(t *testing.T) {
-	released := func(reviews, facts, written int, outcome string) string {
+	// released is doc-a's event: its commit counted reviews and facts, and its
+	// releases moved so many reviews, writing the decisions of written.
+	released := func(reviews, facts, moved int, outcome string, written ...string) string {
 		c := strings.Replace(counts, `"reviews":1`, fmt.Sprintf(`"reviews":%d`, reviews), 1)
 		c = strings.Replace(c, `"facts":1`, fmt.Sprintf(`"facts":%d`, facts), 1)
-		c = strings.Replace(c, `"released":0`, fmt.Sprintf(`"released":%d`, written), 1)
-		return `{"event":"document","doc_id":"doc-a","outcome":` + outcome + `,"text_bytes":120,"sections":2,` + c + `,` + noUsage + `}`
+		c = strings.Replace(c, `"released":0`, fmt.Sprintf(`"released":%d`, moved), 1)
+		var releases []string
+		for _, id := range written {
+			releases = append(releases, `{"decision_id":"`+id+`","outcome":{"kind":"written"}}`)
+		}
+		return `{"event":"document","doc_id":"doc-a","outcome":` + outcome + `,"text_bytes":120,"sections":2,` + c + `,` + noUsage +
+			`,"releases":[` + strings.Join(releases, ",") + `]}`
 	}
 	for name, tc := range map[string]struct {
 		event          string
 		reviews, facts int
+		moved          int
 		kept           bool
 	}{
-		"a review released":    {released(2, 3, 1, `{"kind":"ingested"}`), 1, 4, false},
-		"all of them":          {released(1, 0, 1, `{"kind":"ingested"}`), 0, 1, false},
-		"none":                 {released(2, 3, 0, `{"kind":"ingested"}`), 2, 3, false},
-		"a held document":      {released(0, 0, 1, `{"kind":"already_ingested"}`), 0, 1, true},
-		"more than it reviews": {released(1, 0, 3, `{"kind":"ingested"}`), 0, 3, false},
+		"a review released": {released(2, 3, 1, `{"kind":"ingested"}`, "1"), 1, 4, 1, false},
+		"all of them":       {released(1, 0, 1, `{"kind":"ingested"}`, "1"), 0, 1, 1, false},
+		"none":              {released(2, 3, 0, `{"kind":"ingested"}`), 2, 3, 0, false},
+		"a held document":   {released(0, 0, 1, `{"kind":"already_ingested"}`, "1"), 0, 1, 1, true},
+		// One claim two reviews held is one fact: the reviews leave, and the
+		// facts gain what the decisions wrote.
+		"two reviews of one claim":          {released(3, 2, 2, `{"kind":"ingested"}`, "1"), 1, 3, 2, false},
+		"two reviews, a held document":      {released(0, 0, 2, `{"kind":"already_ingested"}`, "1"), 0, 1, 2, true},
+		"two decisions, three reviews":      {released(4, 0, 3, `{"kind":"ingested"}`, "1", "2"), 1, 2, 3, false},
+		"more released than it reviews":     {released(1, 0, 3, `{"kind":"ingested"}`, "1", "2"), 0, 2, 3, false},
+		"a decision the worker didn't send": {released(2, 3, 1, `{"kind":"ingested"}`, "9"), 1, 3, 1, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t)
+			h.store.decisions = []*model.FoundryReviewDecision{approval("1", "doc-a", hashA), approval("2", "doc-a", hashB)}
+			h.store.decisions[1].ClaimSpan = &model.FoundryClaimSpan{Section: 1, Start: 0, End: 4}
 			h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
 				events := []string{extracted[0], tc.event}
 				for _, doc := range []string{"doc-b", "doc-c", "doc-d"} {
@@ -3196,7 +3212,8 @@ func TestExtractRecordsWhatAReleaseMoved(t *testing.T) {
 				t.Fatalf("%+v", outcome)
 			}
 			got := h.store.extractions["doc-a"]
-			if got == nil || got.Counts.Reviews != tc.reviews || got.Counts.Facts != tc.facts || h.store.kept["doc-a"] != tc.kept {
+			if got == nil || got.Counts.Reviews != tc.reviews || got.Counts.Facts != tc.facts || got.Released != tc.moved ||
+				h.store.kept["doc-a"] != tc.kept {
 				t.Fatalf("recorded %+v", got)
 			}
 		})
