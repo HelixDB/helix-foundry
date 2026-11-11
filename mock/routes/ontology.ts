@@ -105,6 +105,10 @@ type Knobs = {
   // "budget": measuring a revision's rules on a comparable load takes past
   // its budget.
   reviseOutcome?: "budget";
+  // Links every version declares to hold one value (`cardinality = "one"`),
+  // as a test's ontology would: what the site reads, and what loads and
+  // settles check.
+  oneValuedLinks?: string[];
 };
 const knobs = config as typeof config & Knobs;
 const STEP_MS = 1500,
@@ -413,17 +417,32 @@ function seed() {
   delete knobs.ontologyStepMs;
   delete knobs.ontologyOutcome;
   delete knobs.reviseOutcome;
+  delete knobs.oneValuedLinks;
 }
 onReset(seed);
 
-/** An ontology's version with its definition, for other mocks. */
+/**
+ * An ontology's version with its definition, for other mocks, with the
+ * links `oneValuedLinks` names holding one value.
+ */
 export function ontologyVersion(
   ontologyId: string,
   versionId: string,
 ): StoredVersion | undefined {
-  return state.versions.find(
+  const v = state.versions.find(
     (v) => v.ontologyId === ontologyId && v.id === versionId,
   );
+  const toml = v?.definition?.ontology_toml;
+  if (!v || !knobs.oneValuedLinks?.length || typeof toml !== "string") return v;
+  const one = knobs.oneValuedLinks.reduce(
+    (t, link) =>
+      t.replace(
+        new RegExp(`(\\[links\\.${link}\\]\\n(?:[^\\[\\n][^\\n]*\\n|\\n)*?)cardinality = "many"`),
+        '$1cardinality = "one"',
+      ),
+    toml,
+  );
+  return { ...v, definition: { ...v.definition, ontology_toml: one } };
 }
 /**
  * For ./access.ts: what a version's generation drafted from (its tables and

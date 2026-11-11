@@ -16,6 +16,7 @@ import {
   decisionTypes,
   decisionValue,
   decisions,
+  holdsOne,
   isInt64,
 } from "../review-decisions";
 import { tenantGraph } from "./databases";
@@ -184,8 +185,21 @@ export const reviewRoutes: MockRoute[] = [
         return fail("NOT_FOUND", "review not found in the current load");
       const r = found[0]!.props;
       // A held claim names no type: the engine reads what it states from its
-      // document.
-      if (["low_confidence", "unverified"].includes(text(r.reason))) {
+      // document. One held as conflicting with what its link holds is
+      // settled so only on a link that holds one value (contract 4.14.0).
+      if (
+        text(r.reason) === "conflict" &&
+        !holdsOne(
+          ontologyVersion(s.o.id, currentLoadVersionId(s.o.id) || "")
+            ?.definition,
+          text(r.suggested_link),
+        )
+      )
+        return fail(
+          "FAILED_PRECONDITION",
+          "this claim conflicts with a property of a fact the graph holds; only a conflict on a link that holds one value can be approved",
+        );
+      if (["low_confidence", "unverified", "conflict"].includes(text(r.reason))) {
         const read = (choice.release ?? choice.reject)?.statementHash;
         if (read === undefined)
           return fail(
