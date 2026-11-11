@@ -40,18 +40,13 @@ import (
 // marked removed and sent in no Extract, until the request ends: the load
 // holds its value until then, and the access rules read the list.
 //
-// A load brought up to date this way is not always the load a rebuild
-// makes. The engine admits a released claim against what the load holds
-// when the release runs: here that is when the person approves, while a new
-// load releases every approval once all its documents have committed, in
-// document order. Claims that agree end the same either way. Claims that
-// conflict on a link holding one value can end differently, and nothing
-// flags it: an approval written here is refused as a conflict by a rebuild
-// that committed a later document stating otherwise first, and two
-// conflicting approvals are written here in the order they were approved,
-// there in document order. This is accepted, not guarded against: each load
-// says what it made of an approval (applied_status), and none promises what
-// the next will.
+// From contract 4.14.0 a load brought up to date this way holds what a
+// rebuild given the same decisions makes, on a link that holds one value
+// too: an approval there is a decision of the link dated when the person
+// made it (decided_at, the same in every Extract that sends it), which
+// outranks commit order. It beats undated statements and those dated up to
+// its day, whichever commits first, and of two approvals the later holds the
+// link. Each load still says what it made of an approval (applied_status).
 
 // oweFoundryResends owes each of documentIDs a resend into loadID for reason,
 // or owes it again: a request a running job hasn't read stays owed when that

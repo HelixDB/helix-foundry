@@ -3269,11 +3269,15 @@ func TestExtractReviewDecisionsLeftOutOnceStale(t *testing.T) {
 }
 
 // A release goes with its document, as a resolve does, whichever version the
-// load is of, and names nothing the engine refuses.
+// load is of, and names nothing the engine refuses. It says when it was
+// approved to the millisecond, in UTC: from contract 4.14.0 that ranks two
+// approvals of a link that holds one value, and the engine keeps a written
+// one's time to the millisecond.
 func TestExtractReleaseDecisionsGoWithTheirDocument(t *testing.T) {
 	h := newHarness(t)
 	ptr := func(s string) *string { return &s }
-	settled := time.Date(2026, 10, 17, 8, 2, 3, 0, time.UTC)
+	// As MySQL hands it back: the server's zone, to the microsecond.
+	settled := time.Date(2026, 10, 17, 1, 2, 3, 456789000, time.FixedZone("PDT", -7*3600))
 	key, read := strings.Repeat("ab", 32), strings.Repeat("cd", 32)
 	release := func(id, doc string) *model.FoundryReviewDecision {
 		return &model.FoundryReviewDecision{ID: id, OntologyID: "ont-1", Kind: model.FoundryReviewRelease,
@@ -3285,7 +3289,7 @@ func TestExtractReleaseDecisionsGoWithTheirDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := json.Marshal(decisions)
-	want := `[{"kind":"release","doc_id":"doc-a","claim_key":"` + key + `","section":1,"start":2,"end":9,"statement_hash":"` + read + `","decision_id":"1","decided_at":"2026-10-17T08:02:03Z"}]`
+	want := `[{"kind":"release","doc_id":"doc-a","claim_key":"` + key + `","section":1,"start":2,"end":9,"statement_hash":"` + read + `","decision_id":"1","decided_at":"2026-10-17T08:02:03.456Z"}]`
 	if string(got) != want {
 		t.Fatalf("decisions = %s, want %s", got, want)
 	}

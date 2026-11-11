@@ -392,3 +392,39 @@ props = { tier = "string", account = "string" }`)
 		}
 	}
 }
+
+// A link holds one value only where its TOML says `cardinality = "one"`: the
+// engine's default is many, and a link the version lacks holds nothing.
+// TOML that can't be read fails closed.
+func TestFoundryOneValuedLink(t *testing.T) {
+	ontology := `
+[types.Person]
+key = ["id"]
+
+[links.works_at]
+from = "Person"
+to = "Company"
+cardinality = "one"
+
+[links.knows]
+from = "Person"
+to = "Person"
+cardinality = "many"
+
+[links.met]
+from = "Person"
+to = "Person"
+`
+	for link, want := range map[string]bool{"works_at": true, "knows": false, "met": false, "gone": false, "": false} {
+		got, err := FoundryOneValuedLink(ontology, link)
+		if err != nil || got != want {
+			t.Fatalf("%q: %v, %v", link, got, err)
+		}
+	}
+	if got, err := FoundryOneValuedLink("", "works_at"); err != nil || got {
+		t.Fatalf("empty ontology: %v, %v", got, err)
+	}
+	if got, err := FoundryOneValuedLink("[links.works_at\ncardinality = \"one\"", "works_at"); err == nil || got {
+		t.Fatalf("invalid TOML: %v, %v", got, err)
+	}
+}

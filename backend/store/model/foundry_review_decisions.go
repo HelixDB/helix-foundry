@@ -167,6 +167,25 @@ func FoundryDecisionTypes(ontologyTOML string) (map[string]FoundryDecisionType, 
 	return schema.Types, err
 }
 
+// FoundryOneValuedLink reports whether an ontology TOML declares link as a
+// link that holds one value (`cardinality = "one"`; the engine's default is
+// "many", schema::Cardinality). A missing link holds none. Invalid TOML fails
+// closed.
+//
+// From contract 4.14.0 a person's approval of a held claim of such a link is
+// a decision of what it holds, so a claim held as `conflict` there can be
+// approved; on any other link a `conflict` is a property that differs from
+// the fact the graph holds, which an approval can't change.
+func FoundryOneValuedLink(ontologyTOML, link string) (bool, error) {
+	var schema struct {
+		Links map[string]struct{ Cardinality string }
+	}
+	if _, err := toml.Decode(ontologyTOML, &schema); err != nil {
+		return false, err
+	}
+	return schema.Links[link].Cardinality == "one", nil
+}
+
 // Fits reports whether the ontology of types still takes d as the engine
 // checks an Extract's decisions (decision::Decisions::validate), which
 // refuses the whole request over one that doesn't: d's type is there, its

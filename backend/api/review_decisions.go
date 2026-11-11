@@ -66,9 +66,25 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	text := func(key string) string { var s string; _ = json.Unmarshal(review[key], &s); return s }
 	d := &foundrymodel.FoundryReviewDecision{ID: id.New(), OntologyID: o.ID, Type: text("type"), DecidedByUserID: actor(ctx).UserID}
 	// A held claim names no type: the engine reads what it states from its
-	// document.
-	switch text("reason") {
-	case "low_confidence", "unverified":
+	// document. A claim held as conflicting with what a link that holds one
+	// value holds is one from contract 4.14.0, where the approval decides
+	// the link; on another link it is a property that differs from the
+	// fact's, which no approval changes, and it isn't settled.
+	switch reason := text("reason"); reason {
+	case "low_confidence", "unverified", "conflict":
+		if reason == "conflict" {
+			ontologyTOML, err := s.loadOntologyTOML(ctx, o.ID, load.VersionID)
+			if err != nil {
+				return nil, err
+			}
+			one, err := foundrymodel.FoundryOneValuedLink(ontologyTOML, text("suggested_link"))
+			if err != nil {
+				return nil, status.Error(codes.Internal, "read load schema")
+			}
+			if !one {
+				return nil, status.Error(codes.FailedPrecondition, "this claim conflicts with a property of a fact the graph holds; only a conflict on a link that holds one value can be approved")
+			}
+		}
 		if err := settleHeldClaim(req, d, review); err != nil {
 			return nil, err
 		}
@@ -88,15 +104,11 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	if d.Type == "" {
 		return nil, status.Error(codes.FailedPrecondition, "this review is missing its identity; start a new load before settling it")
 	}
-	version, err := s.loadOntologyVersion(ctx, o.ID, load.VersionID)
+	ontologyTOML, err := s.loadOntologyTOML(ctx, o.ID, load.VersionID)
 	if err != nil {
 		return nil, err
 	}
-	var def ontologyagent.Definition
-	if err := json.Unmarshal(version.Definition, &def); err != nil {
-		return nil, status.Error(codes.Internal, "read load definition")
-	}
-	types, err := foundrymodel.FoundryDecisionTypes(def.OntologyTOML)
+	types, err := foundrymodel.FoundryDecisionTypes(ontologyTOML)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "read load schema")
 	}
@@ -254,6 +266,20 @@ func settleHeldClaim(req *foundryv1.SettleFoundryReviewRequest, d *foundrymodel.
 		return status.Error(codes.FailedPrecondition, "this claim reads differently now; reload the review and decide on what it says")
 	}
 	return nil
+}
+
+// loadOntologyTOML is the ontology TOML of one of o's versions, what a
+// decision is checked against.
+func (s *Service) loadOntologyTOML(ctx context.Context, ontologyID, versionID string) (string, error) {
+	version, err := s.loadOntologyVersion(ctx, ontologyID, versionID)
+	if err != nil {
+		return "", err
+	}
+	var def ontologyagent.Definition
+	if err := json.Unmarshal(version.Definition, &def); err != nil {
+		return "", status.Error(codes.Internal, "read load definition")
+	}
+	return def.OntologyTOML, nil
 }
 
 // saveFoundryReviewDecision stores d, whose identity the review gave.

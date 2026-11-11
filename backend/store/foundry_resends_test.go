@@ -316,6 +316,60 @@ func TestFoundryReleaseRefusedAndApprovedAgain(t *testing.T) {
 	assert.Nil(t, f.liveJob(t))
 }
 
+// A claim approved again as it still reads is the decision the person made
+// first: its id, who made it and when stay, in the ontology's decisions and
+// in the load's list. From contract 4.14.0 an approval of a link that holds
+// one value ranks by when it was made, and a load that wrote it keeps that
+// time, so every Extract sends the first. Approved as it reads otherwise, it
+// is decided anew, by whoever approved it, now.
+func TestFoundryReleaseApprovedAgainKeepsItsTime(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "RTIME")
+	type when struct {
+		at time.Time
+		by string
+	}
+	read := func(d *model.FoundryReviewDecision) (decision, copied when) {
+		t.Helper()
+		require.NoError(t, testDB.QueryRow(`SELECT decided_at, decided_by_user_id FROM foundry_review_decisions WHERE id=?`, d.ID).Scan(&decision.at, &decision.by))
+		require.NoError(t, testDB.QueryRow(`SELECT decided_at, decided_by_user_id FROM foundry_load_decisions WHERE load_id=? AND id=?`, f.load, d.ID).Scan(&copied.at, &copied.by))
+		return decision, copied
+	}
+	settle := func(d *model.FoundryReviewDecision, by string) {
+		t.Helper()
+		d.DecidedByUserID = id26(by)
+		_, err := f.db.SettleFoundryReleases(ctx, f.ontology.WorkspaceID, f.load, []*model.FoundryReviewDecision{d},
+			&model.FoundryGraphJob{ID: id26("RS-time-" + by), RequestedByUserID: &d.DecidedByUserID})
+		require.NoError(t, err)
+	}
+	d := f.held(f.a, 0, readA)
+	settle(d, "first")
+	// An hour ago, so a time set now can't pass for it.
+	for _, table := range []string{"foundry_review_decisions", "foundry_load_decisions"} {
+		_, err := testDB.Exec(`UPDATE `+table+` SET decided_at = decided_at - INTERVAL 1 HOUR WHERE id=?`, d.ID)
+		require.NoError(t, err)
+	}
+	first, _ := read(d)
+
+	again := f.held(f.a, 0, readA)
+	again.ID = id26("again")
+	settle(again, "second")
+	assert.Equal(t, d.ID, again.ID, "one decision a claim")
+	decision, copied := read(d)
+	assert.Equal(t, first, decision, "the same statement approved again keeps when and by whom")
+	assert.Equal(t, first, copied, "and so does the load's list")
+	assert.True(t, again.DecidedAt.Equal(first.at), "the answer says when it was decided: %v", again.DecidedAt)
+
+	other := f.held(f.a, 0, readB)
+	other.ID = id26("other")
+	settle(other, "third")
+	assert.Equal(t, d.ID, other.ID, "one decision a claim")
+	decision, copied = read(d)
+	assert.Equal(t, id26("third"), decision.by)
+	assert.True(t, decision.at.After(first.at.Add(30*time.Minute)), "what it reads now is decided now: %v", decision.at)
+	assert.Equal(t, decision, copied)
+}
+
 // A load that is mid-extract or mid-apply has a live job, and one job at a
 // time writes a database: the approval joins the load's list and stays owed,
 // and that job's end queues the resend. A live delete of another load gives
