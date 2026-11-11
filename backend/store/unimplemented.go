@@ -621,7 +621,8 @@ func (u Unimplemented) CreateFoundryLoad(context.Context, *model.FoundryGraphJob
 	u.unimplemented("CreateFoundryLoad")
 	return nil
 }
-func (u Unimplemented) SetCurrentFoundryLoad(context.Context, string, string, string, *model.FoundryGraphJob, model.FoundryGraphBudget) (bool, error) {
+func (u Unimplemented) SetCurrentFoundryLoad(context.Context, string, string, string, *model.FoundryGraphJob, *model.FoundryGraphJob,
+	model.FoundryGraphBudget) (bool, error) {
 	u.unimplemented("SetCurrentFoundryLoad")
 	return false, nil
 }

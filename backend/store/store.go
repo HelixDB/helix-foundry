@@ -299,7 +299,8 @@ type Store interface {
 	OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID string, tables []string, refreshEvery time.Duration) error
 	SetFoundryOntologyAutoRefresh(ctx context.Context, workspaceID, id string, on bool) error
 	SetFoundryGraphJobSources(ctx context.Context, id, workerID string, sources []model.FoundryLoadSource) error
-	SetCurrentFoundryLoad(ctx context.Context, workspaceID, ontologyID, loadID string, extract *model.FoundryGraphJob, budget model.FoundryGraphBudget) (bool, error)
+	SetCurrentFoundryLoad(ctx context.Context, workspaceID, ontologyID, loadID string, extract, resend *model.FoundryGraphJob,
+		budget model.FoundryGraphBudget) (bool, error)
 	DeleteFoundryLoad(ctx context.Context, workspaceID, ontologyID, loadID, deleteJobID string) error
 	ClaimFoundryGraphJob(ctx context.Context, workerID string, lease time.Duration) (*model.FoundryGraphJob, error)
 	RenewFoundryGraphJobLease(ctx context.Context, id, workerID string, lease time.Duration) error

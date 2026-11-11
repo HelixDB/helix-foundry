@@ -669,6 +669,60 @@ func TestFoundryReleaseNotCarriedWithoutItsDocument(t *testing.T) {
 	assert.Equal(t, model.FoundryGraphJobResend, resend.Kind)
 }
 
+// Making another load current carries approvals as a job's end does. One
+// saved since that load copied its decisions joins its list, and with no job
+// live a resend is queued for its document at once, so its card never says
+// the load hasn't read it until some other job happens to end.
+func TestFoundryReleaseCarriedWhenALoadIsMadeCurrent(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "RCUR")
+	first := f.load
+	f.draftVersion(t, "RCUR2", customerTOML)
+	require.NoError(t, f.db.CreateFoundryLoad(ctx, loadJob(f.ontology, "RCUR2")))
+	f.loaded(t, f.worker, f.a, f.b)
+	f.load = id26("FJ-RCUR2")
+	require.Equal(t, f.load, *f.ontologyNow(t).CurrentLoadID)
+
+	// Approved on the second load, which writes it.
+	d := f.held(f.a, 0, readA)
+	require.True(t, f.approve(t, "1", d))
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	f.sent(t, job, owed[0], 1, written(d))
+	f.end(t, job, "second", model.FoundryGraphJobSucceeded)
+	require.Nil(t, f.liveJob(t))
+
+	// The first load is made current again: it never read the approval.
+	queued, err := f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, first, extractJob("RCUR"),
+		&model.FoundryGraphJob{ID: id26("FR-RCUR"), RequestedByUserID: ptr(id26("user"))}, noBudget)
+	require.NoError(t, err)
+	assert.False(t, queued, "no document waits for an extract")
+	f.load = first
+	assert.Equal(t, map[string]string{d.ID: "carried"}, f.applied(t, d))
+	assert.Equal(t, map[string]int{f.a: 1}, f.owed(t))
+	resend := f.liveJob(t)
+	require.NotNil(t, resend, "the change of current load queues the resend")
+	assert.Equal(t, id26("FR-RCUR"), resend.ID)
+	assert.Equal(t, model.FoundryGraphJobResend, resend.Kind)
+	assert.Equal(t, first, resend.LoadID)
+	assert.Equal(t, id26("user"), *resend.RequestedByUserID)
+
+	job = f.claim(t)
+	owed, err = f.db.ListFoundryLoadResends(ctx, first)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	f.sent(t, job, owed[0], 1, written(d))
+	assert.Equal(t, map[string]string{d.ID: "written"}, f.applied(t, d))
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "first", model.FoundryGraphJobSucceeded))
+	assert.Nil(t, f.liveJob(t))
+
+	// A load with nothing to carry queues nothing.
+	_, err = f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, id26("FJ-RCUR2"), extractJob("RCURb"), resendJob("RCURb"), noBudget)
+	require.NoError(t, err)
+	assert.Nil(t, f.liveJob(t))
+}
+
 // An approval taken back before it is applied leaves the current load's list
 // with it, so the resend that was queued writes nothing of it; one already
 // written stays in the load that wrote it. A claim approved again after that
