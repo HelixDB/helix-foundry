@@ -2032,7 +2032,7 @@ message FoundryWorkflowRun {
 }
 
 // FoundryWorkflowAssessment is a finished run's assessment by the ontology
-// agent's Assess (contract 4.12.0), on the workspace's questions model: how
+// agent's Assess (contract 4.15.0), on the workspace's questions model: how
 // much what the agent read made its answer, the answer's claims and the
 // calls that bear on them, what the ontology lacked and what would close it.
 message FoundryWorkflowAssessment {

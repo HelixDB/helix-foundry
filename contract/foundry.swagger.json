@@ -8133,7 +8133,7 @@
           "format": "date-time"
         }
       },
-      "description": "FoundryWorkflowAssessment is a finished run's assessment by the ontology\nagent's Assess (contract 4.12.0), on the workspace's questions model: how\nmuch what the agent read made its answer, the answer's claims and the\ncalls that bear on them, what the ontology lacked and what would close it."
+      "description": "FoundryWorkflowAssessment is a finished run's assessment by the ontology\nagent's Assess (contract 4.15.0), on the workspace's questions model: how\nmuch what the agent read made its answer, the answer's claims and the\ncalls that bear on them, what the ontology lacked and what would close it."
     },
     "v1FoundryWorkflowQuestion": {
       "type": "object",

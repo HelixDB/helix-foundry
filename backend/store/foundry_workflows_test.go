@@ -239,9 +239,12 @@ func TestFoundryWorkflowRunsKept(t *testing.T) {
 	ctx := context.Background()
 	f := newFoundryFixture(t, "WFK")
 	w := f.workflow(t, "A")
-	oldest := f.run(t, w, "OLDEST", nil)
+	in := "q"
+	oldest := f.run(t, w, "OLDEST", &in)
 	_, err := f.db.RecordFoundryWorkflowAccess(ctx, oldest.ID, &model.FoundryWorkflowUpload{DocumentID: "d", SetID: "s"})
 	require.NoError(t, err)
+	// Finished: an open run from the last day is an agent's at work, spared.
+	require.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, oldest.ID, nil, "a", true))
 	// The rest of the cap, all after it.
 	var values []string
 	var args []any
@@ -260,6 +263,7 @@ func TestFoundryWorkflowRunsKept(t *testing.T) {
 	_, err = f.db.GetFoundryWorkflowRun(ctx, f.ontology.ID, oldest.ID)
 	assert.ErrorIs(t, err, store.ErrNotFound)
 	assert.Zero(t, countRows(t, "foundry_workflow_run_accesses", "run_id=?", oldest.ID))
+	assert.Zero(t, countRows(t, "foundry_workflow_run_assessments", "run_id=?", oldest.ID))
 }
 
 func TestFoundryWorkflowAccesses(t *testing.T) {

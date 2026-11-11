@@ -2832,7 +2832,7 @@ export type FoundryWorkflowVerdictCount = {
 };
 /**
  * v1FoundryWorkflowAssessment: a finished run's assessment by the ontology
- * agent's Assess (contract 4.12.0). `assessmentJson` is the engine's
+ * agent's Assess (contract 4.15.0). `assessmentJson` is the engine's
  * Assessment (assess_result.json `$defs/Assessment`): parse it without trust
  * (areas/workflows/model.ts).
  */

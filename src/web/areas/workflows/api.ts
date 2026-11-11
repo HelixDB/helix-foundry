@@ -35,9 +35,13 @@ export const workflowQueries = {
     queryKey: [ws, "ontology", o, "workflows"],
     queryFn: () => api<ListFoundryWorkflowsResponse>(base(ws, o)),
   }),
+  // A workflow, with its runs' verdicts: read again as its page opens and
+  // as often as its runs, since a run's assessment ends on its own.
   workflow: (ws: string, o: string, w: string) => ({
     queryKey: [ws, "ontology", o, "workflows", w],
     queryFn: () => api<FoundryWorkflowResponse>(`${base(ws, o)}/${enc(w)}`),
+    refetchOnMount: "always" as const,
+    refetchInterval: RUNS_POLL_MS,
   }),
   // A workflow's newest runs, asked again so new ones show.
   runs: (ws: string, o: string, w: string) => ({
