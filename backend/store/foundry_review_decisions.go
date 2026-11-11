@@ -238,7 +238,9 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 // written by the next approval of another claim of that document, after the
 // person took it back, with no decision left to show for it. One the load
 // wrote stays: the fact is in the load, and sent again it finds no review.
-// It holds the ontology's lock, as every writer of a load's decisions does,
+// A copy in a load that is not current is not reached here: it goes when
+// that load is made current again, before any resend of it is queued
+// (carryFoundryReleases). It holds the ontology's lock, as every writer of a load's decisions does,
 // so the current load is the same throughout. ErrNotFound means the ontology
 // has no such decision.
 func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, ontologyID, id string) error {

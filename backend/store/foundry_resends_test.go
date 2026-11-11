@@ -878,6 +878,87 @@ func TestFoundryReleaseTakenBackAfterTheLoadsWord(t *testing.T) {
 	assert.Nil(t, f.liveJob(t))
 }
 
+// An approval taken back while another load is current leaves a copy in the
+// load it was settled against: removal reaches only the load that is current
+// then. When that load is made current again the copy goes before anything
+// is sent, whether it still waited there (approved while the other load was
+// written, so its document is still owed) or that load had refused it. The
+// resend the owed document gets sends nothing of it, and neither does a
+// later approval of another claim of the refused one's document.
+func TestFoundryReleaseTakenBackWhileAnotherLoadIsCurrent(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "RSWAP")
+	first := f.load
+	// The first load refuses one approval.
+	turnedDown := f.held(f.b, 0, readA)
+	require.True(t, f.approve(t, "0", turnedDown))
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(ctx, first)
+	require.NoError(t, err)
+	f.sent(t, job, owed[0], 0, refused(turnedDown, "conflict"))
+	f.end(t, job, "refused", model.FoundryGraphJobSucceeded)
+
+	// While a second load is written another claim is approved on the first:
+	// it waits there, and the first load owes its document.
+	f.draftVersion(t, "RSWAP2", customerTOML)
+	require.NoError(t, f.db.CreateFoundryLoad(ctx, loadJob(f.ontology, "RSWAP2")))
+	waits := f.held(f.a, 0, readA)
+	require.False(t, f.approve(t, "1", waits), "the load job goes on")
+
+	// The second load becomes current, is carried that approval, and refuses it.
+	f.loaded(t, f.worker, f.a, f.b)
+	f.load = id26("FJ-RSWAP2")
+	require.Equal(t, f.load, *f.ontologyNow(t).CurrentLoadID)
+	job = f.claim(t)
+	require.Equal(t, model.FoundryGraphJobResend, job.Kind)
+	owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	f.sent(t, job, owed[0], 0, refused(waits, "conflict"))
+	f.end(t, job, "second", model.FoundryGraphJobSucceeded)
+	require.Equal(t, map[string]string{turnedDown.ID: "", waits.ID: "refused/conflict"}, f.applied(t, turnedDown, waits))
+
+	// The person takes both back. They leave the current load's list; the
+	// first load keeps its copies, and still owes the document.
+	for _, d := range []*model.FoundryReviewDecision{turnedDown, waits} {
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.ID, d.ID))
+	}
+	assert.Empty(t, f.applied(t, turnedDown, waits))
+	var left int
+	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_load_decisions WHERE load_id=?`, first).Scan(&left))
+	require.Equal(t, 2, left, "removal reaches only the load that is current")
+	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND status='owed'`, first).Scan(&left))
+	require.Equal(t, 1, left)
+
+	// The first load is made current again: its copies go before the resend
+	// its owed document queues.
+	_, err = f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, first, extractJob("RSWAP"), resendJob("RSWAP"), noBudget)
+	require.NoError(t, err)
+	f.load = first
+	assert.Empty(t, f.applied(t, turnedDown, waits), "neither is in the list any more")
+	list, err := f.db.ListFoundryLoadDecisions(ctx, first, "", nil, 100)
+	require.NoError(t, err)
+	assert.Empty(t, list, "a resend sends what the list holds: nothing a person took back")
+	job = f.claim(t)
+	require.Equal(t, id26("FR-RSWAP"), job.ID)
+	require.Equal(t, model.FoundryGraphJobResend, job.Kind)
+	owed, err = f.db.ListFoundryLoadResends(ctx, first)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	assert.Equal(t, f.a, owed[0].DocumentID)
+	f.sent(t, job, owed[0], 0)
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "back", model.FoundryGraphJobSucceeded))
+	assert.Nil(t, f.liveJob(t))
+
+	// Another claim of the refused one's document is approved: it goes alone.
+	later := f.held(f.b, 1, readA)
+	require.True(t, f.approve(t, "2", later))
+	list, err = f.db.ListFoundryLoadDecisions(ctx, first, "", []string{f.b}, 100)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, later.ID, list[0].ID)
+}
+
 // A job that fails for good after the engine wrote a release, and before the
 // event that said so was recorded. The decision is not refused: it stays
 // unconfirmed, and no job is queued for it. The next resend of its document,
@@ -1030,7 +1111,8 @@ func TestFoundryReleaseLandsWhileAResendRuns(t *testing.T) {
 // as an extract of its load, sends the documents the load waits for (none),
 // and ends it, knowing nothing of what the load owes. The approvals go on
 // waiting and their documents stay owed. Back on this binary, the next
-// approval, or the next job's end, queues the resend that applies them.
+// approval, or the next job's end, queues the resend that applies them, less
+// any that binary removed meanwhile.
 func TestFoundryResendEndedByAnOlderBinary(t *testing.T) {
 	ctx := context.Background()
 	// older ends the ontology's live job as that binary's finish does.
@@ -1085,6 +1167,70 @@ func TestFoundryResendEndedByAnOlderBinary(t *testing.T) {
 		require.Len(t, owed, 1)
 		f.sent(t, job, owed[0], 1, written(d))
 		assert.Equal(t, map[string]string{d.ID: "written"}, f.applied(t, d))
+	})
+
+	// That binary's removal of a decision takes it from the saved decisions
+	// only: the current load's copy stays, waiting, with its document owed.
+	// removed takes decisions back as it does.
+	removed := func(t *testing.T, f resendFixture, ds ...*model.FoundryReviewDecision) {
+		t.Helper()
+		for _, d := range ds {
+			_, err := testDB.Exec(`DELETE FROM foundry_review_decisions WHERE ontology_id=? AND id=?`, f.ontology.ID, d.ID)
+			require.NoError(t, err)
+		}
+	}
+
+	// Back on this binary the copy goes before a resend is queued: the next
+	// approval of that document's claims is sent without it.
+	t.Run("the next approval sends nothing that binary removed", func(t *testing.T) {
+		f := newResendFixture(t, "ROLDR")
+		gone, alsoGone := f.held(f.a, 0, readA), f.held(f.b, 0, readA)
+		require.True(t, f.approve(t, "1", gone, alsoGone))
+		older(t, f)
+		removed(t, f, gone, alsoGone)
+		require.Equal(t, map[string]string{gone.ID: "pending", alsoGone.ID: "pending"}, f.applied(t, gone, alsoGone))
+		require.Equal(t, map[string]int{f.a: 1, f.b: 1}, f.owed(t))
+
+		kept := f.held(f.a, 1, readA)
+		require.True(t, f.approve(t, "2", kept))
+		assert.Equal(t, map[string]string{kept.ID: "pending"}, f.applied(t, gone, alsoGone, kept))
+		list, err := f.db.ListFoundryLoadDecisions(ctx, f.load, "", nil, 100)
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, kept.ID, list[0].ID)
+		job := f.claim(t)
+		owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+		require.NoError(t, err)
+		require.Len(t, owed, 2, "the documents the removed ones owed are sent, with what is left")
+		f.sent(t, job, owed[0], 1, written(kept))
+		f.sent(t, job, owed[1], 0)
+		assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "oldr", model.FoundryGraphJobSucceeded))
+		assert.Nil(t, f.liveJob(t))
+	})
+
+	t.Run("the next job's end sends nothing that binary removed", func(t *testing.T) {
+		f := newResendFixture(t, "ROLDS")
+		gone := f.held(f.a, 0, readA)
+		require.True(t, f.approve(t, "1", gone))
+		older(t, f)
+		removed(t, f, gone)
+		c := f.uploaded(t, "ROLDS-c")
+		job := f.claim(t)
+		require.Equal(t, model.FoundryGraphJobExtract, job.Kind)
+		require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, extracted(c), false))
+		assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "olds", model.FoundryGraphJobSucceeded))
+		assert.Empty(t, f.applied(t, gone))
+		list, err := f.db.ListFoundryLoadDecisions(ctx, f.load, "", nil, 100)
+		require.NoError(t, err)
+		assert.Empty(t, list)
+		job = f.claim(t)
+		require.Equal(t, model.FoundryGraphJobResend, job.Kind, "the document it owed is still sent")
+		owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+		require.NoError(t, err)
+		require.Len(t, owed, 1)
+		f.sent(t, job, owed[0], 0)
+		assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "olds-sent", model.FoundryGraphJobSucceeded))
+		assert.Nil(t, f.liveJob(t))
 	})
 }
 

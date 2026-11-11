@@ -62,13 +62,29 @@ ON DUPLICATE KEY UPDATE status='owed', requests=requests+1, requested_at=NOW(6),
 // nothing could say what became of it, and a decision in the list that waits
 // is one a reader waits for. It is carried by the first job end that finds
 // its document extracted, as after the extract that reads it. A claim the
-// list already has a decision for is left as it is, whatever its id. The
-// caller holds the ontology's lock.
+// list already has a decision for is left as it is, whatever its id.
+//
+// First the list loses the releases it has not written whose decision is
+// gone. Removing a decision takes it from the load that is current then
+// (DeleteFoundryReviewDecision), so a copy is left behind in a load that was
+// not: one made current again later, whose list still held the approval
+// waiting, refused or unconfirmed. An older binary's removal leaves the
+// current load's copy too. A resend sends every release its load's list
+// holds of a document, and every resend job is queued through here
+// (queueFoundryResend), so none sends an approval a person took back; the
+// document such a copy owed is sent with what is left. The caller holds the
+// ontology's lock.
 func (s *mysqlDB) carryFoundryReleases(ctx context.Context, o *model.FoundryOntology) error {
 	if o.CurrentLoadID == nil {
 		return nil
 	}
 	loadID := *o.CurrentLoadID
+	// <=> is NULL-safe: a copy no job has reported on has no status.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
+WHERE load_id=? AND kind='release' AND NOT (applied_status <=> 'written')
+  AND id NOT IN (SELECT id FROM foundry_review_decisions WHERE ontology_id=?)`, loadID, o.ID); err != nil {
+		return err
+	}
 	columns := "r." + strings.ReplaceAll(foundryReviewDecisionColumns, ", ", ", r.")
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
 SELECT ?, `+columns+`, 'carried' FROM foundry_review_decisions r
