@@ -729,7 +729,7 @@
           "const": "not_allowed"
         },
         {
-          "description": "It conflicts with what the load holds of its link.",
+          "description": "It conflicts with what the load holds of its link: a property of the fact that differs\nfrom the one set, or a second object of a one-valued link whose slot keeps no statements\nto weigh, as a load before P3 wrote it. An approval of a one-valued link's claim\notherwise outranks what it conflicted with.",
           "type": "string",
           "const": "conflict"
         },

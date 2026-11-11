@@ -223,17 +223,17 @@
           "type": "object",
           "properties": {
             "claim_key": {
-              "description": "The claim's key, as the review stores it.",
+              "description": "The claim's key, as the review stores it. A key the load holds no review under is\nmatched to the review at the quote's place that states what `statement_hash` binds.",
               "type": "string",
               "pattern": "^[0-9a-f]{64}$"
             },
             "decided_at": {
-              "description": "When it was settled.",
+              "description": "When it was settled. Of a link that holds one value the approval holds the link from\nthen: it beats undated statements and those dated up to that day, a statement dated\nlater beats it, and of two approvals the later settled holds it.",
               "type": "string",
               "format": "date-time"
             },
             "decision_id": {
-              "description": "The decision's id, as the backend keeps it.",
+              "description": "The decision's id, as the backend keeps it. Of two approvals of one link that holds\none value settled at the same instant, the one whose id sorts last holds it.",
               "type": "string"
             },
             "doc_id": {
