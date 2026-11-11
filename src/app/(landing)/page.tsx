@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { Landing, type Via } from "@/landing/landing";
+import { jsonLd } from "@/server/agent-context";
 import { authConfig } from "@/server/config";
 import { remindersConfig } from "@/server/reminders";
 import { LOCAL } from "@/shared/deployment";
@@ -28,9 +29,19 @@ export default async function Home({ searchParams }: Props) {
   }
   const via = [params.via].flat()[0];
   return (
-    <Landing
-      via={via === "email" || via === "github" ? (via as Via) : undefined}
-      remind={remindersConfig() !== null}
-    />
+    <>
+      {/* What Foundry is and costs, for search engines and agents
+          (schema.org). "<" is escaped so no value ends the script. */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(jsonLd()).replace(/</g, "\\u003c"),
+        }}
+      />
+      <Landing
+        via={via === "email" || via === "github" ? (via as Via) : undefined}
+        remind={remindersConfig() !== null}
+      />
+    </>
   );
 }

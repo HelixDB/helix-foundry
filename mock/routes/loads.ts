@@ -7,8 +7,10 @@ import {
 } from "../../src/web/areas/ontology/model";
 import { CREDITS_PER_PROFILE } from "../../src/web/areas/ontology/enrichment-fields";
 import { decisionsFor } from "../review-decisions";
+import { FOUNDRY_NODES as N } from "../../src/shared/foundry-labels";
 import { parse } from "smol-toml";
 import type {
+  DecisionApplied,
   FoundryEnrichmentStop,
   FoundryLoadEnrichment,
   FoundryLoadEnrichmentStatus,
@@ -36,6 +38,7 @@ import {
   extractDocument,
   ingestChunk,
   markLoad,
+  releaseReview,
   type EnrichmentBinding,
   type ExtractOntology,
   type ProfileRow,
@@ -60,6 +63,7 @@ import {
   dropExtractions,
   joinLoad,
   loadDocumentSets,
+  countRelease,
   loadDocuments,
   setExtraction,
   spentAllowance,
@@ -309,10 +313,16 @@ const state = {
   owed: new Set<string>(),
   // Ontologies owed a load without profiles (consent was turned off).
   purgesOwed: new Set<string>(),
+  // What became of each release decision in each load, by load and decision
+  // id (appliedKey), and the approvals waiting to be applied.
+  applied: new Map<string, DecisionApplied>(),
+  resends: [] as { loadId: string; decisionId: string; due: number }[],
 };
 onReset(() => {
   state.loads = [];
   state.jobs = [];
+  state.applied.clear();
+  state.resends = [];
   state.current.clear();
   state.owed.clear();
   state.purgesOwed.clear();
@@ -365,6 +375,134 @@ export const ontologyLoad = (ontologyId: string, loadId: string) => {
 /** An ontology's current load's id, if it has one. */
 export const currentLoadId = (ontologyId: string) =>
   state.current.get(ontologyId);
+
+// A person's approval of a held claim applies to the current load at once,
+// as the backend's resend job does (store/foundry_resends.go): the decision joins the
+// load's own list, waits a job's step, then the review is written as its
+// fact, or stays held for a reason. What became of each decision is kept by
+// load and decision id. The mock applies only what is settled on the current
+// load: an approval saved while another load was being written is not
+// carried to it, so its card offers to approve it again.
+
+type Release = Extract<FoundryReviewDecision, { kind: "release" }>;
+/** A release decision's review in a load's graph, if the load holds it. */
+function heldReview(l: StoredLoad, d: Release) {
+  const g = tenantGraph(l.tenantId).view(l.id);
+  for (const n of g.nodes())
+    if (
+      n.label === N.Review &&
+      n.props.doc_id === d.docId &&
+      n.props.claim_key === d.claimKey &&
+      n.props.section === d.claimSection &&
+      n.props.start === d.claimStart &&
+      n.props.end === d.claimEnd &&
+      typeof n.props.statement === "string"
+    )
+      return n;
+  return undefined;
+}
+
+/**
+ * Why the engine would keep an approved claim held, from what the mock was
+ * told to make of hedged claims (`documentHeld`): none when it writes it.
+ */
+const refusal = () =>
+  knobs.documentHeld === "refused"
+    ? "conflict"
+    : knobs.documentHeld === "legal_form"
+      ? "legal_form"
+      : knobs.documentHeld === "differs"
+        ? "differs"
+        : undefined;
+
+const appliedKey = (loadId: string, decisionId: string) =>
+  `${loadId}\u001f${decisionId}`;
+
+/**
+ * Says what a load made of a release decision of a document it just read:
+ * written when no review of it is left, refused when one is.
+ */
+function recordRelease(l: StoredLoad, d: Release, at: number) {
+  state.applied.set(appliedKey(l.id, d.id), {
+    ...(heldReview(l, d)
+      ? { status: "refused", reason: refusal() ?? "changed" }
+      : { status: "written" }),
+    at: iso(at),
+  });
+}
+
+/**
+ * Joins a release decision just settled to the ontology's current load, to
+ * be applied a job's step from now.
+ */
+export function owePendingRelease(ontologyId: string, d: Release) {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  if (!l) return;
+  l.decisions = [...l.decisions.filter((x) => x.id !== d.id), d];
+  state.applied.set(appliedKey(l.id, d.id), { status: "pending" });
+  state.resends.push({
+    loadId: l.id,
+    decisionId: d.id,
+    due: Date.now() + (knobs.loadStepMs ?? STEP_MS),
+  });
+}
+
+/** Applies the approvals whose step has passed, each to the load it joined. */
+function applyReleases(ontologyId: string, now = Date.now()) {
+  // A deleted load's are dropped with whichever ontology is read next.
+  const due = state.resends.filter(
+    (r) =>
+      r.due <= now &&
+      (loadById(r.loadId)?.ontologyId ?? ontologyId) === ontologyId,
+  );
+  if (!due.length) return;
+  state.resends = state.resends.filter((r) => !due.includes(r));
+  for (const r of due) {
+    const l = loadById(r.loadId);
+    const d = l?.decisions.find(
+      (x): x is Release => x.id === r.decisionId && x.kind === "release",
+    );
+    // Taken back, or its load deleted, before it was applied.
+    if (!l || !d) continue;
+    const review = heldReview(l, d);
+    if (review && !refusal()) {
+      releaseReview(tenantGraph(l.tenantId).view(l.id), review.id, {
+        ontologyVersion: versionName(l),
+        model: aiModel(l.workspaceId, "extract") || MODEL,
+        verifier: aiModel(l.workspaceId, "verify") || VERIFIER,
+      });
+      countRelease(l.id, d.docId);
+    }
+    recordRelease(l, d, r.due);
+  }
+}
+
+/**
+ * What became of a decision in the ontology's current load: unset for one
+ * that load's list doesn't hold, and for any decision but a release.
+ */
+export function appliedOf(ontologyId: string, d: FoundryReviewDecision) {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  if (d.kind !== "release" || !l?.decisions.some((x) => x.id === d.id))
+    return undefined;
+  return state.applied.get(appliedKey(l.id, d.id)) ?? { status: "" as const };
+}
+
+/**
+ * Takes a removed release decision back from the current load's list, unless
+ * that load wrote it: whatever else the load made of it, a later approval of
+ * its document must not send it again.
+ */
+export function forgetRelease(ontologyId: string, decisionId: string) {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  if (
+    !l?.decisions.some((x) => x.id === decisionId && x.kind === "release") ||
+    state.applied.get(appliedKey(l.id, decisionId))?.status === "written"
+  )
+    return;
+  l.decisions = l.decisions.filter((x) => x.id !== decisionId);
+  state.applied.delete(appliedKey(l.id, decisionId));
+}
 /** The version of an ontology's current load, if it has one. */
 export const currentLoadVersionId = (ontologyId: string) =>
   loadById(currentLoadId(ontologyId) || "")?.versionId;
@@ -1106,6 +1244,11 @@ function read(j: StoredJob, documentId: string, at: string) {
     });
     return;
   }
+  // What the load made of each approval it copied of this document.
+  const l = loadById(j.loadId);
+  for (const d of l?.decisions || [])
+    if (d.kind === "release" && d.docId === doc.id)
+      recordRelease(l!, d, Date.parse(at));
   j.usdMicros += DOCUMENT_USD_MICROS;
   setExtraction(
     j.loadId,
@@ -1401,6 +1544,7 @@ function advance(j: StoredJob) {
 export function advanceLoads(ontologyId: string) {
   // PDFs read since: their sets' readers read them now.
   wakeReads();
+  applyReleases(ontologyId);
   for (let seen = -1; seen !== state.jobs.length; ) {
     seen = state.jobs.length;
     jobsOf(ontologyId).forEach(advance);

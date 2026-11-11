@@ -164,7 +164,7 @@ test("approves every held claim of a group at once, and says which couldn't be",
   await approveAll.click();
   const dialog = page.getByRole("dialog", { name: "Approve 3 claims?" });
   await expect(dialog).toContainText(
-    "The next load writes each one it can. Any it can't stays held, and its card says why.",
+    "This load writes each one it can, at once. Any it can't stays held, and its card says why.",
   );
   await dialog.getByRole("button", { name: "Approve all" }).click();
   await expect(
@@ -175,24 +175,30 @@ test("approves every held claim of a group at once, and says which couldn't be",
       .map(hashOf)
       .sort(),
   );
+  // The load writes the three approved, with no new load: their cards go.
   // The card that failed is as it was, with its own Approve; one claim
   // isn't a group's worth.
-  const open = rows.filter({
-    has: page.getByRole("button", { name: "Approve", exact: true }),
-  });
-  await expect(open).toHaveCount(1);
+  await expect(rows).toHaveCount(1);
   await expect(
-    rows.filter({ hasText: "Decision saved. Reload to apply." }),
-  ).toHaveCount(3);
+    rows.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(1);
   await expect(approveAll).toHaveCount(0);
   await page.unroute("**/papi/**/reviews/*:settle");
-  // The next load writes what was approved and holds the rest.
+  const saved = page
+    .getByRole("list", { name: "Saved decisions" })
+    .getByRole("listitem");
+  await expect(saved).toHaveCount(3);
+  await expect(saved.filter({ hasText: /^Approved: “/ })).toHaveCount(3);
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  const facts = page.getByRole("list", { name: "Facts" });
+  await expect(facts).toContainText("signed_with");
+  await expect(facts).toContainText("Globex Corporation");
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  // A later load writes what was approved and holds the rest.
   await loadVersion3(page);
   await page.goto(`${doc}?tab=review`);
   await expect(rows).toHaveCount(1);
-  await expect(
-    page.getByRole("list", { name: "Saved decisions" }).getByRole("listitem"),
-  ).toHaveCount(3);
+  await expect(saved).toHaveCount(3);
 });
 
 test("offers Approve all and Add these links to managers only", async ({

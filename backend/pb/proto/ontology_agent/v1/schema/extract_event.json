@@ -116,6 +116,14 @@
           "description": "How it ended.",
           "$ref": "#/$defs/DocumentOutcome"
         },
+        "releases": {
+          "description": "What the run did with each release decision of the request that names the document,\nby its `decision_id`: written, refused and why, `missed` (the run committed the\ndocument, and its commit held no review at that key and place) or `not_held` (the\nload held the document already, with no such review: one a release wrote before, or\na claim this load never held there). `counts` counts reviews, of which one decision\nmay name several.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ReleasedDecision"
+          }
+        },
         "sections": {
           "description": "Its sections.",
           "type": "integer",
@@ -140,7 +148,8 @@
         "text_bytes",
         "sections",
         "counts",
-        "usage"
+        "usage",
+        "releases"
       ]
     },
     {
@@ -602,6 +611,142 @@
         "link",
         "verify",
         "adjudicate"
+      ]
+    },
+    "ReleaseOutcome": {
+      "description": "What became of a release decision.",
+      "oneOf": [
+        {
+          "description": "Every review it names was written as what it states.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "written"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Its reviews stay held.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "refused"
+            },
+            "reason": {
+              "description": "Why.",
+              "$ref": "#/$defs/ReleaseRefusal"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "description": "The run committed the document, and the commit held no review at its key and place: the\nclaim has another key or place now.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "missed"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The load held the document already, with no review at its key and place: one a release\nwrote before, as a decision sent again finds, or a claim this load never held there.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_held"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "ReleaseRefusal": {
+      "description": "Why a release decision's reviews stay held.",
+      "oneOf": [
+        {
+          "description": "The document holds more reviews under the keys its decisions name than one read takes,\nor the write was past what the store takes in one.",
+          "type": "string",
+          "const": "too_large"
+        },
+        {
+          "description": "Its review keeps no statement to write: one of a property value, or of a load before\nreviews kept them.",
+          "type": "string",
+          "const": "no_statement"
+        },
+        {
+          "description": "Reviews at its place state different things, and no word of a person's says which.",
+          "type": "string",
+          "const": "differs"
+        },
+        {
+          "description": "What its review states isn't what the decision's hash binds: not what the person read.",
+          "type": "string",
+          "const": "changed"
+        },
+        {
+          "description": "The document's model work states no such claim at that place now, as other artifacts,\nmodels or prompts may read the sentence otherwise.",
+          "type": "string",
+          "const": "not_stated"
+        },
+        {
+          "description": "An end resolves to no one entity: a resolve decision settles the name first.",
+          "type": "string",
+          "const": "unresolved"
+        },
+        {
+          "description": "Its link holds one value and an end is linked by legal form alone: a resolve decision\nsettles that name first.",
+          "type": "string",
+          "const": "legal_form"
+        },
+        {
+          "description": "Its hold isn't one a person's word releases.",
+          "type": "string",
+          "const": "not_allowed"
+        },
+        {
+          "description": "It conflicts with what the load holds of its link.",
+          "type": "string",
+          "const": "conflict"
+        },
+        {
+          "description": "It would open a `block` violation, or checking that needed more reading than the budget\nallows.",
+          "type": "string",
+          "const": "blocked"
+        }
+      ]
+    },
+    "ReleasedDecision": {
+      "description": "What a run did with one release decision of a document, by the backend's id of the decision.",
+      "type": "object",
+      "properties": {
+        "decision_id": {
+          "description": "The decision's `decision_id`.",
+          "type": "string"
+        },
+        "outcome": {
+          "description": "What the run did with it.",
+          "$ref": "#/$defs/ReleaseOutcome"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "decision_id",
+        "outcome"
       ]
     },
     "ResolvedCounts": {

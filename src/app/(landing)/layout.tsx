@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { PROD, PROD_ORIGIN } from "@/server/agent-context";
 import { Telemetry } from "@/web/telemetry";
 // The landing page's own stylesheets, before the figures' (src/landing). A
 // root layout of its own, so none of the app's global styles reach it, and
@@ -12,15 +13,26 @@ import "@/landing/styles/scene.css";
 import "@/landing/styles/connect.css";
 import "@/landing/styles/analyst.css";
 
-const prod = process.env.NEXT_PUBLIC_APP_ENV?.trim().toLowerCase() === "prod";
+const description =
+  "Every system your company runs, matched into one ontology that you and your AI agents explore and ask questions of, each answer citing its sources. Hosted, or on your own machine.";
 
 export const metadata: Metadata = {
+  // Every stamp's canonical page is prod's.
+  metadataBase: new URL(PROD_ORIGIN),
   title: "Helix Foundry",
-  description:
-    "Every system your company runs, matched into one set of objects you can explore and ask questions of. Hosted, or on your own machine.",
+  description,
   icons: "/landing/favicon.svg",
   // The one page search engines may list, and only on prod.
-  robots: { index: prod, follow: prod },
+  robots: { index: PROD, follow: PROD },
+  // The same page in Markdown, for agents (src/app/index.md).
+  alternates: { canonical: "/", types: { "text/markdown": "/index.md" } },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: "Helix Foundry",
+    title: "Helix Foundry",
+    description,
+  },
 };
 
 export const viewport: Viewport = {

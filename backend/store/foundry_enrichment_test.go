@@ -1551,10 +1551,10 @@ func TestSetCurrentFoundryLoadPurged(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, f.db.SetFoundryEnrichmentConsent(ctx, consent(ws, "off", false, 0)))
 
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, f.ontology.ID, dirty.LoadID, extractJob("SC1-x"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, f.ontology.ID, dirty.LoadID, extractJob("SC1-x"), resendJob("SC1-x"), noBudget)
 		assert.ErrorIs(t, err, store.FoundryLoadPurged)
 		assert.Equal(t, clean.LoadID, *f.ontologyNow(t).CurrentLoadID)
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, f.ontology.ID, clean.LoadID, extractJob("SC1-y"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, f.ontology.ID, clean.LoadID, extractJob("SC1-y"), resendJob("SC1-y"), noBudget)
 		assert.NoError(t, err, "a load that applied no profiles stays servable")
 	})
 }

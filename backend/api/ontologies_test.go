@@ -649,7 +649,7 @@ func (s *foundryStore) load(id string) *foundrymodel.FoundryLoad {
 	return nil
 }
 
-func (s *foundryStore) SetCurrentFoundryLoad(_ context.Context, _, ontologyID, loadID string, extract *foundrymodel.FoundryGraphJob,
+func (s *foundryStore) SetCurrentFoundryLoad(_ context.Context, _, ontologyID, loadID string, extract, _ *foundrymodel.FoundryGraphJob,
 	_ foundrymodel.FoundryGraphBudget) (bool, error) {
 	l := s.load(loadID)
 	switch {

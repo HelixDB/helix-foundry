@@ -467,17 +467,23 @@ export function LiveLoad() {
           : job.status === "queued"
             ? job.kind === "extract"
               ? "New documents are queued for reading"
-              : "A load is queued"
+              : job.kind === "resend"
+                ? "Approved claims are queued for writing"
+                : "A load is queued"
             : job.kind === "extract"
               ? `Reading new documents into ${loadVersion(live.load)}`
-              : `Loading the database: ${phaseLabel(job).toLowerCase()}`
+              : job.kind === "resend"
+                ? `Writing approved claims into ${loadVersion(live.load)}`
+                : `Loading the database: ${phaseLabel(job).toLowerCase()}`
       }
       text={
         starting
           ? `Your new database is starting. The ${job.kind === "extract" ? "reading" : "load"} tries again automatically once it’s ready.`
-          : p.documentsTotal
-            ? `${p.documentsDone || 0} of ${plural(p.documentsTotal, "document")} read so far.`
-            : "What it writes shows in the Explorer as it goes."
+          : job.kind === "resend"
+            ? "Each claim’s document is read again from its saved reading, at no model cost."
+            : p.documentsTotal
+              ? `${p.documentsDone || 0} of ${plural(p.documentsTotal, "document")} read so far.`
+              : "What it writes shows in the Explorer as it goes."
       }
       action={
         <ButtonLink size="sm" to={paths.load(o, live.load.id)}>
