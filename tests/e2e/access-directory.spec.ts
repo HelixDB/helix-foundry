@@ -26,6 +26,10 @@ test("a synced team offers only its sources, and leaves out whom they can't conf
   await expect(
     finance.getByRole("button", { name: "Delete Finance" }),
   ).toHaveCount(0);
+  // Connecting the directory and roles from its groups are the dashboard's.
+  await expect(
+    page.getByRole("link", { name: "Helix dashboard’s Settings" }),
+  ).toHaveAttribute("href", /\/acme\/settings$/);
 
   await finance.getByRole("button", { name: "Sources for Finance" }).click();
   const sources = page.getByRole("dialog", { name: "Sources for Finance" });

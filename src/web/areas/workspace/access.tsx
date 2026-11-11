@@ -71,7 +71,7 @@ import {
   type Grant,
   type Principal,
 } from "./access-model";
-import { membersQuery } from "./members";
+import { DASHBOARD_URL, membersQuery } from "./members";
 import { initials, roleLabel } from "./people";
 
 // Settings › Access (hosted, owners and admins): what agents, people and
@@ -1168,7 +1168,7 @@ function TeamDialog({
 }
 
 function TeamsPanel({ data }: { data: AccessData }) {
-  const { id, notify } = useWorkspace(),
+  const { id, slug, notify } = useWorkspace(),
     qc = useQueryClient();
   const [making, setMaking] = useState(false),
     [changing, setChanging] = useState<FoundryTeam>(),
@@ -1283,6 +1283,19 @@ function TeamsPanel({ data }: { data: AccessData }) {
           />
         )}
       </Panel>
+      <p className="wk-note">
+        {teams.some((t) => t.directory)
+          ? "Directory sync makes a team of each group your IT admin assigns. An owner connects the directory, and sets roles from its groups, in the "
+          : "To make teams of your company’s directory groups (Okta, Microsoft Entra and others), an owner connects the directory in the "}
+        <a
+          href={`${DASHBOARD_URL}/${encodeURIComponent(slug)}/settings`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Helix dashboard’s Settings
+        </a>
+        .
+      </p>
       {(making || changing) && (
         <TeamDialog
           data={data}
