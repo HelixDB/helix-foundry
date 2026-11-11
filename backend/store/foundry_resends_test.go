@@ -629,6 +629,92 @@ func TestFoundryReleaseTakenBack(t *testing.T) {
 	assert.Equal(t, again.ID, list[0].ID)
 }
 
+// An approval taken back after its load said something of it, or before any
+// job did, leaves the current load's list too, unless the load wrote it: one
+// the engine refused, one whose job failed, one the load found no claim for,
+// and one the load copied at its creation that no job reported on. A resend
+// sends every release its load's list holds of a document, so a copy left
+// behind would be written by the next approval of that document: here the
+// resends that follow send only the approvals that still stand.
+func TestFoundryReleaseTakenBackAfterTheLoadsWord(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "RWORD")
+	missed, unreported := f.held(f.a, 0, readA), f.held(f.a, 1, readA)
+	require.True(t, f.approve(t, "1", missed, unreported))
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	f.sent(t, job, owed[0], 2, written(missed), written(unreported))
+	f.end(t, job, "first", model.FoundryGraphJobSucceeded)
+
+	// A second load copies both. Its commit of the document finds no claim at
+	// the first's place, and says nothing of the second.
+	f.draftVersion(t, "RWORD2", customerTOML)
+	require.NoError(t, f.db.CreateFoundryLoad(ctx, loadJob(f.ontology, "RWORD2")))
+	load := f.claim(t)
+	committed := extracted(f.a)
+	committed.Releases = []model.FoundryReleaseOutcome{{DecisionID: missed.ID, StatementHash: readA, Kind: model.FoundryReleaseOutcomeMissed}}
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, load.ID, f.worker, committed, false))
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, load.ID, f.worker, extracted(f.b), false))
+	f.end(t, load, "second", model.FoundryGraphJobSucceeded)
+	f.load = load.ID
+
+	// On the second load one approval is refused by the engine, one waits for
+	// a job that fails, and one is written.
+	refusedOne, failed, kept := f.held(f.a, 2, readA), f.held(f.b, 0, readA), f.held(f.b, 1, readA)
+	require.True(t, f.approve(t, "2", refusedOne, kept))
+	job = f.claim(t)
+	owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 2)
+	f.sent(t, job, owed[0], 0, refused(refusedOne, "conflict"))
+	f.sent(t, job, owed[1], 1, written(kept))
+	f.end(t, job, "third", model.FoundryGraphJobSucceeded)
+	require.True(t, f.approve(t, "3", failed))
+	f.end(t, f.claim(t), "failed", model.FoundryGraphJobFailed)
+	got := f.applied(t, missed, unreported, refusedOne, failed, kept)
+	assert.Equal(t, "missed", got[missed.ID])
+	assert.Equal(t, "", got[unreported.ID])
+	assert.Equal(t, "refused/conflict", got[refusedOne.ID])
+	assert.NotEqual(t, "written", got[failed.ID])
+	assert.Equal(t, "written", got[kept.ID])
+	require.Len(t, got, 5, "the load's list holds each")
+
+	for _, d := range []*model.FoundryReviewDecision{missed, unreported, refusedOne, failed, kept} {
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.ID, d.ID))
+	}
+	list, err := f.db.ListFoundryLoadDecisions(ctx, f.load, "", nil, 100)
+	require.NoError(t, err)
+	require.Len(t, list, 1, "only what the load wrote stays in its list")
+	assert.Equal(t, kept.ID, list[0].ID)
+
+	// Another claim of each document is approved: its resend sends that
+	// approval, the one the load wrote (which finds no review), and none of
+	// those taken back.
+	laterA, laterB := f.held(f.a, 3, readA), f.held(f.b, 2, readA)
+	require.True(t, f.approve(t, "4", laterA, laterB))
+	sentA, err := f.db.ListFoundryLoadDecisions(ctx, f.load, "", []string{f.a}, 100)
+	require.NoError(t, err)
+	require.Len(t, sentA, 1)
+	assert.Equal(t, laterA.ID, sentA[0].ID)
+	sentB, err := f.db.ListFoundryLoadDecisions(ctx, f.load, "", []string{f.b}, 100)
+	require.NoError(t, err)
+	ids := []string{sentB[0].ID}
+	if len(sentB) > 1 {
+		ids = append(ids, sentB[1].ID)
+	}
+	assert.ElementsMatch(t, []string{kept.ID, laterB.ID}, ids)
+	job = f.claim(t)
+	owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 2)
+	f.sent(t, job, owed[0], 1, written(laterA))
+	f.sent(t, job, owed[1], 1, notHeld(kept), written(laterB))
+	f.end(t, job, "later", model.FoundryGraphJobSucceeded)
+	assert.Equal(t, map[string]string{laterA.ID: "written", laterB.ID: "written"}, f.applied(t, missed, unreported, refusedOne, failed, laterA, laterB))
+	assert.Nil(t, f.liveJob(t))
+}
+
 // A resend sends only what its load holds. A document uploaded while it runs
 // is the owed extract's, which the resend's end queues: the resend is not
 // queued again for it, as a load or an extract would be.

@@ -24,7 +24,7 @@ import {
   appliedOf,
   currentLoadId,
   currentLoadVersionId,
-  forgetPendingRelease,
+  forgetRelease,
   owePendingRelease,
 } from "./loads";
 import { isScope, ontologyOf } from "./ontologies";
@@ -343,8 +343,8 @@ export const reviewRoutes: MockRoute[] = [
       const own = decisions.get(s.o.id) || [];
       if (!own.some((d) => d.id === req.params.id))
         return fail("NOT_FOUND", "review decision not found");
-      // One the current load has yet to apply is taken back from it too.
-      forgetPendingRelease(s.o.id, req.params.id!);
+      // One the current load has not written is taken back from it too.
+      forgetRelease(s.o.id, req.params.id!);
       decisions.set(
         s.o.id,
         own.filter((d) => d.id !== req.params.id),

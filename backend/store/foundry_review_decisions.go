@@ -231,12 +231,16 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 }
 
 // DeleteFoundryReviewDecision removes a decision from those later loads
-// copy. A load that copied it keeps its copy, and what it wrote; the current
-// load's copy of one a resend has yet to apply goes with it, so a claim whose
-// approval was taken back before it was written stays held. It holds the
-// ontology's lock, as every writer of a load's decisions does, so the current
-// load is the same throughout. ErrNotFound means the ontology has no such
-// decision.
+// copy. A load that copied it keeps its copy, and what it wrote. The current
+// load's copy of a release it has not written goes with it, whatever a job
+// said of it (waiting, refused, missed, or nothing yet): a resend sends every
+// release its load's list holds of a document, so a copy left there would be
+// written by the next approval of another claim of that document, after the
+// person took it back, with no decision left to show for it. One the load
+// wrote stays: the fact is in the load, and sent again it finds no review.
+// It holds the ontology's lock, as every writer of a load's decisions does,
+// so the current load is the same throughout. ErrNotFound means the ontology
+// has no such decision.
 func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, ontologyID, id string) error {
 	return s.WithTx(ctx, func(db Store) error {
 		tx := db.(*mysqlDB)
@@ -254,8 +258,9 @@ func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, ontologyID, i
 		if !current.Valid {
 			return nil
 		}
+		// <=> is NULL-safe: a copy no job has reported on has no status.
 		_, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
-WHERE load_id=? AND id=? AND applied_status IN ('pending', 'carried')`, current.String, id)
+WHERE load_id=? AND id=? AND kind='release' AND NOT (applied_status <=> 'written')`, current.String, id)
 		return err
 	})
 }

@@ -488,15 +488,20 @@ export function appliedOf(ontologyId: string, d: FoundryReviewDecision) {
   return state.applied.get(appliedKey(l.id, d.id)) ?? { status: "" as const };
 }
 
-/** Takes a decision back from the current load, if it has yet to apply it. */
-export function forgetPendingRelease(ontologyId: string, decisionId: string) {
+/**
+ * Takes a removed release decision back from the current load's list, unless
+ * that load wrote it: whatever else the load made of it, a later approval of
+ * its document must not send it again.
+ */
+export function forgetRelease(ontologyId: string, decisionId: string) {
   const l = loadById(currentLoadId(ontologyId) || "");
   if (
-    state.applied.get(appliedKey(l?.id || "", decisionId))?.status !== "pending"
+    !l?.decisions.some((x) => x.id === decisionId && x.kind === "release") ||
+    state.applied.get(appliedKey(l.id, decisionId))?.status === "written"
   )
     return;
-  l!.decisions = l!.decisions.filter((x) => x.id !== decisionId);
-  state.applied.delete(appliedKey(l!.id, decisionId));
+  l.decisions = l.decisions.filter((x) => x.id !== decisionId);
+  state.applied.delete(appliedKey(l.id, decisionId));
 }
 /** The version of an ontology's current load, if it has one. */
 export const currentLoadVersionId = (ontologyId: string) =>
