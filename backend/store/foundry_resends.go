@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -310,6 +311,12 @@ func (s *mysqlDB) recordFoundryReleaseOutcomes(ctx context.Context, loadID strin
 		err := s.db.QueryRowContext(ctx, `SELECT applied_status, applied_reason FROM foundry_load_decisions
 WHERE load_id=? AND id=? AND kind='release' AND statement_hash=? FOR UPDATE`, loadID, o.DecisionID, o.StatementHash).Scan(&current, &currentReason)
 		if err == sql.ErrNoRows {
+			// A decision removed, or approved as it reads now, after the job
+			// read it: the engine's word on what the job sent is dropped, and
+			// if that word is written, the load holds a fact no decision in
+			// its list accounts for.
+			log.From(ctx).Warn("graph job: the engine's word on a release the load's list no longer holds was dropped",
+				"load", loadID, "decision", o.DecisionID, "outcome", string(o.Kind))
 			continue
 		}
 		if err != nil {
