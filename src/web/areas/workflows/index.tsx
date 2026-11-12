@@ -8,14 +8,28 @@
 // here starts a run.
 import "./workflows.css";
 import { useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Plus, RefreshCw, Trash2, Workflow } from "lucide-react";
-import type {
-  FoundryWorkflow,
-  FoundryWorkflowAssessment,
-  FoundryWorkflowRun,
-} from "../../../shared/wfe";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import {
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Plus,
+  RefreshCw,
+  Trash2,
+  Workflow,
+  X,
+} from "lucide-react";
+import type { FoundryWorkflow, FoundryWorkflowRun } from "../../../shared/wfe";
 import { trackEvent } from "../../analytics";
 import {
   Button,
@@ -23,15 +37,20 @@ import {
   DataGrid,
   Dialog,
   EmptyState,
+  IconButton,
   KeyValue,
   Page,
   PageHeader,
   Panel,
+  Segmented,
   SkeletonText,
   StatusBadge,
   Tag,
+  cx,
   formatDate,
+  formatNumber,
   formatRelative,
+  useNow,
   useTitle,
   type Crumb,
 } from "../../kit";
@@ -47,21 +66,42 @@ import {
   deleteWorkflow,
   workflowQueries,
 } from "./api";
-import { InsightsBoard, Spark, VerdictBar, useInsights } from "./insights";
+import {
+  ChangesPanel,
+  ImpactCards,
+  InsightsPending,
+  InsightsToolbar,
+  Spark,
+  StatStrip,
+  TrendPanel,
+  VerdictBar,
+  useInsights,
+  useStarterNames,
+  type InsightsState,
+} from "./insights";
 import {
   INSIGHT_METRICS,
+  RUN_FILTERS,
   VERDICT_LABELS,
   accessTitle,
   accessView,
   assessmentOf,
   countsText,
+  insightSummary,
+  isRunFilter,
+  metricText,
   preview,
   readText,
   runDuration,
+  runShown,
+  starterLabel,
+  starterOf,
   suggestionGoal,
-  verdictsText,
+  verdictRuns,
+  windowStart,
   workflowPrompt,
   type AccessView,
+  type RunFilter,
   type Verdict,
 } from "./model";
 
@@ -83,10 +123,13 @@ function useCopy() {
       .catch(() => notify(`Couldn’t copy the ${what}.`, true));
 }
 
-// A run's assessment in a cell: its verdict once done, else where it stands.
-function AssessmentCell({ a }: { a?: FoundryWorkflowAssessment }) {
-  if (!a) return <span className="on-muted">—</span>;
-  if (a.status === "done" && a.verdict && a.verdict in VERDICT_LABELS) {
+// What a run's assessment found, as its row shows it: its verdict once
+// done, else where the run or its assessment stands.
+function RunVerdict({ run: r }: { run: FoundryWorkflowRun }) {
+  if (r.status === "open")
+    return <StatusBadge status="running" label="Open" size="sm" />;
+  const a = r.assessment;
+  if (a?.status === "done" && a.verdict && a.verdict in VERDICT_LABELS) {
     const v = VERDICT_LABELS[a.verdict as Verdict];
     return <Tag tone={v.tone}>{v.label}</Tag>;
   }
@@ -96,7 +139,9 @@ function AssessmentCell({ a }: { a?: FoundryWorkflowAssessment }) {
     failed: "Not assessed",
     skipped: "Not assessed",
   };
-  return <span className="on-muted">{words[a.status] || "—"}</span>;
+  return (
+    <span className="on-muted">{(a && words[a.status]) || "Finished"}</span>
+  );
 }
 
 const runStatus = (r: FoundryWorkflowRun) =>
@@ -106,7 +151,9 @@ const runStatus = (r: FoundryWorkflowRun) =>
     <StatusBadge status="running" label="Open" size="sm" />
   );
 
-// /ontology/:ontologyId/workflows
+// /ontology/:ontologyId/workflows: whether the ontology pays off across its
+// workflows, and what to change in it. A sentence and the impact cards lead,
+// then the workflows side by side (a row opens its runs), then what to change.
 export function WorkflowsPage() {
   const { id: ws, role, partial } = useWorkspace(),
     { id: o } = useOntology();
@@ -124,7 +171,7 @@ export function WorkflowsPage() {
     <PageHeader
       breadcrumbs={crumbs.slice(0, 2).concat({ label: "Workflows" })}
       title="Workflows"
-      subtitle="How much this ontology helps your agents’ tasks, and what to change in it. Each run records an agent’s request, what it read and wrote here, and its answer."
+      subtitle="How much this ontology helps your agents’ tasks, and what to change in it."
       actions={
         canManage(role) && (
           <Button
@@ -166,115 +213,187 @@ export function WorkflowsPage() {
       </Page>
     );
   const workflows = list.data.workflows || [];
+  const data = insights.query.data;
+  const days = data?.days || insights.days;
   const segments = new Map(
-    (insights.query.data?.workflows || []).map((w) => [w.workflowId, w]),
+    (data?.workflows || []).map((w) => [w.workflowId, w]),
   );
   return (
     <Page>
       {header}
       <div className="on-stack">
         <RefreshFailed query={list} />
-        {workflows.length > 0 && (
-          <InsightsBoard
-            state={insights}
-            workflowNames={names}
-            own={partial.includes(o)}
-          />
-        )}
         {!workflows.length ? (
           <EmptyState
             icon={Workflow}
             title="No workflows yet"
             text={
               canManage(role)
-                ? "Create one for each task an agent does with this ontology, then give the agent its prompt."
+                ? "Create one for each task an agent does with this ontology, then give the agent its prompt. What its runs come to shows here."
                 : "An owner or admin creates one for each task an agent does with this ontology."
             }
           />
         ) : (
-          <DataGrid<FoundryWorkflow>
-            label="Workflows"
-            rows={workflows}
-            getRowKey={(w) => w.id}
-            onRowClick={(w) => navigate(paths.workflow(o, w.id))}
-            rowHeight={64}
-            columns={[
-              {
-                key: "name",
-                label: "Workflow",
-                width: 280,
-                render: (w) => (
-                  <span className="wf-row-name">
-                    <Link
-                      className="on-row-link on-cell-text"
-                      to={paths.workflow(o, w.id)}
-                    >
-                      {w.name}
-                    </Link>
-                    {w.description && (
-                      <span className="on-cell-text on-muted">
-                        {w.description}
-                      </span>
+          <>
+            <section className="wf-insights" aria-label="Insights">
+              <InsightsToolbar state={insights} own={partial.includes(o)} />
+              <RefreshFailed query={insights.query} />
+              {!data ? (
+                <InsightsPending state={insights} />
+              ) : (
+                <>
+                  <p className="wf-summary">
+                    {insightSummary(
+                      data.totals,
+                      days,
+                      (data.workflows || []).length,
                     )}
-                  </span>
-                ),
-              },
-              {
-                key: "trend",
-                label: `Runs, ${insights.days} days`,
-                width: 200,
-                sortValue: (w) => segments.get(w.id)?.totals?.runs || 0,
-                render: (w) => {
-                  const seg = segments.get(w.id);
-                  return (
-                    <span className="wf-row-trend">
-                      <Spark
-                        values={seg?.dailyRuns || []}
-                        label={`${w.name}: runs a day`}
-                      />
-                      <span className="wf-row-n">{seg?.totals?.runs || 0}</span>
-                    </span>
-                  );
-                },
-              },
-              {
-                key: "helped",
-                label: "Ontology helped",
-                width: 190,
-                sortValue: (w) =>
-                  INSIGHT_METRICS.helped.value(segments.get(w.id)?.totals) ??
-                  -1,
-                render: (w) => {
-                  const t = segments.get(w.id)?.totals,
-                    helped = INSIGHT_METRICS.helped.value(t);
-                  return (
-                    <span className="wf-row-helped">
-                      <VerdictBar totals={t} />
-                      {helped === undefined
-                        ? "—"
-                        : `${Math.round(helped * 100)}%`}
-                    </span>
-                  );
-                },
-              },
-              {
-                key: "gap",
-                label: "Top gap",
-                render: (w) => (
-                  <span className="on-cell-text">
-                    {segments.get(w.id)?.topGap || "—"}
-                  </span>
-                ),
-              },
-              {
-                key: "lastRunAt",
-                label: "Last run",
-                width: 130,
-                render: (w) =>
-                  w.lastRunAt ? formatRelative(w.lastRunAt) : "Never",
-              },
-            ]}
-          />
+                  </p>
+                  {(data.totals?.runs || 0) > 0 && (
+                    <>
+                      <ImpactCards state={insights} data={data} />
+                      <TrendPanel data={data} metric={insights.metric} />
+                    </>
+                  )}
+                </>
+              )}
+            </section>
+            <Panel
+              title="Workflows"
+              subtitle={`What each workflow’s runs came to in the last ${days} days. Open one for its runs.`}
+              padded={false}
+            >
+              <DataGrid<FoundryWorkflow>
+                className="wf-grid"
+                label="Workflows"
+                rows={workflows}
+                getRowKey={(w) => w.id}
+                onRowClick={(w) => navigate(paths.workflow(o, w.id))}
+                rowHeight={60}
+                columns={[
+                  {
+                    key: "name",
+                    label: "Workflow",
+                    type: "string",
+                    width: 220,
+                    render: (w) => (
+                      <span className="wf-row-name">
+                        <Link
+                          className="on-row-link on-cell-text"
+                          to={paths.workflow(o, w.id)}
+                        >
+                          {w.name}
+                        </Link>
+                        {w.description && (
+                          <span
+                            className="on-cell-text on-muted"
+                            title={w.description}
+                          >
+                            {w.description}
+                          </span>
+                        )}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: "runs",
+                    label: "Runs",
+                    type: "integer",
+                    width: 130,
+                    sortValue: (w) => segments.get(w.id)?.totals?.runs || 0,
+                    render: (w) => {
+                      const seg = segments.get(w.id);
+                      const daily = seg?.dailyRuns || [];
+                      return (
+                        <span className="wf-row-trend">
+                          {daily.filter((n) => n > 0).length >= 2 && (
+                            <Spark
+                              values={daily}
+                              label={`${w.name}: runs a day`}
+                            />
+                          )}
+                          <span className="wf-row-n">
+                            {formatNumber(seg?.totals?.runs || 0)}
+                          </span>
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    key: "helped",
+                    label: "Ontology helped",
+                    type: "string",
+                    width: 170,
+                    sortValue: (w) =>
+                      INSIGHT_METRICS.helped.value(
+                        segments.get(w.id)?.totals,
+                      ) ?? -1,
+                    render: (w) => {
+                      const t = segments.get(w.id)?.totals;
+                      return (
+                        <span className="wf-row-helped">
+                          <VerdictBar totals={t} />
+                          {metricText("helped", t).text}
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    key: "backed",
+                    label: "Claims grounded",
+                    type: "string",
+                    align: "right",
+                    width: 120,
+                    sortValue: (w) =>
+                      INSIGHT_METRICS.backed.value(
+                        segments.get(w.id)?.totals,
+                      ) ?? -1,
+                    render: (w) =>
+                      metricText("backed", segments.get(w.id)?.totals).text,
+                  },
+                  {
+                    key: "misleading",
+                    label: "Misleading",
+                    type: "string",
+                    align: "right",
+                    width: 100,
+                    sortValue: (w) =>
+                      verdictRuns(segments.get(w.id)?.totals, "misleading"),
+                    render: (w) => {
+                      const n = verdictRuns(
+                        segments.get(w.id)?.totals,
+                        "misleading",
+                      );
+                      return n > 0 ? (
+                        <Link
+                          className="wf-alert-link"
+                          to={`${paths.workflow(o, w.id)}?verdict=misleading`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {formatNumber(n)}
+                        </Link>
+                      ) : (
+                        <span className="on-muted">0</span>
+                      );
+                    },
+                  },
+                  {
+                    key: "lastRunAt",
+                    label: "Last run",
+                    type: "string",
+                    width: 100,
+                    sortValue: (w) => w.lastRunAt || "",
+                    render: (w) => (
+                      <span className="on-muted">
+                        {w.lastRunAt ? formatRelative(w.lastRunAt) : "Never"}
+                      </span>
+                    ),
+                  },
+                ]}
+              />
+            </Panel>
+            {data && <ChangesPanel data={data} workflowNames={names} />}
+          </>
         )}
       </div>
       {dialog}
@@ -364,7 +483,9 @@ function NewWorkflowDialog({
   );
 }
 
-// /ontology/:ontologyId/workflows/:workflowId
+// /ontology/:ontologyId/workflows/:workflowId: how this task goes and why.
+// Until its first run, connecting the agent; then a strip of its numbers
+// with where its runs went, its runs, and what to change for it.
 export function WorkflowPage() {
   const { workflowId = "" } = useParams();
   const { id: ws, name: workspaceName, role, partial } = useWorkspace(),
@@ -375,9 +496,10 @@ export function WorkflowPage() {
     navigate = useNavigate(),
     qc = useQueryClient(),
     copy = useCopy();
-  const workflow = useQuery(workflowQueries.workflow(ws, o, workflowId)),
-    runs = useQuery(workflowQueries.runs(ws, o, workflowId));
+  const workflow = useQuery(workflowQueries.workflow(ws, o, workflowId));
   const insights = useInsights(workflowId);
+  // A gap or suggestion narrowing the runs to those that named it.
+  const [issue, setIssue] = useState<{ key: string; text: string }>();
   const [connecting, setConnecting] = useState(false);
   const [deleting, setDeleting] = useState(false),
     [pending, setPending] = useState(false),
@@ -436,7 +558,8 @@ export function WorkflowPage() {
     workflowId: w.id,
     workflowName: w.name,
   });
-  const list = runs.data?.runs || [];
+  const ran = Number(w.runs || 0) > 0;
+  const data = insights.query.data;
   const copyPrompt = (
     <Button
       size="sm"
@@ -482,7 +605,17 @@ export function WorkflowPage() {
       {header}
       <div className="on-stack">
         <RefreshFailed query={workflow} />
-        {Number(w.runs || 0) === 0 ? (
+        {ran ? (
+          <section className="wf-insights" aria-label="Insights">
+            <InsightsToolbar state={insights} own={own} />
+            <RefreshFailed query={insights.query} />
+            {data ? (
+              <StatStrip data={data} />
+            ) : (
+              <InsightsPending state={insights} />
+            )}
+          </section>
+        ) : (
           <Panel
             title="Connect your agent"
             subtitle={`Give the agent this prompt, with the Helix MCP added. In ${workspaceName}, each request it takes on becomes a run here.`}
@@ -490,111 +623,27 @@ export function WorkflowPage() {
           >
             {connection}
           </Panel>
-        ) : (
-          <InsightsBoard state={insights} own={own} />
         )}
-        <Panel
-          title={own ? "Your runs" : "Runs"}
-          subtitle={[
-            verdictsText(w.verdicts) &&
-              `Assessed: ${verdictsText(w.verdicts)}.`,
-            "The newest first.",
-            own &&
-              "You can read only part of this ontology, so you see the runs you started.",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-          padded={false}
-        >
-          <RefreshFailed query={runs} />
-          {runs.isPending ? (
-            <div className="on-pad">
-              <SkeletonText lines={4} />
-            </div>
-          ) : !list.length ? (
-            <EmptyState
-              size="sm"
-              icon={Workflow}
-              title={runs.error ? "Couldn’t load the runs" : "No runs yet"}
-              text={
-                runs.error?.message ||
-                "Once the agent starts a run with this workflow’s ID, it shows here."
-              }
-            />
-          ) : (
-            <DataGrid<FoundryWorkflowRun>
-              label="Runs"
-              rows={list}
-              getRowKey={(r) => r.id}
-              rowHeight={44}
-              onRowClick={(r) => navigate(paths.workflowRun(o, w.id, r.id))}
-              columns={[
-                {
-                  key: "input",
-                  label: "Request",
-                  render: (r) => (
-                    <Link
-                      className="on-row-link on-cell-text"
-                      to={paths.workflowRun(o, w.id, r.id)}
-                    >
-                      {preview(r.input) || <em>Not sent yet</em>}
-                    </Link>
-                  ),
-                },
-                {
-                  key: "status",
-                  label: "Status",
-                  width: 120,
-                  render: runStatus,
-                },
-                {
-                  key: "assessment",
-                  label: "Ontology",
-                  width: 140,
-                  render: (r) => <AssessmentCell a={r.assessment} />,
-                },
-                {
-                  key: "claims",
-                  label: "Claims backed",
-                  align: "right",
-                  width: 130,
-                  render: (r) => {
-                    const a = assessmentOf(r.assessment?.assessmentJson);
-                    if (!a?.claims.length) return "—";
-                    const backed = a.claims.filter(
-                      (c) => c.support === "supported",
-                    ).length;
-                    return `${backed} / ${a.claims.length}`;
-                  },
-                },
-                {
-                  key: "gaps",
-                  label: "Gaps",
-                  align: "right",
-                  width: 80,
-                  render: (r) =>
-                    assessmentOf(r.assessment?.assessmentJson)?.gaps.length ??
-                    "—",
-                },
-                {
-                  key: "counts",
-                  label: "Recorded",
-                  width: 200,
-                  render: (r) => (
-                    <span className="on-cell-text">{countsText(r.counts)}</span>
-                  ),
-                },
-                {
-                  key: "startedAt",
-                  label: "Started",
-                  width: 150,
-                  render: (r) =>
-                    r.startedAt ? formatRelative(r.startedAt) : "—",
-                },
-              ]}
-            />
-          )}
-        </Panel>
+        <WorkflowRuns
+          workflowId={w.id}
+          own={own}
+          insights={insights}
+          issue={issue}
+          onIssue={setIssue}
+        />
+        {ran && data && (
+          <ChangesPanel
+            data={data}
+            issue={issue?.key}
+            onIssue={(next) => {
+              setIssue(next);
+              if (next)
+                document
+                  .getElementById("wf-runs")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          />
+        )}
       </div>
       {connecting && (
         <Dialog
@@ -644,6 +693,269 @@ export function WorkflowPage() {
     </Page>
   );
 }
+
+/**
+ * A workflow's runs of the window, newest first: each its request, what its
+ * assessment said of it, its claims grounded and when it started, opening to
+ * its claims and gaps. Narrowed by who started them (the toolbar), what the
+ * assessment found (`?verdict=`, which the overview links) and a gap or
+ * suggestion (What to change). Read 50 at a time as the backend pages them:
+ * the window's runs past the pages read come with Load more.
+ */
+function WorkflowRuns({
+  workflowId,
+  own,
+  insights,
+  issue,
+  onIssue,
+}: {
+  workflowId: string;
+  own: boolean;
+  insights: InsightsState;
+  issue?: { key: string; text: string };
+  onIssue: (issue?: { key: string; text: string }) => void;
+}) {
+  const { id: ws, user } = useWorkspace(),
+    { id: o } = useOntology();
+  const names = useStarterNames();
+  const runs = useInfiniteQuery(workflowQueries.runs(ws, o, workflowId));
+  const [params, setParams] = useSearchParams();
+  const asked = params.get("verdict");
+  const filter: RunFilter = isRunFilter(asked) ? asked : "all";
+  const [opened, setOpened] = useState<string[]>([]),
+    [limit, setLimit] = useState(RUNS_SHOWN);
+  const now = useNow(60_000);
+  const from = windowStart(insights.days, new Date(now));
+  const loaded = (runs.data?.pages || []).flatMap((p) => p.runs || []);
+  const shown = loaded.filter((r) =>
+    runShown(r, { from, who: insights.who, filter, issue: issue?.key }),
+  );
+  const oldest = loaded.at(-1)?.startedAt;
+  // Runs of the window may be on pages not read yet.
+  const unread = runs.hasNextPage && !!oldest && Date.parse(oldest) >= from;
+  const more = shown.length > limit || unread;
+  // The window's runs by filter, as the strip counts them.
+  const t = insights.query.data?.totals;
+  const counts: Partial<Record<RunFilter, number>> = t
+    ? {
+        all: t.runs || 0,
+        helped: t.helped || 0,
+        not_helped: verdictRuns(t, "marginal") + verdictRuns(t, "unused"),
+        misleading: verdictRuns(t, "misleading"),
+        pending: (t.runs || 0) - (t.assessed || 0),
+      }
+    : {};
+  const choose = (f: string) =>
+    setParams(
+      (p) => {
+        if (f === "all") p.delete("verdict");
+        else p.set("verdict", f);
+        return p;
+      },
+      { replace: true },
+    );
+  return (
+    <Panel
+      title={own ? "Your runs" : "Runs"}
+      subtitle={[
+        `Newest first, from the last ${insights.days} days.`,
+        own &&
+          "You can read only part of this ontology, so you see the runs you started.",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      padded={false}
+      className="wf-runs-panel"
+    >
+      <div id="wf-runs" className="wf-runs-bar">
+        <Segmented
+          label="Show runs"
+          value={filter}
+          onChange={choose}
+          options={(Object.keys(RUN_FILTERS) as RunFilter[]).map((f) => ({
+            value: f,
+            label: RUN_FILTERS[f],
+            count: counts[f],
+          }))}
+        />
+        {issue && (
+          <span className="wf-runs-issue">
+            <span>
+              Naming <q>{issue.text}</q>
+            </span>
+            <IconButton
+              size="sm"
+              icon={X}
+              label="Show every run"
+              onClick={() => onIssue(undefined)}
+            />
+          </span>
+        )}
+      </div>
+      <RefreshFailed query={runs} />
+      {runs.isPending ? (
+        <div className="on-pad">
+          <SkeletonText lines={4} />
+        </div>
+      ) : !loaded.length ? (
+        <EmptyState
+          size="sm"
+          icon={Workflow}
+          title={runs.error ? "Couldn’t load the runs" : "No runs yet"}
+          text={
+            runs.error?.message ||
+            "Once the agent starts a run with this workflow’s ID, it shows here."
+          }
+        />
+      ) : (
+        <>
+          {!shown.length ? (
+            <p className="wf-runs-none">
+              {unread
+                ? "None of the runs read so far match."
+                : `No runs match in the last ${insights.days} days.`}
+            </p>
+          ) : (
+            <>
+              <div className="wf-run wf-runs-head" aria-hidden>
+                <span>Request</span>
+                <span>Verdict</span>
+                <span className="is-right">Claims grounded</span>
+                <span className="is-right">Started</span>
+                <span />
+              </div>
+              <ul className="wf-runs" aria-label="Runs">
+                {shown.slice(0, limit).map((r) => {
+                  const a = assessmentOf(r.assessment?.assessmentJson);
+                  const backed = (a?.claims || []).filter(
+                    (c) => c.support === "supported",
+                  ).length;
+                  const open = opened.includes(r.id);
+                  const request = preview(r.input);
+                  return (
+                    <li key={r.id} className={cx("wf-run", open && "is-open")}>
+                      <span className="wf-run-main">
+                        <Link
+                          className="wf-run-request"
+                          to={paths.workflowRun(o, workflowId, r.id)}
+                        >
+                          {request || <em>Not sent yet</em>}
+                        </Link>
+                        <span className="wf-run-summary">
+                          {a?.summary ||
+                            (r.status === "open"
+                              ? "The agent is still recording its calls."
+                              : r.assessment?.error || "")}
+                        </span>
+                        <span className="wf-run-meta">
+                          {countsText(r.counts)} ·{" "}
+                          {starterLabel(starterOf(r), names, user.id)}
+                        </span>
+                      </span>
+                      <span className="wf-run-verdict">
+                        <RunVerdict run={r} />
+                      </span>
+                      <span className="wf-run-claims">
+                        {a?.claims.length
+                          ? `${backed} of ${a.claims.length}`
+                          : "—"}
+                      </span>
+                      <span className="wf-run-at">
+                        {r.startedAt ? formatRelative(r.startedAt) : "—"}
+                      </span>
+                      <span className="wf-run-toggle">
+                        {a && (
+                          <IconButton
+                            size="sm"
+                            icon={open ? ChevronUp : ChevronDown}
+                            label={`${open ? "Hide" : "Show"} what the assessment found`}
+                            aria-expanded={open}
+                            onClick={() =>
+                              setOpened((was) =>
+                                open
+                                  ? was.filter((x) => x !== r.id)
+                                  : [...was, r.id],
+                              )
+                            }
+                          />
+                        )}
+                      </span>
+                      {open && a && (
+                        <div className="wf-run-detail wf-assessment">
+                          {!!a.claims.length && (
+                            <section aria-label="Claims">
+                              <h4>The answer’s claims</h4>
+                              <ul>
+                                {a.claims.map((c, i) => (
+                                  <li key={i}>
+                                    <Tag tone={SUPPORT[c.support].tone}>
+                                      {SUPPORT[c.support].label}
+                                    </Tag>{" "}
+                                    {c.text}
+                                  </li>
+                                ))}
+                              </ul>
+                            </section>
+                          )}
+                          {!!a.gaps.length && (
+                            <section aria-label="Gaps">
+                              <h4>What the ontology lacked</h4>
+                              <ul>
+                                {a.gaps.map((g, i) => (
+                                  <li key={i}>
+                                    <Tag>{g.label}</Tag> {g.what}
+                                  </li>
+                                ))}
+                              </ul>
+                            </section>
+                          )}
+                          <Link to={paths.workflowRun(o, workflowId, r.id)}>
+                            Open the run: its calls and answer
+                          </Link>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+          {more && (
+            <div className="wf-runs-more">
+              <span className="on-muted">
+                {shown.length > limit
+                  ? `${formatNumber(limit)} of ${formatNumber(shown.length)}${unread ? "+" : ""} shown`
+                  : `${formatNumber(shown.length)} shown`}
+              </span>
+              <Button
+                size="sm"
+                pending={runs.isFetchingNextPage}
+                onClick={() => {
+                  setLimit(limit + RUNS_MORE);
+                  if (shown.length < limit + RUNS_MORE && unread)
+                    void runs.fetchNextPage();
+                }}
+              >
+                Show more runs
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+// The runs the list shows at first, and how many more at a time.
+const RUNS_SHOWN = 10,
+  RUNS_MORE = 20;
+
+// How a claim's support reads.
+const SUPPORT = {
+  supported: { label: "Supported", tone: "success" },
+  unsupported: { label: "Unsupported", tone: "warning" },
+  contradicted: { label: "Contradicted", tone: "danger" },
+} as const;
 
 // /ontology/:ontologyId/workflows/:workflowId/runs/:runId
 export function WorkflowRunPage() {
@@ -931,20 +1243,8 @@ function AssessmentPanel({
               <ul>
                 {assessment.claims.map((c, i) => (
                   <li key={i}>
-                    <Tag
-                      tone={
-                        c.support === "supported"
-                          ? "success"
-                          : c.support === "contradicted"
-                            ? "danger"
-                            : "warning"
-                      }
-                    >
-                      {c.support === "supported"
-                        ? "Supported"
-                        : c.support === "contradicted"
-                          ? "Contradicted"
-                          : "Unsupported"}
+                    <Tag tone={SUPPORT[c.support].tone}>
+                      {SUPPORT[c.support].label}
                     </Tag>{" "}
                     {c.text} {calls(c.calls)}
                   </li>
@@ -974,7 +1274,7 @@ function AssessmentPanel({
                     {canManage(role) && (
                       <Link
                         to={paths.generate(o, {
-                          goal: suggestionGoal(s, assessment.gaps, MAX_GOAL),
+                          goal: suggestionGoal([s], assessment.gaps, MAX_GOAL),
                         })}
                       >
                         Draft a version with this
