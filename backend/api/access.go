@@ -134,9 +134,24 @@ func granteeLoad(ctx context.Context) (foundrymodel.FoundryLoadInputs, bool) {
 	return l, ok
 }
 
+// errWorkflowsOff refuses a grantee whose Workflows permission is off.
+var errWorkflowsOff = status.Error(codes.PermissionDenied,
+	"workflows are off for this member or key: an owner or admin turns them on with its sources in Settings › Access")
+
+// workflowsOn reports whether g's Workflows permission is on: neither it nor
+// any of its teams has it off.
+func (s *Service) workflowsOn(ctx context.Context, g access.Grantee) (bool, error) {
+	off, err := s.deps.DB.ListFoundryAccessWorkflowsOff(ctx, g.WorkspaceID, g.Principals())
+	if err != nil {
+		return false, status.Errorf(codes.Internal, "read the Workflows permission: %v", err)
+	}
+	return len(off) == 0, nil
+}
+
 // admit checks a grantee's call against rule: every rule but Deny needs the
-// grantee's own workspace, and Ontology an ontology whose current load it
-// covers, which is NotFound otherwise, as an ontology it can't see is.
+// grantee's own workspace, Ontology and Workflows an ontology whose current
+// load it covers, which is NotFound otherwise, as an ontology it can't see
+// is, and Workflows the grantee's Workflows permission.
 func (s *Service) admit(ctx context.Context, g access.Grantee, rule access.Rule, req any) (context.Context, error) {
 	if rule == access.Deny {
 		return nil, errNotGranted
@@ -145,8 +160,16 @@ func (s *Service) admit(ctx context.Context, g access.Grantee, rule access.Rule,
 	if !ok || ws.GetWorkspaceId() != g.WorkspaceID {
 		return nil, errNotGranted
 	}
-	if rule != access.Ontology {
+	if rule == access.Workspace {
 		return ctx, nil
+	}
+	if rule == access.Workflows {
+		switch on, err := s.workflowsOn(ctx, g); {
+		case err != nil:
+			return nil, err
+		case !on:
+			return nil, errWorkflowsOff
+		}
 	}
 	o, ok := req.(interface{ GetOntologyId() string })
 	if !ok || o.GetOntologyId() == "" {
@@ -277,7 +300,14 @@ func (s *Service) ListFoundryAccess(ctx context.Context, req *foundryv1.ListFoun
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read restricted members: %v", err)
 	}
+	off, err := s.deps.DB.ListFoundryAccessWorkflowsOff(ctx, req.GetWorkspaceId(), nil)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read the Workflows permission: %v", err)
+	}
 	resp := &foundryv1.ListFoundryAccessResponse{RestrictedUserIds: restricted}
+	for _, p := range off {
+		resp.WorkflowsOff = append(resp.WorkflowsOff, principalToProto(p))
+	}
 	for _, t := range teams {
 		resp.Teams = append(resp.Teams, teamToProto(t))
 	}
@@ -306,7 +336,8 @@ func (s *Service) ListFoundryAccess(ctx context.Context, req *foundryv1.ListFoun
 	return resp, nil
 }
 
-// SetFoundryAccessGrants replaces a principal's grants. Authz has checked
+// SetFoundryAccessGrants replaces a principal's grants, and sets its Workflows
+// permission when the request names it. Authz has checked
 // the caller manages the workspace's members.
 func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.SetFoundryAccessGrantsRequest) (*foundryv1.SetFoundryAccessGrantsResponse, error) {
 	if req.GetWorkspaceId() == "" {
@@ -372,6 +403,11 @@ func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.Set
 				}
 			}
 		}
+		if req.Workflows != nil {
+			if err := tx.SetFoundryAccessWorkflows(ctx, req.GetWorkspaceId(), principal, req.GetWorkflows(), byUser(ctx)); err != nil {
+				return err
+			}
+		}
 		return tx.SetFoundryAccessGrants(ctx, req.GetWorkspaceId(), principal, targets, byUser(ctx))
 	})
 	switch {
@@ -384,7 +420,11 @@ func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.Set
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read grants: %v", err)
 	}
-	resp := &foundryv1.SetFoundryAccessGrantsResponse{}
+	off, err := s.deps.DB.ListFoundryAccessWorkflowsOff(ctx, req.GetWorkspaceId(), []access.Principal{principal})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read the Workflows permission: %v", err)
+	}
+	resp := &foundryv1.SetFoundryAccessGrantsResponse{Workflows: len(off) == 0}
 	for _, gr := range grants {
 		resp.Grants = append(resp.Grants, grantToProto(gr))
 	}
@@ -442,7 +482,7 @@ func (s *Service) GetMyFoundryAccess(ctx context.Context, req *foundryv1.GetMyFo
 		case a.ServiceCredentialID != "":
 			g = access.Grantee{WorkspaceID: req.GetWorkspaceId(), Principal: access.Principal{Kind: access.PrincipalServiceCredential, ID: a.ServiceCredentialID}}
 		default:
-			return &foundryv1.GetMyFoundryAccessResponse{}, nil
+			return &foundryv1.GetMyFoundryAccessResponse{Workflows: true}, nil
 		}
 	}
 	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
@@ -453,7 +493,14 @@ func (s *Service) GetMyFoundryAccess(ctx context.Context, req *foundryv1.GetMyFo
 	if err != nil {
 		return nil, err
 	}
-	resp := &foundryv1.GetMyFoundryAccessResponse{Grantee: grantee, HasGrants: !grants.Empty(), OntologyIds: slices.Sorted(maps.Keys(loads))}
+	workflows := true
+	if grantee {
+		if workflows, err = s.workflowsOn(ctx, g); err != nil {
+			return nil, err
+		}
+	}
+	resp := &foundryv1.GetMyFoundryAccessResponse{Grantee: grantee, HasGrants: !grants.Empty(), OntologyIds: slices.Sorted(maps.Keys(loads)),
+		Workflows: workflows}
 	for _, id := range resp.OntologyIds {
 		if loads[id].Partial {
 			resp.PartialOntologyIds = append(resp.PartialOntologyIds, id)

@@ -4716,6 +4716,10 @@
             "type": "object",
             "$ref": "#/definitions/v1FoundryAccessTarget"
           }
+        },
+        "workflows": {
+          "type": "boolean",
+          "description": "The principal's Workflows permission: on, it lists the workflows of the\nontologies it reads and records its own runs, and reads every run of an\nontology whose current load it holds all of, else only the runs it\nstarted. Absent leaves it as it is (on, unless turned off)."
         }
       },
       "description": "SetFoundryAccessGrantsRequest replaces a principal's grants with targets,\nnone to take them all away. Every target must be of a live connector or\nset of the workspace (NOT_FOUND otherwise)."
@@ -8358,6 +8362,10 @@
             "type": "string"
           },
           "description": "Those of them it holds only some of."
+        },
+        "workflows": {
+          "type": "boolean",
+          "description": "The caller may use the workflows of the ontologies it reads: always, for\na caller that isn't a grantee; for a grantee, while its Workflows\npermission is on."
         }
       }
     },
@@ -8502,6 +8510,14 @@
             "type": "string"
           },
           "description": "The members restricted to what grants give."
+        },
+        "workflowsOff": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryPrincipal"
+          },
+          "description": "The principals whose Workflows permission is off; every other principal\nhas it on. A member is refused it while they or any of their teams has it\noff."
         }
       }
     },
@@ -9197,6 +9213,10 @@
             "$ref": "#/definitions/v1FoundryAccessGrant"
           },
           "description": "The principal's grants now."
+        },
+        "workflows": {
+          "type": "boolean",
+          "description": "The principal's Workflows permission now."
         }
       }
     },

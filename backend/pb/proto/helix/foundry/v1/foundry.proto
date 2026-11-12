@@ -1295,6 +1295,10 @@ message ListFoundryAccessResponse {
   repeated FoundryTeam teams = 3;
   // The members restricted to what grants give.
   repeated string restricted_user_ids = 4;
+  // The principals whose Workflows permission is off; every other principal
+  // has it on. A member is refused it while they or any of their teams has it
+  // off.
+  repeated FoundryPrincipal workflows_off = 5;
 }
 
 // SetFoundryAccessGrantsRequest replaces a principal's grants with targets,
@@ -1304,10 +1308,17 @@ message SetFoundryAccessGrantsRequest {
   string                       workspace_id = 1;
   FoundryPrincipal             principal    = 2;
   repeated FoundryAccessTarget targets      = 3;
+  // The principal's Workflows permission: on, it lists the workflows of the
+  // ontologies it reads and records its own runs, and reads every run of an
+  // ontology whose current load it holds all of, else only the runs it
+  // started. Absent leaves it as it is (on, unless turned off).
+  optional bool workflows = 4;
 }
 message SetFoundryAccessGrantsResponse {
   // The principal's grants now.
   repeated FoundryAccessGrant grants = 1;
+  // The principal's Workflows permission now.
+  bool workflows = 2;
 }
 
 // PreviewFoundryAccessChangeRequest asks what a change would take away.
@@ -1352,6 +1363,10 @@ message GetMyFoundryAccessResponse {
   repeated string ontology_ids = 3;
   // Those of them it holds only some of.
   repeated string partial_ontology_ids = 4;
+  // The caller may use the workflows of the ontologies it reads: always, for
+  // a caller that isn't a grantee; for a grantee, while its Workflows
+  // permission is on.
+  bool workflows = 5;
 }
 
 // SetFoundryMemberRestrictedRequest restricts user_id, or lifts it.

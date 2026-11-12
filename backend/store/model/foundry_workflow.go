@@ -56,6 +56,15 @@ const (
 	FoundryWorkflowRunFinished FoundryWorkflowRunStatus = "finished"
 )
 
+// FoundryWorkflowRunTally is what one principal's runs of a workflow come
+// to: a FoundryWorkflow's counts and its verdicts, over those runs alone.
+type FoundryWorkflowRunTally struct {
+	Runs, FinishedRuns int64
+	LastRunAt          *time.Time
+	// Verdicts counts their done assessments by verdict.
+	Verdicts map[string]int64
+}
+
 // FoundryWorkflowRun is one row of foundry_workflow_runs.
 type FoundryWorkflowRun struct {
 	ID, WorkflowID, WorkspaceID, OntologyID string

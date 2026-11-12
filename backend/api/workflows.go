@@ -97,13 +97,9 @@ func (s *Service) ListFoundryWorkflows(ctx context.Context, req *foundryv1.ListF
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "list workflows: %v", err)
 	}
-	ids := make([]string, len(workflows))
-	for i, w := range workflows {
-		ids[i] = w.ID
-	}
-	verdicts, err := s.deps.DB.CountFoundryWorkflowVerdicts(ctx, ids)
+	verdicts, err := s.workflowVerdicts(ctx, workflows)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "count verdicts: %v", err)
+		return nil, err
 	}
 	out := &foundryv1.ListFoundryWorkflowsResponse{NextPageToken: next}
 	for _, w := range workflows {
@@ -186,7 +182,8 @@ func (s *Service) StartFoundryWorkflowRun(ctx context.Context, req *foundryv1.St
 	return s.foundryWorkflowRunResponse(ctx, o.ID, r.WorkflowID, r.ID)
 }
 
-// ListFoundryWorkflowRuns lists a workflow's runs, newest first.
+// ListFoundryWorkflowRuns lists a workflow's runs, newest first: a grantee
+// holding only some of the ontology's current load lists those it started.
 func (s *Service) ListFoundryWorkflowRuns(ctx context.Context, req *foundryv1.ListFoundryWorkflowRunsRequest) (*foundryv1.ListFoundryWorkflowRunsResponse, error) {
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
@@ -195,7 +192,11 @@ func (s *Service) ListFoundryWorkflowRuns(ctx context.Context, req *foundryv1.Li
 	if _, err := s.foundryWorkflow(ctx, o.ID, req.GetWorkflowId()); err != nil {
 		return nil, err
 	}
-	runs, next, err := s.deps.DB.ListFoundryWorkflowRuns(ctx, req.GetWorkflowId(), req.GetPageToken(), workflowRunsPage)
+	var startedBy *access.Principal
+	if by, own := ownRunsOnly(ctx); own {
+		startedBy = &by
+	}
+	runs, next, err := s.deps.DB.ListFoundryWorkflowRuns(ctx, req.GetWorkflowId(), startedBy, req.GetPageToken(), workflowRunsPage)
 	switch {
 	case errors.Is(err, foundrystore.ErrInvalidPageToken):
 		return nil, status.Error(codes.InvalidArgument, "invalid page_token")
@@ -305,14 +306,20 @@ func (s *Service) ListFoundryWorkflowRunAccesses(ctx context.Context, req *found
 // before it reads or writes anything: nil for none. ontologyID is the
 // ontology the call reads (a read, a question, an upload's ontology route),
 // or empty for a call of the workspace (a send), whose run may be of any
-// of its ontologies. A grantee records nothing: it can't start runs, and
-// may not add to another's.
+// of its ontologies. A grantee records only with its Workflows permission,
+// and, holding only some of the ontology's current load, only under a run it
+// started.
 func (s *Service) trackedRun(ctx context.Context, workspaceID, ontologyID, runID string) (*foundrymodel.FoundryWorkflowRun, error) {
 	if runID == "" {
 		return nil, nil
 	}
-	if _, ok := access.GranteeFrom(ctx); ok {
-		return nil, status.Error(codes.PermissionDenied, "workflow runs are not open to restricted members and keys")
+	if g, ok := access.GranteeFrom(ctx); ok {
+		switch on, err := s.workflowsOn(ctx, g); {
+		case err != nil:
+			return nil, err
+		case !on:
+			return nil, errWorkflowsOff
+		}
 	}
 	var r *foundrymodel.FoundryWorkflowRun
 	var err error
@@ -321,8 +328,9 @@ func (s *Service) trackedRun(ctx context.Context, workspaceID, ontologyID, runID
 	} else {
 		r, err = s.deps.DB.GetFoundryWorkflowRun(ctx, ontologyID, runID)
 	}
+	by, own := ownRunsOnly(ctx)
 	switch {
-	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && r.WorkspaceID != workspaceID:
+	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && (r.WorkspaceID != workspaceID || own && r.StartedBy != by):
 		return nil, status.Error(codes.NotFound, "workflow run not found")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "get workflow run: %v", err)
@@ -365,19 +373,62 @@ func (s *Service) foundryWorkflowResponse(ctx context.Context, ontologyID, workf
 	if err != nil {
 		return nil, err
 	}
-	verdicts, err := s.deps.DB.CountFoundryWorkflowVerdicts(ctx, []string{w.ID})
+	verdicts, err := s.workflowVerdicts(ctx, []*foundrymodel.FoundryWorkflow{w})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "count verdicts: %v", err)
+		return nil, err
 	}
 	return &foundryv1.FoundryWorkflowResponse{Workflow: foundryWorkflowToProto(w, verdicts[w.ID])}, nil
 }
 
+// ownRunsOnly is the principal whose runs alone the call sees: a grantee's,
+// unless it holds all of the ontology's current load. The host's callers,
+// and a grantee holding all of it, see every run.
+func ownRunsOnly(ctx context.Context) (access.Principal, bool) {
+	g, ok := access.GranteeFrom(ctx)
+	if !ok {
+		return access.Principal{}, false
+	}
+	l, ok := granteeLoad(ctx)
+	return g.Principal, !ok || l.Partial
+}
+
+// workflowVerdicts counts the done assessments of workflows' runs by verdict.
+// For a caller who sees only its own runs, it counts those alone, and
+// narrows each workflow's run counts to them too.
+func (s *Service) workflowVerdicts(ctx context.Context, workflows []*foundrymodel.FoundryWorkflow) (map[string]map[string]int64, error) {
+	ids := make([]string, len(workflows))
+	for i, w := range workflows {
+		ids[i] = w.ID
+	}
+	by, own := ownRunsOnly(ctx)
+	if !own {
+		verdicts, err := s.deps.DB.CountFoundryWorkflowVerdicts(ctx, ids)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "count verdicts: %v", err)
+		}
+		return verdicts, nil
+	}
+	tallies, err := s.deps.DB.TallyFoundryWorkflowRuns(ctx, ids, by)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "count runs: %v", err)
+	}
+	verdicts := map[string]map[string]int64{}
+	for _, w := range workflows {
+		t := tallies[w.ID]
+		w.Runs, w.FinishedRuns, w.LastRunAt = t.Runs, t.FinishedRuns, t.LastRunAt
+		verdicts[w.ID] = t.Verdicts
+	}
+	return verdicts, nil
+}
+
 // foundryWorkflowRun reads a run of the ontology's workflow workflowID: a
-// run of another workflow is not found.
+// run of another workflow is not found, nor one someone else started for a
+// caller who sees only its own (ownRunsOnly).
 func (s *Service) foundryWorkflowRun(ctx context.Context, ontologyID, workflowID, runID string) (*foundrymodel.FoundryWorkflowRun, error) {
 	r, err := s.deps.DB.GetFoundryWorkflowRun(ctx, ontologyID, runID)
+	by, own := ownRunsOnly(ctx)
 	switch {
-	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && r.WorkflowID != workflowID:
+	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && (r.WorkflowID != workflowID || own && r.StartedBy != by):
 		return nil, status.Error(codes.NotFound, "workflow run not found")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "get workflow run: %v", err)

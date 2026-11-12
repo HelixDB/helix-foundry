@@ -135,11 +135,61 @@ VALUES `+strings.Join(rows, ", "), args...)
 }
 
 // DeleteFoundryAccessPrincipal deletes every grant principal holds in the
-// workspace: the host calls it when it revokes a service credential, in its
-// own transaction or not.
+// workspace, and its Workflows permission being off: the host calls it when
+// it revokes a service credential, in its own transaction or not.
 func (s *mysqlDB) DeleteFoundryAccessPrincipal(ctx context.Context, workspaceID string, principal access.Principal) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND principal_kind=? AND principal_id=?`,
-		workspaceID, principal.Kind.String(), principal.ID)
+	for _, table := range []string{"foundry_access_grants", "foundry_access_workflows_off"} {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE workspace_id=? AND principal_kind=? AND principal_id=?`,
+			workspaceID, principal.Kind.String(), principal.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ListFoundryAccessWorkflowsOff returns the principals of the workspace
+// whose Workflows permission is off, of principals when it names any (all of
+// them otherwise), in the order they were turned off.
+func (s *mysqlDB) ListFoundryAccessWorkflowsOff(ctx context.Context, workspaceID string, principals []access.Principal) ([]access.Principal, error) {
+	query := `SELECT principal_kind, principal_id FROM foundry_access_workflows_off WHERE workspace_id=?`
+	args := []any{workspaceID}
+	if len(principals) > 0 {
+		query += ` AND (principal_kind, principal_id) IN (` + strings.TrimSuffix(strings.Repeat("(?, ?), ", len(principals)), ", ") + `)`
+		for _, p := range principals {
+			args = append(args, p.Kind.String(), p.ID)
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, query+` ORDER BY created_at, principal_kind, principal_id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []access.Principal
+	for rows.Next() {
+		var p access.Principal
+		var kind string
+		if err := rows.Scan(&kind, &p.ID); err != nil {
+			return nil, err
+		}
+		if p.Kind, err = access.ParsePrincipalKind(kind); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// SetFoundryAccessWorkflows turns principal's Workflows permission on or off
+// in the workspace. It restricts no one: a member it is set for reads as
+// before, and it holds only while they read through grants.
+func (s *mysqlDB) SetFoundryAccessWorkflows(ctx context.Context, workspaceID string, principal access.Principal, on bool, byUserID *string) error {
+	if on {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_access_workflows_off WHERE workspace_id=? AND principal_kind=? AND principal_id=?`,
+			workspaceID, principal.Kind.String(), principal.ID)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_access_workflows_off (workspace_id, principal_kind, principal_id, created_by_user_id)
+VALUES (?, ?, ?, ?)`, workspaceID, principal.Kind.String(), principal.ID, byUserID)
 	return err
 }
 

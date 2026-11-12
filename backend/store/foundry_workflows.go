@@ -322,9 +322,13 @@ func (s *mysqlDB) GetFoundryWorkflowRunByClientToken(ctx context.Context, workfl
 FROM foundry_workflow_runs WHERE workflow_id=? AND client_token=?`, workflowID, clientToken))
 }
 
-// ListFoundryWorkflowRuns lists a workflow's runs newest first, limit a page.
-func (s *mysqlDB) ListFoundryWorkflowRuns(ctx context.Context, workflowID, pageToken string, limit int) ([]*model.FoundryWorkflowRun, string, error) {
+// ListFoundryWorkflowRuns lists a workflow's runs newest first, limit a page:
+// those startedBy started, when it names anyone.
+func (s *mysqlDB) ListFoundryWorkflowRuns(ctx context.Context, workflowID string, startedBy *access.Principal, pageToken string, limit int) ([]*model.FoundryWorkflowRun, string, error) {
 	conds, args := []string{"workflow_id=?"}, []any{workflowID}
+	if startedBy != nil {
+		conds, args = append(conds, startedByColumn(*startedBy)+"=?"), append(args, startedBy.ID)
+	}
 	if pageToken != "" {
 		cursor, err := decodeTimeIDCursor(pageToken)
 		if err != nil {
@@ -696,6 +700,70 @@ WHERE status='done' AND workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) GR
 		out[workflow][verdict] = n
 	}
 	return out, rows.Err()
+}
+
+// startedByColumn is the column of foundry_workflow_runs naming who started a
+// run of p's kind. A run is started by a user or a service credential; a
+// team, which starts none, is held to the user column, which never holds a
+// team's id.
+func startedByColumn(p access.Principal) string {
+	if p.Kind == access.PrincipalServiceCredential {
+		return "started_by_service_credential_id"
+	}
+	return "started_by_user_id"
+}
+
+// TallyFoundryWorkflowRuns counts the runs by of each of workflowIDs, as
+// GetFoundryWorkflow and CountFoundryWorkflowVerdicts count all of a
+// workflow's: every workflow has a tally, none for one by never ran.
+func (s *mysqlDB) TallyFoundryWorkflowRuns(ctx context.Context, workflowIDs []string, by access.Principal) (map[string]model.FoundryWorkflowRunTally, error) {
+	out := map[string]model.FoundryWorkflowRunTally{}
+	if len(workflowIDs) == 0 {
+		return out, nil
+	}
+	for _, w := range workflowIDs {
+		out[w] = model.FoundryWorkflowRunTally{Verdicts: map[string]int64{}}
+	}
+	args := append(toAnySlice(workflowIDs), by.ID)
+	column := startedByColumn(by)
+	rows, err := s.db.QueryContext(ctx, `SELECT workflow_id, COUNT(*), SUM(status = 'finished'), MAX(started_at) FROM foundry_workflow_runs
+WHERE workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND `+column+`=? GROUP BY workflow_id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var workflow string
+		var last sql.NullTime
+		t := model.FoundryWorkflowRunTally{}
+		if err := rows.Scan(&workflow, &t.Runs, &t.FinishedRuns, &last); err != nil {
+			return nil, err
+		}
+		if last.Valid {
+			t.LastRunAt = &last.Time
+		}
+		t.Verdicts = out[workflow].Verdicts
+		out[workflow] = t
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	verdicts, err := s.db.QueryContext(ctx, `SELECT a.workflow_id, a.verdict, COUNT(*) FROM foundry_workflow_run_assessments a
+JOIN foundry_workflow_runs r ON r.id = a.run_id
+WHERE a.status='done' AND a.workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND r.`+column+`=? GROUP BY a.workflow_id, a.verdict`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = verdicts.Close() }()
+	for verdicts.Next() {
+		var workflow, verdict string
+		var n int64
+		if err := verdicts.Scan(&workflow, &verdict, &n); err != nil {
+			return nil, err
+		}
+		out[workflow].Verdicts[verdict] = n
+	}
+	return out, verdicts.Err()
 }
 
 // SumFoundryWorkflowAssessmentSpend is what a workspace's assessments

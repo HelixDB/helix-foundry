@@ -48,6 +48,22 @@ type accessStore struct {
 	// restricted are each workspace's restricted members.
 	restricted map[string][]string
 	teams      []foundrymodel.FoundryTeam
+	// workflowsOff are the principals whose Workflows permission is off.
+	workflowsOff []access.Principal
+}
+
+func (s *accessStore) ListFoundryAccessWorkflowsOff(_ context.Context, _ string, principals []access.Principal) ([]access.Principal, error) {
+	return slices.DeleteFunc(slices.Clone(s.workflowsOff), func(p access.Principal) bool {
+		return len(principals) > 0 && !slices.Contains(principals, p)
+	}), nil
+}
+
+func (s *accessStore) SetFoundryAccessWorkflows(_ context.Context, _ string, p access.Principal, on bool, _ *string) error {
+	s.workflowsOff = slices.DeleteFunc(s.workflowsOff, func(x access.Principal) bool { return x == p })
+	if !on {
+		s.workflowsOff = append(s.workflowsOff, p)
+	}
+	return nil
 }
 
 func (s *accessStore) ListFoundryAccessGrants(_ context.Context, workspaceID string, principals []access.Principal) ([]foundrymodel.FoundryAccessGrant, error) {
@@ -353,7 +369,7 @@ func TestGranteeRulesReadTheirRequest(t *testing.T) {
 	for _, m := range servedMethods(t) {
 		fields := m.Input().Fields()
 		switch access.RuleOf(fullMethod(m)) {
-		case access.Ontology:
+		case access.Ontology, access.Workflows:
 			if fields.ByName("ontology_id") == nil {
 				t.Errorf("%s admits a grantee to an ontology it doesn't name", m.Name())
 			}
