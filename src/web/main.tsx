@@ -42,7 +42,7 @@ import {
   RouteErrorBoundary,
 } from "./shell/ErrorBoundary";
 import { applyTheme, readTheme } from "./shell/theme";
-import { SignInPage, SignedInAs } from "./sign-in";
+import { SignInPage, SignedInAs, VerifyEmailPage } from "./sign-in";
 import { WorkspacePicker } from "./areas/workspace/picker";
 import { myAccessQuery } from "./areas/workspace/access-api";
 import { granteeRedirect } from "./areas/workspace/access-model";
@@ -412,7 +412,8 @@ function SignedIn({ me }: { me: WhoamiResponse }) {
   );
 }
 
-// Everything but /login needs a session: GET /v1/whoami decides.
+// Everything but /login and /login/verify needs a session: GET /v1/whoami
+// decides.
 function Authenticated() {
   const location = useLocation();
   const me = useQuery(whoamiQuery);
@@ -476,6 +477,12 @@ export default function FoundryApp() {
             <Route
               path="/login"
               element={LOCAL ? <Navigate to="/" replace /> : <SignInPage />}
+            />
+            <Route
+              path="/login/verify"
+              element={
+                LOCAL ? <Navigate to="/" replace /> : <VerifyEmailPage />
+              }
             />
             <Route path="*" element={<Authenticated />} />
           </Routes>

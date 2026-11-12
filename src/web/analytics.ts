@@ -90,6 +90,11 @@ export type AnalyticsEvents = {
   // Sign-in (src/web/sign-in.tsx, main.tsx).
   sign_in_started: { method: "github" | "google" | "microsoft" };
   sign_in_failed: { reason: SignInError };
+  // WorkOS emailed a code before it signs the address in (/login/verify):
+  // shown, a code refused or not checked, and a right one.
+  email_verification_shown: undefined;
+  email_verification_failed: { reason: "code" | "unavailable" };
+  email_verified: undefined;
   login_completed: { destination: "workspace" | "onboarding" };
   workspace_created: undefined;
   // A workspace with no ontology shows only the new-ontology wizard, which

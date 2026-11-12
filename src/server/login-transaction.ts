@@ -4,14 +4,30 @@ import { parseReturnPath } from "@/shared/return-path";
 // A sign-in in progress: the WFE's pending-login ID and where to land
 // afterwards, signed (WORKOS_COOKIE_PASSWORD) into a short-lived cookie named
 // after the OAuth state, so parallel sign-ins in two tabs do not collide.
+// The callback seals it again when WorkOS asks for the code it emailed
+// (`verifyEmail`, the address), and a sign-in through the email's single
+// sign-on carries `sso`, so a second refusal for SSO stops instead of looping.
 
 export const LOGIN_TRANSACTION_TTL_SECONDS = 10 * 60;
 
 const FLOW_ID = /^[A-Za-z0-9_-]{43}$/;
 const SESSION_ID = /^[A-Za-z0-9_-]{32,256}$/;
+const MAX_EMAIL = 320;
 
-export type LoginTransaction = { sessionId: string; returnPath: string };
+export type LoginTransaction = {
+  sessionId: string;
+  returnPath: string;
+  // Started with AUTH_PROVIDER_SSO.
+  sso?: true;
+  // Waiting for the code WorkOS emailed to this address ("" when unknown).
+  verifyEmail?: string;
+};
 type Stored = LoginTransaction & { issuedAt: number };
+
+const validEmail = (email: unknown): email is string =>
+  typeof email === "string" &&
+  email.length <= MAX_EMAIL &&
+  (email === "" || email.includes("@"));
 
 /** sha256(state), the flow's cookie suffix. */
 export function loginFlowId(state: string): string | null {
@@ -34,7 +50,9 @@ export function sealLoginTransaction(
   if (
     !secret ||
     !SESSION_ID.test(transaction.sessionId) ||
-    parseReturnPath(transaction.returnPath) !== transaction.returnPath
+    parseReturnPath(transaction.returnPath) !== transaction.returnPath ||
+    (transaction.verifyEmail !== undefined &&
+      !validEmail(transaction.verifyEmail))
   )
     return null;
   const payload = Buffer.from(
@@ -67,10 +85,18 @@ export function openLoginTransaction(
       parseReturnPath(stored.returnPath) !== stored.returnPath ||
       typeof stored.issuedAt !== "number" ||
       stored.issuedAt > now ||
-      now - stored.issuedAt > LOGIN_TRANSACTION_TTL_SECONDS * 1000
+      now - stored.issuedAt > LOGIN_TRANSACTION_TTL_SECONDS * 1000 ||
+      (stored.verifyEmail !== undefined && !validEmail(stored.verifyEmail))
     )
       return null;
-    return { sessionId: stored.sessionId, returnPath: stored.returnPath };
+    return {
+      sessionId: stored.sessionId,
+      returnPath: stored.returnPath,
+      ...(stored.sso === true && { sso: true }),
+      ...(stored.verifyEmail !== undefined && {
+        verifyEmail: stored.verifyEmail,
+      }),
+    };
   } catch {
     return null;
   }

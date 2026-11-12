@@ -66,6 +66,7 @@ export type StartLoginRequest = {
   provider: AuthProvider;
   application: AuthApplication;
   invitationSession?: string;
+  // Required for AUTH_PROVIDER_SSO, which routes by its domain.
   email?: string;
 };
 /** v1StartLoginResponse: the WorkOS authorize URL and the pending login. */
@@ -77,13 +78,35 @@ export type ExchangeAuthCodeRequest = {
   code: string;
   state: string;
 };
-/** v1ExchangeAuthCodeResponse */
+/**
+ * v1ExchangeAuthCodeResponse. Tokens, or no tokens and one of: the code
+ * WorkOS emailed to `email` is needed (emailVerificationRequired: VerifyEmail
+ * under the same sessionId), or the email's company requires its single
+ * sign-on (ssoRequired: a new login with AUTH_PROVIDER_SSO and `email`).
+ */
 export type ExchangeAuthCodeResponse = {
   accessToken?: string;
   refreshToken?: string;
   expiresAt?: string;
   email?: string;
   emailVerificationRequired?: boolean;
+  workspaceId?: string;
+  invitationOnboarding?: boolean;
+  ssoRequired?: boolean;
+};
+
+/** v1VerifyEmailRequest: POST /v1/auth/verify-email, under the exchange's sessionId. */
+export type VerifyEmailRequest = { sessionId: string; code: string };
+/**
+ * v1VerifyEmailResponse: tokens, or ssoRequired as an exchange answers it.
+ * A wrong code is INVALID_ARGUMENT and keeps the session for another try;
+ * an expired or unknown one is UNAUTHENTICATED.
+ */
+export type VerifyEmailResponse = {
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  email?: string;
   workspaceId?: string;
   invitationOnboarding?: boolean;
   ssoRequired?: boolean;
