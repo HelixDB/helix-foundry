@@ -7,7 +7,7 @@
 // page shows the request, those calls and the answer side by side. Nothing
 // here starts a run.
 import "./workflows.css";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Plus, RefreshCw, Trash2, Workflow } from "lucide-react";
@@ -47,7 +47,9 @@ import {
   deleteWorkflow,
   workflowQueries,
 } from "./api";
+import { InsightsBoard, Spark, VerdictBar, useInsights } from "./insights";
 import {
+  INSIGHT_METRICS,
   VERDICT_LABELS,
   accessTitle,
   accessView,
@@ -106,18 +108,23 @@ const runStatus = (r: FoundryWorkflowRun) =>
 
 // /ontology/:ontologyId/workflows
 export function WorkflowsPage() {
-  const { id: ws, role } = useWorkspace(),
+  const { id: ws, role, partial } = useWorkspace(),
     { id: o } = useOntology();
   useTitle("Workflows");
   const crumbs = useCrumbs(),
     navigate = useNavigate();
   const list = useQuery(workflowQueries.list(ws, o));
+  const insights = useInsights();
+  const names = useMemo(
+    () => new Map((list.data?.workflows || []).map((w) => [w.id, w.name])),
+    [list.data],
+  );
   const [creating, setCreating] = useState(false);
   const header = (
     <PageHeader
       breadcrumbs={crumbs.slice(0, 2).concat({ label: "Workflows" })}
       title="Workflows"
-      subtitle="An agent’s task over this ontology. Each run records the agent’s request, what it read and wrote here, and its answer."
+      subtitle="How much this ontology helps your agents’ tasks, and what to change in it. Each run records an agent’s request, what it read and wrote here, and its answer."
       actions={
         canManage(role) && (
           <Button
@@ -159,11 +166,21 @@ export function WorkflowsPage() {
       </Page>
     );
   const workflows = list.data.workflows || [];
+  const segments = new Map(
+    (insights.query.data?.workflows || []).map((w) => [w.workflowId, w]),
+  );
   return (
     <Page>
       {header}
       <div className="on-stack">
         <RefreshFailed query={list} />
+        {workflows.length > 0 && (
+          <InsightsBoard
+            state={insights}
+            workflowNames={names}
+            own={partial.includes(o)}
+          />
+        )}
         {!workflows.length ? (
           <EmptyState
             icon={Workflow}
@@ -179,41 +196,80 @@ export function WorkflowsPage() {
             label="Workflows"
             rows={workflows}
             getRowKey={(w) => w.id}
-            rowHeight={44}
             onRowClick={(w) => navigate(paths.workflow(o, w.id))}
+            rowHeight={64}
             columns={[
               {
                 key: "name",
-                label: "Name",
+                label: "Workflow",
+                width: 280,
                 render: (w) => (
-                  <Link
-                    className="on-row-link on-cell-text"
-                    to={paths.workflow(o, w.id)}
-                  >
-                    {w.name}
-                  </Link>
+                  <span className="wf-row-name">
+                    <Link
+                      className="on-row-link on-cell-text"
+                      to={paths.workflow(o, w.id)}
+                    >
+                      {w.name}
+                    </Link>
+                    {w.description && (
+                      <span className="on-cell-text on-muted">
+                        {w.description}
+                      </span>
+                    )}
+                  </span>
                 ),
               },
               {
-                key: "runs",
-                label: "Runs",
-                align: "right",
-                width: 90,
-                sortValue: (w) => Number(w.runs || 0),
-                render: (w) => w.runs || "0",
+                key: "trend",
+                label: `Runs, ${insights.days} days`,
+                width: 200,
+                sortValue: (w) => segments.get(w.id)?.totals?.runs || 0,
+                render: (w) => {
+                  const seg = segments.get(w.id);
+                  return (
+                    <span className="wf-row-trend">
+                      <Spark
+                        values={seg?.dailyRuns || []}
+                        label={`${w.name}: runs a day`}
+                      />
+                      <span className="wf-row-n">{seg?.totals?.runs || 0}</span>
+                    </span>
+                  );
+                },
               },
               {
-                key: "finishedRuns",
-                label: "Finished",
-                align: "right",
-                width: 100,
-                sortValue: (w) => Number(w.finishedRuns || 0),
-                render: (w) => w.finishedRuns || "0",
+                key: "helped",
+                label: "Ontology helped",
+                width: 190,
+                sortValue: (w) =>
+                  INSIGHT_METRICS.helped.value(segments.get(w.id)?.totals) ??
+                  -1,
+                render: (w) => {
+                  const t = segments.get(w.id)?.totals,
+                    helped = INSIGHT_METRICS.helped.value(t);
+                  return (
+                    <span className="wf-row-helped">
+                      <VerdictBar totals={t} />
+                      {helped === undefined
+                        ? "—"
+                        : `${Math.round(helped * 100)}%`}
+                    </span>
+                  );
+                },
+              },
+              {
+                key: "gap",
+                label: "Top gap",
+                render: (w) => (
+                  <span className="on-cell-text">
+                    {segments.get(w.id)?.topGap || "—"}
+                  </span>
+                ),
               },
               {
                 key: "lastRunAt",
                 label: "Last run",
-                width: 150,
+                width: 130,
                 render: (w) =>
                   w.lastRunAt ? formatRelative(w.lastRunAt) : "Never",
               },
@@ -321,6 +377,8 @@ export function WorkflowPage() {
     copy = useCopy();
   const workflow = useQuery(workflowQueries.workflow(ws, o, workflowId)),
     runs = useQuery(workflowQueries.runs(ws, o, workflowId));
+  const insights = useInsights(workflowId);
+  const [connecting, setConnecting] = useState(false);
   const [deleting, setDeleting] = useState(false),
     [pending, setPending] = useState(false),
     [deleteError, setDeleteError] = useState("");
@@ -332,11 +390,19 @@ export function WorkflowPage() {
       title={w?.name || "Workflow"}
       subtitle={w?.description || undefined}
       actions={
-        w &&
-        canManage(role) && (
-          <Button icon={Trash2} onClick={() => setDeleting(true)}>
-            Delete
-          </Button>
+        w && (
+          <>
+            {Number(w.runs || 0) > 0 && (
+              <Button icon={Copy} onClick={() => setConnecting(true)}>
+                Connect agent
+              </Button>
+            )}
+            {canManage(role) && (
+              <Button icon={Trash2} onClick={() => setDeleting(true)}>
+                Delete
+              </Button>
+            )}
+          </>
         )
       }
     />
@@ -371,52 +437,62 @@ export function WorkflowPage() {
     workflowName: w.name,
   });
   const list = runs.data?.runs || [];
+  const copyPrompt = (
+    <Button
+      size="sm"
+      icon={Copy}
+      onClick={() => {
+        trackEvent("workflow_prompt_copied");
+        void copy(prompt, "prompt");
+      }}
+    >
+      Copy prompt
+    </Button>
+  );
+  const connection = (
+    <>
+      <KeyValue
+        items={[
+          {
+            label: "Workflow ID",
+            value: (
+              <span className="wf-id">
+                <code>{w.id}</code>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={Copy}
+                  aria-label="Copy workflow ID"
+                  onClick={() => void copy(w.id, "workflow ID")}
+                />
+              </span>
+            ),
+          },
+          {
+            label: "Created",
+            value: w.createdAt ? formatDate(w.createdAt) : "—",
+          },
+        ]}
+      />
+      <pre className="on-code wf-prompt">{prompt}</pre>
+    </>
+  );
   return (
     <Page>
       {header}
       <div className="on-stack">
         <RefreshFailed query={workflow} />
-        <Panel
-          title="Connect your agent"
-          subtitle={`Give the agent this prompt, with the Helix MCP added. In ${workspaceName}, each request it takes on becomes a run here.`}
-          actions={
-            <Button
-              size="sm"
-              icon={Copy}
-              onClick={() => {
-                trackEvent("workflow_prompt_copied");
-                void copy(prompt, "prompt");
-              }}
-            >
-              Copy prompt
-            </Button>
-          }
-        >
-          <KeyValue
-            items={[
-              {
-                label: "Workflow ID",
-                value: (
-                  <span className="wf-id">
-                    <code>{w.id}</code>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      icon={Copy}
-                      aria-label="Copy workflow ID"
-                      onClick={() => void copy(w.id, "workflow ID")}
-                    />
-                  </span>
-                ),
-              },
-              {
-                label: "Created",
-                value: w.createdAt ? formatDate(w.createdAt) : "—",
-              },
-            ]}
-          />
-          <pre className="on-code wf-prompt">{prompt}</pre>
-        </Panel>
+        {Number(w.runs || 0) === 0 ? (
+          <Panel
+            title="Connect your agent"
+            subtitle={`Give the agent this prompt, with the Helix MCP added. In ${workspaceName}, each request it takes on becomes a run here.`}
+            actions={copyPrompt}
+          >
+            {connection}
+          </Panel>
+        ) : (
+          <InsightsBoard state={insights} own={own} />
+        )}
         <Panel
           title={own ? "Your runs" : "Runs"}
           subtitle={[
@@ -478,9 +554,32 @@ export function WorkflowPage() {
                   render: (r) => <AssessmentCell a={r.assessment} />,
                 },
                 {
+                  key: "claims",
+                  label: "Claims backed",
+                  align: "right",
+                  width: 130,
+                  render: (r) => {
+                    const a = assessmentOf(r.assessment?.assessmentJson);
+                    if (!a?.claims.length) return "—";
+                    const backed = a.claims.filter(
+                      (c) => c.support === "supported",
+                    ).length;
+                    return `${backed} / ${a.claims.length}`;
+                  },
+                },
+                {
+                  key: "gaps",
+                  label: "Gaps",
+                  align: "right",
+                  width: 80,
+                  render: (r) =>
+                    assessmentOf(r.assessment?.assessmentJson)?.gaps.length ??
+                    "—",
+                },
+                {
                   key: "counts",
                   label: "Recorded",
-                  width: 240,
+                  width: 200,
                   render: (r) => (
                     <span className="on-cell-text">{countsText(r.counts)}</span>
                   ),
@@ -497,6 +596,17 @@ export function WorkflowPage() {
           )}
         </Panel>
       </div>
+      {connecting && (
+        <Dialog
+          title="Connect your agent"
+          description={`Give the agent this prompt, with the Helix MCP added. In ${workspaceName}, each request it takes on becomes a run here.`}
+          size="lg"
+          onClose={() => setConnecting(false)}
+          footer={copyPrompt}
+        >
+          {connection}
+        </Dialog>
+      )}
       {deleting && (
         <ConfirmDialog
           title={`Delete ${w.name}?`}

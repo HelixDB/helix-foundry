@@ -269,3 +269,62 @@ test("a restricted member uses workflows while their Workflows permission is on"
     (await mock.agent("GET", `${API}/workflows/${workflow}/runs`)).status,
   ).toBe(200);
 });
+
+test("the workflows' trends: who ran them, the metrics, where runs go and what to change", async ({
+  page,
+}) => {
+  await mock.configure({ workflowDemo: true });
+  await signIn(page);
+  await page.goto(`${O}/workflows`);
+  const insights = page.getByRole("region", { name: "Insights" });
+  const metrics = insights.getByRole("group", { name: "Metrics" });
+  await expect(metrics.getByRole("button")).toHaveCount(4);
+  await expect(
+    insights.getByRole("heading", {
+      name: "Runs by how much the ontology helped",
+    }),
+  ).toBeVisible();
+  const runs = metrics.getByRole("button", { name: /^Runs/ });
+  const everyone = await runs.textContent();
+
+  // One who started runs narrows every number.
+  const who = insights.getByRole("group", { name: "Who ran them" });
+  await who.getByRole("button", { name: /^Alan Turing/ }).click();
+  await expect(
+    who.getByRole("button", { name: /^Alan Turing/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(runs).not.toHaveText(everyone || "");
+  await who.getByRole("button", { name: /^Everyone/ }).click();
+
+  // A card charts its metric.
+  await metrics.getByRole("button", { name: /^Ontology helped/ }).click();
+  await expect(
+    insights.getByRole("heading", { name: "Ontology helped, by day" }),
+  ).toBeVisible();
+  await expect(insights.getByText("Used the ontology")).toBeVisible();
+
+  // A suggestion drafts a version with it as the goal.
+  const draft = insights
+    .getByRole("list", { name: "Suggested changes" })
+    .getByRole("link", { name: "Draft version" })
+    .first();
+  await expect(draft).toHaveAttribute("href", /\/generate\?goal=/);
+  // A gap opens the run that named it last.
+  await insights
+    .getByRole("list", { name: "Recurring gaps" })
+    .getByRole("link", { name: "Latest run" })
+    .first()
+    .click();
+  await expect(page).toHaveURL(/\/workflows\/wf_demo_\w+\/runs\/wfr_demo_/);
+
+  // A workflow's page leads with the same, and connects its agent from a dialog.
+  await page.goto(`${O}/workflows/wf_demo_renewals`);
+  await expect(page.getByRole("region", { name: "Insights" })).toBeVisible();
+  await page.getByRole("button", { name: "Connect agent" }).click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "Connect your agent" })
+      .getByText("wf_demo_renewals", { exact: false })
+      .first(),
+  ).toBeVisible();
+});

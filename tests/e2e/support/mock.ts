@@ -39,6 +39,8 @@ export const mock = {
     }[]
   > => (await (await fetch(`${MOCK}/__mock/reminders`)).json()).reminders,
   configure: (config: {
+    // Seeds Customer contracts' demo workflows and 45 days of their runs.
+    workflowDemo?: boolean;
     // New reminders the door takes an hour (300).
     remindersPerHour?: number;
     remindersPerClientPerHour?: number;

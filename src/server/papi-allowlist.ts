@@ -493,6 +493,11 @@ export const papiRoutes = [
   {
     area: "ontology",
     method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows:insights",
+  },
+  {
+    area: "ontology",
+    method: "GET",
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{id}",
   },
   {

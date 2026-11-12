@@ -189,6 +189,7 @@ describe("mock source grants", () => {
       `GET ${F}/ontologies/{ontologyId}/documents/{id}`,
       // With the Workflows permission, on unless turned off.
       `GET ${F}/ontologies/{ontologyId}/workflows`,
+      `GET ${F}/ontologies/{ontologyId}/workflows:insights`,
       `GET ${F}/ontologies/{ontologyId}/workflows/{id}`,
       `POST ${F}/ontologies/{ontologyId}/workflows/{workflowId}/runs`,
       `GET ${F}/ontologies/{ontologyId}/workflows/{workflowId}/runs`,

@@ -1,5 +1,7 @@
 import type {
   CreateFoundryWorkflowRequest,
+  FoundryPrincipal,
+  FoundryWorkflowInsights,
   FoundryWorkflowRun,
   FoundryWorkflowResponse,
   FoundryWorkflowRunResponse,
@@ -42,6 +44,37 @@ export const workflowQueries = {
     queryFn: () => api<FoundryWorkflowResponse>(`${base(ws, o)}/${enc(w)}`),
     refetchOnMount: "always" as const,
     refetchInterval: RUNS_POLL_MS,
+  }),
+  // What the window's runs came to (of one workflow, or all of the
+  // ontology's; of one who started them, when `startedBy` names them), asked
+  // again as often as runs are, so the trends follow new runs.
+  insights: (
+    ws: string,
+    o: string,
+    q: { workflowId?: string; days: number; startedBy?: FoundryPrincipal },
+  ) => ({
+    queryKey: [
+      ws,
+      "ontology",
+      o,
+      "workflows",
+      "insights",
+      q.workflowId || "",
+      q.days,
+      q.startedBy?.kind || "",
+      q.startedBy?.id || "",
+    ],
+    queryFn: () => {
+      const params = new URLSearchParams({ days: String(q.days) });
+      if (q.workflowId) params.set("workflowId", q.workflowId);
+      if (q.startedBy?.kind && q.startedBy.id) {
+        params.set("startedBy.kind", q.startedBy.kind);
+        params.set("startedBy.id", q.startedBy.id);
+      }
+      return api<FoundryWorkflowInsights>(`${base(ws, o)}:insights?${params}`);
+    },
+    refetchInterval: RUNS_POLL_MS,
+    placeholderData: (previous?: FoundryWorkflowInsights) => previous,
   }),
   // A workflow's newest runs, asked again so new ones show.
   runs: (ws: string, o: string, w: string) => ({
