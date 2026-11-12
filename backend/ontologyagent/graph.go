@@ -579,7 +579,8 @@ type DocumentRelease struct {
 
 // ReleaseOutcome is what became of a release decision: written (from contract
 // 4.14.0, on a link that holds one value, also when a statement dated after
-// the approval's day holds the link and the quote is kept as evidence alone);
+// the approval takes effect holds the link and the quote is kept as evidence
+// alone);
 // refused, its
 // reviews staying held for Reason (the engine's ReleaseRefusal, a word such as
 // unresolved, legal_form, part_name, own_name, changed, differs, conflict or blocked, kept as it

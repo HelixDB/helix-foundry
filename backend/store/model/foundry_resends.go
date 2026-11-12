@@ -87,8 +87,9 @@ const (
 	FoundryReleaseCarried FoundryReleaseStatus = "carried"
 	// FoundryReleaseWritten is a claim the engine wrote as a fact. From
 	// contract 4.14.0, on a link that holds one value, a statement dated
-	// after the approval's day may hold the link instead, the claim's quote
-	// kept as its evidence.
+	// after the approval takes effect (its quote's date, else its
+	// document's, else the day it was decided), or a later approval, may
+	// hold the link instead, the claim's quote kept as its evidence.
 	FoundryReleaseWritten FoundryReleaseStatus = "written"
 	// FoundryReleaseRefused is a claim that stays held; its reason says why.
 	FoundryReleaseRefused FoundryReleaseStatus = "refused"
