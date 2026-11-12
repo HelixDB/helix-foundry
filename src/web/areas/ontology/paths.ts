@@ -113,6 +113,9 @@ export const ontologyPaths = {
     (span ? `#s${span.section}-${span.start}-${span.end}` : ""),
   // What audits of its current load found its ontology and mappings lack.
   suggestions: (ontologyId: string) => at(ontologyId) + "/suggestions",
+  // Every open review of its current load, the decisions writing the most
+  // facts first, with a random slice that measures precision.
+  reviewQueue: (ontologyId: string) => at(ontologyId) + "/review",
   // Its workflows (an agent's task), one, and one of its runs: what the
   // agent read and wrote between its request and its answer.
   workflows: (ontologyId: string) => at(ontologyId) + "/workflows",

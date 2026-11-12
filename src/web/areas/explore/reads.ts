@@ -9,16 +9,27 @@ import {
 } from "./database-query";
 import type { Scope } from "./load-scope";
 import {
+  acceptedFactsRequest,
+  acceptedQuotesRequest,
   documentFactsRequest,
+  documentQuotesRequest,
   documentRequest,
   entityRequest,
   factEvidenceRequest,
   nameLinksRequest,
+  loadReviewCountsRequest,
+  loadReviewsRequest,
+  parseAcceptedFacts,
+  parseAcceptedQuotes,
   parseDocument,
   parseDocumentFacts,
+  parseDocumentQuotes,
+  parseLoadReviewCounts,
+  parseLoadReviews,
   parseEntity,
   parseFactEvidence,
   parseNameLinks,
+  type AcceptedQuote,
   type DocumentGraph,
   type EntityGraph,
   type EntityIdentity,
@@ -379,4 +390,108 @@ export const readQueries = {
       ...readOptions,
     };
   },
+  // The review queue's reads of the current load (../reviews/queue.ts): how
+  // many reviews and accepted quotes it holds, its reviews a page at a time,
+  // the accepted quotes at offsets the queue drew, their facts' ends, and a
+  // few documents' quotes. Each under the load, so a job that ends reads
+  // them again.
+  queueCounts: (ws: string, o: string, read: QueryExecutor, scope: Scope) => ({
+    queryKey: [ws, "ontology", o, "read", scope.id, "queue-counts"],
+    queryFn: async ({ signal }: { signal?: AbortSignal }) =>
+      parseLoadReviewCounts(
+        await runRead(read, loadReviewCountsRequest(scope), signal),
+      ),
+    ...readOptions,
+  }),
+  queueReviews: (
+    ws: string,
+    o: string,
+    read: QueryExecutor,
+    scope: Scope,
+    page: number,
+    naming: Naming = NO_NAMING,
+  ) => ({
+    queryKey: [
+      ws,
+      "ontology",
+      o,
+      "read",
+      scope.id,
+      "queue-reviews",
+      page,
+      naming.version,
+    ],
+    queryFn: async ({ signal }: { signal?: AbortSignal }) =>
+      parseLoadReviews(
+        await runRead(read, loadReviewsRequest(scope, page), signal),
+      ).map((r) => ({
+        ...r,
+        candidates: r.candidates.map((c) =>
+          c.entity ? { ...c, entity: named(naming, c.entity) } : c,
+        ),
+      })),
+    ...readOptions,
+  }),
+  acceptedQuotes: (
+    ws: string,
+    o: string,
+    read: QueryExecutor,
+    scope: Scope,
+    offsets: readonly number[],
+  ) => ({
+    queryKey: [ws, "ontology", o, "read", scope.id, "accepted", offsets],
+    queryFn: async ({ signal }: { signal?: AbortSignal }) =>
+      parseAcceptedQuotes(
+        await runRead(read, acceptedQuotesRequest(scope, offsets), signal),
+        offsets.length,
+      ),
+    ...readOptions,
+  }),
+  acceptedFacts: (
+    ws: string,
+    o: string,
+    read: QueryExecutor,
+    scope: Scope,
+    quotes: readonly AcceptedQuote[],
+    naming: Naming = NO_NAMING,
+  ) => ({
+    queryKey: [
+      ws,
+      "ontology",
+      o,
+      "read",
+      scope.id,
+      "accepted-facts",
+      quotes.map((q) => `${q.link}\u001f${q.factKey}`),
+      naming.version,
+    ],
+    queryFn: async ({ signal }: { signal?: AbortSignal }) => {
+      const request = acceptedFactsRequest(scope, quotes, namingKeys(naming));
+      if (!request) return [];
+      return parseAcceptedFacts(
+        await runRead(read, request, signal),
+        quotes.length,
+      ).map(({ from, to }) => ({
+        ...(from ? { from: named(naming, from) } : {}),
+        ...(to ? { to: named(naming, to) } : {}),
+      }));
+    },
+    ...readOptions,
+  }),
+  documentQuotes: (
+    ws: string,
+    o: string,
+    read: QueryExecutor,
+    scope: Scope,
+    documents: readonly string[],
+  ) => ({
+    queryKey: [ws, "ontology", o, "read", scope.id, "quotes", documents],
+    queryFn: async ({ signal }: { signal?: AbortSignal }) => {
+      const request = documentQuotesRequest(scope, documents);
+      return request
+        ? parseDocumentQuotes(await runRead(read, request, signal), documents)
+        : [];
+    },
+    ...readOptions,
+  }),
 };

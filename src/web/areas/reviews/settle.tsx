@@ -6,6 +6,7 @@ import type {
   FoundryReviewChoice,
   FoundryReviewDecision,
   ReviewDecision,
+  ReviewDrawn,
 } from "../../../shared/wfe";
 import { Button, ButtonLink, Select } from "../../kit";
 import { paths } from "../../paths";
@@ -193,19 +194,25 @@ function ClaimWritten({
  * sends the load its decisions, the card says so, and the value shows
  * wherever the page reads it, with no reload. A held claim can be rejected
  * instead: that only saves the person's word, and the page that lists the
- * card leaves it out from then on (`unrejected`).
+ * card leaves it out from then on (`unrejected`). On the review queue each
+ * decision says how its card was drawn (`drawn`), and the queue hears of it
+ * once it is saved (`onSettled`).
  */
 export function SettleReview({
   review,
   load,
   link,
   naming,
+  drawn,
+  onSettled,
 }: {
   review: Settleable & { reason: string };
   load?: FoundryLoad;
   link: (path: string) => string;
   // The rules of the page's version: which links hold one value.
   naming: Naming;
+  drawn?: ReviewDrawn;
+  onSettled?: () => void;
 }) {
   const { id: ws, role } = useWorkspace();
   const { id: o, ontology } = useOntology();
@@ -335,7 +342,11 @@ export function SettleReview({
     setPending(true);
     setError("");
     try {
-      await settleReview(ws, o, s.reviewId, { decision: choice });
+      await settleReview(ws, o, s.reviewId, {
+        decision: choice,
+        ...(drawn ? { drawn } : {}),
+      });
+      onSettled?.();
       await qc.invalidateQueries({
         queryKey: reviewQueries.list(ws, o).queryKey,
       });
