@@ -120,36 +120,61 @@ test("local agents discover, create and read through MCP and reach HTTP Ask", as
     ).result;
   };
   const target = `ontology:${workspace.id}/${ontologyID}`;
-  const added = await run({ operation: "add_sample_data", target, payload: {} });
-  expect(added.documents).toHaveLength(9);
-  for (const doc of added.documents) {
-    expect(doc.status).toBe("uploaded");
-    expect(doc.set_id).toBe(added.document_set_id);
+  const sample = { operation: "add_sample_data", target, payload: {} };
+  const synced = async (connectorID: string, syncID: string) =>
+    expect
+      .poll(
+        async () =>
+          (
+            await tool("helix_foundry_get_sync", {
+              workspace_id: workspace.id,
+              connector_id: connectorID,
+              sync_id: syncID,
+              wait: true,
+            })
+          ).sync.status,
+        { timeout: 180_000, intervals: [0] },
+      )
+      .toBe("succeeded");
+  if (!process.env.FOUNDRY_STACK_MODELS) {
+    // With no model provider an upload can't complete, so it stops there:
+    // after connecting acme-db and sending the first document to the store.
+    const confirmed = await tool("helix_prepare_foundry_operation", sample);
+    const refused = await rpc("tools/call", {
+      name: "helix_execute_foundry_operation",
+      arguments: {
+        ...sample,
+        confirmation_id: confirmed.confirmation_id,
+        confirmation_token: confirmed.confirmation_token,
+      },
+    });
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused.content)).toContain("completing ");
+    expect(JSON.stringify(refused.content)).toContain("No AI provider");
+    const connector = (
+      await tool("helix_foundry_list_connectors", {
+        workspace_id: workspace.id,
+      })
+    ).connectors.find((c: { name: string }) => c.name === "Acme Corp");
+    await synced(connector.id, connector.last_sync.id);
   }
-  await expect
-    .poll(
-      async () =>
-        (
-          await tool("helix_foundry_get_sync", {
-            workspace_id: workspace.id,
-            connector_id: added.connector_id,
-            sync_id: added.sync_id,
-            wait: true,
-          })
-        ).sync.status,
-      { timeout: 180_000, intervals: [0] },
-    )
-    .toBe("succeeded");
-  // Again, it makes nothing twice.
-  const again = await run({ operation: "add_sample_data", target, payload: {} });
-  expect(again.connector_id).toBe(added.connector_id);
-  expect(again.document_set_id).toBe(added.document_set_id);
-  expect(again.documents.map((d: { id: string }) => d.id).sort()).toEqual(
-    added.documents.map((d: { id: string }) => d.id).sort(),
-  );
-
-  // With a model provider, its ready-made draft loads and answers.
+  // With a model provider, all of it, then its ready-made draft loads and
+  // answers.
   if (process.env.FOUNDRY_STACK_MODELS) {
+    const added = await run(sample);
+    expect(added.documents).toHaveLength(9);
+    for (const doc of added.documents) {
+      expect(doc.status).toBe("uploaded");
+      expect(doc.set_id).toBe(added.document_set_id);
+    }
+    await synced(added.connector_id, added.sync_id);
+    // Again, it makes nothing twice.
+    const again = await run(sample);
+    expect(again.connector_id).toBe(added.connector_id);
+    expect(again.document_set_id).toBe(added.document_set_id);
+    expect(again.documents.map((d: { id: string }) => d.id).sort()).toEqual(
+      added.documents.map((d: { id: string }) => d.id).sort(),
+    );
     const generation = await run({
       operation: "generate_ontology",
       target,
