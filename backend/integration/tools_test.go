@@ -61,7 +61,7 @@ func TestToolsNameAPISourcesOnlyOnAHostWithThem(t *testing.T) {
 		assert.NotContains(t, local, word)
 	}
 	assert.Contains(t, local, "One of 12 operations: create_ontology, sync_connector,")
-	assert.Contains(t, local, "generate_ontology: {goal, connector_ids, document_set_ids, no_connectors}")
+	assert.Contains(t, local, "generate_ontology: {goal, connector_ids, document_set_ids, no_connectors, sample}")
 	assert.Contains(t, local, "or s3.")
 	hosted := listed(&Service{FoundryURL: "https://foundry.example", Events: true})
 	for _, word := range words {

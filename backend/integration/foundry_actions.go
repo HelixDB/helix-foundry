@@ -19,6 +19,7 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/document"
 	"github.com/helixdb/helix-foundry/backend/events"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/text/unicode/norm"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -390,18 +391,22 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 	switch input.Operation {
 	case "generate_ontology":
 		var payload GenerateOntologyPayload
-		malformed := invalid("generate_ontology takes payload {goal, connector_ids, document_set_ids, no_connectors}, a goal of at most 2000 characters and no connector_ids with no_connectors")
+		malformed := invalid("generate_ontology takes payload {goal, connector_ids, document_set_ids, no_connectors, sample}, a goal of at most 2000 characters, no connector_ids with no_connectors, " +
+			"and with sample \"acme\" exactly one connector and one document set")
 		if s.Events {
-			malformed = invalid("generate_ontology takes payload {goal, connector_ids, document_set_ids, no_connectors, event_sources}, a goal of at most 2000 characters, " +
-				"no connector_ids with no_connectors, and event_sources naming each API source once as {connector_id, mode}, mode structured or extraction")
+			malformed = invalid("generate_ontology takes payload {goal, connector_ids, document_set_ids, no_connectors, event_sources, sample}, a goal of at most 2000 characters, " +
+				"no connector_ids with no_connectors, event_sources naming each API source once as {connector_id, mode}, mode structured or extraction, " +
+				"and with sample \"acme\" exactly one connector, one document set and no event_sources")
 		}
 		if decodeStrict(raw, &payload) != nil || utf8.RuneCountInString(payload.Goal) > maxFoundryGoalChars ||
-			!ValidIDs(payload.ConnectorIDs) || !ValidIDs(payload.DocumentSetIDs) || payload.NoConnectors && len(payload.ConnectorIDs) > 0 {
+			!ValidIDs(payload.ConnectorIDs) || !ValidIDs(payload.DocumentSetIDs) || payload.NoConnectors && len(payload.ConnectorIDs) > 0 ||
+			// The sample's ready-made draft maps its one database and reads its one set, as the backend checks.
+			payload.Sample != "" && (payload.Sample != sample.Acme || len(payload.ConnectorIDs) != 1 || len(payload.DocumentSetIDs) != 1 || len(payload.EventSources) > 0) {
 			return nil, malformed
 		}
 		req := &foundryv1.GenerateOntologyRequest{
 			WorkspaceId: workspaceID, OntologyId: ontologyID, Goal: payload.Goal,
-			ConnectorIds: payload.ConnectorIDs, DocumentSetIds: payload.DocumentSetIDs, NoConnectors: payload.NoConnectors,
+			ConnectorIds: payload.ConnectorIDs, DocumentSetIds: payload.DocumentSetIDs, NoConnectors: payload.NoConnectors, Sample: payload.Sample,
 		}
 		if !s.Events && len(payload.EventSources) > 0 {
 			return nil, status.Error(codes.FailedPrecondition, "API sources are not available in local mode")
@@ -807,6 +812,9 @@ type GenerateOntologyPayload struct {
 	DocumentSetIDs []string                 `json:"document_set_ids,omitempty"`
 	NoConnectors   bool                     `json:"no_connectors,omitempty"`
 	EventSources   []EventSourcePickPayload `json:"event_sources,omitempty"`
+	// Sample "acme" takes the sample company's ready-made draft in place of the ontology agent's:
+	// no model is called, and it is done in seconds.
+	Sample string `json:"sample,omitempty"`
 }
 
 // EventSourcePickPayload is an API source a generation drafts from; mode is a key of
