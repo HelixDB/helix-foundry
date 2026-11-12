@@ -178,6 +178,10 @@ export type AnalyticsEvents = {
   review_settled: { kind: "resolve" | "prop" | "release" | "reject" };
   review_decision_removed: undefined;
   graph_exported: undefined;
+  // Workflows: an agent's task, and the prompt that has an agent run it.
+  workflow_created: undefined;
+  workflow_deleted: undefined;
+  workflow_prompt_copied: undefined;
 
   // Settings and the account.
   ai_provider_saved: { kind: FoundryAiProviderKind | "default" };

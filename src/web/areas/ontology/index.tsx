@@ -18,8 +18,8 @@ import { VersionPage } from "./version";
 
 export { OntologyHome };
 
-// An ontology's documents, its suggestions, its database's explorer and its
-// records are areas of their own, loaded when first opened (the explorer's canvas is
+// An ontology's documents, its suggestions, its workflows, its database's
+// explorer and its records are areas of their own, loaded when first opened (the explorer's canvas is
 // large). The Explorer and Ask are sections of their own too (ExploreRoutes,
 // AskRoutes), still under the ontology's scope.
 const DocumentsPage = lazy(() =>
@@ -39,6 +39,15 @@ const DocumentsPage = lazy(() =>
   ),
   SuggestionsPage = lazy(() =>
     import("../suggestions").then((m) => ({ default: m.SuggestionsPage })),
+  ),
+  WorkflowsPage = lazy(() =>
+    import("../workflows").then((m) => ({ default: m.WorkflowsPage })),
+  ),
+  WorkflowPage = lazy(() =>
+    import("../workflows").then((m) => ({ default: m.WorkflowPage })),
+  ),
+  WorkflowRunPage = lazy(() =>
+    import("../workflows").then((m) => ({ default: m.WorkflowRunPage })),
   );
 
 // /ontology/:ontologyId/versions/:versionId
@@ -91,6 +100,12 @@ export function OntologyRoutes() {
         <Route path="documents" element={<DocumentsPage />} />
         <Route path="documents/:documentId" element={<DocumentPage />} />
         <Route path="suggestions" element={<SuggestionsPage />} />
+        <Route path="workflows" element={<WorkflowsPage />} />
+        <Route path="workflows/:workflowId" element={<WorkflowPage />} />
+        <Route
+          path="workflows/:workflowId/runs/:runId"
+          element={<WorkflowRunPage />}
+        />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="*" element={<NotFound />} />

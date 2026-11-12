@@ -30,7 +30,7 @@ func testCluesRequest() CluesRequest {
 // The engine's own events (agent::graph::CluesEvent's doc tests), and those
 // of a stream of each ending.
 const (
-	cluesStarted = `{"event":"clues_started","contract_version":"4.14.0"}`
+	cluesStarted = `{"event":"clues_started","contract_version":"4.15.0"}`
 	cluesPage    = `{"event":"clues","entities":[{"entity":"Person[sc_17]","name":"Ada Lovelace","email":"ada@acme.io"},` +
 		`{"entity":"Person[sc_18]","name":null,"email":null,"linkedin_url":"linkedin.com/in/grace"},{"entity":"Person[sc_19]"}]}`
 	cluesDone = `{"event":"done","entities":3,"no_clue":1,"no_name":2,"conflicting":0,"shared":1}`

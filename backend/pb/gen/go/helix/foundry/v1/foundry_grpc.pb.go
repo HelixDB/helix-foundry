@@ -85,6 +85,16 @@ const (
 	FoundryService_DeleteFoundryReviewDecision_FullMethodName           = "/helix.foundry.v1.FoundryService/DeleteFoundryReviewDecision"
 	FoundryService_ListFoundryHealFindings_FullMethodName               = "/helix.foundry.v1.FoundryService/ListFoundryHealFindings"
 	FoundryService_DismissFoundryHealFinding_FullMethodName             = "/helix.foundry.v1.FoundryService/DismissFoundryHealFinding"
+	FoundryService_CreateFoundryWorkflow_FullMethodName                 = "/helix.foundry.v1.FoundryService/CreateFoundryWorkflow"
+	FoundryService_ListFoundryWorkflows_FullMethodName                  = "/helix.foundry.v1.FoundryService/ListFoundryWorkflows"
+	FoundryService_GetFoundryWorkflow_FullMethodName                    = "/helix.foundry.v1.FoundryService/GetFoundryWorkflow"
+	FoundryService_DeleteFoundryWorkflow_FullMethodName                 = "/helix.foundry.v1.FoundryService/DeleteFoundryWorkflow"
+	FoundryService_StartFoundryWorkflowRun_FullMethodName               = "/helix.foundry.v1.FoundryService/StartFoundryWorkflowRun"
+	FoundryService_ListFoundryWorkflowRuns_FullMethodName               = "/helix.foundry.v1.FoundryService/ListFoundryWorkflowRuns"
+	FoundryService_GetFoundryWorkflowRun_FullMethodName                 = "/helix.foundry.v1.FoundryService/GetFoundryWorkflowRun"
+	FoundryService_FinishFoundryWorkflowRun_FullMethodName              = "/helix.foundry.v1.FoundryService/FinishFoundryWorkflowRun"
+	FoundryService_AssessFoundryWorkflowRun_FullMethodName              = "/helix.foundry.v1.FoundryService/AssessFoundryWorkflowRun"
+	FoundryService_ListFoundryWorkflowRunAccesses_FullMethodName        = "/helix.foundry.v1.FoundryService/ListFoundryWorkflowRunAccesses"
 	FoundryService_ListFoundryOntologyDocuments_FullMethodName          = "/helix.foundry.v1.FoundryService/ListFoundryOntologyDocuments"
 	FoundryService_GetFoundryOntologyDocument_FullMethodName            = "/helix.foundry.v1.FoundryService/GetFoundryOntologyDocument"
 	FoundryService_CreateFoundryLoad_FullMethodName                     = "/helix.foundry.v1.FoundryService/CreateFoundryLoad"
@@ -211,6 +221,22 @@ type FoundryServiceClient interface {
 	// Hides an open finding until audits find it with twice the support it
 	// has now, or under a spelling it doesn't hold.
 	DismissFoundryHealFinding(ctx context.Context, in *DismissFoundryHealFindingRequest, opts ...grpc.CallOption) (*FoundryHealFindingResponse, error)
+	// Workflows: an agent's task over an ontology, whose runs record what the
+	// agent read of the ontology and wrote to Foundry between its request and
+	// its answer. Owners and admins create and delete workflows; a caller that
+	// may read the ontology's database starts and finishes runs, and reads
+	// them.
+	CreateFoundryWorkflow(ctx context.Context, in *CreateFoundryWorkflowRequest, opts ...grpc.CallOption) (*FoundryWorkflowResponse, error)
+	ListFoundryWorkflows(ctx context.Context, in *ListFoundryWorkflowsRequest, opts ...grpc.CallOption) (*ListFoundryWorkflowsResponse, error)
+	GetFoundryWorkflow(ctx context.Context, in *GetFoundryWorkflowRequest, opts ...grpc.CallOption) (*FoundryWorkflowResponse, error)
+	DeleteFoundryWorkflow(ctx context.Context, in *DeleteFoundryWorkflowRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	StartFoundryWorkflowRun(ctx context.Context, in *StartFoundryWorkflowRunRequest, opts ...grpc.CallOption) (*FoundryWorkflowRunResponse, error)
+	ListFoundryWorkflowRuns(ctx context.Context, in *ListFoundryWorkflowRunsRequest, opts ...grpc.CallOption) (*ListFoundryWorkflowRunsResponse, error)
+	GetFoundryWorkflowRun(ctx context.Context, in *GetFoundryWorkflowRunRequest, opts ...grpc.CallOption) (*FoundryWorkflowRunResponse, error)
+	FinishFoundryWorkflowRun(ctx context.Context, in *FinishFoundryWorkflowRunRequest, opts ...grpc.CallOption) (*FoundryWorkflowRunResponse, error)
+	// Queues a finished run's assessment again (owners and admins).
+	AssessFoundryWorkflowRun(ctx context.Context, in *AssessFoundryWorkflowRunRequest, opts ...grpc.CallOption) (*FoundryWorkflowRunResponse, error)
+	ListFoundryWorkflowRunAccesses(ctx context.Context, in *ListFoundryWorkflowRunAccessesRequest, opts ...grpc.CallOption) (*ListFoundryWorkflowRunAccessesResponse, error)
 	// An ontology's documents, read only: what its current load holds and
 	// what its reading version's scope holds, each with its extraction there.
 	ListFoundryOntologyDocuments(ctx context.Context, in *ListFoundryOntologyDocumentsRequest, opts ...grpc.CallOption) (*ListFoundryDocumentsResponse, error)
@@ -947,6 +973,106 @@ func (c *foundryServiceClient) DismissFoundryHealFinding(ctx context.Context, in
 	return out, nil
 }
 
+func (c *foundryServiceClient) CreateFoundryWorkflow(ctx context.Context, in *CreateFoundryWorkflowRequest, opts ...grpc.CallOption) (*FoundryWorkflowResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryWorkflowResponse)
+	err := c.cc.Invoke(ctx, FoundryService_CreateFoundryWorkflow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ListFoundryWorkflows(ctx context.Context, in *ListFoundryWorkflowsRequest, opts ...grpc.CallOption) (*ListFoundryWorkflowsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryWorkflowsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryWorkflows_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) GetFoundryWorkflow(ctx context.Context, in *GetFoundryWorkflowRequest, opts ...grpc.CallOption) (*FoundryWorkflowResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryWorkflowResponse)
+	err := c.cc.Invoke(ctx, FoundryService_GetFoundryWorkflow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) DeleteFoundryWorkflow(ctx context.Context, in *DeleteFoundryWorkflowRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, FoundryService_DeleteFoundryWorkflow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) StartFoundryWorkflowRun(ctx context.Context, in *StartFoundryWorkflowRunRequest, opts ...grpc.CallOption) (*FoundryWorkflowRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryWorkflowRunResponse)
+	err := c.cc.Invoke(ctx, FoundryService_StartFoundryWorkflowRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ListFoundryWorkflowRuns(ctx context.Context, in *ListFoundryWorkflowRunsRequest, opts ...grpc.CallOption) (*ListFoundryWorkflowRunsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryWorkflowRunsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryWorkflowRuns_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) GetFoundryWorkflowRun(ctx context.Context, in *GetFoundryWorkflowRunRequest, opts ...grpc.CallOption) (*FoundryWorkflowRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryWorkflowRunResponse)
+	err := c.cc.Invoke(ctx, FoundryService_GetFoundryWorkflowRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) FinishFoundryWorkflowRun(ctx context.Context, in *FinishFoundryWorkflowRunRequest, opts ...grpc.CallOption) (*FoundryWorkflowRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryWorkflowRunResponse)
+	err := c.cc.Invoke(ctx, FoundryService_FinishFoundryWorkflowRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) AssessFoundryWorkflowRun(ctx context.Context, in *AssessFoundryWorkflowRunRequest, opts ...grpc.CallOption) (*FoundryWorkflowRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryWorkflowRunResponse)
+	err := c.cc.Invoke(ctx, FoundryService_AssessFoundryWorkflowRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ListFoundryWorkflowRunAccesses(ctx context.Context, in *ListFoundryWorkflowRunAccessesRequest, opts ...grpc.CallOption) (*ListFoundryWorkflowRunAccessesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryWorkflowRunAccessesResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryWorkflowRunAccesses_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) ListFoundryOntologyDocuments(ctx context.Context, in *ListFoundryOntologyDocumentsRequest, opts ...grpc.CallOption) (*ListFoundryDocumentsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFoundryDocumentsResponse)
@@ -1332,6 +1458,22 @@ type FoundryServiceServer interface {
 	// Hides an open finding until audits find it with twice the support it
 	// has now, or under a spelling it doesn't hold.
 	DismissFoundryHealFinding(context.Context, *DismissFoundryHealFindingRequest) (*FoundryHealFindingResponse, error)
+	// Workflows: an agent's task over an ontology, whose runs record what the
+	// agent read of the ontology and wrote to Foundry between its request and
+	// its answer. Owners and admins create and delete workflows; a caller that
+	// may read the ontology's database starts and finishes runs, and reads
+	// them.
+	CreateFoundryWorkflow(context.Context, *CreateFoundryWorkflowRequest) (*FoundryWorkflowResponse, error)
+	ListFoundryWorkflows(context.Context, *ListFoundryWorkflowsRequest) (*ListFoundryWorkflowsResponse, error)
+	GetFoundryWorkflow(context.Context, *GetFoundryWorkflowRequest) (*FoundryWorkflowResponse, error)
+	DeleteFoundryWorkflow(context.Context, *DeleteFoundryWorkflowRequest) (*emptypb.Empty, error)
+	StartFoundryWorkflowRun(context.Context, *StartFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error)
+	ListFoundryWorkflowRuns(context.Context, *ListFoundryWorkflowRunsRequest) (*ListFoundryWorkflowRunsResponse, error)
+	GetFoundryWorkflowRun(context.Context, *GetFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error)
+	FinishFoundryWorkflowRun(context.Context, *FinishFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error)
+	// Queues a finished run's assessment again (owners and admins).
+	AssessFoundryWorkflowRun(context.Context, *AssessFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error)
+	ListFoundryWorkflowRunAccesses(context.Context, *ListFoundryWorkflowRunAccessesRequest) (*ListFoundryWorkflowRunAccessesResponse, error)
 	// An ontology's documents, read only: what its current load holds and
 	// what its reading version's scope holds, each with its extraction there.
 	ListFoundryOntologyDocuments(context.Context, *ListFoundryOntologyDocumentsRequest) (*ListFoundryDocumentsResponse, error)
@@ -1611,6 +1753,36 @@ func (UnimplementedFoundryServiceServer) ListFoundryHealFindings(context.Context
 }
 func (UnimplementedFoundryServiceServer) DismissFoundryHealFinding(context.Context, *DismissFoundryHealFindingRequest) (*FoundryHealFindingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DismissFoundryHealFinding not implemented")
+}
+func (UnimplementedFoundryServiceServer) CreateFoundryWorkflow(context.Context, *CreateFoundryWorkflowRequest) (*FoundryWorkflowResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateFoundryWorkflow not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryWorkflows(context.Context, *ListFoundryWorkflowsRequest) (*ListFoundryWorkflowsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryWorkflows not implemented")
+}
+func (UnimplementedFoundryServiceServer) GetFoundryWorkflow(context.Context, *GetFoundryWorkflowRequest) (*FoundryWorkflowResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryWorkflow not implemented")
+}
+func (UnimplementedFoundryServiceServer) DeleteFoundryWorkflow(context.Context, *DeleteFoundryWorkflowRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteFoundryWorkflow not implemented")
+}
+func (UnimplementedFoundryServiceServer) StartFoundryWorkflowRun(context.Context, *StartFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StartFoundryWorkflowRun not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryWorkflowRuns(context.Context, *ListFoundryWorkflowRunsRequest) (*ListFoundryWorkflowRunsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryWorkflowRuns not implemented")
+}
+func (UnimplementedFoundryServiceServer) GetFoundryWorkflowRun(context.Context, *GetFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryWorkflowRun not implemented")
+}
+func (UnimplementedFoundryServiceServer) FinishFoundryWorkflowRun(context.Context, *FinishFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FinishFoundryWorkflowRun not implemented")
+}
+func (UnimplementedFoundryServiceServer) AssessFoundryWorkflowRun(context.Context, *AssessFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AssessFoundryWorkflowRun not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryWorkflowRunAccesses(context.Context, *ListFoundryWorkflowRunAccessesRequest) (*ListFoundryWorkflowRunAccessesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryWorkflowRunAccesses not implemented")
 }
 func (UnimplementedFoundryServiceServer) ListFoundryOntologyDocuments(context.Context, *ListFoundryOntologyDocumentsRequest) (*ListFoundryDocumentsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryOntologyDocuments not implemented")
@@ -2889,6 +3061,186 @@ func _FoundryService_DismissFoundryHealFinding_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_CreateFoundryWorkflow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateFoundryWorkflowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).CreateFoundryWorkflow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_CreateFoundryWorkflow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).CreateFoundryWorkflow(ctx, req.(*CreateFoundryWorkflowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ListFoundryWorkflows_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryWorkflowsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryWorkflows(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryWorkflows_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryWorkflows(ctx, req.(*ListFoundryWorkflowsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_GetFoundryWorkflow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetFoundryWorkflowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).GetFoundryWorkflow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_GetFoundryWorkflow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).GetFoundryWorkflow(ctx, req.(*GetFoundryWorkflowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_DeleteFoundryWorkflow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteFoundryWorkflowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).DeleteFoundryWorkflow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_DeleteFoundryWorkflow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).DeleteFoundryWorkflow(ctx, req.(*DeleteFoundryWorkflowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_StartFoundryWorkflowRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartFoundryWorkflowRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).StartFoundryWorkflowRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_StartFoundryWorkflowRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).StartFoundryWorkflowRun(ctx, req.(*StartFoundryWorkflowRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ListFoundryWorkflowRuns_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryWorkflowRunsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryWorkflowRuns(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryWorkflowRuns_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryWorkflowRuns(ctx, req.(*ListFoundryWorkflowRunsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_GetFoundryWorkflowRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetFoundryWorkflowRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).GetFoundryWorkflowRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_GetFoundryWorkflowRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).GetFoundryWorkflowRun(ctx, req.(*GetFoundryWorkflowRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_FinishFoundryWorkflowRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FinishFoundryWorkflowRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).FinishFoundryWorkflowRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_FinishFoundryWorkflowRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).FinishFoundryWorkflowRun(ctx, req.(*FinishFoundryWorkflowRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_AssessFoundryWorkflowRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssessFoundryWorkflowRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).AssessFoundryWorkflowRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_AssessFoundryWorkflowRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).AssessFoundryWorkflowRun(ctx, req.(*AssessFoundryWorkflowRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ListFoundryWorkflowRunAccesses_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryWorkflowRunAccessesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryWorkflowRunAccesses(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryWorkflowRunAccesses_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryWorkflowRunAccesses(ctx, req.(*ListFoundryWorkflowRunAccessesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_ListFoundryOntologyDocuments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFoundryOntologyDocumentsRequest)
 	if err := dec(in); err != nil {
@@ -3677,6 +4029,46 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DismissFoundryHealFinding",
 			Handler:    _FoundryService_DismissFoundryHealFinding_Handler,
+		},
+		{
+			MethodName: "CreateFoundryWorkflow",
+			Handler:    _FoundryService_CreateFoundryWorkflow_Handler,
+		},
+		{
+			MethodName: "ListFoundryWorkflows",
+			Handler:    _FoundryService_ListFoundryWorkflows_Handler,
+		},
+		{
+			MethodName: "GetFoundryWorkflow",
+			Handler:    _FoundryService_GetFoundryWorkflow_Handler,
+		},
+		{
+			MethodName: "DeleteFoundryWorkflow",
+			Handler:    _FoundryService_DeleteFoundryWorkflow_Handler,
+		},
+		{
+			MethodName: "StartFoundryWorkflowRun",
+			Handler:    _FoundryService_StartFoundryWorkflowRun_Handler,
+		},
+		{
+			MethodName: "ListFoundryWorkflowRuns",
+			Handler:    _FoundryService_ListFoundryWorkflowRuns_Handler,
+		},
+		{
+			MethodName: "GetFoundryWorkflowRun",
+			Handler:    _FoundryService_GetFoundryWorkflowRun_Handler,
+		},
+		{
+			MethodName: "FinishFoundryWorkflowRun",
+			Handler:    _FoundryService_FinishFoundryWorkflowRun_Handler,
+		},
+		{
+			MethodName: "AssessFoundryWorkflowRun",
+			Handler:    _FoundryService_AssessFoundryWorkflowRun_Handler,
+		},
+		{
+			MethodName: "ListFoundryWorkflowRunAccesses",
+			Handler:    _FoundryService_ListFoundryWorkflowRunAccesses_Handler,
 		},
 		{
 			MethodName: "ListFoundryOntologyDocuments",

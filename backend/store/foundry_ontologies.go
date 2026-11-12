@@ -93,6 +93,11 @@ func (s *mysqlDB) ListFoundryOntologies(ctx context.Context, workspaceID, pageTo
 // it. The rest of the database is left as it is. ErrNotFound means no live
 // ontology has this id.
 func (s *mysqlDB) DeleteFoundryOntology(ctx context.Context, workspaceID, id, deleteJobID string) error {
+	// Its workflows' runs may hold a long history: their accesses go first,
+	// a batch at a time, and the transaction deletes what is left.
+	if err := s.purgeFoundryWorkflowAccesses(ctx, "ontology_id", id, "workspace_id", workspaceID); err != nil {
+		return err
+	}
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		o, err := tx.lockFoundryOntology(ctx, workspaceID, id)
@@ -122,6 +127,11 @@ WHERE ontology_id=? AND active_key=1`, id); err != nil {
 			if _, err := tx.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE ontology_id=?`, id); err != nil {
 				return fmt.Errorf("delete the ontology's %s: %w", table, err)
 			}
+		}
+		// Its workflows' runs hold what was read of its loads: they go with
+		// it.
+		if err := tx.deleteFoundryWorkflowRows(ctx, "ontology_id", id); err != nil {
+			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting', finished_at=COALESCE(finished_at, NOW(6))
 WHERE ontology_id=? AND status NOT IN ('deleting', 'deleted')`, id); err != nil {

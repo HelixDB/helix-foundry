@@ -4,6 +4,7 @@ import { isReply, membership } from "../state";
 import { systemSpend } from "./documents";
 import { MONTH_CAP_MICROS, monthSpend } from "./loads";
 import { ASK_LIMITS, spend } from "./questions";
+import { ASSESSMENTS_CAP_MICROS, assessmentSpend } from "./workflows";
 
 // The workspace's AI spend this UTC month by task, as the backend's
 // GetFoundryUsage serves it, from the other routes' in-memory state: loads'
@@ -28,12 +29,13 @@ export const usageRoutes: MockRoute[] = [
           Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + 1, 1),
         ),
         loads = monthSpend(m.workspaceId),
-        questions = spend(m.workspaceId);
+        questions = spend(m.workspaceId),
+        assessed = assessmentSpend(m.workspaceId);
       return ok({
         usage: {
           monthStart: start.toISOString(),
           resetsAt: resets.toISOString(),
-          totalUsdMicros: String(loads + questions.spent),
+          totalUsdMicros: String(loads + questions.spent + assessed),
           tasks: [
             {
               task: "FOUNDRY_USAGE_TASK_LOADS",
@@ -52,6 +54,12 @@ export const usageRoutes: MockRoute[] = [
               spentUsdMicros: String(questions.spent),
               reservedUsdMicros: String(questions.reserved),
               capUsdMicros: String(ASK_LIMITS.monthlyUsdMicros),
+            },
+            {
+              task: "FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS",
+              spentUsdMicros: String(assessed),
+              reservedUsdMicros: "0",
+              capUsdMicros: String(ASSESSMENTS_CAP_MICROS),
             },
           ],
         },

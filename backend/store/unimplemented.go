@@ -1082,3 +1082,87 @@ func (u Unimplemented) PublishFoundryHealRun(context.Context, model.FoundryHealP
 	u.unimplemented("PublishFoundryHealRun")
 	return nil
 }
+func (u Unimplemented) GetFoundryWorkflow(context.Context, string, string) (*model.FoundryWorkflow, error) {
+	u.unimplemented("GetFoundryWorkflow")
+	return nil, nil
+}
+func (u Unimplemented) GetFoundryWorkflowByClientToken(context.Context, string, string) (*model.FoundryWorkflow, error) {
+	u.unimplemented("GetFoundryWorkflowByClientToken")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryWorkflows(context.Context, string, string, int) ([]*model.FoundryWorkflow, string, error) {
+	u.unimplemented("ListFoundryWorkflows")
+	return nil, "", nil
+}
+func (u Unimplemented) GetFoundryWorkflowRun(context.Context, string, string) (*model.FoundryWorkflowRun, error) {
+	u.unimplemented("GetFoundryWorkflowRun")
+	return nil, nil
+}
+func (u Unimplemented) GetFoundryWorkflowRunInWorkspace(context.Context, string, string) (*model.FoundryWorkflowRun, error) {
+	u.unimplemented("GetFoundryWorkflowRunInWorkspace")
+	return nil, nil
+}
+func (u Unimplemented) GetFoundryWorkflowRunByClientToken(context.Context, string, string) (*model.FoundryWorkflowRun, error) {
+	u.unimplemented("GetFoundryWorkflowRunByClientToken")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryWorkflowRuns(context.Context, string, string, int) ([]*model.FoundryWorkflowRun, string, error) {
+	u.unimplemented("ListFoundryWorkflowRuns")
+	return nil, "", nil
+}
+func (u Unimplemented) ListFoundryWorkflowRunAccesses(context.Context, string, int32, int) ([]*model.FoundryWorkflowAccess, bool, error) {
+	u.unimplemented("ListFoundryWorkflowRunAccesses")
+	return nil, false, nil
+}
+func (u Unimplemented) CreateFoundryWorkflow(context.Context, *model.FoundryWorkflow) error {
+	u.unimplemented("CreateFoundryWorkflow")
+	return nil
+}
+func (u Unimplemented) DeleteFoundryWorkflow(context.Context, string, string) error {
+	u.unimplemented("DeleteFoundryWorkflow")
+	return nil
+}
+func (u Unimplemented) StartFoundryWorkflowRun(context.Context, *model.FoundryWorkflowRun) error {
+	u.unimplemented("StartFoundryWorkflowRun")
+	return nil
+}
+func (u Unimplemented) FinishFoundryWorkflowRun(context.Context, string, *string, string, bool) error {
+	u.unimplemented("FinishFoundryWorkflowRun")
+	return nil
+}
+func (u Unimplemented) RecordFoundryWorkflowAccess(context.Context, string, model.FoundryWorkflowCall) (*model.FoundryWorkflowAccess, error) {
+	u.unimplemented("RecordFoundryWorkflowAccess")
+	return nil, nil
+}
+func (u Unimplemented) GetFoundryWorkflowRunAssessment(context.Context, string) (*model.FoundryWorkflowAssessment, error) {
+	u.unimplemented("GetFoundryWorkflowRunAssessment")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryWorkflowRunAssessments(context.Context, []string) (map[string]*model.FoundryWorkflowAssessment, error) {
+	u.unimplemented("ListFoundryWorkflowRunAssessments")
+	return nil, nil
+}
+func (u Unimplemented) CountFoundryWorkflowVerdicts(context.Context, []string) (map[string]map[string]int64, error) {
+	u.unimplemented("CountFoundryWorkflowVerdicts")
+	return nil, nil
+}
+func (u Unimplemented) SumFoundryWorkflowAssessmentSpend(context.Context, string, time.Time) (int64, error) {
+	u.unimplemented("SumFoundryWorkflowAssessmentSpend")
+	return 0, nil
+}
+func (u Unimplemented) QueueFoundryWorkflowRunAssessment(context.Context, string) error {
+	u.unimplemented("QueueFoundryWorkflowRunAssessment")
+	return nil
+}
+func (u Unimplemented) ClaimFoundryWorkflowRunAssessment(context.Context, string, time.Duration) (*model.FoundryWorkflowAssessment, error) {
+	u.unimplemented("ClaimFoundryWorkflowRunAssessment")
+	return nil, nil
+}
+func (u Unimplemented) RenewFoundryWorkflowRunAssessment(context.Context, string, string, time.Duration) error {
+	u.unimplemented("RenewFoundryWorkflowRunAssessment")
+	return nil
+}
+func (u Unimplemented) FinishFoundryWorkflowRunAssessment(context.Context, string, string, model.FoundryWorkflowAssessmentOutcome) error {
+	u.unimplemented("FinishFoundryWorkflowRunAssessment")
+	return nil
+}

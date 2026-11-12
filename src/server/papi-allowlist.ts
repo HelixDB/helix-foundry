@@ -478,6 +478,49 @@ export const papiRoutes = [
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/heal-findings/{fingerprint}:dismiss",
   },
 
+  // Ontology: workflows, an agent's task, and what its runs recorded. Runs
+  // are started and finished by agents, never the site.
+  {
+    area: "ontology",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows",
+  },
+  {
+    area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows",
+  },
+  {
+    area: "ontology",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{id}",
+  },
+  {
+    area: "ontology",
+    method: "DELETE",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{id}",
+  },
+  {
+    area: "ontology",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs",
+  },
+  {
+    area: "ontology",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}",
+  },
+  {
+    area: "ontology",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}/accesses",
+  },
+  {
+    area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}:assess",
+  },
+
   // Databases: the workspace's projects and their databases (tenants), and
   // creating either, as helix-website does, to bind an ontology to one. The
   // WFE puts a new database on the shared cluster; Foundry never offers

@@ -60,6 +60,19 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_ListFoundryHealFindings_FullMethodName:   Deny,
 	foundryv1.FoundryService_DismissFoundryHealFinding_FullMethodName: Deny,
 
+	// Workflows: their runs hold what others read and wrote, never narrowed
+	// to what a grantee holds, and a grantee changes nothing.
+	foundryv1.FoundryService_CreateFoundryWorkflow_FullMethodName:          Deny,
+	foundryv1.FoundryService_ListFoundryWorkflows_FullMethodName:           Deny,
+	foundryv1.FoundryService_GetFoundryWorkflow_FullMethodName:             Deny,
+	foundryv1.FoundryService_DeleteFoundryWorkflow_FullMethodName:          Deny,
+	foundryv1.FoundryService_StartFoundryWorkflowRun_FullMethodName:        Deny,
+	foundryv1.FoundryService_ListFoundryWorkflowRuns_FullMethodName:        Deny,
+	foundryv1.FoundryService_GetFoundryWorkflowRun_FullMethodName:          Deny,
+	foundryv1.FoundryService_FinishFoundryWorkflowRun_FullMethodName:       Deny,
+	foundryv1.FoundryService_ListFoundryWorkflowRunAccesses_FullMethodName: Deny,
+	foundryv1.FoundryService_AssessFoundryWorkflowRun_FullMethodName:       Deny,
+
 	// Reading a load and asking it questions.
 	foundryv1.FoundryService_ReadFoundryGraph_FullMethodName:          Ontology,
 	foundryv1.FoundryService_AskFoundryQuestion_FullMethodName:        Ontology,

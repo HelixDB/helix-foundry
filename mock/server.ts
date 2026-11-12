@@ -39,7 +39,8 @@ import { handleWorkos } from "./workos";
 // memberQueryRead, invoiceOnlyCustomers, healEnabled, healRun, healDismiss,
 // healRowsMeasured, freshInstall, signIn, signInsRunOut, accountBroken,
 // githubInstalled, directoryTeams, directoryEntitled, directoryIssues,
-// directorySyncMs, remindersPerHour, remindersPerClientPerHour }.
+// directorySyncMs, remindersPerHour, remindersPerClientPerHour, assessEnabled,
+// assessMs, assessOutcome }.
 //
 // POST /v1/reminders and /v1/reminders/stop are Foundry's door's, not the
 // WFE's: the landing page's reminders (./reminders.ts), which the site's
@@ -52,8 +53,13 @@ import { handleWorkos } from "./workos";
 //
 // POST /__mock/event-sources/{connectorId}/pieces sends pieces to an API
 // source, as an agent does through the Helix MCP: { clientToken?, pieces:
-// [{ id, occurredAt?, data }] }, answered as SendFoundryEvents answers. The
-// WFE has no route that sends pieces, so neither has the app.
+// [{ id, occurredAt?, data }], workflowRunId? }, answered as
+// SendFoundryEvents answers. The WFE has no route that sends pieces, so
+// neither has the app.
+//
+// /__mock/agent/v1/... calls the WFE route /v1/... as Ada's agent does
+// through the Helix MCP, with no token: starting and finishing a workflow's
+// runs, and reading and asking under one, which the app never does.
 //
 // /__uploads/ stands in for the bucket a document's presigned PUT goes to:
 // binary bodies with CORS, so it reads its own body.
@@ -90,13 +96,14 @@ async function wfe(
   req: IncomingMessage,
   url: URL,
   raw: string,
+  as?: Principal,
 ): Promise<MockReply> {
   const method = (req.method || "GET").toUpperCase();
   for (const route of compiled) {
     const params =
       route.method === method && matchTemplate(route.c, url.pathname);
     if (!params) continue;
-    const caller = route.public ? null : await principal(req);
+    const caller = route.public ? null : as || (await principal(req));
     if (!route.public && !caller)
       return fail("UNAUTHENTICATED", "missing or invalid bearer token");
     let body: unknown;
@@ -115,6 +122,17 @@ async function wfe(
     });
   }
   return fail("NOT_FOUND", "Not Found");
+}
+
+/** A WFE call as Ada's agent makes it through the Helix MCP. */
+function asAgent(req: IncomingMessage, url: URL, raw: string) {
+  const ada = [...db.users.values()].find((u) => u.email === SEED_EMAIL);
+  if (!ada) return fail("UNAUTHENTICATED", "Ada has not signed in");
+  const wfeUrl = new URL(
+    url.pathname.slice("/__mock/agent".length) + url.search,
+    url,
+  );
+  return wfe(req, wfeUrl, raw, { user: ada, sessionId: "agent" });
 }
 
 const server = createServer(async (req, res) => {
@@ -138,6 +156,12 @@ const server = createServer(async (req, res) => {
       if (url.pathname === "/__mock/reminders" && req.method === "GET") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ reminders: mockReminders() }));
+        return;
+      }
+      if (url.pathname.startsWith("/__mock/agent/v1/")) {
+        const reply = await asAgent(req, url, raw);
+        res.writeHead(reply.status, { "Content-Type": "application/json" });
+        res.end(reply.body === undefined ? "" : JSON.stringify(reply.body));
         return;
       }
       if (url.pathname === "/__mock/reset" && req.method === "POST")
