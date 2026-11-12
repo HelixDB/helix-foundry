@@ -3543,6 +3543,47 @@ describe("review decisions", () => {
   });
 
   it.each([
+    ["the older approval's document first", ["a-older.md", "b-newer.md"]],
+    ["the newer approval's document first", ["b-newer.md", "a-older.md"]],
+  ])(
+    "holds a one-valued link for the newer of two approvals in two documents, %s",
+    async (_, order) => {
+      Object.assign(config, { oneValuedLinks: ["signed_with"] });
+      const text: Record<string, string> = {
+        "a-older.md": "# Deal\n\nInitech may have signed.\n",
+        "b-newer.md": "# Deal\n\nGlobex Corporation may have signed.\n",
+      };
+      for (const name of order) await uploaded(name, Buffer.from(text[name]!));
+      const g = await loaded("first");
+      const approve = async (name: string) => {
+        const rv = reviews(g).find(
+          (n) =>
+            n.props.reason === "low_confidence" &&
+            String(n.props.statement).includes(name),
+        )!;
+        const statementHash = createHash("sha256")
+          .update(`signed_with\u001f${String(rv.props.statement)}`)
+          .digest("hex");
+        await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+          decision: { release: { statementHash } },
+        });
+        vi.setSystemTime(Date.now() + 10_000);
+        await call("GET", `${O}/review-decisions`);
+      };
+      await approve("Initech");
+      await approve("Globex");
+      const signedWith = (load: typeof g) => {
+        const deal = load.find("Contract", "norm_name", "deal")!;
+        return [...load.graph.edges.values()]
+          .filter((e) => e.label === "signed_with" && e.from === deal.id)
+          .map((e) => String(load.node(e.to)!.props.entity_key));
+      };
+      expect(signedWith(g)).toEqual(["cus_GLOBEX01"]);
+      expect(signedWith(await loaded("next"))).toEqual(["cus_GLOBEX01"]);
+    },
+  );
+
+  it.each([
     ["the approved document first", ["a-held.md", "b-plain.md"]],
     ["the plain document first", ["b-plain.md", "a-held.md"]],
   ])(

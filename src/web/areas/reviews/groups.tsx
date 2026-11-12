@@ -11,6 +11,7 @@ import { reviewQueries, settleReview } from "./api";
 import {
   approvable,
   approveAllText,
+  leftToCards,
   linksGoal,
   reviewGroups,
   type Settle,
@@ -106,10 +107,7 @@ function ApproveAll({
   const ready = saved ? approvable(reviews, saved, single) : [];
   // Those it would approve but leaves to their cards: the claims of links
   // that hold one value.
-  const own = saved
-    ? approvable(reviews, saved, () => false).filter((s) => single(s.link))
-        .length
-    : 0;
+  const own = saved ? leftToCards(reviews, saved, single) : 0;
   const run = async (
     cards: readonly Extract<Settle, { kind: "release" }>[],
   ) => {

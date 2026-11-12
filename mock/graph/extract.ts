@@ -1263,6 +1263,9 @@ export function extractDocument(
     // releases it by its key, the same in every load, and written at the
     // verifier's confidence.
     let stated = confidence;
+    // A claim a person's approval released: its edge stands until the
+    // document's decide says which approval holds the link.
+    let approval = false;
     const [from, to] = sentenceAt(first.s.text, first.i);
     if (/\bmay\b/.test(first.s.text.slice(from, to))) {
       const about = [
@@ -1356,6 +1359,7 @@ export function extractDocument(
         continue;
       }
       stated = held === "unverified" ? 0 : 0.72;
+      approval = true;
       const r = release!;
       if (
         ontology.oneValued?.has("signed_with") &&
@@ -1370,15 +1374,16 @@ export function extractDocument(
       ["signed_with", String(contract), String(e.id)].join("\u001f"),
     );
     const stored = g.findEdge("signed_with", "fact_key", factKey);
-    // Where an approval the load wrote decides the contract's link, a
+    // Where an approval the load wrote decides the contract's link, a plain
     // statement of another customer loses to it whichever commits first:
-    // its quote is evidence alone (decide).
+    // its quote is evidence alone (decide). An approval's own edge is
+    // written, and decide keeps the newest approval's.
     const holder = ontology.oneValued?.has("signed_with")
       ? approvals.get([g.load, "signed_with", contract].join("\u001f"))
       : undefined;
     if (stored)
       stored.props.evidence_count = Number(stored.props.evidence_count) + 1;
-    else if (!holder || holder.to === e.id)
+    else if (approval || !holder || holder.to === e.id)
       g.addEdge("signed_with", contract!, e.id, {
         fact_key: factKey,
         provenance: "extracted",

@@ -96,7 +96,8 @@ function NameReviews({
  * the version isn't known) the approval decides the link (contract 4.14.0),
  * as the engine dates it: from the date its quote gives, else its
  * document's, else the day it is first approved; one of a date still to come
- * beats nothing, and the engine refuses it as `conflict` until then. It
+ * beats nothing until then: where the link holds another value the engine
+ * refuses it as `conflict`, and a load or resend after the date writes it. It
  * replaces what the link holds of no date or dated up to then, which a
  * claim held as conflicting with it (`conflict`) says; a statement dated
  * later, approved or not, still holds the link, so it promises no edge; of
@@ -132,7 +133,8 @@ function ClaimWritten({
         <p role="note">
           This link holds one value. An approval makes this its value from the
           date this sentence gives, else its document’s date, else the day it is
-          first approved; a sentence dated ahead stays held until that date. It
+          first approved; a sentence dated ahead replaces nothing until that
+          date, and stays held meanwhile if the link holds another value. It
           replaces what the link holds of no date or dated up to then, whose
           evidence stays. A statement dated later, approved or not, still holds
           the link, and then this is kept as evidence only. Of two approvals,

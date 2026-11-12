@@ -696,9 +696,26 @@ export function approvable(
 }
 
 /**
- * What Approve all says before it approves `ready` claims, leaving `left`
- * to their cards: those it would approve but for their link holding one
- * value (`approvable` given every link as one that holds many, less `ready`).
+ * How many of `reviews` Approve all leaves to their cards for their link
+ * alone: those it would approve if every link held many values whose link
+ * holds one (`single`).
+ *
+ * @example
+ * leftToCards([heldOfOneValuedLink, heldOfManyValuedLink], [], (l) => l === "signed_with"); // 1
+ */
+export function leftToCards(
+  reviews: readonly Settleable[],
+  decisions: readonly ReviewDecision[],
+  single: (link: string) => boolean,
+): number {
+  return approvable(reviews, decisions, () => false).filter((s) =>
+    single(s.link),
+  ).length;
+}
+
+/**
+ * What Approve all says before it approves, leaving `left` claims to their
+ * cards (leftToCards).
  *
  * @example
  * approveAllText(2); // "This load writes each one it can, at once. … 2 claims of a link that holds one value aren’t included: …"

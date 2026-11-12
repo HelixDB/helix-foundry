@@ -1445,7 +1445,8 @@ message FoundryReviewChoice {
     // that holds one value it also decides the link, from the date its quote
     // gives, else its document's date, and only for a quote with neither from
     // the day it was first approved; a quote dated after the load recorded it
-    // decides nothing until that date, and is refused as conflict until then.
+    // replaces nothing until that date: where the link holds another value it
+    // is refused as conflict, and a load or resend after the date writes it.
     // From then it replaces what the link holds of no date or dated up to
     // then (whose evidence stays); a statement dated later, approved or not,
     // still holds the link, and the claim is kept as its evidence. Of two

@@ -338,7 +338,8 @@ describe("what Approve all says before it approves", () => {
     );
   });
   it("counts the claims it would approve but for their link", () => {
-    // As ApproveAll counts them: approvable on many-valued links, less those of one-valued links.
+    // As ApproveAll counts them (leftToCards): approvable where every link
+    // holds many values, of a link that holds one.
     const reviews = [
       settled(held(0)),
       settled({ ...held(20), suggested_link: "partner_of" }),
@@ -346,10 +347,16 @@ describe("what Approve all says before it approves", () => {
     ];
     const single = (link: string) => link === "signed_with";
     expect(ids(model.approvable(reviews, [], single))).toEqual(["held-20"]);
+    expect(model.leftToCards(reviews, [], single)).toBe(1);
+    // Not one already decided, nor any where every link holds many.
     expect(
-      model.approvable(reviews, [], () => false).filter((s) => single(s.link))
-        .length,
-    ).toBe(1);
+      model.leftToCards(
+        reviews,
+        [{ ...approved(0), statementHash: "0" }],
+        single,
+      ),
+    ).toBe(0);
+    expect(model.leftToCards(reviews, [], () => false)).toBe(0);
   });
 });
 
