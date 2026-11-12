@@ -1445,11 +1445,11 @@ message FoundryReviewChoice {
     // that holds one value it also decides the link, from the date its quote
     // gives, else its document's date, and only for a quote with neither from
     // the day it was first approved; a quote dated after the load recorded it
-    // decides nothing until that date. From then it replaces what the link
-    // holds of no date or dated up to then (whose evidence stays); a
-    // statement dated later, approved or not, still holds the link, and the
-    // claim is kept as its evidence. Of two approvals of the link, the one
-    // decided later is its decision. So a review held as conflicting with
+    // decides nothing until that date, and is refused as conflict until then.
+    // From then it replaces what the link holds of no date or dated up to
+    // then (whose evidence stays); a statement dated later, approved or not,
+    // still holds the link, and the claim is kept as its evidence. Of two
+    // approvals of the link, the one first decided later is its decision. So a review held as conflicting with
     // what such a link holds can be approved; on another link a conflict is
     // a property that differs from the fact the graph holds, which no
     // approval changes.
@@ -1533,9 +1533,10 @@ message FoundryDecisionApplied {
   // it by, whatever the link holds: settle that name), changed (the claim
   // reads differently now from what was approved), differs (its sentence is
   // read more than one way), conflict (a property of the fact differs from
-  // the one the load holds, or the link holds one value and a load built
-  // before statements were kept wrote its edge, or an engine before contract
-  // 4.14.0 refused it: load again), blocked (it would break
+  // the one the load holds; or the link holds one value and the claim gives
+  // a date still to come, which a load or resend after it writes; or a load
+  // built before statements were kept wrote its edge, or an engine before
+  // contract 4.14.0 refused it: load again), blocked (it would break
   // a blocking rule, or checking that took more reading than a load allows),
   // no_statement (its review keeps nothing to write), not_stated (the
   // document, read again, no longer states it there), too_large,
