@@ -1370,9 +1370,15 @@ export function extractDocument(
       ["signed_with", String(contract), String(e.id)].join("\u001f"),
     );
     const stored = g.findEdge("signed_with", "fact_key", factKey);
+    // Where an approval the load wrote decides the contract's link, a
+    // statement of another customer loses to it whichever commits first:
+    // its quote is evidence alone (decide).
+    const holder = ontology.oneValued?.has("signed_with")
+      ? approvals.get([g.load, "signed_with", contract].join("\u001f"))
+      : undefined;
     if (stored)
       stored.props.evidence_count = Number(stored.props.evidence_count) + 1;
-    else
+    else if (!holder || holder.to === e.id)
       g.addEdge("signed_with", contract!, e.id, {
         fact_key: factKey,
         provenance: "extracted",
