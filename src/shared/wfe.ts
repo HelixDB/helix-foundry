@@ -2071,7 +2071,7 @@ export type FoundryLoadDocumentSet = {
   facts?: string;
   // (int64) The reviews its documents left when the load last wrote each,
   // of every kind. Not the open reviews: one settled since stays counted
-  // until the load writes the decision.
+  // until the load writes the decision, and a disputed value's once chosen.
   reviews?: string;
   // (int64) The names matched to no one record (none, several, or
   // identifiers that disagree). Nearly every one left a review too.

@@ -3,6 +3,7 @@ package foundrygraphworker
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
@@ -72,6 +73,12 @@ func (r *runner) decisions(ctx context.Context, job *model.FoundryGraphJob, onto
 				}
 				decision.DocID, decision.ClaimKey, decision.StatementHash = *d.DocID, *d.ClaimKey, *d.StatementHash
 				decision.Section, decision.Start, decision.End = d.ClaimSpan.Section, d.ClaimSpan.Start, d.ClaimSpan.End
+				// From contract 4.14.0 the later of two approvals of a link
+				// that holds one value holds it. The engine keeps a written
+				// approval's time to the millisecond and ranks the one it
+				// writes by the time sent, so sent to the millisecond two
+				// approvals rank alike whichever is written first.
+				decision.DecidedAt = decision.DecidedAt.Truncate(time.Millisecond)
 			}
 			out = append(out, decision)
 			if len(out) > maxExtractDecisions {

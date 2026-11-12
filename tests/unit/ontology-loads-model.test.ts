@@ -707,7 +707,7 @@ describe("what a load and a version read of their documents", () => {
       "18 of 121 documents were read for the names and facts they hold. " +
         "99 documents in Set s03, Set s04, Set s05, Set s06, Set s07, and 5 more are stored and searchable, but no route of this version reads those sets, so nothing from them is in the graph: to read them, generate a version whose goal covers them. " +
         "The documents read made 3 fact writes (a fact counts once for each document that states it) and left 67 reviews. 5 names matched no one record: their reviews are among them. " +
-        "A review settled since stays counted until this load writes the decision. " +
+        "A review settled since stays counted until this load writes the decision, and a disputed value stays counted once chosen. " +
         "Of the rest, 1 failed, 1 repeats another document, and 2 are not read yet.",
     );
     // One document of one set, unread.

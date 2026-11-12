@@ -174,7 +174,7 @@ func deleteDone(req string, stream agentv1.Agent_DeleteLoadServer) error {
 		return status.Error(codes.Internal, err.Error())
 	}
 	return deleteEvents(stream, []string{
-		`{"event":"delete_started","contract_version":"4.13.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
+		`{"event":"delete_started","contract_version":"4.14.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
 		`{"event":"deleted","label":"Customer","element":"node","count":1}`, `{"event":"delete_finished"}`,
 	}, `{"status":"done","nodes":1,"edges":2}`)
 }
@@ -254,7 +254,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 			return status.Error(codes.Internal, err.Error())
 		}
 		return ingestEvents(stream, []string{
-			`{"event":"ingest_started","contract_version":"4.13.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.14.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":2}}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"resolve","rows":2}}`,
 			`{"event":"sweep_page","entities":2}`, `{"event":"ingest_finished"}`,
@@ -265,7 +265,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 // extracted ends doc-a ingested with an artifact, doc-b a duplicate of it,
 // doc-c failed retryably and doc-d already held.
 var extracted = []string{
-	`{"event":"extract_started","contract_version":"4.13.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
+	`{"event":"extract_started","contract_version":"4.14.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
 	`{"event":"artifact","doc_id":"doc-a","key":"key_a","json":"{\"sections\":[1]}"}`,
 	documentEvent("doc-a", `{"kind":"ingested"}`, usage),
 	documentEvent("doc-b", `{"kind":"duplicate","of":"doc-a"}`, noUsage),
@@ -3269,11 +3269,15 @@ func TestExtractReviewDecisionsLeftOutOnceStale(t *testing.T) {
 }
 
 // A release goes with its document, as a resolve does, whichever version the
-// load is of, and names nothing the engine refuses.
+// load is of, and names nothing the engine refuses. It says when it was
+// approved to the millisecond, in UTC: from contract 4.14.0 that ranks two
+// approvals of a link that holds one value, and the engine keeps a written
+// one's time to the millisecond.
 func TestExtractReleaseDecisionsGoWithTheirDocument(t *testing.T) {
 	h := newHarness(t)
 	ptr := func(s string) *string { return &s }
-	settled := time.Date(2026, 10, 17, 8, 2, 3, 0, time.UTC)
+	// As MySQL hands it back: the server's zone, to the microsecond.
+	settled := time.Date(2026, 10, 17, 1, 2, 3, 456789000, time.FixedZone("PDT", -7*3600))
 	key, read := strings.Repeat("ab", 32), strings.Repeat("cd", 32)
 	release := func(id, doc string) *model.FoundryReviewDecision {
 		return &model.FoundryReviewDecision{ID: id, OntologyID: "ont-1", Kind: model.FoundryReviewRelease,
@@ -3285,7 +3289,7 @@ func TestExtractReleaseDecisionsGoWithTheirDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := json.Marshal(decisions)
-	want := `[{"kind":"release","doc_id":"doc-a","claim_key":"` + key + `","section":1,"start":2,"end":9,"statement_hash":"` + read + `","decision_id":"1","decided_at":"2026-10-17T08:02:03Z"}]`
+	want := `[{"kind":"release","doc_id":"doc-a","claim_key":"` + key + `","section":1,"start":2,"end":9,"statement_hash":"` + read + `","decision_id":"1","decided_at":"2026-10-17T08:02:03.456Z"}]`
 	if string(got) != want {
 		t.Fatalf("decisions = %s, want %s", got, want)
 	}

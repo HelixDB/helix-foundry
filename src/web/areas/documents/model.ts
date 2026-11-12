@@ -1472,7 +1472,7 @@ const reviews: Record<ReviewReason, { title: string; text: string }> = {
   },
   conflict: {
     title: "Disagrees with your data",
-    text: "The text says something different from what the tables say.",
+    text: "The text gives a link another value than the one your data holds, so it wasn’t stored. Where the link holds one value, approving it replaces that value.",
   },
   violation: {
     title: "Would break a rule",
@@ -1500,7 +1500,7 @@ const reviews: Record<ReviewReason, { title: string; text: string }> = {
   },
   prop_conflict: {
     title: "Disagrees on a value",
-    text: "Documents state different values for this property, or one the tables don’t hold, so the stored value is the table’s or none.",
+    text: "Documents state different values for this property, or one the tables don’t hold, so the stored value is the table’s, none, or the one a person chose.",
   },
   attribute_low_confidence: {
     title: "The model wasn’t sure of a value",

@@ -621,13 +621,23 @@ const sameValue = (a: Value, b: Value) =>
     : JSON.stringify(a) === JSON.stringify(b);
 
 /**
+ * The value a table row set of an entity's prop, kept aside while a decision
+ * replaces it, as the engine keeps the row's statement: what the rows and
+ * quotes give without the decision, and the value again once it is removed.
+ * Keyed by the entity's node.
+ */
+const rowValues = new WeakMap<object, Map<string, Value | undefined>>();
+
+/**
  * Sets an entity's prop from the whole set of evidence about it, so the
  * order documents came in never matters: a decision's value (null removes
  * it) wins; a value a row set stays; evidence that agrees sets the value
  * of the most confident (ties by document id); evidence that disagrees
  * removes it. The quotes a conflict's review lists, as the engine's
- * attribute::settle gives them: those disagreeing with a row's value, or
- * every quote when documents disagree; none without a conflict.
+ * attribute::settle gives them from contract 4.14.0, weighed without the
+ * decision: those disagreeing with a row's value, or every quote when
+ * documents disagree; none without a conflict. So a load lists the same
+ * review before a decision, with it and after it is removed.
  */
 function settle(
   g: LoadGraph,
@@ -643,13 +653,6 @@ function settle(
       d.entityKey === (node.props.entity_key ?? node.props.norm_name) &&
       d.prop === prop,
   );
-  if (decision?.kind === "prop") {
-    const v = decision.value;
-    if (v.null !== undefined) delete node.props[prop];
-    else if (v.integer !== undefined) node.props[prop] = Number(v.integer);
-    else node.props[prop] = v.text ?? v.number ?? v.boolean!;
-    return [];
-  }
   const about = [...g.graph.edges.values()]
     .filter((e) => e.label === E.ABOUT && e.to === entity)
     .flatMap((e) => {
@@ -667,26 +670,42 @@ function settle(
         Number(b.props.confidence) - Number(a.props.confidence) ||
         String(a.props.doc_id).localeCompare(String(b.props.doc_id)),
     );
-  if (rowSet)
-    return quotes
-      .filter((q) => !sameValue(q.props.value!, node.props[prop]!))
-      .map((q) => q.props);
+  const kept = rowValues.get(node);
+  const row = kept?.has(prop) ? kept.get(prop) : node.props[prop];
   const agree = quotes.every((q) =>
     sameValue(q.props.value!, quotes[0]!.props.value!),
   );
-  if (agree && quotes.length) node.props[prop] = quotes[0]!.props.value!;
+  const disagreeing = rowSet
+    ? quotes.filter((q) => row === undefined || !sameValue(q.props.value!, row))
+    : agree
+      ? []
+      : quotes;
+  if (decision?.kind === "prop") {
+    if (rowSet && !kept?.has(prop))
+      rowValues.set(node, (kept ?? new Map()).set(prop, row));
+    const v = decision.value;
+    if (v.null !== undefined) delete node.props[prop];
+    else if (v.integer !== undefined) node.props[prop] = Number(v.integer);
+    else node.props[prop] = v.text ?? v.number ?? v.boolean!;
+  } else if (kept?.has(prop)) {
+    // The decision is gone: the row's value again.
+    if (row === undefined) delete node.props[prop];
+    else node.props[prop] = row;
+    kept.delete(prop);
+  } else if (rowSet) {
+    // The row's value stays.
+  } else if (agree && quotes.length) node.props[prop] = quotes[0]!.props.value!;
   else delete node.props[prop];
-  return agree ? [] : quotes.map((q) => q.props);
+  return disagreeing.map((q) => q.props);
 }
 
 /**
  * Applies a load's value decisions to the entity of `type` and `key` (its
  * `entity_key`, or a named type's `norm_name`), as the engine does when an
  * Extract carries them: a decision of `prop` sets its value (null removes
- * it), and with none the prop is what its evidence gives. A value a table
- * row set is the row's again only on the next load: the mock keeps no
- * history of it, where the engine restores it at once. False when the load
- * holds no such entity.
+ * it), and with none the prop is what its evidence gives: a value a table
+ * row set is the row's again at once, as the engine restores it. False when
+ * the load holds no such entity.
  */
 export function decideValue(
   g: LoadGraph,
@@ -710,16 +729,30 @@ export function decideValue(
 type Nameable = { id: number; name?: string; ids: string[] };
 
 /**
+ * From contract 4.14.0 a person's approval of a link that holds one value
+ * decides it, as the engine weighs it, whichever document committed first:
+ * `from`'s other edges of `link` go, and their evidence stays.
+ */
+function displace(g: LoadGraph, link: string, from: number, to: number) {
+  for (const e of [...g.graph.edges.values()])
+    if (e.label === link && e.from === from && e.to !== to)
+      g.graph.removeEdge(e.id);
+}
+
+/**
  * Writes what a held claim's review states as its fact, as the engine's
  * release does in a load that holds the review's document: the edge, or one
  * more piece of evidence of it, the evidence at the review's quote, at the
  * verifier's confidence (none for a claim no verifier judged), and the review
  * gone. Its ends are the entities the review concerns, in the link's order.
+ * On a link that holds one value (`one`) the approval displaces what the link
+ * held.
  */
 export function releaseReview(
   g: LoadGraph,
   review: number,
   written: { ontologyVersion: string; model: string; verifier: string },
+  one = false,
 ) {
   const r = g.node(review);
   if (!r) return;
@@ -757,6 +790,7 @@ export function releaseReview(
   });
   g.addEdge(E.FROM_SECTION, ev, section);
   g.graph.removeNode(review);
+  if (one) displace(g, link, from, to);
 }
 
 export type ExtractOutcome =
@@ -778,6 +812,8 @@ export type UndoableLink = "adjudicated" | WeakLink;
 /** What extraction reads of the version's ontology.toml. */
 export type ExtractOntology = {
   types: Set<string>;
+  // The links that hold one value (`cardinality = "one"`).
+  oneValued?: Set<string>;
   // A type's first `names` prop.
   names: Map<string, string>;
   // A type's identifier props and their kind.
@@ -804,14 +840,17 @@ export function extractDocument(
   // "differs" gives its place a review stating something else, and refuses
   // it; "unverified" is one no verifier judged, written at no confidence;
   // "one_end" names one of its ends; "no_statement" is one an older load
-  // held, with no statement to approve.
+  // held, with no statement to approve; "conflict" is one held as
+  // conflicting with what its link holds, which an approval writes on a link
+  // that holds one value (contract 4.14.0), displacing what it held.
   held?:
     | "refused"
     | WeakLink
     | "differs"
     | "unverified"
     | "one_end"
-    | "no_statement",
+    | "no_statement"
+    | "conflict",
   // The models that read and check it.
   readers: { model: string; verifier: string } = {
     model: MODEL,
@@ -1168,6 +1207,12 @@ export function extractDocument(
     }
   }
   const linked = contract !== undefined && scope.links.has("signed_with");
+  // The customer a person's approval gives a contract's signed_with, where
+  // that link holds one value: it holds the link whatever else the document
+  // states of it, in whichever order; of two approvals the later decided, as
+  // the engine ranks them: here the one saved later, as a load keeps its
+  // decisions in the order they were saved.
+  let approved: { to: number; rank: number } | undefined;
   for (const { e, hits, resolvedBy } of found) {
     if (!hits.length) continue;
     counts.entities += 1;
@@ -1207,7 +1252,7 @@ export function extractDocument(
         object: { type: g.node(e.id)!.label, name: e.name || first.surface },
         props: {},
       });
-      const released = decisions.some(
+      const release = decisions.find(
         (d) =>
           d.kind === "release" &&
           d.docId === doc.id &&
@@ -1217,6 +1262,7 @@ export function extractDocument(
           d.claimEnd === place.end &&
           d.statementHash === sha256(`signed_with\u001f${statement}`),
       );
+      const released = !!release;
       // The link its name stands on, where that holds the claim.
       const weak = WEAK_LINKS.find((w) => w === held);
       const refused = held === "refused" || !!weak || held === "differs";
@@ -1226,7 +1272,10 @@ export function extractDocument(
           doc_id: doc.id,
           section: first.s.ordinal,
           ...place,
-          reason: held === "unverified" ? "unverified" : "low_confidence",
+          reason:
+            held === "unverified" || held === "conflict"
+              ? held
+              : "low_confidence",
           claim_key: claimKey,
           claim,
           ...(held === "no_statement" ? {} : { statement }),
@@ -1276,6 +1325,12 @@ export function extractDocument(
         continue;
       }
       stated = held === "unverified" ? 0 : 0.72;
+      const rank = decisions.indexOf(release!);
+      if (
+        ontology.oneValued?.has("signed_with") &&
+        (!approved || rank > approved.rank)
+      )
+        approved = { to: e.id, rank };
     }
     const factKey = sha256(
       ["signed_with", String(contract), String(e.id)].join("\u001f"),
@@ -1304,6 +1359,7 @@ export function extractDocument(
     g.addEdge(E.FROM_SECTION, ev, first.s.node);
     counts.facts += 1;
   }
+  if (approved) displace(g, "signed_with", contract!, approved.to);
   [...unresolved, ...adjudicated].forEach((u, k) => {
     const q = quote(u.s, u.i);
     const r = g.addNode(N.Review, {

@@ -2680,8 +2680,18 @@ describe("review decisions", () => {
       next.find("Contract", "norm_name", "master services agreement")!.props
         .term_months,
     ).toBe(36);
-    expect(reviews(next).some((n) => n.props.reason === "prop_conflict")).toBe(
-      false,
+    // From contract 4.14.0 a load given the decision lists the documents'
+    // conflict too, which the decision settles.
+    const kept = reviews(next).find((n) => n.props.reason === "prop_conflict");
+    expect(kept?.props).toMatchObject({ prop: "term_months" });
+    expect(
+      JSON.parse(String(kept!.props.values))
+        .map((v: { value: number }) => v.value)
+        .sort(),
+    ).toEqual(
+      JSON.parse(String(rv.props.values))
+        .map((v: { value: number }) => v.value)
+        .sort(),
     );
     expect(
       [...next.nodes()].filter(
@@ -3091,9 +3101,30 @@ describe("review decisions", () => {
     expect(
       next.find("Customer", "entity_key", "cus_GLOBEX01")!.props.currency,
     ).toBe("GBP");
-    expect(reviews(next).some((n) => n.props.reason === "prop_conflict")).toBe(
-      false,
+    // From contract 4.14.0 its review is weighed without the decision: the
+    // quote that disagrees with the table's value, listed in every load.
+    const kept = reviews(next).filter(
+      (n) => n.props.reason === "prop_conflict",
     );
+    expect(kept).toHaveLength(1);
+    expect(
+      JSON.parse(String(kept[0]!.props.values)).map(
+        (v: { value: string }) => v.value,
+      ),
+    ).toEqual(["GBP"]);
+    // Removed, the table's value is back at once, and the review stays.
+    const id = saved.body.decision.id;
+    expect((await call("DELETE", `${O}/review-decisions/${id}`)).status).toBe(
+      200,
+    );
+    vi.setSystemTime(Date.now() + 10_000);
+    await call("GET", `${O}/review-decisions`);
+    expect(
+      next.find("Customer", "entity_key", "cus_GLOBEX01")!.props.currency,
+    ).toBe("usd");
+    expect(
+      reviews(next).filter((n) => n.props.reason === "prop_conflict"),
+    ).toHaveLength(1);
   });
 
   it("lists an adjudicated review's choice only", async () => {
@@ -3287,6 +3318,85 @@ describe("review decisions", () => {
     expect((await listed())[0].applied).toMatchObject({ status: "written" });
   });
 
+  it("approves a claim held as a conflict only on a link that holds one value, where it replaces what the link held", async () => {
+    Object.assign(config, { documentHeld: "conflict" });
+    await uploaded(
+      "variant.md",
+      Buffer.from(
+        "# Hedged deal\n\nInitech LLC signed. Globex Corporation may have signed.\n",
+      ),
+    );
+    const g = await loaded("first");
+    const rv = reviews(g).find((n) => n.props.reason === "conflict")!;
+    expect(rv.props).toMatchObject({
+      suggested_link: "signed_with",
+      claim_key: expect.any(String),
+      statement: expect.any(String),
+    });
+    const statementHash = createHash("sha256")
+      .update(`signed_with\u001f${String(rv.props.statement)}`)
+      .digest("hex");
+    const approve = () =>
+      call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+        decision: { release: { statementHash } },
+      });
+    const signedWith = (load: typeof g) => {
+      const deal = load.find("Contract", "norm_name", "hedged deal")!;
+      return [...load.graph.edges.values()]
+        .filter((e) => e.label === "signed_with" && e.from === deal.id)
+        .map((e) => String(load.node(e.to)!.props.entity_key))
+        .sort();
+    };
+    const quotes = (load: typeof g) =>
+      [...load.nodes()]
+        .filter(
+          (n) =>
+            n.label === FOUNDRY_NODES.Evidence &&
+            n.props.link === "signed_with",
+        )
+        .map((n) => String(n.props.quote))
+        .sort();
+    expect(signedWith(g)).toEqual(["cus_INITECH2"]);
+    // signed_with holds many here: a conflict is a property that differs,
+    // which no approval changes, so neither an approval nor a rejection.
+    expect(refusal(await approve())).toEqual([
+      400,
+      "this claim conflicts with a property of a fact the graph holds; only a conflict on a link that holds one value can be approved",
+    ]);
+    expect(
+      (
+        await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+          decision: { reject: { statementHash } },
+        })
+      ).status,
+    ).toBe(400);
+    expect((await call("GET", `${O}/review-decisions`)).body.decisions).toEqual(
+      [],
+    );
+
+    // Where it holds one value, the approval decides the link: Globex
+    // replaces Initech LLC, whose quote stays as evidence.
+    Object.assign(config, { oneValuedLinks: ["signed_with"] });
+    expect((await approve()).status).toBe(200);
+    vi.setSystemTime(Date.now() + 10_000);
+    const [d] = (await call("GET", `${O}/review-decisions`)).body.decisions;
+    expect(d.applied).toEqual({ status: "written", at: expect.any(String) });
+    expect(reviews(g).filter((n) => n.props.reason === "conflict")).toEqual([]);
+    expect(signedWith(g)).toEqual(["cus_GLOBEX01"]);
+    expect(quotes(g)).toEqual([
+      "Globex Corporation may have signed.",
+      "Initech LLC signed.",
+    ]);
+
+    // A new load given the approval holds the same.
+    const next = await loaded("next");
+    expect(signedWith(next)).toEqual(["cus_GLOBEX01"]);
+    expect(quotes(next)).toEqual(quotes(g));
+    expect(reviews(next).filter((n) => n.props.reason === "conflict")).toEqual(
+      [],
+    );
+  });
+
   it("says why the current load kept an approved claim held", async () => {
     Object.assign(config, { documentHeld: "legal_form" });
     await uploaded(
@@ -3449,7 +3559,7 @@ describe("review decisions", () => {
       ["resend", "succeeded"],
       ["load", "succeeded"],
     ]);
-    // Its review was written when the documents were read, and stays.
+    // Its review stays: every load lists it (contract 4.14.0).
     expect(reviews(g).some((n) => n.props.reason === "prop_conflict")).toBe(
       true,
     );
@@ -3678,11 +3788,13 @@ describe("review decisions", () => {
       "master services agreement",
     )!;
     expect(contract.props.term_months).toBe(36);
+    // The review is weighed without the decision (contract 4.14.0): the new
+    // document's value joins the ones in dispute, and the decision holds.
     expect(
       JSON.parse(String(rv.props.values)).map(
         (v: { value: number }) => v.value,
       ),
-    ).toEqual([24, 36]);
+    ).toEqual([24, 36, 48]);
     // The next load reads it too.
     expect(
       (await loaded("next")).find(

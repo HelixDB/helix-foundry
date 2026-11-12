@@ -97,10 +97,17 @@ const isScalar = (v: unknown): v is string | number | boolean =>
   typeof v === "boolean" ||
   (typeof v === "number" && Number.isFinite(v));
 
-/** The reasons a person's release settles: a verifier doubted the claim. */
+/**
+ * The reasons a person's release settles: a verifier doubted the claim, or,
+ * from contract 4.14.0, it conflicts with what its link holds. An approval
+ * of the latter is written only on a link that holds one value, where it
+ * decides the link; on another link the conflict is a property that differs
+ * from the fact the graph holds, which no approval changes (`conflict`).
+ */
 const RELEASE_REASONS: ReadonlySet<ReviewReason> = new Set<ReviewReason>([
   "low_confidence",
   "unverified",
+  "conflict",
 ]);
 
 /**
@@ -217,7 +224,10 @@ export type Statement = {
  *   else: no approval says which, so the engine refuses both. `unsettled` are
  *   the ends whose names the load linked on less than a name, in the order
  *   the engine refuses them, which a person settles before the claim is
- *   written where they hold it (holdingEnds);
+ *   written where they hold it (holdingEnds). `conflict` is a claim held as
+ *   conflicting with what its link holds: approving it replaces that, on a
+ *   link that holds one value only (contract 4.14.0), and on any other link
+ *   nothing settles it;
  * - `stale`: a reason a decision settles, on a review written without the
  *   identity the backend reads (a load from before decisions) or whose
  *   entity this read doesn't find. A new load writes it again.
@@ -255,6 +265,7 @@ export type Settle =
       differs?: boolean;
       // Never empty: a claim with no such end has none.
       unsettled?: Unsettled[];
+      conflict?: true;
     }
   | { kind: "stale" };
 
@@ -380,6 +391,9 @@ function settleOf(
       stored = text(r.statement),
       stated = stored ? statement(stored) : undefined,
       { section, start, end } = r;
+    // A conflict a load wrote before claims kept statements was never one a
+    // person settles, and on a link that holds many values none is.
+    if (reason === "conflict" && !stored) return { candidates };
     // An approval is of what its card shows: a review of a load before
     // statements shows nothing to approve.
     if (
@@ -408,6 +422,7 @@ function settleOf(
         statement: stated,
         stored,
         named: ends(r.claim) >= 2,
+        ...(reason === "conflict" ? { conflict: true as const } : {}),
       },
     };
   }
@@ -538,7 +553,8 @@ export function markDiffering<T extends Placed>(
 }
 
 /**
- * Needs review's groups in order: held claims to approve, names linked on
+ * Needs review's groups in order: held claims to approve (those a verifier
+ * doubted, then those that conflict with what their link holds), names linked on
  * less than a name (by legal form, by part of a name, by an own-name
  * identifier), values in conflict, then links the ontology doesn't have. Any
  * other reason follows, in the order it first appears.
@@ -546,6 +562,7 @@ export function markDiffering<T extends Placed>(
 const GROUP_ORDER: readonly string[] = [
   "low_confidence",
   "unverified",
+  "conflict",
   ...WEAK_LINKS,
   "prop_conflict",
   "unmatched",
@@ -644,6 +661,13 @@ export function unrejected<R extends Settleable>(
  * until that name is settled, and only a later load can write it. A stale
  * review settles by no release, so it's never one of them.
  *
+ * From contract 4.14.0 an approval of a link that holds one value decides
+ * it, and of two the later holds it. So none held as conflicting with what
+ * its link holds (`conflict`), as approving it replaces a value the graph
+ * holds, and none of a link that holds one value whose subject the reviews
+ * give another object too: sent at once, which of them would hold the link
+ * is chance. A person approves those on their cards.
+ *
  * @example
  * approvable([held, readTwoWays, alreadyApproved], decisions, () => false); // [held.settle]
  */
@@ -652,10 +676,24 @@ export function approvable(
   decisions: readonly ReviewDecision[],
   single: (link: string) => boolean,
 ): Extract<Settle, { kind: "release" }>[] {
+  const end = (e: StatedEnd) => `${e.type}\u001f${e.name}`;
+  const slot = (s: Extract<Settle, { kind: "release" }>) =>
+    `${s.link}\u001f${end(s.statement.subject)}`;
+  // The objects each one-valued link's subject is given, by every held claim
+  // listed, approved or not.
+  const objects = new Map<string, Set<string>>();
+  for (const { settle: s } of reviews)
+    if (s?.kind === "release" && single(s.link))
+      objects.set(
+        slot(s),
+        (objects.get(slot(s)) ?? new Set()).add(end(s.statement.object)),
+      );
   return reviews.flatMap(({ settle: s }) =>
     s?.kind === "release" &&
+    !s.conflict &&
     !s.differs &&
     !holdingEnds(s.unsettled, single(s.link)).length &&
+    !(single(s.link) && objects.get(slot(s))!.size > 1) &&
     !decisions.some((d) => ofClaim(d, s))
       ? [s]
       : [],
@@ -812,23 +850,39 @@ export function matchesReview(d: ReviewDecision, s: Settle) {
 
 /**
  * How a person's saved approvals stand toward a held claim's card, `read`
- * being the hash of what it shows. `saved` is the approval of this review.
- * On the load a person can settle, `moved` is that it approved what the claim
- * said before: the engine refuses it. `earlier` is that this statement was
- * approved at this place under another key, which it held before: a sibling
- * claim of the sentence states something else. An older load's statement may
- * not be the current one, so it says neither.
+ * being the hash of what it shows. `saved` is the approval of this review:
+ * by its key, or, on the load a person can settle, an approval of this
+ * statement at this place under another key, which the claim held before (a
+ * rebuild moves keys): from contract 4.14.0 the engine matches a release
+ * whose key it holds no review under by its place and statement hash, so
+ * that approval is this claim's and says what became of it. A sibling claim
+ * of the sentence states something else, and isn't. On that load `moved` is
+ * that the approval of this review approved what the claim said before: the
+ * engine refuses it. An older load's statement may not be the current one,
+ * so it says neither.
  *
  * @example
- * approvalOf([], release, "abc", true); // { saved: undefined, moved: false, earlier: false }
+ * approvalOf([], release, "abc", true); // { saved: undefined, moved: false }
  */
 export function approvalOf<D extends ReviewDecision>(
   decisions: readonly D[],
   s: Extract<Settle, { kind: "release" }>,
   read: string | undefined,
   editable: boolean,
-): { saved?: D; moved: boolean; earlier: boolean } {
-  const saved = decisions.find((d) => matchesReview(d, s));
+): { saved?: D; moved: boolean } {
+  const saved =
+    decisions.find((d) => matchesReview(d, s)) ??
+    (editable && read
+      ? decisions.find(
+          (d) =>
+            d.kind === "release" &&
+            d.docId === s.docId &&
+            d.claimSection === s.section &&
+            d.claimStart === s.start &&
+            d.claimEnd === s.end &&
+            d.statementHash === read,
+        )
+      : undefined);
   return {
     saved,
     moved:
@@ -836,20 +890,6 @@ export function approvalOf<D extends ReviewDecision>(
       !!read &&
       saved?.kind === "release" &&
       saved.statementHash !== read,
-    earlier:
-      editable &&
-      !!read &&
-      !saved &&
-      decisions.some(
-        (d) =>
-          d.kind === "release" &&
-          d.docId === s.docId &&
-          d.claimKey !== s.claimKey &&
-          d.claimSection === s.section &&
-          d.claimStart === s.start &&
-          d.claimEnd === s.end &&
-          d.statementHash === read,
-      ),
   };
 }
 
@@ -928,8 +968,10 @@ export function refusalText(
       return "It reads differently now from what was approved. Read it again and approve what it says.";
     case "differs":
       return "Its sentence is read more than one way, and no approval can say which.";
+    // From contract 4.14.0 an approval of a link that holds one value
+    // replaces what the link holds, so this is all that's left of it.
     case "conflict":
-      return "It conflicts with what the graph holds for this link: another statement of the same date, or one that can’t be compared with it.";
+      return "It conflicts with what the graph holds for this link: a property of it differs from the one the graph holds, which no approval or new load changes, or a load built before statements were kept wrote the link, which a new load writes again.";
     case "blocked":
       return "Writing it would break a rule the ontology enforces, or checking that took more reading than a load allows.";
     case "no_statement":
@@ -1007,30 +1049,39 @@ export function holdsDecided(
 /**
  * What a property review's card says of the value saved for it (`value`, as
  * the page shows one), from what the current load made of the decision
- * (`applied`; unset when that load's list doesn't hold it). The load says
- * only that it was sent the value: a review still listed was written when
- * the documents were read, before the decision, and a document dated after
- * the decision still wins.
+ * (`applied`; unset when that load's list doesn't hold it) and whether the
+ * entity holds that value now (`holds`: holdsDecided, or no value stored for
+ * a decision of none). From contract 4.14.0
+ * every load lists the values its documents dispute, decided or not, so the
+ * review stays listed and the decision is what settles it. The load says
+ * only that it was sent the value: a document dated after the decision
+ * still wins, which is why a load may hold another.
  *
  * @example
- * decidedText({ status: "applied" }, "36"); // "Decided: 36. This load was sent the decision, …"
+ * decidedText({ status: "applied" }, "36", null, true); // "Decided: 36. This load holds it. …"
  * decidedText(undefined, "36"); // "A decision is saved (36), and this load hasn’t read it. …"
  */
 export function decidedText(
   applied: DecisionApplied | null | undefined,
   value: string,
   live?: string | null,
+  holds = false,
 ) {
   const shown = value || "no value";
+  const settled =
+    "The documents’ values stay listed here, as in every load: this decision settles them.";
   switch (applied?.status) {
     case "pending":
       return waitingText(live, "prop");
     case "applied":
-      return `Decided: ${shown}. This load was sent the decision, and holds that value unless a document dated after the decision states another. The review stays listed here: it was written before the decision.`;
+    case "":
+      return holds
+        ? `Decided: ${shown}. This load holds it. ${settled}`
+        : applied.status === "applied"
+          ? `Decided: ${shown}. This load was sent the decision, and holds that value unless a document dated after the decision states another. ${settled}`
+          : `Decided: ${shown}. This load read the decision and holds another value: a document dated after the decision states it. Choose again or remove the decision.`;
     case "unconfirmed":
       return `Decided: ${shown}, but the job that sends it to this load failed. Choose it again to send it.`;
-    case "":
-      return "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision.";
     default:
       return `A decision is saved (${shown}), and this load hasn’t read it. Choose it again to apply it now.`;
   }

@@ -150,7 +150,9 @@ func reviewService(t *testing.T, review string) (*Service, *decisionStore, *[]st
 	t.Helper()
 	queries := []string{}
 	current := "load-1"
-	def, _ := json.Marshal(ontologyagent.Definition{OntologyTOML: "[types.Customer]\nkey = [\"id\"]\nprops = { name = \"string\", amount = \"float\" }"})
+	def, _ := json.Marshal(ontologyagent.Definition{OntologyTOML: "[types.Customer]\nkey = [\"id\"]\nprops = { name = \"string\", amount = \"float\" }\n" +
+		"[links.promised_to]\nfrom = \"Commitment\"\nto = \"Account\"\ncardinality = \"one\"\n" +
+		"[links.partner_of]\nfrom = \"Account\"\nto = \"Account\"\n"})
 	db := &decisionStore{ontology: &foundrymodel.FoundryOntology{ID: "o", WorkspaceID: "workspace-a", TenantID: "tenant-a", CurrentLoadID: &current}, load: &foundrymodel.FoundryLoad{ID: current, VersionID: "v", Status: foundrymodel.FoundryLoadReady}, version: &foundrymodel.OntologyVersion{ID: "v", Definition: def}}
 	graph := graphFunc(func(ctx context.Context, tenantID string, query []byte) (int, []byte, error) {
 		queries = append(queries, string(query))
@@ -288,9 +290,11 @@ func TestSettleFoundryReview(t *testing.T) {
 }
 
 // A person's approval of a held claim names its document and its key, no type,
-// and reads nothing of the load's entities.
+// and reads nothing of the load's entities. From contract 4.14.0 that takes a
+// claim held as conflicting with what a link that holds one value holds:
+// promised_to is one.
 func TestSettleHeldClaim(t *testing.T) {
-	for _, reason := range []string{"low_confidence", "unverified"} {
+	for _, reason := range []string{"low_confidence", "unverified", "conflict"} {
 		s, db, queries := reviewService(t, heldReview(reason, testClaimKey))
 		out, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(releaseChoice(testRead)))
 		if err != nil {
@@ -325,7 +329,7 @@ func TestSettleHeldClaim(t *testing.T) {
 // what the person read, and is only saved: no load is told, no job is
 // handed over, and the answer says nothing of a load.
 func TestRejectHeldClaim(t *testing.T) {
-	for _, reason := range []string{"low_confidence", "unverified"} {
+	for _, reason := range []string{"low_confidence", "unverified", "conflict"} {
 		s, db, queries := reviewService(t, heldReview(reason, testClaimKey))
 		out, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(rejectChoice(testRead)))
 		if err != nil {
@@ -445,6 +449,27 @@ func TestListFoundryReviewDecisionsApplied(t *testing.T) {
 	}
 }
 
+// A conflict on a link that holds many values is a property that differs
+// from the fact the graph holds, which no approval changes: the answer says
+// which conflicts can be approved, and nothing is saved. A version whose
+// TOML can't be read says so.
+func TestSettleConflictOfManyValuedLink(t *testing.T) {
+	review := strings.Replace(heldReview("conflict", testClaimKey), "promised_to", "partner_of", 1)
+	s, db, queries := reviewService(t, review)
+	_, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer),
+		settleRequest(releaseChoice(foundrymodel.FoundryStatementHash("partner_of", testStatement))))
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "only a conflict on a link that holds one value can be approved") ||
+		len(db.saved) != 0 || len(db.resends) != 0 || len(*queries) != 1 {
+		t.Fatalf("err %v, saved %v, resends %v, reads %v", err, db.saved, db.resends, *queries)
+	}
+	s, db, _ = reviewService(t, heldReview("conflict", testClaimKey))
+	db.version.Definition, _ = json.Marshal(ontologyagent.Definition{OntologyTOML: "[links.promised_to\n"})
+	_, err = s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(releaseChoice(testRead)))
+	if status.Code(err) != codes.Internal || len(db.saved) != 0 {
+		t.Fatalf("err %v, saved %v", err, db.saved)
+	}
+}
+
 func TestSettleHeldClaimValidation(t *testing.T) {
 	for name, tc := range map[string]struct {
 		review string
@@ -467,9 +492,16 @@ func TestSettleHeldClaimValidation(t *testing.T) {
 		"a key the engine refuses":  {heldReview("low_confidence", "ABC"), releaseChoice(testRead), codes.FailedPrecondition},
 		"no place":                  {`{"items":[{"reason":"low_confidence","doc_id":"doc-a","claim_key":"` + testClaimKey + `"}]}`, releaseChoice(testRead), codes.FailedPrecondition},
 		"a value's hold":            {heldReview("attribute_low_confidence", testClaimKey), releaseChoice(testRead), codes.FailedPrecondition},
-		"a conflict":                {heldReview("conflict", testClaimKey), releaseChoice(testRead), codes.FailedPrecondition},
-		"a constraint's":            {heldReview("violation", testClaimKey), releaseChoice(testRead), codes.FailedPrecondition},
-		"an identity":               {heldReview("identity", testClaimKey), releaseChoice(testRead), codes.FailedPrecondition},
+		"a conflict of a link that holds many values": {strings.Replace(heldReview("conflict", testClaimKey), "promised_to", "partner_of", 1),
+			releaseChoice(foundrymodel.FoundryStatementHash("partner_of", testStatement)), codes.FailedPrecondition},
+		"a reject of a conflict of a link that holds many values": {strings.Replace(heldReview("conflict", testClaimKey), "promised_to", "partner_of", 1),
+			rejectChoice(foundrymodel.FoundryStatementHash("partner_of", testStatement)), codes.FailedPrecondition},
+		"a conflict of a link the version lacks": {strings.Replace(heldReview("conflict", testClaimKey), "promised_to", "gone", 1),
+			releaseChoice(foundrymodel.FoundryStatementHash("gone", testStatement)), codes.FailedPrecondition},
+		"a conflict with no link": {strings.Replace(heldReview("conflict", testClaimKey), `"suggested_link":"promised_to",`, "", 1),
+			releaseChoice(foundrymodel.FoundryStatementHash("", testStatement)), codes.FailedPrecondition},
+		"a constraint's": {heldReview("violation", testClaimKey), releaseChoice(testRead), codes.FailedPrecondition},
+		"an identity":    {heldReview("identity", testClaimKey), releaseChoice(testRead), codes.FailedPrecondition},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, db, _ := reviewService(t, tc.review)

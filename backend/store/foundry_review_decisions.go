@@ -185,8 +185,12 @@ ON DUPLICATE KEY UPDATE value=VALUES(value), decided_by_user_id=VALUES(decided_b
 // saveFoundryReviewDecision writes d, or replaces the choice of its identity,
 // keeping that one's id, and reads it back into d. With stands, the choice of
 // its identity is d's already and is left as it is, with who made it and
-// when: only d's documents are added to it. The caller holds the ontology's
-// lock and has checked d.
+// when: only d's documents are added to it. A release of the statement its
+// claim's approval already binds stands too: from contract 4.14.0 the
+// approval's time ranks it on a link that holds one value, so it stays the
+// time the person first approved what they read, in every Extract that
+// sends it, as a load that wrote it keeps it. The caller holds the
+// ontology's lock and has checked d.
 func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.FoundryReviewDecision, stands bool) error {
 	var value, section, start, end any
 	if len(d.Value) > 0 {
@@ -199,8 +203,10 @@ func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.Foundr
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_review_decisions
  (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id)
  VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)
- ON DUPLICATE KEY UPDATE entity_key=VALUES(entity_key), value=VALUES(value), statement_hash=VALUES(statement_hash),
- decided_by_user_id=VALUES(decided_by_user_id), decided_at=NOW(6)`,
+ ON DUPLICATE KEY UPDATE
+ decided_by_user_id=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), decided_by_user_id, VALUES(decided_by_user_id)),
+ decided_at=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), decided_at, NOW(6)),
+ entity_key=VALUES(entity_key), value=VALUES(value), statement_hash=VALUES(statement_hash)`,
 			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID); err != nil {
 			return err
 		}

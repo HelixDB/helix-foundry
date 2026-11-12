@@ -94,8 +94,10 @@ function NameReviews({
 /**
  * What approving a held claim does: its ends in order, its link, its
  * properties as stored. On a link that holds one value (`single`, also when
- * the version isn't known) a date decides, so it promises no edge and hides no
- * replacement. The ends whose names the load linked on less than a name,
+ * the version isn't known) the approval decides the link from today
+ * (contract 4.14.0): it replaces what the link holds, which a claim held as
+ * conflicting with it (`conflict`) says, and a statement dated later still
+ * wins, so it promises no edge. The ends whose names the load linked on less than a name,
  * where that holds the claim (`holding`, holdingEnds), are named as the
  * document writes them, each with the way to its review.
  */
@@ -123,9 +125,13 @@ function ClaimWritten({
       </p>
       {single && (
         <p role="note">
-          This link holds one value, and the latest dated statement wins. If
-          this one is newest it replaces what the link holds now; if not, it’s
-          kept as evidence and no link is written.
+          This link holds one value. An approval makes this its value from the
+          day it is first approved: it replaces what the link holds then, whose
+          evidence stays. A statement dated after that day still wins, and then
+          this is kept as evidence only; of two approvals, the later holds the
+          link.
+          {settle.conflict &&
+            " It conflicts with what the graph holds: approving replaces another value the link holds, though not a property of the same fact that differs, which keeps it held."}
         </p>
       )}
       {holding.length > 0 && (
@@ -256,6 +262,12 @@ export function SettleReview({
           });
   // Also when the version isn't known: a card promises no edge it can't.
   const single = isRelease && (!naming.version || naming.oneValued.has(s.link));
+  // A claim held as conflicting with what its link holds, where the version
+  // says the link holds many values: a property of the fact differs from the
+  // one the graph holds, which no approval changes (contract 4.14.0), so
+  // nothing settles it here. Where the version isn't known the backend,
+  // which reads it, decides.
+  const fixed = isRelease && !!s.conflict && !single;
   // The names of the claim the load linked on less than a name that hold it
   // in this load, in the order the engine refuses them.
   const unsettled = isRelease ? holdingEnds(s.unsettled, single) : [];
@@ -263,8 +275,7 @@ export function SettleReview({
     ? approvalOf(query.data ?? [], s, read.data, editable)
     : undefined;
   const saved = approval?.saved ?? query.data?.find((d) => matchesReview(d, s));
-  const moved = !!approval?.moved,
-    earlier = !!approval?.earlier;
+  const moved = !!approval?.moved;
   // What the current load made of a saved approval: nothing yet when its
   // list doesn't hold it (saved while another load was current), and
   // nothing to write when it found no claim at the approval's place. Either
@@ -276,14 +287,23 @@ export function SettleReview({
     retry = applied?.status === "unconfirmed";
   // Approve where a card could be approved now, or, held for a name, where
   // that saves an approval of what it says for a later load: none is saved,
-  // or the one saved approved what it said before. Reject on any held claim
+  // or the one saved approved what it said before. Also where a load
+  // refused it as a conflict on a link that holds one value, as an engine
+  // before contract 4.14.0 did: sent again, at no cost, it decides the link
+  // now, unless a property of the fact differs. Reject on any held claim
   // that isn't being written or written: its job may have sent it.
+  const conflicted =
+    single && applied?.status === "refused" && applied.reason === "conflict";
   const approves =
       isRelease &&
+      !fixed &&
       !s.differs &&
-      (!saved || moved || (!unsettled.length && (unread || missed || retry))),
+      (!saved ||
+        moved ||
+        (!unsettled.length && (unread || missed || retry || conflicted))),
     rejects =
       isRelease &&
+      !fixed &&
       applied?.status !== "pending" &&
       applied?.status !== "written";
   // Why the load holds a saved approval, where a name may: its word, or
@@ -328,13 +348,19 @@ export function SettleReview({
   };
   return (
     <div className="on-stack">
-      {isRelease && (
+      {isRelease && !fixed && (
         <ClaimWritten
           settle={s}
           single={single}
           holding={unsettled}
           link={link}
         />
+      )}
+      {fixed && (
+        <p role="note">
+          It conflicts with a property of a fact the graph holds of this link,
+          which no approval changes.
+        </p>
       )}
       {!isProp && !isRelease && review.candidates.length > 0 && (
         <p>
@@ -398,6 +424,9 @@ export function SettleReview({
                     saved.applied,
                     propValueText(saved.value),
                     ontology.activeJob?.kind,
+                    saved.value.null !== undefined
+                      ? s.kind === "prop" && s.table === undefined
+                      : holds,
                   )
                 : loadRead(saved, load?.createdAt)
                   ? "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
@@ -405,12 +434,6 @@ export function SettleReview({
           {held && heldBy.length > 0 && (
             <NameReviews ends={heldBy} docId={held.docId} link={link} />
           )}
-        </p>
-      )}
-      {isRelease && !saved && earlier && (
-        <p role="status">
-          An earlier approval of this statement didn’t apply: what’s known of
-          the names in it has changed since. Approve it again to write it.
         </p>
       )}
       {canManage(role) && editable && (approves || rejects) && (
@@ -570,7 +593,8 @@ const APPROVED: Record<ReleaseStatus, string> = {
   written: "Approved",
   unknown: "Approved",
   held: "Approved, not written",
-  no_link: "Approved, no link written, as a later statement holds it",
+  no_link:
+    "Approved, no link written: a statement dated later, or a later approval, holds it",
 };
 
 /**
@@ -688,7 +712,7 @@ export function SavedDecisions({
                           );
                         setNotice(
                           d.kind === "prop"
-                            ? "Decision removed. This load is taking the value back now; later loads won’t read it. A conflict this load didn’t list is listed again from the next load."
+                            ? "Decision removed. This load is taking the value back now; later loads won’t read it."
                             : d.kind === "reject"
                               ? "Decision removed. The claim is listed for review again."
                               : "Decision removed. Reload to apply.",

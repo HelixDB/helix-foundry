@@ -6,7 +6,11 @@ import {
   type AgentBinding,
 } from "../../src/web/areas/ontology/model";
 import { CREDITS_PER_PROFILE } from "../../src/web/areas/ontology/enrichment-fields";
-import { decisions as saved, decisionsFor } from "../review-decisions";
+import {
+  decisions as saved,
+  decisionsFor,
+  holdsOne,
+} from "../review-decisions";
 import { FOUNDRY_NODES as N } from "../../src/shared/foundry-labels";
 import { parse } from "smol-toml";
 import type {
@@ -181,7 +185,8 @@ type Knobs = {
     | "differs"
     | "unverified"
     | "one_end"
-    | "no_statement";
+    | "no_statement"
+    | "conflict";
   deleteOutcome?: "succeed" | "fail";
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // The next n reads find every read slot taken.
@@ -493,11 +498,17 @@ function applyReleases(ontologyId: string, now = Date.now()) {
     if (!l || !d) continue;
     const review = heldReview(l, d);
     if (review && !refusal()) {
-      releaseReview(tenantGraph(l.tenantId).view(l.id), review.id, {
-        ontologyVersion: versionName(l),
-        model: aiModel(l.workspaceId, "extract") || MODEL,
-        verifier: aiModel(l.workspaceId, "verify") || VERIFIER,
-      });
+      const def = ontologyVersion(l.ontologyId, l.versionId)?.definition;
+      releaseReview(
+        tenantGraph(l.tenantId).view(l.id),
+        review.id,
+        {
+          ontologyVersion: versionName(l),
+          model: aiModel(l.workspaceId, "extract") || MODEL,
+          verifier: aiModel(l.workspaceId, "verify") || VERIFIER,
+        },
+        holdsOne(def, String(review.props.suggested_link)),
+      );
       countRelease(l.id, d.docId);
     }
     recordRelease(l, d, r.due);
@@ -769,7 +780,10 @@ function ontologyOfVersion(def: Definition): ExtractOntology & {
       string,
       { names?: string[]; identifiers?: Record<string, string> }
     >;
-    links?: Record<string, { from?: string; to?: string }>;
+    links?: Record<
+      string,
+      { from?: string; to?: string; cardinality?: string }
+    >;
   } = {};
   try {
     doc = parse(String(def.ontology_toml || "")) as typeof doc;
@@ -792,6 +806,11 @@ function ontologyOfVersion(def: Definition): ExtractOntology & {
         l,
         { from: String(v.from || ""), to: String(v.to || "") },
       ]),
+    ),
+    oneValued: new Set(
+      Object.entries(doc.links || {})
+        .filter(([, v]) => v.cardinality === "one")
+        .map(([l]) => l),
     ),
   };
 }

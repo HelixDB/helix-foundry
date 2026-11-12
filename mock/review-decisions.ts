@@ -45,6 +45,26 @@ export function decisionTypes(
   }
 }
 
+/**
+ * Whether a version's TOML declares `link` to hold one value
+ * (`cardinality = "one"`; many by default), as the backend reads it
+ * (FoundryOneValuedLink): false for a link it lacks or TOML that doesn't
+ * parse.
+ */
+export function holdsOne(
+  definition: Record<string, unknown> | undefined,
+  link: string,
+): boolean {
+  try {
+    const doc = parse(String(definition?.ontology_toml || "")) as {
+      links?: Record<string, { cardinality?: string }>;
+    };
+    return doc.links?.[link]?.cardinality === "one";
+  } catch {
+    return false;
+  }
+}
+
 // schema's is_iso_date: YYYY, YYYY-MM or YYYY-MM-DD with a real month and day.
 const isDate = (s: string) => {
   const m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(s);

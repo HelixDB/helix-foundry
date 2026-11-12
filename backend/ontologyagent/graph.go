@@ -577,12 +577,15 @@ type DocumentRelease struct {
 	Outcome    ReleaseOutcome `json:"outcome"`
 }
 
-// ReleaseOutcome is what became of a release decision: written; refused, its
+// ReleaseOutcome is what became of a release decision: written (from contract
+// 4.14.0, on a link that holds one value, also when a statement dated after
+// the approval's day holds the link and the quote is kept as evidence alone);
+// refused, its
 // reviews staying held for Reason (the engine's ReleaseRefusal, a word such as
 // unresolved, legal_form, part_name, own_name, changed, differs, conflict or blocked, kept as it
 // came: a later engine may give one this backend hasn't seen); missed (the run
-// committed the document, whose commit held no review at the decision's key
-// and place); or not_held (the load held the document already, with no such
+// committed the document, whose commit held no review at the decision's key,
+// nor from 4.14.0 one at its place stating what its hash binds); or not_held (the load held the document already, with no such
 // review: one a release wrote before, or a claim this load never held there).
 type ReleaseOutcome struct {
 	Kind   model.FoundryReleaseOutcomeKind `json:"kind"`

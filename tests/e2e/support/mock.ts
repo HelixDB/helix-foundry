@@ -58,7 +58,11 @@ export const mock = {
       | "differs"
       | "unverified"
       | "one_end"
-      | "no_statement";
+      | "no_statement"
+      | "conflict";
+    // Links every version declares to hold one value, as a test's ontology
+    // would: what the site reads, and what loads and settles check.
+    oneValuedLinks?: string[];
     // A load's delete fails for good (delete_failed).
     deleteOutcome?: "succeed" | "fail";
     // The next n presigned PUTs fail as a busy bucket does.

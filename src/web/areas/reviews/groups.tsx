@@ -57,7 +57,12 @@ export function ReviewGroups<R extends Review>({
             {g.title} <span className="dc-review-count">{g.items.length}</span>
           </h3>
           <p>{g.text}</p>
-          <ApproveAll reviews={members} load={load} naming={naming} />
+          <ApproveAll
+            reviews={members}
+            all={reviews}
+            load={load}
+            naming={naming}
+          />
           {g.reason === "unmatched" && (
             <AddLinks reviews={members} load={load} />
           )}
@@ -77,13 +82,17 @@ export function ReviewGroups<R extends Review>({
  * own Approve. Each approval saved shows on its card at once; one that fails
  * leaves its card as it is, and the result says why. The backend applies
  * approvals that land together in one job, so the load writes them in one go.
+ * Rivals on a link that holds one value are looked for among the page's
+ * reviews (`all`), whichever group they are in.
  */
 function ApproveAll({
   reviews,
+  all,
   load,
   naming,
 }: {
   reviews: readonly Settleable[];
+  all: readonly Settleable[];
   load?: FoundryLoad;
   naming: Naming;
 }) {
@@ -101,10 +110,10 @@ function ApproveAll({
   const ready =
     load?.current && decisions.data
       ? approvable(
-          reviews,
+          all,
           decisions.data,
           (link) => !naming.version || naming.oneValued.has(link),
-        )
+        ).filter((s) => reviews.some((r) => r.settle === s))
       : [];
   const run = async (
     cards: readonly Extract<Settle, { kind: "release" }>[],
@@ -184,7 +193,7 @@ function ApproveAll({
       {confirming && ready.length > 0 && (
         <ConfirmDialog
           title={`Approve ${plural(ready.length, "claim")}?`}
-          description="This load writes each one it can, at once. Any it can't stays held, and its card says why."
+          description="This load writes each one it can, at once. Any it can't stays held, and its card says why. On a link that holds one value, an approval replaces what the link holds."
           confirmLabel="Approve all"
           onConfirm={() => void run(ready)}
           onCancel={() => setConfirming(false)}
