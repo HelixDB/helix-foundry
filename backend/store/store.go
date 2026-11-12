@@ -124,6 +124,7 @@ type ReadStore interface {
 	ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error)
 	ListFoundryReviewDecisions(ctx context.Context, ontologyID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error)
 	GetFoundryReviewDecision(ctx context.Context, ontologyID, id string) (*model.FoundryReviewDecision, error)
+	GetFoundryReviewLabel(ctx context.Context, ontologyID, id string) (*model.FoundryReviewLabel, error)
 	ListFoundryReviewLabels(ctx context.Context, ontologyID, afterID string, limit int) ([]*model.FoundryReviewLabel, error)
 	FoundryReviewLabelsOf(ctx context.Context, ontologyID, docID string, span model.FoundryClaimSpan, claimKey, factKey *string) ([]*model.FoundryReviewLabel, error)
 

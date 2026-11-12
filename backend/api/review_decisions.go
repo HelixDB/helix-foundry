@@ -288,9 +288,11 @@ func (s *Service) labelDrawnClaim(ctx context.Context, o *foundrymodel.FoundryOn
 	if d.Kind == foundrymodel.FoundryReviewReject {
 		verdict = foundrymodel.FoundryVerdictWrong
 	}
+	// The person's own word, with the decision that stands: an approval of a
+	// statement someone approved before keeps theirs (saveFoundryReviewDecision).
 	label := &foundrymodel.FoundryReviewLabel{ID: id.New(), OntologyID: o.ID, LoadID: loadID, Drawn: foundrymodel.FoundryLabelRandom,
 		DocID: *d.DocID, Span: *d.ClaimSpan, ClaimKey: d.ClaimKey, StatementHash: d.StatementHash, Verdict: verdict,
-		DecisionID: &d.ID, DecidedByUserID: d.DecidedByUserID}
+		DecisionID: &d.ID, DecidedByUserID: actor(ctx).UserID}
 	var link string
 	if json.Unmarshal(review["suggested_link"], &link) == nil && link != "" {
 		label.Link = &link

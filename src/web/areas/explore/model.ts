@@ -1526,62 +1526,114 @@ export function snippet(text: string, start: number, end: number) {
  * The review queue's reads of one load (../reviews/queue.ts): every review
  * the load holds, a page at a time in the database's order, each with the
  * entities it concerns, as a document's reviews are read; and its documents'
- * accepted quotes (a fact's evidence in a section, scored at or above the
- * accept bar, `accept`), counted, and read one at a time at offsets the
- * queue draws at random. Offset paging reads every row before its page, so
- * the reviews read stop at `reviews`, and the page says how many it left.
+ * quotes of facts (a fact's evidence in a section) in a score range,
+ * counted, and read one at a time at offsets the queue draws at random.
+ * Offset paging reads every row before its page, so the reviews read stop
+ * at `reviews`, and the page says how many it left.
  */
 export const QUEUE_READ = Object.freeze({
-  page: 250,
+  page: 500,
   reviews: 5000,
-  accept: 0.9,
 });
+
+/** A score range: from (inclusive) and below (exclusive), either open. */
+export type ScoreRange = { from?: number; below?: number };
 
 const sectionsIn = (scope: Scope): Ast => nodesOf(scope, N.Section);
 /**
- * The load's accepted quotes of documents: a fact's evidence (it has a fact
- * key, where a property's quote has none) in a section, at the bar or above.
+ * The load's quotes of facts in documents, scored in `range`: a fact's
+ * evidence (it has a fact key, where a property's quote has none) in a
+ * section. `from` and `below` name the parameters the range reads.
  */
-const acceptedQuotes = (scope: Scope): Ast =>
+const quotesIn = (
+  scope: Scope,
+  range: ScoreRange,
+  from: string,
+  below: string,
+): Ast =>
   where(step("in", sectionsIn(scope), E.FROM_SECTION), {
     and: {
       predicates: [
         label(N.Evidence),
         { not: { predicate: { is_null: { property: "fact_key" } } } },
-        {
-          gte: { left: { property: "confidence" }, right: { param: "accept" } },
-        },
+        ...(range.from === undefined
+          ? []
+          : [
+              {
+                gte: {
+                  left: { property: "confidence" },
+                  right: { param: from },
+                },
+              },
+            ]),
+        ...(range.below === undefined
+          ? []
+          : [
+              {
+                lt: {
+                  left: { property: "confidence" },
+                  right: { param: below },
+                },
+              },
+            ]),
       ],
     },
   });
-const acceptParam = { accept: { value: QUEUE_READ.accept, type: "f64" } };
+const rangeParams = (range: ScoreRange, from: string, below: string) => ({
+  ...(range.from === undefined
+    ? {}
+    : { [from]: { value: range.from, type: "f64" } }),
+  ...(range.below === undefined
+    ? {}
+    : { [below]: { value: range.below, type: "f64" } }),
+});
 
 /**
- * How many reviews a load holds, and how many accepted quotes of documents:
- * a bitmap count, and a count of the quotes in its sections.
+ * How many reviews a load holds (a bitmap count), and how many quotes of
+ * facts in each of `ranges` (by name): a count of the quotes in its
+ * sections.
  */
-export function loadReviewCountsRequest(scope: Scope): DynamicQueryRequest {
+export function loadReviewCountsRequest(
+  scope: Scope,
+  ranges: Readonly<Record<string, ScoreRange>> = {},
+): DynamicQueryRequest {
+  const named = Object.entries(ranges);
   return readRequest(
     "foundry_queue_counts",
     [
       { name: "reviews", root: { count: { input: nodesOf(scope, N.Review) } } },
-      { name: "accepted", root: { count: { input: acceptedQuotes(scope) } } },
+      ...named.map(([, range], i) => ({
+        name: `quotes_${i}`,
+        root: {
+          count: { input: quotesIn(scope, range, `from_${i}`, `below_${i}`) },
+        },
+      })),
     ],
-    acceptParam,
+    Object.assign(
+      {},
+      ...named.map(([, range], i) =>
+        rangeParams(range, `from_${i}`, `below_${i}`),
+      ),
+    ),
   );
 }
 
-/** loadReviewCountsRequest's answer; a count missing reads as none. */
-export function parseLoadReviewCounts(body: unknown): {
-  reviews: number;
-  accepted: number;
-} {
+/** loadReviewCountsRequest's answer, its ranges by name; a count missing reads as none. */
+export function parseLoadReviewCounts(
+  body: unknown,
+  ranges: readonly string[] = [],
+): { reviews: number; quotes: Record<string, number> } {
   const data = isRecord(body) ? body : {};
   const count = (v: unknown) => {
     const n = int(v);
     return n !== undefined && n >= 0 ? n : 0;
   };
-  return { reviews: count(data.reviews), accepted: count(data.accepted) };
+  return {
+    reviews: count(data.reviews),
+    quotes: Object.fromEntries(
+      ranges.map((name, i) => [name, count(data[`quotes_${i}`])]),
+    ),
+  };
 }
 
 /** One page (from 0) of a load's reviews, QUEUE_READ.page at a time, with the entities they concern. */
@@ -1642,8 +1694,8 @@ export function parseLoadReviews(body: unknown): EntityReview[] {
   });
 }
 
-/** An accepted quote of a document: where it is, its fact and the verifier's score. */
-export type AcceptedQuote = Span & {
+/** A quote of a fact in a document: where it is, its fact and the verifier's score. */
+export type FactQuote = Span & {
   documentId: string;
   factKey: string;
   link: string;
@@ -1652,15 +1704,17 @@ export type AcceptedQuote = Span & {
 };
 
 /**
- * The accepted quotes at `offsets` among the load's (in the order its
- * sections are read), each with its section's ordinal: one entry each.
+ * The quotes of facts scored in `range` at `offsets` among the load's (in
+ * the order its sections are read), each with its section's ordinal: one
+ * entry each.
  */
-export function acceptedQuotesRequest(
+export function rangeQuotesRequest(
   scope: Scope,
+  range: ScoreRange,
   offsets: readonly number[],
 ): DynamicQueryRequest {
   return readRequest(
-    "foundry_queue_accepted",
+    "foundry_queue_quotes_at",
     offsets.flatMap((at, i): ReadEntry[] => {
       const o = Math.max(0, Math.floor(at));
       return [
@@ -1668,7 +1722,7 @@ export function acceptedQuotesRequest(
           name: `q_${i}`,
           root: {
             range: {
-              input: acceptedQuotes(scope),
+              input: quotesIn(scope, range, "from", "below"),
               start: { literal: o },
               end: { literal: o + 1 },
             },
@@ -1693,15 +1747,15 @@ export function acceptedQuotesRequest(
         },
       ];
     }),
-    acceptParam,
+    rangeParams(range, "from", "below"),
   );
 }
 
-/** acceptedQuotesRequest's answer, one per offset: undefined where none read. */
-export function parseAcceptedQuotes(
+/** rangeQuotesRequest's answer, one per offset: undefined where none read. */
+export function parseRangeQuotes(
   body: unknown,
   count: number,
-): (AcceptedQuote | undefined)[] {
+): (FactQuote | undefined)[] {
   const data = isRecord(body) ? body : {};
   return Array.from({ length: count }, (_, i) => {
     const q = rows(data[`quote_${i}`])[0],
@@ -1733,17 +1787,17 @@ export function parseAcceptedQuotes(
 }
 
 /**
- * The ends of each accepted quote's fact (by its link and key, index-backed),
- * named by `names` (naming.ts namingKeys). Null when there are none.
+ * The ends of each quote's fact (by its link and key, index-backed), named
+ * by `names` (naming.ts namingKeys). Null when there are none.
  */
-export function acceptedFactsRequest(
+export function quoteFactsRequest(
   scope: Scope,
-  quotes: readonly AcceptedQuote[],
+  quotes: readonly FactQuote[],
   names: string[] = [],
 ): DynamicQueryRequest | null {
   if (!quotes.length) return null;
   return readRequest(
-    "foundry_queue_accepted_facts",
+    "foundry_queue_quote_facts",
     quotes.flatMap(({ link }, i): ReadEntry[] => [
       {
         name: `e_${i}`,
@@ -1768,8 +1822,8 @@ export function acceptedFactsRequest(
   );
 }
 
-/** acceptedFactsRequest's answer: each quote's fact's ends, where read. */
-export function parseAcceptedFacts(
+/** quoteFactsRequest's answer: each quote's fact's ends, where read. */
+export function parseQuoteFacts(
   body: unknown,
   count: number,
 ): { from?: EntityRow; to?: EntityRow }[] {
@@ -1840,7 +1894,7 @@ export function documentQuotesRequest(
 export function parseDocumentQuotes(
   body: unknown,
   documents: readonly string[],
-): AcceptedQuote[] {
+): FactQuote[] {
   const data = isRecord(body) ? body : {};
   return documents.flatMap((documentId, i) => {
     const ordinal = new Map(
@@ -1859,7 +1913,7 @@ export function parseDocumentQuotes(
           : [];
       }),
     );
-    return rows(data[`quotes_${i}`]).flatMap((q): AcceptedQuote[] => {
+    return rows(data[`quotes_${i}`]).flatMap((q): FactQuote[] => {
       const at = section.get(int(q.$id) ?? -1),
         factKey = str(q.fact_key),
         link = str(q.link),

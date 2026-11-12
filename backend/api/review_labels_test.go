@@ -47,6 +47,14 @@ func (s *decisionStore) ListFoundryReviewLabels(_ context.Context, o, after stri
 	}
 	return s.labels, nil
 }
+func (s *decisionStore) GetFoundryReviewLabel(_ context.Context, o, id string) (*foundrymodel.FoundryReviewLabel, error) {
+	for _, l := range s.labels {
+		if o == s.ontology.ID && l.ID == id {
+			return l, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
+}
 func (s *decisionStore) GetFoundryReviewDecision(_ context.Context, o, id string) (*foundrymodel.FoundryReviewDecision, error) {
 	for _, d := range s.rows {
 		if o == s.ontology.ID && d.ID == id {
@@ -96,9 +104,17 @@ func TestSettleDrawnHeldClaim(t *testing.T) {
 			t.Fatalf("label %+v", l)
 		}
 	}
+	// Approved again where someone approved the statement first: their
+	// decision stands, and the label is this person's word.
+	s, db, _ := reviewService(t, heldScored("low_confidence", "0.83"))
+	db.firstApprover = "user-z"
+	out, err := s.SettleFoundryReview(ctx, drawnRequest(releaseChoice(testRead), "random"))
+	if err != nil || out.Decision.GetDecidedByUserId() != "user-z" || len(db.labels) != 1 || db.labels[0].DecidedByUserID != "user-a" {
+		t.Fatalf("%v %+v %+v", err, out, db.labels)
+	}
 	// Ranked: the decision says so, and no label is kept.
-	s, db, _ := reviewService(t, heldScored("unverified", "null"))
-	out, err := s.SettleFoundryReview(ctx, drawnRequest(releaseChoice(testRead), "ranked"))
+	s, db, _ = reviewService(t, heldScored("unverified", "null"))
+	out, err = s.SettleFoundryReview(ctx, drawnRequest(releaseChoice(testRead), "ranked"))
 	if err != nil || out.Decision.GetDrawn() != "ranked" || len(db.labels) != 0 {
 		t.Fatalf("%v %+v %+v", err, out, db.labels)
 	}
@@ -216,6 +232,12 @@ func TestLabelAcceptedFact(t *testing.T) {
 	}{
 		{factRequest(fact(2, 10, 25), "maybe", "random"), codes.InvalidArgument},
 		{factRequest(fact(2, 10, 25), "right", "ranked"), codes.InvalidArgument},
+		// A fact's word is drawn at random; a re-check names the label.
+		{factRequest(fact(2, 10, 25), "right", "recheck"), codes.InvalidArgument},
+		{&foundryv1.SettleFoundryReviewLabelRequest{WorkspaceId: "workspace-a", OntologyId: "o", Verdict: "right", Drawn: "recheck",
+			Subject: &foundryv1.SettleFoundryReviewLabelRequest_ReviewId{ReviewId: "review-1"}}, codes.InvalidArgument},
+		{&foundryv1.SettleFoundryReviewLabelRequest{WorkspaceId: "workspace-a", OntologyId: "o", Verdict: "right", Drawn: "random",
+			Subject: &foundryv1.SettleFoundryReviewLabelRequest_LabelId{LabelId: "l-1"}}, codes.InvalidArgument},
 		{factRequest(fact(2, 25, 25), "right", "random"), codes.InvalidArgument},
 		{factRequest(&foundryv1.FoundryLabelFact{DocId: "doc-a", Section: 2, Start: 10, End: 25}, "right", "random"), codes.InvalidArgument},
 		{factRequest(&foundryv1.FoundryLabelFact{Section: 2, Start: 10, End: 25, FactKey: "fk-1"}, "right", "random"), codes.InvalidArgument},
@@ -302,23 +324,81 @@ func TestRecheckLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A fact: re-checked only once someone else has labelled it.
+	// Another person's label drawn at random: re-checked by its id, against
+	// its verdict, with its claim, link and score.
 	s, db, _ = labelService(t, factQuotes)
-	if _, err := s.SettleFoundryReviewLabel(ctx, factRequest(fact(2, 10, 25), "right", "recheck")); status.Code(err) != codes.FailedPrecondition {
-		t.Fatal(err)
-	}
 	key, wrong := "fk-1", foundrymodel.FoundryVerdictWrong
-	db.labels = []*foundrymodel.FoundryReviewLabel{{ID: "l-1", OntologyID: "o", LoadID: "load-1", Drawn: foundrymodel.FoundryLabelRandom, DocID: doc, Span: span,
-		FactKey: &key, Verdict: wrong, DecidedByUserID: "user-b"}}
-	if _, err := s.SettleFoundryReviewLabel(ctx, factRequest(fact(2, 10, 25), "right", "recheck")); err != nil || *db.labels[1].Against != wrong ||
-		db.labels[1].Verdict != right {
-		t.Fatalf("%v %+v", err, db.labels)
+	db.labels = []*foundrymodel.FoundryReviewLabel{
+		{ID: "l-1", OntologyID: "o", LoadID: "load-1", Drawn: foundrymodel.FoundryLabelRandom, DocID: doc, Span: span,
+			FactKey: &key, Link: &link, Confidence: &confidence, Verdict: wrong, DecidedByUserID: "user-b"},
+		{ID: "l-2", OntologyID: "o", LoadID: "load-1", Drawn: foundrymodel.FoundryLabelRandom, DocID: doc, Span: span,
+			FactKey: &key, Verdict: right, DecidedByUserID: "user-c"},
+		{ID: "l-3", OntologyID: "o", LoadID: "load-1", Drawn: foundrymodel.FoundryLabelRecheck, DocID: doc, Span: span,
+			FactKey: &key, Verdict: right, Against: &wrong, DecidedByUserID: "user-c"},
 	}
-	// Not by one who labelled it at random themselves.
-	db.labels = append(db.labels, &foundrymodel.FoundryReviewLabel{ID: "l-2", OntologyID: "o", LoadID: "load-1", Drawn: foundrymodel.FoundryLabelRandom,
-		DocID: doc, Span: span, FactKey: &key, Verdict: right, DecidedByUserID: "user-a"})
-	if _, err := s.SettleFoundryReviewLabel(ctx, factRequest(fact(2, 10, 25), "wrong", "recheck")); status.Code(err) != codes.FailedPrecondition {
+	byLabel := func(id string) *foundryv1.SettleFoundryReviewLabelRequest {
+		return &foundryv1.SettleFoundryReviewLabelRequest{WorkspaceId: "workspace-a", OntologyId: "o", Verdict: "right", Drawn: "recheck",
+			Subject: &foundryv1.SettleFoundryReviewLabelRequest_LabelId{LabelId: id}}
+	}
+	// The label shown, l-1, whatever else was said of the fact since.
+	if _, err := s.SettleFoundryReviewLabel(ctx, byLabel("l-1")); err != nil {
 		t.Fatal(err)
+	}
+	got := db.labels[3]
+	if got.Drawn != foundrymodel.FoundryLabelRecheck || *got.Against != wrong || *got.FactKey != key || *got.Link != link ||
+		*got.Confidence != confidence || got.Span != span || got.DecisionID != nil {
+		t.Fatalf("%+v", got)
+	}
+	for id, code := range map[string]codes.Code{"l-3": codes.FailedPrecondition, "missing": codes.NotFound, strings.Repeat("x", 27): codes.InvalidArgument} {
+		if _, err := s.SettleFoundryReviewLabel(ctx, byLabel(id)); status.Code(err) != code {
+			t.Fatalf("%s: %v", id, err)
+		}
+	}
+	// Not one's own label, nor by one who labelled the claim at random.
+	db.labels[0].DecidedByUserID = "user-a"
+	if _, err := s.SettleFoundryReviewLabel(ctx, byLabel("l-1")); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal(err)
+	}
+	db.labels[0].DecidedByUserID = "user-b"
+	db.labels = append(db.labels, &foundrymodel.FoundryReviewLabel{ID: "l-9", OntologyID: "o", LoadID: "load-1", Drawn: foundrymodel.FoundryLabelRandom,
+		DocID: doc, Span: span, FactKey: &key, Verdict: right, DecidedByUserID: "user-a"})
+	if _, err := s.SettleFoundryReviewLabel(ctx, byLabel("l-1")); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal(err)
+	}
+}
+
+// A held claim someone decided, drawn at random, is labelled from its review
+// in the current load: its key and place, the hash of what it states, its
+// link and score. Its decision is left as it is.
+func TestLabelDecidedHeldClaim(t *testing.T) {
+	ctx := ports.WithActor(context.Background(), reviewer)
+	request := func(verdict string) *foundryv1.SettleFoundryReviewLabelRequest {
+		return &foundryv1.SettleFoundryReviewLabelRequest{WorkspaceId: "workspace-a", OntologyId: "o", Verdict: verdict, Drawn: "random",
+			Subject: &foundryv1.SettleFoundryReviewLabelRequest_ReviewId{ReviewId: "review-1"}}
+	}
+	s, db, queries := reviewService(t, heldScored("conflict", "0.91"))
+	if _, err := s.SettleFoundryReviewLabel(ctx, request("wrong")); err != nil {
+		t.Fatal(err)
+	}
+	l := db.labels[0]
+	if l.Drawn != foundrymodel.FoundryLabelRandom || l.Verdict != foundrymodel.FoundryVerdictWrong || *l.ClaimKey != testClaimKey ||
+		*l.StatementHash != testRead || l.Span != (foundrymodel.FoundryClaimSpan{Section: 2, Start: 10, End: 25}) || *l.Link != "promised_to" ||
+		*l.Confidence != 0.91 || l.DecisionID != nil || len(db.saved) != 0 {
+		t.Fatalf("%+v saved %v", l, db.saved)
+	}
+	if !strings.Contains((*queries)[0], `"review-1"`) || !strings.Contains((*queries)[0], `"load-1"`) {
+		t.Fatalf("read %s", (*queries)[0])
+	}
+	// Not a review of a held claim, none at all, or one with no statement.
+	for name, review := range map[string]string{
+		"name":      `{"items":[{"reason":"unresolved","type":"Customer","doc_id":"doc-a","norm_name":"variant"}]}`,
+		"none":      `{"items":[]}`,
+		"statement": `{"items":[{"reason":"low_confidence","doc_id":"doc-a","claim_key":"` + testClaimKey + `","section":2,"start":10,"end":25,"suggested_link":"promised_to"}]}`,
+	} {
+		s, db, _ := reviewService(t, review)
+		if _, err := s.SettleFoundryReviewLabel(ctx, request("right")); err == nil || len(db.labels) != 0 {
+			t.Fatalf("%s: %v %+v", name, err, db.labels)
+		}
 	}
 }
 

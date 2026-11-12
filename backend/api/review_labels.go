@@ -16,11 +16,12 @@ import (
 )
 
 // SettleFoundryReviewLabel keeps a person's word on a claim, to measure
-// precision: an accepted fact's quote the review queue drew at random, or a
-// second person's re-check of a decision on a held claim or of another
-// person's label of an accepted fact. It reads the claim from the current
-// load (a quote: its link and the verifier's score) or from the decision,
-// never from the request, and changes no decision and no load.
+// precision: a claim the review queue drew at random (a fact's quote, or a
+// held claim someone has decided), or a second person's re-check of a
+// decision on a held claim or of another person's label drawn at random. It
+// reads the claim from the current load (its link and the verifier's
+// score), the decision or the label, never from the request, and changes
+// no decision and no load.
 func (s *Service) SettleFoundryReviewLabel(ctx context.Context, req *foundryv1.SettleFoundryReviewLabelRequest) (*foundryv1.FoundryReviewLabelResponse, error) {
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
@@ -52,17 +53,34 @@ func (s *Service) SettleFoundryReviewLabel(ctx context.Context, req *foundryv1.S
 		return nil, status.Error(codes.FailedPrecondition, "the load is not ready")
 	}
 	label := &foundrymodel.FoundryReviewLabel{ID: id.New(), OntologyID: o.ID, LoadID: load.ID, Drawn: drawn, Verdict: verdict, DecidedByUserID: user}
+	// A draw is of a claim the load holds; a re-check of another's word.
+	random := drawn == foundrymodel.FoundryLabelRandom
 	switch subject := req.GetSubject().(type) {
 	case *foundryv1.SettleFoundryReviewLabelRequest_Fact:
-		if err := s.labelOfFact(ctx, o, load.ID, subject.Fact, label); err != nil {
-			return nil, err
+		if !random {
+			return nil, status.Error(codes.InvalidArgument, "a fact is labelled when drawn at random; re-check another's label by its label_id")
 		}
+		err = s.labelOfFact(ctx, o, load.ID, subject.Fact, label)
+	case *foundryv1.SettleFoundryReviewLabelRequest_ReviewId:
+		if !random {
+			return nil, status.Error(codes.InvalidArgument, "a held claim is labelled when drawn at random; re-check a decision by its decision_id")
+		}
+		err = s.labelOfReview(ctx, o, load.ID, subject.ReviewId, label)
 	case *foundryv1.SettleFoundryReviewLabelRequest_DecisionId:
-		if err := s.labelOfDecision(ctx, o.ID, subject.DecisionId, label); err != nil {
-			return nil, err
+		if random {
+			return nil, status.Error(codes.InvalidArgument, "a label of a decision is a re-check")
 		}
+		err = s.labelOfDecision(ctx, o.ID, subject.DecisionId, label)
+	case *foundryv1.SettleFoundryReviewLabelRequest_LabelId:
+		if random {
+			return nil, status.Error(codes.InvalidArgument, "a label of a label is a re-check")
+		}
+		err = s.labelOfLabel(ctx, o.ID, subject.LabelId, label)
 	default:
-		return nil, status.Error(codes.InvalidArgument, "a label is of a fact or a decision")
+		return nil, status.Error(codes.InvalidArgument, "a label is of a fact, a held claim, a decision or a label")
+	}
+	if err != nil {
+		return nil, err
 	}
 	if label.Drawn == foundrymodel.FoundryLabelRecheck {
 		// A second person's word: never the first's, and never one who has
@@ -86,9 +104,8 @@ func (s *Service) SettleFoundryReviewLabel(ctx context.Context, req *foundryv1.S
 	return &foundryv1.FoundryReviewLabelResponse{Label: foundryReviewLabelProto(label)}, nil
 }
 
-// labelOfFact fills label from the accepted fact's quote f names, as the
-// current load holds it: its link and the verifier's score. A re-check also
-// takes the verdict of another person's label of it, which it checks.
+// labelOfFact fills label from the fact's quote f names, as the current
+// load holds it: its link and the verifier's score.
 func (s *Service) labelOfFact(ctx context.Context, o *foundrymodel.FoundryOntology, loadID string, f *foundryv1.FoundryLabelFact, label *foundrymodel.FoundryReviewLabel) error {
 	key := f.GetFactKey()
 	if f.GetDocId() == "" || len(f.GetDocId()) > 26 || key == "" || len(key) > foundrymodel.FoundryFactKeyMax || f.GetStart() >= f.GetEnd() {
@@ -100,22 +117,76 @@ func (s *Service) labelOfFact(ctx context.Context, o *foundrymodel.FoundryOntolo
 		return err
 	}
 	label.DocID, label.Span, label.FactKey, label.Link, label.Confidence = f.GetDocId(), span, &key, &link, confidence
-	if label.Drawn != foundrymodel.FoundryLabelRecheck {
-		return nil
+	return nil
+}
+
+// labelOfReview fills label from the held claim the current load's review
+// reviewID holds back: its key and place, the hash of its statement, its
+// link and the verifier's score. Its decision, if any, stands as it is.
+func (s *Service) labelOfReview(ctx context.Context, o *foundrymodel.FoundryOntology, loadID, reviewID string, label *foundrymodel.FoundryReviewLabel) error {
+	if reviewID == "" || len(reviewID) > 256 {
+		return status.Error(codes.InvalidArgument, "invalid review_id")
 	}
-	labels, err := s.deps.DB.FoundryReviewLabelsOf(ctx, o.ID, label.DocID, span, nil, &key)
+	rows, err := s.foundryDecisionRead(ctx, o, loadID, map[string]string{"$label": "FoundryReview", "review_key": reviewID},
+		[]string{"reason", "doc_id", "claim_key", "section", "start", "end", "suggested_link", "statement", "confidence"})
 	if err != nil {
-		return status.Errorf(codes.Internal, "read labels: %v", err)
+		return err
 	}
-	// The latest word of anyone else on it.
-	for i := len(labels) - 1; i >= 0; i-- {
-		if labels[i].DecidedByUserID != label.DecidedByUserID && labels[i].Drawn == foundrymodel.FoundryLabelRandom {
-			against := labels[i].Verdict
-			label.Against = &against
-			return nil
-		}
+	if len(rows) != 1 {
+		return status.Error(codes.NotFound, "review not found in the current load")
 	}
-	return status.Error(codes.FailedPrecondition, "nobody else has labelled this fact for a re-check")
+	review := rows[0]
+	var reason, doc, claimKey, link, statement string
+	var span foundrymodel.FoundryClaimSpan
+	var confidence *float64
+	_ = json.Unmarshal(review["reason"], &reason)
+	_ = json.Unmarshal(review["doc_id"], &doc)
+	_ = json.Unmarshal(review["claim_key"], &claimKey)
+	_ = json.Unmarshal(review["section"], &span.Section)
+	_ = json.Unmarshal(review["start"], &span.Start)
+	_ = json.Unmarshal(review["end"], &span.End)
+	_ = json.Unmarshal(review["suggested_link"], &link)
+	_ = json.Unmarshal(review["statement"], &statement)
+	_ = json.Unmarshal(review["confidence"], &confidence)
+	switch reason {
+	case "low_confidence", "unverified", "conflict":
+	default:
+		return status.Error(codes.FailedPrecondition, "only a held claim is labelled so")
+	}
+	if doc == "" || link == "" || statement == "" {
+		return status.Error(codes.FailedPrecondition, "this review is missing its identity; start a new load before labelling it")
+	}
+	hash := foundrymodel.FoundryStatementHash(link, statement)
+	label.DocID, label.Span, label.ClaimKey, label.StatementHash, label.Link = doc, span, &claimKey, &hash, &link
+	if confidence != nil && *confidence >= 0 && *confidence <= 1 {
+		label.Confidence = confidence
+	}
+	return nil
+}
+
+// labelOfLabel fills a re-check's label from another person's label drawn
+// at random, which it checks: its claim, link and score, and its verdict.
+func (s *Service) labelOfLabel(ctx context.Context, ontologyID, labelID string, label *foundrymodel.FoundryReviewLabel) error {
+	if labelID == "" || len(labelID) > 26 {
+		return status.Error(codes.InvalidArgument, "invalid label_id")
+	}
+	l, err := s.deps.DB.GetFoundryReviewLabel(ctx, ontologyID, labelID)
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		return status.Error(codes.NotFound, "review label not found")
+	}
+	if err != nil {
+		return status.Errorf(codes.Internal, "get review label: %v", err)
+	}
+	if l.Drawn != foundrymodel.FoundryLabelRandom {
+		return status.Error(codes.FailedPrecondition, "only a label drawn at random is re-checked")
+	}
+	if l.DecidedByUserID == label.DecidedByUserID {
+		return status.Error(codes.FailedPrecondition, "a re-check is another person's word, not the label's own")
+	}
+	against := l.Verdict
+	label.DocID, label.Span, label.ClaimKey, label.StatementHash, label.FactKey = l.DocID, l.Span, l.ClaimKey, l.StatementHash, l.FactKey
+	label.Link, label.Confidence, label.Against = l.Link, l.Confidence, &against
+	return nil
 }
 
 // labelOfDecision fills a re-check's label from the saved decision on a

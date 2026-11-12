@@ -7,32 +7,34 @@ import type {
   ReviewDecision,
 } from "@/shared/wfe";
 import {
-  QUEUE_READ,
-  acceptedFactsRequest,
-  acceptedQuotesRequest,
   documentQuotesRequest,
   loadReviewCountsRequest,
   loadReviewsRequest,
-  parseAcceptedFacts,
-  parseAcceptedQuotes,
   parseDocumentQuotes,
   parseLoadReviewCounts,
   parseLoadReviews,
+  parseQuoteFacts,
+  parseRangeQuotes,
+  quoteFactsRequest,
+  rangeQuotesRequest,
 } from "@/web/areas/explore/model";
 import { statementHash, type Unsettled } from "@/web/areas/reviews/model";
 import {
   BANDS,
+  BAND_RANGE,
   RANKED_PER_RANDOM,
   RECHECK_SHARE,
-  acceptedOffsets,
   bandOf,
   buildQueue,
+  claimPlace,
   facts,
   hashUnit,
   labelPlace,
   perDecision,
   precision,
+  quoteOffsets,
   rechecks,
+  scoreText,
   type NameCard,
   type QueueCard,
   type QueueReview,
@@ -146,7 +148,7 @@ const build = (
     reviews,
     decisions: [],
     single: many,
-    accepted: 0,
+    quotes: {},
     seed: "load-1",
     ...more,
   });
@@ -194,7 +196,7 @@ describe("buildQueue", () => {
     const queue = build(
       [...claims, ...blocking, lonely, waiting, value("v1")],
       {
-        accepted: 100,
+        quotes: { "0.9": 100 },
       },
     );
     const ranked = queue.cards.filter((c) => c.drawn === "ranked");
@@ -234,7 +236,9 @@ describe("buildQueue", () => {
       unsettled: [{ name: "Globex Ltd", by: "legal_form" }],
     });
     // A legal form holds a claim only of a link that holds one value.
-    let queue = build([part, legal, onPart, onLegal], { accepted: 100 });
+    let queue = build([part, legal, onPart, onLegal], {
+      quotes: { "0.9": 100 },
+    });
     const card = (k: string) =>
       queue.cards.find((c): c is NameCard => c.key.includes(k))!;
     expect(card("westmere").held.map((c) => c.key)).toEqual(["held-1"]);
@@ -242,7 +246,7 @@ describe("buildQueue", () => {
     expect(keys(queue.cards)).toContain("held-2");
     queue = build([part, legal, onPart, onLegal], {
       single: () => true,
-      accepted: 100,
+      quotes: { "0.9": 100 },
     });
     expect(card("globex").held.map((c) => c.key)).toEqual(["held-2"]);
   });
@@ -299,12 +303,18 @@ describe("buildQueue", () => {
     };
     const stale: QueueReview = { ...held(7), settle: { kind: "stale" } };
     const conflict = held(8, { reason: "conflict" });
+    // An approval of what the claim said before (its key, another
+    // statement): the load refuses it, and the card asks to be read again.
+    const older = held(9);
+    decisions.push(claim(older, "release"));
+    (decisions.at(-1) as { statementHash: string }).statementHash = key(42);
     const queue = build(
       [
         approved,
         rejected,
         movedKey,
         left,
+        older,
         name("n", "acme"),
         value("v"),
         twoWays,
@@ -312,9 +322,13 @@ describe("buildQueue", () => {
         stale,
         conflict,
       ],
-      { decisions },
+      // The random slot's draw is a fact, from the top band.
+      { decisions, quotes: { "0.9": 100 } },
     );
-    expect(queue.cards.map((c) => c.key)).toEqual(["held-4"]);
+    expect(
+      queue.cards.filter((c) => c.drawn === "ranked").map((c) => c.key),
+    ).toEqual(expect.arrayContaining(["held-4", "held-9"]));
+    expect(queue.cards.filter((c) => c.drawn === "ranked")).toHaveLength(2);
     expect(queue.left).toEqual({
       decided: 5,
       unsettled: 1,
@@ -325,12 +339,19 @@ describe("buildQueue", () => {
     // A conflict of a link that holds one value is approved as a claim.
     const one = build([conflict], { single: () => true });
     expect(keys(one.cards)).toEqual(["held-8"]);
+    expect(one.cards[0]!.drawn).toBe("random");
     // Decided here, kept in place until the page reads again.
     const kept = build([approved, left], {
       decisions,
       keep: new Set(["held-1"]),
+      quotes: { "0.9": 100 },
     });
-    expect(keys(kept.cards).toSorted()).toEqual(["held-1", "held-4"]);
+    expect(
+      kept.cards
+        .filter((c) => c.kind === "claim")
+        .map((c) => c.key)
+        .toSorted(),
+    ).toEqual(["held-1", "held-4"]);
     // A name's card is kept by its own key: every review of the name.
     const nameCard = build([name("n", "acme")]).cards.find(
       (c) => c.kind === "name",
@@ -362,7 +383,9 @@ describe("buildQueue", () => {
     ).toEqual([RANKED_PER_RANDOM, 2 * RANKED_PER_RANDOM + 1, 26]);
     // Three bands, in turn from the top.
     const band = (c: QueueCard) =>
-      c.kind === "claim" || c.kind === "accepted" ? c.band : undefined;
+      c.kind === "claim" || c.kind === "quote" || c.kind === "decided"
+        ? c.band
+        : undefined;
     expect(random.map(band)).toEqual(["0.9", "0.8", "0.7"]);
     // A claim drawn is only there.
     const ids = keys(queue.cards);
@@ -370,37 +393,109 @@ describe("buildQueue", () => {
     // The same load draws the same; another load others.
     expect(keys(build(reviews).cards)).toEqual(ids);
     expect(keys(build(reviews, { seed: "load-2" }).cards)).not.toEqual(ids);
-    expect(queue.pool).toMatchObject({ "0.9": 5, "0.8": 5, none: 4 });
+    expect(queue.pool).toMatchObject({
+      "0.9": { held: 5, quotes: 0 },
+      "0.8": { held: 5, quotes: 0 },
+      none: { held: 4, quotes: 0 },
+    });
   });
 
-  it("draws accepted facts in the top band, as many as each of its held claims", () => {
+  it("takes the bands in turn, passing over one with nothing left", () => {
+    // 10 at the top, 1 at 0.8, 10 at 0.7: three draws, one a band.
+    const reviews = Array.from({ length: 21 }, (_, n) =>
+      held(n, { confidence: n < 10 ? 0.95 : n === 10 ? 0.85 : 0.75 }),
+    );
+    const bands = build(reviews)
+      .cards.filter((c) => c.drawn === "random")
+      .map((c) => (c.kind === "claim" ? c.band : undefined));
+    expect(bands).toEqual(["0.9", "0.8", "0.7"]);
+  });
+
+  it("draws from the whole band, decided claims and facts the graph holds included, but those labelled at random", () => {
+    // Nine held claims at 0.7 a person approved elsewhere (their reviews
+    // still in the load, as approvals refused or waiting are), and one ranked.
+    const decidedElsewhere = Array.from({ length: 9 }, (_, n) =>
+      held(n, { confidence: 0.75 }),
+    );
+    const s = (r: QueueReview) =>
+      r.settle as Extract<QueueReview["settle"], { kind: "release" }>;
+    const decisions: ReviewDecision[] = decidedElsewhere.map((r) => ({
+      kind: "reject",
+      type: "",
+      docId: s(r).docId,
+      claimKey: s(r).claimKey,
+      claimSection: s(r).section,
+      claimStart: s(r).start,
+      claimEnd: s(r).end,
+      statementHash: s(r).hash,
+    }));
+    const open = held(20, { confidence: 0.75 });
+    const queue = build([...decidedElsewhere, open], { decisions });
+    // One ranked card (the open claim), so one draw, from all ten.
+    expect(queue.pool["0.7"]).toEqual({ held: 10, quotes: 0 });
+    const random = queue.cards.find((c) => c.drawn === "random")!;
+    expect(["decided", "claim"]).toContain(random.kind);
+    // Over many loads, the decided nine are drawn about nine times in ten.
+    const decided = Array.from({ length: 400 }, (_, i) =>
+      build([...decidedElsewhere, open], { decisions, seed: `load-${i}` }),
+    ).filter((q) =>
+      q.cards.some((c) => c.drawn === "random" && c.kind === "decided"),
+    ).length;
+    expect(decided).toBeGreaterThan(320);
+    expect(decided).toBeLessThan(390);
+    // A claim labelled at random is out of the pool; one labelled on this
+    // page keeps its place.
+    const labelled = new Set(
+      decidedElsewhere.map((r) => claimPlace(r, r.suggestedLink)),
+    );
+    const left = build([...decidedElsewhere, open], {
+      decisions,
+      labelled,
+    });
+    expect(left.pool["0.7"]).toEqual({ held: 1, quotes: 0 });
+    const kept = build([...decidedElsewhere, open], {
+      decisions,
+      labelled,
+      keep: new Set(["held-3"]),
+    });
+    expect(kept.pool["0.7"]).toEqual({ held: 2, quotes: 0 });
+    // Facts the graph holds in a band are drawn as their share of it.
+    const facts = build([open, held(21, { confidence: 0.75 })], {
+      quotes: { "0.7": 1000 },
+    });
+    expect(facts.cards.find((c) => c.drawn === "random")).toMatchObject({
+      kind: "quote",
+      band: "0.7",
+      draw: 0,
+    });
+  });
+
+  it("draws accepted facts in the top band, in proportion to its held claims", () => {
     const reviews = Array.from({ length: 9 }, (_, n) =>
       held(n, { confidence: 0.7 }),
     );
     // No held claim at the top: its draw is an accepted fact.
-    const queue = build(reviews, { accepted: 40 });
+    const queue = build(reviews, { quotes: { "0.9": 40 } });
     const random = queue.cards.filter((c) => c.drawn === "random");
     expect(random).toHaveLength(1);
-    expect(random[0]).toMatchObject({ kind: "accepted", draw: 0, band: "0.9" });
+    expect(random[0]).toMatchObject({ kind: "quote", draw: 0, band: "0.9" });
     // Many draws: mostly facts where they outnumber the held claims there.
     const top = Array.from({ length: 90 }, (_, n) =>
       held(n, { confidence: n < 2 ? 0.95 : 0.7 }),
     );
-    const mixed = build(top, { accepted: 1000 }).cards.filter(
+    const mixed = build(top, { quotes: { "0.9": 1000 } }).cards.filter(
       (c) =>
         c.drawn === "random" &&
-        (c.kind === "claim" || c.kind === "accepted") &&
+        (c.kind === "claim" || c.kind === "quote") &&
         c.band === "0.9",
     );
-    expect(mixed.filter((c) => c.kind === "accepted").length).toBeGreaterThan(
+    expect(mixed.filter((c) => c.kind === "quote").length).toBeGreaterThan(
       mixed.filter((c) => c.kind === "claim").length,
     );
     // Draws number on.
-    expect(
-      mixed.flatMap((c) => (c.kind === "accepted" ? [c.draw] : [])),
-    ).toEqual(
+    expect(mixed.flatMap((c) => (c.kind === "quote" ? [c.draw] : []))).toEqual(
       Array.from(
-        { length: mixed.filter((c) => c.kind === "accepted").length },
+        { length: mixed.filter((c) => c.kind === "quote").length },
         (_, i) => i,
       ),
     );
@@ -424,33 +519,48 @@ describe("buildQueue", () => {
   });
 });
 
-describe("acceptedOffsets", () => {
-  it("gives up to five offsets in range, the same for the same draw", () => {
-    const a = acceptedOffsets("load-1", 0, 40);
-    expect(a).toHaveLength(5);
+describe("quoteOffsets and scores", () => {
+  it("gives up to eight distinct offsets in range, the same for the same draw", () => {
+    const a = quoteOffsets("load-1", "0.9", 0, 40);
+    expect(a).toHaveLength(8);
+    expect(new Set(a).size).toBe(8);
     expect(a.every((o) => o >= 0 && o < 40 && Number.isInteger(o))).toBe(true);
-    expect(acceptedOffsets("load-1", 0, 40)).toEqual(a);
-    expect(acceptedOffsets("load-1", 1, 40)).not.toEqual(a);
-    expect(acceptedOffsets("load-1", 0, 3)).toHaveLength(3);
-    expect(acceptedOffsets("load-1", 0, 0)).toEqual([]);
+    expect(quoteOffsets("load-1", "0.9", 0, 40)).toEqual(a);
+    expect(quoteOffsets("load-1", "0.9", 1, 40)).not.toEqual(a);
+    expect(quoteOffsets("load-1", "0.8", 0, 40)).not.toEqual(a);
+    // Fewer quotes than offsets: every one, once.
+    expect(quoteOffsets("load-1", "0.9", 0, 3).toSorted()).toEqual([0, 1, 2]);
+    expect(quoteOffsets("load-1", "0.9", 0, 0)).toEqual([]);
+  });
+  it("shows a score cut to two decimals, never the next band's", () => {
+    expect(scoreText(0.8999)).toBe("0.89");
+    expect(scoreText(0.9)).toBe("0.90");
+    expect(scoreText(0.72)).toBe("0.72");
+    expect(bandOf(0.8999)).toBe("0.8");
   });
 });
 
+// Each label of a claim of its own, at its own place.
+let placed = 0;
 const label = (
   id: string,
   over: Partial<FoundryReviewLabel> = {},
-): FoundryReviewLabel => ({
-  id,
-  drawn: "random",
-  docId: "doc-1",
-  claimSection: 0,
-  claimStart: 1,
-  claimEnd: 5,
-  factKey: `fact-${id}`,
-  verdict: "right",
-  decidedByUserId: "ann",
-  ...over,
-});
+): FoundryReviewLabel => {
+  placed += 10;
+  return {
+    id,
+    drawn: "random",
+    docId: "doc-1",
+    claimSection: 0,
+    claimStart: placed,
+    claimEnd: placed + 5,
+    factKey: `fact-${id}`,
+    link: "partner_of",
+    verdict: "right",
+    decidedByUserId: "ann",
+    ...over,
+  };
+};
 
 describe("rechecks and precision", () => {
   const decision = (
@@ -509,19 +619,62 @@ describe("rechecks and precision", () => {
     expect(
       rechecks([], [...labels, mine], "bob").map((r) => r.key),
     ).not.toContain(offered[0]!.key);
-    // A held claim's label is its decision's to re-check, not its own.
+    // A label that came with a decision is that decision's to re-check.
+    expect(
+      rechecks(
+        [],
+        labels.map((l) => ({ ...l, decisionId: `d-${l.id}` })),
+        "bob",
+      ),
+    ).toEqual([]);
+    // A held claim's label with no decision (a decided claim drawn at
+    // random) is re-checked as a fact's is.
     expect(
       rechecks(
         [],
         labels.map((l) => ({ ...l, factKey: undefined, claimKey: key(1) })),
         "bob",
       ),
+    ).toHaveLength(offered.length);
+    // Nor a decision of a claim the person labelled, at its place.
+    const d = rechecks(
+      Array.from({ length: 2000 }, (_, i) => decision(`d${i}`)),
+      [],
+      "bob",
+    )[0]!;
+    const at =
+      d.kind === "decision"
+        ? label("bobs", {
+            decidedByUserId: "bob",
+            claimStart: d.decision.claimStart,
+            claimEnd: d.decision.claimEnd,
+          })
+        : undefined;
+    expect(
+      rechecks(
+        Array.from({ length: 2000 }, (_, i) => decision(`d${i}`)),
+        [at!],
+        "bob",
+      ),
     ).toEqual([]);
   });
   it("counts the random slice's word per band, and the re-checks' agreement", () => {
+    const b = label("b", {
+      confidence: 0.92,
+      verdict: "wrong",
+      decidedAt: "2026-11-12T10:00:00Z",
+    });
     const p = precision([
       label("a", { confidence: 0.95 }),
-      label("b", { confidence: 0.92, verdict: "wrong" }),
+      b,
+      // The same claim labelled again by another, later: counted once.
+      {
+        ...b,
+        id: "b2",
+        verdict: "right",
+        decidedByUserId: "cat",
+        decidedAt: "2026-11-12T11:00:00Z",
+      },
       label("c", { confidence: 0.85 }),
       label("d", { confidence: undefined }),
       label("e", { drawn: "recheck", against: "right", verdict: "right" }),
@@ -538,17 +691,21 @@ describe("rechecks and precision", () => {
       rechecks: { agreed: 0, total: 0 },
     });
   });
-  it("names a claim by its document, place and key", () => {
-    expect(labelPlace(label("x"))).toBe(
-      labelPlace({
-        docId: "doc-1",
-        claimSection: 0,
-        claimStart: 1,
-        claimEnd: 5,
-        factKey: "fact-x",
-      }),
+  it("names a claim by its document, place and link", () => {
+    const x = label("x");
+    expect(labelPlace(x)).toBe(
+      claimPlace(
+        {
+          documentId: "doc-1",
+          section: 0,
+          start: x.claimStart!,
+          end: x.claimEnd!,
+        },
+        "partner_of",
+      ),
     );
-    expect(labelPlace(label("x"))).not.toBe(labelPlace(label("y")));
+    expect(labelPlace(x)).not.toBe(labelPlace(label("y")));
+    expect(labelPlace(x)).not.toBe(labelPlace({ ...x, link: "owns" }));
   });
 });
 
@@ -642,16 +799,23 @@ const ask = (g: MockGraph, request: unknown) => {
 
 describe("a load's reviews, as the queue reads them", () => {
   const scope = { id: "load-1" };
-  it("counts its reviews, and its documents' quotes at the accept bar", () => {
+  it("counts its reviews, and its documents' quotes of facts in each score band", () => {
     const g = loadGraph();
+    const names = Object.keys(BAND_RANGE);
     expect(
-      parseLoadReviewCounts(ask(g, loadReviewCountsRequest(scope))),
+      parseLoadReviewCounts(
+        ask(g, loadReviewCountsRequest(scope, BAND_RANGE)),
+        names,
+      ),
     ).toEqual({
       reviews: 2,
-      accepted: 2,
+      // Two accepted, one approved at 0.72; no property's quote, no row's.
+      quotes: { "0.9": 2, "0.8": 0, "0.7": 1, "0.6": 0, low: 0 },
     });
-    expect(parseLoadReviewCounts(null)).toEqual({ reviews: 0, accepted: 0 });
-    expect(QUEUE_READ.accept).toBe(0.9);
+    expect(parseLoadReviewCounts(null, names)).toEqual({
+      reviews: 0,
+      quotes: { "0.9": 0, "0.8": 0, "0.7": 0, "0.6": 0, low: 0 },
+    });
   });
   it("reads its reviews a page at a time, those of documents with what settles them", () => {
     const g = loadGraph();
@@ -667,10 +831,10 @@ describe("a load's reviews, as the queue reads them", () => {
     expect(parseLoadReviews(ask(g, loadReviewsRequest(scope, 1)))).toEqual([]);
     expect(parseLoadReviews(undefined)).toEqual([]);
   });
-  it("reads the accepted quotes at offsets, each with its section, and their facts' ends", () => {
+  it("reads a band's quotes at offsets, each with its section, and their facts' ends", () => {
     const g = loadGraph();
-    const quotes = parseAcceptedQuotes(
-      ask(g, acceptedQuotesRequest(scope, [0, 1, 5])),
+    const quotes = parseRangeQuotes(
+      ask(g, rangeQuotesRequest(scope, BAND_RANGE["0.9"], [0, 1, 5])),
       3,
     );
     expect(quotes[0]).toMatchObject({
@@ -684,15 +848,22 @@ describe("a load's reviews, as the queue reads them", () => {
     expect(quotes[1]).toMatchObject({ factKey: "fk-2", section: 1 });
     expect(quotes[2]).toBeUndefined();
     const read = quotes.filter((q) => !!q);
-    const ends = parseAcceptedFacts(
-      ask(g, acceptedFactsRequest(scope, read)!),
+    const ends = parseQuoteFacts(
+      ask(g, quoteFactsRequest(scope, read)!),
       read.length,
     );
     expect(ends[0]?.from?.name).toBe("Acme");
     expect(ends[0]?.to?.name).toBe("Globex");
     // fk-2 has no edge in this load.
     expect(ends[1]).toEqual({});
-    expect(acceptedFactsRequest(scope, [])).toBeNull();
+    expect(quoteFactsRequest(scope, [])).toBeNull();
+    // A band below the top: its quotes only.
+    expect(
+      parseRangeQuotes(
+        ask(g, rangeQuotesRequest(scope, BAND_RANGE["0.7"], [0, 1])),
+        2,
+      ).map((q) => q?.factKey),
+    ).toEqual(["fk-3", undefined]);
   });
   it("reads a document's quotes at their places", () => {
     const g = loadGraph();

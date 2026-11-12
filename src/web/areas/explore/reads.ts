@@ -9,8 +9,6 @@ import {
 } from "./database-query";
 import type { Scope } from "./load-scope";
 import {
-  acceptedFactsRequest,
-  acceptedQuotesRequest,
   documentFactsRequest,
   documentQuotesRequest,
   documentRequest,
@@ -19,8 +17,10 @@ import {
   nameLinksRequest,
   loadReviewCountsRequest,
   loadReviewsRequest,
-  parseAcceptedFacts,
-  parseAcceptedQuotes,
+  parseQuoteFacts,
+  parseRangeQuotes,
+  quoteFactsRequest,
+  rangeQuotesRequest,
   parseDocument,
   parseDocumentFacts,
   parseDocumentQuotes,
@@ -29,7 +29,8 @@ import {
   parseEntity,
   parseFactEvidence,
   parseNameLinks,
-  type AcceptedQuote,
+  type FactQuote,
+  type ScoreRange,
   type DocumentGraph,
   type EntityGraph,
   type EntityIdentity,
@@ -391,15 +392,23 @@ export const readQueries = {
     };
   },
   // The review queue's reads of the current load (../reviews/queue.ts): how
-  // many reviews and accepted quotes it holds, its reviews a page at a time,
-  // the accepted quotes at offsets the queue drew, their facts' ends, and a
-  // few documents' quotes. Each under the load, so a job that ends reads
-  // them again.
-  queueCounts: (ws: string, o: string, read: QueryExecutor, scope: Scope) => ({
-    queryKey: [ws, "ontology", o, "read", scope.id, "queue-counts"],
+  // many reviews it holds and quotes of facts in each score range, its
+  // reviews a page at a time, the quotes at offsets the queue drew, their
+  // facts' ends, and a few documents' quotes. Each under the load, so a job
+  // that ends reads them again. All but the counts wait their turn at the
+  // database's limiter (`readLater`).
+  queueCounts: (
+    ws: string,
+    o: string,
+    read: QueryExecutor,
+    scope: Scope,
+    ranges: Readonly<Record<string, ScoreRange>>,
+  ) => ({
+    queryKey: [ws, "ontology", o, "read", scope.id, "queue-counts", ranges],
     queryFn: async ({ signal }: { signal?: AbortSignal }) =>
       parseLoadReviewCounts(
-        await runRead(read, loadReviewCountsRequest(scope), signal),
+        await runRead(read, loadReviewCountsRequest(scope, ranges), signal),
+        Object.keys(ranges),
       ),
     ...readOptions,
   }),
@@ -432,27 +441,37 @@ export const readQueries = {
       })),
     ...readOptions,
   }),
-  acceptedQuotes: (
+  rangeQuotes: (
     ws: string,
     o: string,
     read: QueryExecutor,
     scope: Scope,
+    range: ScoreRange,
     offsets: readonly number[],
   ) => ({
-    queryKey: [ws, "ontology", o, "read", scope.id, "accepted", offsets],
+    queryKey: [
+      ws,
+      "ontology",
+      o,
+      "read",
+      scope.id,
+      "quotes-at",
+      range,
+      offsets,
+    ],
     queryFn: async ({ signal }: { signal?: AbortSignal }) =>
-      parseAcceptedQuotes(
-        await runRead(read, acceptedQuotesRequest(scope, offsets), signal),
+      parseRangeQuotes(
+        await runRead(read, rangeQuotesRequest(scope, range, offsets), signal),
         offsets.length,
       ),
     ...readOptions,
   }),
-  acceptedFacts: (
+  quoteFacts: (
     ws: string,
     o: string,
     read: QueryExecutor,
     scope: Scope,
-    quotes: readonly AcceptedQuote[],
+    quotes: readonly FactQuote[],
     naming: Naming = NO_NAMING,
   ) => ({
     queryKey: [
@@ -461,14 +480,14 @@ export const readQueries = {
       o,
       "read",
       scope.id,
-      "accepted-facts",
+      "quote-facts",
       quotes.map((q) => `${q.link}\u001f${q.factKey}`),
       naming.version,
     ],
     queryFn: async ({ signal }: { signal?: AbortSignal }) => {
-      const request = acceptedFactsRequest(scope, quotes, namingKeys(naming));
+      const request = quoteFactsRequest(scope, quotes, namingKeys(naming));
       if (!request) return [];
-      return parseAcceptedFacts(
+      return parseQuoteFacts(
         await runRead(read, request, signal),
         quotes.length,
       ).map(({ from, to }) => ({

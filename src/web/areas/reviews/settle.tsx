@@ -27,6 +27,7 @@ import {
   isUndoableLink,
   isWeakLink,
   loadRead,
+  rejectionOf,
   matchesReview,
   propValueText,
   refusalText,
@@ -309,15 +310,20 @@ export function SettleReview({
   // being written or written: its job may have sent it. Neither until the
   // saved decisions are read: one may be a rejection of this claim, which
   // an approval would replace, or the approval it has.
+  // A rejection saved: pages that list the claim leave it out, but the
+  // review queue keeps a card decided on it in place, saying so.
+  const rejected = !!held && !!rejectionOf(query.data ?? [], held);
   const approves =
       isRelease &&
       !!query.data &&
+      !rejected &&
       !fixed &&
       !s.differs &&
       (!saved || moved || (!unsettled.length && (unread || missed || retry))),
     rejects =
       isRelease &&
       !!query.data &&
+      !rejected &&
       !fixed &&
       applied?.status !== "pending" &&
       applied?.status !== "written";
@@ -409,6 +415,12 @@ export function SettleReview({
       )}
       {!editable && (
         <p className="on-muted">Open the current load to settle this review.</p>
+      )}
+      {rejected && (
+        <p role="status">
+          Rejected: nothing is written, and it stays out of Needs review and the
+          review queue until the decision is removed.
+        </p>
       )}
       {moved && (
         <p role="status">

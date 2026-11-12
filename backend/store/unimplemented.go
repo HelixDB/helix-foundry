@@ -80,6 +80,10 @@ func (u Unimplemented) GetFoundryReviewDecision(context.Context, string, string)
 	u.unimplemented("GetFoundryReviewDecision")
 	return nil, nil
 }
+func (u Unimplemented) GetFoundryReviewLabel(context.Context, string, string) (*model.FoundryReviewLabel, error) {
+	u.unimplemented("GetFoundryReviewLabel")
+	return nil, nil
+}
 func (u Unimplemented) ListFoundryReviewLabels(context.Context, string, string, int) ([]*model.FoundryReviewLabel, error) {
 	u.unimplemented("ListFoundryReviewLabels")
 	return nil, nil

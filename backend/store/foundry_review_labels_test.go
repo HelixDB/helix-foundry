@@ -141,6 +141,13 @@ func TestFoundryReviewLabels(t *testing.T) {
 	require.Len(t, of, 1)
 	assert.Equal(t, held.ID, of[0].ID)
 
+	got, err := f.db.GetFoundryReviewLabel(ctx, f.ontology.ID, bob.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryLabelRecheck, got.Drawn)
+	assert.Equal(t, model.FoundryVerdictWrong, *got.Against)
+	_, err = f.db.GetFoundryReviewLabel(ctx, f.ontology.ID, id26("nope"))
+	assert.ErrorIs(t, err, store.ErrNotFound)
+
 	all, err := f.db.ListFoundryReviewLabels(ctx, f.ontology.ID, "", 100)
 	require.NoError(t, err)
 	assert.Len(t, all, 3)

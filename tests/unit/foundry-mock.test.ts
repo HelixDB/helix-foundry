@@ -3654,7 +3654,9 @@ describe("review decisions", () => {
     await uploaded("contract.md", CONTRACT);
     await uploaded(
       "variant.md",
-      Buffer.from("# Hedged deal\n\nGlobex Corporation may have signed.\n"),
+      Buffer.from(
+        "# Hedged deal\n\nGlobex Corporation and Initech may have signed.\n",
+      ),
     );
     const g = await loaded("first");
     const rv = reviews(g).find((n) => n.props.reason === "low_confidence")!;
@@ -3783,29 +3785,86 @@ describe("review decisions", () => {
       decisionId: approved.id,
       confidence: rv.props.confidence,
     });
-    expect(
-      (await label({ fact, verdict: "right", drawn: "recheck" }, "usr_alan"))
-        .body.label,
-    ).toMatchObject({ drawn: "recheck", against: "right" });
-    // Ada labelled the fact at random herself: not hers to re-check.
-    expect(
-      (await label({ fact, verdict: "right", drawn: "recheck" })).status,
-    ).toBe(400);
+    // Ada's label of the fact, by its id: against what it says.
     expect(
       (
+        await label(
+          { labelId: wrong.id, verdict: "wrong", drawn: "recheck" },
+          "usr_alan",
+        )
+      ).body.label,
+    ).toMatchObject({
+      drawn: "recheck",
+      against: "right",
+      factKey: quote.props.fact_key,
+      link: quote.props.link,
+    });
+    expect(
+      refusal(
+        await label({ labelId: wrong.id, verdict: "right", drawn: "recheck" }),
+      ),
+    ).toEqual([
+      400,
+      "a re-check is another person's word, not the label's own",
+    ]);
+    // A fact is labelled when drawn, never re-checked by itself; a decision
+    // or a label is re-checked, never drawn.
+    expect(
+      refusal(await label({ fact, verdict: "right", drawn: "recheck" })),
+    ).toEqual([400, "a claim the load holds is labelled when drawn at random"]);
+    expect(
+      refusal(
         await label({
           decisionId: approved.id,
           verdict: "wrong",
           drawn: "random",
-        })
-      ).status,
-    ).toBe(400);
-    expect((await labels()).map((l: { drawn: string }) => l.drawn)).toEqual([
-      "random",
-      "random",
-      "recheck",
-      "recheck",
+        }),
+      ),
+    ).toEqual([400, "a decision or a label is re-checked, never drawn"]);
+    // One who labelled the claim at random re-checks no one's word on it.
+    const cat = (
+      await label({ fact, verdict: "wrong", drawn: "random" }, "usr_alan")
+    ).body.label;
+    expect(cat).toMatchObject({ drawn: "random", verdict: "wrong" });
+    expect(
+      refusal(
+        await label(
+          { labelId: wrong.id, verdict: "right", drawn: "recheck" },
+          "usr_alan",
+        ),
+      ),
+    ).toEqual([
+      400,
+      "you have labelled this claim already; a re-check is another person's",
     ]);
+    // A held claim someone decided, drawn at random: labelled from its
+    // review, its decision left as it is.
+    const other = reviews(g).find(
+      (n) =>
+        n.props.reason === "low_confidence" &&
+        n.props.review_key !== rv.props.review_key,
+    );
+    expect(other).toBeDefined();
+    const held = (
+      await label(
+        {
+          reviewId: other!.props.review_key,
+          verdict: "right",
+          drawn: "random",
+        },
+        "usr_alan",
+      )
+    ).body.label;
+    expect(held).toMatchObject({
+      drawn: "random",
+      claimKey: other!.props.claim_key,
+      link: "signed_with",
+    });
+    expect(
+      refusal(
+        await label({ reviewId: "nope", verdict: "right", drawn: "random" }),
+      ),
+    ).toEqual([404, "review not found in the current load"]);
   });
 
   it("saves a rejection of a held claim, and tells no load", async () => {

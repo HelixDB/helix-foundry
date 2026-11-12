@@ -506,6 +506,24 @@ export const reviewRoutes: MockRoute[] = [
           "FAILED_PRECONDITION",
           "load the ontology before labelling a claim",
         );
+      const subjects = ["fact", "reviewId", "decisionId", "labelId"].filter(
+        (k) => b[k] !== undefined,
+      );
+      if (subjects.length !== 1)
+        return fail(
+          "INVALID_ARGUMENT",
+          "a label is of a fact, a held claim, a decision or a label",
+        );
+      const subject = subjects[0]!;
+      // A draw is of a claim the load holds; a re-check of another's word.
+      const random = b.drawn === "random";
+      if (random !== (subject === "fact" || subject === "reviewId"))
+        return fail(
+          "INVALID_ARGUMENT",
+          random
+            ? "a decision or a label is re-checked, never drawn"
+            : "a claim the load holds is labelled when drawn at random",
+        );
       const base = {
         id: id("label"),
         drawn: b.drawn,
@@ -514,10 +532,11 @@ export const reviewRoutes: MockRoute[] = [
         decidedByUserId: user,
         decidedAt: now(),
       } as const;
-      let label: FoundryReviewLabel;
+      const graph = tenantGraph(s.o.tenantId);
       const own = labels.get(s.o.id) || [];
-      if (isRecord(b.fact) && b.decisionId === undefined) {
-        const f = b.fact;
+      let label: FoundryReviewLabel;
+      if (subject === "fact") {
+        const f = isRecord(b.fact) ? b.fact : {};
         const [section, start, end] = [f.section ?? 0, f.start ?? 0, f.end];
         if (
           typeof f.docId !== "string" ||
@@ -535,7 +554,6 @@ export const reviewRoutes: MockRoute[] = [
             "a fact is its document, section, byte range and fact key",
           );
         // The quote as the current load holds it: its link and score.
-        const graph = tenantGraph(s.o.tenantId);
         const quote = [...graph.nodes.values()].find((n) => {
           if (
             n.label !== N.Evidence ||
@@ -570,28 +588,46 @@ export const reviewRoutes: MockRoute[] = [
             ? { confidence: quote.props.confidence }
             : {}),
         };
-        if (b.drawn === "recheck") {
-          const other = own
-            .filter(
-              (l) =>
-                labelClaim(l) === labelClaim(label) &&
-                l.decidedByUserId !== user &&
-                l.drawn === "random",
-            )
-            .at(-1);
-          if (!other)
-            return fail(
-              "FAILED_PRECONDITION",
-              "nobody else has labelled this fact for a re-check",
-            );
-          label = { ...label, against: other.verdict };
-        }
-      } else if (typeof b.decisionId === "string" && b.fact === undefined) {
-        if (b.drawn !== "recheck")
+      } else if (subject === "reviewId") {
+        const found = [...graph.nodes.values()].filter(
+          (n) =>
+            n.label === N.Review &&
+            n.props.review_key === b.reviewId &&
+            n.props[FOUNDRY_LOAD] === load,
+        );
+        if (found.length !== 1)
+          return fail("NOT_FOUND", "review not found in the current load");
+        const r = found[0]!.props;
+        if (
+          !["low_confidence", "unverified", "conflict"].includes(text(r.reason))
+        )
           return fail(
-            "INVALID_ARGUMENT",
-            "a label of a decision is a re-check",
+            "FAILED_PRECONDITION",
+            "only a held claim is labelled so",
           );
+        const link = text(r.suggested_link),
+          stored = text(r.statement);
+        if (!text(r.doc_id) || !link || !stored)
+          return fail(
+            "FAILED_PRECONDITION",
+            "this review is missing its identity; start a new load before labelling it",
+          );
+        label = {
+          ...base,
+          docId: text(r.doc_id),
+          claimSection: Number(r.section),
+          claimStart: Number(r.start),
+          claimEnd: Number(r.end),
+          claimKey: text(r.claim_key),
+          statementHash: createHash("sha256")
+            .update(`${link}\u001f${stored}`)
+            .digest("hex"),
+          link,
+          ...(typeof r.confidence === "number"
+            ? { confidence: r.confidence }
+            : {}),
+        };
+      } else if (subject === "decisionId") {
         const d = (decisions.get(s.o.id) || []).find(
           (d) => d.id === b.decisionId,
         );
@@ -624,8 +660,33 @@ export const reviewRoutes: MockRoute[] = [
             ? { confidence: random.confidence }
             : {}),
         };
-      } else
-        return fail("INVALID_ARGUMENT", "a label is of a fact or a decision");
+      } else {
+        const l = own.find((l) => l.id === b.labelId);
+        if (!l) return fail("NOT_FOUND", "review label not found");
+        if (l.drawn !== "random")
+          return fail(
+            "FAILED_PRECONDITION",
+            "only a label drawn at random is re-checked",
+          );
+        if (l.decidedByUserId === user)
+          return fail(
+            "FAILED_PRECONDITION",
+            "a re-check is another person's word, not the label's own",
+          );
+        label = {
+          ...base,
+          docId: l.docId,
+          claimSection: l.claimSection,
+          claimStart: l.claimStart,
+          claimEnd: l.claimEnd,
+          ...(l.claimKey
+            ? { claimKey: l.claimKey, statementHash: l.statementHash }
+            : { factKey: l.factKey }),
+          ...(l.link ? { link: l.link } : {}),
+          ...(l.confidence !== undefined ? { confidence: l.confidence } : {}),
+          against: l.verdict,
+        };
+      }
       if (
         label.drawn === "recheck" &&
         own.some(

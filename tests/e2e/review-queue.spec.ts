@@ -218,31 +218,31 @@ function sampledId() {
   }
 }
 
-test("offers a second person a re-check of another's queue decision, which changes nothing", async ({
+test("offers a second person a re-check of another's queue decision, with what the claim states, which changes nothing", async ({
   page,
 }) => {
   await queued(page);
+  // Ada rejects a held claim from the queue; the decisions read names it
+  // as another person's, drawn for a re-check.
+  const held = card(page, "may have signed")
+    .filter({ hasNotText: "Random check" })
+    .first();
+  const saved = page.waitForResponse(
+    (r) => r.request().method() === "POST" && /:settle$/.test(r.url()),
+  );
+  await held.getByRole("button", { name: "Reject" }).click();
+  const decision = (await (await saved).json()).decision;
+  await expect(held).toContainText("Rejected: nothing is written");
+  await expect(held.getByRole("button", { name: "Approve" })).toHaveCount(0);
   const id = sampledId();
-  // Another person's approval from the queue, among the saved decisions.
   await page.route(/\/review-decisions(\?.*)?$/, async (route) => {
     const response = await route.fetch();
     const json = await response.json();
-    json.decisions = [
-      ...(json.decisions ?? []),
-      {
-        id,
-        kind: "release",
-        type: "",
-        docId: "doc_elsewhere",
-        claimKey: "a".repeat(64),
-        claimSection: 0,
-        claimStart: 1,
-        claimEnd: 9,
-        statementHash: "b".repeat(64),
-        decidedByUserId: "usr_alan",
-        drawn: "ranked",
-      },
-    ];
+    json.decisions = (json.decisions ?? []).map((d: { id: string }) =>
+      d.id === decision.id
+        ? { ...d, id, decidedByUserId: "usr_alan", drawn: "ranked" }
+        : d,
+    );
     await route.fulfill({ response, json });
   });
   await page.route(/\/review-labels$/, async (route) => {
@@ -252,9 +252,9 @@ test("offers a second person a re-check of another's queue decision, which chang
         label: {
           id: "label_1",
           drawn: "recheck",
-          docId: "doc_elsewhere",
+          docId: decision.docId,
           verdict: "wrong",
-          against: "right",
+          against: "wrong",
           decisionId: id,
         },
       },
@@ -262,11 +262,9 @@ test("offers a second person a re-check of another's queue decision, which chang
   });
   await page.reload();
   const rechecks = page.getByRole("list", { name: "Re-checks" });
+  await expect(rechecks).toContainText("may have signed");
   await expect(rechecks).toContainText(
-    "Someone approved this claim. Is the claim right?",
-  );
-  await expect(rechecks).toContainText(
-    "This load holds no quote at its place any more.",
+    /It states .+ → signed_with → .+\. Someone rejected it\. Is it right\?/,
   );
   const sent = page.waitForRequest(
     (r) => r.method() === "POST" && r.url().endsWith("/review-labels"),
@@ -277,7 +275,5 @@ test("offers a second person a re-check of another's queue decision, which chang
     verdict: "wrong",
     drawn: "recheck",
   });
-  await expect(rechecks).toContainText(
-    "You said it’s wrong, where they said otherwise.",
-  );
+  await expect(rechecks).toContainText("You said it’s wrong, as they did.");
 });

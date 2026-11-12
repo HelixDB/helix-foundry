@@ -4837,6 +4837,12 @@
         "decisionId": {
           "type": "string"
         },
+        "reviewId": {
+          "type": "string"
+        },
+        "labelId": {
+          "type": "string"
+        },
         "verdict": {
           "type": "string",
           "description": "\"right\" or \"wrong\"."
@@ -4846,7 +4852,7 @@
           "description": "\"random\" (a card of the queue's random slice) or \"recheck\" (a second\nperson's word, never the first person's own)."
         }
       },
-      "description": "A label of a claim at its place: an accepted fact's quote drawn at random\n(`fact`), or a second person's word on a decision of a held claim\n(`decision_id`) or on another person's label of an accepted fact (`fact`\nwith drawn \"recheck\"). The backend reads the claim from the current load\n(a fact's quote) or from the decision, never from the request."
+      "description": "A label of a claim at its place, drawn at random (`fact`, a fact's quote\nthe current load holds; `review_id`, a held claim of the current load\nsomeone has decided) or a second person's re-check (`decision_id`, a\ndecision on a held claim; `label_id`, another person's label drawn at\nrandom). The backend reads the claim from the current load, the decision\nor the label, never from the request."
     },
     "FoundryServiceStartConnectorSignInBody": {
       "type": "object",

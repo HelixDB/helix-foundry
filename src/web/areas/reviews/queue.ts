@@ -35,18 +35,22 @@ import {
 //   documents);
 // - a value of a property documents state differently writes one value.
 // Cards go by facts per decision, then facts, then held claims before
-// names before values, then in an order drawn from the load's id: so the
-// claims the queue leaves for later are a random part of their rank, and a
-// random draw from what is left is still a fair sample.
+// names before values, then in an order drawn from the load's id.
 //
-// The random slice: about one card in ten (one after every nine ranked)
-// is a held claim or an accepted fact drawn at random from a score band,
-// the bands taken in turn, the accepted facts at the accept bar and above
-// included. A person's word on it measures precision there: an approval or
-// a rejection of a held claim (a decision, kept as a label too), Right or
-// Wrong on an accepted fact (a label). Draws come from a hash of the load's
-// id and what is drawn, so a page shows the same draws until they're
-// decided, and a reload changes none.
+// The random slice: about one card in ten (one after every nine ranked) is
+// a claim drawn at random from a score band, the bands taken in turn. A
+// band's claims are every claim the load holds at a place with a score in
+// it, held or written: its held claims (decided or not) and its documents'
+// quotes of facts (accepted ones at the accept bar and above; approved ones
+// at the score their review had). A decision moves a claim from held to
+// written and leaves it in its band, so whatever people decide elsewhere,
+// and in whatever order, a draw is from the whole band; only a claim someone
+// has already labelled at random is left out. A person's word on a drawn
+// claim measures precision there: an undecided held claim is approved or
+// rejected (a decision, kept as a label too); a decided one, or a fact the
+// graph holds, takes Right or Wrong (a label). Draws come from a hash of the
+// load's id and what is drawn, so a page shows the same draws until they're
+// labelled, and a reload changes none.
 
 /** A review as the queue reads it: at its place in its document. */
 export type QueueReview = EntityReview;
@@ -63,6 +67,18 @@ export const BANDS: readonly Band[] = [
   "low",
   "none",
 ];
+
+/** The score each band starts at (inclusive) and ends below; none has no score. */
+export const BAND_RANGE: Record<
+  Exclude<Band, "none">,
+  { from?: number; below?: number }
+> = {
+  "0.9": { from: 0.9 },
+  "0.8": { from: 0.8, below: 0.9 },
+  "0.7": { from: 0.7, below: 0.8 },
+  "0.6": { from: 0.6, below: 0.7 },
+  low: { below: 0.6 },
+};
 
 /** What a band says on a card and in the precision table. */
 export const BAND_TEXT: Record<Band, string> = {
@@ -91,6 +107,17 @@ export function bandOf(confidence: number | undefined): Band {
   return "low";
 }
 
+/**
+ * A score as a card shows it: two decimals, cut rather than rounded, so it
+ * never reads as the next band's (0.899 is 0.89, not 0.90).
+ *
+ * @example
+ * scoreText(0.8999); // "0.89"
+ * scoreText(0.9); // "0.90"
+ */
+export const scoreText = (confidence: number) =>
+  (Math.floor(confidence * 100 + 1e-9) / 100).toFixed(2);
+
 /** One card in ten is drawn at random: one after every RANKED_PER_RANDOM ranked. */
 export const RANKED_PER_RANDOM = 9;
 
@@ -102,6 +129,18 @@ export type ClaimCard = {
   key: string;
   review: QueueReview;
   drawn: ReviewDrawn;
+  band: Band;
+};
+
+/**
+ * A held claim someone has decided, drawn at random: it takes Right or
+ * Wrong, a label of the claim, as its decision is already made.
+ */
+export type DecidedCard = {
+  kind: "decided";
+  key: string;
+  review: QueueReview;
+  drawn: "random";
   band: Band;
 };
 
@@ -130,18 +169,23 @@ export type ValueCard = {
 };
 
 /**
- * An accepted fact drawn at random: the `draw`th of the queue's draws of
- * the load's accepted quotes, which the page reads (acceptedOffsets).
+ * A fact the graph holds, drawn at random from a band: the `draw`th of the
+ * queue's draws of the band's quotes, which the page reads (quoteOffsets).
  */
-export type AcceptedCard = {
-  kind: "accepted";
+export type QuoteCard = {
+  kind: "quote";
   key: string;
+  band: Exclude<Band, "none">;
   draw: number;
   drawn: "random";
-  band: "0.9";
 };
 
-export type QueueCard = ClaimCard | NameCard | ValueCard | AcceptedCard;
+export type QueueCard =
+  | ClaimCard
+  | DecidedCard
+  | NameCard
+  | ValueCard
+  | QuoteCard;
 
 /** Why a review of the load isn't in the queue, with how many. */
 export type Left = {
@@ -161,8 +205,9 @@ export type Left = {
 export type Queue = {
   cards: QueueCard[];
   left: Left;
-  // The held claims each band holds now, which its random draws come from.
-  pool: Record<Band, number>;
+  // Each band's claims the random slice draws from: its held claims, and
+  // its quotes of facts.
+  pool: Record<Band, { held: number; quotes: number }>;
 };
 
 /**
@@ -179,6 +224,37 @@ export function hashUnit(...parts: (string | number)[]): number {
     0;
   return word / 2 ** 32;
 }
+
+/**
+ * A claim at its place, as the random slice keeps it apart from others: its
+ * document, section, byte range and link. A held claim and the fact its
+ * approval writes are one claim; two claims of one link in one sentence are
+ * one too.
+ *
+ * @example
+ * claimPlace({ documentId: "d", section: 0, start: 1, end: 5 }, "partner_of");
+ */
+export const claimPlace = (
+  at: { documentId: string; section: number; start: number; end: number },
+  link: string | undefined,
+) => [at.documentId, at.section, at.start, at.end, link ?? ""].join("\u001f");
+
+/** A label's claim (claimPlace). */
+export const labelPlace = (
+  l: Pick<
+    FoundryReviewLabel,
+    "docId" | "claimSection" | "claimStart" | "claimEnd" | "link"
+  >,
+) =>
+  claimPlace(
+    {
+      documentId: l.docId,
+      section: l.claimSection ?? 0,
+      start: l.claimStart ?? 0,
+      end: l.claimEnd ?? 0,
+    },
+    l.link,
+  );
 
 /** A review's own key: its review_key, else its place and reason. */
 const keyOf = (r: QueueReview) =>
@@ -223,14 +299,16 @@ function decidedIndex(decisions: readonly ReviewDecision[]) {
   return (s: Settle): boolean => {
     switch (s.kind) {
       case "release":
-        // An approval or a rejection of the claim at its place, under its key
-        // or of what it reads (a rebuild moves keys): its card is decided.
+        // A rejection of the claim at its place, under its key or of what it
+        // reads (a rebuild moves keys), or an approval of what it reads now:
+        // its card is decided. An approval of what it said before is not:
+        // the load refuses it, and the card asks to be read again.
         return (
           claims.get([s.docId, s.section, s.start, s.end].join("\u001f")) ?? []
-        ).some(
-          (d) =>
-            (d.kind === "release" || d.kind === "reject") &&
-            (d.claimKey === s.claimKey || d.statementHash === s.hash),
+        ).some((d) =>
+          d.kind === "reject"
+            ? d.claimKey === s.claimKey || d.statementHash === s.hash
+            : d.kind === "release" && d.statementHash === s.hash,
         );
       case "resolve":
         return (others.get(nameKey(s.type, s.docId, s.normName)) ?? []).some(
@@ -253,11 +331,12 @@ function decidedIndex(decisions: readonly ReviewDecision[]) {
  * engine holds the claim for it (holdingEnds: part of a name and an own-name
  * identifier always, a legal form on a link that holds one value); one the
  * load matched to no row, or several, holds a claim an end of which isn't
- * in the graph (`named` false).
+ * in the graph (`named` false). A name the model linked (adjudicated) holds
+ * nothing: it is in the graph.
  */
 function waitsOn(
   s: Release,
-  names: ReadonlyMap<string, { weak: boolean }>,
+  names: ReadonlyMap<string, { weak: boolean; blocking: boolean }>,
   single: boolean,
 ): string | undefined {
   const holding = new Set(
@@ -270,7 +349,7 @@ function waitsOn(
       key = nameKey(end.type, s.docId, norm),
       name = names.get(key);
     if (!name) continue;
-    if (name.weak ? holding.has(norm) : !s.named) return key;
+    if (name.weak ? holding.has(norm) : name.blocking && !s.named) return key;
   }
   return undefined;
 }
@@ -278,31 +357,45 @@ function waitsOn(
 /**
  * The queue of a load's `reviews` (all of them, read load-wide), given the
  * ontology's saved `decisions`, which links hold one value (`single`), how
- * many accepted quotes of documents the load holds (`accepted`), the load's
- * id (`seed`), and the keys of the cards decided on this page (`keep`),
- * which keep their places until the page is read again so their cards can
- * say what became of them.
+ * many quotes of facts the load holds in each band (`quotes`), the claims
+ * someone has labelled at random (`labelled`, claimPlace), the load's id
+ * (`seed`), and the keys of the cards decided on this page (`keep`), which
+ * keep their places until the page is read again so their cards can say
+ * what became of them.
  */
 export function buildQueue({
   reviews,
   decisions,
   single,
-  accepted,
+  quotes = {},
+  labelled = new Set(),
   seed,
   keep = new Set(),
 }: {
   reviews: readonly QueueReview[];
   decisions: readonly ReviewDecision[];
   single: (link: string) => boolean;
-  accepted: number;
+  quotes?: Partial<Record<Band, number>>;
+  labelled?: ReadonlySet<string>;
   seed: string;
   keep?: ReadonlySet<string>;
 }): Queue {
   const decided = decidedIndex(decisions);
+  const orders = new Map<string, number>();
+  // Computed once a key: a sort calls it on every comparison.
+  const order = (key: string) => {
+    let o = orders.get(key);
+    if (o === undefined) orders.set(key, (o = hashUnit(seed, "order", key)));
+    return o;
+  };
   const left: Left = { decided: 0, unsettled: 0, blocked: 0, stale: 0 };
   const claims: QueueReview[] = [],
+    done: QueueReview[] = [],
     values: QueueReview[] = [],
-    names = new Map<string, { reviews: QueueReview[]; weak: boolean }>();
+    names = new Map<
+      string,
+      { reviews: QueueReview[]; weak: boolean; blocking: boolean }
+    >();
   for (const r of markDiffering([...reviews])) {
     const s = r.settle;
     if (!s) {
@@ -313,6 +406,15 @@ export function buildQueue({
       left.stale += 1;
       continue;
     }
+    // Nothing an approval writes: read two ways, or a property of a fact
+    // that differs, on a link that holds many values.
+    if (
+      s.kind === "release" &&
+      (s.differs || (s.conflict && !single(s.link)))
+    ) {
+      left.blocked += 1;
+      continue;
+    }
     // A card decided on the page keeps its place: a claim's or a value's by
     // its review, a name's by its decision (every review of the name).
     const kept =
@@ -320,23 +422,21 @@ export function buildQueue({
       (s.kind === "resolve" && keep.has(nameKey(s.type, s.docId, s.normName)));
     if (decided(s) && !kept) {
       left.decided += 1;
+      // Still one of its band's claims, for the random slice.
+      if (s.kind === "release") done.push(r);
       continue;
     }
-    if (s.kind === "release") {
-      // Nothing an approval writes: read two ways, or a property of a fact
-      // that differs, on a link that holds many values.
-      if (s.differs || (s.conflict && !single(s.link))) left.blocked += 1;
-      else claims.push(r);
-    } else if (s.kind === "prop") values.push(r);
+    if (s.kind === "release") claims.push(r);
+    else if (s.kind === "prop") values.push(r);
     else {
       const key = nameKey(s.type, s.docId, s.normName),
-        name = names.get(key) ?? { reviews: [], weak: false };
+        name = names.get(key) ?? { reviews: [], weak: false, blocking: false };
       name.reviews.push(r);
       name.weak ||= r.reason !== "adjudicated" && !BLOCKING.has(r.reason);
+      name.blocking ||= BLOCKING.has(r.reason);
       names.set(key, name);
     }
   }
-  const order = (key: string) => hashUnit(seed, "order", key);
   // Each held claim on its own, or on the card of the name it waits on.
   const held = new Map<string, ClaimCard[]>();
   const own: ClaimCard[] = [];
@@ -353,17 +453,6 @@ export function buildQueue({
     if (on) held.set(on, [...(held.get(on) ?? []), card]);
     else own.push(card);
   }
-  // The random slice, drawn from the held claims of each band and the
-  // load's accepted facts, before the ranking: a claim drawn is its card
-  // there and nowhere else.
-  const byBand = new Map<Band, ClaimCard[]>(BANDS.map((b) => [b, []]));
-  for (const c of [...own, ...[...held.values()].flat()])
-    byBand.get(c.band)!.push(c);
-  for (const pool of byBand.values())
-    pool.sort((a, b) => order(a.key) - order(b.key));
-  const pool = Object.fromEntries(
-    BANDS.map((b) => [b, byBand.get(b)!.length]),
-  ) as Record<Band, number>;
   const nameCards = [...names.entries()].map(([key, n]): NameCard => {
     const sorted = n.reviews.toSorted(
       (a, b) => a.section - b.section || a.start - b.start,
@@ -396,47 +485,80 @@ export function buildQueue({
         KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
         order(a.key) - order(b.key),
     );
-  const randoms = Math.ceil(ranked().length / RANKED_PER_RANDOM);
-  const drawn: (ClaimCard | AcceptedCard)[] = [];
-  let acceptedLeft = accepted,
-    draws = 0;
-  for (let slot = 0; drawn.length < randoms; slot++) {
-    const open = BANDS.filter(
-      (b) => byBand.get(b)!.length > 0 || (b === "0.9" && acceptedLeft > 0),
-    );
-    if (!open.length) break;
-    const band = open[slot % open.length]!,
-      inBand = byBand.get(band)!;
-    // In the top band, a held claim or an accepted fact, in proportion to
-    // how many of each there are.
-    const fact =
-      band === "0.9" &&
-      acceptedLeft > 0 &&
-      hashUnit(seed, "pick", slot) * (inBand.length + acceptedLeft) >=
-        inBand.length;
-    if (fact) {
-      drawn.push({
-        kind: "accepted",
-        key: `accepted-${draws}`,
-        draw: draws,
+  // The random slice's pools: each band's held claims, decided or not, but
+  // those labelled at random, in an order drawn from the load's id; and how
+  // many quotes of facts the band holds.
+  // A card labelled on this page (a random draw decided here) keeps its
+  // place, as a decided one does.
+  const open = (r: QueueReview) =>
+    !labelled.has(claimPlace(r, r.suggestedLink)) || keep.has(keyOf(r));
+  type Drawable = ClaimCard | DecidedCard;
+  const pools = new Map<Band, Drawable[]>(BANDS.map((b) => [b, []]));
+  for (const c of [...own, ...[...held.values()].flat()])
+    if (open(c.review)) pools.get(c.band)!.push(c);
+  for (const r of done)
+    if (open(r))
+      pools.get(bandOf(r.confidence))!.push({
+        kind: "decided",
+        key: (r.settle as Release).reviewId,
+        review: r,
         drawn: "random",
-        band: "0.9",
+        band: bandOf(r.confidence),
       });
-      draws += 1;
-      acceptedLeft -= 1;
+  for (const p of pools.values()) p.sort((a, b) => order(a.key) - order(b.key));
+  const quotesLeft = new Map<Band, number>(
+    BANDS.map((b) => [b, b === "none" ? 0 : Math.max(0, quotes[b] ?? 0)]),
+  );
+  const pool = Object.fromEntries(
+    BANDS.map((b) => [
+      b,
+      { held: pools.get(b)!.length, quotes: quotesLeft.get(b)! },
+    ]),
+  ) as Queue["pool"];
+  const randoms = Math.ceil(ranked().length / RANKED_PER_RANDOM);
+  const drawn: (Drawable | QuoteCard)[] = [];
+  const draws = new Map<Band, number>();
+  // The bands in turn, from the top, passing over one with nothing left.
+  let next = 0;
+  while (drawn.length < randoms) {
+    const at = BANDS.findIndex(
+      (_, i) =>
+        pools.get(BANDS[(next + i) % BANDS.length]!)!.length > 0 ||
+        quotesLeft.get(BANDS[(next + i) % BANDS.length]!)! > 0,
+    );
+    if (at < 0) break;
+    const band = BANDS[(next + at) % BANDS.length]!;
+    next = (next + at + 1) % BANDS.length;
+    const inBand = pools.get(band)!,
+      quotesIn = quotesLeft.get(band)!;
+    // A held claim or a fact, in proportion to how many of each there are.
+    const fact =
+      quotesIn > 0 &&
+      hashUnit(seed, "pick", drawn.length) * (inBand.length + quotesIn) >=
+        inBand.length;
+    if (fact && band !== "none") {
+      const n = draws.get(band) ?? 0;
+      drawn.push({
+        kind: "quote",
+        key: `quote-${band}-${n}`,
+        band,
+        draw: n,
+        drawn: "random",
+      });
+      draws.set(band, n + 1);
+      quotesLeft.set(band, quotesIn - 1);
       continue;
     }
     const card = inBand.shift()!;
-    drawn.push({ ...card, drawn: "random" });
+    drawn.push(card.kind === "claim" ? { ...card, drawn: "random" } : card);
     // Out of its rank, or off its name's card.
-    const at = own.indexOf(card);
-    if (at >= 0) own.splice(at, 1);
+    const i = own.indexOf(card as ClaimCard);
+    if (i >= 0) own.splice(i, 1);
     for (const n of nameCards) n.held = n.held.filter((c) => c !== card);
   }
   // One random card after every RANKED_PER_RANDOM ranked, the rest at the end.
   const cards: QueueCard[] = [];
-  const rest = ranked();
-  rest.forEach((c, i) => {
+  ranked().forEach((c, i) => {
     cards.push(c);
     if ((i + 1) % RANKED_PER_RANDOM === 0 && drawn.length)
       cards.push(drawn.shift()!);
@@ -485,45 +607,36 @@ export function perDecision(card: ClaimCard | NameCard | ValueCard): number {
   }
 }
 
+/** How many offsets a quote card reads: the first unlabelled one is its fact. */
+export const QUOTE_CANDIDATES = 8;
+
 /**
- * The offsets among `accepted` quotes the `draw`th accepted card reads, in
- * order: the first that no one has labelled at random, and no earlier card
- * shows, is its fact.
+ * The offsets among a band's `count` quotes the `draw`th quote card of the
+ * band reads, in order, each once: the first that no one has labelled at
+ * random, and no earlier card shows, is its fact. Drawn from a hash of the
+ * load's id, so they are the same until the band's count changes.
  *
  * @example
- * acceptedOffsets("load-1", 0, 40).length; // 5
+ * quoteOffsets("load-1", "0.9", 0, 40).length; // 8
+ * quoteOffsets("load-1", "0.9", 0, 3).toSorted(); // [0, 1, 2]
  */
-export function acceptedOffsets(
+export function quoteOffsets(
   seed: string,
+  band: Band,
   draw: number,
-  accepted: number,
+  count: number,
 ): number[] {
-  if (accepted <= 0) return [];
-  return Array.from({ length: Math.min(5, accepted) }, (_, t) =>
-    Math.floor(hashUnit(seed, "accepted", draw, t) * accepted),
-  );
+  if (count <= 0) return [];
+  const want = Math.min(QUOTE_CANDIDATES, count);
+  const out: number[] = [];
+  for (let t = 0; out.length < want; t++) {
+    let o = Math.floor(hashUnit(seed, "quote", band, draw, t) * count);
+    // Each offset once: the next free one after a repeat.
+    while (out.includes(o)) o = (o + 1) % count;
+    out.push(o);
+  }
+  return out;
 }
-
-/** A claim's place and key, as a label names it. */
-export const labelPlace = (
-  l: Pick<
-    FoundryReviewLabel,
-    | "docId"
-    | "claimSection"
-    | "claimStart"
-    | "claimEnd"
-    | "claimKey"
-    | "factKey"
-  >,
-) =>
-  JSON.stringify([
-    l.docId,
-    l.claimSection ?? 0,
-    l.claimStart ?? 0,
-    l.claimEnd ?? 0,
-    l.claimKey ?? null,
-    l.factKey ?? null,
-  ]);
 
 /** Of each re-check's candidates, this share is drawn for a second person. */
 export const RECHECK_SHARE = 0.05;
@@ -543,12 +656,17 @@ export type Recheck =
       against: ReviewVerdict;
     };
 
+/** A decision's claim, by its place (a decision keeps no link). */
+const decisionAt = (
+  d: Extract<FoundryReviewDecision, { kind: "release" | "reject" }>,
+) => [d.docId, d.claimSection, d.claimStart, d.claimEnd].join("\u001f");
+
 /**
  * What `user` may re-check: the share RECHECK_SHARE, drawn by id, of the
- * decisions on held claims made from the queue, and of the labels of
- * accepted facts drawn at random, made by someone else, of a claim `user`
- * has given no word on. A re-check changes nothing: it measures how often
- * people agree.
+ * decisions on held claims made from the queue, and of the labels drawn at
+ * random that came with no decision (a fact's, or a decided claim's), made
+ * by someone else, of a claim `user` has given no word on. A re-check
+ * changes nothing: it measures how often people agree.
  *
  * @example
  * rechecks([], [], "user-1"); // []
@@ -558,16 +676,22 @@ export function rechecks(
   labels: readonly FoundryReviewLabel[],
   user: string,
 ): Recheck[] {
-  const mine = new Set(
-    labels.filter((l) => l.decidedByUserId === user).map(labelPlace),
-  );
+  const mine = labels.filter((l) => l.decidedByUserId === user);
+  const said = new Set(mine.map(labelPlace)),
+    saidAt = new Set(
+      mine.map((l) =>
+        [l.docId, l.claimSection ?? 0, l.claimStart ?? 0, l.claimEnd ?? 0].join(
+          "\u001f",
+        ),
+      ),
+    );
   const sampled = (id: string) => hashUnit("recheck", id) < RECHECK_SHARE;
   const ofDecisions = decisions.flatMap((d): Recheck[] =>
     (d.kind === "release" || d.kind === "reject") &&
     !!d.drawn &&
     d.decidedByUserId !== user &&
     sampled(d.id) &&
-    !mine.has(labelPlace(d))
+    !saidAt.has(decisionAt(d))
       ? [
           {
             kind: "decision",
@@ -580,10 +704,10 @@ export function rechecks(
   );
   const ofLabels = labels.flatMap((l): Recheck[] =>
     l.drawn === "random" &&
-    !!l.factKey &&
+    !l.decisionId &&
     l.decidedByUserId !== user &&
     sampled(l.id) &&
-    !mine.has(labelPlace(l))
+    !said.has(labelPlace(l))
       ? [{ kind: "label", key: `label-${l.id}`, label: l, against: l.verdict }]
       : [],
   );
@@ -597,15 +721,23 @@ export type Precision = {
 };
 
 /**
- * The random slice's word per band, from the labels: each a claim drawn at
- * random (a held claim's approval or rejection, or an accepted fact's Right
- * or Wrong), with the score it was read at; and the re-checks' agreement.
+ * The random slice's word per band, from the labels: one per claim (the
+ * first said, where two people labelled one at once), each a claim drawn at
+ * random with the score it was read at; and the re-checks' agreement.
  *
  * @example
  * precision([]).bands.length; // 0
  */
 export function precision(labels: readonly FoundryReviewLabel[]): Precision {
-  const random = labels.filter((l) => l.drawn === "random");
+  const first = new Map<string, FoundryReviewLabel>();
+  for (const l of labels.toSorted(
+    (a, b) =>
+      (a.decidedAt ?? "").localeCompare(b.decidedAt ?? "") ||
+      a.id.localeCompare(b.id),
+  ))
+    if (l.drawn === "random" && !first.has(labelPlace(l)))
+      first.set(labelPlace(l), l);
+  const random = [...first.values()];
   const bands = BANDS.flatMap((band) => {
     const of = random.filter((l) => bandOf(l.confidence) === band);
     return of.length

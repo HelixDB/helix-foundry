@@ -2,17 +2,17 @@
 // /ontology/:ontologyId/review: every open review of the ontology's current
 // load on one page, the decisions that write the most facts first
 // (./queue.ts buildQueue), with about one card in ten drawn at random from a
-// score band, the accepted facts included, to measure how often claims at
-// each score are right. Each card shows the evidence (the quote, its
-// document and where) before what it writes and the verifier's score, then
-// the controls a document's Needs review has (./settle.tsx SettleReview):
-// approve, reject, link a name, choose a value, each as the backend settles
-// it, saying how the queue drew the card. An accepted fact drawn at random
-// takes Right or Wrong, a label that changes nothing. A few decisions and
-// labels of other people come back as optional re-checks. There is no
-// Approve all here: a person reads every card.
+// score band to measure how often claims at each score are right. Each card
+// shows the evidence (the quote, its document and where) before what it
+// writes and the verifier's score, then the controls a document's Needs
+// review has (./settle.tsx SettleReview): approve, reject, link a name,
+// choose a value, each as the backend settles it, saying how the queue drew
+// the card. A claim drawn at random that is already decided, or a fact the
+// graph holds, takes Right or Wrong, a label that changes nothing. A few
+// decisions and labels of other people come back as optional re-checks.
+// There is no Approve all here: a person reads every card.
 import "./reviews.css";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   useQueries,
@@ -25,6 +25,7 @@ import type {
   FoundryLoad,
   FoundryReviewLabel,
   ReviewVerdict,
+  SettleReviewLabelRequest,
 } from "../../../shared/wfe";
 import {
   Button,
@@ -41,7 +42,13 @@ import {
 import { paths } from "../../paths";
 import { canManage, useWorkspace } from "../../ui";
 import { useDocumentNames } from "../documents/documents-api";
-import { QUEUE_READ, type AcceptedQuote, type Span } from "../explore/model";
+import { useReadAccess } from "../explore/graph-reader";
+import {
+  QUEUE_READ,
+  type EntityRow,
+  type FactQuote,
+  type Span,
+} from "../explore/model";
 import type { Naming } from "../explore/naming";
 import { readQueries } from "../explore/reads";
 import { useTenantReads } from "../explore/tenant-reads";
@@ -49,94 +56,141 @@ import { useNaming } from "../explore/use-naming";
 import { ontologyQueries } from "../ontology/queries";
 import { ontologyName, useOntology } from "../ontology/scope";
 import { labelQueries, reviewQueries, settleLabel } from "./api";
+import { approvalOf, rejectionOf, type Statement } from "./model";
 import {
+  BAND_RANGE,
   BAND_TEXT,
-  acceptedOffsets,
   bandOf,
   buildQueue,
+  claimPlace,
   labelPlace,
   precision,
+  quoteOffsets,
   rechecks,
+  scoreText,
   type ClaimCard,
+  type DecidedCard,
   type NameCard,
   type QueueCard,
   type QueueReview,
+  type QuoteCard,
   type Recheck,
 } from "./queue";
 import { SettleReview } from "./settle";
 
+/** How many cards the page shows at first, and how many more each time. */
+const SHOWN = 20;
+/** How many re-checks the page offers at once, of how many it reads. */
+const RECHECKS_SHOWN = 5;
+const RECHECKS_READ = 20;
+
+/** A review once, wherever pages read at different times put it. */
+const reviewKey = (r: QueueReview) =>
+  [
+    r.documentId,
+    r.section,
+    r.start,
+    r.end,
+    r.reason,
+    r.settle && r.settle.kind !== "stale" ? r.settle.reviewId : r.quote,
+  ].join("\u001f");
+
 /**
  * A load's pages of reviews as one: all of them once every page is read,
+ * each review once (offset pages read at different times may overlap),
  * else the first failure. Stable, so TanStack combines again only when a
  * page changes.
  */
-const combinePages = (results: UseQueryResult<QueueReview[]>[]) => ({
-  data: results.every((r) => r.data)
-    ? results.flatMap((r) => r.data ?? [])
-    : undefined,
-  error: results.find((r) => r.error)?.error ?? null,
-  refetch: () => results.forEach((r) => void r.refetch()),
-});
-
-/** How many cards the page shows at first, and how many more each time. */
-const SHOWN = 20;
-/** How many re-checks the page offers at once. */
-const RECHECKS_SHOWN = 5;
+const combinePages = (results: UseQueryResult<QueueReview[]>[]) => {
+  const seen = new Set<string>();
+  return {
+    data: results.every((r) => r.data)
+      ? results
+          .flatMap((r) => r.data ?? [])
+          .filter((r) => {
+            const key = reviewKey(r);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+      : undefined,
+    read: results.filter((r) => r.data).length,
+    error: results.find((r) => r.error)?.error ?? null,
+    refetch: () => results.forEach((r) => void r.refetch()),
+  };
+};
 
 export function ReviewQueuePage() {
   const { id: ws, role, user } = useWorkspace(),
     { id: o, ontology } = useOntology();
   useTitle("Review queue");
   const qc = useQueryClient();
+  const access = useReadAccess();
   const loads = useQuery(ontologyQueries.loads(ws, o));
   // Only the current load is settled, so the queue is always its.
   const load = loads.data?.loads?.find((l) => l.current);
-  const scope = useMemo(() => (load ? { id: load.id } : null), [load]);
-  const { read } = useTenantReads();
+  const loadId = load?.id ?? "";
+  const scope = useMemo(() => ({ id: loadId }), [loadId]);
+  const { read, readLater } = useTenantReads();
   const { naming, ready } = useNaming(load?.versionId || "");
+  const reads = access === "database" && !!loadId && !!ontology.tenantId;
   const counts = useQuery({
-    ...readQueries.queueCounts(ws, o, read, scope ?? { id: "" }),
-    enabled: !!scope && !!ontology.tenantId,
+    ...readQueries.queueCounts(ws, o, read, scope, BAND_RANGE),
+    enabled: reads,
   });
   const total = counts.data?.reviews ?? 0,
     pages = Math.ceil(Math.min(total, QUEUE_READ.reviews) / QUEUE_READ.page);
-  // Every page, as one: the reviews once all are read, else the first
-  // failure.
+  // The pages wait their turn at the database's limiter.
   const reviewPages = useQueries({
     queries: Array.from({ length: pages }, (_, page) => ({
-      ...readQueries.queueReviews(
-        ws,
-        o,
-        read,
-        scope ?? { id: "" },
-        page,
-        naming,
-      ),
-      enabled: !!scope && ready,
+      ...readQueries.queueReviews(ws, o, readLater, scope, page, naming),
+      enabled: reads && ready && !!counts.data,
     })),
     combine: combinePages,
   });
+  // While pages are read again (a job ended, or the count crossed a page),
+  // the last whole read of this load stands.
+  const last = useRef<{ load: string; reviews: QueueReview[] }>(undefined);
+  if (reviewPages.data)
+    last.current = { load: loadId, reviews: reviewPages.data };
+  const reviews =
+    reviewPages.data ??
+    (last.current?.load === loadId ? last.current.reviews : undefined);
   const decisions = useQuery(reviewQueries.list(ws, o));
   const labels = useQuery(labelQueries.list(ws, o));
+  const labelled = useMemo(
+    () =>
+      new Set(
+        (labels.data ?? []).filter((l) => l.drawn === "random").map(labelPlace),
+      ),
+    [labels.data],
+  );
   // The cards decided here keep their places until the page is read again.
   const [keep, setKeep] = useState<ReadonlySet<string>>(new Set());
   const [shown, setShown] = useState(SHOWN);
-  const reviews = reviewPages.data;
-  const single = (link: string) =>
-    !naming.version || naming.oneValued.has(link);
   const queue = useMemo(
     () =>
-      reviews && decisions.data && load
+      reviews && decisions.data && labels.data && counts.data && loadId
         ? buildQueue({
             reviews,
             decisions: decisions.data,
-            single,
-            accepted: counts.data?.accepted ?? 0,
-            seed: load.id,
+            single: (link) => !naming.version || naming.oneValued.has(link),
+            quotes: counts.data.quotes,
+            labelled,
+            seed: loadId,
             keep,
           })
         : undefined,
-    [reviews, decisions.data, load, counts.data, keep, naming],
+    [
+      reviews,
+      decisions.data,
+      labels.data,
+      labelled,
+      counts.data,
+      loadId,
+      keep,
+      naming,
+    ],
   );
   const settled = (key: string) => {
     setKeep((now) => new Set(now).add(key));
@@ -150,69 +204,87 @@ export function ReviewQueuePage() {
         { label: "Review queue" },
       ]}
       title="Review queue"
-      subtitle="Every open review of the current load, the decisions that write the most facts first. About one card in ten is drawn at random from a score band, accepted facts included, to measure how often claims at each score are right."
+      subtitle="Every open review of the current load, the decisions that write the most facts first. About one card in ten is drawn at random from a score band, to measure how often claims at each score are right."
     />
   );
-  if (loads.isPending || (scope && (counts.isPending || !ready)))
-    return (
-      <Page>
-        {header}
-        <SkeletonText lines={6} />
-      </Page>
+  const shell = (body: ReactNode) => (
+    <Page>
+      {header}
+      {body}
+    </Page>
+  );
+  if (access !== "database")
+    return shell(
+      <EmptyState
+        icon={ListChecks}
+        title="Its reviews aren’t shared with you"
+        text="The review queue reads the ontology’s database, which you don’t query."
+      />,
+    );
+  if (loads.isPending) return shell(<SkeletonText lines={6} />);
+  if (!loads.data)
+    return shell(
+      <EmptyState
+        icon={ListChecks}
+        title="Couldn’t read the loads"
+        text={loads.error?.message}
+        action={<Button onClick={() => void loads.refetch()}>Retry</Button>}
+      />,
     );
   if (!load)
-    return (
-      <Page>
-        {header}
-        <EmptyState
-          icon={ListChecks}
-          title="Nothing to review yet"
-          text="Load the ontology: its reviews are read from the current load."
-          action={
-            <Link to={paths.ontology(o)} className="hf-link">
-              Overview
-            </Link>
-          }
-        />
-      </Page>
+    return shell(
+      <EmptyState
+        icon={ListChecks}
+        title="Nothing to review yet"
+        text="Load the ontology: its reviews are read from the current load."
+        action={
+          <Link to={paths.ontology(o)} className="hf-link">
+            Overview
+          </Link>
+        }
+      />,
     );
   const failed =
     counts.error || reviewPages.error || decisions.error || labels.error;
-  if (failed && !queue)
-    return (
-      <Page>
-        {header}
+  const retry = () => {
+    void counts.refetch();
+    reviewPages.refetch();
+    void decisions.refetch();
+    void labels.refetch();
+  };
+  if (!queue)
+    return shell(
+      failed && !counts.isFetching ? (
         <EmptyState
           icon={ListChecks}
           title="Couldn’t read the reviews"
           text={failed.message}
-          action={
-            <Button
-              onClick={() => {
-                void counts.refetch();
-                reviewPages.refetch();
-                void decisions.refetch();
-                void labels.refetch();
-              }}
-            >
-              Retry
-            </Button>
-          }
+          action={<Button onClick={retry}>Retry</Button>}
         />
-      </Page>
-    );
-  if (!queue)
-    return (
-      <Page>
-        {header}
-        <SkeletonText lines={6} />
-      </Page>
+      ) : (
+        <>
+          {pages > 1 && (
+            <p role="status" className="on-muted">
+              Reading the load’s reviews: {reviewPages.read} of {pages} pages.
+            </p>
+          )}
+          <SkeletonText lines={6} />
+        </>
+      ),
     );
   const manage = canManage(role);
-  const cards = queue.cards.slice(0, shown);
   return (
     <Page>
       {header}
+      {failed && (
+        <p role="status" className="hf-refresh-failed">
+          Couldn’t read the latest reviews ({failed.message}): this is the last
+          read.{" "}
+          <Button size="sm" variant="ghost" onClick={retry}>
+            Retry
+          </Button>
+        </p>
+      )}
       <QueueSummary
         queue={queue}
         total={total}
@@ -229,11 +301,12 @@ export function ReviewQueuePage() {
         <>
           <ol className="rq-list" aria-label="Review queue">
             <QueueCards
-              cards={cards}
+              cards={queue.cards.slice(0, shown)}
               load={load}
               naming={naming}
               labels={labels.data ?? []}
-              accepted={counts.data?.accepted ?? 0}
+              labelled={labelled}
+              quotes={counts.data?.quotes ?? {}}
               settled={settled}
             />
           </ol>
@@ -247,10 +320,11 @@ export function ReviewQueuePage() {
       )}
       <Rechecks
         load={load}
+        naming={naming}
         reviews={reviews ?? []}
         items={rechecks(decisions.data ?? [], labels.data ?? [], user.id).slice(
           0,
-          RECHECKS_SHOWN,
+          RECHECKS_READ,
         )}
         manage={manage}
       />
@@ -289,8 +363,8 @@ function QueueSummary({
       {total > QUEUE_READ.reviews && (
         <p role="note">
           This load holds {formatNumber(total)} reviews: the queue reads the
-          first {formatNumber(QUEUE_READ.reviews)}. Decide those, and the next
-          load lists the rest.
+          first {formatNumber(QUEUE_READ.reviews)}, decided ones included.
+          Decide those, and the next load lists the rest.
         </p>
       )}
       {!manage && <p className="on-muted">Owners and admins settle reviews.</p>}
@@ -298,67 +372,77 @@ function QueueSummary({
   );
 }
 
+/** A quote card's fact: its quote, and its ends as the read found them. */
+type Pick = {
+  quote: FactQuote;
+  from?: EntityRow;
+  to?: EntityRow;
+  ends: "read" | "reading" | "failed";
+};
+
 /**
- * The cards on the page, the accepted facts drawn at random among them read
- * at the offsets their draws give: each the first quote no one has labelled
- * at random and no earlier card shows, kept once labelled here.
+ * The cards on the page. The facts drawn at random are read at the offsets
+ * their draws give (quoteOffsets): each the first quote of its band no one
+ * has labelled at random and no earlier card shows, kept once labelled here.
  */
 function QueueCards({
   cards,
   load,
   naming,
   labels,
-  accepted,
+  labelled,
+  quotes,
   settled,
 }: {
   cards: QueueCard[];
   load: FoundryLoad;
   naming: Naming;
   labels: readonly FoundryReviewLabel[];
-  accepted: number;
+  labelled: ReadonlySet<string>;
+  quotes: Partial<Record<string, number>>;
   settled: (key: string) => void;
 }) {
   const { id: ws } = useWorkspace(),
     { id: o } = useOntology();
-  const { read } = useTenantReads();
+  const { readLater } = useTenantReads();
   const scope = { id: load.id };
-  const draws = cards.flatMap((c) => (c.kind === "accepted" ? [c] : []));
-  const offsets = draws.flatMap((c) =>
-    acceptedOffsets(load.id, c.draw, accepted),
-  );
-  const quotes = useQuery({
-    ...readQueries.acceptedQuotes(ws, o, read, scope, offsets),
-    enabled: offsets.length > 0,
+  const draws = cards.filter((c): c is QuoteCard => c.kind === "quote");
+  const offsetsOf = (c: QuoteCard) =>
+    quoteOffsets(load.id, c.band, c.draw, quotes[c.band] ?? 0);
+  // One read a card, so showing more reads only the new ones.
+  const reads = useQueries({
+    queries: draws.map((c) => ({
+      ...readQueries.rangeQuotes(
+        ws,
+        o,
+        readLater,
+        scope,
+        BAND_RANGE[c.band],
+        offsetsOf(c),
+      ),
+      enabled: offsetsOf(c).length > 0,
+    })),
   });
-  // The quotes labelled here keep their cards; any other a label names is
-  // left for another draw.
-  const [mine, setMine] = useState<ReadonlyMap<string, string>>(new Map());
-  const taken = new Set(
-    labels.filter((l) => l.drawn === "random" && l.factKey).map(labelPlace),
-  );
-  const chosen = new Map<string, AcceptedQuote>();
-  if (quotes.data) {
-    const used = new Set<string>();
-    let at = 0;
-    for (const c of draws) {
-      const candidates = acceptedOffsets(load.id, c.draw, accepted).map(
-        () => quotes.data[at++],
-      );
-      const kept = mine.get(c.key);
-      const pick =
-        candidates.find((q) => q && placeOf(q) === kept) ??
-        candidates.find(
-          (q) => q && !used.has(placeOf(q)) && !taken.has(placeOf(q)),
-        );
-      if (pick) {
-        chosen.set(c.key, pick);
-        used.add(placeOf(pick));
-      }
+  // The quotes labelled here keep their cards, whatever is read since.
+  const [mine, setMine] = useState<ReadonlyMap<string, FactQuote>>(new Map());
+  const chosen = new Map<string, FactQuote>();
+  const used = new Set<string>();
+  draws.forEach((c, i) => {
+    const pick =
+      mine.get(c.key) ??
+      (reads[i]?.data ?? []).find((q): q is FactQuote => {
+        if (!q) return false;
+        const at = claimPlace(q, q.link);
+        return !used.has(at) && !labelled.has(at);
+      });
+    if (pick) {
+      chosen.set(c.key, pick);
+      used.add(claimPlace(pick, pick.link));
     }
-  }
+  });
   const picked = [...chosen.values()];
   const ends = useQuery({
-    ...readQueries.acceptedFacts(ws, o, read, scope, picked, naming),
+    ...readQueries.quoteFacts(ws, o, readLater, scope, picked, naming),
     enabled: picked.length > 0,
   });
   const link = (path: string) => path;
@@ -372,6 +456,15 @@ function QueueCards({
             load={load}
             naming={naming}
             link={link}
+            settled={settled}
+          />
+        );
+      case "decided":
+        return (
+          <DecidedItem
+            key={card.key}
+            card={card}
+            labels={labels}
             settled={settled}
           />
         );
@@ -390,7 +483,7 @@ function QueueCards({
         return (
           <li key={card.key} className="rq-card">
             <CardHead title="A value documents state differently" />
-            <Evidence review={card.review} />
+            <Evidence at={card.review} quote={card.review.quote} />
             <p className="rq-writes">
               Writes one value of {card.review.prop || "a property"}.
             </p>
@@ -404,32 +497,48 @@ function QueueCards({
             />
           </li>
         );
-      case "accepted": {
-        const q = chosen.get(card.key);
+      case "quote": {
+        const i = draws.indexOf(card),
+          q = chosen.get(card.key);
         const fact = q ? ends.data?.[picked.indexOf(q)] : undefined;
         return (
           <li key={card.key} className="rq-card">
-            <CardHead title="An accepted fact" random />
+            <CardHead
+              title={
+                card.band === "0.9" ? "An accepted fact" : "An approved fact"
+              }
+              random
+            />
             {q ? (
-              <AcceptedFact
-                quote={q}
-                from={fact?.from?.name}
-                to={fact?.to?.name}
+              <QuoteFact
+                pick={{
+                  quote: q,
+                  from: fact?.from,
+                  to: fact?.to,
+                  ends: ends.isPending
+                    ? "reading"
+                    : ends.error
+                      ? "failed"
+                      : "read",
+                }}
+                accepted={card.band === "0.9"}
                 label={labels.find(
-                  (l) => l.drawn === "random" && labelPlace(l) === placeOf(q),
+                  (l) =>
+                    l.drawn === "random" &&
+                    labelPlace(l) === claimPlace(q, q.link),
                 )}
                 onLabelled={() => {
-                  setMine((now) => new Map(now).set(card.key, placeOf(q)));
+                  setMine((now) => new Map(now).set(card.key, q));
                   settled(card.key);
                 }}
               />
-            ) : quotes.isPending ? (
+            ) : reads[i]?.isPending ? (
               <SkeletonText lines={2} />
             ) : (
               <p className="on-muted">
-                {quotes.error
-                  ? `Couldn’t read this draw: ${quotes.error.message}`
-                  : "Every accepted fact this draw found is labelled already."}
+                {reads[i]?.error
+                  ? `Couldn’t read this draw: ${reads[i]!.error!.message}`
+                  : "Every fact this draw read is labelled already, or shown above."}
               </p>
             )}
           </li>
@@ -438,16 +547,6 @@ function QueueCards({
     }
   });
 }
-
-/** An accepted quote's place and fact, as a label names it. */
-const placeOf = (q: AcceptedQuote) =>
-  labelPlace({
-    docId: q.documentId,
-    claimSection: q.section,
-    claimStart: q.start,
-    claimEnd: q.end,
-    factKey: q.factKey,
-  });
 
 function CardHead({ title, random }: { title: string; random?: boolean }) {
   return (
@@ -463,24 +562,22 @@ function CardHead({ title, random }: { title: string; random?: boolean }) {
  * document and its section, linked to the document's review at the quote.
  */
 function Evidence({
-  review,
+  at,
   quote,
 }: {
-  review?: Pick<QueueReview, "documentId" | "quote"> & Span;
-  quote?: AcceptedQuote;
+  at: Span & { documentId: string };
+  quote: string;
 }) {
   const { id: ws } = useWorkspace(),
     { id: o } = useOntology();
   const name = useDocumentNames(ws, "a document");
-  const at = review ?? quote!,
-    documentId = review?.documentId ?? quote!.documentId;
-  const text = (review?.quote ?? quote?.quote ?? "").trim();
+  const text = quote.trim();
   return (
     <div className="rq-evidence">
       {text ? <blockquote>“{text}”</blockquote> : null}
       <p>
-        <Link to={paths.document(o, documentId, "review", at)}>
-          {name(documentId)}
+        <Link to={paths.document(o, at.documentId, "review", at)}>
+          {name(at.documentId)}
         </Link>{" "}
         · section {at.section + 1}
       </p>
@@ -488,13 +585,35 @@ function Evidence({
   );
 }
 
+/** What a claim states: its ends, as named, and its link. */
+function ClaimLine({
+  from,
+  link,
+  to,
+}: {
+  from?: string;
+  link: string;
+  to?: string;
+}) {
+  return (
+    <>
+      <strong>{from ?? "…"}</strong> <span aria-label="to">→</span>{" "}
+      <code>{link}</code> <span aria-label="to">→</span>{" "}
+      <strong>{to ?? "…"}</strong>
+    </>
+  );
+}
+const statementLine = (s: Statement, link: string) => (
+  <ClaimLine from={s.subject.name} link={link} to={s.object.name} />
+);
+
 /** The verifier's score, after the evidence: what the model said. */
 function Score({ confidence }: { confidence?: number }) {
   return (
     <p className="rq-score on-muted">
       {confidence === undefined
         ? "The verifier gave it no score."
-        : `Verifier score ${confidence.toFixed(2)} (${BAND_TEXT[bandOf(confidence)]}).`}
+        : `Verifier score ${scoreText(confidence)} (${BAND_TEXT[bandOf(confidence)]}).`}
     </p>
   );
 }
@@ -522,7 +641,7 @@ function ClaimItem({
   return (
     <Item className="rq-card" data-drawn={card.drawn}>
       <CardHead title="A held claim" random={random} />
-      <Evidence review={card.review} />
+      <Evidence at={card.review} quote={card.review.quote} />
       {random ? (
         <p className="rq-writes">{RANDOM_NOTE}</p>
       ) : (
@@ -562,7 +681,7 @@ function NameItem({
   return (
     <li className="rq-card">
       <CardHead title="A name in a document" />
-      <Evidence review={card.review} />
+      <Evidence at={card.review} quote={card.review.quote} />
       <p className="rq-writes">
         {card.blocked > 0 &&
           `Settling it writes ${plural(card.blocked, "fact")} the load holds back for it. `}
@@ -580,7 +699,7 @@ function NameItem({
         drawn="ranked"
         onSettled={() => settled(card.key)}
       />
-      {card.held.length > 0 && (
+      {held > 0 && (
         <div className="rq-held" aria-label="Claims that wait on this name">
           {card.held.map((c) => (
             <ClaimItem
@@ -599,41 +718,36 @@ function NameItem({
   );
 }
 
-/** An accepted fact drawn at random: Right or Wrong, a label of it. */
-function AcceptedFact({
-  quote,
-  from,
-  to,
-  label,
+/**
+ * Right and Wrong on a claim, a label (`request`), or what this person said
+ * of it (`own`). It changes nothing in the graph or the decisions.
+ */
+function LabelButtons({
+  request,
+  own,
   onLabelled,
 }: {
-  quote: AcceptedQuote;
-  from?: string;
-  to?: string;
-  label?: FoundryReviewLabel;
+  request: (verdict: ReviewVerdict) => SettleReviewLabelRequest;
+  own?: FoundryReviewLabel;
   onLabelled: () => void;
 }) {
-  const { id: ws, role, user } = useWorkspace(),
+  const { id: ws, role } = useWorkspace(),
     { id: o } = useOntology();
   const qc = useQueryClient();
   const [pending, setPending] = useState(false),
     [error, setError] = useState("");
-  const own = label?.decidedByUserId === user.id ? label : undefined;
+  if (own)
+    return (
+      <p role="status">
+        You said it’s {own.verdict}. It’s counted in the random checks below.
+      </p>
+    );
+  if (!canManage(role)) return null;
   const say = async (verdict: ReviewVerdict) => {
     setPending(true);
     setError("");
     try {
-      await settleLabel(ws, o, {
-        fact: {
-          docId: quote.documentId,
-          section: quote.section,
-          start: quote.start,
-          end: quote.end,
-          factKey: quote.factKey,
-        },
-        verdict,
-        drawn: "random",
-      });
+      await settleLabel(ws, o, request(verdict));
       onLabelled();
       await qc.invalidateQueries({
         queryKey: labelQueries.list(ws, o).queryKey,
@@ -646,41 +760,24 @@ function AcceptedFact({
   };
   return (
     <>
-      <Evidence quote={quote} />
-      <p className="rq-writes">
-        The graph holds it as a fact: <strong>{from ?? "…"}</strong>{" "}
-        <span aria-label="to">→</span> <code>{quote.link}</code>{" "}
-        <span aria-label="to">→</span> <strong>{to ?? "…"}</strong>. Drawn at
-        random from accepted facts, to measure how often they’re right. Your
-        word is kept as a label: it changes nothing in the graph.
-      </p>
-      <Score confidence={quote.confidence} />
-      {own ? (
-        <p role="status">
-          You said it’s {own.verdict}. It’s counted in the random checks below.
-        </p>
-      ) : (
-        canManage(role) && (
-          <div className="hf-form-actions">
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={pending}
-              onClick={() => void say("wrong")}
-            >
-              Wrong
-            </Button>
-            <Button
-              size="sm"
-              disabled={pending}
-              pending={pending}
-              onClick={() => void say("right")}
-            >
-              Right
-            </Button>
-          </div>
-        )
-      )}
+      <div className="hf-form-actions">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={pending}
+          onClick={() => void say("wrong")}
+        >
+          Wrong
+        </Button>
+        <Button
+          size="sm"
+          disabled={pending}
+          pending={pending}
+          onClick={() => void say("right")}
+        >
+          Right
+        </Button>
+      </div>
       {error && (
         <p role="alert" className="hf-form-error">
           {error}
@@ -690,28 +787,148 @@ function AcceptedFact({
   );
 }
 
+/** A fact the graph holds, drawn at random: Right or Wrong, a label of it. */
+function QuoteFact({
+  pick,
+  accepted,
+  label,
+  onLabelled,
+}: {
+  pick: Pick;
+  accepted: boolean;
+  label?: FoundryReviewLabel;
+  onLabelled: () => void;
+}) {
+  const { user } = useWorkspace();
+  const { quote: q } = pick;
+  const gone = pick.ends === "read" && !pick.from && !pick.to;
+  return (
+    <>
+      <Evidence at={q} quote={q.quote} />
+      <p className="rq-writes">
+        {gone ? (
+          <>
+            It states <code>{q.link}</code>, and the graph holds it as evidence
+            only now: a later statement holds the link.
+          </>
+        ) : (
+          <>
+            The graph holds it as a fact:{" "}
+            <ClaimLine
+              from={pick.from?.name}
+              link={q.link}
+              to={pick.to?.name}
+            />
+            .
+          </>
+        )}{" "}
+        {accepted
+          ? "Drawn at random from accepted facts"
+          : "Drawn at random from facts people approved at this score"}
+        , to measure how often they’re right. Your word is kept as a label: it
+        changes nothing in the graph.
+      </p>
+      {pick.ends === "failed" && (
+        <p className="on-muted">Couldn’t read what the fact joins.</p>
+      )}
+      <Score confidence={q.confidence} />
+      <LabelButtons
+        own={label?.decidedByUserId === user.id ? label : undefined}
+        request={(verdict) => ({
+          fact: {
+            docId: q.documentId,
+            section: q.section,
+            start: q.start,
+            end: q.end,
+            factKey: q.factKey,
+          },
+          verdict,
+          drawn: "random",
+        })}
+        onLabelled={onLabelled}
+      />
+    </>
+  );
+}
+
+/**
+ * A held claim someone decided, drawn at random: what it states, what was
+ * decided, and Right or Wrong, a label of it; the decision stands.
+ */
+function DecidedItem({
+  card,
+  labels,
+  settled,
+}: {
+  card: DecidedCard;
+  labels: readonly FoundryReviewLabel[];
+  settled: (key: string) => void;
+}) {
+  const { id: ws, user } = useWorkspace(),
+    { id: o } = useOntology();
+  const decisions = useQuery(reviewQueries.list(ws, o));
+  const s = card.review.settle;
+  if (s?.kind !== "release") return null;
+  const approved = approvalOf(decisions.data ?? [], s, true).saved,
+    rejected = rejectionOf(decisions.data ?? [], s);
+  const place = claimPlace(card.review, card.review.suggestedLink);
+  return (
+    <li className="rq-card">
+      <CardHead title="A decided claim" random />
+      <Evidence at={card.review} quote={card.review.quote} />
+      <p className="rq-writes">
+        It states {statementLine(s.statement, s.link)}.{" "}
+        {rejected
+          ? "Someone rejected it."
+          : approved
+            ? "Someone approved it."
+            : "It is decided."}{" "}
+        Drawn at random from its score band, to measure how often claims scored
+        so are right. Your word is kept as a label; the decision stands.
+      </p>
+      <Score confidence={card.review.confidence} />
+      <LabelButtons
+        own={labels.find(
+          (l) =>
+            l.drawn === "random" &&
+            l.decidedByUserId === user.id &&
+            labelPlace(l) === place,
+        )}
+        request={(verdict) => ({
+          reviewId: s.reviewId,
+          verdict,
+          drawn: "random",
+        })}
+        onLabelled={() => settled(card.key)}
+      />
+    </li>
+  );
+}
+
 /**
  * The re-checks offered to this person: another's decision or label, drawn
- * at random (rechecks), each with its quote, what was said of it, and Right
- * or Wrong, a label that changes nothing.
+ * at random (rechecks), each with its quote and what the claim states, what
+ * was said of it, and Right or Wrong, a label that changes nothing. Only
+ * those whose claim the current load still holds are offered.
  */
 function Rechecks({
   load,
+  naming,
   reviews,
   items,
   manage,
 }: {
   load: FoundryLoad;
+  naming: Naming;
   reviews: readonly QueueReview[];
   items: Recheck[];
   manage: boolean;
 }) {
   const { id: ws } = useWorkspace(),
     { id: o } = useOntology();
-  const { read } = useTenantReads();
-  // A decision's quote is its review's while the load holds it; else (an
-  // approval written) the load's quote at its place.
-  const placeAt = (r: Recheck) =>
+  const { readLater } = useTenantReads();
+  const scope = { id: load.id };
+  const at = (r: Recheck) =>
     r.kind === "decision"
       ? {
           documentId: r.decision.docId,
@@ -733,49 +950,82 @@ function Rechecks({
     a.section === b.section &&
     a.start === b.start &&
     a.end === b.end;
-  const reviewOf = (r: Recheck) => reviews.find((v) => same(v, placeAt(r)));
+  // The review of a decision's claim, or of a held claim's label, while the
+  // load holds it back; else the fact's quote at its place.
+  const reviewOf = (r: Recheck) =>
+    reviews.find(
+      (v) =>
+        v.settle?.kind === "release" &&
+        same(v, at(r)) &&
+        (r.kind === "decision"
+          ? v.settle.hash === r.decision.statementHash ||
+            v.settle.claimKey === r.decision.claimKey
+          : !!r.label.claimKey &&
+            (v.settle.hash === r.label.statementHash ||
+              v.settle.claimKey === r.label.claimKey)),
+    );
   const documents = [
-    ...new Set(
-      items.filter((r) => !reviewOf(r)).map((r) => placeAt(r).documentId),
-    ),
+    ...new Set(items.filter((r) => !reviewOf(r)).map((r) => at(r).documentId)),
   ];
   const quotes = useQuery({
-    ...readQueries.documentQuotes(ws, o, read, { id: load.id }, documents),
+    ...readQueries.documentQuotes(ws, o, readLater, scope, documents),
     enabled: documents.length > 0,
   });
-  if (!items.length) return null;
+  const quoteOf = (r: Recheck) =>
+    quotes.data?.find(
+      (q) =>
+        same(q, at(r)) &&
+        (r.kind === "label" && r.label.link ? q.link === r.label.link : true),
+    );
+  const shown = items
+    .map((r) => {
+      const review = reviewOf(r);
+      return { r, review, quote: review ? undefined : quoteOf(r) };
+    })
+    .filter((x) => x.review || x.quote)
+    .slice(0, RECHECKS_SHOWN);
+  const facts = shown.flatMap((x) => (x.quote ? [x.quote] : []));
+  const ends = useQuery({
+    ...readQueries.quoteFacts(ws, o, readLater, scope, facts, naming),
+    enabled: facts.length > 0,
+  });
+  if (!shown.length) return null;
   return (
     <Panel
       title="Re-checks"
-      subtitle="Optional: a few of other people’s random checks and queue decisions, drawn at random, for a second person to say whether they’re right. Your word changes nothing; it measures how often people agree."
+      subtitle="Optional: a few of other people’s queue decisions and random checks, drawn at random, for a second person to say whether they’re right. Your word changes nothing; it measures how often people agree."
     >
       <ol className="rq-list" aria-label="Re-checks">
-        {items.map((r) => {
-          const review = reviewOf(r),
-            quote = review
-              ? undefined
-              : quotes.data?.find((q) => same(q, placeAt(r)));
+        {shown.map(({ r, review, quote }) => {
+          const s =
+            review?.settle?.kind === "release" ? review.settle : undefined;
+          const fact = quote ? ends.data?.[facts.indexOf(quote)] : undefined;
           return (
             <li key={r.key} className="rq-card">
               <CardHead title="A re-check" />
               {review ? (
-                <Evidence review={review} />
-              ) : quote ? (
-                <Evidence quote={quote} />
-              ) : quotes.isPending && documents.length ? (
-                <SkeletonText lines={2} />
+                <Evidence at={review} quote={review.quote} />
               ) : (
-                <p className="on-muted">
-                  This load holds no quote at its place any more.
-                </p>
+                <Evidence at={quote!} quote={quote!.quote} />
               )}
               <p className="rq-writes">
+                It states{" "}
+                {s ? (
+                  statementLine(s.statement, s.link)
+                ) : (
+                  <ClaimLine
+                    from={fact?.from?.name}
+                    link={quote!.link}
+                    to={fact?.to?.name}
+                  />
+                )}
+                .{" "}
                 {r.kind === "decision"
                   ? r.decision.kind === "release"
-                    ? "Someone approved this claim."
-                    : "Someone rejected this claim."
-                  : `Someone said this accepted fact is ${r.label.verdict}.`}{" "}
-                Is the claim right?
+                    ? "Someone approved it."
+                    : "Someone rejected it."
+                  : `Someone said it’s ${r.label.verdict}.`}{" "}
+                Is it right?
               </p>
               {manage && <RecheckButtons item={r} />}
             </li>
@@ -789,7 +1039,6 @@ function Rechecks({
 function RecheckButtons({ item }: { item: Recheck }) {
   const { id: ws } = useWorkspace(),
     { id: o } = useOntology();
-  const qc = useQueryClient();
   const [pending, setPending] = useState(false),
     [error, setError] = useState(""),
     [said, setSaid] = useState<ReviewVerdict>();
@@ -802,17 +1051,7 @@ function RecheckButtons({ item }: { item: Recheck }) {
         o,
         item.kind === "decision"
           ? { decisionId: item.decision.id, verdict, drawn: "recheck" }
-          : {
-              fact: {
-                docId: item.label.docId,
-                section: item.label.claimSection ?? 0,
-                start: item.label.claimStart ?? 0,
-                end: item.label.claimEnd ?? 0,
-                factKey: item.label.factKey ?? "",
-              },
-              verdict,
-              drawn: "recheck",
-            },
+          : { labelId: item.label.id, verdict, drawn: "recheck" },
       );
       setSaid(verdict);
     } catch (e) {
@@ -821,16 +1060,6 @@ function RecheckButtons({ item }: { item: Recheck }) {
       setPending(false);
     }
   };
-  // Read again once this person has moved on: the re-check leaves the list.
-  useEffect(
-    () => () => {
-      if (said)
-        void qc.invalidateQueries({
-          queryKey: labelQueries.list(ws, o).queryKey,
-        });
-    },
-    [said, qc, ws, o],
-  );
   if (said)
     return (
       <p role="status">
@@ -876,7 +1105,7 @@ function PrecisionTable({ labels }: { labels: readonly FoundryReviewLabel[] }) {
   return (
     <Panel
       title="Random checks"
-      subtitle="What people said of the claims drawn at random, by the verifier’s score. Only these measure precision: the ranked cards are not a fair sample."
+      subtitle="What people said of the claims drawn at random, one word a claim, by the verifier’s score. Only these measure precision: the ranked cards are not a fair sample."
     >
       <table className="rq-precision">
         <thead>

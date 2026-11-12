@@ -72,6 +72,13 @@ func (s *mysqlDB) ListFoundryReviewLabels(ctx context.Context, ontologyID, after
 	return scanAll(rows, scanFoundryReviewLabel)
 }
 
+// GetFoundryReviewLabel reads one label of an ontology. ErrNotFound means
+// there is none.
+func (s *mysqlDB) GetFoundryReviewLabel(ctx context.Context, ontologyID, id string) (*model.FoundryReviewLabel, error) {
+	return scanFoundryReviewLabel(s.db.QueryRowContext(ctx, "SELECT "+foundryReviewLabelColumns+`
+ FROM foundry_review_labels WHERE ontology_id=? AND id=?`, ontologyID, id))
+}
+
 // GetFoundryReviewDecision reads one saved decision of an ontology, with how
 // the review queue drew its card. ErrNotFound means there is none.
 func (s *mysqlDB) GetFoundryReviewDecision(ctx context.Context, ontologyID, id string) (*model.FoundryReviewDecision, error) {

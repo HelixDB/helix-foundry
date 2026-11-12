@@ -2792,9 +2792,14 @@ export type LabelFact = {
   end: number;
   factKey: string;
 };
+// A claim drawn at random (a fact's quote, or a held claim of the current
+// load by its review), or a second person's re-check of a decision on a
+// held claim or of another's label drawn at random.
 export type SettleReviewLabelRequest = { verdict: ReviewVerdict } & (
-  | { fact: LabelFact; decisionId?: never; drawn: "random" | "recheck" }
-  | { decisionId: string; fact?: never; drawn: "recheck" }
+  | { fact: LabelFact; drawn: "random" }
+  | { reviewId: string; drawn: "random" }
+  | { decisionId: string; drawn: "recheck" }
+  | { labelId: string; drawn: "recheck" }
 );
 export type ReviewLabelResponse = { label: FoundryReviewLabel };
 export type ListReviewLabelsResponse = {
