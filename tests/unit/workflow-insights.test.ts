@@ -8,7 +8,6 @@ import {
 } from "../../mock/routes/workflow-insights";
 import {
   MIN_SAMPLE,
-  activeDays,
   backedShare,
   callsPerRun,
   claimsOf,
@@ -380,8 +379,6 @@ describe("the Workflows pages' metrics", () => {
     expect(insightSeries("helped", undefined)).toEqual([]);
     expect(rollingDays(7)).toBe(1);
     expect(rollingDays(30)).toBe(7);
-    expect(activeDays(days)).toBe(3);
-    expect(activeDays(undefined)).toBe(0);
   });
 
   it("says in a sentence where runs went when none left on the way", () => {

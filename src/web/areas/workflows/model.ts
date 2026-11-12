@@ -626,10 +626,6 @@ export const insightSeries = (
 /** The days a rate's trend reads each day over: a week, in a window long enough. */
 export const rollingDays = (windowDays: number) => (windowDays >= 30 ? 7 : 1);
 
-/** The days of a window with runs: a trend needs two. */
-export const activeDays = (series: FoundryWorkflowInsightDay[] | undefined) =>
-  (series || []).filter((d) => num(d.totals?.runs) > 0).length;
-
 /** A day's runs by verdict, and those not assessed yet, for the runs chart. */
 export function verdictDay(d: FoundryWorkflowInsightDay) {
   const out: Record<string, number | string> = { date: d.date || "" };

@@ -53,7 +53,6 @@ import {
   INSIGHT_WINDOWS,
   VERDICTS,
   VERDICT_LABELS,
-  activeDays,
   callsPerRun,
   claimsOf,
   funnelSteps,
@@ -288,9 +287,9 @@ function metricDetail(
 }
 
 /**
- * The overview's impact cards, one height: how often the ontology helped,
- * how much of the answers what the agents read backed, and what misled.
- * With a trend to show, a card charts its metric below.
+ * The overview's impact cards, one height: how many runs, how often the
+ * ontology helped, how much of the answers what the agents read backed, and
+ * what misled. A card charts its metric below.
  */
 export function ImpactCards({
   state,
@@ -301,7 +300,6 @@ export function ImpactCards({
 }) {
   const { metric, setMetric } = state;
   const t = data.totals;
-  const trend = activeDays(data.series) >= 2;
   return (
     <div className="wf-cards" role="group" aria-label="Metrics">
       {METRICS.map((key) => {
@@ -325,25 +323,20 @@ export function ImpactCards({
             </span>
           </>
         );
-        const className = cx(
-          "wf-card",
-          key === "misleading" && needsLook(t) && "is-alert",
-          trend && metric === key && "is-active",
-        );
-        return trend ? (
+        return (
           <button
             key={key}
             type="button"
-            className={className}
+            className={cx(
+              "wf-card",
+              key === "misleading" && needsLook(t) && "is-alert",
+              metric === key && "is-active",
+            )}
             aria-pressed={metric === key}
             onClick={() => setMetric(key)}
           >
             {body}
           </button>
-        ) : (
-          <div key={key} className={className}>
-            {body}
-          </div>
         );
       })}
     </div>
@@ -376,7 +369,10 @@ function ChartTip({
   );
 }
 
-/** The chosen metric by day, in a panel; nothing until two days have runs. */
+/**
+ * The chosen metric by day, in a panel. Runs a day show as bars; a rate as a
+ * line, a dot while only one day has a value (a line needs two).
+ */
 export function TrendPanel({
   data,
   metric,
@@ -384,7 +380,6 @@ export function TrendPanel({
   data: FoundryWorkflowInsights;
   metric: InsightMetric;
 }) {
-  if (activeDays(data.series) < 2) return null;
   const m = INSIGHT_METRICS[metric];
   const rolling = m.share ? rollingDays(data.days || 0) : 1;
   const series = insightSeries(metric, data.series, rolling);
@@ -471,6 +466,9 @@ export function TrendPanel({
       </Panel>
     );
   }
+  const color =
+    m.better === "down" ? "var(--hf-verdict-misleading)" : "var(--hf-chart-1)";
+  const points = series.filter((d) => d.value !== undefined).length;
   return (
     <Panel
       title={`${m.label}, by day`}
@@ -518,20 +516,12 @@ export function TrendPanel({
             <Area
               type="monotone"
               dataKey="value"
-              stroke={
-                m.better === "down"
-                  ? "var(--hf-verdict-misleading)"
-                  : "var(--hf-chart-1)"
-              }
+              stroke={color}
               strokeWidth={2}
-              fill={
-                m.better === "down"
-                  ? "var(--hf-verdict-misleading)"
-                  : "var(--hf-chart-1)"
-              }
+              fill={color}
               fillOpacity={0.1}
               connectNulls
-              dot={false}
+              dot={points < 2 ? { r: 4, fill: color, stroke: color } : false}
               activeDot={{ r: 4 }}
               isAnimationActive={false}
             />
