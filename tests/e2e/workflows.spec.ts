@@ -5,6 +5,7 @@ import {
   mock,
   signIn,
   test,
+  uploadAndLoadContract,
 } from "./support/mock";
 
 // Workflows: an owner or admin makes one for an agent's task and gives the
@@ -194,8 +195,8 @@ test("a restricted member uses workflows while their Workflows permission is on"
 }) => {
   await signIn(page);
   await mock.configure({ loadStepMs: 100 });
-  await makeContractsCurrent(page);
-  await loadVersion3(page);
+  // Its current load reads Stripe and General, so Eve, holding General, holds part of it.
+  await uploadAndLoadContract(page);
   const made = await mock.agent("POST", `${API}/workflows`, {
     name: "Renewal desk",
     clientToken: "renewal-desk",
