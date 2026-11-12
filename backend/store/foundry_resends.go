@@ -84,6 +84,13 @@ ON DUPLICATE KEY UPDATE status='owed', requests=requests+1, requested_at=NOW(6),
 // so is a decision the list holds a copy of under the key its claim had
 // before it was approved again (SettleFoundryReleases).
 //
+// A release of a claim the ontology holds a rejection of (foundryClaimAt) is
+// never carried, and a copy of one the list has not written goes: the load
+// list never sends it (ListFoundryLoadDecisions), so it would wait for good,
+// owing its document a resend at every job's end. Only rows saved before a
+// rejection took a claim's approvals under every key, or by an older binary,
+// are such.
+//
 // First the list loses the releases it has not written whose decision is
 // gone. Removing a decision takes it from the load that is current then
 // (DeleteFoundryReviewDecision), so a copy is left behind in a load that was
@@ -100,19 +107,23 @@ func (s *mysqlDB) carryFoundryReleases(ctx context.Context, o *model.FoundryOnto
 	}
 	loadID := *o.CurrentLoadID
 	// <=> is NULL-safe: a copy no job has reported on has no status.
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
-WHERE load_id=? AND kind='release' AND NOT (applied_status <=> 'written')
-  AND id NOT IN (SELECT id FROM foundry_review_decisions WHERE ontology_id=?)`, loadID, o.ID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DELETE l FROM foundry_load_decisions l
+WHERE l.load_id=? AND l.kind='release' AND NOT (l.applied_status <=> 'written')
+  AND (l.id NOT IN (SELECT id FROM foundry_review_decisions WHERE ontology_id=?) OR `+foundryRejected("l", "?")+`)`, loadID, o.ID, o.ID); err != nil {
 		return err
 	}
+	// Two anti-joins, each on an index (the list's primary key, and its
+	// documents' index), where one with an OR would scan the list for each
+	// decision.
 	columns := "r." + strings.ReplaceAll(foundryReviewDecisionColumns, ", ", ", r.")
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
 SELECT ?, `+columns+`, 'carried' FROM foundry_review_decisions r
 JOIN foundry_load_extractions e ON e.load_id=? AND e.document_id=r.doc_id AND e.status='extracted'
-LEFT JOIN foundry_load_decisions l ON l.load_id=? AND l.kind='release' AND (l.id=r.id OR l.doc_id=r.doc_id
-  AND l.claim_section=r.claim_section AND l.claim_start=r.claim_start AND l.claim_end=r.claim_end
-  AND (l.claim_key=r.claim_key OR l.statement_hash=r.statement_hash))
-WHERE r.ontology_id=? AND r.kind='release' AND l.id IS NULL`, loadID, loadID, loadID, o.ID); err != nil {
+WHERE r.ontology_id=? AND r.kind='release' AND NOT `+foundryRejected("r", "r.ontology_id")+`
+  AND NOT EXISTS (SELECT 1 FROM foundry_load_decisions l WHERE l.load_id=? AND l.id=r.id)
+  AND NOT EXISTS (SELECT 1 FROM foundry_load_decisions l WHERE l.load_id=? AND l.kind='release' AND l.doc_id=r.doc_id
+    AND l.claim_section=r.claim_section AND l.claim_start=r.claim_start AND l.claim_end=r.claim_end
+    AND (l.claim_key=r.claim_key OR l.statement_hash=r.statement_hash))`, loadID, loadID, o.ID, loadID, loadID); err != nil {
 		return err
 	}
 	// A document whose row left extracted since (a failure recorded over it)

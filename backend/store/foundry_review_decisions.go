@@ -248,6 +248,15 @@ func foundryClaimAt(t string) string {
 		t + ".claim_key=? OR " + t + ".statement_hash=?)"
 }
 
+// foundryRejected is the SQL condition that the ontology `ontology` (a column
+// or a placeholder) holds a rejection of the claim the release with alias t
+// names (foundryClaimAt): a release no Extract sends.
+func foundryRejected(t, ontology string) string {
+	return `EXISTS (SELECT 1 FROM foundry_review_decisions j WHERE j.ontology_id=` + ontology + ` AND j.kind='reject'
+  AND j.doc_id=` + t + `.doc_id AND j.claim_section=` + t + `.claim_section AND j.claim_start=` + t + `.claim_start
+  AND j.claim_end=` + t + `.claim_end AND (j.claim_key=` + t + `.claim_key OR j.statement_hash=` + t + `.statement_hash))`
+}
+
 // foundryClaimArgs are foundryClaimAt's arguments for the claim d names.
 func foundryClaimArgs(d *model.FoundryReviewDecision) []any {
 	span := d.ClaimSpan
@@ -470,11 +479,8 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 	if table == "foundry_load_decisions" {
 		// <=> is NULL-safe: a copy no job has reported on has no status.
 		query += " AND NOT (applied_status <=> '" + string(model.FoundryValueRemoved) + `')
- AND NOT (kind='release' AND EXISTS (SELECT 1 FROM foundry_loads o JOIN foundry_review_decisions j ON j.ontology_id=o.ontology_id
-  WHERE o.id=foundry_load_decisions.load_id AND j.kind='reject' AND j.doc_id=foundry_load_decisions.doc_id
-  AND j.claim_section=foundry_load_decisions.claim_section AND j.claim_start=foundry_load_decisions.claim_start
-  AND j.claim_end=foundry_load_decisions.claim_end
-  AND (j.claim_key=foundry_load_decisions.claim_key OR j.statement_hash=foundry_load_decisions.statement_hash)))`
+ AND NOT (kind='release' AND ` + foundryRejected("foundry_load_decisions",
+			"(SELECT o.ontology_id FROM foundry_loads o WHERE o.id=foundry_load_decisions.load_id)") + `)`
 	}
 	args := []any{ontologyID, afterID}
 	if documentIDs != nil {

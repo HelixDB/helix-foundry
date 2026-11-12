@@ -224,6 +224,13 @@ func TestFoundryCarryKeepsACopyUnderTheKeyItsLoadHad(t *testing.T) {
 	require.True(t, f.approve(t, "2", moved))
 	require.Equal(t, x.ID, moved.ID)
 	f.resent(t, "refused2", refused(x, "unresolved"))
+	// The claim reads otherwise now, and is approved again as it reads: the
+	// same decision, under the key it has here, of another statement. The
+	// first load's copy has neither, and only its id says it is this one.
+	again := keyed(f.held(f.a, 0, readB), "cd", "MKCARRY-again")
+	require.True(t, f.approve(t, "3", again))
+	require.Equal(t, x.ID, again.ID)
+	f.resent(t, "refused3", refused(again, "unresolved"))
 
 	_, err := f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, first, extractJob("MKCARRY"), resendJob("MKCARRY"), noBudget)
 	require.NoError(t, err)
@@ -249,4 +256,19 @@ func TestFoundryLoadListLeavesOutARejectedClaim(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{other.ID}, f.sends(t, f.load, f.a))
 	assert.Len(t, f.copies(t, f.load), 2, "the list's rows are left as they are")
+
+	// The resend sends the other approval alone. Its job's end takes the
+	// withheld copy from the list, so nothing waits on it and no resend
+	// follows, and a new load copies none of it.
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(context.Background(), f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	f.sent(t, job, owed[0], 1, written(other))
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "end", model.FoundryGraphJobSucceeded))
+	assert.Equal(t, map[string]string{other.ID: "written"}, f.copies(t, f.load))
+	assert.Nil(t, f.liveJob(t))
+	f.draftVersion(t, "MKLIST2", customerTOML)
+	require.NoError(t, f.db.CreateFoundryLoad(context.Background(), loadJob(f.ontology, "MKLIST2")))
+	assert.Equal(t, map[string]string{other.ID: ""}, f.copies(t, id26("FJ-MKLIST2")))
 }
