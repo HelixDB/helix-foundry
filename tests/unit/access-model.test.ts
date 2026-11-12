@@ -29,6 +29,8 @@ import {
   targetOf,
   targetsOf,
   toggle,
+  workflowsOffBy,
+  workflowsOn,
   type Grant,
 } from "@/web/areas/workspace/access-model";
 
@@ -632,6 +634,44 @@ describe("restricted mode", () => {
     // The graph isn't theirs: Records is their Explorer.
     expect(granteeRedirect("/explore/o")).toBe("/explore/o/records");
     expect(granteeRedirect("/explore/o/entities")).toBe("/explore/o/records");
+    // Workflows only with the Workflows permission.
+    for (const path of [
+      "/ontology/o/workflows",
+      "/ontology/o/workflows/w",
+      "/ontology/o/workflows/w/runs/r",
+    ]) {
+      expect(granteeRedirect(path), path).toBe("/ontology/o");
+      expect(granteeRedirect(path, true), path).toBeUndefined();
+    }
+    expect(granteeRedirect("/ontology/o/loads/l", true)).toBe("/ontology/o");
+  });
+
+  it("reads the Workflows permission: on unless turned off, and off through a team", () => {
+    const access: wfe.ListFoundryAccessResponse = {
+      teams: [
+        { id: "t1", name: "Support", memberUserIds: ["u1"] },
+        { id: "t2", name: "Sales", memberUserIds: ["u1", "u2"] },
+      ],
+      workflowsOff: [
+        { kind: "KIND_TEAM", id: "t1" },
+        { kind: "KIND_SERVICE_CREDENTIAL", id: "k1" },
+      ],
+    };
+    expect(
+      workflowsOn(access, { kind: "KIND_SERVICE_CREDENTIAL", id: "k1" }),
+    ).toBe(false);
+    expect(
+      workflowsOn(access, { kind: "KIND_SERVICE_CREDENTIAL", id: "k2" }),
+    ).toBe(true);
+    expect(workflowsOn(access, { kind: "KIND_USER", id: "u1" })).toBe(true);
+    expect(workflowsOn({}, { kind: "KIND_TEAM", id: "t1" })).toBe(true);
+    expect(
+      workflowsOffBy(access, { kind: "KIND_USER", id: "u1" }).map(
+        (t) => t.name,
+      ),
+    ).toEqual(["Support"]);
+    expect(workflowsOffBy(access, { kind: "KIND_USER", id: "u2" })).toEqual([]);
+    expect(workflowsOffBy(access, { kind: "KIND_TEAM", id: "t2" })).toEqual([]);
   });
 
   it("reads through grants where the user can't query the database", () => {

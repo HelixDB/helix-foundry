@@ -9,6 +9,7 @@ import type * as wfe from "@/shared/wfe";
 import type { MockReply } from "../../mock/http";
 import { contractErrors } from "../../mock/agent-contract";
 import { routes } from "../../mock/routes";
+import { WORKFLOWS_OFF } from "../../mock/routes/access";
 import { handleDocumentUpload } from "../../mock/routes/documents";
 import { config, db, resetState } from "../../mock/state";
 
@@ -186,6 +187,14 @@ describe("mock source grants", () => {
       `GET ${F}/documents/{id}:content`,
       `GET ${F}/ontologies/{ontologyId}/documents`,
       `GET ${F}/ontologies/{ontologyId}/documents/{id}`,
+      // With the Workflows permission, on unless turned off.
+      `GET ${F}/ontologies/{ontologyId}/workflows`,
+      `GET ${F}/ontologies/{ontologyId}/workflows/{id}`,
+      `POST ${F}/ontologies/{ontologyId}/workflows/{workflowId}/runs`,
+      `GET ${F}/ontologies/{ontologyId}/workflows/{workflowId}/runs`,
+      `GET ${F}/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}`,
+      `POST ${F}/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}:finish`,
+      `GET ${F}/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}/accesses`,
     ]);
     const foundry = routes.filter((r) =>
       /^\/v1\/(foundry|workspaces\/\{workspaceId\}\/foundry)/.test(r.path),
@@ -219,6 +228,7 @@ describe("mock source grants", () => {
       hasGrants: true,
       ontologyIds: [],
       partialOntologyIds: [],
+      workflows: true,
     });
     // The WFE's own routes answer as for any member, but query-read: Eve
     // holds no query access.
@@ -236,6 +246,42 @@ describe("mock source grants", () => {
     expect(
       (await call("GET", `${F}/connectors`, undefined, "usr_alan")).status,
     ).toBe(200);
+  });
+
+  it("turns a principal's Workflows off and on, and a team's off for its members", async () => {
+    const W = `${O}/workflows`;
+    const set = (
+      principal: wfe.FoundryPrincipal,
+      targets: wfe.FoundryAccessTarget[],
+      workflows?: boolean,
+    ) => call("PUT", `${A}/grants`, { principal, targets, workflows });
+    // On until turned off: Eve, who holds nothing of a load yet, reaches the
+    // ontology check, not the permission's.
+    expect((await eve("GET", `${A}/me`)).body.workflows).toBe(true);
+    expect((await eve("GET", W)).status).toBe(404);
+    const off = await set(user("usr_eve"), [general], false);
+    expect(off.body.workflows).toBe(false);
+    expect(refusal(await eve("GET", W))).toEqual([403, WORKFLOWS_OFF]);
+    expect((await eve("GET", `${A}/me`)).body.workflows).toBe(false);
+    expect((await call("GET", A)).body.workflowsOff).toEqual([user("usr_eve")]);
+    // A save that leaves it out keeps it; on again, it is.
+    expect((await set(user("usr_eve"), [general])).body.workflows).toBe(false);
+    expect((await set(user("usr_eve"), [general], true)).body.workflows).toBe(
+      true,
+    );
+    expect((await eve("GET", W)).status).toBe(404);
+    // Off for a team of hers is off for her, until the team goes.
+    const team = (
+      await call("POST", `${A}/teams`, {
+        name: "Sales",
+        memberUserIds: ["usr_eve"],
+      })
+    ).body.team as wfe.FoundryTeam;
+    await set({ kind: "KIND_TEAM", id: team.id! }, [], false);
+    expect(refusal(await eve("GET", W))).toEqual([403, WORKFLOWS_OFF]);
+    await call("DELETE", `${A}/teams/${team.id}`);
+    expect((await call("GET", A)).body.workflowsOff).toEqual([]);
+    expect((await eve("GET", W)).status).toBe(404);
   });
 
   it("covers a load once every table and set it holds is granted", async () => {
@@ -268,6 +314,7 @@ describe("mock source grants", () => {
     expect((await eve("GET", `${A}/me`)).body).toMatchObject({
       ontologyIds: ["ont_acme_contracts"],
       partialOntologyIds: ["ont_acme_contracts"],
+      workflows: true,
     });
     await grant(user("usr_eve"), [
       general,
@@ -285,6 +332,7 @@ describe("mock source grants", () => {
     expect((await eve("GET", `${A}/me`)).body).toMatchObject({
       ontologyIds: ["ont_acme_contracts"],
       partialOntologyIds: [],
+      workflows: true,
     });
     // The connector covers every table; the grant kept keeps its id.
     const before = (await call("GET", A)).body
@@ -1237,6 +1285,7 @@ describe("mock source grants", () => {
       hasGrants: false,
       ontologyIds: [],
       partialOntologyIds: [],
+      workflows: true,
     });
     // Asking and reading need grants; review decisions and query-read are refused.
     // The WFE's own refusal, not an ontology it can't see: it lists this one.
@@ -1268,6 +1317,7 @@ describe("mock source grants", () => {
       hasGrants: true,
       ontologyIds: ["ont_acme_contracts"],
       partialOntologyIds: [],
+      workflows: true,
     });
     expect(
       (

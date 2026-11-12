@@ -311,8 +311,10 @@ function NewWorkflowDialog({
 // /ontology/:ontologyId/workflows/:workflowId
 export function WorkflowPage() {
   const { workflowId = "" } = useParams();
-  const { id: ws, name: workspaceName, role } = useWorkspace(),
+  const { id: ws, name: workspaceName, role, partial } = useWorkspace(),
     { id: o, ontology } = useOntology();
+  // A grantee holding only part of the ontology sees only the runs it started.
+  const own = partial.includes(o);
   const crumbs = useCrumbs(),
     navigate = useNavigate(),
     qc = useQueryClient(),
@@ -416,12 +418,16 @@ export function WorkflowPage() {
           <pre className="on-code wf-prompt">{prompt}</pre>
         </Panel>
         <Panel
-          title="Runs"
-          subtitle={
-            verdictsText(w.verdicts)
-              ? `Assessed: ${verdictsText(w.verdicts)}. The newest first.`
-              : "The newest first."
-          }
+          title={own ? "Your runs" : "Runs"}
+          subtitle={[
+            verdictsText(w.verdicts) &&
+              `Assessed: ${verdictsText(w.verdicts)}.`,
+            "The newest first.",
+            own &&
+              "You can read only part of this ontology, so you see the runs you started.",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           padded={false}
         >
           <RefreshFailed query={runs} />

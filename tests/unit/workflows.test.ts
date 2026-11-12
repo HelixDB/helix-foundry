@@ -409,6 +409,8 @@ describe("the mock's workflows", () => {
   it("records a call under the run its body names, checked first", async () => {
     const wf = (await create()).body.workflow.id;
     const run = (await start(wf, { input: "q" })).body.run;
+    // A grantee holding part of the ontology: Eve, who records only under
+    // her own runs.
     const req = (body: object, grantee = false): MockRequest =>
       ({
         method: "POST",
@@ -417,7 +419,12 @@ describe("the mock's workflows", () => {
         query: new URLSearchParams(),
         body,
         principal: { user: db.users.get("usr_ada")!, sessionId: "s" },
-        ...(grantee && { grantee: {} }),
+        ...(grantee && {
+          grantee: {
+            principal: "KIND_USER:usr_eve",
+            load: { loadId: "l1", versionId: "v1", partial: true },
+          },
+        }),
       }) as MockRequest;
     let handled = 0;
     const handle =
@@ -441,7 +448,7 @@ describe("the mock's workflows", () => {
     for (const [body, ontology, grantee, status] of [
       [{ workflowRunId: "nope" }, "ont_acme_contracts", false, 404],
       [{ workflowRunId: run.id }, "ont_other", false, 404],
-      [{ workflowRunId: run.id }, "ont_acme_contracts", true, 403],
+      [{ workflowRunId: run.id }, "ont_acme_contracts", true, 404],
     ] as const) {
       expect(
         (await tracked(req(body, grantee), ontology, handle(), asRead)).status,

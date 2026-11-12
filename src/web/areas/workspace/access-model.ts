@@ -103,6 +103,35 @@ export function grantsOf(
 }
 
 /**
+ * A principal's own Workflows permission as saved: on unless turned off.
+ *
+ *     workflowsOn({ workflowsOff: [{ kind: "KIND_TEAM", id: "t" }] }, { kind: "KIND_TEAM", id: "t" }) // false
+ */
+export const workflowsOn = (
+  access: ListFoundryAccessResponse,
+  principal: Principal,
+) =>
+  !(access.workflowsOff || []).some(
+    (p) => principalKey(p) === principalKey(principal),
+  );
+
+/**
+ * The teams of a member that have Workflows off, which turns it off for the
+ * member too, whatever their own says; none for anyone else.
+ */
+export function workflowsOffBy(
+  access: ListFoundryAccessResponse,
+  principal: Principal,
+): FoundryTeam[] {
+  if (principal.kind !== "KIND_USER") return [];
+  return (access.teams || []).filter(
+    (t) =>
+      t.memberUserIds?.includes(principal.id) &&
+      !workflowsOn(access, { kind: "KIND_TEAM", id: t.id || "" }),
+  );
+}
+
+/**
  * The grants a principal reads with: its own, and a member's teams' too
  * (a team's members hold its grants).
  */
@@ -571,16 +600,21 @@ export function restrictedHoldingNothing(
 /**
  * Where a grantee (a member restricted to what grants give) goes instead
  * of `pathname`, or undefined where it may stay: Ask, its ontologies'
- * overviews and the read-only pages of their shared loads (Records, an
- * entity's page and a document's view). Connectors, Settings and making an
+ * overviews, the read-only pages of their shared loads (Records, an
+ * entity's page and a document's view) and, with its Workflows permission
+ * (`workflows`), their workflows. Connectors, Settings and making an
  * ontology open Ask; the Explorer's graph opens Records, and an ontology's
  * other pages its overview.
  *
  *     granteeRedirect("/data/connections/c") // "/ask"
  *     granteeRedirect("/explore/o") // "/explore/o/records"
  *     granteeRedirect("/ontology/o/loads/l") // "/ontology/o"
+ *     granteeRedirect("/ontology/o/workflows/w", true) // undefined
  */
-export function granteeRedirect(pathname: string): string | undefined {
+export function granteeRedirect(
+  pathname: string,
+  workflows = false,
+): string | undefined {
   const [first = "", second, third, fourth] = pathname
     .split("/")
     .filter(Boolean);
@@ -590,7 +624,9 @@ export function granteeRedirect(pathname: string): string | undefined {
       return undefined;
     case "ontology":
       if (second === "new" || second === "sample") return "/ask";
-      return third === undefined || (third === "documents" && fourth)
+      return third === undefined ||
+        (third === "documents" && fourth) ||
+        (third === "workflows" && workflows)
         ? undefined
         : `/ontology/${second}`;
     case "explore":

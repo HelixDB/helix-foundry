@@ -335,7 +335,7 @@ export function sendPieces(connectorId: string, body: unknown): MockReply {
   if (typeof runId !== "string" || !runId) return send(connectorId, body);
   const c = storedConnector(connectorId);
   if (!c) return fail("NOT_FOUND", "API source not found");
-  const run = openRun(c.workspaceId, undefined, runId, false);
+  const run = openRun(c.workspaceId, undefined, runId);
   if (!("accesses" in run)) return run;
   const reply = send(connectorId, body);
   if (reply.status === 200)

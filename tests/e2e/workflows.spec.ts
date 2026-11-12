@@ -187,3 +187,84 @@ test("a member reads workflows and creates none", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Copy prompt" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0);
 });
+
+test("a restricted member uses workflows while their Workflows permission is on", async ({
+  page,
+  browser,
+}) => {
+  await signIn(page);
+  await mock.configure({ loadStepMs: 100 });
+  await makeContractsCurrent(page);
+  await loadVersion3(page);
+  const made = await mock.agent("POST", `${API}/workflows`, {
+    name: "Renewal desk",
+    clientToken: "renewal-desk",
+  });
+  expect(made.status).toBe(200);
+  const workflow = made.body.workflow.id as string;
+  const run = await mock.agent("POST", `${API}/workflows/${workflow}/runs`, {
+    input: "Which customers are up for renewal?",
+  });
+  expect(run.status).toBe(200);
+
+  // Eve, restricted to General, reads part of Customer contracts: she sees
+  // its workflows, and only the runs she started, which are none.
+  const eve = await (
+    await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  ).newPage();
+  await signIn(eve, "eve@example.com");
+  await eve.goto(O);
+  await eve
+    .getByRole("complementary", { name: "Ontologies" })
+    .getByRole("link", { name: "Workflows" })
+    .click();
+  await eve.getByRole("link", { name: "Renewal desk" }).click();
+  await expect(eve.getByRole("heading", { name: "Your runs" })).toBeVisible();
+  await expect(
+    eve.getByText("you see the runs you started", { exact: false }),
+  ).toBeVisible();
+  await expect(eve.getByText("No runs yet")).toBeVisible();
+
+  // Given Stripe too, she reads all of it: every run.
+  await page.goto("/settings/access?tab=people");
+  await page.getByRole("button", { name: "Sources for Eve Adler" }).click();
+  let sources = page.getByRole("dialog", { name: "Sources for Eve Adler" });
+  await expect(
+    sources.getByRole("checkbox", { name: /^Workflows/ }),
+  ).toBeChecked();
+  await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
+  await sources.getByRole("button", { name: "Close" }).first().click();
+  await eve.reload();
+  await expect(
+    eve.getByRole("heading", { name: "Runs", exact: true }),
+  ).toBeVisible();
+  await expect(
+    eve.getByText("Which customers are up for renewal?"),
+  ).toBeVisible();
+
+  // Turned off, she has no Workflows, and their pages open the overview.
+  await page.getByRole("button", { name: "Sources for Eve Adler" }).click();
+  sources = page.getByRole("dialog", { name: "Sources for Eve Adler" });
+  await sources.getByRole("checkbox", { name: /^Workflows/ }).uncheck();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
+  await sources.getByRole("button", { name: "Close" }).first().click();
+  await page.getByRole("button", { name: "Sources for Eve Adler" }).click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "Sources for Eve Adler" })
+      .getByRole("checkbox", { name: /^Workflows/ }),
+  ).not.toBeChecked();
+  await eve.goto(`${O}/workflows/${workflow}`);
+  await expect(eve).toHaveURL(new RegExp(`${O}$`));
+  await expect(
+    eve
+      .getByRole("complementary", { name: "Ontologies" })
+      .getByRole("link", { name: "Workflows" }),
+  ).toHaveCount(0);
+  expect(
+    (await mock.agent("GET", `${API}/workflows/${workflow}/runs`)).status,
+  ).toBe(200);
+});
