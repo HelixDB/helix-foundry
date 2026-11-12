@@ -331,6 +331,18 @@ describe("buildQueue", () => {
       keep: new Set(["held-1"]),
     });
     expect(keys(kept.cards).toSorted()).toEqual(["held-1", "held-4"]);
+    // A name's card is kept by its own key: every review of the name.
+    const nameCard = build([name("n", "acme")]).cards.find(
+      (c) => c.kind === "name",
+    )!;
+    expect(
+      keys(
+        build([name("n", "acme"), name("n2", "acme", { at: 20 })], {
+          decisions,
+          keep: new Set([nameCard.key]),
+        }).cards,
+      ),
+    ).toEqual([nameCard.key]);
   });
 
   it("draws one card in ten at random, a band at a time, after every nine ranked", () => {
@@ -349,11 +361,9 @@ describe("buildQueue", () => {
       queue.cards.flatMap((c, i) => (c.drawn === "random" ? [i] : [])),
     ).toEqual([RANKED_PER_RANDOM, 2 * RANKED_PER_RANDOM + 1, 26]);
     // Three bands, in turn from the top.
-    expect(random.map((c) => (c.kind === "claim" ? c.band : c.band))).toEqual([
-      "0.9",
-      "0.8",
-      "0.7",
-    ]);
+    const band = (c: QueueCard) =>
+      c.kind === "claim" || c.kind === "accepted" ? c.band : undefined;
+    expect(random.map(band)).toEqual(["0.9", "0.8", "0.7"]);
     // A claim drawn is only there.
     const ids = keys(queue.cards);
     expect(new Set(ids).size).toBe(ids.length);
@@ -377,7 +387,10 @@ describe("buildQueue", () => {
       held(n, { confidence: n < 2 ? 0.95 : 0.7 }),
     );
     const mixed = build(top, { accepted: 1000 }).cards.filter(
-      (c) => c.drawn === "random" && c.band === "0.9",
+      (c) =>
+        c.drawn === "random" &&
+        (c.kind === "claim" || c.kind === "accepted") &&
+        c.band === "0.9",
     );
     expect(mixed.filter((c) => c.kind === "accepted").length).toBeGreaterThan(
       mixed.filter((c) => c.kind === "claim").length,

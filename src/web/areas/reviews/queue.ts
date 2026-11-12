@@ -279,9 +279,9 @@ function waitsOn(
  * The queue of a load's `reviews` (all of them, read load-wide), given the
  * ontology's saved `decisions`, which links hold one value (`single`), how
  * many accepted quotes of documents the load holds (`accepted`), the load's
- * id (`seed`), and the review keys decided on this page (`keep`), which keep
- * their places until the page is read again so their cards can say what
- * became of them.
+ * id (`seed`), and the keys of the cards decided on this page (`keep`),
+ * which keep their places until the page is read again so their cards can
+ * say what became of them.
  */
 export function buildQueue({
   reviews,
@@ -313,7 +313,12 @@ export function buildQueue({
       left.stale += 1;
       continue;
     }
-    if (decided(s) && !keep.has(s.reviewId)) {
+    // A card decided on the page keeps its place: a claim's or a value's by
+    // its review, a name's by its decision (every review of the name).
+    const kept =
+      keep.has(s.reviewId) ||
+      (s.kind === "resolve" && keep.has(nameKey(s.type, s.docId, s.normName)));
+    if (decided(s) && !kept) {
       left.decided += 1;
       continue;
     }
