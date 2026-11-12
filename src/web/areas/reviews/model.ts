@@ -695,6 +695,22 @@ export function approvable(
   );
 }
 
+/**
+ * What Approve all says before it approves `ready` claims, leaving `left`
+ * to their cards: those it would approve but for their link holding one
+ * value (`approvable` given every link as one that holds many, less `ready`).
+ *
+ * @example
+ * approveAllText(2); // "This load writes each one it can, at once. … 2 claims of a link that holds one value aren’t included: …"
+ */
+export function approveAllText(left: number) {
+  return `This load writes each one it can, at once. Any it can't stays held, and its card says why.${
+    left
+      ? ` ${left === 1 ? "1 claim" : `${left} claims`} of a link that holds one value ${left > 1 ? "aren’t" : "isn’t"} included: an approval decides what such a link holds, so approve each on its card.`
+      : ""
+  }`;
+}
+
 const LINKS_GOAL = "Add links the documents state that the ontology lacks: ";
 /**
  * The most a goal takes as a URL query value. Generate opens with it in its
@@ -966,7 +982,7 @@ export function refusalText(
     // again, and the card can't tell which engine refused it, so it offers
     // no approval again, which would change nothing in the first two cases.
     case "conflict":
-      return "It conflicts with what the graph holds for this link: a property of it differs from the one the graph holds, which no approval or new load changes; or a load built before statements were kept wrote the link, or a version before approvals could decide a link refused it, and then the next load writes it.";
+      return "It conflicts with what the graph holds for this link: a property of it differs from the one the graph holds, which no approval or new load changes; or it gives a date still to come, and a load sent it after that date writes it; or a load built before statements were kept wrote the link, or a version before approvals could decide a link refused it, and then the next load writes it.";
     case "blocked":
       return "Writing it would break a rule the ontology enforces, or checking that took more reading than a load allows.";
     case "no_statement":

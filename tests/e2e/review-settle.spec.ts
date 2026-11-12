@@ -782,7 +782,7 @@ test("promises no edge on a link that holds one value", async ({ page }) => {
     "A statement dated later, approved or not, still holds the link",
   );
   await expect(held).toContainText(
-    "Of two approvals, the one approved later decides.",
+    "Of two approvals, the one first approved later decides.",
   );
 });
 

@@ -95,11 +95,13 @@ function NameReviews({
  * properties as stored. On a link that holds one value (`single`, also when
  * the version isn't known) the approval decides the link (contract 4.14.0),
  * as the engine dates it: from the date its quote gives, else its
- * document's, else the day it is first approved, and from no sooner than
- * that date. It replaces what the link holds of no date or dated up to
- * then, which a claim held as conflicting with it (`conflict`) says; a
- * statement dated later, approved or not, still holds the link, so it
- * promises no edge; of two approvals the one decided later decides. The
+ * document's, else the day it is first approved; one of a date still to come
+ * beats nothing, and the engine refuses it as `conflict` until then. It
+ * replaces what the link holds of no date or dated up to then, which a
+ * claim held as conflicting with it (`conflict`) says; a statement dated
+ * later, approved or not, still holds the link, so it promises no edge; of
+ * two approvals the one first decided later decides (approving again keeps
+ * the first time). The
  * ends whose names the load linked on less than a name, where that holds the
  * claim (`holding`, holdingEnds), are named as the document writes them,
  * each with the way to its review.
@@ -130,11 +132,11 @@ function ClaimWritten({
         <p role="note">
           This link holds one value. An approval makes this its value from the
           date this sentence gives, else its document’s date, else the day it is
-          first approved, and a date still to come only once it comes. It
+          first approved; a sentence dated ahead stays held until that date. It
           replaces what the link holds of no date or dated up to then, whose
           evidence stays. A statement dated later, approved or not, still holds
           the link, and then this is kept as evidence only. Of two approvals,
-          the one approved later decides.
+          the one first approved later decides.
           {settle.conflict &&
             " It conflicts with what the graph holds: approving replaces that value unless it is dated later, though not a property of the same fact that differs, which keeps it held."}
         </p>
@@ -295,14 +297,18 @@ export function SettleReview({
   // statements were kept wrote the link), which nothing approved here
   // changes; the next load sends every approval again and writes the first,
   // and the card says so (refusalText). Reject on any held claim that isn't
-  // being written or written: its job may have sent it.
+  // being written or written: its job may have sent it. Neither until the
+  // saved decisions are read: one may be a rejection of this claim, which
+  // an approval would replace, or the approval it has.
   const approves =
       isRelease &&
+      !!query.data &&
       !fixed &&
       !s.differs &&
       (!saved || moved || (!unsettled.length && (unread || missed || retry))),
     rejects =
       isRelease &&
+      !!query.data &&
       !fixed &&
       applied?.status !== "pending" &&
       applied?.status !== "written";

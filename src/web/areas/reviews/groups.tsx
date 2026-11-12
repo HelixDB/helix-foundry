@@ -10,6 +10,7 @@ import type { Naming } from "../explore/naming";
 import { reviewQueries, settleReview } from "./api";
 import {
   approvable,
+  approveAllText,
   linksGoal,
   reviewGroups,
   type Settle,
@@ -187,11 +188,7 @@ function ApproveAll({
       {confirming && ready.length > 0 && (
         <ConfirmDialog
           title={`Approve ${plural(ready.length, "claim")}?`}
-          description={`This load writes each one it can, at once. Any it can't stays held, and its card says why.${
-            own
-              ? ` ${plural(own, "claim")} of a link that holds one value ${own > 1 ? "aren’t" : "isn’t"} included: an approval decides what such a link holds, so approve each on its card.`
-              : ""
-          }`}
+          description={approveAllText(own)}
           confirmLabel="Approve all"
           onConfirm={() => void run(ready)}
           onCancel={() => setConfirming(false)}

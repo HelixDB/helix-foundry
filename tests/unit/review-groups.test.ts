@@ -325,6 +325,34 @@ describe("what Approve all approves", () => {
   });
 });
 
+describe("what Approve all says before it approves", () => {
+  it("says how many claims of a link that holds one value it leaves to their cards", () => {
+    const base =
+      "This load writes each one it can, at once. Any it can't stays held, and its card says why.";
+    expect(model.approveAllText(0)).toBe(base);
+    expect(model.approveAllText(1)).toBe(
+      `${base} 1 claim of a link that holds one value isn’t included: an approval decides what such a link holds, so approve each on its card.`,
+    );
+    expect(model.approveAllText(3)).toContain(
+      "3 claims of a link that holds one value aren’t included",
+    );
+  });
+  it("counts the claims it would approve but for their link", () => {
+    // As ApproveAll counts them: approvable on many-valued links, less those of one-valued links.
+    const reviews = [
+      settled(held(0)),
+      settled({ ...held(20), suggested_link: "partner_of" }),
+      settled(held(40, "Globex", "conflict")),
+    ];
+    const single = (link: string) => link === "signed_with";
+    expect(ids(model.approvable(reviews, [], single))).toEqual(["held-20"]);
+    expect(
+      model.approvable(reviews, [], () => false).filter((s) => single(s.link))
+        .length,
+    ).toBe(1);
+  });
+});
+
 describe("the reviews a page lists once claims are rejected", () => {
   const rejected = (start: number) =>
     ({
