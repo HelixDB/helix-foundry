@@ -34,6 +34,7 @@ const (
 	toolFoundryListOntologies = "helix_foundry_list_ontologies"
 	toolFoundryGetOntology    = "helix_foundry_get_ontology"
 	toolFoundryGetVersion     = "helix_foundry_get_version"
+	toolFoundryGetContext     = "helix_foundry_get_context"
 	toolFoundryListConnectors = "helix_foundry_list_connectors"
 	toolFoundryReadGuide      = "helix_foundry_read_guide"
 	toolFoundryReadGraph      = "helix_foundry_read_graph"
@@ -67,6 +68,7 @@ var toolTitles = map[string]string{
 	toolFoundryListOntologies:      "List Foundry ontologies",
 	toolFoundryGetOntology:         "Get a Foundry ontology",
 	toolFoundryGetVersion:          "Get an ontology version",
+	toolFoundryGetContext:          "Get an ontology's schema and example questions",
 	toolFoundryListConnectors:      "List Foundry connectors",
 	toolFoundryReadGuide:           "Describe Foundry graph reads",
 	toolFoundryReadGraph:           "Read a Foundry graph",
@@ -809,7 +811,8 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 		addFoundryTool(s, server, identity, tool(toolFoundryListOntologies,
 			"Start here to use what a business knows: Helix Foundry holds its customers, accounts, people, deals, documents and the facts that link them, "+
 				"matched across its systems into ontologies whose every fact names its source. "+
-				"List the Foundry ontologies of one workspace, with their current version and load."), s.ListFoundryOntologies)
+				"List the Foundry ontologies of one workspace, with their current version and load. "+
+				toolFoundryGetContext+" then gives one's schema and questions it answers."), s.ListFoundryOntologies)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetOntology,
 			"Get one Foundry ontology: its current version, its versions, loads and generations, the workspace's document sets its current version was given (document_sets), and the others. "+
 				"Only the current version carries load_refusal, why create_load would refuse it, and document_reads, which of its sets its routes read: a listed version has neither either way. helix_foundry_get_version returns a version's definition, load_refusal and document_reads. "+
@@ -821,6 +824,11 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 				"document_set_ids are the sets it was given; document_reads says which of them its routes read (read_set_ids) and which it only stores (unread_set_ids: searchable, with nothing extracted into the graph). "+
 				"An agent bundle comes without the agent's working draft, but with its open questions (definition.questions; a default is the agent's suggestion, not a decision) and what the draft left out of its sources (definition.left_out, each with the reason, and the connector_id and table of a synced table it names; tables lists every synced table by the id the definition uses): "+
 				"to act on an answer, or to have it read what it left out, generate again with that in the goal. A definition past 256 KiB is refused, with its load_refusal."), s.GetFoundryVersion)
+		addFoundryTool(s, server, identity, tool(toolFoundryGetContext,
+			"Learn what a business's Foundry ontology holds before you ask or read it: its schema, with each type's properties, key, names and identifiers, its links, rules and constraints, "+
+				"and example questions it answers, the ones Foundry's Analyst suggests. "+
+				"Describes the version of the ontology's current load, which "+toolFoundryAsk+" and "+toolFoundryReadGraph+" answer from by default, else its current version while nothing is loaded. "+
+				"An agent bundle's schema is its ontology.toml; a Definition v1 version's is its definition. With source grants that cover part of the load, it is the part they cover."), s.GetFoundryContext)
 		addFoundryTool(s, server, identity, tool(toolFoundryReadGuide,
 			"Describe the reads helix_foundry_read_graph takes: their kinds and JSON Schema."), s.FoundryReadGuide)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetGeneration,
