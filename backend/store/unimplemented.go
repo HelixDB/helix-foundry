@@ -1125,6 +1125,12 @@ func (u Unimplemented) TallyFoundryWorkflowRuns(context.Context, []string, acces
 	u.unimplemented("TallyFoundryWorkflowRuns")
 	return nil, nil
 }
+
+func (u Unimplemented) ListFoundryWorkflowInsightRuns(context.Context, string, string, *access.Principal, time.Time, time.Time,
+	int) ([]model.FoundryWorkflowInsightRun, error) {
+	u.unimplemented("ListFoundryWorkflowInsightRuns")
+	return nil, nil
+}
 func (u Unimplemented) ListFoundryWorkflowRunAccesses(context.Context, string, int32, int) ([]*model.FoundryWorkflowAccess, bool, error) {
 	u.unimplemented("ListFoundryWorkflowRunAccesses")
 	return nil, false, nil

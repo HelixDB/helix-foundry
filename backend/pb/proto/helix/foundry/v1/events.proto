@@ -12,7 +12,6 @@ option go_package = "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/fo
 // for the sender holding the send token, and the reminders people ask for on
 // the landing page, for the site. It has no REST routes.
 service FoundryEventsService {
-
   // Helix Foundry event sources: connectors of kind events
   rpc SendFoundryEvents(SendFoundryEventsRequest) returns (SendFoundryEventsResponse);
   rpc ValidateFoundryEventSourceToken(ValidateFoundryEventSourceTokenRequest) returns (ValidateFoundryEventSourceTokenResponse);
@@ -64,8 +63,8 @@ message StopFoundryRemindersRequest {
 message StopFoundryRemindersResponse {}
 
 message SendFoundryEventsRequest {
-  string       workspace_id = 2;
-  string       connector_id = 3;
+  string workspace_id = 2;
+  string connector_id = 3;
   // 16 to 64 bytes, each 0x21-0x7E, new and random for each send (a UUID);
   // optional. A retry with the same token and the same pieces stores nothing
   // and returns the first send (replayed). The same token with other pieces
@@ -91,8 +90,8 @@ message ValidateFoundryEventSourceTokenRequest {
   string hash = 2;
 }
 message ValidateFoundryEventSourceTokenResponse {
-  bool   valid        = 1;
-  string token_id     = 2;
+  bool valid = 1;
+  string token_id = 2;
   string workspace_id = 3;
   string connector_id = 4;
 }

@@ -79,6 +79,7 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_GetFoundryWorkflowRun_FullMethodName:          Workflows,
 	foundryv1.FoundryService_FinishFoundryWorkflowRun_FullMethodName:       Workflows,
 	foundryv1.FoundryService_ListFoundryWorkflowRunAccesses_FullMethodName: Workflows,
+	foundryv1.FoundryService_GetFoundryWorkflowInsights_FullMethodName:     Workflows,
 	foundryv1.FoundryService_AssessFoundryWorkflowRun_FullMethodName:       Deny,
 
 	// Reading a load and asking it questions.

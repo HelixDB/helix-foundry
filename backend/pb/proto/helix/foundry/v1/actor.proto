@@ -18,7 +18,7 @@ message Actor {
   string workspace_id = 4;
   // The projects of workspace_id whose databases the caller may read and
   // write with queries.
-  ProjectScope query_read  = 5;
+  ProjectScope query_read = 5;
   ProjectScope query_write = 6;
   // The workspace service credential (an agent's hlxs_ key) the caller
   // authenticated with; set only for SOURCE_MCP and SOURCE_GRANTEE, and

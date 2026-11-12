@@ -3988,6 +3988,75 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows:insights": {
+      "get": {
+        "operationId": "FoundryService_GetFoundryWorkflowInsights",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowInsights"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "startedBy.kind",
+            "description": " - KIND_USER: A workspace member.\n - KIND_SERVICE_CREDENTIAL: A workspace service credential: an agent's key.\n - KIND_TEAM: A workspace team: its members hold its grants.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "KIND_UNSPECIFIED",
+              "KIND_USER",
+              "KIND_SERVICE_CREDENTIAL",
+              "KIND_TEAM"
+            ],
+            "default": "KIND_UNSPECIFIED"
+          },
+          {
+            "name": "startedBy.id",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}:generate": {
       "post": {
         "operationId": "FoundryService_GenerateOntology",
@@ -8138,6 +8207,263 @@
         }
       },
       "description": "FoundryWorkflowAssessment is a finished run's assessment by the ontology\nagent's Assess (contract 4.15.0), on the workspace's questions model: how\nmuch what the agent read made its answer, the answer's claims and the\ncalls that bear on them, what the ontology lacked and what would close it."
+    },
+    "v1FoundryWorkflowGapCount": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "runs": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "FoundryWorkflowGapCount is how many runs' assessments named a gap of kind."
+    },
+    "v1FoundryWorkflowInsightDay": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "totals": {
+          "$ref": "#/definitions/v1FoundryWorkflowInsightTotals"
+        }
+      },
+      "description": "FoundryWorkflowInsightDay is one UTC day of a window."
+    },
+    "v1FoundryWorkflowInsightFunnel": {
+      "type": "object",
+      "properties": {
+        "started": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "finished": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "assessed": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "used": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "helped": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "FoundryWorkflowInsightFunnel follows a window's runs: each step counts\nthose of the step before that went on. Started; finished; assessed (a done\nassessment); used the ontology (at least one call); helped (essential or\nhelpful)."
+    },
+    "v1FoundryWorkflowInsightIssue": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "runs": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "lastRunId": {
+          "type": "string"
+        },
+        "lastWorkflowId": {
+          "type": "string"
+        },
+        "lastAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "workflowIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "FoundryWorkflowInsightIssue is a gap or a suggestion runs' assessments\nnamed: its text as the newest named it, its kind (a gap's), how many runs\nnamed it, the newest of them and the workflows they are of."
+    },
+    "v1FoundryWorkflowInsightSegment": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "$ref": "#/definitions/v1FoundryPrincipal"
+        },
+        "workflowId": {
+          "type": "string"
+        },
+        "totals": {
+          "$ref": "#/definitions/v1FoundryWorkflowInsightTotals"
+        },
+        "dailyRuns": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "lastRunAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "topGap": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryWorkflowInsightSegment is the window's totals for one who started\nruns (principal) or one workflow (workflow_id), with its runs by day and\nthe gap its runs named most (the newest of those named as often)."
+    },
+    "v1FoundryWorkflowInsightTotals": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "open": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "finished": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "assessed": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "helped": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "used": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Runs that made at least one call to the ontology."
+        },
+        "verdicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowVerdictCount"
+          }
+        },
+        "claimsSupported": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "claimsUnsupported": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "claimsContradicted": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "reads": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "questions": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "sends": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "uploads": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "assessmentUsdMicros": {
+          "type": "string",
+          "format": "int64",
+          "description": "What their assessments cost, in millionths of a dollar."
+        },
+        "gapKinds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowGapCount"
+          },
+          "description": "How many runs named a gap of each kind."
+        }
+      },
+      "description": "FoundryWorkflowInsightTotals counts runs and what their assessments said.\nhelped is the runs whose verdict is essential or helpful; claims are those\nof done assessments."
+    },
+    "v1FoundryWorkflowInsights": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "The window's first day, YYYY-MM-DD, and its length."
+        },
+        "days": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "totals": {
+          "$ref": "#/definitions/v1FoundryWorkflowInsightTotals"
+        },
+        "previous": {
+          "$ref": "#/definitions/v1FoundryWorkflowInsightTotals"
+        },
+        "series": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowInsightDay"
+          },
+          "description": "One entry a day, oldest first, `days` of them."
+        },
+        "funnel": {
+          "$ref": "#/definitions/v1FoundryWorkflowInsightFunnel"
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowInsightIssue"
+          },
+          "description": "The gaps and suggestions that recur, most runs first, at most 10 each:\nruns that named the same text (case, spacing and end punctuation\naside) count once each."
+        },
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowInsightIssue"
+          }
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowInsightSegment"
+          },
+          "description": "Who started runs, most runs first, at most 10."
+        },
+        "workflows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowInsightSegment"
+          },
+          "description": "Each workflow with runs in the window, most runs first; none when the\nrequest named one."
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "More runs started in the window than were read (the newest 5,000 are)."
+        }
+      },
+      "description": "FoundryWorkflowInsights is what runs of an ontology's workflows came to\nover a window of whole UTC days ending today: its totals, the same window\nbefore it, a day by day series, how runs went from start to the ontology\nhelping, the gaps and suggestions their assessments named most, and the\nsame totals by who started them and by workflow. Runs are counted by the\nday they started."
     },
     "v1FoundryWorkflowQuestion": {
       "type": "object",

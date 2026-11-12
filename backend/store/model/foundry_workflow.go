@@ -65,6 +65,29 @@ type FoundryWorkflowRunTally struct {
 	Verdicts map[string]int64
 }
 
+// FoundryWorkflowInsightRun is what a workflow's insights read of one run:
+// who started it and when, where it stands, what it recorded, and its
+// assessment, if it has one.
+type FoundryWorkflowInsightRun struct {
+	ID, WorkflowID string
+	StartedBy      access.Principal
+	StartedAt      time.Time
+	Status         FoundryWorkflowRunStatus
+	Counts         FoundryWorkflowRunCounts
+	// Assessment is nil until the run's first assessment is queued.
+	Assessment *FoundryWorkflowInsightAssessment
+}
+
+// FoundryWorkflowInsightAssessment is what insights read of a run's
+// assessment: where it stands, its verdict and the engine's assessment once
+// done, and what it cost.
+type FoundryWorkflowInsightAssessment struct {
+	Status     FoundryWorkflowAssessmentStatus
+	Verdict    string
+	Assessment json.RawMessage
+	USDMicros  int64
+}
+
 // FoundryWorkflowRun is one row of foundry_workflow_runs.
 type FoundryWorkflowRun struct {
 	ID, WorkflowID, WorkspaceID, OntologyID string
