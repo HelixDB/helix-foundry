@@ -3280,6 +3280,92 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-labels": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryReviewLabels",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryReviewLabelsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageToken",
+            "description": "Last label id from a previous page.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "post": {
+        "summary": "A person's word on a claim drawn for the review queue's random slice or\nre-checked by a second person: a label that measures precision. It\nchanges no decision and no load.",
+        "operationId": "FoundryService_SettleFoundryReviewLabel",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryReviewLabelResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceSettleFoundryReviewLabelBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/reviews/{reviewId}:settle": {
       "post": {
         "operationId": "FoundryService_SettleFoundryReview",
@@ -4734,9 +4820,33 @@
       "properties": {
         "decision": {
           "$ref": "#/definitions/v1FoundryReviewChoice"
+        },
+        "drawn": {
+          "type": "string",
+          "description": "How the review queue showed the card the decision was made on: \"ranked\"\n(in its order of facts written) or \"random\" (its random slice, which\nmeasures precision); empty for a decision made elsewhere. A release or\nreject drawn at random is also kept as a label of the claim\n(FoundryReviewLabel), with the score it was read at."
         }
       },
       "description": "Reads the current load's review and stores a decision. A resolve decision\napplies from the next load; a release or a prop decision applies to the\ncurrent load at once (FoundryReviewChoice.release, FoundryReviewChoice.prop);\na reject changes no load (FoundryReviewChoice.reject)."
+    },
+    "FoundryServiceSettleFoundryReviewLabelBody": {
+      "type": "object",
+      "properties": {
+        "fact": {
+          "$ref": "#/definitions/v1FoundryLabelFact"
+        },
+        "decisionId": {
+          "type": "string"
+        },
+        "verdict": {
+          "type": "string",
+          "description": "\"right\" or \"wrong\"."
+        },
+        "drawn": {
+          "type": "string",
+          "description": "\"random\" (a card of the queue's random slice) or \"recheck\" (a second\nperson's word, never the first person's own)."
+        }
+      },
+      "description": "A label of a claim at its place: an accepted fact's quote drawn at random\n(`fact`), or a second person's word on a decision of a held claim\n(`decision_id`) or on another person's label of an accepted fact (`fact`\nwith drawn \"recheck\"). The backend reads the claim from the current load\n(a fact's quote) or from the decision, never from the request."
     },
     "FoundryServiceStartConnectorSignInBody": {
       "type": "object",
@@ -6982,6 +7092,30 @@
       },
       "description": "FoundryHealRun is one audit of an ontology's load."
     },
+    "v1FoundryLabelFact": {
+      "type": "object",
+      "properties": {
+        "docId": {
+          "type": "string"
+        },
+        "section": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "start": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "end": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "factKey": {
+          "type": "string"
+        }
+      },
+      "description": "An accepted fact's quote in the current load: its document, its section\nand byte range there, and its fact's key."
+    },
     "v1FoundryLoad": {
       "type": "object",
       "properties": {
@@ -7829,6 +7963,10 @@
         "applied": {
           "$ref": "#/definitions/v1FoundryDecisionApplied",
           "description": "A release or prop decision's state in the ontology's current load; unset\nfor a resolve, and when that load's decisions don't hold it yet (one\nsaved while another load was current joins them when a job of the\nontology next ends)."
+        },
+        "drawn": {
+          "type": "string",
+          "description": "\"ranked\" or \"random\": the review queue's card it was made on, in the\nqueue's order or drawn at random; empty for a decision made elsewhere."
         }
       },
       "description": "A durable ontology-wide override. A resolve decision applies from the next\nload; a release or a prop decision applies to the current load at once,\nand later loads read it as they are made. Removing a prop decision\nwithdraws it from the current load at once too. A reject changes no load:\nit tells readers which held claims a person said are wrong."
@@ -7838,6 +7976,83 @@
       "properties": {
         "decision": {
           "$ref": "#/definitions/v1FoundryReviewDecision"
+        }
+      }
+    },
+    "v1FoundryReviewLabel": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "drawn": {
+          "type": "string",
+          "description": "\"random\" or \"recheck\"."
+        },
+        "docId": {
+          "type": "string"
+        },
+        "claimSection": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "claimStart": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "claimEnd": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "claimKey": {
+          "type": "string",
+          "description": "A held claim's key and the hash of the statement read, or an accepted\nfact's key: one or the other."
+        },
+        "statementHash": {
+          "type": "string"
+        },
+        "factKey": {
+          "type": "string"
+        },
+        "link": {
+          "type": "string",
+          "description": "The claim's link, and the verifier's score when it was read."
+        },
+        "confidence": {
+          "type": "number",
+          "format": "double"
+        },
+        "verdict": {
+          "type": "string",
+          "description": "\"right\" or \"wrong\"."
+        },
+        "decisionId": {
+          "type": "string",
+          "description": "The decision a held claim's label came with, or the one re-checked."
+        },
+        "against": {
+          "type": "string",
+          "description": "A re-check: the verdict it checks (\"right\" for an approval or a label\nsaying right, \"wrong\" for a rejection or a label saying wrong)."
+        },
+        "loadId": {
+          "type": "string",
+          "description": "The load whose graph the claim was read from."
+        },
+        "decidedByUserId": {
+          "type": "string"
+        },
+        "decidedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "A person's word on a claim at its place, kept to measure precision: a\nclaim of the review queue's random slice (a held claim, kept as its\ndecision is saved, or an accepted fact's quote), or a second person's\nre-check. Nothing reads it into a load. One per person and claim: saying\nit again replaces the verdict."
+    },
+    "v1FoundryReviewLabelResponse": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "$ref": "#/definitions/v1FoundryReviewLabel"
         }
       }
     },
@@ -8685,6 +8900,21 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1FoundryReviewDecision"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ListFoundryReviewLabelsResponse": {
+      "type": "object",
+      "properties": {
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewLabel"
           }
         },
         "nextPageToken": {

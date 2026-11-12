@@ -39,6 +39,10 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	if req.GetReviewId() == "" || req.GetDecision() == nil {
 		return nil, status.Error(codes.InvalidArgument, "review_id and decision are required")
 	}
+	drawn, err := foundrymodel.ParseFoundryReviewDrawn(req.GetDrawn())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	if actor(ctx).UserID == "" {
 		return nil, status.Error(codes.Unauthenticated, "a user is required to settle a review")
 	}
@@ -55,7 +59,7 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	if !load.Status.Servable() {
 		return nil, status.Error(codes.FailedPrecondition, "the load is not ready")
 	}
-	rows, err := s.foundryDecisionRead(ctx, o, load.ID, map[string]string{"$label": "FoundryReview", "review_key": req.GetReviewId()}, []string{"reason", "type", "doc_id", "norm_name", "entity_key", "prop", "values", "claim_key", "section", "start", "end", "suggested_link", "statement"})
+	rows, err := s.foundryDecisionRead(ctx, o, load.ID, map[string]string{"$label": "FoundryReview", "review_key": req.GetReviewId()}, []string{"reason", "type", "doc_id", "norm_name", "entity_key", "prop", "values", "claim_key", "section", "start", "end", "suggested_link", "statement", "confidence"})
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +68,7 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	}
 	review := rows[0]
 	text := func(key string) string { var s string; _ = json.Unmarshal(review[key], &s); return s }
-	d := &foundrymodel.FoundryReviewDecision{ID: id.New(), OntologyID: o.ID, Type: text("type"), DecidedByUserID: actor(ctx).UserID}
+	d := &foundrymodel.FoundryReviewDecision{ID: id.New(), OntologyID: o.ID, Type: text("type"), DecidedByUserID: actor(ctx).UserID, Drawn: drawn}
 	// A held claim names no type: the engine reads what it states from its
 	// document. A claim held as conflicting with what a link that holds one
 	// value holds is one from contract 4.14.0, where the approval decides
@@ -92,12 +96,17 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 			if err := s.deps.DB.SettleFoundryReject(ctx, o.WorkspaceID, load.ID, d); err != nil {
 				return nil, settleFoundryReviewError(err)
 			}
-			return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
+		} else {
+			userID := actor(ctx).UserID
+			resend := &foundrymodel.FoundryGraphJob{ID: id.New(), RequestedByUserID: &userID}
+			if _, err := s.deps.DB.SettleFoundryReleases(ctx, o.WorkspaceID, load.ID, []*foundrymodel.FoundryReviewDecision{d}, resend); err != nil {
+				return nil, settleFoundryReviewError(err)
+			}
 		}
-		userID := actor(ctx).UserID
-		resend := &foundrymodel.FoundryGraphJob{ID: id.New(), RequestedByUserID: &userID}
-		if _, err := s.deps.DB.SettleFoundryReleases(ctx, o.WorkspaceID, load.ID, []*foundrymodel.FoundryReviewDecision{d}, resend); err != nil {
-			return nil, settleFoundryReviewError(err)
+		if drawn != nil && *drawn == foundrymodel.FoundryDrawnRandom {
+			if err := s.labelDrawnClaim(ctx, o, load.ID, d, review); err != nil {
+				return nil, err
+			}
 		}
 		return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
 	}
@@ -268,6 +277,35 @@ func settleHeldClaim(req *foundryv1.SettleFoundryReviewRequest, d *foundrymodel.
 	return nil
 }
 
+// labelDrawnClaim keeps the decision d of a held claim the review queue drew
+// at random as a label of that claim (a release says it is right, a reject
+// that it is wrong), with the link and the verifier's score its review was
+// read at: the measure of precision in the claim's score band, which outlives
+// the decision. The decision is saved first; a label that fails to save says
+// so, and settling again (which saves the same decision) saves it.
+func (s *Service) labelDrawnClaim(ctx context.Context, o *foundrymodel.FoundryOntology, loadID string, d *foundrymodel.FoundryReviewDecision, review map[string]json.RawMessage) error {
+	verdict := foundrymodel.FoundryVerdictRight
+	if d.Kind == foundrymodel.FoundryReviewReject {
+		verdict = foundrymodel.FoundryVerdictWrong
+	}
+	label := &foundrymodel.FoundryReviewLabel{ID: id.New(), OntologyID: o.ID, LoadID: loadID, Drawn: foundrymodel.FoundryLabelRandom,
+		DocID: *d.DocID, Span: *d.ClaimSpan, ClaimKey: d.ClaimKey, StatementHash: d.StatementHash, Verdict: verdict,
+		DecisionID: &d.ID, DecidedByUserID: d.DecidedByUserID}
+	var link string
+	if json.Unmarshal(review["suggested_link"], &link) == nil && link != "" {
+		label.Link = &link
+	}
+	// A review with no score (unverified) reads as null or nothing.
+	var confidence *float64
+	if json.Unmarshal(review["confidence"], &confidence) == nil && confidence != nil && *confidence >= 0 && *confidence <= 1 {
+		label.Confidence = confidence
+	}
+	if err := s.deps.DB.SaveFoundryReviewLabel(ctx, o.WorkspaceID, label); err != nil {
+		return status.Errorf(codes.Internal, "the decision is saved, but not its label of the random slice; settle it again: %v", err)
+	}
+	return nil
+}
+
 // loadOntologyTOML is the ontology TOML of one of o's versions, what a
 // decision is checked against.
 func (s *Service) loadOntologyTOML(ctx context.Context, ontologyID, versionID string) (string, error) {
@@ -407,6 +445,9 @@ func (s *Service) DeleteFoundryReviewDecision(ctx context.Context, req *foundryv
 
 func foundryReviewDecisionProto(d *foundrymodel.FoundryReviewDecision) *foundryv1.FoundryReviewDecision {
 	out := &foundryv1.FoundryReviewDecision{Id: d.ID, Kind: string(d.Kind), Type: d.Type, DocId: d.DocID, NormName: d.NormName, EntityKey: d.EntityKey, Prop: d.Prop, ClaimKey: d.ClaimKey, StatementHash: d.StatementHash, DecidedByUserId: d.DecidedByUserID, DecidedAt: timestamppb.New(d.DecidedAt)}
+	if d.Drawn != nil {
+		out.Drawn = string(*d.Drawn)
+	}
 	if span := d.ClaimSpan; span != nil {
 		out.ClaimSection, out.ClaimStart, out.ClaimEnd = &span.Section, &span.Start, &span.End
 	}

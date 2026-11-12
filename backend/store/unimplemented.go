@@ -76,6 +76,22 @@ func (u Unimplemented) DeleteFoundryReviewDecision(context.Context, string, stri
 	u.unimplemented("DeleteFoundryReviewDecision")
 	return nil
 }
+func (u Unimplemented) GetFoundryReviewDecision(context.Context, string, string) (*model.FoundryReviewDecision, error) {
+	u.unimplemented("GetFoundryReviewDecision")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryReviewLabels(context.Context, string, string, int) ([]*model.FoundryReviewLabel, error) {
+	u.unimplemented("ListFoundryReviewLabels")
+	return nil, nil
+}
+func (u Unimplemented) FoundryReviewLabelsOf(context.Context, string, string, model.FoundryClaimSpan, *string, *string) ([]*model.FoundryReviewLabel, error) {
+	u.unimplemented("FoundryReviewLabelsOf")
+	return nil, nil
+}
+func (u Unimplemented) SaveFoundryReviewLabel(context.Context, string, *model.FoundryReviewLabel) error {
+	u.unimplemented("SaveFoundryReviewLabel")
+	return nil
+}
 func (u Unimplemented) GetConnector(context.Context, string, string) (*model.Connector, error) {
 	u.unimplemented("GetConnector")
 	return nil, nil

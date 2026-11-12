@@ -41,6 +41,10 @@ type decisionStore struct {
 	rejectedOn string
 	resends    []*foundrymodel.FoundryGraphJob
 	applied    map[string]foundrymodel.FoundryDecisionApplied
+	// labels are what SaveFoundryReviewLabel kept, labelErr what it fails
+	// with.
+	labels   []*foundrymodel.FoundryReviewLabel
+	labelErr error
 }
 
 func (s *decisionStore) GetFoundryOntology(_ context.Context, ws, id string) (*foundrymodel.FoundryOntology, error) {
