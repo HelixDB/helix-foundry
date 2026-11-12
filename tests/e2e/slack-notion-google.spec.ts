@@ -63,14 +63,17 @@ async function openInTree(
   name: string,
   tables: number,
   setName: string,
+  // Every set of the connection, in the tree's order, after its tables.
+  sets = [setName],
 ) {
   const row = connection(page, name);
   await expect(row).toBeVisible(SYNCED);
   await row.locator(":scope > .dt-row .dt-toggle").click();
   await expect(row).toHaveAttribute("aria-expanded", "true");
   const rows = row.locator(":scope > [role=group] > [role=treeitem]");
-  await expect(rows).toHaveCount(tables + 1);
-  await expect(rows.last()).toHaveAccessibleName(setName);
+  await expect(rows).toHaveCount(tables + sets.length);
+  for (const [i, s] of sets.entries())
+    await expect(rows.nth(tables + i)).toHaveAccessibleName(s);
   const own = folder(page, setName);
   await own.locator(":scope > .dt-row").click();
   await expect(own).toHaveAttribute("aria-expanded", "true");
@@ -273,7 +276,7 @@ test("connects Notion, shows its databases' first rows, and keeps its pages as d
   expect(await page.content()).not.toContain(secret);
 });
 
-test("connects Google Workspace, keeps its stored key on an edit, and keeps its Docs as documents", async ({
+test("connects Google Workspace, keeps its stored key on an edit, and keeps its Docs and transcripts as documents", async ({
   page,
 }) => {
   const key = (email = "foundry@acme-data.iam.gserviceaccount.com") =>
@@ -354,6 +357,7 @@ test("connects Google Workspace, keeps its stored key on an edit, and keeps its 
     page.getByRole("list", { name: "Synced tables" }).getByRole("listitem"),
   ).toHaveCount(5);
   await expect(set(page, "Docs")).toContainText("14 documents");
+  await expect(set(page, "Transcripts")).toContainText("4 documents");
 
   // An edit starts with the key blank and keeps the stored one when it is
   // left blank.
@@ -384,7 +388,10 @@ test("connects Google Workspace, keeps its stored key on an edit, and keeps its 
   ]);
 
   // The new days queued a sync; the Docs are the same once it ends.
-  const docs = await openInTree(page, "Google Workspace", 5, "Docs");
+  const docs = await openInTree(page, "Google Workspace", 5, "Docs", [
+    "Docs",
+    "Transcripts",
+  ]);
   await expect(docs.locator(":scope > .dt-row .dt-count")).toHaveText("14");
   await expect(docs.getByRole("link")).toHaveCount(14);
   await docs.getByRole("link", { name: "Q4 planning" }).click();
@@ -400,6 +407,23 @@ test("connects Google Workspace, keeps its stored key on an edit, and keeps its 
   await expect(
     page.getByRole("heading", { name: "Next steps", exact: true }),
   ).toBeVisible();
+  // Its meeting transcripts, the .vtt files in Drive, show as ontologies
+  // read them: google.go's note of where each is, then a line a turn.
+  const transcripts = folder(page, "Transcripts");
+  await transcripts.locator(":scope > .dt-row").click();
+  await expect(transcripts).toHaveAttribute("aria-expanded", "true");
+  await expect(transcripts.getByRole("link")).toHaveCount(4);
+  await transcripts
+    .getByRole("link", { name: "Globex renewal call.vtt" })
+    .click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Globex renewal call.vtt" }),
+  ).toBeVisible();
+  const turns = page.getByLabel("Transcript", { exact: true });
+  await expect(turns).toContainText("Owner: ada@example.com");
+  await expect(turns.getByRole("listitem").first()).toHaveText(
+    "00:00:02Ada Lovelace: Globex wants a three year renewal starting in January.",
+  );
   for (const body of bodies) expect(body).not.toContain("MIIEe2eGoogleKey");
   expect(await page.content()).not.toContain("MIIEe2eGoogleKey");
 });

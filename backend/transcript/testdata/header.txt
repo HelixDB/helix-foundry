@@ -1,0 +1,9 @@
+Weekly sync
+Recorded 2026-11-10
+Attendees: Ada Lovelace, Grace Hopper
+Organizer: ada@example.com
+
+[00:00:01] Ada Lovelace: Can everyone hear me? Globex's renewal — three years.
+[00:00:07] Grace Hopper: Yes &copy; &amp no; 5 &lt 6.
+[00:00:09] Applause
+[00:00:11] An empty voice says this.

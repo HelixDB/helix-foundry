@@ -8,6 +8,7 @@ import { routes } from "../../mock/routes";
 import type { MockStream } from "../../mock/routes/data-sources";
 import { writeConnectorDocuments } from "../../mock/routes/documents";
 import { config, db, resetState } from "../../mock/state";
+import { transcriptText } from "../../src/shared/transcript";
 
 // A connector's documents in the mock WFE, as the reader release serves
 // them and the writer release writes them: a Granola, Slack, Notion or
@@ -477,6 +478,43 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
       new RegExp(
         `^# Q4 planning\\n\\nOwner: ada@example\\.com\\nLast modified: 2026-10-27 16:20 UTC\\nFile id: ${id}\\n\\n## Summary\\n`,
       ),
+    );
+  });
+
+  it("fills Google Workspace's Transcripts with each .vtt file in Drive, read as its turns", async () => {
+    const connectorId = await connect("Acme Drive", {
+      google: { serviceAccountKey: googleKey, subject: "ada@example.com" },
+    });
+    const transcripts = await setOf("transcripts");
+    expect(transcripts).toMatchObject({
+      name: "Transcripts",
+      documents: 4,
+      connector: { connectorId, stream: "transcripts" },
+    });
+    expect(transcripts!.description).toContain("WebVTT transcript (.vtt file)");
+    const [newest] = (await page(`setId=${transcripts!.id}`)).documents;
+    expect(newest).toMatchObject({
+      name: "Globex renewal call.vtt",
+      mediaType: "text/vtt",
+    });
+    // :content is the file as stored, a WebVTT file with google.go's note;
+    // ontologies read it as its turns.
+    const { text } = (await call("GET", `${DOCS}/${newest!.id}:content`)).body;
+    expect(text).toMatch(
+      /^WEBVTT\n\nNOTE\nGlobex renewal call\.vtt\nOwner: ada@example\.com\nLast modified: 2026-11-06 15:00 UTC\nFile id: 1mockVtt0001\w+\n\n1\n/,
+    );
+    expect(transcriptText(text)).toBe(
+      [
+        "Globex renewal call.vtt",
+        "Owner: ada@example.com",
+        "Last modified: 2026-11-06 15:00 UTC",
+        "File id: 1mockVtt0001aBcDeFgHiJkLmNoPq",
+        "",
+        "[00:00:02] Ada Lovelace: Globex wants a three year renewal starting in January.",
+        "[00:00:09] Grace Hopper: They asked for the same discount Initech has.",
+        "[00:00:16] Ada Lovelace: I'll send Globex the order form today.",
+        "",
+      ].join("\n"),
     );
   });
 });

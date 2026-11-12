@@ -995,7 +995,7 @@ export function SetPicker({
           size="sm"
           icon={FileText}
           title="No documents yet"
-          text="Upload contracts and notes (Markdown, MDX, text or PDF), or tables (CSV, TSV, JSON, JSONL or Parquet). They go in a new set, General, chosen here."
+          text="Upload contracts, notes and meeting transcripts (Markdown, MDX, text, PDF or WebVTT), or tables (CSV, TSV, JSON, JSONL or Parquet). They go in a new set, General, chosen here."
           action={upload}
         />
       ) : (

@@ -470,8 +470,8 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 		if err != nil || !ValidIDs([]string{payload.SetID}) || !document.ValidName(payload.Name) || !known ||
 			payload.SizeBytes <= 0 || payload.SizeBytes > s.Documents.MaxBytesFor(mediaType) || !document.ValidSHA256(payload.SHA256) {
 			return nil, invalid(fmt.Sprintf("upload_document takes payload {set_id, name, size_bytes, sha256}: a name of 1 to 255 characters with no slash, "+
-				"ending .md, .markdown, .mdx, .txt, .json, .csv, .tsv, .jsonl, .ndjson, .parquet or .pdf, the file's size in bytes, "+
-				"at most %d KiB for Markdown, MDX and text, %d KiB for CSV, TSV, JSON, JSONL and Parquet, and %d KiB for PDF, "+
+				"ending .md, .markdown, .mdx, .txt, .json, .csv, .tsv, .jsonl, .ndjson, .parquet, .pdf or .vtt, the file's size in bytes, "+
+				"at most %d KiB for Markdown, MDX, text and WebVTT, %d KiB for CSV, TSV, JSON, JSONL and Parquet, and %d KiB for PDF, "+
 				"and its lowercase hex SHA-256", s.Documents.MaxBytes>>10, s.Documents.MaxTableBytes>>10, s.Documents.MaxPDFBytes>>10))
 		}
 		req := &foundryv1.CreateFoundryOntologyDocumentRequest{

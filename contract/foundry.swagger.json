@@ -3901,7 +3901,7 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "1 to 255 characters once trimmed, with no slash, backslash or control\ncharacter; its extension must agree with media_type: .md or .markdown\ntext/markdown, .mdx text/mdx, .txt text/plain, .json application/json,\n.csv text/csv, .tsv text/tab-separated-values, .jsonl or .ndjson\napplication/x-ndjson, .parquet application/vnd.apache.parquet, .pdf\napplication/pdf."
+          "description": "1 to 255 characters once trimmed, with no slash, backslash or control\ncharacter; its extension must agree with media_type: .md or .markdown\ntext/markdown, .mdx text/mdx, .txt text/plain, .json application/json,\n.csv text/csv, .tsv text/tab-separated-values, .jsonl or .ndjson\napplication/x-ndjson, .parquet application/vnd.apache.parquet, .pdf\napplication/pdf, .vtt text/vtt."
         },
         "mediaType": {
           "type": "string"
@@ -5668,7 +5668,7 @@
         },
         "mediaType": {
           "type": "string",
-          "description": "text/markdown, text/mdx, text/plain, application/json, text/csv,\ntext/tab-separated-values, application/x-ndjson,\napplication/vnd.apache.parquet or application/pdf. A rename keeps it."
+          "description": "text/markdown, text/mdx, text/plain, application/json, text/csv,\ntext/tab-separated-values, application/x-ndjson,\napplication/vnd.apache.parquet, application/pdf or text/vtt. A rename\nkeeps it."
         },
         "sizeBytes": {
           "type": "string",
@@ -5711,7 +5711,7 @@
           "description": "The row of a connector's table it is the text of; unset for an upload."
         }
       },
-      "description": "FoundryDocument is one document of a workspace, in one of its document\nsets: one a person uploaded, or the text of one row of a connector's table\n(source), which the connector's syncs write into its set. Ontologies read\ntext/markdown, text/mdx (as Markdown, with its code blanked to spaces; it\nis never compiled or run) and text/plain as text, extracted through\nroutes. Each text/csv,\ntext/tab-separated-values, application/json, application/x-ndjson and\napplication/vnd.apache.parquet document is read once, at upload, as a\ntable of its own, which a version's mappings name by the document's id; it\nis never extracted. Each application/pdf document is read once, at\nupload, to its text (read), and is extracted through routes as that text\nonce read; a scanned PDF has no text to read."
+      "description": "FoundryDocument is one document of a workspace, in one of its document\nsets: one a person uploaded, or the text of one row of a connector's table\n(source), which the connector's syncs write into its set. Ontologies read\ntext/markdown, text/mdx (as Markdown, with its code blanked to spaces; it\nis never compiled or run), text/plain and text/vtt (a WebVTT transcript, as\nits turns: a line each with its start, speaker and words) as text,\nextracted through routes. Each text/csv,\ntext/tab-separated-values, application/json, application/x-ndjson and\napplication/vnd.apache.parquet document is read once, at upload, as a\ntable of its own, which a version's mappings name by the document's id; it\nis never extracted. Each application/pdf document is read once, at\nupload, to its text (read), and is extracted through routes as that text\nonce read; a scanned PDF has no text to read."
     },
     "v1FoundryDocumentExtraction": {
       "type": "object",

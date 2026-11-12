@@ -82,7 +82,7 @@ test("uploads documents in Data, and lists what an ontology reads read only", as
   await expect(upload(page, "notes.txt")).toContainText("Uploaded");
   // A file that can't be read fails at once, with nothing to retry.
   await expect(upload(page, "deck.docx")).toContainText(
-    "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, or PDF files can be uploaded.",
+    "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, PDF, or WebVTT files can be uploaded.",
   );
   await expect(
     upload(page, "deck.docx").getByRole("button", { name: "Retry" }),
@@ -383,6 +383,71 @@ test("shows an MDX document as written, with what a load read marked inside its 
   await expect(
     text.locator("mark.is-mention", { hasText: "Globex Corporation" }),
   ).toHaveCount(1);
+});
+
+test("shows a WebVTT transcript as its turns, and a load reads them", async ({
+  page,
+}) => {
+  await mock.configure({ loadStepMs: 300 });
+  await signIn(page);
+  const vtt = [
+    "WEBVTT",
+    "",
+    "1",
+    "00:00:03.120 --> 00:00:05.200",
+    "<v Ada Lovelace>Globex Corporation renews in January.</v>",
+    "",
+    "2",
+    "00:00:05.200 --> 00:00:08.000",
+    "<v Ada Lovelace>For three years.</v>",
+    "",
+    "3",
+    "00:01:02.000 --> 00:01:04.000",
+    "<v Grace Hopper>Initech LLC wants the same terms.</v>",
+    "",
+  ].join("\n");
+  await uploadInData(page, [file("renewal call.vtt", vtt)]);
+  // In Data, as ontologies read it: a turn a speaker, their cues in a row
+  // one turn, each with its start; its cues are a click away.
+  await dataTree(page).getByRole("link", { name: "renewal call.vtt" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "renewal call.vtt" }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Transcript", { exact: true }).getByRole("listitem"),
+  ).toHaveText([
+    "00:00:03Ada Lovelace: Globex Corporation renews in January. For three years.",
+    "00:01:02Grace Hopper: Initech LLC wants the same terms.",
+  ]);
+  await page
+    .getByRole("radiogroup", { name: "View" })
+    .getByRole("radio", { name: "Source" })
+    .click();
+  await expect(page).toHaveURL(/[?&]view=source$/);
+  await expect(page.getByLabel("Document text")).toContainText(
+    "<v Ada Lovelace>Globex Corporation renews in January.</v>",
+  );
+
+  await makeContractsCurrent(page);
+  await startContractsLoad(page);
+  await expect(page).toHaveURL(/\/loads\/load_/);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
+  ).toContainText("1 document written into contracts", { timeout: 20_000 });
+  await page.goto(`${O}/documents`);
+  await row(page, "renewal call.vtt")
+    .getByRole("link", { name: "renewal call.vtt" })
+    .click();
+  // The load read its turns, a line each, and found the names in them.
+  const text = page.getByLabel("Document text");
+  await expect(text).toContainText(
+    "[00:00:03] Ada Lovelace: Globex Corporation renews in January. For three years.",
+  );
+  await expect(text).not.toContainText("-->");
+  await expect(text.locator("mark.is-mention")).toContainText([
+    "Globex Corporation",
+    "Initech LLC",
+  ]);
 });
 
 test("says nothing was read from a document a load couldn't read", async ({

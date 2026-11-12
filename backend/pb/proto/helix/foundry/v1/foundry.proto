@@ -805,7 +805,7 @@ message CreateFoundryDocumentRequest {
   // text/markdown, .mdx text/mdx, .txt text/plain, .json application/json,
   // .csv text/csv, .tsv text/tab-separated-values, .jsonl or .ndjson
   // application/x-ndjson, .parquet application/vnd.apache.parquet, .pdf
-  // application/pdf.
+  // application/pdf, .vtt text/vtt.
   string name       = 3;
   string media_type = 4;
   int64  size_bytes = 5;

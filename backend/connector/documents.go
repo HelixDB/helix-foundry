@@ -15,6 +15,12 @@ type Format uint8
 const (
 	Markdown  Format = iota + 1 // text/markdown
 	PlainText                   // text/plain
+	// WebVTT is a transcript's cues (text/vtt), as a meeting's recording
+	// exports them: a stream of them is read as its turns, a line each
+	// with its start and speaker (transcript.Text), as an uploaded .vtt is.
+	// A kind may say where a transcript comes from in a NOTE block
+	// (transcript.WithNote).
+	WebVTT
 )
 
 // MediaType is the type a document of the format is stored as; "" for none.
@@ -24,6 +30,8 @@ func (f Format) MediaType() string {
 		return "text/markdown"
 	case PlainText:
 		return "text/plain"
+	case WebVTT:
+		return "text/vtt"
 	}
 	return ""
 }

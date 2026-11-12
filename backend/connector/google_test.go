@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/helixdb/helix-foundry/backend/transcript"
 )
 
 const googleSubject = "ada@acme.com"
@@ -300,11 +302,15 @@ func TestGoogleConnector(t *testing.T) {
 			t.Fatalf("Hint = %q, DisplayName = %q", hint, kind.DisplayName())
 		}
 	})
-	t.Run("keeps every Doc in the docs set of the files table", func(t *testing.T) {
+	t.Run("keeps every Doc and every transcript in sets of the files table", func(t *testing.T) {
 		streams := kind.(DocumentKind).Streams(Source{Settings: googleSettings})
-		if len(streams) != 1 || streams[0].Name != "docs" || streams[0].Table != "files" || streams[0].Title != "Docs" ||
+		if len(streams) != 2 || streams[0].Name != "docs" || streams[0].Table != "files" || streams[0].Title != "Docs" ||
 			streams[0].Format != Markdown || streams[0].Keep != (Keep{}) || streams[0].Problem() != "" {
 			t.Fatalf("streams = %+v", streams)
+		}
+		if s := streams[1]; s.Name != "transcripts" || s.Table != "files" || s.Title != "Transcripts" || s.Format != WebVTT ||
+			s.Format.MediaType() != "text/vtt" || s.Keep != (Keep{}) || s.Problem() != "" {
+			t.Fatalf("streams[1] = %+v", s)
 		}
 	})
 
@@ -1483,6 +1489,121 @@ func TestGoogleDocuments(t *testing.T) {
 		docs := &granolaDocs{want: map[string]bool{"docs": true}}
 		if _, err := kind.SyncDocuments(ctx, googleSource(), Table{Name: "files"}, &rowSink{}, docs); err != nil || len(docs.puts) != 3 {
 			t.Fatalf("SyncDocuments = %v, puts = %v", err, docs.putNames())
+		}
+	})
+}
+
+// googleTranscriptFiles are Drive's files with transcripts: call1, a WebVTT
+// file Drive types as one; call2, the newest, a .VTT it typed by its bytes,
+// in a shared drive and with no owner; fake, a .vtt that holds no WebVTT;
+// big, past googleTranscriptMaxBytes; locked, which its owner keeps viewers
+// from downloading; and a Sheet named .vtt, which is no transcript.
+const googleTranscriptFiles = `{"files":[
+	{"id":"call1","name":"Weekly  sync.vtt","mimeType":"text/vtt","owners":[{"emailAddress":"Ada@acme.com"}],"size":"190",
+		"modifiedTime":"2026-11-03T10:00:00Z","webViewLink":"https://drive.google.com/file/d/call1/view","version":"5"},
+	{"id":"call2","name":"Board call.VTT","mimeType":"application/octet-stream","driveId":"drv1","size":"120",
+		"modifiedTime":"2026-11-05T09:30:00Z","webViewLink":"https://drive.google.com/file/d/call2/view","version":"2"},
+	{"id":"fake","name":"notes.vtt","mimeType":"text/vtt","size":"9","modifiedTime":"2026-11-04T08:00:00Z","version":"1"},
+	{"id":"big","name":"all-hands.vtt","mimeType":"text/vtt","size":"20000000","modifiedTime":"2026-11-06T08:00:00Z","version":"1"},
+	{"id":"locked","name":"1-1.vtt","mimeType":"text/vtt","size":"90","modifiedTime":"2026-11-07T08:00:00Z","version":"1",
+		"capabilities":{"canDownload":false}},
+	{"id":"sheet1","name":"Budget.vtt","mimeType":"application/vnd.google-apps.spreadsheet","modifiedTime":"2026-11-08T10:00:00Z","version":"9"}]}`
+
+// googleTranscriptBodies are what downloading each transcript gives.
+var googleTranscriptBodies = map[string]string{
+	"call1": "WEBVTT\r\n\r\n00:00:01.000 --> 00:00:03.000\r\n<v Ada Lovelace>Globex wants three years.\r\n",
+	"call2": "WEBVTT\n\n1\n00:00:02.000 --> 00:00:04.000\n<v Grace Hopper>Initech renews in March.\n",
+	"fake":  "not vtt\n",
+}
+
+func TestGoogleTranscripts(t *testing.T) {
+	ctx := context.Background()
+	routes := func(t *testing.T, answers map[string]func(*http.Request) (int, string)) map[string]func(*http.Request) (int, string) {
+		routes := map[string]func(*http.Request) (int, string){
+			"/drive/v3/files":  func(*http.Request) (int, string) { return http.StatusOK, googleTranscriptFiles },
+			"/drive/v3/drives": googleDrivesRoute(t, map[string]string{"": `{"drives":[]}`}),
+		}
+		for id, body := range googleTranscriptBodies {
+			routes["/drive/v3/files/"+id] = func(r *http.Request) (int, string) {
+				if r.URL.RawQuery != "alt=media&supportsAllDrives=true" {
+					t.Errorf("download query = %s", r.URL.RawQuery)
+				}
+				if answer := answers[id]; answer != nil {
+					return answer(r)
+				}
+				return http.StatusOK, body
+			}
+		}
+		return routes
+	}
+	pass := func(t *testing.T, w *googleWorkspace, docs DocumentWriter) (*rowSink, error) {
+		t.Helper()
+		sink := &rowSink{}
+		_, err := googleAt(t, w).SyncPass(ctx, googleSource(), []Table{{Name: "files"}}, map[string]RowWriter{"files": sink}, docs)
+		return sink, err
+	}
+
+	t.Run("downloads each transcript it wants, newest first, with a note of where it is", func(t *testing.T) {
+		w := &googleWorkspace{routes: routes(t, nil)}
+		docs := &granolaDocs{want: map[string]bool{"transcripts": true}}
+		sink, err := pass(t, w, docs)
+		if err != nil || len(sink.rows) != 6 {
+			t.Fatalf("SyncPass = %v, rows = %d", err, len(sink.rows))
+		}
+		if fmt.Sprint(docs.offers) != "[transcripts call2 1|2026-11-05T09:30:00Z|2|482284250ee8a251 "+
+			"transcripts fake 1|2026-11-04T08:00:00Z|1|bfe0d4797327ff7f transcripts call1 1|2026-11-03T10:00:00Z|5|454f1a88afac850f]" {
+			t.Fatalf("offers = %q", docs.offers)
+		}
+		if fmt.Sprint(docs.drops) != "[transcripts fake]" || fmt.Sprint(docs.putNames()) != "[transcripts call2 transcripts call1]" {
+			t.Fatalf("drops = %v, puts = %v", docs.drops, docs.putNames())
+		}
+		call2, call1 := docs.puts[0].doc, docs.puts[1].doc
+		if string(call2.Text) != "WEBVTT\n\nNOTE\nBoard call.VTT\nLast modified: 2026-11-05 09:30 UTC\nFile id: call2\n\n"+
+			"1\n00:00:02.000 --> 00:00:04.000\n<v Grace Hopper>Initech renews in March.\n" ||
+			call2.Title != "Board call.VTT" || call2.URL != "https://drive.google.com/file/d/call2/view" ||
+			!call2.At.Equal(time.Date(2026, 11, 5, 9, 30, 0, 0, time.UTC)) {
+			t.Fatalf("call2 = %+v\n%s", call2, call2.Text)
+		}
+		if got := string(transcript.Text(call1.Text)); got != "Weekly sync.vtt\nOwner: ada@acme.com\nLast modified: 2026-11-03 10:00 UTC\n"+
+			"File id: call1\n\n[00:00:01] Ada Lovelace: Globex wants three years.\n" || call1.Title != "Weekly sync.vtt" {
+			t.Fatalf("call1 reads as %q", got)
+		}
+		if asked := w.requested("/drive/v3/files/"); fmt.Sprint(asked) != "[/drive/v3/files/call2?alt=media&supportsAllDrives=true "+
+			"/drive/v3/files/fake?alt=media&supportsAllDrives=true /drive/v3/files/call1?alt=media&supportsAllDrives=true]" {
+			t.Fatalf("downloads = %v", asked)
+		}
+	})
+	t.Run("downloads only the transcripts it wants", func(t *testing.T) {
+		w := &googleWorkspace{routes: routes(t, nil)}
+		docs := &granolaDocs{want: map[string]bool{"docs": true}}
+		if _, err := pass(t, w, docs); err != nil || len(docs.offers) != 3 || len(docs.puts) != 0 || len(w.requested("/drive/v3/files/")) != 0 {
+			t.Fatalf("SyncPass = %v, offers = %q, downloads = %v", err, docs.offers, w.requested("/drive/v3/files/"))
+		}
+	})
+	t.Run("drops a transcript Drive won't give the user, and skips one it fails to", func(t *testing.T) {
+		noBackoff(t)
+		before := testutil.ToFloat64(googleDocsSkipped)
+		w := &googleWorkspace{routes: routes(t, map[string]func(*http.Request) (int, string){
+			"call1": googleFailure(http.StatusForbidden, "The user has not granted the app read access to the file.", "cannotDownloadFile"),
+			"call2": func(*http.Request) (int, string) { return http.StatusBadGateway, `` },
+		})}
+		docs := &granolaDocs{want: map[string]bool{"transcripts": true}}
+		if _, err := pass(t, w, docs); err != nil || len(docs.puts) != 0 || fmt.Sprint(docs.drops) != "[transcripts fake transcripts call1]" {
+			t.Fatalf("SyncPass = %v, puts = %v, drops = %v", err, docs.putNames(), docs.drops)
+		}
+		if skipped := testutil.ToFloat64(googleDocsSkipped) - before; skipped != 1 {
+			t.Fatalf("skipped %v, want call2", skipped)
+		}
+	})
+	t.Run("fails a transcript listed without its modified time", func(t *testing.T) {
+		w := &googleWorkspace{routes: map[string]func(*http.Request) (int, string){
+			"/drive/v3/drives": googleDrivesRoute(t, map[string]string{"": `{}`}),
+			"/drive/v3/files": func(*http.Request) (int, string) {
+				return http.StatusOK, `{"files":[{"id":"call1","name":"Sync.vtt","mimeType":"text/vtt"}]}`
+			},
+		}}
+		if _, err := pass(t, w, &granolaDocs{}); err == nil || !strings.Contains(err.Error(), "transcript call1 is listed without its modifiedTime") {
+			t.Fatalf("SyncPass error = %v, want the listing refused", err)
 		}
 	})
 }

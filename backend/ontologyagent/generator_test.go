@@ -459,7 +459,7 @@ func TestGenerator(t *testing.T) {
 		var h *harness
 		h = newHarness(t, func(stream agentv1.Agent_TurnServer) error {
 			staged = map[string]string{}
-			for _, name := range []string{"doc-md.md", "doc-mdx.md", "doc-txt.txt", "doc-inv.txt"} {
+			for _, name := range []string{"doc-md.md", "doc-mdx.md", "doc-txt.txt", "doc-vtt.txt", "doc-inv.txt"} {
 				body, _ := os.ReadFile(filepath.Join(h.generator.WorkDir, "generations", "gen-1", name))
 				staged[name] = string(body)
 			}
@@ -469,6 +469,7 @@ func TestGenerator(t *testing.T) {
 		h.documents.objects["ws/ws-1/documents/doc-txt/original"] = "Globex renews yearly."
 		h.documents.objects["ws/ws-1/documents/doc-mdx/original"] = "import X from 'x'\n\n# Guide\nInitech pays {total}.\n"
 		h.documents.objects["ws/ws-1/documents/doc-pdf/original"] = "%PDF-1.7"
+		h.documents.objects["ws/ws-1/documents/doc-vtt/original"] = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v Ada>Initech renews in March.\n"
 		h.documents.objects["ws/ws-1/documents/doc-inv/original"] = "%PDF-1.7 the invoice"
 		invoiceText := "ws/ws-1/documents/doc-inv/read/standard-ab.txt"
 		h.documents.objects[invoiceText] = "Invoice 1042\n\fTerms\n"
@@ -485,6 +486,8 @@ func TestGenerator(t *testing.T) {
 				{ID: "doc-md", Name: "msa.md", MediaType: model.FoundryMediaMarkdown, SHA256: "aa", S3Key: "ws/ws-1/documents/doc-md/original"},
 				{ID: "doc-mdx", Name: "guide.mdx", MediaType: model.FoundryMediaMDX, SHA256: "ee", S3Key: "ws/ws-1/documents/doc-mdx/original"},
 				{ID: "doc-txt", Name: "renewals.txt", MediaType: model.FoundryMediaPlainText, SHA256: "bb", S3Key: "ws/ws-1/documents/doc-txt/original"},
+				// A transcript is staged as its turns, plain text.
+				{ID: "doc-vtt", Name: "renewal call.vtt", MediaType: model.FoundryMediaVTT, SHA256: "cc", S3Key: "ws/ws-1/documents/doc-vtt/original"},
 				// A read PDF is staged as the text its read stored.
 				{ID: "doc-inv", Name: "invoice.pdf", MediaType: model.FoundryMediaPDF, SHA256: "ff", S3Key: "ws/ws-1/documents/doc-inv/original",
 					Read: &model.FoundryFileRead{Status: model.FoundryFileReadSucceeded, ArtifactKey: &invoiceText}},
@@ -512,14 +515,16 @@ func TestGenerator(t *testing.T) {
 		// The fingerprint hashes the text staged, not the original, so an MDX
 		// blanked otherwise is measured afresh.
 		mdx := "                 \n\n# Guide\nInitech pays        .\n"
+		vtt := "[00:00:01] Ada: Initech renews in March.\n"
 		textHash := func(text string) string { sum := sha256.Sum256([]byte(text)); return hex.EncodeToString(sum[:]) }
 		fingerprint := sha256.Sum256([]byte("doc-md " + textHash("# MSA\nAcme Corp buys from us.") + "\ndoc-mdx " + textHash(mdx) +
-			"\ndoc-txt " + textHash("Globex renews yearly.") + "\ndoc-inv " + textHash("Invoice 1042\n\fTerms\n") + "\n"))
+			"\ndoc-txt " + textHash("Globex renews yearly.") + "\ndoc-vtt " + textHash(vtt) + "\ndoc-inv " + textHash("Invoice 1042\n\fTerms\n") + "\n"))
 		want := `{"id":"set-contracts","display_name":"Contracts","description":"Signed customer contracts","route":"extraction",` +
 			`"access":{"documents":{"files":[` +
 			`{"doc_id":"doc-md","path":"generations/gen-1/doc-md.md","media_type":"markdown","title":"msa.md"},` +
 			`{"doc_id":"doc-mdx","path":"generations/gen-1/doc-mdx.md","media_type":"markdown","title":"guide.mdx"},` +
 			`{"doc_id":"doc-txt","path":"generations/gen-1/doc-txt.txt","media_type":"plain_text","title":"renewals.txt"},` +
+			`{"doc_id":"doc-vtt","path":"generations/gen-1/doc-vtt.txt","media_type":"plain_text","title":"renewal call.vtt"},` +
 			`{"doc_id":"doc-inv","path":"generations/gen-1/doc-inv.txt","media_type":"plain_text","title":"invoice.pdf"}]}},` +
 			`"fingerprint":"` + hex.EncodeToString(fingerprint[:]) + `"}`
 		if len(req.Sources) != 4 || string(req.Sources[1]) != want {
@@ -534,6 +539,7 @@ func TestGenerator(t *testing.T) {
 			}
 		}
 		if staged["doc-md.md"] != "# MSA\nAcme Corp buys from us." || staged["doc-mdx.md"] != mdx || staged["doc-txt.txt"] != "Globex renews yearly." ||
+			staged["doc-vtt.txt"] != vtt ||
 			staged["doc-inv.txt"] != "Invoice 1042\n\fTerms\n" {
 			t.Fatalf("the agent found %q", staged)
 		}

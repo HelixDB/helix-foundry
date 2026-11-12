@@ -61,7 +61,9 @@ import { layout, type Listed } from "./data-files";
 //   Slack sync reads each day with messages of the channels the app is in
 //   (two of every three of the history_days before the sync's, in each of
 //   four channels) into Conversations, a Notion sync its 60 pages with a
-//   body into Pages, and a Google Workspace sync its 14 Docs into Docs.
+//   body into Pages, and a Google Workspace sync its 14 Docs into Docs and
+//   its 4 meeting transcripts (.vtt files in Drive, as WebVTT with
+//   google.go's note of where each is) into Transcripts.
 // - S3 (Pro): every bucket holds the plan's V1 fixture folder (./data-files.ts
 //   lays it out as the WFE does): tables api, customers, events, orders and
 //   products, in eu-west-2, with notes.xlsx and an archived archive/old.csv
@@ -1283,6 +1285,54 @@ const googleDocs = GOOGLE_DOC_NAMES.map((name, i) => {
   };
 });
 
+// The meeting transcripts in Drive (.vtt files), newest first: who spoke
+// and what they said, naming Acme's Stripe customers.
+const googleTranscripts = [
+  {
+    name: "Globex renewal call.vtt",
+    turns: [
+      [
+        "Ada Lovelace",
+        "Globex wants a three year renewal starting in January.",
+      ],
+      ["Grace Hopper", "They asked for the same discount Initech has."],
+      ["Ada Lovelace", "I'll send Globex the order form today."],
+    ],
+  },
+  {
+    name: "Weekly pipeline review.vtt",
+    turns: [
+      ["Grace Hopper", "Initech signed the expansion on Monday."],
+      ["Alan Turing", "Umbrella Holdings is still waiting on legal."],
+    ],
+  },
+  {
+    name: "Initech kickoff.vtt",
+    turns: [
+      ["Katherine Johnson", "Initech's rollout starts with the finance team."],
+      ["Ada Lovelace", "Their invoices go to the new billing contact."],
+    ],
+  },
+  {
+    name: "Board prep.vtt",
+    turns: [
+      ["Ada Lovelace", "Revenue from Globex and Initech grew this quarter."],
+    ],
+  },
+].map((t, i) => {
+  const id = `1mockVtt${String(i + 1).padStart(4, "0")}aBcDeFgHiJkLmNoPq`;
+  return {
+    ...t,
+    id,
+    link: `https://drive.google.com/file/d/${id}/view?usp=drivesdk`,
+    owner: "ada@example.com",
+    modifiedAt: new Date(
+      Date.parse("2026-11-06T15:00:00.000Z") - i * 49 * 3_600_000,
+    ).toISOString(),
+    driveVersion: String(3 + i),
+  };
+});
+
 // ---------------------------------------------------------------- Documents
 
 /**
@@ -1295,7 +1345,7 @@ export type MockStream = {
   table: string;
   title: string;
   description: string;
-  mediaType: "text/markdown" | "text/plain";
+  mediaType: "text/markdown" | "text/plain" | "text/vtt";
   // connector.KeepNewest(n): the set never holds more than the newest n by
   // their time, at every sync, and a document offered again with the same
   // text and a newer time moves up in place. Left out, the set keeps
@@ -1397,6 +1447,16 @@ const googleStream: MockStream = {
     "modified time and file id, then the Doc's text as Drive exports it, with its headings, lists, tables and links; its " +
     "images are left out, keeping their alt text, and a Doc whose export is over Drive's 10 MB limit is its plain text.",
   mediaType: "text/markdown",
+};
+const googleTranscriptStream: MockStream = {
+  name: "transcripts",
+  table: "files",
+  title: "Transcripts",
+  description:
+    "Each WebVTT transcript (.vtt file) of a meeting or call that the connection's user can open and download in " +
+    "Drive, as its recording exported it: a note of its file name, owner, last modified time and file id, then its cues, " +
+    "which are read as one line per turn with its start, its speaker when the file names them, and the words said.",
+  mediaType: "text/vtt",
 };
 
 const clock = (at: number) => new Date(at).toISOString().slice(11, 16);
@@ -1603,6 +1663,36 @@ export function documentStreams(
             "- Review by Friday",
             "- Share with the account owners",
             "",
+          ].join("\n"),
+        })),
+      },
+      {
+        stream: googleTranscriptStream,
+        documents: googleTranscripts.map((t) => ({
+          externalId: t.id,
+          // As a Doc's: "1|", the file's modified time, Drive's version and
+          // a hash of its name, owner and link.
+          version: `1|${t.modifiedAt}|${t.driveVersion}|${sha(`${t.name}\0${t.owner}\0${t.link}`, 16)}`,
+          at: t.modifiedAt,
+          title: t.name,
+          url: t.link,
+          // The file as Drive holds it, with google.go's note
+          // (transcript.WithNote) after its header.
+          text: [
+            "WEBVTT",
+            "",
+            "NOTE",
+            t.name,
+            `Owner: ${t.owner}`,
+            `Last modified: ${t.modifiedAt.slice(0, 16).replace("T", " ")} UTC`,
+            `File id: ${t.id}`,
+            "",
+            ...t.turns.flatMap(([speaker, words], j) => [
+              `${j + 1}`,
+              `00:00:${String(j * 7 + 2).padStart(2, "0")}.000 --> 00:00:${String(j * 7 + 8).padStart(2, "0")}.000`,
+              `<v ${speaker}>${words}</v>`,
+              "",
+            ]),
           ].join("\n"),
         })),
       },

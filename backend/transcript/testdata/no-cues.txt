@@ -1,0 +1,3 @@
+WEBVTT
+
+NOTE Only a note, no cues.

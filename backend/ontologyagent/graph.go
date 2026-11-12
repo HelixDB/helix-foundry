@@ -7,6 +7,7 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/document"
 	"github.com/helixdb/helix-foundry/backend/store/model"
+	"github.com/helixdb/helix-foundry/backend/transcript"
 )
 
 // graph.go is the agent's graph-build contract (schema/ingest_*.json,
@@ -76,9 +77,10 @@ const (
 // what model.FoundryDocument.TextKey holds. Markdown and MDX are markdown,
 // MDX with its code blanked to the same length (document.BlankMDX), so its
 // sections and marks fall on the original's bytes; plain text, and the text
-// a PDF's read stored (its pages split by form feeds), are plain_text. The
-// engine has no PDF type and needs none. False for a type that is not read
-// as text.
+// a PDF's read stored (its pages split by form feeds), are plain_text, as is
+// a WebVTT transcript, as its turns (transcript.Text): its sections and
+// marks fall on those, which the load stores. The engine has no PDF or
+// WebVTT type and needs none. False for a type that is not read as text.
 func StageText(mediaType model.FoundryMediaType, text []byte) (MediaType, string, []byte, bool) {
 	switch mediaType {
 	case model.FoundryMediaMarkdown:
@@ -87,6 +89,8 @@ func StageText(mediaType model.FoundryMediaType, text []byte) (MediaType, string
 		return MediaMarkdown, ".md", document.BlankMDX(text), true
 	case model.FoundryMediaPlainText, model.FoundryMediaPDF:
 		return MediaPlainText, ".txt", text, true
+	case model.FoundryMediaVTT:
+		return MediaPlainText, ".txt", transcript.Text(text), true
 	}
 	return "", "", nil, false
 }

@@ -155,10 +155,11 @@ describe("onboardingPrompt without an ontology", () => {
       ".ndjson",
       ".parquet",
       ".pdf",
+      ".vtt",
     ])
       expect(text).toContain(`\`${ext}\``);
     expect(text).toContain(
-      "at most 1 MiB for Markdown, MDX and text, and 3 MiB for the others",
+      "at most 1 MiB for Markdown, MDX, text and WebVTT, and 3 MiB for the others",
     );
     expect(text).toContain(
       "Helix reads a PDF’s text once, after its upload; a scanned PDF has no text to read.",
@@ -186,7 +187,7 @@ describe("onboardingPrompt without an ontology", () => {
       'or from documents alone `{"goal": "<the goal>", "no_connectors": true, "document_set_ids": ["<set id>"]}`',
     );
     expect(text).toContain(
-      "a synced table, an API source whose table has rows or, for extraction, whose `event_source.extraction.documents` is above 0, a table file Helix has read, or a set holding Markdown, MDX, text or a PDF Helix has read",
+      "a synced table, an API source whose table has rows or, for extraction, whose `event_source.extraction.documents` is above 0, a table file Helix has read, or a set holding Markdown, MDX, text, a WebVTT transcript or a PDF Helix has read",
     );
   });
 

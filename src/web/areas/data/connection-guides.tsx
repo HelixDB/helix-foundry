@@ -331,8 +331,8 @@ const guides: Record<CredentialKind, (form: ConnectionForm) => ReactNode> = {
       </li>
       <li>
         Paste the JSON key below, and an admin’s email as Acts as. Foundry reads
-        Drive and Calendar as that user, and each Google Doc they can open and
-        download becomes a document.
+        Drive and Calendar as that user, and each Google Doc and meeting
+        transcript (.vtt file) they can open and download becomes a document.
       </li>
     </ol>
   ),
@@ -504,8 +504,8 @@ const signInGuides: Record<SignInKind, (installUrl?: string) => ReactNode> = {
       <li>
         Click <strong>Connect with Google</strong> and allow Helix Foundry to
         read your Drive and Calendar. Signed in, it reads as you: the files and
-        calendars you can see, and each Google Doc you can open becomes a
-        document.
+        calendars you can see, and each Google Doc and meeting transcript (.vtt
+        file) you can open becomes a document.
       </li>
       <li>
         The directory of your organization’s people needs an admin to sign in;

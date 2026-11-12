@@ -173,20 +173,24 @@ const (
 	FoundryMediaJSONL     FoundryMediaType = "application/x-ndjson"
 	FoundryMediaParquet   FoundryMediaType = "application/vnd.apache.parquet"
 	FoundryMediaPDF       FoundryMediaType = "application/pdf"
+	// FoundryMediaVTT is a WebVTT transcript, of a meeting or a call: read
+	// as its turns, a line each with its start and speaker
+	// (transcript.Text), not as the cues it is stored as.
+	FoundryMediaVTT FoundryMediaType = "text/vtt"
 )
 
 // FoundryMediaTypes are the types Foundry stores, in a fixed order.
 func FoundryMediaTypes() []FoundryMediaType {
 	return []FoundryMediaType{
 		FoundryMediaMarkdown, FoundryMediaMDX, FoundryMediaPlainText, FoundryMediaJSON, FoundryMediaCSV,
-		FoundryMediaTSV, FoundryMediaJSONL, FoundryMediaParquet, FoundryMediaPDF,
+		FoundryMediaTSV, FoundryMediaJSONL, FoundryMediaParquet, FoundryMediaPDF, FoundryMediaVTT,
 	}
 }
 
 // FoundryMediaTypesRead are the types Foundry stores that ontologies read
 // as one of kinds, in FoundryMediaTypes' order.
 //
-//	FoundryMediaTypesRead(FoundryReadText) // text/markdown, text/mdx, text/plain
+//	FoundryMediaTypesRead(FoundryReadText) // text/markdown, text/mdx, text/plain, text/vtt
 func FoundryMediaTypesRead(kinds ...FoundryReadKind) []FoundryMediaType {
 	var out []FoundryMediaType
 	for _, t := range FoundryMediaTypes() {
@@ -201,8 +205,8 @@ func FoundryMediaTypesRead(kinds ...FoundryReadKind) []FoundryMediaType {
 type FoundryReadKind string
 
 const (
-	// FoundryReadText is read as text, by extraction: Markdown, MDX and
-	// plain text.
+	// FoundryReadText is read as text, by extraction: Markdown, MDX, plain
+	// text and WebVTT transcripts.
 	FoundryReadText FoundryReadKind = "text"
 	// FoundryReadTable loads as a table of its own, through mappings, whose
 	// source id is the document's id: CSV, TSV, JSON, JSONL and Parquet. The
@@ -220,7 +224,7 @@ const (
 // store.
 func (t FoundryMediaType) ReadKind() FoundryReadKind {
 	switch t {
-	case FoundryMediaMarkdown, FoundryMediaMDX, FoundryMediaPlainText:
+	case FoundryMediaMarkdown, FoundryMediaMDX, FoundryMediaPlainText, FoundryMediaVTT:
 		return FoundryReadText
 	case FoundryMediaJSON, FoundryMediaCSV, FoundryMediaTSV, FoundryMediaJSONL, FoundryMediaParquet:
 		return FoundryReadTable
@@ -252,6 +256,8 @@ func (t FoundryMediaType) Format() string {
 		return "Parquet"
 	case FoundryMediaPDF:
 		return "PDF"
+	case FoundryMediaVTT:
+		return "WebVTT"
 	}
 	return ""
 }
