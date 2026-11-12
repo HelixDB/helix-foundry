@@ -7496,7 +7496,9 @@ type FoundryLoadDocumentSet struct {
 	// link, and links it did write that a person can undo. It is not the
 	// number of open reviews: a review a person settles stays counted until
 	// the load writes the decision, which moves a released statement to facts,
-	// and one a person rejects stays counted, as a rejection writes nothing.
+	// and one a person rejects stays counted, as a rejection writes nothing. A
+	// property value in conflict stays counted after a person chooses its
+	// value: every load lists the conflict, and the choice settles it.
 	Reviews int64 `protobuf:"varint,10,opt,name=reviews,proto3" json:"reviews,omitempty"`
 	// The names in its documents the load matched to no one record: none
 	// matched, several did, or its identifiers disagree. A statement about one
@@ -8690,7 +8692,13 @@ type FoundryReviewChoice_Release struct {
 	// current load at once: a job replays the claim's document from its saved
 	// extraction, at no model cost, and writes what the review states as a
 	// fact, or keeps it held and says why (FoundryReviewDecision.applied).
-	// Later loads read it too, and each says what it made of it.
+	// Later loads read it too, and each says what it made of it. On a link
+	// that holds one value it also decides the link from when it was
+	// approved: it replaces what the link holds (whose evidence stays), a
+	// statement dated after that day still beats it, and of two approvals the
+	// later holds the link. So a review held as conflicting with what such a
+	// link holds can be approved; on another link a conflict is a property
+	// that differs from the fact the graph holds, which no approval changes.
 	Release *FoundryReleaseChoice `protobuf:"bytes,4,opt,name=release,proto3,oneof"`
 }
 
@@ -9023,9 +9031,12 @@ type FoundryDecisionApplied struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// pending (a job has yet to apply it), written (the claim is a fact),
+	// pending (a job has yet to apply it), written (the claim is a fact; on a
+	// link that holds one value, a statement dated after the approval may hold
+	// the link instead, with the claim kept as its evidence),
 	// refused (it stays held: reason says why), missed (this load holds no
-	// review at the decision's key and place, so it has nothing to release),
+	// review at the decision's key, nor one at its place stating what was
+	// approved, so it has nothing to release),
 	// applied (a prop decision: the load was sent it, and the job that sent it
 	// succeeded; the engine reports nothing more of a value, so this doesn't
 	// say the property holds it: a document dated after the decision still
@@ -9049,8 +9060,9 @@ type FoundryDecisionApplied struct {
 	// record's name, or only by an identifier that is the name the text calls
 	// it by, whatever the link holds: settle that name), changed (the claim
 	// reads differently now from what was approved), differs (its sentence is
-	// read more than one way), conflict (it
-	// conflicts with what the load holds of its link), blocked (it would break
+	// read more than one way), conflict (a property of the fact differs from
+	// the one the load holds, or the link holds one value and a load built
+	// before statements were kept wrote its edge: load again), blocked (it would break
 	// a blocking rule, or checking that took more reading than a load allows),
 	// no_statement (its review keeps nothing to write), not_stated (the
 	// document, read again, no longer states it there), too_large,
