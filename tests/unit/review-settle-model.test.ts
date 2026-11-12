@@ -268,12 +268,8 @@ describe("how approvals stand toward a held claim", () => {
     });
     // One of this key comes first.
     expect(
-      model.approvalOf(
-        [keyed, saved({ id: "d2" as never })],
-        settle,
-        read,
-        true,
-      ).saved?.id,
+      model.approvalOf([keyed, { ...saved(), id: "d2" }], settle, read, true)
+        .saved?.id,
     ).toBe("d2");
   });
   it("doesn't look at another place's approval", () => {

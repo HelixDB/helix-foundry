@@ -1209,9 +1209,10 @@ export function extractDocument(
   const linked = contract !== undefined && scope.links.has("signed_with");
   // The customer a person's approval gives a contract's signed_with, where
   // that link holds one value: it holds the link whatever else the document
-  // states of it, in whichever order; of two approvals the later decided,
-  // then the decision id that sorts last, as the engine ranks them.
-  let approved: { to: number; at: string; id: string } | undefined;
+  // states of it, in whichever order; of two approvals the later decided, as
+  // the engine ranks them: here the one saved later, as a load keeps its
+  // decisions in the order they were saved.
+  let approved: { to: number; rank: number } | undefined;
   for (const { e, hits, resolvedBy } of found) {
     if (!hits.length) continue;
     counts.entities += 1;
@@ -1324,15 +1325,12 @@ export function extractDocument(
         continue;
       }
       stated = held === "unverified" ? 0 : 0.72;
-      const at = String(release!.decidedAt ?? ""),
-        id = String(release!.id);
+      const rank = decisions.indexOf(release!);
       if (
         ontology.oneValued?.has("signed_with") &&
-        (!approved ||
-          at > approved.at ||
-          (at === approved.at && id > approved.id))
+        (!approved || rank > approved.rank)
       )
-        approved = { to: e.id, at, id };
+        approved = { to: e.id, rank };
     }
     const factKey = sha256(
       ["signed_with", String(contract), String(e.id)].join("\u001f"),
