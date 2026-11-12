@@ -797,6 +797,7 @@ test("approves a claim that conflicts with what a link holding one value holds, 
   await expect(
     page.getByRole("list", { name: "Saved decisions" }),
   ).toContainText("Approved: “Globex Corporation may have signed.”");
+  // The page's facts follow, with no reload: the approved one is listed.
   await page.getByRole("tab", { name: /^Facts/ }).click();
   await expect(page.getByRole("list", { name: "Facts" })).toContainText(
     "Globex Corporation",

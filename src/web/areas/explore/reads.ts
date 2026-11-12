@@ -178,7 +178,10 @@ export const readQueries = {
     doc: DocumentGraph | undefined,
     naming: Naming = NO_NAMING,
   ) => ({
-    // The facts' ends are the document's entities, named with it.
+    // The facts' ends are the document's entities, named with it. Keyed by
+    // the facts its quotes name too: an approval written in place adds one,
+    // and on a link that holds one value replaces another (contract
+    // 4.14.0), so a read made with the page's earlier quotes reads again.
     queryKey: [
       ws,
       "ontology",
@@ -189,6 +192,7 @@ export const readQueries = {
       documentId,
       naming.version,
       "facts",
+      [...new Set(doc?.evidence.map((e) => e.factKey))].sort().join(","),
     ],
     enabled: !!doc?.evidence.length,
     queryFn: async ({ signal }: { signal?: AbortSignal }) => {
