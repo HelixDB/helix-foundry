@@ -449,6 +449,112 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/directory": {
+      "get": {
+        "operationId": "WfeService_GetWorkspaceDirectory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1WorkspaceDirectory"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/directory/portal-link": {
+      "post": {
+        "operationId": "WfeService_CreateDirectoryPortalLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/helixwfev1CreateDirectoryPortalLinkResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1WfeServiceCreateDirectoryPortalLinkBody"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/directory:sync": {
+      "post": {
+        "operationId": "WfeService_SyncWorkspaceDirectory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1WorkspaceDirectory"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1WfeServiceSyncWorkspaceDirectoryBody"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/members": {
       "get": {
         "operationId": "WfeService_ListWorkspaceMembers",
@@ -644,6 +750,15 @@
         },
         "role": {
           "$ref": "#/definitions/v1WorkspaceRole"
+        }
+      }
+    },
+    "helixwfev1CreateDirectoryPortalLinkResponse": {
+      "type": "object",
+      "properties": {
+        "link": {
+          "type": "string",
+          "description": "Single-use Admin Portal link for directory setup, valid for minutes."
         }
       }
     },
@@ -974,6 +1089,110 @@
         }
       },
       "description": "DatabaseReference makes the logical database boundary explicit. A dedicated\ncluster and a tenant are distinct authorization and routing variants."
+    },
+    "v1DirectoryConnection": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "description": "WorkOS's directory type, for example \"okta scim v2.0\"."
+        },
+        "provider": {
+          "type": "string",
+          "description": "The provider as people know it, for example \"Okta\"."
+        },
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/definitions/v1DirectoryState"
+        }
+      }
+    },
+    "v1DirectoryGroup": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "memberCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "role": {
+          "$ref": "#/definitions/v1WorkspaceRole"
+        },
+        "foundryTeamId": {
+          "type": "string"
+        }
+      },
+      "description": "DirectoryGroup's role is the owner's mapping: unspecified maps to no role."
+    },
+    "v1DirectoryIssue": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/v1DirectoryIssueKind"
+        },
+        "email": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "groupId": {
+          "type": "string"
+        },
+        "groupName": {
+          "type": "string"
+        }
+      },
+      "description": "DirectoryIssue is something the sync could not do as the directory asks:\na person (email, user_id, display_name) or a group (group_id, group_name)."
+    },
+    "v1DirectoryIssueKind": {
+      "type": "string",
+      "enum": [
+        "DIRECTORY_ISSUE_KIND_UNSPECIFIED",
+        "DIRECTORY_ISSUE_KIND_NO_EMAIL",
+        "DIRECTORY_ISSUE_KIND_NOT_PROVISIONED",
+        "DIRECTORY_ISSUE_KIND_PENDING_INVITATION",
+        "DIRECTORY_ISSUE_KIND_OWNER_KEPT",
+        "DIRECTORY_ISSUE_KIND_TOO_MANY_GROUPS",
+        "DIRECTORY_ISSUE_KIND_GROUP_TOO_LARGE",
+        "DIRECTORY_ISSUE_KIND_LEFT_OUT_RAW_ACCESS"
+      ],
+      "default": "DIRECTORY_ISSUE_KIND_UNSPECIFIED"
+    },
+    "v1DirectoryState": {
+      "type": "string",
+      "enum": [
+        "DIRECTORY_STATE_UNSPECIFIED",
+        "DIRECTORY_STATE_LINKED",
+        "DIRECTORY_STATE_VALIDATING",
+        "DIRECTORY_STATE_INVALID_CREDENTIALS",
+        "DIRECTORY_STATE_UNLINKED",
+        "DIRECTORY_STATE_DELETING"
+      ],
+      "default": "DIRECTORY_STATE_UNSPECIFIED"
+    },
+    "v1DirectorySyncState": {
+      "type": "string",
+      "enum": [
+        "DIRECTORY_SYNC_STATE_UNSPECIFIED",
+        "DIRECTORY_SYNC_STATE_IDLE",
+        "DIRECTORY_SYNC_STATE_PENDING",
+        "DIRECTORY_SYNC_STATE_FAILED"
+      ],
+      "default": "DIRECTORY_SYNC_STATE_UNSPECIFIED"
     },
     "v1ExchangeAuthCodeRequest": {
       "type": "object",
@@ -1324,6 +1543,14 @@
         }
       }
     },
+    "v1WfeServiceCreateDirectoryPortalLinkBody": {
+      "type": "object",
+      "properties": {
+        "returnUrl": {
+          "type": "string"
+        }
+      }
+    },
     "v1WfeServiceCreateServiceCredentialBody": {
       "type": "object",
       "properties": {
@@ -1342,6 +1569,9 @@
           "format": "date-time"
         }
       }
+    },
+    "v1WfeServiceSyncWorkspaceDirectoryBody": {
+      "type": "object"
     },
     "v1WhoamiResponse": {
       "type": "object",
@@ -1411,6 +1641,57 @@
         }
       }
     },
+    "v1WorkspaceDirectory": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "entitled": {
+          "type": "boolean"
+        },
+        "directory": {
+          "$ref": "#/definitions/v1DirectoryConnection",
+          "description": "Unset until the IdP admin connects a directory in the Admin Portal."
+        },
+        "rolesFromDirectory": {
+          "type": "boolean"
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1DirectoryGroup"
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1DirectoryIssue"
+          }
+        },
+        "syncState": {
+          "$ref": "#/definitions/v1DirectorySyncState"
+        },
+        "syncError": {
+          "type": "string"
+        },
+        "lastSyncedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "userCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "managedMemberCount": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "WorkspaceDirectory is the workspace's WorkOS directory (SCIM) as its last\nsync saw it. Entitlement is the SSO entitlement."
+    },
     "v1WorkspaceGateReason": {
       "type": "string",
       "enum": [
@@ -1445,6 +1726,14 @@
         "projectAccess": {
           "$ref": "#/definitions/v1ProjectAccess",
           "description": "Effective access after applying built-in role precedence and any\nmember-specific persisted policy."
+        },
+        "directoryProvider": {
+          "type": "string",
+          "description": "The directory managing the member, for example \"Okta\"; empty when none does."
+        },
+        "directoryRole": {
+          "type": "boolean",
+          "description": "The member's role comes from their directory groups."
         }
       }
     },

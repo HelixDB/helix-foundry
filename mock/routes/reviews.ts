@@ -19,7 +19,14 @@ import {
   isInt64,
 } from "../review-decisions";
 import { tenantGraph } from "./databases";
-import { currentLoadId, currentLoadVersionId } from "./loads";
+import {
+  advanceLoads,
+  appliedOf,
+  currentLoadId,
+  currentLoadVersionId,
+  forgetRelease,
+  owePendingRelease,
+} from "./loads";
 import { isScope, ontologyOf } from "./ontologies";
 import { ontologyVersion } from "./ontology";
 import { isRecord } from "../../src/shared/json";
@@ -31,7 +38,9 @@ import { isRecord } from "../../src/shared/json";
 // decision per identity with its value as the engine keeps it (trimmed
 // strings, UTC datetimes); the list pages 100 at a time by id; a removed
 // decision is gone for later loads only. Making a version current drops
-// the decisions it doesn't take (pruneDecisions).
+// the decisions it doesn't take (pruneDecisions). An approval of a held
+// claim applies to the current load at once (./loads.ts owePendingRelease):
+// its decision says what became of it there (`applied`).
 
 const BASE = "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}";
 const PAGE = 100;
@@ -172,22 +181,24 @@ export const reviewRoutes: MockRoute[] = [
             "FAILED_PRECONDITION",
             "this claim reads differently now; reload the review and approve what it says",
           );
-        return ok(
-          save(
-            s.o.id,
-            {
-              kind: "release",
-              type: "",
-              docId,
-              claimKey,
-              claimSection: Number(r.section),
-              claimStart: Number(r.start),
-              claimEnd: Number(r.end),
-              statementHash,
-            },
-            req.principal.user.id,
-          ) satisfies ReviewDecisionResponse,
+        const { decision: saved } = save(
+          s.o.id,
+          {
+            kind: "release",
+            type: "",
+            docId,
+            claimKey,
+            claimSection: Number(r.section),
+            claimStart: Number(r.start),
+            claimEnd: Number(r.end),
+            statementHash,
+          },
+          req.principal.user.id,
         );
+        if (saved.kind === "release") owePendingRelease(s.o.id, saved);
+        return ok({
+          decision: { ...saved, applied: appliedOf(s.o.id, saved) },
+        } satisfies ReviewDecisionResponse);
       }
       const type = text(r.type);
       if (!type)
@@ -307,13 +318,18 @@ export const reviewRoutes: MockRoute[] = [
       const token = req.query.get("pageToken") || "";
       if (token.length > 26)
         return fail("INVALID_ARGUMENT", "invalid page_token");
+      // Approvals whose job's step has passed are applied by now.
+      advanceLoads(s.o.id);
       // Keyset paging: every decision after the token's id.
       const after = (decisions.get(s.o.id) || [])
         .filter((d) => d.id > token)
         .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       const page = after.slice(0, PAGE);
       return ok({
-        decisions: page,
+        decisions: page.map((d) => {
+          const applied = appliedOf(s.o.id, d);
+          return applied ? { ...d, applied } : d;
+        }),
         nextPageToken: after.length > PAGE ? page.at(-1)!.id : "",
       } satisfies ListReviewDecisionsResponse);
     },
@@ -327,6 +343,8 @@ export const reviewRoutes: MockRoute[] = [
       const own = decisions.get(s.o.id) || [];
       if (!own.some((d) => d.id === req.params.id))
         return fail("NOT_FOUND", "review decision not found");
+      // One the current load has not written is taken back from it too.
+      forgetRelease(s.o.id, req.params.id!);
       decisions.set(
         s.o.id,
         own.filter((d) => d.id !== req.params.id),

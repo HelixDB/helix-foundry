@@ -99,6 +99,14 @@ export const mock = {
     alanRole?: "WORKSPACE_ROLE_ADMIN" | "WORKSPACE_ROLE_MEMBER";
     // Alan can't query databases: he reads through source grants.
     memberQueryRead?: boolean;
+    // Acme's Okta directory synced: Engineering (Ada, Alan) and Finance
+    // (Alan, Eve).
+    directoryTeams?: boolean;
+    // Acme is entitled to directory sync (SSO) with nothing connected yet;
+    // what its directory reports; how long a sync asked for runs.
+    directoryEntitled?: boolean;
+    directoryIssues?: { kind: string; displayName?: string; email?: string }[];
+    directorySyncMs?: number;
     // People enrichment: a batch of lookups (and the wait for a slot), and
     // how the lookups stop: the credit cap, context.dev, the time limit, or
     // no free slot.

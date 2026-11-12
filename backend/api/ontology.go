@@ -110,10 +110,13 @@ func (s *Service) GetOntologyVersion(ctx context.Context, req *foundryv1.GetOnto
 		delete(fields, "usage")
 		delete(fields, "rules")
 		delete(fields, "parent_version_id")
-		items := fields["draft"].GetStructValue().GetFields()["draft"].GetStructValue().GetFields()["items"].GetStructValue().GetFields()
-		for _, item := range items {
+		draft := fields["draft"].GetStructValue().GetFields()["draft"].GetStructValue().GetFields()
+		for _, item := range draft["items"].GetStructValue().GetFields() {
 			delete(item.GetStructValue().GetFields(), "rationale")
 		}
+		// What it left out names sources its generation read that the load may
+		// not hold, with why, in its agent's words.
+		delete(draft, "left_out")
 		if granted.Partial {
 			err = s.projectVersion(ctx, o, granted, v, resp.Version)
 		}

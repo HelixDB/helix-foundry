@@ -2,7 +2,9 @@
 // one graph job at a time, binds a loopback proxy to the ontology's tenant,
 // and drives the ontology agent sidecar: a load's Ingest writes an approved
 // version's tables into a new load, then Extract adds the ontology's
-// documents to it; a delete's DeleteLoad removes an old load. The sidecar
+// documents to it; a resend's Extract sends documents a load holds again, so
+// a person's approval of a held claim is written at once; a delete's
+// DeleteLoad removes an old load. The sidecar
 // holds only its model keys; the proxy holds the database's.
 package foundrygraphworker
 
@@ -291,7 +293,8 @@ func (t *Task) park(ctx context.Context, job *model.FoundryGraphJob, until time.
 // finish records an attempt's outcome. It runs after the attempt's context
 // may have ended, the worker's included, so it has a bound of its own. A job
 // that ends hands over what may follow it: the ids of an extract it owes
-// (queued within this month's budget), of the next delete, or of the full
+// (queued within this month's budget), of a resend of what the current load
+// owes one (a person's approvals), of the next delete, or of the full
 // refresh load an apply hands over to (in place of a failed one, or as the
 // rebuild of a load older than rebuild_every), and how many loads the
 // ontology keeps. It returns the outcome it counted, or "unrecorded" when the finish
@@ -300,7 +303,8 @@ func (t *Task) finish(ctx context.Context, job *model.FoundryGraphJob, outcome m
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
 	defer cancel()
 	outcome.Next = model.FoundryGraphNext{
-		ExtractID: id.New(), DeleteID: id.New(), RefreshID: id.New(), RetainLoads: t.cfg.RetainLoads, Budget: t.cfg.MonthBudget(t.now()),
+		ExtractID: id.New(), DeleteID: id.New(), RefreshID: id.New(), ResendID: id.New(), RetainLoads: t.cfg.RetainLoads,
+		Budget:        t.cfg.MonthBudget(t.now()),
 		RebuildBefore: t.now().Add(-t.cfg.RebuildEvery),
 	}
 	finish, err := t.queue.FinishFoundryGraphJob(finishCtx, job.ID, t.workerID, outcome)

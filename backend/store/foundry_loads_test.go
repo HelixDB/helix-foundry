@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 	"sync"
@@ -458,11 +459,11 @@ func TestFoundryLoadDeletes(t *testing.T) {
 		f.finish(t, "w1", "a", model.FoundryGraphJobFailed)
 
 		// An extract into the first load, made current again, targets it.
-		_, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, first, extractJob("sc"), noBudget)
+		_, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, first, extractJob("sc"), resendJob("sc"), noBudget)
 		require.NoError(t, err)
 		f.uploaded(t, "a")
 		require.Equal(t, first, f.liveJob(t).LoadID)
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, current, extractJob("sc2"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, current, extractJob("sc2"), resendJob("sc2"), noBudget)
 		require.NoError(t, err)
 		assert.ErrorIs(t, f.db.DeleteFoundryLoad(ctx, ws, o, first, id26("FN-D-3")), store.FoundryLoadBusy, "a live job targets it")
 
@@ -575,7 +576,7 @@ func TestFoundryLoadSetCurrent(t *testing.T) {
 		require.NotNil(t, extract)
 		require.Equal(t, newer, extract.LoadID)
 
-		queued, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc"), noBudget)
+		queued, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc"), resendJob("sc"), noBudget)
 		require.NoError(t, err)
 		assert.False(t, queued, "a job is live")
 		assert.Equal(t, old, *f.ontologyNow(t).CurrentLoadID)
@@ -604,24 +605,24 @@ func TestFoundryLoadSetCurrent(t *testing.T) {
 		f.loaded(t, "w1", a)
 		newer := f.load(t, "L2")
 		f.loaded(t, "w1", a)
-		queued, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc1"), noBudget)
+		queued, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc1"), resendJob("sc1"), noBudget)
 		require.NoError(t, err)
 		assert.False(t, queued, "the old load holds every document")
 		assert.Nil(t, f.liveJob(t))
 
 		// A document only the newer load holds.
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, newer, extractJob("sc2"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, newer, extractJob("sc2"), resendJob("sc2"), noBudget)
 		require.NoError(t, err)
 		b := f.uploaded(t, "b")
 		f.finish(t, "w1", "b", model.FoundryGraphJobSucceeded, b)
 		require.Nil(t, f.liveJob(t))
 
-		queued, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc3"), model.FoundryGraphBudget{Since: time.Unix(0, 0), CapMicros: 0})
+		queued, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc3"), resendJob("sc3"), model.FoundryGraphBudget{Since: time.Unix(0, 0), CapMicros: 0})
 		require.NoError(t, err)
 		assert.False(t, queued, "the month is spent")
 		assert.Equal(t, old, *f.ontologyNow(t).CurrentLoadID, "the load is current all the same")
 
-		queued, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc4"), noBudget)
+		queued, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob("sc4"), resendJob("sc4"), noBudget)
 		require.NoError(t, err)
 		assert.True(t, queued)
 		catchUp := f.liveJob(t)
@@ -641,18 +642,18 @@ func TestFoundryLoadSetCurrent(t *testing.T) {
 		f.load(t, "L2")
 		f.loaded(t, "w1")
 		failed := f.load(t, "L3")
-		_, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, failed, extractJob("a"), noBudget)
+		_, err := f.db.SetCurrentFoundryLoad(ctx, ws, o, failed, extractJob("a"), resendJob("a"), noBudget)
 		assert.ErrorIs(t, err, store.FoundryLoadNotServable, "a load being written")
 		f.finish(t, "w1", "a", model.FoundryGraphJobFailed)
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, failed, extractJob("b"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, failed, extractJob("b"), resendJob("b"), noBudget)
 		assert.ErrorIs(t, err, store.FoundryLoadNotServable, "a failed load")
 		require.NoError(t, f.db.DeleteFoundryLoad(ctx, ws, o, first, id26("FN-D-user")))
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, first, extractJob("c"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, first, extractJob("c"), resendJob("c"), noBudget)
 		assert.ErrorIs(t, err, store.FoundryLoadNotServable, "a load being deleted")
 		f.ended(t, "w1", f.claimed(t, "w1", id26("FN-D-user")).ID, model.FoundryGraphJobFailed, next("d"))
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, first, extractJob("e"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, first, extractJob("e"), resendJob("e"), noBudget)
 		assert.ErrorIs(t, err, store.FoundryLoadNotServable, "a load whose delete failed")
-		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, id26("FJ-none"), extractJob("f"), noBudget)
+		_, err = f.db.SetCurrentFoundryLoad(ctx, ws, o, id26("FJ-none"), extractJob("f"), resendJob("f"), noBudget)
 		assert.ErrorIs(t, err, store.ErrNotFound)
 		assert.Equal(t, id26("FJ-L2"), *f.ontologyNow(t).CurrentLoadID, "every refusal leaves the current load")
 	})
@@ -673,7 +674,7 @@ func TestFoundryLoadSetCurrent(t *testing.T) {
 			wg.Add(2)
 			go func() {
 				defer wg.Done()
-				_, setErr = f.db.SetCurrentFoundryLoad(ctx, ws, o, target, extractJob(fmt.Sprintf("r%d", round)), noBudget)
+				_, setErr = f.db.SetCurrentFoundryLoad(ctx, ws, o, target, extractJob(fmt.Sprintf("r%d", round)), resendJob(fmt.Sprintf("r%d", round)), noBudget)
 			}()
 			go func() {
 				defer wg.Done()
@@ -710,7 +711,7 @@ func TestFoundryLoadSetCurrent(t *testing.T) {
 			wg.Add(2)
 			go func() {
 				defer wg.Done()
-				_, setErr = f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob(fmt.Sprintf("r%d", round)), noBudget)
+				_, setErr = f.db.SetCurrentFoundryLoad(ctx, ws, o, old, extractJob(fmt.Sprintf("r%d", round)), resendJob(fmt.Sprintf("r%d", round)), noBudget)
 			}()
 			go func() {
 				defer wg.Done()
@@ -897,4 +898,97 @@ func TestFoundryLoadIngestViolations(t *testing.T) {
 	require.NoError(t, f.db.UpdateFoundryGraphJob(ctx, job.ID, "w1", zero))
 	require.NotNil(t, violations())
 	assert.Zero(t, *violations())
+}
+
+// What a load made of its documents is counted by the set each joined it
+// with: what a model read, what no route of its version reads, what failed,
+// repeats another or still waits, and what the read ones wrote. A caller
+// who only sees a job's "documents done" can't tell a read document from a
+// stored one.
+func TestListFoundryLoadDocumentSets(t *testing.T) {
+	ctx := context.Background()
+	f := newFoundryFixture(t, "LDS")
+	ws, general := f.ontology.WorkspaceID, generalSetID(f.ontology.ID)
+	memos, minutes := f.documentSet("memos"), f.documentSet("minutes")
+	require.NoError(t, f.db.CreateFoundryDocumentSet(ctx, memos, 20))
+	require.NoError(t, f.db.CreateFoundryDocumentSet(ctx, minutes, 20))
+	uploadAs := func(tag, setID string, mediaType model.FoundryMediaType) string {
+		d := f.documentIn(tag, setID)
+		d.MediaType = mediaType
+		d = f.created(t, d)
+		_, _, err := f.db.CompleteFoundryDocumentUpload(ctx, ws, d.ID, f.fan(tag))
+		require.NoError(t, err)
+		return d.ID
+	}
+	upload := func(tag, setID string) string { return uploadAs(tag, setID, model.FoundryMediaMarkdown) }
+	read1, read2, repeat, failed := upload("m1", memos.ID), upload("m2", memos.ID), upload("m3", memos.ID), upload("m4", memos.ID)
+	upload("m5", memos.ID) // never extracted: it waits
+	gone := upload("m6", memos.ID)
+	stored1, stored2 := upload("n1", minutes.ID), upload("n2", minutes.ID)
+	// A table file joins no load, and a document of a set outside the version's scope neither.
+	uploadAs("csv", memos.ID, model.FoundryMediaCSV)
+	upload("g1", general)
+
+	v := &model.OntologyVersion{
+		ID: id26("FV-L1"), WorkspaceID: ws, OntologyID: f.ontology.ID, Source: model.OntologySourceGenerated,
+		Format: model.OntologyFormatAgentBundle, Definition: json.RawMessage(`{}`), DocumentSetIDs: &[]string{memos.ID, minutes.ID},
+	}
+	require.NoError(t, f.db.CreateOntologyVersion(ctx, v))
+	require.NoError(t, f.db.CreateFoundryLoad(ctx, loadJob(f.ontology, "L1")))
+	loadID := id26("FJ-L1")
+	job := f.claimed(t, "w1", loadID)
+
+	// Before anything is extracted, every document waits.
+	sets, err := f.db.ListFoundryLoadDocumentSets(ctx, loadID)
+	require.NoError(t, err)
+	assert.Equal(t, []model.FoundryLoadDocumentSet{
+		{SetID: memos.ID, Documents: 6, Waiting: 6},
+		{SetID: minutes.ID, Documents: 2, Waiting: 2},
+	}, sets)
+
+	record := func(e *model.FoundryDocumentExtraction) {
+		require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", e, false))
+	}
+	counted := func(doc string, facts, reviews, unresolved int) *model.FoundryDocumentExtraction {
+		e := extracted(doc)
+		e.Counts.Facts, e.Counts.Reviews, e.Counts.Unresolved = facts, reviews, unresolved
+		return e
+	}
+	record(counted(read1, 3, 5, 2))
+	record(counted(read2, 0, 7, 4))
+	record(counted(gone, 40, 40, 40))
+	record(&model.FoundryDocumentExtraction{DocumentID: repeat, Status: model.FoundryExtractionDuplicate, DuplicateOf: &read1})
+	record(&model.FoundryDocumentExtraction{DocumentID: failed, Status: model.FoundryExtractionFailed,
+		Error: &model.FoundryExtractionError{Code: model.FoundryExtractionModel, Retryable: true}})
+	for _, doc := range []string{stored1, stored2} {
+		record(&model.FoundryDocumentExtraction{DocumentID: doc, Status: model.FoundryExtractionOutOfScope,
+			Counts: model.FoundryExtractionCounts{Sections: 3}})
+	}
+	// A deleted document is on its way out of the load: it counts nowhere.
+	require.NoError(t, f.db.DeleteFoundryDocument(ctx, ws, gone))
+
+	sets, err = f.db.ListFoundryLoadDocumentSets(ctx, loadID)
+	require.NoError(t, err)
+	assert.Equal(t, []model.FoundryLoadDocumentSet{
+		{SetID: memos.ID, Documents: 5, Read: 2, Duplicate: 1, Failed: 1, Waiting: 1, Facts: 3, Reviews: 12, Unresolved: 6},
+		{SetID: minutes.ID, Documents: 2, NotRead: 2},
+	}, sets)
+
+	// A document moved to another set since still counts under the set it
+	// joined the load with, which is the set the load read it as. A failed
+	// document a later attempt gets through counts once, as it ended.
+	_, _, err = f.db.MoveFoundryDocument(ctx, ws, read1, minutes.ID, f.fan("moved"))
+	require.NoError(t, err)
+	record(counted(failed, 2, 1, 0))
+	sets, err = f.db.ListFoundryLoadDocumentSets(ctx, loadID)
+	require.NoError(t, err)
+	assert.Equal(t, []model.FoundryLoadDocumentSet{
+		{SetID: memos.ID, Documents: 5, Read: 3, Duplicate: 1, Waiting: 1, Facts: 5, Reviews: 13, Unresolved: 6},
+		{SetID: minutes.ID, Documents: 2, NotRead: 2},
+	}, sets)
+
+	// Another load's documents are its own; a load with none has no sets.
+	none, err := f.db.ListFoundryLoadDocumentSets(ctx, id26("FJ-none"))
+	require.NoError(t, err)
+	assert.Empty(t, none)
 }

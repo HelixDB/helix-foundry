@@ -20,8 +20,13 @@ import (
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 )
 
-// SettleFoundryReview reads trusted identity from the current load's review.
-// It stores only an override: no graph mutation or extract is queued.
+// SettleFoundryReview reads trusted identity from the current load's review
+// and stores an override. A resolve or prop decision applies from the next
+// load. A release, a person's approval of a held claim, applies to the
+// current load at once: it joins that load's decisions and a resend job
+// replays the claim's document, which writes it (SettleFoundryReleases). The
+// decision returned says so (applied), and ListFoundryReviewDecisions what
+// became of it.
 func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.SettleFoundryReviewRequest) (*foundryv1.FoundryReviewDecisionResponse, error) {
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
@@ -63,7 +68,12 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 		if err := settleHeldClaim(req, d, review); err != nil {
 			return nil, err
 		}
-		return s.saveFoundryReviewDecision(ctx, o, d)
+		userID := actor(ctx).UserID
+		resend := &foundrymodel.FoundryGraphJob{ID: id.New(), RequestedByUserID: &userID}
+		if _, err := s.deps.DB.SettleFoundryReleases(ctx, o.WorkspaceID, load.ID, []*foundrymodel.FoundryReviewDecision{d}, resend); err != nil {
+			return nil, settleFoundryReviewError(err)
+		}
+		return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
 	}
 	if d.Type == "" {
 		return nil, status.Error(codes.FailedPrecondition, "this review is missing its identity; start a new load before settling it")
@@ -185,8 +195,8 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 // claim's key and its quote's place, of the statement the person read: a load
 // since may read the claim otherwise, and they haven't seen that. The engine
 // writes what the review states once its ends resolve, and keeps it held if a
-// name no rung resolved is yet to be settled. A review written before claims
-// had keys and statements is released by a new load's.
+// name no rung resolved is yet to be settled, saying why. A review written
+// before claims had keys and statements is released by a new load's.
 func settleHeldClaim(req *foundryv1.SettleFoundryReviewRequest, d *foundrymodel.FoundryReviewDecision, review map[string]json.RawMessage) error {
 	release := req.GetDecision().GetRelease()
 	if release == nil {
@@ -215,15 +225,22 @@ func settleHeldClaim(req *foundryv1.SettleFoundryReviewRequest, d *foundrymodel.
 // saveFoundryReviewDecision stores d, whose identity the review gave.
 func (s *Service) saveFoundryReviewDecision(ctx context.Context, o *foundrymodel.FoundryOntology, d *foundrymodel.FoundryReviewDecision) (*foundryv1.FoundryReviewDecisionResponse, error) {
 	if err := s.deps.DB.SettleFoundryReviewDecision(ctx, o.WorkspaceID, d); err != nil {
-		if errors.Is(err, foundrystore.ErrConflict) {
-			return nil, status.Error(codes.FailedPrecondition, "the current load's version no longer has this review's type or property; reload the review and try again")
-		}
-		if errors.Is(err, foundrystore.ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "ontology not found")
-		}
-		return nil, status.Errorf(codes.Internal, "settle review: %v", err)
+		return nil, settleFoundryReviewError(err)
 	}
 	return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
+}
+
+// settleFoundryReviewError maps a settle the store refused to its status: the
+// current load changed since the review was read, or its version no longer
+// takes the decision.
+func settleFoundryReviewError(err error) error {
+	if errors.Is(err, foundrystore.ErrConflict) {
+		return status.Error(codes.FailedPrecondition, "the current load changed, or its version no longer has this review's type or property; reload the review and try again")
+	}
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		return status.Error(codes.NotFound, "ontology not found")
+	}
+	return status.Errorf(codes.Internal, "settle review: %v", err)
 }
 
 // foundryDecisionRead builds a bounded read from server-owned predicates. All
@@ -276,7 +293,19 @@ func (s *Service) ListFoundryReviewDecisions(ctx context.Context, req *foundryv1
 		out.NextPageToken = rows[99].ID
 		rows = rows[:100]
 	}
+	ids := make([]string, 0, len(rows))
 	for _, d := range rows {
+		ids = append(ids, d.ID)
+	}
+	// What became of each in the current load, which the cards show.
+	applied, err := s.deps.DB.ListFoundryDecisionsApplied(ctx, o.ID, ids)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list review decisions: %v", err)
+	}
+	for _, d := range rows {
+		if a, ok := applied[d.ID]; ok {
+			d.Applied = &a
+		}
 		out.Decisions = append(out.Decisions, foundryReviewDecisionProto(d))
 	}
 	return out, nil
@@ -304,6 +333,21 @@ func foundryReviewDecisionProto(d *foundrymodel.FoundryReviewDecision) *foundryv
 	out := &foundryv1.FoundryReviewDecision{Id: d.ID, Kind: string(d.Kind), Type: d.Type, DocId: d.DocID, NormName: d.NormName, EntityKey: d.EntityKey, Prop: d.Prop, ClaimKey: d.ClaimKey, StatementHash: d.StatementHash, DecidedByUserId: d.DecidedByUserID, DecidedAt: timestamppb.New(d.DecidedAt)}
 	if span := d.ClaimSpan; span != nil {
 		out.ClaimSection, out.ClaimStart, out.ClaimEnd = &span.Section, &span.Start, &span.End
+	}
+	if a := d.Applied; a != nil {
+		// Carried or settled here, a decision a resend owes is pending to a
+		// reader; one whose job failed is unconfirmed, and nothing is coming.
+		status := string(a.Status)
+		switch {
+		case a.Unconfirmed():
+			status = foundrymodel.FoundryReleaseUnconfirmed
+		case a.Status.Waits():
+			status = string(foundrymodel.FoundryReleasePending)
+		}
+		out.Applied = &foundryv1.FoundryDecisionApplied{Status: status, Reason: a.Reason}
+		if a.At != nil {
+			out.Applied.At = timestamppb.New(*a.At)
+		}
 	}
 	if len(d.Value) == 0 {
 		return out

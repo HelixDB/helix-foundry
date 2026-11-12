@@ -1,6 +1,9 @@
 import { randomBytes } from "node:crypto";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
+  CreateDirectoryPortalLinkRequest,
   CreateServiceCredentialRequest,
+  DirectoryIssue,
   CreateServiceCredentialResponse,
   FoundryAccessChange,
   FoundryAccessGrant,
@@ -20,9 +23,11 @@ import type {
   SetFoundryAccessGrantsRequest,
   SetFoundryAccessGrantsResponse,
   SetFoundryMemberRestrictedResponse,
+  WorkspaceDirectory,
 } from "../../src/shared/wfe";
 import { parseAgentEnrichments } from "../../src/web/areas/ontology/model";
 import type { Visibility } from "../graph/view";
+import { escape, page, send } from "../pages";
 import {
   fail,
   id,
@@ -34,7 +39,14 @@ import {
   type MockRequest,
   type MockRoute,
 } from "../http";
-import { db, isReply, membership, onReset, type Membership } from "../state";
+import {
+  config,
+  db,
+  isReply,
+  membership,
+  onReset,
+  type Membership,
+} from "../state";
 import { workspaceConnectors } from "./data";
 import {
   ACME_GENERAL,
@@ -85,6 +97,15 @@ import { manages, queryReads, rawAccess } from "./workspaces";
 // a member with raw access is given none, nor can one with raw access join a
 // team holding some.
 //
+// A team synced from a directory group (the host's directory sync, SCIM
+// through WorkOS; the store's SyncFoundryDirectoryTeams) has the group's name
+// and members, so updating or deleting it is refused, and it doesn't count
+// toward the workspace's 100 teams. Grants given to one leave out its plain
+// members with raw access, whom they can't confine, instead of refusing, and
+// restrict the rest. `POST /__mock/config {"directoryTeams": true}` syncs
+// Acme's Okta directory until the next reset: Engineering (Ada and Alan) and
+// Finance (Alan and Eve), so giving either sources leaves Alan out.
+//
 // Acme starts with Eve restricted, holding the General set, and one agent's
 // key holding nothing. A key's token is shown once, when it is made, and
 // accepted nowhere; revoking a key deletes its grants, deleting a team its
@@ -106,6 +127,13 @@ type StoredTeam = {
   memberUserIds: string[];
   createdByUserId: string;
   createdAt: string;
+  // Set on a team synced from a directory group.
+  directory?: {
+    directoryId: string;
+    groupId: string;
+    provider: string;
+    leftOutUserIds: string[];
+  };
 };
 type StoredCredential = ServiceCredential & { workspaceId: string };
 /** What a load holds, as far as grants go (access.Inputs). */
@@ -145,18 +173,281 @@ const unconfinable = (ws: string, userId: string) => {
     ? fail("FAILED_PRECONDITION", RAW_ACCESS)
     : undefined;
 };
+/** These team members' plain members with raw access (unconfinable). */
+const rawMembers = (ws: string, userIds: string[]) =>
+  db.memberships
+    .filter(
+      (x) =>
+        x.workspaceId === ws &&
+        userIds.includes(x.userId) &&
+        x.role === "WORKSPACE_ROLE_MEMBER" &&
+        rawAccess(x),
+    )
+    .map((x) => x.userId);
 /** Whether any of these team members has raw access (teamRestrictable). */
 const anyRaw = (ws: string, userIds: string[]) =>
-  db.memberships.some(
-    (x) =>
-      x.workspaceId === ws &&
-      userIds.includes(x.userId) &&
-      x.role === "WORKSPACE_ROLE_MEMBER" &&
-      rawAccess(x),
+  rawMembers(ws, userIds).length > 0;
+/** A synced team's refusal of a change to its name or members (notSynced). */
+const synced = (t: StoredTeam) =>
+  t.directory &&
+  fail(
+    "FAILED_PRECONDITION",
+    `this team is synced from ${t.directory.provider || "your directory"}: change its name and members there`,
   );
+
+const knobs = config as typeof config & {
+  directoryTeams?: boolean;
+  directoryEntitled?: boolean;
+  directoryIssues?: DirectoryIssue[];
+  directorySyncMs?: number;
+};
+// Whether Acme's directory has been synced since the reset, when last, and
+// until when a sync asked for now runs.
+let directorySynced = false,
+  directorySyncedAt: string | undefined,
+  directoryPendingUntil = 0;
+// Where each workspace's Admin Portal link goes back to.
+const portalReturns = new Map<string, string>();
+/**
+ * SyncFoundryDirectoryTeams: the workspace's teams of the directory become
+ * its groups, a team per group, named as it is, or "Name (provider)", then
+ * "Name (2)"…, when another team has the name; a team of a group that is
+ * gone goes with its grants. A team holding grants leaves out its group's
+ * unconfinable members and restricts the rest.
+ */
+function syncDirectory(
+  ws: string,
+  directoryId: string,
+  provider: string,
+  groups: { groupId: string; name: string; members: string[] }[],
+) {
+  const holds = (teamId: string) =>
+    state.grants.some(
+      (g) => g.principal.kind === "KIND_TEAM" && g.principal.id === teamId,
+    );
+  const gone = state.teams.filter(
+    (t) =>
+      t.workspaceId === ws &&
+      t.directory?.directoryId === directoryId &&
+      !groups.some((g) => g.groupId === t.directory!.groupId),
+  );
+  state.teams = state.teams.filter((t) => !gone.includes(t));
+  state.grants = state.grants.filter(
+    (g) =>
+      !(
+        g.principal.kind === "KIND_TEAM" &&
+        gone.some((t) => t.id === g.principal.id)
+      ),
+  );
+  for (const g of groups) {
+    let t = state.teams.find(
+      (x) => x.workspaceId === ws && x.directory?.groupId === g.groupId,
+    );
+    const free = (name: string) => !nameTaken(ws, name, t?.id);
+    let name = g.name;
+    if (!free(name)) name = `${g.name} (${provider})`;
+    for (let i = 2; !free(name); i++) name = `${g.name} (${i})`;
+    if (!t) {
+      t = {
+        id: id("team"),
+        workspaceId: ws,
+        name,
+        memberUserIds: [],
+        createdByUserId: "",
+        createdAt: now(),
+      };
+      state.teams.push(t);
+    }
+    const held = holds(t.id),
+      left = held ? rawMembers(ws, g.members) : [];
+    Object.assign(t, {
+      name,
+      memberUserIds: g.members.filter((u) => !left.includes(u)),
+      directory: {
+        directoryId,
+        groupId: g.groupId,
+        provider,
+        leftOutUserIds: left,
+      },
+    });
+    if (held) restrict(ws, t.memberUserIds);
+  }
+}
+// Acme's Okta directory: its groups and their members.
+const ACME_GROUPS = [
+  {
+    groupId: "grp_engineering",
+    name: "Engineering",
+    members: ["usr_ada", "usr_alan"],
+  },
+  {
+    groupId: "grp_finance",
+    name: "Finance",
+    members: ["usr_alan", "usr_eve"],
+  },
+];
+/** Connects Acme's Okta directory, as its Admin Portal does, and syncs it. */
+function connectAcmeDirectory() {
+  directorySynced = true;
+  directorySyncedAt = now();
+  syncDirectory("ws_acme", "directory_acme_okta", "Okta", ACME_GROUPS);
+}
+/** Syncs Acme's Okta directory once `directoryTeams` is set. */
+function syncDirectoryIfAsked() {
+  if (!knobs.directoryTeams || directorySynced || !db.workspaces.has("ws_acme"))
+    return;
+  connectAcmeDirectory();
+}
+
+// The host's directory sync as the WFE serves it (GET .../directory,
+// .../directory/portal-link, .../directory:sync). Only Acme can have one:
+// it is entitled (SSO) with `directoryEntitled` or `directoryTeams`, and
+// connected once `directoryTeams` syncs it or its Admin Portal
+// (/mock/directory-portal) connects Okta. `directoryIssues` is what the
+// directory reports, and a sync asked for runs `directorySyncMs` (1500).
+const directoryEntitled = (ws: string) =>
+  ws === "ws_acme" &&
+  (!!knobs.directoryEntitled || !!knobs.directoryTeams || directorySynced);
+
+function directoryOf(ws: string): WorkspaceDirectory {
+  syncDirectoryIfAsked();
+  if (!directoryEntitled(ws)) return { workspaceId: ws };
+  if (!directorySynced) return { workspaceId: ws, entitled: true };
+  if (directoryPendingUntil && Date.now() >= directoryPendingUntil) {
+    directoryPendingUntil = 0;
+    directorySyncedAt = now();
+  }
+  const teams = state.teams.filter((t) => t.workspaceId === ws && t.directory);
+  const people = new Set(ACME_GROUPS.flatMap((g) => g.members));
+  return {
+    workspaceId: ws,
+    entitled: true,
+    directory: {
+      id: "directory_acme_okta",
+      type: "okta scim v2.0",
+      provider: "Okta",
+      name: db.workspaces.get(ws)?.displayName || "",
+      state: "DIRECTORY_STATE_LINKED",
+    },
+    rolesFromDirectory: false,
+    groups: ACME_GROUPS.map((g) => ({
+      id: g.groupId,
+      name: g.name,
+      memberCount: g.members.length,
+      foundryTeamId: teams.find((t) => t.directory?.groupId === g.groupId)?.id,
+    })),
+    issues: knobs.directoryIssues || [],
+    syncState: directoryPendingUntil
+      ? "DIRECTORY_SYNC_STATE_PENDING"
+      : "DIRECTORY_SYNC_STATE_IDLE",
+    lastSyncedAt: directorySyncedAt,
+    userCount: people.size,
+    managedMemberCount: people.size,
+  };
+}
+
+const notEntitled = () =>
+  fail(
+    "FAILED_PRECONDITION",
+    "directory sync is not enabled for this workspace; contact Helix support",
+  );
+
+export const directoryRoutes: MockRoute[] = [
+  {
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/directory",
+    handle: ({ params, principal }) => {
+      const m = membership(params.workspaceId!, principal.user.id);
+      if (isReply(m)) return m;
+      if (!manages(m)) return fail("PERMISSION_DENIED", "permission denied");
+      return ok(directoryOf(m.workspaceId));
+    },
+  },
+  {
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/directory/portal-link",
+    handle: ({ params, body, principal }) => {
+      const m = membership(params.workspaceId!, principal.user.id);
+      if (isReply(m)) return m;
+      if (m.role !== "WORKSPACE_ROLE_OWNER")
+        return fail("PERMISSION_DENIED", "permission denied");
+      if (!directoryEntitled(m.workspaceId)) return notEntitled();
+      const back = String(
+        (body as CreateDirectoryPortalLinkRequest | undefined)?.returnUrl || "",
+      ).trim();
+      if (back && !/^https?:\/\/[^/]/.test(back))
+        return fail("INVALID_ARGUMENT", "return_url must be an http(s) URL");
+      portalReturns.set(m.workspaceId, back);
+      const url = new URL("/mock/directory-portal", process.env.MOCK_ORIGIN);
+      url.searchParams.set("workspace", m.workspaceId);
+      return ok({ link: url.toString() });
+    },
+  },
+  {
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/directory:sync",
+    handle: ({ params, principal }) => {
+      const m = membership(params.workspaceId!, principal.user.id);
+      if (isReply(m)) return m;
+      if (m.role !== "WORKSPACE_ROLE_OWNER")
+        return fail("PERMISSION_DENIED", "permission denied");
+      if (!directoryEntitled(m.workspaceId)) return notEntitled();
+      if (!directorySynced)
+        return fail(
+          "FAILED_PRECONDITION",
+          "no directory is connected; connect one in the setup guide",
+        );
+      directoryPendingUntil = Date.now() + (knobs.directorySyncMs ?? 1500);
+      return ok(directoryOf(m.workspaceId));
+    },
+  },
+];
+
+/**
+ * WorkOS's Admin Portal for directory sync (/mock/directory-portal), which
+ * a portal link opens: Connect Okta connects Acme's directory and syncs it.
+ * False if the path is another.
+ */
+export function handleDirectoryPage(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+): boolean {
+  if (url.pathname !== "/mock/directory-portal") return false;
+  const ws = url.searchParams.get("workspace") || "",
+    workspace = db.workspaces.get(ws),
+    back = portalReturns.get(ws),
+    home = back ? `<a href="${escape(back)}">Return to Helix Foundry</a>` : "";
+  if (!workspace || !directoryEntitled(ws)) {
+    send(res, 404, page("Admin Portal", "<h1>This link has expired</h1>"));
+    return true;
+  }
+  if (req.method === "POST") connectAcmeDirectory();
+  send(
+    res,
+    200,
+    page(
+      "Admin Portal",
+      directorySynced
+        ? `<h1>Okta is connected</h1><p>Directory sync for ${escape(workspace.displayName || ws)} is set up. You can close this tab.</p>${home}`
+        : `<h1>Set up directory sync</h1><p>Mock WorkOS Admin Portal for ${escape(workspace.displayName || ws)}. Choose your provider.</p>
+<form method="post" action="/mock/directory-portal?workspace=${escape(enc(ws))}"><button type="submit">Connect Okta</button></form>${home}`,
+    ),
+  );
+  return true;
+}
+const enc = encodeURIComponent;
 export const ACME_AGENT_KEY = "sc_acme_support";
 onReset(() => {
   const at = "2026-10-03T10:00:00.000Z";
+  delete knobs.directoryTeams;
+  delete knobs.directoryEntitled;
+  delete knobs.directoryIssues;
+  delete knobs.directorySyncMs;
+  directorySynced = false;
+  directorySyncedAt = undefined;
+  directoryPendingUntil = 0;
+  portalReturns.clear();
   state.teams = [];
   state.restricted = new Set([restrictedKey("ws_acme", "usr_eve")]);
   state.grants = [
@@ -526,6 +817,7 @@ export function guarded(route: MockRoute): MockRoute {
   return {
     ...route,
     handle: (req) => {
+      syncDirectoryIfAsked();
       const m = granteeMember(req, key);
       if (!m) return route.handle(req);
       // The WFE's own refusal: this member isn't restricted, and sees the
@@ -599,6 +891,14 @@ const teamOut = (t: StoredTeam): FoundryTeam => ({
   memberUserIds: [...t.memberUserIds],
   createdByUserId: t.createdByUserId,
   createdAt: t.createdAt,
+  ...(t.directory
+    ? {
+        directory: {
+          ...t.directory,
+          leftOutUserIds: [...t.directory.leftOutUserIds],
+        },
+      }
+    : {}),
 });
 const credentialOut = ({
   workspaceId: _,
@@ -777,6 +1077,7 @@ export const accessRoutes: MockRoute[] = [
             )
           : undefined;
       // Only what's new has to confine them: taking some away is always allowed.
+      let leaveOut: string[] = [];
       const holding = state.grants.filter(
         (g) =>
           g.workspaceId === m.workspaceId &&
@@ -800,7 +1101,11 @@ export const accessRoutes: MockRoute[] = [
         }
         if (principal.kind === "KIND_TEAM") {
           if (!team) return fail("NOT_FOUND", "the workspace has no such team");
-          if (anyRaw(m.workspaceId, team.memberUserIds))
+          // A synced team's members are its group's: it leaves out whom
+          // its grants can't confine instead of refusing them.
+          if (team.directory)
+            leaveOut = rawMembers(m.workspaceId, team.memberUserIds);
+          else if (anyRaw(m.workspaceId, team.memberUserIds))
             return fail("FAILED_PRECONDITION", TEAM_RAW_ACCESS);
         }
       }
@@ -843,6 +1148,14 @@ export const accessRoutes: MockRoute[] = [
         ...state.grants.filter((g) => !mine(g) || kept.includes(g)),
         ...added,
       ];
+      if (team?.directory && leaveOut.length) {
+        team.memberUserIds = team.memberUserIds.filter(
+          (u) => !leaveOut.includes(u),
+        );
+        team.directory.leftOutUserIds = [
+          ...new Set([...team.directory.leftOutUserIds, ...leaveOut]),
+        ].sort();
+      }
       if (targets.length > 0) {
         if (principal.kind === "KIND_USER")
           restrict(m.workspaceId, [principal.id]);
@@ -1003,8 +1316,9 @@ export const accessRoutes: MockRoute[] = [
       const team = teamOf(m.workspaceId, req.body);
       if ("status" in team) return team;
       if (
-        state.teams.filter((t) => t.workspaceId === m.workspaceId).length >=
-        MAX_TEAMS
+        state.teams.filter(
+          (t) => t.workspaceId === m.workspaceId && !t.directory,
+        ).length >= MAX_TEAMS
       )
         return fail(
           "FAILED_PRECONDITION",
@@ -1036,6 +1350,8 @@ export const accessRoutes: MockRoute[] = [
         (x) => x.workspaceId === m.workspaceId && x.id === req.params.teamId,
       );
       if (!t) return fail("NOT_FOUND", "team not found");
+      const refused = synced(t);
+      if (refused) return refused;
       if (nameTaken(m.workspaceId, team.name, t.id))
         return fail("ALREADY_EXISTS", "the workspace has a team of that name");
       const holds = state.grants.some(
@@ -1062,12 +1378,12 @@ export const accessRoutes: MockRoute[] = [
       const m = manager(req);
       if (isReply(m)) return m;
       const teamId = req.params.teamId!;
-      if (
-        !state.teams.some(
-          (t) => t.workspaceId === m.workspaceId && t.id === teamId,
-        )
-      )
-        return fail("NOT_FOUND", "team not found");
+      const t = state.teams.find(
+        (x) => x.workspaceId === m.workspaceId && x.id === teamId,
+      );
+      const refused = t && synced(t);
+      if (refused) return refused;
+      if (!t) return fail("NOT_FOUND", "team not found");
       state.teams = state.teams.filter((t) => t.id !== teamId);
       state.grants = state.grants.filter(
         (g) => !(g.principal.kind === "KIND_TEAM" && g.principal.id === teamId),

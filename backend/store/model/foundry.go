@@ -115,6 +115,37 @@ type FoundryLoad struct {
 	AppliedAt *time.Time
 }
 
+// FoundryLoadDocumentSet is what a load made of the documents of one document
+// set: its uploaded documents that joined the load, by how extracting each
+// into the load ended, and what those extractions wrote. A document counts
+// under the set it joined with. Documents is
+// Read + Duplicate + Failed + NotRead + Waiting.
+type FoundryLoadDocumentSet struct {
+	SetID     string
+	Documents int
+	// Read are those a model read for names and facts (extracted).
+	Read      int
+	Duplicate int
+	Failed    int
+	// NotRead are those no extraction route of the load's version reads
+	// (out_of_scope): stored with their sections, and read by no model.
+	NotRead int
+	// Waiting are those the load has not extracted yet.
+	Waiting int
+	// Facts are its documents' fact writes: each document counts the facts
+	// it created and those it added its evidence to, so a fact two documents
+	// state counts twice.
+	Facts int64
+	// Reviews are the reviews its documents left when the load last wrote
+	// each, of every kind; one a person settled since stays counted until
+	// the load writes the decision.
+	Reviews int64
+	// Unresolved are the names the load matched to no one record (none,
+	// several, or identifiers that disagree). Nearly every one left a
+	// review too, so it overlaps Reviews.
+	Unresolved int64
+}
+
 // OntologyVersion is the version the graph records the load under.
 func (l *FoundryLoad) OntologyVersion() string {
 	return fmt.Sprintf("foundry-v%d", l.Version)
@@ -612,6 +643,15 @@ type FoundryDocumentExtraction struct {
 	// ArtifactKey is the saved model output the document was committed from.
 	ArtifactKey *string
 	FinishedAt  time.Time
+	// Releases are what the engine said of each release decision the job
+	// sent with the document, which RecordFoundryDocumentExtraction records
+	// on the load's decisions; nothing reads them back.
+	Releases []FoundryReleaseOutcome
+	// Released are the reviews the run's releases wrote as facts. On a row
+	// that stays (a document the load held already) they leave its reviews;
+	// the facts they became are in Counts.Facts, one a decision written,
+	// which several reviews of one claim share. Nothing reads it back.
+	Released int
 }
 
 // FoundryGraphJobKind is what a graph job does.
@@ -631,6 +671,12 @@ const (
 	// snapshots in place, writing only what changed, then extracts the
 	// documents it waits for. A refresh queues it instead of a new load.
 	FoundryGraphJobApply FoundryGraphJobKind = "apply"
+	// FoundryGraphJobResend sends documents its load already holds to the
+	// engine again, each with its saved extraction: those the load owes a
+	// resend (FoundryLoadResend). A person's approval of a held claim queues
+	// it, so the engine replays the claim's document and writes what the
+	// approval releases.
+	FoundryGraphJobResend FoundryGraphJobKind = "resend"
 )
 
 // FoundryGraphJobStatus is where a graph job is in its run.
@@ -814,6 +860,9 @@ type FoundryGraphJobOutcome struct {
 type FoundryGraphNext struct {
 	ExtractID string
 	DeleteID  string
+	// ResendID is the id of the resend job queued when the current load owes
+	// documents one (FoundryLoadResend) and nothing else goes first.
+	ResendID string
 	// RefreshID is the id of the full refresh load an apply queues: in its
 	// place when it failed before its tables were in, or after it when the
 	// load it brought up to date was built before RebuildBefore (a rebuild of

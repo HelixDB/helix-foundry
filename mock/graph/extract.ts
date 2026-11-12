@@ -595,13 +595,18 @@ export function applyProfiles(
 
 // ---------------------------------------------------------------- Extract
 
-/** What reading a document stored: the counts its document row keeps. */
+/**
+ * What reading a document stored: the counts its document row keeps, and
+ * `unresolved`, the names it matched to no record, which only its load's
+ * totals show.
+ */
 export type ExtractCounts = {
   sections: number;
   entities: number;
   mentions: number;
   facts: number;
   reviews: number;
+  unresolved: number;
 };
 
 /**
@@ -678,6 +683,56 @@ function settle(
  * prop or by the stored values of its identifier props.
  */
 type Nameable = { id: number; name?: string; ids: string[] };
+
+/**
+ * Writes what a held claim's review states as its fact, as the engine's
+ * release does in a load that holds the review's document: the edge, or one
+ * more piece of evidence of it, the evidence at the review's quote, at the
+ * verifier's confidence (none for a claim no verifier judged), and the review
+ * gone. Its ends are the entities the review concerns, in the link's order.
+ */
+export function releaseReview(
+  g: LoadGraph,
+  review: number,
+  written: { ontologyVersion: string; model: string; verifier: string },
+) {
+  const r = g.node(review);
+  if (!r) return;
+  const out = (g.graph.outgoing.get(review) || []).map(
+    (id) => g.graph.edges.get(id)!,
+  );
+  const [from, to] = out.filter((e) => e.label === E.CONCERNS).map((e) => e.to);
+  const section = out.find((e) => e.label === E.FROM_SECTION)?.to;
+  const link = String(r.props.suggested_link);
+  if (from === undefined || to === undefined || section === undefined) return;
+  const confidence = Number(r.props.confidence ?? 0);
+  const factKey = sha256([link, String(from), String(to)].join("\u001f"));
+  const stored = g.findEdge(link, "fact_key", factKey);
+  if (stored)
+    stored.props.evidence_count = Number(stored.props.evidence_count) + 1;
+  else
+    g.addEdge(link, from, to, {
+      fact_key: factKey,
+      provenance: "extracted",
+      confidence,
+      evidence_count: 1,
+      ontology_version: written.ontologyVersion,
+    });
+  const ev = g.addNode(N.Evidence, {
+    fact_key: factKey,
+    link,
+    doc_id: r.props.doc_id!,
+    start: r.props.start!,
+    end: r.props.end!,
+    quote: r.props.quote!,
+    model: written.model,
+    verifier: written.verifier,
+    prompt_version: PROMPT_VERSION,
+    confidence,
+  });
+  g.addEdge(E.FROM_SECTION, ev, section);
+  g.graph.removeNode(review);
+}
 
 export type ExtractOutcome =
   | { kind: "ingested"; counts: ExtractCounts }
@@ -773,7 +828,7 @@ export function extractDocument(
   if (isEmpty(scope))
     return {
       kind: "out_of_scope",
-      counts: { ...empty, facts: 0, reviews: 0 },
+      counts: { ...empty, facts: 0, reviews: 0, unresolved: 0 },
     };
 
   // Keyed entities of the scope's types text can name: by their `names`
@@ -922,7 +977,12 @@ export function extractDocument(
     return false;
   });
 
-  const counts: ExtractCounts = { ...empty, facts: 0, reviews: 0 };
+  const counts: ExtractCounts = {
+    ...empty,
+    facts: 0,
+    reviews: 0,
+    unresolved: unresolved.length,
+  };
   const mention = (
     s: (typeof sections)[number],
     i: number,

@@ -121,6 +121,65 @@
   gap: var(--hf-space-1);
   margin-left: auto;
 }
+.wk-access .hf-toolbar.wk-access-filter {
+  margin-bottom: 0;
+}
+.wk-access .wk-member-text small.wk-access-note {
+  white-space: normal;
+}
+/* Directory sync above the teams (access-directory.tsx): its status, what
+   needs attention, and the nudge for synced teams that read nothing yet. */
+.wk-directory {
+  display: grid;
+  gap: var(--hf-space-1);
+}
+.wk-directory p {
+  margin: 0;
+}
+.wk-directory > p:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--hf-space-1);
+}
+.wk-directory-problem {
+  color: var(--hf-danger-text);
+  font-size: var(--hf-text-sm);
+}
+.wk-directory-issues {
+  display: grid;
+  gap: var(--hf-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--hf-text-sm);
+}
+.wk-directory-issues li {
+  display: grid;
+  gap: 2px;
+  padding: var(--hf-space-1) var(--hf-space-2);
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-sm);
+}
+.wk-directory-issues small {
+  color: var(--hf-muted);
+}
+.wk-directory-nudge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hf-space-1) var(--hf-space-2);
+  padding: var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-border);
+  background: var(--hf-warning-soft);
+  color: var(--hf-warning-text);
+  font-size: var(--hf-text-sm);
+}
+.wk-directory-nudge p {
+  margin: 0;
+  flex: 1 1 320px;
+}
 .wk-access-switch {
   margin: 0;
   font-size: var(--hf-text-sm);

@@ -205,6 +205,102 @@ export type InviteWorkspaceMemberRequest = {
   role: WorkspaceRole;
 };
 
+// ---------------------------------------------------------------- Directory sync
+
+/**
+ * v1WorkspaceDirectory: GET /v1/workspaces/{workspaceId}/directory, the
+ * workspace's directory (SCIM through WorkOS) as its last sync saw it. Needs
+ * workspace.members.manage (owners and admins). A workspace without the SSO
+ * entitlement answers `{workspaceId}` alone (`entitled` false); `directory`
+ * is unset until an IT admin connects one in the Admin Portal. Roles from
+ * groups stay in the Helix dashboard: Foundry reads `groups` only to count
+ * them.
+ */
+export type WorkspaceDirectory = {
+  workspaceId?: string;
+  entitled?: boolean;
+  directory?: DirectoryConnection;
+  rolesFromDirectory?: boolean;
+  groups?: DirectoryGroup[];
+  issues?: DirectoryIssue[];
+  syncState?: DirectorySyncState;
+  syncError?: string;
+  lastSyncedAt?: string;
+  userCount?: number;
+  managedMemberCount?: number;
+};
+
+/** v1DirectoryConnection: `provider` is the name people know ("Okta"), or empty. */
+export type DirectoryConnection = {
+  id?: string;
+  type?: string;
+  provider?: string;
+  name?: string;
+  state?: DirectoryState;
+};
+
+export type DirectoryState =
+  | "DIRECTORY_STATE_UNSPECIFIED"
+  | "DIRECTORY_STATE_LINKED"
+  | "DIRECTORY_STATE_VALIDATING"
+  | "DIRECTORY_STATE_INVALID_CREDENTIALS"
+  | "DIRECTORY_STATE_UNLINKED"
+  | "DIRECTORY_STATE_DELETING";
+
+export type DirectorySyncState =
+  | "DIRECTORY_SYNC_STATE_UNSPECIFIED"
+  | "DIRECTORY_SYNC_STATE_IDLE"
+  | "DIRECTORY_SYNC_STATE_PENDING"
+  | "DIRECTORY_SYNC_STATE_FAILED";
+
+/** v1DirectoryGroup: `foundryTeamId` is the team it syncs to. */
+export type DirectoryGroup = {
+  id?: string;
+  name?: string;
+  memberCount?: number;
+  role?: WorkspaceRole;
+  foundryTeamId?: string;
+};
+
+/** v1DirectoryIssue: about a person (email, userId, displayName) or a group. */
+export type DirectoryIssue = {
+  kind?: DirectoryIssueKind;
+  email?: string;
+  userId?: string;
+  displayName?: string;
+  groupId?: string;
+  groupName?: string;
+};
+
+export type DirectoryIssueKind =
+  | "DIRECTORY_ISSUE_KIND_UNSPECIFIED"
+  | "DIRECTORY_ISSUE_KIND_NO_EMAIL"
+  | "DIRECTORY_ISSUE_KIND_NOT_PROVISIONED"
+  | "DIRECTORY_ISSUE_KIND_PENDING_INVITATION"
+  | "DIRECTORY_ISSUE_KIND_OWNER_KEPT"
+  | "DIRECTORY_ISSUE_KIND_TOO_MANY_GROUPS"
+  | "DIRECTORY_ISSUE_KIND_GROUP_TOO_LARGE"
+  | "DIRECTORY_ISSUE_KIND_LEFT_OUT_RAW_ACCESS";
+
+/**
+ * WfeServiceCreateDirectoryPortalLinkBody: POST
+ * /v1/workspaces/{workspaceId}/directory/portal-link. Needs
+ * workspace.sso.manage (owners) and the entitlement (else
+ * FAILED_PRECONDITION). `returnUrl`, an http(s) URL, is where the portal's
+ * back link goes.
+ */
+export type CreateDirectoryPortalLinkRequest = { returnUrl?: string };
+
+/** v1CreateDirectoryPortalLinkResponse: a single-use link, valid for minutes. */
+export type CreateDirectoryPortalLinkResponse = { link?: string };
+
+/**
+ * POST /v1/workspaces/{workspaceId}/directory:sync with `{}`: asks for a sync
+ * now (owners), answered with the WorkspaceDirectory. FAILED_PRECONDITION
+ * when no directory is connected.
+ */
+export type SyncWorkspaceDirectoryRequest = Record<string, never>;
+
 // ---------------------------------------------------------------- Plan and billing
 
 /**
@@ -1889,7 +1985,9 @@ export type JobPhase =
  * the documents; an extract, queued by an upload or a change of current load,
  * only reads documents into its load; a delete removes a load.
  */
-export type JobKind = "load" | "extract" | "delete";
+// A resend applies a person's approvals to its load: their documents, sent
+// again from their saved extractions.
+export type JobKind = "load" | "extract" | "delete" | "resend";
 
 /** v1FoundryGraphJob.progress */
 export type JobProgress = {
@@ -1939,6 +2037,45 @@ export type FoundryLoad = {
   ingestViolations?: string;
   // Its People enrichment step; unset when its version enriches no one.
   enrichment?: FoundryLoadEnrichment | null;
+  // What it made of its documents, by document set, in set id order. Only
+  // GetFoundryLoad fills it (not the list, nor the answer to a change of a
+  // load); unset for a load that holds no documents, for one made before
+  // Foundry recorded a load's documents, and for a grantee. A few seconds
+  // old at most while a job of the load runs.
+  documentSets?: FoundryLoadDocumentSet[];
+};
+
+/**
+ * v1FoundryLoadDocumentSet: what a load made of one document set's
+ * documents (its uploaded text documents and PDFs that joined the load).
+ * `documents` is read + duplicate + failed + notRead + waiting.
+ */
+export type FoundryLoadDocumentSet = {
+  setId?: string;
+  // An extraction route of the load's version reads the set: what the
+  // version routes, not what came of it (`read` says that). Unset (false):
+  // the load stores its documents, which stay searchable, and no model
+  // reads them, so they add nothing to the graph.
+  routed?: boolean;
+  documents?: number;
+  // Those a model read for the names and facts they hold.
+  read?: number;
+  duplicate?: number;
+  failed?: number;
+  // Those no route of the load's version reads (out_of_scope).
+  notRead?: number;
+  // Those the load has not extracted yet.
+  waiting?: number;
+  // (int64) Its documents' fact writes: a fact counts once for each
+  // document that created it or added evidence to it.
+  facts?: string;
+  // (int64) The reviews its documents left when the load last wrote each,
+  // of every kind. Not the open reviews: one settled since stays counted
+  // until the load writes the decision.
+  reviews?: string;
+  // (int64) The names matched to no one record (none, several, or
+  // identifiers that disagree). Nearly every one left a review too.
+  unresolved?: string;
 };
 
 /**
@@ -2532,10 +2669,29 @@ export type ReviewDecision =
       // What the person read, hashed (reviews/model.ts statementHash).
       statementHash: string;
     };
+/**
+ * What became of a release decision in the ontology's current load: `pending`
+ * while a job has yet to apply it, `written` once its claim is a fact,
+ * `refused` when it stays held (`reason` says why, in the engine's word or the
+ * backend's, and may be one this site doesn't know), `missed` when that load
+ * holds no review at its place, `unconfirmed` when the job that applies it
+ * failed before saying what became of it (it may or may not be written, and
+ * no job is coming; approving it again finishes it while its review is still
+ * in the load, and if the claim was written there is no review left to
+ * approve, only the fact), and empty when the load read it as it was created
+ * and no job has said what became of it.
+ */
+export type DecisionApplied = {
+  status?: "pending" | "written" | "refused" | "missed" | "unconfirmed" | "";
+  reason?: string;
+  at?: string | null;
+};
 export type FoundryReviewDecision = ReviewDecision & {
   id: string;
   decidedByUserId?: string;
   decidedAt?: string | null;
+  // Unset for a decision the current load's list doesn't hold.
+  applied?: DecisionApplied | null;
 };
 export type SettleReviewRequest = { decision: FoundryReviewChoice };
 export type ReviewDecisionResponse = { decision: FoundryReviewDecision };
@@ -3145,13 +3301,31 @@ export type FoundryOntologyAccess = {
   partialReaders?: FoundryPrincipal[];
 };
 
-/** v1FoundryTeam: members hold the team's grants. Names are unique, 1 to 120 characters. */
+/**
+ * v1FoundryTeam: members hold the team's grants. Names are unique, 1 to 120
+ * characters. `directory` is set on a team synced from a directory group:
+ * its name and members are the group's, and only its grants change here.
+ */
 export type FoundryTeam = {
   id?: string;
   name?: string;
   memberUserIds?: string[];
   createdByUserId?: string;
   createdAt?: string;
+  directory?: FoundryTeamDirectory;
+};
+
+/**
+ * v1FoundryTeamDirectory: the directory group a synced team follows.
+ * `provider` names the directory as people know it ("Okta"); `leftOutUserIds`
+ * are the group's members the team leaves out while it holds grants (plain
+ * members with raw access, whom its grants can't confine).
+ */
+export type FoundryTeamDirectory = {
+  directoryId?: string;
+  groupId?: string;
+  provider?: string;
+  leftOutUserIds?: string[];
 };
 
 /**

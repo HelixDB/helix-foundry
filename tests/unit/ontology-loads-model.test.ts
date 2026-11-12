@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
+  FoundryDocumentSet,
   FoundryLoad,
   FoundryOntology,
   GraphJob,
@@ -30,7 +31,15 @@ import {
   loadSteps,
   phaseLabel,
   slugify,
+  leftOutSetText,
+  loadDocumentTotals,
+  loadDocumentsOutcome,
+  loadSetsLine,
+  scopeNames,
+  scopeReads,
+  scopeReadsText,
   type AgentMapping,
+  type AgentRoute,
 } from "@/web/areas/ontology/model";
 
 // The Ontology area's logic for databases and loads: which databases an
@@ -564,5 +573,252 @@ describe("versioned loads", () => {
 
   it("lays a version out for a load's explorer: hubs first, links with ends", () => {
     expect(versionLayout(null)).toEqual({ types: [], links: [] });
+  });
+});
+
+// What a load and a version say of the documents they don't read: a version
+// given twelve sets that routes two reads two, and its load says so.
+describe("what a load and a version read of their documents", () => {
+  const route = (ids: string[] | "all"): AgentRoute => ({
+    name: "r",
+    documents: ids === "all" ? { kind: "all" } : { kind: "sets", ids },
+    types: [],
+    links: [],
+  });
+  const sets: FoundryDocumentSet[] = [
+    { id: "memos", name: "Memos" },
+    { id: "minutes", name: "Minutes" },
+    { id: "calls", name: "Calls" },
+  ];
+  const names = (ids: readonly string[]) => scopeNames(ids, sets);
+
+  it("splits a version's scope by whether a route reads the set", () => {
+    expect(
+      scopeReads(["memos", "minutes", "calls"], [route(["minutes"])]),
+    ).toEqual({ read: ["minutes"], unread: ["memos", "calls"] });
+    expect(scopeReads(["memos", "minutes"], [route("all")])).toEqual({
+      read: ["memos", "minutes"],
+      unread: [],
+    });
+    expect(scopeReads(["memos"], [])).toEqual({ read: [], unread: ["memos"] });
+    expect(scopeReads([], [route("all")])).toEqual({ read: [], unread: [] });
+  });
+
+  it("says in a version's header what it reads and what it only stores", () => {
+    expect(
+      scopeReadsText({ read: ["memos"], unread: ["minutes", "calls"] }, names),
+    ).toBe("Reads Memos; stores 2 more sets unread");
+    expect(
+      scopeReadsText({ read: ["memos", "calls"], unread: ["minutes"] }, names),
+    ).toBe("Reads Memos and Calls; stores 1 more set unread");
+    expect(scopeReadsText({ read: ["memos"], unread: [] }, names)).toBe(
+      "Reads Memos",
+    );
+    expect(scopeReadsText({ read: [], unread: ["memos"] }, names)).toBe(
+      "Reads none of its 1 document set",
+    );
+    expect(
+      scopeReadsText({ read: [], unread: ["memos", "calls"] }, names),
+    ).toBe("Reads none of its 2 document sets");
+    expect(scopeReadsText({ read: [], unread: [] }, names)).toBe(
+      "Reads no documents",
+    );
+  });
+
+  // Twelve sets of which two are routed: 18 of 121 documents read.
+  const twelve: FoundryLoad = {
+    id: "l",
+    documentSets: [
+      {
+        setId: "s01",
+        routed: true,
+        documents: 10,
+        read: 8,
+        duplicate: 1,
+        failed: 1,
+        reviews: "30",
+      },
+      {
+        setId: "s02",
+        routed: true,
+        documents: 12,
+        read: 10,
+        waiting: 2,
+        facts: "3",
+        reviews: "37",
+        unresolved: "5",
+      },
+      ...Array.from({ length: 9 }, (_, i) => ({
+        setId: `s${String(i + 3).padStart(2, "0")}`,
+        documents: 10,
+        notRead: 10,
+      })),
+      { setId: "s12", documents: 9, notRead: 9 },
+    ],
+  };
+
+  it("adds a load's document sets up", () => {
+    const totals = loadDocumentTotals(twelve)!;
+    expect(totals).toEqual({
+      sets: 12,
+      setsRead: 2,
+      unreadSetIds: [
+        "s03",
+        "s04",
+        "s05",
+        "s06",
+        "s07",
+        "s08",
+        "s09",
+        "s10",
+        "s11",
+        "s12",
+      ],
+      documents: 121,
+      read: 18,
+      notRead: 99,
+      duplicate: 1,
+      failed: 1,
+      waiting: 2,
+      facts: 3,
+      reviews: 67,
+      unresolved: 5,
+    });
+    // Two of its documents still wait, so more sets may yet be read.
+    expect(loadSetsLine(totals)).toBe(
+      "12 document sets, 2 read into the graph so far",
+    );
+    expect(loadSetsLine({ ...totals, waiting: 0 })).toBe(
+      "12 document sets, 2 read into the graph",
+    );
+    // A load from a list, one that holds no documents, a grantee's: nothing to say.
+    expect(loadDocumentTotals({ id: "l" } as FoundryLoad)).toBeUndefined();
+    expect(loadDocumentTotals({ documentSets: [] })).toBeUndefined();
+  });
+
+  it("says what came of a load's documents, naming the sets it didn't read", () => {
+    const totals = loadDocumentTotals(twelve)!;
+    expect(
+      loadDocumentsOutcome(
+        totals,
+        totals.unreadSetIds.map((id) => `Set ${id}`),
+      ),
+    ).toBe(
+      "18 of 121 documents were read for the names and facts they hold. " +
+        "99 documents in Set s03, Set s04, Set s05, Set s06, Set s07, and 5 more are stored and searchable, but no route of this version reads those sets, so nothing from them is in the graph: to read them, generate a version whose goal covers them. " +
+        "The documents read made 3 fact writes (a fact counts once for each document that states it) and left 67 reviews. 5 names matched no one record: their reviews are among them. " +
+        "A review settled since stays counted until this load writes the decision. " +
+        "Of the rest, 1 failed, 1 repeats another document, and 2 are not read yet.",
+    );
+    // One document of one set, unread.
+    expect(
+      loadDocumentsOutcome(
+        loadDocumentTotals({
+          documentSets: [{ setId: "o", documents: 1, notRead: 1 }],
+        })!,
+        ["Other"],
+      ),
+    ).toBe(
+      "Its one document was not read for names and facts. " +
+        "1 document in Other is stored and searchable, but no route of this version reads that set, so nothing from it is in the graph: to read it, generate a version whose goal covers it.",
+    );
+    // Nothing reached yet.
+    expect(
+      loadDocumentsOutcome(
+        loadDocumentTotals({
+          documentSets: [
+            { setId: "g", routed: true, documents: 3, waiting: 3 },
+          ],
+        })!,
+        [],
+      ),
+    ).toBe(
+      "None of its 3 documents was read for names and facts yet. Of the rest, 3 are not read yet.",
+    );
+    // The sets' names aren't known yet: it still says how many it didn't read.
+    expect(
+      loadDocumentsOutcome(
+        loadDocumentTotals({
+          documentSets: [
+            { setId: "a", documents: 2, notRead: 2 },
+            { setId: "b", documents: 1, notRead: 1 },
+          ],
+        })!,
+        [],
+      ),
+    ).toBe(
+      "None of its 3 documents was read for names and facts. " +
+        "3 documents are stored and searchable, but no route of this version reads those sets, so nothing from them is in the graph: to read them, generate a version whose goal covers them.",
+    );
+    // Everything read, nothing held back.
+    expect(
+      loadDocumentsOutcome(
+        loadDocumentTotals({
+          documentSets: [
+            { setId: "g", routed: true, documents: 1, read: 1, facts: "1" },
+          ],
+        })!,
+        [],
+      ),
+    ).toBe(
+      "1 of 1 document was read for the names and facts it holds. " +
+        "The document read made 1 fact write (a fact counts once for each document that states it) and left 0 reviews.",
+    );
+  });
+
+  // The title says what the load read, not what its version routes: a load
+  // that has only started, and one whose routed documents all failed, have
+  // read no set, whatever their routes name.
+  it("counts a set as read only once a document of it was read", () => {
+    const started = loadDocumentTotals({
+      documentSets: [
+        { setId: "a", routed: true, documents: 20, waiting: 20 },
+        { setId: "b", routed: true, documents: 15, waiting: 15 },
+        { setId: "c", routed: true, documents: 5, waiting: 5 },
+      ],
+    })!;
+    expect(started.setsRead).toBe(0);
+    expect(loadSetsLine(started)).toBe(
+      "3 document sets, 0 read into the graph so far",
+    );
+    expect(loadDocumentsOutcome(started, [])).toBe(
+      "None of its 40 documents was read for names and facts yet. Of the rest, 40 are not read yet.",
+    );
+    const failed = loadDocumentTotals({
+      documentSets: [
+        { setId: "a", routed: true, documents: 2, failed: 2 },
+        { setId: "b", routed: true, documents: 3, read: 3, facts: "4" },
+      ],
+    })!;
+    expect(failed.setsRead).toBe(1);
+    expect(loadSetsLine(failed)).toBe("2 document sets, 1 read into the graph");
+    expect(loadDocumentsOutcome(failed, [])).toBe(
+      "3 of 5 documents were read for the names and facts they hold. " +
+        "The documents read made 4 fact writes (a fact counts once for each document that states it) and left 0 reviews. " +
+        "Of the rest, 2 failed.",
+    );
+    // A version whose routes Foundry couldn't read says no set is routed:
+    // the sets it read still count as read, and none is named as unread.
+    const unreadable = loadDocumentTotals({
+      documentSets: [
+        { setId: "a", documents: 2, read: 2, facts: "1" },
+        { setId: "b", documents: 1, waiting: 1 },
+      ],
+    })!;
+    expect(unreadable.setsRead).toBe(1);
+    expect(unreadable.unreadSetIds).toEqual([]);
+    expect(loadSetsLine(unreadable)).toBe(
+      "2 document sets, 1 read into the graph so far",
+    );
+  });
+
+  it("names a document set a draft left out", () => {
+    expect(leftOutSetText("minutes", sets)).toBe("Minutes (document set)");
+    expect(leftOutSetText("calls transcripts only", sets)).toBe(
+      "Calls (document set) transcripts only",
+    );
+    expect(leftOutSetText("src_0123456789abcdef file.notes", sets)).toBe(
+      "src_0123456789abcdef file.notes",
+    );
   });
 });

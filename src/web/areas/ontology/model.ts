@@ -36,6 +36,7 @@ import {
   piecesSet,
 } from "../data/model";
 import {
+  andList,
   fileRead,
   readKindOf,
   readsAsText,
@@ -974,6 +975,173 @@ export function loadDocumentsText(
 }
 
 /**
+ * A version's scope, split by whether a route of its mappings reads the
+ * set: `read` are read for the names and facts their documents hold,
+ * `unread` are only stored, so they add nothing to the graph. Each keeps the
+ * scope's order.
+ *
+ * @example
+ * scopeReads(["a", "b"], [{ name: "r", documents: { kind: "sets", ids: ["b"] }, types: [], links: [] }]);
+ * // { read: ["b"], unread: ["a"] }
+ */
+export function scopeReads(scope: readonly string[], routes: AgentRoute[]) {
+  const reads = (id: string) => routesReading(routes, id).length > 0;
+  return {
+    read: scope.filter(reads),
+    unread: scope.filter((id) => !reads(id)),
+  };
+}
+
+/**
+ * A version's scope in a few words, for its page's header: the sets its
+ * routes read, by name, then how many more it was given and only stores.
+ * `names` gives a list of set ids its names (scopeNames).
+ *
+ * @example
+ * scopeReadsText({ read: ["a"], unread: ["b", "c"] }, () => ["Memos"]); // "Reads Memos; stores 2 more sets unread"
+ * scopeReadsText({ read: [], unread: ["b"] }, () => []); // "Reads none of its 1 document set"
+ */
+export function scopeReadsText(
+  reads: ReturnType<typeof scopeReads>,
+  names: (ids: readonly string[]) => string[],
+): string {
+  const { read, unread } = reads;
+  if (!read.length && !unread.length) return "Reads no documents";
+  if (!read.length)
+    return `Reads none of its ${plural(unread.length, "document set")}`;
+  return `Reads ${andList(names(read))}${unread.length ? `; stores ${unread.length} more ${unread.length === 1 ? "set" : "sets"} unread` : ""}`;
+}
+
+/**
+ * What a load made of its documents, added up over its document sets
+ * (FoundryLoad.documentSets): the sets it holds documents of, how many of
+ * them it read a document of (`setsRead`: what happened, not what its
+ * version routes) and which hold documents its version doesn't read
+ * (`unreadSetIds`), its documents by how each ended, and what the read ones
+ * wrote. `facts` counts a fact once for each document that states it;
+ * `reviews` are those the documents left when the load wrote them, settled
+ * since or not; `unresolved` are the names matched to no one record, nearly
+ * all of which are among the reviews. Undefined for a load that says nothing
+ * of its documents: one from a list, one that holds none, or a grantee's.
+ *
+ * @example
+ * loadDocumentTotals({ documentSets: [{ setId: "a", routed: true, documents: 2, read: 2, facts: "3" }, { setId: "b", documents: 5, notRead: 5 }] });
+ * // { sets: 2, setsRead: 1, unreadSetIds: ["b"], documents: 7, read: 2, notRead: 5, duplicate: 0, failed: 0, waiting: 0, facts: 3, reviews: 0, unresolved: 0 }
+ */
+export function loadDocumentTotals(load: Pick<FoundryLoad, "documentSets">) {
+  const sets = load.documentSets || [];
+  if (!sets.length) return undefined;
+  const sum = (of: (s: (typeof sets)[number]) => number | string | undefined) =>
+    sets.reduce((n, s) => n + Number(of(s) || 0), 0);
+  return {
+    sets: sets.length,
+    setsRead: sets.filter((s) => (s.read || 0) > 0).length,
+    unreadSetIds: sets
+      .filter((s) => (s.notRead || 0) > 0)
+      .map((s) => s.setId || ""),
+    documents: sum((s) => s.documents),
+    read: sum((s) => s.read),
+    notRead: sum((s) => s.notRead),
+    duplicate: sum((s) => s.duplicate),
+    failed: sum((s) => s.failed),
+    waiting: sum((s) => s.waiting),
+    facts: sum((s) => s.facts),
+    reviews: sum((s) => s.reviews),
+    unresolved: sum((s) => s.unresolved),
+  };
+}
+export type LoadDocumentTotals = NonNullable<
+  ReturnType<typeof loadDocumentTotals>
+>;
+
+/**
+ * A load's documents in a line: the sets it holds, and how many of them it
+ * has read a document of: "so far" while documents still wait, when the
+ * count can only grow. A set its version routes whose documents all failed
+ * or still wait is not read.
+ *
+ * @example
+ * loadSetsLine({ sets: 12, setsRead: 2, waiting: 0 }); // "12 document sets, 2 read into the graph"
+ * loadSetsLine({ sets: 3, setsRead: 0, waiting: 40 }); // "3 document sets, 0 read into the graph so far"
+ */
+export const loadSetsLine = (
+  t: Pick<LoadDocumentTotals, "sets" | "setsRead" | "waiting">,
+) =>
+  `${plural(t.sets, "document set")}, ${formatNumber(t.setsRead)} read into the graph${t.waiting ? " so far" : ""}`;
+
+// The most sets a sentence names before it counts the rest.
+const NAMED_SETS = 6;
+
+/**
+ * What came of a load's documents, in sentences: how many were read for
+ * facts; those its version doesn't read, with their sets' names
+ * (`unreadNames`, as scopeNames gives them; none while the sets aren't
+ * known) and how to have them read; what the read ones wrote and left for
+ * review, as counted when the load wrote them; and those that failed,
+ * repeat another or still wait. While documents wait, none read is "yet".
+ *
+ * @example
+ * loadDocumentsOutcome(
+ *   { unreadSetIds: ["m"], documents: 3, read: 1, notRead: 2, duplicate: 0, failed: 0, waiting: 0, facts: 4, reviews: 2, unresolved: 1 },
+ *   ["Minutes"],
+ * );
+ * // "1 of 3 documents was read for the names and facts it holds. 2 documents in Minutes are stored and searchable, but no route of this version reads that set, so nothing from them is in the graph: to read them, generate a version whose goal covers them. The document read made 4 fact writes (a fact counts once for each document that states it) and left 2 reviews. 1 name matched no one record: its review is among them. A review settled since stays counted until this load writes the decision."
+ */
+export function loadDocumentsOutcome(
+  t: Omit<LoadDocumentTotals, "sets" | "setsRead">,
+  unreadNames: readonly string[],
+): string {
+  const named =
+    unreadNames.length > NAMED_SETS
+      ? [
+          ...unreadNames.slice(0, NAMED_SETS - 1),
+          `${unreadNames.length - NAMED_SETS + 1} more`,
+        ]
+      : unreadNames;
+  const one = t.notRead === 1;
+  const others = [
+    t.failed ? `${formatNumber(t.failed)} failed` : "",
+    t.duplicate
+      ? `${formatNumber(t.duplicate)} ${t.duplicate === 1 ? "repeats" : "repeat"} another document`
+      : "",
+    t.waiting
+      ? `${formatNumber(t.waiting)} ${t.waiting === 1 ? "is" : "are"} not read yet`
+      : "",
+  ].filter(Boolean);
+  const yet = t.waiting ? " yet" : "";
+  return [
+    t.read
+      ? `${formatNumber(t.read)} of ${plural(t.documents, "document")} ${t.read === 1 ? "was" : "were"} read for the names and facts ${t.read === 1 ? "it holds" : "they hold"}.`
+      : t.documents === 1
+        ? `Its one document was not read for names and facts${yet}.`
+        : `None of its ${plural(t.documents, "document")} was read for names and facts${yet}.`,
+    ...(t.notRead
+      ? [
+          `${plural(t.notRead, "document")}${named.length ? ` in ${andList(named)}` : ""} ${one ? "is" : "are"} stored and searchable, but no route of this version reads ${t.unreadSetIds.length === 1 ? "that set" : "those sets"}, so nothing from ${one ? "it" : "them"} is in the graph: to read ${one ? "it" : "them"}, generate a version whose goal covers ${one ? "it" : "them"}.`,
+        ]
+      : []),
+    ...(t.read
+      ? [
+          `${t.read === 1 ? "The document read" : "The documents read"} made ${plural(t.facts, "fact write")} (a fact counts once for each document that states it) and left ${plural(t.reviews, "review")}.`,
+          ...(t.unresolved
+            ? [
+                `${plural(t.unresolved, "name")} matched no one record: ${t.unresolved === 1 ? "its review is" : "their reviews are"} among them.`,
+              ]
+            : []),
+          // True whether a settled review waits for the next load or is
+          // written to this one at once.
+          ...(t.reviews
+            ? [
+                "A review settled since stays counted until this load writes the decision.",
+              ]
+            : []),
+        ]
+      : []),
+    ...(others.length ? [`Of the rest, ${andList(others)}.`] : []),
+  ].join(" ");
+}
+
+/**
  * How an ontology's current version reads a table file of set `setId`:
  * - mapped: its mappings name the file, so its loads load the file's rows;
  * - unmapped: it reads the set (its scope), but no mapping names the file.
@@ -1317,6 +1485,24 @@ export function splitSourceText(what: string) {
 }
 
 /**
+ * A left-out entry that starts with a document set's id (the agent's id for
+ * a set it was given), with the set's name in its place; any other entry as
+ * it is.
+ *
+ * @example
+ * leftOutSetText("set_1 minutes", [{ id: "set_1", name: "Board" }]); // "Board (document set) minutes"
+ * leftOutSetText("notes", []); // "notes"
+ */
+export function leftOutSetText(
+  what: string,
+  sets: readonly FoundryDocumentSet[],
+): string {
+  const [first = "", ...rest] = what.trim().split(/\s+/);
+  const set = sets.find((s) => s.id === first);
+  return set ? [`${setLabel(set)} (document set)`, ...rest].join(" ") : what;
+}
+
+/**
  * A field as read: the column or pointer, its transforms, then its parse.
  *
  * @example
@@ -1585,14 +1771,17 @@ const phaseLabels: Record<JobPhase, string> = {
 /**
  * What a job does, in words: a load reads the tables then the documents, an
  * extract (queued by an upload or by making a load current) only the
- * documents its load hasn't read, a delete removes the load.
+ * documents its load hasn't read, a resend writes the claims a person
+ * approved, a delete removes the load.
  */
 export const kindLabel = (j: GraphJob) =>
   j.kind === "extract"
     ? "New documents"
-    : j.kind === "delete"
-      ? "Delete"
-      : "Tables and documents";
+    : j.kind === "resend"
+      ? "Approved claims"
+      : j.kind === "delete"
+        ? "Delete"
+        : "Tables and documents";
 
 /** The step a job is at, in words. */
 export const phaseLabel = (j: GraphJob) =>
@@ -1875,7 +2064,12 @@ export function jobBadge(
     case "succeeded":
       return {
         status: "succeeded",
-        label: j.kind === "delete" ? "Deleted" : "Loaded",
+        label:
+          j.kind === "delete"
+            ? "Deleted"
+            : j.kind === "resend"
+              ? "Applied"
+              : "Loaded",
       };
     case "budget_exhausted":
       return { status: "stale", label: "Stopped at the cap" };
@@ -2150,7 +2344,7 @@ export function loadSteps(
       label: queued ? "Waiting to start" : "Started",
       status: queued ? "active" : "done",
     },
-    ...(j.kind === "extract"
+    ...(j.kind === "extract" || j.kind === "resend"
       ? []
       : [
           step(

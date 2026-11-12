@@ -4,6 +4,7 @@ import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   FoundryLoad,
   FoundryReviewChoice,
+  FoundryReviewDecision,
   ReviewDecision,
 } from "../../../shared/wfe";
 import { Button, ButtonLink, Select } from "../../kit";
@@ -20,7 +21,9 @@ import {
   loadRead,
   matchesReview,
   propValueText,
+  refusalText,
   statementHash,
+  waitingText,
   type Candidate,
   type ReleaseStatus,
   type Settle,
@@ -114,8 +117,12 @@ function ClaimWritten({
 }
 
 /**
- * Saves an override only. A load's graph and evidence are never edited.
- * `load` is the load the page shows; only the current one settles.
+ * Settles a review of the load the page shows (`load`); only the current one
+ * settles. A name or a value is saved as an override for the next load. An
+ * approval of a held claim is written to the current load at once, by a job
+ * of its own: its card says it is being written, or what it waits behind
+ * when another job is running, then the claim is a fact and the card goes,
+ * or the card says why the load kept it held.
  */
 export function SettleReview({
   review,
@@ -130,7 +137,7 @@ export function SettleReview({
   naming: Naming;
 }) {
   const { id: ws, role } = useWorkspace();
-  const { id: o } = useOntology();
+  const { id: o, ontology } = useOntology();
   const qc = useQueryClient();
   const query = useQuery(reviewQueries.list(ws, o));
   const [choice, setChoice] = useState("");
@@ -188,6 +195,15 @@ export function SettleReview({
   const saved = approval?.saved ?? query.data?.find((d) => matchesReview(d, s));
   const moved = !!approval?.moved,
     earlier = !!approval?.earlier;
+  // What the current load made of a saved approval: nothing yet when its
+  // list doesn't hold it (saved while another load was current), and
+  // nothing to write when it found no claim at the approval's place. Either
+  // way approving this card binds it to this load's review, at once. So
+  // does approving one whose job failed before saying what became of it.
+  const applied = isRelease && editable ? saved?.applied : undefined,
+    unread = isRelease && editable && !!saved && !applied,
+    missed = applied?.status === "missed",
+    retry = applied?.status === "unconfirmed";
   const save = async (choice: FoundryReviewChoice) => {
     if (pending) return;
     setPending(true);
@@ -254,13 +270,25 @@ export function SettleReview({
         <p role="status">
           {!editable
             ? "A decision is saved for this review."
-            : loadRead(saved, load?.createdAt)
-              ? isRelease
-                ? s.formed && single
-                  ? `This load read the approval, and the claim stays held: “${s.formed}” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`
-                  : "This load read the approval, and the claim stays held: a name in it isn’t in your data or is linked only by its legal form, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
-                : "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
-              : "Decision saved. Reload to apply."}
+            : isRelease
+              ? applied?.status === "pending"
+                ? waitingText(ontology.activeJob?.kind)
+                : applied?.status === "written"
+                  ? "Approved, and written to this load."
+                  : applied?.status === "refused"
+                    ? `Approved, and this load kept it held. ${refusalText(applied.reason, s.formed)}`
+                    : retry
+                      ? "Approved, but the job that writes it failed before it said whether this was written. Approve it again to finish."
+                      : unread
+                        ? "An approval of this is saved, and this load hasn’t read it. Approve it to write it now."
+                        : missed
+                          ? "An approval of this is saved, and it found no claim at its place in this load. Approve it to write it now."
+                          : s.formed && single
+                            ? `This load read the approval, and the claim stays held: “${s.formed}” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`
+                            : "This load read the approval, and the claim stays held: a name in it isn’t in your data or is linked only by its legal form, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
+              : loadRead(saved, load?.createdAt)
+                ? "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
+                : "Decision saved. Reload to apply."}
         </p>
       )}
       {isRelease && !saved && earlier && (
@@ -272,12 +300,13 @@ export function SettleReview({
       {canManage(role) &&
         editable &&
         isRelease &&
-        (!saved || moved) &&
+        (!saved || moved || unread || missed || retry) &&
         !s.differs && (
           <div className="on-stack">
             <p className="on-muted">
-              On your word, from this sentence alone. Applies from the next
-              load. Reload to apply.
+              On your word, from this sentence alone. It’s written to this load
+              at once. Later loads read the approval too, and each says what it
+              made of it.
             </p>
             {(error || query.error) && (
               <p role="alert" className="hf-form-error">
@@ -382,6 +411,27 @@ const APPROVED: Record<ReleaseStatus, string> = {
   no_link: "Approved, no link written, as a later statement holds it",
 };
 
+/**
+ * A saved approval's line: being written while its job has yet to run, else
+ * what the page's reads say became of it, which tell a statement kept as
+ * evidence alone from one that made a link. Where the reads don't say, the
+ * load's word does: held when it refused it, and not confirmed when its job
+ * failed before saying, which is no claim that it stays held.
+ */
+const approvedLine = (
+  d: Extract<ReviewDecision, { kind: "release" }> & FoundryReviewDecision,
+  read: ReleaseStatus,
+) =>
+  d.applied?.status === "pending"
+    ? "Approved, being written"
+    : read !== "unknown"
+      ? APPROVED[read]
+      : d.applied?.status === "refused"
+        ? APPROVED.held
+        : d.applied?.status === "unconfirmed"
+          ? "Approved, not confirmed as written"
+          : APPROVED.unknown;
+
 /** Saved overrides stay available to remove after their review disappears. */
 export function SavedDecisions({
   documentId,
@@ -439,7 +489,7 @@ export function SavedDecisions({
               <li key={d.id} className="dc-review">
                 <p>
                   {d.kind === "release"
-                    ? `${APPROVED[statusOf?.(d) ?? "unknown"]}: “${quoteOf?.(d.claimSection, d.claimStart, d.claimEnd) ?? `section ${d.claimSection + 1}`}”`
+                    ? `${approvedLine(d, statusOf?.(d) ?? "unknown")}: “${quoteOf?.(d.claimSection, d.claimStart, d.claimEnd) ?? `section ${d.claimSection + 1}`}”`
                     : `${d.type} · ${
                         d.kind === "resolve"
                           ? `${d.normName} → ${d.entityKey ?? "Not in data"}`
@@ -479,7 +529,10 @@ export function SavedDecisions({
               </li>
             ))}
           </ul>
-          <p className="on-muted">Decisions apply to future loads.</p>
+          <p className="on-muted">
+            An approval is written to the current load at once. Other decisions
+            apply to future loads.
+          </p>
           <ButtonLink to={paths.loads(o)} size="sm">
             Loads
           </ButtonLink>

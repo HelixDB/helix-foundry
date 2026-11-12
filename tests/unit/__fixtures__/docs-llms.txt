@@ -1,0 +1,23 @@
+# HelixDB
+
+> HelixDB combines a property graph, approximate vector search, and BM25 full-text search behind one operation-tree query model. Requests run through Cloud, a local server, or the embedded runtime.
+
+## HelixDB — Start Here
+- [Introduction](https://docs.helix-db.com/database/helix-db/start-here/introduction): HelixDB is a graph database with native vector and full-text search, built on object storage — Page type: Concept
+- [Get started](https://docs.helix-db.com/database/helix-db/start-here/quickstart): Initialize HelixDB, start a local instance, run the generated query, and stop it — Page type: Tutorial
+
+## Helix Foundry — Start Here
+- [What is Helix Foundry?](https://docs.helix-db.com/foundry/start-here/introduction): Helix Foundry connects your company's data, drafts an ontology across it, and loads it into a Helix database you can explore — Page type: Concept
+- [Helix Foundry quickstart](https://docs.helix-db.com/foundry/start-here/quickstart): Sign in, create a workspace's first ontology from a connected source and your documents, load it into a Helix database, ask it a question and explore it — Page type: Tutorial
+- [Workspaces and navigation](https://docs.helix-db.com/foundry/start-here/workspaces-and-navigation): Sign in to Helix Foundry, choose or create a workspace, and find your way with the sidebar, the section panels, search and themes — Page type: Guide
+
+## Agents
+- [Use Foundry from your agent](https://docs.helix-db.com/foundry/agents/helix-mcp): Connect Claude Code, Codex or another MCP client to the Helix MCP to read and ask Helix Foundry ontologies, and to set them up with a confirmation for every change — Page type: Guide
+
+## Using the helix CLI
+- [Getting started with HelixDB CLI](https://docs.helix-db.com/cli/getting-started): Install the CLI, run locally, or link a WorkOS-authenticated Cloud database — Page type: Tutorial
+- [Local development](https://docs.helix-db.com/cli/workflows/local): Run a local instance and iterate on dynamic JSON queries — Page type: Guide
+
+## AI memory and RAG
+- [What is retrieval-augmented generation (RAG)?](https://docs.helix-db.com/learn/ai-memory/what-is-rag): RAG has an AI model answer from documents looked up at question time, so answers can use private, current data and cite their sources. — Page type: Concept
+- [What is GraphRAG?](https://docs.helix-db.com/learn/ai-memory/what-is-graphrag): GraphRAG finds context for an AI model by following links between facts in a graph, not only by matching text that is similar to the question. — Page type: Concept
