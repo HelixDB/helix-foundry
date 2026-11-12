@@ -139,6 +139,7 @@ export async function readTableFile(
     case "text/markdown":
     case "text/mdx":
     case "text/plain":
+    case "text/vtt":
     case "application/pdf":
       return unsupported("It isn’t a table file.");
   }

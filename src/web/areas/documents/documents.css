@@ -102,6 +102,37 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+/* A WebVTT transcript's turns: each one's start, muted and not selected
+   with the words, beside its speaker and what they said. */
+.dc-transcript-notes {
+  color: var(--hf-muted);
+}
+.dc-transcript {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dc-turn {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+}
+.dc-turn-start {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.dc-turn-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.dc-turn-text strong {
+  font-weight: 600;
+}
 /* Where a PDF's page starts in its text: its number, then a rule. Not
    selected with the text around it. */
 .dc-page-break {

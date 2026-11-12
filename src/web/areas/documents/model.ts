@@ -63,9 +63,10 @@ export type TableSource = "csv" | "tsv" | "jsonl" | "parquet";
  * click away; MDX too, never compiled or run, its frontmatter a code block),
  * plain text as it is, JSON as a tree (its source a click away), a table's
  * first rows in a grid, a PDF's text once read (its pages in the browser's
- * viewer a click away), and a type this page doesn't know as text with a
- * download. A PDF's pages, Parquet tables and `unknown` read the bytes
- * (`:bytes`); the others, and a PDF's text, the text (`:content`).
+ * viewer a click away), a WebVTT transcript as its turns, as ontologies
+ * read it (its cues a click away), and a type this page doesn't know as
+ * text with a download. A PDF's pages, Parquet tables and `unknown` read the
+ * bytes (`:bytes`); the others, and a PDF's text, the text (`:content`).
  */
 export type DocumentViewer =
   | { kind: "markdown"; mdx: boolean }
@@ -73,12 +74,14 @@ export type DocumentViewer =
   | { kind: "json" }
   | { kind: "table"; source: TableSource }
   | { kind: "pdf" }
+  | { kind: "transcript" }
   | { kind: "unknown" };
 
 /**
  * How ontologies read a format (the WFE's FoundryReadKind):
- * - text (Markdown, MDX, text): loads read its text for what the version's
- *   routes say it fills;
+ * - text (Markdown, MDX, text, WebVTT): loads read its text for what the
+ *   version's routes say it fills; a WebVTT transcript's text is its turns,
+ *   a line each with its start and speaker (src/shared/transcript.ts);
  * - table (CSV, TSV, JSON, JSONL, Parquet): Foundry reads it once, when its
  *   upload completes, as a table of its own that a version's mappings name
  *   by the document's id; never read as text;
@@ -174,6 +177,14 @@ export const DOCUMENT_FORMATS: readonly DocumentFormat[] = [
     viewer: { kind: "pdf" },
     kind: "pdf",
     maxBytes: MAX_FILE_BYTES,
+  },
+  {
+    mediaType: "text/vtt",
+    name: "WebVTT",
+    extensions: [".vtt"],
+    viewer: { kind: "transcript" },
+    kind: "text",
+    maxBytes: MAX_TEXT_BYTES,
   },
 ];
 
@@ -314,8 +325,8 @@ export function fileRead(d: FoundryDocument): FileRead {
 }
 
 /**
- * Whether ontologies read a document as text: Markdown, MDX and text, and a
- * PDF once its text is read. A table file never is: its rows load through
+ * Whether ontologies read a document as text: Markdown, MDX, text and
+ * WebVTT, and a PDF once its text is read. A table file never is: its rows load through
  * mappings.
  *
  * @example
@@ -958,6 +969,7 @@ export const readsBytes = (v: DocumentViewer) =>
 export function renderedLabel(v: DocumentViewer) {
   if (v.kind === "markdown") return "Rendered";
   if (v.kind === "json") return "Tree";
+  if (v.kind === "transcript") return "Transcript";
   if (v.kind === "table" && v.source !== "parquet") return "Table";
   return undefined;
 }

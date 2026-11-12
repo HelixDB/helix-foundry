@@ -1,0 +1,3 @@
+[00:00:00] Ada Lovelace: Okay, let's get started.
+[00:00:03] Ada Lovelace: First, the Umbrella Holdings contract.
+[01:02:03] Grace Hopper: It renews on March 1.

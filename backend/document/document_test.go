@@ -328,6 +328,7 @@ func TestNames(t *testing.T) {
 			"orders.json": model.FoundryMediaJSON, "orders.CSV": model.FoundryMediaCSV, "orders.tsv": model.FoundryMediaTSV,
 			"events.jsonl": model.FoundryMediaJSONL, "events.ndjson": model.FoundryMediaJSONL,
 			"orders.parquet": model.FoundryMediaParquet, "contract.Pdf": model.FoundryMediaPDF,
+			"weekly sync.vtt": model.FoundryMediaVTT, "Board call.VTT": model.FoundryMediaVTT,
 		} {
 			if got, ok := MediaTypeOf(name); !ok || got != want {
 				t.Errorf("%s: %q, %t", name, got, ok)

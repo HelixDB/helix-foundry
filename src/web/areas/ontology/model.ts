@@ -847,7 +847,7 @@ export type MissingFile = { id: string; name?: string };
 
 /**
  * What a load of a version reads of the workspace's documents.
- * - Text (Markdown, MDX, text, and PDFs whose text is read) in its scope
+ * - Text (Markdown, MDX, text, WebVTT, and PDFs whose text is read) in its scope
  *   (`total`, with the other PDFs): those its routes read for what they
  *   hold (`routed`), those it only stores (`stored`), and how many the
  *   current load hasn't read (`unread`: `read` holds the ids it has).

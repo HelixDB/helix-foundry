@@ -116,11 +116,12 @@ describe("uploads", () => {
     // One format a media type, and one an extension.
     const types = DOCUMENT_FORMATS.map((f) => f.mediaType),
       extensions = DOCUMENT_FORMATS.flatMap((f) => f.extensions);
-    expect(new Set(types).size).toBe(9);
+    expect(new Set(types).size).toBe(10);
     expect(new Set(extensions).size).toBe(extensions.length);
     expect(FORMAT_NAMES).toBe(
-      "Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, or PDF",
+      "Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, PDF, or WebVTT",
     );
+    expect(type("Weekly sync.VTT")).toBe("text/vtt");
   });
 
   it("takes text up to 1 MiB and table files and PDFs up to 3 MiB", () => {
@@ -133,12 +134,15 @@ describe("uploads", () => {
       "Text files hold at most 1.0 MiB. Split it into smaller documents.",
     );
     expect(fileProblem({ name: "a.pdf", size: 3_145_728 })).toBeUndefined();
+    expect(fileProblem({ name: "call.vtt", size: 1_048_577 })).toBe(
+      "WebVTT files hold at most 1.0 MiB. Split it into smaller documents.",
+    );
     expect(fileProblem({ name: "a.parquet", size: 3_145_729 })).toBe(
       "Parquet files hold at most 3.0 MiB. Split it into smaller files.",
     );
     expect(fileProblem({ name: "a.csv", size: 0 })).toBe("The file is empty.");
     expect(fileProblem({ name: "deck.docx", size: 10 })).toBe(
-      "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, or PDF files can be uploaded.",
+      "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, PDF, or WebVTT files can be uploaded.",
     );
   });
 
@@ -157,6 +161,7 @@ describe("uploads", () => {
       "application/x-ndjson": { kind: "table", source: "jsonl" },
       "application/vnd.apache.parquet": { kind: "table", source: "parquet" },
       "application/pdf": { kind: "pdf" },
+      "text/vtt": { kind: "transcript" },
     });
     // A type the page doesn't know, or none, is text with a download.
     expect(documentViewer("image/png")).toEqual({ kind: "unknown" });
@@ -190,6 +195,7 @@ describe("uploads", () => {
       ["JSONL", "Table"],
       ["Parquet", undefined],
       ["PDF", undefined],
+      ["WebVTT", "Transcript"],
     ]);
     expect(renderedLabel({ kind: "unknown" })).toBeUndefined();
   });
@@ -197,7 +203,7 @@ describe("uploads", () => {
   it("says how ontologies read each format", () => {
     expect(
       DOCUMENT_FORMATS.filter((f) => f.kind === "text").map((f) => f.mediaType),
-    ).toEqual(["text/markdown", "text/mdx", "text/plain"]);
+    ).toEqual(["text/markdown", "text/mdx", "text/plain", "text/vtt"]);
     expect(
       DOCUMENT_FORMATS.filter((f) => f.kind === "table").map((f) => f.name),
     ).toEqual(["JSON", "CSV", "TSV", "JSONL", "Parquet"]);
@@ -1515,7 +1521,7 @@ describe("the documents model's examples", () => {
       kindText({ id: "d", mediaType: "text/markdown" }, "General"),
     ).toBeUndefined();
     expect(fileProblem({ name: "deck.docx", size: 10 })).toBe(
-      "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, or PDF files can be uploaded.",
+      "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, PDF, or WebVTT files can be uploaded.",
     );
     expect(failureText({ code: "model", retryable: true })).toBe(
       "The model couldn’t read it. The next load tries again.",

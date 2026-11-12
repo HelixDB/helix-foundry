@@ -1,0 +1,32 @@
+﻿WEBVTT - Weekly sync
+Kind: captions
+Language: en
+
+NOTE
+Recorded 2026-11-10
+Attendees: Ada Lovelace, Grace Hopper
+
+NOTE   Organizer:   ada@example.com  
+
+STYLE
+::cue { color: yellow }
+
+REGION
+id:fred width:40%
+
+00:01.000 --> 00:04.000 align:start position:10%
+<v.loud Ada Lovelace>Can <i>every</i>one hear me?
+
+NOTE This note comes after a cue, so it is a comment.
+
+00:04,500 --> 00:07,000
+<v Ada Lovelace><c.yellow>Glo</c>bex&#39;s renewal &#x2014; <00:00:05.000>three&nbsp;years&lrm;.
+
+00:07.000 --> 00:09.000
+<v Grace&nbsp;Hopper>&rlm;Yes &copy; &amp no; 5 &lt 6.</v>
+
+00:09.000 --> 00:11.000
+<b>Applause</b>
+
+00:11.000 --> 00:12.000
+<v>An empty voice says this.

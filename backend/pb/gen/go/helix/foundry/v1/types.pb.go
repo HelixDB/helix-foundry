@@ -5962,8 +5962,9 @@ func (x *FoundryOntologyCounts) GetDocuments() int32 {
 // sets: one a person uploaded, or the text of one row of a connector's table
 // (source), which the connector's syncs write into its set. Ontologies read
 // text/markdown, text/mdx (as Markdown, with its code blanked to spaces; it
-// is never compiled or run) and text/plain as text, extracted through
-// routes. Each text/csv,
+// is never compiled or run), text/plain and text/vtt (a WebVTT transcript, as
+// its turns: a line each with its start, speaker and words) as text,
+// extracted through routes. Each text/csv,
 // text/tab-separated-values, application/json, application/x-ndjson and
 // application/vnd.apache.parquet document is read once, at upload, as a
 // table of its own, which a version's mappings name by the document's id; it
@@ -5979,7 +5980,8 @@ type FoundryDocument struct {
 	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	// text/markdown, text/mdx, text/plain, application/json, text/csv,
 	// text/tab-separated-values, application/x-ndjson,
-	// application/vnd.apache.parquet or application/pdf. A rename keeps it.
+	// application/vnd.apache.parquet, application/pdf or text/vtt. A rename
+	// keeps it.
 	MediaType string `protobuf:"bytes,3,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
 	SizeBytes int64  `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
 	// Lowercase hex SHA-256 of the bytes.

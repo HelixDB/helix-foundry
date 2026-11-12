@@ -108,6 +108,7 @@ func ArtifactKey(workspaceID, documentID, key string) (string, bool) {
 //	.jsonl, .ndjson  application/x-ndjson
 //	.parquet         application/vnd.apache.parquet
 //	.pdf             application/pdf
+//	.vtt             text/vtt
 func MediaTypeOf(name string) (model.FoundryMediaType, bool) {
 	switch strings.ToLower(path.Ext(name)) {
 	case ".md", ".markdown":
@@ -128,6 +129,8 @@ func MediaTypeOf(name string) (model.FoundryMediaType, bool) {
 		return model.FoundryMediaParquet, true
 	case ".pdf":
 		return model.FoundryMediaPDF, true
+	case ".vtt":
+		return model.FoundryMediaVTT, true
 	}
 	return "", false
 }

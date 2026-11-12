@@ -1,0 +1,4 @@
+[00:00:03] Ada Lovelace: Let's start with the Globex renewal. They asked for a three year term starting in January.
+[00:00:09] Grace Hopper: Initech & Globex both want the same discount, <10% at most.
+[00:00:14] Ada Lovelace: Agreed.
+[00:01:02] Grace Hopper: I'll send Globex the order form today.

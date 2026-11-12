@@ -4013,7 +4013,7 @@ type CreateFoundryDocumentRequest struct {
 	// text/markdown, .mdx text/mdx, .txt text/plain, .json application/json,
 	// .csv text/csv, .tsv text/tab-separated-values, .jsonl or .ndjson
 	// application/x-ndjson, .parquet application/vnd.apache.parquet, .pdf
-	// application/pdf.
+	// application/pdf, .vtt text/vtt.
 	Name      string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
 	MediaType string `protobuf:"bytes,4,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
 	SizeBytes int64  `protobuf:"varint,5,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`

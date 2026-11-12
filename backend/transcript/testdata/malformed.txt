@@ -1,0 +1,2 @@
+[00:00:01] Ada Lovelace: A cue right under the header. Ada again, merged after the empty cues: 3 < 4 and <unclosed
+[00:00:08] Grace Hopper: Grace, at last.

@@ -1349,6 +1349,30 @@ func TestLoad(t *testing.T) {
 		}
 	})
 
+	// A WebVTT transcript goes to the agent as plain text, its turns a line
+	// each (transcript.Text), never its cues: the sections and marks it
+	// returns fall on that text, which the load stores.
+	t.Run("sends a WebVTT transcript as plain text, a line per turn", func(t *testing.T) {
+		h := newHarness(t)
+		h.store.pending[1].MediaType = model.FoundryMediaVTT
+		h.bucket.objects[document.Key("ws-1", "doc-b")] = []byte("WEBVTT\n\n1\n00:00:03.120 --> 00:00:05.200\n<v Ada Lovelace>Acme renews.</v>\n\n" +
+			"2\n00:00:05.200 --> 00:00:07.000\n<v Ada Lovelace>For three years.</v>\n")
+		var staged []byte
+		h.agent.extract = func(req string, stream agentv1.Agent_ExtractServer) error {
+			staged, _ = os.ReadFile(filepath.Join(h.workDir, "jobs/job-1/docs/doc-b.txt"))
+			return extractAll(req, stream)
+		}
+		h.run(t, loadJob())
+		_, extracts := h.agent.calls()
+		extract := decodeExtract(t, extracts[0])
+		if b := extract.Documents[1]; b.DocID != "doc-b" || b.MediaType != ontologyagent.MediaPlainText || b.Path != "jobs/job-1/docs/doc-b.txt" {
+			t.Fatalf("document = %+v", b)
+		}
+		if want := "[00:00:03] Ada Lovelace: Acme renews. For three years.\n"; string(staged) != want {
+			t.Fatalf("staged %q, want %q", staged, want)
+		}
+	})
+
 	// A PDF goes to the agent as the text its read stored, as plain text:
 	// its pages split by form feeds, never its original's bytes. The URI
 	// still names the original.

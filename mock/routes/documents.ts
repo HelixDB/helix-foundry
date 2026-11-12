@@ -29,6 +29,7 @@ import type {
   UpdateDocumentSetRequest,
 } from "../../src/shared/wfe";
 import { isRouted } from "../graph/scope";
+import { transcriptText } from "../../src/shared/transcript";
 import { blankMdx } from "../mdx";
 import { readPdfText, textPdf, type PdfRead } from "../pdf-text";
 import { readTableFile, type Row, type TableRead } from "../table-files";
@@ -75,7 +76,9 @@ import { manages } from "./workspaces";
 //   one asked for again counts again). :content serves the text types'
 //   text, :bytes any type's bytes (base64).
 // - How ontologies read each is its kind, said in every uploaded document's
-//   `read`. Loads read Markdown, MDX (its code blanked, ../mdx.ts) and text.
+//   `read`. Loads read Markdown, MDX (its code blanked, ../mdx.ts), text and
+//   WebVTT, as its turns (src/shared/transcript.ts, the backend's
+//   transcript.Text): :content serves a transcript as uploaded.
 //   Completing a PDF's or a table file's upload queues its read, reading
 //   for `documentReadMs` (1.5 s; `POST /__mock/config`), then ready or
 //   failed with why. A PDF's read is its text (../pdf-text.ts, its pages
@@ -116,8 +119,8 @@ import { manages } from "./workspaces";
 //   SKIPPED.
 // - With MOCK_DOCUMENT_FIXTURES set (pnpm dev:mock sets it), Acme's General
 //   holds a CSV, a JSON and a PDF document from the start, read, to show
-//   their viewers, and a scanned PDF whose read failed; tests start with no
-//   document.
+//   their viewers, a scanned PDF whose read failed, and a call's WebVTT
+//   transcript; tests start with no document.
 // - A connector's syncs write documents too (writeConnectorDocuments, from
 //   ./data.ts): a set per connector and stream (`connector`), named by the
 //   stream, keeping the newest `documentsPerStream` (1000; `POST
@@ -212,6 +215,12 @@ export const FORMATS: Record<
     name: "PDF",
     binary: true,
     kind: "pdf",
+  },
+  "text/vtt": {
+    extensions: /\.vtt$/i,
+    name: "WebVTT",
+    binary: false,
+    kind: "text",
   },
 };
 type Knobs = {
@@ -527,16 +536,18 @@ export function loadDocuments(loadId: string) {
         name: d.name,
         setId,
         // MDX is read as Markdown, its code blanked (../mdx.ts); a PDF's
-        // text as plain text.
+        // text and a transcript's turns as plain text.
         markdown: d.mediaType === "text/markdown" || d.mediaType === "text/mdx",
         // A PDF whose text couldn't be read: its read's code.
         refused: r && !r.ok ? r.code : undefined,
         text:
           d.mediaType === "text/mdx"
             ? blankMdx(contents.get(d.id)?.toString("utf8") || "")
-            : r
-              ? pdfText(d) || ""
-              : contents.get(d.id)?.toString("utf8") || "",
+            : d.mediaType === "text/vtt"
+              ? transcriptText(contents.get(d.id)?.toString("utf8") || "")
+              : r
+                ? pdfText(d) || ""
+                : contents.get(d.id)?.toString("utf8") || "",
         // What the load read from it, if it did.
         extraction: extractions.get(readKey(loadId, d.id)),
       };
@@ -1755,8 +1766,8 @@ export async function handleDocumentUpload(
 }
 
 // Acme's fixtures for pnpm dev:mock (MOCK_DOCUMENT_FIXTURES): a CSV, a
-// JSON and a PDF document in General, uploaded, and a scan with no text
-// layer, whose read fails.
+// JSON and a PDF document in General, uploaded, a scan with no text layer,
+// whose read fails, and a renewal call's transcript, as Teams exports one.
 const FIXTURES: {
   name: string;
   mediaType: DocumentMediaType;
@@ -1821,6 +1832,43 @@ const FIXTURES: {
     mediaType: "application/pdf",
     bytes: textPdf([[], []]),
   },
+  {
+    name: "renewal-call.vtt",
+    mediaType: "text/vtt",
+    bytes: Buffer.from(
+      [
+        "WEBVTT",
+        "",
+        ...[
+          [
+            "00:00:03.120",
+            "Ada Lovelace",
+            "Thanks for joining. Globex Corporation renews on 1 December.",
+          ],
+          [
+            "00:00:07.480",
+            "Ada Lovelace",
+            "They want 250 seats at the Enterprise rate.",
+          ],
+          [
+            "00:00:11.020",
+            "Grace Hopper",
+            "Initech LLC asked for the same discount.",
+          ],
+          [
+            "00:00:15.900",
+            "Ada Lovelace",
+            "Then both renewals go to the board together.",
+          ],
+        ].flatMap(([start, speaker, words], i) => [
+          `7b2f3c1e-4a5d-4e8b-9c0d-1f2e3a4b5c6d/${12 + i}-0`,
+          `${start} --> ${start.replace(/\.\d+$/, ".900")}`,
+          `<v ${speaker}>${words}</v>`,
+          "",
+        ]),
+      ].join("\n"),
+    ),
+  },
 ];
 
 onReset(() => {
@@ -1863,10 +1911,12 @@ onReset(() => {
       uploads: [],
     });
     contents.set(id, bytes);
-    void (
-      FORMATS[f.mediaType].kind === "pdf"
-        ? readPdfText(bytes)
-        : readTableFile(f.mediaType, bytes)
-    ).then((result) => reads.set(id, { at: 0, result }));
+    // Text has no read: it is ready as it is.
+    if (FORMATS[f.mediaType].kind !== "text")
+      void (
+        FORMATS[f.mediaType].kind === "pdf"
+          ? readPdfText(bytes)
+          : readTableFile(f.mediaType, bytes)
+      ).then((result) => reads.set(id, { at: 0, result }));
   });
 });

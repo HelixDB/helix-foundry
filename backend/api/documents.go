@@ -75,7 +75,7 @@ func (s *Service) createFoundryDocument(ctx context.Context, ontologyID string, 
 		return nil, status.Error(codes.InvalidArgument, "name must be 1 to 255 characters with no slash, backslash or control character")
 	case !ok || !slices.Contains(cfg.MediaTypes, mediaType):
 		return nil, status.Errorf(codes.InvalidArgument, "Foundry takes Markdown (.md, .markdown), MDX (.mdx), plain text (.txt), JSON (.json), CSV (.csv), "+
-			"TSV (.tsv), JSONL (.jsonl, .ndjson), Parquet (.parquet) and PDF (.pdf) documents; %q is none of them", req.GetName())
+			"TSV (.tsv), JSONL (.jsonl, .ndjson), Parquet (.parquet), PDF (.pdf) and WebVTT (.vtt) documents; %q is none of them", req.GetName())
 	case extType != mediaType:
 		return nil, status.Errorf(codes.InvalidArgument, "media_type %q does not match %q, which is %s", mediaType, req.GetName(), extType)
 	case req.GetSizeBytes() <= 0 || req.GetSizeBytes() > cfg.MaxBytesFor(mediaType):

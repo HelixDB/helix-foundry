@@ -173,10 +173,12 @@ var errFilesReset = errors.New("google: the files table is read in full")
 // row, and the syncer its document. A file moved between shared drives
 // keeps its row and document, with its new drive, whichever feed shows the
 // move first, and when the other shows it only at the next read. Once every
-// feed is read, as a full read lists before it exports, the Docs shown are
-// offered, newest first (googleExporter): a changed one is exported again.
-// A Doc its owner no longer lets the user download loses the document the
-// stream holds, if Drive's version of it changed; a full read leaves it out.
+// feed is read, as a full read lists before it exports, the Docs and
+// transcripts shown are offered, newest first (googleExporter): a changed
+// one is exported or downloaded again. One its owner no longer lets the
+// user download, or a transcript grown past googleTranscriptMaxBytes, loses
+// the document its stream holds, if Drive's version of it changed; a full
+// read leaves it out.
 //
 // The files table is reset, and read in full, when there is no cursor; when
 // the shared drives the user can read changed (one joined has no token; one
@@ -285,8 +287,8 @@ func (c *googleClient) fileChanges(ctx context.Context, prev *googleFilesCursor,
 	for _, doc := range docs {
 		if !doc.withheld {
 			err = exporter.offer(ctx, doc)
-		} else if _, held := w.Held(googleDocsStream.Name, doc.id); held && w.Want(googleDocsStream.Name, doc.id, doc.version) {
-			err = w.Drop(googleDocsStream.Name, doc.id)
+		} else if _, held := w.Held(doc.stream, doc.id); held && w.Want(doc.stream, doc.id, doc.version) {
+			err = w.Drop(doc.stream, doc.id)
 		}
 		if err != nil {
 			return nil, err

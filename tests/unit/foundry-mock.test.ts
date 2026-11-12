@@ -844,27 +844,29 @@ describe("mock document sets", () => {
     expect(await read(terms)).toBeNull();
   });
 
-  it("holds a CSV, a JSON, a PDF and a scan in Acme's General for dev:mock only", async () => {
+  it("holds a CSV, a JSON, a PDF, a scan and a transcript in Acme's General for dev:mock only", async () => {
     const general = async () =>
       (await call("GET", `${DOCS}?setId=${GENERAL}`)).body.documents;
     expect(await general()).toEqual([]);
     vi.stubEnv("MOCK_DOCUMENT_FIXTURES", "1");
     try {
       resetState();
-      // Each is read as the mock starts; the scan has no text to read.
+      // Each is read as the mock starts; the scan has no text to read, and
+      // the transcript, text, is ready as it is.
       await vi.waitFor(async () =>
         expect(
           (await general()).map(
             (d: { read: { state: string } }) => d.read.state,
           ),
         ).toEqual([
+          "FOUNDRY_FILE_READ_STATE_READY",
           "FOUNDRY_FILE_READ_STATE_FAILED",
           ...Array(3).fill("FOUNDRY_FILE_READ_STATE_READY"),
         ]),
       );
-      const [scan, ...docs] = await general();
+      const [transcript, scan, ...docs] = await general();
       expect(
-        [scan, ...docs].map(
+        [transcript, scan, ...docs].map(
           (d: { name: string; mediaType: string; status: string }) => [
             d.name,
             d.mediaType,
@@ -872,6 +874,7 @@ describe("mock document sets", () => {
           ],
         ),
       ).toEqual([
+        ["renewal-call.vtt", "text/vtt", "uploaded"],
         ["signed-order-form.pdf", "application/pdf", "uploaded"],
         ["renewal-terms.pdf", "application/pdf", "uploaded"],
         ["pricing.json", "application/json", "uploaded"],
@@ -893,6 +896,12 @@ describe("mock document sets", () => {
         "customer,plan,seats,renews_on,owner",
       );
       expect(docs[2].sha256).toBe(sha(Buffer.from(csv.text)));
+      // The transcript's :content is its cues, as uploaded.
+      const vtt = (await call("GET", `${DOCS}/${transcript.id}:content`)).body;
+      expect(vtt.text).toMatch(
+        /^WEBVTT\n\n7b2f3c1e-[\w-]+\/12-0\n00:00:03\.120 --> /,
+      );
+      expect(transcript.read.kind).toBe("FOUNDRY_READ_KIND_TEXT");
     } finally {
       vi.unstubAllEnvs();
     }
