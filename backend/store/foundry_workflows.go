@@ -327,7 +327,11 @@ FROM foundry_workflow_runs WHERE workflow_id=? AND client_token=?`, workflowID, 
 func (s *mysqlDB) ListFoundryWorkflowRuns(ctx context.Context, workflowID string, startedBy *access.Principal, pageToken string, limit int) ([]*model.FoundryWorkflowRun, string, error) {
 	conds, args := []string{"workflow_id=?"}, []any{workflowID}
 	if startedBy != nil {
-		conds, args = append(conds, startedByColumn(*startedBy)+"=?"), append(args, startedBy.ID)
+		column, ok := startedByColumn(*startedBy)
+		if !ok {
+			return nil, "", nil
+		}
+		conds, args = append(conds, column+"=?"), append(args, startedBy.ID)
 	}
 	if pageToken != "" {
 		cursor, err := decodeTimeIDCursor(pageToken)
@@ -703,14 +707,16 @@ WHERE status='done' AND workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) GR
 }
 
 // startedByColumn is the column of foundry_workflow_runs naming who started a
-// run of p's kind. A run is started by a user or a service credential; a
-// team, which starts none, is held to the user column, which never holds a
-// team's id.
-func startedByColumn(p access.Principal) string {
-	if p.Kind == access.PrincipalServiceCredential {
-		return "started_by_service_credential_id"
+// run of p's kind: a user or a service credential. A team starts no run, and
+// has none (false).
+func startedByColumn(p access.Principal) (string, bool) {
+	switch p.Kind {
+	case access.PrincipalUser:
+		return "started_by_user_id", true
+	case access.PrincipalServiceCredential:
+		return "started_by_service_credential_id", true
 	}
-	return "started_by_user_id"
+	return "", false
 }
 
 // TallyFoundryWorkflowRuns counts the runs by of each of workflowIDs, as
@@ -724,8 +730,11 @@ func (s *mysqlDB) TallyFoundryWorkflowRuns(ctx context.Context, workflowIDs []st
 	for _, w := range workflowIDs {
 		out[w] = model.FoundryWorkflowRunTally{Verdicts: map[string]int64{}}
 	}
+	column, ok := startedByColumn(by)
+	if !ok {
+		return out, nil
+	}
 	args := append(toAnySlice(workflowIDs), by.ID)
-	column := startedByColumn(by)
 	rows, err := s.db.QueryContext(ctx, `SELECT workflow_id, COUNT(*), SUM(status = 'finished'), MAX(started_at) FROM foundry_workflow_runs
 WHERE workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND `+column+`=? GROUP BY workflow_id`, args...)
 	if err != nil {

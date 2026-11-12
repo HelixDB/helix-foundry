@@ -188,8 +188,9 @@ func (s *mysqlDB) SetFoundryAccessWorkflows(ctx context.Context, workspaceID str
 			workspaceID, principal.Kind.String(), principal.ID)
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_access_workflows_off (workspace_id, principal_kind, principal_id, created_by_user_id)
-VALUES (?, ?, ?, ?)`, workspaceID, principal.Kind.String(), principal.ID, byUserID)
+	// Not INSERT IGNORE, which would let a row past the table's checks.
+	_, err := s.db.ExecContext(ctx, `INSERT INTO foundry_access_workflows_off (workspace_id, principal_kind, principal_id, created_by_user_id)
+VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE principal_id = principal_id`, workspaceID, principal.Kind.String(), principal.ID, byUserID)
 	return err
 }
 
