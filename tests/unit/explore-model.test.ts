@@ -31,13 +31,21 @@ import {
   parseEntity,
   parseEntityId,
   parseFactEvidence,
+  heldClaimDocs,
   isLayoutProp,
+  nameLinksRequest,
+  parseNameLinks,
   propertyViews,
   resolvedByText,
   sameValue,
   type PropEvidence,
 } from "@/web/areas/explore/model";
 import type { Scope } from "@/web/areas/explore/load-scope";
+import {
+  approvable,
+  markDiffering,
+  type Unsettled,
+} from "@/web/areas/reviews/model";
 
 // The reads over C3, run through the mock's v3 interpreter over a graph the
 // mock's load wrote: the seeded contract names two Stripe customers (Globex
@@ -871,6 +879,108 @@ describe("an entity's page", () => {
     expect(page.rows).toEqual([
       expect.objectContaining({ source: "src_x", props: ["amount"] }),
     ]);
+  });
+});
+
+describe("a held claim's other end, on an entity's page", () => {
+  // Two hedged claims of a contract, each at a customer linked by part of
+  // its name: that link's review concerns the customer alone, so the
+  // contract's page doesn't list it.
+  const db = new MockGraph(),
+    g = db.view(LOAD);
+  ingestChunk(
+    g,
+    chunk,
+    [
+      ["cus_GLOBEX01", "Globex Corporation"],
+      ["cus_INITECH2", "Initech LLC"],
+    ].map(([key, name]) => ({
+      type: "Customer",
+      key: key!,
+      name: name!,
+      props: { customer_id: key!, company_name: name! },
+      names: ["company_name"],
+    })),
+  );
+  extractDocument(
+    g,
+    {
+      id: "doc_1",
+      name: "variant.md",
+      text: "# Hedged deal\n\nReportedly, Globex Corporation and Initech LLC may have signed.\n",
+      markdown: true,
+      ontologyVersion: "foundry-v3",
+    },
+    ontology,
+    SCOPE_OF_DOCUMENTS,
+    [],
+    undefined,
+    "part_name",
+  );
+  const page = parseEntity(
+    read(db, entityRequest(SCOPE, { type: "Contract", name: "hedged deal" })),
+  );
+  const ends = (reviews: typeof page.reviews) =>
+    reviews.flatMap((r) =>
+      r.settle?.kind === "release" ? [r.settle.unsettled ?? []] : [],
+    );
+
+  it("reads the names' reviews from the claims' documents, and marks what holds each claim", () => {
+    expect(page.reviews.map((r) => r.reason)).toEqual([
+      "low_confidence",
+      "low_confidence",
+    ]);
+    const links = parseNameLinks(
+      read(db, nameLinksRequest(SCOPE, heldClaimDocs(page.reviews))!),
+    );
+    expect(links.map((l) => [l.reason, l.settle?.kind])).toEqual([
+      ["part_name", "resolve"],
+      ["part_name", "resolve"],
+    ]);
+    const marked = markDiffering(page.reviews, links);
+    const named = ends(marked);
+    expect(
+      named.map((e) => e.map((u: Unsettled) => `${u.name} ${u.by}`)).sort(),
+    ).toEqual([["Globex Corporation part_name"], ["Initech LLC part_name"]]);
+    // Each where its name is, after the claim's sentence starts.
+    named.forEach((e, i) =>
+      expect(e[0]!.at!.start).toBeGreaterThan(page.reviews[i]!.start),
+    );
+    // So Approve all leaves both out, as on the document's page; without
+    // that read it would send both, and the engine would refuse both.
+    expect(approvable(marked, [], () => false)).toEqual([]);
+    expect(
+      approvable(markDiffering(page.reviews), [], () => false),
+    ).toHaveLength(2);
+  });
+
+  it("reads only the load's reviews of such links, and nothing with no held claim", () => {
+    // One document, however many of its claims are held.
+    expect(heldClaimDocs(page.reviews)).toEqual(["doc_1"]);
+    const other = nameLinksRequest(
+      { id: "load_2" },
+      heldClaimDocs(page.reviews),
+    )!;
+    expect(parseNameLinks(read(db, other))).toEqual([]);
+    expect(nameLinksRequest(SCOPE, [])).toBeNull();
+    const globex = parseEntity(
+      read(db, entityRequest(SCOPE, { type: "Customer", key: "cus_GLOBEX01" })),
+    );
+    // A customer's page lists its own link's review and its held claim.
+    expect(globex.reviews.map((r) => r.reason).sort()).toEqual([
+      "low_confidence",
+      "part_name",
+    ]);
+    expect(
+      heldClaimDocs(globex.reviews.filter((r) => r.settle?.kind !== "release")),
+    ).toEqual([]);
+    // What it reads is never trusted: a review missing its place is left out.
+    expect(
+      parseNameLinks({
+        links_0: [{ reason: "part_name", section: 0 }, "junk"],
+        other: [{ reason: "part_name", section: 0, start: 1 }],
+      }),
+    ).toEqual([]);
   });
 });
 

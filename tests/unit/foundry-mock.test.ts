@@ -3181,7 +3181,9 @@ describe("review decisions", () => {
       Object.assign(config, { documentHeld: weak });
       await uploaded(
         "variant.md",
-        Buffer.from("# Hedged deal\n\nGlobex Corporation may have signed.\n"),
+        Buffer.from(
+          "# Hedged deal\n\nReportedly, Globex Corporation may have signed.\n",
+        ),
       );
       const g = await loaded("first");
       const rv = reviews(g).find((n) => n.props.reason === "low_confidence")!;
@@ -3190,7 +3192,11 @@ describe("review decisions", () => {
         type: "Customer",
         norm_name: "globex corporation",
         candidates: ["cus_GLOBEX01"],
+        // At the name, as the engine writes it, not at the claim's sentence.
+        quote: "Globex Corporation",
+        section: rv.props.section,
       });
+      expect(Number(name.props.start)).toBeGreaterThan(Number(rv.props.start));
       const statementHash = createHash("sha256")
         .update(`signed_with\u001f${String(rv.props.statement)}`)
         .digest("hex");
