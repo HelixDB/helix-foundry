@@ -184,7 +184,7 @@ function ApproveAll({
       {confirming && ready.length > 0 && (
         <ConfirmDialog
           title={`Approve ${plural(ready.length, "claim")}?`}
-          description="This load writes each one it can, at once. Any it can't stays held, and its card says why."
+          description="This load writes each one it can, at once. Any it can't stays held, and its card says why. On a link that holds one value, an approval replaces what the link holds."
           confirmLabel="Approve all"
           onConfirm={() => void run(ready)}
           onCancel={() => setConfirming(false)}

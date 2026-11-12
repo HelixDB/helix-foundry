@@ -154,6 +154,45 @@ describe("what Approve all approves", () => {
       ),
     ).toEqual(["held-0", "held-20"]);
   });
+  it("leaves out a claim held as conflicting with what its link holds: approving it replaces a value (contract 4.14.0)", () => {
+    const reviews = [settled(held(0)), settled(held(20, "Globex", "conflict"))];
+    for (const single of [many, () => true])
+      expect(ids(model.approvable(reviews, [], single))).toEqual(["held-0"]);
+  });
+  it("leaves out claims giving one subject of a link that holds one value different objects: the later approval would hold it", () => {
+    const reviews = [
+      settled(held(0, "Initech LLC")),
+      settled(held(20, "Globex")),
+      settled(held(40, "Initech LLC")),
+    ];
+    expect(ids(model.approvable(reviews, [], () => true))).toEqual([]);
+    // On a link that holds many, each is its own fact.
+    expect(ids(model.approvable(reviews, [], many))).toEqual([
+      "held-0",
+      "held-20",
+      "held-40",
+    ]);
+    // The same object twice is no rivalry, and a rival already approved
+    // still counts: approving the other would replace it.
+    expect(
+      ids(model.approvable([reviews[0]!, reviews[2]!], [], () => true)),
+    ).toEqual(["held-0", "held-40"]);
+    expect(ids(model.approvable(reviews, [approved(20)], () => true))).toEqual(
+      [],
+    );
+    // Another subject is another link.
+    const other = settled({
+      ...held(60, "Globex"),
+      statement: JSON.stringify({
+        subject: { type: "Contract", name: "Another deal" },
+        object: { type: "Customer", name: "Globex" },
+        props: {},
+      }),
+    });
+    expect(ids(model.approvable([reviews[0]!, other], [], () => true))).toEqual(
+      ["held-0", "held-60"],
+    );
+  });
   it("leaves out a claim already decided, even one approved as it read before", () => {
     const reviews = [settled(held(0)), settled(held(20)), settled(held(40))];
     expect(

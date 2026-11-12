@@ -96,6 +96,11 @@ describe("a held claim", () => {
       expect(model.matchesReview(decided, release)).toBe(true);
     },
   );
+  it("held as conflicting with what its link holds is approved the same way, said so (contract 4.14.0)", () => {
+    const s = model.settleable({ ...held, reason: "conflict" }, []).settle;
+    expect(s).toEqual({ ...release, conflict: true });
+    expect(model.matchesReview(decided, s!)).toBe(true);
+  });
   it("is matched by its key and place", () => {
     for (const other of [
       { claimKey: "b".repeat(64) },
@@ -309,12 +314,16 @@ describe("a claim at the same place", () => {
       reason,
       ...model.settleable({ ...held, reason, statement: stated(who) }, []),
     });
-    const [approvable, conflict] = model.markDiffering([
+    const [approvable, conflict, violation] = model.markDiffering([
       review("low_confidence", "one"),
       review("conflict", "other"),
+      review("violation", "third"),
     ]);
     expect(approvable!.settle).toMatchObject({ differs: true });
-    expect(conflict!.settle).toBeUndefined();
+    // A conflict is a release too from contract 4.14.0, and as unsure.
+    expect(conflict!.settle).toMatchObject({ conflict: true, differs: true });
+    expect(violation!.settle).toBeUndefined();
+    expect(violation!.claim).toBeDefined();
   });
   it("of another reason with no statement counts too", () => {
     const { statement: _, ...none } = held;
@@ -709,7 +718,7 @@ describe("review choices", () => {
   it("offers nothing for a stale review or one nothing settles", () => {
     const stale = model.settleable({ ...name, type: undefined }, []);
     expect(model.decisionFor(stale, { entityKey: null })).toBeUndefined();
-    const other = model.settleable({ ...name, reason: "conflict" }, []);
+    const other = model.settleable({ ...name, reason: "violation" }, []);
     expect(model.decisionFor(other, { entityKey: null })).toBeUndefined();
   });
   it("matches overrides by ontology identity, not review or load id", () => {
@@ -825,7 +834,7 @@ describe("what a card says of a value chosen for its property", () => {
   it("says only what the load knows once it was sent", () => {
     const text = model.decidedText({ status: "applied" }, "36");
     expect(text).toBe(
-      "Decided: 36. This load was sent the decision, and holds that value unless a document dated after the decision states another. The review stays listed here: it was written before the decision.",
+      "Decided: 36. This load was sent the decision, and holds that value unless a document dated after the decision states another. The documents’ values stay listed here, as in every load: this decision settles them.",
     );
     // A value removed shows as none.
     expect(model.decidedText({ status: "applied" }, "")).toMatch(
@@ -839,9 +848,15 @@ describe("what a card says of a value chosen for its property", () => {
       "Decided: 36, but the job that sends it to this load failed. Choose it again to send it.",
     );
   });
+  it("says it settles the review where the load holds the value, sent or read when the load was made (contract 4.14.0)", () => {
+    for (const status of ["applied", ""] as const)
+      expect(model.decidedText({ status }, "36", null, true)).toBe(
+        "Decided: 36. This load holds it. The documents’ values stay listed here, as in every load: this decision settles them.",
+      );
+  });
   it("tells a load that read it when it was made from one that hasn't", () => {
-    expect(model.decidedText({ status: "" }, "36")).toContain(
-      "This load read the saved decision, and the review is still open",
+    expect(model.decidedText({ status: "" }, "36")).toBe(
+      "Decided: 36. This load read the decision and holds another value: a document dated after the decision states it. Choose again or remove the decision.",
     );
     for (const unread of [undefined, null])
       expect(model.decidedText(unread, "36")).toBe(
@@ -858,6 +873,10 @@ describe("why a load kept an approved claim held", () => {
     expect(said("changed")).toContain("reads differently now");
     expect(said("differs")).toContain("read more than one way");
     expect(said("conflict")).toContain("conflicts with what the graph holds");
+    // From contract 4.14.0 an approval replaces a one-valued link's value:
+    // what's left of a conflict is a property, or an old load's link.
+    expect(said("conflict")).toContain("a property of it differs");
+    expect(said("conflict")).not.toContain("same date");
     expect(said("blocked")).toContain("break a rule");
     expect(said("no_statement")).toContain("keeps nothing to write");
     expect(said("not_stated")).toContain("no longer states it");

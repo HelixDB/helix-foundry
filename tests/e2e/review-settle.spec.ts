@@ -745,6 +745,59 @@ test("promises no edge on a link that holds one value", async ({ page }) => {
   await expect(held).toContainText("Approving states:");
   await expect(held).not.toContainText("Approving writes:");
   await expect(held).toContainText("This link holds one value");
+  await expect(held).toContainText(
+    "of two approvals, the later holds the link",
+  );
+});
+
+// Contract 4.14.0: an approval of a link that holds one value decides it, so
+// a claim held as conflicting with what such a link holds can be approved.
+test("approves a claim that conflicts with what a link holding one value holds, which replaces it", async ({
+  page,
+}) => {
+  await mock.configure({
+    documentHeld: "conflict",
+    oneValuedLinks: ["signed_with"],
+  });
+  await hedged(page, "Initech LLC signed. Globex Corporation may have signed.");
+  const held = reviews(page)
+    .getByRole("listitem")
+    .filter({ hasText: "Disagrees with your data" });
+  await expect(held).toContainText(
+    "Approving states: Hedged deal (Contract) → signed_with → Globex Corporation (Customer)",
+  );
+  await expect(held).toContainText(
+    "The graph holds another value for it now, which approving replaces.",
+  );
+  await expect(
+    held.getByRole("button", { name: "Reject", exact: true }),
+  ).toBeVisible();
+  await approve(held);
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved: “Globex Corporation may have signed.”");
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  await expect(page.getByRole("list", { name: "Facts" })).toContainText(
+    "Globex Corporation",
+  );
+});
+
+test("offers nothing on a conflict of a link that holds many values", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "conflict" });
+  await hedged(page, "Initech LLC signed. Globex Corporation may have signed.");
+  const held = reviews(page)
+    .getByRole("listitem")
+    .filter({ hasText: "Disagrees with your data" });
+  await expect(held).toContainText(
+    "It conflicts with a property of a fact the graph holds of this link, which no approval changes.",
+  );
+  for (const name of ["Approve", "Reject"])
+    await expect(held.getByRole("button", { name, exact: true })).toHaveCount(
+      0,
+    );
 });
 
 test("hides Approve from a member", async ({ page }) => {
@@ -1188,9 +1241,10 @@ test("keeps a table's value over a document's, and replaces it only by choice", 
     decision: { prop: { text: "GBP" } },
   });
   // The load is sent the choice at once: the table's value gives way, and
-  // the card no longer calls the value it holds the table's.
+  // the card no longer calls the value it holds the table's. It stays
+  // listed, settled by the decision.
   await expect(review.getByRole("status")).toContainText(
-    "Decided: GBP. This load was sent the decision",
+    "Decided: GBP. This load holds it. The documents’ values stay listed here, as in every load: this decision settles them.",
   );
   await expect(review).not.toContainText("The table’s value");
   await expect(review.getByLabel("Choose another value")).toBeVisible();
@@ -1218,4 +1272,10 @@ test("keeps a table's value over a document's, and replaces it only by choice", 
   await expect(
     page.getByRole("list", { name: "Saved decisions" }),
   ).toContainText("currency: GBP");
+  // A load made with the decision lists the document's value against the
+  // table's too (contract 4.14.0), and its card says the decision settles it.
+  await expect(review.getByRole("status")).toContainText(
+    "Decided: GBP. This load holds it.",
+  );
+  await expect(review).not.toContainText("still open");
 });

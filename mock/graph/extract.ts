@@ -676,9 +676,7 @@ function settle(
     sameValue(q.props.value!, quotes[0]!.props.value!),
   );
   const disagreeing = rowSet
-    ? quotes.filter(
-        (q) => row === undefined || !sameValue(q.props.value!, row),
-      )
+    ? quotes.filter((q) => row === undefined || !sameValue(q.props.value!, row))
     : agree
       ? []
       : quotes;

@@ -437,7 +437,9 @@ export function ontologyVersion(
   const one = knobs.oneValuedLinks.reduce(
     (t, link) =>
       t.replace(
-        new RegExp(`(\\[links\\.${link}\\]\\n(?:[^\\[\\n][^\\n]*\\n|\\n)*?)cardinality = "many"`),
+        new RegExp(
+          `(\\[links\\.${link}\\]\\n(?:[^\\[\\n][^\\n]*\\n|\\n)*?)cardinality = "many"`,
+        ),
         '$1cardinality = "one"',
       ),
     toml,

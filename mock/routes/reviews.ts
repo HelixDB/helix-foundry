@@ -199,7 +199,9 @@ export const reviewRoutes: MockRoute[] = [
           "FAILED_PRECONDITION",
           "this claim conflicts with a property of a fact the graph holds; only a conflict on a link that holds one value can be approved",
         );
-      if (["low_confidence", "unverified", "conflict"].includes(text(r.reason))) {
+      if (
+        ["low_confidence", "unverified", "conflict"].includes(text(r.reason))
+      ) {
         const read = (choice.release ?? choice.reject)?.statementHash;
         if (read === undefined)
           return fail(

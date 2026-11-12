@@ -6,7 +6,11 @@ import {
   type AgentBinding,
 } from "../../src/web/areas/ontology/model";
 import { CREDITS_PER_PROFILE } from "../../src/web/areas/ontology/enrichment-fields";
-import { decisions as saved, decisionsFor, holdsOne } from "../review-decisions";
+import {
+  decisions as saved,
+  decisionsFor,
+  holdsOne,
+} from "../review-decisions";
 import { FOUNDRY_NODES as N } from "../../src/shared/foundry-labels";
 import { parse } from "smol-toml";
 import type {
@@ -776,7 +780,10 @@ function ontologyOfVersion(def: Definition): ExtractOntology & {
       string,
       { names?: string[]; identifiers?: Record<string, string> }
     >;
-    links?: Record<string, { from?: string; to?: string; cardinality?: string }>;
+    links?: Record<
+      string,
+      { from?: string; to?: string; cardinality?: string }
+    >;
   } = {};
   try {
     doc = parse(String(def.ontology_toml || "")) as typeof doc;
