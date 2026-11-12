@@ -9,6 +9,7 @@ import type {
   ListFoundryWorkflowRunsResponse,
   ListFoundryWorkflowsResponse,
 } from "../../../shared/wfe";
+import { infiniteQueryOptions } from "@tanstack/react-query";
 import { api } from "../../api";
 
 // The Workflows pages' routes: an ontology's workflows, one, its runs, and
@@ -76,14 +77,22 @@ export const workflowQueries = {
     refetchInterval: RUNS_POLL_MS,
     placeholderData: (previous?: FoundryWorkflowInsights) => previous,
   }),
-  // A workflow's newest runs, asked again so new ones show.
-  runs: (ws: string, o: string, w: string) => ({
-    queryKey: [ws, "ontology", o, "workflows", w, "runs"],
-    queryFn: () => api<ListFoundryWorkflowRunsResponse>(runs(ws, o, w)),
-    refetchInterval: (q: {
-      state: { data?: ListFoundryWorkflowRunsResponse };
-    }) => (q.state.data?.runs?.some(isLive) ? OPEN_RUN_POLL_MS : RUNS_POLL_MS),
-  }),
+  // A workflow's runs, newest first, a page of 50 at a time (Load more asks
+  // for the next); every page read is asked again so new runs show.
+  runs: (ws: string, o: string, w: string) =>
+    infiniteQueryOptions({
+      queryKey: [ws, "ontology", o, "workflows", w, "runs"],
+      initialPageParam: "",
+      queryFn: ({ pageParam }) =>
+        api<ListFoundryWorkflowRunsResponse>(
+          runs(ws, o, w) + (pageParam ? `?pageToken=${enc(pageParam)}` : ""),
+        ),
+      getNextPageParam: (last) => last.nextPageToken || undefined,
+      refetchInterval: (q) =>
+        q.state.data?.pages.some((p) => p.runs?.some(isLive))
+          ? OPEN_RUN_POLL_MS
+          : RUNS_POLL_MS,
+    }),
   run: (ws: string, o: string, w: string, r: string) => ({
     queryKey: [ws, "ontology", o, "workflows", w, "runs", r],
     queryFn: () =>

@@ -26,6 +26,7 @@ import { routes } from "../../mock/routes";
 import { sendPieces } from "../../mock/routes/event-sources";
 import {
   ASSESSMENT_USD_MICROS,
+  RUNS_PAGE,
   WORKFLOW_CAPS,
   mockAssessment,
   tracked,
@@ -406,6 +407,26 @@ describe("the mock's workflows", () => {
     expect((await call("DELETE", `${W}/${wf}`)).status).toBe(404);
   });
 
+  it("lists runs newest first, a page at a time, as the backend does", async () => {
+    const wf = (await create()).body.workflow.id;
+    const ids: string[] = [];
+    for (let i = 0; i <= RUNS_PAGE; i++)
+      ids.push((await start(wf, { input: `q${i}` })).body.run.id);
+    const first = (await call("GET", `${W}/${wf}/runs`)).body;
+    expect(first.runs.map((r: any) => r.id)).toEqual(
+      ids.toReversed().slice(0, RUNS_PAGE),
+    );
+    expect(first.nextPageToken).toBe(first.runs.at(-1).id);
+    const second = (
+      await call("GET", `${W}/${wf}/runs?pageToken=${first.nextPageToken}`)
+    ).body;
+    expect(second.runs.map((r: any) => r.id)).toEqual([ids[0]]);
+    expect(second.nextPageToken).toBeUndefined();
+    expect((await call("GET", `${W}/${wf}/runs?pageToken=nope`)).status).toBe(
+      400,
+    );
+  });
+
   it("records a call under the run its body names, checked first", async () => {
     const wf = (await create()).body.workflow.id;
     const run = (await start(wf, { input: "q" })).body.run;
@@ -652,15 +673,18 @@ describe("a run's assessment, read without trust", () => {
     expect(verdictsText(undefined)).toBe("");
     expect(VERDICTS).toHaveLength(5);
   });
-  it("turns a suggestion into a draft's goal within its cap", () => {
+  it("turns suggestions into a draft's goal within its cap", () => {
     const a = assessmentOf(JSON.stringify(full))!;
-    expect(suggestionGoal("Add renewal_owner.", a.gaps, 2000)).toBe(
+    expect(suggestionGoal(["Add renewal_owner."], a.gaps, 2000)).toBe(
       "Add renewal_owner.\n\nAn agent's run lacked: missing property: Customer.renewal_owner; other: Something new.",
     );
-    expect(suggestionGoal("Add renewal_owner.", [], 2000)).toBe(
+    expect(suggestionGoal(["Add renewal_owner."], [], 2000)).toBe(
       "Add renewal_owner.",
     );
-    expect([...suggestionGoal("é".repeat(50), a.gaps, 10)]).toHaveLength(10);
+    expect(suggestionGoal(["Add x.", "Link y to z."], [], 2000)).toBe(
+      "Make these changes:\n- Add x.\n- Link y to z.",
+    );
+    expect([...suggestionGoal(["é".repeat(50)], a.gaps, 10)]).toHaveLength(10);
   });
 });
 

@@ -86,13 +86,13 @@ test("an agent's run shows its request, what it read and asked, and its answer",
   ).toBe(404);
 
   // The open run shows on the workflow's page as it goes.
-  const runs = page.getByRole("grid", { name: "Runs" });
+  const runs = page.getByRole("list", { name: "Runs" });
   // The list asks again every 10 s while no run is open.
   await expect(
     runs.getByText("Which customers are up for renewal?"),
   ).toBeVisible({ timeout: 15_000 });
-  await expect(runs.getByText("Open")).toBeVisible();
-  await expect(runs.getByText("1 read · 1 question")).toBeVisible();
+  await expect(runs.getByText("Open", { exact: true })).toBeVisible();
+  await expect(runs.getByText(/^1 read · 1 question/)).toBeVisible();
   await runs
     .getByRole("link", { name: "Which customers are up for renewal?" })
     .click();
@@ -133,9 +133,15 @@ test("an agent's run shows its request, what it read and asked, and its answer",
     "href",
     "#call-1",
   );
+  // Back on the workflow's page, the run reads by its verdict, opening to
+  // what the assessment found.
   await page.getByRole("link", { name: "Renewal desk" }).click();
+  await expect(runs.getByText("Essential", { exact: true })).toBeVisible();
+  await runs
+    .getByRole("button", { name: "Show what the assessment found" })
+    .click();
   await expect(
-    page.getByText("Assessed: 1 essential.", { exact: false }),
+    runs.getByRole("region", { name: "Claims" }).getByText("Supported"),
   ).toBeVisible();
   await page.goBack();
 
@@ -270,7 +276,7 @@ test("a restricted member uses workflows while their Workflows permission is on"
   ).toBe(200);
 });
 
-test("the workflows' trends: who ran them, the metrics, where runs go and what to change", async ({
+test("the overview: the metrics, who ran them, the workflows and what to change", async ({
   page,
 }) => {
   await mock.configure({ workflowDemo: true });
@@ -279,47 +285,90 @@ test("the workflows' trends: who ran them, the metrics, where runs go and what t
   const insights = page.getByRole("region", { name: "Insights" });
   const metrics = insights.getByRole("group", { name: "Metrics" });
   await expect(metrics.getByRole("button")).toHaveCount(4);
+  // How often the ontology helped is charted first, over a week a day.
   await expect(
-    insights.getByRole("heading", {
-      name: "Runs by how much the ontology helped",
-    }),
+    insights.getByRole("heading", { name: "Ontology helped, by day" }),
   ).toBeVisible();
+  await expect(
+    metrics.getByRole("button", { name: /^Ontology helped/ }),
+  ).toHaveAttribute("aria-pressed", "true");
   const runs = metrics.getByRole("button", { name: /^Runs/ });
   const everyone = await runs.textContent();
 
   // One who started runs narrows every number.
-  const who = insights.getByRole("group", { name: "Who ran them" });
-  await who.getByRole("button", { name: /^Alan Turing/ }).click();
-  await expect(
-    who.getByRole("button", { name: /^Alan Turing/ }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await insights.getByRole("combobox", { name: "Started by" }).click();
+  await page.getByRole("option", { name: /^Alan Turing/ }).click();
   await expect(runs).not.toHaveText(everyone || "");
-  await who.getByRole("button", { name: /^Everyone/ }).click();
+  await insights.getByRole("combobox", { name: "Started by" }).click();
+  await page.getByRole("option", { name: /^Everyone/ }).click();
+  await expect(runs).toHaveText(everyone || "");
 
-  // A card charts its metric.
-  await metrics.getByRole("button", { name: /^Ontology helped/ }).click();
+  // The runs card charts runs a day by verdict.
+  await runs.click();
   await expect(
-    insights.getByRole("heading", { name: "Ontology helped, by day" }),
+    insights.getByRole("heading", {
+      name: "Runs a day, by how much the ontology helped",
+    }),
   ).toBeVisible();
-  await expect(insights.getByText("Used the ontology")).toBeVisible();
 
-  // A suggestion drafts a version with it as the goal.
-  const draft = insights
-    .getByRole("list", { name: "Suggested changes" })
-    .getByRole("link", { name: "Draft version" })
-    .first();
-  await expect(draft).toHaveAttribute("href", /\/generate\?goal=/);
+  // The workflows side by side, a row opening one.
+  const grid = page.getByRole("grid", { name: "Workflows" });
+  await expect(grid.getByRole("row")).toHaveCount(4);
+
+  // Suggestions ticked draft one version with them as its goal.
+  const draft = page.getByRole("button", { name: "Draft a version" });
+  await expect(draft).toBeDisabled();
+  const suggestions = page.getByRole("list", { name: "Suggested changes" });
+  await suggestions.getByRole("checkbox").nth(0).check();
+  await suggestions.getByRole("checkbox").nth(1).check();
+  await expect(page.getByText("2 changes chosen")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Draft a version" }),
+  ).toHaveAttribute("href", /\/generate\?goal=Make\+these\+changes/);
   // A gap opens the run that named it last.
-  await insights
+  await page
     .getByRole("list", { name: "Recurring gaps" })
-    .getByRole("link", { name: "Latest run" })
+    .getByRole("link")
     .first()
     .click();
   await expect(page).toHaveURL(/\/workflows\/wf_demo_\w+\/runs\/wfr_demo_/);
+});
 
-  // A workflow's page leads with the same, and connects its agent from a dialog.
-  await page.goto(`${O}/workflows/wf_demo_renewals`);
-  await expect(page.getByRole("region", { name: "Insights" })).toBeVisible();
+test("a workflow's page: its numbers, its runs and what to change for it", async ({
+  page,
+}) => {
+  await mock.configure({ workflowDemo: true });
+  await signIn(page);
+  // The overview's misleading count links here, filtered.
+  await page.goto(`${O}/workflows/wf_demo_renewals?verdict=misleading`);
+  await expect(
+    page.getByRole("region", { name: "Numbers" }).getByText("Misleading runs"),
+  ).toBeVisible();
+  const filter = page.getByRole("radiogroup", { name: "Show runs" });
+  await expect(
+    filter.getByRole("radio", { name: /^Misleading/ }),
+  ).toHaveAttribute("aria-checked", "true");
+  const runs = page.getByRole("list", { name: "Runs" });
+  await expect(runs.getByText("Essential", { exact: true })).toHaveCount(0);
+
+  // All of them: ten at first, more on asking.
+  await filter.getByRole("radio", { name: /^All/ }).click();
+  await expect(page).not.toHaveURL(/verdict=/);
+  await expect(runs.getByRole("listitem")).toHaveCount(10);
+  await page.getByRole("button", { name: "Show more runs" }).click();
+  await expect(runs.getByRole("listitem")).toHaveCount(30);
+
+  // A gap narrows them to the runs that named it.
+  await page
+    .getByRole("list", { name: "Recurring gaps" })
+    .getByRole("button", { name: /^Show its/ })
+    .first()
+    .click();
+  await expect(page.getByText(/^Naming/)).toBeVisible();
+  await page.getByRole("button", { name: "Show every run" }).click();
+  await expect(page.getByText(/^Naming/)).toHaveCount(0);
+
+  // It connects its agent from a dialog.
   await page.getByRole("button", { name: "Connect agent" }).click();
   await expect(
     page

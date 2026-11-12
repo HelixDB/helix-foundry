@@ -46,6 +46,9 @@ import { insights, starterOf } from "./workflow-insights";
 const BASE =
   "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows";
 
+// A page of runs, as the backend's (api/workflows.go workflowRunsPage).
+export const RUNS_PAGE = 50;
+
 // The backend's caps (store/model/foundry_workflow.go).
 export const WORKFLOW_CAPS = {
   workflows: 100,
@@ -736,11 +739,24 @@ export const workflowRoutes: MockRoute[] = [
       if (!isScope(s)) return s;
       const w = workflowOf(s.o.id, req.params.workflowId);
       if (isReplyOf(w)) return w;
+      // Newest first by when they started, RUNS_PAGE a page, as the backend
+      // pages them (runs started in the same instant newest made first); the
+      // token names the last run of the page before.
+      const all = state.runs
+        .filter((r) => r.workflowId === w.id && startedBy(r, own(req)))
+        .toReversed()
+        .toSorted((a, b) =>
+          (b.startedAt || "").localeCompare(a.startedAt || ""),
+        );
+      const token = req.query.get("pageToken") || "";
+      const from = token ? all.findIndex((r) => r.id === token) + 1 : 0;
+      if (token && !from) return fail("INVALID_ARGUMENT", "invalid page_token");
+      const page = all.slice(from, from + RUNS_PAGE);
       return ok({
-        runs: state.runs
-          .filter((r) => r.workflowId === w.id && startedBy(r, own(req)))
-          .toReversed()
-          .map(toRun),
+        runs: page.map(toRun),
+        ...(from + RUNS_PAGE < all.length && {
+          nextPageToken: page.at(-1)!.id,
+        }),
       } satisfies ListFoundryWorkflowRunsResponse);
     },
   },
