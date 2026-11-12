@@ -101,8 +101,9 @@ type documentStore interface {
 // failure is why an attempt did not succeed, worded for the customer.
 // Permanent ends the job; Budget ends it as budget_exhausted; anything else
 // is retried with backoff, and an Uncounted one (the database still building
-// an index) gives its attempt back. An Internal one (the agent's own error,
-// gRPC INTERNAL) is retried within ontologyagent.InternalAttempts attempts.
+// an index, its only cause) gives its attempt back until indexWait after the
+// job began. An Internal one (the agent's own error, gRPC INTERNAL) is
+// retried within ontologyagent.InternalAttempts attempts.
 type failure struct {
 	Message   string
 	Permanent bool

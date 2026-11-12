@@ -52,6 +52,10 @@ const (
 	// stopMargin is what Stop allows past the drain and the finish, for the
 	// lease renewal in flight and the loop's return.
 	stopMargin = 5 * time.Second
+	// indexWait is how long after its first attempt began a job is retried
+	// for an index still building. Those retries give their attempts back,
+	// so without it a build that never finishes would retry the job forever.
+	indexWait = 2 * time.Hour
 )
 
 type Deps struct {
@@ -403,9 +407,10 @@ func (t *Task) renewLease(ctx context.Context, cancel context.CancelFunc, jobID 
 // has settled before the retry reads the database. An attempt that would be
 // retried while the worker is stopping was stopped, not failed, and one that
 // found an index still building did nothing wrong: either is retried after
-// the floor and given back, whatever attempt it was. The agent's internal
-// error is Helix's bug: it is logged as an error, for on-call, and gets
-// ontologyagent.InternalAttempts attempts at most.
+// the floor and given back, whatever attempt it was, until an index still
+// building indexWait after the job's first attempt began fails the job. The
+// agent's internal error is Helix's bug: it is logged as an error, for
+// on-call, and gets ontologyagent.InternalAttempts attempts at most.
 func (t *Task) outcome(ctx context.Context, job *model.FoundryGraphJob, a *attempt, err error, stopping bool) model.FoundryGraphJobOutcome {
 	outcome := model.FoundryGraphJobOutcome{IngestDone: a.ingestDone, Report: a.report(), Progress: a.progress}
 	if err == nil {
@@ -431,6 +436,9 @@ func (t *Task) outcome(ctx context.Context, job *model.FoundryGraphJob, a *attem
 		outcome.Status, outcome.Error, outcome.HeldSets = model.FoundryGraphJobBudgetExhausted, f.Message, a.held
 	case f.Permanent:
 		outcome.Status, outcome.Error = model.FoundryGraphJobFailed, f.Message
+	case f.Uncounted && !stopping && job.StartedAt != nil && t.now().Sub(*job.StartedAt) > indexWait:
+		outcome.Status, outcome.Error = model.FoundryGraphJobFailed,
+			"the database's indexes had not finished building 2 hours after the load started; try the load again"
 	case stopping || f.Uncounted:
 		retryAt := t.now().Add(t.cfg.RetryBackoff)
 		outcome.RetryAt, outcome.Uncounted, outcome.Error = &retryAt, true, f.Message
