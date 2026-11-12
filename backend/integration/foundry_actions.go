@@ -289,7 +289,7 @@ func (s *Service) ExecuteFoundryOperation(
 
 // ValidateFoundryOperation parses an action's target and strict payload, then authorizes the
 // caller for it: a user by the WFE method's registry entry, a key by its grant on the project
-// of the ontology's database. create_ontology, create_event_source, sync_connector,
+// of the ontology's database. create_ontology, create_event_source, add_sample_data, sync_connector,
 // generate_ontology and settle_review are user-only. create_event_source is the one connector
 // an agent may make: an event source has no credential to pass through it. A create_ontology
 // on a new database is authorized for every call the website's wizard makes: CreateProject
@@ -389,6 +389,27 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 		return nil, invalid(input.Operation + " takes target ontology:<workspace_id>/<ontology_id>")
 	}
 	switch input.Operation {
+	case "add_sample_data":
+		if s.SampleDatabase == nil {
+			return nil, status.Error(codes.FailedPrecondition, "this host serves no sample database")
+		}
+		if len(input.Payload) != 0 {
+			return nil, invalid("add_sample_data takes target ontology:<workspace_id>/<ontology_id> and an empty payload")
+		}
+		// What the website's sample tour calls: the connector's, the sets' and the uploads'.
+		if err := s.AuthorizeFoundry(ctx, identity, &foundryv1.CreateConnectorRequest{WorkspaceId: workspaceID}, foundryUserOnly,
+			"ListConnectors", "CreateConnector", "SyncConnector"); err != nil {
+			return nil, err
+		}
+		if err := s.AuthorizeFoundry(ctx, identity, &foundryv1.GetFoundryOntologyRequest{WorkspaceId: workspaceID, OntologyId: ontologyID}, QueryRead,
+			"ListFoundryDocumentSets"); err != nil {
+			return nil, err
+		}
+		if err := s.AuthorizeFoundry(ctx, identity, &foundryv1.CreateFoundryOntologyDocumentRequest{WorkspaceId: workspaceID, OntologyId: ontologyID}, writeGrant,
+			"CreateFoundryOntologyDocumentSet", "CreateFoundryOntologyDocument", "CompleteFoundryOntologyDocumentUpload"); err != nil {
+			return nil, err
+		}
+		return AddSampleDataOperation{workspaceID: workspaceID, ontologyID: ontologyID}, nil
 	case "generate_ontology":
 		var payload GenerateOntologyPayload
 		malformed := invalid("generate_ontology takes payload {goal, connector_ids, document_set_ids, no_connectors, sample}, a goal of at most 2000 characters, no connector_ids with no_connectors, " +
