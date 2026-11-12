@@ -7,7 +7,7 @@ import (
 )
 
 // foundryReminders creates foundry_reminders.
-const foundryReminders = 20261118000000
+const foundryReminders = 20261119000000
 
 // The reminders' table goes up and down cleanly, keeps one row per address
 // byte for byte, and its checks refuse what no layer writes: a schedule with
