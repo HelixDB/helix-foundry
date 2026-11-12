@@ -30,6 +30,7 @@
     "@databuddy/sdk": "3.4.5",
     "@dnd-kit/core": "6.3.1",
     "@dnd-kit/sortable": "10.0.0",
+    "@noble/hashes": "2.4.0",
     "@tanstack/react-query": "5.103.2",
     "@workos-inc/authkit-nextjs": "4.3.1",
     "d3-force": "3.0.0",

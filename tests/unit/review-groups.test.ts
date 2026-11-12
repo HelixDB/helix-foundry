@@ -154,51 +154,66 @@ describe("what Approve all approves", () => {
       ),
     ).toEqual(["held-0", "held-20"]);
   });
-  it("leaves out a claim held as conflicting with what its link holds: approving it replaces a value (contract 4.14.0)", () => {
+  it("leaves out a claim held as conflicting with what its link holds, which a many-valued link never writes", () => {
     const reviews = [settled(held(0)), settled(held(20, "Globex", "conflict"))];
     expect(ids(model.approvable(reviews, [], many))).toEqual(["held-0"]);
-    // On a link that holds one value it is the other's rival, too.
-    expect(ids(model.approvable(reviews, [], () => true))).toEqual([]);
-    expect(ids(model.approvable([reviews[1]!], [], () => true))).toEqual([]);
   });
-  it("leaves out claims giving one subject of a link that holds one value different objects: the later approval would hold it", () => {
+  it("leaves every claim of a link that holds one value to its card: an approval decides what it holds (contract 4.14.0)", () => {
     const reviews = [
       settled(held(0, "Initech LLC")),
       settled(held(20, "Globex")),
       settled(held(40, "Initech LLC")),
+      settled(held(60, "Globex", "conflict")),
     ];
+    // Whatever the link holds now, and whoever put it there: a page can't
+    // tell a person's approval or a table's row from a document's.
     expect(ids(model.approvable(reviews, [], () => true))).toEqual([]);
+    expect(ids(model.approvable([reviews[0]!], [], () => true))).toEqual([]);
     // On a link that holds many, each is its own fact.
-    expect(ids(model.approvable(reviews, [], many))).toEqual([
+    expect(ids(model.approvable(reviews.slice(0, 3), [], many))).toEqual([
       "held-0",
       "held-20",
       "held-40",
     ]);
-    // The same object twice is no rivalry, and a rival already approved
-    // still counts: approving the other would replace it.
+    // Only the claim's own link decides.
     expect(
-      ids(model.approvable([reviews[0]!, reviews[2]!], [], () => true)),
-    ).toEqual(["held-0", "held-40"]);
-    expect(ids(model.approvable(reviews, [approved(20)], () => true))).toEqual(
-      [],
-    );
-    // Another subject is another link.
-    const other = settled({
-      ...held(60, "Globex"),
-      statement: JSON.stringify({
-        subject: { type: "Contract", name: "Another deal" },
-        object: { type: "Customer", name: "Globex" },
-        props: {},
-      }),
-    });
-    expect(ids(model.approvable([reviews[0]!, other], [], () => true))).toEqual(
-      ["held-0", "held-60"],
-    );
+      ids(
+        model.approvable(
+          [
+            settled(held(0)),
+            settled({ ...held(20), suggested_link: "partner_of" }),
+          ],
+          [],
+          (link) => link === "signed_with",
+        ),
+      ),
+    ).toEqual(["held-20"]);
   });
   it("leaves out a claim already decided, even one approved as it read before", () => {
     const reviews = [settled(held(0)), settled(held(20)), settled(held(40))];
     expect(
       ids(model.approvable(reviews, [approved(0), approved(40, "0")], many)),
+    ).toEqual(["held-20"]);
+  });
+  it("leaves out a claim approved or rejected under the key it had before, of what it reads", () => {
+    // A rebuild keyed the sentence otherwise: the engine binds the approval
+    // by its place and what it reads (contract 4.14.0), and approving the
+    // card again would only approve that decision again.
+    const reviews = [settled(held(0)), settled(held(20)), settled(held(40))];
+    const read = (start: number) =>
+      model.statementHash("signed_with", held(start).statement);
+    const moved = (start: number) => ({
+      ...approved(start, read(start)),
+      claimKey: "c".repeat(64),
+    });
+    expect(
+      ids(
+        model.approvable(
+          reviews,
+          [moved(0), { ...moved(40), kind: "reject" as const }],
+          many,
+        ),
+      ),
     ).toEqual(["held-20"]);
   });
   it("leaves out a sentence read two ways", () => {
@@ -359,6 +374,29 @@ describe("the reviews a page lists once claims are rejected", () => {
     expect(
       model.unrejected(reviews, [{ ...rejected(0), statementHash: "0" }]),
     ).toEqual([]);
+  });
+  it("follow what a reject read at the place under the key a rebuild gave the claim", () => {
+    const reviews = [settled(held(0)), settled(held(0, "Globex"))];
+    const read = model.statementHash("signed_with", held(0).statement);
+    // Under another key, of what the first card reads: that card goes, as
+    // the backend keeps every approval of it from the engine; the sibling
+    // claim of the sentence stays.
+    const moved = {
+      ...rejected(0),
+      claimKey: "c".repeat(64),
+      statementHash: read,
+    };
+    expect(model.unrejected(reviews, [moved])).toEqual([reviews[1]]);
+    // Not at another place, nor of another document.
+    for (const other of [
+      { ...moved, claimStart: 1 },
+      { ...moved, docId: "other" },
+    ])
+      expect(model.unrejected(reviews, [other])).toEqual(reviews);
+    // An approval hides nothing.
+    expect(
+      model.unrejected(reviews, [{ ...moved, kind: "release" as const }]),
+    ).toEqual(reviews);
   });
   it("hide every reading of a sentence read two ways", () => {
     const twice = model.markDiffering([

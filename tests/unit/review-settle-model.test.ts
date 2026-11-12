@@ -76,6 +76,7 @@ const release = {
     props: { due_on: "2027-01-01", nested: "{}" },
   },
   stored: held.statement,
+  hash: model.statementHash(held.suggested_link, held.statement),
   named: true,
 } as const;
 const decided = {
@@ -86,7 +87,7 @@ const decided = {
   claimSection: 1,
   claimStart: 4,
   claimEnd: 20,
-  statementHash: "b".repeat(64),
+  statementHash: release.hash,
 } as const;
 describe("a held claim", () => {
   it.each(["low_confidence", "unverified"])(
@@ -207,11 +208,27 @@ describe("a held claim", () => {
     // The value held::Statement::hash and FoundryStatementHash are tested to give.
     const stored =
       '{"subject":{"type":"Company","name":"Zoë Ltd"},"object":{"type":"Company","name":"Acme"},"props":{"since":"2024"}}';
-    const hash = await model.statementHash("partner_of", stored);
+    const hash = model.statementHash("partner_of", stored);
     expect(hash).toBe(
       "2c785db79d066c94d16e140edb1a8708834d7ecb12dda32c2f71dcdcc0ab0654",
     );
-    expect(await model.statementHash("rival_of", stored)).not.toBe(hash);
+    expect(model.statementHash("rival_of", stored)).not.toBe(hash);
+    // As WebCrypto hashes it, whatever the text holds.
+    for (const text of [
+      stored,
+      "",
+      "a\u001fb",
+      "日本語 🌍 \u0000",
+      "x".repeat(10_000),
+    ]) {
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(`partner_of\u001f${text}`),
+      );
+      expect(model.statementHash("partner_of", text)).toBe(
+        Buffer.from(digest).toString("hex"),
+      );
+    }
   });
 });
 
@@ -220,7 +237,6 @@ describe("how approvals stand toward a held claim", () => {
     model.Settle,
     { kind: "release" }
   >;
-  const read = "b".repeat(64);
   const saved = (over: Partial<typeof decided> = {}) => ({
     ...decided,
     id: "d1",
@@ -229,25 +245,19 @@ describe("how approvals stand toward a held claim", () => {
   const other = "c".repeat(64);
 
   it("finds the approval of this review", () => {
-    const s = model.approvalOf([saved()], settle, read, true);
+    const s = model.approvalOf([saved()], settle, true);
     expect(s).toMatchObject({ moved: false });
     expect(s.saved?.id).toBe("d1");
   });
   it("says an approval of what it said before no longer stands", () => {
     const d = saved({ statementHash: other as never });
-    expect(model.approvalOf([d], settle, read, true).moved).toBe(true);
-  });
-  it("waits for the statement's hash before it says so", () => {
-    const d = saved({ statementHash: other as never });
-    expect(model.approvalOf([d], settle, undefined, true).moved).toBe(false);
+    expect(model.approvalOf([d], settle, true).moved).toBe(true);
   });
   it("says neither on an older load, whose statement may be another's", () => {
     const moved = saved({ statementHash: other as never });
-    expect(model.approvalOf([moved], settle, read, false).moved).toBe(false);
+    expect(model.approvalOf([moved], settle, false).moved).toBe(false);
     const elsewhere = saved({ claimKey: "e".repeat(64) as never });
-    expect(
-      model.approvalOf([elsewhere], settle, read, false).saved,
-    ).toBeUndefined();
+    expect(model.approvalOf([elsewhere], settle, false).saved).toBeUndefined();
   });
   it("tells a sibling claim at the sentence from this one's key moving", () => {
     // Another claim of the sentence, another statement: nothing of this one.
@@ -255,22 +265,35 @@ describe("how approvals stand toward a held claim", () => {
       claimKey: "e".repeat(64) as never,
       statementHash: other as never,
     });
-    expect(model.approvalOf([sibling], settle, read, true)).toMatchObject({
+    expect(model.approvalOf([sibling], settle, true)).toMatchObject({
       saved: undefined,
       moved: false,
     });
     // This statement under another key: the claim's key moved, and the
     // engine matches the approval by its place and hash (contract 4.14.0).
     const keyed = saved({ claimKey: "e".repeat(64) as never });
-    expect(model.approvalOf([keyed], settle, read, true)).toMatchObject({
+    expect(model.approvalOf([keyed], settle, true)).toMatchObject({
       saved: { id: "d1" },
       moved: false,
     });
     // One of this key comes first.
     expect(
-      model.approvalOf([keyed, { ...saved(), id: "d2" }], settle, read, true)
-        .saved?.id,
+      model.approvalOf([keyed, { ...saved(), id: "d2" }], settle, true).saved
+        ?.id,
     ).toBe("d2");
+    // One of what it reads under another key comes before one of what it
+    // said before under its key: approving the card approves the first
+    // again, as the backend does.
+    const before = { ...saved({ statementHash: other as never }), id: "d3" };
+    expect(model.approvalOf([before, keyed], settle, true)).toMatchObject({
+      saved: { id: "d1" },
+      moved: false,
+    });
+    // On an older load only its key counts.
+    expect(model.approvalOf([before, keyed], settle, false)).toMatchObject({
+      saved: { id: "d3" },
+      moved: false,
+    });
   });
   it("doesn't look at another place's approval", () => {
     const d = saved({
@@ -278,7 +301,7 @@ describe("how approvals stand toward a held claim", () => {
       claimStart: 40 as never,
       claimEnd: 60 as never,
     });
-    expect(model.approvalOf([d], settle, read, true).saved).toBeUndefined();
+    expect(model.approvalOf([d], settle, true).saved).toBeUndefined();
   });
 });
 
@@ -297,6 +320,16 @@ describe("what became of an approval", () => {
 
   it("is still held while its review is", () => {
     expect(model.releaseStatus(decision, [review], [])).toBe("held");
+    // Under the key a rebuild gave it, stating what was approved there.
+    const moved = { ...decided, claimKey: "e".repeat(64) } as never;
+    expect(model.releaseStatus(moved, [review], [])).toBe("held");
+    // A sibling claim of the sentence is another.
+    const sibling = {
+      ...decided,
+      claimKey: "e".repeat(64),
+      statementHash: "c".repeat(64),
+    } as never;
+    expect(model.releaseStatus(sibling, [review], [])).toBe("unknown");
   });
   it("is written when its quote stands on an edge", () => {
     expect(model.releaseStatus(decision, [], [fact({ id: "e" })])).toBe(
@@ -891,6 +924,10 @@ describe("why a load kept an approved claim held", () => {
     // what's left of a conflict is a property, or an old load's link.
     expect(said("conflict")).toContain("a property of it differs");
     expect(said("conflict")).not.toContain("same date");
+    // An engine before 4.14.0's refusal: the next load sends it again.
+    expect(said("conflict")).toContain(
+      "a version before approvals could decide a link refused it, and then the next load writes it",
+    );
     expect(said("blocked")).toContain("break a rule");
     expect(said("no_statement")).toContain("keeps nothing to write");
     expect(said("not_stated")).toContain("no longer states it");

@@ -201,6 +201,37 @@ test("approves every held claim of a group at once, and says which couldn't be",
   await expect(saved).toHaveCount(3);
 });
 
+// Contract 4.14.0: an approval of a link that holds one value decides what
+// it holds, and a page can't tell what the link holds or who put it there (a
+// person's approval, a table's row, another document), so Approve all leaves
+// such claims to their cards, also once a person has approved one there.
+test("leaves claims of a link that holds one value to their cards", async ({
+  page,
+}) => {
+  await mock.configure({ oneValuedLinks: ["signed_with"] });
+  await reviewed(
+    page,
+    "# Hedged deal\n\nGlobex Corporation, Initech, Elstree Media Group and Lockhart Shipping plc may have signed.\n",
+  );
+  const { head, rows } = group(page, HELD);
+  await expect(rows).toHaveCount(4);
+  await expect(rows.first()).toContainText("This link holds one value");
+  await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(
+    0,
+  );
+  await rows
+    .filter({ hasText: "Globex Corporation (Customer)" })
+    .getByRole("button", { name: "Approve", exact: true })
+    .click();
+  await expect(rows).toHaveCount(3);
+  await expect(
+    rows.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(3);
+  await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(
+    0,
+  );
+});
+
 test("leaves claims held for a name out of Approve all, on the page of their other end too", async ({
   page,
 }) => {

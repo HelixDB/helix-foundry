@@ -483,9 +483,11 @@ test("says why the load kept an approved claim held", async ({ page }) => {
   );
 });
 
-// An engine before contract 4.14.0 refused an approval that conflicted with
-// what a link holding one value holds; sent again, it decides the link.
-test("offers to approve again a claim refused as a conflict on a link that holds one value", async ({
+// A conflict refusal on a link that holds one value: from contract 4.14.0 a
+// property differs or an old load wrote the link, and sent again to this
+// load it is refused again, so no approval is offered; an engine before
+// 4.14.0's is written by the next load, which sends every approval again.
+test("offers no approval again on a conflict refusal, and says what writes it", async ({
   page,
 }) => {
   await oneValued(page);
@@ -495,8 +497,14 @@ test("offers to approve again a claim refused as a conflict on a link that holds
   await expect(held.getByRole("status")).toContainText(
     "Approved, and this load kept it held. It conflicts with what the graph holds for this link",
   );
+  await expect(held.getByRole("status")).toContainText(
+    "and then the next load writes it",
+  );
   await expect(
     held.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    held.getByRole("button", { name: "Reject", exact: true }),
   ).toBeVisible();
 });
 
@@ -765,8 +773,16 @@ test("promises no edge on a link that holds one value", async ({ page }) => {
   await expect(held).toContainText("Approving states:");
   await expect(held).not.toContainText("Approving writes:");
   await expect(held).toContainText("This link holds one value");
+  // As the engine dates the approval: the sentence's date, its document's,
+  // else the day it is first approved.
   await expect(held).toContainText(
-    "of two approvals, the later holds the link",
+    "from the date this sentence gives, else its document’s date, else the day it is first approved",
+  );
+  await expect(held).toContainText(
+    "A statement dated later, approved or not, still holds the link",
+  );
+  await expect(held).toContainText(
+    "Of two approvals, the one approved later decides.",
   );
 });
 
@@ -787,7 +803,7 @@ test("approves a claim that conflicts with what a link holding one value holds, 
     "Approving states: Hedged deal (Contract) → signed_with → Globex Corporation (Customer)",
   );
   await expect(held).toContainText(
-    "It conflicts with what the graph holds: approving replaces another value the link holds",
+    "It conflicts with what the graph holds: approving replaces that value unless it is dated later",
   );
   await expect(
     held.getByRole("button", { name: "Reject", exact: true }),

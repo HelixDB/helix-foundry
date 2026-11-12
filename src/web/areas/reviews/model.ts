@@ -1,3 +1,5 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import type {
   DecisionApplied,
   FoundryPropValue,
@@ -218,14 +220,15 @@ export type Statement = {
  * - `release`: approve one review of a claim code holds back, so the current
  *   load writes what it states as a fact, at once, or reject it, which hides
  *   its card and writes nothing. `statement` is what that is, and
- *   `stored` it as the review keeps it, which its hash reads. `named` is
+ *   `stored` it as the review keeps it, which its hash reads (`hash`,
+ *   statementHash). `named` is
  *   whether the review names both its ends: if not, an end isn't in the graph
  *   yet. `differs` is whether another review at its place states something
  *   else: no approval says which, so the engine refuses both. `unsettled` are
  *   the ends whose names the load linked on less than a name, in the order
  *   the engine refuses them, which a person settles before the claim is
  *   written where they hold it (holdingEnds). `conflict` is a claim held as
- *   conflicting with what its link holds: approving it replaces that, on a
+ *   conflicting with what its link holds: approving it decides that, on a
  *   link that holds one value only (contract 4.14.0), and on any other link
  *   nothing settles it;
  * - `stale`: a reason a decision settles, on a review written without the
@@ -261,6 +264,8 @@ export type Settle =
       statement: Statement;
       /** The statement as the review stores it, which its hash reads. */
       stored: string;
+      /** statementHash of `link` and `stored`: what an approval of it binds. */
+      hash: string;
       named: boolean;
       differs?: boolean;
       // Never empty: a claim with no such end has none.
@@ -421,6 +426,7 @@ function settleOf(
         link,
         statement: stated,
         stored,
+        hash: statementHash(link, stored),
         named: ends(r.claim) >= 2,
         ...(reason === "conflict" ? { conflict: true as const } : {}),
       },
@@ -452,21 +458,14 @@ function settleOf(
 /**
  * What binds an approval to the claim a person read: the SHA-256 of what its
  * card shows, as the backend and the engine hash it (held::Statement::hash).
+ * Synchronous, as a page reads its reviews: a saved decision names a claim
+ * by it as well as by its key (ofClaim).
  *
  * @example
- * await statementHash("partner_of", stored); // 64 lowercase hexadecimal digits
+ * statementHash("partner_of", stored); // 64 lowercase hexadecimal digits
  */
-export async function statementHash(
-  link: string,
-  stored: string,
-): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(`${link}\u001f${stored}`),
-  );
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+export function statementHash(link: string, stored: string): string {
+  return bytesToHex(sha256(new TextEncoder().encode(`${link}\u001f${stored}`)));
 }
 
 /** A review as markDiffering reads it: what settles it, its reason and its place. */
@@ -617,23 +616,32 @@ export function reviewGroups<
   return [...groups.values()].sort((a, b) => rank(a) - rank(b));
 }
 
-/** Whether a saved decision names this held claim's review: a release or a reject of it. */
+/**
+ * Whether a saved decision names this held claim's review: a release or a
+ * reject at its document and place, under its key or, as a rebuild may key
+ * the same sentence otherwise, of the statement it reads (`hash`). From
+ * contract 4.14.0 the engine binds a release whose key names no review of its
+ * document so, and the backend keeps a claim's approval and rejection apart
+ * the same way.
+ */
 const ofClaim = (d: ReviewDecision, s: Extract<Settle, { kind: "release" }>) =>
   (d.kind === "release" || d.kind === "reject") &&
   d.docId === s.docId &&
-  d.claimKey === s.claimKey &&
   d.claimSection === s.section &&
   d.claimStart === s.start &&
-  d.claimEnd === s.end;
+  d.claimEnd === s.end &&
+  (d.claimKey === s.claimKey || d.statementHash === s.hash);
 
 /**
  * `reviews` without the held claims a person rejected: each review of a held
- * claim that a saved reject names by its document, its claim's key and its
- * quote's place. A rejection changes no load, so the review is still in the
- * graph: leaving it out here is what hides its card, drops it from a page's
- * counts and keeps Approve all from it, in this load and every later one,
- * until the decision is removed. It hides the claim however it reads now: a
- * person said that claim at that place is wrong.
+ * claim that a saved reject names (ofClaim: by its document and its quote's
+ * place, and its claim's key or the statement it reads). A rejection changes
+ * no load, so the review is still in the graph: leaving it out here is what
+ * hides its card, drops it from a page's counts and keeps Approve all from
+ * it, in this load and every later one, until the decision is removed. By its
+ * key it hides the claim however it reads now: a person said that claim at
+ * that place is wrong. By what it reads it hides that statement there under
+ * the key a rebuild gave it.
  *
  * @example
  * unrejected([held, other], [{ kind: "reject", ...placeOf(held) }]); // [other]
@@ -653,20 +661,19 @@ export function unrejected<R extends Settleable>(
 /**
  * The held claims of `reviews` that Approve all approves: each settled by a
  * release a person could approve on its card now, with no decision saved for
- * it (not a rejection, nor an approval of what it said before: that card
- * asks to be read again),
- * not read two ways (`differs`), and not naming a name the load linked on
- * less than a name where the engine holds the claim for it (holdingEnds;
- * `single` is whether a link holds one value): the engine would refuse it
- * until that name is settled, and only a later load can write it. A stale
- * review settles by no release, so it's never one of them.
+ * it (ofClaim: not a rejection, nor an approval, of what it reads under any
+ * key or of what it said before: that card asks to be read again), not read
+ * two ways (`differs`), and not naming a name the load linked on less than a
+ * name where the engine holds the claim for it (holdingEnds): the engine
+ * would refuse it until that name is settled, and only a later load can
+ * write it. A stale review settles by no release, so it's never one of them.
  *
- * From contract 4.14.0 an approval of a link that holds one value decides
- * it, and of two the later holds it. So none held as conflicting with what
- * its link holds (`conflict`), as approving it replaces a value the graph
- * holds, and none of a link that holds one value whose subject the reviews
- * give another object too: sent at once, which of them would hold the link
- * is chance. A person approves those on their cards.
+ * None of a link that holds one value (`single`): from contract 4.14.0 an
+ * approval there decides what the link holds, and replaces what it holds of
+ * no date or dated up to when the approval takes effect, whoever put it
+ * there: a person's approval, a table's row or another document. A page
+ * can't tell what such a link holds or why, so a person approves each of
+ * those on its card, where it says so.
  *
  * @example
  * approvable([held, readTwoWays, alreadyApproved], decisions, () => false); // [held.settle]
@@ -676,24 +683,12 @@ export function approvable(
   decisions: readonly ReviewDecision[],
   single: (link: string) => boolean,
 ): Extract<Settle, { kind: "release" }>[] {
-  const end = (e: StatedEnd) => `${e.type}\u001f${e.name}`;
-  const slot = (s: Extract<Settle, { kind: "release" }>) =>
-    `${s.link}\u001f${end(s.statement.subject)}`;
-  // The objects each one-valued link's subject is given, by every held claim
-  // listed, approved or not.
-  const objects = new Map<string, Set<string>>();
-  for (const { settle: s } of reviews)
-    if (s?.kind === "release" && single(s.link))
-      objects.set(
-        slot(s),
-        (objects.get(slot(s)) ?? new Set()).add(end(s.statement.object)),
-      );
   return reviews.flatMap(({ settle: s }) =>
     s?.kind === "release" &&
+    !single(s.link) &&
     !s.conflict &&
     !s.differs &&
-    !holdingEnds(s.unsettled, single(s.link)).length &&
-    !(single(s.link) && objects.get(slot(s))!.size > 1) &&
+    !holdingEnds(s.unsettled, false).length &&
     !decisions.some((d) => ofClaim(d, s))
       ? [s]
       : [],
@@ -849,47 +844,44 @@ export function matchesReview(d: ReviewDecision, s: Settle) {
 }
 
 /**
- * How a person's saved approvals stand toward a held claim's card, `read`
- * being the hash of what it shows. `saved` is the approval of this review:
- * by its key, or, on the load a person can settle, an approval of this
- * statement at this place under another key, which the claim held before (a
- * rebuild moves keys): from contract 4.14.0 the engine matches a release
- * whose key it holds no review under by its place and statement hash, so
- * that approval is this claim's and says what became of it. A sibling claim
- * of the sentence states something else, and isn't. On that load `moved` is
- * that the approval of this review approved what the claim said before: the
- * engine refuses it. An older load's statement may not be the current one,
- * so it says neither.
+ * How a person's saved approvals stand toward a held claim's card. `saved`
+ * is the approval of this review: by its key and of what it reads; on the
+ * load a person can settle, an approval of what it reads at its place under
+ * another key, which the claim held before (a rebuild moves keys): from
+ * contract 4.14.0 the engine matches a release whose key it holds no review
+ * under by its place and statement hash, so that approval is this claim's
+ * and says what became of it, and approving the card approves it again
+ * (the backend keeps its time); else the approval under its key of what it
+ * said before. A sibling claim of the sentence states something else, and
+ * isn't. On that load `moved` is that the approval of this review approved
+ * what the claim said before: the engine refuses it. An older load's
+ * statement may not be the current one, so it says neither.
  *
  * @example
- * approvalOf([], release, "abc", true); // { saved: undefined, moved: false }
+ * approvalOf([], release, true); // { saved: undefined, moved: false }
  */
 export function approvalOf<D extends ReviewDecision>(
   decisions: readonly D[],
   s: Extract<Settle, { kind: "release" }>,
-  read: string | undefined,
   editable: boolean,
 ): { saved?: D; moved: boolean } {
+  const read = (d: D) =>
+    d.kind === "release" &&
+    d.docId === s.docId &&
+    d.claimSection === s.section &&
+    d.claimStart === s.start &&
+    d.claimEnd === s.end &&
+    d.statementHash === s.hash;
   const saved =
-    decisions.find((d) => matchesReview(d, s)) ??
-    (editable && read
-      ? decisions.find(
-          (d) =>
-            d.kind === "release" &&
-            d.docId === s.docId &&
-            d.claimSection === s.section &&
-            d.claimStart === s.start &&
-            d.claimEnd === s.end &&
-            d.statementHash === read,
-        )
-      : undefined);
+    decisions.find(
+      (d) => d.kind === "release" && d.claimKey === s.claimKey && read(d),
+    ) ??
+    (editable ? decisions.find(read) : undefined) ??
+    decisions.find((d) => matchesReview(d, s));
   return {
     saved,
     moved:
-      editable &&
-      !!read &&
-      saved?.kind === "release" &&
-      saved.statementHash !== read,
+      editable && saved?.kind === "release" && saved.statementHash !== s.hash,
   };
 }
 
@@ -969,9 +961,12 @@ export function refusalText(
     case "differs":
       return "Its sentence is read more than one way, and no approval can say which.";
     // From contract 4.14.0 an approval of a link that holds one value
-    // replaces what the link holds, so this is all that's left of it.
+    // decides what the link holds, so this is all that's left of it, besides
+    // an engine before 4.14.0's word: each new load sends every approval
+    // again, and the card can't tell which engine refused it, so it offers
+    // no approval again, which would change nothing in the first two cases.
     case "conflict":
-      return "It conflicts with what the graph holds for this link: a property of it differs from the one the graph holds, which no approval or new load changes, or a load built before statements were kept wrote the link, which a new load writes again.";
+      return "It conflicts with what the graph holds for this link: a property of it differs from the one the graph holds, which no approval or new load changes; or a load built before statements were kept wrote the link, or a version before approvals could decide a link refused it, and then the next load writes it.";
     case "blocked":
       return "Writing it would break a rule the ontology enforces, or checking that took more reading than a load allows.";
     case "no_statement":
@@ -1117,8 +1112,10 @@ export type ReleaseStatus = "written" | "no_link" | "held" | "unknown";
 
 /**
  * What became of `d` on a document's page, from its reviews and its facts:
- * its review is still held, or its quote stands with an edge, or without one,
- * as a later statement holds that link. Otherwise the reads don't say.
+ * its review is still held (at its place, under its key or stating what it
+ * approved there, as a rebuild may key it otherwise), or its quote stands
+ * with an edge, or without one, as a later statement holds that link.
+ * Otherwise the reads don't say.
  *
  * @example
  * releaseStatus(decision, reviews, facts); // "held"
@@ -1134,7 +1131,9 @@ export function releaseStatus(
     at.end === d.claimEnd;
   const held = reviews.some(
     ({ settle: s }) =>
-      s?.kind === "release" && s.claimKey === d.claimKey && here(s),
+      s?.kind === "release" &&
+      here(s) &&
+      (s.claimKey === d.claimKey || s.hash === d.statementHash),
   );
   if (held) return "held";
   const fact = facts.find((f) => !f.unread && f.quotes.some(here));
