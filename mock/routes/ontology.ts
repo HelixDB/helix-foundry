@@ -1273,7 +1273,7 @@ export const ontologyRoutes: MockRoute[] = [
       if (!count && !textDocumentCount(m.workspaceId, documentSetIds))
         return fail(
           "FAILED_PRECONDITION",
-          "connect your data or upload documents first: a generation reads at least one synced table, one CSV, TSV, JSON, JSONL or Parquet file that has been read, or one document set holding Markdown, MDX, text or a PDF whose text has been read",
+          "connect your data or upload documents first: a generation reads at least one synced table, one CSV, TSV, JSON, JSONL or Parquet file that has been read, or one document set holding Markdown, MDX, text, a WebVTT transcript or a PDF whose text has been read",
         );
       if (count > MAX_TABLES)
         return fail(

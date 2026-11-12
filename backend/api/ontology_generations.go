@@ -243,7 +243,7 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 		}
 		if text == 0 {
 			return nil, status.Error(codes.FailedPrecondition, "connect your data or upload documents first: a generation reads at least one synced table, "+
-				"one CSV, TSV, JSON, JSONL or Parquet file that has been read, or one document set holding Markdown, MDX, text or a PDF whose text has been read")
+				"one CSV, TSV, JSON, JSONL or Parquet file that has been read, or one document set holding Markdown, MDX, text, a WebVTT transcript or a PDF whose text has been read")
 		}
 	}
 	if limit := s.deps.Cfg.Foundry.Ontology.MaxTables; limit > 0 && tables > limit {

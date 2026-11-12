@@ -511,6 +511,28 @@ func TestGoogleChanges(t *testing.T) {
 			t.Fatalf("drops = %v, offers = %v, exports = %v", got.drops, got.offers, w.requested("/drive/v3/files/"))
 		}
 	})
+	t.Run("downloads a changed transcript, and drops one grown too large to keep", func(t *testing.T) {
+		routes := unchanged()
+		edited := googleChangeFile("call1", "text/vtt", "2026-11-03T10:00:00Z", "6", `,"size":"80"`)
+		grown := googleChangeFile("call2", "text/vtt", "2026-11-04T10:00:00Z", "3", `,"size":"10485761"`)
+		routes["/drive/v3/changes"] = googleFeedRoute(t, map[string]map[string]string{
+			"":     {"100": `{"changes":[{"fileId":"call1","file":` + edited + `},{"fileId":"call2","file":` + grown + `}],"newStartPageToken":"101"}`},
+			"drv1": {"200": `{"newStartPageToken":"201"}`}})
+		routes["/drive/v3/files/call1"] = func(*http.Request) (int, string) {
+			return http.StatusOK, "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v Ada>Edited.\n"
+		}
+		w := &googleWorkspace{routes: routes}
+		got, _ := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"call1": "1|old", "call2": "1|old"})
+		if fmt.Sprint(got.log) != "[upsert files call1 upsert files call2]" || fmt.Sprint(got.drops) != "[call2]" || len(got.puts) != 1 ||
+			!strings.HasPrefix(got.puts[0].Version, "1|2026-11-03T10:00:00Z|6|") ||
+			string(got.puts[0].Text) != "WEBVTT\n\nNOTE\nFile call1\nOwner: ada@acme.com\nLast modified: 2026-11-03 10:00 UTC\nFile id: call1\n\n"+
+				"00:00:01.000 --> 00:00:02.000\n<v Ada>Edited.\n" {
+			t.Fatalf("log = %v, drops = %v, puts = %+v", got.log, got.drops, got.puts)
+		}
+		if asked := w.requested("/drive/v3/files/"); fmt.Sprint(asked) != "[/drive/v3/files/call1?alt=media&supportsAllDrives=true]" {
+			t.Fatalf("downloads = %v", asked)
+		}
+	})
 	t.Run("skips a changed Doc Drive fails to export, as a full read does", func(t *testing.T) {
 		noBackoff(t)
 		routes := unchanged()
