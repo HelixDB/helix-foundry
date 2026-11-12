@@ -72,19 +72,19 @@ func TestGetContextDescribesTheCurrentLoadsVersion(t *testing.T) {
 		"cq.CQ4":    "[cq.CQ4]\nquestion = \"   \"\n",
 		"cq.CQ5":    "[cq.CQ5\nquestion = \"Not TOML\"\n",
 		"cq.CQ6":    "[cq.CQ6]\nquestion = \"When does each term end?\"\n",
-		"cq.CQ7":    "[cq.CQ7]\nquestion = \"Past the first four.\"\n",
+		"cq.CQ11":   "[cq.CQ11]\nquestion = \"Past the first four.\"\n",
 		"type.Plan": "[types.Plan]\ndescription = \"A tier.\"\n",
 	})
 	backend := &contextBackend{
 		ontology: &foundryv1.FoundryOntology{
-			Id: "ontology-1", Name: "Accounts", CurrentVersionId: "version-2", CurrentLoad: &foundryv1.FoundryOntologyCurrentLoad{Id: "load-1", Version: "foundry-v1"},
+			Id: "ontology-1", Name: "Accounts", CurrentVersionId: new("version-2"), CurrentLoad: &foundryv1.FoundryOntologyCurrentLoad{Id: "load-1", Version: "foundry-v1"},
 		},
 		loads:    map[string]*foundryv1.FoundryLoad{"load-1": {Id: "load-1", VersionId: "version-1", Status: "ready", Current: true}},
 		versions: map[string]*foundryv1.OntologyVersion{"version-1": loaded, "version-2": bundle(t, "version-2", "[types.Deal]\n", nil)},
 	}
 
 	out := called(t, &Service{Foundry: backend}, toolFoundryGetContext, contextArguments)
-	assert.Equal(t, "untrusted", out["content_trust"])
+	assert.Equal(t, contentTrustUntrusted, out["content_trust"])
 	assert.Equal(t, "Accounts", out["ontology"].(map[string]any)["name"])
 	assert.Equal(t, "version-1", out["version"].(map[string]any)["id"])
 	assert.Equal(t, "agent_bundle", out["version"].(map[string]any)["format"])
@@ -104,7 +104,7 @@ func TestGetContextDescribesTheCurrentLoadsVersion(t *testing.T) {
 	assert.Equal(t, []any{}, out["example_questions"])
 
 	// No version at all: the ontology alone.
-	backend.ontology.CurrentVersionId, backend.read = "", nil
+	backend.ontology.CurrentVersionId, backend.read = nil, nil
 	out = called(t, &Service{Foundry: backend}, toolFoundryGetContext, contextArguments)
 	assert.NotContains(t, out, "version")
 	assert.NotContains(t, out, "ontology_toml")
@@ -117,7 +117,7 @@ func TestGetContextGivesADefinitionV1sDefinition(t *testing.T) {
 	definition, err := structpb.NewStruct(map[string]any{"entities": []any{map[string]any{"name": "Customer"}}})
 	require.NoError(t, err)
 	backend := &contextBackend{
-		ontology: &foundryv1.FoundryOntology{Id: "ontology-1", CurrentVersionId: "version-1"},
+		ontology: &foundryv1.FoundryOntology{Id: "ontology-1", CurrentVersionId: new("version-1")},
 		versions: map[string]*foundryv1.OntologyVersion{"version-1": {Id: "version-1", Version: 1, Definition: definition}},
 	}
 	out := called(t, &Service{Foundry: backend}, toolFoundryGetContext, contextArguments)
@@ -131,7 +131,7 @@ func TestGetContextGivesADefinitionV1sDefinition(t *testing.T) {
 // the ontology alone, and no other version is read for it.
 func TestGetContextTellsAGranteeWithNoLoadNothingMore(t *testing.T) {
 	backend := &contextBackend{
-		ontology: &foundryv1.FoundryOntology{Id: "ontology-1", CurrentVersionId: "version-1"},
+		ontology: &foundryv1.FoundryOntology{Id: "ontology-1", CurrentVersionId: new("version-1")},
 		versions: map[string]*foundryv1.OntologyVersion{"version-1": bundle(t, "version-1", "[types.Secret]\n", nil)},
 	}
 	grantee := reader()
@@ -148,7 +148,7 @@ func TestGetContextTellsAGranteeWithNoLoadNothingMore(t *testing.T) {
 // A schema past get_version's cap would crowd out the agent's context: it is refused with where to open it.
 func TestGetContextRefusesASchemaPastTheCap(t *testing.T) {
 	backend := &contextBackend{
-		ontology: &foundryv1.FoundryOntology{Id: "ontology-1", CurrentVersionId: "version-1"},
+		ontology: &foundryv1.FoundryOntology{Id: "ontology-1", CurrentVersionId: new("version-1")},
 		versions: map[string]*foundryv1.OntologyVersion{"version-1": bundle(t, "version-1", strings.Repeat("#", maxFoundryDefinitionBytes+1), nil)},
 	}
 	result, err := connect(t, &Service{Foundry: backend, FoundryURL: "https://foundry.example"}, reader()).
