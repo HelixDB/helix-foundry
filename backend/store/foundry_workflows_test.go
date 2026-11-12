@@ -762,3 +762,83 @@ func toAny(ids []string) []any {
 	}
 	return out
 }
+
+// TestFoundryWorkflowInsightRuns reads the runs that started in a window,
+// newest first, of a workflow and a starter when asked, each with its
+// assessment, if any.
+func TestFoundryWorkflowInsightRuns(t *testing.T) {
+	ctx := context.Background()
+	f := newFoundryFixture(t, "WFI")
+	a, b := f.workflow(t, "IA"), f.workflow(t, "IB")
+	in := "q"
+	at := func(r *model.FoundryWorkflowRun, when time.Time) {
+		t.Helper()
+		_, err := testDB.Exec(`UPDATE foundry_workflow_runs SET started_at=? WHERE id=?`, when, r.ID)
+		require.NoError(t, err)
+	}
+	day := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	before := f.run(t, a, "I-BEFORE", &in)
+	at(before, day.Add(-time.Millisecond))
+	first := f.run(t, a, "I-FIRST", &in)
+	at(first, day)
+	key := &model.FoundryWorkflowRun{
+		ID: id26("FR-I-KEY"), WorkflowID: a.ID, WorkspaceID: a.WorkspaceID, OntologyID: a.OntologyID, ClientToken: "i-key",
+		StartedBy: access.Principal{Kind: access.PrincipalServiceCredential, ID: id26("SC-I")},
+	}
+	require.NoError(t, f.db.StartFoundryWorkflowRun(ctx, key))
+	at(key, day.Add(33*time.Hour))
+	other := f.run(t, b, "I-OTHER", &in)
+	at(other, day.Add(36*time.Hour))
+	after := f.run(t, a, "I-AFTER", &in)
+	at(after, day.AddDate(0, 0, 3))
+
+	require.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, first.ID, nil, "answer", false))
+	_, err := testDB.Exec(`UPDATE foundry_workflow_runs SET accesses=2, reads_count=1, questions=1 WHERE id=?`, first.ID)
+	require.NoError(t, err)
+	_, err = testDB.Exec(`INSERT INTO foundry_workflow_run_assessments (run_id, workspace_id, ontology_id, workflow_id, status, verdict, assessment, usd_micros, finished_at)
+VALUES (?, ?, ?, ?, 'done', 'helpful', '{"verdict":"helpful"}', 123, NOW(6)), (?, ?, ?, ?, 'queued', NULL, NULL, 0, NULL)`,
+		first.ID, a.WorkspaceID, a.OntologyID, a.ID, key.ID, a.WorkspaceID, a.OntologyID, a.ID)
+	require.NoError(t, err)
+
+	ids := func(runs []model.FoundryWorkflowInsightRun) []string {
+		var out []string
+		for _, r := range runs {
+			out = append(out, r.ID)
+		}
+		return out
+	}
+	window := func(workflowID string, by *access.Principal, limit int) []model.FoundryWorkflowInsightRun {
+		t.Helper()
+		runs, err := f.db.ListFoundryWorkflowInsightRuns(ctx, f.ontology.ID, workflowID, by, day, day.AddDate(0, 0, 3), limit)
+		require.NoError(t, err)
+		return runs
+	}
+	all := window("", nil, 10)
+	assert.Equal(t, []string{other.ID, key.ID, first.ID}, ids(all), "newest first; the instant the window starts is in it, its end isn't")
+	got := all[2]
+	assert.Equal(t, model.FoundryWorkflowRunFinished, got.Status)
+	assert.Equal(t, a.ID, got.WorkflowID)
+	assert.Equal(t, access.Principal{Kind: access.PrincipalUser, ID: id26("U-ADA")}, got.StartedBy)
+	assert.True(t, got.StartedAt.Equal(day))
+	assert.Equal(t, model.FoundryWorkflowRunCounts{Accesses: 2, Reads: 1, Questions: 1}, got.Counts)
+	require.NotNil(t, got.Assessment)
+	assert.Equal(t, model.FoundryWorkflowAssessmentDone, got.Assessment.Status)
+	assert.Equal(t, "helpful", got.Assessment.Verdict)
+	assert.JSONEq(t, `{"verdict":"helpful"}`, string(got.Assessment.Assessment))
+	assert.EqualValues(t, 123, got.Assessment.USDMicros)
+	require.NotNil(t, all[1].Assessment)
+	assert.Equal(t, model.FoundryWorkflowAssessmentQueued, all[1].Assessment.Status)
+	assert.Empty(t, all[1].Assessment.Verdict)
+	assert.Equal(t, model.FoundryWorkflowRunOpen, all[1].Status)
+	assert.Equal(t, key.StartedBy, all[1].StartedBy)
+	assert.Nil(t, all[0].Assessment)
+
+	assert.Equal(t, []string{key.ID, first.ID}, ids(window(a.ID, nil, 10)), "one workflow's")
+	assert.Equal(t, []string{key.ID}, ids(window("", &key.StartedBy, 10)), "one starter's")
+	ada := access.Principal{Kind: access.PrincipalUser, ID: id26("U-ADA")}
+	assert.Equal(t, []string{other.ID, first.ID}, ids(window("", &ada, 10)))
+	assert.Equal(t, []string{other.ID}, ids(window("", nil, 1)), "the newest, up to limit")
+	none, err := f.db.ListFoundryWorkflowInsightRuns(ctx, id26("ONT-NONE"), "", nil, day, day.AddDate(0, 0, 3), 10)
+	require.NoError(t, err)
+	assert.Empty(t, none, "another ontology's")
+}

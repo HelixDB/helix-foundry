@@ -165,6 +165,26 @@ func (s *workflowStore) ListFoundryWorkflowRuns(_ context.Context, workflowID st
 	return out, "", nil
 }
 
+func (s *workflowStore) ListFoundryWorkflowInsightRuns(_ context.Context, ontologyID, workflowID string, startedBy *access.Principal,
+	from, to time.Time, limit int) ([]foundrymodel.FoundryWorkflowInsightRun, error) {
+	var out []foundrymodel.FoundryWorkflowInsightRun
+	for _, r := range s.runs {
+		if r.OntologyID != ontologyID || workflowID != "" && r.WorkflowID != workflowID || startedBy != nil && r.StartedBy != *startedBy ||
+			r.StartedAt.Before(from) || !r.StartedAt.Before(to) {
+			continue
+		}
+		run := foundrymodel.FoundryWorkflowInsightRun{ID: r.ID, WorkflowID: r.WorkflowID, StartedBy: r.StartedBy, StartedAt: r.StartedAt,
+			Status: r.Status(), Counts: r.Counts}
+		if a := s.assessments[r.ID]; a != nil {
+			run.Assessment = &foundrymodel.FoundryWorkflowInsightAssessment{Status: a.Status, Verdict: a.Verdict, Assessment: a.Assessment,
+				USDMicros: a.USDMicros}
+		}
+		out = append(out, run)
+	}
+	slices.SortFunc(out, func(a, b foundrymodel.FoundryWorkflowInsightRun) int { return b.StartedAt.Compare(a.StartedAt) })
+	return out[:min(len(out), limit)], nil
+}
+
 func (s *workflowStore) TallyFoundryWorkflowRuns(_ context.Context, workflowIDs []string, by access.Principal) (map[string]foundrymodel.FoundryWorkflowRunTally, error) {
 	out := map[string]foundrymodel.FoundryWorkflowRunTally{}
 	for _, w := range workflowIDs {

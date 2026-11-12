@@ -4,7 +4,11 @@
 // are read without trust: anything that isn't what it should be reads as
 // nothing.
 import type {
+  FoundryPrincipal,
   FoundryWorkflowAccess,
+  FoundryWorkflowInsightDay,
+  FoundryWorkflowInsightFunnel,
+  FoundryWorkflowInsightTotals,
   FoundryWorkflowRun,
   FoundryWorkflowRunCounts,
 } from "../../../shared/wfe";
@@ -412,4 +416,210 @@ export function suggestionGoal(
     ? `\n\nAn agent's run lacked: ${gaps.map((g) => `${g.label.toLowerCase()}: ${g.what}`).join("; ")}.`
     : "";
   return [...(suggestion + why)].slice(0, max).join("");
+}
+
+// ---------------------------------------------------------------- insights
+
+/** The windows the pages offer, in days. */
+export const INSIGHT_WINDOWS = [7, 30, 90] as const;
+
+type Totals = FoundryWorkflowInsightTotals;
+const num = (v?: number | string) => Number(v || 0);
+
+/** part of whole, or undefined with nothing to share. */
+const share = (part: number, whole: number) =>
+  whole > 0 ? part / whole : undefined;
+
+/** The runs the ontology helped (essential or helpful), of those assessed. */
+export const helpedShare = (t?: Totals) =>
+  share(num(t?.helped), num(t?.assessed));
+
+/** The claims a call backed, of all claims assessed. */
+export const backedShare = (t?: Totals) =>
+  share(
+    num(t?.claimsSupported),
+    num(t?.claimsSupported) +
+      num(t?.claimsUnsupported) +
+      num(t?.claimsContradicted),
+  );
+
+/** Calls to the ontology a run. */
+export const callsPerRun = (t?: Totals) =>
+  num(t?.runs)
+    ? (num(t?.reads) + num(t?.questions) + num(t?.sends) + num(t?.uploads)) /
+      num(t?.runs)
+    : undefined;
+
+/** What a page charts: runs, or one of the shares a run comes to. */
+export type InsightMetric = "runs" | "helped" | "backed" | "calls";
+
+const percent = (v: number) => `${Math.round(v * 100)}%`;
+
+/** Each metric: its label, its value over totals, and how it reads. */
+export const INSIGHT_METRICS: Record<
+  InsightMetric,
+  {
+    label: string;
+    value: (t?: Totals) => number | undefined;
+    format: (v: number) => string;
+    share: boolean;
+  }
+> = {
+  runs: {
+    label: "Runs",
+    value: (t) => num(t?.runs),
+    format: (v) => formatCount(v),
+    share: false,
+  },
+  helped: {
+    label: "Ontology helped",
+    value: helpedShare,
+    format: percent,
+    share: true,
+  },
+  backed: {
+    label: "Claims backed by reads",
+    value: backedShare,
+    format: percent,
+    share: true,
+  },
+  calls: {
+    label: "Calls per run",
+    value: callsPerRun,
+    format: (v) => v.toFixed(1),
+    share: false,
+  },
+};
+
+/**
+ * How a metric moved from the window before: points for a share, a percent
+ * for a count; undefined when either side has nothing to compare.
+ *
+ *     insightChange("helped", { helped: 8, assessed: 10 }, { helped: 6, assessed: 10 })
+ *     // { text: "▲ 20 pts", direction: "up" }
+ */
+export function insightChange(
+  metric: InsightMetric,
+  now?: Totals,
+  before?: Totals,
+): { text: string; direction: "up" | "down" | "flat" } | undefined {
+  const m = INSIGHT_METRICS[metric];
+  const a = m.value(now),
+    b = m.value(before);
+  if (a === undefined || b === undefined || (!m.share && b === 0)) return;
+  const delta = m.share
+    ? Math.round((a - b) * 100)
+    : metric === "calls"
+      ? Math.round((a - b) * 10) / 10
+      : Math.round(((a - b) / b) * 100);
+  const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  const size = Math.abs(delta);
+  const unit = m.share ? " pts" : metric === "calls" ? "" : "%";
+  return {
+    text:
+      direction === "flat"
+        ? "No change"
+        : `${direction === "up" ? "▲" : "▼"} ${metric === "calls" ? size.toFixed(1) : size}${unit}`,
+    direction,
+  };
+}
+
+/** A metric day by day, for a sparkline or the main chart; undefined on a day it has no value. */
+export const insightSeries = (
+  metric: InsightMetric,
+  series: FoundryWorkflowInsightDay[] | undefined,
+) =>
+  (series || []).map((d) => ({
+    date: d.date || "",
+    value: INSIGHT_METRICS[metric].value(d.totals),
+  }));
+
+/** A day's runs by verdict, and those not assessed, for the stacked chart. */
+export function verdictDay(d: FoundryWorkflowInsightDay) {
+  const t = d.totals;
+  const out: Record<string, number | string> = { date: d.date || "" };
+  for (const v of VERDICTS)
+    out[v] = num(t?.verdicts?.find((x) => x.verdict === v)?.runs);
+  out.pending = Math.max(0, num(t?.runs) - num(t?.assessed));
+  return out;
+}
+
+/** A window's verdicts in scale order, with their share of assessed runs. */
+export function verdictParts(t?: Totals) {
+  const assessed = num(t?.assessed);
+  return VERDICTS.map((verdict) => {
+    const runs = num(t?.verdicts?.find((x) => x.verdict === verdict)?.runs);
+    return { verdict, runs, share: assessed ? runs / assessed : 0 };
+  }).filter((p) => p.runs > 0);
+}
+
+/** One step of where runs go: its count, its share of runs started, and what left before it. */
+export type FunnelStep = {
+  key: keyof FoundryWorkflowInsightFunnel;
+  label: string;
+  runs: number;
+  share: number;
+  // Runs of the step before that didn't go on, and why.
+  left?: { runs: number; share: number; why: string };
+};
+
+const STEPS: {
+  key: keyof FoundryWorkflowInsightFunnel;
+  label: string;
+  why: string;
+}[] = [
+  { key: "started", label: "Started", why: "" },
+  { key: "finished", label: "Finished", why: "still open" },
+  { key: "assessed", label: "Assessed", why: "not assessed yet" },
+  { key: "used", label: "Used the ontology", why: "never called it" },
+  { key: "helped", label: "Ontology helped", why: "it didn’t help" },
+];
+
+/**
+ * Where a window's runs went, step by step.
+ *
+ *     funnelSteps({ started: 10, finished: 8, assessed: 8, used: 6, helped: 5 })[3]
+ *     // { key: "used", label: "Used the ontology", runs: 6, share: 0.6,
+ *     //   left: { runs: 2, share: 0.25, why: "never called it" } }
+ */
+export function funnelSteps(f?: FoundryWorkflowInsightFunnel): FunnelStep[] {
+  const started = num(f?.started);
+  return STEPS.map((s, i) => {
+    const runs = num(f?.[s.key]);
+    const before = i ? num(f?.[STEPS[i - 1]!.key]) : runs;
+    return {
+      key: s.key,
+      label: s.label,
+      runs,
+      share: started ? runs / started : 0,
+      ...(i > 0 && {
+        left: {
+          runs: before - runs,
+          share: before ? (before - runs) / before : 0,
+          why: s.why,
+        },
+      }),
+    };
+  });
+}
+
+/** A gap kind as the pages say it. */
+export const gapKindLabel = (kind?: string) =>
+  GAP_KINDS[(kind || "other") as keyof typeof GAP_KINDS] || GAP_KINDS.other;
+
+/**
+ * Who started a window's runs, as the page names them: a key or a member
+ * by name where `names` has it, the caller as "You", else what it is.
+ */
+export function starterLabel(
+  p: FoundryPrincipal | undefined,
+  names: ReadonlyMap<string, string>,
+  me: string,
+): string {
+  if (!p?.id) return "Someone";
+  if (p.kind === "KIND_USER" && p.id === me) return "You";
+  return (
+    names.get(p.id) ||
+    (p.kind === "KIND_SERVICE_CREDENTIAL" ? "An agent’s key" : "A member")
+  );
 }

@@ -102,6 +102,13 @@
   --hf-chart-4: #8a6fb0;
   --hf-chart-5: #c85a43;
   --hf-chart-6: #6f7a4f;
+  /* A workflow run's verdict: how much the ontology helped, a diverging scale
+     from helped (green) through marginal (grey) to hurt (red). */
+  --hf-verdict-essential: #3a9c2e;
+  --hf-verdict-helpful: #86c27c;
+  --hf-verdict-marginal: #b3b3b3;
+  --hf-verdict-unused: #e0957f;
+  --hf-verdict-misleading: #b5503b;
   /* Entity types, in order (Records, a document's marks); the explorer's
      canvas draws the same hues (explore/explorer/lib/theme.ts). */
   --hf-type-1: #2a78d6;
@@ -178,6 +185,11 @@
     --hf-chart-4: #a98fd0;
     --hf-chart-5: #e47a62;
     --hf-chart-6: #a3ad7e;
+    --hf-verdict-essential: #85ed75;
+    --hf-verdict-helpful: #4c9a45;
+    --hf-verdict-marginal: #9a9a9a;
+    --hf-verdict-unused: #b5523f;
+    --hf-verdict-misleading: #f08a70;
     --hf-type-1: #3987e5;
     --hf-type-2: #d95926;
     --hf-type-3: #199e70;
@@ -247,6 +259,11 @@
   --hf-chart-4: #a98fd0;
   --hf-chart-5: #e47a62;
   --hf-chart-6: #a3ad7e;
+  --hf-verdict-essential: #85ed75;
+  --hf-verdict-helpful: #4c9a45;
+  --hf-verdict-marginal: #9a9a9a;
+  --hf-verdict-unused: #b5523f;
+  --hf-verdict-misleading: #f08a70;
   --hf-type-1: #3987e5;
   --hf-type-2: #d95926;
   --hf-type-3: #199e70;

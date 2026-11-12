@@ -706,6 +706,59 @@ WHERE status='done' AND workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) GR
 	return out, rows.Err()
 }
 
+// ListFoundryWorkflowInsightRuns returns the runs of the ontology's
+// workflows that started in [from, to), newest first, at most limit: of
+// workflowID when it names one, and those startedBy started when it names
+// anyone. Each comes with its assessment, if it has one.
+func (s *mysqlDB) ListFoundryWorkflowInsightRuns(ctx context.Context, ontologyID, workflowID string, startedBy *access.Principal,
+	from, to time.Time, limit int) ([]model.FoundryWorkflowInsightRun, error) {
+	conds := []string{"r.ontology_id=?", "r.started_at >= ?", "r.started_at < ?"}
+	args := []any{ontologyID, from.UTC(), to.UTC()}
+	if workflowID != "" {
+		conds, args = append(conds, "r.workflow_id=?"), append(args, workflowID)
+	}
+	if startedBy != nil {
+		column, ok := startedByColumn(*startedBy)
+		if !ok {
+			return nil, nil
+		}
+		conds, args = append(conds, "r."+column+"=?"), append(args, startedBy.ID)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id, r.workflow_id, r.started_by_user_id, r.started_by_service_credential_id, r.started_at,
+  r.status, r.accesses, r.reads_count, r.questions, r.sends, r.uploads, a.status, a.verdict, a.assessment, a.usd_micros
+FROM foundry_workflow_runs r LEFT JOIN foundry_workflow_run_assessments a ON a.run_id = r.id`+whereClause(conds)+
+		fmt.Sprintf(" ORDER BY r.started_at DESC, r.id DESC LIMIT %d", limit), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []model.FoundryWorkflowInsightRun
+	for rows.Next() {
+		var r model.FoundryWorkflowInsightRun
+		var user, credential, assessed, verdict sql.NullString
+		var status string
+		var body []byte
+		var usd sql.NullInt64
+		c := &r.Counts
+		if err := rows.Scan(&r.ID, &r.WorkflowID, &user, &credential, &r.StartedAt, &status,
+			&c.Accesses, &c.Reads, &c.Questions, &c.Sends, &c.Uploads, &assessed, &verdict, &body, &usd); err != nil {
+			return nil, err
+		}
+		r.Status = model.FoundryWorkflowRunStatus(status)
+		if user.Valid {
+			r.StartedBy = access.Principal{Kind: access.PrincipalUser, ID: user.String}
+		} else {
+			r.StartedBy = access.Principal{Kind: access.PrincipalServiceCredential, ID: credential.String}
+		}
+		if assessed.Valid {
+			r.Assessment = &model.FoundryWorkflowInsightAssessment{Status: model.FoundryWorkflowAssessmentStatus(assessed.String),
+				Verdict: verdict.String, Assessment: body, USDMicros: usd.Int64}
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // startedByColumn is the column of foundry_workflow_runs naming who started a
 // run of p's kind: a user or a service credential. A team starts no run, and
 // has none (false).

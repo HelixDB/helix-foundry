@@ -23,8 +23,10 @@ import {
   type MockRoute,
 } from "../http";
 import { config, onReset } from "../state";
+import { workflowDemo } from "../fixtures/workflow-demo";
 import { WORKFLOWS_OFF, workflowsOn } from "./access";
 import { isScope, ontologyOf } from "./ontologies";
+import { insights, starterOf } from "./workflow-insights";
 
 // Workflows, as the backend serves them (api/workflows.go): an agent's task
 // over one ontology. A run of one is started and finished by the agent (in
@@ -64,6 +66,8 @@ type StoredWorkflow = FoundryWorkflow & {
   createdAt: string;
 };
 type StoredRun = FoundryWorkflowRun & {
+  // Who started it: a user, or an agent's key.
+  startedByServiceCredentialId?: string;
   workspaceId: string;
   ontologyId: string;
   workflowId: string;
@@ -84,12 +88,16 @@ type Knobs = {
   assessEnabled?: boolean;
   assessMs?: number;
   assessOutcome?: "fail" | "skip";
+  // Seeds Customer contracts' demo workflows (../fixtures/workflow-demo.ts),
+  // as MOCK_WORKFLOW_DEMO does at start.
+  workflowDemo?: boolean;
 };
 const knobs = config as typeof config & Knobs;
 onReset(() => {
   delete knobs.assessEnabled;
   delete knobs.assessMs;
   delete knobs.assessOutcome;
+  delete knobs.workflowDemo;
 });
 
 /** What one assessment spends in the mock, in millionths of a dollar. */
@@ -100,10 +108,12 @@ export const ASSESSMENTS_CAP_MICROS = 20_000_000;
 const state = {
   workflows: [] as StoredWorkflow[],
   runs: [] as StoredRun[],
+  demo: false,
 };
 onReset(() => {
   state.workflows = [];
   state.runs = [];
+  state.demo = false;
 });
 
 const bytes = (s: string) => new TextEncoder().encode(s).length;
@@ -253,8 +263,85 @@ function own(req: MockRequest): string | undefined {
 }
 
 /** Whether `r` is a run `by` (a principal key, as own gives) started. */
-const startedBy = (r: StoredRun, by: string | undefined) =>
-  !by || by === `KIND_USER:${r.startedByUserId}`;
+const startedBy = (r: StoredRun, by: string | undefined) => {
+  const s = starterOf(r);
+  return !by || by === `${s.kind}:${s.id}`;
+};
+
+/**
+ * Seeds Customer contracts' demo workflows and runs once, when the demo is
+ * asked for (MOCK_WORKFLOW_DEMO or the workflowDemo knob).
+ */
+function ensureDemo() {
+  if (state.demo || !(process.env.MOCK_WORKFLOW_DEMO || knobs.workflowDemo))
+    return;
+  state.demo = true;
+  const demo = workflowDemo(new Date());
+  const at = new Date(Date.now() - 46 * 86_400_000).toISOString();
+  for (const w of demo.workflows)
+    state.workflows.push({
+      ...w,
+      ontologyId: "ont_acme_contracts",
+      workspaceId: "ws_acme",
+      clientToken: w.id,
+      createdByUserId: "usr_ada",
+      createdAt: at,
+      runs: "0",
+      finishedRuns: "0",
+    });
+  for (const d of demo.runs) {
+    const accesses: StoredRun["accesses"] = [];
+    for (let i = 0; i < d.reads + d.questions; i++)
+      accesses.push({
+        seq: accesses.length + 1,
+        at: d.startedAt,
+        ...(i < d.reads
+          ? { read: { loadId: "load_demo", readsJson: "[]", resultJson: "{}" } }
+          : {
+              question: { loadId: "load_demo", questionId: `q_${d.id}_${i}` },
+            }),
+      });
+    state.runs.push({
+      id: d.id,
+      workflowId: d.workflowId,
+      workspaceId: "ws_acme",
+      ontologyId: "ont_acme_contracts",
+      clientToken: d.id,
+      status: d.output === undefined ? "open" : "finished",
+      input: d.input,
+      ...(d.output !== undefined && { output: d.output }),
+      ...(d.startedByUserId && { startedByUserId: d.startedByUserId }),
+      ...(d.startedByServiceCredentialId && {
+        startedByServiceCredentialId: d.startedByServiceCredentialId,
+      }),
+      startedAt: d.startedAt,
+      ...(d.finishedAt && { finishedAt: d.finishedAt }),
+      resultBytes: 0,
+      accesses,
+      ...(d.verdict && {
+        assessment: {
+          status: "done",
+          verdict: d.verdict,
+          assessmentJson: d.assessmentJson,
+          usdMicros: String(d.usdMicros),
+          queuedAt: d.finishedAt,
+          finishedAt: d.finishedAt,
+          startsAt: 0,
+          endsAt: 0,
+        },
+      }),
+      ...(d.queued && {
+        assessment: {
+          status: "running",
+          queuedAt: d.finishedAt,
+          usdMicros: "0",
+          startsAt: 0,
+          endsAt: Date.now() + 3_600_000,
+        },
+      }),
+    } as StoredRun);
+  }
+}
 
 function toWorkflow(w: StoredWorkflow, by?: string): FoundryWorkflow {
   const runs = state.runs.filter(
@@ -302,7 +389,9 @@ function toRun(r: StoredRun): FoundryWorkflowRun {
     status: r.status,
     ...(r.input !== undefined && { input: r.input }),
     ...(r.output !== undefined && { output: r.output }),
-    startedByUserId: r.startedByUserId,
+    ...(r.startedByServiceCredentialId
+      ? { startedByServiceCredentialId: r.startedByServiceCredentialId }
+      : { startedByUserId: r.startedByUserId }),
     startedAt: r.startedAt,
     ...(r.finishedAt && { finishedAt: r.finishedAt }),
     counts: {
@@ -526,8 +615,40 @@ export const workflowRoutes: MockRoute[] = [
   },
   {
     method: "GET",
+    path: `${BASE}:insights`,
+    handle: (req) => {
+      ensureDemo();
+      const s = ontologyOf(req);
+      if (!isScope(s)) return s;
+      const workflowId = req.query.get("workflowId") || undefined;
+      if (workflowId) {
+        const w = workflowOf(s.o.id, workflowId);
+        if (isReplyOf(w)) return w;
+      }
+      const days = Number(req.query.get("days") || 0);
+      if (!Number.isInteger(days) || days < 0 || days > 90)
+        return fail("INVALID_ARGUMENT", "days is 1 to 90");
+      const kind = req.query.get("startedBy.kind"),
+        who = req.query.get("startedBy.id");
+      const by = own(req) || (kind && who ? `${kind}:${who}` : undefined);
+      const runs = state.runs
+        .filter(
+          (r) =>
+            r.ontologyId === s.o.id &&
+            (!workflowId || r.workflowId === workflowId) &&
+            startedBy(r, by),
+        )
+        .map((r) => ({ ...toRun(r), startedAt: r.startedAt }));
+      return ok(
+        insights(runs, { days: days || 30, now: new Date(), workflowId }),
+      );
+    },
+  },
+  {
+    method: "GET",
     path: BASE,
     handle: (req) => {
+      ensureDemo();
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
       return ok({

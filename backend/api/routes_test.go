@@ -286,6 +286,12 @@ func (r *routeRecorder) ListFoundryWorkflowRunAccesses(_ context.Context, req *f
 	return &foundryv1.ListFoundryWorkflowRunAccessesResponse{}, nil
 }
 
+func (r *routeRecorder) GetFoundryWorkflowInsights(_ context.Context, req *foundryv1.GetFoundryWorkflowInsightsRequest) (*foundryv1.FoundryWorkflowInsights, error) {
+	r.hit("GetFoundryWorkflowInsights", req, fmt.Sprintf("%s/%d/%s:%s", req.GetWorkflowId(), req.GetDays(),
+		req.GetStartedBy().GetKind(), req.GetStartedBy().GetId()))
+	return &foundryv1.FoundryWorkflowInsights{}, nil
+}
+
 func (r *routeRecorder) AssessFoundryWorkflowRun(_ context.Context, req *foundryv1.AssessFoundryWorkflowRunRequest) (*foundryv1.FoundryWorkflowRunResponse, error) {
 	r.hit("AssessFoundryWorkflowRun", req, req.GetWorkflowId()+"/"+req.GetId())
 	return &foundryv1.FoundryWorkflowRunResponse{}, nil
@@ -461,6 +467,9 @@ func TestFoundryRoutes(t *testing.T) {
 			"CreateFoundryWorkflow ws-1 ont-1 Triage/tickets/t"},
 		{http.MethodGet, o + "/ont-1/workflows?pageToken=p", "", "ListFoundryWorkflows ws-1 ont-1 p"},
 		{http.MethodGet, o + "/ont-1/workflows/wf-1", "", "GetFoundryWorkflow ws-1 ont-1 wf-1"},
+		{http.MethodGet, o + "/ont-1/workflows:insights?workflowId=wf-1&days=7&startedBy.kind=KIND_USER&startedBy.id=u-1", "",
+			"GetFoundryWorkflowInsights ws-1 ont-1 wf-1/7/KIND_USER:u-1"},
+		{http.MethodGet, o + "/ont-1/workflows:insights", "", "GetFoundryWorkflowInsights ws-1 ont-1 /0/KIND_UNSPECIFIED:"},
 		{http.MethodDelete, o + "/ont-1/workflows/wf-1", "", "DeleteFoundryWorkflow ws-1 ont-1 wf-1"},
 		{http.MethodPost, o + "/ont-1/workflows/wf-1/runs", `{"input":"hi","clientToken":"c"}`, "StartFoundryWorkflowRun ws-1 ont-1 wf-1/hi/c"},
 		{http.MethodGet, o + "/ont-1/workflows/wf-1/runs?pageToken=p", "", "ListFoundryWorkflowRuns ws-1 ont-1 wf-1/p"},

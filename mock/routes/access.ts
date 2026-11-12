@@ -786,6 +786,7 @@ const RULES: Record<string, Rule> = {
   [`GET ${O}/documents`]: "ontology",
   [`GET ${O}/documents/{id}`]: "ontology",
   [`GET ${O}/workflows`]: "workflows",
+  [`GET ${O}/workflows:insights`]: "workflows",
   [`GET ${O}/workflows/{id}`]: "workflows",
   [`POST ${O}/workflows/{workflowId}/runs`]: "workflows",
   [`GET ${O}/workflows/{workflowId}/runs`]: "workflows",

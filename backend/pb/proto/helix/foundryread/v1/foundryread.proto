@@ -30,8 +30,8 @@ service FoundryRead {
 
 message ReadRequest {
   string workspace_id = 1;
-  string ontology_id  = 2;
-  string load_id      = 3;
+  string ontology_id = 2;
+  string load_id = 3;
   // The load's version as the graph records it: foundry-v<number>.
   string ontology_version = 4;
   // The version's ontology.toml, whose rules the reads evaluate.
@@ -51,11 +51,11 @@ message ReadResponse {
 }
 
 message TitleRequest {
-  string workspace_id  = 1;
+  string workspace_id = 1;
   // The generation it titles, the same on every attempt.
   string generation_id = 2;
   // The generation's goal, as its author wrote it.
-  string goal          = 3;
+  string goal = 3;
 }
 
 message TitleResponse {
