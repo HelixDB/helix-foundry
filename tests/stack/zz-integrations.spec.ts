@@ -105,6 +105,123 @@ test("local agents discover, create and read through MCP and reach HTTP Ask", as
     ontology_id: ontologyID,
   });
 
+  // The sample company through the same tools, as an agent builds an
+  // ontology of its own: foundry connects the install's acme-db, syncs it and
+  // uploads the documents to the store itself.
+  const ids = { workspace_id: workspace.id, ontology_id: ontologyID };
+  const run = async (op: object) => {
+    const confirmed = await tool("helix_prepare_foundry_operation", op);
+    return (
+      await tool("helix_execute_foundry_operation", {
+        ...op,
+        confirmation_id: confirmed.confirmation_id,
+        confirmation_token: confirmed.confirmation_token,
+      })
+    ).result;
+  };
+  const target = `ontology:${workspace.id}/${ontologyID}`;
+  const added = await run({ operation: "add_sample_data", target, payload: {} });
+  expect(added.documents).toHaveLength(9);
+  for (const doc of added.documents) {
+    expect(doc.status).toBe("uploaded");
+    expect(doc.set_id).toBe(added.document_set_id);
+  }
+  await expect
+    .poll(
+      async () =>
+        (
+          await tool("helix_foundry_get_sync", {
+            workspace_id: workspace.id,
+            connector_id: added.connector_id,
+            sync_id: added.sync_id,
+            wait: true,
+          })
+        ).sync.status,
+      { timeout: 180_000, intervals: [0] },
+    )
+    .toBe("succeeded");
+  // Again, it makes nothing twice.
+  const again = await run({ operation: "add_sample_data", target, payload: {} });
+  expect(again.connector_id).toBe(added.connector_id);
+  expect(again.document_set_id).toBe(added.document_set_id);
+  expect(again.documents.map((d: { id: string }) => d.id).sort()).toEqual(
+    added.documents.map((d: { id: string }) => d.id).sort(),
+  );
+
+  // With a model provider, its ready-made draft loads and answers.
+  if (process.env.FOUNDRY_STACK_MODELS) {
+    const generation = await run({
+      operation: "generate_ontology",
+      target,
+      payload: {
+        sample: "acme",
+        connector_ids: [added.connector_id],
+        document_set_ids: [added.document_set_id],
+      },
+    });
+    let versionID = "";
+    await expect
+      .poll(
+        async () => {
+          const g = (
+            await tool("helix_foundry_get_generation", {
+              ...ids,
+              generation_id: generation.id,
+              wait: true,
+            })
+          ).generation;
+          versionID = g.result_version_id ?? "";
+          return g.status;
+        },
+        { timeout: 120_000, intervals: [0] },
+      )
+      .toBe("succeeded");
+    await run({
+      operation: "set_current_version",
+      target,
+      payload: { version_id: versionID, expected_current_version_id: "" },
+    });
+    const load = await run({
+      operation: "create_load",
+      target,
+      payload: { version_id: versionID },
+    });
+    await expect
+      .poll(
+        async () =>
+          (
+            await tool("helix_foundry_get_load", {
+              ...ids,
+              load_id: load.id,
+              wait: true,
+            })
+          ).load.status,
+        { timeout: 900_000, intervals: [0] },
+      )
+      .toMatch(/^(ready|partial)$/);
+    const context = await tool("helix_foundry_get_context", ids);
+    expect(context.ontology_toml).toContain("[types.Account]");
+    expect(context.example_questions.length).toBeGreaterThan(0);
+    let question = await tool("helix_foundry_ask", {
+      ...ids,
+      question: context.example_questions[0],
+      client_token: "stack-sample-question",
+    });
+    await expect
+      .poll(
+        async () => {
+          if (!question.done)
+            question = await tool("helix_foundry_get_question", {
+              ...ids,
+              question_id: question.id,
+            });
+          return question.status;
+        },
+        { timeout: 300_000, intervals: [0] },
+      )
+      .toBe("answered");
+  }
+
   const ask = await request.post(`${base}/v1/ontologies/${ontologyID}/ask`, {
     headers: { ...headers, "Idempotency-Key": "stack-integration-question" },
     data: { question: "What data is loaded?" },
