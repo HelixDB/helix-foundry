@@ -7,15 +7,29 @@ import {
   type InsightRun,
 } from "../../mock/routes/workflow-insights";
 import {
+  MIN_SAMPLE,
+  activeDays,
   backedShare,
   callsPerRun,
+  claimsOf,
   funnelSteps,
+  funnelText,
   helpedShare,
   insightChange,
   insightSeries,
+  isRunFilter,
+  issueKey,
+  metricText,
+  principalKey,
+  rollingDays,
+  runBucket,
+  runShown,
   starterLabel,
+  starterOf,
   verdictDay,
   verdictParts,
+  verdictRuns,
+  windowStart,
 } from "@/web/areas/workflows/model";
 
 // What a window of runs comes to (the mock's GetFoundryWorkflowInsights, the
@@ -277,21 +291,112 @@ describe("the Workflows pages' metrics", () => {
     expect(callsPerRun({})).toBeUndefined();
   });
 
-  it("says how a metric moved from the window before", () => {
-    expect(insightChange("helped", t, { helped: 3, assessed: 6 })).toEqual({
-      text: "▲ 25 pts",
-      direction: "up",
+  it("reads a rate of few runs as the counts it comes from", () => {
+    expect(metricText("helped", { assessed: 1, helped: 1 })).toEqual({
+      text: "1 of 1",
+      few: true,
     });
+    expect(
+      metricText("backed", {
+        assessed: 1,
+        claimsSupported: 10,
+        claimsUnsupported: 1,
+      }),
+    ).toEqual({ text: "10 of 11", few: true });
+    expect(metricText("helped", { assessed: 20, helped: 15 })).toEqual({
+      text: "75%",
+      few: false,
+    });
+    expect(metricText("helped", {})).toEqual({ text: "—", few: false });
+    expect(metricText("runs", { runs: 1200 })).toEqual({
+      text: "1,200",
+      few: false,
+    });
+    expect(metricText("misleading", { runs: 3 })).toEqual({
+      text: "—",
+      few: false,
+    });
+    expect(metricText("misleading", t)).toEqual({ text: "0", few: false });
+    expect(claimsOf(t)).toBe(12);
+    expect(verdictRuns(t, "essential")).toBe(4);
+    expect(verdictRuns(undefined, "essential")).toBe(0);
+  });
+
+  it("says how a metric moved from the window before, and whether that is good", () => {
+    const many = { runs: 20, assessed: 20, helped: 16 };
+    expect(
+      insightChange("helped", many, { runs: 10, assessed: 10, helped: 6 }),
+    ).toEqual({ text: "▲ 20 pts", tone: "good" });
+    // A rate of fewer than MIN_SAMPLE runs on either side moves nothing.
+    expect(
+      insightChange("helped", many, { assessed: MIN_SAMPLE - 1, helped: 1 }),
+    ).toBeUndefined();
+    expect(insightChange("helped", t, many)).toBeUndefined();
     expect(insightChange("runs", t, { runs: 20 })).toEqual({
-      text: "▼ 50%",
-      direction: "down",
+      text: "▼ 10",
+      tone: "bad",
     });
-    expect(insightChange("calls", t, { runs: 10, reads: 25 })).toEqual({
+    expect(insightChange("runs", t, { runs: 10 })).toEqual({
       text: "No change",
-      direction: "flat",
+      tone: "flat",
     });
-    expect(insightChange("runs", t, { runs: 0 })).toBeUndefined();
+    // Fewer misleading runs is good news.
+    const misled = (n: number) => ({
+      assessed: 5,
+      verdicts: [{ verdict: "misleading", runs: String(n) }],
+    });
+    expect(insightChange("misleading", misled(1), misled(3))).toEqual({
+      text: "▼ 2",
+      tone: "good",
+    });
+    expect(insightChange("misleading", misled(2), misled(0))).toEqual({
+      text: "▲ 2",
+      tone: "bad",
+    });
+    expect(insightChange("misleading", misled(1), {})).toBeUndefined();
     expect(insightChange("backed", t, {})).toBeUndefined();
+  });
+
+  it("reads a rate over the days before each, so a day of few runs doesn't swing it", () => {
+    const days = [
+      { date: "d1", totals: { runs: 1, assessed: 1, helped: 1 } },
+      { date: "d2", totals: { runs: 1, assessed: 1 } },
+      { date: "d3", totals: {} },
+      { date: "d4", totals: { runs: 2, assessed: 2, helped: 2 } },
+    ];
+    expect(insightSeries("helped", days, 2).map((d) => d.value)).toEqual([
+      1, 0.5, 0, 1,
+    ]);
+    expect(insightSeries("helped", days).map((d) => d.value)).toEqual([
+      1,
+      0,
+      undefined,
+      1,
+    ]);
+    // Counts are each day's own.
+    expect(insightSeries("runs", days, 7).map((d) => d.value)).toEqual([
+      1, 1, 0, 2,
+    ]);
+    expect(insightSeries("helped", undefined)).toEqual([]);
+    expect(rollingDays(7)).toBe(1);
+    expect(rollingDays(30)).toBe(7);
+    expect(activeDays(days)).toBe(3);
+    expect(activeDays(undefined)).toBe(0);
+  });
+
+  it("says in a sentence where runs went when none left on the way", () => {
+    expect(
+      funnelText({ started: 1, finished: 1, assessed: 1, used: 1, helped: 1 }),
+    ).toBe(
+      "The run finished, was assessed and used the ontology, and the ontology helped.",
+    );
+    expect(
+      funnelText({ started: 3, finished: 3, assessed: 3, used: 3, helped: 3 }),
+    ).toMatch(/^Every run finished/);
+    expect(
+      funnelText({ started: 3, finished: 3, assessed: 3, used: 2, helped: 2 }),
+    ).toBeUndefined();
+    expect(funnelText({})).toBeUndefined();
   });
 
   it("charts runs by verdict and the shares by day", () => {
@@ -334,5 +439,71 @@ describe("the Workflows pages' metrics", () => {
       "A member",
     );
     expect(starterLabel(undefined, names, "u1")).toBe("Someone");
+  });
+});
+
+describe("a workflow's runs list", () => {
+  const at = "2026-11-12T10:00:00Z";
+  it("files each run under one filter", () => {
+    expect(runBucket(run(at, { open: true }))).toBe("pending");
+    expect(runBucket(run(at, { status: "queued" }))).toBe("pending");
+    expect(runBucket(run(at, { status: "failed" }))).toBe("pending");
+    expect(runBucket(run(at, { verdict: "later" }))).toBe("pending");
+    expect(runBucket(run(at, { verdict: "essential" }))).toBe("helped");
+    expect(runBucket(run(at, { verdict: "helpful" }))).toBe("helped");
+    expect(runBucket(run(at, { verdict: "marginal" }))).toBe("not_helped");
+    expect(runBucket(run(at, { verdict: "unused" }))).toBe("not_helped");
+    expect(runBucket(run(at, { verdict: "misleading" }))).toBe("misleading");
+    expect(isRunFilter("misleading")).toBe(true);
+    expect(isRunFilter("toString")).toBe(false);
+    expect(isRunFilter(null)).toBe(false);
+  });
+
+  it("starts a window on its first whole UTC day, as the insights count", () => {
+    expect(new Date(windowStart(7, NOW)).toISOString()).toBe(
+      "2026-11-06T00:00:00.000Z",
+    );
+    expect(new Date(windowStart(1, NOW)).toISOString()).toBe(
+      "2026-11-12T00:00:00.000Z",
+    );
+  });
+
+  it("matches a gap's text as the backend does", () => {
+    expect(issueKey("  No HEALTH   score on Customer. ")).toBe(
+      normalize("  No HEALTH   score on Customer. "),
+    );
+    expect(issueKey("Add x!?")).toBe("add x");
+  });
+
+  it("shows the runs of the window, who, filter and gap asked for", () => {
+    const from = windowStart(7, NOW);
+    const named = run(at, {
+      verdict: "misleading",
+      key: "k1",
+      gaps: [{ kind: "missing_property", what: "No health score." }],
+      suggestions: ["Add a health_score"],
+    });
+    const plain = run(at, { verdict: "helpful" });
+    const old = run("2026-11-01T10:00:00Z", { verdict: "helpful" });
+    const q = (o: Partial<Parameters<typeof runShown>[1]>) => ({
+      from,
+      filter: "all" as const,
+      ...o,
+    });
+    expect(runShown(named, q({}))).toBe(true);
+    expect(runShown(old, q({}))).toBe(false);
+    expect(runShown({ ...plain, startedAt: undefined }, q({}))).toBe(false);
+    expect(runShown(named, q({ filter: "misleading" }))).toBe(true);
+    expect(runShown(plain, q({ filter: "misleading" }))).toBe(false);
+    const k1 = { kind: "KIND_SERVICE_CREDENTIAL" as const, id: "k1" };
+    expect(runShown(named, q({ who: k1 }))).toBe(true);
+    expect(runShown(plain, q({ who: k1 }))).toBe(false);
+    expect(runShown(named, q({ issue: "no health score" }))).toBe(true);
+    expect(runShown(named, q({ issue: "add a health_score" }))).toBe(true);
+    expect(runShown(plain, q({ issue: "no health score" }))).toBe(false);
+    expect(starterOf(named)).toEqual(k1);
+    expect(starterOf(plain)).toEqual({ kind: "KIND_USER", id: "u1" });
+    expect(principalKey(k1)).toBe("KIND_SERVICE_CREDENTIAL:k1");
+    expect(principalKey(undefined)).toBe("");
   });
 });

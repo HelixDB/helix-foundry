@@ -739,15 +739,14 @@ export const workflowRoutes: MockRoute[] = [
       if (!isScope(s)) return s;
       const w = workflowOf(s.o.id, req.params.workflowId);
       if (isReplyOf(w)) return w;
-      // Newest first (by when they started, then id), RUNS_PAGE a page, as
-      // the backend pages them; the token names the last run of the page
-      // before.
+      // Newest first by when they started, RUNS_PAGE a page, as the backend
+      // pages them (runs started in the same instant newest made first); the
+      // token names the last run of the page before.
       const all = state.runs
         .filter((r) => r.workflowId === w.id && startedBy(r, own(req)))
-        .toSorted(
-          (a, b) =>
-            (b.startedAt || "").localeCompare(a.startedAt || "") ||
-            b.id.localeCompare(a.id),
+        .toReversed()
+        .toSorted((a, b) =>
+          (b.startedAt || "").localeCompare(a.startedAt || ""),
         );
       const token = req.query.get("pageToken") || "";
       const from = token ? all.findIndex((r) => r.id === token) + 1 : 0;
