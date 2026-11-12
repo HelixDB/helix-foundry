@@ -10,13 +10,13 @@
 </p>
 
 <p align="center">
-  <a href="https://foundry.helix-db.com">Helix Cloud</a> ·
+  <a href="https://foundry.helix-db.com/?via=github">Helix Cloud</a> ·
   <a href="https://docs.helix-db.com/foundry">Docs</a> ·
   <a href="#run-it-on-your-computer">Run it on your computer</a> ·
   <a href="LICENSE">Apache 2.0</a>
 </p>
 
-Connect your databases, tools and documents, let an agent draft an ontology over them, and load it into [HelixDB](https://docs.helix-db.com) as one connected graph. Explore it, follow every value back to the row or quote it came from, and ask questions with cited answers. Use it hosted at [foundry.helix-db.com](https://foundry.helix-db.com), or run it on your own computer with one command.
+Connect your databases, tools and documents, let an agent draft an ontology over them, and load it into [HelixDB](https://docs.helix-db.com) as one connected graph. Explore it, follow every value back to the row or quote it came from, and ask questions with cited answers. Use it hosted at [foundry.helix-db.com](https://foundry.helix-db.com/?via=github), or run it on your own computer with one command.
 
 <p align="center">
   <img src=".github/assets/explorer.png" width="800" alt="The Helix Foundry Explorer: customers, invoices and contracts as one connected graph, with the selected customer's properties and relationships beside it">
@@ -24,7 +24,7 @@ Connect your databases, tools and documents, let an agent draft an ontology over
 
 ## Get started with your coding agent
 
-**On Helix Cloud.** Open [foundry.helix-db.com](https://foundry.helix-db.com) and click **Set up with your agent**. It copies a prompt for Claude Code, Codex, Cursor or any agent that can run commands. The agent adds the Helix MCP, signs you up through it if you don't have an account yet, and builds your first ontology with you. You never need the Helix dashboard: the agent sends you a link only to sign in or to enter a password or key.
+**On Helix Cloud.** Open [foundry.helix-db.com](https://foundry.helix-db.com/?via=github) and click **Set up with your agent**. It copies a prompt for Claude Code, Codex, Cursor or any agent that can run commands. The agent adds the Helix MCP, signs you up through it if you don't have an account yet, and builds your first ontology with you. You never need the Helix dashboard: the agent sends you a link only to sign in or to enter a password or key.
 
 **On your computer.** With [Docker](https://docs.docker.com/get-started/get-docker/) running, paste this into your agent:
 

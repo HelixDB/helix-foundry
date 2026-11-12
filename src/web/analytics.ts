@@ -105,6 +105,12 @@ export type AnalyticsEvents = {
   // The landing page's copy buttons: the agent's setup prompt, or a local
   // install's (visitors who take them never open sign-in).
   setup_prompt_copied: { setup: "agent" | "local" };
+  // The landing page on a phone: a reminder to try Foundry on a computer
+  // set up (again: the address already had them), or why it wasn't; then a
+  // visit from a reminder's link or the README's (?via=).
+  reminder_requested: { again: boolean };
+  reminder_refused: { reason: "invalid" | "rate_limit" | "error" };
+  landing_returned: { via: "email" | "github" };
 
   // The sample company: Use the sample, then its tour reaching each step.
   sample_clicked: undefined;

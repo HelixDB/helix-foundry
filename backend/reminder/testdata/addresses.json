@@ -1,0 +1,54 @@
+{
+  "_": "The addresses reminder.Normalize keeps, with what it keeps, and those it refuses. The site's mock (mock/reminders.ts) is held to it: copied to tests/unit/__fixtures__/reminder-addresses.json, byte for byte; copy it again when it changes. The last refused is 254 bytes as typed and 255 lowercased (Ⱥ is 2 bytes, ⱥ 3).",
+  "kept": [
+    {
+      "in": "ada@example.com",
+      "want": "ada@example.com"
+    },
+    {
+      "in": "  Ada.Lovelace@Example.COM\n",
+      "want": "ada.lovelace@example.com"
+    },
+    {
+      "in": "grace+foundry@mail.example.org",
+      "want": "grace+foundry@mail.example.org"
+    },
+    {
+      "in": "o'brien@example.ie",
+      "want": "o'brien@example.ie"
+    },
+    {
+      "in": "Ⱥda@example.com",
+      "want": "ⱥda@example.com"
+    }
+  ],
+  "refused": [
+    "",
+    "ada",
+    "ada@",
+    "@example.com",
+    "ada@example",
+    "ada@.example.com",
+    "ada@example.com.",
+    "ada@example..com",
+    "ada@@example.com",
+    "a@b@example.com",
+    "Ada <ada@example.com>",
+    "ada@example.com (Ada)",
+    "\"ada lovelace\"@example.com",
+    "ada lovelace@example.com",
+    "ada@exa\u0000mple.com",
+    "ada,grace@example.com",
+    "ada@example.com;grace@example.com",
+    ".ada@example.com",
+    "ada.@example.com",
+    "ada..lovelace@example.com",
+    "a\"b@example.com",
+    "x(y)@example.io",
+    "ada@[192.0.2.1]",
+    "ada:x@example.com",
+    "ada\\x@example.com",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com",
+    "Ⱥaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com"
+  ]
+}

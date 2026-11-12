@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { compileTemplate, matchTemplate } from "../src/shared/route-template";
 import { fail, type MockReply, type Principal } from "./http";
+import { handleReminders, mockReminders } from "./reminders";
 import { routes } from "./routes";
 import { handleDirectoryPage } from "./routes/access";
 import { handleBillingPage } from "./routes/billing";
@@ -38,7 +39,11 @@ import { handleWorkos } from "./workos";
 // memberQueryRead, invoiceOnlyCustomers, healEnabled, healRun, healDismiss,
 // healRowsMeasured, freshInstall, signIn, signInsRunOut, accountBroken,
 // githubInstalled, directoryTeams, directoryEntitled, directoryIssues,
-// directorySyncMs }.
+// directorySyncMs, remindersPerHour, remindersPerClientPerHour }.
+//
+// POST /v1/reminders and /v1/reminders/stop are Foundry's door's, not the
+// WFE's: the landing page's reminders (./reminders.ts), which the site's
+// server calls with the mock's secret. GET /__mock/reminders lists them.
 //
 // /mock/directory-portal is WorkOS's Admin Portal for directory sync
 // (./routes/access.ts).
@@ -130,6 +135,11 @@ const server = createServer(async (req, res) => {
         res.end(JSON.stringify(reply.body));
         return;
       }
+      if (url.pathname === "/__mock/reminders" && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ reminders: mockReminders() }));
+        return;
+      }
       if (url.pathname === "/__mock/reset" && req.method === "POST")
         resetState();
       else if (url.pathname === "/__mock/config" && req.method === "POST") {
@@ -147,6 +157,8 @@ const server = createServer(async (req, res) => {
     if (handleBillingPage(req, res, url, raw)) return;
     if (handleConnectPage(req, res, url, raw)) return;
     if (handleDirectoryPage(req, res, url)) return;
+    // Foundry's door's reminder routes (ingest.helix-db.com), not the WFE's.
+    if (handleReminders(req, res, url, raw)) return;
     const reply = url.pathname.startsWith("/v1/")
       ? await wfe(req, url, raw)
       : fail("NOT_FOUND", "Not Found");

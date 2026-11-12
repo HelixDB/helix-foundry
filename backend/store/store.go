@@ -363,6 +363,14 @@ type Store interface {
 	ClaimFoundryNotification(ctx context.Context, token string, lease time.Duration) (*model.FoundryNotification, error)
 	FinishFoundryNotification(ctx context.Context, id, token string, outcome model.FoundryNotificationOutcome) error
 
+	// Foundry reminders: the reminders people ask for on the landing page,
+	// which the API takes from the foundry-events door and the
+	// foundry-notify-worker claims and sends (foundry_reminders.go)
+	RequestFoundryReminder(ctx context.Context, req model.FoundryReminderRequest) (model.FoundryReminderAnswer, error)
+	StopFoundryReminder(ctx context.Context, email, reason string) (bool, error)
+	ClaimFoundryReminder(ctx context.Context, token string, lease time.Duration) (*model.FoundryReminder, error)
+	FinishFoundryReminder(ctx context.Context, id, token string, outcome model.FoundryReminderOutcome) error
+
 	// Foundry self-healing: a person's dismissals, and the
 	// foundry-heal-worker's runs (foundry_heal.go)
 	DismissFoundryHealFinding(ctx context.Context, ontologyID, fingerprint, userID string) error

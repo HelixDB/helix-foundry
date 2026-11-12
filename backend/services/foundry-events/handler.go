@@ -26,11 +26,15 @@ import (
 )
 
 // backendAPI is what the door calls on Foundry's API (FoundryEventsService), as an event
-// source's sender (ports.SourceEventSource).
+// source's sender (ports.SourceEventSource), or as the door for the site's reminders.
 type backendAPI interface {
 	ValidateFoundryEventSourceToken(context.Context, *foundryv1.ValidateFoundryEventSourceTokenRequest, ...grpc.CallOption) (
 		*foundryv1.ValidateFoundryEventSourceTokenResponse, error)
 	SendFoundryEvents(context.Context, *foundryv1.SendFoundryEventsRequest, ...grpc.CallOption) (*foundryv1.SendFoundryEventsResponse, error)
+	CreateFoundryReminder(context.Context, *foundryv1.CreateFoundryReminderRequest, ...grpc.CallOption) (
+		*foundryv1.CreateFoundryReminderResponse, error)
+	StopFoundryReminders(context.Context, *foundryv1.StopFoundryRemindersRequest, ...grpc.CallOption) (
+		*foundryv1.StopFoundryRemindersResponse, error)
 }
 
 // handler serves POST /v1/sources/{source}/pieces. It checks a request in this order, cheapest
@@ -93,15 +97,19 @@ func newHandler(backend backendAPI, cfg config.EventsConfig, logger *slog.Logger
 	}
 }
 
-// routes is the role's one route on a mux of its own, which answers another method on it 405,
-// and another path 404. Every request's connection gets readFor from the request's start to
-// read its body, the mux's refusals' too: the server reads what a handler leaves of a short body
-// before it answers and again before it reuses the connection, with no deadline of its own once
-// the headers are in, so a slow body sent with a 404 or 405 held its connection for as long as
-// it trickled, outside the gate's bounds. serve clears the deadline once a send's body is in.
+// routes is the role's routes on a mux of its own, which answers another method on one 405,
+// and another path 404: the sends, and the site's reminders (reminders), which share the
+// handler's gate. Every request's connection gets readFor from the request's start to read its
+// body, the mux's refusals' too: the server reads what a handler leaves of a short body before
+// it answers and again before it reuses the connection, with no deadline of its own once the
+// headers are in, so a slow body sent with a 404 or 405 held its connection for as long as it
+// trickled, outside the gate's bounds. serve clears the deadline once a send's body is in.
 func (h *handler) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("POST /v1/sources/{source}/pieces", h)
+	rm := &reminders{backend: h.backend, gate: h.gate, secret: newSecretAdmission(), logger: h.logger, now: h.now}
+	mux.Handle("POST /v1/reminders", rm.route(routeCreate))
+	mux.Handle("POST /v1/reminders/stop", rm.route(routeStop))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(h.readFor)) // net/http's server supports it; a test's recorder doesn't
 		mux.ServeHTTP(w, r)

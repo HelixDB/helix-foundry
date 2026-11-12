@@ -122,6 +122,11 @@ var rules = map[string]Rule{
 	foundryv1.FoundryEventsService_SendFoundryEvents_FullMethodName:               Deny,
 	foundryv1.FoundryEventsService_ValidateFoundryEventSourceToken_FullMethodName: Deny,
 
+	// The landing page's reminders: the site's, through the door, of no
+	// workspace.
+	foundryv1.FoundryEventsService_CreateFoundryReminder_FullMethodName: Deny,
+	foundryv1.FoundryEventsService_StopFoundryReminders_FullMethodName:  Deny,
+
 	// The workspace's settings, plan and spend.
 	foundryv1.FoundryService_GetFoundryAI_FullMethodName:             Deny,
 	foundryv1.FoundryService_UpdateFoundryAI_FullMethodName:          Deny,
