@@ -2,11 +2,16 @@ import type {
   FoundryPropValue,
   FoundryReviewChoice,
   FoundryReviewDecision,
+  FoundryReviewLabel,
+  ListReviewLabelsResponse,
   ReviewDecision,
   ReviewDecisionResponse,
+  ReviewDrawn,
+  ReviewLabelResponse,
   ListReviewDecisionsResponse,
 } from "../../src/shared/wfe";
 import {
+  FOUNDRY_EDGES as E,
   FOUNDRY_LOAD,
   FOUNDRY_NODES as N,
 } from "../../src/shared/foundry-labels";
@@ -19,6 +24,9 @@ import {
   decisions,
   holdsOne,
   isInt64,
+  labelClaim,
+  labels,
+  saveLabel,
 } from "../review-decisions";
 import { tenantGraph } from "./databases";
 import {
@@ -136,6 +144,7 @@ function save(
   ontology: string,
   decision: ReviewDecision,
   user: string,
+  drawn?: ReviewDrawn,
 ): ReviewDecisionResponse {
   const own = decisions.get(ontology) || [];
   const previous = own.find((d) => sameIdentity(d, decision));
@@ -153,6 +162,7 @@ function save(
     id: (!value && previous?.id) || id("decision"),
     decidedByUserId: user,
     decidedAt: now(),
+    ...(drawn ? { drawn } : {}),
   };
   decisions.set(ontology, [
     ...own.filter((d) => d !== previous && d.id !== saved.id),
@@ -174,6 +184,18 @@ export const reviewRoutes: MockRoute[] = [
           "INVALID_ARGUMENT",
           "choose a candidate, not in data, or a property value",
         );
+      const drawn: unknown = req.body?.drawn;
+      if (
+        drawn !== undefined &&
+        drawn !== "" &&
+        drawn !== "ranked" &&
+        drawn !== "random"
+      )
+        return fail(
+          "INVALID_ARGUMENT",
+          `drawn must be ranked or random, not "${String(drawn)}"`,
+        );
+      const draw = drawn || undefined;
       const load = currentLoadId(s.o.id);
       if (!load)
         return fail(
@@ -281,8 +303,27 @@ export const reviewRoutes: MockRoute[] = [
           s.o.id,
           { kind, type: "", ...claim, statementHash },
           req.principal.user.id,
+          draw,
         );
         if (saved.kind === "release") owePendingRelease(s.o.id, saved);
+        // A decision of the random slice is a label of the claim too, with
+        // the score its review was read at.
+        if (draw === "random")
+          saveLabel(s.o.id, {
+            id: id("label"),
+            drawn: "random",
+            ...claim,
+            statementHash,
+            link,
+            ...(typeof r.confidence === "number"
+              ? { confidence: r.confidence }
+              : {}),
+            verdict: kind === "release" ? "right" : "wrong",
+            decisionId: saved.id,
+            loadId: load,
+            decidedByUserId: req.principal.user.id,
+            decidedAt: now(),
+          });
         return ok({
           decision: { ...saved, applied: appliedOf(s.o.id, saved) },
         } satisfies ReviewDecisionResponse);
@@ -393,6 +434,7 @@ export const reviewRoutes: MockRoute[] = [
         s.o.id,
         decision,
         req.principal.user.id,
+        draw,
       );
       if (stored.kind === "prop") owePendingValue(s.o.id, stored);
       const applied = appliedOf(s.o.id, stored);
@@ -444,6 +486,181 @@ export const reviewRoutes: MockRoute[] = [
         own.filter((d) => d.id !== req.params.id),
       );
       return ok();
+    },
+  },
+  {
+    method: "POST",
+    path: `${BASE}/review-labels`,
+    handle: (req) => {
+      const s = ontologyOf(req, true);
+      if (!isScope(s)) return s;
+      const b = isRecord(req.body) ? req.body : {};
+      const user = req.principal.user.id;
+      if (b.verdict !== "right" && b.verdict !== "wrong")
+        return fail("INVALID_ARGUMENT", "verdict must be right or wrong");
+      if (b.drawn !== "random" && b.drawn !== "recheck")
+        return fail("INVALID_ARGUMENT", "drawn must be random or recheck");
+      const load = currentLoadId(s.o.id);
+      if (!load)
+        return fail(
+          "FAILED_PRECONDITION",
+          "load the ontology before labelling a claim",
+        );
+      const base = {
+        id: id("label"),
+        drawn: b.drawn,
+        verdict: b.verdict,
+        loadId: load,
+        decidedByUserId: user,
+        decidedAt: now(),
+      } as const;
+      let label: FoundryReviewLabel;
+      const own = labels.get(s.o.id) || [];
+      if (isRecord(b.fact) && b.decisionId === undefined) {
+        const f = b.fact;
+        const [section, start, end] = [f.section ?? 0, f.start ?? 0, f.end];
+        if (
+          typeof f.docId !== "string" ||
+          !f.docId ||
+          typeof f.factKey !== "string" ||
+          !f.factKey ||
+          f.factKey.length > 128 ||
+          ![section, start, end].every(
+            (n) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0,
+          ) ||
+          (start as number) >= (end as number)
+        )
+          return fail(
+            "INVALID_ARGUMENT",
+            "a fact is its document, section, byte range and fact key",
+          );
+        // The quote as the current load holds it: its link and score.
+        const graph = tenantGraph(s.o.tenantId);
+        const quote = [...graph.nodes.values()].find((n) => {
+          if (
+            n.label !== N.Evidence ||
+            n.props[FOUNDRY_LOAD] !== load ||
+            n.props.fact_key !== f.factKey ||
+            n.props.doc_id !== f.docId ||
+            n.props.start !== start ||
+            n.props.end !== end
+          )
+            return false;
+          const at = (graph.outgoing.get(n.id) || [])
+            .map((e) => graph.edges.get(e)!)
+            .find((e) => e.label === E.FROM_SECTION)?.to;
+          return (
+            at !== undefined && graph.nodes.get(at)?.props.ordinal === section
+          );
+        });
+        if (!quote || typeof quote.props.link !== "string")
+          return fail(
+            "NOT_FOUND",
+            "the current load holds no such quote of the fact",
+          );
+        label = {
+          ...base,
+          docId: f.docId,
+          claimSection: section as number,
+          claimStart: start as number,
+          claimEnd: end as number,
+          factKey: f.factKey,
+          link: quote.props.link,
+          ...(typeof quote.props.confidence === "number"
+            ? { confidence: quote.props.confidence }
+            : {}),
+        };
+        if (b.drawn === "recheck") {
+          const other = own
+            .filter(
+              (l) =>
+                labelClaim(l) === labelClaim(label) &&
+                l.decidedByUserId !== user &&
+                l.drawn === "random",
+            )
+            .at(-1);
+          if (!other)
+            return fail(
+              "FAILED_PRECONDITION",
+              "nobody else has labelled this fact for a re-check",
+            );
+          label = { ...label, against: other.verdict };
+        }
+      } else if (typeof b.decisionId === "string" && b.fact === undefined) {
+        if (b.drawn !== "recheck")
+          return fail(
+            "INVALID_ARGUMENT",
+            "a label of a decision is a re-check",
+          );
+        const d = (decisions.get(s.o.id) || []).find(
+          (d) => d.id === b.decisionId,
+        );
+        if (!d) return fail("NOT_FOUND", "review decision not found");
+        if (d.kind !== "release" && d.kind !== "reject")
+          return fail(
+            "FAILED_PRECONDITION",
+            "only a decision on a held claim is re-checked",
+          );
+        if (d.decidedByUserId === user)
+          return fail(
+            "FAILED_PRECONDITION",
+            "a re-check is another person's word, not the decision's own",
+          );
+        const random = own.find(
+          (l) => l.decisionId === d.id && l.drawn === "random",
+        );
+        label = {
+          ...base,
+          docId: d.docId,
+          claimSection: d.claimSection,
+          claimStart: d.claimStart,
+          claimEnd: d.claimEnd,
+          claimKey: d.claimKey,
+          statementHash: d.statementHash,
+          decisionId: d.id,
+          against: d.kind === "release" ? "right" : "wrong",
+          ...(random?.link ? { link: random.link } : {}),
+          ...(random?.confidence !== undefined
+            ? { confidence: random.confidence }
+            : {}),
+        };
+      } else
+        return fail("INVALID_ARGUMENT", "a label is of a fact or a decision");
+      if (
+        label.drawn === "recheck" &&
+        own.some(
+          (l) =>
+            labelClaim(l) === labelClaim(label) &&
+            l.decidedByUserId === user &&
+            l.drawn === "random",
+        )
+      )
+        return fail(
+          "FAILED_PRECONDITION",
+          "you have labelled this claim already; a re-check is another person's",
+        );
+      return ok({
+        label: saveLabel(s.o.id, label),
+      } satisfies ReviewLabelResponse);
+    },
+  },
+  {
+    method: "GET",
+    path: `${BASE}/review-labels`,
+    handle: (req) => {
+      const s = ontologyOf(req, false);
+      if (!isScope(s)) return s;
+      const token = req.query.get("pageToken") || "";
+      if (token.length > 26)
+        return fail("INVALID_ARGUMENT", "invalid page_token");
+      const after = (labels.get(s.o.id) || [])
+        .filter((l) => l.id > token)
+        .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      const page = after.slice(0, PAGE);
+      return ok({
+        labels: page,
+        nextPageToken: after.length > PAGE ? page.at(-1)!.id : "",
+      } satisfies ListReviewLabelsResponse);
     },
   },
 ];
