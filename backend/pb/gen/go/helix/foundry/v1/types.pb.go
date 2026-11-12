@@ -8693,12 +8693,17 @@ type FoundryReviewChoice_Release struct {
 	// extraction, at no model cost, and writes what the review states as a
 	// fact, or keeps it held and says why (FoundryReviewDecision.applied).
 	// Later loads read it too, and each says what it made of it. On a link
-	// that holds one value it also decides the link from when it was
-	// approved: it replaces what the link holds (whose evidence stays), a
-	// statement dated after that day still beats it, and of two approvals the
-	// later holds the link. So a review held as conflicting with what such a
-	// link holds can be approved; on another link a conflict is a property
-	// that differs from the fact the graph holds, which no approval changes.
+	// that holds one value it also decides the link, from the date its quote
+	// gives, else its document's date, and only for a quote with neither from
+	// the day it was first approved; a quote dated after the load recorded it
+	// decides nothing until that date. From then it replaces what the link
+	// holds of no date or dated up to then (whose evidence stays); a
+	// statement dated later, approved or not, still holds the link, and the
+	// claim is kept as its evidence. Of two approvals of the link, the one
+	// decided later is its decision. So a review held as conflicting with
+	// what such a link holds can be approved; on another link a conflict is
+	// a property that differs from the fact the graph holds, which no
+	// approval changes.
 	Release *FoundryReleaseChoice `protobuf:"bytes,4,opt,name=release,proto3,oneof"`
 }
 
@@ -9032,8 +9037,9 @@ type FoundryDecisionApplied struct {
 	unknownFields protoimpl.UnknownFields
 
 	// pending (a job has yet to apply it), written (the claim is a fact; on a
-	// link that holds one value, a statement dated after the approval may hold
-	// the link instead, with the claim kept as its evidence),
+	// link that holds one value, a statement dated after the approval takes
+	// effect, or a later approval, may hold the link instead, with the claim
+	// kept as its evidence),
 	// refused (it stays held: reason says why), missed (this load holds no
 	// review at the decision's key, nor one at its place stating what was
 	// approved, so it has nothing to release),
@@ -9062,7 +9068,8 @@ type FoundryDecisionApplied struct {
 	// reads differently now from what was approved), differs (its sentence is
 	// read more than one way), conflict (a property of the fact differs from
 	// the one the load holds, or the link holds one value and a load built
-	// before statements were kept wrote its edge: load again), blocked (it would break
+	// before statements were kept wrote its edge, or an engine before contract
+	// 4.14.0 refused it: load again), blocked (it would break
 	// a blocking rule, or checking that took more reading than a load allows),
 	// no_statement (its review keeps nothing to write), not_stated (the
 	// document, read again, no longer states it there), too_large,
@@ -9149,14 +9156,22 @@ type FoundryReviewDecision struct {
 	Prop      *string `protobuf:"bytes,7,opt,name=prop,proto3,oneof" json:"prop,omitempty"`
 	// A prop decision's value as stored. A whole number within int64 is an
 	// integer here, even a float property's (3.0 reads back as integer 3).
-	Value           *FoundryPropValue      `protobuf:"bytes,11,opt,name=value,proto3" json:"value,omitempty"`
-	DecidedByUserId string                 `protobuf:"bytes,9,opt,name=decided_by_user_id,json=decidedByUserId,proto3" json:"decided_by_user_id,omitempty"`
-	DecidedAt       *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=decided_at,json=decidedAt,proto3" json:"decided_at,omitempty"`
+	Value           *FoundryPropValue `protobuf:"bytes,11,opt,name=value,proto3" json:"value,omitempty"`
+	DecidedByUserId string            `protobuf:"bytes,9,opt,name=decided_by_user_id,json=decidedByUserId,proto3" json:"decided_by_user_id,omitempty"`
+	// When it was decided. A release approved again, of the statement it
+	// approved, keeps who first approved it and when: on a link that holds one
+	// value the approval decided last is the link's decision.
+	DecidedAt *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=decided_at,json=decidedAt,proto3" json:"decided_at,omitempty"`
 	// The review a release decision releases, or a reject decision rejects, as
 	// it stores them: its claim's key, its quote's section and byte range in
-	// the section, and the hash of the statement the person read. A reader
+	// the section, and the hash of the statement the person read. A decision
+	// is of a review by its document and place, and by its claim key or, as a
+	// rebuild may key the same sentence otherwise, by the statement it read
+	// there (the engine binds a release so from contract 4.14.0). A reader
 	// leaves out of what needs review each review of a held claim that a
-	// reject names by its document, claim key and place.
+	// reject names so; approving a claim saved under another key approves that
+	// decision again, under the key the review has now, and a reject takes
+	// every approval of the claim back.
 	ClaimKey      *string `protobuf:"bytes,12,opt,name=claim_key,json=claimKey,proto3,oneof" json:"claim_key,omitempty"`
 	ClaimSection  *uint32 `protobuf:"varint,13,opt,name=claim_section,json=claimSection,proto3,oneof" json:"claim_section,omitempty"`
 	ClaimStart    *uint32 `protobuf:"varint,14,opt,name=claim_start,json=claimStart,proto3,oneof" json:"claim_start,omitempty"`
