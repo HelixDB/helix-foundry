@@ -87,7 +87,6 @@ import {
   accessView,
   assessmentOf,
   countsText,
-  insightSummary,
   isRunFilter,
   metricText,
   preview,
@@ -240,22 +239,18 @@ export function WorkflowsPage() {
               <RefreshFailed query={insights.query} />
               {!data ? (
                 <InsightsPending state={insights} />
-              ) : (
+              ) : (data.totals?.runs || 0) > 0 ? (
                 <>
-                  <p className="wf-summary">
-                    {insightSummary(
-                      data.totals,
-                      days,
-                      (data.workflows || []).length,
-                    )}
-                  </p>
-                  {(data.totals?.runs || 0) > 0 && (
-                    <>
-                      <ImpactCards state={insights} data={data} />
-                      <TrendPanel data={data} metric={insights.metric} />
-                    </>
-                  )}
+                  <ImpactCards state={insights} data={data} />
+                  <TrendPanel data={data} metric={insights.metric} />
                 </>
+              ) : (
+                <EmptyState
+                  size="sm"
+                  icon={Workflow}
+                  title={`No runs in the last ${days} days`}
+                  text="Once an agent runs a workflow, what its runs come to shows here."
+                />
               )}
             </section>
             <Panel

@@ -647,47 +647,6 @@ export function verdictParts(t?: Totals) {
   }).filter((p) => p.runs > 0);
 }
 
-/**
- * What a window's runs came to, in a sentence or three: how many, how often
- * the ontology helped, how much of the answers what the agents read backed,
- * and what needs a look. Counts stand in for rates of few runs.
- *
- *     insightSummary({ runs: 1, assessed: 1, helped: 1, claimsSupported: 10, claimsUnsupported: 1 }, 30)
- *     // "In the last 30 days, agents made 1 run. The ontology helped in 1 of 1 assessed run, and what the agents read backed 10 of 11 claims in their answers."
- */
-export function insightSummary(
-  t: Totals | undefined,
-  days: number,
-  workflows = 0,
-): string {
-  const runs = num(t?.runs);
-  if (!runs) return `No runs in the last ${days} days.`;
-  const lead = `In the last ${days} days, agents made ${plural(runs, "run")}${workflows > 1 ? ` across ${workflows} workflows` : ""}.`;
-  const assessed = num(t?.assessed);
-  if (!assessed) return `${lead} None has been assessed yet.`;
-  // A rate, or the count it comes from with too few runs for one.
-  const few = assessed < MIN_SAMPLE;
-  const part = (n: number, v: number | undefined) =>
-    few || v === undefined ? formatCount(n) : percent(v);
-  const claims = claimsOf(t);
-  const out = [
-    `${lead} The ontology helped in ${part(num(t?.helped), helpedShare(t))} of ${plural(assessed, "assessed run")}${
-      claims
-        ? `, and what the agents read backed ${part(num(t?.claimsSupported), backedShare(t))} of ${plural(claims, "claim")} in their answers`
-        : ""
-    }.`,
-  ];
-  const misled = verdictRuns(t, "misleading"),
-    contradicted = num(t?.claimsContradicted);
-  const attention = [
-    misled && `It misled ${plural(misled, "run")}`,
-    contradicted &&
-      `${plural(contradicted, "claim")} contradicted what the agents read`,
-  ].filter(Boolean);
-  if (attention.length) out.push(`${attention.join(", and ")}.`);
-  return out.join(" ");
-}
-
 /** One step of where runs go: its count, its share of runs started, and what left before it. */
 export type FunnelStep = {
   key: keyof FoundryWorkflowInsightFunnel;

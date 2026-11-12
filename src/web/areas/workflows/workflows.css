@@ -107,14 +107,6 @@
 .wf-toolbar > .hf-segmented {
   margin-left: auto;
 }
-/* The overview's sentence of what the runs came to. */
-.wf-summary {
-  max-width: 72ch;
-  margin: 0;
-  color: var(--hf-text);
-  font-size: var(--hf-text-lg);
-  line-height: 1.55;
-}
 .wf-cards {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
