@@ -1,4 +1,7 @@
-import type { ReviewDecision } from "../../src/shared/wfe";
+import type {
+  FoundryReviewDecision,
+  ReviewDecision,
+} from "../../src/shared/wfe";
 import { createHash } from "node:crypto";
 import {
   FOUNDRY_EDGES as E,
@@ -7,6 +10,7 @@ import {
 import { ENRICHMENT_SOURCE } from "../../src/web/areas/ontology/enrichment-fields";
 import { isEmpty, type Scope } from "./scope";
 import type { LoadGraph, Props, Value } from "./store";
+import { onReset } from "../state";
 
 // The mock's stand-in for the ontology agent's Ingest and Extract RPCs:
 // deterministic, with no model, writing the graph layout the engine writes
@@ -728,14 +732,40 @@ export function decideValue(
  */
 type Nameable = { id: number; name?: string; ids: string[] };
 
+/** A release decision, as the mock ranks it: when it was decided, and its id. */
+type Approval = Partial<Pick<FoundryReviewDecision, "id" | "decidedAt">>;
+/** The approval each link that holds one value holds, by load, link and subject. */
+const approvals = new Map<string, { to: number; at: string; id: string }>();
+onReset(() => approvals.clear());
+
 /**
- * From contract 4.14.0 a person's approval of a link that holds one value
- * decides it, as the engine weighs it, whichever document committed first:
- * `from`'s other edges of `link` go, and their evidence stays.
+ * From contract 4.14.0 the last decided of the approvals of a link that holds
+ * one value (by `decidedAt`, then id, as the engine ranks them) is its
+ * decision, whichever was written first. The engine dates it from its
+ * quote's date, else its document's, else when it was decided, and a
+ * statement dated later still beats it; the mock's sentences and documents
+ * give no date, so it beats every other statement: `from`'s edges of `link`
+ * to any other object go, an earlier approval's included, and their evidence
+ * stays. `approval` (decided `to`) is written; whether it holds the link is
+ * the decision's to say.
  */
-function displace(g: LoadGraph, link: string, from: number, to: number) {
+function decide(
+  g: LoadGraph,
+  link: string,
+  from: number,
+  to: number,
+  approval: Approval,
+) {
+  const slot = [g.load, link, from].join("\u001f"),
+    at = approval.decidedAt ?? "",
+    was = approvals.get(slot);
+  const newest =
+    !was || at > was.at || (at === was.at && (approval.id ?? "") > was.id)
+      ? { to, at, id: approval.id ?? "" }
+      : was;
+  approvals.set(slot, newest);
   for (const e of [...g.graph.edges.values()])
-    if (e.label === link && e.from === from && e.to !== to)
+    if (e.label === link && e.from === from && e.to !== newest.to)
       g.graph.removeEdge(e.id);
 }
 
@@ -745,14 +775,14 @@ function displace(g: LoadGraph, link: string, from: number, to: number) {
  * more piece of evidence of it, the evidence at the review's quote, at the
  * verifier's confidence (none for a claim no verifier judged), and the review
  * gone. Its ends are the entities the review concerns, in the link's order.
- * On a link that holds one value (`one`) the approval displaces what the link
- * held.
+ * On a link that holds one value, `one` is the approval, which decides the
+ * link if it is the newest (decide).
  */
 export function releaseReview(
   g: LoadGraph,
   review: number,
   written: { ontologyVersion: string; model: string; verifier: string },
-  one = false,
+  one?: Approval,
 ) {
   const r = g.node(review);
   if (!r) return;
@@ -790,7 +820,7 @@ export function releaseReview(
   });
   g.addEdge(E.FROM_SECTION, ev, section);
   g.graph.removeNode(review);
-  if (one) displace(g, link, from, to);
+  if (one) decide(g, link, from, to, one);
 }
 
 export type ExtractOutcome =
@@ -831,7 +861,7 @@ export function extractDocument(
   },
   ontology: ExtractOntology,
   scope: Scope,
-  decisions: ReviewDecision[] = [],
+  decisions: (ReviewDecision & Approval)[] = [],
   // How a name no row holds exactly links to its first candidate, if at all.
   linkedBy?: UndoableLink,
   // What the engine would make of a hedged claim, for a page to show:
@@ -1208,11 +1238,9 @@ export function extractDocument(
   }
   const linked = contract !== undefined && scope.links.has("signed_with");
   // The customer a person's approval gives a contract's signed_with, where
-  // that link holds one value: it holds the link whatever else the document
-  // states of it, in whichever order; of two approvals the later decided, as
-  // the engine ranks them: here the one saved later, as a load keeps its
-  // decisions in the order they were saved.
-  let approved: { to: number; rank: number } | undefined;
+  // that link holds one value: the newest approval of the document's, which
+  // decides the link if it is the newest the load has written (decide).
+  let approved: { to: number; release: Approval } | undefined;
   for (const { e, hits, resolvedBy } of found) {
     if (!hits.length) continue;
     counts.entities += 1;
@@ -1235,6 +1263,9 @@ export function extractDocument(
     // releases it by its key, the same in every load, and written at the
     // verifier's confidence.
     let stated = confidence;
+    // A claim a person's approval released: its edge stands until the
+    // document's decide says which approval holds the link.
+    let approval = false;
     const [from, to] = sentenceAt(first.s.text, first.i);
     if (/\bmay\b/.test(first.s.text.slice(from, to))) {
       const about = [
@@ -1252,16 +1283,19 @@ export function extractDocument(
         object: { type: g.node(e.id)!.label, name: e.name || first.surface },
         props: {},
       });
-      const release = decisions.find(
-        (d) =>
-          d.kind === "release" &&
-          d.docId === doc.id &&
-          d.claimKey === claimKey &&
-          d.claimSection === first.s.ordinal &&
-          d.claimStart === place.start &&
-          d.claimEnd === place.end &&
-          d.statementHash === sha256(`signed_with\u001f${statement}`),
-      );
+      // By its key, or, as the engine binds one whose key names no review
+      // of the document (contract 4.14.0), by its place and statement.
+      const at = (d: ReviewDecision) =>
+        d.kind === "release" &&
+        d.docId === doc.id &&
+        d.claimSection === first.s.ordinal &&
+        d.claimStart === place.start &&
+        d.claimEnd === place.end &&
+        d.statementHash === sha256(`signed_with\u001f${statement}`);
+      const release =
+        decisions.find(
+          (d) => d.kind === "release" && d.claimKey === claimKey && at(d),
+        ) ?? decisions.find(at);
       const released = !!release;
       // The link its name stands on, where that holds the claim.
       const weak = WEAK_LINKS.find((w) => w === held);
@@ -1325,20 +1359,31 @@ export function extractDocument(
         continue;
       }
       stated = held === "unverified" ? 0 : 0.72;
-      const rank = decisions.indexOf(release!);
+      approval = true;
+      const r = release!;
       if (
         ontology.oneValued?.has("signed_with") &&
-        (!approved || rank > approved.rank)
+        (!approved ||
+          (r.decidedAt ?? "") > (approved.release.decidedAt ?? "") ||
+          ((r.decidedAt ?? "") === (approved.release.decidedAt ?? "") &&
+            (r.id ?? "") > (approved.release.id ?? "")))
       )
-        approved = { to: e.id, rank };
+        approved = { to: e.id, release: r };
     }
     const factKey = sha256(
       ["signed_with", String(contract), String(e.id)].join("\u001f"),
     );
     const stored = g.findEdge("signed_with", "fact_key", factKey);
+    // Where an approval the load wrote decides the contract's link, a plain
+    // statement of another customer loses to it whichever commits first:
+    // its quote is evidence alone (decide). An approval's own edge is
+    // written, and decide keeps the newest approval's.
+    const holder = ontology.oneValued?.has("signed_with")
+      ? approvals.get([g.load, "signed_with", contract].join("\u001f"))
+      : undefined;
     if (stored)
       stored.props.evidence_count = Number(stored.props.evidence_count) + 1;
-    else
+    else if (approval || !holder || holder.to === e.id)
       g.addEdge("signed_with", contract!, e.id, {
         fact_key: factKey,
         provenance: "extracted",
@@ -1359,7 +1404,8 @@ export function extractDocument(
     g.addEdge(E.FROM_SECTION, ev, first.s.node);
     counts.facts += 1;
   }
-  if (approved) displace(g, "signed_with", contract!, approved.to);
+  if (approved)
+    decide(g, "signed_with", contract!, approved.to, approved.release);
   [...unresolved, ...adjudicated].forEach((u, k) => {
     const q = quote(u.s, u.i);
     const r = g.addNode(N.Review, {

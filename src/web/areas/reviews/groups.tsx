@@ -10,9 +10,10 @@ import type { Naming } from "../explore/naming";
 import { reviewQueries, settleReview } from "./api";
 import {
   approvable,
+  approveAllText,
+  leftToCards,
   linksGoal,
   reviewGroups,
-  statementHash,
   type Settle,
   type Settleable,
 } from "./model";
@@ -57,12 +58,7 @@ export function ReviewGroups<R extends Review>({
             {g.title} <span className="dc-review-count">{g.items.length}</span>
           </h3>
           <p>{g.text}</p>
-          <ApproveAll
-            reviews={members}
-            all={reviews}
-            load={load}
-            naming={naming}
-          />
+          <ApproveAll reviews={members} load={load} naming={naming} />
           {g.reason === "unmatched" && (
             <AddLinks reviews={members} load={load} />
           )}
@@ -82,17 +78,15 @@ export function ReviewGroups<R extends Review>({
  * own Approve. Each approval saved shows on its card at once; one that fails
  * leaves its card as it is, and the result says why. The backend applies
  * approvals that land together in one job, so the load writes them in one go.
- * Rivals on a link that holds one value are looked for among the page's
- * reviews (`all`), whichever group they are in.
+ * Claims of a link that holds one value are left out, as an approval decides
+ * what such a link holds, and the dialog says so.
  */
 function ApproveAll({
   reviews,
-  all,
   load,
   naming,
 }: {
   reviews: readonly Settleable[];
-  all: readonly Settleable[];
   load?: FoundryLoad;
   naming: Naming;
 }) {
@@ -107,14 +101,13 @@ function ApproveAll({
   // Saved decisions decide what is already approved, so none is offered
   // until they're read. A link of a version that isn't known holds one
   // value, as a card takes it.
-  const ready =
-    load?.current && decisions.data
-      ? approvable(
-          all,
-          decisions.data,
-          (link) => !naming.version || naming.oneValued.has(link),
-        ).filter((s) => reviews.some((r) => r.settle === s))
-      : [];
+  const single = (link: string) =>
+    !naming.version || naming.oneValued.has(link);
+  const saved = (load?.current && decisions.data) || undefined;
+  const ready = saved ? approvable(reviews, saved, single) : [];
+  // Those it would approve but leaves to their cards: the claims of links
+  // that hold one value.
+  const own = saved ? leftToCards(reviews, saved, single) : 0;
   const run = async (
     cards: readonly Extract<Settle, { kind: "release" }>[],
   ) => {
@@ -132,7 +125,7 @@ function ApproveAll({
         try {
           const { decision } = await settleReview(ws, o, s.reviewId, {
             decision: {
-              release: { statementHash: await statementHash(s.link, s.stored) },
+              release: { statementHash: s.hash },
             },
           });
           // Its card reads saved, and the count drops, as each one lands.
@@ -193,7 +186,7 @@ function ApproveAll({
       {confirming && ready.length > 0 && (
         <ConfirmDialog
           title={`Approve ${plural(ready.length, "claim")}?`}
-          description="This load writes each one it can, at once. Any it can't stays held, and its card says why. On a link that holds one value, an approval replaces what the link holds."
+          description={approveAllText(own)}
           confirmLabel="Approve all"
           onConfirm={() => void run(ready)}
           onCancel={() => setConfirming(false)}

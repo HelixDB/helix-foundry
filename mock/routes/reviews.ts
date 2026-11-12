@@ -1,6 +1,7 @@
 import type {
   FoundryPropValue,
   FoundryReviewChoice,
+  FoundryReviewDecision,
   ReviewDecision,
   ReviewDecisionResponse,
   ListReviewDecisionsResponse,
@@ -127,6 +128,9 @@ const sameIdentity = (a: ReviewDecision, b: ReviewDecision) =>
  * the engine keeps a decision once, by its id, so another value for a
  * property is a new decision under a new id, and the same value chosen
  * again is the decision that stands, with its id, its time and who made it.
+ * So is an approval of the statement it approved, as the backend keeps the
+ * time a person first approved what they read: of a link's approvals the
+ * last decided is its decision (contract 4.14.0).
  */
 function save(
   ontology: string,
@@ -137,10 +141,13 @@ function save(
   const previous = own.find((d) => sameIdentity(d, decision));
   const value = previous?.kind === "prop" && decision.kind === "prop";
   if (
-    value &&
-    JSON.stringify(previous.value) === JSON.stringify(decision.value)
+    (value &&
+      JSON.stringify(previous.value) === JSON.stringify(decision.value)) ||
+    (previous?.kind === "release" &&
+      decision.kind === "release" &&
+      previous.statementHash === decision.statementHash)
   )
-    return { decision: previous };
+    return { decision: previous! };
   const saved = {
     ...decision,
     id: (!value && previous?.id) || id("decision"),
@@ -225,8 +232,12 @@ export const reviewRoutes: MockRoute[] = [
             "FAILED_PRECONDITION",
             "this claim reads differently now; reload the review and decide on what it says",
           );
-        // The other decision of this claim gives way: an approval the load
-        // has not written leaves its list too.
+        // The claim's decisions: at its place, under its key or of what was
+        // read there under another (a rebuild moves keys), as the engine
+        // binds a release from contract 4.14.0 and the backend keeps them.
+        // One of its kind of what was read here stands, the first decided,
+        // and takes the claim's key; every other gives way, and an approval
+        // the load has not written leaves its list too.
         const claim = {
           docId,
           claimKey,
@@ -235,23 +246,37 @@ export const reviewRoutes: MockRoute[] = [
           claimEnd: Number(r.end),
         };
         const kind = choice.reject ? "reject" : "release";
-        const other = (decisions.get(s.o.id) || []).find(
-          (d) =>
+        const own = decisions.get(s.o.id) || [];
+        const mine = own.filter(
+          (
+            d,
+          ): d is Extract<
+            FoundryReviewDecision,
+            { kind: "release" | "reject" }
+          > =>
             (d.kind === "release" || d.kind === "reject") &&
-            d.kind !== kind &&
             d.docId === claim.docId &&
-            d.claimKey === claim.claimKey &&
             d.claimSection === claim.claimSection &&
             d.claimStart === claim.claimStart &&
-            d.claimEnd === claim.claimEnd,
+            d.claimEnd === claim.claimEnd &&
+            (d.claimKey === claim.claimKey ||
+              d.statementHash === statementHash),
         );
-        if (other) {
-          forgetRelease(s.o.id, other.id);
-          decisions.set(
-            s.o.id,
-            (decisions.get(s.o.id) || []).filter((d) => d.id !== other.id),
-          );
-        }
+        const same = mine.filter((d) => d.kind === kind);
+        const stands =
+          same
+            .filter((d) => d.statementHash === statementHash)
+            .sort(
+              (a, b) =>
+                (a.decidedAt ?? "").localeCompare(b.decidedAt ?? "") ||
+                a.id.localeCompare(b.id),
+            )[0] ?? same.find((d) => d.claimKey === claim.claimKey);
+        for (const d of mine)
+          if (d !== stands && d.kind === "release") forgetRelease(s.o.id, d.id);
+        decisions.set(s.o.id, [
+          ...own.filter((d) => !mine.some((m) => m.id === d.id)),
+          ...(stands ? [{ ...stands, claimKey: claim.claimKey }] : []),
+        ]);
         const { decision: saved } = save(
           s.o.id,
           { kind, type: "", ...claim, statementHash },

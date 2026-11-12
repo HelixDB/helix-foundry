@@ -187,10 +187,11 @@ ON DUPLICATE KEY UPDATE value=VALUES(value), decided_by_user_id=VALUES(decided_b
 // its identity is d's already and is left as it is, with who made it and
 // when: only d's documents are added to it. A release of the statement its
 // claim's approval already binds stands too: from contract 4.14.0 the
-// approval's time ranks it on a link that holds one value, so it stays the
-// time the person first approved what they read, in every Extract that
-// sends it, as a load that wrote it keeps it. The caller holds the
-// ontology's lock and has checked d.
+// approval's time says which of a link's approvals is its decision, on a
+// link that holds one value, and dates the decision of a quote that gives no
+// date and has no document date, so it stays the time the person first
+// approved what they read, in every Extract that sends it, as a load that
+// wrote it keeps it. The caller holds the ontology's lock and has checked d.
 func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.FoundryReviewDecision, stands bool) error {
 	var value, section, start, end any
 	if len(d.Value) > 0 {
@@ -236,12 +237,44 @@ func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.Foundr
 	return nil
 }
 
+// foundryClaimAt is the SQL condition, with alias t's columns, that a decision
+// is of the claim at a place: its document and place, and its key or the
+// statement it binds. From contract 4.14.0 the engine binds a release whose
+// key names no review of its document by its place and statement hash, so a
+// decision saved under the key the claim had before a rebuild moved it is
+// this claim's too. Its arguments are foundryClaimArgs's.
+func foundryClaimAt(t string) string {
+	return t + ".doc_id=? AND " + t + ".claim_section=? AND " + t + ".claim_start=? AND " + t + ".claim_end=? AND (" +
+		t + ".claim_key=? OR " + t + ".statement_hash=?)"
+}
+
+// foundryRejected is the SQL condition that the ontology `ontology` (a column
+// or a placeholder) holds a rejection of the claim the release with alias t
+// names (foundryClaimAt): a release no Extract sends.
+func foundryRejected(t, ontology string) string {
+	return `EXISTS (SELECT 1 FROM foundry_review_decisions j WHERE j.ontology_id=` + ontology + ` AND j.kind='reject'
+  AND j.doc_id=` + t + `.doc_id AND j.claim_section=` + t + `.claim_section AND j.claim_start=` + t + `.claim_start
+  AND j.claim_end=` + t + `.claim_end AND (j.claim_key=` + t + `.claim_key OR j.statement_hash=` + t + `.statement_hash))`
+}
+
+// foundryClaimArgs are foundryClaimAt's arguments for the claim d names.
+func foundryClaimArgs(d *model.FoundryReviewDecision) []any {
+	span := d.ClaimSpan
+	return []any{d.DocID, span.Section, span.Start, span.End, d.ClaimKey, d.StatementHash}
+}
+
 // SettleFoundryReleases settles release decisions, each read from a review of
 // load loadID, and applies them to that load at once: under the ontology's
 // lock each is saved as SettleFoundryReviewDecision saves one, in place of a
 // rejection of its claim, joins the load's own list as pending (in place of
 // any earlier decision the list holds for its claim), and its document is
-// owed a resend (oweFoundryResends).
+// owed a resend (oweFoundryResends). A claim is its key at its place, or the
+// statement read at its place under another key (foundryClaimAt): an
+// approval of that statement there, saved under the key the claim had before
+// a rebuild moved it, is the decision approved again. It takes the claim's
+// key now and keeps its id, its time and who made it, and no rival decision
+// is made: the engine would weigh the two apart, and which of them a load
+// wrote would depend on how it keyed the sentence.
 // Then resend is queued, or left to the live job's end
 // (queueFoundryResendBehind). queued reports a job queued here. Each decision
 // comes back as stored, with what the load holds of it (Applied). ErrConflict
@@ -279,26 +312,46 @@ func (s *mysqlDB) SettleFoundryReleases(ctx context.Context, workspaceID, loadID
 		}
 		var documents []string
 		for _, d := range decisions {
+			claim := foundryClaimArgs(d)
+			// The first approval of what the person read at this place, under
+			// any key, stands: every other approval of the claim goes, and it
+			// takes the claim's key, so saving d below finds it and keeps its
+			// time (saveFoundryReviewDecision).
+			var first string
+			switch err := tx.db.QueryRowContext(ctx, `SELECT id FROM foundry_review_decisions t
+WHERE t.ontology_id=? AND t.kind='release' AND t.doc_id=? AND t.claim_section=? AND t.claim_start=? AND t.claim_end=? AND t.statement_hash=?
+ORDER BY t.decided_at, t.id LIMIT 1 FOR UPDATE`, ontologyID, d.DocID, d.ClaimSpan.Section, d.ClaimSpan.Start, d.ClaimSpan.End, d.StatementHash).Scan(&first); {
+			case err == sql.ErrNoRows:
+			case err != nil:
+				return err
+			default:
+				if _, err := tx.db.ExecContext(ctx, `DELETE t FROM foundry_review_decisions t
+WHERE t.ontology_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND t.id<>?`, append(append([]any{ontologyID}, claim...), first)...); err != nil {
+					return err
+				}
+				if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_review_decisions SET claim_key=? WHERE ontology_id=? AND id=?`,
+					d.ClaimKey, ontologyID, first); err != nil {
+					return err
+				}
+			}
 			if err := tx.saveFoundryReviewDecision(ctx, d, false); err != nil {
 				return err
 			}
-			span := d.ClaimSpan
 			// A claim is approved or rejected, never both.
-			if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_review_decisions
-WHERE ontology_id=? AND kind='reject' AND doc_id=? AND claim_key=? AND claim_section=? AND claim_start=? AND claim_end=?`,
-				ontologyID, d.DocID, d.ClaimKey, span.Section, span.Start, span.End); err != nil {
+			if _, err := tx.db.ExecContext(ctx, `DELETE t FROM foundry_review_decisions t
+WHERE t.ontology_id=? AND t.kind='reject' AND `+foundryClaimAt("t"), append([]any{ontologyID}, claim...)...); err != nil {
 				return err
 			}
 			// One decision a claim in a load's list: the engine refuses an
-			// Extract that lists a release twice.
-			if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
-WHERE load_id=? AND kind='release' AND doc_id=? AND claim_key=? AND claim_section=? AND claim_start=? AND claim_end=? AND id<>?`,
-				loadID, d.DocID, d.ClaimKey, span.Section, span.Start, span.End, d.ID); err != nil {
+			// Extract that lists a release twice, and would weigh two of one
+			// claim apart.
+			if _, err := tx.db.ExecContext(ctx, `DELETE t FROM foundry_load_decisions t
+WHERE t.load_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND t.id<>?`, append(append([]any{loadID}, claim...), d.ID)...); err != nil {
 				return err
 			}
 			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
 SELECT ?, `+foundryReviewDecisionColumns+`, 'pending' FROM foundry_review_decisions WHERE ontology_id=? AND id=?
-ON DUPLICATE KEY UPDATE statement_hash=VALUES(statement_hash), decided_by_user_id=VALUES(decided_by_user_id),
+ON DUPLICATE KEY UPDATE claim_key=VALUES(claim_key), statement_hash=VALUES(statement_hash), decided_by_user_id=VALUES(decided_by_user_id),
  decided_at=VALUES(decided_at), applied_status='pending', applied_reason=NULL, applied_at=NULL`, loadID, ontologyID, d.ID); err != nil {
 				return err
 			}
@@ -326,7 +379,11 @@ ON DUPLICATE KEY UPDATE statement_hash=VALUES(statement_hash), decided_by_user_i
 //
 // A claim is approved or rejected, never both: an approval saved for the
 // claim goes, and with it its copy in every load of the ontology that has
-// not written it. The current load's would be sent by the next resend of
+// not written it. The claim is its key at its place, or what the person read
+// at its place under another key (foundryClaimAt): the engine writes an
+// approval saved under the key the claim had before a rebuild moved it, by
+// its place and statement hash, so that one goes too, and so does a
+// rejection saved under such a key, which this one replaces. The current load's would be sent by the next resend of
 // its document; a load being written copied the approval when it was
 // created and would release it at the end of its run; a load that is not
 // current would send its copy if it were made current again. One a load
@@ -358,15 +415,15 @@ func (s *mysqlDB) SettleFoundryReject(ctx context.Context, workspaceID, loadID s
 		if err != nil {
 			return err
 		}
-		span := d.ClaimSpan
-		claim := []any{d.DocID, d.ClaimKey, span.Section, span.Start, span.End}
-		// What the current load's list says of the claim's approval: written,
-		// or waiting for a job with nothing said of it yet.
+		claim := foundryClaimArgs(d)
+		// What the current load's list says of the claim's approvals (by its
+		// key, or of what the person read at its place under another key,
+		// which the engine binds to this review: foundryClaimAt): one written,
+		// or one waiting for a job with nothing said of it yet.
 		var written, waits bool
-		if err := tx.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(applied_status='written'), 0) > 0,
-  COALESCE(SUM(applied_status IN ('pending', 'carried') AND applied_reason IS NULL), 0) > 0 FROM foundry_load_decisions
-WHERE load_id=? AND kind='release' AND doc_id=? AND claim_key=? AND claim_section=? AND claim_start=? AND claim_end=?`,
-			append([]any{loadID}, claim...)...).Scan(&written, &waits); err != nil {
+		if err := tx.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(t.applied_status='written'), 0) > 0,
+  COALESCE(SUM(t.applied_status IN ('pending', 'carried') AND t.applied_reason IS NULL), 0) > 0 FROM foundry_load_decisions t
+WHERE t.load_id=? AND t.kind='release' AND `+foundryClaimAt("t"), append([]any{loadID}, claim...)...).Scan(&written, &waits); err != nil {
 			return err
 		}
 		if written || waits && live != nil && live.Kind == model.FoundryGraphJobResend && live.LoadID == loadID &&
@@ -375,14 +432,16 @@ WHERE load_id=? AND kind='release' AND doc_id=? AND claim_key=? AND claim_sectio
 		}
 		// <=> is NULL-safe: a copy no job has reported on has no status. A
 		// deleted load's list went with it.
-		if _, err := tx.db.ExecContext(ctx, `DELETE d FROM foundry_load_decisions d JOIN foundry_loads l ON l.id=d.load_id
-WHERE l.ontology_id=? AND d.kind='release' AND d.doc_id=? AND d.claim_key=? AND d.claim_section=? AND d.claim_start=? AND d.claim_end=?
-  AND NOT (d.applied_status <=> 'written')`, append([]any{d.OntologyID}, claim...)...); err != nil {
+		if _, err := tx.db.ExecContext(ctx, `DELETE t FROM foundry_load_decisions t JOIN foundry_loads l ON l.id=t.load_id
+WHERE l.ontology_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND NOT (t.applied_status <=> 'written')`,
+			append([]any{d.OntologyID}, claim...)...); err != nil {
 			return err
 		}
-		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_review_decisions
-WHERE ontology_id=? AND kind='release' AND doc_id=? AND claim_key=? AND claim_section=? AND claim_start=? AND claim_end=?`,
-			append([]any{d.OntologyID}, claim...)...); err != nil {
+		// Its approvals go, and so does a rejection of what was read here under
+		// another key: one rejection a claim, which removing lists it again.
+		if _, err := tx.db.ExecContext(ctx, `DELETE t FROM foundry_review_decisions t
+WHERE t.ontology_id=? AND `+foundryClaimAt("t")+` AND (t.kind='release' OR t.kind='reject' AND t.claim_key<>?)`,
+			append(append([]any{d.OntologyID}, claim...), d.ClaimKey)...); err != nil {
 			return err
 		}
 		return tx.saveFoundryReviewDecision(ctx, d, false)
@@ -401,8 +460,12 @@ func (s *mysqlDB) ListFoundryReviewDecisions(ctx context.Context, ontologyID, af
 // decisions settled against it or carried to it since, and no value decision
 // removed since: one the load has yet to be told is gone stays in its list
 // (model.FoundryValueRemoved) and is left out here, which is what tells the
-// engine to withdraw it. A resolve replaced or removed, and schema pruning,
-// affect only future loads.
+// engine to withdraw it. So is a release of a claim the ontology holds a
+// rejection of (foundryClaimAt), whatever put it there: a rejection settled
+// since takes the claim's approvals from every list (SettleFoundryReject),
+// and this keeps one saved before that did, or by an older binary, from
+// writing a claim a person said is wrong. A resolve replaced or removed, and
+// schema pruning, affect only future loads.
 func (s *mysqlDB) ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error) {
 	return s.listFoundryDecisions(ctx, "foundry_load_decisions", "load_id", loadID, afterID, documentIDs, limit)
 }
@@ -415,7 +478,9 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 	query := "SELECT " + foundryReviewDecisionColumns + " FROM " + table + " WHERE " + key + "=? AND id>?"
 	if table == "foundry_load_decisions" {
 		// <=> is NULL-safe: a copy no job has reported on has no status.
-		query += " AND NOT (applied_status <=> '" + string(model.FoundryValueRemoved) + "')"
+		query += " AND NOT (applied_status <=> '" + string(model.FoundryValueRemoved) + `')
+ AND NOT (kind='release' AND ` + foundryRejected("foundry_load_decisions",
+			"(SELECT o.ontology_id FROM foundry_loads o WHERE o.id=foundry_load_decisions.load_id)") + `)`
 	}
 	args := []any{ontologyID, afterID}
 	if documentIDs != nil {

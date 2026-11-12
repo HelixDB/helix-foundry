@@ -73,8 +73,10 @@ func (r *runner) decisions(ctx context.Context, job *model.FoundryGraphJob, onto
 				}
 				decision.DocID, decision.ClaimKey, decision.StatementHash = *d.DocID, *d.ClaimKey, *d.StatementHash
 				decision.Section, decision.Start, decision.End = d.ClaimSpan.Section, d.ClaimSpan.Start, d.ClaimSpan.End
-				// From contract 4.14.0 the later of two approvals of a link
-				// that holds one value holds it. The engine keeps a written
+				// From contract 4.14.0 the last decided of a link's approvals
+				// is its decision, on a link that holds one value, and an
+				// undated quote's decision takes effect from when it was
+				// decided. The engine keeps a written
 				// approval's time to the millisecond and ranks the one it
 				// writes by the time sent, so sent to the millisecond two
 				// approvals rank alike whichever is written first.

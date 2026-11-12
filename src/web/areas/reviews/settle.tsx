@@ -1,6 +1,6 @@
 import { Fragment, useState } from "react";
 import { Link } from "react-router-dom";
-import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   FoundryLoad,
   FoundryReviewChoice,
@@ -29,7 +29,6 @@ import {
   matchesReview,
   propValueText,
   refusalText,
-  statementHash,
   waitingText,
   WEAK_LINK_TEXT,
   type Candidate,
@@ -94,12 +93,19 @@ function NameReviews({
 /**
  * What approving a held claim does: its ends in order, its link, its
  * properties as stored. On a link that holds one value (`single`, also when
- * the version isn't known) the approval decides the link from today
- * (contract 4.14.0): it replaces what the link holds, which a claim held as
- * conflicting with it (`conflict`) says, and a statement dated later still
- * wins, so it promises no edge. The ends whose names the load linked on less than a name,
- * where that holds the claim (`holding`, holdingEnds), are named as the
- * document writes them, each with the way to its review.
+ * the version isn't known) the approval decides the link (contract 4.14.0),
+ * as the engine dates it: from the date its quote gives, else its
+ * document's, else the day it is first approved; one of a date still to come
+ * beats nothing until then: where the link holds another value the engine
+ * refuses it as `conflict`, and a load or resend after the date writes it. It
+ * replaces what the link holds of no date or dated up to then, which a
+ * claim held as conflicting with it (`conflict`) says; a statement dated
+ * later, approved or not, still holds the link, so it promises no edge; of
+ * two approvals the one first decided later decides (approving again keeps
+ * the first time). The
+ * ends whose names the load linked on less than a name, where that holds the
+ * claim (`holding`, holdingEnds), are named as the document writes them,
+ * each with the way to its review.
  */
 function ClaimWritten({
   settle,
@@ -126,12 +132,15 @@ function ClaimWritten({
       {single && (
         <p role="note">
           This link holds one value. An approval makes this its value from the
-          day it is first approved: it replaces what the link holds then, whose
-          evidence stays. A statement dated after that day still wins, and then
-          this is kept as evidence only; of two approvals, the later holds the
-          link.
+          date this sentence gives, else its document’s date, else the day it is
+          first approved; a sentence dated ahead replaces nothing until that
+          date, and stays held meanwhile if the link holds another value. It
+          replaces what the link holds of no date or dated up to then, whose
+          evidence stays. A statement dated later, approved or not, still holds
+          the link, and then this is kept as evidence only. Of two approvals,
+          the one first approved later decides.
           {settle.conflict &&
-            " It conflicts with what the graph holds: approving replaces another value the link holds, though not a property of the same fact that differs, which keeps it held."}
+            " It conflicts with what the graph holds: approving replaces that value unless it is dated later, though not a property of the same fact that differs, which keeps it held."}
         </p>
       )}
       {holding.length > 0 && (
@@ -208,11 +217,6 @@ export function SettleReview({
   const s = review.settle;
   const editable = !!load?.current;
   const held = s?.kind === "release" ? s : undefined;
-  const read = useQuery({
-    queryKey: ["statement-hash", held?.link, held?.stored],
-    queryFn: held ? () => statementHash(held.link, held.stored) : skipToken,
-    staleTime: Infinity,
-  });
   if (!s || s.kind === "stale")
     return (
       <>
@@ -272,7 +276,7 @@ export function SettleReview({
   // in this load, in the order the engine refuses them.
   const unsettled = isRelease ? holdingEnds(s.unsettled, single) : [];
   const approval = isRelease
-    ? approvalOf(query.data ?? [], s, read.data, editable)
+    ? approvalOf(query.data ?? [], s, editable)
     : undefined;
   const saved = approval?.saved ?? query.data?.find((d) => matchesReview(d, s));
   const moved = !!approval?.moved;
@@ -287,22 +291,26 @@ export function SettleReview({
     retry = applied?.status === "unconfirmed";
   // Approve where a card could be approved now, or, held for a name, where
   // that saves an approval of what it says for a later load: none is saved,
-  // or the one saved approved what it said before. Also where a load
-  // refused it as a conflict on a link that holds one value, as an engine
-  // before contract 4.14.0 did: sent again, at no cost, it decides the link
-  // now, unless a property of the fact differs. Reject on any held claim
-  // that isn't being written or written: its job may have sent it.
-  const conflicted =
-    single && applied?.status === "refused" && applied.reason === "conflict";
+  // or the one saved approved what it said before. Not where a load refused
+  // it, whatever the reason: sent again to the same load it is refused
+  // again. A `conflict` refusal of a link that holds one value by an engine
+  // before contract 4.14.0 is the one exception, and the card can't tell it
+  // from a later one (a property of the fact differs, or a load built before
+  // statements were kept wrote the link), which nothing approved here
+  // changes; the next load sends every approval again and writes the first,
+  // and the card says so (refusalText). Reject on any held claim that isn't
+  // being written or written: its job may have sent it. Neither until the
+  // saved decisions are read: one may be a rejection of this claim, which
+  // an approval would replace, or the approval it has.
   const approves =
       isRelease &&
+      !!query.data &&
       !fixed &&
       !s.differs &&
-      (!saved ||
-        moved ||
-        (!unsettled.length && (unread || missed || retry || conflicted))),
+      (!saved || moved || (!unsettled.length && (unread || missed || retry))),
     rejects =
       isRelease &&
+      !!query.data &&
       !fixed &&
       applied?.status !== "pending" &&
       applied?.status !== "written";
@@ -458,11 +466,9 @@ export function SettleReview({
               <Button
                 size="sm"
                 variant="ghost"
-                disabled={pending || !read.data}
+                disabled={pending}
                 onClick={() =>
-                  void (
-                    read.data && save({ reject: { statementHash: read.data } })
-                  )
+                  void (held && save({ reject: { statementHash: held.hash } }))
                 }
               >
                 Reject
@@ -471,12 +477,10 @@ export function SettleReview({
             {approves && (
               <Button
                 size="sm"
-                disabled={pending || !read.data}
+                disabled={pending}
                 pending={pending}
                 onClick={() =>
-                  void (
-                    read.data && save({ release: { statementHash: read.data } })
-                  )
+                  void (held && save({ release: { statementHash: held.hash } }))
                 }
               >
                 Approve

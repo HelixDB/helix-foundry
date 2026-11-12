@@ -201,6 +201,52 @@ test("approves every held claim of a group at once, and says which couldn't be",
   await expect(saved).toHaveCount(3);
 });
 
+// Contract 4.14.0: an approval of a link that holds one value decides what
+// it holds, and a page can't tell what the link holds or who put it there (a
+// person's approval, a table's row, another document), so Approve all leaves
+// such claims to their cards. Two contracts' claims of one customer, on the
+// customer's page: no rivals, so before this Approve all took both.
+test("leaves claims of a link that holds one value to their cards", async ({
+  page,
+}) => {
+  await mock.configure({ loadStepMs: 200 });
+  await signIn(page);
+  await makeContractsCurrent(page);
+  await uploadInData(page, [
+    file("one.md", "# Deal one\n\nInitech may have signed.\n"),
+    file("two.md", "# Deal two\n\nInitech may have signed.\n"),
+  ]);
+  await loadVersion3(page);
+  const initech = entity("Customer", "k:cus_INITECH2");
+  const { head, rows } = group(page, HELD);
+  const approveAll = head.getByRole("button", { name: /^Approve all/ });
+  // Where the link holds many values, both are offered together.
+  await page.goto(initech);
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(rows).toHaveCount(2);
+  await expect(approveAll).toHaveText("Approve all (2)");
+  // Where it holds one, each is approved on its card.
+  await mock.configure({ oneValuedLinks: ["signed_with"] });
+  await page.reload();
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText("This link holds one value");
+  await expect(
+    rows.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(2);
+  await expect(approveAll).toHaveCount(0);
+  // A person approves one on its card; the other is still theirs to decide.
+  await rows
+    .first()
+    .getByRole("button", { name: "Approve", exact: true })
+    .click();
+  await expect(rows).toHaveCount(1);
+  await expect(
+    rows.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(1);
+  await expect(approveAll).toHaveCount(0);
+});
+
 test("leaves claims held for a name out of Approve all, on the page of their other end too", async ({
   page,
 }) => {

@@ -195,9 +195,11 @@ VALUES (?, ?, ?, ?, 'writing', ?, ?)`, job.ID, job.WorkspaceID, job.OntologyID, 
 		return err
 	}
 	// Every decision an Extract takes: a reject is the site's to read, and is
-	// sent to no engine.
+	// sent to no engine, and neither is an approval of a claim it rejects
+	// (foundryRejected), as only an older binary leaves both.
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`)
-SELECT ?, `+foundryReviewDecisionColumns+` FROM foundry_review_decisions WHERE ontology_id=? AND kind<>'reject'`, job.LoadID, job.OntologyID); err != nil {
+SELECT ?, `+foundryReviewDecisionColumns+` FROM foundry_review_decisions r WHERE r.ontology_id=? AND r.kind<>'reject'
+  AND NOT (r.kind='release' AND `+foundryRejected("r", "r.ontology_id")+`)`, job.LoadID, job.OntologyID); err != nil {
 		return err
 	}
 	// Made since grants could cover a load: the decisions it copied had

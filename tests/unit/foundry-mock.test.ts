@@ -3397,6 +3397,225 @@ describe("review decisions", () => {
     );
   });
 
+  it("ranks one link's approvals by when each was first approved, in place as in a new load", async () => {
+    // Refused first: neither is written yet.
+    Object.assign(config, {
+      documentHeld: "refused",
+      oneValuedLinks: ["signed_with"],
+    });
+    await uploaded(
+      "variant.md",
+      Buffer.from(
+        "# Hedged deal\n\nGlobex Corporation and Initech may have signed.\n",
+      ),
+    );
+    const g = await loaded("first");
+    const held = (name: string) =>
+      reviews(g).find(
+        (n) =>
+          n.props.reason === "low_confidence" &&
+          String(n.props.statement).includes(name),
+      )!;
+    const approve = async (name: string) => {
+      const rv = held(name);
+      const statementHash = createHash("sha256")
+        .update(`signed_with\u001f${String(rv.props.statement)}`)
+        .digest("hex");
+      const { body } = await call(
+        "POST",
+        `${O}/reviews/${rv.props.review_key}:settle`,
+        { decision: { release: { statementHash } } },
+      );
+      // A job's step later a read applies it.
+      vi.setSystemTime(Date.now() + 10_000);
+      await call("GET", `${O}/review-decisions`);
+      return body.decision;
+    };
+    const signedWith = (load: typeof g) => {
+      const deal = load.find("Contract", "norm_name", "hedged deal")!;
+      return [...load.graph.edges.values()]
+        .filter((e) => e.label === "signed_with" && e.from === deal.id)
+        .map((e) => String(load.node(e.to)!.props.entity_key));
+    };
+    const globex = await approve("Globex");
+    Object.assign(config, { documentHeld: undefined });
+    // Initech, approved later, is written and holds the link.
+    await approve("Initech");
+    expect(signedWith(g)).toEqual(["cus_INITECH2"]);
+    // Globex approved again keeps when it was first approved, and by whom,
+    // as the backend does: written now, it is the older approval, so its
+    // quote is evidence and Initech keeps the link.
+    const again = await approve("Globex");
+    expect(again).toMatchObject({
+      id: globex.id,
+      decidedAt: globex.decidedAt,
+      decidedByUserId: globex.decidedByUserId,
+    });
+    expect(held("Globex")).toBeUndefined();
+    expect(signedWith(g)).toEqual(["cus_INITECH2"]);
+    expect(
+      [...g.nodes()].filter(
+        (n) =>
+          n.label === FOUNDRY_NODES.Evidence &&
+          n.props.quote === "Globex Corporation and Initech may have signed.",
+      ),
+    ).toHaveLength(2);
+    // A new load given both holds the same.
+    expect(signedWith(await loaded("next"))).toEqual(["cus_INITECH2"]);
+  });
+
+  it("binds an approval to its claim under the key a rebuild gave it, as the engine and the backend do", async () => {
+    Object.assign(config, { documentHeld: "refused" });
+    await uploaded(
+      "variant.md",
+      Buffer.from("# Hedged deal\n\nGlobex Corporation may have signed.\n"),
+    );
+    const g = await loaded("first");
+    const rv = reviews(g).find((n) => n.props.reason === "low_confidence")!;
+    const statementHash = createHash("sha256")
+      .update(`signed_with\u001f${String(rv.props.statement)}`)
+      .digest("hex");
+    const settle = async (choice: "release" | "reject") => {
+      const { body } = await call(
+        "POST",
+        `${O}/reviews/${rv.props.review_key}:settle`,
+        { decision: { [choice]: { statementHash } } },
+      );
+      vi.setSystemTime(Date.now() + 10_000);
+      await call("GET", `${O}/review-decisions`);
+      return body.decision;
+    };
+    const listed = async () =>
+      (await call("GET", `${O}/review-decisions`)).body.decisions;
+    const first = await settle("release");
+    expect((await listed())[0].applied).toMatchObject({ status: "refused" });
+    // A rebuild keys the sentence otherwise: its review, here, the same.
+    const moved = "f".repeat(64);
+    rv.props.claim_key = moved;
+    // Approved at the new key: the decision approved again, under it.
+    const again = await settle("release");
+    expect(again).toMatchObject({
+      id: first.id,
+      decidedAt: first.decidedAt,
+      claimKey: moved,
+    });
+    expect(await listed()).toHaveLength(1);
+    // Rejected there: no approval of the claim is left, and none waits.
+    rv.props.claim_key = "e".repeat(64);
+    const no = await settle("reject");
+    expect(no).toMatchObject({ kind: "reject", claimKey: "e".repeat(64) });
+    expect((await listed()).map((d: { kind: string }) => d.kind)).toEqual([
+      "reject",
+    ]);
+    // Approved after all, under yet another key: the rejection goes.
+    rv.props.claim_key = "d".repeat(64);
+    Object.assign(config, { documentHeld: undefined });
+    await settle("release");
+    expect(
+      (await listed()).map((d: { kind: string; applied?: unknown }) => [
+        d.kind,
+        d.applied,
+      ]),
+    ).toEqual([["release", { status: "written", at: expect.any(String) }]]);
+  });
+
+  it("writes an approval saved under the key the claim had, by its place and statement", async () => {
+    await uploaded(
+      "variant.md",
+      Buffer.from("# Hedged deal\n\nGlobex Corporation may have signed.\n"),
+    );
+    const g = await loaded("first");
+    const rv = reviews(g).find((n) => n.props.reason === "low_confidence")!;
+    const statementHash = createHash("sha256")
+      .update(`signed_with\u001f${String(rv.props.statement)}`)
+      .digest("hex");
+    await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+      decision: { release: { statementHash } },
+    });
+    // The load's review is keyed otherwise before the job runs.
+    rv.props.claim_key = "f".repeat(64);
+    vi.setSystemTime(Date.now() + 10_000);
+    const [d] = (await call("GET", `${O}/review-decisions`)).body.decisions;
+    expect(d.applied).toMatchObject({ status: "written" });
+    expect(
+      reviews(g).filter((n) => n.props.reason === "low_confidence"),
+    ).toHaveLength(0);
+  });
+
+  it.each([
+    ["the older approval's document first", ["a-older.md", "b-newer.md"]],
+    ["the newer approval's document first", ["b-newer.md", "a-older.md"]],
+  ])(
+    "holds a one-valued link for the newer of two approvals in two documents, %s",
+    async (_, order) => {
+      Object.assign(config, { oneValuedLinks: ["signed_with"] });
+      const text: Record<string, string> = {
+        "a-older.md": "# Deal\n\nInitech may have signed.\n",
+        "b-newer.md": "# Deal\n\nGlobex Corporation may have signed.\n",
+      };
+      for (const name of order) await uploaded(name, Buffer.from(text[name]!));
+      const g = await loaded("first");
+      const approve = async (name: string) => {
+        const rv = reviews(g).find(
+          (n) =>
+            n.props.reason === "low_confidence" &&
+            String(n.props.statement).includes(name),
+        )!;
+        const statementHash = createHash("sha256")
+          .update(`signed_with\u001f${String(rv.props.statement)}`)
+          .digest("hex");
+        await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+          decision: { release: { statementHash } },
+        });
+        vi.setSystemTime(Date.now() + 10_000);
+        await call("GET", `${O}/review-decisions`);
+      };
+      await approve("Initech");
+      await approve("Globex");
+      const signedWith = (load: typeof g) => {
+        const deal = load.find("Contract", "norm_name", "deal")!;
+        return [...load.graph.edges.values()]
+          .filter((e) => e.label === "signed_with" && e.from === deal.id)
+          .map((e) => String(load.node(e.to)!.props.entity_key));
+      };
+      expect(signedWith(g)).toEqual(["cus_GLOBEX01"]);
+      expect(signedWith(await loaded("next"))).toEqual(["cus_GLOBEX01"]);
+    },
+  );
+
+  it.each([
+    ["the approved document first", ["a-held.md", "b-plain.md"]],
+    ["the plain document first", ["b-plain.md", "a-held.md"]],
+  ])(
+    "holds a one-valued link's approval against another document's statement, %s",
+    async (_, order) => {
+      Object.assign(config, { oneValuedLinks: ["signed_with"] });
+      const text: Record<string, string> = {
+        "a-held.md": "# Deal\n\nInitech may have signed.\n",
+        "b-plain.md": "# Deal\n\nGlobex Corporation signed.\n",
+      };
+      for (const name of order) await uploaded(name, Buffer.from(text[name]!));
+      const g = await loaded("first");
+      const rv = reviews(g).find((n) => n.props.reason === "low_confidence")!;
+      const statementHash = createHash("sha256")
+        .update(`signed_with\u001f${String(rv.props.statement)}`)
+        .digest("hex");
+      await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+        decision: { release: { statementHash } },
+      });
+      vi.setSystemTime(Date.now() + 10_000);
+      await call("GET", `${O}/review-decisions`);
+      const signedWith = (load: typeof g) => {
+        const deal = load.find("Contract", "norm_name", "deal")!;
+        return [...load.graph.edges.values()]
+          .filter((e) => e.label === "signed_with" && e.from === deal.id)
+          .map((e) => String(load.node(e.to)!.props.entity_key));
+      };
+      expect(signedWith(g)).toEqual(["cus_INITECH2"]);
+      expect(signedWith(await loaded("next"))).toEqual(["cus_INITECH2"]);
+    },
+  );
+
   it("says why the current load kept an approved claim held", async () => {
     Object.assign(config, { documentHeld: "legal_form" });
     await uploaded(

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   parseAgentEnrichments,
   parseAgentMappings,
@@ -414,18 +415,28 @@ type Release = Extract<FoundryReviewDecision, { kind: "release" }>;
 /** A release decision's review in a load's graph, if the load holds it. */
 function heldReview(l: StoredLoad, d: Release) {
   const g = tenantGraph(l.tenantId).view(l.id);
-  for (const n of g.nodes())
-    if (
+  const at = [...g.nodes()].filter(
+    (n) =>
       n.label === N.Review &&
       n.props.doc_id === d.docId &&
-      n.props.claim_key === d.claimKey &&
       n.props.section === d.claimSection &&
       n.props.start === d.claimStart &&
       n.props.end === d.claimEnd &&
-      typeof n.props.statement === "string"
-    )
-      return n;
-  return undefined;
+      typeof n.props.statement === "string",
+  );
+  // By its key, or, as the engine binds a release whose key names no review
+  // of its document (contract 4.14.0), by the statement it read there.
+  return (
+    at.find((n) => n.props.claim_key === d.claimKey) ??
+    (g.find(N.Review, "claim_key", d.claimKey)
+      ? undefined
+      : at.find(
+          (n) =>
+            createHash("sha256")
+              .update(`${n.props.suggested_link}\u001f${n.props.statement}`)
+              .digest("hex") === d.statementHash,
+        ))
+  );
 }
 
 /**
@@ -507,7 +518,7 @@ function applyReleases(ontologyId: string, now = Date.now()) {
           model: aiModel(l.workspaceId, "extract") || MODEL,
           verifier: aiModel(l.workspaceId, "verify") || VERIFIER,
         },
-        holdsOne(def, String(review.props.suggested_link)),
+        holdsOne(def, String(review.props.suggested_link)) ? d : undefined,
       );
       countRelease(l.id, d.docId);
     }

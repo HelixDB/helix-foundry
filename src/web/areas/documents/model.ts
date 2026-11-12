@@ -1472,7 +1472,7 @@ const reviews: Record<ReviewReason, { title: string; text: string }> = {
   },
   conflict: {
     title: "Disagrees with your data",
-    text: "The text gives a link another value than the one your data holds, so it wasn’t stored. Where the link holds one value, approving it replaces that value.",
+    text: "The text gives a link another value than the one your data holds, so it wasn’t stored. Where the link holds one value, approving it decides the link: it replaces that value unless that one is dated later.",
   },
   violation: {
     title: "Would break a rule",

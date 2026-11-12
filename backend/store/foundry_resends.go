@@ -42,11 +42,15 @@ import (
 //
 // From contract 4.14.0 a load brought up to date this way holds what a
 // rebuild given the same decisions makes, on a link that holds one value
-// too: an approval there is a decision of the link dated when the person
-// made it (decided_at, the same in every Extract that sends it), which
-// outranks commit order. It beats undated statements and those dated up to
-// its day, whichever commits first, and of two approvals the later holds the
-// link. Each load still says what it made of an approval (applied_status).
+// too: of the link's approvals the last decided (decided_at, the same in
+// every Extract that sends it) is a decision of the link, which outranks
+// commit order. It takes effect from its quote's date, the one the quote
+// gives or else its document's, and from decided_at's day only for a quote
+// with neither; a quote dated after the load recorded it beats nothing until
+// that date. It beats undated statements and those dated up to then,
+// whichever commits first; a statement dated later, an earlier approval's
+// quote included, still holds the link. Each load still says what it made of
+// an approval (applied_status).
 
 // oweFoundryResends owes each of documentIDs a resend into loadID for reason,
 // or owes it again: a request a running job hasn't read stays owed when that
@@ -75,7 +79,17 @@ ON DUPLICATE KEY UPDATE status='owed', requests=requests+1, requested_at=NOW(6),
 // nothing could say what became of it, and a decision in the list that waits
 // is one a reader waits for. It is carried by the first job end that finds
 // its document extracted, as after the extract that reads it. A claim the
-// list already has a decision for is left as it is, whatever its id.
+// list already has a decision for, by its key or by the statement at its
+// place (as the engine binds a release), is left as it is, whatever its id;
+// so is a decision the list holds a copy of under the key its claim had
+// before it was approved again (SettleFoundryReleases).
+//
+// A release of a claim the ontology holds a rejection of (foundryClaimAt) is
+// never carried, and a copy of one the list has not written goes: the load
+// list never sends it (ListFoundryLoadDecisions), so it would wait for good,
+// owing its document a resend at every job's end. Only rows saved before a
+// rejection took a claim's approvals under every key, or by an older binary,
+// are such.
 //
 // First the list loses the releases it has not written whose decision is
 // gone. Removing a decision takes it from the load that is current then
@@ -93,18 +107,23 @@ func (s *mysqlDB) carryFoundryReleases(ctx context.Context, o *model.FoundryOnto
 	}
 	loadID := *o.CurrentLoadID
 	// <=> is NULL-safe: a copy no job has reported on has no status.
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
-WHERE load_id=? AND kind='release' AND NOT (applied_status <=> 'written')
-  AND id NOT IN (SELECT id FROM foundry_review_decisions WHERE ontology_id=?)`, loadID, o.ID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DELETE l FROM foundry_load_decisions l
+WHERE l.load_id=? AND l.kind='release' AND NOT (l.applied_status <=> 'written')
+  AND (l.id NOT IN (SELECT id FROM foundry_review_decisions WHERE ontology_id=?) OR `+foundryRejected("l", "?")+`)`, loadID, o.ID, o.ID); err != nil {
 		return err
 	}
+	// Two anti-joins, each on an index (the list's primary key, and its
+	// documents' index), where one with an OR would scan the list for each
+	// decision.
 	columns := "r." + strings.ReplaceAll(foundryReviewDecisionColumns, ", ", ", r.")
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
 SELECT ?, `+columns+`, 'carried' FROM foundry_review_decisions r
 JOIN foundry_load_extractions e ON e.load_id=? AND e.document_id=r.doc_id AND e.status='extracted'
-LEFT JOIN foundry_load_decisions l ON l.load_id=? AND l.kind='release' AND l.doc_id=r.doc_id AND l.claim_key=r.claim_key
-  AND l.claim_section=r.claim_section AND l.claim_start=r.claim_start AND l.claim_end=r.claim_end
-WHERE r.ontology_id=? AND r.kind='release' AND l.id IS NULL`, loadID, loadID, loadID, o.ID); err != nil {
+WHERE r.ontology_id=? AND r.kind='release' AND NOT `+foundryRejected("r", "r.ontology_id")+`
+  AND NOT EXISTS (SELECT 1 FROM foundry_load_decisions l WHERE l.load_id=? AND l.id=r.id)
+  AND NOT EXISTS (SELECT 1 FROM foundry_load_decisions l WHERE l.load_id=? AND l.kind='release' AND l.doc_id=r.doc_id
+    AND l.claim_section=r.claim_section AND l.claim_start=r.claim_start AND l.claim_end=r.claim_end
+    AND (l.claim_key=r.claim_key OR l.statement_hash=r.statement_hash))`, loadID, loadID, o.ID, loadID, loadID); err != nil {
 		return err
 	}
 	// A document whose row left extracted since (a failure recorded over it)
