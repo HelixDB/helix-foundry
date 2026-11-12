@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/helixdb/helix-foundry/backend/access"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
@@ -150,17 +152,38 @@ func (s *workflowStore) GetFoundryWorkflowRunByClientToken(_ context.Context, wo
 	})
 }
 
-func (s *workflowStore) ListFoundryWorkflowRuns(_ context.Context, workflowID, pageToken string, _ int) ([]*foundrymodel.FoundryWorkflowRun, string, error) {
+func (s *workflowStore) ListFoundryWorkflowRuns(_ context.Context, workflowID string, startedBy *access.Principal, pageToken string, _ int) ([]*foundrymodel.FoundryWorkflowRun, string, error) {
 	if pageToken == "bad" {
 		return nil, "", foundrystore.ErrInvalidPageToken
 	}
 	var out []*foundrymodel.FoundryWorkflowRun
 	for _, r := range s.runs {
-		if r.WorkflowID == workflowID {
+		if r.WorkflowID == workflowID && (startedBy == nil || r.StartedBy == *startedBy) {
 			out = append(out, r)
 		}
 	}
 	return out, "", nil
+}
+
+func (s *workflowStore) TallyFoundryWorkflowRuns(_ context.Context, workflowIDs []string, by access.Principal) (map[string]foundrymodel.FoundryWorkflowRunTally, error) {
+	out := map[string]foundrymodel.FoundryWorkflowRunTally{}
+	for _, w := range workflowIDs {
+		t := foundrymodel.FoundryWorkflowRunTally{Verdicts: map[string]int64{}}
+		for _, r := range s.runs {
+			if r.WorkflowID != w || r.StartedBy != by {
+				continue
+			}
+			t.Runs++
+			if r.Finished != nil {
+				t.FinishedRuns++
+			}
+			if a := s.assessments[r.ID]; a != nil && a.Status == foundrymodel.FoundryWorkflowAssessmentDone {
+				t.Verdicts[a.Verdict]++
+			}
+		}
+		out[w] = t
+	}
+	return out, nil
 }
 
 func (s *workflowStore) FinishFoundryWorkflowRun(_ context.Context, id string, input *string, output string, assess bool) error {
@@ -581,7 +604,6 @@ func TestTrackedRun(t *testing.T) {
 		"another workspace":                  {ctx, "ws-2", "", run.GetId(), codes.NotFound},
 		"another workspace's ontology route": {ctx, "ws-2", "ont-1", run.GetId(), codes.NotFound},
 		"unknown":                            {ctx, "ws-1", "ont-1", "nope", codes.NotFound},
-		"a grantee":                          {access.WithCaller(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: agentKey}), "ws-1", "ont-1", run.GetId(), codes.PermissionDenied},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := s.trackedRun(tc.ctx, tc.workspace, tc.onto, tc.r)
@@ -869,5 +891,172 @@ func TestFoundryWorkflowListsStayInsideAResponse(t *testing.T) {
 		if !slices.Equal(seqs, want.seqs) || got.GetMore() != want.more {
 			t.Fatalf("after %d: %v, more %v", after, seqs, got.GetMore())
 		}
+	}
+}
+
+// TestGranteeWorkflows: with the Workflows permission, a grantee lists an
+// ontology's workflows and starts, records under and finishes its own runs.
+// It reads every run of an ontology it holds all of (the agent's key holds
+// all of Billing), and only its own of one it holds part of (user-9),
+// counts and verdicts included. Off, for it or a team of its, every
+// workflow call is refused, as is recording under a run; the host's callers
+// never read it.
+func TestGranteeWorkflows(t *testing.T) {
+	s, acc := accessService(t)
+	store := newWorkflowStore(acc)
+	s.deps.DB = store
+	conn, as := served(t, s)
+	client := foundryv1.NewFoundryServiceClient(conn)
+	owners := startRun(t, s, "the owner's")
+	wf := owners.GetWorkflowId()
+	start := func(who ports.Actor, input string) *foundryv1.FoundryWorkflowRun {
+		t.Helper()
+		r, err := client.StartFoundryWorkflowRun(as(who), &foundryv1.StartFoundryWorkflowRunRequest{
+			WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: wf, Input: input,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.GetRun()
+	}
+	agents, members := start(agent, "the agent's"), start(member, "the member's")
+	if agents.GetStartedByServiceCredentialId() != "cred-1" || members.GetStartedByUserId() != "user-9" {
+		t.Fatalf("started by %v and %v", agents, members)
+	}
+	for id, verdict := range map[string]string{owners.GetId(): "helpful", members.GetId(): "unused"} {
+		store.assessments[id] = &foundrymodel.FoundryWorkflowAssessment{RunID: id, WorkflowID: wf, Status: foundrymodel.FoundryWorkflowAssessmentDone, Verdict: verdict}
+	}
+	ids := func(who ports.Actor) []string {
+		t.Helper()
+		runs, err := client.ListFoundryWorkflowRuns(as(who), &foundryv1.ListFoundryWorkflowRunsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: wf})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, r := range runs.GetRuns() {
+			out = append(out, r.GetId())
+		}
+		return slices.Sorted(slices.Values(out))
+	}
+	if got, want := ids(agent), slices.Sorted(slices.Values([]string{owners.GetId(), agents.GetId(), members.GetId()})); !slices.Equal(got, want) {
+		t.Fatalf("the agent's key lists %v, want every run %v", got, want)
+	}
+	if got := ids(member); !slices.Equal(got, []string{members.GetId()}) {
+		t.Fatalf("user-9 lists %v, want its own run", got)
+	}
+	verdicts := func(w *foundryv1.FoundryWorkflow) map[string]int64 {
+		out := map[string]int64{}
+		for _, v := range w.GetVerdicts() {
+			out[v.GetVerdict()] = v.GetRuns()
+		}
+		return out
+	}
+	whole, err := client.GetFoundryWorkflow(as(agent), &foundryv1.GetFoundryWorkflowRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: wf})
+	if err != nil || whole.GetWorkflow().GetRuns() != 3 || len(verdicts(whole.GetWorkflow())) != 2 {
+		t.Fatalf("the agent's workflow = %v, %v", whole, err)
+	}
+	part, err := client.GetFoundryWorkflow(as(member), &foundryv1.GetFoundryWorkflowRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: wf})
+	if err != nil || part.GetWorkflow().GetRuns() != 1 || part.GetWorkflow().GetFinishedRuns() != 0 ||
+		!maps.Equal(verdicts(part.GetWorkflow()), map[string]int64{"unused": 1}) {
+		t.Fatalf("user-9's workflow = %v, %v", part, err)
+	}
+	listed, err := client.ListFoundryWorkflows(as(member), &foundryv1.ListFoundryWorkflowsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})
+	if err != nil || len(listed.GetWorkflows()) != 1 || listed.GetWorkflows()[0].GetRuns() != 1 {
+		t.Fatalf("user-9's workflows = %v, %v", listed, err)
+	}
+
+	// Another's run is not found for user-9, whatever it asks of it.
+	_, err = client.GetFoundryWorkflowRun(as(member), &foundryv1.GetFoundryWorkflowRunRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: wf, Id: owners.GetId()})
+	wantCode(t, err, codes.NotFound)
+	_, err = client.ListFoundryWorkflowRunAccesses(as(member), &foundryv1.ListFoundryWorkflowRunAccessesRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: wf, Id: agents.GetId()})
+	wantCode(t, err, codes.NotFound)
+	_, err = client.FinishFoundryWorkflowRun(as(member), &foundryv1.FinishFoundryWorkflowRunRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: wf, Id: owners.GetId(), Output: "x"})
+	wantCode(t, err, codes.NotFound)
+	if _, err := client.GetFoundryWorkflowRun(as(agent), &foundryv1.GetFoundryWorkflowRunRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: wf, Id: members.GetId()}); err != nil {
+		t.Fatalf("the agent's key reads user-9's run: %v", err)
+	}
+	// Making, deleting and assessing them stay with owners and admins.
+	_, err = client.CreateFoundryWorkflow(as(agent), &foundryv1.CreateFoundryWorkflowRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Name: "Mine"})
+	wantCode(t, err, codes.PermissionDenied)
+
+	// Recording: user-9 only under its own run, the agent's key under any.
+	user9 := access.Principal{Kind: access.PrincipalUser, ID: "user-9"}
+	partly := context.WithValue(access.WithCaller(asPerson(), access.Grantee{WorkspaceID: "ws-1", Principal: user9}), granteeLoadKey{},
+		foundrymodel.FoundryLoadInputs{LoadID: "load-1", Partial: true})
+	wholly := context.WithValue(access.WithCaller(asPerson(), access.Grantee{WorkspaceID: "ws-1", Principal: agentKey}), granteeLoadKey{},
+		foundrymodel.FoundryLoadInputs{LoadID: "load-1"})
+	for _, run := range []string{owners.GetId(), agents.GetId()} {
+		_, err := s.trackedRun(partly, "ws-1", "ont-1", run)
+		wantCode(t, err, codes.NotFound)
+	}
+	if r, err := s.trackedRun(partly, "ws-1", "ont-1", members.GetId()); err != nil || r.ID != members.GetId() {
+		t.Fatalf("user-9's own run = %v, %v", r, err)
+	}
+	if r, err := s.trackedRun(wholly, "ws-1", "ont-1", owners.GetId()); err != nil || r.ID != owners.GetId() {
+		t.Fatalf("the owner's run for the agent's key = %v, %v", r, err)
+	}
+	finished, err := client.FinishFoundryWorkflowRun(as(member), &foundryv1.FinishFoundryWorkflowRunRequest{
+		WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: wf, Id: members.GetId(), Output: "done",
+	})
+	if err != nil || finished.GetRun().GetStatus() != string(foundrymodel.FoundryWorkflowRunFinished) {
+		t.Fatalf("user-9 finishing its run = %v, %v", finished, err)
+	}
+
+	// Off for the agent's key: refused, saying where to turn it on, and the
+	// workspace's list names it. Its grants stay as they were.
+	held := []*foundryv1.FoundryAccessTarget{
+		{Kind: foundryv1.FoundryAccessTarget_KIND_CONNECTOR, ConnectorId: "conn-1"},
+		{Kind: foundryv1.FoundryAccessTarget_KIND_DOCUMENT_SET, DocumentSetId: "set-general"},
+	}
+	set, err := s.SetFoundryAccessGrants(asPerson(), &foundryv1.SetFoundryAccessGrantsRequest{
+		WorkspaceId: "ws-1", Principal: principalToProto(agentKey), Targets: held, Workflows: proto.Bool(false),
+	})
+	if err != nil || set.GetWorkflows() || len(set.GetGrants()) != 2 {
+		t.Fatalf("turning workflows off = %v, %v", set, err)
+	}
+	_, err = client.ListFoundryWorkflows(as(agent), &foundryv1.ListFoundryWorkflowsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})
+	wantCode(t, err, codes.PermissionDenied)
+	if !strings.Contains(status.Convert(err).Message(), "Settings › Access") {
+		t.Fatalf("refusal %q doesn't say where to turn it on", status.Convert(err).Message())
+	}
+	_, err = s.trackedRun(wholly, "ws-1", "ont-1", owners.GetId())
+	wantCode(t, err, codes.PermissionDenied)
+	mine, err := client.GetMyFoundryAccess(as(agent), &foundryv1.GetMyFoundryAccessRequest{WorkspaceId: "ws-1"})
+	if err != nil || mine.GetWorkflows() {
+		t.Fatalf("the agent's key's access = %v, %v", mine, err)
+	}
+	all, err := s.ListFoundryAccess(asPerson(), &foundryv1.ListFoundryAccessRequest{WorkspaceId: "ws-1"})
+	if err != nil || len(all.GetWorkflowsOff()) != 1 || all.GetWorkflowsOff()[0].GetId() != "cred-1" {
+		t.Fatalf("listed access = %v, %v", all.GetWorkflowsOff(), err)
+	}
+	// Left out of a save, it stays off; turned on again, it is.
+	if set, err = s.SetFoundryAccessGrants(asPerson(), &foundryv1.SetFoundryAccessGrantsRequest{
+		WorkspaceId: "ws-1", Principal: principalToProto(agentKey), Targets: held,
+	}); err != nil || set.GetWorkflows() {
+		t.Fatalf("a save leaving it out = %v, %v", set, err)
+	}
+	if set, err = s.SetFoundryAccessGrants(asPerson(), &foundryv1.SetFoundryAccessGrantsRequest{
+		WorkspaceId: "ws-1", Principal: principalToProto(agentKey), Targets: held, Workflows: proto.Bool(true),
+	}); err != nil || !set.GetWorkflows() {
+		t.Fatalf("turning workflows on = %v, %v", set, err)
+	}
+	if _, err := client.ListFoundryWorkflows(as(agent), &foundryv1.ListFoundryWorkflowsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"}); err != nil {
+		t.Fatalf("on again: %v", err)
+	}
+
+	// Off for a team of user-9's turns it off for them too; the host's caller,
+	// for whom it was turned off as well, is served as before.
+	acc.teams = []foundrymodel.FoundryTeam{{ID: "team-1", WorkspaceID: "ws-1", Name: "Support", MemberUserIDs: []string{"user-9"}}}
+	acc.workflowsOff = []access.Principal{{Kind: access.PrincipalTeam, ID: "team-1"}, {Kind: access.PrincipalUser, ID: person.UserID}}
+	_, err = client.ListFoundryWorkflowRuns(as(member), &foundryv1.ListFoundryWorkflowRunsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: wf})
+	wantCode(t, err, codes.PermissionDenied)
+	if mine, err := client.GetMyFoundryAccess(as(member), &foundryv1.GetMyFoundryAccessRequest{WorkspaceId: "ws-1"}); err != nil || mine.GetWorkflows() {
+		t.Fatalf("user-9's access = %v, %v", mine, err)
+	}
+	if runs, err := s.ListFoundryWorkflowRuns(asPerson(), &foundryv1.ListFoundryWorkflowRunsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: wf}); err != nil || len(runs.GetRuns()) != 3 {
+		t.Fatalf("the host's caller lists %v, %v", runs, err)
+	}
+	if mine, err := s.GetMyFoundryAccess(asPerson(), &foundryv1.GetMyFoundryAccessRequest{WorkspaceId: "ws-1"}); err != nil || !mine.GetWorkflows() {
+		t.Fatalf("the host's caller's access = %v, %v", mine, err)
 	}
 }

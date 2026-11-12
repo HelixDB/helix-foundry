@@ -93,13 +93,14 @@ func TestWorkflowToolsByIdentity(t *testing.T) {
 	assert.Subset(t, names, workflowTools[1:])
 	assert.NotContains(t, names, toolFoundryCreateWorkflow)
 
+	// A key reading through source grants gets them too, but for creating one:
+	// Foundry checks its Workflows permission on each call.
 	granted := grantKey()
 	granted.FoundryGrants = true
 	names = toolNames(t, with, granted)
 	assert.Contains(t, names, toolFoundryReadGraph)
-	for _, name := range workflowTools {
-		assert.NotContains(t, names, name)
-	}
+	assert.Subset(t, names, workflowTools[1:])
+	assert.NotContains(t, names, toolFoundryCreateWorkflow)
 
 	viewer := &Identity{User: true, HasPermission: func(p Permission) bool { return p == PermissionWorkspaceRead }}
 	for _, name := range workflowTools {

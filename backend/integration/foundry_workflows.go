@@ -135,7 +135,8 @@ type GetFoundryWorkflowRunOutput struct {
 }
 
 // addFoundryWorkflowTools registers the workflow tools: creating one for a user who manages
-// ontologies, and the rest for whoever reads ontologies' databases, an agent's key included.
+// ontologies, and the rest for whoever reads ontologies, through their databases or source
+// grants, an agent's key included.
 func (s *Service) addFoundryWorkflowTools(server *mcp.Server, identity *Identity, reads bool) {
 	no := false
 	if !identity.ServiceKey && identity.HasPermission(PermissionWorkspaceOntologyManage) {

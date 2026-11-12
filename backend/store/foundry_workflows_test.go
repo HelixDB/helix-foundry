@@ -221,17 +221,66 @@ func TestFoundryWorkflowRuns(t *testing.T) {
 	require.NotNil(t, workflow.LastRunAt)
 
 	t.Run("runs list newest first, a page at a time", func(t *testing.T) {
-		first, next, err := f.db.ListFoundryWorkflowRuns(ctx, w.ID, "", 3)
+		first, next, err := f.db.ListFoundryWorkflowRuns(ctx, w.ID, nil, "", 3)
 		require.NoError(t, err)
 		require.Len(t, first, 3)
 		assert.Equal(t, id26("FR-BARE"), first[0].ID)
-		rest, next2, err := f.db.ListFoundryWorkflowRuns(ctx, w.ID, next, 3)
+		rest, next2, err := f.db.ListFoundryWorkflowRuns(ctx, w.ID, nil, next, 3)
 		require.NoError(t, err)
 		assert.Empty(t, next2)
 		require.Len(t, rest, 1)
 		assert.Equal(t, r.ID, rest[0].ID)
-		_, _, err = f.db.ListFoundryWorkflowRuns(ctx, w.ID, "%%%", 3)
+		_, _, err = f.db.ListFoundryWorkflowRuns(ctx, w.ID, nil, "%%%", 3)
 		assert.ErrorIs(t, err, store.ErrInvalidPageToken)
+	})
+	ada := access.Principal{Kind: access.PrincipalUser, ID: id26("U-ADA")}
+	key := access.Principal{Kind: access.PrincipalServiceCredential, ID: id26("SC-1")}
+	t.Run("runs list those one principal started", func(t *testing.T) {
+		mine, next, err := f.db.ListFoundryWorkflowRuns(ctx, w.ID, &ada, "", 2)
+		require.NoError(t, err)
+		require.Len(t, mine, 2)
+		rest, _, err := f.db.ListFoundryWorkflowRuns(ctx, w.ID, &ada, next, 2)
+		require.NoError(t, err)
+		require.Len(t, rest, 1)
+		for _, r := range append(mine, rest...) {
+			assert.Equal(t, ada, r.StartedBy)
+		}
+		keys, _, err := f.db.ListFoundryWorkflowRuns(ctx, w.ID, &key, "", 10)
+		require.NoError(t, err)
+		require.Len(t, keys, 1)
+		assert.Equal(t, id26("FR-KEY"), keys[0].ID)
+		// A team starts none, and a user id under the key's kind matches none.
+		for _, p := range []access.Principal{{Kind: access.PrincipalTeam, ID: ada.ID}, {Kind: access.PrincipalServiceCredential, ID: ada.ID}} {
+			none, _, err := f.db.ListFoundryWorkflowRuns(ctx, w.ID, &p, "", 10)
+			require.NoError(t, err)
+			assert.Empty(t, none, p)
+		}
+	})
+	t.Run("a tally counts one principal's runs and their verdicts", func(t *testing.T) {
+		_, err := testDB.Exec(`INSERT INTO foundry_workflow_run_assessments (run_id, workspace_id, ontology_id, workflow_id, status, verdict, assessment, finished_at)
+VALUES (?, ?, ?, ?, 'done', 'helpful', '{}', NOW(6)), (?, ?, ?, ?, 'queued', NULL, NULL, NULL)`,
+			r.ID, w.WorkspaceID, w.OntologyID, w.ID, id26("FR-KEY"), w.WorkspaceID, w.OntologyID, w.ID)
+		require.NoError(t, err)
+		other := id26("WF-NONE")
+		tallies, err := f.db.TallyFoundryWorkflowRuns(ctx, []string{w.ID, other}, ada)
+		require.NoError(t, err)
+		mine := tallies[w.ID]
+		assert.EqualValues(t, 3, mine.Runs)
+		assert.EqualValues(t, 2, mine.FinishedRuns)
+		require.NotNil(t, mine.LastRunAt)
+		assert.Equal(t, map[string]int64{"helpful": 1}, mine.Verdicts)
+		assert.Equal(t, model.FoundryWorkflowRunTally{Verdicts: map[string]int64{}}, tallies[other])
+		keys, err := f.db.TallyFoundryWorkflowRuns(ctx, []string{w.ID}, key)
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, keys[w.ID].Runs)
+		assert.Zero(t, keys[w.ID].FinishedRuns)
+		assert.Empty(t, keys[w.ID].Verdicts, "a queued assessment counts no verdict")
+		teams, err := f.db.TallyFoundryWorkflowRuns(ctx, []string{w.ID}, access.Principal{Kind: access.PrincipalTeam, ID: ada.ID})
+		require.NoError(t, err)
+		assert.Zero(t, teams[w.ID].Runs)
+		empty, err := f.db.TallyFoundryWorkflowRuns(ctx, nil, ada)
+		require.NoError(t, err)
+		assert.Empty(t, empty)
 	})
 }
 
