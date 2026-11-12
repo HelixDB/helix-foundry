@@ -156,8 +156,10 @@ describe("what Approve all approves", () => {
   });
   it("leaves out a claim held as conflicting with what its link holds: approving it replaces a value (contract 4.14.0)", () => {
     const reviews = [settled(held(0)), settled(held(20, "Globex", "conflict"))];
-    for (const single of [many, () => true])
-      expect(ids(model.approvable(reviews, [], single))).toEqual(["held-0"]);
+    expect(ids(model.approvable(reviews, [], many))).toEqual(["held-0"]);
+    // On a link that holds one value it is the other's rival, too.
+    expect(ids(model.approvable(reviews, [], () => true))).toEqual([]);
+    expect(ids(model.approvable([reviews[1]!], [], () => true))).toEqual([]);
   });
   it("leaves out claims giving one subject of a link that holds one value different objects: the later approval would hold it", () => {
     const reviews = [

@@ -3788,11 +3788,13 @@ describe("review decisions", () => {
       "master services agreement",
     )!;
     expect(contract.props.term_months).toBe(36);
+    // The review is weighed without the decision (contract 4.14.0): the new
+    // document's value joins the ones in dispute, and the decision holds.
     expect(
       JSON.parse(String(rv.props.values)).map(
         (v: { value: number }) => v.value,
       ),
-    ).toEqual([24, 36]);
+    ).toEqual([24, 36, 48]);
     // The next load reads it too.
     expect(
       (await loaded("next")).find(

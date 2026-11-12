@@ -1500,7 +1500,7 @@ const reviews: Record<ReviewReason, { title: string; text: string }> = {
   },
   prop_conflict: {
     title: "Disagrees on a value",
-    text: "Documents state different values for this property, or one the tables don’t hold, so the stored value is the table’s or none.",
+    text: "Documents state different values for this property, or one the tables don’t hold, so the stored value is the table’s, none, or the one a person chose.",
   },
   attribute_low_confidence: {
     title: "The model wasn’t sure of a value",

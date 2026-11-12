@@ -391,6 +391,9 @@ function settleOf(
       stored = text(r.statement),
       stated = stored ? statement(stored) : undefined,
       { section, start, end } = r;
+    // A conflict a load wrote before claims kept statements was never one a
+    // person settles, and on a link that holds many values none is.
+    if (reason === "conflict" && !stored) return { candidates };
     // An approval is of what its card shows: a review of a load before
     // statements shows nothing to approve.
     if (
@@ -847,23 +850,39 @@ export function matchesReview(d: ReviewDecision, s: Settle) {
 
 /**
  * How a person's saved approvals stand toward a held claim's card, `read`
- * being the hash of what it shows. `saved` is the approval of this review.
- * On the load a person can settle, `moved` is that it approved what the claim
- * said before: the engine refuses it. `earlier` is that this statement was
- * approved at this place under another key, which it held before: a sibling
- * claim of the sentence states something else. An older load's statement may
- * not be the current one, so it says neither.
+ * being the hash of what it shows. `saved` is the approval of this review:
+ * by its key, or, on the load a person can settle, an approval of this
+ * statement at this place under another key, which the claim held before (a
+ * rebuild moves keys): from contract 4.14.0 the engine matches a release
+ * whose key it holds no review under by its place and statement hash, so
+ * that approval is this claim's and says what became of it. A sibling claim
+ * of the sentence states something else, and isn't. On that load `moved` is
+ * that the approval of this review approved what the claim said before: the
+ * engine refuses it. An older load's statement may not be the current one,
+ * so it says neither.
  *
  * @example
- * approvalOf([], release, "abc", true); // { saved: undefined, moved: false, earlier: false }
+ * approvalOf([], release, "abc", true); // { saved: undefined, moved: false }
  */
 export function approvalOf<D extends ReviewDecision>(
   decisions: readonly D[],
   s: Extract<Settle, { kind: "release" }>,
   read: string | undefined,
   editable: boolean,
-): { saved?: D; moved: boolean; earlier: boolean } {
-  const saved = decisions.find((d) => matchesReview(d, s));
+): { saved?: D; moved: boolean } {
+  const saved =
+    decisions.find((d) => matchesReview(d, s)) ??
+    (editable && read
+      ? decisions.find(
+          (d) =>
+            d.kind === "release" &&
+            d.docId === s.docId &&
+            d.claimSection === s.section &&
+            d.claimStart === s.start &&
+            d.claimEnd === s.end &&
+            d.statementHash === read,
+        )
+      : undefined);
   return {
     saved,
     moved:
@@ -871,20 +890,6 @@ export function approvalOf<D extends ReviewDecision>(
       !!read &&
       saved?.kind === "release" &&
       saved.statementHash !== read,
-    earlier:
-      editable &&
-      !!read &&
-      !saved &&
-      decisions.some(
-        (d) =>
-          d.kind === "release" &&
-          d.docId === s.docId &&
-          d.claimKey !== s.claimKey &&
-          d.claimSection === s.section &&
-          d.claimStart === s.start &&
-          d.claimEnd === s.end &&
-          d.statementHash === read,
-      ),
   };
 }
 
@@ -966,7 +971,7 @@ export function refusalText(
     // From contract 4.14.0 an approval of a link that holds one value
     // replaces what the link holds, so this is all that's left of it.
     case "conflict":
-      return "It conflicts with what the graph holds for this link: a property of it differs from the one the graph holds, or a load built before statements were kept wrote the link. Load again to write it.";
+      return "It conflicts with what the graph holds for this link: a property of it differs from the one the graph holds, which no approval or new load changes, or a load built before statements were kept wrote the link, which a new load writes again.";
     case "blocked":
       return "Writing it would break a rule the ontology enforces, or checking that took more reading than a load allows.";
     case "no_statement":

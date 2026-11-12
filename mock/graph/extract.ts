@@ -1209,8 +1209,9 @@ export function extractDocument(
   const linked = contract !== undefined && scope.links.has("signed_with");
   // The customer a person's approval gives a contract's signed_with, where
   // that link holds one value: it holds the link whatever else the document
-  // states of it, in whichever order.
-  let approved: number | undefined;
+  // states of it, in whichever order; of two approvals the later decided,
+  // then the decision id that sorts last, as the engine ranks them.
+  let approved: { to: number; at: string; id: string } | undefined;
   for (const { e, hits, resolvedBy } of found) {
     if (!hits.length) continue;
     counts.entities += 1;
@@ -1250,7 +1251,7 @@ export function extractDocument(
         object: { type: g.node(e.id)!.label, name: e.name || first.surface },
         props: {},
       });
-      const released = decisions.some(
+      const release = decisions.find(
         (d) =>
           d.kind === "release" &&
           d.docId === doc.id &&
@@ -1260,6 +1261,7 @@ export function extractDocument(
           d.claimEnd === place.end &&
           d.statementHash === sha256(`signed_with\u001f${statement}`),
       );
+      const released = !!release;
       // The link its name stands on, where that holds the claim.
       const weak = WEAK_LINKS.find((w) => w === held);
       const refused = held === "refused" || !!weak || held === "differs";
@@ -1322,7 +1324,15 @@ export function extractDocument(
         continue;
       }
       stated = held === "unverified" ? 0 : 0.72;
-      if (ontology.oneValued?.has("signed_with")) approved = e.id;
+      const at = String(release!.decidedAt ?? ""),
+        id = String(release!.id);
+      if (
+        ontology.oneValued?.has("signed_with") &&
+        (!approved ||
+          at > approved.at ||
+          (at === approved.at && id > approved.id))
+      )
+        approved = { to: e.id, at, id };
     }
     const factKey = sha256(
       ["signed_with", String(contract), String(e.id)].join("\u001f"),
@@ -1351,7 +1361,7 @@ export function extractDocument(
     g.addEdge(E.FROM_SECTION, ev, first.s.node);
     counts.facts += 1;
   }
-  if (approved !== undefined) displace(g, "signed_with", contract!, approved);
+  if (approved) displace(g, "signed_with", contract!, approved.to);
   [...unresolved, ...adjudicated].forEach((u, k) => {
     const q = quote(u.s, u.i);
     const r = g.addNode(N.Review, {

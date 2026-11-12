@@ -100,6 +100,12 @@ describe("a held claim", () => {
     const s = model.settleable({ ...held, reason: "conflict" }, []).settle;
     expect(s).toEqual({ ...release, conflict: true });
     expect(model.matchesReview(decided, s!)).toBe(true);
+    // One a load wrote before claims kept statements is settled by nothing,
+    // as before: no new load is asked for.
+    const { statement: _, ...unstated } = held;
+    expect(
+      model.settleable({ ...unstated, reason: "conflict" }, []).settle,
+    ).toBeUndefined();
   });
   it("is matched by its key and place", () => {
     for (const other of [
@@ -224,7 +230,7 @@ describe("how approvals stand toward a held claim", () => {
 
   it("finds the approval of this review", () => {
     const s = model.approvalOf([saved()], settle, read, true);
-    expect(s).toMatchObject({ moved: false, earlier: false });
+    expect(s).toMatchObject({ moved: false });
     expect(s.saved?.id).toBe("d1");
   });
   it("says an approval of what it said before no longer stands", () => {
@@ -239,9 +245,9 @@ describe("how approvals stand toward a held claim", () => {
     const moved = saved({ statementHash: other as never });
     expect(model.approvalOf([moved], settle, read, false).moved).toBe(false);
     const elsewhere = saved({ claimKey: "e".repeat(64) as never });
-    expect(model.approvalOf([elsewhere], settle, read, false).earlier).toBe(
-      false,
-    );
+    expect(
+      model.approvalOf([elsewhere], settle, read, false).saved,
+    ).toBeUndefined();
   });
   it("tells a sibling claim at the sentence from this one's key moving", () => {
     // Another claim of the sentence, another statement: nothing of this one.
@@ -252,11 +258,23 @@ describe("how approvals stand toward a held claim", () => {
     expect(model.approvalOf([sibling], settle, read, true)).toMatchObject({
       saved: undefined,
       moved: false,
-      earlier: false,
     });
-    // This statement under another key: the claim's key moved.
+    // This statement under another key: the claim's key moved, and the
+    // engine matches the approval by its place and hash (contract 4.14.0).
     const keyed = saved({ claimKey: "e".repeat(64) as never });
-    expect(model.approvalOf([keyed], settle, read, true).earlier).toBe(true);
+    expect(model.approvalOf([keyed], settle, read, true)).toMatchObject({
+      saved: { id: "d1" },
+      moved: false,
+    });
+    // One of this key comes first.
+    expect(
+      model.approvalOf(
+        [keyed, saved({ id: "d2" as never })],
+        settle,
+        read,
+        true,
+      ).saved?.id,
+    ).toBe("d2");
   });
   it("doesn't look at another place's approval", () => {
     const d = saved({
@@ -264,7 +282,7 @@ describe("how approvals stand toward a held claim", () => {
       claimStart: 40 as never,
       claimEnd: 60 as never,
     });
-    expect(model.approvalOf([d], settle, read, true).earlier).toBe(false);
+    expect(model.approvalOf([d], settle, read, true).saved).toBeUndefined();
   });
 });
 
