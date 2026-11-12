@@ -439,7 +439,9 @@ export function LiveLoad() {
   if (!live) return null;
   const { job } = live;
   const p = job.progress || {},
-    starting = loadRetry(job, ontology.createdAt, now)?.kind === "starting";
+    retry = loadRetry(job, ontology.createdAt, now)?.kind,
+    starting = retry === "starting",
+    indexing = retry === "indexing";
   // Parked while its people are looked up: the tables load next.
   if (lookingUp(job, live.load.enrichment))
     return (
@@ -464,26 +466,32 @@ export function LiveLoad() {
           ? job.kind === "extract"
             ? "New documents are waiting for the new database"
             : "A load is waiting for the new database"
-          : job.status === "queued"
+          : indexing
             ? job.kind === "extract"
-              ? "New documents are queued for reading"
-              : job.kind === "resend"
-                ? "Decisions are queued for this load"
-                : "A load is queued"
-            : job.kind === "extract"
-              ? `Reading new documents into ${loadVersion(live.load)}`
-              : job.kind === "resend"
-                ? `Applying decisions to ${loadVersion(live.load)}`
-                : `Loading the database: ${phaseLabel(job).toLowerCase()}`
+              ? "New documents are waiting for the database’s indexes"
+              : "A load is waiting for the database’s indexes"
+            : job.status === "queued"
+              ? job.kind === "extract"
+                ? "New documents are queued for reading"
+                : job.kind === "resend"
+                  ? "Decisions are queued for this load"
+                  : "A load is queued"
+              : job.kind === "extract"
+                ? `Reading new documents into ${loadVersion(live.load)}`
+                : job.kind === "resend"
+                  ? `Applying decisions to ${loadVersion(live.load)}`
+                  : `Loading the database: ${phaseLabel(job).toLowerCase()}`
       }
       text={
         starting
           ? `Your new database is starting. The ${job.kind === "extract" ? "reading" : "load"} tries again automatically once it’s ready.`
-          : job.kind === "resend"
-            ? "Approved claims are written from their documents’ saved readings, and chosen values are sent, at no model cost."
-            : p.documentsTotal
-              ? `${p.documentsDone || 0} of ${plural(p.documentsTotal, "document")} read so far.`
-              : "What it writes shows in the Explorer as it goes."
+          : indexing
+            ? `Helix builds the database’s indexes before it writes. The ${job.kind === "extract" ? "reading" : "load"} carries on by itself once they’re ready.`
+            : job.kind === "resend"
+              ? "Approved claims are written from their documents’ saved readings, and chosen values are sent, at no model cost."
+              : p.documentsTotal
+                ? `${p.documentsDone || 0} of ${plural(p.documentsTotal, "document")} read so far.`
+                : "What it writes shows in the Explorer as it goes."
       }
       action={
         <ButtonLink size="sm" to={paths.load(o, live.load.id)}>
@@ -607,7 +615,8 @@ function CountCell({
 
 /**
  * A load's jobs in a line: the newest, with its progress or result (or that
- * it waits for its new database to start: loadRetry) and what it spent.
+ * it waits for its new database to start, or for the database's indexes:
+ * loadRetry) and what it spent.
  */
 function jobsText(
   l: FoundryLoad,
@@ -620,14 +629,17 @@ function jobsText(
   if (!shown) return "—";
   const p = shown.progress || {};
   const total = jobTotals(l);
+  const retry = loadRetry(shown, ontologyCreatedAt, now)?.kind;
   const step =
-    loadRetry(shown, ontologyCreatedAt, now)?.kind === "starting"
+    retry === "starting"
       ? `${kindLabel(shown)}: database starting`
-      : lookingUp(shown, l.enrichment)
-        ? `${kindLabel(shown)}: looking up people`
-        : isLiveJob(shown)
-          ? `${kindLabel(shown)}: ${phaseLabel(shown).toLowerCase()}${p.documentsTotal ? ` ${p.documentsDone || 0}/${p.documentsTotal}` : ""}`
-          : `${kindLabel(shown)}: ${jobBadge(shown).label.toLowerCase()}`;
+      : retry === "indexing"
+        ? `${kindLabel(shown)}: building indexes`
+        : lookingUp(shown, l.enrichment)
+          ? `${kindLabel(shown)}: looking up people`
+          : isLiveJob(shown)
+            ? `${kindLabel(shown)}: ${phaseLabel(shown).toLowerCase()}${p.documentsTotal ? ` ${p.documentsDone || 0}/${p.documentsTotal}` : ""}`
+            : `${kindLabel(shown)}: ${jobBadge(shown).label.toLowerCase()}`;
   return `${step} · ${plural(total.count, "job")} · ${formatUsd(total.usdMicros)}`;
 }
 
@@ -1199,6 +1211,14 @@ export function LoadPage({ loadId }: { loadId: string }) {
             text={`Starting ${ontology.databaseName ? `the ${ontology.databaseName} database` : "the database"} may take a few minutes. The load tries again automatically once it’s ready.`}
           />
         )}
+        {retry?.kind === "indexing" && (
+          <Callout
+            icon={LoaderCircle}
+            live
+            title="Building the database’s indexes"
+            text="Helix builds the database’s indexes before it writes. The load carries on by itself once they’re ready."
+          />
+        )}
         {retry?.kind === "failed" && (
           <Callout
             icon={RotateCcw}
@@ -1430,13 +1450,21 @@ export function LoadPage({ loadId }: { loadId: string }) {
                 label: "Result",
                 width: 220,
                 sortable: false,
-                render: (x) =>
-                  loadRetry(x, ontology.createdAt, now)?.kind === "starting" ? (
+                render: (x) => {
+                  const waits = loadRetry(x, ontology.createdAt, now)?.kind;
+                  return waits === "starting" ? (
                     <span
                       className="on-muted on-cell-text"
                       title="Your new database is starting. The load tries again automatically once it’s ready."
                     >
                       Database starting
+                    </span>
+                  ) : waits === "indexing" ? (
+                    <span
+                      className="on-muted on-cell-text"
+                      title="Helix builds the database’s indexes before it writes. The load carries on by itself once they’re ready."
+                    >
+                      Building indexes
                     </span>
                   ) : x.error ? (
                     <span
@@ -1447,7 +1475,8 @@ export function LoadPage({ loadId }: { loadId: string }) {
                     </span>
                   ) : (
                     <span className="on-muted">—</span>
-                  ),
+                  );
+                },
               },
             ]}
           />

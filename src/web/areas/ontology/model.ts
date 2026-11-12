@@ -2088,16 +2088,22 @@ export function jobBadge(
 
 /**
  * A load waiting for Helix to try it again (queued, with the worker's words
- * for its last attempt): the new database still starting, when the attempt
- * failed at the database within the database's first minutes
- * (mayBeStarting, from its ontology's creation); otherwise why it failed.
+ * for its last attempt): the database still building its indexes, which
+ * Helix does before it writes, whatever the database's age; the new
+ * database still starting, when the attempt failed at the database within
+ * the database's first minutes (mayBeStarting, from its ontology's
+ * creation); otherwise why it failed.
  * The worker words a write the gateway refused as starting
  * (rate_limit_unavailable) as any refused write, so the words alone can't
  * tell; the window can.
  */
 export type LoadRetry =
+  | { kind: "indexing" }
   | { kind: "starting" }
   | { kind: "failed"; reason: string };
+
+// The worker's words for an attempt that found an index still building.
+const STILL_INDEXING = /still indexing/i;
 
 // The worker's words for an attempt the database refused. Its "database
 // can't be reached" is about Helix's own records of the database (it never
@@ -2108,6 +2114,7 @@ const AT_THE_DATABASE = /rate_limit_unavailable|database refused a write/i;
  * What a load waiting to be tried again says; null for one that isn't.
  *
  * @example
+ * loadRetry({ id: "j", status: "queued", error: "the database is still indexing its data; Helix will retry" }, createdAt, now); // { kind: "indexing" }
  * loadRetry({ id: "j", status: "queued", error: "the database refused a write; Helix will retry" }, createdAt, now); // { kind: "starting" } in the window
  */
 export function loadRetry(
@@ -2116,6 +2123,7 @@ export function loadRetry(
   now: number,
 ): LoadRetry | null {
   if (j.status !== "queued" || !j.error) return null;
+  if (STILL_INDEXING.test(j.error)) return { kind: "indexing" };
   return AT_THE_DATABASE.test(j.error) && mayBeStarting(ontologyCreatedAt, now)
     ? { kind: "starting" }
     : { kind: "failed", reason: j.error };

@@ -152,7 +152,8 @@ import { sourceId } from "./ontology-agent";
 // `deleteOutcome` "fail" (a delete fails for good: delete_failed). A
 // database still starting (`startingQueries` in ./databases.ts) refuses an
 // ingest's first write: the attempt fails, and the load waits, queued with
-// the worker's words, to try again three steps later.
+// the worker's words, to try again three steps later. `indexesPending` n
+// has the next n ingests find an index still building, which waits so too.
 //
 // A load of a version with an [enrichments] item looks people up at its
 // first step: it plans from the people the mappings
@@ -201,6 +202,8 @@ type Knobs = {
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // The next n reads find every read slot taken.
   readsBusy?: number;
+  // The next n ingests find an index still building.
+  indexesPending?: number;
   // Reads are refused as a database whose queries are paused, in these words.
   readsPaused?: string;
   // ./ontologies.ts: the caller can't read the ontology's database.
@@ -377,6 +380,7 @@ onReset(() => {
   delete knobs.withdrawOutcome;
   delete knobs.readErrors;
   delete knobs.readsBusy;
+  delete knobs.indexesPending;
   delete knobs.readsPaused;
   delete knobs.invoiceOnlyCustomers;
 });
@@ -1755,6 +1759,15 @@ function advance(j: StoredJob) {
           Object.assign(j, {
             status: "queued",
             error: "the database refused a write; Helix will retry",
+            at: due + 2 * step,
+          });
+          break;
+        }
+        if (knobs.indexesPending) {
+          knobs.indexesPending -= 1;
+          Object.assign(j, {
+            status: "queued",
+            error: "the database is still indexing its data; Helix will retry",
             at: due + 2 * step,
           });
           break;

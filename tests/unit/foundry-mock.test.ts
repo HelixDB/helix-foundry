@@ -1746,6 +1746,31 @@ describe("mock documents and loads", () => {
     expect(config).toMatchObject({ startingQueries: { contracts: 0 } });
   });
 
+  it("retries a load's attempt while its database builds its indexes", async () => {
+    Object.assign(config, { loadStepMs: 100, indexesPending: 1 });
+    const id = (
+      await call("POST", `${O}/loads`, {
+        versionId: "ver_seed_3",
+        clientToken: "go",
+      })
+    ).body.load.id;
+    const at = async (ms: number) => {
+      vi.setSystemTime(Date.now() + ms);
+      return (await call("GET", `${O}/loads/${id}`)).body.load.jobs[0];
+    };
+    expect(await at(350)).toMatchObject({
+      status: "queued",
+      phase: "ingest",
+      error: "the database is still indexing its data; Helix will retry",
+    });
+    expect(await at(10_000)).toMatchObject({
+      status: "succeeded",
+      error: "",
+      progress: { chunksDone: 2 },
+    });
+    expect(config).toMatchObject({ indexesPending: 0 });
+  });
+
   it("writes foundry_load on every node and edge, and a marker per load", async () => {
     Object.assign(config, { loadStepMs: 100 });
     await uploaded("contract.md", CONTRACT);

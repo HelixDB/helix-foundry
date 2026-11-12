@@ -420,6 +420,40 @@ describe("loads", () => {
       expect(loadRetry({ ...refused, status }, created, t), status).toBeNull();
   });
 
+  it("says a load waiting on the database's indexes is building them, at any age", () => {
+    const created = "2026-10-19T08:13:15.000Z",
+      t = Date.parse(created);
+    const indexing = job({
+      status: "queued",
+      error: "the database is still indexing its data; Helix will retry",
+    });
+    // Index building is never a failure: no window, no ontology needed.
+    for (const now of [t, t + 15 * 60_000, t + 30 * 86_400_000])
+      expect(loadRetry(indexing, created, now)).toEqual({ kind: "indexing" });
+    expect(loadRetry(indexing, undefined, t)).toEqual({ kind: "indexing" });
+    expect(
+      loadRetry(
+        job({ status: "queued", error: "The database is STILL INDEXING" }),
+        created,
+        t,
+      ),
+    ).toEqual({ kind: "indexing" });
+    // The worker giving up on the build fails the load: not a retry.
+    for (const status of ["running", "failed", "succeeded"] as const)
+      expect(loadRetry({ ...indexing, status }, created, t), status).toBeNull();
+    expect(
+      loadRetry(
+        job({
+          status: "failed",
+          error:
+            "the database's indexes had not finished building 2 hours after the load started; try the load again",
+        }),
+        created,
+        t,
+      ),
+    ).toBeNull();
+  });
+
   it("never says a local build's database is starting: it has one HelixDB, always up", async () => {
     vi.stubEnv("NEXT_PUBLIC_FOUNDRY_MODE", "local");
     vi.resetModules();
@@ -431,6 +465,17 @@ describe("loads", () => {
       expect(
         local.loadRetry(job({ status: "queued", error }), created, t),
       ).toEqual({ kind: "failed", reason: error });
+      // Its HelixDB builds indexes all the same.
+      expect(
+        local.loadRetry(
+          job({
+            status: "queued",
+            error: "the database is still indexing its data; Helix will retry",
+          }),
+          created,
+          t,
+        ),
+      ).toEqual({ kind: "indexing" });
     } finally {
       vi.unstubAllEnvs();
       vi.resetModules();
