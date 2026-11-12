@@ -4207,7 +4207,7 @@
           "$ref": "#/definitions/v1FoundryReviewChoice"
         }
       },
-      "description": "Reads the current load's review and stores a decision. A resolve or prop\ndecision applies from the next load; a release applies to the current load\nat once (FoundryReviewChoice.release)."
+      "description": "Reads the current load's review and stores a decision. A resolve decision\napplies from the next load; a release or a prop decision applies to the\ncurrent load at once (FoundryReviewChoice.release, FoundryReviewChoice.prop);\na reject changes no load (FoundryReviewChoice.reject)."
     },
     "FoundryServiceStartConnectorSignInBody": {
       "type": "object",
@@ -5662,11 +5662,11 @@
       "properties": {
         "status": {
           "type": "string",
-          "description": "pending (a job has yet to apply it), written (the claim is a fact),\nrefused (it stays held: reason says why), missed (this load holds no\nreview at the decision's key and place, so it has nothing to release),\nunconfirmed (the job that applies it failed before the engine's word on\nit was recorded, reason job_failed: the claim may or may not have been\nwritten, and no job is coming. Approving it again finishes it while the\nload still holds the claim's review. If the engine wrote the claim\nbefore the job failed, that review is gone and there is nothing to\napprove: the fact is in the load, and the decision stays unconfirmed\nuntil another approval of the same document sends it again), or empty:\nthe load read the decision when it was created, and no job has said\nwhat became of it."
+          "description": "pending (a job has yet to apply it), written (the claim is a fact; on a\nlink that holds one value, a statement dated after the approval takes\neffect, or a later approval, may hold the link instead, with the claim\nkept as its evidence),\nrefused (it stays held: reason says why), missed (this load holds no\nreview at the decision's key, nor one at its place stating what was\napproved, so it has nothing to release),\napplied (a prop decision: the load was sent it, and the job that sent it\nsucceeded; the engine reports nothing more of a value, so this doesn't\nsay the property holds it: a document dated after the decision still\nbeats it, and an entity the load doesn't hold takes none),\nunconfirmed (the job that applies it failed before the engine's word on\nit was recorded, reason job_failed: the claim may or may not have been\nwritten, or the value sent, and no job is coming. Approving it again\nfinishes it while the load still holds the claim's review; choosing a\nvalue again finishes a value, and so does the end of the ontology's next\njob, which sends the load its values again. If the engine wrote the\nclaim before the job failed, that review is gone and there is nothing\nto approve: the fact is in the load, and the decision stays unconfirmed\nuntil another approval of the same document sends it again), or empty:\nthe load read the decision when it was created, and no job has said\nwhat became of it."
         },
         "reason": {
           "type": "string",
-          "description": "Why a refused claim stays held. The engine's reasons: unresolved (a name\nin it is matched to no one record: settle that name), legal_form (a name\nis linked only by its legal form, on a link that holds one value: settle\nthat name), changed (the claim reads differently now from what was\napproved), differs (its sentence is read more than one way), conflict (it\nconflicts with what the load holds of its link), blocked (it would break\na blocking rule, or checking that took more reading than a load allows),\nno_statement (its review keeps nothing to write), not_stated (the\ndocument, read again, no longer states it there), too_large,\nnot_allowed. The backend's: not_replayed (the document's saved\nextraction didn't replay, so applying it would have cost a model call: a\nnew load applies it), document_gone, document_unread (the load holds\nthe document but no extraction of it to replay), document_failed,\ntoo_large (the document with its decisions is more than one request to\nthe engine takes), unanswered. With unconfirmed it is job_failed. A\nreader shows a reason it doesn't know as it is."
+          "description": "Why a refused claim stays held. The engine's reasons: unresolved (a name\nin it is matched to no one record: settle that name), legal_form (a name\nis linked only by its legal form, on a link that holds one value: settle\nthat name), part_name and own_name (a name is linked only by part of a\nrecord's name, or only by an identifier that is the name the text calls\nit by, whatever the link holds: settle that name), changed (the claim\nreads differently now from what was approved), differs (its sentence is\nread more than one way), conflict (a property of the fact differs from\nthe one the load holds; or the link holds one value and the claim gives\na date still to come, which a load or resend after it writes; or a load\nbuilt before statements were kept wrote its edge, or an engine before\ncontract 4.14.0 refused it: load again), blocked (it would break\na blocking rule, or checking that took more reading than a load allows),\nno_statement (its review keeps nothing to write), not_stated (the\ndocument, read again, no longer states it there), too_large,\nnot_allowed. The backend's: not_replayed (the document's saved\nextraction didn't replay, so applying it would have cost a model call: a\nnew load applies it), document_gone, document_unread (the load holds\nthe document but no extraction of it to replay), document_failed,\ntoo_large (the document with its decisions is more than one request to\nthe engine takes), unanswered. With unconfirmed it is job_failed. A\nreader shows a reason it doesn't know as it is."
         },
         "at": {
           "type": "string",
@@ -5674,7 +5674,7 @@
           "description": "When a job said so; unset while pending."
         }
       },
-      "description": "What became of a release decision in the ontology's current load."
+      "description": "What became of a release or a prop decision in the ontology's current load."
     },
     "v1FoundryDocument": {
       "type": "object",
@@ -6323,7 +6323,7 @@
         },
         "kind": {
           "type": "string",
-          "description": "load, extract, apply, delete or resend (a person's approvals applied to\nthe load: their documents sent again from their saved extractions)."
+          "description": "load, extract, apply, delete or resend (a person's decisions applied to\nthe load: approved claims' documents sent again from their saved\nextractions, and the load's value decisions)."
         },
         "loadId": {
           "type": "string",
@@ -6601,7 +6601,7 @@
         "reviews": {
           "type": "string",
           "format": "int64",
-          "description": "The reviews its documents left when the load last wrote each, of every\nkind: statements held back instead of written as facts (scored under the\nbar, unverified, conflicting, breaking a rule), names matched to no one\nrecord, property values held back or in conflict, statements that fit no\nlink, and links it did write that a person can undo. It is not the\nnumber of open reviews: a review a person settles stays counted until\nthe load writes the decision, which moves a released statement to facts."
+          "description": "The reviews its documents left when the load last wrote each, of every\nkind: statements held back instead of written as facts (scored under the\nbar, unverified, conflicting, breaking a rule), names matched to no one\nrecord, property values held back or in conflict, statements that fit no\nlink, and links it did write that a person can undo. It is not the\nnumber of open reviews: a review a person settles stays counted until\nthe load writes the decision, which moves a released statement to facts,\nand one a person rejects stays counted, as a rejection writes nothing. A\nproperty value in conflict stays counted after a person chooses its\nvalue: every load lists the conflict, and the choice settles it."
         },
         "unresolved": {
           "type": "string",
@@ -7175,6 +7175,16 @@
       "default": "FOUNDRY_READ_KIND_UNSPECIFIED",
       "description": "FoundryReadKind is how ontologies read a type of document.\n\n - FOUNDRY_READ_KIND_TEXT: Markdown, MDX and plain text: extracted as text through routes.\n - FOUNDRY_READ_KIND_TABLE: CSV, TSV, JSON, JSONL and Parquet: read once, at upload, as a table of\nits own, which mappings name by the document's id.\n - FOUNDRY_READ_KIND_PDF: PDF: read once, at upload, to its text (each page's, a form feed\nbetween pages), then extracted as that text through routes. One with no\ntext layer (a scan), encrypted or damaged can't be read."
     },
+    "v1FoundryRejectChoice": {
+      "type": "object",
+      "properties": {
+        "statementHash": {
+          "type": "string",
+          "description": "SHA-256, in lowercase hexadecimal, of the review's suggested_link, a unit\nseparator (0x1f) and its stored statement."
+        }
+      },
+      "description": "A rejection of the statement a person read: a review that reads otherwise\nnow is refused, as an approval of it would be."
+    },
     "v1FoundryReleaseChoice": {
       "type": "object",
       "properties": {
@@ -7204,11 +7214,16 @@
           "$ref": "#/definitions/v1FoundryResolveChoice"
         },
         "prop": {
-          "$ref": "#/definitions/v1FoundryPropValue"
+          "$ref": "#/definitions/v1FoundryPropValue",
+          "description": "A value a person chose for a property documents state differently. It\napplies to the current load at once: a job sends the load its value\ndecisions, at no model cost, and the engine holds the value as a\nstatement of the property from when it was decided, which a document\ndated later still beats (FoundryReviewDecision.applied). Later loads\nread it too."
         },
         "release": {
           "$ref": "#/definitions/v1FoundryReleaseChoice",
-          "description": "A person's word that what the review holds back holds. It applies to the\ncurrent load at once: a job replays the claim's document from its saved\nextraction, at no model cost, and writes what the review states as a\nfact, or keeps it held and says why (FoundryReviewDecision.applied).\nLater loads read it too, and each says what it made of it."
+          "description": "A person's word that what the review holds back holds. It applies to the\ncurrent load at once: a job replays the claim's document from its saved\nextraction, at no model cost, and writes what the review states as a\nfact, or keeps it held and says why (FoundryReviewDecision.applied).\nLater loads read it too, and each says what it made of it. On a link\nthat holds one value it also decides the link, from the date its quote\ngives, else its document's date, and only for a quote with neither from\nthe day it was first approved; a quote dated after the load recorded it\nreplaces nothing until that date: where the link holds another value it\nis refused as conflict, and a load or resend after the date writes it.\nFrom then it replaces what the link holds of no date or dated up to\nthen (whose evidence stays); a statement dated later, approved or not,\nstill holds the link, and the claim is kept as its evidence. Of two\napprovals of the link, the one first decided later is its decision. So a review held as conflicting with\nwhat such a link holds can be approved; on another link a conflict is\na property that differs from the fact the graph holds, which no\napproval changes."
+        },
+        "reject": {
+          "$ref": "#/definitions/v1FoundryRejectChoice",
+          "description": "A person's word that what the review holds back is wrong. Nothing is\nwritten and nothing is sent to the engine: the review stays in the\nload, and readers leave it out of what needs review in this load and\nevery later one while the decision stands. It takes the place of an\napproval of the same claim, as an approval takes its place; removing\nit lists the claim for review again."
         }
       },
       "description": "A user choice. Review identity is always derived by the backend."
@@ -7220,7 +7235,8 @@
           "type": "string"
         },
         "kind": {
-          "type": "string"
+          "type": "string",
+          "description": "resolve, prop, release or reject."
         },
         "type": {
           "type": "string"
@@ -7246,11 +7262,12 @@
         },
         "decidedAt": {
           "type": "string",
-          "format": "date-time"
+          "format": "date-time",
+          "description": "When it was decided. A release approved again, of the statement it\napproved, keeps who first approved it and when: on a link that holds one\nvalue the approval decided last is the link's decision."
         },
         "claimKey": {
           "type": "string",
-          "description": "The review a release decision releases, as it stores them: its claim's\nkey, its quote's section and byte range in the section, and the hash of\nthe statement the person read."
+          "description": "The review a release decision releases, or a reject decision rejects, as\nit stores them: its claim's key, its quote's section and byte range in\nthe section, and the hash of the statement the person read. A decision\nis of a review by its document and place, and by its claim key or, as a\nrebuild may key the same sentence otherwise, by the statement it read\nthere (the engine binds a release so from contract 4.14.0). A reader\nleaves out of what needs review each review of a held claim that a\nreject names so; approving a claim saved under another key approves that\ndecision again, under the key the review has now, and a reject takes\nevery approval of the claim back."
         },
         "claimSection": {
           "type": "integer",
@@ -7269,10 +7286,10 @@
         },
         "applied": {
           "$ref": "#/definitions/v1FoundryDecisionApplied",
-          "description": "A release decision's state in the ontology's current load; unset for\nother kinds, and when that load's decisions don't hold it yet (one saved\nwhile another load was current joins them when a job of the ontology next\nends)."
+          "description": "A release or prop decision's state in the ontology's current load; unset\nfor a resolve, and when that load's decisions don't hold it yet (one\nsaved while another load was current joins them when a job of the\nontology next ends)."
         }
       },
-      "description": "A durable ontology-wide override. A resolve or prop decision applies from\nthe next load; a release applies to the current load at once, and later\nloads read it as they are made."
+      "description": "A durable ontology-wide override. A resolve decision applies from the next\nload; a release or a prop decision applies to the current load at once,\nand later loads read it as they are made. Removing a prop decision\nwithdraws it from the current load at once too. A reject changes no load:\nit tells readers which held claims a person said are wrong."
     },
     "v1FoundryReviewDecisionResponse": {
       "type": "object",

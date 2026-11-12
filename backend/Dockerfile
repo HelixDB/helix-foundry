@@ -18,10 +18,14 @@ COPY . .
 # No defaults: BuildKit sets them from --platform.
 ARG TARGETOS
 ARG TARGETARCH
+# The version Foundry names itself by to HelixDB (helixgateway.UserAgent).
+ARG FOUNDRY_VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/foundry ./cmd/foundry
+    go build -trimpath \
+      -ldflags="-s -w -X github.com/helixdb/helix-foundry/backend/pkg/helixgateway.Version=${FOUNDRY_VERSION}" \
+      -o /out/foundry ./cmd/foundry
 
 FROM debian:bookworm-slim
 # Foundry runs as 65532, and the compose file runs the ontology agent as the

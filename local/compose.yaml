@@ -24,7 +24,7 @@ x-images:
   site: &site-image ${FOUNDRY_SITE_IMAGE:-ghcr.io/helixdb/foundry-site:0.1.4}
   foundry: &foundry-image ${FOUNDRY_IMAGE:-ghcr.io/helixdb/foundry:0.1.3}
   agent: &agent-image ${FOUNDRY_AGENT_IMAGE:-ghcr.io/helixdb/ontology-agent:0.1.2}
-  helix: &helix-image ${FOUNDRY_HELIX_IMAGE:-ghcr.io/helixdb/helixdb:v0.0.15}
+  helix: &helix-image ${FOUNDRY_HELIX_IMAGE:-ghcr.io/helixdb/helixdb:v0.0.16}
   ollama: &ollama-image ollama/ollama:0.40.10@sha256:4c5b27871a3239a717048f9b93057680a51b60c8119a7016aebb57f938e25e35
 
 # Every service starts once init-secrets has.
@@ -260,7 +260,12 @@ services:
     image: *helix-image
     environment:
       HELIX_DATA_DIR: /var/lib/helix
-      HELIX_TELEMETRY_LEVEL: "off"
+      # HelixDB tells Helix, anonymously, how its queries run: their shape
+      # with every value taken out, how long they took and whether they
+      # failed, marked as Foundry's by foundry's user agent. The site's
+      # switch turns it off too: FOUNDRY_TELEMETRY=off or DO_NOT_TRACK=1.
+      HELIX_TELEMETRY_LEVEL: ${FOUNDRY_TELEMETRY:-basic}
+      DO_NOT_TRACK: ${DO_NOT_TRACK:-}
     volumes: ["helix:/var/lib/helix"]
     depends_on: *secrets-first
     restart: unless-stopped

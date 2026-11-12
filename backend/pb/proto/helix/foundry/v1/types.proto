@@ -1102,8 +1102,9 @@ message FoundryGraphJob {
   google.protobuf.Timestamp created_at  = 8;
   google.protobuf.Timestamp started_at  = 9;
   google.protobuf.Timestamp finished_at = 10;
-  // load, extract, apply, delete or resend (a person's approvals applied to
-  // the load: their documents sent again from their saved extractions).
+  // load, extract, apply, delete or resend (a person's decisions applied to
+  // the load: approved claims' documents sent again from their saved
+  // extractions, and the load's value decisions).
   string kind = 11;
   // The load it writes or deletes.
   string load_id = 12;
@@ -1195,7 +1196,10 @@ message FoundryLoadDocumentSet {
   // record, property values held back or in conflict, statements that fit no
   // link, and links it did write that a person can undo. It is not the
   // number of open reviews: a review a person settles stays counted until
-  // the load writes the decision, which moves a released statement to facts.
+  // the load writes the decision, which moves a released statement to facts,
+  // and one a person rejects stays counted, as a rejection writes nothing. A
+  // property value in conflict stays counted after a person chooses its
+  // value: every load lists the conflict, and the choice settles it.
   int64 reviews = 10;
   // The names in its documents the load matched to no one record: none
   // matched, several did, or its identifiers disagree. A statement about one
@@ -1426,18 +1430,50 @@ message FoundryReviewChoice {
   reserved 2;
   oneof choice {
     FoundryResolveChoice resolve = 1;
+    // A value a person chose for a property documents state differently. It
+    // applies to the current load at once: a job sends the load its value
+    // decisions, at no model cost, and the engine holds the value as a
+    // statement of the property from when it was decided, which a document
+    // dated later still beats (FoundryReviewDecision.applied). Later loads
+    // read it too.
     FoundryPropValue prop = 3;
     // A person's word that what the review holds back holds. It applies to the
     // current load at once: a job replays the claim's document from its saved
     // extraction, at no model cost, and writes what the review states as a
     // fact, or keeps it held and says why (FoundryReviewDecision.applied).
-    // Later loads read it too, and each says what it made of it.
+    // Later loads read it too, and each says what it made of it. On a link
+    // that holds one value it also decides the link, from the date its quote
+    // gives, else its document's date, and only for a quote with neither from
+    // the day it was first approved; a quote dated after the load recorded it
+    // replaces nothing until that date: where the link holds another value it
+    // is refused as conflict, and a load or resend after the date writes it.
+    // From then it replaces what the link holds of no date or dated up to
+    // then (whose evidence stays); a statement dated later, approved or not,
+    // still holds the link, and the claim is kept as its evidence. Of two
+    // approvals of the link, the one first decided later is its decision. So a review held as conflicting with
+    // what such a link holds can be approved; on another link a conflict is
+    // a property that differs from the fact the graph holds, which no
+    // approval changes.
     FoundryReleaseChoice release = 4;
+    // A person's word that what the review holds back is wrong. Nothing is
+    // written and nothing is sent to the engine: the review stays in the
+    // load, and readers leave it out of what needs review in this load and
+    // every later one while the decision stands. It takes the place of an
+    // approval of the same claim, as an approval takes its place; removing
+    // it lists the claim for review again.
+    FoundryRejectChoice reject = 5;
   }
 }
 // A release of the statement a person read. A review that reads otherwise now
 // is refused, and so is a load that reads it otherwise.
 message FoundryReleaseChoice {
+  // SHA-256, in lowercase hexadecimal, of the review's suggested_link, a unit
+  // separator (0x1f) and its stored statement.
+  string statement_hash = 1;
+}
+// A rejection of the statement a person read: a review that reads otherwise
+// now is refused, as an approval of it would be.
+message FoundryRejectChoice {
   // SHA-256, in lowercase hexadecimal, of the review's suggested_link, a unit
   // separator (0x1f) and its stored statement.
   string statement_hash = 1;
@@ -1465,17 +1501,27 @@ message FoundryResolveChoice {
   }
 }
 
-// What became of a release decision in the ontology's current load.
+// What became of a release or a prop decision in the ontology's current load.
 message FoundryDecisionApplied {
-  // pending (a job has yet to apply it), written (the claim is a fact),
+  // pending (a job has yet to apply it), written (the claim is a fact; on a
+  // link that holds one value, a statement dated after the approval takes
+  // effect, or a later approval, may hold the link instead, with the claim
+  // kept as its evidence),
   // refused (it stays held: reason says why), missed (this load holds no
-  // review at the decision's key and place, so it has nothing to release),
+  // review at the decision's key, nor one at its place stating what was
+  // approved, so it has nothing to release),
+  // applied (a prop decision: the load was sent it, and the job that sent it
+  // succeeded; the engine reports nothing more of a value, so this doesn't
+  // say the property holds it: a document dated after the decision still
+  // beats it, and an entity the load doesn't hold takes none),
   // unconfirmed (the job that applies it failed before the engine's word on
   // it was recorded, reason job_failed: the claim may or may not have been
-  // written, and no job is coming. Approving it again finishes it while the
-  // load still holds the claim's review. If the engine wrote the claim
-  // before the job failed, that review is gone and there is nothing to
-  // approve: the fact is in the load, and the decision stays unconfirmed
+  // written, or the value sent, and no job is coming. Approving it again
+  // finishes it while the load still holds the claim's review; choosing a
+  // value again finishes a value, and so does the end of the ontology's next
+  // job, which sends the load its values again. If the engine wrote the
+  // claim before the job failed, that review is gone and there is nothing
+  // to approve: the fact is in the load, and the decision stays unconfirmed
   // until another approval of the same document sends it again), or empty:
   // the load read the decision when it was created, and no job has said
   // what became of it.
@@ -1483,9 +1529,15 @@ message FoundryDecisionApplied {
   // Why a refused claim stays held. The engine's reasons: unresolved (a name
   // in it is matched to no one record: settle that name), legal_form (a name
   // is linked only by its legal form, on a link that holds one value: settle
-  // that name), changed (the claim reads differently now from what was
-  // approved), differs (its sentence is read more than one way), conflict (it
-  // conflicts with what the load holds of its link), blocked (it would break
+  // that name), part_name and own_name (a name is linked only by part of a
+  // record's name, or only by an identifier that is the name the text calls
+  // it by, whatever the link holds: settle that name), changed (the claim
+  // reads differently now from what was approved), differs (its sentence is
+  // read more than one way), conflict (a property of the fact differs from
+  // the one the load holds; or the link holds one value and the claim gives
+  // a date still to come, which a load or resend after it writes; or a load
+  // built before statements were kept wrote its edge, or an engine before
+  // contract 4.14.0 refused it: load again), blocked (it would break
   // a blocking rule, or checking that took more reading than a load allows),
   // no_statement (its review keeps nothing to write), not_stated (the
   // document, read again, no longer states it there), too_large,
@@ -1501,11 +1553,14 @@ message FoundryDecisionApplied {
   google.protobuf.Timestamp at = 3;
 }
 
-// A durable ontology-wide override. A resolve or prop decision applies from
-// the next load; a release applies to the current load at once, and later
-// loads read it as they are made.
+// A durable ontology-wide override. A resolve decision applies from the next
+// load; a release or a prop decision applies to the current load at once,
+// and later loads read it as they are made. Removing a prop decision
+// withdraws it from the current load at once too. A reject changes no load:
+// it tells readers which held claims a person said are wrong.
 message FoundryReviewDecision {
   string id = 1;
+  // resolve, prop, release or reject.
   string kind = 2;
   string type = 3;
   optional string doc_id = 4;
@@ -1517,19 +1572,29 @@ message FoundryReviewDecision {
   // integer here, even a float property's (3.0 reads back as integer 3).
   FoundryPropValue value = 11;
   string decided_by_user_id = 9;
+  // When it was decided. A release approved again, of the statement it
+  // approved, keeps who first approved it and when: on a link that holds one
+  // value the approval decided last is the link's decision.
   google.protobuf.Timestamp decided_at = 10;
-  // The review a release decision releases, as it stores them: its claim's
-  // key, its quote's section and byte range in the section, and the hash of
-  // the statement the person read.
+  // The review a release decision releases, or a reject decision rejects, as
+  // it stores them: its claim's key, its quote's section and byte range in
+  // the section, and the hash of the statement the person read. A decision
+  // is of a review by its document and place, and by its claim key or, as a
+  // rebuild may key the same sentence otherwise, by the statement it read
+  // there (the engine binds a release so from contract 4.14.0). A reader
+  // leaves out of what needs review each review of a held claim that a
+  // reject names so; approving a claim saved under another key approves that
+  // decision again, under the key the review has now, and a reject takes
+  // every approval of the claim back.
   optional string claim_key = 12;
   optional uint32 claim_section = 13;
   optional uint32 claim_start = 14;
   optional uint32 claim_end = 15;
   optional string statement_hash = 16;
-  // A release decision's state in the ontology's current load; unset for
-  // other kinds, and when that load's decisions don't hold it yet (one saved
-  // while another load was current joins them when a job of the ontology next
-  // ends).
+  // A release or prop decision's state in the ontology's current load; unset
+  // for a resolve, and when that load's decisions don't hold it yet (one
+  // saved while another load was current joins them when a job of the
+  // ontology next ends).
   FoundryDecisionApplied applied = 17;
 }
 

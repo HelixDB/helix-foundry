@@ -7277,9 +7277,10 @@ func (x *ReadFoundryGraphResponse) GetResultJson() string {
 	return ""
 }
 
-// Reads the current load's review and stores a decision. A resolve or prop
-// decision applies from the next load; a release applies to the current load
-// at once (FoundryReviewChoice.release).
+// Reads the current load's review and stores a decision. A resolve decision
+// applies from the next load; a release or a prop decision applies to the
+// current load at once (FoundryReviewChoice.release, FoundryReviewChoice.prop);
+// a reject changes no load (FoundryReviewChoice.reject).
 type SettleFoundryReviewRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -7509,6 +7510,11 @@ func (x *ListFoundryReviewDecisionsResponse) GetNextPageToken() string {
 	return ""
 }
 
+// Removes a saved decision. A prop decision is withdrawn from the current
+// load at once: a job sends the load its value decisions without it, and the
+// property goes back to what its other statements give. A release the load
+// has not written is taken back from it; one it wrote stays a fact until a
+// new load. A resolve stops applying from the next load.
 type DeleteFoundryReviewDecisionRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache

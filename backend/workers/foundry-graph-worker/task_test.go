@@ -174,7 +174,7 @@ func deleteDone(req string, stream agentv1.Agent_DeleteLoadServer) error {
 		return status.Error(codes.Internal, err.Error())
 	}
 	return deleteEvents(stream, []string{
-		`{"event":"delete_started","contract_version":"4.12.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
+		`{"event":"delete_started","contract_version":"4.14.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
 		`{"event":"deleted","label":"Customer","element":"node","count":1}`, `{"event":"delete_finished"}`,
 	}, `{"status":"done","nodes":1,"edges":2}`)
 }
@@ -220,7 +220,7 @@ func writeThroughProxy(request string) error {
 const (
 	// documentCounts are what each document of the fixtures put in the graph.
 	documentCounts = `{"entities":2,"mentions":3,"facts":1,"reviews":1,"unresolved":1,"rejected":0,"attributes":4,"attribute_reviews":3,` +
-		`"prop_conflicts":2,"created":1,"identifiers_unverified":5,"attributes_over_entries":6,"released":0,"release_refused":0,"release_missed":0,"resolved":{"user":7,"adjudicated":8,"identifier":9,"name":2,"alias":10,"legal_form":3,"created":1}}`
+		`"prop_conflicts":2,"created":1,"identifiers_unverified":5,"attributes_over_entries":6,"released":0,"release_refused":0,"release_missed":0,"resolved":{"user":7,"adjudicated":8,"identifier":9,"name":2,"alias":10,"legal_form":3,"part_name":0,"own_name":0,"created":1}}`
 	totals   = `{"ingested":1,"out_of_scope":0,"already_ingested":1,"duplicate":1,"failed":1,"counts":` + documentCounts + `,"swept":0,"unchecked":0,"stale_decisions":0,"usd_micros":1500,"input_tokens":900,"output_tokens":80}`
 	counts   = `"counts":` + documentCounts
 	usage    = `"usage":{"usd_micros":1500,"input_tokens":900,"output_tokens":80,"replayed":false,"phases":{"entity":{"calls":1,"replayed":0,"usd_micros":1500,"input_tokens":900,"output_tokens":80},"link":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"verify":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"adjudicate":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0}}}`
@@ -254,7 +254,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 			return status.Error(codes.Internal, err.Error())
 		}
 		return ingestEvents(stream, []string{
-			`{"event":"ingest_started","contract_version":"4.12.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.14.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":2}}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"resolve","rows":2}}`,
 			`{"event":"sweep_page","entities":2}`, `{"event":"ingest_finished"}`,
@@ -265,7 +265,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 // extracted ends doc-a ingested with an artifact, doc-b a duplicate of it,
 // doc-c failed retryably and doc-d already held.
 var extracted = []string{
-	`{"event":"extract_started","contract_version":"4.12.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
+	`{"event":"extract_started","contract_version":"4.14.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
 	`{"event":"artifact","doc_id":"doc-a","key":"key_a","json":"{\"sections\":[1]}"}`,
 	documentEvent("doc-a", `{"kind":"ingested"}`, usage),
 	documentEvent("doc-b", `{"kind":"duplicate","of":"doc-a"}`, noUsage),
@@ -379,11 +379,19 @@ type memStore struct {
 	removed   []string
 	forgotten []string
 	// resends are the documents the job's load owes a resend
-	// (ListFoundryLoadResends), and ended the requests EndFoundryLoadResend
-	// ended, in order; endErr fails every end.
-	resends []*model.FoundryLoadResend
-	ended   []model.FoundryResendEnd
-	endErr  error
+	// (ListFoundryLoadResends), owedDecisions the request it owes its own
+	// decisions for (FoundryLoadDecisionsOwed), and ended the requests
+	// EndFoundryLoadResend ended, in order; endErr fails every end.
+	resends       []*model.FoundryLoadResend
+	owedDecisions *model.FoundryLoadResend
+	ended         []model.FoundryResendEnd
+	endErr        error
+}
+
+func (s *memStore) FoundryLoadDecisionsOwed(context.Context, string) (*model.FoundryLoadResend, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.owedDecisions, nil
 }
 
 func (s *memStore) ListFoundryLoadResends(context.Context, string) ([]*model.FoundryLoadResend, error) {
@@ -3116,6 +3124,11 @@ func TestExtractReviewDecisions(t *testing.T) {
 	stale := resolve("8", "doc-a")
 	stale.NormName, stale.EntityKey = ptr("stale variant"), ptr("s42|i7")
 	h.store.decisions = append(h.store.decisions, stale)
+	// No load's list holds a rejection; one that did, as a load an older
+	// binary made, is never sent: the engine knows no such decision.
+	rejected := approval("9", "doc-a", hashA)
+	rejected.Kind = model.FoundryReviewReject
+	h.store.decisions = append(h.store.decisions, rejected)
 	outcome := h.run(t, extractJob())
 	if outcome.Status != model.FoundryGraphJobSucceeded {
 		t.Fatalf("%+v", outcome)
@@ -3151,8 +3164,8 @@ func TestExtractReviewDecisions(t *testing.T) {
 			t.Fatalf("decision %d = %s at %s, want %s at %s", i, req.Decisions[i].DecisionID, at, want.id, want.at)
 		}
 	}
-	if strings.Contains(calls[0], `"decided_by_user_id"`) || strings.Contains(calls[0], "other-doc") {
-		t.Fatal("audit or other-document data sent")
+	if strings.Contains(calls[0], `"decided_by_user_id"`) || strings.Contains(calls[0], "other-doc") || strings.Contains(calls[0], `"reject"`) {
+		t.Fatal("audit, other-document data or a rejection sent")
 	}
 }
 
@@ -3256,11 +3269,15 @@ func TestExtractReviewDecisionsLeftOutOnceStale(t *testing.T) {
 }
 
 // A release goes with its document, as a resolve does, whichever version the
-// load is of, and names nothing the engine refuses.
+// load is of, and names nothing the engine refuses. It says when it was
+// approved to the millisecond, in UTC: from contract 4.14.0 that ranks two
+// approvals of a link that holds one value, and the engine keeps a written
+// one's time to the millisecond.
 func TestExtractReleaseDecisionsGoWithTheirDocument(t *testing.T) {
 	h := newHarness(t)
 	ptr := func(s string) *string { return &s }
-	settled := time.Date(2026, 10, 17, 8, 2, 3, 0, time.UTC)
+	// As MySQL hands it back: the server's zone, to the microsecond.
+	settled := time.Date(2026, 10, 17, 1, 2, 3, 456789000, time.FixedZone("PDT", -7*3600))
 	key, read := strings.Repeat("ab", 32), strings.Repeat("cd", 32)
 	release := func(id, doc string) *model.FoundryReviewDecision {
 		return &model.FoundryReviewDecision{ID: id, OntologyID: "ont-1", Kind: model.FoundryReviewRelease,
@@ -3272,7 +3289,7 @@ func TestExtractReleaseDecisionsGoWithTheirDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := json.Marshal(decisions)
-	want := `[{"kind":"release","doc_id":"doc-a","claim_key":"` + key + `","section":1,"start":2,"end":9,"statement_hash":"` + read + `","decision_id":"1","decided_at":"2026-10-17T08:02:03Z"}]`
+	want := `[{"kind":"release","doc_id":"doc-a","claim_key":"` + key + `","section":1,"start":2,"end":9,"statement_hash":"` + read + `","decision_id":"1","decided_at":"2026-10-17T08:02:03.456Z"}]`
 	if string(got) != want {
 		t.Fatalf("decisions = %s, want %s", got, want)
 	}

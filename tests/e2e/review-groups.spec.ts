@@ -201,6 +201,250 @@ test("approves every held claim of a group at once, and says which couldn't be",
   await expect(saved).toHaveCount(3);
 });
 
+// Contract 4.14.0: an approval of a link that holds one value decides what
+// it holds, and a page can't tell what the link holds or who put it there (a
+// person's approval, a table's row, another document), so Approve all leaves
+// such claims to their cards. Two contracts' claims of one customer, on the
+// customer's page: no rivals, so before this Approve all took both.
+test("leaves claims of a link that holds one value to their cards", async ({
+  page,
+}) => {
+  await mock.configure({ loadStepMs: 200 });
+  await signIn(page);
+  await makeContractsCurrent(page);
+  await uploadInData(page, [
+    file("one.md", "# Deal one\n\nInitech may have signed.\n"),
+    file("two.md", "# Deal two\n\nInitech may have signed.\n"),
+  ]);
+  await loadVersion3(page);
+  const initech = entity("Customer", "k:cus_INITECH2");
+  const { head, rows } = group(page, HELD);
+  const approveAll = head.getByRole("button", { name: /^Approve all/ });
+  // Where the link holds many values, both are offered together.
+  await page.goto(initech);
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(rows).toHaveCount(2);
+  await expect(approveAll).toHaveText("Approve all (2)");
+  // Where it holds one, each is approved on its card.
+  await mock.configure({ oneValuedLinks: ["signed_with"] });
+  await page.reload();
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText("This link holds one value");
+  await expect(
+    rows.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(2);
+  await expect(approveAll).toHaveCount(0);
+  // A person approves one on its card; the other is still theirs to decide.
+  await rows
+    .first()
+    .getByRole("button", { name: "Approve", exact: true })
+    .click();
+  await expect(rows).toHaveCount(1);
+  await expect(
+    rows.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(1);
+  await expect(approveAll).toHaveCount(0);
+});
+
+test("leaves claims held for a name out of Approve all, on the page of their other end too", async ({
+  page,
+}) => {
+  // Each customer is linked by part of its name: that link's review
+  // concerns the customer alone, so the contract's page reads it apart.
+  await mock.configure({ documentHeld: "part_name" });
+  const doc = await reviewed(
+    page,
+    "# Hedged deal\n\nGlobex Corporation and Initech may have signed.\n",
+  );
+  const { head, rows } = group(page, HELD);
+  await expect(rows).toHaveCount(2);
+  await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(
+    0,
+  );
+  await page.goto(entity("Contract", "n:hedged deal"));
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(rows).toHaveCount(2);
+  const globex = rows.filter({ hasText: "Globex Corporation (Customer)" });
+  await expect(globex).toContainText(
+    "“Globex Corporation” is linked only by part of a row’s name. Settle that name too, or this stays held.",
+  );
+  await expect(globex).toContainText(
+    "the first load after that name is settled writes it",
+  );
+  await expect(globex).not.toContainText("written to this load at once");
+  await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(
+    0,
+  );
+  // Its way to the name's review leads to the document, at the name.
+  await globex.getByRole("link", { name: "Review that name" }).click();
+  await expect(page).toHaveURL(new RegExp(`${doc}\\?tab=review.*#s\\d+-\\d+$`));
+  await expect(
+    reviews(page).getByRole("list", { name: "Linked by part of a name" }),
+  ).toContainText("Linked to:");
+});
+
+test("keeps an entity's page up when the names holding its claims can't be read, and lists the claims once they are", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "part_name" });
+  await reviewed(
+    page,
+    "# Hedged deal\n\nGlobex Corporation and Initech may have signed.\n",
+  );
+  // Only the read of the names' reviews fails: a read's query is base64.
+  const names = "**/databases:query-read";
+  await page.route(names, async (route) => {
+    const { queryJson } = route.request().postDataJSON() as {
+      queryJson?: string;
+    };
+    if (
+      Buffer.from(queryJson ?? "", "base64")
+        .toString("utf8")
+        .includes('"foundry_name_links"')
+    )
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ code: 14, message: "unavailable" }),
+      });
+    await route.continue();
+  });
+  await page.goto(entity("Contract", "n:hedged deal"));
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(
+    page.getByRole("tabpanel", { name: "Needs review" }).getByRole("alert"),
+  ).toContainText("Couldn’t read which names hold its held claims");
+  // No held claim is offered while what holds it isn't known.
+  await expect(group(page, HELD).rows).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
+  // The rest of the page stands: the entity, and where documents name it.
+  await expect(page.getByRole("tab", { name: /^Mentions/ })).toBeVisible();
+  await expect(page.getByText("Couldn’t read this entity")).toHaveCount(0);
+  await page.unroute(names);
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await page.getByRole("button", { name: "Retry" }).click();
+  const { head, rows } = group(page, HELD);
+  await expect(rows).toHaveCount(2);
+  await expect(
+    rows.filter({ hasText: "Globex Corporation (Customer)" }),
+  ).toContainText("Settle that name too, or this stays held.");
+  await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(
+    0,
+  );
+});
+
+test("rejects a held claim: its card and its count go, Approve all leaves it out, and removing the decision lists it again", async ({
+  page,
+}) => {
+  const doc = await reviewed(
+    page,
+    "# Hedged deal\n\nGlobex Corporation, Initech, Elstree Media Group and Lockhart Shipping plc may have signed.\n",
+  );
+  const { head, rows } = group(page, HELD);
+  await expect(rows).toHaveCount(4);
+  const approveAll = head.getByRole("button", { name: /^Approve all/ });
+  await expect(approveAll).toHaveText("Approve all (4)");
+  const tab = page.getByRole("tab", { name: /^Needs review/ });
+  const listed = async () =>
+    Number((await tab.locator(".hf-tab-count").innerText()).replace(/\D/g, ""));
+  const before = await listed();
+  // From here the page is never loaded again until it says so.
+  let loads = 0;
+  page.on("load", () => (loads += 1));
+
+  // Rejected, bound to what its card shows. Nothing is written, so no job
+  // runs: the card goes at once, and every count with it.
+  const globex = rows.filter({ hasText: "Globex Corporation (Customer)" });
+  await expect(globex).toContainText(
+    "Reject it if it’s wrong: nothing is written, and it leaves Needs review in this load and later ones.",
+  );
+  const sent = page.waitForRequest(
+    (r) => r.method() === "POST" && /\/reviews\/[^/]+:settle$/.test(r.url()),
+  );
+  await globex.getByRole("button", { name: "Reject", exact: true }).click();
+  expect((await sent).postDataJSON()).toEqual({
+    decision: { reject: { statementHash: hashOf("Globex Corporation") } },
+  });
+  await expect(rows).toHaveCount(3);
+  await expect(globex).toHaveCount(0);
+  await expect(head.getByRole("heading")).toHaveText(`${HELD} 3`);
+  expect(await listed()).toBe(before - 1);
+  await expect(approveAll).toHaveText("Approve all (3)");
+  const saved = page
+    .getByRole("list", { name: "Saved decisions" })
+    .getByRole("listitem");
+  await expect(saved.filter({ hasText: /^Rejected: “/ })).toHaveCount(1);
+  await expect(page.getByText("Writing it to this load")).toHaveCount(0);
+
+  // Approve all approves the three left, and never the one rejected.
+  const approved: string[] = [];
+  await page.route("**/papi/**/reviews/*:settle", async (route) => {
+    approved.push(
+      route.request().postDataJSON().decision.release.statementHash,
+    );
+    await route.continue();
+  });
+  await approveAll.click();
+  await page
+    .getByRole("dialog", { name: "Approve 3 claims?" })
+    .getByRole("button", { name: "Approve all" })
+    .click();
+  await expect(rows).toHaveCount(0);
+  expect(approved.sort()).toEqual(
+    ["Initech LLC", "Elstree Media Group", "Lockhart Shipping plc"]
+      .map(hashOf)
+      .sort(),
+  );
+  await page.unroute("**/papi/**/reviews/*:settle");
+  expect(await listed()).toBe(before - 4);
+  await expect(saved.filter({ hasText: /^Approved: “/ })).toHaveCount(3);
+  await expect(saved.filter({ hasText: /^Rejected: “/ })).toHaveCount(1);
+  // The rejected claim was written nowhere.
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  const facts = page.getByRole("list", { name: "Facts" });
+  await expect(facts).toContainText(/signed_with\s*Initech LLC/);
+  await expect(facts).not.toContainText(/signed_with\s*Globex Corporation/);
+  expect(loads).toBe(0);
+
+  // A later load holds the claim again, and its card stays out.
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(saved.filter({ hasText: /^Rejected: “/ })).toHaveCount(1);
+  await expect(rows).toHaveCount(0);
+  await expect(
+    reviews(page).getByText("Globex Corporation (Customer)"),
+  ).toHaveCount(0);
+  const hidden = await listed();
+
+  // The decision removed, the claim is listed again, to approve or reject.
+  await saved
+    .filter({ hasText: /^Rejected: “/ })
+    .getByRole("button", { name: "Remove decision" })
+    .click();
+  await expect(
+    page.getByText("Decision removed. The claim is listed for review again."),
+  ).toBeVisible();
+  await expect(rows).toHaveCount(1);
+  await expect(globex).toContainText("Approving writes:");
+  await expect(
+    globex.getByRole("button", { name: "Approve", exact: true }),
+  ).toBeVisible();
+  await expect(
+    globex.getByRole("button", { name: "Reject", exact: true }),
+  ).toBeVisible();
+  expect(await listed()).toBe(hidden + 1);
+
+  // A member reads the card and can't reject it.
+  await page.context().clearCookies();
+  await signIn(page, "alan@example.com");
+  await page.goto(`${doc}?tab=review`);
+  await expect(globex).toContainText("Approving writes:");
+  await expect(
+    globex.getByRole("button", { name: "Reject", exact: true }),
+  ).toHaveCount(0);
+});
+
 test("offers Approve all and Add these links to managers only", async ({
   page,
 }) => {

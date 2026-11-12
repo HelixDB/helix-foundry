@@ -1985,8 +1985,8 @@ export type JobPhase =
  * the documents; an extract, queued by an upload or a change of current load,
  * only reads documents into its load; a delete removes a load.
  */
-// A resend applies a person's approvals to its load: their documents, sent
-// again from their saved extractions.
+// A resend applies a person's decisions to its load: approved claims'
+// documents, sent again from their saved extractions, and its chosen values.
 export type JobKind = "load" | "extract" | "delete" | "resend";
 
 /** v1FoundryGraphJob.progress */
@@ -2071,7 +2071,7 @@ export type FoundryLoadDocumentSet = {
   facts?: string;
   // (int64) The reviews its documents left when the load last wrote each,
   // of every kind. Not the open reviews: one settled since stays counted
-  // until the load writes the decision.
+  // until the load writes the decision, and a disputed value's once chosen.
   reviews?: string;
   // (int64) The names matched to no one record (none, several, or
   // identifiers that disagree). Nearly every one left a review too.
@@ -2637,9 +2637,23 @@ export type FoundryReviewChoice =
         | { notInData: true; entityKey?: never };
       prop?: never;
       release?: never;
+      reject?: never;
     }
-  | { prop: FoundryPropValue; resolve?: never; release?: never }
-  | { release: { statementHash: string }; resolve?: never; prop?: never };
+  | { prop: FoundryPropValue; resolve?: never; release?: never; reject?: never }
+  | {
+      release: { statementHash: string };
+      resolve?: never;
+      prop?: never;
+      reject?: never;
+    }
+  // A held claim a person says is wrong, bound to what they read as a release
+  // is: nothing is written, and its card leaves Needs review.
+  | {
+      reject: { statementHash: string };
+      resolve?: never;
+      prop?: never;
+      release?: never;
+    };
 export type ReviewDecision =
   | {
       kind: "resolve";
@@ -2668,21 +2682,45 @@ export type ReviewDecision =
       claimEnd: number;
       // What the person read, hashed (reviews/model.ts statementHash).
       statementHash: string;
+    }
+  // A person's word that one review's held claim is wrong, named as a release
+  // names its review. No load is told: pages leave the claim's card out
+  // (reviews/model.ts unrejected) until the decision is removed.
+  | {
+      kind: "reject";
+      type: "";
+      docId: string;
+      claimKey: string;
+      claimSection: number;
+      claimStart: number;
+      claimEnd: number;
+      statementHash: string;
     };
 /**
- * What became of a release decision in the ontology's current load: `pending`
- * while a job has yet to apply it, `written` once its claim is a fact,
- * `refused` when it stays held (`reason` says why, in the engine's word or the
- * backend's, and may be one this site doesn't know), `missed` when that load
- * holds no review at its place, `unconfirmed` when the job that applies it
- * failed before saying what became of it (it may or may not be written, and
- * no job is coming; approving it again finishes it while its review is still
- * in the load, and if the claim was written there is no review left to
- * approve, only the fact), and empty when the load read it as it was created
- * and no job has said what became of it.
+ * What became of a release or a prop decision in the ontology's current load:
+ * `pending` while a job has yet to apply it, `written` once a release's claim
+ * is a fact, `refused` when it stays held (`reason` says why, in the engine's
+ * word or the backend's, and may be one this site doesn't know), `missed`
+ * when that load holds no review at its place, `applied` once the load was
+ * sent a prop decision's value and the job that sent it succeeded (the
+ * engine says nothing more of a value: a document dated after the decision
+ * still beats it), `unconfirmed` when the job that applies it failed before
+ * saying what became of it (it may or may not be written or sent, and no job
+ * is coming; approving it again finishes it while its review is still in the
+ * load, and if the claim was written there is no review left to approve,
+ * only the fact; choosing a value again finishes a value, as the end of the
+ * ontology's next job does), and empty when the load read it as it was
+ * created and no job has said what became of it.
  */
 export type DecisionApplied = {
-  status?: "pending" | "written" | "refused" | "missed" | "unconfirmed" | "";
+  status?:
+    | "pending"
+    | "written"
+    | "refused"
+    | "missed"
+    | "applied"
+    | "unconfirmed"
+    | "";
   reason?: string;
   at?: string | null;
 };

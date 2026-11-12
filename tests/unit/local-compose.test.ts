@@ -321,6 +321,23 @@ describe.skipIf(!compose)("local/compose.yaml's AI default", () => {
 // adopting an old .env's; every other service waits for it and reads its
 // own secret from the volume, read-only.
 describe.skipIf(!compose)("local/compose.yaml's secrets", () => {
+  // HelixDB's telemetry follows the site's switch (local/README.md).
+  it("turns HelixDB's telemetry off with the site's", () => {
+    const helix = (vars: Record<string, string>) =>
+      composed(vars).services.helix.environment as Record<string, string>;
+    expect(helix({ FOUNDRY_TELEMETRY: "off" })).toMatchObject({
+      HELIX_TELEMETRY_LEVEL: "off",
+      DO_NOT_TRACK: "",
+    });
+    expect(helix({ FOUNDRY_TELEMETRY: "" })).toMatchObject({
+      HELIX_TELEMETRY_LEVEL: "basic",
+    });
+    expect(helix({ DO_NOT_TRACK: "1" })).toMatchObject({
+      HELIX_TELEMETRY_LEVEL: "basic",
+      DO_NOT_TRACK: "1",
+    });
+  });
+
   it("runs from a fresh clone with nothing set", () => {
     const { services, volumes } = composed({});
     expect(Object.keys(services).sort()).toEqual([
@@ -411,6 +428,11 @@ describe.skipIf(!compose)("local/compose.yaml's secrets", () => {
       FOUNDRY_ORIGIN: "http://localhost:3000",
       FOUNDRY_LOCAL_TOKEN_FILE: "/secrets/site-token",
       FOUNDRY_TELEMETRY: "",
+      DO_NOT_TRACK: "",
+    });
+    expect(services.helix.environment).toEqual({
+      HELIX_DATA_DIR: "/var/lib/helix",
+      HELIX_TELEMETRY_LEVEL: "basic",
       DO_NOT_TRACK: "",
     });
     expect(services.mysql.environment).toEqual({

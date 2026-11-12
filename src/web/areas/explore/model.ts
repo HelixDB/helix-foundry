@@ -13,7 +13,12 @@ import {
 } from "./database-query";
 import { scopedPredicates, type Scope } from "./load-scope";
 
-import { markDiffering, settleable, type Settleable } from "../reviews/model";
+import {
+  WEAK_LINKS,
+  markDiffering,
+  settleable,
+  type Settleable,
+} from "../reviews/model";
 import { isRecord } from "../../../shared/json";
 
 // What the website reads from an ontology's database, as v3 dynamic read
@@ -55,8 +60,9 @@ import { isRecord } from "../../../shared/json";
 // Every read is bounded: a document reads its own sections and what points
 // at them; an entity reads at most 200 facts each way, 50 mentions, 50
 // reviews and 200 rows and quotes that state it; reviews read the entities
-// they concern (a few each); evidence is read for at most 50 facts at a
-// time.
+// they concern (a few each), and an entity's held claims the reviews of
+// names linked on less than a name in their documents (at most 50
+// documents); evidence is read for at most 50 facts at a time.
 
 export const LIMITS = Object.freeze({
   factsPerSide: 200,
@@ -866,6 +872,91 @@ export function entityRequest(
 }
 
 /**
+ * The documents of the held claims among `reviews`, each once, in order.
+ *
+ * @example
+ * heldClaimDocs(page.reviews); // ["doc_1"]
+ */
+export const heldClaimDocs = (reviews: readonly Settleable[]) =>
+  [
+    ...new Set(
+      reviews.flatMap(({ settle: s }) =>
+        s?.kind === "release" ? [s.docId] : [],
+      ),
+    ),
+  ].sort();
+
+/**
+ * A read of the reviews of names a load linked on less than a name
+ * (`WEAK_LINKS`) in `docs`, the documents of a page's held claims
+ * (heldClaimDocs), which mark the claims they hold (markDiffering). An
+ * entity's page needs it: it reads only the reviews that concern its entity,
+ * and such a review concerns only the row it linked, so the name at a held
+ * claim's other end has its review elsewhere. Each document is one lookup of
+ * the load's reviews by `doc_id`, which the engine indexes, and holds one such
+ * review per name it linked so. None for no document.
+ *
+ * @example
+ * nameLinksRequest(scope, heldClaimDocs(page.reviews)); // a read, or null with no held claim
+ */
+export function nameLinksRequest(
+  scope: Scope,
+  docs: readonly string[],
+): DynamicQueryRequest | null {
+  if (!docs.length) return null;
+  return readRequest(
+    "foundry_name_links",
+    docs.map((_, i) => ({
+      name: `links_${i}`,
+      root: values(
+        nodesOf(scope, N.Review, propIs("doc_id", `doc_${i}`), {
+          is_in: {
+            value: { property: "reason" },
+            values: { param: "weak_links" },
+          },
+        }),
+        [
+          "doc_id",
+          "section",
+          "start",
+          "reason",
+          "review_key",
+          "type",
+          "norm_name",
+        ],
+      ),
+    })),
+    {
+      ...Object.fromEntries(
+        docs.map((d, i) => [`doc_${i}`, { value: d, type: "string" }]),
+      ),
+      weak_links: { value: [...WEAK_LINKS], type: { array: "string" } },
+    },
+  );
+}
+
+/**
+ * The reviews nameLinksRequest read, each with its reason, its place and
+ * what settles it, as markDiffering takes them; nothing in them is trusted.
+ */
+export function parseNameLinks(
+  body: unknown,
+): (Settleable & { reason: string; section: number; start: number })[] {
+  const data = isRecord(body) ? body : {};
+  return Object.keys(data)
+    .filter((k) => /^links_\d+$/.test(k))
+    .flatMap((k) => rows(data[k]))
+    .flatMap((r) => {
+      const reason = str(r.reason),
+        section = int(r.section),
+        start = int(r.start);
+      return reason && section !== undefined && start !== undefined
+        ? [{ reason, section, start, ...settleable(r, []) }]
+        : [];
+    });
+}
+
+/**
  * Whether an entity's property is the layout's, not the data's: its
  * identity, normalized names and identifiers (`<prop>__nn`, `<prop>__id`),
  * and Foundry's stamps (`foundry_*`: the load and request that wrote it, the
@@ -1032,7 +1123,9 @@ export function parseEntity(body: unknown): EntityGraph {
       : null,
     facts,
     mentions,
-    reviews: markDiffering(reviews.slice(0, LIMITS.reviews)),
+    // Marked once the names their documents linked on less than a name are
+    // read too (nameLinksRequest).
+    reviews: reviews.slice(0, LIMITS.reviews),
     violations: rows(data.violations).flatMap((r): Violation[] => {
       const constraint = str(r.constraint);
       return constraint
@@ -1216,6 +1309,10 @@ export function resolvedByText(r?: string): string | undefined {
       return "Matched by the model";
     case "legal_form":
       return "By its legal form";
+    case "part_name":
+      return "By part of its name";
+    case "own_name":
+      return "By an identifier used as its name";
     default:
       return undefined;
   }

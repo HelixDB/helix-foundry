@@ -1,4 +1,7 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import type {
+  DecisionApplied,
   FoundryPropValue,
   FoundryReviewChoice,
   FoundryReviewDecision,
@@ -96,11 +99,55 @@ const isScalar = (v: unknown): v is string | number | boolean =>
   typeof v === "boolean" ||
   (typeof v === "number" && Number.isFinite(v));
 
-/** The reasons a person's release settles: a verifier doubted the claim. */
+/**
+ * The reasons a person's release settles: a verifier doubted the claim, or,
+ * from contract 4.14.0, it conflicts with what its link holds. An approval
+ * of the latter is written only on a link that holds one value, where it
+ * decides the link; on another link the conflict is a property that differs
+ * from the fact the graph holds, which no approval changes (`conflict`).
+ */
 const RELEASE_REASONS: ReadonlySet<ReviewReason> = new Set<ReviewReason>([
   "low_confidence",
   "unverified",
+  "conflict",
 ]);
+
+/**
+ * How a load links a name on less than the name itself or a verified
+ * identifier: by its legal form, by its being part of one row's name, or by
+ * an identifier the verifier held back that is the name the text calls the
+ * entity by. Each such link has a review of that reason, which a resolve
+ * decision confirms or overturns.
+ */
+export type WeakLink = "legal_form" | "part_name" | "own_name";
+export const WEAK_LINKS: readonly WeakLink[] = [
+  "legal_form",
+  "part_name",
+  "own_name",
+];
+
+/**
+ * Whether `reason` (a review's, or a mention's `resolved_by`) is a link made
+ * on less than a name.
+ *
+ * @example
+ * isWeakLink("part_name"); // true
+ * isWeakLink("adjudicated"); // false
+ */
+export const isWeakLink = (reason?: string): reason is WeakLink =>
+  WEAK_LINKS.some((w) => w === reason);
+
+/**
+ * Whether `reason` is a link the load made that a person can undo: the
+ * model's, or one made on less than a name. Its review lists the row it
+ * linked, and its mentions link to that review.
+ *
+ * @example
+ * isUndoableLink("adjudicated"); // true
+ * isUndoableLink("unresolved"); // false
+ */
+export const isUndoableLink = (reason?: string) =>
+  reason === "adjudicated" || isWeakLink(reason);
 
 /** The reasons a resolve decision settles; `prop_conflict` takes a value. */
 const RESOLVE_REASONS: ReadonlySet<ReviewReason> = new Set<ReviewReason>([
@@ -109,8 +156,38 @@ const RESOLVE_REASONS: ReadonlySet<ReviewReason> = new Set<ReviewReason>([
   "collision",
   "identifier_conflict",
   "adjudicated",
-  "legal_form",
+  ...WEAK_LINKS,
 ]);
+
+/**
+ * An end of a held claim whose name the load linked on less than a name:
+ * the name as the document writes it (the claim's statement), how it was
+ * linked, and where that link's review is in the document's text (`at`,
+ * when the page read its place).
+ */
+export type Unsettled = {
+  name: string;
+  by: WeakLink;
+  at?: { section: number; start: number };
+};
+
+/**
+ * The ends of a held claim (`unsettled`, in the order the engine refuses
+ * them) for which the engine refuses an approval until a person settles the
+ * name: always one linked by part of a name or by an own-name identifier,
+ * and one linked by legal form only where the claim's link holds one value
+ * (`single`). None: an approval can be written at once.
+ *
+ * @example
+ * holdingEnds([{ name: "Westmere", by: "part_name" }], false).length; // 1
+ * holdingEnds([{ name: "Globex Ltd", by: "legal_form" }], false).length; // 0
+ * holdingEnds(undefined, true).length; // 0
+ */
+export const holdingEnds = (
+  unsettled: readonly Unsettled[] | undefined,
+  single: boolean,
+): Unsettled[] =>
+  (unsettled ?? []).filter((u) => u.by !== "legal_form" || single);
 
 /**
  * An entity a resolve review suggests: its identity as the graph stores it
@@ -136,17 +213,24 @@ export type Statement = {
  * - `resolve`: link the document's name to a candidate, or say it is not in
  *   the data;
  * - `prop`: choose a value of an entity's property that documents state
- *   differently. `table` is the value stored for it, if any: only a table
- *   row's value survives a conflict, so it is the table's, and a
- *   chosen document value replaces it in every later load;
+ *   differently, which the current load is sent at once. `table` is the
+ *   value stored for it, if any: only a table row's value survives a
+ *   conflict, so it is the table's, and a chosen document value replaces it
+ *   in this load and every later one;
  * - `release`: approve one review of a claim code holds back, so the current
- *   load writes what it states as a fact, at once. `statement` is what that is, and
- *   `stored` it as the review keeps it, which its hash reads. `named` is
+ *   load writes what it states as a fact, at once, or reject it, which hides
+ *   its card and writes nothing. `statement` is what that is, and
+ *   `stored` it as the review keeps it, which its hash reads (`hash`,
+ *   statementHash). `named` is
  *   whether the review names both its ends: if not, an end isn't in the graph
  *   yet. `differs` is whether another review at its place states something
- *   else: no approval says which, so the engine refuses both. `formed` is an
- *   end's name a legal form linked, which a person settles before a link that
- *   holds one value is written;
+ *   else: no approval says which, so the engine refuses both. `unsettled` are
+ *   the ends whose names the load linked on less than a name, in the order
+ *   the engine refuses them, which a person settles before the claim is
+ *   written where they hold it (holdingEnds). `conflict` is a claim held as
+ *   conflicting with what its link holds: approving it decides that, on a
+ *   link that holds one value only (contract 4.14.0), and on any other link
+ *   nothing settles it;
  * - `stale`: a reason a decision settles, on a review written without the
  *   identity the backend reads (a load from before decisions) or whose
  *   entity this read doesn't find. A new load writes it again.
@@ -180,9 +264,13 @@ export type Settle =
       statement: Statement;
       /** The statement as the review stores it, which its hash reads. */
       stored: string;
+      /** statementHash of `link` and `stored`: what an approval of it binds. */
+      hash: string;
       named: boolean;
       differs?: boolean;
-      formed?: string;
+      // Never empty: a claim with no such end has none.
+      unsettled?: Unsettled[];
+      conflict?: true;
     }
   | { kind: "stale" };
 
@@ -308,6 +396,9 @@ function settleOf(
       stored = text(r.statement),
       stated = stored ? statement(stored) : undefined,
       { section, start, end } = r;
+    // A conflict a load wrote before claims kept statements was never one a
+    // person settles, and on a link that holds many values none is.
+    if (reason === "conflict" && !stored) return { candidates };
     // An approval is of what its card shows: a review of a load before
     // statements shows nothing to approve.
     if (
@@ -335,7 +426,9 @@ function settleOf(
         link,
         statement: stated,
         stored,
+        hash: statementHash(link, stored),
         named: ends(r.claim) >= 2,
+        ...(reason === "conflict" ? { conflict: true as const } : {}),
       },
     };
   }
@@ -365,34 +458,42 @@ function settleOf(
 /**
  * What binds an approval to the claim a person read: the SHA-256 of what its
  * card shows, as the backend and the engine hash it (held::Statement::hash).
+ * Synchronous, as a page reads its reviews: a saved decision names a claim
+ * by it as well as by its key (ofClaim).
  *
  * @example
- * await statementHash("partner_of", stored); // 64 lowercase hexadecimal digits
+ * statementHash("partner_of", stored); // 64 lowercase hexadecimal digits
  */
-export async function statementHash(
-  link: string,
-  stored: string,
-): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(`${link}\u001f${stored}`),
-  );
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+export function statementHash(link: string, stored: string): string {
+  return bytesToHex(sha256(new TextEncoder().encode(`${link}\u001f${stored}`)));
 }
+
+/** A review as markDiffering reads it: what settles it, its reason and its place. */
+type Placed = Settleable & {
+  reason?: string;
+  section?: number;
+  start?: number;
+};
 
 /**
  * Marks the held claims of `reviews` whose approval the engine would refuse or
  * hold: those that share a place and a key with a review of any reason that
  * states something else, as no approval says which (`differs`), and those
- * naming an entity by a name a legal form linked in that document (`formed`).
+ * naming an entity by a name the load linked on less than a name in that
+ * document (`unsettled`), found among `reviews` and `names` (the reviews of
+ * such links a page read apart: an entity's page lists only the reviews that
+ * concern its entity, and such a review concerns only the row it linked).
+ * Ends go in the order the engine refuses them: a link by part of a name or
+ * by an own-name identifier before one by legal form, subject before object.
  *
  * @example
  * markDiffering([one, sameKeyAndPlaceOtherStatement]); // both settle with `differs: true`
+ * markDiffering([heldClaimOfWestmere], [partNameReviewOfWestmere])[0].settle.unsettled;
+ * // [{ name: "Westmere", by: "part_name", at: { section: 0, start: 12 } }]
  */
-export function markDiffering<T extends Settleable & { reason?: string }>(
+export function markDiffering<T extends Placed>(
   reviews: T[],
+  names: readonly Placed[] = [],
 ): T[] {
   const stated = new Map<string, Set<string>>();
   for (const { claim } of reviews) {
@@ -403,27 +504,47 @@ export function markDiffering<T extends Settleable & { reason?: string }>(
   // A name resolves per document and type, so a link in another holds nothing.
   const end = (docId: string, type: string, name: string) =>
     JSON.stringify([docId, type, name]);
-  const linked = new Set(
-    reviews.flatMap((r) =>
-      r.reason === "legal_form" && r.settle?.kind === "resolve"
-        ? [end(r.settle.docId, r.settle.type, r.settle.normName)]
+  const linked = new Map(
+    [...reviews, ...names].flatMap((r) =>
+      isWeakLink(r.reason) && r.settle?.kind === "resolve"
+        ? [
+            [
+              end(r.settle.docId, r.settle.type, r.settle.normName),
+              {
+                by: r.reason,
+                ...(r.section !== undefined && r.start !== undefined
+                  ? { at: { section: r.section, start: r.start } }
+                  : {}),
+              },
+            ] as const,
+          ]
         : [],
     ),
   );
   return reviews.map((r) => {
     const s = r.settle;
     if (s?.kind !== "release") return r;
-    const differs = (stated.get(r.claim?.place ?? "")?.size ?? 0) > 1,
-      formed = [s.statement.subject, s.statement.object]
-        .map(({ type, name }) => ({ type, name: normalizeName(name) }))
-        .find(({ type, name }) => linked.has(end(s.docId, type, name)))?.name;
-    return differs || formed
+    const differs = (stated.get(r.claim?.place ?? "")?.size ?? 0) > 1;
+    // Each name once: a claim of an entity with itself names it twice.
+    const unsettled = [
+      ...new Map(
+        [s.statement.subject, s.statement.object].flatMap(({ type, name }) => {
+          const key = end(s.docId, type, normalizeName(name)),
+            link = linked.get(key);
+          return link ? [[key, { name, ...link }] as const] : [];
+        }),
+      ).values(),
+    ].sort(
+      // Stable: subject before object within each.
+      (a, b) => Number(a.by === "legal_form") - Number(b.by === "legal_form"),
+    );
+    return differs || unsettled.length
       ? {
           ...r,
           settle: {
             ...s,
             ...(differs ? { differs } : {}),
-            ...(formed ? { formed } : {}),
+            ...(unsettled.length ? { unsettled } : {}),
           },
         }
       : r;
@@ -431,14 +552,17 @@ export function markDiffering<T extends Settleable & { reason?: string }>(
 }
 
 /**
- * Needs review's groups in order: held claims to approve, names linked by
- * legal form, values in conflict, then links the ontology doesn't have. Any
+ * Needs review's groups in order: held claims to approve (those a verifier
+ * doubted, then those that conflict with what their link holds), names linked on
+ * less than a name (by legal form, by part of a name, by an own-name
+ * identifier), values in conflict, then links the ontology doesn't have. Any
  * other reason follows, in the order it first appears.
  */
 const GROUP_ORDER: readonly string[] = [
   "low_confidence",
   "unverified",
-  "legal_form",
+  "conflict",
+  ...WEAK_LINKS,
   "prop_conflict",
   "unmatched",
 ];
@@ -493,13 +617,63 @@ export function reviewGroups<
 }
 
 /**
+ * Whether a saved decision names this held claim's review: a release or a
+ * reject at its document and place, under its key or, as a rebuild may key
+ * the same sentence otherwise, of the statement it reads (`hash`). From
+ * contract 4.14.0 the engine binds a release whose key names no review of its
+ * document so, and the backend keeps a claim's approval and rejection apart
+ * the same way.
+ */
+const ofClaim = (d: ReviewDecision, s: Extract<Settle, { kind: "release" }>) =>
+  (d.kind === "release" || d.kind === "reject") &&
+  d.docId === s.docId &&
+  d.claimSection === s.section &&
+  d.claimStart === s.start &&
+  d.claimEnd === s.end &&
+  (d.claimKey === s.claimKey || d.statementHash === s.hash);
+
+/**
+ * `reviews` without the held claims a person rejected: each review of a held
+ * claim that a saved reject names (ofClaim: by its document and its quote's
+ * place, and its claim's key or the statement it reads). A rejection changes
+ * no load, so the review is still in the graph: leaving it out here is what
+ * hides its card, drops it from a page's counts and keeps Approve all from
+ * it, in this load and every later one, until the decision is removed. By its
+ * key it hides the claim however it reads now: a person said that claim at
+ * that place is wrong. By what it reads it hides that statement there under
+ * the key a rebuild gave it.
+ *
+ * @example
+ * unrejected([held, other], [{ kind: "reject", ...placeOf(held) }]); // [other]
+ */
+export function unrejected<R extends Settleable>(
+  reviews: readonly R[],
+  decisions: readonly ReviewDecision[],
+): R[] {
+  const rejects = decisions.filter((d) => d.kind === "reject");
+  if (!rejects.length) return [...reviews];
+  return reviews.filter(({ settle: s }) => {
+    if (s?.kind !== "release") return true;
+    return !rejects.some((d) => ofClaim(d, s));
+  });
+}
+
+/**
  * The held claims of `reviews` that Approve all approves: each settled by a
  * release a person could approve on its card now, with no decision saved for
- * it (not even one of what it said before: that card asks to be read again),
- * not read two ways (`differs`), and not naming a name only a legal form
- * linked on a link that holds one value (`single`), which stays held until
- * that name is settled. A stale review settles by no release, so it's never
- * one of them.
+ * it (ofClaim: not a rejection, nor an approval, of what it reads under any
+ * key or of what it said before: that card asks to be read again), not read
+ * two ways (`differs`), and not naming a name the load linked on less than a
+ * name where the engine holds the claim for it (holdingEnds): the engine
+ * would refuse it until that name is settled, and only a later load can
+ * write it. A stale review settles by no release, so it's never one of them.
+ *
+ * None of a link that holds one value (`single`): from contract 4.14.0 an
+ * approval there decides what the link holds, and replaces what it holds of
+ * no date or dated up to when the approval takes effect, whoever put it
+ * there: a person's approval, a table's row or another document. A page
+ * can't tell what such a link holds or why, so a person approves each of
+ * those on its card, where it says so.
  *
  * @example
  * approvable([held, readTwoWays, alreadyApproved], decisions, () => false); // [held.settle]
@@ -511,12 +685,47 @@ export function approvable(
 ): Extract<Settle, { kind: "release" }>[] {
   return reviews.flatMap(({ settle: s }) =>
     s?.kind === "release" &&
+    !single(s.link) &&
+    !s.conflict &&
     !s.differs &&
-    !(s.formed && single(s.link)) &&
-    !decisions.some((d) => matchesReview(d, s))
+    !holdingEnds(s.unsettled, false).length &&
+    !decisions.some((d) => ofClaim(d, s))
       ? [s]
       : [],
   );
+}
+
+/**
+ * How many of `reviews` Approve all leaves to their cards for their link
+ * alone: those it would approve if every link held many values whose link
+ * holds one (`single`).
+ *
+ * @example
+ * leftToCards([heldOfOneValuedLink, heldOfManyValuedLink], [], (l) => l === "signed_with"); // 1
+ */
+export function leftToCards(
+  reviews: readonly Settleable[],
+  decisions: readonly ReviewDecision[],
+  single: (link: string) => boolean,
+): number {
+  return approvable(reviews, decisions, () => false).filter((s) =>
+    single(s.link),
+  ).length;
+}
+
+/**
+ * What Approve all says before it approves, leaving `left` claims to their
+ * cards (leftToCards).
+ *
+ * @example
+ * approveAllText(2); // "This load writes each one it can, at once. … 2 claims of a link that holds one value aren’t included: …"
+ */
+export function approveAllText(left: number) {
+  return `This load writes each one it can, at once. Any it can't stays held, and its card says why.${
+    left
+      ? ` ${left === 1 ? "1 claim" : `${left} claims`} of a link that holds one value ${left > 1 ? "aren’t" : "isn’t"} included: an approval decides what such a link holds, so approve each on its card.`
+      : ""
+  }`;
 }
 
 const LINKS_GOAL = "Add links the documents state that the ontology lacks: ";
@@ -668,51 +877,50 @@ export function matchesReview(d: ReviewDecision, s: Settle) {
 }
 
 /**
- * How a person's saved approvals stand toward a held claim's card, `read`
- * being the hash of what it shows. `saved` is the approval of this review.
- * On the load a person can settle, `moved` is that it approved what the claim
- * said before: the engine refuses it. `earlier` is that this statement was
- * approved at this place under another key, which it held before: a sibling
- * claim of the sentence states something else. An older load's statement may
- * not be the current one, so it says neither.
+ * How a person's saved approvals stand toward a held claim's card. `saved`
+ * is the approval of this review: by its key and of what it reads; on the
+ * load a person can settle, an approval of what it reads at its place under
+ * another key, which the claim held before (a rebuild moves keys): from
+ * contract 4.14.0 the engine matches a release whose key it holds no review
+ * under by its place and statement hash, so that approval is this claim's
+ * and says what became of it, and approving the card approves it again
+ * (the backend keeps its time); else the approval under its key of what it
+ * said before. A sibling claim of the sentence states something else, and
+ * isn't. On that load `moved` is that the approval of this review approved
+ * what the claim said before: the engine refuses it. An older load's
+ * statement may not be the current one, so it says neither.
  *
  * @example
- * approvalOf([], release, "abc", true); // { saved: undefined, moved: false, earlier: false }
+ * approvalOf([], release, true); // { saved: undefined, moved: false }
  */
 export function approvalOf<D extends ReviewDecision>(
   decisions: readonly D[],
   s: Extract<Settle, { kind: "release" }>,
-  read: string | undefined,
   editable: boolean,
-): { saved?: D; moved: boolean; earlier: boolean } {
-  const saved = decisions.find((d) => matchesReview(d, s));
+): { saved?: D; moved: boolean } {
+  const read = (d: D) =>
+    d.kind === "release" &&
+    d.docId === s.docId &&
+    d.claimSection === s.section &&
+    d.claimStart === s.start &&
+    d.claimEnd === s.end &&
+    d.statementHash === s.hash;
+  const saved =
+    decisions.find(
+      (d) => d.kind === "release" && d.claimKey === s.claimKey && read(d),
+    ) ??
+    (editable ? decisions.find(read) : undefined) ??
+    decisions.find((d) => matchesReview(d, s));
   return {
     saved,
     moved:
-      editable &&
-      !!read &&
-      saved?.kind === "release" &&
-      saved.statementHash !== read,
-    earlier:
-      editable &&
-      !!read &&
-      !saved &&
-      decisions.some(
-        (d) =>
-          d.kind === "release" &&
-          d.docId === s.docId &&
-          d.claimKey !== s.claimKey &&
-          d.claimSection === s.section &&
-          d.claimStart === s.start &&
-          d.claimEnd === s.end &&
-          d.statementHash === read,
-      ),
+      editable && saved?.kind === "release" && saved.statementHash !== s.hash,
   };
 }
 
 /**
- * The approvals a job has yet to apply to the current load: while there are
- * any, the page reads the decisions again.
+ * The approvals and chosen values a job has yet to apply to the current
+ * load: while there are any, the page reads the decisions again.
  *
  * @example
  * waiting([{ applied: { status: "pending" } }, { applied: { status: "written" } }]).length; // 1
@@ -724,28 +932,74 @@ export function waiting<D extends Pick<FoundryReviewDecision, "applied">>(
 }
 
 /**
+ * How a name is linked on less than a name, as a card's sentence says it.
+ *
+ * @example
+ * WEAK_LINK_TEXT.part_name; // "linked only by part of a row’s name"
+ */
+export const WEAK_LINK_TEXT: Record<WeakLink, string> = {
+  legal_form: "linked only by its legal form",
+  part_name: "linked only by part of a row’s name",
+  own_name: "linked only by a code the document calls it by",
+};
+
+/**
  * Why an approved claim stays held, for its card, from the reason the load's
  * job gave a refusal (FoundryDecisionApplied.reason): what a person can do
- * about it where there is something. `formed` is the name a legal form
- * linked, if the card knows it. A reason this site doesn't know reads as it
- * came.
+ * about it where there is something. `ends` are the claim's names that hold
+ * it, as far as the card knows them (holdingEnds, and those linked the way
+ * the refusal says): it names those linked the way it says, as the engine
+ * doesn't say which end it refused for, and no name where none was; any
+ * other is a name to settle too before a load writes it. A reason this site
+ * doesn't know reads as it came.
  *
  * @example
  * refusalText("unresolved"); // "A name in it isn’t matched to one record in your data. …"
+ * refusalText("part_name", [{ name: "Westmere", by: "part_name" }]); // "“Westmere” is linked only by part of a row’s name, …"
+ * refusalText("part_name", [{ name: "Globex Ltd", by: "legal_form" }]); // "A name in it is linked only by part of a row’s name, … Settle that name and “Globex Ltd”, which holds it too, …"
  * refusalText("a_new_reason"); // "The load kept it held (a_new_reason)."
  */
-export function refusalText(reason: string | undefined, formed?: string) {
+export function refusalText(
+  reason: string | undefined,
+  ends: readonly Unsettled[] = [],
+) {
+  const quoted = (by: (u: Unsettled) => boolean) =>
+    ends.filter(by).map((u) => `“${u.name}”`);
+  const names = quoted((u) => u.by === reason),
+    others = quoted((u) => u.by !== reason);
+  const named = names.length
+      ? `${names.join(" and ")} ${names.length > 1 ? "are each" : "is"}`
+      : "A name in it is",
+    too = others.length
+      ? ` and ${others.join(" and ")}, which ${others.length > 1 ? "hold" : "holds"} it too`
+      : "",
+    settle = `Settle ${names.length > 1 ? "those names" : "that name"}${too}, and the next load writes this.`;
   switch (reason) {
     case "unresolved":
       return "A name in it isn’t matched to one record in your data. Settle that name and load again; if it’s still held then, approve it there.";
     case "legal_form":
-      return `${formed ? `“${formed}”` : "A name in it"} is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`;
+      return `${named} ${WEAK_LINK_TEXT.legal_form}, which doesn’t write a link that holds one value. ${settle}`;
+    case "part_name":
+    case "own_name":
+      // With no review of the link in this load (an engine before these
+      // links made it, or the row came after the document), it lists the
+      // name as one it couldn't match.
+      return `${named} ${WEAK_LINK_TEXT[reason]}, and an approval doesn’t stand on such a link. ${settle}${
+        names.length
+          ? ""
+          : " Where this load has no review of such a link, it lists that name as not in your data, or as one that could mean more than one entity: settle it there."
+      }`;
     case "changed":
       return "It reads differently now from what was approved. Read it again and approve what it says.";
     case "differs":
       return "Its sentence is read more than one way, and no approval can say which.";
+    // From contract 4.14.0 an approval of a link that holds one value
+    // decides what the link holds, so this is all that's left of it, besides
+    // an engine before 4.14.0's word: each new load sends every approval
+    // again, and the card can't tell which engine refused it, so it offers
+    // no approval again, which would change nothing in the first two cases.
     case "conflict":
-      return "It conflicts with what the graph holds for this link: another statement of the same date, or one that can’t be compared with it.";
+      return "It conflicts with what the graph holds for this link: a property of it differs from the one the graph holds, which no approval or new load changes; or it gives a date still to come, and a load sent it after that date writes it; or a load built before statements were kept wrote the link, or a version before approvals could decide a link refused it, and then the next load writes it.";
     case "blocked":
       return "Writing it would break a rule the ontology enforces, or checking that took more reading than a load allows.";
     case "no_statement":
@@ -768,24 +1022,96 @@ export function refusalText(reason: string | undefined, formed?: string) {
 }
 
 /**
- * What a card says while an approval waits for its job. One job at a time
- * writes an ontology's database, so with another job live (`live`, the kind
- * of the ontology's active job) the approval waits for that job's end rather
- * than being written now; behind a new load it is written to whichever load
- * is current when that one ends.
+ * What a card says while an approval, or a chosen value (`kind` "prop"),
+ * waits for its job. One job at a time writes an ontology's database, so
+ * with another job live (`live`, the kind of the ontology's active job) the
+ * decision waits for that job's end rather than being applied now; behind a
+ * new load it is applied to whichever load is current when that one ends.
  *
  * @example
  * waitingText(); // "Approved. Writing it to this load…"
  * waitingText("extract"); // "Approved. Another job is running, so this waits: …"
+ * waitingText(null, "prop"); // "Decision saved. Sending it to this load…"
  */
-export function waitingText(live?: string | null) {
+export function waitingText(
+  live?: string | null,
+  kind: "release" | "prop" = "release",
+) {
+  const value = kind === "prop";
   switch (live || "resend") {
     case "resend":
-      return "Approved. Writing it to this load…";
+      return value
+        ? "Decision saved. Sending it to this load…"
+        : "Approved. Writing it to this load…";
     case "load":
-      return "Approved. A load is running, so this waits: it’s written when that ends, to the load that is current then.";
+      return value
+        ? "Decision saved. A load is running, so this waits: it’s applied when that ends, to the load that is current then."
+        : "Approved. A load is running, so this waits: it’s written when that ends, to the load that is current then.";
     default:
-      return "Approved. Another job is running, so this waits: it’s written to this load when that ends.";
+      return value
+        ? "Decision saved. Another job is running, so this waits: it’s applied to this load when that ends."
+        : "Approved. Another job is running, so this waits: it’s written to this load when that ends.";
+  }
+}
+
+/**
+ * Whether the value an entity stores for a property (`stored`) is the one a
+ * decision chose: the load holds the decision, so the stored value is no
+ * table's to keep, and its card offers another choice rather than to replace
+ * a table's value. An integer past 2^53 compares as the number it rounds to.
+ *
+ * @example
+ * holdsDecided({ integer: "36" }, 36); // true
+ * holdsDecided({ text: "GBP" }, "usd"); // false
+ */
+export function holdsDecided(
+  chosen: FoundryPropValue,
+  stored: string | number | boolean | undefined,
+): boolean {
+  if (stored === undefined || chosen.null !== undefined) return false;
+  if (chosen.text !== undefined) return chosen.text === stored;
+  if (chosen.boolean !== undefined) return chosen.boolean === stored;
+  return Number(chosen.integer ?? chosen.number) === stored;
+}
+
+/**
+ * What a property review's card says of the value saved for it (`value`, as
+ * the page shows one), from what the current load made of the decision
+ * (`applied`; unset when that load's list doesn't hold it) and whether the
+ * entity holds that value now (`holds`: holdsDecided, or no value stored for
+ * a decision of none). From contract 4.14.0
+ * every load lists the values its documents dispute, decided or not, so the
+ * review stays listed and the decision is what settles it. The load says
+ * only that it was sent the value: a document dated after the decision
+ * still wins, which is why a load may hold another.
+ *
+ * @example
+ * decidedText({ status: "applied" }, "36", null, true); // "Decided: 36. This load holds it. …"
+ * decidedText(undefined, "36"); // "A decision is saved (36), and this load hasn’t read it. …"
+ */
+export function decidedText(
+  applied: DecisionApplied | null | undefined,
+  value: string,
+  live?: string | null,
+  holds = false,
+) {
+  const shown = value || "no value";
+  const settled =
+    "The documents’ values stay listed here, as in every load: this decision settles them.";
+  switch (applied?.status) {
+    case "pending":
+      return waitingText(live, "prop");
+    case "applied":
+    case "":
+      return holds
+        ? `Decided: ${shown}. This load holds it. ${settled}`
+        : applied.status === "applied"
+          ? `Decided: ${shown}. This load was sent the decision, and holds that value unless a document dated after the decision states another. ${settled}`
+          : `Decided: ${shown}. This load read the decision and holds another value: a document dated after the decision states it. Choose again or remove the decision.`;
+    case "unconfirmed":
+      return `Decided: ${shown}, but the job that sends it to this load failed. Choose it again to send it.`;
+    default:
+      return `A decision is saved (${shown}), and this load hasn’t read it. Choose it again to apply it now.`;
   }
 }
 
@@ -819,8 +1145,10 @@ export type ReleaseStatus = "written" | "no_link" | "held" | "unknown";
 
 /**
  * What became of `d` on a document's page, from its reviews and its facts:
- * its review is still held, or its quote stands with an edge, or without one,
- * as a later statement holds that link. Otherwise the reads don't say.
+ * its review is still held (at its place, under its key or stating what it
+ * approved there, as a rebuild may key it otherwise), or its quote stands
+ * with an edge, or without one, as a later statement holds that link.
+ * Otherwise the reads don't say.
  *
  * @example
  * releaseStatus(decision, reviews, facts); // "held"
@@ -836,7 +1164,9 @@ export function releaseStatus(
     at.end === d.claimEnd;
   const held = reviews.some(
     ({ settle: s }) =>
-      s?.kind === "release" && s.claimKey === d.claimKey && here(s),
+      s?.kind === "release" &&
+      here(s) &&
+      (s.claimKey === d.claimKey || s.hash === d.statementHash),
   );
   if (held) return "held";
   const fact = facts.find((f) => !f.unread && f.quotes.some(here));
@@ -845,11 +1175,12 @@ export function releaseStatus(
 }
 
 /**
- * Whether a load read a resolve or prop decision. A load reads the decisions
- * saved when it starts (the backend snapshots them), and replacing one saves
- * it anew, so one saved before the load started is in it, and one saved after
+ * Whether a load read a resolve decision. A load reads the decisions saved
+ * when it starts (the backend snapshots them), and replacing one saves it
+ * anew, so one saved before the load started is in it, and one saved after
  * waits for the next load. A load whose start isn't known read none. (A
- * release says what its load made of it: FoundryReviewDecision.applied.)
+ * release or a chosen value says what its load made of it:
+ * FoundryReviewDecision.applied.)
  *
  * @example
  * loadRead({ decidedAt: "2026-10-20T10:00:00Z" }, "2026-10-20T11:00:00Z"); // true

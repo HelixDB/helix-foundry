@@ -76,6 +76,7 @@ const release = {
     props: { due_on: "2027-01-01", nested: "{}" },
   },
   stored: held.statement,
+  hash: model.statementHash(held.suggested_link, held.statement),
   named: true,
 } as const;
 const decided = {
@@ -86,7 +87,7 @@ const decided = {
   claimSection: 1,
   claimStart: 4,
   claimEnd: 20,
-  statementHash: "b".repeat(64),
+  statementHash: release.hash,
 } as const;
 describe("a held claim", () => {
   it.each(["low_confidence", "unverified"])(
@@ -96,6 +97,17 @@ describe("a held claim", () => {
       expect(model.matchesReview(decided, release)).toBe(true);
     },
   );
+  it("held as conflicting with what its link holds is approved the same way, said so (contract 4.14.0)", () => {
+    const s = model.settleable({ ...held, reason: "conflict" }, []).settle;
+    expect(s).toEqual({ ...release, conflict: true });
+    expect(model.matchesReview(decided, s!)).toBe(true);
+    // One a load wrote before claims kept statements is settled by nothing,
+    // as before: no new load is asked for.
+    const { statement: _, ...unstated } = held;
+    expect(
+      model.settleable({ ...unstated, reason: "conflict" }, []).settle,
+    ).toBeUndefined();
+  });
   it("is matched by its key and place", () => {
     for (const other of [
       { claimKey: "b".repeat(64) },
@@ -196,11 +208,27 @@ describe("a held claim", () => {
     // The value held::Statement::hash and FoundryStatementHash are tested to give.
     const stored =
       '{"subject":{"type":"Company","name":"Zoë Ltd"},"object":{"type":"Company","name":"Acme"},"props":{"since":"2024"}}';
-    const hash = await model.statementHash("partner_of", stored);
+    const hash = model.statementHash("partner_of", stored);
     expect(hash).toBe(
       "2c785db79d066c94d16e140edb1a8708834d7ecb12dda32c2f71dcdcc0ab0654",
     );
-    expect(await model.statementHash("rival_of", stored)).not.toBe(hash);
+    expect(model.statementHash("rival_of", stored)).not.toBe(hash);
+    // As WebCrypto hashes it, whatever the text holds.
+    for (const text of [
+      stored,
+      "",
+      "a\u001fb",
+      "日本語 🌍 \u0000",
+      "x".repeat(10_000),
+    ]) {
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(`partner_of\u001f${text}`),
+      );
+      expect(model.statementHash("partner_of", text)).toBe(
+        Buffer.from(digest).toString("hex"),
+      );
+    }
   });
 });
 
@@ -209,7 +237,6 @@ describe("how approvals stand toward a held claim", () => {
     model.Settle,
     { kind: "release" }
   >;
-  const read = "b".repeat(64);
   const saved = (over: Partial<typeof decided> = {}) => ({
     ...decided,
     id: "d1",
@@ -218,25 +245,19 @@ describe("how approvals stand toward a held claim", () => {
   const other = "c".repeat(64);
 
   it("finds the approval of this review", () => {
-    const s = model.approvalOf([saved()], settle, read, true);
-    expect(s).toMatchObject({ moved: false, earlier: false });
+    const s = model.approvalOf([saved()], settle, true);
+    expect(s).toMatchObject({ moved: false });
     expect(s.saved?.id).toBe("d1");
   });
   it("says an approval of what it said before no longer stands", () => {
     const d = saved({ statementHash: other as never });
-    expect(model.approvalOf([d], settle, read, true).moved).toBe(true);
-  });
-  it("waits for the statement's hash before it says so", () => {
-    const d = saved({ statementHash: other as never });
-    expect(model.approvalOf([d], settle, undefined, true).moved).toBe(false);
+    expect(model.approvalOf([d], settle, true).moved).toBe(true);
   });
   it("says neither on an older load, whose statement may be another's", () => {
     const moved = saved({ statementHash: other as never });
-    expect(model.approvalOf([moved], settle, read, false).moved).toBe(false);
+    expect(model.approvalOf([moved], settle, false).moved).toBe(false);
     const elsewhere = saved({ claimKey: "e".repeat(64) as never });
-    expect(model.approvalOf([elsewhere], settle, read, false).earlier).toBe(
-      false,
-    );
+    expect(model.approvalOf([elsewhere], settle, false).saved).toBeUndefined();
   });
   it("tells a sibling claim at the sentence from this one's key moving", () => {
     // Another claim of the sentence, another statement: nothing of this one.
@@ -244,14 +265,35 @@ describe("how approvals stand toward a held claim", () => {
       claimKey: "e".repeat(64) as never,
       statementHash: other as never,
     });
-    expect(model.approvalOf([sibling], settle, read, true)).toMatchObject({
+    expect(model.approvalOf([sibling], settle, true)).toMatchObject({
       saved: undefined,
       moved: false,
-      earlier: false,
     });
-    // This statement under another key: the claim's key moved.
+    // This statement under another key: the claim's key moved, and the
+    // engine matches the approval by its place and hash (contract 4.14.0).
     const keyed = saved({ claimKey: "e".repeat(64) as never });
-    expect(model.approvalOf([keyed], settle, read, true).earlier).toBe(true);
+    expect(model.approvalOf([keyed], settle, true)).toMatchObject({
+      saved: { id: "d1" },
+      moved: false,
+    });
+    // One of this key comes first.
+    expect(
+      model.approvalOf([keyed, { ...saved(), id: "d2" }], settle, true).saved
+        ?.id,
+    ).toBe("d2");
+    // One of what it reads under another key comes before one of what it
+    // said before under its key: approving the card approves the first
+    // again, as the backend does.
+    const before = { ...saved({ statementHash: other as never }), id: "d3" };
+    expect(model.approvalOf([before, keyed], settle, true)).toMatchObject({
+      saved: { id: "d1" },
+      moved: false,
+    });
+    // On an older load only its key counts.
+    expect(model.approvalOf([before, keyed], settle, false)).toMatchObject({
+      saved: { id: "d3" },
+      moved: false,
+    });
   });
   it("doesn't look at another place's approval", () => {
     const d = saved({
@@ -259,7 +301,7 @@ describe("how approvals stand toward a held claim", () => {
       claimStart: 40 as never,
       claimEnd: 60 as never,
     });
-    expect(model.approvalOf([d], settle, read, true).earlier).toBe(false);
+    expect(model.approvalOf([d], settle, true).saved).toBeUndefined();
   });
 });
 
@@ -278,6 +320,16 @@ describe("what became of an approval", () => {
 
   it("is still held while its review is", () => {
     expect(model.releaseStatus(decision, [review], [])).toBe("held");
+    // Under the key a rebuild gave it, stating what was approved there.
+    const moved = { ...decided, claimKey: "e".repeat(64) } as never;
+    expect(model.releaseStatus(moved, [review], [])).toBe("held");
+    // A sibling claim of the sentence is another.
+    const sibling = {
+      ...decided,
+      claimKey: "e".repeat(64),
+      statementHash: "c".repeat(64),
+    } as never;
+    expect(model.releaseStatus(sibling, [review], [])).toBe("unknown");
   });
   it("is written when its quote stands on an edge", () => {
     expect(model.releaseStatus(decision, [], [fact({ id: "e" })])).toBe(
@@ -309,12 +361,16 @@ describe("a claim at the same place", () => {
       reason,
       ...model.settleable({ ...held, reason, statement: stated(who) }, []),
     });
-    const [approvable, conflict] = model.markDiffering([
+    const [approvable, conflict, violation] = model.markDiffering([
       review("low_confidence", "one"),
       review("conflict", "other"),
+      review("violation", "third"),
     ]);
     expect(approvable!.settle).toMatchObject({ differs: true });
-    expect(conflict!.settle).toBeUndefined();
+    // A conflict is a release too from contract 4.14.0, and as unsure.
+    expect(conflict!.settle).toMatchObject({ conflict: true, differs: true });
+    expect(violation!.settle).toBeUndefined();
+    expect(violation!.claim).toBeDefined();
   });
   it("of another reason with no statement counts too", () => {
     const { statement: _, ...none } = held;
@@ -351,12 +407,181 @@ describe("a claim at the same place", () => {
           },
         },
       ])[0]!.settle;
+    // Named as the document writes it, not by the key it's matched on.
     expect(formed("A", "doc")).toMatchObject({
-      formed: "halvorsen freight ltd",
+      unsettled: [{ name: "Halvorsen Freight Ltd.", by: "legal_form" }],
     });
     // A name resolves per document and type, so a link elsewhere holds nothing.
-    expect(formed("A", "other-doc")).not.toHaveProperty("formed");
-    expect(formed("B", "doc")).not.toHaveProperty("formed");
+    expect(formed("A", "other-doc")).not.toHaveProperty("unsettled");
+    expect(formed("B", "doc")).not.toHaveProperty("unsettled");
+  });
+  // A link by part of a row's name, or by an identifier the text uses as a
+  // name (contract 4.13.0), and where its own review is.
+  const linkedEnd = (
+    reason: string,
+    type: string,
+    normName: string,
+    at?: { section: number; start: number },
+  ) => ({
+    reason,
+    candidates: [],
+    ...at,
+    settle: {
+      kind: "resolve" as const,
+      reviewId: `r-${reason}`,
+      type,
+      docId: "doc",
+      normName,
+    },
+  });
+  const claimOf = (subject: string, object: string) => ({
+    reason: "low_confidence",
+    ...model.settleable(
+      {
+        ...held,
+        statement: JSON.stringify({
+          subject: { type: "A", name: subject },
+          object: { type: "B", name: object },
+          props: {},
+        }),
+      },
+      [],
+    ),
+  });
+  it.each(["part_name", "own_name"] as const)(
+    "names an end linked by %s, and where its review is",
+    (by) => {
+      const [claim] = model.markDiffering([
+        claimOf("Westmere", "b"),
+        linkedEnd(by, "A", "westmere", { section: 3, start: 41 }),
+      ]);
+      expect(claim!.settle).toMatchObject({
+        unsettled: [{ name: "Westmere", by, at: { section: 3, start: 41 } }],
+      });
+    },
+  );
+  it("keeps an own-name identifier as the document writes it", () => {
+    const [claim] = model.markDiffering([
+      claimOf("INC-2031-0042", "b"),
+      linkedEnd("own_name", "A", "inc 2031 0042"),
+    ]);
+    expect(claim!.settle).toMatchObject({
+      unsettled: [{ name: "INC-2031-0042", by: "own_name" }],
+    });
+  });
+  it("names a link it reads apart from the page's reviews: the other end's, on an entity's page", () => {
+    const [claim, ...rest] = model.markDiffering(
+      [claimOf("Halvorsen Freight Ltd.", "Westmere")],
+      [linkedEnd("part_name", "B", "westmere", { section: 1, start: 7 })],
+    );
+    expect(rest).toEqual([]);
+    expect(claim!.settle).toMatchObject({
+      unsettled: [
+        { name: "Westmere", by: "part_name", at: { section: 1, start: 7 } },
+      ],
+    });
+  });
+  it("names an entity a claim states of itself once", () => {
+    const [claim] = model.markDiffering([
+      {
+        reason: "low_confidence",
+        ...model.settleable(
+          {
+            ...held,
+            statement: JSON.stringify({
+              subject: { type: "A", name: "Westmere" },
+              object: { type: "A", name: "Westmere" },
+              props: {},
+            }),
+          },
+          [],
+        ),
+      },
+      linkedEnd("part_name", "A", "westmere"),
+    ]);
+    expect(
+      (claim!.settle as { unsettled: model.Unsettled[] }).unsettled,
+    ).toHaveLength(1);
+  });
+  it("names no place a page didn't read", () => {
+    const [claim] = model.markDiffering([
+      claimOf("Westmere", "b"),
+      linkedEnd("part_name", "A", "westmere"),
+    ]);
+    expect(claim!.settle).toMatchObject({
+      unsettled: [{ name: "Westmere", by: "part_name" }],
+    });
+    expect(
+      (claim!.settle as { unsettled: model.Unsettled[] }).unsettled[0],
+    ).not.toHaveProperty("at");
+  });
+  it("lists both ends in the order the engine refuses them: part of a name before a legal form", () => {
+    const [claim] = model.markDiffering([
+      claimOf("Halvorsen Freight Ltd.", "Westmere"),
+      linkedEnd("legal_form", "A", "halvorsen freight ltd"),
+      linkedEnd("part_name", "B", "westmere"),
+    ]);
+    expect(claim!.settle).toMatchObject({
+      unsettled: [
+        { name: "Westmere", by: "part_name" },
+        { name: "Halvorsen Freight Ltd.", by: "legal_form" },
+      ],
+    });
+    // Of two such links, subject before object.
+    const [two] = model.markDiffering([
+      claimOf("Tarnwick", "Westmere"),
+      linkedEnd("part_name", "B", "westmere"),
+      linkedEnd("own_name", "A", "tarnwick"),
+    ]);
+    expect(
+      (two!.settle as { unsettled: model.Unsettled[] }).unsettled.map(
+        (u) => u.name,
+      ),
+    ).toEqual(["Tarnwick", "Westmere"]);
+  });
+  it("leaves a name the model matched, or no one linked, alone", () => {
+    for (const reason of ["adjudicated", "unresolved", "ambiguous"]) {
+      const [claim] = model.markDiffering([
+        claimOf("Westmere", "b"),
+        linkedEnd(reason, "A", "westmere"),
+      ]);
+      expect(claim!.settle).not.toHaveProperty("unsettled");
+    }
+  });
+});
+
+describe("a link on less than a name", () => {
+  it("is one by legal form, part of a name or an own-name identifier", () => {
+    for (const r of ["legal_form", "part_name", "own_name"])
+      expect([model.isWeakLink(r), model.isUndoableLink(r)]).toEqual([
+        true,
+        true,
+      ]);
+    expect([
+      model.isWeakLink("adjudicated"),
+      model.isUndoableLink("adjudicated"),
+    ]).toEqual([false, true]);
+    for (const r of ["name", "identifier", "alias", "user", "later", undefined])
+      expect([model.isWeakLink(r), model.isUndoableLink(r)]).toEqual([
+        false,
+        false,
+      ]);
+  });
+  it("holds an approval whatever its link holds, but a legal form only a one-valued one", () => {
+    const end = (by: model.WeakLink) => ({ name: "n", by });
+    for (const single of [true, false]) {
+      expect(model.holdingEnds([end("part_name")], single)).toHaveLength(1);
+      expect(model.holdingEnds([end("own_name")], single)).toHaveLength(1);
+      expect(model.holdingEnds([end("legal_form")], single)).toHaveLength(
+        single ? 1 : 0,
+      );
+      expect(model.holdingEnds(undefined, single)).toEqual([]);
+      expect(model.holdingEnds([], single)).toEqual([]);
+    }
+    // Both ends, in order, where both hold.
+    const both = [end("part_name"), end("legal_form")];
+    expect(model.holdingEnds(both, true)).toEqual(both);
+    expect(model.holdingEnds(both, false)).toEqual([end("part_name")]);
   });
 });
 
@@ -368,6 +593,8 @@ describe("what settles a review", () => {
     "identifier_conflict",
     "adjudicated",
     "legal_form",
+    "part_name",
+    "own_name",
   ])("a %s review with its identity takes a resolve choice", (reason) => {
     expect(model.settleable({ ...name, reason }, [globex])).toEqual({
       candidates: [
@@ -538,7 +765,7 @@ describe("review choices", () => {
   it("offers nothing for a stale review or one nothing settles", () => {
     const stale = model.settleable({ ...name, type: undefined }, []);
     expect(model.decisionFor(stale, { entityKey: null })).toBeUndefined();
-    const other = model.settleable({ ...name, reason: "conflict" }, []);
+    const other = model.settleable({ ...name, reason: "violation" }, []);
     expect(model.decisionFor(other, { entityKey: null })).toBeUndefined();
   });
   it("matches overrides by ontology identity, not review or load id", () => {
@@ -612,6 +839,77 @@ describe("an approval the current load has yet to apply", () => {
     expect(model.waiting(decisions).map((d) => d.id)).toEqual(["a"]);
     expect(model.waiting([])).toEqual([]);
   });
+  it("is a chosen value the load has yet to be sent, too", () => {
+    const decisions = [
+      { id: "a", kind: "prop", applied: { status: "pending" as const } },
+      { id: "b", kind: "prop", applied: { status: "applied" as const } },
+      { id: "c", kind: "prop", applied: { status: "unconfirmed" as const } },
+    ];
+    expect(model.waiting(decisions).map((d) => d.id)).toEqual(["a"]);
+  });
+});
+
+describe("whether a stored value is the one a decision chose", () => {
+  it("compares each kind of value as it is stored", () => {
+    expect(model.holdsDecided({ integer: "36" }, 36)).toBe(true);
+    expect(model.holdsDecided({ number: 1.5 }, 1.5)).toBe(true);
+    expect(model.holdsDecided({ text: "GBP" }, "GBP")).toBe(true);
+    expect(model.holdsDecided({ boolean: false }, false)).toBe(true);
+    expect(model.holdsDecided({ text: "GBP" }, "usd")).toBe(false);
+    expect(model.holdsDecided({ integer: "36" }, "36")).toBe(false);
+    expect(model.holdsDecided({ integer: "36" }, 24)).toBe(false);
+  });
+  it("is never so for a value removed, or a property that holds none", () => {
+    expect(model.holdsDecided({ null: null }, "usd")).toBe(false);
+    expect(model.holdsDecided({ text: "GBP" }, undefined)).toBe(false);
+  });
+});
+
+describe("what a card says of a value chosen for its property", () => {
+  it("says it is on its way, and what it waits behind", () => {
+    const sending = "Decision saved. Sending it to this load…";
+    expect(model.waitingText(undefined, "prop")).toBe(sending);
+    expect(model.waitingText("resend", "prop")).toBe(sending);
+    expect(model.decidedText({ status: "pending" }, "36")).toBe(sending);
+    expect(model.decidedText({ status: "pending" }, "36", "extract")).toBe(
+      "Decision saved. Another job is running, so this waits: it’s applied to this load when that ends.",
+    );
+    expect(model.decidedText({ status: "pending" }, "36", "load")).toBe(
+      "Decision saved. A load is running, so this waits: it’s applied when that ends, to the load that is current then.",
+    );
+  });
+  it("says only what the load knows once it was sent", () => {
+    const text = model.decidedText({ status: "applied" }, "36");
+    expect(text).toBe(
+      "Decided: 36. This load was sent the decision, and holds that value unless a document dated after the decision states another. The documents’ values stay listed here, as in every load: this decision settles them.",
+    );
+    // A value removed shows as none.
+    expect(model.decidedText({ status: "applied" }, "")).toMatch(
+      /^Decided: no value\./,
+    );
+  });
+  it("asks for the choice again when its job failed", () => {
+    expect(
+      model.decidedText({ status: "unconfirmed", reason: "job_failed" }, "36"),
+    ).toBe(
+      "Decided: 36, but the job that sends it to this load failed. Choose it again to send it.",
+    );
+  });
+  it("says it settles the review where the load holds the value, sent or read when the load was made (contract 4.14.0)", () => {
+    for (const status of ["applied", ""] as const)
+      expect(model.decidedText({ status }, "36", null, true)).toBe(
+        "Decided: 36. This load holds it. The documents’ values stay listed here, as in every load: this decision settles them.",
+      );
+  });
+  it("tells a load that read it when it was made from one that hasn't", () => {
+    expect(model.decidedText({ status: "" }, "36")).toBe(
+      "Decided: 36. This load read the decision and holds another value: a document dated after the decision states it. Choose again or remove the decision.",
+    );
+    for (const unread of [undefined, null])
+      expect(model.decidedText(unread, "36")).toBe(
+        "A decision is saved (36), and this load hasn’t read it. Choose it again to apply it now.",
+      );
+  });
 });
 
 describe("why a load kept an approved claim held", () => {
@@ -622,16 +920,92 @@ describe("why a load kept an approved claim held", () => {
     expect(said("changed")).toContain("reads differently now");
     expect(said("differs")).toContain("read more than one way");
     expect(said("conflict")).toContain("conflicts with what the graph holds");
+    // From contract 4.14.0 an approval replaces a one-valued link's value:
+    // what's left of a conflict is a property, or an old load's link.
+    expect(said("conflict")).toContain("a property of it differs");
+    expect(said("conflict")).not.toContain("same date");
+    // An engine before 4.14.0's refusal: the next load sends it again.
+    expect(said("conflict")).toContain(
+      "a version before approvals could decide a link refused it, and then the next load writes it",
+    );
     expect(said("blocked")).toContain("break a rule");
     expect(said("no_statement")).toContain("keeps nothing to write");
     expect(said("not_stated")).toContain("no longer states it");
     expect(said("too_large")).toContain("more held claims");
   });
+  const end = (name: string, by: model.WeakLink) => ({ name, by });
   it("names the name a legal form linked, when the card knows it", () => {
-    expect(model.refusalText("legal_form", "globex corporation")).toBe(
-      "“globex corporation” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.",
+    expect(
+      model.refusalText("legal_form", [
+        end("Globex Corporation", "legal_form"),
+      ]),
+    ).toBe(
+      "“Globex Corporation” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.",
     );
     expect(model.refusalText("legal_form")).toMatch(/^A name in it is linked/);
+  });
+  it("says a name linked by part of a name, or by an own-name identifier, is settled first", () => {
+    expect(model.refusalText("part_name", [end("Westmere", "part_name")])).toBe(
+      "“Westmere” is linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
+    );
+    expect(
+      model.refusalText("own_name", [end("INC-2031-0042", "own_name")]),
+    ).toBe(
+      "“INC-2031-0042” is linked only by a code the document calls it by, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
+    );
+    for (const reason of ["part_name", "own_name"]) {
+      expect(model.refusalText(reason)).toMatch(/^A name in it is linked only/);
+      // Unlike a legal form's, it holds whatever the link holds.
+      expect(model.refusalText(reason)).not.toContain("holds one value");
+    }
+  });
+  it("names only the ends linked the way the engine refused, both where both are", () => {
+    const halvorsen = end("Halvorsen Freight Ltd.", "legal_form"),
+      westmere = end("Westmere", "part_name");
+    // The engine refused for the end the card didn't mark: no name, no
+    // wrong one.
+    expect(model.refusalText("part_name", [halvorsen])).toMatch(
+      /^A name in it is linked only by part of a row’s name/,
+    );
+    expect(model.refusalText("part_name", [halvorsen, westmere])).toMatch(
+      /^“Westmere” is linked only by part/,
+    );
+    expect(
+      model.refusalText("part_name", [westmere, end("Tarnwick", "part_name")]),
+    ).toBe(
+      "“Westmere” and “Tarnwick” are each linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle those names, and the next load writes this.",
+    );
+  });
+  it("says where to settle a name the load has no review of the link for", () => {
+    for (const reason of ["part_name", "own_name"]) {
+      expect(model.refusalText(reason)).toContain(
+        "Where this load has no review of such a link, it lists that name as not in your data, or as one that could mean more than one entity: settle it there.",
+      );
+      expect(
+        model.refusalText(reason, [end("Westmere", reason as model.WeakLink)]),
+      ).not.toContain("no review of such a link");
+    }
+    expect(model.refusalText("legal_form")).not.toContain(
+      "no review of such a link",
+    );
+  });
+  it("promises the next load only with every name that holds the claim", () => {
+    // Refused for one name, while another holds it too: both are settled
+    // before a load writes it.
+    expect(
+      model.refusalText("part_name", [
+        end("Westmere", "part_name"),
+        end("Halvorsen Freight Ltd.", "legal_form"),
+      ]),
+    ).toBe(
+      "“Westmere” is linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle that name and “Halvorsen Freight Ltd.”, which holds it too, and the next load writes this.",
+    );
+    expect(
+      model.refusalText("own_name", [
+        end("INC-2031-0042", "own_name"),
+        end("Westmere", "part_name"),
+      ]),
+    ).toContain("Settle that name and “Westmere”, which holds it too,");
   });
   it("says what the backend found when the engine was never asked", () => {
     expect(model.refusalText("not_replayed")).toContain(

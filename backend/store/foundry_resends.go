@@ -14,27 +14,43 @@ import (
 )
 
 // A load owes the engine a document again (foundry_load_resends) when
-// something of the document that the load holds changed after its commit: so
-// far only a person's approval of a claim its review holds back, which joins
-// the load's decisions as it is settled (SettleFoundryReleases). A resend job
-// sends each owed document with its saved extraction, and the engine replays
-// it and writes what the approval releases; the document never leaves the
-// load. One job at a time writes an ontology's database, so an approval that
-// lands while a job is live stays owed, and that job's end queues the resend
+// something of the document that the load holds changed after its commit: a
+// person's approval of a claim its review holds back, which joins the load's
+// decisions as it is settled (SettleFoundryReleases). A resend job sends each
+// owed document with its saved extraction, and the engine replays it and
+// writes what the approval releases; the document never leaves the load. One
+// job at a time writes an ontology's database, so an approval that lands
+// while a job is live stays owed, and that job's end queues the resend
 // (queueAfterFoundryGraphJob).
 //
-// A load brought up to date this way is not always the load a rebuild
-// makes. The engine admits a released claim against what the load holds
-// when the release runs: here that is when the person approves, while a new
-// load releases every approval once all its documents have committed, in
-// document order. Claims that agree end the same either way. Claims that
-// conflict on a link holding one value can end differently, and nothing
-// flags it: an approval written here is refused as a conflict by a rebuild
-// that committed a later document stating otherwise first, and two
-// conflicting approvals are written here in the order they were approved,
-// there in document order. This is accepted, not guarded against: each load
-// says what it made of an approval (applied_status), and none promises what
-// the next will.
+// A load owes the engine its own decisions again (model.FoundryResendDecisions,
+// a row that names no document) when its list of value decisions changed: a
+// person chose a value of a property (SettleFoundryValue) or took a choice
+// back (DeleteFoundryReviewDecision). Every Extract of a load carries all of
+// its value decisions, and the engine sets each and withdraws those it is no
+// longer sent, so the same job answers it, with an Extract of no documents
+// when no document is owed. The engine reports nothing of a value decision:
+// one is applied (model.FoundryValueApplied) once an Extract that carried the
+// list has ended, and that is all a load says of it. A value decision is a
+// statement of its property from when it was decided, weighed by date and
+// never by the order it arrived in, so a load it was applied to in place
+// holds what a rebuild with the same decisions holds. The engine keeps a
+// decision once, by its id, so a property decided again with another value
+// is a new decision (SettleFoundryValue). One taken back stays in the list,
+// marked removed and sent in no Extract, until the request ends: the load
+// holds its value until then, and the access rules read the list.
+//
+// From contract 4.14.0 a load brought up to date this way holds what a
+// rebuild given the same decisions makes, on a link that holds one value
+// too: of the link's approvals the last decided (decided_at, the same in
+// every Extract that sends it) is a decision of the link, which outranks
+// commit order. It takes effect from its quote's date, the one the quote
+// gives or else its document's, and from decided_at's day only for a quote
+// with neither; a quote dated after the load recorded it beats nothing until
+// that date. It beats undated statements and those dated up to then,
+// whichever commits first; a statement dated later, an earlier approval's
+// quote included, still holds the link. Each load still says what it made of
+// an approval (applied_status).
 
 // oweFoundryResends owes each of documentIDs a resend into loadID for reason,
 // or owes it again: a request a running job hasn't read stays owed when that
@@ -63,7 +79,17 @@ ON DUPLICATE KEY UPDATE status='owed', requests=requests+1, requested_at=NOW(6),
 // nothing could say what became of it, and a decision in the list that waits
 // is one a reader waits for. It is carried by the first job end that finds
 // its document extracted, as after the extract that reads it. A claim the
-// list already has a decision for is left as it is, whatever its id.
+// list already has a decision for, by its key or by the statement at its
+// place (as the engine binds a release), is left as it is, whatever its id;
+// so is a decision the list holds a copy of under the key its claim had
+// before it was approved again (SettleFoundryReleases).
+//
+// A release of a claim the ontology holds a rejection of (foundryClaimAt) is
+// never carried, and a copy of one the list has not written goes: the load
+// list never sends it (ListFoundryLoadDecisions), so it would wait for good,
+// owing its document a resend at every job's end. Only rows saved before a
+// rejection took a claim's approvals under every key, or by an older binary,
+// are such.
 //
 // First the list loses the releases it has not written whose decision is
 // gone. Removing a decision takes it from the load that is current then
@@ -81,18 +107,23 @@ func (s *mysqlDB) carryFoundryReleases(ctx context.Context, o *model.FoundryOnto
 	}
 	loadID := *o.CurrentLoadID
 	// <=> is NULL-safe: a copy no job has reported on has no status.
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
-WHERE load_id=? AND kind='release' AND NOT (applied_status <=> 'written')
-  AND id NOT IN (SELECT id FROM foundry_review_decisions WHERE ontology_id=?)`, loadID, o.ID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DELETE l FROM foundry_load_decisions l
+WHERE l.load_id=? AND l.kind='release' AND NOT (l.applied_status <=> 'written')
+  AND (l.id NOT IN (SELECT id FROM foundry_review_decisions WHERE ontology_id=?) OR `+foundryRejected("l", "?")+`)`, loadID, o.ID, o.ID); err != nil {
 		return err
 	}
+	// Two anti-joins, each on an index (the list's primary key, and its
+	// documents' index), where one with an OR would scan the list for each
+	// decision.
 	columns := "r." + strings.ReplaceAll(foundryReviewDecisionColumns, ", ", ", r.")
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
 SELECT ?, `+columns+`, 'carried' FROM foundry_review_decisions r
 JOIN foundry_load_extractions e ON e.load_id=? AND e.document_id=r.doc_id AND e.status='extracted'
-LEFT JOIN foundry_load_decisions l ON l.load_id=? AND l.kind='release' AND l.doc_id=r.doc_id AND l.claim_key=r.claim_key
-  AND l.claim_section=r.claim_section AND l.claim_start=r.claim_start AND l.claim_end=r.claim_end
-WHERE r.ontology_id=? AND r.kind='release' AND l.id IS NULL`, loadID, loadID, loadID, o.ID); err != nil {
+WHERE r.ontology_id=? AND r.kind='release' AND NOT `+foundryRejected("r", "r.ontology_id")+`
+  AND NOT EXISTS (SELECT 1 FROM foundry_load_decisions l WHERE l.load_id=? AND l.id=r.id)
+  AND NOT EXISTS (SELECT 1 FROM foundry_load_decisions l WHERE l.load_id=? AND l.kind='release' AND l.doc_id=r.doc_id
+    AND l.claim_section=r.claim_section AND l.claim_start=r.claim_start AND l.claim_end=r.claim_end
+    AND (l.claim_key=r.claim_key OR l.statement_hash=r.statement_hash))`, loadID, loadID, o.ID, loadID, loadID); err != nil {
 		return err
 	}
 	// A document whose row left extracted since (a failure recorded over it)
@@ -108,17 +139,92 @@ ON DUPLICATE KEY UPDATE status='owed', requests=requests+1, requested_at=NOW(6),
 	return err
 }
 
+// carryFoundryValues brings the ontology's current load the value decisions
+// saved while another load was current, as during this one's writing, which
+// its creation could not copy: each the list lacks joins it as carried, and
+// one the list holds of a property since decided anew, under another id,
+// gives way to what was chosen last, so the list never decides a property
+// twice, which the engine refuses; so does one a person took back that the
+// load was not yet told of (model.FoundryValueRemoved). The decision that
+// takes a copy's place keeps the documents that copy was decided from, so
+// the property is withheld from no fewer readers. Then the load owes the
+// engine its decisions again (model.FoundryResendDecisions). A value decision
+// names no document, so there is none to wait for: the resend that follows
+// carries every one, and none is left waiting.
+//
+// A copy under the id of the decision that stands, from another time, is
+// left as it is: before a changed value had a new id the load read another
+// value under that id, and the engine, which keeps a decision once by its
+// id, would set nothing if it were sent the new one. That load says nothing
+// of the decision (ListFoundryDecisionsApplied) until it is chosen again
+// there, as a new decision.
+//
+// A value that waits, or one taken back, with nothing owed for it is owed
+// here: an older binary ends the load's own request unsent (it reads it as a
+// document that is gone), and a job that was requeued in place of its end
+// queued nothing. One whose job failed is not owed again until the next job
+// ends (FinishFoundryGraphJob). The caller holds the ontology's lock.
+func (s *mysqlDB) carryFoundryValues(ctx context.Context, o *model.FoundryOntology) error {
+	if o.CurrentLoadID == nil {
+		return nil
+	}
+	loadID := *o.CurrentLoadID
+	if _, err := s.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_review_decision_documents (decision_id, document_id)
+SELECT r.id, dd.document_id FROM foundry_load_decisions l
+JOIN foundry_review_decisions r ON r.ontology_id=? AND r.kind='prop' AND r.type=l.type AND r.entity_key=l.entity_key AND r.prop=l.prop AND r.id<>l.id
+JOIN foundry_review_decision_documents dd ON dd.decision_id=l.id
+WHERE l.load_id=? AND l.kind='prop'`, o.ID, loadID); err != nil {
+		return err
+	}
+	replaced, err := s.db.ExecContext(ctx, `DELETE l FROM foundry_load_decisions l
+JOIN foundry_review_decisions r ON r.ontology_id=? AND r.kind='prop' AND r.type=l.type AND r.entity_key=l.entity_key AND r.prop=l.prop
+WHERE l.load_id=? AND l.kind='prop' AND r.id<>l.id`, o.ID, loadID)
+	if err != nil {
+		return err
+	}
+	columns := "r." + strings.ReplaceAll(foundryReviewDecisionColumns, ", ", ", r.")
+	carried, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
+SELECT ?, `+columns+`, 'carried' FROM foundry_review_decisions r
+LEFT JOIN foundry_load_decisions l ON l.load_id=? AND l.id=r.id
+WHERE r.ontology_id=? AND r.kind='prop' AND l.id IS NULL`, loadID, loadID, o.ID)
+	if err != nil {
+		return err
+	}
+	var changed int64
+	for _, res := range []sql.Result{replaced, carried} {
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		changed += n
+	}
+	if changed == 0 {
+		var unowed bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_decisions
+  WHERE load_id=? AND kind='prop' AND applied_status IN ('pending', 'carried', 'removed') AND applied_reason IS NULL)
+AND NOT EXISTS (SELECT 1 FROM foundry_load_resends WHERE load_id=? AND document_id='' AND reason=? AND status='owed')`,
+			loadID, loadID, string(model.FoundryResendDecisions)).Scan(&unowed); err != nil || !unowed {
+			return err
+		}
+	}
+	return s.oweFoundryResends(ctx, loadID, model.FoundryResendDecisions, []string{""})
+}
+
 // queueFoundryResend queues job, a resend into the ontology's current load,
-// when that load owes a document one, first carrying over the approvals the
-// load hasn't read (carryFoundryReleases); queued reports whether it did. The
-// job is due after wait, which a request that comes meanwhile puts off again
-// (SettleFoundryReleases). The caller holds the ontology's lock and no job is
-// live.
+// when that load owes the engine one, first carrying over the approvals and
+// the value decisions the load hasn't read (carryFoundryReleases,
+// carryFoundryValues); queued reports whether it did. The job is due after
+// wait, which a request that comes meanwhile puts off again
+// (queueFoundryResendBehind). The caller holds the ontology's lock and no job
+// is live.
 func (s *mysqlDB) queueFoundryResend(ctx context.Context, o *model.FoundryOntology, job *model.FoundryGraphJob, wait time.Duration) (queued bool, err error) {
 	if o.CurrentLoadID == nil {
 		return false, nil
 	}
 	if err := s.carryFoundryReleases(ctx, o); err != nil {
+		return false, err
+	}
+	if err := s.carryFoundryValues(ctx, o); err != nil {
 		return false, err
 	}
 	loadID := *o.CurrentLoadID
@@ -127,7 +233,7 @@ func (s *mysqlDB) queueFoundryResend(ctx context.Context, o *model.FoundryOntolo
 		Scan(&owed); err != nil || !owed {
 		return false, err
 	}
-	if job.ID == "" {
+	if job == nil || job.ID == "" {
 		return false, fmt.Errorf("a load that owes a resend needs the resend job's id")
 	}
 	var versionID string
@@ -147,6 +253,49 @@ func (s *mysqlDB) queueFoundryResend(ctx context.Context, o *model.FoundryOntolo
 	return true, err
 }
 
+// queueFoundryResendBehind queues resend for what the ontology's current
+// load was just owed, where no job is in its way. With no job live it is
+// queued as a resend job of the load, due after model.FoundryResendSettle; a
+// queued resend of the load is put off by as much instead, so requests that
+// come together go in one job; a live delete gives way, as to a new load,
+// and resumes after; any other live job's end queues the resend
+// (queueAfterFoundryGraphJob). live is the ontology's live job, read before
+// any decision's row was written: a worker recording what became of a
+// decision holds its job's row first, so the two never wait on each other.
+// queued reports a job queued here. The caller holds the ontology's lock.
+func (s *mysqlDB) queueFoundryResendBehind(ctx context.Context, o *model.FoundryOntology, live, resend *model.FoundryGraphJob) (queued bool, err error) {
+	switch {
+	case live == nil:
+	case live.Kind == model.FoundryGraphJobDelete:
+		if err := s.cancelLiveFoundryGraphJob(ctx, o.ID, "a decision went first; the delete resumes after it"); err != nil {
+			return false, err
+		}
+	case live.Kind == model.FoundryGraphJobResend && o.CurrentLoadID != nil && live.LoadID == *o.CurrentLoadID &&
+		live.Status == model.FoundryGraphJobQueued:
+		_, err := s.db.ExecContext(ctx, `UPDATE foundry_load_jobs
+SET next_attempt_at=GREATEST(next_attempt_at, NOW(6) + INTERVAL ? MICROSECOND) WHERE id=? AND status='queued'`,
+			model.FoundryResendSettle.Microseconds(), live.ID)
+		return false, err
+	default:
+		return false, nil
+	}
+	return s.queueFoundryResend(ctx, o, resend, model.FoundryResendSettle)
+}
+
+// FoundryLoadDecisionsOwed returns the request a load owes the engine its
+// value decisions for (model.FoundryResendDecisions), or nil when it owes
+// none. A job reads it before it sends an Extract, so the request it ends is
+// one every decision it sent was part of (EndFoundryLoadResend).
+func (s *mysqlDB) FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error) {
+	r := &model.FoundryLoadResend{LoadID: loadID, Reason: model.FoundryResendDecisions}
+	err := s.db.QueryRowContext(ctx, `SELECT requests FROM foundry_load_resends
+WHERE load_id=? AND document_id='' AND reason=? AND status='owed'`, loadID, string(model.FoundryResendDecisions)).Scan(&r.Requests)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return r, err
+}
+
 // ListFoundryLoadResends returns the documents a load owes a resend, in the
 // order a load sends its documents (ListPendingFoundryDocuments), so a
 // resend's releases go in the order a fresh load's would; those that can't be
@@ -154,7 +303,7 @@ func (s *mysqlDB) queueFoundryResend(ctx context.Context, o *model.FoundryOntolo
 // load still holds its document (FoundryLoadResend.Unsendable).
 func (s *mysqlDB) ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT document_id, reason, requests FROM foundry_load_resends
-WHERE load_id=? AND status='owed' ORDER BY document_id, reason`, loadID)
+WHERE load_id=? AND status='owed' AND reason<>? ORDER BY document_id, reason`, loadID, string(model.FoundryResendDecisions))
 	if err != nil {
 		return nil, err
 	}
@@ -242,11 +391,19 @@ WHERE d.status='uploaded' AND d.id IN (`+idPlaceholders(len(ids))+`)`, append([]
 	return append(out, unsendable...), nil
 }
 
-// EndFoundryLoadResend ends a document's resend into the job's load, while
-// workerID holds the job's lease; ErrNotFound means it lost it, and nothing
-// was written. The row ends only if it is still the request the job read
+// EndFoundryLoadResend ends a document's resend into the job's load, or the
+// load's own (model.FoundryResendDecisions, no document), while workerID
+// holds the job's lease; ErrNotFound means it lost it, and nothing was
+// written. The row ends only if it is still the request the job read
 // (end.Requests): one owed again meanwhile stays owed, and the job's end
-// queues another resend. With end.Refused, the document's release decisions
+// queues another resend. Ending the load's own request marks every value
+// decision of the load that waited applied (model.FoundryValueApplied), one
+// left unconfirmed by a failed job included: no value was decided or removed
+// since the job read the request, so the Extract that just ended carried
+// each of them. The ones taken back (model.FoundryValueRemoved) leave the
+// list then: that Extract carried none of them, so the engine has withdrawn
+// each, and the load no longer holds a value to withhold. With end.Refused,
+// the document's release decisions
 // that wait for the request are refused for that reason, as the engine said
 // nothing of them; a request owed again since is not this job's to answer,
 // so its decisions go on waiting for the job that sends them all. One left
@@ -268,8 +425,21 @@ WHERE load_id=? AND document_id=? AND reason=? AND requests=? AND status='owed'`
 		if err != nil {
 			return err
 		}
-		if n, err := ended.RowsAffected(); err != nil || n == 0 || end.Refused == "" {
+		n, err := ended.RowsAffected()
+		if err != nil || n == 0 {
 			return err
+		}
+		if end.Reason == model.FoundryResendDecisions {
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_status=?, applied_reason=NULL, applied_at=NOW(6)
+WHERE load_id=? AND kind='prop' AND applied_status IN ('pending', 'carried')`, string(model.FoundryValueApplied), loadID); err != nil {
+				return err
+			}
+			_, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions WHERE load_id=? AND kind='prop' AND applied_status=?`,
+				loadID, string(model.FoundryValueRemoved))
+			return err
+		}
+		if end.Refused == "" {
+			return nil
 		}
 		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_status='refused', applied_reason=?, applied_at=NOW(6)
 WHERE load_id=? AND kind='release' AND doc_id=? AND applied_status IN ('pending', 'carried') AND applied_reason IS NULL`,
@@ -287,9 +457,22 @@ WHERE load_id=? AND kind='release' AND doc_id=? AND applied_status IN ('pending'
 // (a pending one the engine no longer holds a review for was written), and
 // their reason says the job failed, so their cards say so rather than wait
 // for a job that won't come. The rows end, so the job's end queues no other.
-// Approving again owes the document anew. The caller holds the ontology's
-// lock.
+// Approving again owes the document anew. The value decisions that still
+// wait are unconfirmed the same way, and so are the ones taken back that the
+// load was to be told of: the load's list holds them, so its next Extract of
+// any kind carries the first and none of the second, and the next resend
+// that ends the load's own request marks the first applied and drops the
+// second. Choosing a value again queues that resend, and so does the end of
+// the ontology's next job, which owes the list again
+// (FinishFoundryGraphJob): the engine keeps a value decision once and
+// withdraws one it is not sent, so sending the list again costs nothing and
+// changes nothing it already did, and a withdrawal has no card a person
+// could send it from. The caller holds the ontology's lock.
 func (s *mysqlDB) failFoundryResends(ctx context.Context, job *model.FoundryGraphJob) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_reason=?
+WHERE load_id=? AND kind='prop' AND applied_status IN ('pending', 'carried', 'removed')`, model.FoundryReleaseJobFailed, job.LoadID); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_reason=?
 WHERE load_id=? AND kind='release' AND applied_status IN ('pending', 'carried')
   AND doc_id IN (SELECT document_id FROM foundry_load_resends WHERE load_id=? AND reason=? AND status='owed')`,
@@ -339,11 +522,13 @@ WHERE load_id=? AND id=?`, string(status), why, loadID, o.DecisionID); err != ni
 	return nil
 }
 
-// ListFoundryDecisionsApplied returns what became of the given release
-// decisions in the ontology's current load, by decision id; a decision that
-// load's list doesn't hold is absent, as is one of another kind, and one it
-// holds that no job has reported on has the empty status. One that waits
-// with a reason is unconfirmed (model.FoundryDecisionApplied.Unconfirmed).
+// ListFoundryDecisionsApplied returns what became of the given release and
+// value decisions in the ontology's current load, by decision id; a decision
+// that load's list doesn't hold is absent, as is a resolve, and one it holds
+// that no job has reported on has the empty status. One that waits with a
+// reason is unconfirmed (model.FoundryDecisionApplied.Unconfirmed). A value
+// the list holds under the decision's id from another time is not that
+// decision (carryFoundryValues), and is absent too.
 func (s *mysqlDB) ListFoundryDecisionsApplied(ctx context.Context, ontologyID string, ids []string) (map[string]model.FoundryDecisionApplied, error) {
 	out := map[string]model.FoundryDecisionApplied{}
 	if len(ids) == 0 {
@@ -351,7 +536,9 @@ func (s *mysqlDB) ListFoundryDecisionsApplied(ctx context.Context, ontologyID st
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT l.id, l.applied_status, l.applied_reason, l.applied_at FROM foundry_ontologies o
 JOIN foundry_load_decisions l ON l.load_id=o.current_load_id
-WHERE o.id=? AND l.kind='release' AND l.id IN (`+idPlaceholders(len(ids))+`)`, append([]any{ontologyID}, toAnySlice(ids)...)...)
+WHERE o.id=? AND l.id IN (`+idPlaceholders(len(ids))+`) AND (l.kind='release' OR l.kind='prop' AND EXISTS (
+  SELECT 1 FROM foundry_review_decisions r WHERE r.ontology_id=o.id AND r.id=l.id AND r.decided_at=l.decided_at))`,
+		append([]any{ontologyID}, toAnySlice(ids)...)...)
 	if err != nil {
 		return nil, err
 	}
