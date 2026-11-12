@@ -48,6 +48,22 @@ type accessStore struct {
 	// restricted are each workspace's restricted members.
 	restricted map[string][]string
 	teams      []foundrymodel.FoundryTeam
+	// workflowsOff are the principals whose Workflows permission is off.
+	workflowsOff []access.Principal
+}
+
+func (s *accessStore) ListFoundryAccessWorkflowsOff(_ context.Context, _ string, principals []access.Principal) ([]access.Principal, error) {
+	return slices.DeleteFunc(slices.Clone(s.workflowsOff), func(p access.Principal) bool {
+		return len(principals) > 0 && !slices.Contains(principals, p)
+	}), nil
+}
+
+func (s *accessStore) SetFoundryAccessWorkflows(_ context.Context, _ string, p access.Principal, on bool, _ *string) error {
+	s.workflowsOff = slices.DeleteFunc(s.workflowsOff, func(x access.Principal) bool { return x == p })
+	if !on {
+		s.workflowsOff = append(s.workflowsOff, p)
+	}
+	return nil
 }
 
 func (s *accessStore) ListFoundryAccessGrants(_ context.Context, workspaceID string, principals []access.Principal) ([]foundrymodel.FoundryAccessGrant, error) {
@@ -353,7 +369,7 @@ func TestGranteeRulesReadTheirRequest(t *testing.T) {
 	for _, m := range servedMethods(t) {
 		fields := m.Input().Fields()
 		switch access.RuleOf(fullMethod(m)) {
-		case access.Ontology:
+		case access.Ontology, access.Workflows:
 			if fields.ByName("ontology_id") == nil {
 				t.Errorf("%s admits a grantee to an ontology it doesn't name", m.Name())
 			}
@@ -391,6 +407,24 @@ func TestGranteeDeniedMethods(t *testing.T) {
 	}
 	if denied < 60 {
 		t.Fatalf("only %d methods refuse a grantee", denied)
+	}
+}
+
+// A rejection is a settle: a grantee, whose access to an ontology is partial,
+// never reaches it, whichever decision the request carries.
+func TestGranteeRejectsNoClaim(t *testing.T) {
+	s, _ := accessService(t)
+	conn, as := served(t, s)
+	client := foundryv1.NewFoundryServiceClient(conn)
+	for _, who := range []ports.Actor{agent, member} {
+		for _, choice := range []*foundryv1.FoundryReviewChoice{rejectChoice(testRead), releaseChoice(testRead)} {
+			_, err := client.SettleFoundryReview(as(who), &foundryv1.SettleFoundryReviewRequest{
+				WorkspaceId: "ws-1", OntologyId: "ont-1", ReviewId: "review-1", Decision: choice,
+			})
+			if status.Code(err) != codes.PermissionDenied {
+				t.Errorf("%+v settling %v: %v", who, choice, err)
+			}
+		}
 	}
 }
 

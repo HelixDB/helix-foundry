@@ -40,6 +40,7 @@ func IntegrationHandler(auth *Authenticator, dir *directory.Store, conn *grpc.Cl
 	service := &integration.Service{
 		Foundry:   client,
 		Actions:   integration.FoundryClients{FoundryServiceClient: client, FoundryEventsServiceClient: foundryv1.NewFoundryEventsServiceClient(conn)},
+		Workflows: client,
 		Directory: localIntegrationDirectory{dir, directoryClient}, Confirmations: directory.Confirmations{Store: dir},
 		Documents: documents, FoundryURL: strings.TrimRight(siteOrigin, "/"), ResourceURI: mcpAudience, Logger: logger,
 	}

@@ -45,6 +45,20 @@
         }
       }
     },
+    "v1CreateFoundryReminderResponse": {
+      "type": "object",
+      "properties": {
+        "nextSendAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the address's next reminder goes."
+        },
+        "again": {
+          "type": "boolean",
+          "description": "The address already had a schedule running, which this request left as\nit was."
+        }
+      }
+    },
     "v1EventSourceCapacity": {
       "type": "object",
       "properties": {
@@ -163,6 +177,9 @@
           "description": "Set from 80% full: how full the source is and what happens at 100%."
         }
       }
+    },
+    "v1StopFoundryRemindersResponse": {
+      "type": "object"
     },
     "v1ValidateFoundryEventSourceTokenResponse": {
       "type": "object",

@@ -13,3 +13,11 @@ var requestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		"unauthorized, invalid_token, not_found, request_timeout, invalid_arguments, failed_precondition, resource_exhausted, " +
 		"backend_unavailable or internal).",
 }, []string{"code"})
+
+// reminderRequestsTotal counts the reminders' answers by route (create or stop) and code: ok for a
+// 200, or the error body's code.
+var reminderRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_events_reminder_requests_total",
+	Help: "The site's reminder requests by route (create, stop) and answer: ok, or the error's code (rate_limited, payload_too_large, " +
+		"unsupported_media_type, unauthorized, request_timeout, invalid_arguments, not_found, backend_unavailable or internal).",
+}, []string{"route", "code"})

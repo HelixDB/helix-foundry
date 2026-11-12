@@ -49,6 +49,7 @@ const (
 	Agent_Turn_FullMethodName       = "/ontology_agent.v1.Agent/Turn"
 	Agent_GetInfo_FullMethodName    = "/ontology_agent.v1.Agent/GetInfo"
 	Agent_Title_FullMethodName      = "/ontology_agent.v1.Agent/Title"
+	Agent_Assess_FullMethodName     = "/ontology_agent.v1.Agent/Assess"
 	Agent_Probe_FullMethodName      = "/ontology_agent.v1.Agent/Probe"
 	Agent_Revise_FullMethodName     = "/ontology_agent.v1.Agent/Revise"
 	Agent_Ingest_FullMethodName     = "/ontology_agent.v1.Agent/Ingest"
@@ -95,6 +96,14 @@ type AgentClient interface {
 	// no titles. RESOURCE_EXHAUSTED: the server writes as many titles as it allows at once.
 	// UNAVAILABLE: the server is shutting down.
 	Title(ctx context.Context, in *TitleRequest, opts ...grpc.CallOption) (*TitleResponse, error)
+	// Assesses a workflow run: how much what an agent read of an ontology made its answer to
+	// one request, the answer's claims and the calls that bear on them, what the ontology
+	// lacked and what would close it. One structured call of the request's model, whose failure
+	// is a result, not a gRPC error. The errors are Title's: INVALID_ARGUMENT for a request_json
+	// that is not an AssessRequest or fails its checks (an empty request id or output, more than
+	// 1000 calls, or two calls with one seq), RESOURCE_EXHAUSTED for as many assessments as the
+	// server runs at once.
+	Assess(ctx context.Context, in *AssessRequest, opts ...grpc.CallOption) (*AssessResponse, error)
 	// Checks whether an endpoint's models can do what each role needs, with the roles' real
 	// tools and schemas: a model the price table lacks fails its check `unpriced` with no call,
 	// and each check's failure is a result, not a gRPC error. The errors are Title's, a
@@ -333,6 +342,16 @@ func (c *agentClient) Title(ctx context.Context, in *TitleRequest, opts ...grpc.
 	return out, nil
 }
 
+func (c *agentClient) Assess(ctx context.Context, in *AssessRequest, opts ...grpc.CallOption) (*AssessResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AssessResponse)
+	err := c.cc.Invoke(ctx, Agent_Assess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *agentClient) Probe(ctx context.Context, in *ProbeRequest, opts ...grpc.CallOption) (*ProbeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ProbeResponse)
@@ -521,6 +540,14 @@ type AgentServer interface {
 	// no titles. RESOURCE_EXHAUSTED: the server writes as many titles as it allows at once.
 	// UNAVAILABLE: the server is shutting down.
 	Title(context.Context, *TitleRequest) (*TitleResponse, error)
+	// Assesses a workflow run: how much what an agent read of an ontology made its answer to
+	// one request, the answer's claims and the calls that bear on them, what the ontology
+	// lacked and what would close it. One structured call of the request's model, whose failure
+	// is a result, not a gRPC error. The errors are Title's: INVALID_ARGUMENT for a request_json
+	// that is not an AssessRequest or fails its checks (an empty request id or output, more than
+	// 1000 calls, or two calls with one seq), RESOURCE_EXHAUSTED for as many assessments as the
+	// server runs at once.
+	Assess(context.Context, *AssessRequest) (*AssessResponse, error)
 	// Checks whether an endpoint's models can do what each role needs, with the roles' real
 	// tools and schemas: a model the price table lacks fails its check `unpriced` with no call,
 	// and each check's failure is a result, not a gRPC error. The errors are Title's, a
@@ -728,6 +755,9 @@ func (UnimplementedAgentServer) GetInfo(context.Context, *GetInfoRequest) (*GetI
 func (UnimplementedAgentServer) Title(context.Context, *TitleRequest) (*TitleResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Title not implemented")
 }
+func (UnimplementedAgentServer) Assess(context.Context, *AssessRequest) (*AssessResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Assess not implemented")
+}
 func (UnimplementedAgentServer) Probe(context.Context, *ProbeRequest) (*ProbeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Probe not implemented")
 }
@@ -824,6 +854,24 @@ func _Agent_Title_Handler(srv interface{}, ctx context.Context, dec func(interfa
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AgentServer).Title(ctx, req.(*TitleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_Assess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).Assess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_Assess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).Assess(ctx, req.(*AssessRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1005,6 +1053,10 @@ var Agent_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Title",
 			Handler:    _Agent_Title_Handler,
+		},
+		{
+			MethodName: "Assess",
+			Handler:    _Agent_Assess_Handler,
 		},
 		{
 			MethodName: "Probe",

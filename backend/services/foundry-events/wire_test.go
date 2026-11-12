@@ -53,6 +53,14 @@ func TestReadBody(t *testing.T) {
 		require.Nil(t, fail)
 		assert.Equal(t, body{ClientToken: "t", Pieces: []bodyPiece{{ID: "o-1", OccurredAt: "2026-01-02T03:04:05Z", Data: json.RawMessage(`{ "n" : 1.10 }`)}}}, b)
 	})
+	t.Run("reads a send's workflow run, and forwards it", func(t *testing.T) {
+		b, fail := readBody(strings.NewReader(`{"client_token":"` + clientToken + `","workflow_run_id":"run-1","pieces":[{"id":"o-1","data":{}}]}`))
+		require.Nil(t, fail)
+		assert.Equal(t, "run-1", b.WorkflowRunID)
+		req, fail := sendRequest(b, "workspace-1", "source-1", events.Limits{MaxPieces: 3, MaxBytes: 100, MaxPieceBytes: 50})
+		require.Nil(t, fail)
+		assert.Equal(t, "run-1", req.GetWorkflowRunId())
+	})
 }
 
 // failing is a reader that fails with err.

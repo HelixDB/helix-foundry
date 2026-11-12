@@ -1,0 +1,31 @@
+{
+  "first": [
+    {"name": "a weekday before 08:00", "now": "2026-11-10T07:30:00Z", "zone": "Europe/London", "want": "2026-11-10T09:00:00Z"},
+    {"name": "exactly an hour before", "now": "2026-11-10T08:00:00Z", "zone": "Europe/London", "want": "2026-11-10T09:00:00Z"},
+    {"name": "a weekday after 08:00", "now": "2026-11-10T08:30:00Z", "zone": "Europe/London", "want": "2026-11-11T09:00:00Z"},
+    {"name": "a Friday evening", "now": "2026-11-13T19:00:00Z", "zone": "Europe/London", "want": "2026-11-16T09:00:00Z"},
+    {"name": "a Saturday", "now": "2026-11-14T10:00:00Z", "zone": "Europe/London", "want": "2026-11-16T09:00:00Z"},
+    {"name": "late on a Sunday", "now": "2026-11-15T23:30:00Z", "zone": "Europe/London", "want": "2026-11-16T09:00:00Z"},
+    {"name": "a Friday before 08:00 in New York", "now": "2026-11-13T12:00:00Z", "zone": "America/New_York", "want": "2026-11-13T14:00:00Z"},
+    {"name": "the weekend London's clocks go forward", "now": "2027-03-27T12:00:00Z", "zone": "Europe/London", "want": "2027-03-29T08:00:00Z"},
+    {"name": "the weekend London's clocks go back", "now": "2026-10-23T18:00:00Z", "zone": "Europe/London", "want": "2026-10-26T09:00:00Z"},
+    {"name": "the weekend New York's clocks go forward", "now": "2027-03-12T20:00:00Z", "zone": "America/New_York", "want": "2027-03-15T13:00:00Z"},
+    {"name": "the weekend New York's clocks go back", "now": "2026-10-30T21:00:00Z", "zone": "America/New_York", "want": "2026-11-02T14:00:00Z"},
+    {"name": "a day ahead of UTC, at UTC+14", "now": "2026-11-10T18:00:00Z", "zone": "Pacific/Kiritimati", "want": "2026-11-10T19:00:00Z"},
+    {"name": "a weekend at UTC+14 that is a weekday in UTC", "now": "2026-11-13T12:00:00Z", "zone": "Pacific/Kiritimati", "want": "2026-11-15T19:00:00Z"},
+    {"name": "half an hour off, at UTC-3:30", "now": "2026-11-10T12:00:00Z", "zone": "America/St_Johns", "want": "2026-11-11T12:30:00Z"}
+  ],
+  "after": [
+    {"name": "a week later", "last": "2026-11-10T09:00:00Z", "zone": "Europe/London", "days": 7, "want": "2026-11-17T09:00:00Z"},
+    {"name": "two weeks later", "last": "2026-11-13T09:00:00Z", "zone": "Europe/London", "days": 14, "want": "2026-11-27T09:00:00Z"},
+    {"name": "four weeks later", "last": "2026-11-10T09:00:00Z", "zone": "Europe/London", "days": 28, "want": "2026-12-08T09:00:00Z"},
+    {"name": "a day on a weekend moves to Monday", "last": "2026-11-16T09:00:00Z", "zone": "Europe/London", "days": 5, "want": "2026-11-23T09:00:00Z"},
+    {"name": "the day counts, not the hour", "last": "2026-11-10T22:30:00Z", "zone": "Europe/London", "days": 7, "want": "2026-11-17T09:00:00Z"},
+    {"name": "a week across London's clocks going forward", "last": "2027-03-22T09:00:00Z", "zone": "Europe/London", "days": 7, "want": "2027-03-29T08:00:00Z"},
+    {"name": "a week across London's clocks going back", "last": "2026-10-19T08:00:00Z", "zone": "Europe/London", "days": 7, "want": "2026-10-26T09:00:00Z"},
+    {"name": "a week across New York's clocks going forward", "last": "2027-03-09T14:00:00Z", "zone": "America/New_York", "days": 7, "want": "2027-03-16T13:00:00Z"},
+    {"name": "a week across New York's clocks going back", "last": "2026-10-26T13:00:00Z", "zone": "America/New_York", "days": 7, "want": "2026-11-02T14:00:00Z"},
+    {"name": "the local day at UTC+14, not UTC's", "last": "2026-11-10T19:00:00Z", "zone": "Pacific/Kiritimati", "days": 7, "want": "2026-11-17T19:00:00Z"},
+    {"name": "two weeks at UTC-3:30", "last": "2026-11-11T12:30:00Z", "zone": "America/St_Johns", "days": 14, "want": "2026-11-25T12:30:00Z"}
+  ]
+}

@@ -1,4 +1,7 @@
-import type { ReviewDecision } from "../../src/shared/wfe";
+import type {
+  FoundryReviewDecision,
+  ReviewDecision,
+} from "../../src/shared/wfe";
 import { createHash } from "node:crypto";
 import {
   FOUNDRY_EDGES as E,
@@ -7,6 +10,7 @@ import {
 import { ENRICHMENT_SOURCE } from "../../src/web/areas/ontology/enrichment-fields";
 import { isEmpty, type Scope } from "./scope";
 import type { LoadGraph, Props, Value } from "./store";
+import { onReset } from "../state";
 
 // The mock's stand-in for the ontology agent's Ingest and Extract RPCs:
 // deterministic, with no model, writing the graph layout the engine writes
@@ -50,8 +54,9 @@ import type { LoadGraph, Props, Value } from "./store";
 //   -FOUNDRY_FROM_SECTION-> FoundrySection, -FOUNDRY_CONCERNS-> its
 //   candidates (stored customers sharing a word of it, by their stored
 //   identity) and the Contract. Text never creates a keyed entity. With
-//   `adjudicate`, its first candidate links it instead, and the review is
-//   that rung's ("adjudicated" or "legal_form"), naming that one only.
+//   `linkedBy`, its first candidate links it instead, and the review is that
+//   rung's ("adjudicated", "legal_form", "part_name" or "own_name"), naming
+//   that one only; only the model's link has a confidence.
 // - When the scope lets documents create Contracts, a document naming a
 //   company is a Contract {norm_name, name, foundry_part: "<load>:documents"}
 //   named by its first heading (or file name), signed_with every company it
@@ -620,13 +625,23 @@ const sameValue = (a: Value, b: Value) =>
     : JSON.stringify(a) === JSON.stringify(b);
 
 /**
+ * The value a table row set of an entity's prop, kept aside while a decision
+ * replaces it, as the engine keeps the row's statement: what the rows and
+ * quotes give without the decision, and the value again once it is removed.
+ * Keyed by the entity's node.
+ */
+const rowValues = new WeakMap<object, Map<string, Value | undefined>>();
+
+/**
  * Sets an entity's prop from the whole set of evidence about it, so the
  * order documents came in never matters: a decision's value (null removes
  * it) wins; a value a row set stays; evidence that agrees sets the value
  * of the most confident (ties by document id); evidence that disagrees
  * removes it. The quotes a conflict's review lists, as the engine's
- * attribute::settle gives them: those disagreeing with a row's value, or
- * every quote when documents disagree; none without a conflict.
+ * attribute::settle gives them from contract 4.14.0, weighed without the
+ * decision: those disagreeing with a row's value, or every quote when
+ * documents disagree; none without a conflict. So a load lists the same
+ * review before a decision, with it and after it is removed.
  */
 function settle(
   g: LoadGraph,
@@ -642,13 +657,6 @@ function settle(
       d.entityKey === (node.props.entity_key ?? node.props.norm_name) &&
       d.prop === prop,
   );
-  if (decision?.kind === "prop") {
-    const v = decision.value;
-    if (v.null !== undefined) delete node.props[prop];
-    else if (v.integer !== undefined) node.props[prop] = Number(v.integer);
-    else node.props[prop] = v.text ?? v.number ?? v.boolean!;
-    return [];
-  }
   const about = [...g.graph.edges.values()]
     .filter((e) => e.label === E.ABOUT && e.to === entity)
     .flatMap((e) => {
@@ -666,16 +674,56 @@ function settle(
         Number(b.props.confidence) - Number(a.props.confidence) ||
         String(a.props.doc_id).localeCompare(String(b.props.doc_id)),
     );
-  if (rowSet)
-    return quotes
-      .filter((q) => !sameValue(q.props.value!, node.props[prop]!))
-      .map((q) => q.props);
+  const kept = rowValues.get(node);
+  const row = kept?.has(prop) ? kept.get(prop) : node.props[prop];
   const agree = quotes.every((q) =>
     sameValue(q.props.value!, quotes[0]!.props.value!),
   );
-  if (agree && quotes.length) node.props[prop] = quotes[0]!.props.value!;
+  const disagreeing = rowSet
+    ? quotes.filter((q) => row === undefined || !sameValue(q.props.value!, row))
+    : agree
+      ? []
+      : quotes;
+  if (decision?.kind === "prop") {
+    if (rowSet && !kept?.has(prop))
+      rowValues.set(node, (kept ?? new Map()).set(prop, row));
+    const v = decision.value;
+    if (v.null !== undefined) delete node.props[prop];
+    else if (v.integer !== undefined) node.props[prop] = Number(v.integer);
+    else node.props[prop] = v.text ?? v.number ?? v.boolean!;
+  } else if (kept?.has(prop)) {
+    // The decision is gone: the row's value again.
+    if (row === undefined) delete node.props[prop];
+    else node.props[prop] = row;
+    kept.delete(prop);
+  } else if (rowSet) {
+    // The row's value stays.
+  } else if (agree && quotes.length) node.props[prop] = quotes[0]!.props.value!;
   else delete node.props[prop];
-  return agree ? [] : quotes.map((q) => q.props);
+  return disagreeing.map((q) => q.props);
+}
+
+/**
+ * Applies a load's value decisions to the entity of `type` and `key` (its
+ * `entity_key`, or a named type's `norm_name`), as the engine does when an
+ * Extract carries them: a decision of `prop` sets its value (null removes
+ * it), and with none the prop is what its evidence gives: a value a table
+ * row set is the row's again at once, as the engine restores it. False when
+ * the load holds no such entity.
+ */
+export function decideValue(
+  g: LoadGraph,
+  type: string,
+  key: string,
+  prop: string,
+  decisions: ReviewDecision[],
+): boolean {
+  for (const n of g.nodes())
+    if (n.label === type && (n.props.entity_key ?? n.props.norm_name) === key) {
+      settle(g, n.id, prop, decisions);
+      return true;
+    }
+  return false;
 }
 
 /**
@@ -684,17 +732,57 @@ function settle(
  */
 type Nameable = { id: number; name?: string; ids: string[] };
 
+/** A release decision, as the mock ranks it: when it was decided, and its id. */
+type Approval = Partial<Pick<FoundryReviewDecision, "id" | "decidedAt">>;
+/** The approval each link that holds one value holds, by load, link and subject. */
+const approvals = new Map<string, { to: number; at: string; id: string }>();
+onReset(() => approvals.clear());
+
+/**
+ * From contract 4.14.0 the last decided of the approvals of a link that holds
+ * one value (by `decidedAt`, then id, as the engine ranks them) is its
+ * decision, whichever was written first. The engine dates it from its
+ * quote's date, else its document's, else when it was decided, and a
+ * statement dated later still beats it; the mock's sentences and documents
+ * give no date, so it beats every other statement: `from`'s edges of `link`
+ * to any other object go, an earlier approval's included, and their evidence
+ * stays. `approval` (decided `to`) is written; whether it holds the link is
+ * the decision's to say.
+ */
+function decide(
+  g: LoadGraph,
+  link: string,
+  from: number,
+  to: number,
+  approval: Approval,
+) {
+  const slot = [g.load, link, from].join("\u001f"),
+    at = approval.decidedAt ?? "",
+    was = approvals.get(slot);
+  const newest =
+    !was || at > was.at || (at === was.at && (approval.id ?? "") > was.id)
+      ? { to, at, id: approval.id ?? "" }
+      : was;
+  approvals.set(slot, newest);
+  for (const e of [...g.graph.edges.values()])
+    if (e.label === link && e.from === from && e.to !== newest.to)
+      g.graph.removeEdge(e.id);
+}
+
 /**
  * Writes what a held claim's review states as its fact, as the engine's
  * release does in a load that holds the review's document: the edge, or one
  * more piece of evidence of it, the evidence at the review's quote, at the
  * verifier's confidence (none for a claim no verifier judged), and the review
  * gone. Its ends are the entities the review concerns, in the link's order.
+ * On a link that holds one value, `one` is the approval, which decides the
+ * link if it is the newest (decide).
  */
 export function releaseReview(
   g: LoadGraph,
   review: number,
   written: { ontologyVersion: string; model: string; verifier: string },
+  one?: Approval,
 ) {
   const r = g.node(review);
   if (!r) return;
@@ -732,6 +820,7 @@ export function releaseReview(
   });
   g.addEdge(E.FROM_SECTION, ev, section);
   g.graph.removeNode(review);
+  if (one) decide(g, link, from, to, one);
 }
 
 export type ExtractOutcome =
@@ -740,9 +829,21 @@ export type ExtractOutcome =
   | { kind: "already_ingested" }
   | { kind: "duplicate"; of: string };
 
+/**
+ * A link on less than a name or a verified identifier, as the engine's
+ * resolution names it: each has a review a person can overturn, and holds an
+ * approval at its end.
+ */
+export type WeakLink = "legal_form" | "part_name" | "own_name";
+const WEAK_LINKS: readonly WeakLink[] = ["legal_form", "part_name", "own_name"];
+/** A link the load made that a person can undo: the model's, or a weak one. */
+export type UndoableLink = "adjudicated" | WeakLink;
+
 /** What extraction reads of the version's ontology.toml. */
 export type ExtractOntology = {
   types: Set<string>;
+  // The links that hold one value (`cardinality = "one"`).
+  oneValued?: Set<string>;
   // A type's first `names` prop.
   names: Map<string, string>;
   // A type's identifier props and their kind.
@@ -760,21 +861,26 @@ export function extractDocument(
   },
   ontology: ExtractOntology,
   scope: Scope,
-  decisions: ReviewDecision[] = [],
-  adjudicate?: "adjudicated" | "legal_form",
+  decisions: (ReviewDecision & Approval)[] = [],
+  // How a name no row holds exactly links to its first candidate, if at all.
+  linkedBy?: UndoableLink,
   // What the engine would make of a hedged claim, for a page to show:
-  // "refused" holds it however it's approved; "legal_form" too, with its name
-  // linked by form; "differs" gives its place a review stating something else,
-  // and refuses it; "unverified" is one no verifier judged, written at no
-  // confidence; "one_end" names one of its ends; "no_statement" is one an
-  // older load held, with no statement to approve.
+  // "refused" holds it however it's approved; "legal_form", "part_name" and
+  // "own_name" too, with its name linked that way and that link's review;
+  // "differs" gives its place a review stating something else, and refuses
+  // it; "unverified" is one no verifier judged, written at no confidence;
+  // "one_end" names one of its ends; "no_statement" is one an older load
+  // held, with no statement to approve; "conflict" is one held as
+  // conflicting with what its link holds, which an approval writes on a link
+  // that holds one value (contract 4.14.0), displacing what it held.
   held?:
     | "refused"
-    | "legal_form"
+    | WeakLink
     | "differs"
     | "unverified"
     | "one_end"
-    | "no_statement",
+    | "no_statement"
+    | "conflict",
   // The models that read and check it.
   readers: { model: string; verifier: string } = {
     model: MODEL,
@@ -952,12 +1058,12 @@ export function extractDocument(
   const unresolved = unknown.filter((u) => {
     const d = resolution(u.name, "Customer");
     if (d?.kind !== "resolve") {
-      const e = adjudicate ? candidates(u.name)[0] : undefined;
+      const e = linkedBy ? candidates(u.name)[0] : undefined;
       if (!e) return true;
       found.push({
         e,
-        hits: [{ s: u.s, i: u.i, surface: u.name, by: adjudicate! }],
-        resolvedBy: adjudicate!,
+        hits: [{ s: u.s, i: u.i, surface: u.name, by: linkedBy! }],
+        resolvedBy: linkedBy!,
       });
       adjudicated.push(u);
       return false;
@@ -1131,6 +1237,10 @@ export function extractDocument(
     }
   }
   const linked = contract !== undefined && scope.links.has("signed_with");
+  // The customer a person's approval gives a contract's signed_with, where
+  // that link holds one value: the newest approval of the document's, which
+  // decides the link if it is the newest the load has written (decide).
+  let approved: { to: number; release: Approval } | undefined;
   for (const { e, hits, resolvedBy } of found) {
     if (!hits.length) continue;
     counts.entities += 1;
@@ -1144,7 +1254,7 @@ export function extractDocument(
       confidence =
         resolvedBy === "identifier" ||
         resolvedBy === "adjudicated" ||
-        resolvedBy === "legal_form"
+        WEAK_LINKS.some((w) => w === resolvedBy)
           ? 0.95
           : resolvedBy === "name"
             ? 0.93
@@ -1153,6 +1263,9 @@ export function extractDocument(
     // releases it by its key, the same in every load, and written at the
     // verifier's confidence.
     let stated = confidence;
+    // A claim a person's approval released: its edge stands until the
+    // document's decide says which approval holds the link.
+    let approval = false;
     const [from, to] = sentenceAt(first.s.text, first.i);
     if (/\bmay\b/.test(first.s.text.slice(from, to))) {
       const about = [
@@ -1170,25 +1283,33 @@ export function extractDocument(
         object: { type: g.node(e.id)!.label, name: e.name || first.surface },
         props: {},
       });
-      const released = decisions.some(
-        (d) =>
-          d.kind === "release" &&
-          d.docId === doc.id &&
-          d.claimKey === claimKey &&
-          d.claimSection === first.s.ordinal &&
-          d.claimStart === place.start &&
-          d.claimEnd === place.end &&
-          d.statementHash === sha256(`signed_with\u001f${statement}`),
-      );
-      const refused =
-        held === "refused" || held === "legal_form" || held === "differs";
+      // By its key, or, as the engine binds one whose key names no review
+      // of the document (contract 4.14.0), by its place and statement.
+      const at = (d: ReviewDecision) =>
+        d.kind === "release" &&
+        d.docId === doc.id &&
+        d.claimSection === first.s.ordinal &&
+        d.claimStart === place.start &&
+        d.claimEnd === place.end &&
+        d.statementHash === sha256(`signed_with\u001f${statement}`);
+      const release =
+        decisions.find(
+          (d) => d.kind === "release" && d.claimKey === claimKey && at(d),
+        ) ?? decisions.find(at);
+      const released = !!release;
+      // The link its name stands on, where that holds the claim.
+      const weak = WEAK_LINKS.find((w) => w === held);
+      const refused = held === "refused" || !!weak || held === "differs";
       if (!released || refused) {
         const r = g.addNode(N.Review, {
           review_key: sha256(`${doc.id}\u001f${claimKey}`),
           doc_id: doc.id,
           section: first.s.ordinal,
           ...place,
-          reason: held === "unverified" ? "unverified" : "low_confidence",
+          reason:
+            held === "unverified" || held === "conflict"
+              ? held
+              : "low_confidence",
           claim_key: claimKey,
           claim,
           ...(held === "no_statement" ? {} : { statement }),
@@ -1215,14 +1336,17 @@ export function extractDocument(
           g.addEdge(E.CONCERNS, other, e.id);
           counts.reviews += 1;
         }
-        if (held === "legal_form") {
+        // At the name's first mention, as the engine writes a link's
+        // review: not at the claim's sentence.
+        if (weak) {
           const key = String(g.node(e.id)!.props.entity_key);
           const linked = g.addNode(N.Review, {
             review_key: sha256(`${doc.id}\u001f${claimKey}\u001fform`),
             doc_id: doc.id,
             section: first.s.ordinal,
-            ...place,
-            reason: "legal_form",
+            ...span(first.s.text, first.i, first.i + first.surface.length),
+            quote: first.surface,
+            reason: weak,
             type: "Customer",
             norm_name: normName(e.name || first.surface),
             entity_key: key,
@@ -1235,14 +1359,31 @@ export function extractDocument(
         continue;
       }
       stated = held === "unverified" ? 0 : 0.72;
+      approval = true;
+      const r = release!;
+      if (
+        ontology.oneValued?.has("signed_with") &&
+        (!approved ||
+          (r.decidedAt ?? "") > (approved.release.decidedAt ?? "") ||
+          ((r.decidedAt ?? "") === (approved.release.decidedAt ?? "") &&
+            (r.id ?? "") > (approved.release.id ?? "")))
+      )
+        approved = { to: e.id, release: r };
     }
     const factKey = sha256(
       ["signed_with", String(contract), String(e.id)].join("\u001f"),
     );
     const stored = g.findEdge("signed_with", "fact_key", factKey);
+    // Where an approval the load wrote decides the contract's link, a plain
+    // statement of another customer loses to it whichever commits first:
+    // its quote is evidence alone (decide). An approval's own edge is
+    // written, and decide keeps the newest approval's.
+    const holder = ontology.oneValued?.has("signed_with")
+      ? approvals.get([g.load, "signed_with", contract].join("\u001f"))
+      : undefined;
     if (stored)
       stored.props.evidence_count = Number(stored.props.evidence_count) + 1;
-    else
+    else if (approval || !holder || holder.to === e.id)
       g.addEdge("signed_with", contract!, e.id, {
         fact_key: factKey,
         provenance: "extracted",
@@ -1263,6 +1404,8 @@ export function extractDocument(
     g.addEdge(E.FROM_SECTION, ev, first.s.node);
     counts.facts += 1;
   }
+  if (approved)
+    decide(g, "signed_with", contract!, approved.to, approved.release);
   [...unresolved, ...adjudicated].forEach((u, k) => {
     const q = quote(u.s, u.i);
     const r = g.addNode(N.Review, {
@@ -1270,7 +1413,7 @@ export function extractDocument(
       doc_id: doc.id,
       section: u.s.ordinal,
       ...q,
-      reason: adjudicated.includes(u) ? adjudicate! : "unresolved",
+      reason: adjudicated.includes(u) ? linkedBy! : "unresolved",
       ...(adjudicated.includes(u)
         ? {
             entity_key: String(
@@ -1285,7 +1428,12 @@ export function extractDocument(
         .slice(0, adjudicated.includes(u) ? 1 : undefined)
         .map((e) => String(g.node(e.id)!.props.entity_key)),
       suggested_link: "signed_with",
-      confidence: adjudicated.includes(u) ? 0.95 : 0.88,
+      // A link on less than a name was judged by no model.
+      ...(!adjudicated.includes(u)
+        ? { confidence: 0.88 }
+        : linkedBy === "adjudicated"
+          ? { confidence: 0.95 }
+          : {}),
     });
     g.addEdge(E.FROM_SECTION, r, u.s.node);
     if (contract !== undefined) g.addEdge(E.CONCERNS, r, contract);

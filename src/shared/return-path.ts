@@ -1,9 +1,10 @@
 // Where to land after signing in: a path on this site, never another origin,
-// and never the sign-in machinery itself (that would loop).
+// and never the sign-in machinery itself (that would loop), or a route that
+// takes only a POST (/remind, the landing page's reminder form).
 
 const ORIGIN = "https://foundry.invalid";
 const MAX_LENGTH = 2048;
-const NEVER = /^\/(?:login|auth|papi)(?:[/?#]|$)/;
+const NEVER = /^\/(?:login|auth|papi|remind)(?:[/?#]|$)/;
 
 /**
  * The normalized return path, or null when `value` is unsafe.

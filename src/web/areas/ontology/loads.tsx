@@ -468,19 +468,19 @@ export function LiveLoad() {
             ? job.kind === "extract"
               ? "New documents are queued for reading"
               : job.kind === "resend"
-                ? "Approved claims are queued for writing"
+                ? "Decisions are queued for this load"
                 : "A load is queued"
             : job.kind === "extract"
               ? `Reading new documents into ${loadVersion(live.load)}`
               : job.kind === "resend"
-                ? `Writing approved claims into ${loadVersion(live.load)}`
+                ? `Applying decisions to ${loadVersion(live.load)}`
                 : `Loading the database: ${phaseLabel(job).toLowerCase()}`
       }
       text={
         starting
           ? `Your new database is starting. The ${job.kind === "extract" ? "reading" : "load"} tries again automatically once it’s ready.`
           : job.kind === "resend"
-            ? "Each claim’s document is read again from its saved reading, at no model cost."
+            ? "Approved claims are written from their documents’ saved readings, and chosen values are sent, at no model cost."
             : p.documentsTotal
               ? `${p.documentsDone || 0} of ${plural(p.documentsTotal, "document")} read so far.`
               : "What it writes shows in the Explorer as it goes."

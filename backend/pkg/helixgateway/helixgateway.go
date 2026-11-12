@@ -56,6 +56,15 @@ type Client struct {
 	MaxResponseBytes int64
 }
 
+// Version is this build's Foundry version, set at link time with
+// -ldflags "-X github.com/helixdb/helix-foundry/backend/pkg/helixgateway.Version=0.1.4".
+// A local build is "dev".
+var Version = "dev"
+
+// UserAgent names Foundry to the HelixDB it queries, whose anonymous
+// telemetry records it so Foundry's queries can be told from others'.
+func UserAgent() string { return "helix-foundry/" + Version }
+
 // Query POSTs body to endpoint for tenantID (none for a dedicated cluster),
 // adding extra headers, such as x-helix-require-writer, before its own.
 func (c *Client) Query(ctx context.Context, endpoint, tenantID string, body []byte, extra http.Header) (Response, error) {
@@ -73,6 +82,7 @@ func (c *Client) Query(ctx context.Context, endpoint, tenantID string, body []by
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", UserAgent())
 	req.Header.Del("Authorization")
 	if c.ProvisionerKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.ProvisionerKey)

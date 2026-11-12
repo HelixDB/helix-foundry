@@ -3508,6 +3508,555 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryWorkflows",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryWorkflowsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageToken",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "post": {
+        "summary": "Workflows: an agent's task over an ontology, whose runs record what the\nagent read of the ontology and wrote to Foundry between its request and\nits answer. Owners and admins create and delete workflows; a caller that\nmay read the ontology's database starts and finishes runs, and reads\nthem.",
+        "operationId": "FoundryService_CreateFoundryWorkflow",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCreateFoundryWorkflowBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{id}": {
+      "get": {
+        "operationId": "FoundryService_GetFoundryWorkflow",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "delete": {
+        "operationId": "FoundryService_DeleteFoundryWorkflow",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryWorkflowRuns",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryWorkflowRunsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageToken",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "post": {
+        "operationId": "FoundryService_StartFoundryWorkflowRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceStartFoundryWorkflowRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}": {
+      "get": {
+        "operationId": "FoundryService_GetFoundryWorkflowRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}/accesses": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryWorkflowRunAccesses",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryWorkflowRunAccessesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "afterSeq",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}:assess": {
+      "post": {
+        "summary": "Queues a finished run's assessment again (owners and admins).",
+        "operationId": "FoundryService_AssessFoundryWorkflowRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceAssessFoundryWorkflowRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}:finish": {
+      "post": {
+        "operationId": "FoundryService_FinishFoundryWorkflowRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceFinishFoundryWorkflowRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows:insights": {
+      "get": {
+        "operationId": "FoundryService_GetFoundryWorkflowInsights",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowInsights"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "startedBy.kind",
+            "description": " - KIND_USER: A workspace member.\n - KIND_SERVICE_CREDENTIAL: A workspace service credential: an agent's key.\n - KIND_TEAM: A workspace team: its members hold its grants.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "KIND_UNSPECIFIED",
+              "KIND_USER",
+              "KIND_SERVICE_CREDENTIAL",
+              "KIND_TEAM"
+            ],
+            "default": "KIND_UNSPECIFIED"
+          },
+          {
+            "name": "startedBy.id",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}:generate": {
       "post": {
         "operationId": "FoundryService_GenerateOntology",
@@ -3861,9 +4410,17 @@
         },
         "clientToken": {
           "type": "string"
+        },
+        "workflowRunId": {
+          "type": "string",
+          "description": "An open run of a workflow of this ontology to record the question\nunder; empty for none. A retry with the same client_token records it\nonce."
         }
       },
       "description": "AskFoundryQuestionRequest queues a question of a ready or partial load\n(FAILED_PRECONDITION otherwise, or when the workspace has spent this\nmonth's questions budget; RESOURCE_EXHAUSTED past its questions an hour).\nThe same client_token returns the question it queued."
+    },
+    "FoundryServiceAssessFoundryWorkflowRunBody": {
+      "type": "object",
+      "description": "AssessFoundryWorkflowRunRequest queues a finished run's assessment again,\nkeeping what earlier ones spent. FAILED_PRECONDITION where assessments are\noff, for an open run, or while its assessment is queued or running."
     },
     "FoundryServiceAuthorizeConnectorSignInBody": {
       "type": "object",
@@ -3883,7 +4440,13 @@
       "description": "CompleteFoundryDocumentUploadRequest checks the bytes PUT to the upload\nURL and marks the document uploaded. Every ontology whose live or current\nload reads its set then reads it, where the caller may write the\nontology's database; reads says what happened for each."
     },
     "FoundryServiceCompleteFoundryOntologyDocumentUploadBody": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "workflowRunId": {
+          "type": "string",
+          "description": "An open run of a workflow of this ontology to record the upload under;\nempty for none. Completing it again records it once."
+        }
+      }
     },
     "FoundryServiceCreateConnectorBody": {
       "type": "object",
@@ -4019,6 +4582,23 @@
       },
       "description": "CreateFoundryTeamRequest makes a team of members. Names are unique in the\nworkspace (ALREADY_EXISTS otherwise), 1 to 120 characters."
     },
+    "FoundryServiceCreateFoundryWorkflowBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "1 to 100 characters, trimmed."
+        },
+        "description": {
+          "type": "string",
+          "description": "What the agent does, at most 2,000 characters; optional."
+        },
+        "clientToken": {
+          "type": "string"
+        }
+      },
+      "description": "CreateFoundryWorkflowRequest makes a workflow of a live ontology. The same\nclient_token returns the workflow it made. FAILED_PRECONDITION past\nFoundryWorkflow's cap of 100 an ontology."
+    },
     "FoundryServiceCreateOntologyVersionBody": {
       "type": "object",
       "properties": {
@@ -4047,6 +4627,20 @@
           "description": "The callback's error when it was given no code, such as access_denied."
         }
       }
+    },
+    "FoundryServiceFinishFoundryWorkflowRunBody": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "string",
+          "description": "The run's initial request, at most 64 KiB: required unless the run was\nstarted with it, and then, if sent, the same."
+        },
+        "output": {
+          "type": "string",
+          "description": "The agent's final answer, 1 byte to 256 KiB."
+        }
+      },
+      "description": "FinishFoundryWorkflowRunRequest closes an open run with its answer: it\nrecords nothing more. Finishing a finished run again with the same input\nand output returns it; with others, FAILED_PRECONDITION."
     },
     "FoundryServiceGenerateOntologyBody": {
       "type": "object",
@@ -4137,6 +4731,10 @@
       "properties": {
         "readsJson": {
           "type": "string"
+        },
+        "workflowRunId": {
+          "type": "string",
+          "description": "An open run of a workflow of this ontology to record the read under,\nwith its result; empty for none. NOT_FOUND for a run the ontology has\nnot, FAILED_PRECONDITION for one that finished."
         }
       },
       "description": "ReadFoundryGraphRequest reads a load of the ontology's database: entities\nwith the facts its version's rules derive, patterns, explanations (\"why\"),\nrule breaks and evidence. reads_json is a JSON array of 1 to 20 reads, each\nthe `reads` item of the ontology agent's read_request.json. NOT_FOUND for a\nload of another ontology or one deleted; FAILED_PRECONDITION while it is\nbeing deleted; RESOURCE_EXHAUSTED while the workspace has as many reads\nrunning as it may."
@@ -4187,6 +4785,10 @@
             "type": "object",
             "$ref": "#/definitions/v1FoundryAccessTarget"
           }
+        },
+        "workflows": {
+          "type": "boolean",
+          "description": "The principal's Workflows permission: on, it lists the workflows of the\nontologies it reads and records its own runs, and reads every run of an\nontology whose current load it holds all of, else only the runs it\nstarted. Absent leaves it as it is (on, unless turned off)."
         }
       },
       "description": "SetFoundryAccessGrantsRequest replaces a principal's grants with targets,\nnone to take them all away. Every target must be of a live connector or\nset of the workspace (NOT_FOUND otherwise)."
@@ -4207,7 +4809,7 @@
           "$ref": "#/definitions/v1FoundryReviewChoice"
         }
       },
-      "description": "Reads the current load's review and stores a decision. A resolve or prop\ndecision applies from the next load; a release applies to the current load\nat once (FoundryReviewChoice.release)."
+      "description": "Reads the current load's review and stores a decision. A resolve decision\napplies from the next load; a release or a prop decision applies to the\ncurrent load at once (FoundryReviewChoice.release, FoundryReviewChoice.prop);\na reject changes no load (FoundryReviewChoice.reject)."
     },
     "FoundryServiceStartConnectorSignInBody": {
       "type": "object",
@@ -4231,6 +4833,19 @@
           "description": "Makes a retry return the sign-in the first attempt started."
         }
       }
+    },
+    "FoundryServiceStartFoundryWorkflowRunBody": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "string",
+          "description": "The run's initial request, at most 64 KiB; optional here, when the\nagent sends it with its answer instead."
+        },
+        "clientToken": {
+          "type": "string"
+        }
+      },
+      "description": "StartFoundryWorkflowRunRequest opens a run of a workflow: its id is what\nthe agent passes as workflow_run_id to the calls it makes for the run. The\nsame client_token returns the run it opened. A workflow keeps its newest\n1,000 runs: starting one past that deletes the oldest."
     },
     "FoundryServiceStopFoundryLoadEnrichmentBody": {
       "type": "object",
@@ -5662,11 +6277,11 @@
       "properties": {
         "status": {
           "type": "string",
-          "description": "pending (a job has yet to apply it), written (the claim is a fact),\nrefused (it stays held: reason says why), missed (this load holds no\nreview at the decision's key and place, so it has nothing to release),\nunconfirmed (the job that applies it failed before the engine's word on\nit was recorded, reason job_failed: the claim may or may not have been\nwritten, and no job is coming. Approving it again finishes it while the\nload still holds the claim's review. If the engine wrote the claim\nbefore the job failed, that review is gone and there is nothing to\napprove: the fact is in the load, and the decision stays unconfirmed\nuntil another approval of the same document sends it again), or empty:\nthe load read the decision when it was created, and no job has said\nwhat became of it."
+          "description": "pending (a job has yet to apply it), written (the claim is a fact; on a\nlink that holds one value, a statement dated after the approval takes\neffect, or a later approval, may hold the link instead, with the claim\nkept as its evidence),\nrefused (it stays held: reason says why), missed (this load holds no\nreview at the decision's key, nor one at its place stating what was\napproved, so it has nothing to release),\napplied (a prop decision: the load was sent it, and the job that sent it\nsucceeded; the engine reports nothing more of a value, so this doesn't\nsay the property holds it: a document dated after the decision still\nbeats it, and an entity the load doesn't hold takes none),\nunconfirmed (the job that applies it failed before the engine's word on\nit was recorded, reason job_failed: the claim may or may not have been\nwritten, or the value sent, and no job is coming. Approving it again\nfinishes it while the load still holds the claim's review; choosing a\nvalue again finishes a value, and so does the end of the ontology's next\njob, which sends the load its values again. If the engine wrote the\nclaim before the job failed, that review is gone and there is nothing\nto approve: the fact is in the load, and the decision stays unconfirmed\nuntil another approval of the same document sends it again), or empty:\nthe load read the decision when it was created, and no job has said\nwhat became of it."
         },
         "reason": {
           "type": "string",
-          "description": "Why a refused claim stays held. The engine's reasons: unresolved (a name\nin it is matched to no one record: settle that name), legal_form (a name\nis linked only by its legal form, on a link that holds one value: settle\nthat name), changed (the claim reads differently now from what was\napproved), differs (its sentence is read more than one way), conflict (it\nconflicts with what the load holds of its link), blocked (it would break\na blocking rule, or checking that took more reading than a load allows),\nno_statement (its review keeps nothing to write), not_stated (the\ndocument, read again, no longer states it there), too_large,\nnot_allowed. The backend's: not_replayed (the document's saved\nextraction didn't replay, so applying it would have cost a model call: a\nnew load applies it), document_gone, document_unread (the load holds\nthe document but no extraction of it to replay), document_failed,\ntoo_large (the document with its decisions is more than one request to\nthe engine takes), unanswered. With unconfirmed it is job_failed. A\nreader shows a reason it doesn't know as it is."
+          "description": "Why a refused claim stays held. The engine's reasons: unresolved (a name\nin it is matched to no one record: settle that name), legal_form (a name\nis linked only by its legal form, on a link that holds one value: settle\nthat name), part_name and own_name (a name is linked only by part of a\nrecord's name, or only by an identifier that is the name the text calls\nit by, whatever the link holds: settle that name), changed (the claim\nreads differently now from what was approved), differs (its sentence is\nread more than one way), conflict (a property of the fact differs from\nthe one the load holds; or the link holds one value and the claim gives\na date still to come, which a load or resend after it writes; or a load\nbuilt before statements were kept wrote its edge, or an engine before\ncontract 4.14.0 refused it: load again), blocked (it would break\na blocking rule, or checking that took more reading than a load allows),\nno_statement (its review keeps nothing to write), not_stated (the\ndocument, read again, no longer states it there), too_large,\nnot_allowed. The backend's: not_replayed (the document's saved\nextraction didn't replay, so applying it would have cost a model call: a\nnew load applies it), document_gone, document_unread (the load holds\nthe document but no extraction of it to replay), document_failed,\ntoo_large (the document with its decisions is more than one request to\nthe engine takes), unanswered. With unconfirmed it is job_failed. A\nreader shows a reason it doesn't know as it is."
         },
         "at": {
           "type": "string",
@@ -5674,7 +6289,7 @@
           "description": "When a job said so; unset while pending."
         }
       },
-      "description": "What became of a release decision in the ontology's current load."
+      "description": "What became of a release or a prop decision in the ontology's current load."
     },
     "v1FoundryDocument": {
       "type": "object",
@@ -6323,7 +6938,7 @@
         },
         "kind": {
           "type": "string",
-          "description": "load, extract, apply, delete or resend (a person's approvals applied to\nthe load: their documents sent again from their saved extractions)."
+          "description": "load, extract, apply, delete or resend (a person's decisions applied to\nthe load: approved claims' documents sent again from their saved\nextractions, and the load's value decisions)."
         },
         "loadId": {
           "type": "string",
@@ -6601,7 +7216,7 @@
         "reviews": {
           "type": "string",
           "format": "int64",
-          "description": "The reviews its documents left when the load last wrote each, of every\nkind: statements held back instead of written as facts (scored under the\nbar, unverified, conflicting, breaking a rule), names matched to no one\nrecord, property values held back or in conflict, statements that fit no\nlink, and links it did write that a person can undo. It is not the\nnumber of open reviews: a review a person settles stays counted until\nthe load writes the decision, which moves a released statement to facts."
+          "description": "The reviews its documents left when the load last wrote each, of every\nkind: statements held back instead of written as facts (scored under the\nbar, unverified, conflicting, breaking a rule), names matched to no one\nrecord, property values held back or in conflict, statements that fit no\nlink, and links it did write that a person can undo. It is not the\nnumber of open reviews: a review a person settles stays counted until\nthe load writes the decision, which moves a released statement to facts,\nand one a person rejects stays counted, as a rejection writes nothing. A\nproperty value in conflict stays counted after a person chooses its\nvalue: every load lists the conflict, and the choice settles it."
         },
         "unresolved": {
           "type": "string",
@@ -7175,6 +7790,16 @@
       "default": "FOUNDRY_READ_KIND_UNSPECIFIED",
       "description": "FoundryReadKind is how ontologies read a type of document.\n\n - FOUNDRY_READ_KIND_TEXT: Markdown, MDX and plain text: extracted as text through routes.\n - FOUNDRY_READ_KIND_TABLE: CSV, TSV, JSON, JSONL and Parquet: read once, at upload, as a table of\nits own, which mappings name by the document's id.\n - FOUNDRY_READ_KIND_PDF: PDF: read once, at upload, to its text (each page's, a form feed\nbetween pages), then extracted as that text through routes. One with no\ntext layer (a scan), encrypted or damaged can't be read."
     },
+    "v1FoundryRejectChoice": {
+      "type": "object",
+      "properties": {
+        "statementHash": {
+          "type": "string",
+          "description": "SHA-256, in lowercase hexadecimal, of the review's suggested_link, a unit\nseparator (0x1f) and its stored statement."
+        }
+      },
+      "description": "A rejection of the statement a person read: a review that reads otherwise\nnow is refused, as an approval of it would be."
+    },
     "v1FoundryReleaseChoice": {
       "type": "object",
       "properties": {
@@ -7204,11 +7829,16 @@
           "$ref": "#/definitions/v1FoundryResolveChoice"
         },
         "prop": {
-          "$ref": "#/definitions/v1FoundryPropValue"
+          "$ref": "#/definitions/v1FoundryPropValue",
+          "description": "A value a person chose for a property documents state differently. It\napplies to the current load at once: a job sends the load its value\ndecisions, at no model cost, and the engine holds the value as a\nstatement of the property from when it was decided, which a document\ndated later still beats (FoundryReviewDecision.applied). Later loads\nread it too."
         },
         "release": {
           "$ref": "#/definitions/v1FoundryReleaseChoice",
-          "description": "A person's word that what the review holds back holds. It applies to the\ncurrent load at once: a job replays the claim's document from its saved\nextraction, at no model cost, and writes what the review states as a\nfact, or keeps it held and says why (FoundryReviewDecision.applied).\nLater loads read it too, and each says what it made of it."
+          "description": "A person's word that what the review holds back holds. It applies to the\ncurrent load at once: a job replays the claim's document from its saved\nextraction, at no model cost, and writes what the review states as a\nfact, or keeps it held and says why (FoundryReviewDecision.applied).\nLater loads read it too, and each says what it made of it. On a link\nthat holds one value it also decides the link, from the date its quote\ngives, else its document's date, and only for a quote with neither from\nthe day it was first approved; a quote dated after the load recorded it\nreplaces nothing until that date: where the link holds another value it\nis refused as conflict, and a load or resend after the date writes it.\nFrom then it replaces what the link holds of no date or dated up to\nthen (whose evidence stays); a statement dated later, approved or not,\nstill holds the link, and the claim is kept as its evidence. Of two\napprovals of the link, the one first decided later is its decision. So a review held as conflicting with\nwhat such a link holds can be approved; on another link a conflict is\na property that differs from the fact the graph holds, which no\napproval changes."
+        },
+        "reject": {
+          "$ref": "#/definitions/v1FoundryRejectChoice",
+          "description": "A person's word that what the review holds back is wrong. Nothing is\nwritten and nothing is sent to the engine: the review stays in the\nload, and readers leave it out of what needs review in this load and\nevery later one while the decision stands. It takes the place of an\napproval of the same claim, as an approval takes its place; removing\nit lists the claim for review again."
         }
       },
       "description": "A user choice. Review identity is always derived by the backend."
@@ -7220,7 +7850,8 @@
           "type": "string"
         },
         "kind": {
-          "type": "string"
+          "type": "string",
+          "description": "resolve, prop, release or reject."
         },
         "type": {
           "type": "string"
@@ -7246,11 +7877,12 @@
         },
         "decidedAt": {
           "type": "string",
-          "format": "date-time"
+          "format": "date-time",
+          "description": "When it was decided. A release approved again, of the statement it\napproved, keeps who first approved it and when: on a link that holds one\nvalue the approval decided last is the link's decision."
         },
         "claimKey": {
           "type": "string",
-          "description": "The review a release decision releases, as it stores them: its claim's\nkey, its quote's section and byte range in the section, and the hash of\nthe statement the person read."
+          "description": "The review a release decision releases, or a reject decision rejects, as\nit stores them: its claim's key, its quote's section and byte range in\nthe section, and the hash of the statement the person read. A decision\nis of a review by its document and place, and by its claim key or, as a\nrebuild may key the same sentence otherwise, by the statement it read\nthere (the engine binds a release so from contract 4.14.0). A reader\nleaves out of what needs review each review of a held claim that a\nreject names so; approving a claim saved under another key approves that\ndecision again, under the key the review has now, and a reject takes\nevery approval of the claim back."
         },
         "claimSection": {
           "type": "integer",
@@ -7269,10 +7901,10 @@
         },
         "applied": {
           "$ref": "#/definitions/v1FoundryDecisionApplied",
-          "description": "A release decision's state in the ontology's current load; unset for\nother kinds, and when that load's decisions don't hold it yet (one saved\nwhile another load was current joins them when a job of the ontology next\nends)."
+          "description": "A release or prop decision's state in the ontology's current load; unset\nfor a resolve, and when that load's decisions don't hold it yet (one\nsaved while another load was current joins them when a job of the\nontology next ends)."
         }
       },
-      "description": "A durable ontology-wide override. A resolve or prop decision applies from\nthe next load; a release applies to the current load at once, and later\nloads read it as they are made."
+      "description": "A durable ontology-wide override. A resolve decision applies from the next\nload; a release or a prop decision applies to the current load at once,\nand later loads read it as they are made. Removing a prop decision\nwithdraws it from the current load at once too. A reject changes no load:\nit tells readers which held claims a person said are wrong."
     },
     "v1FoundryReviewDecisionResponse": {
       "type": "object",
@@ -7453,10 +8085,561 @@
         "FOUNDRY_USAGE_TASK_UNSPECIFIED",
         "FOUNDRY_USAGE_TASK_LOADS",
         "FOUNDRY_USAGE_TASK_API_SOURCES",
-        "FOUNDRY_USAGE_TASK_QUESTIONS"
+        "FOUNDRY_USAGE_TASK_QUESTIONS",
+        "FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS"
       ],
       "default": "FOUNDRY_USAGE_TASK_UNSPECIFIED",
-      "description": "FoundryUsageTask is a kind of model work a workspace's month of AI spend\nis broken down by (FoundryUsage). Ontology drafts (generations and\nrevisions) are not among them: they record tokens, not dollars; nor are\ngeneration titles, which record no spend at all.\n\n - FOUNDRY_USAGE_TASK_LOADS: Loads and extracts of the workspace's ontologies, created this month:\nreading documents into their graphs, which is all of a load's model\nspend (tables load at no model cost). Capped by foundry.graph.monthly_usd\n(config.FoundryGraphConfig.MonthBudget), the budget the graph worker\nchecks.\n - FOUNDRY_USAGE_TASK_API_SOURCES: What work no person started (refreshes, and extracts no one asked for)\nspent extracting the workspace's API sources' pieces this month, its\ndeleted sources' included. Capped by\nfoundry.events.max_system_usd_per_workspace_month. Part of LOADS' spend,\nso FoundryUsage.total_usd_micros counts it once, there.\n - FOUNDRY_USAGE_TASK_QUESTIONS: Questions charged this month (claimed in it, whenever asked), as the\nquestions budget counts them (FoundryQuestionBudget). Capped by\nfoundry.ask.monthly_usd."
+      "description": "FoundryUsageTask is a kind of model work a workspace's month of AI spend\nis broken down by (FoundryUsage). Ontology drafts (generations and\nrevisions) are not among them: they record tokens, not dollars; nor are\ngeneration titles, which record no spend at all.\n\n - FOUNDRY_USAGE_TASK_LOADS: Loads and extracts of the workspace's ontologies, created this month:\nreading documents into their graphs, which is all of a load's model\nspend (tables load at no model cost). Capped by foundry.graph.monthly_usd\n(config.FoundryGraphConfig.MonthBudget), the budget the graph worker\nchecks.\n - FOUNDRY_USAGE_TASK_API_SOURCES: What work no person started (refreshes, and extracts no one asked for)\nspent extracting the workspace's API sources' pieces this month, its\ndeleted sources' included. Capped by\nfoundry.events.max_system_usd_per_workspace_month. Part of LOADS' spend,\nso FoundryUsage.total_usd_micros counts it once, there.\n - FOUNDRY_USAGE_TASK_QUESTIONS: Questions charged this month (claimed in it, whenever asked), as the\nquestions budget counts them (FoundryQuestionBudget). Capped by\nfoundry.ask.monthly_usd.\n - FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS: Workflow runs' assessments charged this month (the ontology agent's\nAssess, on the questions model), capped by\nfoundry.workflows.assess.monthly_usd, apart from questions'."
+    },
+    "v1FoundryWorkflow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "ontologyId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "createdByUserId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "runs": {
+          "type": "string",
+          "format": "int64",
+          "description": "Its runs kept, and how many of them finished."
+        },
+        "finishedRuns": {
+          "type": "string",
+          "format": "int64"
+        },
+        "lastRunAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When its newest run started; absent before any."
+        },
+        "verdicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowVerdictCount"
+          },
+          "description": "Its runs' assessments that are done, by verdict, in the verdicts'\norder; a verdict no run has is absent."
+        }
+      },
+      "description": "FoundryWorkflow is an agent's task over one ontology. Each of its runs\nrecords the agent's request, what the agent read of the ontology's loads\nand wrote to Foundry while answering it, and its answer, so the runs show\nwhat the ontology gave the agent."
+    },
+    "v1FoundryWorkflowAccess": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Its place in the run, from 1."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "read": {
+          "$ref": "#/definitions/v1FoundryWorkflowRead"
+        },
+        "question": {
+          "$ref": "#/definitions/v1FoundryWorkflowQuestion"
+        },
+        "send": {
+          "$ref": "#/definitions/v1FoundryWorkflowSend"
+        },
+        "upload": {
+          "$ref": "#/definitions/v1FoundryWorkflowUpload"
+        }
+      },
+      "description": "FoundryWorkflowAccess is one call a run recorded: exactly one of read,\nquestion, send and upload."
+    },
+    "v1FoundryWorkflowAssessment": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "queued, running, done, failed or skipped (the workspace's month of\nassessments was spent)."
+        },
+        "verdict": {
+          "type": "string",
+          "description": "Once done: essential, helpful, marginal, unused or misleading."
+        },
+        "assessmentJson": {
+          "type": "string",
+          "description": "Once done: the engine's Assessment (assess_result.json\n$defs/Assessment), as JSON."
+        },
+        "leftOut": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "description": "Once done: the calls whose results, or the whole calls, were left out\nto fit the model."
+        },
+        "error": {
+          "type": "string",
+          "description": "Failed or skipped, or queued for a retry: why, for a person."
+        },
+        "usdMicros": {
+          "type": "string",
+          "format": "int64",
+          "description": "What its attempts spent, in millionths of a US dollar."
+        },
+        "queuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryWorkflowAssessment is a finished run's assessment by the ontology\nagent's Assess (contract 4.15.0), on the workspace's questions model: how\nmuch what the agent read made its answer, the answer's claims and the\ncalls that bear on them, what the ontology lacked and what would close it."
+    },
+    "v1FoundryWorkflowGapCount": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "runs": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "FoundryWorkflowGapCount is how many runs' assessments named a gap of kind."
+    },
+    "v1FoundryWorkflowInsightDay": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "totals": {
+          "$ref": "#/definitions/v1FoundryWorkflowInsightTotals"
+        }
+      },
+      "description": "FoundryWorkflowInsightDay is one UTC day of a window."
+    },
+    "v1FoundryWorkflowInsightFunnel": {
+      "type": "object",
+      "properties": {
+        "started": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "finished": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "assessed": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "used": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "helped": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "FoundryWorkflowInsightFunnel follows a window's runs: each step counts\nthose of the step before that went on. Started; finished; assessed (a done\nassessment); used the ontology (at least one call); helped (essential or\nhelpful)."
+    },
+    "v1FoundryWorkflowInsightIssue": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "runs": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "lastRunId": {
+          "type": "string"
+        },
+        "lastWorkflowId": {
+          "type": "string"
+        },
+        "lastAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "workflowIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "FoundryWorkflowInsightIssue is a gap or a suggestion runs' assessments\nnamed: its text as the newest named it, its kind (a gap's), how many runs\nnamed it, the newest of them and the workflows they are of."
+    },
+    "v1FoundryWorkflowInsightSegment": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "$ref": "#/definitions/v1FoundryPrincipal"
+        },
+        "workflowId": {
+          "type": "string"
+        },
+        "totals": {
+          "$ref": "#/definitions/v1FoundryWorkflowInsightTotals"
+        },
+        "dailyRuns": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "lastRunAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "topGap": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryWorkflowInsightSegment is the window's totals for one who started\nruns (principal) or one workflow (workflow_id), with its runs by day and\nthe gap its runs named most (the newest of those named as often)."
+    },
+    "v1FoundryWorkflowInsightTotals": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "open": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "finished": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "assessed": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "helped": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "used": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Runs that made at least one call to the ontology."
+        },
+        "verdicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowVerdictCount"
+          }
+        },
+        "claimsSupported": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "claimsUnsupported": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "claimsContradicted": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "reads": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "questions": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "sends": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "uploads": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "assessmentUsdMicros": {
+          "type": "string",
+          "format": "int64",
+          "description": "What their assessments cost, in millionths of a dollar."
+        },
+        "gapKinds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowGapCount"
+          },
+          "description": "How many runs named a gap of each kind."
+        }
+      },
+      "description": "FoundryWorkflowInsightTotals counts runs and what their assessments said.\nhelped is the runs whose verdict is essential or helpful; claims are those\nof done assessments."
+    },
+    "v1FoundryWorkflowInsights": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "The window's first day, YYYY-MM-DD, and its length."
+        },
+        "days": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "totals": {
+          "$ref": "#/definitions/v1FoundryWorkflowInsightTotals"
+        },
+        "previous": {
+          "$ref": "#/definitions/v1FoundryWorkflowInsightTotals"
+        },
+        "series": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowInsightDay"
+          },
+          "description": "One entry a day, oldest first, `days` of them."
+        },
+        "funnel": {
+          "$ref": "#/definitions/v1FoundryWorkflowInsightFunnel"
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowInsightIssue"
+          },
+          "description": "The gaps and suggestions that recur, most runs first, at most 10 each:\nruns that named the same text (case, spacing and end punctuation\naside) count once each."
+        },
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowInsightIssue"
+          }
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowInsightSegment"
+          },
+          "description": "Who started runs, most runs first, at most 10."
+        },
+        "workflows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowInsightSegment"
+          },
+          "description": "Each workflow with runs in the window, most runs first; none when the\nrequest named one."
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "More runs started in the window than were read (the newest 5,000 are)."
+        }
+      },
+      "description": "FoundryWorkflowInsights is what runs of an ontology's workflows came to\nover a window of whole UTC days ending today: its totals, the same window\nbefore it, a day by day series, how runs went from start to the ontology\nhelping, the gaps and suggestions their assessments named most, and the\nsame totals by who started them and by workflow. Runs are counted by the\nday they started."
+    },
+    "v1FoundryWorkflowQuestion": {
+      "type": "object",
+      "properties": {
+        "loadId": {
+          "type": "string"
+        },
+        "questionId": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryWorkflowQuestion is a question asked of a load\n(AskFoundryQuestion). Its answer and steps are the question's own."
+    },
+    "v1FoundryWorkflowRead": {
+      "type": "object",
+      "properties": {
+        "loadId": {
+          "type": "string"
+        },
+        "readsJson": {
+          "type": "string",
+          "description": "The reads asked, as sent."
+        },
+        "resultJson": {
+          "type": "string",
+          "description": "The result returned (read_result.json); empty when left out."
+        },
+        "resultOmitted": {
+          "type": "boolean",
+          "description": "Whether the result was left out: one over 256 KiB, or past the run's\n8 MiB of results."
+        }
+      },
+      "description": "FoundryWorkflowRead is a read of a load (ReadFoundryGraph) and what it\nreturned."
+    },
+    "v1FoundryWorkflowResponse": {
+      "type": "object",
+      "properties": {
+        "workflow": {
+          "$ref": "#/definitions/v1FoundryWorkflow"
+        }
+      }
+    },
+    "v1FoundryWorkflowRun": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workflowId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "open or finished."
+        },
+        "input": {
+          "type": "string",
+          "description": "The initial request: empty until sent, at start or finish."
+        },
+        "output": {
+          "type": "string",
+          "description": "The final answer: empty while open."
+        },
+        "startedByUserId": {
+          "type": "string",
+          "description": "Who started it: a user, or an agent's service credential."
+        },
+        "startedByServiceCredentialId": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "counts": {
+          "$ref": "#/definitions/v1FoundryWorkflowRunCounts"
+        },
+        "assessment": {
+          "$ref": "#/definitions/v1FoundryWorkflowAssessment",
+          "description": "Its assessment, once it finished: absent where assessments are off, or\nfor a run finished before."
+        }
+      },
+      "description": "FoundryWorkflowRun is one run of a workflow: open while it records the\ncalls made with its id, finished once its answer is in, after which it\nrecords nothing more."
+    },
+    "v1FoundryWorkflowRunCounts": {
+      "type": "object",
+      "properties": {
+        "accesses": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "reads": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "questions": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "sends": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "uploads": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "pieces": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The pieces its sends carried."
+        },
+        "resultsOmitted": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Reads whose result it left out (FoundryWorkflowRead.result_omitted)."
+        }
+      },
+      "description": "FoundryWorkflowRunCounts counts what a run recorded, at most 1,000 calls."
+    },
+    "v1FoundryWorkflowRunResponse": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/v1FoundryWorkflowRun"
+        }
+      }
+    },
+    "v1FoundryWorkflowSend": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "string",
+          "format": "int64",
+          "description": "The send's number in the source."
+        },
+        "pieceIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "FoundryWorkflowSend is a send to an API source (SendFoundryEvents)."
+    },
+    "v1FoundryWorkflowUpload": {
+      "type": "object",
+      "properties": {
+        "documentId": {
+          "type": "string"
+        },
+        "setId": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryWorkflowUpload is a document whose upload completed\n(CompleteFoundryOntologyDocumentUpload)."
+    },
+    "v1FoundryWorkflowVerdictCount": {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "type": "string"
+        },
+        "runs": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "FoundryWorkflowVerdictCount is how many of a workflow's runs an\nassessment gave a verdict."
     },
     "v1GetFoundryDocumentBytesResponse": {
       "type": "object",
@@ -7505,6 +8688,10 @@
             "type": "string"
           },
           "description": "Those of them it holds only some of."
+        },
+        "workflows": {
+          "type": "boolean",
+          "description": "The caller may use the workflows of the ontologies it reads: always, for\na caller that isn't a grantee; for a grantee, while its Workflows\npermission is on."
         }
       }
     },
@@ -7649,6 +8836,14 @@
             "type": "string"
           },
           "description": "The members restricted to what grants give."
+        },
+        "workflowsOff": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryPrincipal"
+          },
+          "description": "The principals whose Workflows permission is off; every other principal\nhas it on. A member is refused it while they or any of their teams has it\noff."
         }
       }
     },
@@ -7832,6 +9027,52 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1FoundryReviewDecision"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ListFoundryWorkflowRunAccessesResponse": {
+      "type": "object",
+      "properties": {
+        "accesses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowAccess"
+          }
+        },
+        "more": {
+          "type": "boolean",
+          "description": "Whether accesses follow the last one returned."
+        }
+      }
+    },
+    "v1ListFoundryWorkflowRunsResponse": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowRun"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ListFoundryWorkflowsResponse": {
+      "type": "object",
+      "properties": {
+        "workflows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflow"
           }
         },
         "nextPageToken": {
@@ -8298,6 +9539,10 @@
             "$ref": "#/definitions/v1FoundryAccessGrant"
           },
           "description": "The principal's grants now."
+        },
+        "workflows": {
+          "type": "boolean",
+          "description": "The principal's Workflows permission now."
         }
       }
     },

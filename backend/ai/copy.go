@@ -67,6 +67,23 @@ func AskFailure(r Resolved, f ontologyagent.ModelFailure) Copy {
 	return Copy{Message: unavailable}
 }
 
+// AssessFailure words a workflow run's assessment whose model call failed
+// with f, on r, as AskFailure does a question's. An assessment is retried
+// unless Permanent.
+func AssessFailure(r Resolved, f ontologyagent.ModelFailure) Copy {
+	const unavailable = "the model could not be reached; Helix will retry"
+	switch {
+	case f == ontologyagent.ModelRefused:
+		return Copy{Message: "the model declined to assess this run", Permanent: true}
+	case r.houseCopy():
+		return house(unavailable, f)
+	}
+	if c, ok := own(r, r.Settings.Models.Ask.Name, f); ok {
+		return c
+	}
+	return Copy{Message: unavailable}
+}
+
 // DocumentFailure words a document whose extraction failed with f, on r.
 // Stop says every other document of the load would fail the same way, so
 // the load stops with Message: the workspace's own provider refused its key,

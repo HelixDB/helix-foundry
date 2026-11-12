@@ -43,13 +43,18 @@ func (s *Service) GetFoundryUsage(ctx context.Context, req *foundryv1.GetFoundry
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "sum questions spend: %v", err)
 	}
+	assessments, err := s.deps.DB.SumFoundryWorkflowAssessmentSpend(ctx, ws, month.Since)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "sum workflow assessments spend: %v", err)
+	}
+	assessCap := cfg.Workflows.Assess.MonthlyMicros()
 	sourcesCap := cfg.SetAllowances()[foundrymodel.ConnectorKindEvents].WorkspaceMicros
 	questionsCap := cfg.Ask.MonthlyMicros()
 	return &foundryv1.FoundryUsageResponse{Usage: &foundryv1.FoundryUsage{
 		MonthStart: timestamppb.New(month.Since),
 		ResetsAt:   timestamppb.New(month.Since.AddDate(0, 1, 0)),
 		// API sources' spend is part of the loads'.
-		TotalUsdMicros: loads + questions.SpentMicros,
+		TotalUsdMicros: loads + questions.SpentMicros + assessments,
 		Tasks: []*foundryv1.FoundryUsageEntry{
 			{Task: foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_LOADS, SpentUsdMicros: loads, CapUsdMicros: &month.CapMicros},
 			{Task: foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_API_SOURCES, SpentUsdMicros: sources, CapUsdMicros: &sourcesCap},
@@ -57,6 +62,7 @@ func (s *Service) GetFoundryUsage(ctx context.Context, req *foundryv1.GetFoundry
 				Task: foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_QUESTIONS, SpentUsdMicros: questions.SpentMicros,
 				ReservedUsdMicros: questions.ReservedMicros, CapUsdMicros: &questionsCap,
 			},
+			{Task: foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS, SpentUsdMicros: assessments, CapUsdMicros: &assessCap},
 		},
 	}}, nil
 }

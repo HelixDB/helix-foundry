@@ -146,23 +146,35 @@ test("settles not-in-data without creating an entity or link", async ({
   ).toHaveCount(0);
 });
 
-test("picks a property conflict value and keeps its quotes after reload", async ({
-  page,
-}) => {
-  await setup(page, [
-    {
-      name: "original.md",
-      text: "# Shared contract\n\nGlobex Corporation signed. The Agreement runs for 24 months.\n",
-    },
-    {
-      name: "amendment.md",
-      text: "# Shared contract\n\nGlobex Corporation signed. The Agreement runs for 36 months.\n",
-    },
-  ]);
+const TERMS = [
+  {
+    name: "original.md",
+    text: "# Shared contract\n\nGlobex Corporation signed. The Agreement runs for 24 months.\n",
+  },
+  {
+    name: "amendment.md",
+    text: "# Shared contract\n\nGlobex Corporation signed. The Agreement runs for 36 months.\n",
+  },
+];
+/** Opens the contract two documents give different terms, on its Needs review tab. */
+async function conflictingTerms(page: Page) {
+  await setup(page, TERMS);
   const at = entity("Contract", "n:shared contract");
   await page.goto(at);
   await expect(page.locator(".ex-props")).toContainText("No value");
   await page.getByRole("tab", { name: /^Needs review/ }).click();
+  return at;
+}
+/** Chooses a term on the open property review, and sends it. */
+async function chooseTerm(page: Page, months: string, field = "Keep value") {
+  await choose(page.getByLabel(field), months);
+  await page.getByRole("button", { name: "Settle review" }).click();
+}
+
+test("picks a property conflict value, and the load holds it at once", async ({
+  page,
+}) => {
+  const at = await conflictingTerms(page);
   await expect(
     page.getByRole("list", { name: "Conflicting values" }),
   ).toContainText("24 months");
@@ -178,29 +190,142 @@ test("picks a property conflict value and keeps its quotes after reload", async 
     page.getByLabel("Document text").locator("mark.is-span"),
   ).toContainText("24 months");
   await page.goto(at);
+  // From here the page is never loaded again: what changes, changes in place.
+  let loads = 0;
+  page.on("load", () => (loads += 1));
   await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await choose(page.getByLabel("Keep value"), "36");
+  await expect(reviews(page)).toContainText(
+    "It’s sent to this load at once, and later loads read it too. A document dated after your decision still wins.",
+  );
   const sent = page.waitForRequest(
     (r) => r.method() === "POST" && /:settle$/.test(r.url()),
   );
-  await page.getByRole("button", { name: "Settle review" }).click();
+  await chooseTerm(page, "36");
   expect((await sent).postDataJSON()).toEqual({
     decision: { prop: { integer: "36" } },
   });
+  // One job sends the load its decisions; the card says what the load holds,
+  // and that the decision settles the review it keeps listing.
+  const status = reviews(page).getByRole("status");
+  await expect(status).toContainText(
+    "Decided: 36. This load holds it. The documents’ values stay listed here, as in every load: this decision settles them.",
+  );
+  await expect(page.getByText("Reload to apply")).toHaveCount(0);
+  const decisions = page.getByRole("list", { name: "Saved decisions" });
+  await expect(decisions).toContainText("term_months: 36 · sent to this load");
+  await page.getByRole("tab", { name: /^Overview/ }).click();
+  await expect(page.locator(".ex-props")).toContainText(/term_months\s*36/);
+  await expect(page.locator(".ex-props")).not.toContainText("No value");
+
+  // Chosen again, the load holds the value chosen last. The value it holds
+  // is the decision's, so the card offers another, and names no table.
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(reviews(page)).not.toContainText("The table’s value");
+  await chooseTerm(page, "24", "Choose another value");
+  await expect(status).toContainText("Decided: 24.");
+  await page.getByRole("tab", { name: /^Overview/ }).click();
+  await expect(page.locator(".ex-props")).toContainText(/term_months\s*24/);
+
+  // Removed, the load takes it back: the property holds nothing again.
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await decisions.getByRole("button", { name: "Remove decision" }).click();
   await expect(
-    page.getByText("Decision saved. Reload to apply."),
+    page.getByText(
+      "Decision removed. This load is taking the value back now; later loads won’t read it.",
+    ),
   ).toBeVisible();
+  await expect(decisions).toHaveCount(0);
   await page.getByRole("tab", { name: /^Overview/ }).click();
   await expect(page.locator(".ex-props")).toContainText("No value");
+  expect(loads).toBe(0);
+
+  // A later load reads a saved value as it is made, and asks nothing.
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await chooseTerm(page, "36");
+  await expect(status).toContainText("Decided: 36.");
   await loadVersion3(page);
   await page.goto(at);
   await expect(page.locator(".ex-props")).toContainText("36");
   await expect(page.locator(".ex-props")).toContainText("24");
   await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await expect(page.getByText("Nothing needs review")).toBeVisible();
+  // It lists the documents' values too (contract 4.14.0), settled by it.
+  await expect(status).toContainText("Decided: 36. This load holds it.");
+  await expect(reviews(page)).not.toContainText("still open");
   await expect(
     page.getByRole("list", { name: "Saved decisions" }),
   ).toContainText("term_months: 36");
+});
+
+test("says what a chosen value waits behind while another job is running", async ({
+  page,
+}) => {
+  await conflictingTerms(page);
+  // Another job holds the database, so the value's own job has yet to run.
+  await mock.configure({ loadStepMs: 60_000 });
+  let kind = "extract";
+  await page.route(
+    /\/foundry\/ontologies\/ont_acme_contracts(\?|$)/,
+    async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          ontology: {
+            ...body.ontology,
+            activeJob: {
+              kind,
+              loadId: body.ontology.currentLoad?.id,
+              phase: "documents",
+            },
+          },
+        },
+      });
+    },
+  );
+  await page.reload();
+  await chooseTerm(page, "36");
+  const status = reviews(page).getByRole("status");
+  await expect(status).toContainText(
+    "Decision saved. Another job is running, so this waits: it’s applied to this load when that ends.",
+  );
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("term_months: 36 · being sent to this load");
+  // Behind a new load, it goes to whichever load is current when that ends.
+  kind = "load";
+  await page.reload();
+  await expect(status).toContainText(
+    "Decision saved. A load is running, so this waits: it’s applied when that ends, to the load that is current then.",
+  );
+  // The load holds nothing of it yet.
+  await page.getByRole("tab", { name: /^Overview/ }).click();
+  await expect(page.locator(".ex-props")).toContainText("No value");
+});
+
+test("says a chosen value's job failed, and sends it when it is chosen again", async ({
+  page,
+}) => {
+  await conflictingTerms(page);
+  await mock.configure({ loadStepMs: 200, loadOutcome: "fail" });
+  await chooseTerm(page, "36");
+  const status = reviews(page).getByRole("status");
+  await expect(status).toContainText(
+    "Decided: 36, but the job that sends it to this load failed. Choose it again to send it.",
+  );
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("term_months: 36 · not confirmed as sent to this load");
+  await page.getByRole("tab", { name: /^Overview/ }).click();
+  await expect(page.locator(".ex-props")).toContainText("No value");
+  await mock.configure({ loadStepMs: 200, loadOutcome: "succeed" });
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await chooseTerm(page, "36");
+  await expect(status).toContainText("Decided: 36. This load holds it.");
+  await page.getByRole("tab", { name: /^Overview/ }).click();
+  await expect(page.locator(".ex-props")).toContainText(/term_months\s*36/);
 });
 
 test("approves a held claim, and the load writes it as a fact at once", async ({
@@ -358,6 +483,57 @@ test("says why the load kept an approved claim held", async ({ page }) => {
   );
 });
 
+// A conflict refusal on a link that holds one value: from contract 4.14.0 a
+// property differs or an old load wrote the link, and sent again to this
+// load it is refused again, so no approval is offered; an engine before
+// 4.14.0's is written by the next load, which sends every approval again.
+test("offers no approval again on a conflict refusal, and says what writes it", async ({
+  page,
+}) => {
+  await oneValued(page);
+  await mock.configure({ documentHeld: "refused" });
+  const { held } = await hedged(page);
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText(
+    "Approved, and this load kept it held. It conflicts with what the graph holds for this link",
+  );
+  await expect(held.getByRole("status")).toContainText(
+    "and then the next load writes it",
+  );
+  await expect(
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    held.getByRole("button", { name: "Reject", exact: true }),
+  ).toBeVisible();
+});
+
+test("rejects a claim the load kept held, in place of its approval", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "refused" });
+  const { held } = await hedged(page);
+  // While it is being written it can't be rejected: its job may have sent it.
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText("kept it held");
+  const saved = page
+    .getByRole("list", { name: "Saved decisions" })
+    .getByRole("listitem");
+  await expect(
+    saved.filter({ hasText: /^Approved, not written: “/ }),
+  ).toHaveCount(1);
+  // The load refused it; the person says it is wrong after all.
+  await held.getByRole("button", { name: "Reject", exact: true }).click();
+  await expect(held).toHaveCount(0);
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await expect(saved).toHaveCount(1);
+  await expect(saved).toContainText(/^Rejected: “/);
+  // It stays out when the page is loaded again.
+  await page.reload();
+  await expect(saved).toContainText(/^Rejected: “/);
+  await expect(held).toHaveCount(0);
+});
+
 test("says what may have kept a claim held when its load never said", async ({
   page,
 }) => {
@@ -505,7 +681,7 @@ test("names the name a legal form linked when it holds a one-valued claim", asyn
   await expect(held).toContainText("Settle that name too");
   await approve(held);
   await expect(held.getByRole("status")).toContainText(
-    "this load kept it held. “globex corporation” is linked only by its legal form",
+    "this load kept it held. “Globex Corporation” is linked only by its legal form",
   );
   await expect(held.getByRole("status")).toContainText(
     "Settle that name, and the next load writes this.",
@@ -597,6 +773,68 @@ test("promises no edge on a link that holds one value", async ({ page }) => {
   await expect(held).toContainText("Approving states:");
   await expect(held).not.toContainText("Approving writes:");
   await expect(held).toContainText("This link holds one value");
+  // As the engine dates the approval: the sentence's date, its document's,
+  // else the day it is first approved.
+  await expect(held).toContainText(
+    "from the date this sentence gives, else its document’s date, else the day it is first approved",
+  );
+  await expect(held).toContainText(
+    "A statement dated later, approved or not, still holds the link",
+  );
+  await expect(held).toContainText(
+    "Of two approvals, the one first approved later decides.",
+  );
+});
+
+// Contract 4.14.0: an approval of a link that holds one value decides it, so
+// a claim held as conflicting with what such a link holds can be approved.
+test("approves a claim that conflicts with what a link holding one value holds, which replaces it", async ({
+  page,
+}) => {
+  await mock.configure({
+    documentHeld: "conflict",
+    oneValuedLinks: ["signed_with"],
+  });
+  await hedged(page, "Initech LLC signed. Globex Corporation may have signed.");
+  const held = reviews(page)
+    .getByRole("listitem")
+    .filter({ hasText: "Disagrees with your data" });
+  await expect(held).toContainText(
+    "Approving states: Hedged deal (Contract) → signed_with → Globex Corporation (Customer)",
+  );
+  await expect(held).toContainText(
+    "It conflicts with what the graph holds: approving replaces that value unless it is dated later",
+  );
+  await expect(
+    held.getByRole("button", { name: "Reject", exact: true }),
+  ).toBeVisible();
+  await approve(held);
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved: “Globex Corporation may have signed.”");
+  // The page's facts follow, with no reload: the approved one is listed.
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  await expect(page.getByRole("list", { name: "Facts" })).toContainText(
+    "Globex Corporation",
+  );
+});
+
+test("offers nothing on a conflict of a link that holds many values", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "conflict" });
+  await hedged(page, "Initech LLC signed. Globex Corporation may have signed.");
+  const held = reviews(page)
+    .getByRole("listitem")
+    .filter({ hasText: "Disagrees with your data" });
+  await expect(held).toContainText(
+    "It conflicts with a property of a fact the graph holds of this link, which no approval changes.",
+  );
+  for (const name of ["Approve", "Reject"])
+    await expect(held.getByRole("button", { name, exact: true })).toHaveCount(
+      0,
+    );
 });
 
 test("hides Approve from a member", async ({ page }) => {
@@ -616,7 +854,7 @@ test("hides Approve from a member", async ({ page }) => {
 test("links an adjudicated mention to its review and undoes the link on reload", async ({
   page,
 }) => {
-  await mock.configure({ documentAdjudicated: true });
+  await mock.configure({ documentLinked: "adjudicated" });
   await setup(page);
   const doc = await openDocument(page);
   await page.getByRole("tab", { name: /^Entities/ }).click();
@@ -642,7 +880,7 @@ test("links an adjudicated mention to its review and undoes the link on reload",
 test("links a mention by legal form to its review and undoes the link on reload", async ({
   page,
 }) => {
-  await mock.configure({ documentLegalForm: true });
+  await mock.configure({ documentLinked: "legal_form" });
   await setup(page);
   const doc = await openDocument(page);
   await page.getByRole("tab", { name: /^Entities/ }).click();
@@ -652,7 +890,9 @@ test("links a mention by legal form to its review and undoes the link on reload"
     page.getByRole("tab", { name: /^Needs review/ }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(reviews(page)).toContainText("Linked by its legal form");
-  await expect(reviews(page)).toContainText("Suggestions only:");
+  // The row is one the load linked, not a suggestion.
+  await expect(reviews(page)).toContainText("Linked to:");
+  await expect(reviews(page)).not.toContainText("Suggestions only:");
   await expect(reviews(page)).toContainText("for the name “");
   await expect(reviews(page)).not.toContainText("couldn’t confirm");
   await page.getByRole("button", { name: "Undo link", exact: true }).click();
@@ -666,6 +906,195 @@ test("links a mention by legal form to its review and undoes the link on reload"
   ).toHaveCount(0);
   await page.getByRole("tab", { name: /^Needs review/ }).click();
   await expect(page.getByText("Nothing needs review.")).toBeVisible();
+});
+
+// Contract 4.13.0: a name the load linked by part of a row's name, or by an
+// identifier the text uses as a name. Each has a review a person keeps or
+// overturns, and holds an approval at its end until then.
+for (const [linked, by, title] of [
+  ["part_name", "By part of its name", "Linked by part of a name"],
+  [
+    "own_name",
+    "By an identifier used as its name",
+    "Linked by an identifier used as its name",
+  ],
+] as const)
+  test(`links a mention by ${linked} to its review and undoes the link on reload`, async ({
+    page,
+  }) => {
+    await mock.configure({ documentLinked: linked });
+    await setup(page);
+    const doc = await openDocument(page);
+    await page.getByRole("tab", { name: /^Entities/ }).click();
+    await expect(page.getByText(by)).toBeVisible();
+    await page.getByRole("link", { name: "Review link" }).click();
+    await expect(
+      page.getByRole("tab", { name: /^Needs review/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    // What the load did, why a person is asked, and no model's confidence.
+    await expect(reviews(page)).toContainText(title);
+    await expect(reviews(page)).toContainText(
+      "can be wrong, so it waits for you",
+    );
+    await expect(reviews(page)).toContainText("Linked to:");
+    await expect(reviews(page)).not.toContainText("% confident");
+    await page.getByRole("button", { name: "Undo link", exact: true }).click();
+    await expect(
+      page.getByText("Decision saved. Reload to apply."),
+    ).toBeVisible();
+    await loadVersion3(page);
+    await page.goto(`${doc}?tab=entities`);
+    await expect(
+      page.getByRole("region", { name: "Customer", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("tab", { name: /^Needs review/ }).click();
+    await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  });
+
+test("keeps a link by part of a name, and the next load holds it as a person's", async ({
+  page,
+}) => {
+  await mock.configure({ documentLinked: "part_name" });
+  await setup(page);
+  const doc = await openDocument(page);
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(reviews(page)).toContainText("Linked by part of a name");
+  await choose(page.getByLabel("Link this name to"), "Globex Corporation");
+  await page.getByRole("button", { name: "Settle review" }).click();
+  await expect(
+    page.getByText("Decision saved. Reload to apply."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("globexx corporation → cus_GLOBEX01");
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=entities`);
+  await expect(page.getByText("Linked by a person")).toBeVisible();
+  await expect(page.getByText("By part of its name")).toHaveCount(0);
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+});
+
+// The engine holds an approval at such a name until a person settles it,
+// which only a later load reads: the card says so before and after, and
+// leads to the name's own review, at the name.
+for (const [linked, how, title] of [
+  [
+    "part_name",
+    "linked only by part of a row’s name",
+    "Linked by part of a name",
+  ],
+  [
+    "own_name",
+    "linked only by a code the document calls it by",
+    "Linked by an identifier used as its name",
+  ],
+] as const)
+  test(`sends an approval held for a name linked by ${linked} to that name's review`, async ({
+    page,
+  }) => {
+    // On a link that holds many: unlike a legal form's, this holds any
+    // claim. The name isn't where its sentence starts, so the claim's place
+    // and the name's are told apart.
+    await mock.configure({ documentHeld: linked });
+    const { held } = await hedged(
+      page,
+      "Reportedly, Globex Corporation may have signed.",
+    );
+    // Named as the document writes it.
+    await expect(held).toContainText(
+      `“Globex Corporation” is ${how}. Settle that name too, or this stays held.`,
+    );
+    // No approval writes it to this load, and the card promises none.
+    await expect(held).toContainText(
+      "This load keeps it held: the first load after that name is settled writes it.",
+    );
+    await expect(held).not.toContainText("written to this load at once");
+    await approve(held);
+    await expect(held.getByRole("status")).toContainText(
+      `Approved, and this load kept it held. “Globex Corporation” is ${how}, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.`,
+    );
+    await expect(held.getByRole("status")).not.toContainText("holds one value");
+    // Saved, it offers no approval this load would refuse again.
+    await expect(
+      held.getByRole("button", { name: "Approve", exact: true }),
+    ).toHaveCount(0);
+    // The card leads to the name's own review, at the name: not at the
+    // claim's sentence, where the held claim's review is.
+    const toName = held
+      .getByRole("status")
+      .getByRole("link", { name: "Review that name" });
+    const href = (await toName.getAttribute("href")) ?? "";
+    expect(href).toMatch(/tab=review.*#s\d+-\d+$/);
+    const anchor = href.slice(href.lastIndexOf("#") + 1);
+    await toName.click();
+    await expect(page).toHaveURL(new RegExp(`#${anchor}$`));
+    await expect(
+      page.getByLabel("Document text").locator(`[id="${anchor}"]`),
+    ).toHaveText("Globex Corporation");
+    const name = reviews(page).getByRole("list", { name: title });
+    await expect(name).toContainText("Linked to:");
+    await choose(name.getByLabel("Link this name to"), "Globex Corporation");
+    await name.getByRole("button", { name: "Settle review" }).click();
+    await expect(name).toContainText("Decision saved. Reload to apply.");
+  });
+
+test("promises no write in this load, and offers no approval it would refuse, for a claim a name holds", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "part_name" });
+  const { held } = await hedged(
+    page,
+    "Reportedly, Globex Corporation may have signed.",
+  );
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText("kept it held");
+  // What the load made of the saved approval, as the decisions say it.
+  const decisions = /\/review-decisions(\?|$)/;
+  const reads = async (applied?: { status: string; reason?: string }) => {
+    await page.unroute(decisions);
+    await page.route(decisions, async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as ListReviewDecisionsResponse;
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          decisions: body.decisions?.map(({ applied: _, ...d }) =>
+            applied ? { ...d, applied } : d,
+          ),
+        },
+      });
+    });
+    await page.reload();
+  };
+  // Its job yet to run: the card doesn't say it is being written.
+  await reads({ status: "pending" });
+  await expect(held.getByRole("status")).toContainText(
+    "Approved. This load keeps it held: the first load after that name is settled writes it.",
+  );
+  await expect(held.getByRole("status")).not.toContainText(
+    "Writing it to this load",
+  );
+  // Saved while another load was current, its job failed before saying,
+  // or it found no claim: approving again here would only be refused.
+  for (const applied of [
+    undefined,
+    { status: "unconfirmed", reason: "job_failed" },
+    { status: "missed" },
+  ]) {
+    await reads(applied);
+    await expect(held.getByRole("status")).toContainText(
+      "An approval of this is saved, and the claim stays held. “Globex Corporation” is linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
+    );
+    await expect(
+      held.getByRole("button", { name: "Approve", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      held.getByRole("status").getByRole("link", { name: "Review that name" }),
+    ).toBeVisible();
+  }
+  await page.unroute(decisions);
 });
 
 test("members can read candidate reviews but cannot settle or remove decisions", async ({
@@ -827,7 +1256,7 @@ test("keeps a table's value over a document's, and replaces it only by choice", 
   ]);
   await page.keyboard.press("Escape");
   await expect(review).toContainText(
-    "A chosen value replaces the table’s in every later load, even after the table changes.",
+    "A chosen value replaces the table’s in this load and every later one, even after the table changes.",
   );
   await expect(review.getByLabel("Keep value")).toHaveCount(0);
   // The document's view shows the same review the same way.
@@ -848,9 +1277,31 @@ test("keeps a table's value over a document's, and replaces it only by choice", 
   expect((await sent).postDataJSON()).toEqual({
     decision: { prop: { text: "GBP" } },
   });
+  // The load is sent the choice at once: the table's value gives way, and
+  // the card no longer calls the value it holds the table's. It stays
+  // listed, settled by the decision.
+  await expect(review.getByRole("status")).toContainText(
+    "Decided: GBP. This load holds it. The documents’ values stay listed here, as in every load: this decision settles them.",
+  );
+  await expect(review).not.toContainText("The table’s value");
+  await expect(review.getByLabel("Choose another value")).toBeVisible();
+  const decisions = page.getByRole("list", { name: "Saved decisions" });
+  await expect(decisions).toContainText("currency: GBP · sent to this load");
+  await page.getByRole("tab", { name: /^Overview/ }).click();
+  await expect(page.locator(".ex-props")).toContainText(/currency\s*GBP/);
+  // Removed, the table's value is the load's again, with no reload.
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await decisions.getByRole("button", { name: "Remove decision" }).click();
   await expect(
-    review.getByText("Decision saved. Reload to apply."),
+    page.getByText("This load is taking the value back"),
   ).toBeVisible();
+  await page.getByRole("tab", { name: /^Overview/ }).click();
+  await expect(page.locator(".ex-props")).toContainText(/currency\s*usd/);
+  // Chosen again, a later load reads it as it is made.
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await choose(replace, "GBP");
+  await review.getByRole("button", { name: "Settle review" }).click();
+  await expect(review.getByRole("status")).toContainText("Decided: GBP.");
   await loadVersion3(page);
   await page.goto(globex);
   await expect(page.locator(".ex-props")).toContainText("GBP");
@@ -858,4 +1309,10 @@ test("keeps a table's value over a document's, and replaces it only by choice", 
   await expect(
     page.getByRole("list", { name: "Saved decisions" }),
   ).toContainText("currency: GBP");
+  // A load made with the decision lists the document's value against the
+  // table's too (contract 4.14.0), and its card says the decision settles it.
+  await expect(review.getByRole("status")).toContainText(
+    "Decided: GBP. This load holds it.",
+  );
+  await expect(review).not.toContainText("still open");
 });

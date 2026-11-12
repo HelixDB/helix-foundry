@@ -12,6 +12,7 @@ import type {
 } from "../../src/shared/wfe";
 import * as rules from "../event-pieces";
 import { fail, id, now, ok, type MockReply, type MockRoute } from "../http";
+import { openRun, record } from "./workflows";
 import { config, onReset } from "../state";
 import {
   access,
@@ -322,11 +323,35 @@ export type SendPiecesResponse = {
 
 /**
  * SendFoundryEvents for the source: `{clientToken?, pieces: [{id,
- * occurredAt?, data}]}`, each piece's data any JSON value, which is sent as
- * its JSON text. Stored whole or refused whole, with the backend's codes
- * and messages.
+ * occurredAt?, data}], workflowRunId?}`, each piece's data any JSON value,
+ * which is sent as its JSON text. Stored whole or refused whole, with the
+ * backend's codes and messages.
  */
 export function sendPieces(connectorId: string, body: unknown): MockReply {
+  // An agent's send for a workflow run is recorded under it, as
+  // SendFoundryEvents records it: checked before, recorded once after.
+  const runId = (body as { workflowRunId?: unknown } | undefined)
+    ?.workflowRunId;
+  if (typeof runId !== "string" || !runId) return send(connectorId, body);
+  const c = storedConnector(connectorId);
+  if (!c) return fail("NOT_FOUND", "API source not found");
+  const run = openRun(c.workspaceId, undefined, runId);
+  if (!("accesses" in run)) return run;
+  const reply = send(connectorId, body);
+  if (reply.status === 200)
+    record(run, {
+      send: {
+        connectorId,
+        seq: Number((reply.body as SendPiecesResponse).batch.seq),
+        pieceIds: ((body as { pieces?: { id?: unknown }[] }).pieces || []).map(
+          (p) => String(p?.id),
+        ),
+      },
+    });
+  return reply;
+}
+
+function send(connectorId: string, body: unknown): MockReply {
   const b = (body || {}) as { clientToken?: unknown; pieces?: unknown };
   const clientToken = typeof b.clientToken === "string" ? b.clientToken : "";
   if (clientToken && !rules.validClientToken(clientToken))

@@ -73,6 +73,12 @@ type fakeBackend struct {
 	// actors are the Actors of received, and lookupActor the last lookup's.
 	actors      []ports.Actor
 	lookupActor ports.Actor
+	// reminderCalls are the reminder requests received, with their Actors;
+	// reminderErr answers each of them, and reminderAgain says a schedule ran.
+	reminderCalls  []proto.Message
+	reminderActors []ports.Actor
+	reminderErr    error
+	reminderAgain  bool
 }
 
 func (b *fakeBackend) ValidateFoundryEventSourceToken(ctx context.Context, req *foundryv1.ValidateFoundryEventSourceTokenRequest) (

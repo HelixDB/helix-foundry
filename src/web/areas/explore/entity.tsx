@@ -33,7 +33,9 @@ import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { useDocumentNames } from "../documents/documents-api";
 import { spanAnchor } from "../documents/model";
+import { reviewQueries } from "../reviews/api";
 import { ReviewGroups } from "../reviews/groups";
+import { isUndoableLink, markDiffering, unrejected } from "../reviews/model";
 import { SavedDecisions, SettleReview } from "../reviews/settle";
 import { AskDrawer } from "../ontology/ask";
 import { ENRICHMENT_SOURCE } from "../ontology/enrichment-fields";
@@ -54,6 +56,7 @@ import {
 import {
   entityId,
   factGroups,
+  heldClaimDocs,
   mentionsByDocument,
   parseEntityId,
   propertyViews,
@@ -307,6 +310,12 @@ function Entity({
     { id: o, ontology } = useOntology();
   const { access, reader } = useGraphReader(),
     shared = access === "grants";
+  // The held claims a person rejected leave the page. Decisions aren't
+  // shared through grants, and neither are the reviews they name.
+  const decisions = useQuery({
+    ...reviewQueries.list(id, o),
+    enabled: !shared,
+  });
   // Through grants the WFE reads the load; else the user's own database.
   const tenant = shared ? o : ontology.tenantId || "";
   const selection = useLoadSelection(),
@@ -330,6 +339,24 @@ function Entity({
   const evidence = useQuery({
     ...evidenceRead,
     enabled: !!selection.scope && !!page?.facts.some((f) => f.factKey),
+  });
+  // What holds its held claims: the names their documents linked on less
+  // than a name, whose reviews this page doesn't list. While another set of
+  // documents is read, the load's last answer stands for those it covers.
+  const heldDocs = heldClaimDocs(page?.reviews ?? []);
+  const nameLinksRead = readQueries.nameLinks(
+    id,
+    o,
+    reader,
+    scope,
+    identity,
+    heldDocs,
+  );
+  const nameLinks = useQuery({
+    ...nameLinksRead,
+    enabled: !!selection.scope && nameLinksRead.enabled,
+    placeholderData: (previous, query) =>
+      query?.queryKey[4] === scope.id ? previous : undefined,
   });
   // What the load's rules derive about it: only for a version with rules.
   const version = useQuery({
@@ -459,7 +486,18 @@ function Entity({
     );
   const facts = page.facts,
     mentions = page.mentions,
-    reviews = page.reviews;
+    // Until the names that hold its held claims are read, no card or Approve
+    // all could say what an approval writes now: the held claims wait.
+    holdsKnown =
+      !nameLinksRead.enabled ||
+      heldDocs.every((d) => nameLinks.data?.docs.includes(d)),
+    reviews = unrejected(
+      markDiffering(page.reviews, nameLinks.data?.links ?? []),
+      decisions.data ?? [],
+    ),
+    listed = holdsKnown
+      ? reviews
+      : reviews.filter((r) => r.settle?.kind !== "release");
   const props = propertyViews(e.props, page.rows, page.propEvidence);
   // The tables (by the rows that state it) and documents (by where they
   // name it) it comes from, each once.
@@ -911,8 +949,7 @@ function Entity({
                             {resolvedByText(m.resolvedBy) &&
                               ` · ${resolvedByText(m.resolvedBy)!.toLowerCase()}`}
                           </small>
-                          {(m.resolvedBy === "adjudicated" ||
-                            m.resolvedBy === "legal_form") && (
+                          {isUndoableLink(m.resolvedBy) && (
                             <Link
                               to={
                                 link(
@@ -942,6 +979,20 @@ function Entity({
             it breaks show here.
           </p>
         )}
+        {!holdsKnown && nameLinks.error && (
+          <div role="alert" className="on-stack">
+            <p className="on-error-text">
+              Couldn’t read which names hold its held claims:{" "}
+              {nameLinks.error.message}
+            </p>
+            <p className="on-muted">
+              They show once that’s read.{" "}
+              <Button size="sm" onClick={() => void nameLinks.refetch()}>
+                Retry
+              </Button>
+            </p>
+          </div>
+        )}
         {liveFailed && (
           <p className="on-muted">
             The rules it breaks now couldn’t be worked out:{" "}
@@ -954,8 +1005,13 @@ function Entity({
         ) : (
           <Panel>
             <ul className="dc-doc-list" aria-label="Needs review">
+              {!holdsKnown && !nameLinks.error && (
+                <li aria-label="Reading its held claims">
+                  <SkeletonText lines={3} />
+                </li>
+              )}
               <ReviewGroups
-                reviews={reviews}
+                reviews={listed}
                 naming={naming}
                 load={
                   selection.choice.kind === "load"

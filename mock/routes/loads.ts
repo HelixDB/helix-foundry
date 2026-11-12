@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   parseAgentEnrichments,
   parseAgentMappings,
@@ -6,7 +7,11 @@ import {
   type AgentBinding,
 } from "../../src/web/areas/ontology/model";
 import { CREDITS_PER_PROFILE } from "../../src/web/areas/ontology/enrichment-fields";
-import { decisionsFor } from "../review-decisions";
+import {
+  decisions as saved,
+  decisionsFor,
+  holdsOne,
+} from "../review-decisions";
 import { FOUNDRY_NODES as N } from "../../src/shared/foundry-labels";
 import { parse } from "smol-toml";
 import type {
@@ -29,12 +34,14 @@ import type {
   ReadFoundryGraphRequest,
   ReadFoundryGraphResponse,
 } from "../../src/shared/wfe";
+import type { Value } from "../graph/store";
 import stripeRows from "../fixtures/stripe-rows.json";
 import { PEOPLE, type PersonRow } from "../fixtures/sales-graph";
 import {
   MODEL,
   VERIFIER,
   applyProfiles,
+  decideValue,
   extractDocument,
   ingestChunk,
   markLoad,
@@ -43,6 +50,8 @@ import {
   type ExtractOntology,
   type ProfileRow,
   type Row,
+  type UndoableLink,
+  type WeakLink,
 } from "../graph/extract";
 import {
   answer,
@@ -55,6 +64,7 @@ import { isRouted, scopeFor } from "../graph/scope";
 import { viewOf, type View } from "../graph/view";
 import { fail, id, now, ok, type MockReply, type MockRoute } from "../http";
 import { PROD_STAMP, config, onReset } from "../state";
+import { tracked } from "./workflows";
 import { aiModel } from "./ai";
 import { isFoundryPro } from "./billing";
 import { workspaceConnectors } from "./data";
@@ -132,7 +142,10 @@ import { sourceId } from "./ontology-agent";
 // load ran) or "budget_exhausted" (the spending cap stops it after one
 // document), `documentOutcome` "fail" (reading a document fails),
 // `documentUnmatched` (a sentence stating a relationship no link covers,
-// such as "supplies", is an "unmatched" review) and
+// such as "supplies", is an "unmatched" review), `documentLinked` (a name no
+// row holds exactly links to its first candidate that way, "adjudicated",
+// "legal_form", "part_name" or "own_name", with that link's review),
+// `documentHeld` (what becomes of a hedged claim, ../graph/extract.ts) and
 // `deleteOutcome` "fail" (a delete fails for good: delete_failed). A
 // database still starting (`startingQueries` in ./databases.ts) refuses an
 // ingest's first write: the attempt fails, and the load waits, queued with
@@ -163,17 +176,19 @@ type Knobs = {
   loadStepMs?: number;
   loadOutcome?: Outcome;
   documentOutcome?: "succeed" | "fail";
-  documentAdjudicated?: boolean;
-  documentLegalForm?: boolean;
+  // A name no row holds exactly links to its first candidate this way, with
+  // that link's review.
+  documentLinked?: UndoableLink;
   // Sentences stating a relationship no link covers are "unmatched" reviews.
   documentUnmatched?: boolean;
   documentHeld?:
     | "refused"
-    | "legal_form"
+    | WeakLink
     | "differs"
     | "unverified"
     | "one_end"
-    | "no_statement";
+    | "no_statement"
+    | "conflict";
   deleteOutcome?: "succeed" | "fail";
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // The next n reads find every read slot taken.
@@ -317,20 +332,33 @@ const state = {
   // id (appliedKey), and the approvals waiting to be applied.
   applied: new Map<string, DecisionApplied>(),
   resends: [] as { loadId: string; decisionId: string; due: number }[],
+  // The loads that owe the engine their value decisions again: a resend job
+  // sends them. What each property held before a value was decided in place
+  // (`was`, by load and property), and the properties whose decision a load
+  // no longer sends (`withdrawn`, by load). The id of the decision the
+  // engine keeps for each property a job sent it (`kept`, by load and
+  // property): it keeps a decision once, by its id.
+  valuesOwed: new Set<string>(),
+  was: new Map<string, { value?: Value }>(),
+  withdrawn: new Map<string, Decided[]>(),
+  kept: new Map<string, string>(),
 };
 onReset(() => {
   state.loads = [];
   state.jobs = [];
   state.applied.clear();
   state.resends = [];
+  state.valuesOwed.clear();
+  state.was.clear();
+  state.withdrawn.clear();
+  state.kept.clear();
   state.current.clear();
   state.owed.clear();
   state.purgesOwed.clear();
   delete knobs.loadStepMs;
   delete knobs.loadOutcome;
   delete knobs.documentOutcome;
-  delete knobs.documentAdjudicated;
-  delete knobs.documentLegalForm;
+  delete knobs.documentLinked;
   delete knobs.documentHeld;
   delete knobs.documentUnmatched;
   delete knobs.deleteOutcome;
@@ -388,32 +416,48 @@ type Release = Extract<FoundryReviewDecision, { kind: "release" }>;
 /** A release decision's review in a load's graph, if the load holds it. */
 function heldReview(l: StoredLoad, d: Release) {
   const g = tenantGraph(l.tenantId).view(l.id);
-  for (const n of g.nodes())
-    if (
+  const at = [...g.nodes()].filter(
+    (n) =>
       n.label === N.Review &&
       n.props.doc_id === d.docId &&
-      n.props.claim_key === d.claimKey &&
       n.props.section === d.claimSection &&
       n.props.start === d.claimStart &&
       n.props.end === d.claimEnd &&
-      typeof n.props.statement === "string"
-    )
-      return n;
-  return undefined;
+      typeof n.props.statement === "string",
+  );
+  // By its key, or, as the engine binds a release whose key names no review
+  // of its document (contract 4.14.0), by the statement it read there.
+  return (
+    at.find((n) => n.props.claim_key === d.claimKey) ??
+    (g.find(N.Review, "claim_key", d.claimKey)
+      ? undefined
+      : at.find(
+          (n) =>
+            createHash("sha256")
+              .update(`${n.props.suggested_link}\u001f${n.props.statement}`)
+              .digest("hex") === d.statementHash,
+        ))
+  );
 }
 
 /**
  * Why the engine would keep an approved claim held, from what the mock was
  * told to make of hedged claims (`documentHeld`): none when it writes it.
  */
-const refusal = () =>
-  knobs.documentHeld === "refused"
-    ? "conflict"
-    : knobs.documentHeld === "legal_form"
-      ? "legal_form"
-      : knobs.documentHeld === "differs"
-        ? "differs"
-        : undefined;
+const refusal = () => {
+  switch (knobs.documentHeld) {
+    case "refused":
+      return "conflict";
+    // The engine's word for a name linked on less than a name is the link's.
+    case "legal_form":
+    case "part_name":
+    case "own_name":
+    case "differs":
+      return knobs.documentHeld;
+    default:
+      return undefined;
+  }
+};
 
 const appliedKey = (loadId: string, decisionId: string) =>
   `${loadId}\u001f${decisionId}`;
@@ -466,11 +510,17 @@ function applyReleases(ontologyId: string, now = Date.now()) {
     if (!l || !d) continue;
     const review = heldReview(l, d);
     if (review && !refusal()) {
-      releaseReview(tenantGraph(l.tenantId).view(l.id), review.id, {
-        ontologyVersion: versionName(l),
-        model: aiModel(l.workspaceId, "extract") || MODEL,
-        verifier: aiModel(l.workspaceId, "verify") || VERIFIER,
-      });
+      const def = ontologyVersion(l.ontologyId, l.versionId)?.definition;
+      releaseReview(
+        tenantGraph(l.tenantId).view(l.id),
+        review.id,
+        {
+          ontologyVersion: versionName(l),
+          model: aiModel(l.workspaceId, "extract") || MODEL,
+          verifier: aiModel(l.workspaceId, "verify") || VERIFIER,
+        },
+        holdsOne(def, String(review.props.suggested_link)) ? d : undefined,
+      );
       countRelease(l.id, d.docId);
     }
     recordRelease(l, d, r.due);
@@ -479,11 +529,15 @@ function applyReleases(ontologyId: string, now = Date.now()) {
 
 /**
  * What became of a decision in the ontology's current load: unset for one
- * that load's list doesn't hold, and for any decision but a release.
+ * that load's list doesn't hold, and for a resolve or a reject.
  */
 export function appliedOf(ontologyId: string, d: FoundryReviewDecision) {
   const l = loadById(currentLoadId(ontologyId) || "");
-  if (d.kind !== "release" || !l?.decisions.some((x) => x.id === d.id))
+  if (
+    d.kind === "resolve" ||
+    d.kind === "reject" ||
+    !l?.decisions.some((x) => x.id === d.id)
+  )
     return undefined;
   return state.applied.get(appliedKey(l.id, d.id)) ?? { status: "" as const };
 }
@@ -503,6 +557,157 @@ export function forgetRelease(ontologyId: string, decisionId: string) {
   l.decisions = l.decisions.filter((x) => x.id !== decisionId);
   state.applied.delete(appliedKey(l.id, decisionId));
 }
+// A value a person chose applies to the current load at once, as the
+// backend's does (store/foundry_resends.go): the decision joins the load's
+// own list as pending, and a resend job sends the load its decisions. The
+// job takes two steps; with another job live it waits for that job's end.
+// When it ends, each decided property holds its value, each property whose
+// decision was removed goes back to what it held, and the decisions that
+// waited are applied. A job that fails (`loadOutcome` "fail") leaves them
+// unconfirmed. A property review stays in the load: it was written when its
+// document was read. A decision made, changed or removed while another load
+// was current reaches a load when it becomes current by a job's end. As the
+// engine does, the job keeps a decision once, by its id: one sent again
+// under an id it holds sets nothing, whatever its value, which is why a
+// changed value is a new decision (`mock/routes/reviews.ts` `save`).
+
+type Chosen = Extract<FoundryReviewDecision, { kind: "prop" }>;
+/** A property a value decision decides. */
+type Decided = Pick<Chosen, "type" | "entityKey" | "prop">;
+const sameProperty = (a: Decided, b: Decided) =>
+  a.type === b.type && a.entityKey === b.entityKey && a.prop === b.prop;
+const propertyKey = (loadId: string, d: Decided) =>
+  [loadId, d.type, d.entityKey, d.prop].join("\u001f");
+
+/** Has a load owe its decisions, and queues the resend when nothing is in its way. */
+function oweValues(l: StoredLoad) {
+  state.valuesOwed.add(l.id);
+  if (currentLoadId(l.ontologyId) !== l.id) return;
+  // A live job's end queues it; a queued resend sends the list as it then is.
+  if (jobsOf(l.ontologyId).some(live)) return;
+  create(l.ontologyId, l, "resend", "person");
+}
+
+/**
+ * Joins a value decision just settled to the ontology's current load, in
+ * place of any the load holds for its property, to be sent by a resend job.
+ */
+export function owePendingValue(ontologyId: string, d: Chosen) {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  if (!l) return;
+  l.decisions = [
+    ...l.decisions.filter((x) => !(x.kind === "prop" && sameProperty(x, d))),
+    d,
+  ];
+  state.applied.set(appliedKey(l.id, d.id), { status: "pending" });
+  oweValues(l);
+}
+
+/**
+ * Takes a removed value decision out of every load's list, under its id or
+ * the one its property's decision had before its value changed: each owes
+ * the engine its decisions again, and the current one is sent them at once.
+ */
+export function forgetValue(ontologyId: string, decisionId: string) {
+  const removed = (saved.get(ontologyId) || []).find(
+    (x): x is Chosen => x.id === decisionId && x.kind === "prop",
+  );
+  if (!removed) return;
+  for (const l of loadsOf(ontologyId)) {
+    const d = l.decisions.find(
+      (x): x is Chosen => x.kind === "prop" && sameProperty(x, removed),
+    );
+    if (!d) continue;
+    l.decisions = l.decisions.filter((x) => x !== d);
+    state.applied.delete(appliedKey(l.id, d.id));
+    state.withdrawn.set(l.id, [...(state.withdrawn.get(l.id) || []), d]);
+    oweValues(l);
+  }
+}
+
+/**
+ * Brings the ontology's current load the value decisions saved while another
+ * load was current: each it lacks, or holds under the id its property's
+ * decision had before a person chose another value, joins its list as
+ * pending, and the load owes its decisions.
+ */
+function carryValues(ontologyId: string) {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  if (!l) return;
+  for (const d of saved.get(ontologyId) || []) {
+    if (d.kind !== "prop") continue;
+    const held = l.decisions.find(
+      (x) => x.kind === "prop" && sameProperty(x, d),
+    );
+    if (held?.id === d.id) continue;
+    l.decisions = [...l.decisions.filter((x) => x !== held), d];
+    state.applied.set(appliedKey(l.id, d.id), { status: "pending" });
+    state.valuesOwed.add(l.id);
+  }
+}
+
+/** What a resend job does when it ends: the load's decisions, sent. */
+function sendValues(l: StoredLoad, at: number) {
+  state.valuesOwed.delete(l.id);
+  const g = tenantGraph(l.tenantId).view(l.id);
+  const entity = (d: Decided) =>
+    [...g.nodes()].find(
+      (n) =>
+        n.label === d.type &&
+        (n.props.entity_key ?? n.props.norm_name) === d.entityKey,
+    );
+  // A decision the load no longer sends is withdrawn: its property holds
+  // what it held before, or what its evidence gives.
+  for (const d of state.withdrawn.get(l.id) || []) {
+    if (l.decisions.some((x) => x.kind === "prop" && sameProperty(x, d)))
+      continue;
+    const was = state.was.get(propertyKey(l.id, d)),
+      node = entity(d);
+    state.was.delete(propertyKey(l.id, d));
+    state.kept.delete(propertyKey(l.id, d));
+    if (node && was?.value !== undefined) node.props[d.prop] = was.value;
+    else decideValue(g, d.type, d.entityKey, d.prop, l.decisions);
+  }
+  state.withdrawn.delete(l.id);
+  for (const d of l.decisions) {
+    if (d.kind !== "prop") continue;
+    const waits =
+      state.applied.get(appliedKey(l.id, d.id))?.status === "pending" ||
+      state.applied.get(appliedKey(l.id, d.id))?.status === "unconfirmed";
+    if (!waits) continue;
+    const node = entity(d),
+      key = propertyKey(l.id, d);
+    // A decision under an id the engine holds is not news: nothing is set.
+    if (state.kept.get(key) !== d.id) {
+      if (node && !state.was.has(key))
+        state.was.set(
+          key,
+          d.prop in node.props ? { value: node.props[d.prop]! } : {},
+        );
+      decideValue(g, d.type, d.entityKey, d.prop, l.decisions);
+      state.kept.set(key, d.id);
+    }
+    state.applied.set(appliedKey(l.id, d.id), {
+      status: "applied",
+      at: iso(at),
+    });
+  }
+}
+
+/** A resend job that failed: what waited for it is not confirmed as sent. */
+function failValues(l: StoredLoad) {
+  state.valuesOwed.delete(l.id);
+  for (const d of l.decisions)
+    if (
+      d.kind === "prop" &&
+      state.applied.get(appliedKey(l.id, d.id))?.status === "pending"
+    )
+      state.applied.set(appliedKey(l.id, d.id), {
+        status: "unconfirmed",
+        reason: "job_failed",
+      });
+}
+
 /** The version of an ontology's current load, if it has one. */
 export const currentLoadVersionId = (ontologyId: string) =>
   loadById(currentLoadId(ontologyId) || "")?.versionId;
@@ -587,7 +792,10 @@ function ontologyOfVersion(def: Definition): ExtractOntology & {
       string,
       { names?: string[]; identifiers?: Record<string, string> }
     >;
-    links?: Record<string, { from?: string; to?: string }>;
+    links?: Record<
+      string,
+      { from?: string; to?: string; cardinality?: string }
+    >;
   } = {};
   try {
     doc = parse(String(def.ontology_toml || "")) as typeof doc;
@@ -610,6 +818,11 @@ function ontologyOfVersion(def: Definition): ExtractOntology & {
         l,
         { from: String(v.from || ""), to: String(v.to || "") },
       ]),
+    ),
+    oneValued: new Set(
+      Object.entries(doc.links || {})
+        .filter(([, v]) => v.cardinality === "one")
+        .map(([l]) => l),
     ),
   };
 }
@@ -1209,11 +1422,7 @@ function read(j: StoredJob, documentId: string, at: string) {
     ontology,
     scope,
     loadById(j.loadId)?.decisions || [],
-    knobs.documentLegalForm
-      ? "legal_form"
-      : knobs.documentAdjudicated
-        ? "adjudicated"
-        : undefined,
+    knobs.documentLinked,
     knobs.documentHeld,
     {
       model: aiModel(j.workspaceId, "extract") || MODEL,
@@ -1363,6 +1572,12 @@ function chain(ontologyId: string, at: number) {
     create(ontologyId, current, "extract", "system", at);
     return;
   }
+  // The value decisions the current load has yet to be sent.
+  carryValues(ontologyId);
+  if (current && state.valuesOwed.has(current.id)) {
+    create(ontologyId, current, "resend", "system", at);
+    return;
+  }
   const deleting = loadsOf(ontologyId)
     .filter((l) => l.status === "deleting")
     .at(-1);
@@ -1495,6 +1710,16 @@ function advance(j: StoredJob) {
         break;
       }
       case "finishing": {
+        // A resend sends what its load holds, and reads no new document.
+        if (j.kind === "resend") {
+          const l = loadById(j.loadId);
+          if (j.plan.outcome === "fail") {
+            if (l) failValues(l);
+            return finish(j, "failed", due, "the agent stopped answering");
+          }
+          if (l) sendValues(l, due);
+          return finish(j, "succeeded", due);
+        }
         // Documents uploaded while it ran are read into the load before it
         // finishes, when that load is (or now becomes) current.
         const current =
@@ -1575,7 +1800,7 @@ function create(
     versionId: load.versionId,
     status: "queued",
     phase:
-      kind === "extract"
+      kind === "extract" || kind === "resend"
         ? "documents"
         : kind === "delete"
           ? "deleting"
@@ -1933,57 +2158,72 @@ export const loadRoutes: MockRoute[] = [
   {
     method: "POST",
     path: `${BASE}/{loadId}:read`,
-    handle: (req) => {
-      const s = ontologyOf(req);
-      if (!isScope(s)) return s;
-      // A grantee reads its granted load whatever the database's project.
-      if (knobs.ontologyDatabaseHidden && !req.grantee)
-        return fail("PERMISSION_DENIED", "permission denied");
-      if (req.grantee && req.params.loadId !== req.grantee.load?.loadId)
-        return fail("NOT_FOUND", "load not found");
-      const reads = readsOf(
-        (req.body as Partial<ReadFoundryGraphRequest> | undefined)?.readsJson,
-      );
-      if (typeof reads === "string") return fail("INVALID_ARGUMENT", reads);
-      advanceLoads(s.o.id);
-      const l = loadsOf(s.o.id).find((x) => x.id === req.params.loadId);
-      if (!l) return fail("NOT_FOUND", "load not found");
-      if (l.status === "deleting" || l.status === "delete_failed")
-        return fail("FAILED_PRECONDITION", "the load is being deleted");
-      if (knobs.readsBusy) {
-        knobs.readsBusy -= 1;
-        return fail(
-          "RESOURCE_EXHAUSTED",
-          "the workspace already runs 4 graph reads; try again when one ends",
-        );
-      }
-      if (knobs.readsPaused)
-        return fail("FAILED_PRECONDITION", knobs.readsPaused);
-      // A database still starting reaches the WFE only as a failed read.
-      if (startingRefuses(l.tenantId))
-        return fail("UNAVAILABLE", "the graph reader failed; try again");
-      // Of a load it holds only some of, a grantee reads what its sources
-      // fill (../graph/view.ts).
-      const def = (ontologyVersion(l.ontologyId, l.versionId)?.definition ||
-        {}) as Definition;
-      const view = req.grantee?.load?.partial
-        ? viewOf(
-            req.grantee.visibility(s.o.id),
-            String(def.ontology_toml || ""),
-            String(def.mappings_toml || ""),
-          )
-        : undefined;
-      const model = rulesOf(l, view);
-      return ok({
-        resultJson: JSON.stringify({
-          as_of: now().slice(0, 10),
-          results: reads.map((r) =>
-            answer(model, r, { errors: knobs.readErrors, view }),
-          ),
-          stats: { instances: model.facts.size, wall_ms: 1 },
+    handle: (req) =>
+      tracked(
+        req,
+        req.params.ontologyId,
+        (): MockReply => {
+          const s = ontologyOf(req);
+          if (!isScope(s)) return s;
+          // A grantee reads its granted load whatever the database's project.
+          if (knobs.ontologyDatabaseHidden && !req.grantee)
+            return fail("PERMISSION_DENIED", "permission denied");
+          if (req.grantee && req.params.loadId !== req.grantee.load?.loadId)
+            return fail("NOT_FOUND", "load not found");
+          const reads = readsOf(
+            (req.body as Partial<ReadFoundryGraphRequest> | undefined)
+              ?.readsJson,
+          );
+          if (typeof reads === "string") return fail("INVALID_ARGUMENT", reads);
+          advanceLoads(s.o.id);
+          const l = loadsOf(s.o.id).find((x) => x.id === req.params.loadId);
+          if (!l) return fail("NOT_FOUND", "load not found");
+          if (l.status === "deleting" || l.status === "delete_failed")
+            return fail("FAILED_PRECONDITION", "the load is being deleted");
+          if (knobs.readsBusy) {
+            knobs.readsBusy -= 1;
+            return fail(
+              "RESOURCE_EXHAUSTED",
+              "the workspace already runs 4 graph reads; try again when one ends",
+            );
+          }
+          if (knobs.readsPaused)
+            return fail("FAILED_PRECONDITION", knobs.readsPaused);
+          // A database still starting reaches the WFE only as a failed read.
+          if (startingRefuses(l.tenantId))
+            return fail("UNAVAILABLE", "the graph reader failed; try again");
+          // Of a load it holds only some of, a grantee reads what its sources
+          // fill (../graph/view.ts).
+          const def = (ontologyVersion(l.ontologyId, l.versionId)?.definition ||
+            {}) as Definition;
+          const view = req.grantee?.load?.partial
+            ? viewOf(
+                req.grantee.visibility(s.o.id),
+                String(def.ontology_toml || ""),
+                String(def.mappings_toml || ""),
+              )
+            : undefined;
+          const model = rulesOf(l, view);
+          return ok({
+            resultJson: JSON.stringify({
+              as_of: now().slice(0, 10),
+              results: reads.map((r) =>
+                answer(model, r, { errors: knobs.readErrors, view }),
+              ),
+              stats: { instances: model.facts.size, wall_ms: 1 },
+            }),
+          } satisfies ReadFoundryGraphResponse);
+        },
+        (body) => ({
+          read: {
+            loadId: req.params.loadId!,
+            readsJson: String(
+              (req.body as Partial<ReadFoundryGraphRequest>).readsJson,
+            ),
+            resultJson: (body as ReadFoundryGraphResponse).resultJson || "",
+          },
         }),
-      } satisfies ReadFoundryGraphResponse);
-    },
+      ),
   },
   {
     method: "DELETE",

@@ -23,6 +23,8 @@ export const MASK_PATTERNS = [
   "/ontology/*/generations/*",
   "/ontology/*/loads/*",
   "/ontology/*/documents/*",
+  "/ontology/*/workflows/*/runs/*",
+  "/ontology/*/workflows/*",
   "/ontology/*",
   "/explore/*/entities/*",
   "/explore/*",

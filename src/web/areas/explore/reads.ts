@@ -13,10 +13,12 @@ import {
   documentRequest,
   entityRequest,
   factEvidenceRequest,
+  nameLinksRequest,
   parseDocument,
   parseDocumentFacts,
   parseEntity,
   parseFactEvidence,
+  parseNameLinks,
   type DocumentGraph,
   type EntityGraph,
   type EntityIdentity,
@@ -176,7 +178,10 @@ export const readQueries = {
     doc: DocumentGraph | undefined,
     naming: Naming = NO_NAMING,
   ) => ({
-    // The facts' ends are the document's entities, named with it.
+    // The facts' ends are the document's entities, named with it. Keyed by
+    // the facts its quotes name too: an approval written in place adds one,
+    // and on a link that holds one value replaces another (contract
+    // 4.14.0), so a read made with the page's earlier quotes reads again.
     queryKey: [
       ws,
       "ontology",
@@ -187,6 +192,7 @@ export const readQueries = {
       documentId,
       naming.version,
       "facts",
+      [...new Set(doc?.evidence.map((e) => e.factKey))].sort().join(","),
     ],
     enabled: !!doc?.evidence.length,
     queryFn: async ({ signal }: { signal?: AbortSignal }) => {
@@ -247,6 +253,45 @@ export const readQueries = {
     },
     ...readOptions,
   }),
+  // The reviews of names linked on less than a name in `docs`, the
+  // documents of its held claims (nameLinksRequest), which its page marks
+  // them with: a held claim's other end has its review there. Its own query,
+  // so a page that shows no reviews never reads it, and a failure leaves the
+  // page up; it answers with the documents it read, so a page knows which of
+  // its claims an answer covers. Reviews aren't shared through grants.
+  nameLinks: (
+    ws: string,
+    o: string,
+    reader: GraphReader,
+    scope: Scope,
+    identity: EntityIdentity,
+    docs: readonly string[],
+  ) => {
+    const req =
+      reader.kind === "database" ? nameLinksRequest(scope, docs) : null;
+    return {
+      queryKey: [
+        ws,
+        "ontology",
+        o,
+        "read",
+        scope.id,
+        "entity",
+        identity,
+        "name-links",
+        docs,
+      ],
+      enabled: !!req,
+      queryFn: async ({ signal }: { signal?: AbortSignal }) => ({
+        docs,
+        links:
+          reader.kind === "database" && req
+            ? parseNameLinks(await runRead(reader.read, req, signal))
+            : [],
+      }),
+      ...readOptions,
+    };
+  },
   // What states its facts, by fact key: through grants, those of the first
   // TYPED_LIMITS.evidenceFacts facts.
   evidence: (
