@@ -1756,7 +1756,8 @@ func (s *Service) ListFoundryReviewDecisions(
 	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID}) || len(input.PageToken) > 1024 {
 		return ListFoundryReviewDecisionsOutput{}, 0, errCodeInvalidArguments
 	}
-	req := &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, PageToken: input.PageToken}
+	req := &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, PageToken: input.PageToken,
+		IncludeWithdraws: true}
 	if err := s.AuthorizeFoundry(ctx, identity, req, QueryRead,
 		"ListFoundryReviewDecisions"); err != nil {
 		return ListFoundryReviewDecisionsOutput{}, 0, err

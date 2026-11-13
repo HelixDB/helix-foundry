@@ -133,6 +133,20 @@ func (s *decisionStore) ListFoundryShownDecisions(_ context.Context, o, after st
 	}
 	return s.rows, nil
 }
+
+// ListFoundryReviewDecisions lists the saved decisions alone: no withdraw.
+func (s *decisionStore) ListFoundryReviewDecisions(_ context.Context, o, after string, docs []string, limit int) ([]*foundrymodel.FoundryReviewDecision, error) {
+	if o != s.ontology.ID {
+		panic("wrong ontology")
+	}
+	var saved []*foundrymodel.FoundryReviewDecision
+	for _, d := range s.rows {
+		if d.Kind != foundrymodel.FoundryReviewWithdraw {
+			saved = append(saved, d)
+		}
+	}
+	return saved, nil
+}
 func (s *decisionStore) DeleteFoundryReviewDecision(_ context.Context, ws, o, id string, resend *foundrymodel.FoundryGraphJob) error {
 	if ws != s.ontology.WorkspaceID || o != s.ontology.ID {
 		panic("wrong ontology")
@@ -478,7 +492,12 @@ func TestListFoundryReviewDecisionsTakenBack(t *testing.T) {
 		"w4": {Status: foundrymodel.FoundryReleaseRefused, Reason: "differs"},
 		"w5": {Status: foundrymodel.FoundryReleasePending, Reason: foundrymodel.FoundryReleaseJobFailed},
 	}
-	out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o"})
+	// A client that doesn't ask, as a site before 4.16.0, gets none.
+	if out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o"}); err != nil || len(out.GetDecisions()) != 0 {
+		t.Fatalf("listed %v, %v without asking", out.GetDecisions(), err)
+	}
+	out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o",
+		IncludeWithdraws: true})
 	if err != nil {
 		t.Fatal(err)
 	}

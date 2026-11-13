@@ -47,8 +47,10 @@ export const reviewQueries = {
       const seen = new Set<string>();
       let token = "";
       do {
+        // With the current load's withdraws (contract 4.16.0), which a
+        // client must ask for: one before them couldn't show one.
         const page = await api<ListReviewDecisionsResponse>(
-          `${base(ws, o)}/review-decisions${token ? `?pageToken=${enc(token)}` : ""}`,
+          `${base(ws, o)}/review-decisions?includeWithdraws=true${token ? `&pageToken=${enc(token)}` : ""}`,
         );
         decisions.push(...(page.decisions || []));
         token = page.nextPageToken || "";
