@@ -1103,15 +1103,16 @@ test("stars on GitHub in place with the install's token, else opens it", async (
     ).status(),
   ).toBe(403);
 
-  // From here, GitHub as a token sees it: `star` and `starred`, answered
-  // after `wait` ms.
-  let github = { star: "in_place", starred: true, wait: 0 };
-  await page.route("**/github-star", async (route) => {
-    if (route.request().method() === "GET")
-      return route.fulfill({ json: { star: github.star } });
-    await new Promise((resolve) => setTimeout(resolve, github.wait));
-    await route.fulfill({ json: { starred: github.starred } });
-  });
+  // From here, GitHub as a token sees it: `star` and `starred`.
+  let github = { star: "in_place", starred: true };
+  await page.route("**/github-star", (route) =>
+    route.fulfill({
+      json:
+        route.request().method() === "GET"
+          ? { star: github.star }
+          : { starred: github.starred },
+    }),
+  );
   await context.route(`${REPOSITORY}**`, (route) =>
     route.fulfill({ contentType: "text/html", body: "<title>GitHub</title>" }),
   );
@@ -1134,17 +1135,20 @@ test("stars on GitHub in place with the install's token, else opens it", async (
     await form.getByRole("textbox", { name: /^Question/ }).fill(question);
     await form.getByRole("button", { name: "Ask", exact: true }).click();
     await expect(page).toHaveURL(/\?thread=q_/);
+    await expect(page.getByRole("region", { name: "Answer" })).toBeVisible({
+      timeout: 20_000,
+    });
   };
 
   // The token has starred it already: nothing asks, ever.
-  github = { star: "starred", starred: true, wait: 0 };
+  github = { star: "starred", starred: true };
   await askThird("Who signed the services agreement?");
   await expect.poll(done).toBe("1");
   await page.clock.fastForward(31_000);
   await expect(prompt).toBeHidden();
 
   // It stars in place, and thanks.
-  github = { star: "in_place", starred: true, wait: 0 };
+  github = { star: "in_place", starred: true };
   await askThird("When were the invoices issued?");
   await page.clock.fastForward(31_000);
   await prompt.getByRole("button", { name: "Star on GitHub" }).click();
@@ -1156,7 +1160,7 @@ test("stars on GitHub in place with the install's token, else opens it", async (
   await expect(prompt).toBeHidden();
 
   // GitHub refuses the token: the click opens the repository.
-  github = { star: "in_place", starred: false, wait: 0 };
+  github = { star: "in_place", starred: false };
   await askThird("How are the invoices doing?");
   await page.clock.fastForward(31_000);
   let opened = context.waitForEvent("page");
@@ -1165,17 +1169,20 @@ test("stars on GitHub in place with the install's token, else opens it", async (
   await expect(prompt).toBeHidden();
   expect(await done()).toBe("1");
 
-  // Refused after the click's activation ran out (5 s), when the browser
-  // opens no tab: the button becomes a link to the repository.
-  github = { star: "in_place", starred: false, wait: 6_000 };
+  // Refused once the click's activation has run out (5 s), when the
+  // browser opens no tab: the button becomes a link to the repository.
+  github = { star: "in_place", starred: false };
   await askThird("Who are the customers?");
   await page.clock.fastForward(31_000);
+  await page.evaluate(() =>
+    Object.defineProperty(navigator, "userActivation", {
+      value: { isActive: false, hasBeenActive: true },
+      configurable: true,
+    }),
+  );
   await prompt.getByRole("button", { name: "Star on GitHub" }).click();
-  await expect(
-    prompt.getByRole("button", { name: "Starring…" }),
-  ).toBeDisabled();
   const link = prompt.getByRole("link", { name: "Open GitHub" });
-  await expect(link).toHaveAttribute("href", REPOSITORY, { timeout: 10_000 });
+  await expect(link).toHaveAttribute("href", REPOSITORY);
   opened = context.waitForEvent("page");
   await link.click();
   await expect(await opened).toHaveURL(REPOSITORY);

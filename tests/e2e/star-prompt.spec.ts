@@ -22,6 +22,11 @@ async function ask(page: Page, question: string) {
   await expect(
     page.getByRole("article", { name: `Question: ${question}` }),
   ).toBeVisible();
+  // Read, as someone would before going idle: the page settles (its
+  // composer takes the focus back) once the answer is in.
+  await expect(page.getByRole("region", { name: "Answer" })).toBeVisible({
+    timeout: 20_000,
+  });
 }
 
 const prompt = (page: Page) =>

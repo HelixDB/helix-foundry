@@ -148,8 +148,13 @@ describe("starRepository", () => {
   ])("refuses a post from %s", async (_, headers, without) => {
     const { upstream, calls } = github(204);
     expect(
-      (await starRepository(request("POST", headers, without), CONFIG, upstream))
-        .status,
+      (
+        await starRepository(
+          request("POST", headers, without),
+          CONFIG,
+          upstream,
+        )
+      ).status,
     ).toBe(403);
     expect(calls).toEqual([]);
   });
@@ -163,7 +168,10 @@ describe("/github-star", () => {
   });
 
   /** The route as `mode`'s build serves it, with the site's environment. */
-  const route = async (mode: "" | "local", env: Record<string, string> = {}) => {
+  const route = async (
+    mode: "" | "local",
+    env: Record<string, string> = {},
+  ) => {
     vi.stubEnv("NEXT_PUBLIC_FOUNDRY_MODE", mode);
     vi.stubEnv("HELIX_WFE_ORIGIN", "http://pod:8081");
     vi.stubEnv("FOUNDRY_ORIGIN", ORIGIN);

@@ -40,7 +40,9 @@ const subscribe = (listener: () => void) => {
 function done() {
   try {
     localStorage.setItem(DONE, "1");
-  } catch {}
+  } catch {
+    // Nothing kept: isDone() reads blocked storage as done anyway.
+  }
 }
 function isDone() {
   try {
