@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FoundryTeam, WorkspaceDirectory } from "../../src/shared/wfe";
 import {
   directoryCounts,
+  directoryNotOffered,
   directoryView,
   issueGroups,
   providerName,
@@ -246,5 +247,15 @@ describe("teamsWithoutSources", () => {
         "Okta",
       ),
     ).toMatch(/^A, B and 3 more teams were synced/);
+  });
+});
+
+describe("directoryNotOffered", () => {
+  it("hides the panel only where it isn't for this workspace", () => {
+    for (const status of [403, 404, 501])
+      expect(directoryNotOffered(status)).toBe(true);
+    // A busy WFE, a bad request or an outage is a failure to say, not "no directory sync".
+    for (const status of [400, 409, 429, 500, 502, 503, undefined])
+      expect(directoryNotOffered(status)).toBe(false);
   });
 });
