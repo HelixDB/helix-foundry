@@ -126,6 +126,7 @@ export const mock = {
     // Acme is entitled to directory sync (SSO) with nothing connected yet;
     // what its directory reports; how long a sync asked for runs.
     directoryEntitled?: boolean;
+    directorySettingUp?: boolean;
     directoryIssues?: { kind: string; displayName?: string; email?: string }[];
     directorySyncMs?: number;
     // People enrichment: a batch of lookups (and the wait for a slot), and

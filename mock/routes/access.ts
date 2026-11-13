@@ -201,6 +201,7 @@ const synced = (t: StoredTeam) =>
 const knobs = config as typeof config & {
   directoryTeams?: boolean;
   directoryEntitled?: boolean;
+  directorySettingUp?: boolean;
   directoryIssues?: DirectoryIssue[];
   directorySyncMs?: number;
 };
@@ -308,17 +309,41 @@ function syncDirectoryIfAsked() {
 
 // The host's directory sync as the WFE serves it (GET .../directory,
 // .../directory/portal-link, .../directory:sync). Only Acme can have one:
-// it is entitled (SSO) with `directoryEntitled` or `directoryTeams`, and
-// connected once `directoryTeams` syncs it or its Admin Portal
-// (/mock/directory-portal) connects Okta. `directoryIssues` is what the
-// directory reports, and a sync asked for runs `directorySyncMs` (1500).
+// it is entitled (directory sync on) with `directoryEntitled`,
+// `directorySettingUp` or `directoryTeams`, and connected once
+// `directoryTeams` syncs it or its Admin Portal (/mock/directory-portal)
+// connects Okta. `directorySettingUp` has a directory chosen in the setup
+// guide that never linked, as the WFE reports one: unlinked, idle, never
+// synced. `directoryIssues` is what the directory reports, and a sync asked
+// for runs `directorySyncMs` (1500).
 const directoryEntitled = (ws: string) =>
   ws === "ws_acme" &&
-  (!!knobs.directoryEntitled || !!knobs.directoryTeams || directorySynced);
+  (!!knobs.directoryEntitled ||
+    !!knobs.directorySettingUp ||
+    !!knobs.directoryTeams ||
+    directorySynced);
 
 function directoryOf(ws: string): WorkspaceDirectory {
   syncDirectoryIfAsked();
   if (!directoryEntitled(ws)) return { workspaceId: ws };
+  if (!directorySynced && knobs.directorySettingUp)
+    return {
+      workspaceId: ws,
+      entitled: true,
+      directory: {
+        id: "directory_acme_scim",
+        type: "generic scim v2.0",
+        provider: "your directory",
+        name: db.workspaces.get(ws)?.displayName || "",
+        state: "DIRECTORY_STATE_UNLINKED",
+      },
+      rolesFromDirectory: false,
+      groups: [],
+      issues: [],
+      syncState: "DIRECTORY_SYNC_STATE_IDLE",
+      userCount: 0,
+      managedMemberCount: 0,
+    };
   if (!directorySynced) return { workspaceId: ws, entitled: true };
   if (directoryPendingUntil && Date.now() >= directoryPendingUntil) {
     directoryPendingUntil = 0;

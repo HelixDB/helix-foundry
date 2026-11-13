@@ -86,7 +86,7 @@ test("an agent's run shows its request, what it read and asked, and its answer",
   ).toBe(404);
 
   // The open run shows on the workflow's page as it goes.
-  const runs = page.getByRole("list", { name: "Runs" });
+  const runs = page.getByRole("list", { name: "Runs", exact: true });
   // The list asks again every 10 s while no run is open.
   await expect(
     runs.getByText("Which customers are up for renewal?"),
@@ -348,7 +348,7 @@ test("a workflow's page: its numbers, its runs and what to change for it", async
   await expect(
     filter.getByRole("radio", { name: /^Misleading/ }),
   ).toHaveAttribute("aria-checked", "true");
-  const runs = page.getByRole("list", { name: "Runs" });
+  const runs = page.getByRole("list", { name: "Runs", exact: true });
   await expect(runs.getByText("Essential", { exact: true })).toHaveCount(0);
 
   // All of them: ten at first, more on asking.

@@ -152,7 +152,7 @@ export function DirectoryPanel() {
     );
 
   const conn = d.directory!,
-    state = stateView(conn.state),
+    state = stateView(conn.state, !!d.lastSyncedAt),
     last = syncText(d, (at) => formatRelative(at)),
     issues = issueGroups(d.issues || [], view.provider),
     busy = syncing(d) || sync.isPending;
@@ -201,6 +201,7 @@ export function DirectoryPanel() {
             {state.problem}
           </p>
         )}
+        {state.hint && <p className="wk-note">{state.hint}</p>}
         <p
           className={
             last.tone === "danger" ? "wk-directory-problem" : "wk-note"

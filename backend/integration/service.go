@@ -104,6 +104,9 @@ type Service struct {
 	Polls                   []time.Duration
 	RunTool                 Runner
 	Logger                  *slog.Logger
+	// SampleDatabase is where the host serves the sample company's tables, for add_sample_data;
+	// nil where it serves none.
+	SampleDatabase *SampleDatabase
 	// SignIn is whether the host offers connecting a connector by signing in at its provider
 	// (hosted: pipes.enabled). Only then are the sign-in tools registered; a local install
 	// has no provider accounts and leaves it false.

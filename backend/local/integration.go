@@ -43,6 +43,8 @@ func IntegrationHandler(auth *Authenticator, dir *directory.Store, conn *grpc.Cl
 		Workflows: client,
 		Directory: localIntegrationDirectory{dir, directoryClient}, Confirmations: directory.Confirmations{Store: dir},
 		Documents: documents, FoundryURL: strings.TrimRight(siteOrigin, "/"), ResourceURI: mcpAudience, Logger: logger,
+		// The sample company's tables, in the install's acme-db (local/compose.yaml), which serves no TLS.
+		SampleDatabase: &integration.SampleDatabase{Host: "acme-db", DisableTLS: true},
 	}
 	identity := &integration.Identity{
 		User:          true,
