@@ -127,6 +127,7 @@ export const mock = {
     // what its directory reports; how long a sync asked for runs.
     directoryEntitled?: boolean;
     directorySettingUp?: boolean;
+    directoryReadFailures?: number;
     directoryIssues?: { kind: string; displayName?: string; email?: string }[];
     directorySyncMs?: number;
     // People enrichment: a batch of lookups (and the wait for a slot), and

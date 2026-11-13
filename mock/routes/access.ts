@@ -202,6 +202,7 @@ const knobs = config as typeof config & {
   directoryTeams?: boolean;
   directoryEntitled?: boolean;
   directorySettingUp?: boolean;
+  directoryReadFailures?: number;
   directoryIssues?: DirectoryIssue[];
   directorySyncMs?: number;
 };
@@ -314,7 +315,8 @@ function syncDirectoryIfAsked() {
 // `directoryTeams` syncs it or its Admin Portal (/mock/directory-portal)
 // connects Okta. `directorySettingUp` has a directory chosen in the setup
 // guide that never linked, as the WFE reports one: unlinked, idle, never
-// synced. `directoryIssues` is what the directory reports, and a sync asked
+// synced. `directoryReadFailures` refuses the next n reads with 429.
+// `directoryIssues` is what the directory reports, and a sync asked
 // for runs `directorySyncMs` (1500).
 const directoryEntitled = (ws: string) =>
   ws === "ws_acme" &&
@@ -392,6 +394,14 @@ export const directoryRoutes: MockRoute[] = [
       const m = membership(params.workspaceId!, principal.user.id);
       if (isReply(m)) return m;
       if (!manages(m)) return fail("PERMISSION_DENIED", "permission denied");
+      // `directoryReadFailures`: the next n reads are refused as busy (429).
+      if (knobs.directoryReadFailures) {
+        knobs.directoryReadFailures -= 1;
+        return fail(
+          "RESOURCE_EXHAUSTED",
+          "too many requests; try again shortly",
+        );
+      }
       return ok(directoryOf(m.workspaceId));
     },
   },
@@ -474,6 +484,8 @@ onReset(() => {
   const at = "2026-10-03T10:00:00.000Z";
   delete knobs.directoryTeams;
   delete knobs.directoryEntitled;
+  delete knobs.directorySettingUp;
+  delete knobs.directoryReadFailures;
   delete knobs.directoryIssues;
   delete knobs.directorySyncMs;
   directorySynced = false;
