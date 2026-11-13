@@ -522,15 +522,18 @@ func (f resendFixture) countsOf(t *testing.T, doc string) (facts, reviews int) {
 	return row.Counts.Facts, row.Counts.Reviews
 }
 
-// The engine takes back every withdraw it is sent before it reads any
+// The engine decides every withdraw it is sent before it reads any
 // document, and says what it did only in that document's event (contract
 // 4.16.0). What it did stands whatever became of the document: a failed
-// event's word is recorded, a document that needed a model call (no event)
-// had its withdraws taken back all the same, and a withdraw sent again after
-// a run that stopped reads not_written, which, of an approval the load had
-// recorded written, is the take-back done. Each moves the document's counts
-// back once: a fact fewer, a review more. A withdraw never sent (its
-// document is gone) is refused, and what it would have taken back stays.
+// event's word is recorded, and a withdraw sent again after a run that
+// stopped reads not_written, which, of an approval the load had recorded
+// written, is the take-back done. Each moves the document's counts back
+// once: a fact fewer, a review more. A document that needed a model call
+// gets no event, so nothing says whether the engine took its withdraws back
+// or refused them: they wait, unconfirmed, and go with the document's next
+// resend, with no job queued for them alone (it would get no event either).
+// A withdraw never sent (its document is gone) is refused, and what it would
+// have taken back stays.
 func TestFoundryTakeBackWhateverBecameOfItsDocument(t *testing.T) {
 	ctx := context.Background()
 	setup := func(t *testing.T, tag string) (resendFixture, *model.FoundryReviewDecision, *model.FoundryGraphJob, *model.FoundryLoadResend) {
@@ -562,7 +565,7 @@ func TestFoundryTakeBackWhateverBecameOfItsDocument(t *testing.T) {
 		require.NoError(t, f.db.RecordFoundryReleaseOutcomes(ctx, job.ID, f.worker, f.a,
 			[]model.FoundryReleaseOutcome{withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, "")}))
 		require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
-			DocumentID: f.a, Reason: o.Reason, Requests: o.Requests, Refused: model.FoundryReleaseDocumentFailed, TakenBack: true,
+			DocumentID: f.a, Reason: o.Reason, Requests: o.Requests, Refused: model.FoundryReleaseDocumentFailed, Unsaid: true,
 		}))
 		back(t, f, d)
 		assert.ErrorIs(t, f.db.RecordFoundryReleaseOutcomes(ctx, job.ID, "another-worker", f.a,
@@ -571,10 +574,36 @@ func TestFoundryTakeBackWhateverBecameOfItsDocument(t *testing.T) {
 
 	t.Run("no event, its document needing a model call", func(t *testing.T) {
 		f, d, job, o := setup(t, "WNOEV")
+		assert.Error(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
+			DocumentID: f.a, Reason: o.Reason, Requests: o.Requests, Unsaid: true,
+		}), "unsaid needs a reason")
 		require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
-			DocumentID: f.a, Reason: o.Reason, Requests: o.Requests, Refused: model.FoundryReleaseNotReplayed, TakenBack: true,
+			DocumentID: f.a, Reason: o.Reason, Requests: o.Requests, Refused: model.FoundryReleaseNotReplayed, Unsaid: true,
 		}))
-		back(t, f, d)
+		assert.Equal(t, map[string]string{d.ID: "pending/not_replayed"}, f.applied(t, d), "unconfirmed: no word")
+		got, err := f.db.ListFoundryDecisionsApplied(ctx, f.ontology.ID, []string{d.ID})
+		require.NoError(t, err)
+		assert.True(t, got[d.ID].Unconfirmed())
+		facts, reviews := f.countsOf(t, f.a)
+		assert.Equal(t, [2]int{2, 2}, [2]int{facts, reviews}, "nothing moved without the engine's word")
+		f.end(t, job, "WNOEV-end", model.FoundryGraphJobSucceeded)
+		assert.Nil(t, f.liveJob(t), "no job for it alone: it would get no event either")
+		assert.Empty(t, f.owed(t))
+
+		// The document's next resend sends it, and its event says what
+		// became of it: not_written, as the run before took it back.
+		other := f.held(f.a, 1, readA)
+		require.True(t, f.approve(t, "WNOEV-3", other))
+		job = f.claim(t)
+		assert.Equal(t, map[string]model.FoundryReviewDecisionKind{d.ID: model.FoundryReviewWithdraw, other.ID: model.FoundryReviewRelease},
+			f.sentKinds(t, f.a))
+		owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+		require.NoError(t, err)
+		require.Len(t, owed, 1)
+		f.sent(t, job, owed[0], 1, withdrawn(d, model.FoundryReleaseOutcomeNotWritten, ""), written(other))
+		assert.Equal(t, map[string]string{d.ID: "withdrawn", other.ID: "written"}, f.applied(t, d, other))
+		facts, reviews = f.countsOf(t, f.a)
+		assert.Equal(t, [2]int{2, 2}, [2]int{facts, reviews}, "the take-back's fact back, the new approval's forward")
 	})
 
 	t.Run("sent again after a run that stopped", func(t *testing.T) {

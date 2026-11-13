@@ -862,6 +862,19 @@ describe("an approval taken back from the current load (contract 4.16.0)", () =>
     expect(model.takenBack({ status: "unconfirmed" }).text).toContain(
       "the ontology’s next job sends it again",
     );
+    expect(
+      model.takenBack({ status: "unconfirmed", reason: "job_failed" }).text,
+    ).toContain("the ontology’s next job sends it again");
+    // No event said what became of it: nothing claims it was taken back.
+    expect(
+      model.takenBack({ status: "unconfirmed", reason: "not_replayed" }),
+    ).toEqual({
+      label: "Approval maybe taken back",
+      text: "The engine said nothing of it: its document’s saved reading couldn’t be reused, as the models or the reading changed since. The next decision on its document sends it again and says.",
+    });
+    expect(
+      model.takenBack({ status: "unconfirmed", reason: "a_later_word" }).text,
+    ).toContain("said nothing of it: “a_later_word”.");
     expect(model.takenBack({ status: "refused", reason: "differs" })).toEqual({
       label: "Approval not taken back",
       text: "This load keeps what it wrote: an earlier version wrote this sentence’s claims of one link without telling them apart, so it can’t say which to take back. The next load won’t write it.",

@@ -122,13 +122,15 @@ func TestFoundryDecisionAppliedUnconfirmed(t *testing.T) {
 		applied FoundryDecisionApplied
 		want    bool
 	}{
-		"settled here, its job failed": {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseJobFailed}, true},
-		"carried, its job failed":      {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: FoundryReleaseJobFailed}, true},
-		"waiting for its job":          {FoundryDecisionApplied{Status: FoundryReleasePending}, false},
-		"refused by the engine":        {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: "unresolved"}, false},
-		"refused, the reason reused":   {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: FoundryReleaseJobFailed}, false},
-		"written":                      {FoundryDecisionApplied{Status: FoundryReleaseWritten}, false},
-		"never reported":               {FoundryDecisionApplied{}, false},
+		"settled here, its job failed":               {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseJobFailed}, true},
+		"carried, its job failed":                    {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: FoundryReleaseJobFailed}, true},
+		"waiting for its job":                        {FoundryDecisionApplied{Status: FoundryReleasePending}, false},
+		"a withdraw no event spoke of":               {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseNotReplayed}, true},
+		"a withdraw its failed document left unsaid": {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseDocumentFailed}, true},
+		"refused by the engine":                      {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: "unresolved"}, false},
+		"refused, the reason reused":                 {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: FoundryReleaseJobFailed}, false},
+		"written":                                    {FoundryDecisionApplied{Status: FoundryReleaseWritten}, false},
+		"never reported":                             {FoundryDecisionApplied{}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := tc.applied.Unconfirmed(); got != tc.want {

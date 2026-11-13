@@ -523,10 +523,11 @@ WHERE d.status='uploaded' AND d.id IN (`+idPlaceholders(len(ids))+`)`, append([]
 // since the job read the request, so the Extract that just ended carried
 // each of them. The ones taken back (model.FoundryValueRemoved) leave the
 // list then: that Extract carried none of them, so the engine has withdrawn
-// each, and the load no longer holds a value to withhold. With end.TakenBack
-// the document's withdraws that wait end withdrawn: the run took them back
-// before it read any document, and said nothing of them
-// (takeBackFoundryWithdraws). With end.Refused,
+// each, and the load no longer holds a value to withhold. With end.Unsaid
+// the document's withdraws that wait stay waiting, unconfirmed with
+// end.Refused as their reason: the run said nothing of them, and the engine
+// may have refused one as well as taken it back, so they go with the
+// document's next resend, whose event says which. With end.Refused,
 // the document's release decisions, and withdraws never sent,
 // that wait for the request are refused for that reason, as the engine said
 // nothing of them; a request owed again since is not this job's to answer,
@@ -534,6 +535,9 @@ WHERE d.status='uploaded' AND d.id IN (`+idPlaceholders(len(ids))+`)`, append([]
 // unconfirmed by a job that failed stays so: it may be written, which this
 // refusal knows nothing of.
 func (s *mysqlDB) EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error {
+	if end.Unsaid && end.Refused == "" {
+		return fmt.Errorf("a document's resend that said nothing of its withdraws needs the reason it gives them")
+	}
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		var loadID string
@@ -553,8 +557,10 @@ WHERE load_id=? AND document_id=? AND reason=? AND requests=? AND status='owed'`
 		if err != nil || n == 0 {
 			return err
 		}
-		if end.TakenBack {
-			if err := tx.takeBackFoundryWithdraws(ctx, loadID, end.DocumentID); err != nil {
+		if end.Unsaid {
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_reason=?
+WHERE load_id=? AND kind='withdraw' AND doc_id=? AND applied_status IN ('pending', 'carried') AND applied_reason IS NULL`,
+				end.Refused, loadID, end.DocumentID); err != nil {
 				return err
 			}
 		}
@@ -706,28 +712,6 @@ func (s *mysqlDB) moveFoundryCounts(ctx context.Context, loadID, docID string, n
 	_, err := s.db.ExecContext(ctx, `UPDATE foundry_load_extractions SET facts=GREATEST(facts+?, 0), reviews=GREATEST(reviews-?, 0)
 WHERE load_id=? AND document_id=?`, n, n, loadID, docID)
 	return err
-}
-
-// takeBackFoundryWithdraws ends the withdraws of document docID in loadID
-// that wait, one unconfirmed by an earlier job included, as taken back: an
-// Extract carried them to a run that reached its documents, and the engine
-// takes every withdraw back before it reads any document, at no cost, saying
-// so only in the document's event, which this run never sent (the document
-// needed a model call, so got none; contract 4.16.0). Sent again they would
-// read not_written. Each of an approval the load recorded written moves the
-// document's counts back. The caller holds the job's row.
-func (s *mysqlDB) takeBackFoundryWithdraws(ctx context.Context, loadID, docID string) error {
-	var back int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_load_decisions
-WHERE load_id=? AND kind='withdraw' AND doc_id=? AND applied_status IN ('pending', 'carried') AND was_written`, loadID, docID).Scan(&back); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_status=?, applied_reason=NULL, applied_at=NOW(6)
-WHERE load_id=? AND kind='withdraw' AND doc_id=? AND applied_status IN ('pending', 'carried')`,
-		string(model.FoundryWithdrawn), loadID, docID); err != nil {
-		return err
-	}
-	return s.moveFoundryCounts(ctx, loadID, docID, -back)
 }
 
 // RecordFoundryReleaseOutcomes records what the engine said of the decisions

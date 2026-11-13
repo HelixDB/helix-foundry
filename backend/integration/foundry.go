@@ -2095,8 +2095,8 @@ func FoundryDocument(doc *foundryv1.FoundryDocument) FoundryDocumentOutput {
 
 // FoundryDecisionAppliedOutput is what became of a decision in the ontology's current load.
 type FoundryDecisionAppliedOutput struct {
-	Status string `json:"status" jsonschema:"A release: pending, written, refused, missed or unconfirmed (its job failed before saying). A value: pending, applied or unconfirmed. A withdraw: pending, withdrawn (the claim is held again), not_written (the load held nothing the approval wrote), refused (what the approval wrote stays) or unconfirmed. Empty: the load read it when it was made and no job said what became of it."`
-	Reason string `json:"reason,omitempty" jsonschema:"Why it was refused, in the engine's word or the backend's (job_failed when unconfirmed)."`
+	Status string `json:"status" jsonschema:"A release: pending, written, refused, missed or unconfirmed (its job failed before saying). A value: pending, applied or unconfirmed. A withdraw: pending, withdrawn (the claim is held again), not_written (the load held nothing the approval wrote), refused (what the approval wrote stays) or unconfirmed (its job failed, or its document needed a model call so the engine said nothing of it; its document's next resend says). Empty: the load read it when it was made and no job said what became of it."`
+	Reason string `json:"reason,omitempty" jsonschema:"Why it was refused, in the engine's word or the backend's; when unconfirmed, why no word came (job_failed, or of a withdraw not_replayed or document_failed)."`
 	At     string `json:"at,omitempty" jsonschema:"When a job said so."`
 	// TakesBack is of a release: removing it takes it back from the current load.
 	TakesBack bool `json:"takes_back,omitempty" jsonschema:"Of a release: the current load may have written it, so removing the decision takes it back from that load rather than only dropping it."`
