@@ -31,6 +31,10 @@ const show = (via: Via | null) => {
   showing = via;
   for (const listener of listeners) listener();
 };
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => void listeners.delete(listener);
+};
 
 // Storage blocked: done() keeps nothing, and isDone() says done, so it never asks.
 function done() {
@@ -50,12 +54,11 @@ function isDone() {
 const check = (): Promise<StarCheck> =>
   fetch("/github-star", { cache: "no-store" })
     .then((res) => (res.ok ? res.json() : null))
-    .then((body: { star?: unknown } | null) =>
-      body?.star === "starred" || body?.star === "in_place"
-        ? body.star
-        : "on_github",
-    )
-    .catch(() => "on_github");
+    .then((body: { star?: unknown } | null): StarCheck => {
+      const star = body?.star;
+      return star === "starred" || star === "in_place" ? star : "on_github";
+    })
+    .catch((): StarCheck => "on_github");
 
 // Resolves once this window, focused, has had IDLE_MS without input.
 function idle() {
@@ -107,10 +110,7 @@ export async function recordQuestionAsked(): Promise<void> {
 /** The prompt, where the toast shows; nothing until recordQuestionAsked shows it. */
 export function StarPrompt() {
   const via = useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => void listeners.delete(listener);
-    },
+    subscribe,
     () => showing,
     () => null,
   );
