@@ -25,6 +25,15 @@ const (
 	FoundryReviewProp    FoundryReviewDecisionKind = "prop"
 	FoundryReviewRelease FoundryReviewDecisionKind = "release"
 	FoundryReviewReject  FoundryReviewDecisionKind = "reject"
+	// FoundryReviewWithdraw is a release a person took back after a load may
+	// have written it (contract 4.16.0): the release as it was sent, same id,
+	// time, claim, place and statement, with this kind. Only a load's list
+	// holds one (foundry_load_decisions), in place of that load's copy of the
+	// release, which an Extract sends with its document as the engine's
+	// `withdraw` decision: what the release wrote is taken back, and the claim
+	// is held again. The ontology keeps no decision for it, so no later load
+	// reads the approval.
+	FoundryReviewWithdraw FoundryReviewDecisionKind = "withdraw"
 )
 
 // FoundryReviewDecision is an ontology-wide override, applied from the next
@@ -135,10 +144,10 @@ func (d FoundryReviewDecision) Validate() error {
 }
 
 // OfClaim reports a decision on one review of a held claim, which it names
-// by its document, its claim's key and its quote's place: a release or a
-// reject.
+// by its document, its claim's key and its quote's place: a release, a
+// reject, or a release taken back (a withdraw).
 func (d FoundryReviewDecision) OfClaim() bool {
-	return d.Kind == FoundryReviewRelease || d.Kind == FoundryReviewReject
+	return d.Kind == FoundryReviewRelease || d.Kind == FoundryReviewReject || d.Kind == FoundryReviewWithdraw
 }
 
 // FoundryClaimSpan is where a review's quote is in its document, as the engine

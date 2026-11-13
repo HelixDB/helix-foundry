@@ -36,6 +36,10 @@ func (u Unimplemented) ListFoundryLoadDecisions(context.Context, string, string,
 	u.unimplemented("ListFoundryLoadDecisions")
 	return nil, nil
 }
+func (u Unimplemented) ListFoundryShownDecisions(context.Context, string, string, int) ([]*model.FoundryReviewDecision, error) {
+	u.unimplemented("ListFoundryShownDecisions")
+	return nil, nil
+}
 func (u Unimplemented) ListFoundryReviewDecisions(context.Context, string, string, []string, int) ([]*model.FoundryReviewDecision, error) {
 	u.unimplemented("ListFoundryReviewDecisions")
 	return nil, nil

@@ -1046,6 +1046,7 @@ export function loadDocumentTotals(load: Pick<FoundryLoad, "documentSets">) {
     failed: sum((s) => s.failed),
     waiting: sum((s) => s.waiting),
     facts: sum((s) => s.facts),
+    attributes: sum((s) => s.attributes),
     reviews: sum((s) => s.reviews),
     unresolved: sum((s) => s.unresolved),
   };
@@ -1082,10 +1083,10 @@ const NAMED_SETS = 6;
  *
  * @example
  * loadDocumentsOutcome(
- *   { unreadSetIds: ["m"], documents: 3, read: 1, notRead: 2, duplicate: 0, failed: 0, waiting: 0, facts: 4, reviews: 2, unresolved: 1 },
+ *   { unreadSetIds: ["m"], documents: 3, read: 1, notRead: 2, duplicate: 0, failed: 0, waiting: 0, facts: 4, attributes: 3, reviews: 2, unresolved: 1 },
  *   ["Minutes"],
  * );
- * // "1 of 3 documents was read for the names and facts it holds. 2 documents in Minutes are stored and searchable, but no route of this version reads that set, so nothing from them is in the graph: to read them, generate a version whose goal covers them. The document read made 4 fact writes (a fact counts once for each document that states it) and left 2 reviews. 1 name matched no one record: its review is among them. A review settled since stays counted until this load writes the decision, and a disputed value stays counted once chosen."
+ * // "1 of 3 documents was read for the names and facts it holds. 2 documents in Minutes are stored and searchable, but no route of this version reads that set, so nothing from them is in the graph: to read them, generate a version whose goal covers them. The document read made 4 fact writes and wrote 3 values (each counts once for each document that states it) and left 2 reviews. 1 name matched no one record: its review is among them. A review settled since stays counted until this load writes the decision, and a disputed value stays counted once chosen."
  */
 export function loadDocumentsOutcome(
   t: Omit<LoadDocumentTotals, "sets" | "setsRead">,
@@ -1122,7 +1123,7 @@ export function loadDocumentsOutcome(
       : []),
     ...(t.read
       ? [
-          `${t.read === 1 ? "The document read" : "The documents read"} made ${plural(t.facts, "fact write")} (a fact counts once for each document that states it) and left ${plural(t.reviews, "review")}.`,
+          `${t.read === 1 ? "The document read" : "The documents read"} made ${plural(t.facts, "fact write")}${t.attributes ? ` and wrote ${plural(t.attributes, "value")}` : ""} (${t.attributes ? "each" : "a fact"} counts once for each document that states it) and left ${plural(t.reviews, "review")}.`,
           ...(t.unresolved
             ? [
                 `${plural(t.unresolved, "name")} matched no one record: ${t.unresolved === 1 ? "its review is" : "their reviews are"} among them.`,

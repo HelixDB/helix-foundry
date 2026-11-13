@@ -399,7 +399,7 @@ func (s *Service) ListFoundryReviewDecisions(ctx context.Context, req *foundryv1
 	if len(req.GetPageToken()) > 26 {
 		return nil, status.Error(codes.InvalidArgument, "invalid page_token")
 	}
-	rows, err := s.deps.DB.ListFoundryReviewDecisions(ctx, o.ID, req.GetPageToken(), nil, 101)
+	rows, err := s.deps.DB.ListFoundryShownDecisions(ctx, o.ID, req.GetPageToken(), 101)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list review decisions: %v", err)
 	}
@@ -429,9 +429,13 @@ func (s *Service) ListFoundryReviewDecisions(ctx context.Context, req *foundryv1
 // DeleteFoundryReviewDecision removes a saved decision. A value decision is
 // withdrawn from the current load at once, as it was applied: a resend job
 // sends the load its decisions without it, and the property goes back to
-// what its other statements give. An approval not yet written is taken back
-// from the current load; one written stays a fact until a new load. A
-// resolve stops applying from the next load.
+// what its other statements give. An approval is taken back from the current
+// load at once too (contract 4.16.0): one the load may have written becomes
+// a withdraw there, which a resend job sends, and the engine holds the claim
+// again (the list shows the withdraw, and what became of it, while that load
+// is current); one it never wrote is only dropped from the load, with
+// nothing sent. A resolve stops applying from the next load. A withdraw is
+// no saved decision: it is not found.
 func (s *Service) DeleteFoundryReviewDecision(ctx context.Context, req *foundryv1.DeleteFoundryReviewDecisionRequest) (*foundryv1.DeleteFoundryReviewDecisionResponse, error) {
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {

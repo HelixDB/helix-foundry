@@ -610,6 +610,8 @@ export type ExtractCounts = {
   entities: number;
   mentions: number;
   facts: number;
+  // Values written: property values it stated, written as evidence.
+  attributes: number;
   reviews: number;
   unresolved: number;
 };
@@ -755,7 +757,7 @@ function decide(
   from: number,
   to: number,
   approval: Approval,
-) {
+): Displaced[] {
   const slot = [g.load, link, from].join("\u001f"),
     at = approval.decidedAt ?? "",
     was = approvals.get(slot);
@@ -764,9 +766,61 @@ function decide(
       ? { to, at, id: approval.id ?? "" }
       : was;
   approvals.set(slot, newest);
+  const displaced: Displaced[] = [];
   for (const e of [...g.graph.edges.values()])
-    if (e.label === link && e.from === from && e.to !== newest.to)
+    if (e.label === link && e.from === from && e.to !== newest.to) {
+      displaced.push({ from: e.from, to: e.to, props: { ...e.props } });
       g.graph.removeEdge(e.id);
+    }
+  return displaced;
+}
+
+/** An edge an approval displaced, as it was. */
+type Displaced = { from: number; to: number; props: Props };
+
+/**
+ * What a release wrote in a load, to take it back (withdrawRelease): the
+ * review it took, as it was, the evidence it added, the fact it created or
+ * added to, and the edges its approval displaced on a link that holds one
+ * value.
+ */
+export type ReleaseWrite = {
+  review: { props: Props; section: number; concerns: number[] };
+  link: string;
+  factKey: string;
+  created: boolean;
+  evidence: number;
+  displaced: Displaced[];
+  approval?: { slot: string; id: string };
+};
+
+/**
+ * Takes back what a release wrote (`w`), as the engine's withdraw does
+ * (contract 4.16.0): its evidence goes, and its fact unless another quote
+ * holds it, the review comes back as the release took it, and the edges its
+ * approval displaced come back, so the load holds what one that never had
+ * the approval holds. The approval no longer decides its link.
+ */
+export function withdrawRelease(g: LoadGraph, w: ReleaseWrite) {
+  g.graph.removeNode(w.evidence);
+  const fact = g.findEdge(w.link, "fact_key", w.factKey);
+  if (fact && Number(fact.props.evidence_count) > 1)
+    fact.props.evidence_count = Number(fact.props.evidence_count) - 1;
+  else if (fact && w.created) g.graph.removeEdge(fact.id);
+  const r = g.graph.addNode(N.Review, w.review.props);
+  g.addEdge(E.FROM_SECTION, r, w.review.section);
+  for (const end of w.review.concerns) g.addEdge(E.CONCERNS, r, end);
+  for (const e of w.displaced)
+    if (
+      g.node(e.from) &&
+      g.node(e.to) &&
+      ![...g.graph.edges.values()].some(
+        (x) => x.label === w.link && x.from === e.from && x.to === e.to,
+      )
+    )
+      g.graph.addEdge(w.link, e.from, e.to, e.props);
+  if (w.approval && approvals.get(w.approval.slot)?.id === w.approval.id)
+    approvals.delete(w.approval.slot);
 }
 
 /**
@@ -783,7 +837,7 @@ export function releaseReview(
   review: number,
   written: { ontologyVersion: string; model: string; verifier: string },
   one?: Approval,
-) {
+): ReleaseWrite | undefined {
   const r = g.node(review);
   if (!r) return;
   const out = (g.graph.outgoing.get(review) || []).map(
@@ -796,6 +850,8 @@ export function releaseReview(
   const confidence = Number(r.props.confidence ?? 0);
   const factKey = sha256([link, String(from), String(to)].join("\u001f"));
   const stored = g.findEdge(link, "fact_key", factKey);
+  const concerns = out.filter((e) => e.label === E.CONCERNS).map((e) => e.to);
+  const props = { ...r.props };
   if (stored)
     stored.props.evidence_count = Number(stored.props.evidence_count) + 1;
   else
@@ -820,7 +876,22 @@ export function releaseReview(
   });
   g.addEdge(E.FROM_SECTION, ev, section);
   g.graph.removeNode(review);
-  if (one) decide(g, link, from, to, one);
+  return {
+    review: { props, section, concerns },
+    link,
+    factKey,
+    created: !stored,
+    evidence: ev,
+    displaced: one ? decide(g, link, from, to, one) : [],
+    ...(one
+      ? {
+          approval: {
+            slot: [g.load, link, from].join("\u001f"),
+            id: one.id ?? "",
+          },
+        }
+      : {}),
+  };
 }
 
 export type ExtractOutcome =
@@ -934,7 +1005,7 @@ export function extractDocument(
   if (isEmpty(scope))
     return {
       kind: "out_of_scope",
-      counts: { ...empty, facts: 0, reviews: 0, unresolved: 0 },
+      counts: { ...empty, facts: 0, attributes: 0, reviews: 0, unresolved: 0 },
     };
 
   // Keyed entities of the scope's types text can name: by their `names`
@@ -1086,6 +1157,7 @@ export function extractDocument(
   const counts: ExtractCounts = {
     ...empty,
     facts: 0,
+    attributes: 0,
     reviews: 0,
     unresolved: unresolved.length,
   };
@@ -1136,6 +1208,7 @@ export function extractDocument(
     });
     g.addEdge(E.ABOUT, ev, entity);
     g.addEdge(E.FROM_SECTION, ev, s.node);
+    counts.attributes += 1;
     const disagreeing = settle(g, entity, prop, decisions);
     // Only a document that adds to a conflict writes its review: one per
     // entity and prop, its values updated as later documents add quotes.

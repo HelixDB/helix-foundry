@@ -1,0 +1,323 @@
+package store_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/helixdb/helix-foundry/backend/store"
+	"github.com/helixdb/helix-foundry/backend/store/model"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// withdrawn is the engine's word on a withdraw of d (contract 4.16.0).
+func withdrawn(d *model.FoundryReviewDecision, kind model.FoundryReleaseOutcomeKind, reason string) model.FoundryReleaseOutcome {
+	return model.FoundryReleaseOutcome{DecisionID: d.ID, StatementHash: *d.StatementHash, Withdraw: true, Kind: kind, Reason: reason}
+}
+
+// kinds lists a load's decisions by id with their kind, as its list holds them.
+func kinds(t *testing.T, loadID string) map[string]string {
+	t.Helper()
+	rows, err := testDB.Query(`SELECT id, kind FROM foundry_load_decisions WHERE load_id=?`, loadID)
+	require.NoError(t, err)
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, kind string
+		require.NoError(t, rows.Scan(&id, &kind))
+		out[id] = kind
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+// sentKinds is what the next Extract of doc sends of the load's list, by id.
+func (f resendFixture) sentKinds(t *testing.T, doc string) map[string]model.FoundryReviewDecisionKind {
+	t.Helper()
+	list, err := f.db.ListFoundryLoadDecisions(context.Background(), f.load, "", []string{doc}, 100)
+	require.NoError(t, err)
+	out := map[string]model.FoundryReviewDecisionKind{}
+	for _, d := range list {
+		out[d.ID] = d.Kind
+	}
+	return out
+}
+
+// writeApproval approves d on the current load and has its resend write it.
+func (f resendFixture) writeApproval(t *testing.T, tag string, d *model.FoundryReviewDecision) {
+	t.Helper()
+	require.True(t, f.approve(t, tag, d))
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(context.Background(), f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	f.sent(t, job, owed[0], 1, written(d))
+	f.end(t, job, tag+"-end", model.FoundryGraphJobSucceeded)
+	require.Equal(t, map[string]string{d.ID: "written"}, f.applied(t, d))
+}
+
+// A person takes back an approval the current load wrote. The decision goes,
+// as any removal, and the load's copy becomes a withdraw of it, the release
+// as it was sent, which waits for a resend of its document, queued as an
+// approval's is. The resend sends it, the engine takes back what it wrote,
+// and the load says so; the withdraw is never sent again, and the document's
+// counts move back. The reader is shown the withdraw beside the saved
+// decisions while that load is current, and can't remove it. Approved
+// again, the claim is a new decision under a new id: the list holds both,
+// and sends the new release alone.
+func TestFoundryWrittenApprovalTakenBack(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "WBACK")
+	_, err := testDB.Exec(`UPDATE foundry_load_extractions SET reviews=3 WHERE load_id=? AND document_id=?`, f.load, f.a)
+	require.NoError(t, err)
+	d := f.held(f.a, 0, readA)
+	f.writeApproval(t, "1", d)
+
+	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+		&model.FoundryGraphJob{ID: id26("RS-WBACK-2")}))
+	assert.Equal(t, map[string]string{d.ID: "withdraw"}, kinds(t, f.load))
+	assert.Equal(t, map[string]string{d.ID: "pending"}, f.applied(t, d))
+	assert.Equal(t, map[string]model.FoundryReviewDecisionKind{d.ID: model.FoundryReviewWithdraw}, f.sentKinds(t, f.a))
+	assert.Equal(t, map[string]int{f.a: 2}, f.owed(t))
+	live := f.liveJob(t)
+	require.NotNil(t, live, "the take-back is queued as an approval is")
+	assert.Equal(t, model.FoundryGraphJobResend, live.Kind)
+	assert.Equal(t, id26("RS-WBACK-2"), live.ID)
+	// No saved decision: removing it again finds none.
+	assert.ErrorIs(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID, nil), store.ErrNotFound)
+	saved, err := f.db.ListFoundryReviewDecisions(ctx, f.ontology.ID, "", nil, 100)
+	require.NoError(t, err)
+	assert.Empty(t, saved)
+	shown, err := f.db.ListFoundryShownDecisions(ctx, f.ontology.ID, "", 100)
+	require.NoError(t, err)
+	require.Len(t, shown, 1)
+	assert.Equal(t, model.FoundryReviewWithdraw, shown[0].Kind)
+	assert.Equal(t, d.ID, shown[0].ID)
+	assert.Equal(t, *d.StatementHash, *shown[0].StatementHash)
+
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, &model.FoundryDocumentExtraction{
+		DocumentID: f.a, Status: model.FoundryExtractionExtracted, Withdrawn: 1,
+		Releases: []model.FoundryReleaseOutcome{withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, "")},
+	}, true))
+	require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
+		DocumentID: f.a, Reason: owed[0].Reason, Requests: owed[0].Requests,
+	}))
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "back", model.FoundryGraphJobSucceeded))
+	assert.Nil(t, f.liveJob(t), "nothing more is owed")
+	assert.Equal(t, map[string]string{d.ID: "withdrawn"}, f.applied(t, d))
+	assert.Empty(t, f.sentKinds(t, f.a), "an answered withdraw is never sent again")
+	row, err := f.db.GetFoundryDocumentExtraction(ctx, f.load, f.a)
+	require.NoError(t, err)
+	assert.Equal(t, 1, row.Counts.Facts, "the commit's fact: the one the approval wrote is taken back")
+	assert.Equal(t, 3, row.Counts.Reviews, "its review is held again")
+
+	again := f.held(f.a, 0, readA)
+	again.ID = id26("WBACK-again")
+	require.True(t, f.approve(t, "3", again))
+	assert.Equal(t, id26("WBACK-again"), again.ID, "a new decision")
+	assert.Equal(t, map[string]string{d.ID: "withdraw", again.ID: "release"}, kinds(t, f.load))
+	assert.Equal(t, map[string]model.FoundryReviewDecisionKind{again.ID: model.FoundryReviewRelease}, f.sentKinds(t, f.a))
+	shown, err = f.db.ListFoundryShownDecisions(ctx, f.ontology.ID, "", 100)
+	require.NoError(t, err)
+	require.Len(t, shown, 2)
+	// Paged by id across both.
+	page, err := f.db.ListFoundryShownDecisions(ctx, f.ontology.ID, "", 1)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	rest, err := f.db.ListFoundryShownDecisions(ctx, f.ontology.ID, page[0].ID, 1)
+	require.NoError(t, err)
+	require.Len(t, rest, 1)
+	assert.NotEqual(t, page[0].ID, rest[0].ID)
+}
+
+// Each word the engine may give a withdraw is kept as it came: nothing the
+// load held (not_written), and a refusal, whose reason says why what it wrote
+// stays. A document a resend can't send refuses the withdraws that wait for
+// it, as it does approvals, so none waits for good.
+func TestFoundryTakeBackOutcomes(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "WWORD")
+	none, differs, gone := f.held(f.a, 0, readA), f.held(f.a, 1, readA), f.held(f.b, 0, readA)
+	require.True(t, f.approve(t, "1", none, differs, gone))
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 2)
+	f.sent(t, job, owed[0], 2, written(none), written(differs))
+	f.sent(t, job, owed[1], 1, written(gone))
+	f.end(t, job, "written", model.FoundryGraphJobSucceeded)
+	for _, d := range []*model.FoundryReviewDecision{none, differs, gone} {
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+			&model.FoundryGraphJob{ID: id26("RS-WWORD-" + d.ID[len(d.ID)-4:])}))
+	}
+	job = f.claim(t)
+	owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 2)
+	f.sent(t, job, owed[0], 0, withdrawn(none, model.FoundryReleaseOutcomeNotWritten, ""),
+		withdrawn(differs, model.FoundryReleaseOutcomeRefused, "differs"))
+	require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
+		DocumentID: owed[1].DocumentID, Reason: owed[1].Reason, Requests: owed[1].Requests, Refused: model.FoundryReleaseDocumentGone,
+	}))
+	f.end(t, job, "words", model.FoundryGraphJobSucceeded)
+	assert.Equal(t, map[string]string{
+		none.ID: "not_written", differs.ID: "refused/differs", gone.ID: "refused/document_gone",
+	}, f.applied(t, none, differs, gone))
+	assert.Empty(t, f.sentKinds(t, f.a))
+	assert.Empty(t, f.sentKinds(t, f.b))
+	assert.Nil(t, f.liveJob(t))
+}
+
+// Removing an approval the load never wrote stays as before: it leaves the
+// list and nothing is sent. One whose job failed before the engine's word was
+// recorded may be written, so it is taken back; so is one a running job of
+// the load may be sending now.
+func TestFoundryRemovedApprovalTakenBackOnlyWhereItMayBeWritten(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "WMAY")
+	waits := f.held(f.a, 0, readA)
+	require.True(t, f.approve(t, "1", waits))
+	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, waits.ID,
+		&model.FoundryGraphJob{ID: id26("RS-WMAY-x")}))
+	assert.Empty(t, kinds(t, f.load), "never sent: dropped")
+
+	// The resend the first approval queued sends this one too, and fails.
+	failed := f.held(f.a, 1, readA)
+	require.False(t, f.approve(t, "2", failed), "the queued resend takes it")
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, f.claim(t), "failed", model.FoundryGraphJobFailed))
+	assert.Equal(t, map[string]string{failed.ID: "pending/job_failed"}, f.applied(t, failed))
+	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, failed.ID,
+		&model.FoundryGraphJob{ID: id26("RS-WMAY-3")}))
+	assert.Equal(t, map[string]string{failed.ID: "withdraw"}, kinds(t, f.load), "unconfirmed: it may be written")
+	assert.Equal(t, map[string]string{failed.ID: "pending"}, f.applied(t, failed))
+
+	// While that resend runs, another claim is approved and taken back: the
+	// running job may be writing it.
+	job := f.claim(t)
+	require.Equal(t, id26("RS-WMAY-3"), job.ID)
+	running := f.held(f.b, 0, readA)
+	require.False(t, f.approve(t, "4", running), "the running job's end queues it")
+	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, running.ID,
+		&model.FoundryGraphJob{ID: id26("RS-WMAY-5")}))
+	assert.Equal(t, map[string]string{failed.ID: "withdraw", running.ID: "withdraw"}, kinds(t, f.load))
+	// The engine's word on what the running job sent as a release is not of
+	// the withdraw it became.
+	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	for _, o := range owed {
+		if o.DocumentID == f.a {
+			f.sent(t, job, o, 0, withdrawn(failed, model.FoundryReleaseOutcomeWithdrawn, ""))
+		}
+	}
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, &model.FoundryDocumentExtraction{
+		DocumentID: f.b, Status: model.FoundryExtractionExtracted, Releases: []model.FoundryReleaseOutcome{written(running)},
+	}, true))
+	assert.Equal(t, map[string]string{failed.ID: "withdrawn", running.ID: "pending"}, f.applied(t, failed, running))
+	f.end(t, job, "ran", model.FoundryGraphJobSucceeded)
+	next := f.liveJob(t)
+	require.NotNil(t, next, "the job's end sends the withdraw it became")
+	job = f.claim(t)
+	owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	assert.Equal(t, f.b, owed[0].DocumentID)
+	assert.Equal(t, map[string]model.FoundryReviewDecisionKind{running.ID: model.FoundryReviewWithdraw}, f.sentKinds(t, f.b))
+	f.sent(t, job, owed[0], 0, withdrawn(running, model.FoundryReleaseOutcomeWithdrawn, ""))
+	f.end(t, job, "after", model.FoundryGraphJobSucceeded)
+	assert.Equal(t, map[string]string{running.ID: "withdrawn"}, f.applied(t, running))
+	assert.Nil(t, f.liveJob(t))
+}
+
+// A take-back whose resend job fails is unconfirmed, and is not owed again by
+// that job's own end; the end of the ontology's next job owes it again, so it
+// never waits on a person, who has no card to send it from.
+func TestFoundryTakeBackWhoseJobFailed(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "WFAIL")
+	d := f.held(f.a, 0, readA)
+	f.writeApproval(t, "1", d)
+	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+		&model.FoundryGraphJob{ID: id26("RS-WFAIL-2")}))
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, f.claim(t), "failed", model.FoundryGraphJobFailed))
+	assert.Equal(t, map[string]string{d.ID: "pending/job_failed"}, f.applied(t, d))
+	got, err := f.db.ListFoundryDecisionsApplied(ctx, f.ontology.ID, []string{d.ID})
+	require.NoError(t, err)
+	assert.True(t, got[d.ID].Unconfirmed())
+	assert.Nil(t, f.liveJob(t), "a failed resend is never followed by itself")
+	assert.Equal(t, map[string]model.FoundryReviewDecisionKind{d.ID: model.FoundryReviewWithdraw}, f.sentKinds(t, f.a),
+		"its list still sends it")
+
+	// Another claim of the other document is approved and written: that job's
+	// end owes the take-back again.
+	other := f.held(f.b, 0, readA)
+	require.True(t, f.approve(t, "3", other))
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	assert.Equal(t, f.b, owed[0].DocumentID)
+	f.sent(t, job, owed[0], 1, written(other))
+	f.end(t, job, "other", model.FoundryGraphJobSucceeded)
+	assert.Equal(t, map[string]string{d.ID: "pending"}, f.applied(t, d))
+	job = f.claim(t)
+	owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	assert.Equal(t, f.a, owed[0].DocumentID)
+	f.sent(t, job, owed[0], 0, withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, ""))
+	f.end(t, job, "again", model.FoundryGraphJobSucceeded)
+	assert.Equal(t, map[string]string{d.ID: "withdrawn"}, f.applied(t, d))
+	assert.Nil(t, f.liveJob(t))
+}
+
+// An approval a load being written copied when it was created, and wrote,
+// while a person took it back from the load that was current: when that
+// load becomes current its copy is taken back too, before anything else is
+// sent, as its decision is gone. The load it was taken back from keeps its
+// withdraw.
+func TestFoundryTakeBackCarriedToALoadThatWroteIt(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "WCARRY")
+	first := f.load
+	d := f.held(f.a, 0, readA)
+	f.writeApproval(t, "1", d)
+	f.draftVersion(t, "WCARRY2", customerTOML)
+	require.NoError(t, f.db.CreateFoundryLoad(ctx, loadJob(f.ontology, "WCARRY2")))
+	second := id26("FJ-WCARRY2")
+	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+		&model.FoundryGraphJob{ID: id26("RS-WCARRY-2")}))
+	assert.Equal(t, map[string]string{d.ID: "withdraw"}, kinds(t, first))
+	assert.Equal(t, map[string]string{d.ID: "release"}, kinds(t, second), "copied as it was created")
+
+	// The new load writes its documents, the copied approval with them.
+	load := f.claim(t)
+	require.Equal(t, second, load.ID)
+	for _, doc := range []string{f.a, f.b} {
+		e := extracted(doc)
+		if doc == f.a {
+			e.Releases = []model.FoundryReleaseOutcome{written(d)}
+		}
+		require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, load.ID, f.worker, e, false))
+	}
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, load, "carry", model.FoundryGraphJobSucceeded))
+	require.Equal(t, second, *f.ontologyNow(t).CurrentLoadID)
+	f.load = second
+	assert.Equal(t, map[string]string{d.ID: "withdraw"}, kinds(t, second))
+	assert.Equal(t, map[string]string{d.ID: "pending"}, f.applied(t, d))
+	resend := f.liveJob(t)
+	require.NotNil(t, resend)
+	assert.Equal(t, model.FoundryGraphJobResend, resend.Kind)
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(ctx, second)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	assert.Equal(t, f.a, owed[0].DocumentID)
+	f.sent(t, job, owed[0], 0, withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, ""))
+	f.end(t, job, "back", model.FoundryGraphJobSucceeded)
+	assert.Equal(t, map[string]string{d.ID: "withdrawn"}, f.applied(t, d))
+	assert.Nil(t, f.liveJob(t))
+}

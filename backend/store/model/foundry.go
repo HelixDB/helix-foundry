@@ -136,6 +136,9 @@ type FoundryLoadDocumentSet struct {
 	// it created and those it added its evidence to, so a fact two documents
 	// state counts twice.
 	Facts int64
+	// Attributes are its documents' values written: property values each
+	// stated that were written as evidence, counted by document as Facts are.
+	Attributes int64
 	// Reviews are the reviews its documents left when the load last wrote
 	// each, of every kind; one a person settled since stays counted until
 	// the load writes the decision.
@@ -652,6 +655,13 @@ type FoundryDocumentExtraction struct {
 	// the facts they became are in Counts.Facts, one a decision written,
 	// which several reviews of one claim share. Nothing reads it back.
 	Released int
+	// Withdrawn are the withdraws the engine carried out (contract 4.16.0):
+	// each puts the review its release took back and takes its fact from
+	// Counts, one a decision, as Released and Counts.Facts gave them. The
+	// engine's own counts count releases alone. A claim held for a conflict
+	// that is gone stays written as its document's statement, which this
+	// still counts as held again: the engine says withdrawn of both.
+	Withdrawn int
 }
 
 // FoundryGraphJobKind is what a graph job does.

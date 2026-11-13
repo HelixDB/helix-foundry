@@ -681,6 +681,7 @@ describe("what a load and a version read of their documents", () => {
       failed: 1,
       waiting: 2,
       facts: 3,
+      attributes: 0,
       reviews: 67,
       unresolved: 5,
     });
@@ -749,6 +750,29 @@ describe("what a load and a version read of their documents", () => {
     ).toBe(
       "None of its 3 documents was read for names and facts. " +
         "3 documents are stored and searchable, but no route of this version reads those sets, so nothing from them is in the graph: to read them, generate a version whose goal covers them.",
+    );
+    // Values written are said beside the fact writes, counted the same way.
+    expect(
+      loadDocumentsOutcome(
+        loadDocumentTotals({
+          documentSets: [
+            {
+              setId: "g",
+              routed: true,
+              documents: 2,
+              read: 2,
+              facts: "3",
+              attributes: "4",
+              reviews: "1",
+            },
+          ],
+        })!,
+        [],
+      ),
+    ).toBe(
+      "2 of 2 documents were read for the names and facts they hold. " +
+        "The documents read made 3 fact writes and wrote 4 values (each counts once for each document that states it) and left 1 review. " +
+        "A review settled since stays counted until this load writes the decision, and a disputed value stays counted once chosen.",
     );
     // Everything read, nothing held back.
     expect(

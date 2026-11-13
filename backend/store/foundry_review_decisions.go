@@ -351,16 +351,18 @@ WHERE t.ontology_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND t.id<
 WHERE t.ontology_id=? AND t.kind='reject' AND `+foundryClaimAt("t"), append([]any{ontologyID}, claim...)...); err != nil {
 				return err
 			}
-			// One decision a claim in a load's list: the engine refuses an
+			// One release a claim in a load's list: the engine refuses an
 			// Extract that lists a release twice, and would weigh two of one
-			// claim apart.
-			if _, err := tx.db.ExecContext(ctx, `DELETE t FROM foundry_load_decisions t
-WHERE t.load_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND t.id<>?`, append(append([]any{loadID}, claim...), d.ID)...); err != nil {
+			// claim apart. Another the load may have written is taken back
+			// (withdrawFoundryReleases): the engine takes it back first,
+			// then writes this one.
+			if _, err := tx.withdrawFoundryReleases(ctx, loadID, foundryClaimAt("t")+` AND t.id<>?`, append(claim, d.ID),
+				foundryRunning(live, loadID)); err != nil {
 				return err
 			}
 			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
 SELECT ?, `+foundryReviewDecisionColumns+`, 'pending' FROM foundry_review_decisions WHERE ontology_id=? AND id=?
-ON DUPLICATE KEY UPDATE claim_key=VALUES(claim_key), statement_hash=VALUES(statement_hash), decided_by_user_id=VALUES(decided_by_user_id),
+ON DUPLICATE KEY UPDATE kind=VALUES(kind), claim_key=VALUES(claim_key), statement_hash=VALUES(statement_hash), decided_by_user_id=VALUES(decided_by_user_id),
  decided_at=VALUES(decided_at), applied_status='pending', applied_reason=NULL, applied_at=NULL`, loadID, ontologyID, d.ID); err != nil {
 				return err
 			}
@@ -439,10 +441,11 @@ WHERE t.load_id=? AND t.kind='release' AND `+foundryClaimAt("t"), append([]any{l
 			live.Status == model.FoundryGraphJobRunning {
 			return ErrConflict
 		}
-		// <=> is NULL-safe: a copy no job has reported on has no status. A
-		// deleted load's list went with it.
+		// A deleted load's list went with it. A copy a load may have
+		// written stays for its carry, which takes it back
+		// (carryFoundryReleases), as its decision is gone.
 		if _, err := tx.db.ExecContext(ctx, `DELETE t FROM foundry_load_decisions t JOIN foundry_loads l ON l.id=t.load_id
-WHERE l.ontology_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND NOT (t.applied_status <=> 'written')`,
+WHERE l.ontology_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND NOT `+foundryMayHaveWritten("t", false),
 			append([]any{d.OntologyID}, claim...)...); err != nil {
 			return err
 		}
@@ -464,6 +467,33 @@ func (s *mysqlDB) ListFoundryReviewDecisions(ctx context.Context, ontologyID, af
 	return s.listFoundryDecisions(ctx, "foundry_review_decisions", "ontology_id", ontologyID, afterID, documentIDs, limit)
 }
 
+// ListFoundryShownDecisions lists what a reader is shown of an ontology's
+// decisions, limit at a time by id: its decisions (ListFoundryReviewDecisions),
+// and its current load's withdraws (model.FoundryReviewWithdraw), approvals
+// taken back from that load that the ontology no longer holds, which a page
+// shows with what became of each while that load is current. A withdraw
+// keeps the id of its release, which the ontology no longer holds, so no id
+// is listed twice. Two reads, each of at most limit rows in id order, merged.
+func (s *mysqlDB) ListFoundryShownDecisions(ctx context.Context, ontologyID, afterID string, limit int) ([]*model.FoundryReviewDecision, error) {
+	decisions, err := s.listFoundryDecisions(ctx, "foundry_review_decisions", "ontology_id", ontologyID, afterID, nil, limit)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT "+foundryReviewDecisionColumns+` FROM foundry_load_decisions
+WHERE load_id=(SELECT current_load_id FROM foundry_ontologies WHERE id=?) AND kind=? AND id>? ORDER BY id LIMIT ?`,
+		ontologyID, string(model.FoundryReviewWithdraw), afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	withdraws, err := scanAll(rows, scanFoundryReviewDecision)
+	if err != nil || len(withdraws) == 0 {
+		return decisions, err
+	}
+	shown := append(decisions, withdraws...)
+	slices.SortFunc(shown, func(a, b *model.FoundryReviewDecision) int { return strings.Compare(a.ID, b.ID) })
+	return shown[:min(len(shown), limit)], nil
+}
+
 // ListFoundryLoadDecisions reads the decisions a load sends the engine: those
 // the ontology held when the load was created, the releases and value
 // decisions settled against it or carried to it since, and no value decision
@@ -473,8 +503,9 @@ func (s *mysqlDB) ListFoundryReviewDecisions(ctx context.Context, ontologyID, af
 // rejection of (foundryClaimAt), whatever put it there: a rejection settled
 // since takes the claim's approvals from every list (SettleFoundryReject),
 // and this keeps one saved before that did, or by an older binary, from
-// writing a claim a person said is wrong. A resolve replaced or removed, and
-// schema pruning, affect only future loads.
+// writing a claim a person said is wrong. A withdraw is sent while it waits
+// (pending), and never once the engine has said what it did. A resolve
+// replaced or removed, and schema pruning, affect only future loads.
 func (s *mysqlDB) ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error) {
 	return s.listFoundryDecisions(ctx, "foundry_load_decisions", "load_id", loadID, afterID, documentIDs, limit)
 }
@@ -492,6 +523,7 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 	if table == "foundry_load_decisions" {
 		// <=> is NULL-safe: a copy no job has reported on has no status.
 		query += " AND NOT (applied_status <=> '" + string(model.FoundryValueRemoved) + `')
+ AND NOT (kind='withdraw' AND NOT (applied_status <=> 'pending'))
  AND NOT (kind='release' AND ` + foundryRejected("foundry_load_decisions",
 			"(SELECT o.ontology_id FROM foundry_loads o WHERE o.id=foundry_load_decisions.load_id)") + `)`
 	}
@@ -520,15 +552,19 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 // can be. A resolve stays in the loads that copied it, with what it wrote. A
 // reject is in no load: with it gone, its claim's card is listed again.
 //
-// The current load's copy of a release it has not written goes with it,
-// whatever a job said of it (waiting, refused, missed, or nothing yet): a
-// resend sends every release its load's list holds of a document, so a copy
-// left there would be written by the next approval of another claim of that
-// document, after the person took it back, with no decision left to show
-// for it. One the load wrote stays: the fact is in the load, and sent again
-// it finds no review. A copy in a load that is not current is not reached
-// here: it goes when that load is made current again, before any resend of
-// it is queued (carryFoundryReleases).
+// A release is taken back from the current load at once (contract 4.16.0).
+// Its copy there, if the load may have written it (foundryMayHaveWritten:
+// written, unconfirmed, or sent by a job of the load that runs now), becomes
+// a withdraw, its document owes a resend, and the resend is queued as a
+// settle queues one (queueFoundryResendBehind): the engine takes back what
+// the approval wrote, and the claim is held again, its card back. A copy the
+// load never wrote goes, whatever a job said of it (waiting, refused, missed,
+// or nothing yet), and nothing is sent: a resend sends every release its
+// load's list holds of a document, so a copy left there would be written by
+// the next approval of another claim of that document. A copy in a load
+// that is not current is not reached here: when that load is current again,
+// its carry takes it back or drops it alike, before any resend of it is
+// queued (carryFoundryReleases).
 //
 // A value decision is sent to no load again: its copy in every load of the
 // ontology that holds one, under its id or one the property's decision had
@@ -580,9 +616,11 @@ func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, workspaceID, 
 			if o.CurrentLoadID == nil {
 				return nil
 			}
-			// <=> is NULL-safe: a copy no job has reported on has no status.
-			_, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
-WHERE load_id=? AND id=? AND kind='release' AND NOT (applied_status <=> 'written')`, *o.CurrentLoadID, id)
+			withdrew, err := tx.withdrawFoundryReleases(ctx, *o.CurrentLoadID, "t.id=?", []any{id}, foundryRunning(live, *o.CurrentLoadID))
+			if err != nil || !withdrew {
+				return err
+			}
+			_, err = tx.queueFoundryResendBehind(ctx, o, live, resend)
 			return err
 		case model.FoundryReviewProp:
 			// Every copy of the property's decision, under this id or one it

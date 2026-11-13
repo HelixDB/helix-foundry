@@ -178,6 +178,9 @@ export const mock = {
     assessEnabled?: boolean;
     assessMs?: number;
     assessOutcome?: "fail" | "skip";
+    // What the engine says of an approval taken back (contract 4.16.0), in
+    // place of withdrawn: nothing of it in the load, or a refusal.
+    withdrawOutcome?: "not_written" | "differs" | "too_large";
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",

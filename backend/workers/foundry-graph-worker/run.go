@@ -1276,11 +1276,11 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	for _, d := range documents {
 		sent[d.DocID] = true
 	}
-	// released is each release decision sent, by its id.
+	// released is each release decision and withdraw sent, by its id.
 	released := map[string]sentRelease{}
 	for _, d := range decisions {
-		if d.Kind == model.FoundryReviewRelease {
-			released[d.DecisionID] = sentRelease{doc: d.DocID, hash: d.StatementHash}
+		if d.Kind == model.FoundryReviewRelease || d.Kind == model.FoundryReviewWithdraw {
+			released[d.DecisionID] = sentRelease{doc: d.DocID, hash: d.StatementHash, withdraw: d.Kind == model.FoundryReviewWithdraw}
 		}
 	}
 	artifacts := map[string]string{}
@@ -1349,9 +1349,12 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	}
 }
 
-// sentRelease is a release decision an Extract sent: its document, and the
-// statement it binds.
-type sentRelease struct{ doc, hash string }
+// sentRelease is a release decision an Extract sent, or a withdraw of one:
+// its document, and the statement it binds.
+type sentRelease struct {
+	doc, hash string
+	withdraw  bool
+}
 
 // recordRemoval forgets a document the agent took out of the job's load,
 // once: a lost lease ends the attempt, and any other failure leaves it for
@@ -1609,12 +1612,15 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		said[release.DecisionID] = true
 		releases.WithLabelValues(string(release.Outcome.Kind), release.Outcome.Reason).Inc()
 		// A decision written is one claim written: one fact, however many
-		// reviews held it.
-		if release.Outcome.Kind == model.FoundryReleaseOutcomeWritten {
+		// reviews held it; one taken back is that claim held again.
+		switch {
+		case of.withdraw && release.Outcome.Kind == model.FoundryReleaseOutcomeWithdrawn:
+			extraction.Withdrawn++
+		case !of.withdraw && release.Outcome.Kind == model.FoundryReleaseOutcomeWritten:
 			extraction.Counts.Facts++
 		}
 		extraction.Releases = append(extraction.Releases, model.FoundryReleaseOutcome{
-			DecisionID: release.DecisionID, StatementHash: of.hash, Kind: release.Outcome.Kind, Reason: release.Outcome.Reason,
+			DecisionID: release.DecisionID, StatementHash: of.hash, Withdraw: of.withdraw, Kind: release.Outcome.Kind, Reason: release.Outcome.Reason,
 		})
 	}
 	owed := a.resends[event.DocID]
@@ -1626,7 +1632,7 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 			log.From(ctx).Error("graph job: the ontology agent said nothing of a release sent with a document", "job", job.ID,
 				"document", event.DocID, "decision", id)
 			extraction.Releases = append(extraction.Releases, model.FoundryReleaseOutcome{
-				DecisionID: id, StatementHash: of.hash, Kind: model.FoundryReleaseOutcomeRefused, Reason: model.FoundryReleaseUnanswered,
+				DecisionID: id, StatementHash: of.hash, Withdraw: of.withdraw, Kind: model.FoundryReleaseOutcomeRefused, Reason: model.FoundryReleaseUnanswered,
 			})
 		}
 	}

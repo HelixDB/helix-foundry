@@ -292,7 +292,7 @@ func (s *mysqlDB) ListFoundryLoadDocumentSets(ctx context.Context, loadID string
 	rows, err := s.db.QueryContext(ctx, `SELECT m.set_id, COUNT(*),
   COALESCE(SUM(e.status='extracted'), 0), COALESCE(SUM(e.status='duplicate'), 0), COALESCE(SUM(e.status='failed'), 0),
   COALESCE(SUM(e.status='out_of_scope'), 0), COALESCE(SUM(e.document_id IS NULL), 0),
-  COALESCE(SUM(e.facts), 0), COALESCE(SUM(e.reviews), 0), COALESCE(SUM(e.unresolved), 0)
+  COALESCE(SUM(e.facts), 0), COALESCE(SUM(e.attributes), 0), COALESCE(SUM(e.reviews), 0), COALESCE(SUM(e.unresolved), 0)
 FROM foundry_load_documents m
 JOIN foundry_documents d ON d.id=m.document_id AND d.status='uploaded'
 LEFT JOIN foundry_load_extractions e ON e.load_id=m.load_id AND e.document_id=m.document_id
@@ -305,7 +305,7 @@ WHERE m.load_id=? GROUP BY m.set_id ORDER BY m.set_id`, loadID)
 	for rows.Next() {
 		var set model.FoundryLoadDocumentSet
 		if err := rows.Scan(&set.SetID, &set.Documents, &set.Read, &set.Duplicate, &set.Failed, &set.NotRead, &set.Waiting,
-			&set.Facts, &set.Reviews, &set.Unresolved); err != nil {
+			&set.Facts, &set.Attributes, &set.Reviews, &set.Unresolved); err != nil {
 			return nil, err
 		}
 		sets = append(sets, set)
