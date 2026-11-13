@@ -74,6 +74,10 @@ services:
       # Anonymous usage analytics, on unless turned off (local/README.md).
       FOUNDRY_TELEMETRY: ${FOUNDRY_TELEMETRY:-}
       DO_NOT_TRACK: ${DO_NOT_TRACK:-}
+      # The shell's GitHub token, if it has one, which the star prompt alone
+      # uses to star helixdb/helix-foundry when asked (src/server/github-star.ts).
+      GH_TOKEN: ${GH_TOKEN:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     volumes: ["secrets:/secrets:ro"]
     ports: ["127.0.0.1:3000:3000"]
     depends_on:

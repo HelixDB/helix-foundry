@@ -41,6 +41,7 @@ import {
   NotFound,
   RouteErrorBoundary,
 } from "./shell/ErrorBoundary";
+import { StarPrompt } from "./shell/star-prompt";
 import { applyTheme, readTheme } from "./shell/theme";
 import { SignInPage, SignedInAs, VerifyEmailPage } from "./sign-in";
 import { WorkspacePicker } from "./areas/workspace/picker";
@@ -408,6 +409,7 @@ function SignedIn({ me }: { me: WhoamiResponse }) {
           </button>
         </div>
       )}
+      <StarPrompt />
     </div>
   );
 }

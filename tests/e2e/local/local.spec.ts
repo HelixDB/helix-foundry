@@ -1073,3 +1073,112 @@ test("answers only the host it was given", async ({ playwright }) => {
   expect(await res.json()).toMatchObject({ code: "HOST_REJECTED" });
   await other.dispose();
 });
+
+// The GitHub star prompt (src/web/shell/star-prompt.tsx) in a local build,
+// once asked for (the third question, then 30 s without input): its button
+// has the site star helixdb/helix-foundry with the install's GitHub token
+// (/github-star), and opens the repository on GitHub when it can't.
+test("stars on GitHub in place with the install's token, else opens it", async ({
+  page,
+  context,
+}) => {
+  const REPOSITORY = "https://github.com/helixdb/helix-foundry";
+  // This install has no token: the site says to link, stars nothing, and
+  // takes no post from another site's page.
+  expect(await (await page.request.get("/github-star")).json()).toEqual({
+    star: "on_github",
+  });
+  expect(
+    await (
+      await page.request.post("/github-star", {
+        headers: { origin: `http://localhost:${e2eLocalPorts.app}` },
+      })
+    ).json(),
+  ).toEqual({ starred: false });
+  expect(
+    (
+      await page.request.post("/github-star", {
+        headers: { origin: "https://evil.example" },
+      })
+    ).status(),
+  ).toBe(403);
+
+  // From here, GitHub as a token sees it: `star` and `starred`, answered
+  // after `wait` ms.
+  let github = { star: "in_place", starred: true, wait: 0 };
+  await page.route("**/github-star", async (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill({ json: { star: github.star } });
+    await new Promise((resolve) => setTimeout(resolve, github.wait));
+    await route.fulfill({ json: { starred: github.starred } });
+  });
+  await context.route(`${REPOSITORY}**`, (route) =>
+    route.fulfill({ contentType: "text/html", body: "<title>GitHub</title>" }),
+  );
+  await page.clock.install();
+  await configure({ loadStepMs: 200, askStepMs: 100 });
+  await uploadAndLoadContract(page);
+  const prompt = page.getByRole("complementary", {
+    name: "Star Helix Foundry",
+  });
+  const done = () =>
+    page.evaluate(() => localStorage.getItem("foundry.star-prompt.done"));
+  // A new session two questions in, asking its third.
+  const askThird = async (question: string) => {
+    await page.evaluate(() => {
+      localStorage.removeItem("foundry.star-prompt.done");
+      localStorage.setItem("foundry.star-prompt.asked", "2");
+    });
+    await page.goto("/ask/ont_acme_contracts");
+    const form = page.getByRole("form", { name: "Ask a question" });
+    await form.getByRole("textbox", { name: /^Question/ }).fill(question);
+    await form.getByRole("button", { name: "Ask", exact: true }).click();
+    await expect(page).toHaveURL(/\?thread=q_/);
+  };
+
+  // The token has starred it already: nothing asks, ever.
+  github = { star: "starred", starred: true, wait: 0 };
+  await askThird("Who signed the services agreement?");
+  await expect.poll(done).toBe("1");
+  await page.clock.fastForward(31_000);
+  await expect(prompt).toBeHidden();
+
+  // It stars in place, and thanks.
+  github = { star: "in_place", starred: true, wait: 0 };
+  await askThird("When were the invoices issued?");
+  await page.clock.fastForward(31_000);
+  await prompt.getByRole("button", { name: "Star on GitHub" }).click();
+  await expect(prompt.getByRole("status")).toHaveText(
+    "Thanks for the star!It really helps Helix Foundry grow.",
+  );
+  expect(await done()).toBe("1");
+  await page.clock.fastForward(5_000);
+  await expect(prompt).toBeHidden();
+
+  // GitHub refuses the token: the click opens the repository.
+  github = { star: "in_place", starred: false, wait: 0 };
+  await askThird("How are the invoices doing?");
+  await page.clock.fastForward(31_000);
+  let opened = context.waitForEvent("page");
+  await prompt.getByRole("button", { name: "Star on GitHub" }).click();
+  await expect(await opened).toHaveURL(REPOSITORY);
+  await expect(prompt).toBeHidden();
+  expect(await done()).toBe("1");
+
+  // Refused after the click's activation ran out (5 s), when the browser
+  // opens no tab: the button becomes a link to the repository.
+  github = { star: "in_place", starred: false, wait: 6_000 };
+  await askThird("Who are the customers?");
+  await page.clock.fastForward(31_000);
+  await prompt.getByRole("button", { name: "Star on GitHub" }).click();
+  await expect(
+    prompt.getByRole("button", { name: "Starring…" }),
+  ).toBeDisabled();
+  const link = prompt.getByRole("link", { name: "Open GitHub" });
+  await expect(link).toHaveAttribute("href", REPOSITORY, { timeout: 10_000 });
+  opened = context.waitForEvent("page");
+  await link.click();
+  await expect(await opened).toHaveURL(REPOSITORY);
+  await expect(prompt).toBeHidden();
+  expect(await done()).toBe("1");
+});
