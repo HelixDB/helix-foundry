@@ -723,7 +723,9 @@ func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, worke
 }
 
 // ListFoundryDecisionsApplied returns what became of the given release and
-// value decisions, and withdraws, in the ontology's current load, by decision id; a decision
+// value decisions, and withdraws, in the ontology's current load, by decision
+// id, and of each release whether removing it takes it back from that load
+// (TakesBack: foundryMayHaveWritten, the rule the removal applies); a decision
 // that load's list doesn't hold is absent, as is a resolve, and one it holds
 // that no job has reported on has the empty status. One that waits with a
 // reason is unconfirmed (model.FoundryDecisionApplied.Unconfirmed). A value
@@ -734,7 +736,8 @@ func (s *mysqlDB) ListFoundryDecisionsApplied(ctx context.Context, ontologyID st
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT l.id, l.applied_status, l.applied_reason, l.applied_at FROM foundry_ontologies o
+	rows, err := s.db.QueryContext(ctx, `SELECT l.id, l.applied_status, l.applied_reason, l.applied_at,
+  l.kind='release' AND `+foundryMayHaveWritten("l")+` FROM foundry_ontologies o
 JOIN foundry_load_decisions l ON l.load_id=o.current_load_id
 WHERE o.id=? AND l.id IN (`+idPlaceholders(len(ids))+`) AND (l.kind IN ('release', 'withdraw') OR l.kind='prop' AND EXISTS (
   SELECT 1 FROM foundry_review_decisions r WHERE r.ontology_id=o.id AND r.id=l.id AND r.decided_at=l.decided_at))`,
@@ -747,10 +750,11 @@ WHERE o.id=? AND l.id IN (`+idPlaceholders(len(ids))+`) AND (l.kind IN ('release
 		var id string
 		var status, reason sql.NullString
 		var at sql.NullTime
-		if err := rows.Scan(&id, &status, &reason, &at); err != nil {
+		var takesBack bool
+		if err := rows.Scan(&id, &status, &reason, &at, &takesBack); err != nil {
 			return nil, err
 		}
-		applied := model.FoundryDecisionApplied{Status: model.FoundryReleaseStatus(status.String), Reason: reason.String}
+		applied := model.FoundryDecisionApplied{Status: model.FoundryReleaseStatus(status.String), Reason: reason.String, TakesBack: takesBack}
 		if at.Valid {
 			applied.At = &at.Time
 		}

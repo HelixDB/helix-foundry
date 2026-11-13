@@ -489,7 +489,7 @@ func foundryReviewDecisionProto(d *foundrymodel.FoundryReviewDecision) *foundryv
 		case a.Status.Waits():
 			status = string(foundrymodel.FoundryReleasePending)
 		}
-		out.Applied = &foundryv1.FoundryDecisionApplied{Status: status, Reason: a.Reason}
+		out.Applied = &foundryv1.FoundryDecisionApplied{Status: status, Reason: a.Reason, TakesBack: a.TakesBack}
 		if a.At != nil {
 			out.Applied.At = timestamppb.New(*a.At)
 		}

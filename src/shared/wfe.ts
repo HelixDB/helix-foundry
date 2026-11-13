@@ -2751,6 +2751,9 @@ export type DecisionApplied = {
     | "";
   reason?: string;
   at?: string | null;
+  // Of a release: removing it takes it back from the current load, which may
+  // have written it (the backend's one rule); otherwise removing only drops it.
+  takesBack?: boolean;
 };
 export type FoundryReviewDecision = ReviewDecision & {
   id: string;

@@ -1574,6 +1574,12 @@ message FoundryDecisionApplied {
   string reason = 2;
   // When a job said so; unset while pending.
   google.protobuf.Timestamp at = 3;
+  // Of a release: the load may have written it, so removing the decision
+  // takes it back from the load (a withdraw, contract 4.16.0) rather than
+  // only dropping it. The backend's one rule: written, unconfirmed, copied
+  // with the load and its document read with no word of it, or any copy
+  // while a job of the load is in flight.
+  bool takes_back = 4;
 }
 
 // A durable ontology-wide override. A resolve decision applies from the next

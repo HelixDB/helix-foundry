@@ -217,6 +217,9 @@ type FoundryDecisionApplied struct {
 	// WasWritten is of a withdraw: its load had recorded the release it takes
 	// back written (foundry_load_decisions.was_written).
 	WasWritten bool
+	// TakesBack is of a release: the load may have written it
+	// (store.foundryMayHaveWritten), so removing it takes it back.
+	TakesBack bool
 }
 
 // MovesBack reports whether a withdraw that ends at status takes back what

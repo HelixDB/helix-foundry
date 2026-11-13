@@ -610,13 +610,13 @@ export function SettleReview({
 }
 
 /**
- * Whether removing `d` takes an approval back from the current load: one it
- * wrote, or one whose job failed before saying (it may be written). The
- * backend sends that load a withdraw; one never written is only dropped.
+ * Whether removing `d` takes an approval back from the current load, as the
+ * backend says by its one rule (`applied.takesBack`: the load may have
+ * written it, its job in flight included). The backend then sends that load
+ * a withdraw; one never written is only dropped.
  */
 const takesBack = (d: FoundryReviewDecision) =>
-  d.kind === "release" &&
-  (d.applied?.status === "written" || d.applied?.status === "unconfirmed");
+  d.kind === "release" && !!d.applied?.takesBack;
 
 /**
  * A saved value's line: what the current load made of it, where it says
@@ -794,9 +794,7 @@ export function SavedDecisions({
                       }
                     }}
                   >
-                    {d.kind === "release" && d.applied?.status === "written"
-                      ? "Take back approval"
-                      : "Remove decision"}
+                    {takesBack(d) ? "Take back approval" : "Remove decision"}
                   </Button>
                 )}
               </li>

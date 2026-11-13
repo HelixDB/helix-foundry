@@ -547,3 +547,23 @@ func TestFoundryRejectLeavesACopyAJobInFlightMayWrite(t *testing.T) {
 	require.NotNil(t, live)
 	assert.Equal(t, model.FoundryGraphJobResend, live.Kind)
 }
+
+// The decisions list says of each release whether removing it takes it back,
+// by the rule removal applies (foundryMayHaveWritten): the site words its
+// button and notice by it, so the two never disagree (review of #305, minor 8).
+func TestFoundryListSaysWhatARemovalTakesBack(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "WSAYS")
+	written, waits := f.held(f.a, 0, readA), f.held(f.b, 0, readA)
+	f.writeApproval(t, "1", written)
+	require.True(t, f.approve(t, "2", waits))
+	takes := func() map[string]bool {
+		got, err := f.db.ListFoundryDecisionsApplied(ctx, f.ontology.ID, []string{written.ID, waits.ID})
+		require.NoError(t, err)
+		return map[string]bool{written.ID: got[written.ID].TakesBack, waits.ID: got[waits.ID].TakesBack}
+	}
+	assert.Equal(t, map[string]bool{written.ID: true, waits.ID: false}, takes())
+	// Its resend running, the waiting one may be written now.
+	f.claim(t)
+	assert.Equal(t, map[string]bool{written.ID: true, waits.ID: true}, takes())
+}
