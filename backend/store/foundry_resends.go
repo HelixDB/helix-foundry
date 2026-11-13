@@ -84,25 +84,43 @@ ON DUPLICATE KEY UPDATE status='owed', requests=requests+1, requested_at=NOW(6),
 // sent it failed before its word was recorded (unconfirmed); the load copied
 // it when it was created and holds its document extracted, with no job's
 // word on it (an engine before contract 4.12.0 said nothing of releases);
-// or, with running, a job of the load runs now and may be sending it. Any
-// other copy is written nowhere: no job sent it, or the engine refused it or
-// found no claim for it. It is never NULL, so NOT of it holds of every copy
-// it doesn't: a copy no job reported on has no status.
-func foundryMayHaveWritten(t string, running bool) string {
-	cond := `COALESCE(` + t + `.applied_status='written'
+// or a job of the load is in flight (foundryInFlight), whatever the copy's
+// status: it may be sending the copy now, a copy made with the load and not
+// yet sent included, or have sent it in an attempt whose word was never
+// recorded. Any other copy is written nowhere: no job sent it, or the engine
+// refused it or found no claim for it. It is never NULL, so NOT of it holds
+// of every copy it doesn't: a copy no job reported on has no status.
+func foundryMayHaveWritten(t string) string {
+	return `COALESCE(` + t + `.applied_status='written'
   OR ` + t + `.applied_status IN ('pending', 'carried') AND ` + t + `.applied_reason IS NOT NULL
   OR ` + t + `.applied_status IS NULL AND EXISTS (SELECT 1 FROM foundry_load_extractions e
-    WHERE e.load_id=` + t + `.load_id AND e.document_id=` + t + `.doc_id AND e.status='extracted')`
-	if running {
-		cond += `
-  OR ` + t + `.applied_status IN ('pending', 'carried')`
+    WHERE e.load_id=` + t + `.load_id AND e.document_id=` + t + `.doc_id AND e.status='extracted')
+  OR ` + foundryInFlight(t+".load_id") + `, FALSE)`
+}
+
+// foundryInFlight is the SQL condition that a job of the load `load` (a
+// column or a placeholder), of one of kinds or of any kind, is in flight: the
+// ontology's live job, running, or queued again after an attempt started (a
+// retry, or one requeued for documents that came during it). An attempt may
+// have sent the engine the load's decisions, and the engine written some,
+// with no word of it recorded: the next attempt sends what the list then
+// holds, and absence never takes anything back.
+func foundryInFlight(load string, kinds ...model.FoundryGraphJobKind) string {
+	cond := `EXISTS (SELECT 1 FROM foundry_load_jobs j WHERE j.load_id=` + load + ` AND j.active_key=1
+    AND (j.status='running' OR j.status='queued' AND j.started_at IS NOT NULL)`
+	if len(kinds) > 0 {
+		names := make([]string, 0, len(kinds))
+		for _, k := range kinds {
+			names = append(names, "'"+string(k)+"'")
+		}
+		cond += ` AND j.kind IN (` + strings.Join(names, ", ") + `)`
 	}
-	return cond + `, FALSE)`
+	return cond + `)`
 }
 
 // withdrawFoundryReleases takes the releases of load loadID that where (SQL
 // over alias t, with args) names out of its list: each the load may have
-// written (foundryMayHaveWritten, running as there) becomes a withdraw of
+// written (foundryMayHaveWritten) becomes a withdraw of
 // it, waiting (pending), and its document is owed a resend
 // (model.FoundryResendApproval), which sends it to the engine; the others
 // are deleted, as nothing of them is in the load. A withdraw keeps the
@@ -111,10 +129,10 @@ func foundryMayHaveWritten(t string, running bool) string {
 // reports a withdraw made here. Its caller queues the resend
 // (queueFoundryResendBehind), or is the carry that comes before one. The
 // caller holds the ontology's lock.
-func (s *mysqlDB) withdrawFoundryReleases(ctx context.Context, loadID, where string, args []any, running bool) (withdrew bool, err error) {
+func (s *mysqlDB) withdrawFoundryReleases(ctx context.Context, loadID, where string, args []any) (withdrew bool, err error) {
 	scope := append([]any{loadID}, args...)
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT t.doc_id FROM foundry_load_decisions t
-WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritten("t", running)+` ORDER BY t.doc_id`, scope...)
+WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritten("t")+` ORDER BY t.doc_id`, scope...)
 	if err != nil {
 		return false, err
 	}
@@ -133,7 +151,7 @@ WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritt
 	}
 	if len(documents) > 0 {
 		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions t SET t.kind=?, t.applied_status=?, t.applied_reason=NULL, t.applied_at=NULL
-WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritten("t", running),
+WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritten("t"),
 			append([]any{string(model.FoundryReviewWithdraw), string(model.FoundryReleasePending)}, scope...)...); err != nil {
 			return false, err
 		}
@@ -142,12 +160,6 @@ WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritt
 		return false, err
 	}
 	return len(documents) > 0, s.oweFoundryResends(ctx, loadID, model.FoundryResendApproval, documents)
-}
-
-// foundryRunning reports whether live, the ontology's live job, runs now
-// against load loadID, so may be sending that load's decisions.
-func foundryRunning(live *model.FoundryGraphJob, loadID string) bool {
-	return live != nil && live.LoadID == loadID && live.Status == model.FoundryGraphJobRunning
 }
 
 // carryFoundryReleases brings the ontology's current load the release
@@ -194,7 +206,7 @@ func (s *mysqlDB) carryFoundryReleases(ctx context.Context, o *model.FoundryOnto
 	}
 	loadID := *o.CurrentLoadID
 	if _, err := s.withdrawFoundryReleases(ctx, loadID, `t.id NOT IN (SELECT id FROM foundry_review_decisions WHERE ontology_id=?) OR `+
-		foundryRejected("t", "?"), []any{o.ID, o.ID}, false); err != nil {
+		foundryRejected("t", "?"), []any{o.ID, o.ID}); err != nil {
 		return err
 	}
 	// Two anti-joins, each on an index (the list's primary key, and its

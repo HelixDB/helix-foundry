@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -320,4 +321,84 @@ func TestFoundryTakeBackCarriedToALoadThatWroteIt(t *testing.T) {
 	f.end(t, job, "back", model.FoundryGraphJobSucceeded)
 	assert.Equal(t, map[string]string{d.ID: "withdrawn"}, f.applied(t, d))
 	assert.Nil(t, f.liveJob(t))
+}
+
+// retried ends job as an attempt that failed with a retry to come: queued
+// again, with the attempt's start kept.
+func (f resendFixture) retried(t *testing.T, job *model.FoundryGraphJob) {
+	t.Helper()
+	later := time.Now().Add(time.Hour)
+	_, err := f.db.FinishFoundryGraphJob(context.Background(), job.ID, f.worker, model.FoundryGraphJobOutcome{
+		Status: model.FoundryGraphJobFailed, Error: "the stream broke; Helix will retry", RetryAt: &later,
+	})
+	require.NoError(t, err)
+	live := f.liveJob(t)
+	require.NotNil(t, live)
+	require.Equal(t, model.FoundryGraphJobQueued, live.Status)
+	require.NotNil(t, live.StartedAt)
+}
+
+// While a job of the current load is in flight it may be sending any copy
+// of its list, and may have written one in an attempt whose word was never
+// recorded: removing an approval then takes it back, whatever its copy's
+// status, rather than deleting a copy the engine may have written. In flight
+// is running, or queued again after an attempt started. So is a rejection
+// refused while a resend in flight may be writing the claim.
+func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
+	ctx := context.Background()
+
+	// A copy the load made as it was created, of a document it has yet to
+	// read, as a load made current with that document still to read holds:
+	// the job reading it sends the copy with it.
+	t.Run("a copy made with the load, of a document it has yet to read", func(t *testing.T) {
+		f := newResendFixture(t, "WFLY")
+		d := f.held(f.a, 0, readA)
+		require.True(t, f.approve(t, "1", d))
+		_, err := testDB.Exec(`UPDATE foundry_load_decisions SET applied_status=NULL WHERE load_id=? AND id=?`, f.load, d.ID)
+		require.NoError(t, err)
+		_, err = testDB.Exec(`DELETE FROM foundry_load_extractions WHERE load_id=? AND document_id=?`, f.load, f.a)
+		require.NoError(t, err)
+		job := f.claim(t)
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+			&model.FoundryGraphJob{ID: id26("RS-WFLY-2")}))
+		assert.Equal(t, map[string]string{d.ID: "withdraw"}, kinds(t, f.load), "the job may be writing it")
+		assert.Equal(t, map[string]string{d.ID: "pending"}, f.applied(t, d))
+		f.end(t, job, "ran", model.FoundryGraphJobSucceeded)
+	})
+
+	// An attempt sent the approval, the engine wrote it, and the attempt
+	// failed before its word was recorded: the job is queued again.
+	t.Run("an approval its job's failed attempt may have written", func(t *testing.T) {
+		f := newResendFixture(t, "WRTY")
+		d := f.held(f.a, 0, readA)
+		require.True(t, f.approve(t, "1", d))
+		f.retried(t, f.claim(t))
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+			&model.FoundryGraphJob{ID: id26("RS-WRTY-2")}))
+		assert.Equal(t, map[string]string{d.ID: "withdraw"}, kinds(t, f.load))
+		assert.Equal(t, map[string]model.FoundryReviewDecisionKind{d.ID: model.FoundryReviewWithdraw}, f.sentKinds(t, f.a),
+			"the retry sends the withdraw in its place")
+	})
+
+	t.Run("not a rejection while that retry may be writing the claim", func(t *testing.T) {
+		f := newResendFixture(t, "WRTX")
+		d := f.held(f.a, 0, readA)
+		require.True(t, f.approve(t, "1", d))
+		f.retried(t, f.claim(t))
+		assert.ErrorIs(t, f.db.SettleFoundryReject(ctx, f.ontology.WorkspaceID, f.load, f.rejected(f.a, 0, readA)), store.ErrConflict)
+		assert.Equal(t, map[string]string{d.ID: "release"}, kinds(t, f.load))
+	})
+
+	// A job queued that never started has sent nothing: a copy no job sent
+	// is only dropped, as before.
+	t.Run("not a job queued that never started", func(t *testing.T) {
+		f := newResendFixture(t, "WQUE")
+		d := f.held(f.a, 0, readA)
+		require.True(t, f.approve(t, "1", d))
+		live := f.liveJob(t)
+		require.NotNil(t, live)
+		require.Nil(t, live.StartedAt)
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID, nil))
+		assert.Empty(t, kinds(t, f.load))
+	})
 }
