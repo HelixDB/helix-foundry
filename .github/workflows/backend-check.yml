@@ -38,6 +38,14 @@ jobs:
         run: |
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2
           "$(go env GOPATH)/bin/golangci-lint" run --timeout 5m ./...
+      # buf.build rate-limits anonymous pulls and is sometimes down. The
+      # plugins run locally (buf.gen.yaml), and googleapis, the one module
+      # dependency, comes from this cache, so buf needs the registry only
+      # when buf.lock changes.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/buf
+          key: buf-${{ runner.os }}-${{ hashFiles('backend/buf.lock') }}
       # The generated code is committed: regenerating it changes nothing.
       - name: generated code
         run: |
