@@ -637,10 +637,28 @@ WHERE load_id=? AND id=? AND kind=? AND statement_hash=? FOR UPDATE`, loadID, o.
 			Scan(&current, &currentReason, &wasWritten)
 		if err == sql.ErrNoRows {
 			// A decision removed, or approved as it reads now, after the job
-			// read it: the engine's word on what the job sent is dropped. A
-			// release the load may have written then became a withdraw
-			// (withdrawFoundryReleases), which the next resend sends, so a
-			// fact no decision accounts for is taken back.
+			// read it. A release the load may have written then became a
+			// withdraw (withdrawFoundryReleases), which the next resend sends,
+			// so a fact no decision accounts for is taken back. Made while
+			// this job was in flight, it waits with was_written unset: the
+			// word that the job wrote the release, which this run counted
+			// (recordDocument), sets it, so the take-back moves the counts
+			// back. Any other word is dropped.
+			if !o.Withdraw && o.Kind == model.FoundryReleaseOutcomeWritten {
+				marked, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET was_written=TRUE
+WHERE load_id=? AND id=? AND kind='withdraw' AND statement_hash=? AND applied_status IN ('pending', 'carried')`,
+					loadID, o.DecisionID, o.StatementHash)
+				if err != nil {
+					return err
+				}
+				n, err := marked.RowsAffected()
+				if err != nil {
+					return err
+				}
+				if n > 0 {
+					continue
+				}
+			}
 			log.From(ctx).Warn("graph job: the engine's word on a release the load's list no longer holds was dropped",
 				"load", loadID, "decision", o.DecisionID, "outcome", string(o.Kind))
 			continue

@@ -441,6 +441,44 @@ func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
 	})
 }
 
+// A person removes an approval while the resend sending it runs: its copy
+// becomes a withdraw, with nothing yet said of the release, before the
+// engine's word comes. That word says written, and the run counts it, so the
+// withdraw is marked as taking back a written release: its take-back moves
+// the counts back to where they were before the approval.
+func TestFoundryTakeBackOfAReleaseWrittenAfterItsRemoval(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "WLATE")
+	_, err := testDB.Exec(`UPDATE foundry_load_extractions SET reviews=3 WHERE load_id=? AND document_id=?`, f.load, f.a)
+	require.NoError(t, err)
+	facts, reviews := f.countsOf(t, f.a)
+	d := f.held(f.a, 0, readA)
+	require.True(t, f.approve(t, "1", d))
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+
+	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+		&model.FoundryGraphJob{ID: id26("RS-WLATE-2")}))
+	require.Equal(t, map[string]string{d.ID: "withdraw"}, kinds(t, f.load), "the job may be writing it")
+	f.sent(t, job, owed[0], 1, written(d))
+	gotFacts, gotReviews := f.countsOf(t, f.a)
+	assert.Equal(t, [2]int{facts + 1, reviews - 1}, [2]int{gotFacts, gotReviews}, "the run counted what it wrote")
+	assert.Equal(t, map[string]string{d.ID: "pending"}, f.applied(t, d), "the withdraw still waits")
+	f.end(t, job, "1-end", model.FoundryGraphJobSucceeded)
+
+	job = f.claim(t)
+	require.Equal(t, map[string]model.FoundryReviewDecisionKind{d.ID: model.FoundryReviewWithdraw}, f.sentKinds(t, f.a))
+	owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	f.sent(t, job, owed[0], 0, withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, ""))
+	assert.Equal(t, map[string]string{d.ID: "withdrawn"}, f.applied(t, d))
+	gotFacts, gotReviews = f.countsOf(t, f.a)
+	assert.Equal(t, [2]int{facts, reviews}, [2]int{gotFacts, gotReviews}, "the take-back moved them back")
+}
+
 // countsOf reads a document's facts and reviews in the fixture's load.
 func (f resendFixture) countsOf(t *testing.T, doc string) (facts, reviews int) {
 	t.Helper()
