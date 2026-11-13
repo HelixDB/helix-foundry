@@ -345,7 +345,8 @@ func (f resendFixture) retried(t *testing.T, job *model.FoundryGraphJob) {
 // of its list, and may have written one in an attempt whose word was never
 // recorded: removing an approval then takes it back, whatever its copy's
 // status, rather than deleting a copy the engine may have written. In flight
-// is running, or queued again after an attempt started. So is a rejection
+// is running, queued again after an attempt started, or cancelled while an
+// attempt ran, until that attempt's lease ends. So is a rejection
 // refused while a resend in flight may be writing the claim.
 func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
 	ctx := context.Background()
@@ -390,6 +391,40 @@ func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
 		f.retried(t, f.claim(t))
 		assert.ErrorIs(t, f.db.SettleFoundryReject(ctx, f.ontology.WorkspaceID, f.load, f.rejected(f.a, 0, readA)), store.ErrConflict)
 		assert.Equal(t, map[string]string{d.ID: "release"}, kinds(t, f.load))
+	})
+
+	// A job cancelled while its attempt ran (here an apply, by the user's
+	// new load) loses its lease, but the attempt, and the engine until its
+	// next commit, may still be writing until that lease ends: until then a
+	// removal takes the approval back; after, it only drops the copy.
+	t.Run("a job cancelled while its attempt may still be writing", func(t *testing.T) {
+		f := newResendFixture(t, "WCAN")
+		_, err := testDB.Exec(`UPDATE foundry_ontologies SET auto_refresh=TRUE, refresh_due_at=NOW(6) - INTERVAL 1 SECOND WHERE id=?`, f.ontology.ID)
+		require.NoError(t, err)
+		queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID,
+			&model.FoundryGraphJob{ID: id26("AP-WCAN"), Kind: model.FoundryGraphJobApply})
+		require.NoError(t, err)
+		require.True(t, queued)
+		d1, d2 := f.held(f.a, 0, readA), f.held(f.a, 1, readA)
+		require.False(t, f.approve(t, "1", d1, d2), "the apply sends them")
+		apply := f.claim(t)
+		require.Equal(t, model.FoundryGraphJobApply, apply.Kind)
+		f.load(t, "WCAN-2")
+		var status string
+		var leaseLeft bool
+		require.NoError(t, testDB.QueryRow(`SELECT status, lease_until > NOW(6) FROM foundry_load_jobs WHERE id=?`, apply.ID).Scan(&status, &leaseLeft))
+		require.Equal(t, "cancelled", status, "the user's load went first")
+		require.True(t, leaseLeft, "a cancelled attempt keeps its lease end")
+
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d1.ID,
+			&model.FoundryGraphJob{ID: id26("RS-WCAN-2")}))
+		assert.Equal(t, map[string]string{d1.ID: "withdraw", d2.ID: "release"}, kinds(t, f.load), "the attempt may be writing it")
+
+		_, err = testDB.Exec(`UPDATE foundry_load_jobs SET lease_until=NOW(6) - INTERVAL 1 SECOND WHERE id=?`, apply.ID)
+		require.NoError(t, err)
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d2.ID,
+			&model.FoundryGraphJob{ID: id26("RS-WCAN-3")}))
+		assert.Equal(t, map[string]string{d1.ID: "withdraw"}, kinds(t, f.load), "its lease ended, so the attempt did too")
 	})
 
 	// A job queued that never started has sent nothing: a copy no job sent

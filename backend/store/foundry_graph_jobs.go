@@ -44,11 +44,14 @@ FROM foundry_load_jobs WHERE ontology_id=? AND active_key=1 FOR UPDATE`, ontolog
 
 // cancelLiveFoundryGraphJob ends the ontology's live job, if it has one, as
 // cancelled, saying why. A worker running it loses its lease: its next
-// renewal stops the attempt, which then records nothing. The caller holds
-// the ontology's lock.
+// renewal stops the attempt, which then records nothing. Until then the
+// attempt, and the engine until its next commit, may still write: a running
+// job keeps its lease end, and counts as in flight until it passes
+// (foundryInFlight). lease_until is assigned first, as MySQL assigns left to
+// right. The caller holds the ontology's lock.
 func (s *mysqlDB) cancelLiveFoundryGraphJob(ctx context.Context, ontologyID, why string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE foundry_load_jobs
-SET status='cancelled', active_key=NULL, lease_owner=NULL, lease_until=NULL, error=?, finished_at=NOW(6)
+SET lease_until=IF(status='running', lease_until, NULL), status='cancelled', active_key=NULL, lease_owner=NULL, error=?, finished_at=NOW(6)
 WHERE ontology_id=? AND active_key=1`, why, ontologyID)
 	return err
 }

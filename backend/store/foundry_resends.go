@@ -100,22 +100,28 @@ func foundryMayHaveWritten(t string) string {
 
 // foundryInFlight is the SQL condition that a job of the load `load` (a
 // column or a placeholder), of one of kinds or of any kind, is in flight: the
-// ontology's live job, running, or queued again after an attempt started (a
-// retry, or one requeued for documents that came during it). An attempt may
-// have sent the engine the load's decisions, and the engine written some,
-// with no word of it recorded: the next attempt sends what the list then
-// holds, and absence never takes anything back.
+// ontology's live job, of this load, running, or queued again after an
+// attempt started (a retry, or one requeued for documents that came during
+// it); or a job of this load cancelled while an attempt ran, until that
+// attempt's lease ends (cancelLiveFoundryGraphJob). An attempt may have sent
+// the engine the load's decisions, and the engine written some, with no word
+// of it recorded: the next attempt sends what the list then holds, and
+// absence never takes anything back. Two lookups by key, whatever the number
+// of jobs the load has had: the live job through the ontology's live-job key
+// (foundry_load_jobs_active_uq), a cancelled one through
+// foundry_load_jobs_writing_idx.
 func foundryInFlight(load string, kinds ...model.FoundryGraphJobKind) string {
-	cond := `EXISTS (SELECT 1 FROM foundry_load_jobs j WHERE j.load_id=` + load + ` AND j.active_key=1
-    AND (j.status='running' OR j.status='queued' AND j.started_at IS NOT NULL)`
+	kind := ""
 	if len(kinds) > 0 {
 		names := make([]string, 0, len(kinds))
 		for _, k := range kinds {
 			names = append(names, "'"+string(k)+"'")
 		}
-		cond += ` AND j.kind IN (` + strings.Join(names, ", ") + `)`
+		kind = ` AND j.kind IN (` + strings.Join(names, ", ") + `)`
 	}
-	return cond + `)`
+	return `(EXISTS (SELECT 1 FROM foundry_loads fl JOIN foundry_load_jobs j ON j.ontology_id=fl.ontology_id AND j.active_key=1
+    WHERE fl.id=` + load + ` AND j.load_id=fl.id AND (j.status='running' OR j.status='queued' AND j.started_at IS NOT NULL)` + kind + `)
+  OR EXISTS (SELECT 1 FROM foundry_load_jobs j WHERE j.load_id=` + load + ` AND j.status='cancelled' AND j.lease_until > NOW(6)` + kind + `))`
 }
 
 // withdrawFoundryReleases takes the releases of load loadID that where (SQL

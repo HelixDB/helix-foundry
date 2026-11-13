@@ -429,13 +429,14 @@ func (s *mysqlDB) SettleFoundryReject(ctx context.Context, workspaceID, loadID s
 		// key, or of what the person read at its place under another key,
 		// which the engine binds to this review: foundryClaimAt): one written,
 		// or one waiting for a job with nothing said of it yet while a resend
-		// of the load is in flight (foundryInFlight: running, or queued again
-		// after an attempt that may have written it).
+		// of the load is in flight (foundryInFlight: running, queued again
+		// after an attempt that may have written it, or cancelled with its
+		// attempt's lease not yet ended; it reads the load id twice).
 		var written, sending bool
 		if err := tx.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(t.applied_status='written'), 0) > 0,
   COALESCE(SUM(t.applied_status IN ('pending', 'carried') AND t.applied_reason IS NULL), 0) > 0 AND `+
 			foundryInFlight("?", model.FoundryGraphJobResend)+` FROM foundry_load_decisions t
-WHERE t.load_id=? AND t.kind='release' AND `+foundryClaimAt("t"), append([]any{loadID, loadID}, claim...)...).Scan(&written, &sending); err != nil {
+WHERE t.load_id=? AND t.kind='release' AND `+foundryClaimAt("t"), append([]any{loadID, loadID, loadID}, claim...)...).Scan(&written, &sending); err != nil {
 			return err
 		}
 		if written || sending {
