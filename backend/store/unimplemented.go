@@ -76,6 +76,10 @@ func (u Unimplemented) EndFoundryLoadResend(context.Context, string, string, mod
 	u.unimplemented("EndFoundryLoadResend")
 	return nil
 }
+func (u Unimplemented) RecordFoundryReleaseOutcomes(context.Context, string, string, string, []model.FoundryReleaseOutcome) error {
+	u.unimplemented("RecordFoundryReleaseOutcomes")
+	return nil
+}
 func (u Unimplemented) DeleteFoundryReviewDecision(context.Context, string, string, string, *model.FoundryGraphJob) error {
 	u.unimplemented("DeleteFoundryReviewDecision")
 	return nil

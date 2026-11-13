@@ -309,6 +309,7 @@ type Store interface {
 	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
 	FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error)
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
+	RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome) error
 	DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error
 	SaveFoundryReviewLabel(ctx context.Context, workspaceID string, label *model.FoundryReviewLabel) error
 	CreateFoundryDocumentSet(ctx context.Context, set *model.FoundryDocumentSet, max int) error

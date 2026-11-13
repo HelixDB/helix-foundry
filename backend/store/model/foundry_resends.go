@@ -64,6 +64,12 @@ type FoundryResendEnd struct {
 	// Refused, when set, is why the document's decisions that still wait were
 	// not applied: one of the FoundryRelease… reasons the backend gives.
 	Refused string
+	// TakenBack is a document an Extract of the job carried to a run that
+	// reached its documents, which said nothing of its withdraws (contract
+	// 4.16.0: it needed a model call, or its event was lost): the engine took
+	// each back before it read any document, so the withdraws that wait end
+	// withdrawn, not refused. Its releases are refused as Refused says.
+	TakenBack bool
 }
 
 // FoundryReleaseStatus is what became of a release or a value decision in a
@@ -208,6 +214,17 @@ type FoundryDecisionApplied struct {
 	Reason string
 	// At is when a job reported it; nil while it waits.
 	At *time.Time
+	// WasWritten is of a withdraw: its load had recorded the release it takes
+	// back written (foundry_load_decisions.was_written).
+	WasWritten bool
+}
+
+// MovesBack reports whether a withdraw that ends at status takes back what
+// its load recorded written, which moves its document's counts back: a fact
+// fewer and a review more, as they moved forward when the release was
+// written. Only once, from waiting.
+func (a FoundryDecisionApplied) MovesBack(status FoundryReleaseStatus) bool {
+	return status == FoundryWithdrawn && a.WasWritten && a.Status.Waits()
 }
 
 // FoundryReleaseUnconfirmed is how a reader is told of an unconfirmed
@@ -242,13 +259,19 @@ func (a FoundryDecisionApplied) Unconfirmed() bool {
 //
 // A withdraw ends as the engine says: withdrawn, not_written or refused;
 // another word, which only a release gets, is refused with its name as the
-// reason, as an unknown one is.
+// reason, as an unknown one is. not_written of an approval its load had
+// recorded written (WasWritten) is the take-back done already, by a run that
+// stopped, or whose document needed a model call, before its event said so
+// (the engine takes withdraws back before it reads any document): withdrawn.
 func (a FoundryDecisionApplied) After(o FoundryReleaseOutcome) (status FoundryReleaseStatus, reason string, ok bool) {
 	if o.Withdraw {
 		switch o.Kind {
 		case FoundryReleaseOutcomeWithdrawn:
 			return FoundryWithdrawn, "", true
 		case FoundryReleaseOutcomeNotWritten:
+			if a.WasWritten {
+				return FoundryWithdrawn, "", true
+			}
 			return FoundryNotWritten, "", true
 		case FoundryReleaseOutcomeRefused:
 			return FoundryReleaseRefused, o.Reason, true

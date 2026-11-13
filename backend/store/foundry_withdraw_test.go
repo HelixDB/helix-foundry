@@ -101,7 +101,7 @@ func TestFoundryWrittenApprovalTakenBack(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, owed, 1)
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, &model.FoundryDocumentExtraction{
-		DocumentID: f.a, Status: model.FoundryExtractionExtracted, Withdrawn: 1,
+		DocumentID: f.a, Status: model.FoundryExtractionExtracted,
 		Releases: []model.FoundryReleaseOutcome{withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, "")},
 	}, true))
 	require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
@@ -400,5 +400,110 @@ func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
 		require.Nil(t, live.StartedAt)
 		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID, nil))
 		assert.Empty(t, kinds(t, f.load))
+	})
+}
+
+// countsOf reads a document's facts and reviews in the fixture's load.
+func (f resendFixture) countsOf(t *testing.T, doc string) (facts, reviews int) {
+	t.Helper()
+	row, err := f.db.GetFoundryDocumentExtraction(context.Background(), f.load, doc)
+	require.NoError(t, err)
+	return row.Counts.Facts, row.Counts.Reviews
+}
+
+// The engine takes back every withdraw it is sent before it reads any
+// document, and says what it did only in that document's event (contract
+// 4.16.0). What it did stands whatever became of the document: a failed
+// event's word is recorded, a document that needed a model call (no event)
+// had its withdraws taken back all the same, and a withdraw sent again after
+// a run that stopped reads not_written, which, of an approval the load had
+// recorded written, is the take-back done. Each moves the document's counts
+// back once: a fact fewer, a review more. A withdraw never sent (its
+// document is gone) is refused, and what it would have taken back stays.
+func TestFoundryTakeBackWhateverBecameOfItsDocument(t *testing.T) {
+	ctx := context.Background()
+	setup := func(t *testing.T, tag string) (resendFixture, *model.FoundryReviewDecision, *model.FoundryGraphJob, *model.FoundryLoadResend) {
+		f := newResendFixture(t, tag)
+		_, err := testDB.Exec(`UPDATE foundry_load_extractions SET reviews=3 WHERE load_id=? AND document_id=?`, f.load, f.a)
+		require.NoError(t, err)
+		d := f.held(f.a, 0, readA)
+		f.writeApproval(t, "1", d)
+		facts, reviews := f.countsOf(t, f.a)
+		require.Equal(t, [2]int{2, 2}, [2]int{facts, reviews}, "the commit's fact and the approval's")
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+			&model.FoundryGraphJob{ID: id26("RS-" + tag + "-2")}))
+		job := f.claim(t)
+		owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+		require.NoError(t, err)
+		require.Len(t, owed, 1)
+		return f, d, job, owed[0]
+	}
+	back := func(t *testing.T, f resendFixture, d *model.FoundryReviewDecision) {
+		t.Helper()
+		assert.Equal(t, map[string]string{d.ID: "withdrawn"}, f.applied(t, d))
+		facts, reviews := f.countsOf(t, f.a)
+		assert.Equal(t, [2]int{1, 3}, [2]int{facts, reviews}, "a fact fewer and a review more, once")
+		assert.Empty(t, f.sentKinds(t, f.a))
+	}
+
+	t.Run("a failed event's word", func(t *testing.T) {
+		f, d, job, o := setup(t, "WFAILD")
+		require.NoError(t, f.db.RecordFoundryReleaseOutcomes(ctx, job.ID, f.worker, f.a,
+			[]model.FoundryReleaseOutcome{withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, "")}))
+		require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
+			DocumentID: f.a, Reason: o.Reason, Requests: o.Requests, Refused: model.FoundryReleaseDocumentFailed, TakenBack: true,
+		}))
+		back(t, f, d)
+		assert.ErrorIs(t, f.db.RecordFoundryReleaseOutcomes(ctx, job.ID, "another-worker", f.a,
+			[]model.FoundryReleaseOutcome{withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, "")}), store.ErrNotFound, "the job's lease")
+	})
+
+	t.Run("no event, its document needing a model call", func(t *testing.T) {
+		f, d, job, o := setup(t, "WNOEV")
+		require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
+			DocumentID: f.a, Reason: o.Reason, Requests: o.Requests, Refused: model.FoundryReleaseNotReplayed, TakenBack: true,
+		}))
+		back(t, f, d)
+	})
+
+	t.Run("sent again after a run that stopped", func(t *testing.T) {
+		f, d, job, _ := setup(t, "WSTOP")
+		f.retried(t, job)
+		f.due(t)
+		job = f.claim(t)
+		owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+		require.NoError(t, err)
+		f.sent(t, job, owed[0], 0, withdrawn(d, model.FoundryReleaseOutcomeNotWritten, ""))
+		back(t, f, d)
+	})
+
+	t.Run("never sent, its document gone", func(t *testing.T) {
+		f, d, job, o := setup(t, "WGONE")
+		require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
+			DocumentID: f.a, Reason: o.Reason, Requests: o.Requests, Refused: model.FoundryReleaseDocumentGone,
+		}))
+		assert.Equal(t, map[string]string{d.ID: "refused/document_gone"}, f.applied(t, d))
+		facts, reviews := f.countsOf(t, f.a)
+		assert.Equal(t, [2]int{2, 2}, [2]int{facts, reviews})
+	})
+
+	// A withdraw of a copy the load never recorded written (here, one whose
+	// job failed before its word) moves nothing back, whatever the engine
+	// says: nothing moved forward for it.
+	t.Run("of an approval the load never recorded written", func(t *testing.T) {
+		f := newResendFixture(t, "WNOTW")
+		d := f.held(f.a, 0, readA)
+		require.True(t, f.approve(t, "1", d))
+		assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, f.claim(t), "failed", model.FoundryGraphJobFailed))
+		facts, reviews := f.countsOf(t, f.a)
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+			&model.FoundryGraphJob{ID: id26("RS-WNOTW-2")}))
+		job := f.claim(t)
+		owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+		require.NoError(t, err)
+		f.sent(t, job, owed[0], 0, withdrawn(d, model.FoundryReleaseOutcomeNotWritten, ""))
+		assert.Equal(t, map[string]string{d.ID: "not_written"}, f.applied(t, d))
+		after, afterReviews := f.countsOf(t, f.a)
+		assert.Equal(t, [2]int{facts, reviews}, [2]int{after, afterReviews})
 	})
 }

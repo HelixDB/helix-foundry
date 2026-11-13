@@ -385,7 +385,10 @@ type memStore struct {
 	resends       []*model.FoundryLoadResend
 	owedDecisions *model.FoundryLoadResend
 	ended         []model.FoundryResendEnd
-	endErr        error
+	// outcomes are the engine's words a job recorded apart from a document's
+	// row (RecordFoundryReleaseOutcomes), by document.
+	outcomes map[string][]model.FoundryReleaseOutcome
+	endErr   error
 }
 
 func (s *memStore) FoundryLoadDecisionsOwed(context.Context, string) (*model.FoundryLoadResend, error) {
@@ -407,6 +410,16 @@ func (s *memStore) EndFoundryLoadResend(_ context.Context, _, _ string, end mode
 		return s.endErr
 	}
 	s.ended = append(s.ended, end)
+	return nil
+}
+
+func (s *memStore) RecordFoundryReleaseOutcomes(_ context.Context, _, _, docID string, outcomes []model.FoundryReleaseOutcome) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.outcomes == nil {
+		s.outcomes = map[string][]model.FoundryReleaseOutcome{}
+	}
+	s.outcomes[docID] = append(s.outcomes[docID], outcomes...)
 	return nil
 }
 
