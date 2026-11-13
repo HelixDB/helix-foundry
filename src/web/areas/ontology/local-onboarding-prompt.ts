@@ -35,7 +35,7 @@ export function localOnboardingPrompt(input: OnboardingPromptInput): string {
     ...data.tables,
     ...data.documents,
     ...data.others,
-    "Use helix_foundry_list_connector_kinds and helix_foundry_connector_link to let me enter connector credentials in Foundry. Never ask for those credentials. Once I've saved one, helix_foundry_list_connectors gives its id. Sync connectors with confirmed sync_connector, target connector:<workspace_id>/<connector_id>, payload {}, and follow helix_foundry_get_sync.",
+    "Use helix_foundry_list_connector_kinds and helix_foundry_connect to let me enter connector credentials in Foundry. Never ask for those credentials. Once I've saved one, helix_foundry_list_connectors gives its id. Sync connectors with confirmed sync_connector, target connector:<workspace_id>/<connector_id>, payload {}, and follow helix_foundry_get_sync.",
     `For documents, use confirmed create_document_set on ${target}, payload {"name":"<name>","description":"<contents>"}. Then upload_document on the same target with {"set_id":"<id>","name":"<filename>","size_bytes":<exact bytes>,"sha256":"<lowercase SHA-256>"}. PUT the file to the returned upload URL, then helix_foundry_complete_document_upload with {${ids}, "document_id":"<id>"}. Wait until the files have been read before generating.`,
     "",
     "## Work out the goal",

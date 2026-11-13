@@ -32,7 +32,7 @@ The proof of concept on branch `poc/workos-pipes` (`backend/cmd/pipes-poc`, and 
 ## The flow
 
 1. The agent asks "Connect GitHub?" and the user says yes. The agent may also ask which repositories to include.
-2. The agent calls `helix_foundry_start_sign_in`, which answers with a link to Foundry: `/data?add=github&sign_in=<id>&workspace=<ws>`.
+2. The agent calls `helix_foundry_connect`, which answers with a link to Foundry: `/data?add=github&sign_in=<id>&workspace=<ws>`.
 3. The agent opens the link in the user's browser, or gives it to the user. Foundry shows GitHub's form, bound to that sign-in, with the workspace, name and settings, and one button: **Connect with GitHub**.
 4. GitHub asks the user to authorize Helix Foundry, and the user clicks Authorize. GitHub returns to Pipes, which returns to Foundry's `/connect/callback`.
 5. The callback finishes the sign-in. The backend:
@@ -124,7 +124,7 @@ sequenceDiagram
 **Starting a sign-in needs no confirmation.**
 
 - MCP writes go through `helix_prepare_foundry_operation`/`helix_execute_foundry_operation`, whose confirmation is "not human approval" (`plans/FOUNDRY_MCP.md:215-219`, hyperscale).
-- A sign-in writes nothing that matters until the user clicks Authorize. The form shows the workspace, name and settings, and never submits on load. So `helix_foundry_start_sign_in` is a plain tool, annotated as a write.
+- A sign-in writes nothing that matters until the user clicks Authorize. The form shows the workspace, name and settings, and never submits on load. So `helix_foundry_connect` starts one with no confirmation, annotated as a write.
 
 **A GitHub App, not an OAuth app.**
 
@@ -133,7 +133,7 @@ sequenceDiagram
 
 **GitHub reads where the app is installed.** With no repositories named, a signed-in GitHub connector reads the repositories of the app's installations the user can reach. It doesn't read every repository the user can see, which would include public ones they only contribute to.
 
-**Keys stay.** GitHub and Linear keep "Use a token instead". Existing key connectors are untouched, and every other kind keeps `helix_foundry_connector_link`.
+**Keys stay.** GitHub and Linear keep "Use a token instead". Existing key connectors are untouched, and every other kind keeps its form, through the same `helix_foundry_connect`.
 
 ## Backend module (`helix-foundry/backend`)
 
@@ -510,18 +510,18 @@ It has a key of its own, `pipes.api_key`: the Foundry application's key, so the 
 
 ### MCP (helix-foundry `backend/integration`)
 
-The MCP's Foundry tools moved into the module's `backend/integration` package (helix-foundry #212 and #236) while #220 was in review; hosted's `mcpinsights` registers them from there. The sign-in tools are in `integration/foundry_sign_ins.go`.
+The MCP's Foundry tools moved into the module's `backend/integration` package (helix-foundry #212 and #236) while #220 was in review; hosted's `mcpinsights` registers them from there. `helix_foundry_connect` (which merged `connector_link` and `start_sign_in`) is in `integration/foundry_connect.go`; `get_sign_in` and the sign-in path are in `integration/foundry_sign_ins.go`.
 
-| Tool                          | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | RPCs                                                       |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `helix_foundry_start_sign_in` | `{workspace_id, kind, name?, repos?, project_id?, connector_id?, client_token?}` → `{sign_in_id, url, expires_at, next}`. `repos` is GitHub's and `project_id` PostHog's (US Cloud only); every other setting takes the kind's default, which the user changes on the connector's page. `url` is `foundryURL + /data?add=<kind>&sign_in=<id>&workspace=<ws>`. `next`: open it in the user's browser (macOS `open`, Linux `xdg-open`), or give it to them, then call `helix_foundry_get_sign_in` with `wait`. It refuses `repos` for any kind but GitHub and `project_id` for any kind but PostHog, and, with `connector_id` (signing a connector in again), any name or setting.                         | `ListConnectorKinds`, `StartConnectorSignIn`               |
-| `helix_foundry_get_sign_in`   | `{workspace_id, sign_in_id, wait}`. Waits up to 25 s (`waitWhile` in `integration/foundry.go`) while the sign-in is pending, authorizing or finishing. Returns `sign_in` (with `discovery_problem` and `identity_changed`), GitHub's `install_url` on every answer, and `next`. Connected: the connector, its `url` and `last_sync`; `next` says to follow the sync, and names the install link when there is a discovery problem. Declined or failed: `next` says to ask whether to try again; the same link works until it expires, except after `settings_invalid`, which needs a new sign-in. Expired: no `url`; `next` says to start again (with `connector_id` when signing a connector in again). | `GetConnectorSignIn`, `GetConnector`, `ListConnectorKinds` |
+| Tool                        | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | RPCs                                                            |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `helix_foundry_connect`     | `{workspace_id, kind, with_key?, name?, repos?, project_id?, connector_id?, client_token?}` → `{url, kind, display_name, available, sign_in_id?, expires_at?, next}`. A kind whose `sign_in` is true, unless `with_key`, starts a sign-in: `url` is `foundryURL + /data?add=<kind>&sign_in=<id>&workspace=<ws>`, and `next` says to open it in the user's browser (macOS `open`, Linux `xdg-open`), or give it to them, then call `helix_foundry_get_sign_in` with `wait`. `repos` is GitHub's and `project_id` PostHog's (US Cloud only); every other setting takes the kind's default, which the user changes on the connector's page. Any other kind, or `with_key`, links the kind's form (`/data?add=<kind>&workspace=<ws>`) and refuses a sign-in's name, settings or `connector_id`. A caller who can't sign in sees only `workspace_id` and `kind`. | `ListConnectorKinds`, `CreateConnector`, `StartConnectorSignIn` |
+| `helix_foundry_get_sign_in` | `{workspace_id, sign_in_id, wait}`. Waits up to 25 s (`waitWhile` in `integration/foundry.go`) while the sign-in is pending, authorizing or finishing. Returns `sign_in` (with `discovery_problem` and `identity_changed`), GitHub's `install_url` on every answer, and `next`. Connected: the connector, its `url` and `last_sync`; `next` says to follow the sync, and names the install link when there is a discovery problem. Declined or failed: `next` says to ask whether to try again; the same link works until it expires, except after `settings_invalid`, which needs a new sign-in. Expired: no `url`; `next` says to start again (with `connector_id` when signing a connector in again).                                                                                                                                                    | `GetConnectorSignIn`, `GetConnector`, `ListConnectorKinds`      |
 
 **Registration and access:**
 
-- Registered for users with `workspace.connectors.manage`, and only when the host offers sign-in (`integration.Service.SignIn`, which hosted sets from `pipes.enabled`; a local install leaves it off) and names the website (`FoundryURL`, hosted's `mcp.foundry_url`): `signInTools`. Service keys, agent registrations and send tokens get neither tool.
+- `helix_foundry_connect` is registered for users with `workspace.connectors.manage` wherever the host names the website; its sign-in fields, and `helix_foundry_get_sign_in`, only when the host offers sign-in (`integration.Service.SignIn`, which hosted sets from `pipes.enabled`; a local install leaves it off) and names the website (`FoundryURL`, hosted's `mcp.foundry_url`): `signInTools`. Service keys, agent registrations and send tokens get neither.
 - Checked with `AuthorizeFoundry(…, UserOnly, …)`. Keys get neither tool.
-- `start_sign_in` is annotated as a write.
+- `connect` is annotated as a write where it may sign in, and as a read where it only links a form.
 - Outputs carry `failure` codes and Foundry's own words, never provider text: query strings and labels are data an attacker can write.
 
 **Changes to existing tools:**
@@ -529,7 +529,7 @@ The MCP's Foundry tools moved into the module's `backend/integration` package (h
 - `helix_foundry_list_connector_kinds` returns `sign_in`.
 - `helix_foundry_list_connectors` returns each connector's `account` (its `state`, `needs_sign_in` when broken, and `broken`), never the provider's account label. The MCP has no `needs_sign_in` filter; that is the site's.
 - `sync_connector` on a broken account returns the MCP's code `account_needs_sign_in` with the backend's message. The backend's `SIGN_IN_UNAVAILABLE` and `SIGN_IN_IN_PROGRESS` reach the agent as `failed_precondition` with the backend's message, and the prompt sends the agent to the connector link, never to asking for a token.
-- `helix_foundry_connector_link`'s `next`, for a kind with `sign_in`, points at `helix_foundry_start_sign_in`.
+- `helix_foundry_connector_link` and `helix_foundry_start_sign_in` became one tool, `helix_foundry_connect`.
 
 **Docs:**
 
@@ -654,7 +654,7 @@ Pipes can't move an account to another member, so someone signs it in again.
 **Agents:**
 
 - `helix_foundry_list_connectors` shows `account`.
-- The onboarding prompt and skill tell the agent to say so, and to offer `helix_foundry_start_sign_in` with `connector_id`.
+- The onboarding prompt and skill tell the agent to say so, and to offer `helix_foundry_connect` with `connector_id`.
 
 **Email: not in v1.** hosted runs no `foundry-notify-worker`, and its mailer only logs (`server/deps_billing.go:114-118`). When Foundry's email runs in hosted, `connector_needs_sign_in` needs these changes:
 
@@ -668,7 +668,7 @@ Pipes can't move an account to another member, so someone signs it in again.
 
 **`onboarding-prompt.ts`, "Connect a source".** For a kind whose `sign_in` is true:
 
-1. Call `helix_foundry_start_sign_in`.
+1. Call `helix_foundry_connect`; a result with `sign_in_id` is a sign-in.
 2. Open its `url` in my browser (`open` on macOS, `xdg-open` on Linux), or give it to me.
 3. Call `helix_foundry_get_sign_in` with `wait` until it ends.
 4. Then, by outcome:
@@ -679,7 +679,7 @@ Pipes can't move an account to another member, so someone signs it in again.
 **Other rules:**
 
 - A connector that needs signing in again: say so, and offer the link.
-- Other kinds keep `helix_foundry_connector_link`.
+- Other kinds get their form's link from the same call.
 - The credentials rule ("Never ask me for credentials…") stays as it is.
 - Test: `tests/unit/ontology-onboarding-prompt.test.ts`.
 
@@ -913,7 +913,7 @@ Five pull requests, then a setup track, verification on dev, and production. Eac
 
 The tools are the module's; hosted sets `integration.Service.SignIn` from `pipes.enabled` where `mcpinsights` builds the service, with a module bump.
 
-- [ ] `helix_foundry_start_sign_in` and `helix_foundry_get_sign_in`:
+- [ ] `helix_foundry_connect`'s sign-in path and `helix_foundry_get_sign_in`:
   - registered only where sign-in is offered;
   - annotated as a write;
   - failure codes only, never provider text.

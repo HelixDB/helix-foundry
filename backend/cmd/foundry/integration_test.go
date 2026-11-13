@@ -82,7 +82,7 @@ func TestFrontAgentIntegration(t *testing.T) {
 	// No tool sends an agent to what this install refuses.
 	described, err := json.Marshal(listed["tools"])
 	require.NoError(t, err)
-	for _, word := range []string{"API source", "create_event_source", "event_source", "send_pieces", "Helix subscription", "shared cluster", "start_sign_in", "get_sign_in"} {
+	for _, word := range []string{"API source", "create_event_source", "event_source", "send_pieces", "Helix subscription", "shared cluster", "get_sign_in", "with_key", "sign_in_id"} {
 		assert.NotContains(t, string(described), word)
 	}
 	tool := func(name string, args map[string]any) (map[string]any, bool) {
@@ -96,11 +96,11 @@ func TestFrontAgentIntegration(t *testing.T) {
 	for _, kind := range kinds["kinds"].([]any) {
 		require.NotEqual(t, "events", kind.(map[string]any)["kind"])
 	}
-	// connector_link's next step, and the only tool that names a new connector.
+	// connect's next step, and the only tool that names a new connector.
 	connectors, failed := tool("helix_foundry_list_connectors", map[string]any{"workspace_id": workspaceID})
 	require.False(t, failed, connectors)
 	require.Empty(t, connectors["connectors"])
-	link, failed := tool("helix_foundry_connector_link", map[string]any{"workspace_id": workspaceID, "kind": "postgres"})
+	link, failed := tool("helix_foundry_connect", map[string]any{"workspace_id": workspaceID, "kind": "postgres"})
 	require.False(t, failed, link)
 	assert.Contains(t, link["url"], "http://localhost:3100/data?")
 	operation := map[string]any{"operation": "create_ontology", "target": "workspace:" + workspaceID, "payload": map[string]any{"name": "MCP ontology", "database": map[string]any{"name": "MCP database", "slug": "mcp-database", "project_name": "MCP project"}}}

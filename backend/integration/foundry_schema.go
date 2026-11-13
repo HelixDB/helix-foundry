@@ -30,10 +30,6 @@ const (
 	payloadRest             = " A set's CSV, TSV, JSON, JSONL and Parquet files that have been read are tables beside the connectors', and count with the synced tables toward the 50 tables one generation covers (choose fewer connectors or sets past it); its Markdown, MDX, text and PDFs whose text has been read are text the agent reads and loads extract (a PDF still being read is left out, and a scanned PDF has no text). A generation needs at least one table, table file or set holding text. set_current_version: {version_id, expected_current_version_id}, the current version as read, empty when there is none. create_load: {version_id}. set_current_load: {load_id}. revise_version: {version_id, edits, dry_run}: 1 to 100 edits, each {put: {item_id, toml}} or {remove: {item_id}}, such as item rule.overdue with its whole TOML; dry_run previews without storing a version. upload_document: {set_id, name, size_bytes, sha256}: the file's name, ending .md, .markdown, .mdx, .txt, .json, .csv, .tsv, .jsonl, .ndjson, .parquet or .pdf, its exact size (at most 1 MiB for Markdown, MDX and text and 3 MiB for the other types, unless the stamp says otherwise) and lowercase hex SHA-256; ontologies read the Markdown, MDX and text ones as text; each PDF as its text, once Helix has read it (a PDF of at most 150 pages; an encrypted or damaged one, or a scan with no text layer, can't be read and stays stored); and each CSV, TSV, JSON, JSONL and Parquet one as a table of its own once Helix has read it. The document's read says how and when. create_document_set: {name, description}. update_document_set: {set_id, name, description}, either optional. move_document: {document_id, set_id}. settle_review: {review_id, decision}, the review_key of a FoundryReview the current load holds and a decision of {resolve: {entity_key}}, {resolve: {not_in_data: true}} or {prop: {text|integer|number|boolean: value}} ({integer} as a string of digits), or {prop: {null: true}} to remove the property."
 )
 
-// connectorLinkKindNoEvents is helix_foundry_connector_link's kind on a host
-// without API sources; its struct tag is the one that has them.
-const connectorLinkKindNoEvents = "The connector's kind: stripe, workos, posthog, github, linear, calcom, granola, slack, notion, google, postgres, mysql or s3."
-
 // foundryOperationSchema is the input schema of helix_prepare_foundry_operation.
 func foundryOperationSchema(events bool) *jsonschema.Schema {
 	schema := schemaFor[FoundryOperationInput]()
@@ -48,14 +44,6 @@ func foundryOperationSchema(events bool) *jsonschema.Schema {
 	schema.Properties["operation"].Description = operation
 	schema.Properties["target"].Description = target
 	schema.Properties["payload"].Description = payload
-	return schema
-}
-
-// connectorLinkSchema is the input schema of helix_foundry_connector_link on a
-// host without API sources.
-func connectorLinkSchema() *jsonschema.Schema {
-	schema := schemaFor[FoundryConnectorLinkInput]()
-	schema.Properties["kind"].Description = connectorLinkKindNoEvents
 	return schema
 }
 
