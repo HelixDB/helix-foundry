@@ -507,3 +507,43 @@ func TestFoundryTakeBackWhateverBecameOfItsDocument(t *testing.T) {
 		assert.Equal(t, [2]int{facts, reviews}, [2]int{after, afterReviews})
 	})
 }
+
+// A rejection deletes the claim's approvals no load can have written, and
+// leaves a copy that a job of another load in flight may be writing: that
+// load's list sends it no more, and when the load becomes current its carry
+// takes back what the job wrote (review of #305, finding 6).
+func TestFoundryRejectLeavesACopyAJobInFlightMayWrite(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "XFLY")
+	first := f.load
+	x := f.held(f.a, 0, readA)
+	require.True(t, f.approve(t, "1", x))
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(ctx, first)
+	require.NoError(t, err)
+	f.sent(t, job, owed[0], 0, refused(x, "unresolved"))
+	f.end(t, job, "refused", model.FoundryGraphJobSucceeded)
+
+	// A new load copies the approval, and its job starts sending it.
+	f.draftVersion(t, "XFLY2", customerTOML)
+	require.NoError(t, f.db.CreateFoundryLoad(ctx, loadJob(f.ontology, "XFLY2")))
+	second := id26("FJ-XFLY2")
+	load := f.claim(t)
+	require.Equal(t, second, load.ID)
+	f.reject(t, f.rejected(f.a, 0, readA))
+	assert.Empty(t, f.copies(t, first), "the current load refused it: nothing of it is there")
+	assert.Equal(t, map[string]string{x.ID: ""}, f.copies(t, second), "the job in flight may be writing it")
+	assert.Empty(t, f.listed(t, second), "though its list sends it no more")
+
+	// The job wrote it: when its load becomes current the carry takes it back.
+	wrote := extracted(f.a)
+	wrote.Releases = []model.FoundryReleaseOutcome{written(x)}
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, load.ID, f.worker, wrote, false))
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, load.ID, f.worker, extracted(f.b), false))
+	f.end(t, load, "loaded", model.FoundryGraphJobSucceeded)
+	require.Equal(t, second, *f.ontologyNow(t).CurrentLoadID)
+	assert.Equal(t, map[string]string{x.ID: "withdraw"}, kinds(t, second))
+	live := f.liveJob(t)
+	require.NotNil(t, live)
+	assert.Equal(t, model.FoundryGraphJobResend, live.Kind)
+}
