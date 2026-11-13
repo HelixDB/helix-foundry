@@ -217,7 +217,8 @@ func TestFoundryReleaseAppliesAtOnce(t *testing.T) {
 // before it recorded so: the request stays owed, the next attempt sends the
 // document again, and the engine finds no review. The decision was settled
 // against a review of this load, so that review left it by a release: it is
-// written. Counts are not added twice, and a second not_held changes nothing.
+// written. The stopped attempt counted nothing, so its fact is counted now,
+// once (MovesForward): a second not_held changes nothing.
 func TestFoundryResendRetryAfterAStop(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "RRETRY")
@@ -244,12 +245,15 @@ func TestFoundryResendRetryAfterAStop(t *testing.T) {
 	assert.Equal(t, map[string]string{d.ID: "written"}, f.applied(t, d))
 	row, err := f.db.GetFoundryDocumentExtraction(ctx, f.load, f.a)
 	require.NoError(t, err)
-	assert.Equal(t, 1, row.Counts.Facts, "a release sent again counts nothing")
+	assert.Equal(t, 2, row.Counts.Facts, "the commit's fact and the approval's, which the stopped attempt never counted")
 	// Sent a third time, as another approval of the document would: no change.
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, retry.ID, "w-other", &model.FoundryDocumentExtraction{
 		DocumentID: f.a, Status: model.FoundryExtractionExtracted, Releases: []model.FoundryReleaseOutcome{notHeld(d)},
 	}, true))
 	assert.Equal(t, map[string]string{d.ID: "written"}, f.applied(t, d))
+	row, err = f.db.GetFoundryDocumentExtraction(ctx, f.load, f.a)
+	require.NoError(t, err)
+	assert.Equal(t, 2, row.Counts.Facts, "counted once")
 	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, retry, "retry", model.FoundryGraphJobSucceeded))
 	assert.Nil(t, f.liveJob(t))
 }
