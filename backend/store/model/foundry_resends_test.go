@@ -9,7 +9,7 @@ func TestFoundryDecisionAppliedAfter(t *testing.T) {
 	outcome := func(kind FoundryReleaseOutcomeKind, reason string) FoundryReleaseOutcome {
 		return FoundryReleaseOutcome{DecisionID: "d", StatementHash: "h", Kind: kind, Reason: reason}
 	}
-	failed := FoundryReleaseJobFailed
+	failed, changed := FoundryReleaseJobFailed, FoundryReleaseDocumentChanged
 	for name, tc := range map[string]struct {
 		from    FoundryDecisionApplied
 		outcome FoundryReleaseOutcome
@@ -36,6 +36,16 @@ func TestFoundryDecisionAppliedAfter(t *testing.T) {
 		"its job failed, carried, written this time": {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: failed}, outcome(FoundryReleaseOutcomeWritten, ""), FoundryReleaseWritten, "", true},
 		"its job failed, carried, refused this time": {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: failed}, outcome(FoundryReleaseOutcomeRefused, "conflict"), FoundryReleaseRefused, "conflict", true},
 		"its job failed, carried, missed this time":  {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: failed}, outcome(FoundryReleaseOutcomeMissed, ""), FoundryReleaseMissed, "", true},
+		// Contract 4.17.0: a document the load holds with other text refuses
+		// every release sent with it, unjudged. Only one that waits for a
+		// word takes it; what the load may hold of any other stays.
+		"changed text, pending":           {FoundryDecisionApplied{Status: FoundryReleasePending}, outcome(FoundryReleaseOutcomeRefused, changed), FoundryReleaseRefused, changed, true},
+		"changed text, carried":           {FoundryDecisionApplied{Status: FoundryReleaseCarried}, outcome(FoundryReleaseOutcomeRefused, changed), FoundryReleaseRefused, changed, true},
+		"changed text, written before":    {FoundryDecisionApplied{Status: FoundryReleaseWritten}, outcome(FoundryReleaseOutcomeRefused, changed), FoundryReleaseWritten, "", false},
+		"changed text, its job failed":    {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: failed}, outcome(FoundryReleaseOutcomeRefused, changed), FoundryReleasePending, failed, false},
+		"changed text, never reported":    {FoundryDecisionApplied{}, outcome(FoundryReleaseOutcomeRefused, changed), "", "", false},
+		"changed text, refused before":    {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: "conflict"}, outcome(FoundryReleaseOutcomeRefused, changed), FoundryReleaseRefused, "conflict", false},
+		"changed text, refused so before": {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: changed}, outcome(FoundryReleaseOutcomeRefused, changed), FoundryReleaseRefused, changed, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			to, reason, ok := tc.from.After(tc.outcome)

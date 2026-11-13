@@ -624,13 +624,13 @@ test("writes an approval in place at no cost", async ({ page }) => {
       has: page.getByRole("term").filter({ hasText: new RegExp(`^${label}$`) }),
     });
   await page.getByRole("tab", { name: /^Details/ }).click();
-  await expect(row("Facts written")).toContainText("0");
+  await expect(row("Facts written").getByRole("definition")).toHaveText("0");
   const cost = await row("Cost to read").getByRole("definition").textContent();
   await page.getByRole("tab", { name: /^Needs review/ }).click();
   await approve(held);
   await expect(page.getByText("Nothing needs review.")).toBeVisible();
   await page.getByRole("tab", { name: /^Details/ }).click();
-  await expect(row("Facts written")).toContainText("1");
+  await expect(row("Facts written").getByRole("definition")).toHaveText("1");
   await expect(row("Cost to read").getByRole("definition")).toHaveText(cost!);
 });
 

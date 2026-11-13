@@ -175,6 +175,12 @@ const (
 	FoundryReleaseUnanswered = "unanswered"
 )
 
+// FoundryReleaseDocumentChanged is the engine's refusal of every release
+// decision of a document the load holds with other text (contract 4.17.0):
+// it judged none of them, so it says nothing of what the load holds of an
+// approval written or unconfirmed before (FoundryDecisionApplied.After).
+const FoundryReleaseDocumentChanged = "document_changed"
+
 // FoundryReleaseOutcomeKind is what the engine did with a release decision of
 // a document it was sent (the document event's releases[].outcome.kind).
 type FoundryReleaseOutcomeKind string
@@ -288,6 +294,12 @@ func (a FoundryDecisionApplied) Unconfirmed() bool {
 // the backend doesn't know wrote nothing it can vouch for: the decision is
 // refused, with the outcome's name as its reason, so none waits for ever.
 //
+// A release refused because the load holds its document with other text
+// (FoundryReleaseDocumentChanged) was not judged: it refuses one that waits
+// with no reason, and leaves any other as it was (ok is false), so one
+// written, unconfirmed, or never reported on keeps what the load may hold of
+// it, and removing it still takes it back.
+//
 // A withdraw ends as the engine says: withdrawn, not_written or refused;
 // another word, which only a release gets, is refused with its name as the
 // reason, as an unknown one is. not_written of an approval its load had
@@ -313,6 +325,9 @@ func (a FoundryDecisionApplied) After(o FoundryReleaseOutcome) (status FoundryRe
 	case FoundryReleaseOutcomeWritten:
 		return FoundryReleaseWritten, "", true
 	case FoundryReleaseOutcomeRefused:
+		if o.Reason == FoundryReleaseDocumentChanged && (!a.Status.Waits() || a.Unconfirmed()) {
+			return a.Status, a.Reason, false
+		}
 		return FoundryReleaseRefused, o.Reason, true
 	case FoundryReleaseOutcomeMissed:
 		return FoundryReleaseMissed, "", true

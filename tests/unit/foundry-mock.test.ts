@@ -3317,6 +3317,17 @@ describe("review decisions", () => {
 
     // Approved again: a job's step later the claim is a fact of the same
     // load, its review gone, and the document counts it.
+    const section = [...g.nodes()].find(
+      (n) =>
+        n.label === FOUNDRY_NODES.Section &&
+        n.props.doc_id === rv.props.doc_id &&
+        n.props.ordinal === rv.props.section,
+    )!;
+    Object.assign(section.props, {
+      model: "commit-extractor",
+      verifier: "commit-verifier",
+      prompt_version: "6",
+    });
     const again = (await approve()).body.decision;
     vi.setSystemTime(Date.now() + 10_000);
     const [written] = await listed();
@@ -3334,17 +3345,12 @@ describe("review decisions", () => {
       confidence: 0.72,
     });
     // Contract 4.17.0: written from what the load keeps, its quote names the
-    // model work the commit recorded for its section, and costs nothing.
-    const section = [...g.nodes()].find(
-      (n) =>
-        n.label === FOUNDRY_NODES.Section &&
-        n.props.doc_id === rv.props.doc_id &&
-        n.props.ordinal === rv.props.section,
-    )!;
+    // model work the commit recorded for its section (set apart here from
+    // the workspace's models), and costs nothing.
     expect(facts()[0]!.props).toMatchObject({
-      model: section.props.model,
-      verifier: section.props.verifier,
-      prompt_version: section.props.prompt_version,
+      model: "commit-extractor",
+      verifier: "commit-verifier",
+      prompt_version: "6",
     });
     expect(await document()).toMatchObject({
       facts: 1,

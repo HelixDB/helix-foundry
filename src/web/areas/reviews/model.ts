@@ -1131,7 +1131,7 @@ export function refusalText(
     // Contract 4.17.0: the load holds the document under its id with other
     // text than the claim was read in. Only a new load reads the new text.
     case "document_changed":
-      return "Its document’s text changed after this load read it, so the claim may not be in it now, and this load can’t write it. The next load reads the new text and writes this where the text still says it; otherwise find the claim in that load’s review and approve it there.";
+      return "Its document’s text changed after this load read it, so the claim may not be in it now, and this load can’t write it. The next load reads the new text and writes this where it holds the same claim; otherwise find the claim in that load’s review and approve it there.";
     case "too_large":
       return "Its document holds more held claims than one approval can be matched among.";
     case "not_replayed":
