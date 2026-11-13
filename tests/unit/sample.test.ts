@@ -1,7 +1,12 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Connector, FoundryDocumentSet } from "@/shared/wfe";
+import type {
+  Connector,
+  FoundryDocumentSet,
+  FoundryLoad,
+  FoundryQuestion,
+} from "@/shared/wfe";
 import { fileProblem } from "@/web/areas/documents/model";
 import {
   MAX_GOAL,
@@ -9,7 +14,14 @@ import {
   firstOntologyWizard,
   generationSources,
 } from "@/web/areas/ontology/model";
-import { SAMPLE, isSampleSet, sampleInView } from "@/web/areas/ontology/sample";
+import {
+  SAMPLE,
+  isSampleSet,
+  sampleAnswerTiming,
+  sampleInView,
+  sampleLoadTiming,
+  secondsBetween,
+} from "@/web/areas/ontology/sample";
 import { readPdfText } from "../../mock/pdf-text";
 
 // The sample company the first ontology's wizard offers is what
@@ -495,6 +507,74 @@ describe("the sample's sources", () => {
         connectorIds: [sampleDb.id],
         documentSetIds: [set.id],
       });
+    });
+  });
+});
+
+// The tour says how long each step took, from Helix's own times, so a slow
+// step shows in its events (src/web/analytics.ts SampleTiming).
+describe("the sample tour's timings", () => {
+  it("counts whole seconds between two of Helix's times", () => {
+    expect(
+      secondsBetween("2026-11-12T10:00:00Z", "2026-11-12T10:01:30.6Z"),
+    ).toBe(91);
+    expect(secondsBetween("2026-11-12T10:00:00Z", "2026-11-12T10:00:00Z")).toBe(
+      0,
+    );
+  });
+
+  it("says nothing of a time Helix didn't give, or a span that runs backwards", () => {
+    expect(secondsBetween("2026-11-12T10:00:00Z", null)).toBeUndefined();
+    expect(secondsBetween(undefined, "2026-11-12T10:00:00Z")).toBeUndefined();
+    expect(secondsBetween("2026-11-12T10:00:00Z", "soon")).toBeUndefined();
+    expect(
+      secondsBetween("2026-11-12T10:00:05Z", "2026-11-12T10:00:00Z"),
+    ).toBeUndefined();
+  });
+
+  it("times a load, its job's wait for a worker and the sample's whole time", () => {
+    const load: FoundryLoad = {
+      id: "l1",
+      createdAt: "2026-11-12T10:02:00Z",
+      finishedAt: "2026-11-12T10:05:00Z",
+      // Newest first: an extract an upload queued, then the load's own job.
+      jobs: [
+        {
+          id: "j2",
+          kind: "extract",
+          createdAt: "2026-11-12T10:04:00Z",
+          startedAt: "2026-11-12T10:04:30Z",
+        },
+        {
+          id: "j1",
+          kind: "load",
+          createdAt: "2026-11-12T10:02:00Z",
+          startedAt: "2026-11-12T10:02:04Z",
+        },
+      ],
+    };
+    expect(sampleLoadTiming(load, "2026-11-12T10:00:00Z")).toEqual({
+      seconds: 180,
+      queued_seconds: 4,
+      total_seconds: 300,
+    });
+    // Without its database's connection time or jobs, only what it knows.
+    expect(sampleLoadTiming({ ...load, jobs: [] }, undefined)).toEqual({
+      seconds: 180,
+      queued_seconds: undefined,
+      total_seconds: undefined,
+    });
+  });
+
+  it("times the first answer and the sample's whole time to it", () => {
+    const question: FoundryQuestion = {
+      id: "q1",
+      createdAt: "2026-11-12T10:05:01Z",
+      finishedAt: "2026-11-12T10:05:41Z",
+    };
+    expect(sampleAnswerTiming(question, "2026-11-12T10:00:00Z")).toEqual({
+      seconds: 40,
+      total_seconds: 341,
     });
   });
 });

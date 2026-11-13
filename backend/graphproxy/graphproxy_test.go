@@ -63,6 +63,26 @@ var (
 	}
 )
 
+// answered is one answer of a scripted gateway: a response, or an error.
+type answered struct {
+	resp helixgateway.Response
+	err  error
+}
+
+// scripted answers each query with the next of answers.
+type scripted struct {
+	mu      sync.Mutex
+	answers []answered
+}
+
+func (g *scripted) Query(context.Context, string, string, []byte, http.Header) (helixgateway.Response, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	next := g.answers[0]
+	g.answers = g.answers[1:]
+	return next.resp, next.err
+}
+
 func (g *gateway) sent() []query {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -365,6 +385,40 @@ func TestProxy(t *testing.T) {
 		}
 	})
 
+	// A new database's gateway turns its queries away until it takes the
+	// database on. An attempt that met that, with no query of it reaching the
+	// database, says so: nothing of it is in flight to settle. One a query of
+	// which may have run, or that met only other refusals, does not.
+	t.Run("says whether a database still starting turned the attempt away", func(t *testing.T) {
+		otherRefusal := helixgateway.Response{StatusCode: 503, Body: []byte(`{"error":"backend_unavailable","msg":"Backend unavailable"}`)}
+		for name, tc := range map[string]struct {
+			answers []answered
+			want    bool
+		}{
+			"no query":                                 {nil, false},
+			"turned away as not taken on":              {[]answered{{resp: noLimit}, {resp: noLimit}}, true},
+			"turned away, then rate limited":           {[]answered{{resp: noLimit}, {resp: rateLimited}}, true},
+			"rate limited only":                        {[]answered{{resp: rateLimited}}, false},
+			"a query that ran first":                   {[]answered{{resp: ok}, {resp: noLimit}}, false},
+			"a query that ran after":                   {[]answered{{resp: noLimit}, {resp: ok}}, false},
+			"a refusal from a query that may have run": {[]answered{{resp: noLimit}, {resp: otherRefusal}}, false},
+			"a query whose answer never came":          {[]answered{{resp: noLimit}, {err: errors.New("dial")}}, false},
+		} {
+			g := &scripted{answers: tc.answers}
+			p, err := Serve(context.Background(), Binding{OntologyID: "ont-1", TenantID: "tenant-1", Endpoint: "https://gw.example/v2/query"}, g, nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = p.Close() })
+			for range tc.answers {
+				post(t, p, QueryPath, p.Token(), []byte(`{"request_type":"write"}`), nil)
+			}
+			if got := p.Starting(); got != tc.want {
+				t.Fatalf("%s: starting = %v, want %v", name, got, tc.want)
+			}
+		}
+	})
+
 	// A database paused or deleted while a query waits stops it from being sent again.
 	t.Run("checks the binding before sending again", func(t *testing.T) {
 		g := &gateway{answer: rateLimited}
@@ -559,18 +613,20 @@ func (d databases) Endpoint(_ context.Context, tenantID, path string) (string, e
 }
 
 func TestBind(t *testing.T) {
+	created := time.Date(2026, 10, 18, 11, 58, 0, 0, time.UTC)
 	fixture := func() (store, databases) {
-		return store{ontology: &model.FoundryOntology{ID: "ont-1", WorkspaceID: "ws-1", TenantID: "tenant-1"}},
+		return store{ontology: &model.FoundryOntology{ID: "ont-1", WorkspaceID: "ws-1", TenantID: "tenant-1", CreatedAt: created}},
 			databases{rows: map[string]ports.Database{"tenant-1": {TenantID: "tenant-1", WorkspaceID: "ws-1", ProjectID: "proj-1"}}}
 	}
 
-	// The binding names the ontology's own database, at its query URL.
+	// The binding names the ontology's own database, at its query URL, and
+	// when the ontology was made, which a database made for it may be starting.
 	s, dbs := fixture()
 	b, err := Bind(context.Background(), s, dbs, "ws-1", "ont-1", model.FoundryGraphJobLoad)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.TenantID != "tenant-1" || b.Endpoint != "https://tenant-1.db.example.com/v2/query" || b.OntologyID != "ont-1" {
+	if b.TenantID != "tenant-1" || b.Endpoint != "https://tenant-1.db.example.com/v2/query" || b.OntologyID != "ont-1" || !b.CreatedAt.Equal(created) {
 		t.Fatalf("binding = %+v", b)
 	}
 

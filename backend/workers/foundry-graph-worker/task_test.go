@@ -1787,6 +1787,60 @@ func TestLoadOutcomes(t *testing.T) {
 		}
 	})
 
+	// A new database's gateway turns every query away until it takes the
+	// database on. An attempt it turned away before any of its queries reached
+	// the database left no write to settle: within the database's first
+	// minutes it is tried again in seconds, and given back, even its last.
+	// Past them, or once a write may have landed, it backs off as any failure
+	// does.
+	t.Run("retries soon a new database still starting that nothing reached", func(t *testing.T) {
+		// The proxy sends each refused write again for a third of the Helix
+		// timeout (1 s here), then relays the refusal: the gateway refuses
+		// every resend.
+		refusing := slices.Repeat([]helixgateway.Response{{StatusCode: 503, ContentType: "application/json",
+			Body: []byte(`{"error":"rate_limit_unavailable","msg":"tenant rate limit is unavailable"}`)}}, 20)
+		ran := helixgateway.Response{StatusCode: 200, ContentType: "application/json", Body: []byte(`{}`)}
+		// writing sends the agent's writes through the proxy, and ends the
+		// Ingest as the agent does once the database refuses one.
+		writing := func(writes int) func(string, agentv1.Agent_IngestServer) error {
+			return func(req string, stream agentv1.Agent_IngestServer) error {
+				for range writes {
+					if err := writeThroughProxy(req); err != nil {
+						return ingestEvents(stream, nil, `{"status":"store_failed","error":"`+err.Error()+`"}`)
+					}
+				}
+				return ingestDone(req, stream)
+			}
+		}
+		for name, tc := range map[string]struct {
+			age     time.Duration
+			writes  int
+			answers []helixgateway.Response
+			soon    bool
+		}{
+			"a new database that took nothing":  {time.Minute, 1, refusing, true},
+			"a database past its first minutes": {startingWindow, 1, refusing, false},
+			"a new database a write reached":    {time.Minute, 2, append([]helixgateway.Response{ran}, refusing...), false},
+		} {
+			h := newHarness(t)
+			h.store.ontology.CreatedAt = h.task.now().Add(-tc.age)
+			h.task.runner.cfg.Foundry.Graph.HelixTimeoutSecs = 1
+			h.gateway.answers = tc.answers
+			h.agent.ingest = writing(tc.writes)
+			job := loadJob()
+			job.Attempts = h.task.cfg.MaxAttempts - 1
+			outcome := h.run(t, job)
+			want, uncounted := h.task.now().Add(h.task.cfg.RetryBackoff<<(job.Attempts-1)), false
+			if tc.soon {
+				want, uncounted = h.task.now().Add(startingRetry), true
+			}
+			if outcome.RetryAt == nil || !outcome.RetryAt.Equal(want) || outcome.Uncounted != uncounted ||
+				outcome.Error != "the database refused a write; Helix will retry" {
+				t.Fatalf("%s: outcome = %+v, want a retry at %v, uncounted %v", name, outcome, want, uncounted)
+			}
+		}
+	})
+
 	// A retry after the tables are in skips them; the job records them as loaded.
 	t.Run("keeps the tables loaded across a retry", func(t *testing.T) {
 		h := newHarness(t)
