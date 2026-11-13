@@ -409,7 +409,7 @@ func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
 		require.False(t, f.approve(t, "1", d1, d2), "the apply sends them")
 		apply := f.claim(t)
 		require.Equal(t, model.FoundryGraphJobApply, apply.Kind)
-		f.load(t, "WCAN-2")
+		f.foundryFixture.load(t, "WCAN-2")
 		var status string
 		var leaseLeft bool
 		require.NoError(t, testDB.QueryRow(`SELECT status, lease_until > NOW(6) FROM foundry_load_jobs WHERE id=?`, apply.ID).Scan(&status, &leaseLeft))
