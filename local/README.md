@@ -181,7 +181,7 @@ export FOUNDRY_LOCAL_TOKEN="$(docker compose exec -T foundry cat /secrets/site-t
 
 Configure the MCP client to read `FOUNDRY_LOCAL_TOKEN` and send `Authorization: Bearer <token>`. The token acts as the owner of every local workspace. Keep it in the client’s environment, out of prompts and browser code. No OAuth sign-in is required. The API port is published only on loopback; tools run on this computer.
 
-Changes use `helix_prepare_foundry_operation` followed by `helix_execute_foundry_operation` after confirmation. The confirmation lasts five minutes, binds the exact operation and payload, and can be consumed once: one that has expired or doesn't match fails with `failed_precondition`, so prepare it again. After a lost response or an already-consumed confirmation, read the current state before retrying: token consumption does not prove the operation finished.
+Changes use `helix_foundry_prepare_operation` followed by `helix_foundry_execute_operation` after confirmation. The confirmation lasts five minutes, binds the exact operation and payload, and can be consumed once: one that has expired or doesn't match fails with `failed_precondition`, so prepare it again. After a lost response or an already-consumed confirmation, read the current state before retrying: token consumption does not prove the operation finished.
 
 ## Ask over HTTP
 
