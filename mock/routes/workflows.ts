@@ -413,10 +413,13 @@ function toRun(r: StoredRun): FoundryWorkflowRun {
   };
 }
 
+// A workflow's page, or a run's, may be the first thing opened: each lookup
+// seeds the demo, as the list and insights do.
 function workflowOf(
   ontologyId: string,
   workflowId: string | undefined,
 ): StoredWorkflow | MockReply {
+  ensureDemo();
   return (
     state.workflows.find(
       (w) => w.id === workflowId && w.ontologyId === ontologyId,
@@ -430,6 +433,7 @@ function runOf(
   runId: string | undefined,
   by?: string,
 ): StoredRun | MockReply {
+  ensureDemo();
   return (
     state.runs.find(
       (r) =>

@@ -208,3 +208,24 @@ test("an admin sees directory sync and what needs attention, without its buttons
   );
   await expect(panel.getByRole("button")).toHaveCount(0);
 });
+
+test("a directory chosen in the setup guide that never linked reads as unfinished, not broken", async ({
+  page,
+}) => {
+  await mock.configure({ directorySettingUp: true });
+  await signIn(page);
+  await page.goto("/settings/access?tab=teams");
+  const status = page.getByLabel("Directory status");
+  await expect(status).toContainText("your directory · Acme");
+  await expect(status).toContainText("Setup not finished");
+  await expect(status).toContainText(
+    "Finish connecting it in the setup guide. Its groups and people show here once it sends them.",
+  );
+  await expect(status).toContainText("Not synced yet · 0 people · 0 groups");
+  await expect(status).not.toContainText("Disconnected");
+  await expect(status).not.toContainText("failed");
+  await expect(status.getByRole("alert")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Open setup guide" }),
+  ).toBeVisible();
+});
