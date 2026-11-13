@@ -105,6 +105,15 @@ test("local agents discover, create and read through MCP and reach HTTP Ask", as
     ontology_id: ontologyID,
   });
 
+  const ask = await request.post(`${base}/v1/ontologies/${ontologyID}/ask`, {
+    headers: { ...headers, "Idempotency-Key": "stack-integration-question" },
+    data: { question: "What data is loaded?" },
+  });
+  // This new ontology has no load yet, regardless of whether the stack has
+  // models: the sample below loads it only with them.
+  expect(ask.status()).toBe(412);
+  expect((await ask.json()).error.code).toBe("failed_precondition");
+
   // The sample company through the same tools, as an agent builds an
   // ontology of its own: foundry connects the install's acme-db, syncs it and
   // uploads the documents to the store itself.
@@ -246,12 +255,4 @@ test("local agents discover, create and read through MCP and reach HTTP Ask", as
       )
       .toBe("answered");
   }
-
-  const ask = await request.post(`${base}/v1/ontologies/${ontologyID}/ask`, {
-    headers: { ...headers, "Idempotency-Key": "stack-integration-question" },
-    data: { question: "What data is loaded?" },
-  });
-  // This new ontology has no load, regardless of whether the stack has models.
-  expect(ask.status()).toBe(412);
-  expect((await ask.json()).error.code).toBe("failed_precondition");
 });
