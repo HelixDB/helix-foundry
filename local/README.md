@@ -148,6 +148,25 @@ The bundled HelixDB tells Helix how its queries run: each query's shape with eve
 
 To turn both off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env` and run `docker compose up -d`. A browser with Do Not Track or Global Privacy Control on sends nothing from the site either way.
 
+The backend and ontology agent must speak the same agent contract. A running
+agent's health check only says it is serving; it does not check that its
+contract matches the backend. To check a running local stack using a backend
+image built from this checkout, run:
+
+```sh
+docker compose exec foundry /usr/local/bin/foundry check-agent
+```
+
+This compares the sidecar's reported contract with the contract compiled into
+that backend image. It makes no model calls and reads no workspace data. A
+mismatch or an unavailable agent returns a nonzero exit code; use a matching
+agent image before starting graph work. The command is part of the backend
+built from this checkout and is not available in older released images. Use
+matching release images when running the published release; don't assume the
+release agent matches a backend built from a newer checkout. For a non-default
+loopback address pass `--addr 127.0.0.1:PORT`. See the [agent contract](../backend/pb/proto/ontology_agent/v1/README.md)
+for the version required by this checkout.
+
 ## Connecting databases
 
 Foundry connects from inside Docker: a database on this machine is `host.docker.internal`. Private addresses are allowed.
