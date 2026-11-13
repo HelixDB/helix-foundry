@@ -199,6 +199,12 @@ export type AnalyticsEvents = {
   people_enrichment_disabled: undefined;
   signed_out: undefined;
 
+  // The GitHub star prompt (src/web/shell/star-prompt.tsx): shown, with how
+  // its button stars; then starred in place, GitHub opened, or dismissed.
+  star_prompt_shown: { via: "in_place" | "on_github" };
+  star_prompt_clicked: { outcome: "starred" | "opened_github" };
+  star_prompt_dismissed: undefined;
+
   // Where the app stood in the way: a Pro-only feature (its gate's label,
   // which names the feature, never data), or a page that crashed.
   pro_gate_shown: { feature: string };

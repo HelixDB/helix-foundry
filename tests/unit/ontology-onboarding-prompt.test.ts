@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { STAR_ASK } from "@/shared/github-star";
 import type { OntologyGeneration } from "@/shared/wfe";
 import { GOAL_APPROACH, GOAL_FORMAT } from "@/web/areas/ontology/goal-prompt";
 import {
@@ -1049,6 +1050,12 @@ describe("onboardingPrompt for an ontology under way", () => {
     expect(steps(text)).toEqual(["Hand it back"]);
     expect(text).toContain("`explore_url`");
     expect(text).toContain("`ask_url`");
+    // Last, a star on GitHub, only if the user says yes.
+    expect(text.trimEnd().endsWith(STAR_ASK)).toBe(true);
+    expect(STAR_ASK).toContain(
+      "Only if I say yes, run `gh api -X PUT user/starred/helixdb/helix-foundry`",
+    );
+    expect(STAR_ASK).toContain("https://github.com/helixdb/helix-foundry");
   });
 });
 
@@ -1076,6 +1083,7 @@ describe("local onboarding through MCP", () => {
     expect(text).not.toContain("Helix subscription");
     expect(text).not.toContain("helix_get_started");
     expect(text).not.toContain("sign in as me");
+    expect(text.endsWith(STAR_ASK)).toBe(true);
   });
   it("says what the local tools answer and where a moved MCP is", () => {
     expect(text).toContain("FOUNDRY_MCP_PORT");
@@ -1113,5 +1121,11 @@ describe("the landing prompt's Run it on my computer", () => {
   it("says what to do when the MCP's port is taken, which only it needs", () => {
     expect(section).toContain("FOUNDRY_MCP_PORT");
     expect(section).toContain("ports 3000 and 8333 are free");
+  });
+  it("asks for a star once, when the ontology is handed back", () => {
+    expect(text.split(STAR_ASK)).toHaveLength(2);
+    expect(text.indexOf(STAR_ASK)).toBeLessThan(
+      text.indexOf("## Run it on my computer"),
+    );
   });
 });

@@ -148,6 +148,10 @@ The bundled HelixDB tells Helix how its queries run: each query's shape with eve
 
 To turn both off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env` and run `docker compose up -d`. A browser with Do Not Track or Global Privacy Control on sends nothing from the site either way.
 
+## Starring on GitHub
+
+After a few questions, the site asks once whether you'd like to star helixdb/helix-foundry. If the shell that ran `docker compose up` has `GH_TOKEN` or `GITHUB_TOKEN`, Compose passes it to the site, which uses it only to check and add that star when you click Star on GitHub. Without one, the button opens the repository on GitHub.
+
 ## Connecting databases
 
 Foundry connects from inside Docker: a database on this machine is `host.docker.internal`. Private addresses are allowed.

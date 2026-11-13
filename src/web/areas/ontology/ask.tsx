@@ -122,6 +122,7 @@ import { AskVisual } from "./ask-visual";
 import { drawable, placeVisuals } from "./ask-visuals";
 import { OntologyPicker, ontologyName, useOntology } from "./scope";
 import { useSources } from "./sources";
+import { recordQuestionAsked } from "../../shell/star-prompt";
 
 // /ask/:ontologyId: questions about a load, answered by the
 // ontology agent's read-only query agent, laid out as a
@@ -1466,6 +1467,7 @@ function Composer({
       });
       setText("");
       setToken(crypto.randomUUID());
+      void recordQuestionAsked();
       await qc.invalidateQueries({
         queryKey: [ws, "ontology", o, "questions"],
       });
