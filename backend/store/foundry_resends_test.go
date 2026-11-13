@@ -452,6 +452,13 @@ func TestFoundryReleaseWhileAJobIsLive(t *testing.T) {
 		require.NotNil(t, after, "the delete resumes")
 		assert.Equal(t, model.FoundryGraphJobDelete, after.Kind)
 		assert.Equal(t, old, after.LoadID)
+
+		// The same approval saved again as its job wrote it owes nothing, so
+		// the delete is not put off for a resend that won't come.
+		require.False(t, f.approve(t, "2", f.held(f.a, 0, readA)))
+		still := f.liveJob(t)
+		require.NotNil(t, still)
+		assert.Equal(t, after.ID, still.ID, "the delete stays live")
 	})
 }
 

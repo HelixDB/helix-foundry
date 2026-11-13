@@ -395,12 +395,13 @@ func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
 	})
 
 	// A job cancelled while its attempt ran (here an apply, by the user's
-	// new load) loses its lease, and what its attempt sent may have been
-	// written with no word recorded: its load's approvals that wait are
-	// unconfirmed, as after a failed resend, so removing one takes it back
-	// for good. Until its lease ends the attempt, and the engine until its
-	// next commit, may still be writing any copy, one never reported
-	// included: removing one then takes it back; after, it is only dropped.
+	// new load) loses its lease, and its attempt's words with it. The
+	// attempt sends the documents the load still waits for, with their
+	// copies, a copy no job reported on included: each of those is
+	// unconfirmed (carried, job_failed), as after a failed resend, so
+	// removing one takes it back for good. Until its lease ends the attempt
+	// may still be writing, so any copy counts as in flight; after, a copy of
+	// a document it never sent is only dropped.
 	t.Run("a job cancelled while its attempt may still be writing", func(t *testing.T) {
 		f := newResendFixture(t, "WCAN")
 		_, err := testDB.Exec(`UPDATE foundry_ontologies SET auto_refresh=TRUE, refresh_due_at=NOW(6) - INTERVAL 1 SECOND WHERE id=?`, f.ontology.ID)
@@ -426,8 +427,8 @@ func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
 		require.NoError(t, testDB.QueryRow(`SELECT status, lease_until > NOW(6) FROM foundry_load_jobs WHERE id=?`, apply.ID).Scan(&status, &leaseLeft))
 		require.Equal(t, "cancelled", status, "the user's load went first")
 		require.True(t, leaseLeft, "a cancelled attempt keeps its lease end")
-		assert.Equal(t, map[string]string{d1.ID: "pending/job_failed", d2.ID: "pending/job_failed"}, f.applied(t, d1, d2),
-			"unconfirmed: the attempt may have written them")
+		assert.Equal(t, map[string]string{d1.ID: "pending", d2.ID: "pending", u1.ID: "carried/job_failed", u2.ID: "carried/job_failed"},
+			f.applied(t, d1, d2, u1, u2), "unconfirmed: the copies of the documents the attempt sent")
 
 		for i, d := range []*model.FoundryReviewDecision{d1, u1} {
 			require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
@@ -442,8 +443,8 @@ func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
 			require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
 				&model.FoundryGraphJob{ID: id26(fmt.Sprintf("RS-WCAN-out-%d", i))}))
 		}
-		assert.Equal(t, map[string]string{d1.ID: "withdraw", d2.ID: "withdraw", u1.ID: "withdraw"}, kinds(t, f.load),
-			"its lease ended: an unconfirmed approval is still taken back, a copy never reported only dropped")
+		assert.Equal(t, map[string]string{d1.ID: "withdraw", u1.ID: "withdraw", u2.ID: "withdraw"}, kinds(t, f.load),
+			"its lease ended: what it may have written is still taken back, a copy of a document it never sent only dropped")
 	})
 
 	// A job queued that never started has sent nothing: a copy no job sent
@@ -512,6 +513,8 @@ func TestFoundryApprovalSavedAgainAfterItsWrite(t *testing.T) {
 	assert.Equal(t, d.ID, again.ID)
 	require.NotNil(t, again.Applied)
 	assert.Equal(t, model.FoundryReleaseWritten, again.Applied.Status)
+	assert.True(t, again.Applied.TakesBack, "removing a written approval takes it back")
+	assert.NotNil(t, again.Applied.At)
 	assert.Equal(t, map[string]string{d.ID: "written"}, f.applied(t, d))
 	assert.Empty(t, f.owed(t))
 	assert.Nil(t, f.liveJob(t))
@@ -637,8 +640,9 @@ func TestFoundryTakeBackWhateverBecameOfItsDocument(t *testing.T) {
 		assert.Nil(t, f.liveJob(t), "no job for it alone: it would get no event either")
 		assert.Empty(t, f.owed(t))
 
-		// The document's next resend sends it, and its event says what
-		// became of it: not_written, as the run before took it back.
+		// The document's next resend sends it. Its event, here as if the
+		// document replays again (its models restored), says what became of
+		// it: not_written, as the run before took it back.
 		other := f.held(f.a, 1, readA)
 		require.True(t, f.approve(t, "WNOEV-3", other))
 		job = f.claim(t)

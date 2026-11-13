@@ -526,8 +526,9 @@ WHERE d.status='uploaded' AND d.id IN (`+idPlaceholders(len(ids))+`)`, append([]
 // each, and the load no longer holds a value to withhold. With end.Unsaid
 // the document's withdraws that wait stay waiting, unconfirmed with
 // end.Refused as their reason: the run said nothing of them, and the engine
-// may have refused one as well as taken it back, so they go with the
-// document's next resend, whose event says which. With end.Refused,
+// may have refused one as well as taken it back
+// (model.FoundryDecisionApplied.Unconfirmed says when a word can still
+// come). With end.Refused,
 // the document's release decisions, and withdraws never sent,
 // that wait for the request are refused for that reason, as the engine said
 // nothing of them; a request owed again since is not this job's to answer,

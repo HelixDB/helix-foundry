@@ -48,14 +48,18 @@ FROM foundry_load_jobs WHERE ontology_id=? AND active_key=1 FOR UPDATE`, ontolog
 // attempt, and the engine until its next commit, may still write: a running
 // job keeps its lease end, and counts as in flight until it passes
 // (foundryInFlight). lease_until is assigned first, as MySQL assigns left to
-// right. What an attempt of it sent (running, or queued again after one
-// started) may have been written with no word recorded, then or since: as
-// for a resend that failed (failFoundryResends), its load's approvals that
-// still wait are marked unconfirmed, so removing one takes it back
-// (foundryMayHaveWritten) and their document's next resend says what became
-// of each. The job's row is locked before any decision's, as a worker
-// recording a decision's outcome locks them. The caller holds the
-// ontology's lock.
+// right. An attempt of it (running, or queued again after one started)
+// sends the load's documents still waiting (waitingFoundryDocumentWhere)
+// with each one's release copies, and its words are lost for good: any of
+// those copies may have been written with no word recorded, a copy made
+// with the load that no job reported on included. Each not recorded written
+// is marked unconfirmed (job_failed, carried unless it was pending), as
+// after a resend that failed (failFoundryResends), so removing one takes it
+// back (foundryMayHaveWritten) and the next job that reads its document
+// says what became of it. A cancelled resend (only ever with its ontology)
+// leaves its load with nothing to answer to. The job's row is locked before
+// any decision's, as a worker recording a decision's outcome locks them.
+// The caller holds the ontology's lock.
 func (s *mysqlDB) cancelLiveFoundryGraphJob(ctx context.Context, ontologyID, why string) error {
 	var loadID string
 	var sent bool
@@ -67,9 +71,12 @@ FROM foundry_load_jobs WHERE ontology_id=? AND active_key=1 FOR UPDATE`, ontolog
 		return err
 	}
 	if sent {
-		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_reason=?
-WHERE load_id=? AND kind='release' AND applied_status IN ('pending', 'carried') AND applied_reason IS NULL`,
-			model.FoundryReleaseJobFailed, loadID); err != nil {
+		// applied_status first: MySQL assigns left to right.
+		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions
+SET applied_status=IF(applied_status <=> 'pending', 'pending', 'carried'), applied_reason=?, applied_at=NULL
+WHERE load_id=? AND kind='release' AND NOT (applied_status <=> 'written')
+  AND doc_id IN (SELECT d.id`+foundryLoadDocuments+waitingFoundryDocumentWhere+`)`,
+			model.FoundryReleaseJobFailed, loadID, loadID); err != nil {
 			return err
 		}
 	}
