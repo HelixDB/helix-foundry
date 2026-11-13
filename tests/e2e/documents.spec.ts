@@ -240,8 +240,11 @@ test("loads the current draft and reads the contract back from the database", as
       .getByRole("status")
       .filter({ hasText: "1 document set, 1 read into the graph" }),
   ).toContainText(
-    "1 of 1 document was read for the names and facts it holds. The document read made 2 fact writes (a fact counts once for each document that states it) and left 1 review. 1 name matched no one record: its review is among them. A review settled since stays counted until this load writes the decision, and a disputed value stays counted once chosen.",
+    "1 of 1 document was read for the names and facts it holds. The document read made 2 fact writes and wrote 2 values (each counts once for each document that states it) and left 1 review. 1 name matched no one record: its review is among them. A review settled since stays counted until this load writes the decision, and a disputed value stays counted once chosen.",
   );
+  // Values written show beside fact writes in its details (contract 4.16.0's
+  // DocumentCounts.attributes, read since 4.12.0).
+  await expect(page.getByText("Values written from documents")).toBeVisible();
 
   // Its details link to what the ontology reads; Review documents opens
   // what needs review.
@@ -253,6 +256,10 @@ test("loads the current draft and reads the contract back from the database", as
   await expect(page).toHaveURL(/\/documents\?status=review$/);
   await expect(page.getByLabel("Status")).toHaveText("Needs review");
   await expect(row(page, "contract.md")).toContainText("Needs review · 1");
+  // The grid counts the values each document wrote beside its facts.
+  await expect(
+    page.getByRole("columnheader", { name: "Values" }),
+  ).toBeVisible();
   await row(page, "contract.md")
     .getByRole("link", { name: "contract.md" })
     .click();
@@ -293,6 +300,7 @@ test("loads the current draft and reads the contract back from the database", as
   await expect(reviews).toContainText("suggested link: signed_with");
   await page.getByRole("tab", { name: /^Details/ }).click();
   await expect(page.getByText("claude-haiku-5-5")).toBeVisible();
+  await expect(page.getByText("Values written", { exact: true })).toBeVisible();
 
   // The Stripe customer the contract names is one entity: its row and the
   // contract's quote.
