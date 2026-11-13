@@ -1782,20 +1782,57 @@ func TestLoadOutcomes(t *testing.T) {
 	})
 
 	// An index still building over the database's data is no fault of the
-	// job's: it waits the backoff's floor and keeps its attempts, even its last.
-	t.Run("retries an index still building without counting the attempt", func(t *testing.T) {
+	// job's: it waits the backoff's floor and keeps its attempts, even its last,
+	// until indexWait after the job's first attempt began, when it fails: a
+	// build that never finishes would retry it forever. A stopping worker's
+	// attempt is given back whenever the job began.
+	t.Run("retries an index still building without counting the attempt, until indexWait after the job began", func(t *testing.T) {
 		for name, setup := range map[string]func(*harness){
 			"ingest":  func(h *harness) { h.agent.ingest = ingestResult(`{"status":"indexes_pending","label":"Customer"}`) },
 			"extract": func(h *harness) { h.agent.extract = extractResult(`{"status":"indexes_pending","label":"Customer"}`) },
 		} {
-			h := newHarness(t)
-			setup(h)
-			job := loadJob()
-			job.Attempts = h.task.cfg.MaxAttempts
-			outcome := h.run(t, job)
-			if want := h.task.now().Add(h.task.cfg.RetryBackoff); outcome.RetryAt == nil || !outcome.RetryAt.Equal(want) || !outcome.Uncounted ||
-				!strings.Contains(outcome.Error, "indexing") {
-				t.Fatalf("%s: outcome = %+v, want an uncounted retry at %v", name, outcome, want)
+			for _, tc := range []struct {
+				when string
+				// began is how long before now the job's first attempt began; 0 never.
+				began    time.Duration
+				stopping bool
+				fails    bool
+			}{
+				{"never began", 0, false, false},
+				{"began a minute ago", time.Minute, false, false},
+				{"began indexWait ago", indexWait, false, false},
+				{"began past indexWait", indexWait + time.Second, false, true},
+				{"stopping, began past indexWait", indexWait + time.Second, true, false},
+			} {
+				h := newHarness(t)
+				setup(h)
+				job := loadJob()
+				job.Attempts = h.task.cfg.MaxAttempts
+				if tc.began > 0 {
+					began := h.task.now().Add(-tc.began)
+					job.StartedAt = &began
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				if tc.stopping {
+					cancel()
+				}
+				h.task.process(ctx, job)
+				cancel()
+				if len(h.store.finished) != 1 {
+					t.Fatalf("%s, %s: finished = %+v, want one outcome", name, tc.when, h.store.finished)
+				}
+				outcome := h.store.finished[0]
+				if tc.fails {
+					if outcome.Status != model.FoundryGraphJobFailed || outcome.RetryAt != nil || outcome.Uncounted ||
+						outcome.Error != "the database's indexes had not finished building 2 hours after the load started; try the load again" {
+						t.Fatalf("%s, %s: outcome = %+v, want a failure", name, tc.when, outcome)
+					}
+					continue
+				}
+				if want := h.task.now().Add(h.task.cfg.RetryBackoff); outcome.RetryAt == nil || !outcome.RetryAt.Equal(want) || !outcome.Uncounted ||
+					outcome.Error != "the database is still indexing its data; Helix will retry" {
+					t.Fatalf("%s, %s: outcome = %+v, want an uncounted retry at %v", name, tc.when, outcome, want)
+				}
 			}
 		}
 	})
