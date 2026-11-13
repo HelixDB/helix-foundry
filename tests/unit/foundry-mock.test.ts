@@ -3821,22 +3821,13 @@ describe("review decisions", () => {
         }),
       ),
     ).toEqual([400, "a decision or a label is re-checked, never drawn"]);
-    // One who labelled the claim at random re-checks no one's word on it.
-    const cat = (
-      await label({ fact, verdict: "wrong", drawn: "random" }, "usr_alan")
-    ).body.label;
-    expect(cat).toMatchObject({ drawn: "random", verdict: "wrong" });
+    // A re-check stands: the same person drawing the claim later can't
+    // replace it with a random label.
     expect(
       refusal(
-        await label(
-          { labelId: wrong.id, verdict: "right", drawn: "recheck" },
-          "usr_alan",
-        ),
+        await label({ fact, verdict: "wrong", drawn: "random" }, "usr_alan"),
       ),
-    ).toEqual([
-      400,
-      "you have labelled this claim already; a re-check is another person's",
-    ]);
+    ).toEqual([400, "you have re-checked this claim; that word stands"]);
     // A held claim someone decided, drawn at random: labelled from its
     // review, its decision left as it is.
     const other = reviews(g).find(
@@ -3860,6 +3851,26 @@ describe("review decisions", () => {
       claimKey: other!.props.claim_key,
       link: "signed_with",
     });
+    // One who labelled the claim at random re-checks no one's word on it.
+    const otherHash = createHash("sha256")
+      .update(`signed_with\u001f${String(other!.props.statement)}`)
+      .digest("hex");
+    const rejected = (
+      await call("POST", `${O}/reviews/${other!.props.review_key}:settle`, {
+        decision: { reject: { statementHash: otherHash } },
+      })
+    ).body.decision;
+    expect(
+      refusal(
+        await label(
+          { decisionId: rejected.id, verdict: "right", drawn: "recheck" },
+          "usr_alan",
+        ),
+      ),
+    ).toEqual([
+      400,
+      "you have labelled this claim already; a re-check is another person's",
+    ]);
     expect(
       refusal(
         await label({ reviewId: "nope", verdict: "right", drawn: "random" }),

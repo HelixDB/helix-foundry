@@ -40,12 +40,15 @@ import {
 // The random slice: about one card in ten (one after every nine ranked) is
 // a claim drawn at random from a score band, the bands taken in turn. A
 // band's claims are every claim the load holds at a place with a score in
-// it, held or written: its held claims (decided or not) and its documents'
-// quotes of facts (accepted ones at the accept bar and above; approved ones
-// at the score their review had). A decision moves a claim from held to
-// written and leaves it in its band, so whatever people decide elsewhere,
-// and in whatever order, a draw is from the whole band; only a claim someone
-// has already labelled at random is left out. A person's word on a drawn
+// it, held or written: its held claims (decided, undecided, or such that no
+// approval writes them) and its documents' quotes of facts (accepted ones at
+// the accept bar and above; approved ones at the score their review had, one
+// with no score at 0, which is the no-score band). A decision moves a claim
+// from held to written and leaves it in its band, so whatever people decide
+// elsewhere, and in whatever order, a draw is from the whole band; only a
+// claim someone has already labelled at random, or this person has said
+// anything of, is left out. The held claims are those of the reviews read
+// (the first QUEUE_READ.reviews of the load). A person's word on a drawn
 // claim measures precision there: an undecided held claim is approved or
 // rejected (a decision, kept as a label too); a decided one, or a fact the
 // graph holds, takes Right or Wrong (a label). Draws come from a hash of the
@@ -68,16 +71,19 @@ export const BANDS: readonly Band[] = [
   "none",
 ];
 
-/** The score each band starts at (inclusive) and ends below; none has no score. */
-export const BAND_RANGE: Record<
-  Exclude<Band, "none">,
-  { from?: number; below?: number }
-> = {
+/**
+ * The scores of a band's quotes of facts: from (inclusive) and below. A
+ * claim the verifier gave no score, approved, is written at 0 (the engine's
+ * Confidence::ZERO), so a quote at 0 is in the no-score band, as its review
+ * was; no other quote is scored 0, as the verifier refutes anything under 0.6.
+ */
+export const BAND_RANGE: Record<Band, { from?: number; below?: number }> = {
   "0.9": { from: 0.9 },
   "0.8": { from: 0.8, below: 0.9 },
   "0.7": { from: 0.7, below: 0.8 },
   "0.6": { from: 0.6, below: 0.7 },
-  low: { below: 0.6 },
+  low: { from: 0.000001, below: 0.6 },
+  none: { from: 0, below: 0.000001 },
 };
 
 /** What a band says on a card and in the precision table. */
@@ -97,9 +103,16 @@ export const BAND_TEXT: Record<Band, string> = {
  * bandOf(0.93); // "0.9"
  * bandOf(0.85); // "0.8"
  * bandOf(undefined); // "none"
+ * bandOf(0); // "none": approved with no score
  */
 export function bandOf(confidence: number | undefined): Band {
-  if (confidence === undefined || !Number.isFinite(confidence)) return "none";
+  // 0 is a claim with no score that a person approved (BAND_RANGE).
+  if (
+    confidence === undefined ||
+    !Number.isFinite(confidence) ||
+    confidence <= 0
+  )
+    return "none";
   if (confidence >= 0.9) return "0.9";
   if (confidence >= 0.8) return "0.8";
   if (confidence >= 0.7) return "0.7";
@@ -142,6 +155,10 @@ export type DecidedCard = {
   review: QueueReview;
   drawn: "random";
   band: Band;
+  // No approval writes it: read two ways at its place, or a property of a
+  // fact that differs on a link that holds many values. Still a claim of
+  // its band, and labelled as any decided one is.
+  blocked?: true;
 };
 
 /**
@@ -175,7 +192,7 @@ export type ValueCard = {
 export type QuoteCard = {
   kind: "quote";
   key: string;
-  band: Exclude<Band, "none">;
+  band: Band;
   draw: number;
   drawn: "random";
 };
@@ -357,11 +374,13 @@ function waitsOn(
 /**
  * The queue of a load's `reviews` (all of them, read load-wide), given the
  * ontology's saved `decisions`, which links hold one value (`single`), how
- * many quotes of facts the load holds in each band (`quotes`), the claims
- * someone has labelled at random (`labelled`, claimPlace), the load's id
- * (`seed`), and the keys of the cards decided on this page (`keep`), which
- * keep their places until the page is read again so their cards can say
- * what became of them.
+ * many quotes of facts the load holds in each band, those already labelled
+ * at random taken off (`quotes`), the claims to leave out of the random
+ * slice (`labelled`, claimPlace: those labelled at random, and those this
+ * person has said anything of), the load's id (`seed`), the keys of the
+ * cards decided on this page (`keep`) and of those labelled on it
+ * (`labelledHere`), which keep their places and their kinds until the page
+ * is read again so their cards can say what became of them.
  */
 export function buildQueue({
   reviews,
@@ -371,6 +390,7 @@ export function buildQueue({
   labelled = new Set(),
   seed,
   keep = new Set(),
+  labelledHere = new Set(),
 }: {
   reviews: readonly QueueReview[];
   decisions: readonly ReviewDecision[];
@@ -379,6 +399,7 @@ export function buildQueue({
   labelled?: ReadonlySet<string>;
   seed: string;
   keep?: ReadonlySet<string>;
+  labelledHere?: ReadonlySet<string>;
 }): Queue {
   const decided = decidedIndex(decisions);
   const orders = new Map<string, number>();
@@ -391,6 +412,7 @@ export function buildQueue({
   const left: Left = { decided: 0, unsettled: 0, blocked: 0, stale: 0 };
   const claims: QueueReview[] = [],
     done: QueueReview[] = [],
+    blocked: QueueReview[] = [],
     values: QueueReview[] = [],
     names = new Map<
       string,
@@ -408,11 +430,13 @@ export function buildQueue({
     }
     // Nothing an approval writes: read two ways, or a property of a fact
     // that differs, on a link that holds many values.
+    // Still one of its band's claims, for the random slice.
     if (
       s.kind === "release" &&
       (s.differs || (s.conflict && !single(s.link)))
     ) {
       left.blocked += 1;
+      blocked.push(r);
       continue;
     }
     // A card decided on the page keeps its place: a claim's or a value's by
@@ -488,26 +512,32 @@ export function buildQueue({
   // The random slice's pools: each band's held claims, decided or not, but
   // those labelled at random, in an order drawn from the load's id; and how
   // many quotes of facts the band holds.
-  // A card labelled on this page (a random draw decided here) keeps its
-  // place, as a decided one does.
+  // A card decided or labelled on this page (a random draw) keeps its place.
   const open = (r: QueueReview) =>
-    !labelled.has(claimPlace(r, r.suggestedLink)) || keep.has(keyOf(r));
+    !labelled.has(claimPlace(r, r.suggestedLink)) ||
+    keep.has(keyOf(r)) ||
+    labelledHere.has(keyOf(r));
   type Drawable = ClaimCard | DecidedCard;
   const pools = new Map<Band, Drawable[]>(BANDS.map((b) => [b, []]));
   for (const c of [...own, ...[...held.values()].flat()])
     if (open(c.review)) pools.get(c.band)!.push(c);
-  for (const r of done)
-    if (open(r))
-      pools.get(bandOf(r.confidence))!.push({
-        kind: "decided",
-        key: (r.settle as Release).reviewId,
-        review: r,
-        drawn: "random",
-        band: bandOf(r.confidence),
-      });
+  for (const [list, isBlocked] of [
+    [done, false],
+    [blocked, true],
+  ] as const)
+    for (const r of list)
+      if (open(r))
+        pools.get(bandOf(r.confidence))!.push({
+          kind: "decided",
+          key: (r.settle as Release).reviewId,
+          review: r,
+          drawn: "random",
+          band: bandOf(r.confidence),
+          ...(isBlocked ? { blocked: true as const } : {}),
+        });
   for (const p of pools.values()) p.sort((a, b) => order(a.key) - order(b.key));
   const quotesLeft = new Map<Band, number>(
-    BANDS.map((b) => [b, b === "none" ? 0 : Math.max(0, quotes[b] ?? 0)]),
+    BANDS.map((b) => [b, Math.max(0, quotes[b] ?? 0)]),
   );
   const pool = Object.fromEntries(
     BANDS.map((b) => [
@@ -536,7 +566,7 @@ export function buildQueue({
       quotesIn > 0 &&
       hashUnit(seed, "pick", drawn.length) * (inBand.length + quotesIn) >=
         inBand.length;
-    if (fact && band !== "none") {
+    if (fact) {
       const n = draws.get(band) ?? 0;
       drawn.push({
         kind: "quote",

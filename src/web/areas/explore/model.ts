@@ -1541,44 +1541,41 @@ export type ScoreRange = { from?: number; below?: number };
 
 const sectionsIn = (scope: Scope): Ast => nodesOf(scope, N.Section);
 /**
- * The load's quotes of facts in documents, scored in `range`: a fact's
- * evidence (it has a fact key, where a property's quote has none) in a
- * section. `from` and `below` name the parameters the range reads.
+ * The load's quotes of facts in documents: a fact's evidence (it has a fact
+ * key, where a property's quote has none) in a section. No index serves it:
+ * it walks the load's sections' quotes and reviews, so a request reads it
+ * once, into a variable its entries filter.
  */
-const quotesIn = (
-  scope: Scope,
-  range: ScoreRange,
-  from: string,
-  below: string,
-): Ast =>
+const factQuotes = (scope: Scope): Ast =>
   where(step("in", sectionsIn(scope), E.FROM_SECTION), {
     and: {
       predicates: [
         label(N.Evidence),
         { not: { predicate: { is_null: { property: "fact_key" } } } },
-        ...(range.from === undefined
-          ? []
-          : [
-              {
-                gte: {
-                  left: { property: "confidence" },
-                  right: { param: from },
-                },
-              },
-            ]),
-        ...(range.below === undefined
-          ? []
-          : [
-              {
-                lt: {
-                  left: { property: "confidence" },
-                  right: { param: below },
-                },
-              },
-            ]),
       ],
     },
   });
+/** Of `input`, those scored in `range`, whose bounds are the parameters `from` and `below`. */
+const scoredIn = (
+  input: Ast,
+  range: ScoreRange,
+  from: string,
+  below: string,
+): Ast => {
+  const predicates: Ast[] = [
+    ...(range.from === undefined
+      ? []
+      : [
+          { gte: { left: { property: "confidence" }, right: { param: from } } },
+        ]),
+    ...(range.below === undefined
+      ? []
+      : [
+          { lt: { left: { property: "confidence" }, right: { param: below } } },
+        ]),
+  ];
+  return predicates.length ? where(input, { and: { predicates } }) : input;
+};
 const rangeParams = (range: ScoreRange, from: string, below: string) => ({
   ...(range.from === undefined
     ? {}
@@ -1588,24 +1585,38 @@ const rangeParams = (range: ScoreRange, from: string, below: string) => ({
     : { [below]: { value: range.below, type: "f64" } }),
 });
 
+/** How many reviews a load holds: a bitmap count. */
+export function loadReviewCountRequest(scope: Scope): DynamicQueryRequest {
+  return readRequest("foundry_queue_reviews_count", [
+    { name: "reviews", root: { count: { input: nodesOf(scope, N.Review) } } },
+  ]);
+}
+
+/** loadReviewCountRequest's answer; none when missing. */
+export function parseLoadReviewCount(body: unknown): number {
+  const n = int(isRecord(body) ? body.reviews : undefined);
+  return n !== undefined && n >= 0 ? n : 0;
+}
+
 /**
- * How many reviews a load holds (a bitmap count), and how many quotes of
- * facts in each of `ranges` (by name): a count of the quotes in its
- * sections.
+ * How many quotes of facts the load holds in each of `ranges` (by name):
+ * the quotes read once, then counted in each range.
  */
-export function loadReviewCountsRequest(
+export function quoteCountsRequest(
   scope: Scope,
-  ranges: Readonly<Record<string, ScoreRange>> = {},
+  ranges: Readonly<Record<string, ScoreRange>>,
 ): DynamicQueryRequest {
   const named = Object.entries(ranges);
   return readRequest(
-    "foundry_queue_counts",
+    "foundry_queue_quote_counts",
     [
-      { name: "reviews", root: { count: { input: nodesOf(scope, N.Review) } } },
+      { name: "facts", root: factQuotes(scope), returned: false },
       ...named.map(([, range], i) => ({
         name: `quotes_${i}`,
         root: {
-          count: { input: quotesIn(scope, range, `from_${i}`, `below_${i}`) },
+          count: {
+            input: scoredIn(v("facts"), range, `from_${i}`, `below_${i}`),
+          },
         },
       })),
     ],
@@ -1618,22 +1629,18 @@ export function loadReviewCountsRequest(
   );
 }
 
-/** loadReviewCountsRequest's answer, its ranges by name; a count missing reads as none. */
-export function parseLoadReviewCounts(
+/** quoteCountsRequest's answer, by range name; a count missing reads as none. */
+export function parseQuoteCounts(
   body: unknown,
-  ranges: readonly string[] = [],
-): { reviews: number; quotes: Record<string, number> } {
+  ranges: readonly string[],
+): Record<string, number> {
   const data = isRecord(body) ? body : {};
-  const count = (v: unknown) => {
-    const n = int(v);
-    return n !== undefined && n >= 0 ? n : 0;
-  };
-  return {
-    reviews: count(data.reviews),
-    quotes: Object.fromEntries(
-      ranges.map((name, i) => [name, count(data[`quotes_${i}`])]),
-    ),
-  };
+  return Object.fromEntries(
+    ranges.map((name, i) => {
+      const n = int(data[`quotes_${i}`]);
+      return [name, n !== undefined && n >= 0 ? n : 0];
+    }),
+  );
 }
 
 /** One page (from 0) of a load's reviews, QUEUE_READ.page at a time, with the entities they concern. */
@@ -1715,38 +1722,45 @@ export function rangeQuotesRequest(
 ): DynamicQueryRequest {
   return readRequest(
     "foundry_queue_quotes_at",
-    offsets.flatMap((at, i): ReadEntry[] => {
-      const o = Math.max(0, Math.floor(at));
-      return [
-        {
-          name: `q_${i}`,
-          root: {
-            range: {
-              input: quotesIn(scope, range, "from", "below"),
-              start: { literal: o },
-              end: { literal: o + 1 },
+    [
+      {
+        name: "band",
+        root: scoredIn(factQuotes(scope), range, "from", "below"),
+        returned: false,
+      },
+      ...offsets.flatMap((at, i): ReadEntry[] => {
+        const o = Math.max(0, Math.floor(at));
+        return [
+          {
+            name: `q_${i}`,
+            root: {
+              range: {
+                input: v("band"),
+                start: { literal: o },
+                end: { literal: o + 1 },
+              },
             },
+            returned: false,
           },
-          returned: false,
-        },
-        {
-          name: `quote_${i}`,
-          root: values(v(`q_${i}`), [
-            "doc_id",
-            "fact_key",
-            "link",
-            "start",
-            "end",
-            "quote",
-            "confidence",
-          ]),
-        },
-        {
-          name: `section_${i}`,
-          root: values(step("out", v(`q_${i}`), E.FROM_SECTION), ["ordinal"]),
-        },
-      ];
-    }),
+          {
+            name: `quote_${i}`,
+            root: values(v(`q_${i}`), [
+              "doc_id",
+              "fact_key",
+              "link",
+              "start",
+              "end",
+              "quote",
+              "confidence",
+            ]),
+          },
+          {
+            name: `section_${i}`,
+            root: values(step("out", v(`q_${i}`), E.FROM_SECTION), ["ordinal"]),
+          },
+        ];
+      }),
+    ],
     rangeParams(range, "from", "below"),
   );
 }

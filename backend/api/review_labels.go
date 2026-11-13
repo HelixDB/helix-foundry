@@ -82,18 +82,21 @@ func (s *Service) SettleFoundryReviewLabel(ctx context.Context, req *foundryv1.S
 	if err != nil {
 		return nil, err
 	}
-	if label.Drawn == foundrymodel.FoundryLabelRecheck {
-		// A second person's word: never the first's, and never one who has
-		// given their own on the claim already, which it would replace.
-		labels, err := s.deps.DB.FoundryReviewLabelsOf(ctx, o.ID, label.DocID, label.Span, label.ClaimKey, label.FactKey)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "read labels: %v", err)
+	// One label per person and claim, so neither kind replaces the other: a
+	// re-check is a second person's word, never one who labelled the claim
+	// at random; and a person's re-check stands against a later draw of it.
+	labels, err := s.deps.DB.FoundryReviewLabelsOf(ctx, o.ID, label.DocID, label.Span, label.ClaimKey, label.FactKey)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read labels: %v", err)
+	}
+	for _, l := range labels {
+		if l.DecidedByUserID != user || l.Drawn == label.Drawn {
+			continue
 		}
-		for _, l := range labels {
-			if l.DecidedByUserID == user && l.Drawn == foundrymodel.FoundryLabelRandom {
-				return nil, status.Error(codes.FailedPrecondition, "you have labelled this claim already; a re-check is another person's")
-			}
+		if l.Drawn == foundrymodel.FoundryLabelRandom {
+			return nil, status.Error(codes.FailedPrecondition, "you have labelled this claim already; a re-check is another person's")
 		}
+		return nil, status.Error(codes.FailedPrecondition, "you have re-checked this claim; that word stands")
 	}
 	if err := s.deps.DB.SaveFoundryReviewLabel(ctx, o.WorkspaceID, label); err != nil {
 		if errors.Is(err, foundrystore.ErrNotFound) {

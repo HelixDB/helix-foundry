@@ -8,13 +8,15 @@ import type {
 } from "@/shared/wfe";
 import {
   documentQuotesRequest,
-  loadReviewCountsRequest,
+  loadReviewCountRequest,
   loadReviewsRequest,
   parseDocumentQuotes,
-  parseLoadReviewCounts,
+  parseLoadReviewCount,
+  parseQuoteCounts,
   parseLoadReviews,
   parseQuoteFacts,
   parseRangeQuotes,
+  quoteCountsRequest,
   quoteFactsRequest,
   rangeQuotesRequest,
 } from "@/web/areas/explore/model";
@@ -165,6 +167,8 @@ describe("bands and hashes", () => {
     expect(bandOf(0.59)).toBe("low");
     expect(bandOf(undefined)).toBe("none");
     expect(bandOf(Number.NaN)).toBe("none");
+    // Approved with no score: written at 0.
+    expect(bandOf(0)).toBe("none");
     expect(BANDS[0]).toBe("0.9");
   });
   it("hashes the same parts to the same number in [0, 1)", () => {
@@ -501,6 +505,75 @@ describe("buildQueue", () => {
     );
   });
 
+  it("draws claims no approval writes too, as decided ones, and keeps a card labelled here as it was", () => {
+    const twoWays = held(1, { confidence: 0.75 });
+    (twoWays.settle as { differs?: boolean }).differs = true;
+    const open = held(2, { confidence: 0.75 });
+    const queue = build([twoWays, open]);
+    expect(queue.left.blocked).toBe(1);
+    expect(queue.pool["0.7"]).toEqual({ held: 2, quotes: 0 });
+    const drawnBlocked = Array.from({ length: 50 }, (_, i) =>
+      build([twoWays, open], { seed: `s-${i}` }).cards.find(
+        (c) => c.drawn === "random" && c.kind === "decided",
+      ),
+    ).filter(Boolean);
+    expect(drawnBlocked.length).toBeGreaterThan(0);
+    expect(drawnBlocked[0]).toMatchObject({ key: "held-1", blocked: true });
+    // A decided card labelled on this page: still a decided card there,
+    // never an approval's.
+    const s = twoWays.settle as Extract<
+      QueueReview["settle"],
+      { kind: "release" }
+    >;
+    const decisions: ReviewDecision[] = [
+      {
+        kind: "reject",
+        type: "",
+        docId: s.docId,
+        claimKey: key(2),
+        claimSection: 0,
+        claimStart: 20,
+        claimEnd: 28,
+        statementHash: (open.settle as typeof s).hash,
+      },
+    ];
+    const seed = Array.from({ length: 50 }, (_, i) => `t-${i}`).find((seed) =>
+      build([open, held(3, { confidence: 0.75 })], {
+        decisions,
+        seed,
+      }).cards.some(
+        (c) =>
+          c.drawn === "random" && c.kind === "decided" && c.key === "held-2",
+      ),
+    )!;
+    const labelled = new Set([claimPlace(open, open.suggestedLink)]);
+    const after = build([open, held(3, { confidence: 0.75 })], {
+      decisions,
+      seed,
+      labelled,
+      labelledHere: new Set(["held-2"]),
+    });
+    expect(after.cards.find((c) => c.key === "held-2")).toMatchObject({
+      kind: "decided",
+      drawn: "random",
+    });
+    // Read again with no label made here, it is out of the pool.
+    expect(
+      build([open, held(3, { confidence: 0.75 })], {
+        decisions,
+        seed,
+        labelled,
+      }).cards.some((c) => c.key === "held-2"),
+    ).toBe(false);
+  });
+
+  it("draws approved claims with no score from the no-score band's quotes", () => {
+    const q = build([held(1, { confidence: null })], {
+      quotes: { none: 1000 },
+    }).cards.find((c) => c.drawn === "random");
+    expect(q).toMatchObject({ kind: "quote", band: "none" });
+  });
+
   it("draws from a name's held claims too, taking them off its card", () => {
     const n = name("n", "acme 1");
     const waiting = held(1, { named: false, confidence: 0.95 });
@@ -742,6 +815,7 @@ function loadGraph() {
   quote(s0, "doc-1", "fk-1", 0.95);
   quote(s1, "doc-1", "fk-2", 0.9);
   quote(s2, "doc-2", "fk-3", 0.72); // released: under the bar
+  quote(s2, "doc-2", "fk-5", 0); // released with no score
   // A property's quote at the bar: no fact key, no fact to label.
   const prop = g.addNode("FoundryEvidence", {
     ...L,
@@ -802,19 +876,27 @@ describe("a load's reviews, as the queue reads them", () => {
   it("counts its reviews, and its documents' quotes of facts in each score band", () => {
     const g = loadGraph();
     const names = Object.keys(BAND_RANGE);
+    expect(parseLoadReviewCount(ask(g, loadReviewCountRequest(scope)))).toBe(2);
+    expect(parseLoadReviewCount(null)).toBe(0);
     expect(
-      parseLoadReviewCounts(
-        ask(g, loadReviewCountsRequest(scope, BAND_RANGE)),
-        names,
-      ),
+      parseQuoteCounts(ask(g, quoteCountsRequest(scope, BAND_RANGE)), names),
     ).toEqual({
-      reviews: 2,
-      // Two accepted, one approved at 0.72; no property's quote, no row's.
-      quotes: { "0.9": 2, "0.8": 0, "0.7": 1, "0.6": 0, low: 0 },
+      // Two accepted, one approved at 0.72, one approved with no score (0);
+      // no property's quote, no row's.
+      "0.9": 2,
+      "0.8": 0,
+      "0.7": 1,
+      "0.6": 0,
+      low: 0,
+      none: 1,
     });
-    expect(parseLoadReviewCounts(null, names)).toEqual({
-      reviews: 0,
-      quotes: { "0.9": 0, "0.8": 0, "0.7": 0, "0.6": 0, low: 0 },
+    expect(parseQuoteCounts(null, names)).toEqual({
+      "0.9": 0,
+      "0.8": 0,
+      "0.7": 0,
+      "0.6": 0,
+      low: 0,
+      none: 0,
     });
   });
   it("reads its reviews a page at a time, those of documents with what settles them", () => {
@@ -864,6 +946,12 @@ describe("a load's reviews, as the queue reads them", () => {
         2,
       ).map((q) => q?.factKey),
     ).toEqual(["fk-3", undefined]);
+    expect(
+      parseRangeQuotes(
+        ask(g, rangeQuotesRequest(scope, BAND_RANGE.none, [0])),
+        1,
+      ).map((q) => q?.factKey),
+    ).toEqual(["fk-5"]);
   });
   it("reads a document's quotes at their places", () => {
     const g = loadGraph();
@@ -873,6 +961,7 @@ describe("a load's reviews, as the queue reads them", () => {
     );
     expect(quotes.map((q) => [q.documentId, q.factKey, q.section])).toEqual([
       ["doc-2", "fk-3", 0],
+      ["doc-2", "fk-5", 0],
       ["doc-1", "fk-1", 0],
       ["doc-1", "fk-2", 1],
     ]);

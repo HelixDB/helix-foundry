@@ -307,8 +307,19 @@ export const reviewRoutes: MockRoute[] = [
         );
         if (saved.kind === "release") owePendingRelease(s.o.id, saved);
         // A decision of the random slice is a label of the claim too, with
-        // the score its review was read at.
-        if (draw === "random")
+        // the score its review was read at, unless this person re-checked
+        // the claim: that word stands.
+        const rechecked = (labels.get(s.o.id) || []).some(
+          (l) =>
+            l.drawn === "recheck" &&
+            l.decidedByUserId === req.principal.user.id &&
+            l.docId === claim.docId &&
+            l.claimSection === claim.claimSection &&
+            l.claimStart === claim.claimStart &&
+            l.claimEnd === claim.claimEnd &&
+            l.claimKey === claim.claimKey,
+        );
+        if (draw === "random" && !rechecked)
           saveLabel(s.o.id, {
             id: id("label"),
             drawn: "random",
@@ -687,18 +698,19 @@ export const reviewRoutes: MockRoute[] = [
           against: l.verdict,
         };
       }
-      if (
-        label.drawn === "recheck" &&
-        own.some(
-          (l) =>
-            labelClaim(l) === labelClaim(label) &&
-            l.decidedByUserId === user &&
-            l.drawn === "random",
-        )
-      )
+      // One label per person and claim: neither kind replaces the other.
+      const other = own.find(
+        (l) =>
+          labelClaim(l) === labelClaim(label) &&
+          l.decidedByUserId === user &&
+          l.drawn !== label.drawn,
+      );
+      if (other)
         return fail(
           "FAILED_PRECONDITION",
-          "you have labelled this claim already; a re-check is another person's",
+          other.drawn === "random"
+            ? "you have labelled this claim already; a re-check is another person's"
+            : "you have re-checked this claim; that word stands",
         );
       return ok({
         label: saveLabel(s.o.id, label),

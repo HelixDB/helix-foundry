@@ -302,6 +302,16 @@ func (s *Service) labelDrawnClaim(ctx context.Context, o *foundrymodel.FoundryOn
 	if json.Unmarshal(review["confidence"], &confidence) == nil && confidence != nil && *confidence >= 0 && *confidence <= 1 {
 		label.Confidence = confidence
 	}
+	// A re-check this person made of the claim stands: one label a claim.
+	labels, err := s.deps.DB.FoundryReviewLabelsOf(ctx, o.ID, label.DocID, label.Span, label.ClaimKey, nil)
+	if err != nil {
+		return status.Errorf(codes.Internal, "the decision is saved, but not its label of the random slice; settle it again: %v", err)
+	}
+	for _, l := range labels {
+		if l.DecidedByUserID == label.DecidedByUserID && l.Drawn == foundrymodel.FoundryLabelRecheck {
+			return nil
+		}
+	}
 	if err := s.deps.DB.SaveFoundryReviewLabel(ctx, o.WorkspaceID, label); err != nil {
 		return status.Errorf(codes.Internal, "the decision is saved, but not its label of the random slice; settle it again: %v", err)
 	}

@@ -124,6 +124,17 @@ func TestSettleDrawnHeldClaim(t *testing.T) {
 	if err != nil || out.Decision.Drawn != "" || db.saved[0].Drawn != nil || len(db.labels) != 0 {
 		t.Fatalf("%v %+v %+v", err, out, db.labels)
 	}
+	// A person who re-checked the claim keeps that word: the decision is
+	// saved, and no random label replaces the re-check.
+	s, db, _ = reviewService(t, heldScored("low_confidence", "0.83"))
+	wrongV := foundrymodel.FoundryVerdictWrong
+	db.labels = []*foundrymodel.FoundryReviewLabel{{ID: "l-r", OntologyID: "o", LoadID: "load-1", Drawn: foundrymodel.FoundryLabelRecheck,
+		DocID: "doc-a", Span: foundrymodel.FoundryClaimSpan{Section: 2, Start: 10, End: 25}, ClaimKey: &testClaimKey, StatementHash: &testRead,
+		Verdict: foundrymodel.FoundryVerdictRight, Against: &wrongV, DecidedByUserID: "user-a"}}
+	if _, err := s.SettleFoundryReview(ctx, drawnRequest(releaseChoice(testRead), "random")); err != nil || len(db.saved) != 1 || len(db.labels) != 1 ||
+		db.labels[0].Drawn != foundrymodel.FoundryLabelRecheck {
+		t.Fatalf("%v %+v", err, db.labels)
+	}
 	// A held claim read with no score is labelled with none.
 	s, db, _ = reviewService(t, heldScored("unverified", "null"))
 	if _, err := s.SettleFoundryReview(ctx, drawnRequest(rejectChoice(testRead), "random")); err != nil || len(db.labels) != 1 || db.labels[0].Confidence != nil {
@@ -353,6 +364,14 @@ func TestRecheckLabel(t *testing.T) {
 		if _, err := s.SettleFoundryReviewLabel(ctx, byLabel(id)); status.Code(err) != code {
 			t.Fatalf("%s: %v", id, err)
 		}
+	}
+	// One who re-checked a fact draws it at random to no avail: the
+	// re-check stands.
+	s2, db2, _ := labelService(t, factQuotes)
+	db2.labels = []*foundrymodel.FoundryReviewLabel{{ID: "l-5", OntologyID: "o", LoadID: "load-1", Drawn: foundrymodel.FoundryLabelRecheck,
+		DocID: doc, Span: span, FactKey: &key, Verdict: right, Against: &wrong, DecidedByUserID: "user-a"}}
+	if _, err := s2.SettleFoundryReviewLabel(ctx, factRequest(fact(2, 10, 25), "right", "random")); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal(err)
 	}
 	// Not one's own label, nor by one who labelled the claim at random.
 	db.labels[0].DecidedByUserID = "user-a"

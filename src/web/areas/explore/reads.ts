@@ -15,16 +15,18 @@ import {
   entityRequest,
   factEvidenceRequest,
   nameLinksRequest,
-  loadReviewCountsRequest,
+  loadReviewCountRequest,
   loadReviewsRequest,
   parseQuoteFacts,
   parseRangeQuotes,
+  quoteCountsRequest,
   quoteFactsRequest,
   rangeQuotesRequest,
   parseDocument,
   parseDocumentFacts,
   parseDocumentQuotes,
-  parseLoadReviewCounts,
+  parseLoadReviewCount,
+  parseQuoteCounts,
   parseLoadReviews,
   parseEntity,
   parseFactEvidence,
@@ -397,17 +399,30 @@ export const readQueries = {
   // facts' ends, and a few documents' quotes. Each under the load, so a job
   // that ends reads them again. All but the counts wait their turn at the
   // database's limiter (`readLater`).
-  queueCounts: (
+  queueReviewCount: (
+    ws: string,
+    o: string,
+    read: QueryExecutor,
+    scope: Scope,
+  ) => ({
+    queryKey: [ws, "ontology", o, "read", scope.id, "queue-review-count"],
+    queryFn: async ({ signal }: { signal?: AbortSignal }) =>
+      parseLoadReviewCount(
+        await runRead(read, loadReviewCountRequest(scope), signal),
+      ),
+    ...readOptions,
+  }),
+  quoteCounts: (
     ws: string,
     o: string,
     read: QueryExecutor,
     scope: Scope,
     ranges: Readonly<Record<string, ScoreRange>>,
   ) => ({
-    queryKey: [ws, "ontology", o, "read", scope.id, "queue-counts", ranges],
+    queryKey: [ws, "ontology", o, "read", scope.id, "quote-counts", ranges],
     queryFn: async ({ signal }: { signal?: AbortSignal }) =>
-      parseLoadReviewCounts(
-        await runRead(read, loadReviewCountsRequest(scope, ranges), signal),
+      parseQuoteCounts(
+        await runRead(read, quoteCountsRequest(scope, ranges), signal),
         Object.keys(ranges),
       ),
     ...readOptions,
