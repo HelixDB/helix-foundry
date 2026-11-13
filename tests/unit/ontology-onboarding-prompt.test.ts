@@ -310,7 +310,7 @@ describe("onboardingPrompt without a workspace", () => {
     expect(text).toContain("target `workspace:<workspace id>`");
     expect(text).toContain("target `ontology:<workspace id>/<ontology id>`");
     expect(text).toContain(
-      '`{"workspace_id": "<workspace id>", "kind": "<kind>", "client_token": "<a new UUID>"}`',
+      '`{"workspace_id": "<workspace id>", "kind": "<kind>"}`. If its `sign_in` is true, add `"client_token": "<a new UUID>"`',
     );
     expect(text).toContain(
       "Give me https://foundry.example.com/settings/billing?workspace=<workspace id> to upgrade",
@@ -372,13 +372,14 @@ describe("onboardingPrompt's connectors that sign in", () => {
   });
 
   it("connects, opens a sign-in's link and waits for it", () => {
+    // A token and a name are a sign-in's: where the kind doesn't sign in,
+    // the tool's schema takes neither.
     expect(payloads(text, "helix_foundry_connect")).toContainEqual({
       workspace_id: "ws1",
       kind: "<kind>",
-      client_token: "<a new UUID>",
     });
     expect(text).toContain(
-      'If its `sign_in` is true, add `"name": "<name>"` for a name other than the kind’s.',
+      'If its `sign_in` is true, add `"client_token": "<a new UUID>"`, and `"name": "<name>"` for a name other than the kind’s.',
     );
     expect(text).toContain(
       "Open its `url` in my browser (`open <url>` on macOS, `xdg-open <url>` on Linux), or give it to me.",
@@ -448,7 +449,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
     expect(text).not.toContain("Linear");
     expect(text).not.toContain("Connect with GitHub");
     expect(text).toContain(
-      "Its other settings start at the kind’s defaults, which I change on the connector’s page, except for two kinds that sign in, whose settings you ask me for first:",
+      "Its other settings start at the kind’s defaults, which I change on the connector’s page, except for two kinds whose settings you ask me for first when their `sign_in` is true:",
     );
   });
 
@@ -475,7 +476,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
       "PostHog: signing in reads PostHog US Cloud only, so ask me which PostHog I use.",
     );
     expect(text).toContain(
-      'For PostHog EU Cloud or a self-hosted PostHog, add `"with_key": true`: it connects through its form, with its key.',
+      'For PostHog EU Cloud or a self-hosted PostHog, `{"workspace_id": "ws1", "kind": "posthog", "with_key": true}`: it connects through its form, with its key.',
     );
   });
 
@@ -538,7 +539,6 @@ describe("onboardingPrompt's connectors that sign in", () => {
     expect(starts).toContainEqual({
       workspace_id: "<workspace id>",
       kind: "<kind>",
-      client_token: "<a new UUID>",
     });
     expect(starts).toContainEqual({
       workspace_id: "<workspace id>",
