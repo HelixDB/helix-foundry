@@ -359,6 +359,25 @@ WHERE t.ontology_id=? AND t.kind='reject' AND `+foundryClaimAt("t"), append([]an
 			if _, err := tx.withdrawFoundryReleases(ctx, loadID, foundryClaimAt("t")+` AND t.id<>?`, append(claim, d.ID)); err != nil {
 				return err
 			}
+			// The same decision approved again as the load wrote it (one
+			// approval read before its job wrote it, saved after) stays
+			// written and owes nothing: sent again it would read not_held,
+			// and count the write a second time (MovesForward).
+			var written bool
+			if err := tx.db.QueryRowContext(ctx, `SELECT COUNT(*) > 0 FROM foundry_load_decisions
+WHERE load_id=? AND id=? AND kind='release' AND applied_status='written' AND statement_hash=? FOR UPDATE`,
+				loadID, d.ID, d.StatementHash).Scan(&written); err != nil {
+				return err
+			}
+			if written {
+				if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions l JOIN foundry_review_decisions r ON r.ontology_id=? AND r.id=l.id
+SET l.claim_key=r.claim_key, l.decided_by_user_id=r.decided_by_user_id, l.decided_at=r.decided_at WHERE l.load_id=? AND l.id=?`,
+					ontologyID, loadID, d.ID); err != nil {
+					return err
+				}
+				d.Applied = &model.FoundryDecisionApplied{Status: model.FoundryReleaseWritten}
+				continue
+			}
 			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
 SELECT ?, `+foundryReviewDecisionColumns+`, 'pending' FROM foundry_review_decisions WHERE ontology_id=? AND id=?
 ON DUPLICATE KEY UPDATE kind=VALUES(kind), claim_key=VALUES(claim_key), statement_hash=VALUES(statement_hash), decided_by_user_id=VALUES(decided_by_user_id),

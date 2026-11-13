@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -394,9 +395,12 @@ func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
 	})
 
 	// A job cancelled while its attempt ran (here an apply, by the user's
-	// new load) loses its lease, but the attempt, and the engine until its
-	// next commit, may still be writing until that lease ends: until then a
-	// removal takes the approval back; after, it only drops the copy.
+	// new load) loses its lease, and what its attempt sent may have been
+	// written with no word recorded: its load's approvals that wait are
+	// unconfirmed, as after a failed resend, so removing one takes it back
+	// for good. Until its lease ends the attempt, and the engine until its
+	// next commit, may still be writing any copy, one never reported
+	// included: removing one then takes it back; after, it is only dropped.
 	t.Run("a job cancelled while its attempt may still be writing", func(t *testing.T) {
 		f := newResendFixture(t, "WCAN")
 		_, err := testDB.Exec(`UPDATE foundry_ontologies SET auto_refresh=TRUE, refresh_due_at=NOW(6) - INTERVAL 1 SECOND WHERE id=?`, f.ontology.ID)
@@ -406,7 +410,14 @@ func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, queued)
 		d1, d2 := f.held(f.a, 0, readA), f.held(f.a, 1, readA)
-		require.False(t, f.approve(t, "1", d1, d2), "the apply sends them")
+		u1, u2 := f.held(f.b, 0, readB), f.held(f.b, 1, readB)
+		require.False(t, f.approve(t, "1", d1, d2, u1, u2), "the apply sends them")
+		// Copies of a document the load has yet to read, which no job has
+		// reported on.
+		_, err = testDB.Exec(`UPDATE foundry_load_decisions SET applied_status=NULL WHERE load_id=? AND doc_id=?`, f.load, f.b)
+		require.NoError(t, err)
+		_, err = testDB.Exec(`DELETE FROM foundry_load_extractions WHERE load_id=? AND document_id=?`, f.load, f.b)
+		require.NoError(t, err)
 		apply := f.claim(t)
 		require.Equal(t, model.FoundryGraphJobApply, apply.Kind)
 		f.foundryFixture.load(t, "WCAN-2")
@@ -415,16 +426,24 @@ func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
 		require.NoError(t, testDB.QueryRow(`SELECT status, lease_until > NOW(6) FROM foundry_load_jobs WHERE id=?`, apply.ID).Scan(&status, &leaseLeft))
 		require.Equal(t, "cancelled", status, "the user's load went first")
 		require.True(t, leaseLeft, "a cancelled attempt keeps its lease end")
+		assert.Equal(t, map[string]string{d1.ID: "pending/job_failed", d2.ID: "pending/job_failed"}, f.applied(t, d1, d2),
+			"unconfirmed: the attempt may have written them")
 
-		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d1.ID,
-			&model.FoundryGraphJob{ID: id26("RS-WCAN-2")}))
-		assert.Equal(t, map[string]string{d1.ID: "withdraw", d2.ID: "release"}, kinds(t, f.load), "the attempt may be writing it")
+		for i, d := range []*model.FoundryReviewDecision{d1, u1} {
+			require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+				&model.FoundryGraphJob{ID: id26(fmt.Sprintf("RS-WCAN-in-%d", i))}))
+		}
+		assert.Equal(t, map[string]string{d1.ID: "withdraw", d2.ID: "release", u1.ID: "withdraw", u2.ID: "release"}, kinds(t, f.load),
+			"the attempt may be writing them")
 
 		_, err = testDB.Exec(`UPDATE foundry_load_jobs SET lease_until=NOW(6) - INTERVAL 1 SECOND WHERE id=?`, apply.ID)
 		require.NoError(t, err)
-		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d2.ID,
-			&model.FoundryGraphJob{ID: id26("RS-WCAN-3")}))
-		assert.Equal(t, map[string]string{d1.ID: "withdraw"}, kinds(t, f.load), "its lease ended, so the attempt did too")
+		for i, d := range []*model.FoundryReviewDecision{d2, u2} {
+			require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+				&model.FoundryGraphJob{ID: id26(fmt.Sprintf("RS-WCAN-out-%d", i))}))
+		}
+		assert.Equal(t, map[string]string{d1.ID: "withdraw", d2.ID: "withdraw", u1.ID: "withdraw"}, kinds(t, f.load),
+			"its lease ended: an unconfirmed approval is still taken back, a copy never reported only dropped")
 	})
 
 	// A job queued that never started has sent nothing: a copy no job sent
@@ -477,6 +496,34 @@ func TestFoundryTakeBackOfAReleaseWrittenAfterItsRemoval(t *testing.T) {
 	assert.Equal(t, map[string]string{d.ID: "withdrawn"}, f.applied(t, d))
 	gotFacts, gotReviews = f.countsOf(t, f.a)
 	assert.Equal(t, [2]int{facts, reviews}, [2]int{gotFacts, gotReviews}, "the take-back moved them back")
+}
+
+// One approval read before its job wrote it and saved after (a double
+// submit, a second reader) is the same decision as the load wrote it: its
+// copy stays written and nothing is owed, so the write is never sent again
+// and counted twice (MovesForward).
+func TestFoundryApprovalSavedAgainAfterItsWrite(t *testing.T) {
+	f := newResendFixture(t, "WAGAIN")
+	d := f.held(f.a, 0, readA)
+	f.writeApproval(t, "1", d)
+	facts, reviews := f.countsOf(t, f.a)
+	again := f.held(f.a, 0, readA)
+	assert.False(t, f.approve(t, "2", again), "nothing to send")
+	assert.Equal(t, d.ID, again.ID)
+	require.NotNil(t, again.Applied)
+	assert.Equal(t, model.FoundryReleaseWritten, again.Applied.Status)
+	assert.Equal(t, map[string]string{d.ID: "written"}, f.applied(t, d))
+	assert.Empty(t, f.owed(t))
+	assert.Nil(t, f.liveJob(t))
+	gotFacts, gotReviews := f.countsOf(t, f.a)
+	assert.Equal(t, [2]int{facts, reviews}, [2]int{gotFacts, gotReviews})
+
+	// Read differently since, it is approved again as it reads now: that
+	// waits to be written, as before.
+	now := f.held(f.a, 0, readB)
+	now.ID = d.ID
+	assert.True(t, f.approve(t, "3", now))
+	assert.Equal(t, map[string]string{d.ID: "pending"}, f.applied(t, d))
 }
 
 // A resend wrote an approval and its event was lost; the retry hears the

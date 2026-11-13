@@ -48,8 +48,31 @@ FROM foundry_load_jobs WHERE ontology_id=? AND active_key=1 FOR UPDATE`, ontolog
 // attempt, and the engine until its next commit, may still write: a running
 // job keeps its lease end, and counts as in flight until it passes
 // (foundryInFlight). lease_until is assigned first, as MySQL assigns left to
-// right. The caller holds the ontology's lock.
+// right. What an attempt of it sent (running, or queued again after one
+// started) may have been written with no word recorded, then or since: as
+// for a resend that failed (failFoundryResends), its load's approvals that
+// still wait are marked unconfirmed, so removing one takes it back
+// (foundryMayHaveWritten) and their document's next resend says what became
+// of each. The job's row is locked before any decision's, as a worker
+// recording a decision's outcome locks them. The caller holds the
+// ontology's lock.
 func (s *mysqlDB) cancelLiveFoundryGraphJob(ctx context.Context, ontologyID, why string) error {
+	var loadID string
+	var sent bool
+	switch err := s.db.QueryRowContext(ctx, `SELECT load_id, kind<>'delete' AND (status='running' OR started_at IS NOT NULL)
+FROM foundry_load_jobs WHERE ontology_id=? AND active_key=1 FOR UPDATE`, ontologyID).Scan(&loadID, &sent); {
+	case err == sql.ErrNoRows:
+		return nil
+	case err != nil:
+		return err
+	}
+	if sent {
+		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_reason=?
+WHERE load_id=? AND kind='release' AND applied_status IN ('pending', 'carried') AND applied_reason IS NULL`,
+			model.FoundryReleaseJobFailed, loadID); err != nil {
+			return err
+		}
+	}
 	_, err := s.db.ExecContext(ctx, `UPDATE foundry_load_jobs
 SET lease_until=IF(status='running', lease_until, NULL), status='cancelled', active_key=NULL, lease_owner=NULL, error=?, finished_at=NOW(6)
 WHERE ontology_id=? AND active_key=1`, why, ontologyID)
