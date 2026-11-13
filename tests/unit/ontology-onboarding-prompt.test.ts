@@ -139,7 +139,7 @@ describe("onboardingPrompt without an ontology", () => {
       "whether to connect sources, upload documents or both: either is enough on its own.",
     );
     expect(text).not.toContain("drafts from synced tables, at least one");
-    expect(text).toContain("`helix_foundry_connector_link`");
+    expect(text).toContain("`helix_foundry_connect`");
     expect(text).toContain(
       '`create_document_set`, target `ontology:ws1/<ontology id>`, payload `{"name": "<name>", "description": "<what its documents hold>"}`',
     );
@@ -310,7 +310,7 @@ describe("onboardingPrompt without a workspace", () => {
     expect(text).toContain("target `workspace:<workspace id>`");
     expect(text).toContain("target `ontology:<workspace id>/<ontology id>`");
     expect(text).toContain(
-      '`{"workspace_id": "<workspace id>", "kind": "<kind>"}`',
+      '`{"workspace_id": "<workspace id>", "kind": "<kind>", "client_token": "<a new UUID>"}`',
     );
     expect(text).toContain(
       "Give me https://foundry.example.com/settings/billing?workspace=<workspace id> to upgrade",
@@ -355,33 +355,33 @@ describe("onboardingPrompt's connectors that sign in", () => {
     );
 
   // The prompt can't know whether the stamp offers signing in, or to whom:
-  // the agent reads it per kind, and every other kind keeps its form.
+  // the agent reads it per kind, and one tool connects either way.
   it("decides per kind from list_connector_kinds' sign_in", () => {
     expect(text).toContain(
-      "Read the kinds with `helix_foundry_list_connector_kinds`, and decide how to connect each one from its own `sign_in`, every time",
+      "Read the kinds with `helix_foundry_list_connector_kinds`. Each kind’s `sign_in` says whether I connect it by signing in at its provider",
+    );
+    expect(text).toContain("read it every time and never assume it.");
+    expect(text).toContain(
+      "2. If its result has no `sign_in_id`, its `url` opens the kind’s form: give it to me, and I enter the credentials there, in my browser.",
     );
     expect(text).toContain(
-      "If its `sign_in` is true, I sign in at its provider, and no key passes through you:",
+      "3. If it has a `sign_in_id`, I sign in at the provider.",
     );
-    expect(text).toContain(
-      'Every other kind connects through its form, where I enter its credentials:\n\n1. Call `helix_foundry_connector_link` with `{"workspace_id": "ws1", "kind": "<kind>"}`',
-    );
-    expect(text).toContain(
-      "If you don’t have that tool, or it says signing in isn’t available to me, connect the kind through its form, below.",
-    );
+    expect(text).not.toContain("helix_foundry_connector_link");
+    expect(text).not.toContain("helix_foundry_start_sign_in");
   });
 
-  it("starts a sign-in, opens its link and waits for it", () => {
-    expect(payloads(text, "helix_foundry_start_sign_in")).toContainEqual({
+  it("connects, opens a sign-in's link and waits for it", () => {
+    expect(payloads(text, "helix_foundry_connect")).toContainEqual({
       workspace_id: "ws1",
       kind: "<kind>",
       client_token: "<a new UUID>",
     });
     expect(text).toContain(
-      'adding `"name": "<name>"` for a name other than the kind’s.',
+      'If its `sign_in` is true, add `"name": "<name>"` for a name other than the kind’s.',
     );
     expect(text).toContain(
-      "2. Open its `url` in my browser (`open <url>` on macOS, `xdg-open <url>` on Linux), or give it to me.",
+      "Open its `url` in my browser (`open <url>` on macOS, `xdg-open <url>` on Linux), or give it to me.",
     );
     expect(text).toContain(
       "I click its Connect button, then authorize Helix Foundry at the provider. Only I can, until its `expires_at`.",
@@ -422,7 +422,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
       "`helix_foundry_list_connectors` shows its `account.state` as `needs_sign_in`, with why in `account.broken`, and `sync_connector` fails with `account_needs_sign_in`.",
     );
     expect(text).toContain("offer to sign it in again");
-    const again = payloads(text, "helix_foundry_start_sign_in").find(
+    const again = payloads(text, "helix_foundry_connect").find(
       (p) => p.connector_id,
     );
     expect(again).toEqual({
@@ -448,7 +448,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
     expect(text).not.toContain("Linear");
     expect(text).not.toContain("Connect with GitHub");
     expect(text).toContain(
-      "Its other settings start at the kind’s defaults, which I change on the connector’s page, except for two kinds, whose settings you ask me for first:",
+      "Its other settings start at the kind’s defaults, which I change on the connector’s page, except for two kinds that sign in, whose settings you ask me for first:",
     );
   });
 
@@ -475,7 +475,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
       "PostHog: signing in reads PostHog US Cloud only, so ask me which PostHog I use.",
     );
     expect(text).toContain(
-      "PostHog EU Cloud or a self-hosted PostHog connects through its form, with its key.",
+      'For PostHog EU Cloud or a self-hosted PostHog, add `"with_key": true`: it connects through its form, with its key.',
     );
   });
 
@@ -517,7 +517,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
       input({ ontology: ontology({ step: "load", state: "todo" }) }),
     );
     expect(later).not.toContain("#### Connect a source");
-    expect(payloads(later, "helix_foundry_start_sign_in")).toEqual([
+    expect(payloads(later, "helix_foundry_connect")).toEqual([
       {
         workspace_id: "ws1",
         kind: "<its kind>",
@@ -533,7 +533,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
       mcpUrl: "https://mcp.example.com/mcp",
       workspace: null,
     });
-    const starts = payloads(landing, "helix_foundry_start_sign_in");
+    const starts = payloads(landing, "helix_foundry_connect");
     expect(starts).toHaveLength(2);
     expect(starts).toContainEqual({
       workspace_id: "<workspace id>",

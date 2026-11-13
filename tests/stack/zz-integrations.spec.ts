@@ -62,7 +62,7 @@ test("local agents discover, create and read through MCP and reach HTTP Ask", as
   expect(kinds.kinds.some((k: { kind: string }) => k.kind === "events")).toBe(
     false,
   );
-  // connector_link's next step, and the only tool that names a new connector.
+  // connect's next step, and the only tool that names a new connector.
   expect(
     (
       await tool("helix_foundry_list_connectors", {
