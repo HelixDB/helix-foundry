@@ -68,6 +68,8 @@ import {
   syncedFrom,
   targetsOf,
   toggle,
+  workflowsOffBy,
+  workflowsOn,
   type Grant,
   type Principal,
 } from "./access-model";
@@ -86,7 +88,9 @@ import { initials, roleLabel } from "./people";
 // a member or a team any restricts them, taking them away leaves them restricted
 // (it never gives anyone more), and only lifting it, with none left, undoes it.
 // Everyone else sees what they saw before. Ontologies says who each is shared
-// with.
+// with. Each principal's Workflows permission, on unless turned off here, lets
+// it see the workflows of what it reads and record runs: every run of an
+// ontology it reads all of, else only its own.
 
 type Tab = "agents" | "people" | "teams" | "ontologies";
 const TABS: { id: Tab; label: string }[] = [
@@ -214,8 +218,11 @@ function GrantsDialog({
   const { id, notify } = useWorkspace(),
     qc = useQueryClient();
   const access = data.access.data || {},
-    saved = grantsOf(access.grants || [], principal);
+    saved = grantsOf(access.grants || [], principal),
+    savedWorkflows = workflowsOn(access, principal),
+    offBy = workflowsOffBy(access, principal);
   const [chosen, setChosen] = useState<Grant[]>(saved),
+    [workflows, setWorkflows] = useState(savedWorkflows),
     [pending, setPending] = useState(false),
     [confirming, setConfirming] = useState(false),
     [error, setError] = useState("");
@@ -229,7 +236,7 @@ function GrantsDialog({
       .map((t) => JSON.stringify(t))
       .sort()
       .join();
-  const dirty = key(chosen) !== key(saved);
+  const dirty = key(chosen) !== key(saved) || workflows !== savedWorkflows;
   const flip = (g: Grant) => setChosen((c) => toggle(c, g));
   const state = (g: Grant, owner?: string) => sourceState(chosen, g, owner);
   const teams =
@@ -245,7 +252,12 @@ function GrantsDialog({
     setPending(true);
     setError("");
     try {
-      await setGrants(id, principal, targetsOf(chosen, owners));
+      await setGrants(
+        id,
+        principal,
+        targetsOf(chosen, owners),
+        workflows !== savedWorkflows ? workflows : undefined,
+      );
       await qc.invalidateQueries({ queryKey: accessQuery(id).queryKey });
       notify(`Saved what ${name} can read.`);
     } catch (e) {
@@ -476,6 +488,35 @@ function GrantsDialog({
               {teams.length > 0 &&
                 ` Also holds what ${teams.map((t) => t.name).join(", ")} ${teams.length > 1 ? "are" : "is"} given.`}
             </p>
+            <h4 id="access-permissions">Permissions</h4>
+            <ul
+              aria-labelledby="access-permissions"
+              className="wk-access-lacks"
+            >
+              <li>
+                <label className="checkbox wk-access-source">
+                  <input
+                    type="checkbox"
+                    checked={workflows}
+                    onChange={() => setWorkflows((w) => !w)}
+                  />
+                  <span>
+                    Workflows
+                    <small>
+                      {" "}
+                      · their runs: every run of an ontology it can read all of,
+                      else only the runs it started
+                    </small>
+                  </span>
+                </label>
+              </li>
+            </ul>
+            {offBy.length > 0 && (
+              <p className="wk-note">
+                Off for them anyway while {offBy.map((t) => t.name).join(", ")}{" "}
+                {offBy.length > 1 ? "have" : "has"} it off.
+              </p>
+            )}
           </section>
         </div>
         {error && (

@@ -145,5 +145,6 @@ var methods = map[string]check{
 	foundry("GetFoundryWorkflowRun"):          checkOntology,
 	foundry("FinishFoundryWorkflowRun"):       checkOntology,
 	foundry("ListFoundryWorkflowRunAccesses"): checkOntology,
+	foundry("GetFoundryWorkflowInsights"):     checkOntology,
 	foundry("AssessFoundryWorkflowRun"):       checkOntology,
 }

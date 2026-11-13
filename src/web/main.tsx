@@ -145,13 +145,15 @@ function ToOnboarding() {
 function WorkspaceRoutes({
   onboarding,
   grantee,
+  workflows,
 }: {
   onboarding: boolean;
   grantee: boolean;
+  workflows: boolean;
 }) {
   const { pathname, search } = useLocation();
   const offered = (page: ReactNode) => (onboarding ? <ToOnboarding /> : page);
-  const away = grantee ? granteeRedirect(pathname) : undefined;
+  const away = grantee ? granteeRedirect(pathname, workflows) : undefined;
   if (away) return <Navigate to={away} replace />;
   return (
     <Routes>
@@ -227,6 +229,8 @@ function WorkspaceApp({
   const list = useQuery(ontologyQueries.list(current.id)),
     access = useQuery({ ...myAccessQuery(current.id), enabled: !LOCAL });
   const grantee = !LOCAL && !!access.data?.grantee,
+    // A grantee uses workflows only with its Workflows permission.
+    workflows = !grantee || !!access.data?.workflows,
     onboarding = !grantee && !!list.data && !list.data.ontologies?.length;
   useEffect(
     () => workspaceOpened(current),
@@ -252,6 +256,7 @@ function WorkspaceApp({
         grantee,
         granted: access.data?.ontologyIds || [],
         partial: access.data?.partialOntologyIds || [],
+        workflows,
         notify,
       }}
     >
@@ -274,7 +279,11 @@ function WorkspaceApp({
           <Suspense fallback={<RouteFallback />}>
             {/* Keyed by workspace: switching starts every page afresh. */}
             <div key={current.id} className="hf-route">
-              <WorkspaceRoutes onboarding={onboarding} grantee={grantee} />
+              <WorkspaceRoutes
+                onboarding={onboarding}
+                grantee={grantee}
+                workflows={workflows}
+              />
             </div>
           </Suspense>
         </RouteErrorBoundary>

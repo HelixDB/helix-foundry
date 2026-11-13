@@ -899,8 +899,10 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release) and a chosen value (prop) also apply to the current load at once. A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review or in the review queue. A decision made on a card of the site's review queue says how it was drawn (drawn)."), s.ListFoundryReviewDecisions)
 	}
 	if s.Workflows != nil && browse {
-		// Restricted callers, whose reads only source grants admit, may not use workflows.
-		s.addFoundryWorkflowTools(server, identity, identity.HasPermission(PermissionDatabaseQueryRead))
+		// A grantee, whose reads source grants admit, gets them too: Foundry
+		// refuses its calls while its Workflows permission is off, and shows
+		// it only its own runs of an ontology it holds only some of.
+		s.addFoundryWorkflowTools(server, identity, reads)
 	}
 	s.AddFoundryActionTools(server, identity)
 }

@@ -1,5 +1,7 @@
 import type {
   CreateFoundryWorkflowRequest,
+  FoundryPrincipal,
+  FoundryWorkflowInsights,
   FoundryWorkflowRun,
   FoundryWorkflowResponse,
   FoundryWorkflowRunResponse,
@@ -7,6 +9,7 @@ import type {
   ListFoundryWorkflowRunsResponse,
   ListFoundryWorkflowsResponse,
 } from "../../../shared/wfe";
+import { infiniteQueryOptions } from "@tanstack/react-query";
 import { api } from "../../api";
 
 // The Workflows pages' routes: an ontology's workflows, one, its runs, and
@@ -43,14 +46,53 @@ export const workflowQueries = {
     refetchOnMount: "always" as const,
     refetchInterval: RUNS_POLL_MS,
   }),
-  // A workflow's newest runs, asked again so new ones show.
-  runs: (ws: string, o: string, w: string) => ({
-    queryKey: [ws, "ontology", o, "workflows", w, "runs"],
-    queryFn: () => api<ListFoundryWorkflowRunsResponse>(runs(ws, o, w)),
-    refetchInterval: (q: {
-      state: { data?: ListFoundryWorkflowRunsResponse };
-    }) => (q.state.data?.runs?.some(isLive) ? OPEN_RUN_POLL_MS : RUNS_POLL_MS),
+  // What the window's runs came to (of one workflow, or all of the
+  // ontology's; of one who started them, when `startedBy` names them), asked
+  // again as often as runs are, so the trends follow new runs.
+  insights: (
+    ws: string,
+    o: string,
+    q: { workflowId?: string; days: number; startedBy?: FoundryPrincipal },
+  ) => ({
+    queryKey: [
+      ws,
+      "ontology",
+      o,
+      "workflows",
+      "insights",
+      q.workflowId || "",
+      q.days,
+      q.startedBy?.kind || "",
+      q.startedBy?.id || "",
+    ],
+    queryFn: () => {
+      const params = new URLSearchParams({ days: String(q.days) });
+      if (q.workflowId) params.set("workflowId", q.workflowId);
+      if (q.startedBy?.kind && q.startedBy.id) {
+        params.set("startedBy.kind", q.startedBy.kind);
+        params.set("startedBy.id", q.startedBy.id);
+      }
+      return api<FoundryWorkflowInsights>(`${base(ws, o)}:insights?${params}`);
+    },
+    refetchInterval: RUNS_POLL_MS,
+    placeholderData: (previous?: FoundryWorkflowInsights) => previous,
   }),
+  // A workflow's runs, newest first, a page of 50 at a time (Load more asks
+  // for the next); every page read is asked again so new runs show.
+  runs: (ws: string, o: string, w: string) =>
+    infiniteQueryOptions({
+      queryKey: [ws, "ontology", o, "workflows", w, "runs"],
+      initialPageParam: "",
+      queryFn: ({ pageParam }) =>
+        api<ListFoundryWorkflowRunsResponse>(
+          runs(ws, o, w) + (pageParam ? `?pageToken=${enc(pageParam)}` : ""),
+        ),
+      getNextPageParam: (last) => last.nextPageToken || undefined,
+      refetchInterval: (q) =>
+        q.state.data?.pages.some((p) => p.runs?.some(isLive))
+          ? OPEN_RUN_POLL_MS
+          : RUNS_POLL_MS,
+    }),
   run: (ws: string, o: string, w: string, r: string) => ({
     queryKey: [ws, "ontology", o, "workflows", w, "runs", r],
     queryFn: () =>

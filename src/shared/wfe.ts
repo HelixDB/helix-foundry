@@ -2966,6 +2966,83 @@ export type FoundryWorkflowSend = {
 /** v1FoundryWorkflowUpload: a document whose upload completed. */
 export type FoundryWorkflowUpload = { documentId?: string; setId?: string };
 /**
+ * v1FoundryWorkflowInsightTotals: what a window's runs came to. `helped`
+ * counts essential and helpful verdicts, `used` runs with a call to the
+ * ontology; claims are done assessments'. Counts are int32 (numbers);
+ * `assessmentUsdMicros` is int64 (a string).
+ */
+export type FoundryWorkflowInsightTotals = {
+  runs?: number;
+  open?: number;
+  finished?: number;
+  assessed?: number;
+  helped?: number;
+  used?: number;
+  verdicts?: FoundryWorkflowVerdictCount[];
+  claimsSupported?: number;
+  claimsUnsupported?: number;
+  claimsContradicted?: number;
+  reads?: number;
+  questions?: number;
+  sends?: number;
+  uploads?: number;
+  assessmentUsdMicros?: string;
+  gapKinds?: { kind?: string; runs?: number }[];
+};
+/** v1FoundryWorkflowInsightDay: one UTC day, YYYY-MM-DD. */
+export type FoundryWorkflowInsightDay = {
+  date?: string;
+  totals?: FoundryWorkflowInsightTotals;
+};
+/** v1FoundryWorkflowInsightFunnel: each step the runs of the one before that went on. */
+export type FoundryWorkflowInsightFunnel = {
+  started?: number;
+  finished?: number;
+  assessed?: number;
+  used?: number;
+  helped?: number;
+};
+/** v1FoundryWorkflowInsightIssue: a recurring gap (with its kind) or suggestion. */
+export type FoundryWorkflowInsightIssue = {
+  kind?: string;
+  text?: string;
+  runs?: number;
+  lastRunId?: string;
+  lastWorkflowId?: string;
+  lastAt?: string;
+  workflowIds?: string[];
+};
+/** v1FoundryWorkflowInsightSegment: one who started runs, or one workflow. */
+export type FoundryWorkflowInsightSegment = {
+  principal?: FoundryPrincipal;
+  workflowId?: string;
+  totals?: FoundryWorkflowInsightTotals;
+  dailyRuns?: number[];
+  lastRunAt?: string;
+  topGap?: string;
+};
+/**
+ * v1FoundryWorkflowInsights: GET .../ontologies/{ontologyId}/workflows:insights
+ * ?days=&workflowId=&startedBy.kind=&startedBy.id=. The window's runs by the
+ * day they started (`from`, YYYY-MM-DD, and `days`), the window before it,
+ * the funnel, recurring gaps and suggestions, and the same by who started
+ * them and by workflow (the latter only without `workflowId`).
+ */
+export type FoundryWorkflowInsights = {
+  from?: string;
+  days?: number;
+  totals?: FoundryWorkflowInsightTotals;
+  previous?: FoundryWorkflowInsightTotals;
+  series?: FoundryWorkflowInsightDay[];
+  funnel?: FoundryWorkflowInsightFunnel;
+  gaps?: FoundryWorkflowInsightIssue[];
+  suggestions?: FoundryWorkflowInsightIssue[];
+  agents?: FoundryWorkflowInsightSegment[];
+  workflows?: FoundryWorkflowInsightSegment[];
+  truncated?: boolean;
+};
+
+/**
  * v1FoundryWorkflowAccess: one call a run recorded, by its place in the run;
  * exactly one of read, question, send and upload (the proto's oneof).
  */
@@ -3583,19 +3660,29 @@ export type ListFoundryAccessResponse = {
   ontologies?: FoundryOntologyAccess[];
   teams?: FoundryTeam[];
   restrictedUserIds?: string[];
+  // The principals whose Workflows permission is off; every other one has it
+  // on. A member is refused it while they or any of their teams has it off.
+  workflowsOff?: FoundryPrincipal[];
 };
 
 /**
  * FoundryServiceSetFoundryAccessGrantsBody: PUT .../foundry/access/grants
  * replaces the principal's grants (none takes them all away); a connector or
- * set not in the workspace is NOT_FOUND. Answers the principal's grants now.
+ * set not in the workspace is NOT_FOUND. `workflows` sets its Workflows
+ * permission (left out, it stays as it is: on unless turned off): the
+ * workflows of the ontologies it reads, its own runs, and every run of one it
+ * reads all of. Answers the principal's grants and permission now.
  */
 export type SetFoundryAccessGrantsRequest = {
   principal: FoundryPrincipal;
   targets: FoundryAccessTarget[];
+  workflows?: boolean;
 };
 /** v1SetFoundryAccessGrantsResponse */
-export type SetFoundryAccessGrantsResponse = { grants?: FoundryAccessGrant[] };
+export type SetFoundryAccessGrantsResponse = {
+  grants?: FoundryAccessGrant[];
+  workflows?: boolean;
+};
 
 /**
  * v1FoundryAccessChange: one change the site warns about, exactly one of a
@@ -3625,13 +3712,16 @@ export type PreviewFoundryAccessChangeResponse = {
  * v1GetMyFoundryAccessResponse: GET .../foundry/access/me, any member.
  * `grantee`: this caller reads only through grants (a restricted member);
  * `ontologyIds`: the live ontologies whose current loads its grants hold any
- * of, `partialOntologyIds` those of them it holds only some of.
+ * of, `partialOntologyIds` those of them it holds only some of; `workflows`:
+ * it may use those ontologies' workflows (always, for a caller that isn't a
+ * grantee), seeing only the runs it started of one it holds only some of.
  */
 export type GetMyFoundryAccessResponse = {
   grantee?: boolean;
   hasGrants?: boolean;
   ontologyIds?: string[];
   partialOntologyIds?: string[];
+  workflows?: boolean;
 };
 
 /**
