@@ -17,12 +17,16 @@ import {
   id,
   now,
   ok,
+  type MockGrantee,
   type MockReply,
   type MockRequest,
   type MockRoute,
 } from "../http";
 import { config, onReset } from "../state";
+import { workflowDemo } from "../fixtures/workflow-demo";
+import { WORKFLOWS_OFF, workflowsOn } from "./access";
 import { isScope, ontologyOf } from "./ontologies";
+import { insights, starterOf } from "./workflow-insights";
 
 // Workflows, as the backend serves them (api/workflows.go): an agent's task
 // over one ontology. A run of one is started and finished by the agent (in
@@ -31,8 +35,9 @@ import { isScope, ontologyOf } from "./ontologies";
 // .../loads/{loadId}:read and .../questions, tracked() below) and every send
 // to an API source (the /__mock/event-sources stand-in's workflowRunId), with
 // the backend's caps and its once-per-question and once-per-send retries. A
-// grantee gets no workflow route (./access.ts names none) and records
-// nothing. Finishing a run queues its assessment, which ends `assessMs` later
+// grantee (a restricted member) reaches them with its Workflows permission
+// (./access.ts), and, holding only part of the ontology, sees and records
+// under only the runs it started (own). Finishing a run queues its assessment, which ends `assessMs` later
 // with the mock agent's assessment (mockAssessment), held to the engine's
 // assess_result.json in the unit tests; an owner or admin asks for one again
 // (:assess). Deleting the ontology leaves its workflows here, unread, as no
@@ -40,6 +45,9 @@ import { isScope, ontologyOf } from "./ontologies";
 
 const BASE =
   "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows";
+
+// A page of runs, as the backend's (api/workflows.go workflowRunsPage).
+export const RUNS_PAGE = 50;
 
 // The backend's caps (store/model/foundry_workflow.go).
 export const WORKFLOW_CAPS = {
@@ -61,6 +69,8 @@ type StoredWorkflow = FoundryWorkflow & {
   createdAt: string;
 };
 type StoredRun = FoundryWorkflowRun & {
+  // Who started it: a user, or an agent's key.
+  startedByServiceCredentialId?: string;
   workspaceId: string;
   ontologyId: string;
   workflowId: string;
@@ -81,12 +91,16 @@ type Knobs = {
   assessEnabled?: boolean;
   assessMs?: number;
   assessOutcome?: "fail" | "skip";
+  // Seeds Customer contracts' demo workflows (../fixtures/workflow-demo.ts),
+  // as MOCK_WORKFLOW_DEMO does at start.
+  workflowDemo?: boolean;
 };
 const knobs = config as typeof config & Knobs;
 onReset(() => {
   delete knobs.assessEnabled;
   delete knobs.assessMs;
   delete knobs.assessOutcome;
+  delete knobs.workflowDemo;
 });
 
 /** What one assessment spends in the mock, in millionths of a dollar. */
@@ -97,10 +111,12 @@ export const ASSESSMENTS_CAP_MICROS = 20_000_000;
 const state = {
   workflows: [] as StoredWorkflow[],
   runs: [] as StoredRun[],
+  demo: false,
 };
 onReset(() => {
   state.workflows = [];
   state.runs = [];
+  state.demo = false;
 });
 
 const bytes = (s: string) => new TextEncoder().encode(s).length;
@@ -240,8 +256,100 @@ export function assessmentSpend(workspaceId: string): number {
     .reduce((n, r) => n + Number(r.assessment?.usdMicros || 0), 0);
 }
 
-function toWorkflow(w: StoredWorkflow): FoundryWorkflow {
-  const runs = state.runs.filter((r) => r.workflowId === w.id);
+/**
+ * The member whose runs alone a call sees: a grantee's, while it holds only
+ * part of the ontology's current load (the backend's ownRunsOnly).
+ */
+function own(req: MockRequest): string | undefined {
+  const g = req.grantee;
+  return g && (!g.load || g.load.partial) ? g.principal : undefined;
+}
+
+/** Whether `r` is a run `by` (a principal key, as own gives) started. */
+const startedBy = (r: StoredRun, by: string | undefined) => {
+  const s = starterOf(r);
+  return !by || by === `${s.kind}:${s.id}`;
+};
+
+/**
+ * Seeds Customer contracts' demo workflows and runs once, when the demo is
+ * asked for (MOCK_WORKFLOW_DEMO or the workflowDemo knob).
+ */
+function ensureDemo() {
+  if (state.demo || !(process.env.MOCK_WORKFLOW_DEMO || knobs.workflowDemo))
+    return;
+  state.demo = true;
+  const demo = workflowDemo(new Date());
+  const at = new Date(Date.now() - 46 * 86_400_000).toISOString();
+  for (const w of demo.workflows)
+    state.workflows.push({
+      ...w,
+      ontologyId: "ont_acme_contracts",
+      workspaceId: "ws_acme",
+      clientToken: w.id,
+      createdByUserId: "usr_ada",
+      createdAt: at,
+      runs: "0",
+      finishedRuns: "0",
+    });
+  for (const d of demo.runs) {
+    const accesses: StoredRun["accesses"] = [];
+    for (let i = 0; i < d.reads + d.questions; i++)
+      accesses.push({
+        seq: accesses.length + 1,
+        at: d.startedAt,
+        ...(i < d.reads
+          ? { read: { loadId: "load_demo", readsJson: "[]", resultJson: "{}" } }
+          : {
+              question: { loadId: "load_demo", questionId: `q_${d.id}_${i}` },
+            }),
+      });
+    state.runs.push({
+      id: d.id,
+      workflowId: d.workflowId,
+      workspaceId: "ws_acme",
+      ontologyId: "ont_acme_contracts",
+      clientToken: d.id,
+      status: d.output === undefined ? "open" : "finished",
+      input: d.input,
+      ...(d.output !== undefined && { output: d.output }),
+      ...(d.startedByUserId && { startedByUserId: d.startedByUserId }),
+      ...(d.startedByServiceCredentialId && {
+        startedByServiceCredentialId: d.startedByServiceCredentialId,
+      }),
+      startedAt: d.startedAt,
+      ...(d.finishedAt && { finishedAt: d.finishedAt }),
+      resultBytes: 0,
+      accesses,
+      ...(d.verdict && {
+        assessment: {
+          status: "done",
+          verdict: d.verdict,
+          assessmentJson: d.assessmentJson,
+          usdMicros: String(d.usdMicros),
+          queuedAt: d.finishedAt,
+          finishedAt: d.finishedAt,
+          startsAt: 0,
+          endsAt: 0,
+        },
+      }),
+      ...(d.queued && {
+        assessment: {
+          status: "running",
+          queuedAt: d.finishedAt,
+          usdMicros: "0",
+          startsAt: 0,
+          endsAt: Date.now() + 3_600_000,
+        },
+      }),
+    } as StoredRun);
+  }
+}
+
+function toWorkflow(w: StoredWorkflow, by?: string): FoundryWorkflow {
+  const runs = state.runs.filter(
+    (r) => r.workflowId === w.id && startedBy(r, by),
+  );
   runs.forEach(settle);
   const verdicts = ["essential", "helpful", "marginal", "unused", "misleading"]
     .map((verdict) => ({
@@ -284,7 +392,9 @@ function toRun(r: StoredRun): FoundryWorkflowRun {
     status: r.status,
     ...(r.input !== undefined && { input: r.input }),
     ...(r.output !== undefined && { output: r.output }),
-    startedByUserId: r.startedByUserId,
+    ...(r.startedByServiceCredentialId
+      ? { startedByServiceCredentialId: r.startedByServiceCredentialId }
+      : { startedByUserId: r.startedByUserId }),
     startedAt: r.startedAt,
     ...(r.finishedAt && { finishedAt: r.finishedAt }),
     counts: {
@@ -303,10 +413,13 @@ function toRun(r: StoredRun): FoundryWorkflowRun {
   };
 }
 
+// A workflow's page, or a run's, may be the first thing opened: each lookup
+// seeds the demo, as the list and insights do.
 function workflowOf(
   ontologyId: string,
   workflowId: string | undefined,
 ): StoredWorkflow | MockReply {
+  ensureDemo();
   return (
     state.workflows.find(
       (w) => w.id === workflowId && w.ontologyId === ontologyId,
@@ -318,13 +431,16 @@ function runOf(
   ontologyId: string,
   workflowId: string | undefined,
   runId: string | undefined,
+  by?: string,
 ): StoredRun | MockReply {
+  ensureDemo();
   return (
     state.runs.find(
       (r) =>
         r.id === runId &&
         r.ontologyId === ontologyId &&
-        r.workflowId === workflowId,
+        r.workflowId === workflowId &&
+        startedBy(r, by),
     ) || fail("NOT_FOUND", "workflow run not found")
   );
 }
@@ -363,18 +479,20 @@ export function openRun(
   workspaceId: string,
   ontologyId: string | undefined,
   runId: string,
-  grantee: boolean,
+  grantee?: MockGrantee,
 ): StoredRun | MockReply {
-  if (grantee)
-    return fail(
-      "PERMISSION_DENIED",
-      "workflow runs are not open to restricted members and keys",
-    );
+  if (grantee && !workflowsOn(workspaceId, grantee.principal.split(":")[1]!))
+    return fail("PERMISSION_DENIED", WORKFLOWS_OFF);
+  const by =
+    grantee && (!grantee.load || grantee.load.partial)
+      ? grantee.principal
+      : undefined;
   const r = state.runs.find(
     (x) =>
       x.id === runId &&
       x.workspaceId === workspaceId &&
-      (ontologyId === undefined || x.ontologyId === ontologyId),
+      (ontologyId === undefined || x.ontologyId === ontologyId) &&
+      startedBy(x, by),
   );
   if (!r) return fail("NOT_FOUND", "workflow run not found");
   if (r.status === "finished")
@@ -440,12 +558,7 @@ export async function tracked(
   const runId = (req.body as { workflowRunId?: unknown } | undefined)
     ?.workflowRunId;
   if (typeof runId !== "string" || !runId) return handle();
-  const run = openRun(
-    req.params.workspaceId!,
-    ontologyId,
-    runId,
-    !!req.grantee,
-  );
+  const run = openRun(req.params.workspaceId!, ontologyId, runId, req.grantee);
   if (isReplyOf(run)) return run;
   const reply = await handle();
   if (reply.status === 200) record(run, call(reply.body));
@@ -509,15 +622,47 @@ export const workflowRoutes: MockRoute[] = [
   },
   {
     method: "GET",
+    path: `${BASE}:insights`,
+    handle: (req) => {
+      ensureDemo();
+      const s = ontologyOf(req);
+      if (!isScope(s)) return s;
+      const workflowId = req.query.get("workflowId") || undefined;
+      if (workflowId) {
+        const w = workflowOf(s.o.id, workflowId);
+        if (isReplyOf(w)) return w;
+      }
+      const days = Number(req.query.get("days") || 0);
+      if (!Number.isInteger(days) || days < 0 || days > 90)
+        return fail("INVALID_ARGUMENT", "days is 1 to 90");
+      const kind = req.query.get("startedBy.kind"),
+        who = req.query.get("startedBy.id");
+      const by = own(req) || (kind && who ? `${kind}:${who}` : undefined);
+      const runs = state.runs
+        .filter(
+          (r) =>
+            r.ontologyId === s.o.id &&
+            (!workflowId || r.workflowId === workflowId) &&
+            startedBy(r, by),
+        )
+        .map((r) => ({ ...toRun(r), startedAt: r.startedAt }));
+      return ok(
+        insights(runs, { days: days || 30, now: new Date(), workflowId }),
+      );
+    },
+  },
+  {
+    method: "GET",
     path: BASE,
     handle: (req) => {
+      ensureDemo();
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
       return ok({
         workflows: state.workflows
           .filter((w) => w.ontologyId === s.o.id)
           .toReversed()
-          .map(toWorkflow),
+          .map((w) => toWorkflow(w, own(req))),
       } satisfies ListFoundryWorkflowsResponse);
     },
   },
@@ -529,7 +674,9 @@ export const workflowRoutes: MockRoute[] = [
       if (!isScope(s)) return s;
       const w = workflowOf(s.o.id, req.params.id);
       if (isReplyOf(w)) return w;
-      return ok({ workflow: toWorkflow(w) } satisfies FoundryWorkflowResponse);
+      return ok({
+        workflow: toWorkflow(w, own(req)),
+      } satisfies FoundryWorkflowResponse);
     },
   },
   {
@@ -596,11 +743,24 @@ export const workflowRoutes: MockRoute[] = [
       if (!isScope(s)) return s;
       const w = workflowOf(s.o.id, req.params.workflowId);
       if (isReplyOf(w)) return w;
+      // Newest first by when they started, RUNS_PAGE a page, as the backend
+      // pages them (runs started in the same instant newest made first); the
+      // token names the last run of the page before.
+      const all = state.runs
+        .filter((r) => r.workflowId === w.id && startedBy(r, own(req)))
+        .toReversed()
+        .toSorted((a, b) =>
+          (b.startedAt || "").localeCompare(a.startedAt || ""),
+        );
+      const token = req.query.get("pageToken") || "";
+      const from = token ? all.findIndex((r) => r.id === token) + 1 : 0;
+      if (token && !from) return fail("INVALID_ARGUMENT", "invalid page_token");
+      const page = all.slice(from, from + RUNS_PAGE);
       return ok({
-        runs: state.runs
-          .filter((r) => r.workflowId === w.id)
-          .toReversed()
-          .map(toRun),
+        runs: page.map(toRun),
+        ...(from + RUNS_PAGE < all.length && {
+          nextPageToken: page.at(-1)!.id,
+        }),
       } satisfies ListFoundryWorkflowRunsResponse);
     },
   },
@@ -610,7 +770,7 @@ export const workflowRoutes: MockRoute[] = [
     handle: (req) => {
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
-      const r = runOf(s.o.id, req.params.workflowId, req.params.id);
+      const r = runOf(s.o.id, req.params.workflowId, req.params.id, own(req));
       if (isReplyOf(r)) return r;
       return ok({ run: toRun(r) } satisfies FoundryWorkflowRunResponse);
     },
@@ -630,7 +790,7 @@ export const workflowRoutes: MockRoute[] = [
           "INVALID_ARGUMENT",
           `output is required, at most ${WORKFLOW_CAPS.output} bytes of UTF-8`,
         );
-      const r = runOf(s.o.id, req.params.workflowId, req.params.id);
+      const r = runOf(s.o.id, req.params.workflowId, req.params.id, own(req));
       if (isReplyOf(r)) return r;
       if (r.status === "finished") {
         return r.output === output && (input === undefined || input === r.input)
@@ -668,7 +828,7 @@ export const workflowRoutes: MockRoute[] = [
         return fail("FAILED_PRECONDITION", "run assessments are off here");
       const s = ontologyOf(req, true);
       if (!isScope(s)) return s;
-      const r = runOf(s.o.id, req.params.workflowId, req.params.id);
+      const r = runOf(s.o.id, req.params.workflowId, req.params.id, own(req));
       if (isReplyOf(r)) return r;
       settle(r);
       if (r.status !== "finished")
@@ -691,7 +851,7 @@ export const workflowRoutes: MockRoute[] = [
     handle: (req) => {
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
-      const r = runOf(s.o.id, req.params.workflowId, req.params.id);
+      const r = runOf(s.o.id, req.params.workflowId, req.params.id, own(req));
       if (isReplyOf(r)) return r;
       const after = Math.max(Number(req.query.get("afterSeq") || 0), 0);
       const page = r.accesses.filter((a) => a.seq > after);

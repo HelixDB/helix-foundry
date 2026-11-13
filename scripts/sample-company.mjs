@@ -1,5 +1,6 @@
 // Builds the sample company the new-ontology wizard offers
-// (src/web/areas/ontology/sample.ts): its documents into public/samples/acme,
+// (src/web/areas/ontology/sample.ts): its documents into public/samples/acme
+// and backend/sample/acme,
 // and its tables as PostgreSQL into local/acme/acme.sql, which a local
 // install's acme-db and each stamp's sample database serve: Acme Corp, a
 // made-up field-service scheduling software company, as its own records
@@ -22,6 +23,9 @@ import process from "node:process";
 import { chromium } from "@playwright/test";
 
 const OUT = join(import.meta.dirname, "..", "public", "samples", "acme");
+// The same documents, embedded in the backend for the MCP's add_sample_data
+// (backend/sample; its test checks the two are identical).
+const COPY = join(import.meta.dirname, "..", "backend", "sample", "acme");
 const SQL = join(import.meta.dirname, "..", "local", "acme", "acme.sql");
 const TODAY = "2026-10-27";
 
@@ -1238,9 +1242,13 @@ const contracts = {
 
 // ---------------------------------------------------------------- Write
 
-rmSync(OUT, { recursive: true, force: true });
-mkdirSync(OUT, { recursive: true });
-const write = (name, body) => writeFileSync(join(OUT, name), body);
+for (const dir of [OUT, COPY]) {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+}
+const write = (name, body) => {
+  for (const dir of [OUT, COPY]) writeFileSync(join(dir, name), body);
+};
 // Each table's rows, for acme.sql.
 const rowsOf = {};
 const table = (name, rows) => {

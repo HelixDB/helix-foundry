@@ -2731,8 +2731,22 @@ export type FoundryReviewDecision = ReviewDecision & {
   decidedAt?: string | null;
   // Unset for a decision the current load's list doesn't hold.
   applied?: DecisionApplied | null;
+  // How the review queue showed the card it was made on; unset (or empty)
+  // for a decision made anywhere else.
+  drawn?: ReviewDrawn | "";
 };
-export type SettleReviewRequest = { decision: FoundryReviewChoice };
+/**
+ * How the review queue showed a card: in its order of the facts each
+ * decision writes, or drawn at random from a score band, which measures
+ * precision.
+ */
+export type ReviewDrawn = "ranked" | "random";
+export type SettleReviewRequest = {
+  decision: FoundryReviewChoice;
+  // A held claim's decision drawn at random is kept as a label of the claim
+  // too, with the score it was read at.
+  drawn?: ReviewDrawn;
+};
 export type ReviewDecisionResponse = { decision: FoundryReviewDecision };
 // Making a version current drops the decisions it doesn't take, but keeps a
 // resolve of a type it keeps whose entityKey its key no longer reads: the
@@ -2742,6 +2756,56 @@ export type ListReviewDecisionsResponse = {
   nextPageToken?: string;
 };
 export type DeleteReviewDecisionResponse = Record<string, never>;
+// POST and GET .../ontologies/{ontologyId}/review-labels: a person's word on
+// a claim at its place, kept to measure precision and read into nothing
+// else. A held claim's (claimKey and statementHash) is kept as its decision
+// of the queue's random slice is saved; an accepted fact's quote (factKey)
+// is labelled here. A re-check is a second person's word on a decision of a
+// held claim or on someone else's label of a fact: `against` is the verdict
+// it checks. One label per person and claim: saying it again replaces it.
+export type ReviewVerdict = "right" | "wrong";
+export type FoundryReviewLabel = {
+  id: string;
+  drawn: "random" | "recheck";
+  docId: string;
+  claimSection?: number;
+  claimStart?: number;
+  claimEnd?: number;
+  claimKey?: string;
+  statementHash?: string;
+  factKey?: string;
+  link?: string;
+  // The verifier's score as the claim was read; unset when it had none.
+  confidence?: number;
+  verdict: ReviewVerdict;
+  decisionId?: string;
+  against?: ReviewVerdict;
+  loadId?: string;
+  decidedByUserId?: string;
+  decidedAt?: string | null;
+};
+/** An accepted fact's quote in the current load, as its evidence holds it. */
+export type LabelFact = {
+  docId: string;
+  section: number;
+  start: number;
+  end: number;
+  factKey: string;
+};
+// A claim drawn at random (a fact's quote, or a held claim of the current
+// load by its review), or a second person's re-check of a decision on a
+// held claim or of another's label drawn at random.
+export type SettleReviewLabelRequest = { verdict: ReviewVerdict } & (
+  | { fact: LabelFact; drawn: "random" }
+  | { reviewId: string; drawn: "random" }
+  | { decisionId: string; drawn: "recheck" }
+  | { labelId: string; drawn: "recheck" }
+);
+export type ReviewLabelResponse = { label: FoundryReviewLabel };
+export type ListReviewLabelsResponse = {
+  labels?: FoundryReviewLabel[];
+  nextPageToken?: string;
+};
 
 // ---------------------------------------------------------------- Ontology: suggestions
 // GET .../ontologies/{ontologyId}/heal-findings and POST
@@ -2901,6 +2965,83 @@ export type FoundryWorkflowSend = {
 };
 /** v1FoundryWorkflowUpload: a document whose upload completed. */
 export type FoundryWorkflowUpload = { documentId?: string; setId?: string };
+/**
+ * v1FoundryWorkflowInsightTotals: what a window's runs came to. `helped`
+ * counts essential and helpful verdicts, `used` runs with a call to the
+ * ontology; claims are done assessments'. Counts are int32 (numbers);
+ * `assessmentUsdMicros` is int64 (a string).
+ */
+export type FoundryWorkflowInsightTotals = {
+  runs?: number;
+  open?: number;
+  finished?: number;
+  assessed?: number;
+  helped?: number;
+  used?: number;
+  verdicts?: FoundryWorkflowVerdictCount[];
+  claimsSupported?: number;
+  claimsUnsupported?: number;
+  claimsContradicted?: number;
+  reads?: number;
+  questions?: number;
+  sends?: number;
+  uploads?: number;
+  assessmentUsdMicros?: string;
+  gapKinds?: { kind?: string; runs?: number }[];
+};
+/** v1FoundryWorkflowInsightDay: one UTC day, YYYY-MM-DD. */
+export type FoundryWorkflowInsightDay = {
+  date?: string;
+  totals?: FoundryWorkflowInsightTotals;
+};
+/** v1FoundryWorkflowInsightFunnel: each step the runs of the one before that went on. */
+export type FoundryWorkflowInsightFunnel = {
+  started?: number;
+  finished?: number;
+  assessed?: number;
+  used?: number;
+  helped?: number;
+};
+/** v1FoundryWorkflowInsightIssue: a recurring gap (with its kind) or suggestion. */
+export type FoundryWorkflowInsightIssue = {
+  kind?: string;
+  text?: string;
+  runs?: number;
+  lastRunId?: string;
+  lastWorkflowId?: string;
+  lastAt?: string;
+  workflowIds?: string[];
+};
+/** v1FoundryWorkflowInsightSegment: one who started runs, or one workflow. */
+export type FoundryWorkflowInsightSegment = {
+  principal?: FoundryPrincipal;
+  workflowId?: string;
+  totals?: FoundryWorkflowInsightTotals;
+  dailyRuns?: number[];
+  lastRunAt?: string;
+  topGap?: string;
+};
+/**
+ * v1FoundryWorkflowInsights: GET .../ontologies/{ontologyId}/workflows:insights
+ * ?days=&workflowId=&startedBy.kind=&startedBy.id=. The window's runs by the
+ * day they started (`from`, YYYY-MM-DD, and `days`), the window before it,
+ * the funnel, recurring gaps and suggestions, and the same by who started
+ * them and by workflow (the latter only without `workflowId`).
+ */
+export type FoundryWorkflowInsights = {
+  from?: string;
+  days?: number;
+  totals?: FoundryWorkflowInsightTotals;
+  previous?: FoundryWorkflowInsightTotals;
+  series?: FoundryWorkflowInsightDay[];
+  funnel?: FoundryWorkflowInsightFunnel;
+  gaps?: FoundryWorkflowInsightIssue[];
+  suggestions?: FoundryWorkflowInsightIssue[];
+  agents?: FoundryWorkflowInsightSegment[];
+  workflows?: FoundryWorkflowInsightSegment[];
+  truncated?: boolean;
+};
+
 /**
  * v1FoundryWorkflowAccess: one call a run recorded, by its place in the run;
  * exactly one of read, question, send and upload (the proto's oneof).
@@ -3519,19 +3660,29 @@ export type ListFoundryAccessResponse = {
   ontologies?: FoundryOntologyAccess[];
   teams?: FoundryTeam[];
   restrictedUserIds?: string[];
+  // The principals whose Workflows permission is off; every other one has it
+  // on. A member is refused it while they or any of their teams has it off.
+  workflowsOff?: FoundryPrincipal[];
 };
 
 /**
  * FoundryServiceSetFoundryAccessGrantsBody: PUT .../foundry/access/grants
  * replaces the principal's grants (none takes them all away); a connector or
- * set not in the workspace is NOT_FOUND. Answers the principal's grants now.
+ * set not in the workspace is NOT_FOUND. `workflows` sets its Workflows
+ * permission (left out, it stays as it is: on unless turned off): the
+ * workflows of the ontologies it reads, its own runs, and every run of one it
+ * reads all of. Answers the principal's grants and permission now.
  */
 export type SetFoundryAccessGrantsRequest = {
   principal: FoundryPrincipal;
   targets: FoundryAccessTarget[];
+  workflows?: boolean;
 };
 /** v1SetFoundryAccessGrantsResponse */
-export type SetFoundryAccessGrantsResponse = { grants?: FoundryAccessGrant[] };
+export type SetFoundryAccessGrantsResponse = {
+  grants?: FoundryAccessGrant[];
+  workflows?: boolean;
+};
 
 /**
  * v1FoundryAccessChange: one change the site warns about, exactly one of a
@@ -3561,13 +3712,16 @@ export type PreviewFoundryAccessChangeResponse = {
  * v1GetMyFoundryAccessResponse: GET .../foundry/access/me, any member.
  * `grantee`: this caller reads only through grants (a restricted member);
  * `ontologyIds`: the live ontologies whose current loads its grants hold any
- * of, `partialOntologyIds` those of them it holds only some of.
+ * of, `partialOntologyIds` those of them it holds only some of; `workflows`:
+ * it may use those ontologies' workflows (always, for a caller that isn't a
+ * grantee), seeing only the runs it started of one it holds only some of.
  */
 export type GetMyFoundryAccessResponse = {
   grantee?: boolean;
   hasGrants?: boolean;
   ontologyIds?: string[];
   partialOntologyIds?: string[];
+  workflows?: boolean;
 };
 
 /**

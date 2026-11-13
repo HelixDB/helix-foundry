@@ -123,6 +123,10 @@ type ReadStore interface {
 
 	ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error)
 	ListFoundryReviewDecisions(ctx context.Context, ontologyID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error)
+	GetFoundryReviewDecision(ctx context.Context, ontologyID, id string) (*model.FoundryReviewDecision, error)
+	GetFoundryReviewLabel(ctx context.Context, ontologyID, id string) (*model.FoundryReviewLabel, error)
+	ListFoundryReviewLabels(ctx context.Context, ontologyID, afterID string, limit int) ([]*model.FoundryReviewLabel, error)
+	FoundryReviewLabelsOf(ctx context.Context, ontologyID, docID string, span model.FoundryClaimSpan, claimKey, factKey *string) ([]*model.FoundryReviewLabel, error)
 
 	// Foundry document sets, documents and the Data layout, per workspace
 	GetFoundryDocumentSet(ctx context.Context, workspaceID, id string) (*model.FoundryDocumentSet, error)
@@ -180,6 +184,7 @@ type ReadStore interface {
 
 	// Foundry source grants and what current loads hold
 	ListFoundryAccessGrants(ctx context.Context, workspaceID string, principals []access.Principal) ([]model.FoundryAccessGrant, error)
+	ListFoundryAccessWorkflowsOff(ctx context.Context, workspaceID string, principals []access.Principal) ([]access.Principal, error)
 	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
 	ListFoundryLoadInputs(ctx context.Context, workspaceID string, loadIDs []string) (map[string]model.FoundryLoadInputs, error)
 	FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error)
@@ -212,7 +217,10 @@ type ReadStore interface {
 	GetFoundryWorkflowRun(ctx context.Context, ontologyID, id string) (*model.FoundryWorkflowRun, error)
 	GetFoundryWorkflowRunInWorkspace(ctx context.Context, workspaceID, id string) (*model.FoundryWorkflowRun, error)
 	GetFoundryWorkflowRunByClientToken(ctx context.Context, workflowID, clientToken string) (*model.FoundryWorkflowRun, error)
-	ListFoundryWorkflowRuns(ctx context.Context, workflowID, pageToken string, limit int) ([]*model.FoundryWorkflowRun, string, error)
+	ListFoundryWorkflowRuns(ctx context.Context, workflowID string, startedBy *access.Principal, pageToken string, limit int) ([]*model.FoundryWorkflowRun, string, error)
+	TallyFoundryWorkflowRuns(ctx context.Context, workflowIDs []string, by access.Principal) (map[string]model.FoundryWorkflowRunTally, error)
+	ListFoundryWorkflowInsightRuns(ctx context.Context, ontologyID, workflowID string, startedBy *access.Principal, from, to time.Time,
+		limit int) ([]model.FoundryWorkflowInsightRun, error)
 	ListFoundryWorkflowRunAccesses(ctx context.Context, runID string, afterSeq int32, limit int) ([]*model.FoundryWorkflowAccess, bool, error)
 	GetFoundryWorkflowRunAssessment(ctx context.Context, runID string) (*model.FoundryWorkflowAssessment, error)
 	ListFoundryWorkflowRunAssessments(ctx context.Context, runIDs []string) (map[string]*model.FoundryWorkflowAssessment, error)
@@ -301,6 +309,7 @@ type Store interface {
 	FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error)
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
 	DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error
+	SaveFoundryReviewLabel(ctx context.Context, workspaceID string, label *model.FoundryReviewLabel) error
 	CreateFoundryDocumentSet(ctx context.Context, set *model.FoundryDocumentSet, max int) error
 	UpdateFoundryDocumentSet(ctx context.Context, workspaceID, id string, update model.FoundryDocumentSetUpdate) error
 	DeleteFoundryDocumentSet(ctx context.Context, workspaceID, id string) error
@@ -329,6 +338,7 @@ type Store interface {
 	FinishFoundryGraphJob(ctx context.Context, jobID, workerID string, outcome model.FoundryGraphJobOutcome) (model.FoundryGraphJobFinish, error)
 	SetFoundryAccessGrants(ctx context.Context, workspaceID string, principal access.Principal, targets []access.Target, byUserID *string) error
 	DeleteFoundryAccessPrincipal(ctx context.Context, workspaceID string, principal access.Principal) error
+	SetFoundryAccessWorkflows(ctx context.Context, workspaceID string, principal access.Principal, on bool, byUserID *string) error
 	SetFoundryMemberRestricted(ctx context.Context, workspaceID, userID string, restricted bool, byUserID *string) error
 	CreateFoundryTeam(ctx context.Context, team *model.FoundryTeam) error
 	UpdateFoundryTeam(ctx context.Context, workspaceID, teamID, name string, memberUserIDs []string) error

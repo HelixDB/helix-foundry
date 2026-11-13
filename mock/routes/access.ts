@@ -150,6 +150,9 @@ const state = {
   // Restricted members, as `${workspaceId}\u001f${userId}`.
   restricted: new Set<string>(),
   credentials: [] as StoredCredential[],
+  // Principals whose Workflows permission is off, as
+  // `${workspaceId}\u001f${principalKey}`; on for everyone else.
+  workflowsOff: new Set<string>(),
 };
 const restrictedKey = (ws: string, userId: string) => `${ws}\u001f${userId}`;
 const restrict = (ws: string, userIds: string[]) =>
@@ -198,6 +201,7 @@ const synced = (t: StoredTeam) =>
 const knobs = config as typeof config & {
   directoryTeams?: boolean;
   directoryEntitled?: boolean;
+  directorySettingUp?: boolean;
   directoryIssues?: DirectoryIssue[];
   directorySyncMs?: number;
 };
@@ -239,6 +243,10 @@ function syncDirectory(
         gone.some((t) => t.id === g.principal.id)
       ),
   );
+  for (const t of gone)
+    state.workflowsOff.delete(
+      `${ws}\u001f${principalKey({ kind: "KIND_TEAM", id: t.id })}`,
+    );
   for (const g of groups) {
     let t = state.teams.find(
       (x) => x.workspaceId === ws && x.directory?.groupId === g.groupId,
@@ -301,17 +309,41 @@ function syncDirectoryIfAsked() {
 
 // The host's directory sync as the WFE serves it (GET .../directory,
 // .../directory/portal-link, .../directory:sync). Only Acme can have one:
-// it is entitled (SSO) with `directoryEntitled` or `directoryTeams`, and
-// connected once `directoryTeams` syncs it or its Admin Portal
-// (/mock/directory-portal) connects Okta. `directoryIssues` is what the
-// directory reports, and a sync asked for runs `directorySyncMs` (1500).
+// it is entitled (directory sync on) with `directoryEntitled`,
+// `directorySettingUp` or `directoryTeams`, and connected once
+// `directoryTeams` syncs it or its Admin Portal (/mock/directory-portal)
+// connects Okta. `directorySettingUp` has a directory chosen in the setup
+// guide that never linked, as the WFE reports one: unlinked, idle, never
+// synced. `directoryIssues` is what the directory reports, and a sync asked
+// for runs `directorySyncMs` (1500).
 const directoryEntitled = (ws: string) =>
   ws === "ws_acme" &&
-  (!!knobs.directoryEntitled || !!knobs.directoryTeams || directorySynced);
+  (!!knobs.directoryEntitled ||
+    !!knobs.directorySettingUp ||
+    !!knobs.directoryTeams ||
+    directorySynced);
 
 function directoryOf(ws: string): WorkspaceDirectory {
   syncDirectoryIfAsked();
   if (!directoryEntitled(ws)) return { workspaceId: ws };
+  if (!directorySynced && knobs.directorySettingUp)
+    return {
+      workspaceId: ws,
+      entitled: true,
+      directory: {
+        id: "directory_acme_scim",
+        type: "generic scim v2.0",
+        provider: "your directory",
+        name: db.workspaces.get(ws)?.displayName || "",
+        state: "DIRECTORY_STATE_UNLINKED",
+      },
+      rolesFromDirectory: false,
+      groups: [],
+      issues: [],
+      syncState: "DIRECTORY_SYNC_STATE_IDLE",
+      userCount: 0,
+      managedMemberCount: 0,
+    };
   if (!directorySynced) return { workspaceId: ws, entitled: true };
   if (directoryPendingUntil && Date.now() >= directoryPendingUntil) {
     directoryPendingUntil = 0;
@@ -449,6 +481,7 @@ onReset(() => {
   directoryPendingUntil = 0;
   portalReturns.clear();
   state.teams = [];
+  state.workflowsOff = new Set();
   state.restricted = new Set([restrictedKey("ws_acme", "usr_eve")]);
   state.grants = [
     {
@@ -655,6 +688,19 @@ const teamsOf = (workspaceId: string, userId: string) =>
     .map((t) => t.id);
 
 /** The targets a user holds in the workspace: their own, then their teams'. */
+/**
+ * Whether a member's Workflows permission is on: neither they nor any of
+ * their teams has it off (the backend's workflowsOn).
+ */
+export function workflowsOn(workspaceId: string, userId: string) {
+  return ![
+    principalKey({ kind: "KIND_USER", id: userId }),
+    ...teamsOf(workspaceId, userId).map((id) =>
+      principalKey({ kind: "KIND_TEAM", id }),
+    ),
+  ].some((k) => state.workflowsOff.has(`${workspaceId}\u001f${k}`));
+}
+
 function userTargets(workspaceId: string, userId: string) {
   const held = new Set([
     principalKey({ kind: "KIND_USER", id: userId }),
@@ -737,13 +783,15 @@ const holds = (
 
 // ---------------------------------------------------------------- the check
 
-type Rule = "workspace" | "ontology";
+type Rule = "workspace" | "ontology" | "workflows";
 const W = "/v1/workspaces/{workspaceId}/foundry",
   O = `${W}/ontologies/{ontologyId}`;
 /**
  * What each of Foundry's routes lets a grantee do (access.Rules); a route
- * not named refuses it. A grantee only reads, and asks and cancels its own
- * questions.
+ * not named refuses it. A grantee only reads, asks and cancels its own
+ * questions, and, with its Workflows permission, reads workflows and starts
+ * and finishes its own runs ("workflows": as "ontology", while the
+ * permission is on).
  */
 const RULES: Record<string, Rule> = {
   [`GET ${W}/access/me`]: "workspace",
@@ -762,6 +810,14 @@ const RULES: Record<string, Rule> = {
   [`GET ${W}/documents/{id}:content`]: "workspace",
   [`GET ${O}/documents`]: "ontology",
   [`GET ${O}/documents/{id}`]: "ontology",
+  [`GET ${O}/workflows`]: "workflows",
+  [`GET ${O}/workflows:insights`]: "workflows",
+  [`GET ${O}/workflows/{id}`]: "workflows",
+  [`POST ${O}/workflows/{workflowId}/runs`]: "workflows",
+  [`GET ${O}/workflows/{workflowId}/runs`]: "workflows",
+  [`GET ${O}/workflows/{workflowId}/runs/{id}`]: "workflows",
+  [`POST ${O}/workflows/{workflowId}/runs/{id}:finish`]: "workflows",
+  [`GET ${O}/workflows/{workflowId}/runs/{id}/accesses`]: "workflows",
 };
 /**
  * The Foundry routes the WFE gates on reading the ontology's database: a
@@ -854,7 +910,9 @@ export function guarded(route: MockRoute): MockRoute {
         },
         stillSees: (seen) => covers(targets, seen),
       };
-      if (rule === "ontology") {
+      if (rule === "workflows" && !workflowsOn(m.workspaceId, m.userId))
+        return denied || fail("PERMISSION_DENIED", WORKFLOWS_OFF);
+      if (rule === "ontology" || rule === "workflows") {
         grantee.load = grantee.covered.get(req.params.ontologyId || "");
         if (!grantee.load)
           return denied || fail("NOT_FOUND", "ontology not found");
@@ -863,6 +921,10 @@ export function guarded(route: MockRoute): MockRoute {
     },
   };
 }
+
+/** The backend's refusal of a grantee whose Workflows permission is off. */
+export const WORKFLOWS_OFF =
+  "workflows are off for this member or key: an owner or admin turns them on with its sources in Settings › Access";
 
 // ---------------------------------------------------------------- routes
 
@@ -1040,6 +1102,13 @@ export const accessRoutes: MockRoute[] = [
           .map((k) => k.split("\u001f"))
           .filter(([ws]) => ws === m.workspaceId)
           .map(([, userId]) => userId!),
+        workflowsOff: [...state.workflowsOff]
+          .map((k) => k.split("\u001f"))
+          .filter(([ws]) => ws === m.workspaceId)
+          .map(([, key]) => {
+            const [kind, ...id] = key!.split(":");
+            return { kind, id: id.join(":") } as FoundryPrincipal;
+          }),
       } satisfies ListFoundryAccessResponse);
     },
   },
@@ -1161,8 +1230,12 @@ export const accessRoutes: MockRoute[] = [
           restrict(m.workspaceId, [principal.id]);
         if (team) restrict(m.workspaceId, team.memberUserIds);
       }
+      const off = `${m.workspaceId}\u001f${principalKey(principal)}`;
+      if (body.workflows === true) state.workflowsOff.delete(off);
+      if (body.workflows === false) state.workflowsOff.add(off);
       return ok({
         grants: grantsOf(m.workspaceId).filter(mine).map(grantOut),
+        workflows: !state.workflowsOff.has(off),
       } satisfies SetFoundryAccessGrantsResponse);
     },
   },
@@ -1260,6 +1333,7 @@ export const accessRoutes: MockRoute[] = [
       return ok({
         grantee: !!req.grantee,
         hasGrants: targets.length > 0,
+        workflows: !req.grantee || workflowsOn(m.workspaceId, m.userId),
         ontologyIds: [...loads.keys()].sort(),
         partialOntologyIds: [...loads]
           .filter(([, l]) => l.partial)
@@ -1388,6 +1462,9 @@ export const accessRoutes: MockRoute[] = [
       state.grants = state.grants.filter(
         (g) => !(g.principal.kind === "KIND_TEAM" && g.principal.id === teamId),
       );
+      state.workflowsOff.delete(
+        `${m.workspaceId}\u001f${principalKey({ kind: "KIND_TEAM", id: teamId })}`,
+      );
       return ok({});
     },
   },
@@ -1453,13 +1530,17 @@ export const accessRoutes: MockRoute[] = [
       );
       if (!c) return fail("NOT_FOUND", "service credential not found");
       c.revokedAt = now();
-      // The host deletes a revoked key's grants (DeleteFoundryAccessPrincipal).
+      // The host deletes a revoked key's grants and Workflows permission
+      // (DeleteFoundryAccessPrincipal).
       state.grants = state.grants.filter(
         (g) =>
           !(
             g.principal.kind === "KIND_SERVICE_CREDENTIAL" &&
             g.principal.id === c.id
           ),
+      );
+      state.workflowsOff.delete(
+        `${m.workspaceId}\u001f${principalKey({ kind: "KIND_SERVICE_CREDENTIAL", id: c.id })}`,
       );
       return ok({});
     },

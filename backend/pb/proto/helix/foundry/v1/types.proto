@@ -12,9 +12,9 @@ option go_package = "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/fo
 // paid tier. Max grants everything Pro does.
 enum FoundryTier {
   FOUNDRY_TIER_UNSPECIFIED = 0;
-  FOUNDRY_TIER_FREE        = 1;
-  FOUNDRY_TIER_PRO         = 2;
-  FOUNDRY_TIER_MAX         = 3;
+  FOUNDRY_TIER_FREE = 1;
+  FOUNDRY_TIER_PRO = 2;
+  FOUNDRY_TIER_MAX = 3;
 }
 
 // FoundryPlan is a workspace's Foundry plan as the billing system reports it now.
@@ -27,7 +27,7 @@ message FoundryPlan {
   // The paid tier ends at current_period_end unless resumed.
   bool cancel_at_period_end = 4;
   // The catalog plan held: free, pro, max or any plan a deployment adds.
-  string code         = 5;
+  string code = 5;
   string display_name = 6;
   FoundrySyncRules sync = 7;
 }
@@ -48,27 +48,27 @@ message FoundrySyncRules {
 
 // FoundryCatalogPlan is one plan the deployment's catalog offers.
 message FoundryCatalogPlan {
-  string code         = 1;
+  string code = 1;
   string display_name = 2;
   // False for Free and for a plan the deployment does not sell.
-  bool             sold  = 3;
-  repeated string  kinds = 4;
-  FoundrySyncRules sync  = 5;
+  bool sold = 3;
+  repeated string kinds = 4;
+  FoundrySyncRules sync = 5;
 }
 
 // ConnectorKind is one type of Helix Foundry data source.
 message ConnectorKind {
   // stripe, workos, posthog, github, linear, calcom, granola, slack, notion,
   // google, postgres, mysql, s3 or events.
-  string kind         = 1;
+  string kind = 1;
   string display_name = 2;
-  bool   requires_pro = 3;
+  bool requires_pro = 3;
   // False when the workspace's plan does not include the kind.
   bool available = 4;
   // What a customer sets up for the kind: s3 where role access is configured,
   // github where connectors sign in through Helix Foundry's GitHub App.
   oneof setup {
-    S3ConnectorSetup     s3     = 5;
+    S3ConnectorSetup s3 = 5;
     GitHubConnectorSetup github = 8;
   }
   // The lowest catalog plan that includes the kind.
@@ -103,7 +103,7 @@ message S3ConnectorConfig {
   string region = 3;
   oneof auth {
     S3RoleAuth role = 4;
-    S3KeyAuth  keys = 5;
+    S3KeyAuth keys = 5;
   }
   // Tables to sync; empty means every table.
   repeated string tables = 6;
@@ -143,23 +143,23 @@ message PostHogConnectorConfig {
   // Days of events to sync, 1 to 365; 0 means 30.
   int32 event_days = 5;
   // export reads PostHog batch exports from export_bucket; empty reads the query API.
-  string            mode          = 6;
+  string mode = 6;
   S3ConnectorConfig export_bucket = 7;
 }
 
 message DatabaseConnectorConfig {
-  string host     = 1;
+  string host = 1;
   // 0 means the database's default port.
-  int32  port     = 2;
+  int32 port = 2;
   string database = 3;
-  string user     = 4;
+  string user = 4;
   // Write-only.
   string password = 5;
   // PostgreSQL only; empty means public.
   string schema = 6;
   // Tables to sync; empty means every table.
   repeated string tables = 7;
-  bool   disable_tls     = 8;
+  bool disable_tls = 8;
   // PEM bundle trusted besides the system roots.
   string ca = 9;
   // Table to the column its application updates on every write; a change
@@ -262,34 +262,34 @@ message EventSourceField {
 // ConnectorConfig is a connector's settings. Write-only fields come back empty.
 message ConnectorConfig {
   oneof kind {
-    StripeConnectorConfig          stripe   = 1;
-    WorkOSConnectorConfig          workos   = 2;
-    PostHogConnectorConfig         posthog  = 3;
-    DatabaseConnectorConfig        postgres = 4;
-    DatabaseConnectorConfig        mysql    = 5;
-    S3ConnectorConfig              s3       = 6;
-    GitHubConnectorConfig          github   = 7;
-    LinearConnectorConfig          linear   = 8;
-    CalcomConnectorConfig          calcom   = 9;
-    GranolaConnectorConfig         granola  = 10;
+    StripeConnectorConfig stripe = 1;
+    WorkOSConnectorConfig workos = 2;
+    PostHogConnectorConfig posthog = 3;
+    DatabaseConnectorConfig postgres = 4;
+    DatabaseConnectorConfig mysql = 5;
+    S3ConnectorConfig s3 = 6;
+    GitHubConnectorConfig github = 7;
+    LinearConnectorConfig linear = 8;
+    CalcomConnectorConfig calcom = 9;
+    GranolaConnectorConfig granola = 10;
     // 11 and 12 are gdrive's and gmail's (Google connectors).
-    EventsConnectorConfig          events   = 13;
-    SlackConnectorConfig           slack    = 14;
-    NotionConnectorConfig          notion   = 15;
-    GoogleWorkspaceConnectorConfig google   = 16;
+    EventsConnectorConfig events = 13;
+    SlackConnectorConfig slack = 14;
+    NotionConnectorConfig notion = 15;
+    GoogleWorkspaceConnectorConfig google = 16;
   }
 }
 
 message Connector {
-  string          id           = 1;
-  string          workspace_id = 2;
-  string          kind         = 3;
-  string          name         = 4;
-  ConnectorConfig config       = 5;
+  string id = 1;
+  string workspace_id = 2;
+  string kind = 3;
+  string name = 4;
+  ConnectorConfig config = 5;
   // Identifies the stored credential without revealing it, e.g. sk_live…4f2a.
-  string                    secret_hint = 6;
-  google.protobuf.Timestamp created_at  = 7;
-  google.protobuf.Timestamp updated_at  = 8;
+  string secret_hint = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
   // Tables the last syncs copied, each pointing at its newest snapshot.
   repeated SyncedTable tables = 9;
   // The newest sync, if any.
@@ -308,21 +308,21 @@ message Connector {
 message ConnectorAccount {
   // Who the provider says signed in: a GitHub login; a Linear user and
   // workspace.
-  string                label = 1;
+  string label = 1;
   ConnectorAccountState state = 2;
   // Why it needs signing in again; unspecified while connected.
-  ConnectorAccountBroken    broken    = 3;
+  ConnectorAccountBroken broken = 3;
   google.protobuf.Timestamp broken_at = 4;
   // The member whose access it reads with, and their name: "a former
   // member" once they have left the workspace.
-  string                    user_id      = 5;
-  string                    connected_by = 6;
+  string user_id = 5;
+  string connected_by = 6;
   google.protobuf.Timestamp connected_at = 7;
 }
 
 enum ConnectorAccountState {
   CONNECTOR_ACCOUNT_STATE_UNSPECIFIED = 0;
-  CONNECTOR_ACCOUNT_STATE_CONNECTED   = 1;
+  CONNECTOR_ACCOUNT_STATE_CONNECTED = 1;
   // It doesn't sync until an owner or admin signs it in again; its tables
   // keep what the last sync read.
   CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN = 2;
@@ -345,9 +345,9 @@ enum ConnectorAccountBroken {
 // site's callback finishes it. Finishing creates the connector, or signs one
 // in again.
 message ConnectorSignIn {
-  string                id     = 1;
-  string                kind   = 2;
-  string                name   = 3;
+  string id = 1;
+  string kind = 2;
+  string name = 3;
   ConnectorSignInStatus status = 4;
   // Why it failed; set with CONNECTOR_SIGN_IN_STATUS_FAILED.
   ConnectorSignInFailure failure = 5;
@@ -360,7 +360,7 @@ message ConnectorSignIn {
   // reads with.
   bool identity_changed = 8;
   // True when the caller started it: only they can authorize and finish it.
-  bool                      mine       = 9;
+  bool mine = 9;
   google.protobuf.Timestamp created_at = 10;
   google.protobuf.Timestamp expires_at = 11;
   // The connector's settings, chosen before signing in; never a credential.
@@ -379,7 +379,7 @@ enum ConnectorSignInStatus {
   // The user declined at the provider. Authorizing again retries it.
   CONNECTOR_SIGN_IN_STATUS_DECLINED = 5;
   // See failure. Authorizing again retries it.
-  CONNECTOR_SIGN_IN_STATUS_FAILED  = 6;
+  CONNECTOR_SIGN_IN_STATUS_FAILED = 6;
   CONNECTOR_SIGN_IN_STATUS_EXPIRED = 7;
 }
 
@@ -404,8 +404,8 @@ message ConnectorSchedule {
   // The owner's choice; 0 means the plan's interval, -1 manual only.
   int64 every_seconds = 1;
   // The interval in force, after the plan's limits; 0 when manual only.
-  int64                     effective_every_seconds = 2;
-  google.protobuf.Timestamp next_sync_at            = 3;
+  int64 effective_every_seconds = 2;
+  google.protobuf.Timestamp next_sync_at = 3;
   // Why automatic syncs stopped; empty while they run.
   string paused_reason = 4;
 }
@@ -414,31 +414,31 @@ message ConnectorCDCStatus {
   // The PostgreSQL slot, or the MySQL binlog position.
   string position = 1;
   // Bytes of WAL the slot holds on the customer's database; PostgreSQL only.
-  int64                     retained_bytes = 2;
-  google.protobuf.Timestamp last_reset_at  = 3;
-  string                    last_reset     = 4;
+  int64 retained_bytes = 2;
+  google.protobuf.Timestamp last_reset_at = 3;
+  string last_reset = 4;
 }
 
 enum ConnectorSyncStatus {
   CONNECTOR_SYNC_STATUS_UNSPECIFIED = 0;
-  CONNECTOR_SYNC_STATUS_QUEUED      = 1;
-  CONNECTOR_SYNC_STATUS_RUNNING     = 2;
-  CONNECTOR_SYNC_STATUS_SUCCEEDED   = 3;
-  CONNECTOR_SYNC_STATUS_FAILED      = 4;
+  CONNECTOR_SYNC_STATUS_QUEUED = 1;
+  CONNECTOR_SYNC_STATUS_RUNNING = 2;
+  CONNECTOR_SYNC_STATUS_SUCCEEDED = 3;
+  CONNECTOR_SYNC_STATUS_FAILED = 4;
 }
 
 // ConnectorSync is one run copying a connector's tables into snapshots.
 message ConnectorSync {
-  string              id           = 1;
-  string              connector_id = 2;
-  ConnectorSyncStatus status       = 3;
-  int32               attempts     = 4;
+  string id = 1;
+  string connector_id = 2;
+  ConnectorSyncStatus status = 3;
+  int32 attempts = 4;
   // Why the last attempt failed, written for the customer.
-  string                    error           = 5;
-  int64                     rows_synced     = 6;
-  google.protobuf.Timestamp created_at      = 7;
-  google.protobuf.Timestamp started_at      = 8;
-  google.protobuf.Timestamp finished_at     = 9;
+  string error = 5;
+  int64 rows_synced = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp started_at = 8;
+  google.protobuf.Timestamp finished_at = 9;
   // When a queued sync runs next; later than now while a retry waits.
   google.protobuf.Timestamp next_attempt_at = 10;
   // manual, schedule or settings.
@@ -453,20 +453,20 @@ message ConnectorSync {
 message ConnectorTableChange {
   string table = 1;
   // changes, replace or drop.
-  string kind    = 2;
-  int64  inserts = 3;
-  int64  updates = 4;
-  int64  deletes = 5;
+  string kind = 2;
+  int64 inserts = 3;
+  int64 updates = 4;
+  int64 deletes = 5;
 }
 
 // SyncedTable is one table's newest snapshot.
 message SyncedTable {
-  string                       name         = 1;
-  int64                        row_count    = 2;
-  google.protobuf.Timestamp    synced_at    = 3;
-  string                       sync_id      = 4;
-  repeated ConnectorColumn     columns      = 5;
-  repeated string              primary_key  = 6;
+  string name = 1;
+  int64 row_count = 2;
+  google.protobuf.Timestamp synced_at = 3;
+  string sync_id = 4;
+  repeated ConnectorColumn columns = 5;
+  repeated string primary_key = 6;
   repeated ConnectorForeignKey foreign_keys = 7;
   // How the table is read now: full, cursor, events or log.
   string capture = 8;
@@ -475,27 +475,27 @@ message SyncedTable {
 }
 
 message ConnectorColumn {
-  string name     = 1;
-  string type     = 2;
-  bool   nullable = 3;
+  string name = 1;
+  string type = 2;
+  bool nullable = 3;
 }
 
 message ConnectorForeignKey {
-  string column            = 1;
-  string referenced_table  = 2;
+  string column = 1;
+  string referenced_table = 2;
   string referenced_column = 3;
 }
 
 message ConnectorTable {
   string name = 1;
   // Empty for API sources until their first sync.
-  repeated ConnectorColumn     columns      = 2;
-  repeated string              primary_key  = 3;
+  repeated ConnectorColumn columns = 2;
+  repeated string primary_key = 3;
   repeated ConnectorForeignKey foreign_keys = 4;
   // File sources only, from here on.
   // parquet, json or csv.
-  string format     = 5;
-  int32  file_count = 6;
+  string format = 5;
+  int32 file_count = 6;
   // Stored bytes of the table's files.
   int64 bytes = 7;
   // At most 5 rows, each one JSON object.
@@ -520,10 +520,10 @@ message ConnectorDiscovery {
 // caps every table has. Output only.
 message EventSourceCapacity {
   // Rows in its table plus pieces not synced yet (resent ids count again).
-  int64 rows     = 1;
+  int64 rows = 1;
   int64 max_rows = 2;
   // Uncompressed bytes of its table plus those of batches not synced yet.
-  int64 bytes     = 3;
+  int64 bytes = 3;
   int64 max_bytes = 4;
 }
 
@@ -540,12 +540,12 @@ message FoundryEventPiece {
 
 // FoundryEventBatch is one send's pieces.
 message FoundryEventBatch {
-  string                    id         = 1;
-  int64                     seq        = 2;
-  int32                     pieces     = 3;
-  int64                     bytes      = 4;
-  google.protobuf.Timestamp first_at   = 5;
-  google.protobuf.Timestamp last_at    = 6;
+  string id = 1;
+  int64 seq = 2;
+  int32 pieces = 3;
+  int64 bytes = 4;
+  google.protobuf.Timestamp first_at = 5;
+  google.protobuf.Timestamp last_at = 6;
   google.protobuf.Timestamp created_at = 7;
   // A sync has read it: its pieces are in the source's table.
   bool synced = 8;
@@ -553,14 +553,14 @@ message FoundryEventBatch {
 
 // FoundryEventSourceToken is a send-only credential of one event source.
 message FoundryEventSourceToken {
-  string id           = 1;
+  string id = 1;
   string connector_id = 2;
   // hx_ev_ and the next 6 characters.
-  string                    prefix             = 3;
-  string                    created_by_user_id = 4;
-  google.protobuf.Timestamp created_at         = 5;
-  google.protobuf.Timestamp revoked_at         = 6;
-  google.protobuf.Timestamp last_used_at       = 7;
+  string prefix = 3;
+  string created_by_user_id = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp revoked_at = 6;
+  google.protobuf.Timestamp last_used_at = 7;
 }
 
 // FoundryEventSourceMode is how a generation reads an event source.
@@ -575,14 +575,14 @@ enum FoundryEventSourceMode {
 // FoundryEventSourcePick is one event source a generation drafts from, and
 // how its ontology reads it.
 message FoundryEventSourcePick {
-  string                 connector_id = 1;
-  FoundryEventSourceMode mode         = 2;
+  string connector_id = 1;
+  FoundryEventSourceMode mode = 2;
 }
 
 enum OntologySource {
   ONTOLOGY_SOURCE_UNSPECIFIED = 0;
-  ONTOLOGY_SOURCE_MANUAL      = 1;
-  ONTOLOGY_SOURCE_GENERATED   = 2;
+  ONTOLOGY_SOURCE_MANUAL = 1;
+  ONTOLOGY_SOURCE_GENERATED = 2;
 }
 
 // OntologyFormat says what a version's definition holds.
@@ -597,17 +597,17 @@ enum OntologyFormat {
 
 // OntologyVersion is one immutable ontology of a workspace.
 message OntologyVersion {
-  string id           = 1;
+  string id = 1;
   string workspace_id = 2;
   // 1, 2, 3 per ontology.
   int32 version = 3;
   // The definition, in the shape format names; unset in lists.
-  google.protobuf.Struct    definition         = 4;
-  OntologySource            source             = 5;
+  google.protobuf.Struct definition = 4;
+  OntologySource source = 5;
   // The generation that wrote it, for generated versions.
-  string                    generation_id      = 6;
-  string                    created_by_user_id = 7;
-  google.protobuf.Timestamp created_at         = 8;
+  string generation_id = 6;
+  string created_by_user_id = 7;
+  google.protobuf.Timestamp created_at = 8;
   // Whether the ontology points at this version.
   bool is_current = 9;
   OntologyFormat format = 10;
@@ -627,16 +627,16 @@ message OntologyVersion {
 
 enum OntologyGenerationStatus {
   ONTOLOGY_GENERATION_STATUS_UNSPECIFIED = 0;
-  ONTOLOGY_GENERATION_STATUS_QUEUED      = 1;
-  ONTOLOGY_GENERATION_STATUS_RUNNING     = 2;
-  ONTOLOGY_GENERATION_STATUS_SUCCEEDED   = 3;
-  ONTOLOGY_GENERATION_STATUS_FAILED      = 4;
+  ONTOLOGY_GENERATION_STATUS_QUEUED = 1;
+  ONTOLOGY_GENERATION_STATUS_RUNNING = 2;
+  ONTOLOGY_GENERATION_STATUS_SUCCEEDED = 3;
+  ONTOLOGY_GENERATION_STATUS_FAILED = 4;
 }
 
 // One edit of a version's draft: put an item, or remove one.
 message OntologyEdit {
   oneof edit {
-    OntologyPut    put    = 1;
+    OntologyPut put = 1;
     OntologyRemove remove = 2;
   }
 }
@@ -675,26 +675,26 @@ message OntologyRevision {
 
 // OntologyGeneration is one request to draft a version of an ontology.
 message OntologyGeneration {
-  string                   id           = 1;
-  string                   workspace_id = 2;
-  OntologyGenerationStatus status       = 3;
-  string                   goal         = 4;
+  string id = 1;
+  string workspace_id = 2;
+  OntologyGenerationStatus status = 3;
+  string goal = 4;
   // The tables it drafts from.
   repeated OntologyGenerationTable tables = 5;
   // The version that was current when it was requested; the draft extends it.
   // Unset for a revision, whose parent is revision.parent_version_id.
   string base_version_id = 6;
-  int32  attempts        = 7;
+  int32 attempts = 7;
   // Why the last attempt failed, written for the customer.
   string error = 8;
   // The draft it stored, once succeeded. It is not made current, unless
   // load_when_ready made it the ontology's first.
-  string                    result_version_id    = 9;
-  string                    model                = 10;
-  string                    requested_by_user_id = 11;
-  google.protobuf.Timestamp created_at           = 12;
-  google.protobuf.Timestamp started_at           = 13;
-  google.protobuf.Timestamp finished_at          = 14;
+  string result_version_id = 9;
+  string model = 10;
+  string requested_by_user_id = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp started_at = 13;
+  google.protobuf.Timestamp finished_at = 14;
   // When a queued generation runs next; later than now while a retry waits.
   google.protobuf.Timestamp next_attempt_at = 15;
   // The Foundry ontology it drafts a version of.
@@ -722,13 +722,13 @@ message OntologyGeneration {
 
 message OntologyGenerationTable {
   string connector_id = 1;
-  string table        = 2;
+  string table = 2;
 }
 
 // OntologyGenerationDocument is a table file a generation drafts from, and
 // the set it was in then.
 message OntologyGenerationDocument {
-  string id     = 1;
+  string id = 1;
   string set_id = 2;
 }
 
@@ -736,19 +736,19 @@ message OntologyGenerationDocument {
 // tenant of one of the workspace's projects. Statuses are the lowercase names
 // the Foundry contract fixes.
 message FoundryOntology {
-  string id   = 1;
+  string id = 1;
   string name = 2;
   // project_id, tenant_id and database_name are empty for a caller who can't
   // read the project's databases (clusters.read on the project).
   string project_id = 3;
-  string tenant_id  = 4;
+  string tenant_id = 4;
   // The tenant's name.
-  string                    database_name      = 5;
-  optional string           current_version_id = 6;
-  google.protobuf.Timestamp created_at         = 7;
+  string database_name = 5;
+  optional string current_version_id = 6;
+  google.protobuf.Timestamp created_at = 7;
   // Its newest load job (kind load); unset before the first.
   FoundryOntologyLastLoad last_load = 8;
-  FoundryOntologyCounts   counts    = 9;
+  FoundryOntologyCounts counts = 9;
   // The load reads go to and uploads are extracted into; unset before a load
   // finished writing.
   FoundryOntologyCurrentLoad current_load = 10;
@@ -769,14 +769,14 @@ message FoundryOntology {
 message FoundryOntologyLastLoad {
   string job_id = 1;
   // queued, running, succeeded, budget_exhausted, failed or cancelled.
-  string                    status      = 2;
+  string status = 2;
   google.protobuf.Timestamp finished_at = 3;
 }
 
 message FoundryOntologyCurrentLoad {
   string id = 1;
   // The version it writes, as the graph records it: foundry-v<number>.
-  string                    version     = 2;
+  string version = 2;
   google.protobuf.Timestamp finished_at = 3;
 }
 
@@ -786,7 +786,7 @@ message FoundryOntologyActiveJob {
   // The load it writes or deletes.
   string load_id = 2;
   // provisioning, ingest, documents, finishing or deleting.
-  string                  phase    = 3;
+  string phase = 3;
   FoundryGraphJobProgress progress = 4;
 }
 
@@ -809,18 +809,18 @@ message FoundryOntologyCounts {
 // upload, to its text (read), and is extracted through routes as that text
 // once read; a scanned PDF has no text to read.
 message FoundryDocument {
-  string id   = 1;
+  string id = 1;
   string name = 2;
   // text/markdown, text/mdx, text/plain, application/json, text/csv,
   // text/tab-separated-values, application/x-ndjson,
   // application/vnd.apache.parquet or application/pdf. A rename keeps it.
   string media_type = 3;
-  int64  size_bytes = 4;
+  int64 size_bytes = 4;
   // Lowercase hex SHA-256 of the bytes.
   string sha256 = 5;
   // pending_upload, uploaded or deleted. A connector's document is only
   // uploaded or deleted: deleted once replaced or removed at its source.
-  string                    status     = 6;
+  string status = 6;
   google.protobuf.Timestamp created_at = 7;
   // Read through an ontology's routes: what extracting it into that
   // ontology's current load made of it; unset until then, while no load is
@@ -891,14 +891,14 @@ enum FoundryFileReadState {
 // FoundryFileReadMode is how deeply a document is read.
 enum FoundryFileReadMode {
   FOUNDRY_FILE_READ_MODE_UNSPECIFIED = 0;
-  FOUNDRY_FILE_READ_MODE_STANDARD    = 1;
-  FOUNDRY_FILE_READ_MODE_DEEP        = 2;
+  FOUNDRY_FILE_READ_MODE_STANDARD = 1;
+  FOUNDRY_FILE_READ_MODE_DEEP = 2;
 }
 
 // FoundryFileRead is how ontologies read a document, and what reading it
 // has come to.
 message FoundryFileRead {
-  FoundryReadKind      kind  = 1;
+  FoundryReadKind kind = 1;
   FoundryFileReadState state = 2;
   // A table file's rows, once read.
   optional int64 rows = 3;
@@ -942,12 +942,12 @@ message FoundryDocumentOntology {
 // mappings) name, by id, the sets whose documents they read for what they
 // hold. A person makes a set, or a connector's syncs do (connector).
 message FoundryDocumentSet {
-  string id   = 1;
+  string id = 1;
   string name = 2;
   // What its documents hold, in the user's words; empty when none was given.
   string description = 3;
   // Its documents that are not deleted.
-  int32                     documents  = 4;
+  int32 documents = 4;
   google.protobuf.Timestamp created_at = 5;
   // The ontologies whose reading version (the current load's, else the
   // current version) has it in scope, on lists.
@@ -1031,8 +1031,8 @@ enum FoundryDocumentReadOutcome {
 
 // FoundryDocumentRead is the outcome for one ontology.
 message FoundryDocumentRead {
-  string                     ontology_id = 1;
-  FoundryDocumentReadOutcome outcome     = 2;
+  string ontology_id = 1;
+  FoundryDocumentReadOutcome outcome = 2;
 }
 
 // FoundryDocumentExtraction is how a document ended in its ontology's database.
@@ -1044,13 +1044,13 @@ message FoundryDocumentExtraction {
   // The document whose text this one repeats, for duplicate.
   optional string duplicate_of = 2;
   // Why it failed, for failed.
-  FoundryExtractionError    error       = 3;
-  int32                     sections    = 4;
-  int32                     entities    = 5;
-  int32                     mentions    = 6;
-  int32                     facts       = 7;
-  int32                     reviews     = 8;
-  int64                     usd_micros  = 9;
+  FoundryExtractionError error = 3;
+  int32 sections = 4;
+  int32 entities = 5;
+  int32 mentions = 6;
+  int32 facts = 7;
+  int32 reviews = 8;
+  int64 usd_micros = 9;
   google.protobuf.Timestamp finished_at = 10;
   int32 attributes = 11;
   int32 attribute_reviews = 12;
@@ -1078,9 +1078,9 @@ message FoundryExtractionError {
 // the declared bytes with these headers before expires_at; the browser adds
 // Content-Length, which is signed too.
 message FoundryDocumentUpload {
-  string                    url        = 1;
-  string                    method     = 2;
-  map<string, string>       headers    = 3;
+  string url = 1;
+  string method = 2;
+  map<string, string> headers = 3;
   google.protobuf.Timestamp expires_at = 4;
 }
 
@@ -1088,19 +1088,19 @@ message FoundryDocumentUpload {
 // load (whose id is its own) from a version's tables, then the documents; an
 // extract adds documents to a load; a delete removes one.
 message FoundryGraphJob {
-  string id         = 1;
+  string id = 1;
   string version_id = 2;
   // queued, running, succeeded, budget_exhausted, failed or cancelled (a
   // delete a new load went before, or any job of a deleted ontology).
   string status = 3;
   // provisioning, ingest, documents or finishing; deleting for a delete.
-  string                  phase      = 4;
-  FoundryGraphJobProgress progress   = 5;
-  int64                   usd_micros = 6;
+  string phase = 4;
+  FoundryGraphJobProgress progress = 5;
+  int64 usd_micros = 6;
   // Why the last attempt failed, written for the customer.
-  optional string           error       = 7;
-  google.protobuf.Timestamp created_at  = 8;
-  google.protobuf.Timestamp started_at  = 9;
+  optional string error = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp started_at = 9;
   google.protobuf.Timestamp finished_at = 10;
   // load, extract, apply, delete or resend (a person's decisions applied to
   // the load: approved claims' documents sent again from their saved
@@ -1116,15 +1116,15 @@ message FoundryGraphJob {
 // versions sit side by side. Foundry keeps the current load and the newest
 // others, five in all, and deletes the rest in the background.
 message FoundryLoad {
-  string id         = 1;
+  string id = 1;
   string version_id = 2;
   // The version it writes, as the graph records it: foundry-v<number>.
   string version = 3;
   // writing, ready, partial, failed, deleting or delete_failed.
   string status = 4;
   // Whether reads go to it.
-  bool                      current     = 5;
-  google.protobuf.Timestamp created_at  = 6;
+  bool current = 5;
+  google.protobuf.Timestamp created_at = 6;
   // When writing ended; unset while writing.
   google.protobuf.Timestamp finished_at = 7;
   // Its newest jobs, newest first: at most 20. A current load gains an
@@ -1211,10 +1211,10 @@ message FoundryLoadDocumentSet {
 // FoundryLoadSource is the snapshot of one synced table a load holds.
 message FoundryLoadSource {
   string connector_id = 1;
-  string table        = 2;
+  string table = 2;
   // The sync that wrote the snapshot, and when it finished; both unset for a
   // load written before Helix recorded them.
-  string                    sync_id   = 3;
+  string sync_id = 3;
   google.protobuf.Timestamp synced_at = 4;
 }
 
@@ -1249,8 +1249,8 @@ message FoundryLoadEnrichment {
   // published after its load stopped waiting for it (past its deadline and
   // the grace) counts what it found then, though the load applied only the
   // profiles found before; applied and unmatched say what the load applied.
-  int64 found     = 11;
-  int64 held      = 12;
+  int64 found = 11;
+  int64 held = 12;
   int64 not_found = 13;
   int64 uncertain = 14;
   // Credits charged, unanswered calls included.
@@ -1258,7 +1258,7 @@ message FoundryLoadEnrichment {
   // The profiles the load applied that bound their person, and those that
   // bound no one (the person changed since the lookup); 0 until its tables
   // are in.
-  int64 applied   = 16;
+  int64 applied = 16;
   int64 unmatched = 17;
   // When the step published its profiles; unset before.
   google.protobuf.Timestamp published_at = 18;
@@ -1275,7 +1275,7 @@ enum FoundryEnrichmentAvailability {
   FOUNDRY_ENRICHMENT_AVAILABILITY_DISABLED = 1;
   // New lookups need Foundry Pro; the profiles found before still apply.
   FOUNDRY_ENRICHMENT_AVAILABILITY_PRO_REQUIRED = 2;
-  FOUNDRY_ENRICHMENT_AVAILABILITY_AVAILABLE    = 3;
+  FOUNDRY_ENRICHMENT_AVAILABILITY_AVAILABLE = 3;
 }
 
 // FoundryEnrichment is a workspace's People enrichment setting and month.
@@ -1293,7 +1293,7 @@ message FoundryEnrichment {
   // When the month's credits start again: the first of next month, UTC.
   google.protobuf.Timestamp cap_resets_at = 6;
   // The owner who turned it on, and when; unset while it is off.
-  string                    enabled_by = 7;
+  string enabled_by = 7;
   google.protobuf.Timestamp enabled_at = 8;
   // Ontologies whose enriched values a clean load has still to remove,
   // since consent was turned off.
@@ -1304,13 +1304,13 @@ message FoundryEnrichment {
 // foundry-ask-worker answers it with the ontology agent's read-only Ask; its
 // run streams events (ListFoundryQuestionEvents), then it ends with a result.
 message FoundryQuestion {
-  string id      = 1;
+  string id = 1;
   string load_id = 2;
   // The load's version, whose definition the agent was given.
   string version_id = 3;
   // The first question of its thread; a new thread's is its own id.
   string thread_id = 4;
-  string question  = 5;
+  string question = 5;
   // The entity the user asked about, {"type": ..., "id": ...}; empty for none.
   string focus_json = 6;
   // queued, running, answered, cannot_answer, failed or cancelled.
@@ -1321,12 +1321,12 @@ message FoundryQuestion {
   // Why it failed or was retried, for the user.
   string error = 9;
   // What its attempts spent, in millionths of a US dollar.
-  int64  usd_micros = 10;
+  int64 usd_micros = 10;
   // The seq of its newest event; 0 before any.
-  int32  last_seq          = 11;
-  string asked_by_user_id  = 12;
-  google.protobuf.Timestamp created_at  = 13;
-  google.protobuf.Timestamp started_at  = 14;
+  int32 last_seq = 11;
+  string asked_by_user_id = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp started_at = 14;
   google.protobuf.Timestamp finished_at = 15;
   // Attempts claimed so far; a queued question with attempts above 0 is
   // waiting to be retried, and error says why.
@@ -1342,16 +1342,16 @@ message FoundryQuestion {
 // leave too little.
 message FoundryQuestionBudget {
   // In millionths of a US dollar.
-  int64 monthly_usd_micros  = 1;
-  int64 spent_usd_micros    = 2;
+  int64 monthly_usd_micros = 1;
+  int64 spent_usd_micros = 2;
   int64 reserved_usd_micros = 3;
   // Per question.
   int64 question_usd_micros = 4;
-  int32 max_steps           = 5;
-  int32 max_wall_secs       = 6;
+  int32 max_steps = 5;
+  int32 max_wall_secs = 6;
   // Per workspace: questions running at once, and asked in an hour.
   int32 concurrent_limit = 7;
-  int32 hourly_limit     = 8;
+  int32 hourly_limit = 8;
 }
 
 // FoundryUsageTask is a kind of model work a workspace's month of AI spend
@@ -1424,8 +1424,8 @@ message FoundryQuestionEvent {
 }
 
 message FoundryGraphJobProgress {
-  int32 chunks_done     = 1;
-  int32 documents_done  = 2;
+  int32 chunks_done = 1;
+  int32 documents_done = 2;
   int32 documents_total = 3;
 }
 
@@ -1468,6 +1468,7 @@ message FoundryReviewChoice {
     FoundryRejectChoice reject = 5;
   }
 }
+
 // A release of the statement a person read. A review that reads otherwise now
 // is refused, and so is a load that reads it otherwise.
 message FoundryReleaseChoice {
@@ -1475,6 +1476,7 @@ message FoundryReleaseChoice {
   // separator (0x1f) and its stored statement.
   string statement_hash = 1;
 }
+
 // A rejection of the statement a person read: a review that reads otherwise
 // now is refused, as an approval of it would be.
 message FoundryRejectChoice {
@@ -1482,6 +1484,7 @@ message FoundryRejectChoice {
   // separator (0x1f) and its stored statement.
   string statement_hash = 1;
 }
+
 // A prop decision's value: null removes the property; any other must be of
 // the kind the property's type takes, as the engine reads it (no coercion).
 // integer is an int64, a JSON string in the REST API, so every digit of an
@@ -1600,6 +1603,43 @@ message FoundryReviewDecision {
   // saved while another load was current joins them when a job of the
   // ontology next ends).
   FoundryDecisionApplied applied = 17;
+  // "ranked" or "random": the review queue's card it was made on, in the
+  // queue's order or drawn at random; empty for a decision made elsewhere.
+  string drawn = 18;
+}
+
+// A person's word on a claim at its place, kept to measure precision: a
+// claim of the review queue's random slice (a held claim, kept as its
+// decision is saved, or an accepted fact's quote), or a second person's
+// re-check. Nothing reads it into a load. One per person and claim: saying
+// it again replaces the verdict.
+message FoundryReviewLabel {
+  string id = 1;
+  // "random" or "recheck".
+  string drawn = 2;
+  string doc_id = 3;
+  uint32 claim_section = 4;
+  uint32 claim_start = 5;
+  uint32 claim_end = 6;
+  // A held claim's key and the hash of the statement read, or an accepted
+  // fact's key: one or the other.
+  optional string claim_key = 7;
+  optional string statement_hash = 8;
+  optional string fact_key = 9;
+  // The claim's link, and the verifier's score when it was read.
+  optional string link = 10;
+  optional double confidence = 11;
+  // "right" or "wrong".
+  string verdict = 12;
+  // The decision a held claim's label came with, or the one re-checked.
+  optional string decision_id = 13;
+  // A re-check: the verdict it checks ("right" for an approval or a label
+  // saying right, "wrong" for a rejection or a label saying wrong).
+  optional string against = 14;
+  // The load whose graph the claim was read from.
+  string load_id = 15;
+  string decided_by_user_id = 16;
+  google.protobuf.Timestamp decided_at = 17;
 }
 
 // Helix Foundry model providers: where a workspace's model calls go
@@ -1609,12 +1649,12 @@ message FoundryReviewDecision {
 // FoundryAIKind is a model provider kind. Every kind is declared; a
 // deployment offers those its agent implements (FoundryAI.offered).
 enum FoundryAIKind {
-  FOUNDRY_AI_KIND_UNSPECIFIED       = 0;
-  FOUNDRY_AI_KIND_ANTHROPIC         = 1;
-  FOUNDRY_AI_KIND_OPENAI            = 2;
-  FOUNDRY_AI_KIND_AZURE_OPENAI      = 3;
-  FOUNDRY_AI_KIND_BEDROCK           = 4;
-  FOUNDRY_AI_KIND_OLLAMA            = 5;
+  FOUNDRY_AI_KIND_UNSPECIFIED = 0;
+  FOUNDRY_AI_KIND_ANTHROPIC = 1;
+  FOUNDRY_AI_KIND_OPENAI = 2;
+  FOUNDRY_AI_KIND_AZURE_OPENAI = 3;
+  FOUNDRY_AI_KIND_BEDROCK = 4;
+  FOUNDRY_AI_KIND_OLLAMA = 5;
   FOUNDRY_AI_KIND_OPENAI_COMPATIBLE = 6;
 }
 
@@ -1622,46 +1662,53 @@ enum FoundryAIKind {
 // kind, holding that kind's endpoint settings and never a key.
 message FoundryAIProvider {
   oneof kind {
-    FoundryAIAnthropic   anthropic         = 1;
-    FoundryAIOpenAI      openai            = 2;
-    FoundryAIAzureOpenAI azure_openai      = 3;
-    FoundryAIBedrock     bedrock           = 4;
-    FoundryAIOllama      ollama            = 5;
-    FoundryAICompatible  openai_compatible = 6;
+    FoundryAIAnthropic anthropic = 1;
+    FoundryAIOpenAI openai = 2;
+    FoundryAIAzureOpenAI azure_openai = 3;
+    FoundryAIBedrock bedrock = 4;
+    FoundryAIOllama ollama = 5;
+    FoundryAICompatible openai_compatible = 6;
   }
 }
+
 // Claude at api.anthropic.com.
 message FoundryAIAnthropic {}
+
 // api.openai.com.
 message FoundryAIOpenAI {}
+
 // An Azure OpenAI resource; each model's name is a deployment's.
 message FoundryAIAzureOpenAI {
   // https://<resource>.openai.azure.com, normalized to .../openai/v1.
   string endpoint = 1;
 }
+
 // Amazon Bedrock, called with a Bedrock API key.
 message FoundryAIBedrock {
   // An AWS region, like us-east-1.
   string region = 1;
-  bool   fips   = 2;
+  bool fips = 2;
 }
+
 // An Ollama server's native API, which takes no key.
 message FoundryAIOllama {
   string base_url = 1;
   // The context window models load with; 0 is 65536.
   uint32 context_tokens = 2;
 }
+
 // FoundryAICompatAPI is the API an OpenAI-compatible server speaks.
 enum FoundryAICompatAPI {
-  FOUNDRY_AI_COMPAT_API_UNSPECIFIED      = 0;
+  FOUNDRY_AI_COMPAT_API_UNSPECIFIED = 0;
   FOUNDRY_AI_COMPAT_API_CHAT_COMPLETIONS = 1;
-  FOUNDRY_AI_COMPAT_API_RESPONSES        = 2;
+  FOUNDRY_AI_COMPAT_API_RESPONSES = 2;
 }
+
 // An OpenAI-compatible server.
 message FoundryAICompatible {
   // Including its /v1.
-  string             base_url = 1;
-  FoundryAICompatAPI api      = 2;
+  string base_url = 1;
+  FoundryAICompatAPI api = 2;
   // Calls sent at once; 0 is 4.
   uint32 max_calls_in_flight = 3;
 }
@@ -1682,67 +1729,69 @@ message FoundryAIModel {
     google.protobuf.Empty free = 5;
   }
 }
+
 // FoundryAIRates are prices in US dollars per million tokens, as decimal
 // strings with at most three decimals ("0.075").
 message FoundryAIRates {
-  string input_usd_per_mtok  = 1;
+  string input_usd_per_mtok = 1;
   string output_usd_per_mtok = 2;
   // Empty when cached input is not priced apart.
   string cached_input_usd_per_mtok = 3;
 }
+
 // FoundryAIModels is a model per task: drafting ontologies, answering
 // questions, reading documents and checking the facts read.
 message FoundryAIModels {
-  FoundryAIModel draft   = 1;
-  FoundryAIModel ask     = 2;
+  FoundryAIModel draft = 1;
+  FoundryAIModel ask = 2;
   FoundryAIModel extract = 3;
-  FoundryAIModel verify  = 4;
+  FoundryAIModel verify = 4;
 }
 
 // FoundryAIProbeState is where a saved provider is in its test.
 enum FoundryAIProbeState {
   FOUNDRY_AI_PROBE_STATE_UNSPECIFIED = 0;
-  FOUNDRY_AI_PROBE_STATE_QUEUED      = 1;
-  FOUNDRY_AI_PROBE_STATE_RUNNING     = 2;
-  FOUNDRY_AI_PROBE_STATE_PASSED      = 3;
-  FOUNDRY_AI_PROBE_STATE_FAILED      = 4;
+  FOUNDRY_AI_PROBE_STATE_QUEUED = 1;
+  FOUNDRY_AI_PROBE_STATE_RUNNING = 2;
+  FOUNDRY_AI_PROBE_STATE_PASSED = 3;
+  FOUNDRY_AI_PROBE_STATE_FAILED = 4;
   // Replaced by a newer save, or by going back to the default, first.
   FOUNDRY_AI_PROBE_STATE_SUPERSEDED = 5;
 }
 
 // FoundryAIConfig is a provider an owner saved.
 message FoundryAIConfig {
-  string            id       = 1;
-  FoundryAIKind     kind     = 2;
+  string id = 1;
+  FoundryAIKind kind = 2;
   FoundryAIProvider provider = 3;
-  FoundryAIModels   models   = 4;
+  FoundryAIModels models = 4;
   // Which key it was saved with, e.g. sk-ant…4f2a; empty for none.
   string key_hint = 5;
   // Whether the key is still stored: only the setting's and a pending one's are.
-  bool                has_key     = 6;
+  bool has_key = 6;
   FoundryAIProbeState probe_state = 7;
   // Why a failed probe failed: an agent ModelFailure (auth, not_found, ...)
   // and its check's ProbeDetail (tools_rejected, ...).
-  string                    probe_failure   = 8;
-  string                    probe_detail    = 9;
-  google.protobuf.Timestamp created_at      = 10;
-  string                    created_by_name = 11;
+  string probe_failure = 8;
+  string probe_detail = 9;
+  google.protobuf.Timestamp created_at = 10;
+  string created_by_name = 11;
   // The provider as failure copy names it: "Claude", or a custom server's host.
   string label = 12;
 }
 
 // FoundryAIDefault is the deployment's provider.
 message FoundryAIDefault {
-  FoundryAIKind   kind   = 1;
+  FoundryAIKind kind = 1;
   FoundryAIModels models = 2;
-  string          label  = 3;
+  string label = 3;
 }
 
 // FoundryAIKey is whether a kind's calls carry an API key.
 enum FoundryAIKey {
   FOUNDRY_AI_KEY_UNSPECIFIED = 0;
-  FOUNDRY_AI_KEY_REQUIRED    = 1;
-  FOUNDRY_AI_KEY_OPTIONAL    = 2;
+  FOUNDRY_AI_KEY_REQUIRED = 1;
+  FOUNDRY_AI_KEY_OPTIONAL = 2;
   // Ollama's native API takes none.
   FOUNDRY_AI_KEY_NONE = 3;
 }
@@ -1753,7 +1802,7 @@ message FoundryAIOffer {
   // The models a save of the kind gets where it names none; unset for a
   // kind whose owner names every model.
   FoundryAIModels suggested = 2;
-  FoundryAIKey    key       = 3;
+  FoundryAIKey key = 3;
 }
 
 // FoundryAI is a workspace's AI setting.
@@ -1767,8 +1816,8 @@ message FoundryAI {
   // A save waiting for or in its test.
   FoundryAIConfig pending = 3;
   // The newest save, when its test failed after the setting last changed.
-  FoundryAIConfig         last_failed = 4;
-  repeated FoundryAIOffer offered     = 5;
+  FoundryAIConfig last_failed = 4;
+  repeated FoundryAIOffer offered = 5;
   // Endpoints may be http and private addresses: a local install.
   bool private_hosts_allowed = 6;
   // The workspace's plan doesn't include bringing a key: saving one is
@@ -1790,7 +1839,7 @@ message FoundryAI {
 message FoundryAIDetected {
   // For the owner: what is used and why, or what was looked for and how to
   // set a provider up. Never a key.
-  string                    summary     = 1;
+  string summary = 1;
   google.protobuf.Timestamp detected_at = 2;
 }
 
@@ -1802,8 +1851,8 @@ message FoundryOllamaServer {
   // For the owner: why its models can't be listed, or can't be told apart
   // (a server too old to say which call tools), and how to fix it; empty
   // when they can.
-  string                      problem = 2;
-  repeated FoundryOllamaModel models  = 3;
+  string problem = 2;
+  repeated FoundryOllamaModel models = 3;
 }
 
 // FoundryOllamaModel is a model an Ollama server has pulled.
@@ -1830,8 +1879,8 @@ message FoundryPrincipal {
     // A workspace team: its members hold its grants.
     KIND_TEAM = 3;
   }
-  Kind   kind = 1;
-  string id   = 2;
+  Kind kind = 1;
+  string id = 2;
 }
 
 // FoundryAccessTarget is the source one grant gives. Each kind names what it
@@ -1849,19 +1898,19 @@ message FoundryAccessTarget {
     // The People enrichment profiles a load applies. Nothing else.
     KIND_ENRICHMENT = 4;
   }
-  Kind   kind            = 1;
-  string connector_id    = 2;
-  string table           = 3;
+  Kind kind = 1;
+  string connector_id = 2;
+  string table = 3;
   string document_set_id = 4;
 }
 
 // FoundryAccessGrant is one source an owner or admin granted a principal.
 message FoundryAccessGrant {
-  string                    id                 = 1;
-  FoundryPrincipal          principal          = 2;
-  FoundryAccessTarget       target             = 3;
-  string                    created_by_user_id = 4;
-  google.protobuf.Timestamp created_at         = 5;
+  string id = 1;
+  FoundryPrincipal principal = 2;
+  FoundryAccessTarget target = 3;
+  string created_by_user_id = 4;
+  google.protobuf.Timestamp created_at = 5;
 }
 
 // FoundryLoadAccessInputs is what a load holds, as far as grants go: a
@@ -1869,16 +1918,16 @@ message FoundryAccessGrant {
 message FoundryLoadAccessInputs {
   message Table {
     string connector_id = 1;
-    string table        = 2;
+    string table = 2;
   }
   // A set its documents, table files or review decisions' documents are in
   // now, with the connector that owns it, if one does; an empty
   // document_set_id is a document in no set, which nothing covers.
   message DocumentSet {
     string document_set_id = 1;
-    string connector_id    = 2;
+    string connector_id = 2;
   }
-  repeated Table       tables        = 1;
+  repeated Table tables = 1;
   repeated DocumentSet document_sets = 2;
   // It applied People enrichment's profiles.
   bool enrichment = 3;
@@ -1890,9 +1939,9 @@ message FoundryLoadAccessInputs {
 
 // FoundryOntologyAccess is an ontology's current load as grants see it.
 message FoundryOntologyAccess {
-  string                  ontology_id = 1;
-  string                  load_id     = 2;
-  FoundryLoadAccessInputs inputs      = 3;
+  string ontology_id = 1;
+  string load_id = 2;
+  FoundryLoadAccessInputs inputs = 3;
   // The principals whose own grants cover it.
   repeated FoundryPrincipal readers = 4;
   // The principals whose own grants hold only some of it, who read that part.
@@ -1902,8 +1951,8 @@ message FoundryOntologyAccess {
 // FoundryAccessLoss is a principal that would stop reading an ontology
 // through grants.
 message FoundryAccessLoss {
-  FoundryPrincipal principal   = 1;
-  string           ontology_id = 2;
+  FoundryPrincipal principal = 1;
+  string ontology_id = 2;
   // It would still read the part its grants hold.
   bool keeps_part = 3;
 }
@@ -1911,23 +1960,23 @@ message FoundryAccessLoss {
 // FoundryTeam is a team of the workspace's members: each holds the team's
 // grants.
 message FoundryTeam {
-  string                    id                 = 1;
-  string                    name               = 2;
-  repeated string           member_user_ids    = 3;
-  string                    created_by_user_id = 4;
-  google.protobuf.Timestamp created_at         = 5;
+  string id = 1;
+  string name = 2;
+  repeated string member_user_ids = 3;
+  string created_by_user_id = 4;
+  google.protobuf.Timestamp created_at = 5;
   // Set on a team synced from a directory group (SCIM, through the host's
   // directory sync): its name and members are the group's, changed in the
   // directory, and only its grants are the workspace's to change.
-  FoundryTeamDirectory      directory          = 6;
+  FoundryTeamDirectory directory = 6;
 }
 
 // FoundryTeamDirectory is the directory group a synced team follows.
 message FoundryTeamDirectory {
-  string          directory_id      = 1;
-  string          group_id          = 2;
+  string directory_id = 1;
+  string group_id = 2;
   // The directory's provider as people know it, for example "Okta".
-  string          provider          = 3;
+  string provider = 3;
   // Members of the group the team leaves out while it holds grants: members
   // who can write a project or query its databases outside Foundry, whom
   // its grants can't confine.
@@ -1955,7 +2004,7 @@ message FoundryHealFinding {
   // The documents behind it; 0 for a row finding.
   int64 sources = 5;
   // The load the support was counted over, and its version.
-  string load_id         = 6;
+  string load_id = 6;
   string base_version_id = 7;
   // The engine's Finding (audit_result.json, $defs/Finding) as JSON, its
   // backing summed over the load's pages: signal, proposal and fingerprint.
@@ -1963,12 +2012,12 @@ message FoundryHealFinding {
   string finding_json = 8;
   // Who dismissed it, and its support then; set while dismissed.
   optional string dismissed_by_user_id = 9;
-  optional int64  support_at_dismissal = 10;
+  optional int64 support_at_dismissal = 10;
 }
 
 // FoundryHealRun is one audit of an ontology's load.
 message FoundryHealRun {
-  string id      = 1;
+  string id = 1;
   string load_id = 2;
   // running, complete, incomplete (even a page of one document was cut
   // short, the run ran out of time, or a graph job changed the load under
@@ -1978,8 +2027,8 @@ message FoundryHealRun {
   // The Audit calls it made, and how many of them were cut short; a page
   // cut short is audited again in smaller pages.
   int32 pages = 4;
-  int32 cuts  = 5;
-  google.protobuf.Timestamp started_at  = 6;
+  int32 cuts = 5;
+  google.protobuf.Timestamp started_at = 6;
   google.protobuf.Timestamp finished_at = 7;
   // Whether it audited the load's rows: a complete run does when the
   // load's report holds them. False, no row finding of this load can be
@@ -1992,14 +2041,14 @@ message FoundryHealRun {
 // and wrote to Foundry while answering it, and its answer, so the runs show
 // what the ontology gave the agent.
 message FoundryWorkflow {
-  string id          = 1;
+  string id = 1;
   string ontology_id = 2;
-  string name        = 3;
+  string name = 3;
   string description = 4;
   string created_by_user_id = 5;
   google.protobuf.Timestamp created_at = 6;
   // Its runs kept, and how many of them finished.
-  int64 runs          = 7;
+  int64 runs = 7;
   int64 finished_runs = 8;
   // When its newest run started; absent before any.
   google.protobuf.Timestamp last_run_at = 9;
@@ -2012,7 +2061,7 @@ message FoundryWorkflow {
 // calls made with its id, finished once its answer is in, after which it
 // records nothing more.
 message FoundryWorkflowRun {
-  string id          = 1;
+  string id = 1;
   string workflow_id = 2;
   // open or finished.
   string status = 3;
@@ -2021,9 +2070,9 @@ message FoundryWorkflowRun {
   // The final answer: empty while open.
   string output = 5;
   // Who started it: a user, or an agent's service credential.
-  string started_by_user_id               = 6;
+  string started_by_user_id = 6;
   string started_by_service_credential_id = 7;
-  google.protobuf.Timestamp started_at  = 8;
+  google.protobuf.Timestamp started_at = 8;
   google.protobuf.Timestamp finished_at = 9;
   FoundryWorkflowRunCounts counts = 10;
   // Its assessment, once it finished: absent where assessments are off, or
@@ -2051,7 +2100,7 @@ message FoundryWorkflowAssessment {
   string error = 5;
   // What its attempts spent, in millionths of a US dollar.
   int64 usd_micros = 6;
-  google.protobuf.Timestamp queued_at   = 7;
+  google.protobuf.Timestamp queued_at = 7;
   google.protobuf.Timestamp finished_at = 8;
 }
 
@@ -2059,16 +2108,119 @@ message FoundryWorkflowAssessment {
 // assessment gave a verdict.
 message FoundryWorkflowVerdictCount {
   string verdict = 1;
-  int64  runs    = 2;
+  int64 runs = 2;
+}
+
+// FoundryWorkflowInsights is what runs of an ontology's workflows came to
+// over a window of whole UTC days ending today: its totals, the same window
+// before it, a day by day series, how runs went from start to the ontology
+// helping, the gaps and suggestions their assessments named most, and the
+// same totals by who started them and by workflow. Runs are counted by the
+// day they started.
+message FoundryWorkflowInsights {
+  // The window's first day, YYYY-MM-DD, and its length.
+  string from = 1;
+  int32 days = 2;
+  FoundryWorkflowInsightTotals totals = 3;
+  FoundryWorkflowInsightTotals previous = 4;
+  // One entry a day, oldest first, `days` of them.
+  repeated FoundryWorkflowInsightDay series = 5;
+  FoundryWorkflowInsightFunnel funnel = 6;
+  // The gaps and suggestions that recur, most runs first, at most 10 each:
+  // runs that named the same text (case, spacing and end punctuation
+  // aside) count once each.
+  repeated FoundryWorkflowInsightIssue gaps = 7;
+  repeated FoundryWorkflowInsightIssue suggestions = 8;
+  // Who started runs, most runs first, at most 10.
+  repeated FoundryWorkflowInsightSegment agents = 9;
+  // Each workflow with runs in the window, most runs first; none when the
+  // request named one.
+  repeated FoundryWorkflowInsightSegment workflows = 10;
+  // More runs started in the window than were read (the newest 5,000 are).
+  bool truncated = 11;
+}
+
+// FoundryWorkflowInsightTotals counts runs and what their assessments said.
+// helped is the runs whose verdict is essential or helpful; claims are those
+// of done assessments.
+message FoundryWorkflowInsightTotals {
+  int32 runs = 1;
+  int32 open = 2;
+  int32 finished = 3;
+  int32 assessed = 4;
+  int32 helped = 5;
+  // Runs that made at least one call to the ontology.
+  int32 used = 6;
+  repeated FoundryWorkflowVerdictCount verdicts = 7;
+  int32 claims_supported = 8;
+  int32 claims_unsupported = 9;
+  int32 claims_contradicted = 10;
+  int32 reads = 11;
+  int32 questions = 12;
+  int32 sends = 13;
+  int32 uploads = 14;
+  // What their assessments cost, in millionths of a dollar.
+  int64 assessment_usd_micros = 15;
+  // How many runs named a gap of each kind.
+  repeated FoundryWorkflowGapCount gap_kinds = 16;
+}
+
+// FoundryWorkflowGapCount is how many runs' assessments named a gap of kind.
+message FoundryWorkflowGapCount {
+  string kind = 1;
+  int32 runs = 2;
+}
+
+// FoundryWorkflowInsightDay is one UTC day of a window.
+message FoundryWorkflowInsightDay {
+  string date = 1;
+  FoundryWorkflowInsightTotals totals = 2;
+}
+
+// FoundryWorkflowInsightFunnel follows a window's runs: each step counts
+// those of the step before that went on. Started; finished; assessed (a done
+// assessment); used the ontology (at least one call); helped (essential or
+// helpful).
+message FoundryWorkflowInsightFunnel {
+  int32 started = 1;
+  int32 finished = 2;
+  int32 assessed = 3;
+  int32 used = 4;
+  int32 helped = 5;
+}
+
+// FoundryWorkflowInsightIssue is a gap or a suggestion runs' assessments
+// named: its text as the newest named it, its kind (a gap's), how many runs
+// named it, the newest of them and the workflows they are of.
+message FoundryWorkflowInsightIssue {
+  string kind = 1;
+  string text = 2;
+  int32 runs = 3;
+  string last_run_id = 4;
+  string last_workflow_id = 5;
+  google.protobuf.Timestamp last_at = 6;
+  repeated string workflow_ids = 7;
+}
+
+// FoundryWorkflowInsightSegment is the window's totals for one who started
+// runs (principal) or one workflow (workflow_id), with its runs by day and
+// the gap its runs named most (the newest of those named as often).
+message FoundryWorkflowInsightSegment {
+  FoundryPrincipal principal = 1;
+  string workflow_id = 2;
+  FoundryWorkflowInsightTotals totals = 3;
+  repeated int32 daily_runs = 4;
+  google.protobuf.Timestamp last_run_at = 5;
+  string top_gap = 6;
 }
 
 // FoundryWorkflowRunCounts counts what a run recorded, at most 1,000 calls.
 message FoundryWorkflowRunCounts {
-  int32 accesses  = 1;
-  int32 reads     = 2;
+  int32 accesses = 1;
+  int32 reads = 2;
   int32 questions = 3;
-  int32 sends     = 4;
-  int32 uploads   = 5;
+  int32 sends = 4;
+  int32 uploads = 5;
   // The pieces its sends carried.
   int32 pieces = 6;
   // Reads whose result it left out (FoundryWorkflowRead.result_omitted).
@@ -2082,17 +2234,17 @@ message FoundryWorkflowAccess {
   int32 seq = 1;
   google.protobuf.Timestamp at = 2;
   oneof access {
-    FoundryWorkflowRead     read     = 3;
+    FoundryWorkflowRead read = 3;
     FoundryWorkflowQuestion question = 4;
-    FoundryWorkflowSend     send     = 5;
-    FoundryWorkflowUpload   upload   = 6;
+    FoundryWorkflowSend send = 5;
+    FoundryWorkflowUpload upload = 6;
   }
 }
 
 // FoundryWorkflowRead is a read of a load (ReadFoundryGraph) and what it
 // returned.
 message FoundryWorkflowRead {
-  string load_id    = 1;
+  string load_id = 1;
   // The reads asked, as sent.
   string reads_json = 2;
   // The result returned (read_result.json); empty when left out.
@@ -2105,7 +2257,7 @@ message FoundryWorkflowRead {
 // FoundryWorkflowQuestion is a question asked of a load
 // (AskFoundryQuestion). Its answer and steps are the question's own.
 message FoundryWorkflowQuestion {
-  string load_id     = 1;
+  string load_id = 1;
   string question_id = 2;
 }
 
@@ -2121,5 +2273,5 @@ message FoundryWorkflowSend {
 // (CompleteFoundryOntologyDocumentUpload).
 message FoundryWorkflowUpload {
   string document_id = 1;
-  string set_id      = 2;
+  string set_id = 2;
 }

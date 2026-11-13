@@ -76,6 +76,26 @@ func (u Unimplemented) DeleteFoundryReviewDecision(context.Context, string, stri
 	u.unimplemented("DeleteFoundryReviewDecision")
 	return nil
 }
+func (u Unimplemented) GetFoundryReviewDecision(context.Context, string, string) (*model.FoundryReviewDecision, error) {
+	u.unimplemented("GetFoundryReviewDecision")
+	return nil, nil
+}
+func (u Unimplemented) GetFoundryReviewLabel(context.Context, string, string) (*model.FoundryReviewLabel, error) {
+	u.unimplemented("GetFoundryReviewLabel")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryReviewLabels(context.Context, string, string, int) ([]*model.FoundryReviewLabel, error) {
+	u.unimplemented("ListFoundryReviewLabels")
+	return nil, nil
+}
+func (u Unimplemented) FoundryReviewLabelsOf(context.Context, string, string, model.FoundryClaimSpan, *string, *string) ([]*model.FoundryReviewLabel, error) {
+	u.unimplemented("FoundryReviewLabelsOf")
+	return nil, nil
+}
+func (u Unimplemented) SaveFoundryReviewLabel(context.Context, string, *model.FoundryReviewLabel) error {
+	u.unimplemented("SaveFoundryReviewLabel")
+	return nil
+}
 func (u Unimplemented) GetConnector(context.Context, string, string) (*model.Connector, error) {
 	u.unimplemented("GetConnector")
 	return nil, nil
@@ -968,6 +988,16 @@ func (u Unimplemented) DeleteFoundryAccessPrincipal(context.Context, string, acc
 	return nil
 }
 
+func (u Unimplemented) ListFoundryAccessWorkflowsOff(context.Context, string, []access.Principal) ([]access.Principal, error) {
+	u.unimplemented("ListFoundryAccessWorkflowsOff")
+	return nil, nil
+}
+
+func (u Unimplemented) SetFoundryAccessWorkflows(context.Context, string, access.Principal, bool, *string) error {
+	u.unimplemented("SetFoundryAccessWorkflows")
+	return nil
+}
+
 func (u Unimplemented) FoundryVersionInputs(context.Context, string, string, string) (access.Inputs, error) {
 	u.unimplemented("FoundryVersionInputs")
 	return access.Inputs{}, nil
@@ -1106,9 +1136,20 @@ func (u Unimplemented) GetFoundryWorkflowRunByClientToken(context.Context, strin
 	u.unimplemented("GetFoundryWorkflowRunByClientToken")
 	return nil, nil
 }
-func (u Unimplemented) ListFoundryWorkflowRuns(context.Context, string, string, int) ([]*model.FoundryWorkflowRun, string, error) {
+func (u Unimplemented) ListFoundryWorkflowRuns(context.Context, string, *access.Principal, string, int) ([]*model.FoundryWorkflowRun, string, error) {
 	u.unimplemented("ListFoundryWorkflowRuns")
 	return nil, "", nil
+}
+
+func (u Unimplemented) TallyFoundryWorkflowRuns(context.Context, []string, access.Principal) (map[string]model.FoundryWorkflowRunTally, error) {
+	u.unimplemented("TallyFoundryWorkflowRuns")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryWorkflowInsightRuns(context.Context, string, string, *access.Principal, time.Time, time.Time,
+	int) ([]model.FoundryWorkflowInsightRun, error) {
+	u.unimplemented("ListFoundryWorkflowInsightRuns")
+	return nil, nil
 }
 func (u Unimplemented) ListFoundryWorkflowRunAccesses(context.Context, string, int32, int) ([]*model.FoundryWorkflowAccess, bool, error) {
 	u.unimplemented("ListFoundryWorkflowRunAccesses")

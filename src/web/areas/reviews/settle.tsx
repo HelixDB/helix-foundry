@@ -6,6 +6,7 @@ import type {
   FoundryReviewChoice,
   FoundryReviewDecision,
   ReviewDecision,
+  ReviewDrawn,
 } from "../../../shared/wfe";
 import { Button, ButtonLink, Select } from "../../kit";
 import { paths } from "../../paths";
@@ -26,6 +27,7 @@ import {
   isUndoableLink,
   isWeakLink,
   loadRead,
+  rejectionOf,
   matchesReview,
   propValueText,
   refusalText,
@@ -193,19 +195,25 @@ function ClaimWritten({
  * sends the load its decisions, the card says so, and the value shows
  * wherever the page reads it, with no reload. A held claim can be rejected
  * instead: that only saves the person's word, and the page that lists the
- * card leaves it out from then on (`unrejected`).
+ * card leaves it out from then on (`unrejected`). On the review queue each
+ * decision says how its card was drawn (`drawn`), and the queue hears of it
+ * once it is saved (`onSettled`).
  */
 export function SettleReview({
   review,
   load,
   link,
   naming,
+  drawn,
+  onSettled,
 }: {
   review: Settleable & { reason: string };
   load?: FoundryLoad;
   link: (path: string) => string;
   // The rules of the page's version: which links hold one value.
   naming: Naming;
+  drawn?: ReviewDrawn;
+  onSettled?: () => void;
 }) {
   const { id: ws, role } = useWorkspace();
   const { id: o, ontology } = useOntology();
@@ -302,15 +310,20 @@ export function SettleReview({
   // being written or written: its job may have sent it. Neither until the
   // saved decisions are read: one may be a rejection of this claim, which
   // an approval would replace, or the approval it has.
+  // A rejection saved: pages that list the claim leave it out, but the
+  // review queue keeps a card decided on it in place, saying so.
+  const rejected = !!held && !!rejectionOf(query.data ?? [], held);
   const approves =
       isRelease &&
       !!query.data &&
+      !rejected &&
       !fixed &&
       !s.differs &&
       (!saved || moved || (!unsettled.length && (unread || missed || retry))),
     rejects =
       isRelease &&
       !!query.data &&
+      !rejected &&
       !fixed &&
       applied?.status !== "pending" &&
       applied?.status !== "written";
@@ -335,7 +348,11 @@ export function SettleReview({
     setPending(true);
     setError("");
     try {
-      await settleReview(ws, o, s.reviewId, { decision: choice });
+      await settleReview(ws, o, s.reviewId, {
+        decision: choice,
+        ...(drawn ? { drawn } : {}),
+      });
+      onSettled?.();
       await qc.invalidateQueries({
         queryKey: reviewQueries.list(ws, o).queryKey,
       });
@@ -398,6 +415,12 @@ export function SettleReview({
       )}
       {!editable && (
         <p className="on-muted">Open the current load to settle this review.</p>
+      )}
+      {rejected && (
+        <p role="status">
+          Rejected: nothing is written, and it stays out of Needs review and the
+          review queue until the decision is removed.
+        </p>
       )}
       {moved && (
         <p role="status">

@@ -117,6 +117,7 @@ To run Foundry on your own machine instead, with no account: \`git clone ${SOURC
 Reading an ontology:
 
 - \`helix_foundry_list_ontologies\`: the workspace’s ontologies, each with its current version and load.
+- \`helix_foundry_get_context\`: what one holds before you ask it: its schema (types with their properties, keys and identifiers, links, rules and constraints) and up to four example questions, the ones Foundry’s Analyst suggests.
 - \`helix_foundry_ask\`, then \`helix_foundry_get_question\` until it is done: a question in plain words, answered from one load, citing the entities, facts, rows and document quotes it read.
 - \`helix_foundry_read_guide\`, then \`helix_foundry_read_graph\`: structured reads of a load with its version’s rules applied: typed queries over its entities and facts, the evidence behind a fact, why a derived fact holds, and rule breaks, 1 to 20 a call.
 - \`helix_foundry_get_ontology\` and \`helix_foundry_get_version\`: its versions, loads and definition, its types, links and rules.

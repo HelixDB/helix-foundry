@@ -39,6 +39,8 @@ export const mock = {
     }[]
   > => (await (await fetch(`${MOCK}/__mock/reminders`)).json()).reminders,
   configure: (config: {
+    // Seeds Customer contracts' demo workflows and 45 days of their runs.
+    workflowDemo?: boolean;
     // New reminders the door takes an hour (300).
     remindersPerHour?: number;
     remindersPerClientPerHour?: number;
@@ -124,6 +126,7 @@ export const mock = {
     // Acme is entitled to directory sync (SSO) with nothing connected yet;
     // what its directory reports; how long a sync asked for runs.
     directoryEntitled?: boolean;
+    directorySettingUp?: boolean;
     directoryIssues?: { kind: string; displayName?: string; email?: string }[];
     directorySyncMs?: number;
     // People enrichment: a batch of lookups (and the wait for a slot), and

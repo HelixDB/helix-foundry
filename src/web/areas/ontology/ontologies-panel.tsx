@@ -45,7 +45,7 @@ const DOCUMENTS_PAGE = /^\/ontology\/([^/]+)\/documents(?:\/([^/]+))?\/?$/;
 const LONG_LIST = 8;
 
 export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
-  const { id: ws, role, grantee, partial } = useWorkspace(),
+  const { id: ws, role, grantee, partial, workflows } = useWorkspace(),
     { pathname } = useLocation(),
     manage = canManage(role);
   const match = ONTOLOGY_PAGE.exec(pathname),
@@ -82,7 +82,8 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
   // is read, the list's page, with the documents as a file system under it;
   // then Suggestions, what audits of its current load found it lacks, where
   // this Foundry audits loads; then Workflows, its agents' tasks and what
-  // their runs read and wrote, for anyone but a grantee. The Explorer and
+  // their runs read and wrote, for anyone but a grantee without the Workflows
+  // permission. The Explorer and
   // Ask, which read a load, are sections of their own.
   const overview: NavChild = {
     to: paths.ontology(open),
@@ -98,6 +99,7 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
     onDocuments = !!documents && open !== "",
     onDocumentsList = onDocuments && !documentId,
     onSuggestions = open !== "" && pathname === paths.suggestions(open),
+    onReviewQueue = open !== "" && pathname === paths.reviewQueue(open),
     onWorkflows =
       open !== "" &&
       (pathname === paths.workflows(open) ||
@@ -210,6 +212,21 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                         />
                       </li>
                     )}
+                    {!grantee && (
+                      <li>
+                        <Link
+                          to={paths.reviewQueue(open)}
+                          onClick={onNavigate}
+                          className={cx(
+                            "hf-subnav-link",
+                            onReviewQueue && "is-active",
+                          )}
+                          aria-current={onReviewQueue ? "page" : undefined}
+                        >
+                          <span>Review queue</span>
+                        </Link>
+                      </li>
+                    )}
                     {!grantee && heal.data?.enabled && (
                       <li>
                         <Link
@@ -225,7 +242,7 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                         </Link>
                       </li>
                     )}
-                    {!grantee && (
+                    {workflows && (
                       <li>
                         <Link
                           to={paths.workflows(open)}

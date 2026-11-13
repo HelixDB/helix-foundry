@@ -75,6 +75,7 @@ async function render(
             grantee: false,
             granted: [],
             partial: [],
+            workflows: true,
             notify: () => {},
           },
         },

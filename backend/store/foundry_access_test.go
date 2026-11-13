@@ -115,6 +115,53 @@ func TestFoundryAccessGrants(t *testing.T) {
 // the sets its documents are in now, the documents of the prop decisions it
 // copied, and its People enrichment step; a load made before grants could
 // cover one holds what nothing covers.
+// TestFoundryAccessWorkflowsOff: the Workflows permission is on for every
+// principal until turned off, off again is no change, and deleting a
+// principal (a revoked key, a deleted team) takes it with its grants.
+func TestFoundryAccessWorkflowsOff(t *testing.T) {
+	ctx := context.Background()
+	f := newFoundryFixture(t, "AWO")
+	ws := f.ontology.WorkspaceID
+	agent := access.Principal{Kind: access.PrincipalServiceCredential, ID: id26("SC-AWO")}
+	team := access.Principal{Kind: access.PrincipalTeam, ID: id26("TEAM-AWO")}
+	user := access.Principal{Kind: access.PrincipalUser, ID: id26("U-AWO")}
+	by := id26("U-AWO-ADMIN")
+
+	off, err := f.db.ListFoundryAccessWorkflowsOff(ctx, ws, nil)
+	require.NoError(t, err)
+	assert.Empty(t, off)
+	require.NoError(t, f.db.SetFoundryAccessWorkflows(ctx, ws, agent, false, &by))
+	require.NoError(t, f.db.SetFoundryAccessWorkflows(ctx, ws, agent, false, nil))
+	require.NoError(t, f.db.SetFoundryAccessWorkflows(ctx, ws, team, false, nil))
+	off, err = f.db.ListFoundryAccessWorkflowsOff(ctx, ws, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []access.Principal{agent, team}, off)
+	off, err = f.db.ListFoundryAccessWorkflowsOff(ctx, ws, []access.Principal{user, team})
+	require.NoError(t, err)
+	assert.Equal(t, []access.Principal{team}, off)
+	off, err = f.db.ListFoundryAccessWorkflowsOff(ctx, id26("AWO-OTHER"), nil)
+	require.NoError(t, err)
+	assert.Empty(t, off, "another workspace's")
+
+	// Turning it off restricts no one, and leaves grants as they were.
+	restricted, err := f.db.ListFoundryRestrictedMembers(ctx, ws)
+	require.NoError(t, err)
+	assert.Empty(t, restricted)
+
+	require.NoError(t, f.db.SetFoundryAccessWorkflows(ctx, ws, agent, true, nil))
+	require.NoError(t, f.db.SetFoundryAccessWorkflows(ctx, ws, agent, true, nil))
+	off, err = f.db.ListFoundryAccessWorkflowsOff(ctx, ws, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []access.Principal{team}, off)
+
+	require.NoError(t, f.db.DeleteFoundryAccessPrincipal(ctx, ws, team))
+	off, err = f.db.ListFoundryAccessWorkflowsOff(ctx, ws, nil)
+	require.NoError(t, err)
+	assert.Empty(t, off)
+
+	assert.Error(t, f.db.SetFoundryAccessWorkflows(ctx, ws, access.Principal{Kind: access.PrincipalUser}, false, nil), "a principal without an id")
+}
+
 func TestFoundryCurrentLoadInputs(t *testing.T) {
 	ctx := context.Background()
 	f := newFoundryFixture(t, "ACL")
