@@ -9086,8 +9086,13 @@ type FoundryDecisionApplied struct {
 	// wrote), refused (what it wrote stays: differs, quotes an engine before
 	// 4.16.0 wrote of several claims of the link keep nothing to tell them
 	// apart; too_large; or the backend's document_gone, document_unread,
-	// document_failed, not_replayed, unanswered), or unconfirmed (its job
-	// failed; the end of the ontology's next job sends it again).
+	// unanswered), or unconfirmed: no word came, so whether it was taken back
+	// is not known. With job_failed its job failed, and the end of the
+	// ontology's next job sends it again; with document_failed the engine
+	// failed its document, and the next approval or take-back in that
+	// document sends it again; with not_replayed its document's saved reading
+	// can't be reused, so no word can come while this load is current, and
+	// the next load won't write the approval.
 	Status string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	// Why a refused claim stays held. The engine's reasons: unresolved (a name
 	// in it is matched to no one record: settle that name), legal_form (a name
@@ -9109,8 +9114,9 @@ type FoundryDecisionApplied struct {
 	// new load applies it), document_gone, document_unread (the load holds
 	// the document but no extraction of it to replay), document_failed,
 	// too_large (the document with its decisions is more than one request to
-	// the engine takes), unanswered. With unconfirmed it is job_failed. A
-	// reader shows a reason it doesn't know as it is.
+	// the engine takes), unanswered. With unconfirmed it is job_failed, or, of
+	// a withdraw, document_failed or not_replayed. A reader shows a reason it
+	// doesn't know as it is.
 	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 	// When a job said so; unset while pending.
 	At *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=at,proto3" json:"at,omitempty"`
