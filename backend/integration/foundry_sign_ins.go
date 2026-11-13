@@ -67,7 +67,7 @@ var signInSettings = map[string]func(FoundryConnectInput) *foundryv1.ConnectorCo
 }
 
 type GetFoundrySignInInput struct {
-	WorkspaceID string `json:"workspace_id" jsonschema:"Helix workspace identifier."`
+	WorkspaceID string `json:"workspace_id,omitempty" jsonschema:"Helix workspace identifier. May be empty when the caller has only one workspace (a service key always does)."`
 	SignInID    string `json:"sign_in_id" jsonschema:"The sign-in's id, as helix_foundry_connect returned it."`
 	Wait        bool   `json:"wait,omitempty" jsonschema:"Wait up to 25 s while it is pending, authorizing or finishing, then return it either way; call again until done."`
 }
@@ -241,9 +241,9 @@ func signInNext(signIn *foundryv1.ConnectorSignIn, display string, out GetFoundr
 	case foundryv1.ConnectorSignInStatus_CONNECTOR_SIGN_IN_STATUS_FINISHING:
 		next = "Foundry is finishing the sign-in: call again with wait."
 	case foundryv1.ConnectorSignInStatus_CONNECTOR_SIGN_IN_STATUS_CONNECTED:
-		next = display + " is connected and syncs now: follow its first sync with helix_foundry_list_syncs, then helix_foundry_get_sync with wait."
+		next = display + " is connected and syncs now: once " + toolFoundryListConnectors + " shows its last_sync, follow it with " + toolFoundryGetSync + " with wait."
 		if out.Connector != nil && out.Connector.LastSync != nil {
-			next = display + " is connected: follow its sync with helix_foundry_get_sync (connector.last_sync.id) with wait."
+			next = display + " is connected: follow its sync with " + toolFoundryGetSync + " (connector.last_sync.id) with wait."
 		}
 		if signIn.GetIdentityChanged() {
 			next += " It now reads with a different " + display + " account than before; tell the user."

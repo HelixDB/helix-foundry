@@ -36,12 +36,17 @@ const (
 // None of its callbacks may trust actor fields from a client's request.
 type Identity struct {
 	User, Agent, ServiceKey bool
-	WorkspaceID             string
-	EventSource             *EventSourceIdentity
-	HasPermission           func(Permission) bool
-	Allows                  func(workspaceID, projectID string, grant Grant) bool
-	Authorize               func(context.Context, any, Grant, ...string) error
-	WithScope               func(context.Context, string, bool) context.Context
+	// WorkspaceID is a service key's own Workspace, which an empty workspace_id names.
+	WorkspaceID string
+	// OnlyWorkspace is, for a user, the Workspace an empty workspace_id names: the one they
+	// belong to, read when a call leaves workspace_id empty, so a Workspace made since the
+	// host last read their memberships counts; empty for a user of several. Nil names none.
+	OnlyWorkspace func(context.Context) string
+	EventSource   *EventSourceIdentity
+	HasPermission func(Permission) bool
+	Allows        func(workspaceID, projectID string, grant Grant) bool
+	Authorize     func(context.Context, any, Grant, ...string) error
+	WithScope     func(context.Context, string, bool) context.Context
 	// FoundryGrants says source grants give it something, though it reads no database: it
 	// discovers the read tools, and each call is decided as it is made.
 	FoundryGrants bool

@@ -35,8 +35,8 @@ import (
 // connector and generation per ontology, the hourly generation cap, the load budget, and the
 // current version's compare-and-set.
 const (
-	toolPrepareFoundry = "helix_prepare_foundry_operation"
-	toolExecuteFoundry = "helix_execute_foundry_operation"
+	toolPrepareFoundry = "helix_foundry_prepare_operation"
+	toolExecuteFoundry = "helix_foundry_execute_operation"
 	// toolFoundryCompleteUpload ends the upload upload_document started. It is not confirmed on
 	// its own: it only checks the bytes the confirmed upload declared, and completing twice is
 	// no error.
@@ -135,8 +135,8 @@ type ExecuteFoundryInput struct {
 	Operation         string         `json:"operation" jsonschema:"The operation prepared."`
 	Target            string         `json:"target" jsonschema:"The target prepared."`
 	Payload           map[string]any `json:"payload" jsonschema:"The payload prepared, unchanged."`
-	ConfirmationID    string         `json:"confirmation_id"`
-	ConfirmationToken string         `json:"confirmation_token"`
+	ConfirmationID    string         `json:"confirmation_id" jsonschema:"The confirmation_id helix_foundry_prepare_operation returned."`
+	ConfirmationToken string         `json:"confirmation_token" jsonschema:"The confirmation_token helix_foundry_prepare_operation returned."`
 }
 
 type FoundryOperationOutput struct {
@@ -194,13 +194,19 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 	case !identity.HasPermission(PermissionWorkspaceConnectorsManage) && !identity.HasPermission(PermissionWorkspaceOntologyManage):
 		return
 	}
-	prepare := queryTool(toolPrepareFoundry,
-		"Validate a Foundry action and prepare a five-minute, one-time confirmation for exactly that action. A create_ontology on workspace:<id> makes the ontology's database first, and its project when new.", false)
-	prepare.InputSchema = foundryOperationSchema(s.Events)
-	addFoundryTool(s, server, identity, prepare, s.PrepareFoundryOperation)
-	addFoundryTool(s, server, identity, queryTool(toolExecuteFoundry,
-		"Consume a matching one-time confirmation, then run exactly one Foundry action, without retry.", false), s.ExecuteFoundryOperation)
-	no := false
+	no, yes := false, true
+	// Preparing changes nothing: only executing is destructive.
+	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
+		Description: "Check a Foundry action and return a one-time confirmation for exactly that action, valid for five minutes; " +
+			toolExecuteFoundry + " runs it. Preparing changes nothing. A create_ontology on workspace:<id> makes the ontology's database first, and its project when new.",
+		InputSchema: foundryOperationSchema(s.Events),
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
+	}, s.PrepareFoundryOperation)
+	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolExecuteFoundry,
+		Description: "Run the Foundry action " + toolPrepareFoundry + " prepared: the same operation, target and payload, with its confirmation. A confirmation runs once, and the action is never retried.",
+		InputSchema: executeOperationSchema(s.Events),
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &yes, OpenWorldHint: &no},
+	}, s.ExecuteFoundryOperation)
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryCompleteUpload,
 		Description: "After an upload_document action, once its bytes are PUT to the upload URL: check them and add the document to its document set, which every ontology whose current version reads the set then reads (reads says how). Completing twice is no error.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},

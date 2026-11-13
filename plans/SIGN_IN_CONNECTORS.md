@@ -123,7 +123,7 @@ sequenceDiagram
 
 **Starting a sign-in needs no confirmation.**
 
-- MCP writes go through `helix_prepare_foundry_operation`/`helix_execute_foundry_operation`, whose confirmation is "not human approval" (`plans/FOUNDRY_MCP.md:215-219`, hyperscale).
+- MCP writes go through `helix_foundry_prepare_operation`/`helix_foundry_execute_operation`, whose confirmation is "not human approval" (`plans/FOUNDRY_MCP.md:215-219`, hyperscale).
 - A sign-in writes nothing that matters until the user clicks Authorize. The form shows the workspace, name and settings, and never submits on load. So `helix_foundry_connect` starts one with no confirmation, annotated as a write.
 
 **A GitHub App, not an OAuth app.**

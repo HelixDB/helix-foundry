@@ -192,3 +192,18 @@ func TestIntegrationHandlerRefusalsAreTheContractsError(t *testing.T) {
 
 	assertRefusal(t, call("GET", "/v1/ontologies/bad!id/questions/question-1", token, nil), http.StatusBadRequest, "invalid_arguments")
 }
+
+// The owner may leave workspace_id empty while the install has one live workspace, read afresh on
+// each call: none, or a second one, and it must be named.
+func TestOnlyWorkspaceIsTheInstallsOne(t *testing.T) {
+	db := freshDB(t)
+	ctx := context.Background()
+	require.NoError(t, Migrate(ctx, db))
+	dir := directory.NewStore(db)
+	only := onlyWorkspace(dir)
+	assert.Empty(t, only(ctx), "no workspace yet")
+	require.NoError(t, dir.CreateWorkspace(ctx, directory.Workspace{ID: "workspace-1", Slug: "one", DisplayName: "One", Region: "local"}))
+	assert.Equal(t, "workspace-1", only(ctx))
+	require.NoError(t, dir.CreateWorkspace(ctx, directory.Workspace{ID: "workspace-2", Slug: "two", DisplayName: "Two", Region: "local"}))
+	assert.Empty(t, only(ctx), "two workspaces: name one")
+}

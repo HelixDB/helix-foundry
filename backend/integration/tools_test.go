@@ -60,8 +60,8 @@ func TestToolsNameAPISourcesOnlyOnAHostWithThem(t *testing.T) {
 	for _, word := range words {
 		assert.NotContains(t, local, word)
 	}
-	assert.Contains(t, local, "One of 13 operations: create_ontology, add_sample_data, sync_connector,")
-	assert.Contains(t, local, "generate_ontology: {goal, connector_ids, document_set_ids, no_connectors, sample}")
+	assert.Contains(t, local, `"enum":["create_ontology","add_sample_data","sync_connector",`)
+	assert.Contains(t, local, "- generate_ontology: {goal, connector_ids, document_set_ids, no_connectors, sample}")
 	assert.Contains(t, local, "or s3.")
 	hosted := listed(&Service{FoundryURL: "https://foundry.example", Events: true})
 	for _, word := range words {
@@ -72,16 +72,18 @@ func TestToolsNameAPISourcesOnlyOnAHostWithThem(t *testing.T) {
 		assert.NotContains(t, local, word)
 		assert.Contains(t, hosted, word)
 	}
-	assert.Contains(t, hosted, "One of 14 operations: create_ontology, create_event_source, add_sample_data, sync_connector,")
+	assert.Contains(t, hosted, `"enum":["create_ontology","create_event_source","add_sample_data","sync_connector",`)
 }
 
 // Clients and MCP directories show a tool's title beside its name: every Foundry tool has one,
 // wherever it is offered.
 func TestEveryToolHasATitle(t *testing.T) {
 	var names []string
+	// The workflow tools need the backend's workflow RPCs, which listing them never calls.
+	workflows := struct{ FoundryWorkflowBackendAPI }{}
 	for _, s := range []*Service{
-		{FoundryURL: "http://localhost:3000"},
-		{FoundryURL: "https://foundry.example", Events: true, SignIn: true},
+		{FoundryURL: "http://localhost:3000", Workflows: workflows},
+		{FoundryURL: "https://foundry.example", Events: true, SignIn: true, Workflows: workflows},
 	} {
 		listed, err := connect(t, s, everyTool()).ListTools(context.Background(), nil)
 		require.NoError(t, err)
@@ -117,11 +119,11 @@ func TestEntryToolsSayWhatTheyAreFor(t *testing.T) {
 	} {
 		assert.True(t, strings.HasPrefix(tools[name], lead), name)
 	}
-	// What each did before follows unchanged.
+	// Then what each takes, in one lead rather than two.
 	assert.Contains(t, tools[toolFoundryListOntologies], "List the Foundry ontologies of one workspace, with their current version and load.")
-	assert.Contains(t, tools[toolFoundryReadGraph], "Read a load of a Foundry ontology's graph, with its version's rules applied: 1 to 20 reads in one call.")
-	assert.Contains(t, tools[toolFoundryAsk], "Ask a question of a Foundry ontology's load in plain language.")
-	assert.Contains(t, tools[toolFoundrySendPieces], "Send pieces of data, JSON objects with an id, to a Foundry API source (a connector of kind events).")
+	assert.Contains(t, tools[toolFoundryReadGraph], "read from a load with its version's rules applied. 1 to 20 reads in one call")
+	assert.Contains(t, tools[toolFoundryAsk], "use it, in plain language, for questions about the user's customers")
+	assert.Contains(t, tools[toolFoundrySendPieces], "sent as JSON pieces (objects with an id) to a Foundry API source (a connector of kind events)")
 	// A send token sees the send tool alone, so its description names no other.
 	for name := range tools {
 		if name != toolFoundrySendPieces {
@@ -982,4 +984,105 @@ func mustJSON(t *testing.T, v any) string {
 	raw, err := json.Marshal(v)
 	require.NoError(t, err)
 	return string(raw)
+}
+
+// An empty workspace_id is the caller's only workspace, a user's as a key's, read only when a call
+// leaves it empty; a user of several is told to name one.
+func TestAnEmptyWorkspaceIsTheCallersOnlyOne(t *testing.T) {
+	for name, only := range map[string]string{"one workspace": "workspace-1", "several": ""} {
+		t.Run(name, func(t *testing.T) {
+			var asked string
+			reads := 0
+			identity := &Identity{User: true, HasPermission: func(Permission) bool { return true },
+				OnlyWorkspace: func(context.Context) string { reads++; return only },
+				Authorize: func(_ context.Context, req any, _ Grant, _ ...string) error {
+					asked = req.(*foundryv1.ListConnectorsRequest).GetWorkspaceId()
+					return nil
+				}}
+			client := connect(t, &Service{Foundry: &connectorsBackend{}}, identity)
+			result, err := client.CallTool(context.Background(), &mcp.CallToolParams{Name: toolFoundryListConnectors, Arguments: map[string]any{}})
+			require.NoError(t, err)
+			assert.Equal(t, 1, reads)
+			if only == "" {
+				require.True(t, result.IsError)
+				assert.Equal(t, errWorkspaceRequired.Error(), result.Content[0].(*mcp.TextContent).Text)
+				assert.Empty(t, asked, "nothing is authorized or asked")
+				return
+			}
+			require.False(t, result.IsError)
+			assert.Equal(t, only, asked)
+
+			// A workspace the call names is used as it is, without reading the memberships.
+			_, err = client.CallTool(context.Background(), &mcp.CallToolParams{Name: toolFoundryListConnectors,
+				Arguments: map[string]any{"workspace_id": "workspace-2"}})
+			require.NoError(t, err)
+			assert.Equal(t, "workspace-2", asked)
+			assert.Equal(t, 1, reads)
+		})
+	}
+	// A key's own workspace comes before any membership read.
+	key := &Identity{ServiceKey: true, WorkspaceID: "workspace-key", OnlyWorkspace: func(context.Context) string { panic("a key has no memberships") }}
+	assert.Equal(t, "workspace-key", key.onlyWorkspace(context.Background()))
+	assert.Empty(t, (&Identity{User: true}).onlyWorkspace(context.Background()), "a host that names none")
+}
+
+// Preparing an action changes nothing, so only executing it is destructive: a client that asks
+// before a destructive tool asks once.
+func TestOnlyExecutingAnActionIsDestructive(t *testing.T) {
+	listed, err := connect(t, &Service{FoundryURL: "https://foundry.example", Events: true}, everyTool()).ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	annotations := map[string]*mcp.ToolAnnotations{}
+	for _, tool := range listed.Tools {
+		annotations[tool.Name] = tool.Annotations
+	}
+	prepare, execute := annotations[toolPrepareFoundry], annotations[toolExecuteFoundry]
+	require.NotNil(t, prepare)
+	require.NotNil(t, execute)
+	assert.False(t, prepare.ReadOnlyHint, "it stores a confirmation")
+	assert.False(t, *prepare.DestructiveHint)
+	assert.True(t, *execute.DestructiveHint)
+}
+
+// A required input is never null; an optional one may be, as some clients send for a field they
+// leave unset. read_graph's reads say how many it takes.
+func TestRequiredInputsTakeNoNull(t *testing.T) {
+	s := &Service{FoundryURL: "https://foundry.example", Events: true, SignIn: true, Workflows: struct{ FoundryWorkflowBackendAPI }{}}
+	listed, err := connect(t, s, everyTool()).ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	nullable := map[string]bool{}
+	for _, tool := range listed.Tools {
+		var schema struct {
+			Required   []string                  `json:"required"`
+			Properties map[string]map[string]any `json:"properties"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(mustJSON(t, tool.InputSchema)), &schema))
+		for _, name := range schema.Required {
+			assert.NotContains(t, mustJSON(t, schema.Properties[name]["type"]), "null", tool.Name+"."+name)
+		}
+		for name, property := range schema.Properties {
+			if strings.Contains(mustJSON(t, property["type"]), "null") {
+				nullable[tool.Name+"."+name] = true
+			}
+		}
+		if tool.Name == toolFoundryReadGraph {
+			reads := tool.InputSchema.(map[string]any)["properties"].(map[string]any)["reads"].(map[string]any)
+			assert.Equal(t, "array", reads["type"])
+			assert.EqualValues(t, 1, reads["minItems"])
+			assert.EqualValues(t, ontologyagent.MaxReads, reads["maxItems"])
+		}
+	}
+	assert.True(t, nullable[toolFoundryConnect+".repos"], "an optional array still takes null")
+	assert.True(t, nullable[toolFoundryAsk+".focus"], "an optional object still takes null")
+}
+
+// Each input that names a workspace hands its workspace_id field to the default, whatever tool
+// takes it.
+func TestEveryWorkspaceInputDefaultsItsWorkspaceID(t *testing.T) {
+	for _, in := range []WorkspaceInput{
+		&ListFoundryOntologiesInput{}, &OntologyInput{}, &FoundryWorkspaceInput{},
+		&GetFoundrySyncInput{}, &FoundryConnectInput{}, &GetFoundrySignInInput{},
+	} {
+		*in.Workspace() = "workspace-1"
+		assert.Contains(t, mustJSON(t, in), `"workspace_id":"workspace-1"`, "%T", in)
+	}
 }

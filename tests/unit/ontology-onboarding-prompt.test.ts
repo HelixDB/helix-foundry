@@ -90,8 +90,8 @@ describe("onboardingPrompt without an ontology", () => {
 
   it("gives the rules for acting through the MCP", () => {
     for (const rule of [
-      "`helix_prepare_foundry_operation`",
-      "`helix_execute_foundry_operation` with the same three",
+      "`helix_foundry_prepare_operation`",
+      "`helix_foundry_execute_operation` with the same three",
       "within 5 minutes",
       "Never retry an execute",
       "Never ask me for credentials",
@@ -227,7 +227,10 @@ describe("onboardingPrompt without a workspace", () => {
     );
     expect(text).toContain("`claude --continue`, `codex resume --last`");
     expect(text).toContain(
-      "Then call `helix_list_workspaces` and use my workspace: the only one, or ask me which. Its `id` is the `<workspace id>` below.",
+      "Then call `helix_list_workspaces` and use my workspace: the only one, or ask me which. If I want a new one, or it lists none, make it with `helix_create_workspace`",
+    );
+    expect(text).toContain(
+      '`{"name": "<its name>", "client_token": "<a new UUID>"}`), which comes with Foundry’s free Helix plan. Its `id` is the `<workspace id>` below.',
     );
     expect(text).toContain("`identity_not_found`");
   });
@@ -1060,8 +1063,8 @@ describe("local onboarding through MCP", () => {
     expect(text).toContain("http://localhost:8081/mcp");
     expect(text).toContain("FOUNDRY_LOCAL_TOKEN");
     expect(text).toContain("helix_list_workspaces");
-    expect(text).toContain("helix_prepare_foundry_operation");
-    expect(text).toContain("helix_execute_foundry_operation");
+    expect(text).toContain("helix_foundry_prepare_operation");
+    expect(text).toContain("helix_foundry_execute_operation");
     expect(text).toContain("helix_foundry_complete_document_upload");
     expect(text).toContain("generate_ontology");
     expect(text).toContain("create_load");

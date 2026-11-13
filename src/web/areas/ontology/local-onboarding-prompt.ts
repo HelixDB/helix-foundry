@@ -29,7 +29,7 @@ export function localOnboardingPrompt(input: OnboardingPromptInput): string {
         ]),
     "",
     "## Confirm changes",
-    "For each mutation, call helix_prepare_foundry_operation with operation, target and payload. Explain the change and any model spend, obtain my confirmation, then call helix_execute_foundry_operation with exactly those arguments and the returned confirmation_id and confirmation_token. Confirmations expire after five minutes and can run once. A confirmation that has expired or doesn't match fails with failed_precondition: prepare it again with the same operation, target and payload. If execution's response is lost, or a confirmation is already consumed, read the current state before preparing another operation; consumption alone does not prove execution succeeded.",
+    "For each mutation, call helix_foundry_prepare_operation with operation, target and payload. Explain the change and any model spend, obtain my confirmation, then call helix_foundry_execute_operation with exactly those arguments and the returned confirmation_id and confirmation_token. Confirmations expire after five minutes and can run once. A confirmation that has expired or doesn't match fails with failed_precondition: prepare it again with the same operation, target and payload. If execution's response is lost, or a confirmation is already consumed, read the current state before preparing another operation; consumption alone does not prove execution succeeded.",
     "",
     "## My data",
     ...data.tables,

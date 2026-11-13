@@ -52,7 +52,7 @@ test("local agents discover, create and read through MCP and reach HTTP Ask", as
     (t: { name: string }) => t.name,
   );
   expect(names).toContain("helix_foundry_ask");
-  expect(names).toContain("helix_prepare_foundry_operation");
+  expect(names).toContain("helix_foundry_prepare_operation");
   expect(names).not.toContain("helix_foundry_send_pieces");
   const workspace = (await tool("helix_list_workspaces", {})).workspaces[0];
   expect(workspace.id).toBeTruthy();
@@ -83,19 +83,19 @@ test("local agents discover, create and read through MCP and reach HTTP Ask", as
       },
     },
   };
-  const confirmation = await tool("helix_prepare_foundry_operation", operation);
+  const confirmation = await tool("helix_foundry_prepare_operation", operation);
   const execution = {
     ...operation,
     confirmation_id: confirmation.confirmation_id,
     confirmation_token: confirmation.confirmation_token,
   };
-  const created = await tool("helix_execute_foundry_operation", execution);
+  const created = await tool("helix_foundry_execute_operation", execution);
   const ontologyID = created.result.id;
   expect(ontologyID).toBeTruthy();
   expect(
     (
       await rpc("tools/call", {
-        name: "helix_execute_foundry_operation",
+        name: "helix_foundry_execute_operation",
         arguments: execution,
       })
     ).isError,
@@ -119,9 +119,9 @@ test("local agents discover, create and read through MCP and reach HTTP Ask", as
   // uploads the documents to the store itself.
   const ids = { workspace_id: workspace.id, ontology_id: ontologyID };
   const run = async (op: object) => {
-    const confirmed = await tool("helix_prepare_foundry_operation", op);
+    const confirmed = await tool("helix_foundry_prepare_operation", op);
     return (
-      await tool("helix_execute_foundry_operation", {
+      await tool("helix_foundry_execute_operation", {
         ...op,
         confirmation_id: confirmed.confirmation_id,
         confirmation_token: confirmed.confirmation_token,
@@ -148,9 +148,9 @@ test("local agents discover, create and read through MCP and reach HTTP Ask", as
   if (!process.env.FOUNDRY_STACK_MODELS) {
     // With no model provider an upload can't complete, so it stops there:
     // after connecting acme-db and sending the first document to the store.
-    const confirmed = await tool("helix_prepare_foundry_operation", sample);
+    const confirmed = await tool("helix_foundry_prepare_operation", sample);
     const refused = await rpc("tools/call", {
-      name: "helix_execute_foundry_operation",
+      name: "helix_foundry_execute_operation",
       arguments: {
         ...sample,
         confirmation_id: confirmed.confirmation_id,
