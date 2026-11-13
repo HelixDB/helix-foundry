@@ -872,6 +872,16 @@ describe("an approval taken back from the current load (contract 4.16.0)", () =>
     expect(
       model.takenBack({ status: "refused", reason: "document_gone" }).text,
     ).toContain("its document was deleted");
+    // Every reason the backend gives a document it couldn't send is words.
+    for (const reason of [
+      "document_unread",
+      "document_failed",
+      "not_replayed",
+      "unanswered",
+    ])
+      expect(
+        model.takenBack({ status: "refused", reason }).text,
+      ).not.toContain(reason);
     expect(
       model.takenBack({ status: "refused", reason: "a_later_word" }).text,
     ).toContain("it says why as “a_later_word”.");

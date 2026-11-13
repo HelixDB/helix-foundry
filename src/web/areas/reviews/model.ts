@@ -959,6 +959,25 @@ export function takenBackOf<D extends ReviewDecision>(
 }
 
 /**
+ * Why a load kept what an approval wrote when it was taken back, by the
+ * reason it refused the withdraw: the engine's (`differs`, `too_large`) or
+ * the backend's, for a document it couldn't send.
+ */
+const TAKE_BACK_REFUSED: Record<string, string> = {
+  differs:
+    "an earlier version wrote this sentence’s claims of one link without telling them apart, so it can’t say which to take back",
+  too_large:
+    "its document holds more than one take-back can be matched among, or more than one request to the engine takes",
+  document_gone: "its document was deleted, or is no longer part of this load",
+  document_unread:
+    "this load holds its document but no finished reading of it to send again",
+  document_failed: "the load couldn’t read its document again",
+  not_replayed:
+    "its document’s saved reading couldn’t be reused, as the models or the reading changed since",
+  unanswered: "the engine said nothing of it",
+};
+
+/**
  * What became of an approval a person took back from the current load (a
  * withdraw), from what that load says of it (`applied`): a `label` for its
  * line, and a sentence saying what that means: being taken back while its
@@ -997,13 +1016,8 @@ export function takenBack(applied?: DecisionApplied | null): {
       };
     case "refused": {
       const why =
-        applied.reason === "differs"
-          ? "an earlier version wrote this sentence’s claims of one link without telling them apart, so it can’t say which to take back"
-          : applied.reason === "too_large"
-            ? "its document holds more than one take-back can be matched among"
-            : applied.reason === "document_gone"
-              ? "its document was deleted, or is no longer part of this load"
-              : `it says why as ${applied.reason ? `“${applied.reason}”` : "nothing"}`;
+        TAKE_BACK_REFUSED[applied.reason ?? ""] ??
+        `it says why as ${applied.reason ? `“${applied.reason}”` : "nothing"}`;
       return {
         label: "Approval not taken back",
         text: `This load keeps what it wrote: ${why}. The next load won’t write it.`,
