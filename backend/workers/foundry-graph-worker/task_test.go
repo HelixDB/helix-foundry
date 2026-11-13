@@ -174,7 +174,7 @@ func deleteDone(req string, stream agentv1.Agent_DeleteLoadServer) error {
 		return status.Error(codes.Internal, err.Error())
 	}
 	return deleteEvents(stream, []string{
-		`{"event":"delete_started","contract_version":"4.16.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
+		`{"event":"delete_started","contract_version":"4.17.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
 		`{"event":"deleted","label":"Customer","element":"node","count":1}`, `{"event":"delete_finished"}`,
 	}, `{"status":"done","nodes":1,"edges":2}`)
 }
@@ -254,7 +254,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 			return status.Error(codes.Internal, err.Error())
 		}
 		return ingestEvents(stream, []string{
-			`{"event":"ingest_started","contract_version":"4.16.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.17.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":2}}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"resolve","rows":2}}`,
 			`{"event":"sweep_page","entities":2}`, `{"event":"ingest_finished"}`,
@@ -265,7 +265,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 // extracted ends doc-a ingested with an artifact, doc-b a duplicate of it,
 // doc-c failed retryably and doc-d already held.
 var extracted = []string{
-	`{"event":"extract_started","contract_version":"4.16.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
+	`{"event":"extract_started","contract_version":"4.17.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
 	`{"event":"artifact","doc_id":"doc-a","key":"key_a","json":"{\"sections\":[1]}"}`,
 	documentEvent("doc-a", `{"kind":"ingested"}`, usage),
 	documentEvent("doc-b", `{"kind":"duplicate","of":"doc-a"}`, noUsage),
