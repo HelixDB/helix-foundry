@@ -1085,7 +1085,7 @@ const NAMED_SETS = 6;
  *   { unreadSetIds: ["m"], documents: 3, read: 1, notRead: 2, duplicate: 0, failed: 0, waiting: 0, facts: 4, reviews: 2, unresolved: 1 },
  *   ["Minutes"],
  * );
- * // "1 of 3 documents was read for the names and facts it holds. 2 documents in Minutes are stored and searchable, but no route of this version reads that set, so nothing from them is in the graph: to read them, generate a version whose goal covers them. The document read made 4 fact writes (a fact counts once for each document that states it) and left 2 reviews. 1 name matched no one record: its review is among them. A review settled since stays counted until this load writes the decision."
+ * // "1 of 3 documents was read for the names and facts it holds. 2 documents in Minutes are stored and searchable, but no route of this version reads that set, so nothing from them is in the graph: to read them, generate a version whose goal covers them. The document read made 4 fact writes (a fact counts once for each document that states it) and left 2 reviews. 1 name matched no one record: its review is among them. A review settled since stays counted until this load writes the decision, and a disputed value stays counted once chosen."
  */
 export function loadDocumentsOutcome(
   t: Omit<LoadDocumentTotals, "sets" | "setsRead">,
@@ -1129,10 +1129,12 @@ export function loadDocumentsOutcome(
               ]
             : []),
           // True whether a settled review waits for the next load or is
-          // written to this one at once.
+          // written to this one at once. A value chosen for a property in
+          // dispute settles its review and leaves it: every load lists it
+          // (contract 4.14.0).
           ...(t.reviews
             ? [
-                "A review settled since stays counted until this load writes the decision.",
+                "A review settled since stays counted until this load writes the decision, and a disputed value stays counted once chosen.",
               ]
             : []),
         ]
@@ -1771,14 +1773,15 @@ const phaseLabels: Record<JobPhase, string> = {
 /**
  * What a job does, in words: a load reads the tables then the documents, an
  * extract (queued by an upload or by making a load current) only the
- * documents its load hasn't read, a resend writes the claims a person
- * approved, a delete removes the load.
+ * documents its load hasn't read, a resend applies a person's decisions
+ * (the claims they approved, the values they chose), a delete removes the
+ * load.
  */
 export const kindLabel = (j: GraphJob) =>
   j.kind === "extract"
     ? "New documents"
     : j.kind === "resend"
-      ? "Approved claims"
+      ? "Decisions"
       : j.kind === "delete"
         ? "Delete"
         : "Tables and documents";

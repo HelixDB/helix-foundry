@@ -10,6 +10,7 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/reminder"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -38,14 +39,49 @@ type outboxStore struct {
 	discoverReady      int
 	discoverFollowUps  int
 	lastDiscoverLimits []int
+	// reminders are handed out in order; remindersEnded holds what each
+	// claim of one ended with.
+	reminders            []*model.FoundryReminder
+	remindersEnded       map[string]model.FoundryReminderOutcome
+	reminderClaimErr     error
+	reminderFinishErr    error
+	reminderClaimsBefore int
 }
 
 func newOutbox(pending ...*model.FoundryNotification) *outboxStore {
 	return &outboxStore{
 		pending: pending, ended: map[string]model.FoundryNotificationOutcome{}, deleting: map[string]bool{}, gone: map[string]bool{},
 		ontologies: map[string]*model.FoundryOntology{}, generations: map[string]*model.OntologyGeneration{},
-		jobs: map[string]*model.FoundryGraphJob{}, loads: map[string]*model.FoundryLoad{},
+		jobs: map[string]*model.FoundryGraphJob{}, loads: map[string]*model.FoundryLoad{}, remindersEnded: map[string]model.FoundryReminderOutcome{},
 	}
+}
+
+func (b *outboxStore) ClaimFoundryReminder(_ context.Context, token string, _ time.Duration) (*model.FoundryReminder, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.reminderClaimErr != nil {
+		return nil, b.reminderClaimErr
+	}
+	if len(b.reminders) == 0 {
+		return nil, nil
+	}
+	// The notifications are claimed first: none is left when a reminder is.
+	b.reminderClaimsBefore += len(b.pending)
+	r := b.reminders[0]
+	b.reminders = b.reminders[1:]
+	r.Attempts++
+	r.ClaimToken = &token
+	return r, nil
+}
+
+func (b *outboxStore) FinishFoundryReminder(_ context.Context, id, token string, outcome model.FoundryReminderOutcome) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if token == "" {
+		panic("no token")
+	}
+	b.remindersEnded[id] = outcome
+	return b.reminderFinishErr
 }
 
 func (b *outboxStore) DiscoverFoundryOntologyReady(_ context.Context, since time.Time, limit int, newID func() string) (int, error) {
@@ -182,7 +218,8 @@ func newTask(box *outboxStore, mail *mailbox) *Task {
 	return &Task{
 		cfg: config.NotifyConfig{SiteURL: siteURL, PollInterval: time.Second, FollowUpAfter: 24 * time.Hour, FollowUpWindow: 72 * time.Hour,
 			MaxAttempts: 3},
-		box: box, mail: mail, site: site(siteURL), now: func() time.Time { return now },
+		reminders: config.Defaults().Foundry.Reminders,
+		box:       box, mail: mail, site: site(siteURL), now: func() time.Time { return now },
 	}
 }
 
@@ -236,6 +273,8 @@ func TestNew(t *testing.T) {
 			t.Fatalf("site_url %q: %v", bad, err)
 		}
 	}
+	// foundry.reminders is Config.Validate's, wherever Foundry runs
+	// (config's TestFoundryRemindersValidate).
 	cfg.Foundry.Notify.SiteURL = siteURL
 	task, err := New(Deps{Cfg: &cfg, DB: store.Unimplemented{}, Mail: ada()})
 	if err != nil {
@@ -603,5 +642,153 @@ func TestSentence(t *testing.T) {
 		if got := sentence(in); got != want {
 			t.Errorf("sentence(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// scheduledReminder is address's reminder after sent of its schedule went,
+// due in London.
+func scheduledReminder(id, address string, sent int) *model.FoundryReminder {
+	due := now.Add(-time.Minute)
+	return &model.FoundryReminder{ID: id, Email: address, TimeZone: "Europe/London", Consent: reminder.Consent,
+		Status: model.FoundryReminderScheduled, Sent: sent, NextSendAt: &due}
+}
+
+const home = siteURL + "/?via=email"
+
+// Each reminder of a schedule goes to its address, on its own topic and
+// linking home, and schedules the next a gap after it, at 09:00 on a
+// weekday in its zone, until the last, which says so and ends the schedule.
+func TestFoundryNotifyWorkerReminders(t *testing.T) {
+	london, _ := reminder.Zone("Europe/London")
+	gaps := config.Defaults().Foundry.Reminders.GapDays
+	for i, c := range []struct {
+		subject string
+		text    string
+	}{
+		{"Your reminder to try Helix Foundry", "You asked for a reminder to try Helix Foundry on your computer, so here it is."},
+		{"Still want to try Helix Foundry?", "You asked for a reminder to try Helix Foundry on your computer, and here's another."},
+		{"A reminder to try Helix Foundry", "Here's your reminder to try Helix Foundry on your computer."},
+		{"One last reminder to try Helix Foundry", "Here's the last reminder you asked for to try Helix Foundry on your computer."},
+	} {
+		box := newOutbox()
+		box.reminders = []*model.FoundryReminder{scheduledReminder("r-1", "grace@example.com", i)}
+		mail := ada()
+		newTask(box, mail).tick(context.Background())
+		if len(mail.sent) != 1 {
+			t.Fatalf("reminder %d: sent %d", i+1, len(mail.sent))
+		}
+		sent := mail.sent[0]
+		if sent.to != (ports.Recipient{Email: "grace@example.com"}) || mail.recipients != 0 {
+			t.Fatalf("reminder %d went to %+v, after %d lookups of a person", i+1, sent.to, mail.recipients)
+		}
+		e := sent.email
+		if e.Subject != c.subject || e.Topic != ports.TopicFoundryReminder || !strings.HasPrefix(e.Text, "Hi,\n\n"+c.text+"\n\n") {
+			t.Fatalf("reminder %d: subject %q, topic %q, text:\n%s", i+1, e.Subject, e.Topic, e.Text)
+		}
+		if !strings.Contains(e.Text, " "+home+"\n") || !strings.Contains(e.HTML, `href="`+siteURL+`/?via=email"`) {
+			t.Fatalf("reminder %d links no home:\n%s\n%s", i+1, e.Text, e.HTML)
+		}
+		if !strings.HasSuffix(e.Text, "If you get stuck, reply to this email and I'll help.\n\nXav\nHelix Foundry\n") {
+			t.Fatalf("reminder %d's close:\n%s", i+1, e.Text)
+		}
+		last := i == len(gaps)
+		if strings.Contains(e.Text, "I won't send another reminder.") != last {
+			t.Fatalf("reminder %d says it is the last: %v", i+1, !last)
+		}
+		got, ok := box.remindersEnded["r-1"].(model.FoundryReminderSent)
+		if !ok {
+			t.Fatalf("reminder %d ended %#v", i+1, box.remindersEnded["r-1"])
+		}
+		switch {
+		case last && got.Next != nil:
+			t.Fatalf("the last reminder scheduled another at %v", got.Next)
+		case !last && (got.Next == nil || !got.Next.Equal(reminder.After(now, gaps[i], london))):
+			t.Fatalf("reminder %d scheduled the next at %v", i+1, got.Next)
+		}
+	}
+	// now is Thursday 29 October 2026, 12:00 in London; a week on is
+	// Thursday 5 November, 09:00 (GMT by then).
+	box := newOutbox()
+	box.reminders = []*model.FoundryReminder{scheduledReminder("r-1", "grace@example.com", 0)}
+	newTask(box, ada()).tick(context.Background())
+	if next := box.remindersEnded["r-1"].(model.FoundryReminderSent).Next; !next.Equal(time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)) {
+		t.Fatalf("the second reminder is at %v", next)
+	}
+	// A schedule asked for under more gaps than the deployment now has ends
+	// with the reminder due.
+	box = newOutbox()
+	box.reminders = []*model.FoundryReminder{scheduledReminder("r-1", "grace@example.com", 6)}
+	mail := ada()
+	newTask(box, mail).tick(context.Background())
+	if got := box.remindersEnded["r-1"].(model.FoundryReminderSent); got.Next != nil || mail.sent[0].email.Subject != "One last reminder to try Helix Foundry" {
+		t.Fatalf("a schedule past its gaps: %#v, %q", got, mail.sent[0].email.Subject)
+	}
+	// With no gaps, the one reminder is the first and the last.
+	box = newOutbox()
+	box.reminders = []*model.FoundryReminder{scheduledReminder("r-1", "grace@example.com", 0)}
+	mail = ada()
+	task := newTask(box, mail)
+	task.reminders.GapDays = nil
+	task.tick(context.Background())
+	if e := mail.sent[0].email; e.Subject != "Your reminder to try Helix Foundry" || !strings.Contains(e.Text, "I won't send another reminder.") {
+		t.Fatalf("the only reminder: %q\n%s", e.Subject, e.Text)
+	}
+}
+
+// A reminder that can't be sent is tried again after a wait that doubles,
+// then given up on, ending its schedule; a tick sends the emails first.
+func TestFoundryNotifyWorkerReminderRetries(t *testing.T) {
+	box := newOutbox()
+	box.reminders = []*model.FoundryReminder{scheduledReminder("r-1", "grace@example.com", 1)}
+	mail := ada()
+	mail.sendErr = errors.New("throttled")
+	newTask(box, mail).tick(context.Background())
+	retry, ok := box.remindersEnded["r-1"].(model.FoundryReminderRetry)
+	if !ok || !retry.At.Equal(now.Add(time.Minute)) || !strings.Contains(retry.Error, "throttled") {
+		t.Fatalf("first failure: %#v", box.remindersEnded["r-1"])
+	}
+	box = newOutbox()
+	tried := scheduledReminder("r-1", "grace@example.com", 1)
+	tried.Attempts = 2 // claimed a third time: max_attempts
+	box.reminders = []*model.FoundryReminder{tried}
+	newTask(box, mail).tick(context.Background())
+	if giveUp, ok := box.remindersEnded["r-1"].(model.FoundryReminderGiveUp); !ok || !strings.Contains(giveUp.Error, "gave up after 3 attempts") {
+		t.Fatalf("last failure: %#v", box.remindersEnded["r-1"])
+	}
+
+	box, _ = firstDraft("Billing", model.OntologyGenerationSucceeded)
+	box.reminders = []*model.FoundryReminder{scheduledReminder("r-1", "grace@example.com", 0), scheduledReminder("r-2", "alan@example.com", 2)}
+	mail = ada()
+	newTask(box, mail).tick(context.Background())
+	if len(mail.sent) != 3 || mail.sent[0].email.Topic != "" || box.reminderClaimsBefore != 0 {
+		t.Fatalf("sent %d, the first on %q, with %d emails left as reminders went", len(mail.sent), mail.sent[0].email.Topic, box.reminderClaimsBefore)
+	}
+	// A reminder's claim failing ends the tick; one whose schedule stopped
+	// while it was sent (its end lost) leaves the store as it is.
+	box = newOutbox()
+	box.reminders = []*model.FoundryReminder{scheduledReminder("r-1", "grace@example.com", 0)}
+	box.reminderClaimErr = errors.New("connection reset")
+	mail = ada()
+	newTask(box, mail).tick(context.Background())
+	if len(mail.sent) != 0 {
+		t.Fatalf("sent %d after the claim failed", len(mail.sent))
+	}
+	box = newOutbox()
+	box.reminders = []*model.FoundryReminder{scheduledReminder("r-1", "grace@example.com", 0), scheduledReminder("r-2", "alan@example.com", 0)}
+	box.reminderFinishErr = store.ErrNotFound
+	mail = ada()
+	newTask(box, mail).tick(context.Background())
+	if len(mail.sent) != 2 {
+		t.Fatalf("finish lost: sent %d", len(mail.sent))
+	}
+	// A stopping worker claims no reminder.
+	box = newOutbox()
+	box.reminders = []*model.FoundryReminder{scheduledReminder("r-1", "grace@example.com", 0)}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	mail = ada()
+	newTask(box, mail).tick(ctx)
+	if len(mail.sent) != 0 {
+		t.Fatalf("sent %d while stopping", len(mail.sent))
 	}
 }

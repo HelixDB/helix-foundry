@@ -16,11 +16,17 @@ const (
 	// whose current load it covers. The handler narrows what it answers
 	// further, to that load.
 	Ontology
+	// Workflows admits a grantee as Ontology does while its Workflows
+	// permission is on: neither it nor any of its teams has it off. The
+	// handler narrows the runs it answers to those the grantee started,
+	// unless it holds all of the ontology's current load.
+	Workflows
 )
 
 // rules names every method of FoundryService and FoundryEventsService, so a
 // method added without a rule fails the package's tests. A grantee only
-// reads, and asks and cancels its own questions: it changes nothing else.
+// reads, asks and cancels its own questions, and starts and finishes its own
+// workflow runs: it changes nothing else.
 var rules = map[string]Rule{
 	// Source grants, restricted members and teams: managed by owners and
 	// admins; a grantee reads its own.
@@ -59,6 +65,22 @@ var rules = map[string]Rule{
 	// what a grantee holds, and dismissing one changes them.
 	foundryv1.FoundryService_ListFoundryHealFindings_FullMethodName:   Deny,
 	foundryv1.FoundryService_DismissFoundryHealFinding_FullMethodName: Deny,
+
+	// Workflows: a grantee with the Workflows permission lists an ontology's
+	// workflows and records its own runs; it reads every run of an ontology
+	// whose current load it holds all of, else only the runs it started.
+	// Making, deleting and assessing them again stay with owners and admins.
+	foundryv1.FoundryService_CreateFoundryWorkflow_FullMethodName:          Deny,
+	foundryv1.FoundryService_ListFoundryWorkflows_FullMethodName:           Workflows,
+	foundryv1.FoundryService_GetFoundryWorkflow_FullMethodName:             Workflows,
+	foundryv1.FoundryService_DeleteFoundryWorkflow_FullMethodName:          Deny,
+	foundryv1.FoundryService_StartFoundryWorkflowRun_FullMethodName:        Workflows,
+	foundryv1.FoundryService_ListFoundryWorkflowRuns_FullMethodName:        Workflows,
+	foundryv1.FoundryService_GetFoundryWorkflowRun_FullMethodName:          Workflows,
+	foundryv1.FoundryService_FinishFoundryWorkflowRun_FullMethodName:       Workflows,
+	foundryv1.FoundryService_ListFoundryWorkflowRunAccesses_FullMethodName: Workflows,
+	foundryv1.FoundryService_GetFoundryWorkflowInsights_FullMethodName:     Workflows,
+	foundryv1.FoundryService_AssessFoundryWorkflowRun_FullMethodName:       Deny,
 
 	// Reading a load and asking it questions.
 	foundryv1.FoundryService_ReadFoundryGraph_FullMethodName:          Ontology,
@@ -121,6 +143,11 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_ListFoundryEventBatches_FullMethodName:               Deny,
 	foundryv1.FoundryEventsService_SendFoundryEvents_FullMethodName:               Deny,
 	foundryv1.FoundryEventsService_ValidateFoundryEventSourceToken_FullMethodName: Deny,
+
+	// The landing page's reminders: the site's, through the door, of no
+	// workspace.
+	foundryv1.FoundryEventsService_CreateFoundryReminder_FullMethodName: Deny,
+	foundryv1.FoundryEventsService_StopFoundryReminders_FullMethodName:  Deny,
 
 	// The workspace's settings, plan and spend.
 	foundryv1.FoundryService_GetFoundryAI_FullMethodName:             Deny,

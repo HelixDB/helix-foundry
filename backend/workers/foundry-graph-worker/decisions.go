@@ -3,13 +3,14 @@ package foundrygraphworker
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
-const maxExtractDecisions = 10000
+const maxExtractDecisions = model.FoundryExtractDecisionsMax
 
 // decisions are the load's decisions for docs: every prop decision and the
 // resolve and release decisions of docs. One the loaded version no longer takes
@@ -18,8 +19,11 @@ const maxExtractDecisions = 10000
 // A resolve whose chosen entity the type's changed key no longer reads goes:
 // the engine counts it stale and reviews its name again, where left out the
 // name would be matched another way. Past the cap the Extract fails, too
-// large to send, rather than drop a choice. Choices made after a load started wait for the next load,
-// including during a catch-up extract or retry. Each goes with its id and
+// large to send, rather than drop a choice. The list is what the load holds
+// now: the choices the ontology held when the load was created, and the
+// approvals and value decisions settled against it or carried to it since
+// (store.SettleFoundryReleases, store.SettleFoundryValue); a name settled
+// after the load started waits for the next load. Each goes with its id and
 // when it was settled (foundry_load_decisions.decided_at), so the load tells
 // when a value was decided; one without that time fails the job rather than
 // go as decided in year 1.
@@ -59,12 +63,24 @@ func (r *runner) decisions(ctx context.Context, job *model.FoundryGraphJob, onto
 				decision.DocID, decision.NormName = *d.DocID, *d.NormName
 			case model.FoundryReviewProp:
 				decision.Prop, decision.Value = *d.Prop, d.Value
+			case model.FoundryReviewReject:
+				// No load's list holds one: it is a person's word to the
+				// site, and the engine knows no such decision.
+				continue
 			case model.FoundryReviewRelease:
 				if !sent[*d.DocID] {
 					continue
 				}
 				decision.DocID, decision.ClaimKey, decision.StatementHash = *d.DocID, *d.ClaimKey, *d.StatementHash
 				decision.Section, decision.Start, decision.End = d.ClaimSpan.Section, d.ClaimSpan.Start, d.ClaimSpan.End
+				// From contract 4.14.0 the last decided of a link's approvals
+				// is its decision, on a link that holds one value, and an
+				// undated quote's decision takes effect from when it was
+				// decided. The engine keeps a written
+				// approval's time to the millisecond and ranks the one it
+				// writes by the time sent, so sent to the millisecond two
+				// approvals rank alike whichever is written first.
+				decision.DecidedAt = decision.DecidedAt.Truncate(time.Millisecond)
 			}
 			out = append(out, decision)
 			if len(out) > maxExtractDecisions {

@@ -45,7 +45,24 @@ const (
 //     for a grantee, the same limits of its own.
 //
 // A local install with no AI provider refuses it (FOUNDRY_AI_NOT_CONFIGURED).
+// With workflow_run_id, the question is recorded under that open run of the
+// ontology's workflow (trackedRun, checked before it is asked), once however
+// often its client token asks it.
 func (s *Service) AskFoundryQuestion(ctx context.Context, req *foundryv1.AskFoundryQuestionRequest) (*foundryv1.FoundryQuestionResponse, error) {
+	run, err := s.trackedRun(ctx, req.GetWorkspaceId(), req.GetOntologyId(), req.GetWorkflowRunId())
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.askFoundryQuestion(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	q := out.GetQuestion()
+	s.track(ctx, run, &foundrymodel.FoundryWorkflowQuestion{LoadID: q.GetLoadId(), QuestionID: q.GetId()})
+	return out, nil
+}
+
+func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoundryQuestionRequest) (*foundryv1.FoundryQuestionResponse, error) {
 	question := strings.TrimSpace(req.GetQuestion())
 	switch {
 	case req.GetClientToken() == "" || len(req.GetClientToken()) > maxClientTokenLength:

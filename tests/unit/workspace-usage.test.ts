@@ -163,6 +163,7 @@ describe("usageView", () => {
         ["FOUNDRY_USAGE_TASK_LOADS", "Loads", false],
         ["FOUNDRY_USAGE_TASK_API_SOURCES", "API sources", true],
         ["FOUNDRY_USAGE_TASK_QUESTIONS", "Questions", false],
+        ["FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS", "Run assessments", false],
       ].map((r) => [...r, "—", { of: "", fill: 0, level: "room" }]),
     );
   });
@@ -231,7 +232,7 @@ describe("the mock's usage route", () => {
     resetState();
   });
 
-  it("serves the month with every task's cap, the total counting loads and questions", async () => {
+  it("serves the month with every task's cap, the total counting loads, questions and assessments", async () => {
     (config as { askSpentUsdMicros?: number }).askSpentUsdMicros = 2_500_000;
     const r = await call("GET", "/v1/workspaces/ws_acme/foundry/usage");
     expect(r.status).toBe(200);
@@ -242,6 +243,7 @@ describe("the mock's usage route", () => {
       ["FOUNDRY_USAGE_TASK_LOADS", "100000000"],
       ["FOUNDRY_USAGE_TASK_API_SOURCES", "20000000"],
       ["FOUNDRY_USAGE_TASK_QUESTIONS", "30000000"],
+      ["FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS", "20000000"],
     ]);
     const spent = Object.fromEntries(
       u.tasks!.map((t) => [t.task, Number(t.spentUsdMicros)]),
@@ -250,7 +252,9 @@ describe("the mock's usage route", () => {
       2_500_000,
     );
     expect(Number(u.totalUsdMicros)).toBe(
-      spent.FOUNDRY_USAGE_TASK_LOADS! + spent.FOUNDRY_USAGE_TASK_QUESTIONS!,
+      spent.FOUNDRY_USAGE_TASK_LOADS! +
+        spent.FOUNDRY_USAGE_TASK_QUESTIONS! +
+        spent.FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS!,
     );
   });
 

@@ -3,8 +3,9 @@
 // and drives the ontology agent sidecar: a load's Ingest writes an approved
 // version's tables into a new load, then Extract adds the ontology's
 // documents to it; a resend's Extract sends documents a load holds again, so
-// a person's approval of a held claim is written at once; a delete's
-// DeleteLoad removes an old load. The sidecar
+// a person's approval of a held claim is written at once, and carries the
+// load's value decisions, so a value a person chose shows at once; a
+// delete's DeleteLoad removes an old load. The sidecar
 // holds only its model keys; the proxy holds the database's.
 package foundrygraphworker
 

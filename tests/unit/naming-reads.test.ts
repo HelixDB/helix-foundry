@@ -188,6 +188,21 @@ describe("the reads' names", () => {
       naming,
     );
     expect(facts.queryKey).toContain("ver_3");
+    // Read with other quotes it is another read: an approval written in
+    // place adds a fact, or replaces one (contract 4.14.0).
+    const more = readQueries.documentFacts(
+      "ws",
+      "o",
+      read,
+      SCOPE,
+      "doc_1",
+      {
+        ...doc,
+        evidence: [...doc.evidence, { ...doc.evidence[0]!, factKey: "f" }],
+      },
+      naming,
+    );
+    expect(more.queryKey).not.toEqual(facts.queryKey);
     const list = await facts.queryFn({});
     expect(list[0]?.to?.name).toBe("Globex Corporation");
     const plain = await readQueries

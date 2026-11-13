@@ -148,7 +148,8 @@ type FoundryOperationOutput struct {
 
 type CompleteFoundryUploadInput struct {
 	OntologyInput
-	DocumentID string `json:"document_id" jsonschema:"The document upload_document created."`
+	DocumentID    string `json:"document_id" jsonschema:"The document upload_document created."`
+	WorkflowRunID string `json:"workflow_run_id,omitempty" jsonschema:"An open run of a workflow (helix_foundry_start_workflow_run) to record this upload under; empty for none."`
 }
 
 type CompleteFoundryUploadOutput struct {
@@ -209,10 +210,12 @@ func (s *Service) CompleteFoundryUpload(
 	ctx context.Context, identity *Identity, call *Call, input CompleteFoundryUploadInput,
 ) (CompleteFoundryUploadOutput, int, error) {
 	call.ResourceKind, call.ResourceID = "ontology", input.OntologyID
-	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID, input.DocumentID}) {
+	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID, input.DocumentID}, input.WorkflowRunID) {
 		return CompleteFoundryUploadOutput{}, 0, errCodeInvalidArguments
 	}
-	req := &foundryv1.CompleteFoundryOntologyDocumentUploadRequest{WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, Id: input.DocumentID}
+	req := &foundryv1.CompleteFoundryOntologyDocumentUploadRequest{
+		WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, Id: input.DocumentID, WorkflowRunId: input.WorkflowRunID,
+	}
 	if err := s.AuthorizeFoundry(ctx, identity, req, QueryWrite,
 		"CompleteFoundryOntologyDocumentUpload"); err != nil {
 		return CompleteFoundryUploadOutput{}, 0, err

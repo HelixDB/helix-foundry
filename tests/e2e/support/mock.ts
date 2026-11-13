@@ -27,7 +27,23 @@ export const mock = {
   /** The mock's settings now: what the knobs below have counted down to. */
   settings: async (): Promise<{ startingQueries?: Record<string, number> }> =>
     (await (await fetch(`${MOCK}/__mock/stats`)).json()).config,
+  /** The landing page's reminders the mock's door holds (mock/reminders.ts). */
+  reminders: async (): Promise<
+    {
+      email: string;
+      timeZone: string;
+      consent: string;
+      status: "scheduled" | "done" | "stopped";
+      nextSendAt: string | null;
+      stopReason: "signed_in" | null;
+    }[]
+  > => (await (await fetch(`${MOCK}/__mock/reminders`)).json()).reminders,
   configure: (config: {
+    // Seeds Customer contracts' demo workflows and 45 days of their runs.
+    workflowDemo?: boolean;
+    // New reminders the door takes an hour (300).
+    remindersPerHour?: number;
+    remindersPerClientPerHour?: number;
     accessTokenTtlSeconds?: number;
     allowedRegions?: string[];
     checkoutCardOnFile?: boolean;
@@ -44,20 +60,25 @@ export const mock = {
     loadStepMs?: number;
     loadOutcome?: "succeed" | "fail" | "sources_changed" | "budget_exhausted";
     documentOutcome?: "succeed" | "fail";
-    // Seeds an adjudicated variant and its informational review (off by default).
-    documentAdjudicated?: boolean;
-    // Seeds the same variant linked by legal form, with its review.
-    documentLegalForm?: boolean;
+    // Seeds a variant of a customer's name linked to that customer this way,
+    // with the link's review (off by default).
+    documentLinked?: "adjudicated" | "legal_form" | "part_name" | "own_name";
     // Sentences stating a relationship no link covers are "unmatched" reviews.
     documentUnmatched?: boolean;
     // What the engine would make of a hedged claim (mock/graph/extract.ts).
     documentHeld?:
       | "refused"
       | "legal_form"
+      | "part_name"
+      | "own_name"
       | "differs"
       | "unverified"
       | "one_end"
-      | "no_statement";
+      | "no_statement"
+      | "conflict";
+    // Links every version declares to hold one value, as a test's ontology
+    // would: what the site reads, and what loads and settles check.
+    oneValuedLinks?: string[];
     // A load's delete fails for good (delete_failed).
     deleteOutcome?: "succeed" | "fail";
     // The next n presigned PUTs fail as a busy bucket does.
@@ -151,11 +172,33 @@ export const mock = {
     healDismiss?: "superseded" | "fails";
     // The current load's complete audit didn't check its rows.
     healRowsMeasured?: boolean;
+    // Workflow runs' assessments: off (finishing queues none), how long one
+    // runs, and one the model refuses or the month's budget skips.
+    assessEnabled?: boolean;
+    assessMs?: number;
+    assessOutcome?: "fail" | "skip";
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",
       body: JSON.stringify(config),
     }),
+  /**
+   * Calls the WFE route `path` (/v1/...) as Ada's agent does through the
+   * Helix MCP, with no token: starting and finishing a workflow's runs, and
+   * reading and asking under one, which the site never does. Its answer's
+   * status and body.
+   */
+  agent: async (
+    method: "GET" | "POST",
+    path: string,
+    body?: object,
+  ): Promise<{ status: number; body: any }> => {
+    const res = await fetch(`${MOCK}/__mock/agent${path}`, {
+      method,
+      ...(body && { body: JSON.stringify(body) }),
+    });
+    return { status: res.status, body: await res.json() };
+  },
   /**
    * Sends pieces to an API source as an agent does through the Helix MCP
    * (the site never sends any): stored whole, or refused whole with the

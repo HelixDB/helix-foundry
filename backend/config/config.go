@@ -87,7 +87,8 @@ func (l *LiveAIDefault) Store(d DetectedAIDefault) { l.v.Store(&d) }
 
 // Foundry is the foundry block: connectors and their credentials, syncs,
 // ontologies and their models, documents, graph loads, reads, questions,
-// People enrichment, event sources and the emails Foundry sends.
+// People enrichment, event sources, the emails Foundry sends and the
+// reminders people ask for on its landing page.
 type Foundry struct {
 	Connectors ConnectorsConfig `koanf:"connectors"`
 	Sync       SyncConfig       `koanf:"sync"`
@@ -100,7 +101,59 @@ type Foundry struct {
 	Enrichment EnrichmentConfig `koanf:"enrichment"`
 	Events     EventsConfig     `koanf:"events"`
 	Notify     NotifyConfig     `koanf:"notify"`
+	Reminders  RemindersConfig  `koanf:"reminders"`
 	Heal       HealConfig       `koanf:"heal"`
+	Workflows  WorkflowsConfig  `koanf:"workflows"`
+}
+
+// WorkflowsConfig drives workflows' runs: an agent's request, every call it
+// made with the run's id, and its answer (api/workflows.go).
+type WorkflowsConfig struct {
+	Assess WorkflowAssessConfig `koanf:"assess"`
+}
+
+// WorkflowAssessConfig drives runs' assessments: finishing a run queues one
+// while Enabled, and the foundry-ask-worker runs it beside its questions,
+// with the ontology agent's Assess on the workspace's question model.
+type WorkflowAssessConfig struct {
+	// Enabled queues a finished run's assessment; off, none is queued and
+	// none can be asked for.
+	Enabled bool `koanf:"enabled"`
+	// MonthlyUSD is a workspace's monthly budget for assessments, apart
+	// from its questions' and loads'. An assessment is skipped once what
+	// the month's charged plus MaxUSD would pass it; several workers may
+	// each start one at that edge, so it can pass by MaxUSD a worker.
+	MonthlyUSD float64 `koanf:"monthly_usd"`
+	// MaxUSD is what one attempt is expected to spend at most: the agent
+	// fits the run to the model's context, about 100,000 tokens at most.
+	MaxUSD float64 `koanf:"max_usd"`
+	// PollInterval is how often the worker looks for one due; Lease how
+	// long a claimed one stays owned without a renewal.
+	PollInterval time.Duration `koanf:"poll_interval"`
+	Lease        time.Duration `koanf:"lease"`
+	// MaxAttempts caps the attempts at a failure a retry may fix, each
+	// RetryBackoff after the last.
+	MaxAttempts  int           `koanf:"max_attempts"`
+	RetryBackoff time.Duration `koanf:"retry_backoff"`
+}
+
+// MonthlyMicros is MonthlyUSD in millionths of a US dollar.
+func (w WorkflowAssessConfig) MonthlyMicros() int64 { return int64(math.Round(w.MonthlyUSD * 1e6)) }
+
+// MaxMicros is MaxUSD in millionths of a US dollar.
+func (w WorkflowAssessConfig) MaxMicros() int64 { return int64(math.Round(w.MaxUSD * 1e6)) }
+
+func (w WorkflowAssessConfig) validate() error {
+	switch {
+	case w.MonthlyUSD < 0 || w.MaxUSD <= 0:
+		return fmt.Errorf("foundry.workflows.assess.monthly_usd must not be negative and max_usd must be positive")
+	case w.PollInterval <= 0 || w.RetryBackoff <= 0 || w.MaxAttempts < 1:
+		return fmt.Errorf("foundry.workflows.assess poll_interval, retry_backoff and max_attempts must be positive")
+	case w.Lease < 30*time.Second:
+		// Renewed every third of it; shorter would lapse on a slow renewal.
+		return fmt.Errorf("foundry.workflows.assess.lease must be at least 30s")
+	}
+	return nil
 }
 
 // HealConfig drives the foundry-heal-worker, which audits each ontology's
@@ -179,6 +232,69 @@ func (n NotifyConfig) Validate() error {
 		return fmt.Errorf("foundry.notify.site_url: %w", err)
 	case origin != n.SiteURL:
 		return fmt.Errorf("foundry.notify.site_url %q must be an origin, such as https://foundry.helix-db.com, with no path", n.SiteURL)
+	}
+	return nil
+}
+
+// RemindersConfig drives the reminders a person asks for on Foundry's
+// landing page, from a phone, to try Foundry on a computer
+// (foundry_reminders, package reminder): the API takes them from the
+// foundry-events door, for the site, and the foundry-notify-worker sends
+// them on ports.TopicFoundryReminder. Every part reads it, so Config.Validate
+// checks it everywhere.
+type RemindersConfig struct {
+	// SecretSHA256 is the lowercase hex SHA-256 of the secret the site sends
+	// the door as its bearer (the site's FOUNDRY_REMINDERS_SECRET), so no
+	// part of Foundry holds the secret itself. Empty, Foundry takes no new
+	// reminder (FAILED_PRECONDITION, the door's 404); those already
+	// scheduled are still sent.
+	SecretSHA256 string `koanf:"secret_sha256"`
+	// MaxNewPerHour is about how many addresses may start a schedule in an
+	// hour, across the deployment: past it a request is refused
+	// RESOURCE_EXHAUSTED. It bounds what a flood past the site's bot check
+	// could send. Asking again while a schedule runs counts nothing.
+	MaxNewPerHour int `koanf:"max_new_per_hour"`
+	// MaxNewPerClientPerHour is how many schedules one client (the site's
+	// key for a visitor's network address) may start in an hour: past it
+	// its request is refused RESOURCE_EXHAUSTED, so one visitor can't spend
+	// the hour's cap. It counts the addresses that client started or
+	// started again within the hour.
+	MaxNewPerClientPerHour int `koanf:"max_new_per_client_per_hour"`
+	// GapDays are the days from each reminder to the next: the schedule
+	// sends len(GapDays)+1 reminders in all, the first at the next weekday
+	// 09:00 in the person's zone, each later one at the first weekday 09:00
+	// on or after its gap (reminder.After).
+	GapDays []int `koanf:"gap_days"`
+	// MinGapDays is the least time, in days, from an address's last
+	// reminder to the first of a new schedule it asks for once one ended or
+	// stopped: however often it asks, an address gets at most one reminder
+	// in that many days.
+	MinGapDays int `koanf:"min_gap_days"`
+}
+
+// maxReminderGapDays bounds each gap: a reminder a year off reminds no one.
+const maxReminderGapDays = 365
+
+// Validate checks the reminders' settings.
+func (r RemindersConfig) Validate() error {
+	if r.SecretSHA256 != "" && (len(r.SecretSHA256) != 64 ||
+		strings.IndexFunc(r.SecretSHA256, func(c rune) bool { return (c < '0' || c > '9') && (c < 'a' || c > 'f') }) >= 0) {
+		return fmt.Errorf("foundry.reminders.secret_sha256 must be the lowercase hex SHA-256 of the site's secret (64 characters), or empty")
+	}
+	switch {
+	case r.MaxNewPerHour < 1:
+		return fmt.Errorf("foundry.reminders.max_new_per_hour must be positive")
+	case r.MaxNewPerClientPerHour < 1 || r.MaxNewPerClientPerHour > r.MaxNewPerHour:
+		return fmt.Errorf("foundry.reminders.max_new_per_client_per_hour must be 1 to max_new_per_hour")
+	case r.MinGapDays < 1 || r.MinGapDays > maxReminderGapDays:
+		return fmt.Errorf("foundry.reminders.min_gap_days must be 1 to %d", maxReminderGapDays)
+	case len(r.GapDays) > 10:
+		return fmt.Errorf("foundry.reminders.gap_days holds at most 10 gaps, for 11 reminders")
+	}
+	for _, days := range r.GapDays {
+		if days < 1 || days > maxReminderGapDays {
+			return fmt.Errorf("foundry.reminders.gap_days must each be 1 to %d days, not %d", maxReminderGapDays, days)
+		}
 	}
 	return nil
 }
@@ -1334,7 +1450,8 @@ func (c *Config) Validate(roles Roles) error {
 		return err
 	}
 	f := c.Foundry
-	for _, check := range []func() error{c.Billing.validate, f.Documents.validate, f.Connectors.validate, f.Sync.validateLimits, f.Events.Validate} {
+	for _, check := range []func() error{c.Billing.validate, f.Documents.validate, f.Connectors.validate, f.Sync.validateLimits, f.Events.Validate,
+		f.Reminders.Validate} {
 		if err := check(); err != nil {
 			return err
 		}
@@ -1380,6 +1497,11 @@ func (c *Config) validateLocal() error {
 	// senders its URL.
 	if c.Foundry.Events.Endpoint.PublicURL != "" {
 		return fmt.Errorf("local mode has no API sources HTTP door: remove foundry.events.endpoint.public_url")
+	}
+	// Reminders come through that door, from the hosted site's landing
+	// page, which an install doesn't have.
+	if c.Foundry.Reminders.SecretSHA256 != "" {
+		return fmt.Errorf("local mode takes no reminders: remove foundry.reminders.secret_sha256")
 	}
 	return nil
 }
@@ -1529,6 +1651,9 @@ func (c *Config) validateRoles(roles Roles) error {
 	// The API checks a workspace's limits when a question is asked; the worker when it claims one.
 	if roles.API || roles.AskWorker {
 		if err := f.Ask.validate(); err != nil {
+			return err
+		}
+		if err := f.Workflows.Assess.validate(); err != nil {
 			return err
 		}
 	}
@@ -1720,12 +1845,25 @@ func Defaults() Config {
 		FollowUpAfter:  24 * time.Hour,
 		FollowUpWindow: 72 * time.Hour,
 		MaxAttempts:    5,
+	}, Reminders: RemindersConfig{
+		MaxNewPerHour:          300,
+		MaxNewPerClientPerHour: 5,
+		GapDays:                []int{7, 14, 28},
+		MinGapDays:             7,
 	}, Heal: HealConfig{
 		PollInterval: time.Minute,
 		Every:        24 * time.Hour,
 		RetryAfter:   15 * time.Minute,
 		Lease:        2 * time.Minute,
-	}},
+	}, Workflows: WorkflowsConfig{Assess: WorkflowAssessConfig{
+		Enabled:      true,
+		MonthlyUSD:   20,
+		MaxUSD:       1,
+		PollInterval: 5 * time.Second,
+		Lease:        2 * time.Minute,
+		MaxAttempts:  3,
+		RetryBackoff: time.Minute,
+	}}},
 		Billing: Billing{Plans: DefaultPlans()},
 	}
 }

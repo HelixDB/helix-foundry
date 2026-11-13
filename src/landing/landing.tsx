@@ -6,6 +6,7 @@ import {
   Scene,
   Schema,
 } from "./figures";
+import { Remind } from "./remind";
 
 // The hosted site's landing page: static markup, with React rendering only
 // the four product figures and the grid of connectors, and running the field
@@ -15,13 +16,61 @@ import {
 // your agent copies the app's onboarding prompt, written in the browser
 // (./behaviours.tsx). The header's GitHub button shows the repository's
 // stars, read from GitHub at most once an hour.
+//
+// A phone (./phone.ts) gets a shorter page: in the hero, the reminder form
+// (./remind.tsx) and Star on GitHub in place of the calls to action that need
+// a computer; below it the Analyst, the shout and the connectors, without the
+// field, the schema, the Explorer, the setup scene or the self-hosted box
+// (.desktop-only and .phone-only, styles/base.css). A visit from a reminder's
+// link (`via` email) or the README's (`via` github) gets the sample company as
+// its first call to action, and a reminder's a welcome back.
 const SIGN_IN = "/login";
+const SAMPLE = `/login?return_to=${encodeURIComponent("/ontology/sample")}`;
 const SOURCE = "https://github.com/helixdb/helix-foundry";
 const DOCS = `${SOURCE}#readme`;
 const SETUP = `git clone ${SOURCE}.git
 cd helix-foundry && docker compose up -d --wait`;
 
-export async function Landing() {
+/**
+ * A phone's way on to a computer: the reminder form, Star on GitHub to find
+ * it later, and Helix Cloud for whoever starts now. Without reminders (no
+ * secret, src/server/reminders.ts) a line says to open the page on a
+ * computer in the form's place.
+ */
+function Handoff({ remind, id }: { remind: boolean; id?: string }) {
+  return (
+    <div className="handoff phone-only" id={id}>
+      {remind ? (
+        <Remind />
+      ) : (
+        <p className="handoff-note">
+          Foundry is built for a bigger screen: open this page on your computer
+          to start.
+        </p>
+      )}
+      <div className="row">
+        <a className="btn" href={SOURCE}>
+          Star on GitHub to find it later
+        </a>
+      </div>
+      <a className="handoff-now" href={SIGN_IN}>
+        Or start on Helix Cloud now
+      </a>
+    </div>
+  );
+}
+
+/** Where a visit came from that the page greets: ?via= on `/`. */
+export type Via = "email" | "github";
+
+export async function Landing({
+  via,
+  remind,
+}: {
+  via?: Via;
+  // Whether the site can take a reminder (src/server/reminders.ts).
+  remind: boolean;
+}) {
   // Without an answer within 1.5 s, the button shows no count.
   const stars: number | null = await fetch(
     "https://api.github.com/repos/helixdb/helix-foundry",
@@ -102,24 +151,39 @@ export async function Landing() {
           <section className="hero" data-field="hero">
             <div className="scrim" aria-hidden="true" />
             <div className="wrap">
+              {via === "email" && <p className="m hero-back">Welcome back</p>}
               <h1>Your company&#8217;s data, connected into one ontology</h1>
               <p className="sub">
                 Connect your database, Stripe, WorkOS, PostHog and your files.
                 Foundry suggests one ontology across them that you explore and
                 ask questions of.
               </p>
-              <div className="cta">
+              {via && (
+                <p className="sub hero-start desktop-only">
+                  The quickest start is the sample company: Foundry connects its
+                  database and documents and loads its ontology, ready for your
+                  questions, in a few minutes.
+                </p>
+              )}
+              <div className="cta desktop-only">
                 <div className="row">
+                  {via && (
+                    <a className="btn btn-solid" href={SAMPLE}>
+                      Try the sample company
+                    </a>
+                  )}
                   <button
-                    className="btn btn-solid"
+                    className={via ? "btn" : "btn btn-solid"}
                     type="button"
                     data-copy="agent-prompt"
                   >
                     <span className="label">Set up with your agent</span>
                   </button>
-                  <a className="btn" href={SIGN_IN}>
-                    Start on Helix Cloud
-                  </a>
+                  {!via && (
+                    <a className="btn" href={SIGN_IN}>
+                      Start on Helix Cloud
+                    </a>
+                  )}
                 </div>
                 <button className="setup" type="button" data-copy="setup-text">
                   <span className="setup-head">
@@ -149,6 +213,7 @@ export async function Landing() {
                   </span>
                 </button>
               </div>
+              <Handoff remind={remind} id="remind" />
               <pre id="setup-text" hidden>
                 {SETUP}
               </pre>
@@ -157,7 +222,7 @@ export async function Landing() {
           </section>
 
           <div className="wrap stack">
-            <section className="box" id="schema">
+            <section className="box desktop-only" id="schema">
               <div className="pad">
                 <p className="m">Schema</p>
                 <h2 style={{ marginTop: ".7rem" }}>
@@ -174,7 +239,7 @@ export async function Landing() {
               </figure>
             </section>
 
-            <section className="box" id="explorer">
+            <section className="box desktop-only" id="explorer">
               <div className="pad">
                 <p className="m">Explorer</p>
                 <h2 style={{ marginTop: ".7rem" }}>
@@ -196,7 +261,7 @@ export async function Landing() {
             </section>
 
             <section className="box split" id="how">
-              <div className="cell up">
+              <div className="cell up desktop-only">
                 <div className="stage">
                   <div className="site-scene" id="scene-root">
                     <Scene />
@@ -249,8 +314,14 @@ export async function Landing() {
                 change it, and nothing is published until you say so.
               </p>
               <div className="row" style={{ marginTop: "1.4rem" }}>
-                <a className="btn" href={SIGN_IN}>
+                <a className="btn desktop-only" href={SIGN_IN}>
                   Start on Helix Cloud
+                </a>
+                <a
+                  className="btn phone-only"
+                  href={remind ? "#remind" : SOURCE}
+                >
+                  {remind ? "Remind me on my computer" : "Star on GitHub"}
                 </a>
               </div>
             </section>
@@ -279,7 +350,7 @@ export async function Landing() {
               </figure>
             </section>
 
-            <section className="box close" id="cloud">
+            <section className="box close desktop-only" id="cloud">
               <div className="pad">
                 <h2>
                   Now there is nothing to host.{" "}
@@ -306,6 +377,13 @@ export async function Landing() {
                 </p>
               </div>
             </section>
+
+            {/* A phone's last word before the footer: the hero's hand-off
+                again, for whoever read down to here. Not a section, so the
+                computer's last box keeps .box:last-of-type. */}
+            <div className="handoff-end phone-only">
+              <Handoff remind={remind} />
+            </div>
           </div>
         </main>
 

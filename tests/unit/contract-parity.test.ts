@@ -16,6 +16,7 @@ const COPIED: ReadonlyArray<readonly [site: string, backend: string]> = [
     "ask_event.json",
     "ask_result.json",
     "probe_result.json",
+    "assess_result.json",
     "catalog.json",
     "VERSION",
   ].map(

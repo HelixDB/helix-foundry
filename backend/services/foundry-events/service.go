@@ -1,5 +1,6 @@
-// Package foundryevents is the foundry-events role: the HTTP door to Foundry's API sources
-// (connector kind events), beside the MCP's send tool. It serves one route:
+// Package foundryevents is the foundry-events role: Foundry's public HTTP door, to its API
+// sources (connector kind events), beside the MCP's send tool, and for the reminders people ask
+// for on the landing page. It serves two routes. The first is a send's:
 //
 //	POST /v1/sources/{event_source_id}/pieces
 //	Authorization: Bearer hx_ev_…
@@ -11,11 +12,21 @@
 // which keeps the limits, the caps and the writer. client_token is required, so a sender can
 // always retry a 429, 502, 503 or 504 with the same body: a stored send is answered again, never
 // stored twice. A 200 is the MCP's send answer (Sent); every other answer the handler gives is
-// {"error": {"code", "message", "piece"?, "reason"?}} (handler.go lists them). Another method on
-// the route is 405, and another path 404, from the mux.
+// {"error": {"code", "message", "piece"?, "reason"?}} (handler.go lists them).
 //
-// The role holds nothing: no Secret, database, AWS identity or service-account token. It reaches
-// only FoundryEventsService (ValidateFoundryEventSourceToken and SendFoundryEvents), and stores
+// The second is the site's, for the reminders a person asks for from a phone to try Foundry on
+// a computer, and stops once they sign in (reminders.go):
+//
+//	POST /v1/reminders       {"email": "…", "time_zone": "Europe/London", "consent": "remind-v1"}
+//	POST /v1/reminders/stop  {"email": "…"}
+//	Authorization: Bearer <the site's secret>
+//
+// It forwards them to FoundryEventsService.CreateFoundryReminder and StopFoundryReminders with the
+// SHA-256 of the bearer, which the backend checks. Another method on a route is 405, and another
+// path 404, from the mux.
+//
+// The role holds nothing: no Secret, database, AWS identity or service-account token; not even the
+// site's secret, only passing its hash on. It reaches only FoundryEventsService, and stores
 // nothing of its own: its buckets and token cache live in memory per pod.
 package foundryevents
 

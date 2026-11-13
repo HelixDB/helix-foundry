@@ -24,6 +24,7 @@ const (
 	FoundryReviewResolve FoundryReviewDecisionKind = "resolve"
 	FoundryReviewProp    FoundryReviewDecisionKind = "prop"
 	FoundryReviewRelease FoundryReviewDecisionKind = "release"
+	FoundryReviewReject  FoundryReviewDecisionKind = "reject"
 )
 
 // FoundryReviewDecision is an ontology-wide override, applied from the next
@@ -34,8 +35,11 @@ const (
 // Release identifies one review of a document holding a claim back, by its
 // ClaimKey and ClaimSpan: a person's word that what it states holds, bound by
 // StatementHash to what they read. It names no type, as what it writes is the
-// engine's to read from the document. Validate guards this sum type at every
-// storage boundary.
+// engine's to read from the document. Reject identifies a review as a
+// release does, and is a person's word that what it states is wrong: it
+// goes to no engine and no load's list, and a claim has a release or a
+// reject, never both (store.SettleFoundryReject). Validate guards this sum
+// type at every storage boundary.
 type FoundryReviewDecision struct {
 	ID              string
 	OntologyID      string
@@ -66,10 +70,10 @@ func (d FoundryReviewDecision) Validate() error {
 	if d.ID == "" || d.OntologyID == "" || d.DecidedByUserID == "" {
 		return fmt.Errorf("decision identity and actor are required")
 	}
-	if d.Kind == FoundryReviewRelease {
+	if d.OfClaim() {
 		if d.Type != "" || !nonempty(d.DocID) || !foundrySHA256(d.ClaimKey) || !foundrySHA256(d.StatementHash) || d.ClaimSpan == nil || d.ClaimSpan.Start >= d.ClaimSpan.End ||
 			d.NormName != nil || d.EntityKey != nil || d.Prop != nil || len(d.Value) != 0 {
-			return fmt.Errorf("invalid release decision")
+			return fmt.Errorf("invalid %s decision", d.Kind)
 		}
 		return nil
 	}
@@ -97,6 +101,13 @@ func (d FoundryReviewDecision) Validate() error {
 		return fmt.Errorf("unknown decision kind %q", d.Kind)
 	}
 	return nil
+}
+
+// OfClaim reports a decision on one review of a held claim, which it names
+// by its document, its claim's key and its quote's place: a release or a
+// reject.
+func (d FoundryReviewDecision) OfClaim() bool {
+	return d.Kind == FoundryReviewRelease || d.Kind == FoundryReviewReject
 }
 
 // FoundryClaimSpan is where a review's quote is in its document, as the engine
@@ -156,6 +167,25 @@ func FoundryDecisionTypes(ontologyTOML string) (map[string]FoundryDecisionType, 
 	return schema.Types, err
 }
 
+// FoundryOneValuedLink reports whether an ontology TOML declares link as a
+// link that holds one value (`cardinality = "one"`; the engine's default is
+// "many", schema::Cardinality). A missing link holds none. Invalid TOML fails
+// closed.
+//
+// From contract 4.14.0 a person's approval of a held claim of such a link is
+// a decision of what it holds, so a claim held as `conflict` there can be
+// approved; on any other link a `conflict` is a property that differs from
+// the fact the graph holds, which an approval can't change.
+func FoundryOneValuedLink(ontologyTOML, link string) (bool, error) {
+	var schema struct {
+		Links map[string]struct{ Cardinality string }
+	}
+	if _, err := toml.Decode(ontologyTOML, &schema); err != nil {
+		return false, err
+	}
+	return schema.Links[link].Cardinality == "one", nil
+}
+
 // Fits reports whether the ontology of types still takes d as the engine
 // checks an Extract's decisions (decision::Decisions::validate), which
 // refuses the whole request over one that doesn't: d's type is there, its
@@ -164,7 +194,8 @@ func FoundryDecisionTypes(ontologyTOML string) (map[string]FoundryDecisionType, 
 // parses as the prop's type. A version that changes a prop's type, or a
 // type's key, leaves decisions that no longer fit.
 func (d FoundryReviewDecision) Fits(types map[string]FoundryDecisionType) bool {
-	if d.Kind == FoundryReviewRelease {
+	// A decision on a claim names no type: any version takes it.
+	if d.OfClaim() {
 		return d.Validate() == nil
 	}
 	ty, ok := types[d.Type]
@@ -188,7 +219,9 @@ func (d FoundryReviewDecision) Fits(types map[string]FoundryDecisionType) bool {
 // normalized name, whose entity_key the type's identity no longer reads (a
 // key changed since it was settled). The engine keeps that resolve
 // (decision::Choice::Stale), so its name is reviewed again rather than
-// matched another way, and counts it in stale_decisions.
+// matched another way, and counts it in stale_decisions. A reject fits every
+// version, so no version prunes it, and is sent with no Extract: no load's
+// list holds one.
 func (d FoundryReviewDecision) Extractable(types map[string]FoundryDecisionType) bool {
 	if d.Kind != FoundryReviewResolve {
 		return d.Fits(types)

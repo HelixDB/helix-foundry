@@ -4,6 +4,7 @@ import (
 	"context"
 
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
+	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
 )
 
 // The ontology-scoped aliases of the document and document set routes, from
@@ -19,11 +20,25 @@ func (s *Service) CreateFoundryOntologyDocument(ctx context.Context, req *foundr
 	})
 }
 
+// CompleteFoundryOntologyDocumentUpload is also how an agent's tools
+// complete an upload: with workflow_run_id, the document is recorded under
+// that open run of the ontology's workflow, once however often it is
+// completed.
 func (s *Service) CompleteFoundryOntologyDocumentUpload(ctx context.Context, req *foundryv1.CompleteFoundryOntologyDocumentUploadRequest) (
 	*foundryv1.FoundryDocumentReadsResponse, error) {
-	return s.completeFoundryDocumentUpload(ctx, req.GetOntologyId(), &foundryv1.CompleteFoundryDocumentUploadRequest{
+	run, err := s.trackedRun(ctx, req.GetWorkspaceId(), req.GetOntologyId(), req.GetWorkflowRunId())
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.completeFoundryDocumentUpload(ctx, req.GetOntologyId(), &foundryv1.CompleteFoundryDocumentUploadRequest{
 		WorkspaceId: req.GetWorkspaceId(), Id: req.GetId(),
 	})
+	if err != nil {
+		return nil, err
+	}
+	doc := out.GetDocument()
+	s.track(ctx, run, &foundrymodel.FoundryWorkflowUpload{DocumentID: doc.GetId(), SetID: doc.GetSetId()})
+	return out, nil
 }
 
 func (s *Service) MoveFoundryOntologyDocument(ctx context.Context, req *foundryv1.MoveFoundryOntologyDocumentRequest) (

@@ -172,10 +172,10 @@ func TestFoundryReviewDecisions(t *testing.T) {
 	isolated, err := f.db.ListFoundryReviewDecisions(ctx, id26("another"), "", nil, 100)
 	require.NoError(t, err)
 	assert.Empty(t, isolated)
-	assert.ErrorIs(t, f.db.DeleteFoundryReviewDecision(ctx, id26("another"), resolve.ID), store.ErrNotFound)
+	assert.ErrorIs(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, id26("another"), resolve.ID, nil), store.ErrNotFound)
 	assert.ErrorIs(t, f.db.SettleFoundryReviewDecision(ctx, id26("wrong-workspace"), resolve), store.ErrNotFound)
-	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.ID, resolve.ID))
-	assert.ErrorIs(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.ID, resolve.ID), store.ErrNotFound)
+	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, resolve.ID, nil))
+	assert.ErrorIs(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, resolve.ID, nil), store.ErrNotFound)
 
 	// Settling checks what the current load's version takes, as the engine
 	// would: a value it refuses, a key that isn't a normalized name, a prop
@@ -339,7 +339,7 @@ func TestFoundryLoadDecisionSnapshot(t *testing.T) {
 	replacement := *choices[0]
 	replacement.EntityKey = ptr("replacement")
 	require.NoError(t, f.db.SettleFoundryReviewDecision(ctx, f.ontology.WorkspaceID, &replacement))
-	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.ID, choices[1].ID))
+	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, choices[1].ID, nil))
 	pruning := f.draftVersion(t, "DSNAP2", "[types.Customer]")
 	require.NoError(t, f.db.SetCurrentOntologyVersion(ctx, f.ontology.ID, pruning.ID, nil))
 	version = pruning

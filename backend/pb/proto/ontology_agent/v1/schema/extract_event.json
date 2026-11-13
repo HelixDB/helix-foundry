@@ -714,12 +714,22 @@
           "const": "legal_form"
         },
         {
+          "description": "An end is linked by part of one row's name alone, whatever its link holds: a resolve\ndecision settles that name first.",
+          "type": "string",
+          "const": "part_name"
+        },
+        {
+          "description": "An end is linked by an identifier the verifier didn't accept, the name the text calls\nit by, whatever its link holds: a resolve decision settles that name first.",
+          "type": "string",
+          "const": "own_name"
+        },
+        {
           "description": "Its hold isn't one a person's word releases.",
           "type": "string",
           "const": "not_allowed"
         },
         {
-          "description": "It conflicts with what the load holds of its link.",
+          "description": "It conflicts with what the load holds of its link: a property of the fact that differs\nfrom the one set, or a second object of a one-valued link whose slot keeps no statements\nto weigh, as a load before P3 wrote it. An approval of a one-valued link's claim\notherwise outranks what it conflicted with.",
           "type": "string",
           "const": "conflict"
         },
@@ -789,6 +799,18 @@
           "format": "uint",
           "minimum": 0
         },
+        "own_name": {
+          "description": "By an identifier the verifier held back without refuting, that is the name the text\ncalls the entity by and one row holds: a review lets a person overturn it, and it is\nheld to what a link by part of a name is.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "part_name": {
+          "description": "By its fullest name being part of one row's name, the rest of which only says what kind\nof thing the row is: a review lets a person overturn it.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "user": {
           "description": "Linked by a settled resolve decision.",
           "type": "integer",
@@ -801,9 +823,11 @@
         "user",
         "adjudicated",
         "identifier",
+        "own_name",
         "name",
         "alias",
         "legal_form",
+        "part_name",
         "created"
       ]
     }

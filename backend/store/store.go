@@ -180,6 +180,7 @@ type ReadStore interface {
 
 	// Foundry source grants and what current loads hold
 	ListFoundryAccessGrants(ctx context.Context, workspaceID string, principals []access.Principal) ([]model.FoundryAccessGrant, error)
+	ListFoundryAccessWorkflowsOff(ctx context.Context, workspaceID string, principals []access.Principal) ([]access.Principal, error)
 	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
 	ListFoundryLoadInputs(ctx context.Context, workspaceID string, loadIDs []string) (map[string]model.FoundryLoadInputs, error)
 	FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error)
@@ -203,6 +204,24 @@ type ReadStore interface {
 	GetLatestCompleteFoundryHealRun(ctx context.Context, ontologyID string) (*model.FoundryHealRun, error)
 	FoundryHealLoadChanged(ctx context.Context, runID, ontologyID, loadID string) (bool, error)
 	ListFoundryHealDocuments(ctx context.Context, loadID, after string, limit int) ([]string, error)
+
+	// Foundry workflows: an ontology's workflows, their runs and what the
+	// runs recorded (foundry_workflows.go)
+	GetFoundryWorkflow(ctx context.Context, ontologyID, id string) (*model.FoundryWorkflow, error)
+	GetFoundryWorkflowByClientToken(ctx context.Context, ontologyID, clientToken string) (*model.FoundryWorkflow, error)
+	ListFoundryWorkflows(ctx context.Context, ontologyID, pageToken string, limit int) ([]*model.FoundryWorkflow, string, error)
+	GetFoundryWorkflowRun(ctx context.Context, ontologyID, id string) (*model.FoundryWorkflowRun, error)
+	GetFoundryWorkflowRunInWorkspace(ctx context.Context, workspaceID, id string) (*model.FoundryWorkflowRun, error)
+	GetFoundryWorkflowRunByClientToken(ctx context.Context, workflowID, clientToken string) (*model.FoundryWorkflowRun, error)
+	ListFoundryWorkflowRuns(ctx context.Context, workflowID string, startedBy *access.Principal, pageToken string, limit int) ([]*model.FoundryWorkflowRun, string, error)
+	TallyFoundryWorkflowRuns(ctx context.Context, workflowIDs []string, by access.Principal) (map[string]model.FoundryWorkflowRunTally, error)
+	ListFoundryWorkflowInsightRuns(ctx context.Context, ontologyID, workflowID string, startedBy *access.Principal, from, to time.Time,
+		limit int) ([]model.FoundryWorkflowInsightRun, error)
+	ListFoundryWorkflowRunAccesses(ctx context.Context, runID string, afterSeq int32, limit int) ([]*model.FoundryWorkflowAccess, bool, error)
+	GetFoundryWorkflowRunAssessment(ctx context.Context, runID string) (*model.FoundryWorkflowAssessment, error)
+	ListFoundryWorkflowRunAssessments(ctx context.Context, runIDs []string) (map[string]*model.FoundryWorkflowAssessment, error)
+	CountFoundryWorkflowVerdicts(ctx context.Context, workflowIDs []string) (map[string]map[string]int64, error)
+	SumFoundryWorkflowAssessmentSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
 }
 
 // Store is ReadStore plus every write.
@@ -278,10 +297,14 @@ type Store interface {
 	SettleFoundryReviewDecision(ctx context.Context, workspaceID string, decision *model.FoundryReviewDecision) error
 	SettleFoundryReleases(ctx context.Context, workspaceID, loadID string, decisions []*model.FoundryReviewDecision,
 		resend *model.FoundryGraphJob) (queued bool, err error)
+	SettleFoundryValue(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision,
+		resend *model.FoundryGraphJob) (queued bool, err error)
+	SettleFoundryReject(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision) error
 	ListFoundryDecisionsApplied(ctx context.Context, ontologyID string, ids []string) (map[string]model.FoundryDecisionApplied, error)
 	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
+	FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error)
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
-	DeleteFoundryReviewDecision(ctx context.Context, ontologyID, id string) error
+	DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error
 	CreateFoundryDocumentSet(ctx context.Context, set *model.FoundryDocumentSet, max int) error
 	UpdateFoundryDocumentSet(ctx context.Context, workspaceID, id string, update model.FoundryDocumentSetUpdate) error
 	DeleteFoundryDocumentSet(ctx context.Context, workspaceID, id string) error
@@ -310,6 +333,7 @@ type Store interface {
 	FinishFoundryGraphJob(ctx context.Context, jobID, workerID string, outcome model.FoundryGraphJobOutcome) (model.FoundryGraphJobFinish, error)
 	SetFoundryAccessGrants(ctx context.Context, workspaceID string, principal access.Principal, targets []access.Target, byUserID *string) error
 	DeleteFoundryAccessPrincipal(ctx context.Context, workspaceID string, principal access.Principal) error
+	SetFoundryAccessWorkflows(ctx context.Context, workspaceID string, principal access.Principal, on bool, byUserID *string) error
 	SetFoundryMemberRestricted(ctx context.Context, workspaceID, userID string, restricted bool, byUserID *string) error
 	CreateFoundryTeam(ctx context.Context, team *model.FoundryTeam) error
 	UpdateFoundryTeam(ctx context.Context, workspaceID, teamID, name string, memberUserIDs []string) error
@@ -359,6 +383,14 @@ type Store interface {
 	ClaimFoundryNotification(ctx context.Context, token string, lease time.Duration) (*model.FoundryNotification, error)
 	FinishFoundryNotification(ctx context.Context, id, token string, outcome model.FoundryNotificationOutcome) error
 
+	// Foundry reminders: the reminders people ask for on the landing page,
+	// which the API takes from the foundry-events door and the
+	// foundry-notify-worker claims and sends (foundry_reminders.go)
+	RequestFoundryReminder(ctx context.Context, req model.FoundryReminderRequest) (model.FoundryReminderAnswer, error)
+	StopFoundryReminder(ctx context.Context, email, reason string) (bool, error)
+	ClaimFoundryReminder(ctx context.Context, token string, lease time.Duration) (*model.FoundryReminder, error)
+	FinishFoundryReminder(ctx context.Context, id, token string, outcome model.FoundryReminderOutcome) error
+
 	// Foundry self-healing: a person's dismissals, and the
 	// foundry-heal-worker's runs (foundry_heal.go)
 	DismissFoundryHealFinding(ctx context.Context, ontologyID, fingerprint, userID string) error
@@ -367,6 +399,17 @@ type Store interface {
 	RenewFoundryHealRun(ctx context.Context, id string, lease time.Duration) error
 	FinishFoundryHealRun(ctx context.Context, id string, status model.FoundryHealRunStatus, pages, cuts int) error
 	PublishFoundryHealRun(ctx context.Context, p model.FoundryHealPublish) error
+
+	// Foundry workflows (foundry_workflows.go)
+	CreateFoundryWorkflow(ctx context.Context, w *model.FoundryWorkflow) error
+	DeleteFoundryWorkflow(ctx context.Context, ontologyID, id string) error
+	StartFoundryWorkflowRun(ctx context.Context, r *model.FoundryWorkflowRun) error
+	FinishFoundryWorkflowRun(ctx context.Context, id string, input *string, output string, assess bool) error
+	RecordFoundryWorkflowAccess(ctx context.Context, runID string, call model.FoundryWorkflowCall) (*model.FoundryWorkflowAccess, error)
+	QueueFoundryWorkflowRunAssessment(ctx context.Context, runID string) error
+	ClaimFoundryWorkflowRunAssessment(ctx context.Context, owner string, lease time.Duration) (*model.FoundryWorkflowAssessment, error)
+	RenewFoundryWorkflowRunAssessment(ctx context.Context, runID, owner string, lease time.Duration) error
+	FinishFoundryWorkflowRunAssessment(ctx context.Context, runID, owner string, o model.FoundryWorkflowAssessmentOutcome) error
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

@@ -17,6 +17,7 @@ import { ontologyRoutes } from "./ontology";
 import { questionRoutes } from "./questions";
 import { suggestionRoutes } from "./suggestions";
 import { usageRoutes } from "./usage";
+import { workflowRoutes } from "./workflows";
 import { workspaceRoutes } from "./workspaces";
 
 // Every WFE route the mock serves. An area adds a module next to these
@@ -37,6 +38,7 @@ export const routes: MockRoute[] = [
   ...documentRoutes,
   ...reviewRoutes,
   ...suggestionRoutes,
+  ...workflowRoutes,
   ...loadRoutes,
   ...enrichmentRoutes,
   ...aiRoutes,

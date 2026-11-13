@@ -133,4 +133,16 @@ var methods = map[string]check{
 
 	foundry("ListFoundryHealFindings"):   checkOntology,
 	foundry("DismissFoundryHealFinding"): checkWorkspace,
+
+	foundry("CreateFoundryWorkflow"):          checkOntology,
+	foundry("ListFoundryWorkflows"):           checkOntology,
+	foundry("GetFoundryWorkflow"):             checkOntology,
+	foundry("DeleteFoundryWorkflow"):          checkOntology,
+	foundry("StartFoundryWorkflowRun"):        checkOntology,
+	foundry("ListFoundryWorkflowRuns"):        checkOntology,
+	foundry("GetFoundryWorkflowRun"):          checkOntology,
+	foundry("FinishFoundryWorkflowRun"):       checkOntology,
+	foundry("ListFoundryWorkflowRunAccesses"): checkOntology,
+	foundry("GetFoundryWorkflowInsights"):     checkOntology,
+	foundry("AssessFoundryWorkflowRun"):       checkOntology,
 }

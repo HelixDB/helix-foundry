@@ -6,7 +6,8 @@
 #   backend/;
 # - contract/ontology_agent: the agent's Read and Ask JSON Schemas, which
 #   Foundry carries as JSON strings, its Probe result (the model failures and
-#   probe details Settings › AI models names) and its price table
+#   probe details Settings › AI models names), its Assess result (a workflow
+#   run's assessment) and its price table
 #   (catalog.json: the models it can price, per kind), from backend/;
 # - contract/wfe.swagger.json: the hosted Helix WFE's, trimmed by
 #   scripts/trim-wfe-contract.mjs to the Helix routes the hosted site calls
@@ -18,7 +19,7 @@ set -eu
 cp backend/pb/gen/openapiv2/helix/foundry/v1/foundry.swagger.json contract/foundry.swagger.json
 schemas=backend/pb/proto/ontology_agent/v1/schema
 mkdir -p contract/ontology_agent
-for f in read_request.json read_result.json ask_request.json ask_event.json ask_result.json probe_result.json audit_result.json check_result.json catalog.json VERSION; do
+for f in read_request.json read_result.json ask_request.json ask_event.json ask_result.json probe_result.json audit_result.json check_result.json assess_result.json catalog.json VERSION; do
   cp "$schemas/$f" "contract/ontology_agent/$f"
 done
 echo "contract/foundry.swagger.json and contract/ontology_agent ($(cat contract/ontology_agent/VERSION)) copied from backend/"

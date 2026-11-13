@@ -2,6 +2,7 @@
 # `site`. Each architecture is built on its own runner and started once.
 #
 #   pull_request       build and start, publish nothing
+#   push (dev, main)   the same, which fills the layer cache pull requests read
 #   workflow_dispatch  the same; with release_version, then publish exactly the
 #                      tested images as ghcr.io/helixdb/foundry-site:<version>
 #                      and :latest, from the default branch, refusing a
@@ -12,6 +13,17 @@ name: Site image
 
 on:
   pull_request:
+    paths:
+      - ".github/workflows/site-image.yml"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "next.config.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+  # Merges into dev and main build too, so their layer cache is there for the
+  # next pull request: a PR reads its base branch's cache, never another PR's.
+  push:
+    branches: [dev, main]
     paths:
       - ".github/workflows/site-image.yml"
       - ".dockerignore"

@@ -52,15 +52,19 @@ export const keysQuery = (ws: string) => ({
     (await api<ListServiceCredentialsResponse>(keys(ws))).credentials || [],
 });
 
-/** Replaces a principal's grants; none takes them all away. */
+/**
+ * Replaces a principal's grants (none takes them all away), and sets its
+ * Workflows permission when `workflows` is given.
+ */
 export const setGrants = (
   ws: string,
   principal: Principal,
   targets: FoundryAccessTarget[],
+  workflows?: boolean,
 ) =>
   api<SetFoundryAccessGrantsResponse>(
     `${access(ws)}/grants`,
-    { principal, targets } satisfies SetFoundryAccessGrantsRequest,
+    { principal, targets, workflows } satisfies SetFoundryAccessGrantsRequest,
     "PUT",
   );
 

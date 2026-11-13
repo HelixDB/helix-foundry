@@ -38,6 +38,10 @@ export type WorkspaceValue = ShellWorkspace & {
   granted: readonly string[];
   // Those of them the grants hold only some of (readsPart).
   partial: readonly string[];
+  // The user may use the workflows of the ontologies they read: anyone but a
+  // grantee whose Workflows permission is off. A grantee sees the runs it
+  // started of an ontology in `partial`, and every run of the others.
+  workflows: boolean;
   notify: (text: string, error?: boolean) => void;
 };
 
@@ -51,6 +55,7 @@ export const WorkspaceContext = createContext<WorkspaceValue>({
   grantee: false,
   granted: [],
   partial: [],
+  workflows: true,
   notify: () => {},
 });
 export const useWorkspace = () => useContext(WorkspaceContext);

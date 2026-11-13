@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // next.config.ts reads the environment once, when it loads: each case stubs
 // it, then loads a fresh copy.
-const load = async (env: Record<string, string | undefined>) => {
+const config = async (env: Record<string, string | undefined>) => {
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
   vi.resetModules();
-  return (await import("../../next.config")).default.env ?? {};
+  return (await import("../../next.config")).default;
 };
+const load = async (env: Record<string, string | undefined>) =>
+  (await config(env)).env ?? {};
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -142,8 +144,33 @@ describe("next.config.ts", () => {
         NEXT_PUBLIC_WORKOS_REDIRECT_URI: origin && `${origin}/login/callback`,
       });
       expect(env.NEXT_PUBLIC_DATABUDDY_CLIENT_ID).toBe(id);
+      // BotID on the reminder form runs where a stamp's own Databuddy site
+      // loads, and only there: never in a local build, which has its own.
+      expect(env.NEXT_PUBLIC_BOTID).toBe(id && mode !== "local" ? "1" : "");
     },
   );
+
+  // BotID's client reaches Vercel through this origin: without the
+  // rewrites (botid/next/config's withBotId) every check says bot.
+  it.each([
+    ["dev's stamp", "dev", "https://dev.foundry.helix-db.com", true],
+    ["prod's stamp", "prod", "https://foundry.helix-db.com", true],
+    ["pnpm dev", "dev", "https://local.foundry.helix-db.com:3000", false],
+    ["the mock", "mock", "http://localhost:3100", false],
+  ])("rewrites BotID's paths for %s: %s", async (_, appEnv, origin, on) => {
+    const built = await config({
+      NEXT_PUBLIC_APP_ENV: appEnv,
+      NEXT_PUBLIC_FOUNDRY_MODE: undefined,
+      NEXT_PUBLIC_WORKOS_REDIRECT_URI: `${origin}/login/callback`,
+    });
+    const rewrites = built.rewrites ? await built.rewrites() : [];
+    const sources = (Array.isArray(rewrites) ? rewrites : []).map(
+      (r) => r.source,
+    );
+    expect(sources.some((s) => s.endsWith("/a-4-a/c.js"))).toBe(on);
+    const headers = (await built.headers?.()) ?? [];
+    expect(headers.length).toBe(on ? 2 : 1);
+  });
 
   it("names an origin the prompt can append a path to", async () => {
     const url = (await load({ NEXT_PUBLIC_APP_ENV: "dev" }))

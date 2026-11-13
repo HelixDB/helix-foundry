@@ -55,16 +55,25 @@ func TestUnknownMethodsDeny(t *testing.T) {
 	}
 }
 
-// A grantee only ever reads: no method whose name says it writes admits one.
+// A grantee only ever reads, apart from asking and cancelling its own
+// questions and starting and finishing its own workflow runs: no other method
+// whose name says it writes admits one, and those two need the Workflows
+// permission.
 func TestGranteesNeverWrite(t *testing.T) {
 	writes := []string{"Create", "Update", "Delete", "Set", "Settle", "Put", "Move", "Revise", "Generate", "Sync", "Test", "Complete",
-		"Revoke", "Stop", "Resume", "Detect", "Send", "Validate"}
+		"Revoke", "Stop", "Resume", "Detect", "Send", "Validate", "Start", "Finish", "Assess"}
+	runs := []string{foundryv1.FoundryService_StartFoundryWorkflowRun_FullMethodName, foundryv1.FoundryService_FinishFoundryWorkflowRun_FullMethodName}
 	for _, m := range methods() {
 		name := m[strings.LastIndex(m, "/")+1:]
 		for _, w := range writes {
-			if strings.HasPrefix(name, w) && access.GranteeAdmits(m) {
+			if strings.HasPrefix(name, w) && access.GranteeAdmits(m) && !slices.Contains(runs, m) {
 				t.Errorf("%s admits a grantee", m)
 			}
+		}
+	}
+	for _, m := range runs {
+		if access.RuleOf(m) != access.Workflows {
+			t.Errorf("%s: rule %v, want Workflows", m, access.RuleOf(m))
 		}
 	}
 }
