@@ -868,7 +868,7 @@ describe("an approval taken back from the current load (contract 4.16.0)", () =>
     });
     expect(
       model.takenBack({ status: "refused", reason: "too_large" }).text,
-    ).toContain("more than one take-back can be matched among.");
+    ).toContain("more than one take-back can be matched among");
     expect(
       model.takenBack({ status: "refused", reason: "document_gone" }).text,
     ).toContain("its document was deleted");

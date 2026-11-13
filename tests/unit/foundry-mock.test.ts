@@ -3298,6 +3298,7 @@ describe("review decisions", () => {
     expect(written.applied).toEqual({
       status: "written",
       at: expect.any(String),
+      takesBack: true,
     });
     expect(held()).toHaveLength(0);
     expect(facts()).toHaveLength(1);

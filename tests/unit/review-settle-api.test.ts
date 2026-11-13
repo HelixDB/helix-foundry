@@ -43,9 +43,15 @@ describe("review API boundary", () => {
     const q = reviews.reviewQueries.list("ws", "o");
     expect(q.queryKey).toEqual(["ws", "ontology", "o", "review-decisions"]);
     expect(await read()).toEqual([{ id: "one" }, { id: "two" }]);
+    // Each page asks for the current load's withdraws: a client that
+    // doesn't gets none (contract 4.16.0).
+    expect(call).toHaveBeenNthCalledWith(
+      1,
+      "/v1/workspaces/ws/foundry/ontologies/o/review-decisions?includeWithdraws=true",
+    );
     expect(call).toHaveBeenNthCalledWith(
       2,
-      "/v1/workspaces/ws/foundry/ontologies/o/review-decisions?pageToken=one%20%2F%23",
+      "/v1/workspaces/ws/foundry/ontologies/o/review-decisions?includeWithdraws=true&pageToken=one%20%2F%23",
     );
   });
   it("stops when a page token comes back, instead of reading forever", async () => {
