@@ -1031,7 +1031,9 @@ describe("why a load kept an approved claim held", () => {
     expect(said("no_statement")).toContain("keeps nothing to write");
     expect(said("not_stated")).toContain("no longer finds it stated");
     // Contract 4.17.0: the load holds the document with other text.
-    expect(said("document_changed")).toContain("text changed after this load read it");
+    expect(said("document_changed")).toContain(
+      "text changed after this load read it",
+    );
     expect(said("document_changed")).toContain(
       "find the claim in that load’s review and approve it there",
     );
