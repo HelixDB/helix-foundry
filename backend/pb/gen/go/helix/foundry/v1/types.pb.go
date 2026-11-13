@@ -9108,8 +9108,9 @@ type FoundryDecisionApplied struct {
 	// contract 4.14.0 refused it: load again), blocked (it would break
 	// a blocking rule, or checking that took more reading than a load allows),
 	// no_statement (its review keeps nothing to write), not_stated (the
-	// document doesn't say its quote at its place, or its set no longer reads
-	// its link or an end's type; through contract 4.16.0 also the document,
+	// document doesn't say its quote at its place, the load keeps no record of
+	// the model work that stated it, or its set no longer reads its link or an
+	// end's type; through contract 4.16.0 also the document,
 	// read again, no longer stating it there), document_changed (contract
 	// 4.17.0: the load holds the document with other text than it read the
 	// claim in, so only a new load, which reads the new text, can write it),

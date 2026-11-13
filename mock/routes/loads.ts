@@ -496,12 +496,7 @@ const appliedKey = (loadId: string, decisionId: string) =>
  * Says what a load made of a release decision of a document it just read:
  * written when no review of it is left, refused when one is.
  */
-function recordRelease(
-  l: StoredLoad,
-  d: Release,
-  at: number,
-  inPlace = false,
-) {
+function recordRelease(l: StoredLoad, d: Release, at: number, inPlace = false) {
   state.applied.set(appliedKey(l.id, d.id), {
     ...(heldReview(l, d)
       ? { status: "refused", reason: refusal(inPlace) ?? "changed" }
