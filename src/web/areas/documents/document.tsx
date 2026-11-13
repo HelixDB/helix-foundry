@@ -43,6 +43,7 @@ import {
   Tag,
   cx,
   formatDate,
+  formatNumber,
   formatRelative,
   plural,
   useTabParam,
@@ -1150,6 +1151,18 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                     value:
                       d.extraction?.finishedAt &&
                       formatDate(d.extraction.finishedAt),
+                  },
+                  {
+                    label: "Facts written",
+                    value:
+                      d.extraction && formatNumber(d.extraction.facts || 0),
+                  },
+                  {
+                    // Property values it stated, written as evidence.
+                    label: "Values written",
+                    value:
+                      d.extraction &&
+                      formatNumber(d.extraction.attributes || 0),
                   },
                   {
                     label: "Cost to read",

@@ -65,6 +65,9 @@ func testExtractRequest() ExtractRequest {
 				DecisionID: "01JDDEC0000000000000000002", DecidedAt: decidedAt.Add(time.Minute)},
 			{Kind: model.FoundryReviewRelease, DocID: "doc-1", ClaimKey: strings.Repeat("ab", 32), Start: 4, End: 20, StatementHash: strings.Repeat("cd", 32),
 				DecisionID: "01JDDEC0000000000000000003", DecidedAt: decidedAt.Add(2 * time.Minute)},
+			// An approval taken back (4.16.0): the release as it was sent.
+			{Kind: model.FoundryReviewWithdraw, DocID: "doc-1", ClaimKey: strings.Repeat("ef", 32), Section: 1, Start: 0, End: 12, StatementHash: strings.Repeat("01", 32),
+				DecisionID: "01JDDEC0000000000000000004", DecidedAt: decidedAt.Add(-time.Hour)},
 		},
 	}
 }
@@ -150,7 +153,7 @@ func TestGraphContract(t *testing.T) {
 		unnamed := []any{}
 		for _, d := range request["decisions"].([]any) {
 			decision := d.(map[string]any)
-			if decision["kind"] == string(model.FoundryReviewRelease) {
+			if decision["kind"] == string(model.FoundryReviewRelease) || decision["kind"] == string(model.FoundryReviewWithdraw) {
 				continue
 			}
 			delete(decision, "decision_id")
@@ -306,7 +309,7 @@ func TestGraphContract(t *testing.T) {
 		counts := `"counts":` + testCounts
 		usage := `"usage":{"usd_micros":1500,"input_tokens":900,"output_tokens":80,"replayed":false,"phases":{"entity":{"calls":1,"replayed":0,"usd_micros":1500,"input_tokens":900,"output_tokens":80},"link":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"verify":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"adjudicate":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0}}}`
 		events := []string{
-			`{"event":"extract_started","contract_version":"4.15.0","extractor":"claude-haiku-5-5","verifier":"gpt-6.1-sol","prompt_version":"7"}`,
+			`{"event":"extract_started","contract_version":"4.16.0","extractor":"claude-haiku-5-5","verifier":"gpt-6.1-sol","prompt_version":"7"}`,
 			`{"event":"artifact","doc_id":"doc-1","key":"abc_DEF-1","json":"{\"sections\":[]}"}`,
 			`{"event":"document","doc_id":"doc-1","outcome":{"kind":"ingested"},"text_bytes":120,"sections":2,` + counts + `,` + usage + `,"releases":[]}`,
 			`{"event":"document","doc_id":"doc-2","outcome":{"kind":"duplicate","of":"doc-1"},"text_bytes":120,"sections":0,` + counts + `,` + usage + `,"releases":[]}`,
@@ -314,6 +317,10 @@ func TestGraphContract(t *testing.T) {
 			`{"event":"document","doc_id":"doc-4","outcome":{"kind":"already_ingested"},"text_bytes":10,"sections":1,` + counts + `,` + usage +
 				`,"releases":[{"decision_id":"dec-1","outcome":{"kind":"written"}},{"decision_id":"dec-2","outcome":{"kind":"refused","reason":"unresolved"}},` +
 				`{"decision_id":"dec-3","outcome":{"kind":"missed"}},{"decision_id":"dec-4","outcome":{"kind":"not_held"}}]}`,
+			// Withdrawals come first (4.16.0).
+			`{"event":"document","doc_id":"doc-7","outcome":{"kind":"already_ingested"},"text_bytes":10,"sections":1,` + counts + `,` + usage +
+				`,"releases":[{"decision_id":"dec-5","outcome":{"kind":"withdrawn"}},{"decision_id":"dec-6","outcome":{"kind":"not_written"}},` +
+				`{"decision_id":"dec-7","outcome":{"kind":"refused","reason":"differs"}},{"decision_id":"dec-8","outcome":{"kind":"written"}}]}`,
 			`{"event":"document","doc_id":"doc-5","outcome":{"kind":"out_of_scope"},"text_bytes":10,"sections":1,` + counts + `,` + usage + `,"releases":[]}`,
 			`{"event":"document","doc_id":"doc-6","outcome":{"kind":"failed","code":"model","model_failure":"auth","retryable":true},"text_bytes":10,"sections":0,` +
 				counts + `,` + usage + `,"releases":[]}`,
@@ -342,7 +349,7 @@ func TestGraphContract(t *testing.T) {
 			Resolved: ResolvedCounts{Identifier: 1, Name: 1, Alias: 0, PartName: 2, OwnName: 1, Created: 1}}); ingested.Counts != want {
 			t.Fatalf("counts = %+v, want %+v", ingested.Counts, want)
 		}
-		outOfScope, err := DecodeDocumentEvent([]byte(events[6]))
+		outOfScope, err := DecodeDocumentEvent([]byte(events[7]))
 		if err != nil || outOfScope.Outcome != (DocumentOutcome{Kind: OutcomeOutOfScope}) || outOfScope.DocID != "doc-5" {
 			t.Fatalf("out_of_scope = (%+v, %v)", outOfScope, err)
 		}
@@ -356,6 +363,13 @@ func TestGraphContract(t *testing.T) {
 		if len(ingested.Releases) != 0 {
 			t.Fatalf("a document no release names lists %+v", ingested.Releases)
 		}
+		// And of each withdraw, first.
+		withdrawn, err := DecodeDocumentEvent([]byte(events[6]))
+		if err != nil || len(withdrawn.Releases) != 4 || withdrawn.Releases[0].Outcome.Kind != model.FoundryReleaseOutcomeWithdrawn ||
+			withdrawn.Releases[1].Outcome.Kind != model.FoundryReleaseOutcomeNotWritten ||
+			withdrawn.Releases[2].Outcome != (ReleaseOutcome{Kind: model.FoundryReleaseOutcomeRefused, Reason: "differs"}) {
+			t.Fatalf("withdrawn = (%+v, %v)", withdrawn, err)
+		}
 		dup, err := DecodeDocumentEvent([]byte(events[3]))
 		if err != nil || dup.Outcome.Kind != OutcomeDuplicate || dup.Outcome.Of != "doc-1" {
 			t.Fatalf("duplicate = (%+v, %v)", dup, err)
@@ -365,7 +379,7 @@ func TestGraphContract(t *testing.T) {
 			t.Fatalf("failed = (%+v, %v)", failed, err)
 		}
 		// A model's failure says how it failed, which the worker words for the owner.
-		modelFailed, err := DecodeDocumentEvent([]byte(events[7]))
+		modelFailed, err := DecodeDocumentEvent([]byte(events[8]))
 		if err != nil || modelFailed.Outcome != (DocumentOutcome{Kind: OutcomeFailed, Code: "model", ModelFailure: ModelAuth, Retryable: true}) {
 			t.Fatalf("model failed = (%+v, %v)", modelFailed, err)
 		}
@@ -395,7 +409,7 @@ func TestGraphContract(t *testing.T) {
 	t.Run("ingest events are what the schema describes", func(t *testing.T) {
 		schema := contracttest.Schema(t, "ingest_event.json")
 		for _, raw := range []string{
-			`{"event":"ingest_started","contract_version":"4.15.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.16.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":1000}}`, `{"event":"sweep_page","entities":50}`,
 			`{"event":"ingest_finished"}`,
 		} {
@@ -446,7 +460,7 @@ func TestDeleteLoadContract(t *testing.T) {
 	t.Run("delete load events are what the schema describes", func(t *testing.T) {
 		schema := contracttest.Schema(t, "delete_load_event.json")
 		for _, raw := range []string{
-			`{"event":"delete_started","contract_version":"4.15.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":1000}`,
+			`{"event":"delete_started","contract_version":"4.16.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":1000}`,
 			`{"event":"deleted","label":"Customer","element":"node","count":3}`, `{"event":"delete_finished"}`,
 		} {
 			if err := contracttest.Validate(t, schema, []byte(raw)); err != nil {
@@ -547,6 +561,10 @@ func TestExtractDecisionWire(t *testing.T) {
 		// A release carries nothing else: the engine refuses a field it doesn't name.
 		{ExtractDecision{Kind: model.FoundryReviewRelease, DocID: "doc", ClaimKey: "abc", End: 9, StatementHash: "def", DecisionID: "01JDDEC", DecidedAt: decidedAt},
 			`{"kind":"release","doc_id":"doc","claim_key":"abc","section":0,"start":0,"end":9,"statement_hash":"def",` + named + `}`},
+		// Nor does a withdraw, the release as it was sent (4.16.0).
+		{ExtractDecision{Kind: model.FoundryReviewWithdraw, Type: "ignored", DocID: "doc", ClaimKey: "abc", Section: 2, Start: 1, End: 9, StatementHash: "def",
+			DecisionID: "01JDDEC", DecidedAt: decidedAt},
+			`{"kind":"withdraw","doc_id":"doc","claim_key":"abc","section":2,"start":1,"end":9,"statement_hash":"def",` + named + `}`},
 	} {
 		got, err := json.Marshal(tc.decision)
 		if err != nil || string(got) != tc.want {

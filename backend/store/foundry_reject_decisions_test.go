@@ -272,7 +272,16 @@ func TestFoundryRejectTakesTheApprovalFromEveryLoad(t *testing.T) {
 
 		f.reject(t, f.rejected(f.b, 0, readA))
 		assert.Equal(t, map[string]string{x.ID: "written"}, f.copies(t, first))
-		assert.Empty(t, f.copies(t, second))
+		// The second load copied it and holds its document, and no job said
+		// what became of it there, so it may have written it (contract
+		// 4.16.0): the copy is left for the carry, which takes it back. The
+		// next settle runs one.
+		assert.Equal(t, map[string]string{x.ID: ""}, f.copies(t, second))
+		assert.Empty(t, f.listed(t, second), "no Extract sends an approval of a rejected claim")
+		other := f.held(f.a, 0, readA)
+		require.True(t, f.approve(t, "2", other))
+		assert.Equal(t, map[string]string{x.ID: "withdraw", other.ID: "release"}, kinds(t, second))
+		assert.Equal(t, map[string]int{f.a: 1, f.b: 1}, f.owed(t))
 	})
 
 	// While a resend of the load runs with the approval waiting for it, the

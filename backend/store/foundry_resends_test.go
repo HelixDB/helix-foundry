@@ -913,19 +913,27 @@ func TestFoundryReleaseTakenBack(t *testing.T) {
 	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, done.ID, nil))
 	list, err := f.db.ListFoundryLoadDecisions(ctx, f.load, "", nil, 100)
 	require.NoError(t, err)
-	require.Len(t, list, 1, "the one it wrote stays")
+	require.Len(t, list, 1, "the one it wrote is taken back (contract 4.16.0)")
 	assert.Equal(t, done.ID, list[0].ID)
+	assert.Equal(t, model.FoundryReviewWithdraw, list[0].Kind)
 	assert.ErrorIs(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, waits.ID, nil), store.ErrNotFound)
 
-	// The queued resend still sends the document: its Extract carries no
-	// decision of it, and the engine says nothing of one.
+	// The queued resend sends both documents: the first with nothing of the
+	// approval it never wrote, the second with the withdraw.
 	job = f.claim(t)
 	owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
 	require.NoError(t, err)
-	require.Len(t, owed, 1)
-	f.sent(t, job, owed[0], 0)
+	require.Len(t, owed, 2)
+	for _, o := range owed {
+		if o.DocumentID == f.b {
+			f.sent(t, job, o, 0, withdrawn(done, model.FoundryReleaseOutcomeWithdrawn, ""))
+		} else {
+			f.sent(t, job, o, 0)
+		}
+	}
 	f.end(t, job, "back", model.FoundryGraphJobSucceeded)
 	assert.Nil(t, f.liveJob(t))
+	assert.Equal(t, map[string]string{done.ID: "withdrawn"}, f.applied(t, done))
 
 	// Approved again: a new decision, the only one of its claim in the list.
 	again := f.held(f.b, 0, readA)
@@ -989,38 +997,41 @@ func TestFoundryReleaseTakenBackAfterTheLoadsWord(t *testing.T) {
 	assert.Equal(t, "written", got[kept.ID])
 	require.Len(t, got, 5, "the load's list holds each")
 
-	for _, d := range []*model.FoundryReviewDecision{missed, unreported, refusedOne, failed, kept} {
-		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID, nil))
+	for i, d := range []*model.FoundryReviewDecision{missed, unreported, refusedOne, failed, kept} {
+		require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+			&model.FoundryGraphJob{ID: id26("RS-RWORD-x" + string(rune('0'+i)))}))
 	}
-	list, err := f.db.ListFoundryLoadDecisions(ctx, f.load, "", nil, 100)
-	require.NoError(t, err)
-	require.Len(t, list, 1, "only what the load wrote stays in its list")
-	assert.Equal(t, kept.ID, list[0].ID)
+	// What the load may have written is taken back (contract 4.16.0): the
+	// one it wrote, the one whose job failed, and the one it copied at its
+	// creation that no job said anything of. The rest leave its list.
+	assert.Equal(t, map[string]string{unreported.ID: "withdraw", failed.ID: "withdraw", kept.ID: "withdraw"}, kinds(t, f.load))
 
-	// Another claim of each document is approved: its resend sends that
-	// approval, the one the load wrote (which finds no review), and none of
-	// those taken back.
+	// Another claim of each document is approved: the resend the take-back
+	// queued sends that approval and the withdraws of its document, and
+	// nothing of those that were never written.
 	laterA, laterB := f.held(f.a, 3, readA), f.held(f.b, 2, readA)
-	require.True(t, f.approve(t, "4", laterA, laterB))
-	sentA, err := f.db.ListFoundryLoadDecisions(ctx, f.load, "", []string{f.a}, 100)
-	require.NoError(t, err)
-	require.Len(t, sentA, 1)
-	assert.Equal(t, laterA.ID, sentA[0].ID)
-	sentB, err := f.db.ListFoundryLoadDecisions(ctx, f.load, "", []string{f.b}, 100)
-	require.NoError(t, err)
-	ids := []string{sentB[0].ID}
-	if len(sentB) > 1 {
-		ids = append(ids, sentB[1].ID)
-	}
-	assert.ElementsMatch(t, []string{kept.ID, laterB.ID}, ids)
+	require.False(t, f.approve(t, "4", laterA, laterB), "the take-back's resend takes them")
+	assert.Equal(t, map[string]model.FoundryReviewDecisionKind{laterA.ID: model.FoundryReviewRelease, unreported.ID: model.FoundryReviewWithdraw},
+		f.sentKinds(t, f.a))
+	assert.Equal(t, map[string]model.FoundryReviewDecisionKind{
+		laterB.ID: model.FoundryReviewRelease, failed.ID: model.FoundryReviewWithdraw, kept.ID: model.FoundryReviewWithdraw,
+	}, f.sentKinds(t, f.b))
 	job = f.claim(t)
 	owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
 	require.NoError(t, err)
 	require.Len(t, owed, 2)
-	f.sent(t, job, owed[0], 1, written(laterA))
-	f.sent(t, job, owed[1], 1, notHeld(kept), written(laterB))
+	for _, o := range owed {
+		if o.DocumentID == f.a {
+			f.sent(t, job, o, 1, withdrawn(unreported, model.FoundryReleaseOutcomeNotWritten, ""), written(laterA))
+		} else {
+			f.sent(t, job, o, 1, withdrawn(failed, model.FoundryReleaseOutcomeWithdrawn, ""),
+				withdrawn(kept, model.FoundryReleaseOutcomeWithdrawn, ""), written(laterB))
+		}
+	}
 	f.end(t, job, "later", model.FoundryGraphJobSucceeded)
-	assert.Equal(t, map[string]string{laterA.ID: "written", laterB.ID: "written"}, f.applied(t, missed, unreported, refusedOne, failed, laterA, laterB))
+	assert.Equal(t, map[string]string{
+		laterA.ID: "written", laterB.ID: "written", unreported.ID: "not_written", failed.ID: "withdrawn", kept.ID: "withdrawn",
+	}, f.applied(t, missed, unreported, refusedOne, failed, kept, laterA, laterB))
 	assert.Nil(t, f.liveJob(t))
 }
 
@@ -1051,8 +1062,19 @@ func TestFoundryReleaseTakenBackWhileAnotherLoadIsCurrent(t *testing.T) {
 	waits := f.held(f.a, 0, readA)
 	require.False(t, f.approve(t, "1", waits), "the load job goes on")
 
-	// The second load becomes current, is carried that approval, and refuses it.
-	f.loaded(t, f.worker, f.a, f.b)
+	// The second load becomes current, is carried that approval, and refuses
+	// it. Its commit refused the one it copied again, as an engine since
+	// 4.12.0 says of each release it is sent.
+	load := f.claim(t)
+	require.Equal(t, model.FoundryGraphJobLoad, load.Kind)
+	for _, doc := range []string{f.a, f.b} {
+		e := extracted(doc)
+		if doc == f.b {
+			e.Releases = []model.FoundryReleaseOutcome{refused(turnedDown, "conflict")}
+		}
+		require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, load.ID, f.worker, e, false))
+	}
+	f.end(t, load, "loaded", model.FoundryGraphJobSucceeded)
 	f.load = id26("FJ-RSWAP2")
 	require.Equal(t, f.load, *f.ontologyNow(t).CurrentLoadID)
 	job = f.claim(t)
@@ -1062,7 +1084,7 @@ func TestFoundryReleaseTakenBackWhileAnotherLoadIsCurrent(t *testing.T) {
 	require.Len(t, owed, 1)
 	f.sent(t, job, owed[0], 0, refused(waits, "conflict"))
 	f.end(t, job, "second", model.FoundryGraphJobSucceeded)
-	require.Equal(t, map[string]string{turnedDown.ID: "", waits.ID: "refused/conflict"}, f.applied(t, turnedDown, waits))
+	require.Equal(t, map[string]string{turnedDown.ID: "refused/conflict", waits.ID: "refused/conflict"}, f.applied(t, turnedDown, waits))
 
 	// The person takes both back. They leave the current load's list; the
 	// first load keeps its copies, and still owes the document.

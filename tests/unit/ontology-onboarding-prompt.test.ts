@@ -603,6 +603,7 @@ describe("onboardingPrompt's review, load and failures", () => {
       "how many it read of how many (`read` of `total`), how many its version doesn’t read (`not_read_by_version`",
       "one about a synced table also has the table’s `connector_id` and `table`, so name the table, not the id;",
       "its fact writes (`facts_written`: a fact counts once for each document that states it, so it is not the number of facts in the graph)",
+      "its values written (`values_written`: property values the documents stated, counted the same way)",
       "the reviews the documents left (`left_for_review`: counted as the load wrote each document, so it is not the number still open)",
       "the names it matched to no one record (`names_unresolved`: they are among those reviews, so don’t add the two)",
       "If `documents` is absent though the version was given document sets, say the counts aren’t available, not that nothing was left unread.",

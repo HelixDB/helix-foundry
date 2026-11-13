@@ -1161,6 +1161,7 @@ describe("mock document sets", () => {
         notRead: 1,
         waiting: 0,
         facts: "0",
+        attributes: "0",
         reviews: "0",
         unresolved: "0",
       },

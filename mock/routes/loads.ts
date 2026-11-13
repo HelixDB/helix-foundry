@@ -46,9 +46,11 @@ import {
   ingestChunk,
   markLoad,
   releaseReview,
+  withdrawRelease,
   type EnrichmentBinding,
   type ExtractOntology,
   type ProfileRow,
+  type ReleaseWrite,
   type Row,
   type UndoableLink,
   type WeakLink,
@@ -74,6 +76,7 @@ import {
   joinLoad,
   loadDocumentSets,
   countRelease,
+  countWithdraw,
   loadDocuments,
   setExtraction,
   spentAllowance,
@@ -190,6 +193,11 @@ type Knobs = {
     | "no_statement"
     | "conflict";
   deleteOutcome?: "succeed" | "fail";
+  // What the engine says of an approval taken back (contract 4.16.0) in
+  // place of `withdrawn`: `not_written` (the load holds nothing it wrote,
+  // and nothing changes), or a refusal (`differs`, `too_large`: what it
+  // wrote stays).
+  withdrawOutcome?: "not_written" | "differs" | "too_large";
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // The next n reads find every read slot taken.
   readsBusy?: number;
@@ -332,6 +340,9 @@ const state = {
   // id (appliedKey), and the approvals waiting to be applied.
   applied: new Map<string, DecisionApplied>(),
   resends: [] as { loadId: string; decisionId: string; due: number }[],
+  // What each approval a load wrote put in its graph, by load and decision
+  // id (appliedKey), which taking it back undoes.
+  written: new Map<string, ReleaseWrite>(),
   // The loads that owe the engine their value decisions again: a resend job
   // sends them. What each property held before a value was decided in place
   // (`was`, by load and property), and the properties whose decision a load
@@ -348,6 +359,7 @@ onReset(() => {
   state.jobs = [];
   state.applied.clear();
   state.resends = [];
+  state.written.clear();
   state.valuesOwed.clear();
   state.was.clear();
   state.withdrawn.clear();
@@ -362,6 +374,7 @@ onReset(() => {
   delete knobs.documentHeld;
   delete knobs.documentUnmatched;
   delete knobs.deleteOutcome;
+  delete knobs.withdrawOutcome;
   delete knobs.readErrors;
   delete knobs.readsBusy;
   delete knobs.readsPaused;
@@ -410,9 +423,14 @@ export const currentLoadId = (ontologyId: string) =>
 // fact, or stays held for a reason. What became of each decision is kept by
 // load and decision id. The mock applies only what is settled on the current
 // load: an approval saved while another load was being written is not
-// carried to it, so its card offers to approve it again.
+// carried to it, so its card offers to approve it again. Removing an
+// approval the current load wrote takes it back (contract 4.16.0): its copy
+// becomes a withdraw, which a job's step later undoes what the release wrote
+// (withdrawRelease), so the claim is held again, unless `withdrawOutcome`
+// says otherwise.
 
 type Release = Extract<FoundryReviewDecision, { kind: "release" }>;
+type Withdraw = Extract<FoundryReviewDecision, { kind: "withdraw" }>;
 /** A release decision's review in a load's graph, if the load holds it. */
 function heldReview(l: StoredLoad, d: Release) {
   const g = tenantGraph(l.tenantId).view(l.id);
@@ -504,14 +522,20 @@ function applyReleases(ontologyId: string, now = Date.now()) {
   for (const r of due) {
     const l = loadById(r.loadId);
     const d = l?.decisions.find(
-      (x): x is Release => x.id === r.decisionId && x.kind === "release",
+      (x): x is Release | Withdraw =>
+        x.id === r.decisionId &&
+        (x.kind === "release" || x.kind === "withdraw"),
     );
     // Taken back, or its load deleted, before it was applied.
     if (!l || !d) continue;
+    if (d.kind === "withdraw") {
+      takeBack(l, d, r.due);
+      continue;
+    }
     const review = heldReview(l, d);
     if (review && !refusal()) {
       const def = ontologyVersion(l.ontologyId, l.versionId)?.definition;
-      releaseReview(
+      const w = releaseReview(
         tenantGraph(l.tenantId).view(l.id),
         review.id,
         {
@@ -521,10 +545,34 @@ function applyReleases(ontologyId: string, now = Date.now()) {
         },
         holdsOne(def, String(review.props.suggested_link)) ? d : undefined,
       );
+      if (w) state.written.set(appliedKey(l.id, d.id), w);
       countRelease(l.id, d.docId);
     }
     recordRelease(l, d, r.due);
   }
+}
+
+/**
+ * Carries out a withdraw, as the engine does before it reads any document:
+ * what the approval wrote is undone and its claim held again (`withdrawn`);
+ * with nothing it wrote in the load, `not_written`; `withdrawOutcome` may
+ * refuse it instead, and then what it wrote stays.
+ */
+function takeBack(l: StoredLoad, d: Withdraw, at: number) {
+  const key = appliedKey(l.id, d.id),
+    w = state.written.get(key),
+    forced = knobs.withdrawOutcome;
+  let applied: DecisionApplied;
+  if (forced === "differs" || forced === "too_large")
+    applied = { status: "refused", reason: forced };
+  else if (!w || forced === "not_written") applied = { status: "not_written" };
+  else {
+    withdrawRelease(tenantGraph(l.tenantId).view(l.id), w);
+    state.written.delete(key);
+    countWithdraw(l.id, d.docId);
+    applied = { status: "withdrawn" };
+  }
+  state.applied.set(key, { ...applied, at: iso(at) });
 }
 
 /**
@@ -543,19 +591,43 @@ export function appliedOf(ontologyId: string, d: FoundryReviewDecision) {
 }
 
 /**
- * Takes a removed release decision back from the current load's list, unless
- * that load wrote it: whatever else the load made of it, a later approval of
- * its document must not send it again.
+ * Takes a removed release decision back from the current load's list. One
+ * that load wrote becomes a withdraw (contract 4.16.0), carried out a job's
+ * step from now; any other leaves the list, as nothing of it is in the load,
+ * and a later approval of its document must not send it again.
  */
 export function forgetRelease(ontologyId: string, decisionId: string) {
   const l = loadById(currentLoadId(ontologyId) || "");
-  if (
-    !l?.decisions.some((x) => x.id === decisionId && x.kind === "release") ||
-    state.applied.get(appliedKey(l.id, decisionId))?.status === "written"
-  )
+  if (!l?.decisions.some((x) => x.id === decisionId && x.kind === "release"))
     return;
+  const key = appliedKey(l.id, decisionId);
+  if (state.applied.get(key)?.status === "written") {
+    l.decisions = l.decisions.map((x) =>
+      x.id === decisionId && x.kind === "release"
+        ? { ...x, kind: "withdraw" }
+        : x,
+    );
+    state.applied.set(key, { status: "pending" });
+    state.resends.push({
+      loadId: l.id,
+      decisionId,
+      due: Date.now() + (knobs.loadStepMs ?? STEP_MS),
+    });
+    return;
+  }
   l.decisions = l.decisions.filter((x) => x.id !== decisionId);
-  state.applied.delete(appliedKey(l.id, decisionId));
+  state.applied.delete(key);
+}
+
+/**
+ * The current load's withdraws, which the decisions list shows with what
+ * became of each while that load is current.
+ */
+export function currentWithdraws(ontologyId: string): Withdraw[] {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  return (l?.decisions ?? []).filter(
+    (x): x is Withdraw => x.kind === "withdraw",
+  );
 }
 // A value a person chose applies to the current load at once, as the
 // backend's does (store/foundry_resends.go): the decision joins the load's
@@ -1378,7 +1450,14 @@ function purge(ontologyId: string, at: number) {
 function read(j: StoredJob, documentId: string, at: string) {
   const doc = loadDocuments(j.loadId).find((d) => d.id === documentId);
   if (!doc) return;
-  const empty = { sections: 0, entities: 0, mentions: 0, facts: 0, reviews: 0 };
+  const empty = {
+    sections: 0,
+    entities: 0,
+    mentions: 0,
+    facts: 0,
+    attributes: 0,
+    reviews: 0,
+  };
   // Never sent to the engine: the stage records a PDF whose text couldn't
   // be read with its read's code, for good (the read says why).
   if (doc.refused) {

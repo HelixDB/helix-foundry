@@ -1557,6 +1557,8 @@ export type DocumentExtraction = {
   entities?: number;
   mentions?: number;
   facts?: number;
+  // Values written: property values it stated that were written as evidence.
+  attributes?: number;
   reviews?: number;
   // int64: what reading it cost, in millionths of a dollar.
   usdMicros?: string;
@@ -2070,6 +2072,9 @@ export type FoundryLoadDocumentSet = {
   // (int64) Its documents' fact writes: a fact counts once for each
   // document that created it or added evidence to it.
   facts?: string;
+  // (int64) Its documents' values written: property values each stated
+  // that were written as evidence, a value counting once for each document.
+  attributes?: string;
   // (int64) The reviews its documents left when the load last wrote each,
   // of every kind. Not the open reviews: one settled since stays counted
   // until the load writes the decision, and a disputed value's once chosen.
@@ -2696,6 +2701,20 @@ export type ReviewDecision =
       claimStart: number;
       claimEnd: number;
       statementHash: string;
+    }
+  // An approval taken back from the current load after it may have written
+  // it (contract 4.16.0): the release as it was sent, under its id. It is no
+  // saved decision: the list shows it, with what became of it (`applied`),
+  // while that load is current, and it can't be removed.
+  | {
+      kind: "withdraw";
+      type: "";
+      docId: string;
+      claimKey: string;
+      claimSection: number;
+      claimStart: number;
+      claimEnd: number;
+      statementHash: string;
     };
 /**
  * What became of a release or a prop decision in the ontology's current load:
@@ -2711,7 +2730,13 @@ export type ReviewDecision =
  * load, and if the claim was written there is no review left to approve,
  * only the fact; choosing a value again finishes a value, as the end of the
  * ontology's next job does), and empty when the load read it as it was
- * created and no job has said what became of it.
+ * created and no job has said what became of it. A withdraw is `pending`
+ * until the engine takes the approval back, then `withdrawn` (the claim is
+ * held again, or, held for a conflict with a document since removed, stays
+ * written as its document's own statement), `not_written` (the load held
+ * nothing the approval wrote), `refused` (what it wrote stays: `differs`,
+ * `too_large`, or a backend reason), or `unconfirmed` (its job failed; the
+ * ontology's next job sends it again).
  */
 export type DecisionApplied = {
   status?:
@@ -2721,6 +2746,8 @@ export type DecisionApplied = {
     | "missed"
     | "applied"
     | "unconfirmed"
+    | "withdrawn"
+    | "not_written"
     | "";
   reason?: string;
   at?: string | null;

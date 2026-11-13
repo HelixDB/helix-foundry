@@ -712,7 +712,7 @@ func TestGetLoadCountsWhatItMadeOfItsDocuments(t *testing.T) {
 	}}
 	load.DocumentSets = append(load.DocumentSets,
 		&foundryv1.FoundryLoadDocumentSet{SetId: "set-01", Routed: true, Documents: 10, Read: 8, Duplicate: 1, Failed: 1, Reviews: 30},
-		&foundryv1.FoundryLoadDocumentSet{SetId: "set-02", Routed: true, Documents: 12, Read: 10, Waiting: 2, Facts: 3, Reviews: 37, Unresolved: 5})
+		&foundryv1.FoundryLoadDocumentSet{SetId: "set-02", Routed: true, Documents: 12, Read: 10, Waiting: 2, Facts: 3, Attributes: 4, Reviews: 37, Unresolved: 5})
 	for _, set := range []string{"03", "04", "05", "06", "07", "08", "09", "10", "11"} {
 		load.DocumentSets = append(load.DocumentSets, &foundryv1.FoundryLoadDocumentSet{SetId: "set-" + set, Documents: 10, NotRead: 10})
 	}
@@ -724,7 +724,7 @@ func TestGetLoadCountsWhatItMadeOfItsDocuments(t *testing.T) {
 	require.True(t, ok, "%v", out)
 	for field, want := range map[string]float64{
 		"total": 121, "read": 18, "not_read_by_version": 99, "duplicate": 1, "failed": 1, "waiting": 2,
-		"facts_written": 3, "left_for_review": 67, "names_unresolved": 5,
+		"facts_written": 3, "values_written": 4, "left_for_review": 67, "names_unresolved": 5,
 	} {
 		assert.Equal(t, want, documents[field], field)
 	}
@@ -733,15 +733,15 @@ func TestGetLoadCountsWhatItMadeOfItsDocuments(t *testing.T) {
 	// Each set says how every one of its documents ended, so "12 documents, 10 read" explains itself.
 	assert.Equal(t, map[string]any{
 		"set_id": "set-01", "read_by_version": true, "documents": 10.0, "read": 8.0, "not_read_by_version": 0.0, "duplicate": 1.0,
-		"failed": 1.0, "waiting": 0.0, "facts_written": 0.0, "left_for_review": 30.0, "names_unresolved": 0.0,
+		"failed": 1.0, "waiting": 0.0, "facts_written": 0.0, "values_written": 0.0, "left_for_review": 30.0, "names_unresolved": 0.0,
 	}, sets[0])
 	assert.Equal(t, map[string]any{
 		"set_id": "set-02", "read_by_version": true, "documents": 12.0, "read": 10.0, "not_read_by_version": 0.0, "duplicate": 0.0,
-		"failed": 0.0, "waiting": 2.0, "facts_written": 3.0, "left_for_review": 37.0, "names_unresolved": 5.0,
+		"failed": 0.0, "waiting": 2.0, "facts_written": 3.0, "values_written": 4.0, "left_for_review": 37.0, "names_unresolved": 5.0,
 	}, sets[1])
 	assert.Equal(t, map[string]any{
 		"set_id": "set-12", "read_by_version": false, "documents": 9.0, "read": 0.0, "not_read_by_version": 9.0, "duplicate": 0.0,
-		"failed": 0.0, "waiting": 0.0, "facts_written": 0.0, "left_for_review": 0.0, "names_unresolved": 0.0,
+		"failed": 0.0, "waiting": 0.0, "facts_written": 0.0, "values_written": 0.0, "left_for_review": 0.0, "names_unresolved": 0.0,
 	}, sets[11])
 	for _, set := range sets {
 		set := set.(map[string]any)

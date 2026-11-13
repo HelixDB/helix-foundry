@@ -310,6 +310,9 @@ function decidedIndex(decisions: readonly ReviewDecision[]) {
         [d.docId, d.claimSection, d.claimStart, d.claimEnd].join("\u001f"),
         d,
       );
+    // An approval taken back (contract 4.16.0) decides nothing: its claim
+    // is held again, and is one to decide.
+    else if (d.kind === "withdraw") continue;
     else if (d.kind === "resolve")
       add(others, nameKey(d.type, d.docId, d.normName), d);
     else add(others, JSON.stringify([d.type, d.entityKey, d.prop]), d);
