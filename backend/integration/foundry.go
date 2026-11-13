@@ -153,8 +153,8 @@ type ListFoundryOntologiesInput struct {
 }
 
 // WorkspaceInput is the input of a tool that acts in one Workspace. An empty workspace_id is
-// the caller's only Workspace (Identity.WorkspaceID): a service key's own, which has no tool that
-// lists workspaces, or the one a user belongs to.
+// the caller's only Workspace (Identity.onlyWorkspace): a service key's own, which has no tool
+// that lists workspaces, or the one a user belongs to.
 type WorkspaceInput interface{ Workspace() *string }
 
 func (in *ListFoundryOntologiesInput) Workspace() *string { return &in.WorkspaceID }
@@ -887,13 +887,11 @@ func addFoundryTool[In, Out any](
 		// The SDK checked the arguments and read them through float64s, which round a large integer
 		// (in a read's filter, say). Read them again, each number as written.
 		_ = decodeExact(req.Params.Arguments, &input)
-		in, scoped := any(&input).(WorkspaceInput)
-		if scoped && *in.Workspace() == "" {
-			*in.Workspace() = identity.WorkspaceID
-		}
 		result, value, err := s.Run(ctx, t.Name, func(ctx context.Context, call *Call) (any, int, error) {
-			if scoped && *in.Workspace() == "" {
-				return nil, 0, detailedToolError{code: errCodeInvalidArguments, message: "workspace_id is required: the caller belongs to more than one workspace"}
+			if in, scoped := any(&input).(WorkspaceInput); scoped && *in.Workspace() == "" {
+				if *in.Workspace() = identity.onlyWorkspace(ctx); *in.Workspace() == "" {
+					return nil, 0, errWorkspaceRequired
+				}
 			}
 			return handle(ctx, identity, call, input)
 		})
@@ -903,6 +901,20 @@ func addFoundryTool[In, Out any](
 		}
 		return result, out, err
 	})
+}
+
+// errWorkspaceRequired refuses an empty workspace_id from a caller who doesn't belong to exactly
+// one workspace.
+var errWorkspaceRequired = detailedToolError{code: errCodeInvalidArguments,
+	message: "workspace_id is required: it may be left empty only by a caller of exactly one workspace"}
+
+// onlyWorkspace is the Workspace an empty workspace_id names: a service key's own, else a
+// user's only one; empty when there is none.
+func (i *Identity) onlyWorkspace(ctx context.Context) string {
+	if i.WorkspaceID != "" || i.OnlyWorkspace == nil {
+		return i.WorkspaceID
+	}
+	return i.OnlyWorkspace(ctx)
 }
 
 // AuthorizeFoundry checks the identity may make each WFE method's call with req, which names

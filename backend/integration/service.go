@@ -36,9 +36,12 @@ const (
 // None of its callbacks may trust actor fields from a client's request.
 type Identity struct {
 	User, Agent, ServiceKey bool
-	// WorkspaceID is the Workspace an empty workspace_id names (WorkspaceInput): a service key's
-	// own, or a user's only one; empty for a user of several.
-	WorkspaceID   string
+	// WorkspaceID is a service key's own Workspace, which an empty workspace_id names.
+	WorkspaceID string
+	// OnlyWorkspace is, for a user, the Workspace an empty workspace_id names: the one they
+	// belong to, read when a call leaves workspace_id empty, so a Workspace made since the
+	// host last read their memberships counts; empty for a user of several. Nil names none.
+	OnlyWorkspace func(context.Context) string
 	EventSource   *EventSourceIdentity
 	HasPermission func(Permission) bool
 	Allows        func(workspaceID, projectID string, grant Grant) bool

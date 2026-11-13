@@ -123,15 +123,17 @@ func withoutEventSources(schema *jsonschema.Schema) *jsonschema.Schema {
 	return schema
 }
 
-// notNullable makes every optional array and object of an input schema plain: a nil slice or
-// pointer infers ["null", "array"], which some clients refuse and none needs, since an omitted
-// field is the same.
+// notNullable makes an input schema's required arrays and objects plain: a nil slice or pointer
+// infers ["null", "array"], but a required field is never null. An optional one keeps null, which
+// some clients send for a field they leave unset.
 func notNullable(schema *jsonschema.Schema) *jsonschema.Schema {
 	if schema == nil {
 		return nil
 	}
-	if len(schema.Types) == 2 && schema.Types[0] == "null" {
-		schema.Type, schema.Types = schema.Types[1], nil
+	for _, name := range schema.Required {
+		if property := schema.Properties[name]; property != nil && len(property.Types) == 2 && property.Types[0] == "null" {
+			property.Type, property.Types = property.Types[1], nil
+		}
 	}
 	for _, property := range schema.Properties {
 		notNullable(property)

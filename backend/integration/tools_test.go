@@ -986,30 +986,44 @@ func mustJSON(t *testing.T, v any) string {
 	return string(raw)
 }
 
-// An empty workspace_id is the caller's only workspace, a user's as a key's; a user of several is
-// told to name one.
+// An empty workspace_id is the caller's only workspace, a user's as a key's, read only when a call
+// leaves it empty; a user of several is told to name one.
 func TestAnEmptyWorkspaceIsTheCallersOnlyOne(t *testing.T) {
 	for name, only := range map[string]string{"one workspace": "workspace-1", "several": ""} {
 		t.Run(name, func(t *testing.T) {
 			var asked string
-			identity := &Identity{User: true, WorkspaceID: only, HasPermission: func(Permission) bool { return true },
+			reads := 0
+			identity := &Identity{User: true, HasPermission: func(Permission) bool { return true },
+				OnlyWorkspace: func(context.Context) string { reads++; return only },
 				Authorize: func(_ context.Context, req any, _ Grant, _ ...string) error {
 					asked = req.(*foundryv1.ListConnectorsRequest).GetWorkspaceId()
 					return nil
 				}}
-			result, err := connect(t, &Service{Foundry: &connectorsBackend{}}, identity).CallTool(context.Background(),
-				&mcp.CallToolParams{Name: toolFoundryListConnectors, Arguments: map[string]any{}})
+			client := connect(t, &Service{Foundry: &connectorsBackend{}}, identity)
+			result, err := client.CallTool(context.Background(), &mcp.CallToolParams{Name: toolFoundryListConnectors, Arguments: map[string]any{}})
 			require.NoError(t, err)
-			if only != "" {
-				require.False(t, result.IsError)
-				assert.Equal(t, only, asked)
+			assert.Equal(t, 1, reads)
+			if only == "" {
+				require.True(t, result.IsError)
+				assert.Equal(t, errWorkspaceRequired.Error(), result.Content[0].(*mcp.TextContent).Text)
+				assert.Empty(t, asked, "nothing is authorized or asked")
 				return
 			}
-			require.True(t, result.IsError)
-			assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "workspace_id is required")
-			assert.Empty(t, asked, "nothing is authorized or asked")
+			require.False(t, result.IsError)
+			assert.Equal(t, only, asked)
+
+			// A workspace the call names is used as it is, without reading the memberships.
+			_, err = client.CallTool(context.Background(), &mcp.CallToolParams{Name: toolFoundryListConnectors,
+				Arguments: map[string]any{"workspace_id": "workspace-2"}})
+			require.NoError(t, err)
+			assert.Equal(t, "workspace-2", asked)
+			assert.Equal(t, 1, reads)
 		})
 	}
+	// A key's own workspace comes before any membership read.
+	key := &Identity{ServiceKey: true, WorkspaceID: "workspace-key", OnlyWorkspace: func(context.Context) string { panic("a key has no memberships") }}
+	assert.Equal(t, "workspace-key", key.onlyWorkspace(context.Background()))
+	assert.Empty(t, (&Identity{User: true}).onlyWorkspace(context.Background()), "a host that names none")
 }
 
 // Preparing an action changes nothing, so only executing it is destructive: a client that asks
@@ -1029,14 +1043,27 @@ func TestOnlyExecutingAnActionIsDestructive(t *testing.T) {
 	assert.True(t, *execute.DestructiveHint)
 }
 
-// No input takes null for an array or object, which leaving it out already says, and some clients
-// refuse a list of types; read_graph's reads say how many it takes.
-func TestInputsTakeNoNull(t *testing.T) {
+// A required input is never null; an optional one may be, as some clients send for a field they
+// leave unset. read_graph's reads say how many it takes.
+func TestRequiredInputsTakeNoNull(t *testing.T) {
 	s := &Service{FoundryURL: "https://foundry.example", Events: true, SignIn: true, Workflows: struct{ FoundryWorkflowBackendAPI }{}}
 	listed, err := connect(t, s, everyTool()).ListTools(context.Background(), nil)
 	require.NoError(t, err)
+	nullable := map[string]bool{}
 	for _, tool := range listed.Tools {
-		assert.NotContains(t, string(mustJSON(t, tool.InputSchema)), `"null"`, tool.Name)
+		var schema struct {
+			Required   []string                  `json:"required"`
+			Properties map[string]map[string]any `json:"properties"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(mustJSON(t, tool.InputSchema)), &schema))
+		for _, name := range schema.Required {
+			assert.NotContains(t, mustJSON(t, schema.Properties[name]["type"]), "null", tool.Name+"."+name)
+		}
+		for name, property := range schema.Properties {
+			if strings.Contains(mustJSON(t, property["type"]), "null") {
+				nullable[tool.Name+"."+name] = true
+			}
+		}
 		if tool.Name == toolFoundryReadGraph {
 			reads := tool.InputSchema.(map[string]any)["properties"].(map[string]any)["reads"].(map[string]any)
 			assert.Equal(t, "array", reads["type"])
@@ -1044,6 +1071,8 @@ func TestInputsTakeNoNull(t *testing.T) {
 			assert.EqualValues(t, ontologyagent.MaxReads, reads["maxItems"])
 		}
 	}
+	assert.True(t, nullable[toolFoundryConnect+".repos"], "an optional array still takes null")
+	assert.True(t, nullable[toolFoundryAsk+".focus"], "an optional object still takes null")
 }
 
 // Each input that names a workspace hands its workspace_id field to the default, whatever tool
