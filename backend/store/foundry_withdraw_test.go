@@ -479,6 +479,41 @@ func TestFoundryTakeBackOfAReleaseWrittenAfterItsRemoval(t *testing.T) {
 	assert.Equal(t, [2]int{facts, reviews}, [2]int{gotFacts, gotReviews}, "the take-back moved them back")
 }
 
+// A resend wrote an approval and its event was lost; the retry hears the
+// claim not held, so the load records the approval written, and its counts,
+// which the lost event never moved, move forward then: a later take-back
+// moves back only what moved forward.
+func TestFoundryTakeBackOfAReleaseWhoseWordWasLost(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "WLOST")
+	_, err := testDB.Exec(`UPDATE foundry_load_extractions SET reviews=3 WHERE load_id=? AND document_id=?`, f.load, f.a)
+	require.NoError(t, err)
+	facts, reviews := f.countsOf(t, f.a)
+	d := f.held(f.a, 0, readA)
+	require.True(t, f.approve(t, "1", d))
+	f.retried(t, f.claim(t))
+	job := f.claim(t)
+	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	f.sent(t, job, owed[0], 0, notHeld(d))
+	assert.Equal(t, map[string]string{d.ID: "written"}, f.applied(t, d))
+	gotFacts, gotReviews := f.countsOf(t, f.a)
+	assert.Equal(t, [2]int{facts + 1, reviews - 1}, [2]int{gotFacts, gotReviews}, "what the lost event never moved")
+	f.end(t, job, "1-end", model.FoundryGraphJobSucceeded)
+
+	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+		&model.FoundryGraphJob{ID: id26("RS-WLOST-2")}))
+	job = f.claim(t)
+	owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	f.sent(t, job, owed[0], 0, withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, ""))
+	assert.Equal(t, map[string]string{d.ID: "withdrawn"}, f.applied(t, d))
+	gotFacts, gotReviews = f.countsOf(t, f.a)
+	assert.Equal(t, [2]int{facts, reviews}, [2]int{gotFacts, gotReviews}, "back where they were")
+}
+
 // countsOf reads a document's facts and reviews in the fixture's load.
 func (f resendFixture) countsOf(t *testing.T, doc string) (facts, reviews int) {
 	t.Helper()

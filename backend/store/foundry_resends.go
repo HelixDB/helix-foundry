@@ -621,10 +621,15 @@ WHERE load_id=? AND kind IN ('release', 'withdraw') AND applied_status IN ('pend
 // the decision as the load holds it, of the kind and under the hash the job
 // sent (model.FoundryDecisionApplied.After). Each withdraw that takes back
 // what the load recorded written moves the document's counts back
-// (MovesBack). The caller runs it in the transaction that records the
-// document, or RecordFoundryReleaseOutcomes does.
-func (s *mysqlDB) recordFoundryReleaseOutcomes(ctx context.Context, loadID, docID string, outcomes []model.FoundryReleaseOutcome) error {
-	back := 0
+// (MovesBack). kept is that the document's row adds up what each run wrote
+// (a run that found it already ingested, or one that failed and left the
+// row as it was): there, a release written by a run whose word was lost
+// moves the counts forward (MovesForward), so was_written, once a removal
+// turns its copy into a withdraw, means its counts moved forward. A fresh
+// commit's counts are its own. The caller runs it in the transaction that
+// records the document, or RecordFoundryReleaseOutcomes does.
+func (s *mysqlDB) recordFoundryReleaseOutcomes(ctx context.Context, loadID, docID string, outcomes []model.FoundryReleaseOutcome, kept bool) error {
+	moved := 0
 	for _, o := range outcomes {
 		kind := model.FoundryReviewRelease
 		if o.Withdraw {
@@ -672,8 +677,11 @@ WHERE load_id=? AND id=? AND kind='withdraw' AND statement_hash=? AND applied_st
 		if !ok {
 			continue
 		}
-		if o.Withdraw && applied.MovesBack(status) {
-			back++
+		switch {
+		case o.Withdraw && applied.MovesBack(status):
+			moved--
+		case kept && applied.MovesForward(o, status):
+			moved++
 		}
 		var why any
 		if reason != "" {
@@ -684,17 +692,18 @@ WHERE load_id=? AND id=?`, string(status), why, loadID, o.DecisionID); err != ni
 			return err
 		}
 	}
-	return s.moveFoundryCountsBack(ctx, loadID, docID, back)
+	return s.moveFoundryCounts(ctx, loadID, docID, moved)
 }
 
-// moveFoundryCountsBack moves a document's counts back by n take-backs of
-// what its load recorded written: n facts fewer and n reviews more, as
-// recording each write moved them forward.
-func (s *mysqlDB) moveFoundryCountsBack(ctx context.Context, loadID, docID string, n int) error {
+// moveFoundryCounts moves n of a document's reviews to its facts: n
+// releases written whose run's word was lost, or, negative, -n take-backs of
+// what its load recorded written, a fact fewer and a review more each. Each
+// count stays at least 0.
+func (s *mysqlDB) moveFoundryCounts(ctx context.Context, loadID, docID string, n int) error {
 	if n == 0 {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE foundry_load_extractions SET facts=GREATEST(facts-?, 0), reviews=reviews+?
+	_, err := s.db.ExecContext(ctx, `UPDATE foundry_load_extractions SET facts=GREATEST(facts+?, 0), reviews=GREATEST(reviews-?, 0)
 WHERE load_id=? AND document_id=?`, n, n, loadID, docID)
 	return err
 }
@@ -718,7 +727,7 @@ WHERE load_id=? AND kind='withdraw' AND doc_id=? AND applied_status IN ('pending
 		string(model.FoundryWithdrawn), loadID, docID); err != nil {
 		return err
 	}
-	return s.moveFoundryCountsBack(ctx, loadID, docID, back)
+	return s.moveFoundryCounts(ctx, loadID, docID, -back)
 }
 
 // RecordFoundryReleaseOutcomes records what the engine said of the decisions
@@ -742,7 +751,7 @@ func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, worke
 			}
 			return err
 		}
-		return tx.recordFoundryReleaseOutcomes(ctx, loadID, docID, outcomes)
+		return tx.recordFoundryReleaseOutcomes(ctx, loadID, docID, outcomes, true)
 	})
 }
 

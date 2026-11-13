@@ -230,6 +230,18 @@ func (a FoundryDecisionApplied) MovesBack(status FoundryReleaseStatus) bool {
 	return status == FoundryWithdrawn && a.WasWritten && a.Status.Waits()
 }
 
+// MovesForward reports whether a release that ends at status after o was
+// written by a run whose word was lost: not_held of one settled here
+// (After). The worker counts a fact only for a written word, so that run's
+// document counts never moved; they move now, a fact more and a review
+// fewer, so the take-back (MovesBack) moves back only what moved forward.
+// Only where the document's counts add up what each run wrote: a fresh
+// commit's counts are its own, so the store asks only of a run that kept
+// the document's row (store.recordFoundryReleaseOutcomes).
+func (a FoundryDecisionApplied) MovesForward(o FoundryReleaseOutcome, status FoundryReleaseStatus) bool {
+	return !o.Withdraw && o.Kind == FoundryReleaseOutcomeNotHeld && status == FoundryReleaseWritten && a.Status.Waits()
+}
+
 // FoundryReleaseUnconfirmed is how a reader is told of an unconfirmed
 // decision (FoundryDecisionApplied.Unconfirmed). No load stores it: the
 // decision keeps the status it waits in.

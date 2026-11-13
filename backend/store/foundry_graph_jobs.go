@@ -283,7 +283,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 		); err != nil {
 			return fmt.Errorf("record foundry document extraction: %w", err)
 		}
-		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, e.DocumentID, e.Releases); err != nil {
+		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, e.DocumentID, e.Releases, keepExisting); err != nil {
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_jobs
