@@ -6,13 +6,9 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const (
-	// foundryWorkflowRunsStartedIdx is the migration before foundryLoadWithdraw.
-	foundryWorkflowRunsStartedIdx = 20261123000000
-	// foundryLoadWithdraw widens a load decision's applied_status for a
-	// withdraw's outcome (contract 4.16.0).
-	foundryLoadWithdraw = 20261125000000
-)
+// foundryLoadWithdraw widens a load decision's applied_status for a
+// withdraw's outcome (contract 4.16.0), after foundryReviewQueue.
+const foundryLoadWithdraw = 20261125000000
 
 // The migration widens applied_status so a withdraw's outcome, the engine's
 // word, fits, and changes no row. Its Down narrows it again only once no
@@ -24,7 +20,7 @@ func TestFoundryLoadWithdrawMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	hostWorkspaces(t, db)
-	if err := goose.UpTo(db, ".", foundryWorkflowRunsStartedIdx); err != nil {
+	if err := goose.UpTo(db, ".", foundryReviewQueue); err != nil {
 		t.Fatal(err)
 	}
 	insert := func(id, kind, status string) error {
@@ -52,13 +48,13 @@ VALUES ('l', ?, 'o', ?, '', 'd', 'u', NOW(6), ?)`, id, kind, status)
 		}
 	}
 
-	if err := goose.DownTo(db, ".", foundryWorkflowRunsStartedIdx); err == nil {
+	if err := goose.DownTo(db, ".", foundryReviewQueue); err == nil {
 		t.Fatal("down narrowed the column under a withdraw's outcome")
 	}
 	if _, err := db.Exec(`DELETE FROM foundry_load_decisions WHERE kind='withdraw'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := goose.DownTo(db, ".", foundryWorkflowRunsStartedIdx); err != nil {
+	if err := goose.DownTo(db, ".", foundryReviewQueue); err != nil {
 		t.Fatalf("down once the withdraws are gone: %v", err)
 	}
 	if err := db.QueryRow(`SELECT applied_status FROM foundry_load_decisions WHERE id='r1'`).Scan(&status); err != nil || status != "written" {

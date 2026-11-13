@@ -2758,8 +2758,22 @@ export type FoundryReviewDecision = ReviewDecision & {
   decidedAt?: string | null;
   // Unset for a decision the current load's list doesn't hold.
   applied?: DecisionApplied | null;
+  // How the review queue showed the card it was made on; unset (or empty)
+  // for a decision made anywhere else.
+  drawn?: ReviewDrawn | "";
 };
-export type SettleReviewRequest = { decision: FoundryReviewChoice };
+/**
+ * How the review queue showed a card: in its order of the facts each
+ * decision writes, or drawn at random from a score band, which measures
+ * precision.
+ */
+export type ReviewDrawn = "ranked" | "random";
+export type SettleReviewRequest = {
+  decision: FoundryReviewChoice;
+  // A held claim's decision drawn at random is kept as a label of the claim
+  // too, with the score it was read at.
+  drawn?: ReviewDrawn;
+};
 export type ReviewDecisionResponse = { decision: FoundryReviewDecision };
 // Making a version current drops the decisions it doesn't take, but keeps a
 // resolve of a type it keeps whose entityKey its key no longer reads: the
@@ -2769,6 +2783,56 @@ export type ListReviewDecisionsResponse = {
   nextPageToken?: string;
 };
 export type DeleteReviewDecisionResponse = Record<string, never>;
+// POST and GET .../ontologies/{ontologyId}/review-labels: a person's word on
+// a claim at its place, kept to measure precision and read into nothing
+// else. A held claim's (claimKey and statementHash) is kept as its decision
+// of the queue's random slice is saved; an accepted fact's quote (factKey)
+// is labelled here. A re-check is a second person's word on a decision of a
+// held claim or on someone else's label of a fact: `against` is the verdict
+// it checks. One label per person and claim: saying it again replaces it.
+export type ReviewVerdict = "right" | "wrong";
+export type FoundryReviewLabel = {
+  id: string;
+  drawn: "random" | "recheck";
+  docId: string;
+  claimSection?: number;
+  claimStart?: number;
+  claimEnd?: number;
+  claimKey?: string;
+  statementHash?: string;
+  factKey?: string;
+  link?: string;
+  // The verifier's score as the claim was read; unset when it had none.
+  confidence?: number;
+  verdict: ReviewVerdict;
+  decisionId?: string;
+  against?: ReviewVerdict;
+  loadId?: string;
+  decidedByUserId?: string;
+  decidedAt?: string | null;
+};
+/** An accepted fact's quote in the current load, as its evidence holds it. */
+export type LabelFact = {
+  docId: string;
+  section: number;
+  start: number;
+  end: number;
+  factKey: string;
+};
+// A claim drawn at random (a fact's quote, or a held claim of the current
+// load by its review), or a second person's re-check of a decision on a
+// held claim or of another's label drawn at random.
+export type SettleReviewLabelRequest = { verdict: ReviewVerdict } & (
+  | { fact: LabelFact; drawn: "random" }
+  | { reviewId: string; drawn: "random" }
+  | { decisionId: string; drawn: "recheck" }
+  | { labelId: string; drawn: "recheck" }
+);
+export type ReviewLabelResponse = { label: FoundryReviewLabel };
+export type ListReviewLabelsResponse = {
+  labels?: FoundryReviewLabel[];
+  nextPageToken?: string;
+};
 
 // ---------------------------------------------------------------- Ontology: suggestions
 // GET .../ontologies/{ontologyId}/heal-findings and POST

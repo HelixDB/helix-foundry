@@ -633,6 +633,17 @@ const ofClaim = (d: ReviewDecision, s: Extract<Settle, { kind: "release" }>) =>
   (d.claimKey === s.claimKey || d.statementHash === s.hash);
 
 /**
+ * The saved rejection of this held claim's review, if any (ofClaim).
+ *
+ * @example
+ * rejectionOf([{ kind: "reject", ...placeOf(held) }], held.settle); // that rejection
+ */
+export const rejectionOf = <D extends ReviewDecision>(
+  decisions: readonly D[],
+  s: Extract<Settle, { kind: "release" }>,
+): D | undefined => decisions.find((d) => d.kind === "reject" && ofClaim(d, s));
+
+/**
  * `reviews` without the held claims a person rejected: each review of a held
  * claim that a saved reject names (ofClaim: by its document and its quote's
  * place, and its claim's key or the statement it reads). A rejection changes

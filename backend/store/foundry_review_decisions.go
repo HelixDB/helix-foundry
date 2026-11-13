@@ -14,6 +14,11 @@ import (
 
 const foundryReviewDecisionColumns = "id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id, decided_at"
 
+// foundryReviewDecisionDrawnColumns are a saved decision's columns with how
+// the review queue drew its card, which only foundry_review_decisions keeps:
+// a load's list copies foundryReviewDecisionColumns, and no Extract carries it.
+const foundryReviewDecisionDrawnColumns = foundryReviewDecisionColumns + ", drawn"
+
 // FoundryValueDecisionsFull refuses a value decision of a property the
 // ontology has decided no value of: it holds
 // model.FoundryExtractDecisionsMax value decisions already, and every one
@@ -201,19 +206,23 @@ func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.Foundr
 		section, start, end = span.Section, span.Start, span.End
 	}
 	if !stands {
+		// drawn goes with who decided and when: an approval of the statement
+		// it approved keeps all three, as it is the decision first made; any
+		// other settle is a decision made now, from the queue or not.
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_review_decisions
- (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)
+ (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id, drawn)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, ?)
  ON DUPLICATE KEY UPDATE
+ drawn=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), drawn, VALUES(drawn)),
  decided_by_user_id=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), decided_by_user_id, VALUES(decided_by_user_id)),
  decided_at=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), decided_at, NOW(6)),
  entity_key=VALUES(entity_key), value=VALUES(value), statement_hash=VALUES(statement_hash)`,
-			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID); err != nil {
+			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID, d.Drawn); err != nil {
 			return err
 		}
 	}
 	// <=> is NULL-safe equality; resolve's chosen entity is not its identity.
-	stored, err := scanFoundryReviewDecision(s.db.QueryRowContext(ctx, "SELECT "+foundryReviewDecisionColumns+`
+	stored, err := scanFoundryReviewDecisionDrawn(s.db.QueryRowContext(ctx, "SELECT "+foundryReviewDecisionDrawnColumns+`
  FROM foundry_review_decisions WHERE ontology_id=? AND kind=? AND type=? AND doc_id <=> ? AND norm_name <=> ?
  AND prop <=> ? AND claim_key <=> ? AND claim_section <=> ? AND claim_start <=> ? AND claim_end <=> ?
  AND (kind='resolve' OR entity_key <=> ?)`, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.Prop, d.ClaimKey, section, start, end, d.EntityKey))
@@ -506,7 +515,11 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 	if limit < 1 || limit > 10001 {
 		return nil, fmt.Errorf("decision limit must be 1..10001")
 	}
-	query := "SELECT " + foundryReviewDecisionColumns + " FROM " + table + " WHERE " + key + "=? AND id>?"
+	columns, scan := foundryReviewDecisionDrawnColumns, scanFoundryReviewDecisionDrawn
+	if table == "foundry_load_decisions" {
+		columns, scan = foundryReviewDecisionColumns, scanFoundryReviewDecision
+	}
+	query := "SELECT " + columns + " FROM " + table + " WHERE " + key + "=? AND id>?"
 	if table == "foundry_load_decisions" {
 		// <=> is NULL-safe: a copy no job has reported on has no status.
 		query += " AND NOT (applied_status <=> '" + string(model.FoundryValueRemoved) + `')
@@ -531,7 +544,7 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 	if err != nil {
 		return nil, err
 	}
-	return scanAll(rows, scanFoundryReviewDecision)
+	return scanAll(rows, scan)
 }
 
 // DeleteFoundryReviewDecision removes a decision from those later loads
@@ -651,12 +664,28 @@ WHERE load_id=? AND kind='prop' AND type=? AND entity_key=? AND prop=?`, string(
 	})
 }
 
+// scanFoundryReviewDecision reads foundryReviewDecisionColumns, which both
+// tables keep.
 func scanFoundryReviewDecision(row rowScanner) (*model.FoundryReviewDecision, error) {
+	return scanDecision(row, false)
+}
+
+// scanFoundryReviewDecisionDrawn reads foundryReviewDecisionDrawnColumns: a
+// saved decision, with how the review queue drew its card.
+func scanFoundryReviewDecisionDrawn(row rowScanner) (*model.FoundryReviewDecision, error) {
+	return scanDecision(row, true)
+}
+
+func scanDecision(row rowScanner, withDrawn bool) (*model.FoundryReviewDecision, error) {
 	var d model.FoundryReviewDecision
-	var doc, name, entity, prop, claim, hash sql.NullString
+	var doc, name, entity, prop, claim, hash, drawn sql.NullString
 	var section, start, end sql.NullInt64
 	var value []byte
-	err := row.Scan(&d.ID, &d.OntologyID, &d.Kind, &d.Type, &doc, &name, &entity, &prop, &value, &claim, &section, &start, &end, &hash, &d.DecidedByUserID, &d.DecidedAt)
+	dest := []any{&d.ID, &d.OntologyID, &d.Kind, &d.Type, &doc, &name, &entity, &prop, &value, &claim, &section, &start, &end, &hash, &d.DecidedByUserID, &d.DecidedAt}
+	if withDrawn {
+		dest = append(dest, &drawn)
+	}
+	err := row.Scan(dest...)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -683,6 +712,10 @@ func scanFoundryReviewDecision(row rowScanner) (*model.FoundryReviewDecision, er
 	}
 	if section.Valid && start.Valid && end.Valid {
 		d.ClaimSpan = &model.FoundryClaimSpan{Section: uint32(section.Int64), Start: uint32(start.Int64), End: uint32(end.Int64)}
+	}
+	if drawn.Valid {
+		v := model.FoundryReviewDrawn(drawn.String)
+		d.Drawn = &v
 	}
 	d.Value = value
 	if err := d.Validate(); err != nil {

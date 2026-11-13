@@ -83,6 +83,8 @@ const (
 	FoundryService_SettleFoundryReview_FullMethodName                   = "/helix.foundry.v1.FoundryService/SettleFoundryReview"
 	FoundryService_ListFoundryReviewDecisions_FullMethodName            = "/helix.foundry.v1.FoundryService/ListFoundryReviewDecisions"
 	FoundryService_DeleteFoundryReviewDecision_FullMethodName           = "/helix.foundry.v1.FoundryService/DeleteFoundryReviewDecision"
+	FoundryService_SettleFoundryReviewLabel_FullMethodName              = "/helix.foundry.v1.FoundryService/SettleFoundryReviewLabel"
+	FoundryService_ListFoundryReviewLabels_FullMethodName               = "/helix.foundry.v1.FoundryService/ListFoundryReviewLabels"
 	FoundryService_ListFoundryHealFindings_FullMethodName               = "/helix.foundry.v1.FoundryService/ListFoundryHealFindings"
 	FoundryService_DismissFoundryHealFinding_FullMethodName             = "/helix.foundry.v1.FoundryService/DismissFoundryHealFinding"
 	FoundryService_CreateFoundryWorkflow_FullMethodName                 = "/helix.foundry.v1.FoundryService/CreateFoundryWorkflow"
@@ -216,6 +218,11 @@ type FoundryServiceClient interface {
 	SettleFoundryReview(ctx context.Context, in *SettleFoundryReviewRequest, opts ...grpc.CallOption) (*FoundryReviewDecisionResponse, error)
 	ListFoundryReviewDecisions(ctx context.Context, in *ListFoundryReviewDecisionsRequest, opts ...grpc.CallOption) (*ListFoundryReviewDecisionsResponse, error)
 	DeleteFoundryReviewDecision(ctx context.Context, in *DeleteFoundryReviewDecisionRequest, opts ...grpc.CallOption) (*DeleteFoundryReviewDecisionResponse, error)
+	// A person's word on a claim drawn for the review queue's random slice or
+	// re-checked by a second person: a label that measures precision. It
+	// changes no decision and no load.
+	SettleFoundryReviewLabel(ctx context.Context, in *SettleFoundryReviewLabelRequest, opts ...grpc.CallOption) (*FoundryReviewLabelResponse, error)
+	ListFoundryReviewLabels(ctx context.Context, in *ListFoundryReviewLabelsRequest, opts ...grpc.CallOption) (*ListFoundryReviewLabelsResponse, error)
 	// Self-healing suggestions: what audits of the ontology's current load
 	// found its ontology and mappings lack, the top open ones by support.
 	ListFoundryHealFindings(ctx context.Context, in *ListFoundryHealFindingsRequest, opts ...grpc.CallOption) (*ListFoundryHealFindingsResponse, error)
@@ -955,6 +962,26 @@ func (c *foundryServiceClient) DeleteFoundryReviewDecision(ctx context.Context, 
 	return out, nil
 }
 
+func (c *foundryServiceClient) SettleFoundryReviewLabel(ctx context.Context, in *SettleFoundryReviewLabelRequest, opts ...grpc.CallOption) (*FoundryReviewLabelResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryReviewLabelResponse)
+	err := c.cc.Invoke(ctx, FoundryService_SettleFoundryReviewLabel_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ListFoundryReviewLabels(ctx context.Context, in *ListFoundryReviewLabelsRequest, opts ...grpc.CallOption) (*ListFoundryReviewLabelsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryReviewLabelsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryReviewLabels_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) ListFoundryHealFindings(ctx context.Context, in *ListFoundryHealFindingsRequest, opts ...grpc.CallOption) (*ListFoundryHealFindingsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFoundryHealFindingsResponse)
@@ -1464,6 +1491,11 @@ type FoundryServiceServer interface {
 	SettleFoundryReview(context.Context, *SettleFoundryReviewRequest) (*FoundryReviewDecisionResponse, error)
 	ListFoundryReviewDecisions(context.Context, *ListFoundryReviewDecisionsRequest) (*ListFoundryReviewDecisionsResponse, error)
 	DeleteFoundryReviewDecision(context.Context, *DeleteFoundryReviewDecisionRequest) (*DeleteFoundryReviewDecisionResponse, error)
+	// A person's word on a claim drawn for the review queue's random slice or
+	// re-checked by a second person: a label that measures precision. It
+	// changes no decision and no load.
+	SettleFoundryReviewLabel(context.Context, *SettleFoundryReviewLabelRequest) (*FoundryReviewLabelResponse, error)
+	ListFoundryReviewLabels(context.Context, *ListFoundryReviewLabelsRequest) (*ListFoundryReviewLabelsResponse, error)
 	// Self-healing suggestions: what audits of the ontology's current load
 	// found its ontology and mappings lack, the top open ones by support.
 	ListFoundryHealFindings(context.Context, *ListFoundryHealFindingsRequest) (*ListFoundryHealFindingsResponse, error)
@@ -1760,6 +1792,12 @@ func (UnimplementedFoundryServiceServer) ListFoundryReviewDecisions(context.Cont
 }
 func (UnimplementedFoundryServiceServer) DeleteFoundryReviewDecision(context.Context, *DeleteFoundryReviewDecisionRequest) (*DeleteFoundryReviewDecisionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteFoundryReviewDecision not implemented")
+}
+func (UnimplementedFoundryServiceServer) SettleFoundryReviewLabel(context.Context, *SettleFoundryReviewLabelRequest) (*FoundryReviewLabelResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SettleFoundryReviewLabel not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryReviewLabels(context.Context, *ListFoundryReviewLabelsRequest) (*ListFoundryReviewLabelsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryReviewLabels not implemented")
 }
 func (UnimplementedFoundryServiceServer) ListFoundryHealFindings(context.Context, *ListFoundryHealFindingsRequest) (*ListFoundryHealFindingsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryHealFindings not implemented")
@@ -3041,6 +3079,42 @@ func _FoundryService_DeleteFoundryReviewDecision_Handler(srv interface{}, ctx co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_SettleFoundryReviewLabel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SettleFoundryReviewLabelRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).SettleFoundryReviewLabel(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_SettleFoundryReviewLabel_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).SettleFoundryReviewLabel(ctx, req.(*SettleFoundryReviewLabelRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ListFoundryReviewLabels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryReviewLabelsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryReviewLabels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryReviewLabels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryReviewLabels(ctx, req.(*ListFoundryReviewLabelsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_ListFoundryHealFindings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFoundryHealFindingsRequest)
 	if err := dec(in); err != nil {
@@ -4055,6 +4129,14 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteFoundryReviewDecision",
 			Handler:    _FoundryService_DeleteFoundryReviewDecision_Handler,
+		},
+		{
+			MethodName: "SettleFoundryReviewLabel",
+			Handler:    _FoundryService_SettleFoundryReviewLabel_Handler,
+		},
+		{
+			MethodName: "ListFoundryReviewLabels",
+			Handler:    _FoundryService_ListFoundryReviewLabels_Handler,
 		},
 		{
 			MethodName: "ListFoundryHealFindings",

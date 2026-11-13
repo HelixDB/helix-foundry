@@ -614,6 +614,10 @@ type FoundryReviewDecisionOutput struct {
 	StatementHash   string `json:"statement_hash,omitempty"`
 	DecidedByUserID string `json:"decided_by_user_id"`
 	DecidedAt       string `json:"decided_at"`
+	// Drawn is how the site's review queue showed the card it was decided
+	// on: ranked (in its order of facts written) or random (its random slice,
+	// which measures precision). Absent for a decision made elsewhere.
+	Drawn string `json:"drawn,omitempty" jsonschema:"ranked or random: how the review queue showed the card it was decided on; absent for a decision made elsewhere"`
 }
 
 type ListFoundryReviewDecisionsOutput struct {
@@ -896,7 +900,7 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 		}, s.CancelFoundryQuestion)
 		addFoundryTool(s, server, identity, tool(toolFoundryListReviewDecisions,
-			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release) and a chosen value (prop) also apply to the current load at once. A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review. A withdraw is an approval a person took back after the current load wrote it: that load is sent it at once, the claim is held again there, and it is listed only while that load is current."), s.ListFoundryReviewDecisions)
+			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release) and a chosen value (prop) also apply to the current load at once. A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review or in the review queue. A decision made on a card of the site's review queue says how it was drawn (drawn). A withdraw is an approval a person took back after the current load wrote it: that load is sent it at once, the claim is held again there, and it is listed only while that load is current."), s.ListFoundryReviewDecisions)
 	}
 	if s.Workflows != nil && browse {
 		// A grantee, whose reads source grants admit, gets them too: Foundry
@@ -2082,7 +2086,7 @@ func FoundryReviewDecision(d *foundryv1.FoundryReviewDecision) FoundryReviewDeci
 	out := FoundryReviewDecisionOutput{
 		ID: d.GetId(), Kind: d.GetKind(), Type: d.GetType(), DocID: d.GetDocId(), NormName: d.GetNormName(), EntityKey: d.GetEntityKey(),
 		Prop: d.GetProp(), ClaimKey: d.GetClaimKey(), ClaimSection: d.ClaimSection, ClaimStart: d.ClaimStart, ClaimEnd: d.ClaimEnd, StatementHash: d.GetStatementHash(),
-		DecidedByUserID: d.GetDecidedByUserId(), DecidedAt: protoTimestamp(d.GetDecidedAt()),
+		DecidedByUserID: d.GetDecidedByUserId(), DecidedAt: protoTimestamp(d.GetDecidedAt()), Drawn: d.GetDrawn(),
 	}
 	switch value := d.GetValue().GetValue().(type) {
 	case *foundryv1.FoundryPropValue_Null:

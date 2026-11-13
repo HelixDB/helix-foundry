@@ -124,6 +124,10 @@ type ReadStore interface {
 	ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error)
 	ListFoundryReviewDecisions(ctx context.Context, ontologyID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error)
 	ListFoundryShownDecisions(ctx context.Context, ontologyID, afterID string, limit int) ([]*model.FoundryReviewDecision, error)
+	GetFoundryReviewDecision(ctx context.Context, ontologyID, id string) (*model.FoundryReviewDecision, error)
+	GetFoundryReviewLabel(ctx context.Context, ontologyID, id string) (*model.FoundryReviewLabel, error)
+	ListFoundryReviewLabels(ctx context.Context, ontologyID, afterID string, limit int) ([]*model.FoundryReviewLabel, error)
+	FoundryReviewLabelsOf(ctx context.Context, ontologyID, docID string, span model.FoundryClaimSpan, claimKey, factKey *string) ([]*model.FoundryReviewLabel, error)
 
 	// Foundry document sets, documents and the Data layout, per workspace
 	GetFoundryDocumentSet(ctx context.Context, workspaceID, id string) (*model.FoundryDocumentSet, error)
@@ -306,6 +310,7 @@ type Store interface {
 	FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error)
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
 	DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error
+	SaveFoundryReviewLabel(ctx context.Context, workspaceID string, label *model.FoundryReviewLabel) error
 	CreateFoundryDocumentSet(ctx context.Context, set *model.FoundryDocumentSet, max int) error
 	UpdateFoundryDocumentSet(ctx context.Context, workspaceID, id string, update model.FoundryDocumentSetUpdate) error
 	DeleteFoundryDocumentSet(ctx context.Context, workspaceID, id string) error

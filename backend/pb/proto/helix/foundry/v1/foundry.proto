@@ -318,6 +318,18 @@ service FoundryService {
   rpc DeleteFoundryReviewDecision(DeleteFoundryReviewDecisionRequest) returns (DeleteFoundryReviewDecisionResponse) {
     option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-decisions/{id}"};
   }
+  // A person's word on a claim drawn for the review queue's random slice or
+  // re-checked by a second person: a label that measures precision. It
+  // changes no decision and no load.
+  rpc SettleFoundryReviewLabel(SettleFoundryReviewLabelRequest) returns (FoundryReviewLabelResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-labels"
+      body: "*"
+    };
+  }
+  rpc ListFoundryReviewLabels(ListFoundryReviewLabelsRequest) returns (ListFoundryReviewLabelsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-labels"};
+  }
   // Self-healing suggestions: what audits of the ontology's current load
   // found its ontology and mappings lack, the top open ones by support.
   rpc ListFoundryHealFindings(ListFoundryHealFindingsRequest) returns (ListFoundryHealFindingsResponse) {
@@ -1423,6 +1435,12 @@ message SettleFoundryReviewRequest {
   string ontology_id = 2;
   string review_id = 3;
   FoundryReviewChoice decision = 4;
+  // How the review queue showed the card the decision was made on: "ranked"
+  // (in its order of facts written) or "random" (its random slice, which
+  // measures precision); empty for a decision made elsewhere. A release or
+  // reject drawn at random is also kept as a label of the claim
+  // (FoundryReviewLabel), with the score it was read at.
+  string drawn = 5;
 }
 message FoundryReviewDecisionResponse {
   FoundryReviewDecision decision = 1;
@@ -1449,6 +1467,50 @@ message DeleteFoundryReviewDecisionRequest {
   string id = 3;
 }
 message DeleteFoundryReviewDecisionResponse {}
+
+// A label of a claim at its place, drawn at random (`fact`, a fact's quote
+// the current load holds; `review_id`, a held claim of the current load
+// someone has decided) or a second person's re-check (`decision_id`, a
+// decision on a held claim; `label_id`, another person's label drawn at
+// random). The backend reads the claim from the current load, the decision
+// or the label, never from the request.
+message SettleFoundryReviewLabelRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  oneof subject {
+    FoundryLabelFact fact = 3;
+    string decision_id = 4;
+    string review_id = 7;
+    string label_id = 8;
+  }
+  // "right" or "wrong".
+  string verdict = 5;
+  // "random" (a card of the queue's random slice) or "recheck" (a second
+  // person's word, never the first person's own).
+  string drawn = 6;
+}
+// An accepted fact's quote in the current load: its document, its section
+// and byte range there, and its fact's key.
+message FoundryLabelFact {
+  string doc_id = 1;
+  uint32 section = 2;
+  uint32 start = 3;
+  uint32 end = 4;
+  string fact_key = 5;
+}
+message FoundryReviewLabelResponse {
+  FoundryReviewLabel label = 1;
+}
+message ListFoundryReviewLabelsRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  // Last label id from a previous page.
+  string page_token = 3;
+}
+message ListFoundryReviewLabelsResponse {
+  repeated FoundryReviewLabel labels = 1;
+  string next_page_token = 2;
+}
 
 // ListFoundryAccessRequest reads the workspace's grants.
 message ListFoundryAccessRequest {
