@@ -480,7 +480,9 @@ func foundryReviewDecisionProto(d *foundrymodel.FoundryReviewDecision) *foundryv
 	}
 	if a := d.Applied; a != nil {
 		// Carried or settled here, a decision a resend owes is pending to a
-		// reader; one whose job failed is unconfirmed, and nothing is coming.
+		// reader; one no word came of (its job failed, or, a withdraw, its
+		// document's run said nothing of it) is unconfirmed, and nothing is
+		// coming for it alone.
 		// A value decision's applied goes as it is.
 		status := string(a.Status)
 		switch {

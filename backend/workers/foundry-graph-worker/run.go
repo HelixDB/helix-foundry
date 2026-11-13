@@ -1008,8 +1008,8 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 		return retry("could not list the documents to send again; Helix will retry", err)
 	}
 	// unsaid is a document an Extract carried to a run that reached its
-	// documents and said nothing of its withdraws: they wait, unconfirmed,
-	// for its next resend (model.FoundryResendEnd.Unsaid).
+	// documents and said nothing of its withdraws: they wait, unconfirmed
+	// (model.FoundryResendEnd.Unsaid).
 	end := func(o *model.FoundryLoadResend, refused string, unsaid bool) error {
 		err := r.db.EndFoundryLoadResend(ctx, job.ID, r.workerID, model.FoundryResendEnd{
 			DocumentID: o.DocumentID, Reason: o.Reason, Requests: o.Requests, Refused: refused, Unsaid: unsaid,
@@ -1107,7 +1107,7 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 	}
 	// Each run reached its end: what it sent no event for needed a model call.
 	// The engine decided its withdraws before it read any document, and said
-	// nothing of them: they wait for the document's next resend.
+	// nothing of them: they wait, unconfirmed.
 	for _, d := range documents {
 		o, waiting := a.resends[d.DocID]
 		if !waiting {

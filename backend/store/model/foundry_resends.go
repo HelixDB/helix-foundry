@@ -66,13 +66,13 @@ type FoundryResendEnd struct {
 	Refused string
 	// Unsaid is a document an Extract of the job carried to a run that
 	// reached its documents, which said nothing of its withdraws (contract
-	// 4.16.0: it needed a model call, so got no event). The engine decides
-	// each before it reads any document, and may have refused one (differs,
-	// too_large), so nothing here says it was taken back: the withdraws that
-	// wait stay waiting, unconfirmed with Refused as their reason
-	// (FoundryDecisionApplied.Unconfirmed), and go with their document's next
-	// resend, whose event says what became of each. Its releases are refused
-	// as Refused says, which Unsaid needs.
+	// 4.16.0: it needed a model call, so got no event; or its event failed
+	// and left one out). The engine decides each before it reads any
+	// document, and may have refused one (differs, too_large), so nothing
+	// here says it was taken back: the withdraws that wait stay waiting,
+	// unconfirmed with Refused as their reason
+	// (FoundryDecisionApplied.Unconfirmed). Its releases are refused as
+	// Refused says, which Unsaid needs.
 	Unsaid bool
 }
 
@@ -260,12 +260,15 @@ const FoundryReleaseUnconfirmed = "unconfirmed"
 // became of it (FoundryDecisionApplied.After), where it can: a carried one
 // the engine holds no review for stays unconfirmed, as that is true both of
 // one it wrote and of one this load never held. A withdraw is unconfirmed
-// too, with the run's reason (FoundryReleaseNotReplayed,
-// FoundryReleaseDocumentFailed), where the run that carried it said nothing
-// of it (FoundryResendEnd.Unsaid): whether the engine took it back or
-// refused it is not known until a resend of its document gets an event. Only
-// the job_failed ones are sent again at the next job's end: the others would
-// get no event again, so they go with their document's next resend.
+// too, with the run's reason, where the run that carried it said nothing of
+// it (FoundryResendEnd.Unsaid): whether the engine took it back or refused
+// it is not known. Only job_failed ones are sent again at the next job's
+// end. One whose document failed (FoundryReleaseDocumentFailed) goes with
+// the document's next resend, which may read it. One whose document's saved
+// reading doesn't replay (FoundryReleaseNotReplayed) gets no word while
+// this load is current: every resend costs nothing, and that document needs
+// a model call. Sent again it would get none either, so nothing queues one
+// for it; the next load holds no copy of the approval, and won't write it.
 func (a FoundryDecisionApplied) Unconfirmed() bool {
 	return a.Status.Waits() && a.Reason != ""
 }

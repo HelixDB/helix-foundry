@@ -2,10 +2,10 @@
 -- Whether a withdraw takes back an approval its load had recorded written
 -- (contract 4.16.0). The engine takes back every withdraw it is sent before it
 -- reads any document, at no cost, and says what it did only in that
--- document's event: a run that stops first, or a document that doesn't
--- replay, says nothing, and the withdraw sent again reads not_written. With
--- this the backend knows such a not_written, or such silence, of an approval
--- the load had written is the take-back done (withdrawn), and moves the
+-- document's event: a run that stops first says nothing, and the withdraw
+-- sent again reads not_written. With this the backend knows such a
+-- not_written of an approval the load had written is the take-back done
+-- (withdrawn), and moves the
 -- document's counts back, a fact fewer and a review more, as it moved them
 -- forward when the approval was written. NULL for every other decision.
 --
