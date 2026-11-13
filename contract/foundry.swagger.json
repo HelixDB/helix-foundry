@@ -6277,7 +6277,7 @@
       "properties": {
         "status": {
           "type": "string",
-          "description": "pending (a job has yet to apply it), written (the claim is a fact; on a\nlink that holds one value, a statement dated after the approval takes\neffect, or a later approval, may hold the link instead, with the claim\nkept as its evidence),\nrefused (it stays held: reason says why), missed (this load holds no\nreview at the decision's key, nor one at its place stating what was\napproved, so it has nothing to release),\napplied (a prop decision: the load was sent it, and the job that sent it\nsucceeded; the engine reports nothing more of a value, so this doesn't\nsay the property holds it: a document dated after the decision still\nbeats it, and an entity the load doesn't hold takes none),\nunconfirmed (the job that applies it failed before the engine's word on\nit was recorded, reason job_failed: the claim may or may not have been\nwritten, or the value sent, and no job is coming. Approving it again\nfinishes it while the load still holds the claim's review; choosing a\nvalue again finishes a value, and so does the end of the ontology's next\njob, which sends the load its values again. If the engine wrote the\nclaim before the job failed, that review is gone and there is nothing\nto approve: the fact is in the load, and the decision stays unconfirmed\nuntil another approval of the same document sends it again), or empty:\nthe load read the decision when it was created, and no job has said\nwhat became of it."
+          "description": "pending (a job has yet to apply it), written (the claim is a fact; on a\nlink that holds one value, a statement dated after the approval takes\neffect, or a later approval, may hold the link instead, with the claim\nkept as its evidence),\nrefused (it stays held: reason says why), missed (this load holds no\nreview at the decision's key, nor one at its place stating what was\napproved, so it has nothing to release),\napplied (a prop decision: the load was sent it, and the job that sent it\nsucceeded; the engine reports nothing more of a value, so this doesn't\nsay the property holds it: a document dated after the decision still\nbeats it, and an entity the load doesn't hold takes none),\nunconfirmed (the job that applies it failed before the engine's word on\nit was recorded, reason job_failed: the claim may or may not have been\nwritten, or the value sent, and no job is coming. Approving it again\nfinishes it while the load still holds the claim's review; choosing a\nvalue again finishes a value, and so does the end of the ontology's next\njob, which sends the load its values again. If the engine wrote the\nclaim before the job failed, that review is gone and there is nothing\nto approve: the fact is in the load, and the decision stays unconfirmed\nuntil another approval of the same document sends it again), or empty:\nthe load read the decision when it was created, and no job has said\nwhat became of it.\nOf a withdraw (an approval taken back, contract 4.16.0): pending while\nits job has yet to run, withdrawn (what the approval wrote no longer\nacts: the claim is held again, or, held for a conflict with a document\nsince removed, stays written as its document's statement with no\napproval to rank it), not_written (the load held nothing the approval\nwrote), refused (what it wrote stays: differs, quotes an engine before\n4.16.0 wrote of several claims of the link keep nothing to tell them\napart; too_large; or the backend's document_gone, document_unread,\ndocument_failed, not_replayed, unanswered), or unconfirmed (its job\nfailed; the end of the ontology's next job sends it again)."
         },
         "reason": {
           "type": "string",
@@ -6392,7 +6392,8 @@
         },
         "attributes": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "description": "Values written: property values it stated that were written as\nevidence (the engine's DocumentCounts.attributes)."
         },
         "attributeReviews": {
           "type": "integer",
@@ -7213,6 +7214,11 @@
           "format": "int64",
           "description": "Fact writes by its documents: each document counts the facts it created\nand the stored facts it added its evidence to, so a fact two documents\nstate counts twice. It is not the number of distinct facts in the graph."
         },
+        "attributes": {
+          "type": "string",
+          "format": "int64",
+          "description": "Values written by its documents: property values each stated that were\nwritten as evidence (the engine's DocumentCounts.attributes), counted as\nfacts are, by document, so a value two documents state counts twice."
+        },
         "reviews": {
           "type": "string",
           "format": "int64",
@@ -7851,7 +7857,7 @@
         },
         "kind": {
           "type": "string",
-          "description": "resolve, prop, release or reject."
+          "description": "resolve, prop, release or reject; withdraw is an approval taken back\nfrom the current load (the release as it was sent)."
         },
         "type": {
           "type": "string"
@@ -7904,7 +7910,7 @@
           "description": "A release or prop decision's state in the ontology's current load; unset\nfor a resolve, and when that load's decisions don't hold it yet (one\nsaved while another load was current joins them when a job of the\nontology next ends)."
         }
       },
-      "description": "A durable ontology-wide override. A resolve decision applies from the next\nload; a release or a prop decision applies to the current load at once,\nand later loads read it as they are made. Removing a prop decision\nwithdraws it from the current load at once too. A reject changes no load:\nit tells readers which held claims a person said are wrong."
+      "description": "A durable ontology-wide override. A resolve decision applies from the next\nload; a release or a prop decision applies to the current load at once,\nand later loads read it as they are made. Removing a prop decision\nwithdraws it from the current load at once too, and so does removing a\nrelease the load may have written (contract 4.16.0): the load's copy\nbecomes a withdraw, listed here, kind withdraw, with what became of it,\nwhile that load is current; it is no saved decision, and can't be removed.\nA reject changes no load: it tells readers which held claims a person said\nare wrong."
     },
     "v1FoundryReviewDecisionResponse": {
       "type": "object",

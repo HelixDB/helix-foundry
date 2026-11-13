@@ -6787,26 +6787,28 @@ type FoundryDocumentExtraction struct {
 	// The document whose text this one repeats, for duplicate.
 	DuplicateOf *string `protobuf:"bytes,2,opt,name=duplicate_of,json=duplicateOf,proto3,oneof" json:"duplicate_of,omitempty"`
 	// Why it failed, for failed.
-	Error                 *FoundryExtractionError `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
-	Sections              int32                   `protobuf:"varint,4,opt,name=sections,proto3" json:"sections,omitempty"`
-	Entities              int32                   `protobuf:"varint,5,opt,name=entities,proto3" json:"entities,omitempty"`
-	Mentions              int32                   `protobuf:"varint,6,opt,name=mentions,proto3" json:"mentions,omitempty"`
-	Facts                 int32                   `protobuf:"varint,7,opt,name=facts,proto3" json:"facts,omitempty"`
-	Reviews               int32                   `protobuf:"varint,8,opt,name=reviews,proto3" json:"reviews,omitempty"`
-	UsdMicros             int64                   `protobuf:"varint,9,opt,name=usd_micros,json=usdMicros,proto3" json:"usd_micros,omitempty"`
-	FinishedAt            *timestamppb.Timestamp  `protobuf:"bytes,10,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
-	Attributes            int32                   `protobuf:"varint,11,opt,name=attributes,proto3" json:"attributes,omitempty"`
-	AttributeReviews      int32                   `protobuf:"varint,12,opt,name=attribute_reviews,json=attributeReviews,proto3" json:"attribute_reviews,omitempty"`
-	PropConflicts         int32                   `protobuf:"varint,13,opt,name=prop_conflicts,json=propConflicts,proto3" json:"prop_conflicts,omitempty"`
-	Created               int32                   `protobuf:"varint,14,opt,name=created,proto3" json:"created,omitempty"`
-	IdentifiersUnverified int32                   `protobuf:"varint,15,opt,name=identifiers_unverified,json=identifiersUnverified,proto3" json:"identifiers_unverified,omitempty"`
-	AttributesOverEntries int32                   `protobuf:"varint,16,opt,name=attributes_over_entries,json=attributesOverEntries,proto3" json:"attributes_over_entries,omitempty"`
-	ResolvedUser          int32                   `protobuf:"varint,17,opt,name=resolved_user,json=resolvedUser,proto3" json:"resolved_user,omitempty"`
-	ResolvedAdjudicated   int32                   `protobuf:"varint,18,opt,name=resolved_adjudicated,json=resolvedAdjudicated,proto3" json:"resolved_adjudicated,omitempty"`
-	ResolvedIdentifier    int32                   `protobuf:"varint,19,opt,name=resolved_identifier,json=resolvedIdentifier,proto3" json:"resolved_identifier,omitempty"`
-	ResolvedName          int32                   `protobuf:"varint,20,opt,name=resolved_name,json=resolvedName,proto3" json:"resolved_name,omitempty"`
-	ResolvedAlias         int32                   `protobuf:"varint,21,opt,name=resolved_alias,json=resolvedAlias,proto3" json:"resolved_alias,omitempty"`
-	ResolvedCreated       int32                   `protobuf:"varint,22,opt,name=resolved_created,json=resolvedCreated,proto3" json:"resolved_created,omitempty"`
+	Error      *FoundryExtractionError `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	Sections   int32                   `protobuf:"varint,4,opt,name=sections,proto3" json:"sections,omitempty"`
+	Entities   int32                   `protobuf:"varint,5,opt,name=entities,proto3" json:"entities,omitempty"`
+	Mentions   int32                   `protobuf:"varint,6,opt,name=mentions,proto3" json:"mentions,omitempty"`
+	Facts      int32                   `protobuf:"varint,7,opt,name=facts,proto3" json:"facts,omitempty"`
+	Reviews    int32                   `protobuf:"varint,8,opt,name=reviews,proto3" json:"reviews,omitempty"`
+	UsdMicros  int64                   `protobuf:"varint,9,opt,name=usd_micros,json=usdMicros,proto3" json:"usd_micros,omitempty"`
+	FinishedAt *timestamppb.Timestamp  `protobuf:"bytes,10,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	// Values written: property values it stated that were written as
+	// evidence (the engine's DocumentCounts.attributes).
+	Attributes            int32 `protobuf:"varint,11,opt,name=attributes,proto3" json:"attributes,omitempty"`
+	AttributeReviews      int32 `protobuf:"varint,12,opt,name=attribute_reviews,json=attributeReviews,proto3" json:"attribute_reviews,omitempty"`
+	PropConflicts         int32 `protobuf:"varint,13,opt,name=prop_conflicts,json=propConflicts,proto3" json:"prop_conflicts,omitempty"`
+	Created               int32 `protobuf:"varint,14,opt,name=created,proto3" json:"created,omitempty"`
+	IdentifiersUnverified int32 `protobuf:"varint,15,opt,name=identifiers_unverified,json=identifiersUnverified,proto3" json:"identifiers_unverified,omitempty"`
+	AttributesOverEntries int32 `protobuf:"varint,16,opt,name=attributes_over_entries,json=attributesOverEntries,proto3" json:"attributes_over_entries,omitempty"`
+	ResolvedUser          int32 `protobuf:"varint,17,opt,name=resolved_user,json=resolvedUser,proto3" json:"resolved_user,omitempty"`
+	ResolvedAdjudicated   int32 `protobuf:"varint,18,opt,name=resolved_adjudicated,json=resolvedAdjudicated,proto3" json:"resolved_adjudicated,omitempty"`
+	ResolvedIdentifier    int32 `protobuf:"varint,19,opt,name=resolved_identifier,json=resolvedIdentifier,proto3" json:"resolved_identifier,omitempty"`
+	ResolvedName          int32 `protobuf:"varint,20,opt,name=resolved_name,json=resolvedName,proto3" json:"resolved_name,omitempty"`
+	ResolvedAlias         int32 `protobuf:"varint,21,opt,name=resolved_alias,json=resolvedAlias,proto3" json:"resolved_alias,omitempty"`
+	ResolvedCreated       int32 `protobuf:"varint,22,opt,name=resolved_created,json=resolvedCreated,proto3" json:"resolved_created,omitempty"`
 }
 
 func (x *FoundryDocumentExtraction) Reset() {
@@ -7495,6 +7497,10 @@ type FoundryLoadDocumentSet struct {
 	// and the stored facts it added its evidence to, so a fact two documents
 	// state counts twice. It is not the number of distinct facts in the graph.
 	Facts int64 `protobuf:"varint,9,opt,name=facts,proto3" json:"facts,omitempty"`
+	// Values written by its documents: property values each stated that were
+	// written as evidence (the engine's DocumentCounts.attributes), counted as
+	// facts are, by document, so a value two documents state counts twice.
+	Attributes int64 `protobuf:"varint,12,opt,name=attributes,proto3" json:"attributes,omitempty"`
 	// The reviews its documents left when the load last wrote each, of every
 	// kind: statements held back instead of written as facts (scored under the
 	// bar, unverified, conflicting, breaking a rule), names matched to no one
@@ -7602,6 +7608,13 @@ func (x *FoundryLoadDocumentSet) GetWaiting() int32 {
 func (x *FoundryLoadDocumentSet) GetFacts() int64 {
 	if x != nil {
 		return x.Facts
+	}
+	return 0
+}
+
+func (x *FoundryLoadDocumentSet) GetAttributes() int64 {
+	if x != nil {
+		return x.Attributes
 	}
 	return 0
 }
@@ -9065,6 +9078,16 @@ type FoundryDecisionApplied struct {
 	// until another approval of the same document sends it again), or empty:
 	// the load read the decision when it was created, and no job has said
 	// what became of it.
+	// Of a withdraw (an approval taken back, contract 4.16.0): pending while
+	// its job has yet to run, withdrawn (what the approval wrote no longer
+	// acts: the claim is held again, or, held for a conflict with a document
+	// since removed, stays written as its document's statement with no
+	// approval to rank it), not_written (the load held nothing the approval
+	// wrote), refused (what it wrote stays: differs, quotes an engine before
+	// 4.16.0 wrote of several claims of the link keep nothing to tell them
+	// apart; too_large; or the backend's document_gone, document_unread,
+	// document_failed, not_replayed, unanswered), or unconfirmed (its job
+	// failed; the end of the ontology's next job sends it again).
 	Status string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	// Why a refused claim stays held. The engine's reasons: unresolved (a name
 	// in it is matched to no one record: settle that name), legal_form (a name
@@ -9147,15 +9170,20 @@ func (x *FoundryDecisionApplied) GetAt() *timestamppb.Timestamp {
 // A durable ontology-wide override. A resolve decision applies from the next
 // load; a release or a prop decision applies to the current load at once,
 // and later loads read it as they are made. Removing a prop decision
-// withdraws it from the current load at once too. A reject changes no load:
-// it tells readers which held claims a person said are wrong.
+// withdraws it from the current load at once too, and so does removing a
+// release the load may have written (contract 4.16.0): the load's copy
+// becomes a withdraw, listed here, kind withdraw, with what became of it,
+// while that load is current; it is no saved decision, and can't be removed.
+// A reject changes no load: it tells readers which held claims a person said
+// are wrong.
 type FoundryReviewDecision struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	// resolve, prop, release or reject.
+	// resolve, prop, release or reject; withdraw is an approval taken back
+	// from the current load (the release as it was sent).
 	Kind      string  `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
 	Type      string  `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
 	DocId     *string `protobuf:"bytes,4,opt,name=doc_id,json=docId,proto3,oneof" json:"doc_id,omitempty"`
@@ -14205,7 +14233,7 @@ var file_helix_foundry_v1_types_proto_rawDesc = []byte{
 	0x4c, 0x6f, 0x61, 0x64, 0x44, 0x6f, 0x63, 0x75, 0x6d, 0x65, 0x6e, 0x74, 0x53, 0x65, 0x74, 0x52,
 	0x0c, 0x64, 0x6f, 0x63, 0x75, 0x6d, 0x65, 0x6e, 0x74, 0x53, 0x65, 0x74, 0x73, 0x42, 0x14, 0x0a,
 	0x12, 0x5f, 0x69, 0x6e, 0x67, 0x65, 0x73, 0x74, 0x5f, 0x76, 0x69, 0x6f, 0x6c, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x73, 0x22, 0xb4, 0x02, 0x0a, 0x16, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x4c,
+	0x6f, 0x6e, 0x73, 0x22, 0xd4, 0x02, 0x0a, 0x16, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x4c,
 	0x6f, 0x61, 0x64, 0x44, 0x6f, 0x63, 0x75, 0x6d, 0x65, 0x6e, 0x74, 0x53, 0x65, 0x74, 0x12, 0x15,
 	0x0a, 0x06, 0x73, 0x65, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05,
 	0x73, 0x65, 0x74, 0x49, 0x64, 0x12, 0x16, 0x0a, 0x06, 0x72, 0x6f, 0x75, 0x74, 0x65, 0x64, 0x18,
@@ -14221,6 +14249,8 @@ var file_helix_foundry_v1_types_proto_rawDesc = []byte{
 	0x12, 0x18, 0x0a, 0x07, 0x77, 0x61, 0x69, 0x74, 0x69, 0x6e, 0x67, 0x18, 0x08, 0x20, 0x01, 0x28,
 	0x05, 0x52, 0x07, 0x77, 0x61, 0x69, 0x74, 0x69, 0x6e, 0x67, 0x12, 0x14, 0x0a, 0x05, 0x66, 0x61,
 	0x63, 0x74, 0x73, 0x18, 0x09, 0x20, 0x01, 0x28, 0x03, 0x52, 0x05, 0x66, 0x61, 0x63, 0x74, 0x73,
+	0x12, 0x1e, 0x0a, 0x0a, 0x61, 0x74, 0x74, 0x72, 0x69, 0x62, 0x75, 0x74, 0x65, 0x73, 0x18, 0x0c,
+	0x20, 0x01, 0x28, 0x03, 0x52, 0x0a, 0x61, 0x74, 0x74, 0x72, 0x69, 0x62, 0x75, 0x74, 0x65, 0x73,
 	0x12, 0x18, 0x0a, 0x07, 0x72, 0x65, 0x76, 0x69, 0x65, 0x77, 0x73, 0x18, 0x0a, 0x20, 0x01, 0x28,
 	0x03, 0x52, 0x07, 0x72, 0x65, 0x76, 0x69, 0x65, 0x77, 0x73, 0x12, 0x1e, 0x0a, 0x0a, 0x75, 0x6e,
 	0x72, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x64, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0a,
