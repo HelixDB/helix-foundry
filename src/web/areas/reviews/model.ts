@@ -961,7 +961,8 @@ export function takenBackOf<D extends ReviewDecision>(
 /**
  * Why a load kept what an approval wrote when it was taken back, by the
  * reason it refused the withdraw: the engine's (`differs`, `too_large`) or
- * the backend's, for a document it couldn't send.
+ * the backend's, for a document it couldn't send; and why no word came of
+ * one still unconfirmed (`not_replayed`, `document_failed`).
  */
 const TAKE_BACK_REFUSED: Record<string, string> = {
   differs:
@@ -981,13 +982,19 @@ const TAKE_BACK_REFUSED: Record<string, string> = {
  * What became of an approval a person took back from the current load (a
  * withdraw), from what that load says of it (`applied`): a `label` for its
  * line, and a sentence saying what that means: being taken back while its
- * job has yet to run, taken back, nothing to take back, or why what it wrote
- * stays. A reason this site doesn't know reads as it came.
+ * job has yet to run, taken back, nothing to take back, why what it wrote
+ * stays, or, unconfirmed, why no word came: its job failed (the ontology's
+ * next job sends it again), the load couldn't read its document again (the
+ * next approval or take-back in it does), or its document's saved reading
+ * can't be reused, so no word can come while this load is current (the next
+ * load won't write the approval). A reason this site doesn't know reads as
+ * it came.
  *
  * @example
  * takenBack({ status: "pending" }); // { label: "Approval being taken back", text: "This load’s job takes it back now." }
  * takenBack({ status: "withdrawn" }); // { label: "Approval taken back", text: "This load holds the claim for review again." }
  * takenBack({ status: "refused", reason: "differs" }).label; // "Approval not taken back"
+ * takenBack({ status: "unconfirmed", reason: "not_replayed" }).label; // "Approval maybe taken back"
  */
 export function takenBack(applied?: DecisionApplied | null): {
   label: string;
@@ -1010,10 +1017,24 @@ export function takenBack(applied?: DecisionApplied | null): {
         text: "This load held nothing it wrote.",
       };
     case "unconfirmed":
-      return {
-        label: "Approval being taken back",
-        text: "The job that takes it back failed before it said; the ontology’s next job sends it again.",
-      };
+      switch (applied.reason ?? "") {
+        case "":
+        case "job_failed":
+          return {
+            label: "Approval being taken back",
+            text: "The job that takes it back failed before it said; the ontology’s next job sends it again.",
+          };
+        case "document_failed":
+          return {
+            label: "Approval maybe taken back",
+            text: `The engine said nothing of it: ${TAKE_BACK_REFUSED.document_failed}. The next approval or take-back in its document sends it again.`,
+          };
+        default:
+          return {
+            label: "Approval maybe taken back",
+            text: `This load can’t say whether it was taken back: ${TAKE_BACK_REFUSED[applied.reason ?? ""] ?? `“${applied.reason}”`}. The next load won’t write it.`,
+          };
+      }
     case "refused": {
       const why =
         TAKE_BACK_REFUSED[applied.reason ?? ""] ??

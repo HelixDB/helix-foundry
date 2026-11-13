@@ -2758,8 +2758,11 @@ export type ReviewDecision =
  * held again, or, held for a conflict with a document since removed, stays
  * written as its document's own statement), `not_written` (the load held
  * nothing the approval wrote), `refused` (what it wrote stays: `differs`,
- * `too_large`, or a backend reason), or `unconfirmed` (its job failed; the
- * ontology's next job sends it again).
+ * `too_large`, or a backend reason), or `unconfirmed`: no word came, with
+ * `job_failed` (the ontology's next job sends it again), `document_failed`
+ * (the next approval or take-back in its document does) or `not_replayed`
+ * (its document's saved reading can't be reused: no word can come while the
+ * load is current, and the next load won't write the approval).
  */
 export type DecisionApplied = {
   status?:

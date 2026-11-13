@@ -44,11 +44,44 @@ FROM foundry_load_jobs WHERE ontology_id=? AND active_key=1 FOR UPDATE`, ontolog
 
 // cancelLiveFoundryGraphJob ends the ontology's live job, if it has one, as
 // cancelled, saying why. A worker running it loses its lease: its next
-// renewal stops the attempt, which then records nothing. The caller holds
-// the ontology's lock.
+// renewal stops the attempt, which then records nothing. Until then the
+// attempt, and the engine until its next commit, may still write: a running
+// job keeps its lease end, and counts as in flight until it passes
+// (foundryInFlight). lease_until is assigned first, as MySQL assigns left to
+// right. An attempt of it (running, or queued again after one started)
+// sends the load's documents still waiting (waitingFoundryDocumentWhere)
+// with each one's release copies, and its words are lost for good: any of
+// those copies may have been written with no word recorded, a copy made
+// with the load that no job reported on included. Each not recorded written
+// is marked unconfirmed (job_failed, carried unless it was pending), as
+// after a resend that failed (failFoundryResends), so removing one takes it
+// back (foundryMayHaveWritten) and the next job that reads its document
+// says what became of it. A cancelled resend (only ever with its ontology)
+// leaves its load with nothing to answer to. The job's row is locked before
+// any decision's, as a worker recording a decision's outcome locks them.
+// The caller holds the ontology's lock.
 func (s *mysqlDB) cancelLiveFoundryGraphJob(ctx context.Context, ontologyID, why string) error {
+	var loadID string
+	var sent bool
+	switch err := s.db.QueryRowContext(ctx, `SELECT load_id, kind<>'delete' AND (status='running' OR started_at IS NOT NULL)
+FROM foundry_load_jobs WHERE ontology_id=? AND active_key=1 FOR UPDATE`, ontologyID).Scan(&loadID, &sent); {
+	case err == sql.ErrNoRows:
+		return nil
+	case err != nil:
+		return err
+	}
+	if sent {
+		// applied_status first: MySQL assigns left to right.
+		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions
+SET applied_status=IF(applied_status <=> 'pending', 'pending', 'carried'), applied_reason=?, applied_at=NULL
+WHERE load_id=? AND kind='release' AND NOT (applied_status <=> 'written')
+  AND doc_id IN (SELECT d.id`+foundryLoadDocuments+waitingFoundryDocumentWhere+`)`,
+			model.FoundryReleaseJobFailed, loadID, loadID); err != nil {
+			return err
+		}
+	}
 	_, err := s.db.ExecContext(ctx, `UPDATE foundry_load_jobs
-SET status='cancelled', active_key=NULL, lease_owner=NULL, lease_until=NULL, error=?, finished_at=NOW(6)
+SET lease_until=IF(status='running', lease_until, NULL), status='cancelled', active_key=NULL, lease_owner=NULL, error=?, finished_at=NOW(6)
 WHERE ontology_id=? AND active_key=1`, why, ontologyID)
 	return err
 }
@@ -280,7 +313,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 		); err != nil {
 			return fmt.Errorf("record foundry document extraction: %w", err)
 		}
-		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, e.DocumentID, e.Releases); err != nil {
+		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, e.DocumentID, e.Releases, keepExisting); err != nil {
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_jobs

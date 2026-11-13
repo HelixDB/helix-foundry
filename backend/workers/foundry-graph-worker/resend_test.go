@@ -153,7 +153,7 @@ func TestResend(t *testing.T) {
 		}
 		want := []model.FoundryResendEnd{
 			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1},
-			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2, Refused: model.FoundryReleaseNotReplayed, TakenBack: true},
+			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2, Refused: model.FoundryReleaseNotReplayed, Unsaid: true},
 		}
 		if !reflect.DeepEqual(h.store.ended, want) {
 			t.Fatalf("ended %+v", h.store.ended)
@@ -223,7 +223,7 @@ func TestResend(t *testing.T) {
 		if h.store.extractions["doc-a"] != nil {
 			t.Fatalf("recorded %+v over the row its commit wrote", h.store.extractions["doc-a"])
 		}
-		want := []model.FoundryResendEnd{{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseDocumentFailed, TakenBack: true}}
+		want := []model.FoundryResendEnd{{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseDocumentFailed, Unsaid: true}}
 		if !reflect.DeepEqual(h.store.ended, want) {
 			t.Fatalf("ended %+v", h.store.ended)
 		}
@@ -913,12 +913,12 @@ func TestResendTakesBackApprovals(t *testing.T) {
 			t.Fatalf("facts %d, released %d", a.Counts.Facts, a.Released)
 		}
 	})
-	// The engine takes withdraws back before it reads any document, and says
+	// The engine decides withdraws before it reads any document, and says
 	// what it did only in the document's event (contract 4.16.0). A document
 	// sent again whose event is failed still says so: recorded, though its
 	// row stays as it was. A document that needed a model call got no event:
-	// its withdraws were taken back all the same, which its end says.
-	t.Run("a take-back stands whatever became of its document", func(t *testing.T) {
+	// its end says nothing was said of its withdraws (Unsaid), which wait.
+	t.Run("a take-back's word is kept whatever became of its document", func(t *testing.T) {
 		h := newHarness(t)
 		owes(h, "doc-a", "doc-b")
 		h.store.decisions = []*model.FoundryReviewDecision{withdraw("1", "doc-a", hashA), withdraw("2", "doc-b", hashB)}
@@ -938,8 +938,8 @@ func TestResendTakesBackApprovals(t *testing.T) {
 			t.Fatalf("outcomes %+v, row %+v", h.store.outcomes, h.store.extractions["doc-a"])
 		}
 		ended := []model.FoundryResendEnd{
-			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseDocumentFailed, TakenBack: true},
-			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2, Refused: model.FoundryReleaseNotReplayed, TakenBack: true},
+			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseDocumentFailed, Unsaid: true},
+			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2, Refused: model.FoundryReleaseNotReplayed, Unsaid: true},
 		}
 		if !reflect.DeepEqual(h.store.ended, ended) {
 			t.Fatalf("ended %+v", h.store.ended)

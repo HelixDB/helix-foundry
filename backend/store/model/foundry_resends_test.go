@@ -52,6 +52,33 @@ func TestFoundryDecisionAppliedAfter(t *testing.T) {
 	}
 }
 
+// A release written by a run whose word was lost moves its document's counts
+// forward when a later run hears not_held of it; nothing else does here, as
+// a written word is counted by the worker.
+func TestFoundryDecisionAppliedMovesForward(t *testing.T) {
+	notHeld := FoundryReleaseOutcome{DecisionID: "d", StatementHash: "h", Kind: FoundryReleaseOutcomeNotHeld}
+	written := FoundryReleaseOutcome{DecisionID: "d", StatementHash: "h", Kind: FoundryReleaseOutcomeWritten}
+	for name, tc := range map[string]struct {
+		from    FoundryDecisionApplied
+		outcome FoundryReleaseOutcome
+		forward bool
+	}{
+		"not_held, settled here":                 {FoundryDecisionApplied{Status: FoundryReleasePending}, notHeld, true},
+		"not_held, settled here, its job failed": {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseJobFailed}, notHeld, true},
+		"not_held, carried":                      {FoundryDecisionApplied{Status: FoundryReleaseCarried}, notHeld, false},
+		"not_held, written before":               {FoundryDecisionApplied{Status: FoundryReleaseWritten}, notHeld, false},
+		"written, counted by the worker":         {FoundryDecisionApplied{Status: FoundryReleasePending}, written, false},
+		"a withdraw's not_held":                  {FoundryDecisionApplied{Status: FoundryReleasePending}, FoundryReleaseOutcome{Withdraw: true, Kind: FoundryReleaseOutcomeNotHeld}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			to, _, _ := tc.from.After(tc.outcome)
+			if got := tc.from.MovesForward(tc.outcome, to); got != tc.forward {
+				t.Fatalf("%+v after %+v (%q) moves forward %t, want %t", tc.from, tc.outcome, to, got, tc.forward)
+			}
+		})
+	}
+}
+
 // A withdraw ends as the engine says, and a not_written of an approval its
 // load had recorded written is the take-back done already, by a run that
 // stopped or whose document needed a model call before its event said so:
@@ -95,13 +122,15 @@ func TestFoundryDecisionAppliedUnconfirmed(t *testing.T) {
 		applied FoundryDecisionApplied
 		want    bool
 	}{
-		"settled here, its job failed": {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseJobFailed}, true},
-		"carried, its job failed":      {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: FoundryReleaseJobFailed}, true},
-		"waiting for its job":          {FoundryDecisionApplied{Status: FoundryReleasePending}, false},
-		"refused by the engine":        {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: "unresolved"}, false},
-		"refused, the reason reused":   {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: FoundryReleaseJobFailed}, false},
-		"written":                      {FoundryDecisionApplied{Status: FoundryReleaseWritten}, false},
-		"never reported":               {FoundryDecisionApplied{}, false},
+		"settled here, its job failed":               {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseJobFailed}, true},
+		"carried, its job failed":                    {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: FoundryReleaseJobFailed}, true},
+		"waiting for its job":                        {FoundryDecisionApplied{Status: FoundryReleasePending}, false},
+		"a withdraw no event spoke of":               {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseNotReplayed}, true},
+		"a withdraw its failed document left unsaid": {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseDocumentFailed}, true},
+		"refused by the engine":                      {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: "unresolved"}, false},
+		"refused, the reason reused":                 {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: FoundryReleaseJobFailed}, false},
+		"written":                                    {FoundryDecisionApplied{Status: FoundryReleaseWritten}, false},
+		"never reported":                             {FoundryDecisionApplied{}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := tc.applied.Unconfirmed(); got != tc.want {
