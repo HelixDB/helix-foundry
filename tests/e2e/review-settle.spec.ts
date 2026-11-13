@@ -614,6 +614,56 @@ test("says why the load kept an approved claim held", async ({ page }) => {
   );
 });
 
+// Contract 4.17.0: a release asks no model, so writing an approval in place
+// costs nothing: the document's cost to read stays what its commit spent,
+// and its facts gain the one written.
+test("writes an approval in place at no cost", async ({ page }) => {
+  const { held } = await hedged(page);
+  const row = (label: string) =>
+    page.locator(".hf-kv-row").filter({
+      has: page.getByRole("term").filter({ hasText: new RegExp(`^${label}$`) }),
+    });
+  await page.getByRole("tab", { name: /^Details/ }).click();
+  await expect(row("Facts written")).toContainText("0");
+  const cost = await row("Cost to read").getByRole("definition").textContent();
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await approve(held);
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await page.getByRole("tab", { name: /^Details/ }).click();
+  await expect(row("Facts written")).toContainText("1");
+  await expect(row("Cost to read").getByRole("definition")).toHaveText(cost!);
+});
+
+// Contract 4.17.0: the load holds the claim's document with other text than
+// the resend sends, so the engine refuses the approval in place as
+// document_changed, and the card says what to do. The next load reads the
+// text afresh and writes it.
+test("says a changed document's approval can't be written in this load, and the next load writes it", async ({
+  page,
+}) => {
+  await mock.configure({ documentChanged: true });
+  const { doc, held } = await hedged(page);
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText(
+    "Approved, and this load kept it held. Its document’s text changed after this load read it",
+  );
+  await expect(held.getByRole("status")).toContainText(
+    "find the claim in that load’s review and approve it there",
+  );
+  await expect(
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved, not written: “");
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved: “Globex Corporation may have signed.”");
+});
+
 // A conflict refusal on a link that holds one value: from contract 4.14.0 a
 // property differs or an old load wrote the link, and sent again to this
 // load it is refused again, so no approval is offered; an engine before

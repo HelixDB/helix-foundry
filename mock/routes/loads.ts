@@ -199,6 +199,10 @@ type Knobs = {
   // and nothing changes), or a refusal (`differs`, `too_large`: what it
   // wrote stays).
   withdrawOutcome?: "not_written" | "differs" | "too_large";
+  // The load holds each approved claim's document with other text than the
+  // one a resend sends (contract 4.17.0): the engine refuses an approval in
+  // place as `document_changed`. A new load reads the text afresh.
+  documentChanged?: boolean;
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // The next n reads find every read slot taken.
   readsBusy?: number;
@@ -378,6 +382,7 @@ onReset(() => {
   delete knobs.documentUnmatched;
   delete knobs.deleteOutcome;
   delete knobs.withdrawOutcome;
+  delete knobs.documentChanged;
   delete knobs.readErrors;
   delete knobs.readsBusy;
   delete knobs.indexesPending;
@@ -464,9 +469,11 @@ function heldReview(l: StoredLoad, d: Release) {
 
 /**
  * Why the engine would keep an approved claim held, from what the mock was
- * told to make of hedged claims (`documentHeld`): none when it writes it.
+ * told to make of hedged claims (`documentHeld`), or of the text a resend
+ * sends (`documentChanged`): none when it writes it.
  */
 const refusal = () => {
+  if (knobs.documentChanged) return "document_changed";
   switch (knobs.documentHeld) {
     case "refused":
       return "conflict";
@@ -542,11 +549,7 @@ function applyReleases(ontologyId: string, now = Date.now()) {
       const w = releaseReview(
         tenantGraph(l.tenantId).view(l.id),
         review.id,
-        {
-          ontologyVersion: versionName(l),
-          model: aiModel(l.workspaceId, "extract") || MODEL,
-          verifier: aiModel(l.workspaceId, "verify") || VERIFIER,
-        },
+        versionName(l),
         holdsOne(def, String(review.props.suggested_link)) ? d : undefined,
       );
       if (w) state.written.set(appliedKey(l.id, d.id), w);

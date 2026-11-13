@@ -184,6 +184,9 @@ export const mock = {
     // What the engine says of an approval taken back (contract 4.16.0), in
     // place of withdrawn: nothing of it in the load, or a refusal.
     withdrawOutcome?: "not_written" | "differs" | "too_large";
+    // The load holds an approved claim's document with other text than a
+    // resend sends (contract 4.17.0): refused in place as document_changed.
+    documentChanged?: boolean;
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",
