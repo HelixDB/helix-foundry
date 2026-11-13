@@ -1,5 +1,8 @@
 # Internal gRPC only, with no REST routes: foundry-read, which the API calls
 # in-cluster, and the ontology agent's contract (pb/proto/ontology_agent/v1/README.md).
+#
+# The plugins run locally at pinned versions with `go run`, not on
+# buf.build, whose rate limits failed CI. They produce the same output.
 version: v2
 managed:
   enabled: true
@@ -7,10 +10,10 @@ managed:
     - file_option: go_package_prefix
       value: github.com/helixdb/helix-foundry/backend/pb/gen/go
 plugins:
-  - remote: buf.build/protocolbuffers/go:v1.35.2
+  - local: ["go", "run", "google.golang.org/protobuf/cmd/protoc-gen-go@v1.35.2"]
     out: pb/gen/go
     opt: paths=source_relative
-  - remote: buf.build/grpc/go:v1.5.1
+  - local: ["go", "run", "google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1"]
     out: pb/gen/go
     opt: paths=source_relative,require_unimplemented_servers=false
 inputs:

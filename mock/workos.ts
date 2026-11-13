@@ -1,6 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { id, now } from "./http";
-import { db, SEED_EMAIL, stats, type MockUser } from "./state";
+import {
+  db,
+  EMAIL_CODE,
+  SEED_EMAIL,
+  SSO_DOMAIN,
+  stats,
+  type MockUser,
+} from "./state";
 import { jwks, randomToken, refresh } from "./tokens";
 
 // The few WorkOS endpoints AuthKit calls from the BFF (JWKS, refresh-token
@@ -23,7 +30,7 @@ const workosUser = (u: MockUser) => ({
   object: "user",
   id: u.workosId,
   email: u.email,
-  email_verified: true,
+  email_verified: !u.emailUnverified,
   first_name: u.firstName,
   last_name: u.lastName,
   profile_picture_url: null,
@@ -43,17 +50,23 @@ const escape = (s: string) =>
       ]!,
   );
 
-function authorizePage(state: string, provider: string) {
-  const label = provider.replace("AUTH_PROVIDER_", "").toLowerCase();
+function authorizePage(state: string, provider: string, email = "") {
+  const sso = provider === "AUTH_PROVIDER_SSO";
+  const title = sso
+    ? "Mock single sign-on"
+    : `Mock ${provider.replace("AUTH_PROVIDER_", "").toLowerCase()} sign-in`;
+  const about = sso
+    ? `${SSO_DOMAIN}'s identity provider signs in the address Foundry sent.`
+    : `Any email signs in; ${SEED_EMAIL} already has a workspace. A new address containing “unverified” is asked for the emailed code, ${EMAIL_CODE}, and one at ${SSO_DOMAIN} goes through its company’s single sign-on.`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Mock sign-in</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f8f7f3;color:#292a26;font:14px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 form{display:grid;gap:12px;width:340px}h1{margin:0 0 4px;font:400 26px Georgia,serif}p{margin:0 0 8px;color:#65675e}
 label{display:grid;gap:6px;color:#4f534a;font-size:13px}input{height:34px;padding:0 10px;border:1px solid #d4d2c7;border-radius:8px;background:#fcfbf8;font:inherit}
 button{height:40px;border:0;border-radius:8px;background:#343932;color:#fbfaf6;font:500 14px inherit;cursor:pointer}</style></head>
 <body><form method="post" action="/mock/authorize">
-<h1>Mock ${escape(label)} sign-in</h1><p>The mock WFE stands in for WorkOS. Any email signs in; ${SEED_EMAIL} already has a workspace.</p>
+<h1>${escape(title)}</h1><p>The mock WFE stands in for WorkOS. ${escape(about)}</p>
 <input type="hidden" name="state" value="${escape(state)}">
-<label>Email<input name="email" type="email" required value="${SEED_EMAIL}"></label>
+<label>Email<input name="email" type="email" required value="${escape(email || SEED_EMAIL)}"${sso ? " readonly" : ""}></label>
 <label>Name<input name="name" placeholder="From the email if left blank"></label>
 <button type="submit">Continue</button></form></body></html>`;
 }
@@ -72,6 +85,7 @@ function userByEmail(email: string, name: string): MockUser {
     firstName,
     lastName: rest.join(" "),
     createdAt: now(),
+    ...(email.includes("unverified") && { emailUnverified: true }),
   };
   db.users.set(user.id, user);
   return user;
@@ -141,20 +155,23 @@ export async function handleWorkos(
   if (pathname === "/mock/authorize") {
     if (req.method === "GET") {
       const state = url.searchParams.get("state") || "";
-      if (!db.logins.has(state))
-        send(res, 400, "Unknown sign-in.", "text/plain");
+      const login = db.logins.get(state);
+      if (!login) send(res, 400, "Unknown sign-in.", "text/plain");
       else
         send(
           res,
           200,
-          authorizePage(state, url.searchParams.get("provider") || ""),
+          authorizePage(state, login.provider, login.email),
           "text/html; charset=utf-8",
         );
       return true;
     }
     const form = new URLSearchParams(body);
     const login = db.logins.get(form.get("state") || "");
-    const email = (form.get("email") || "").trim().toLowerCase();
+    // Single sign-on signs in the address its login was started for.
+    const email = (login?.email || form.get("email") || "")
+      .trim()
+      .toLowerCase();
     if (!login || !email) {
       send(res, 400, "Unknown sign-in.", "text/plain");
       return true;
