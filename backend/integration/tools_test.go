@@ -577,7 +577,7 @@ func TestSourceGrantsListTheReadToolsOnly(t *testing.T) {
 	assert.Contains(t, names, toolFoundryListOntologies)
 	assert.Contains(t, names, toolFoundryReadGraph)
 	assert.Contains(t, names, toolFoundryAsk)
-	assert.NotContains(t, names, toolFoundryConnectorLink)
+	assert.NotContains(t, names, toolFoundryConnect)
 }
 
 func TestAKeyListsWhatSourceGrantsGiveIt(t *testing.T) {
