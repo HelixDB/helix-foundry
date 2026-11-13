@@ -23,8 +23,9 @@ import (
 // SettleFoundryReview reads trusted identity from the current load's review
 // and stores an override. A resolve decision applies from the next load. A
 // release, a person's approval of a held claim, applies to the current load
-// at once: it joins that load's decisions and a resend job replays the
-// claim's document, which writes it (SettleFoundryReleases). So does a prop
+// at once: it joins that load's decisions and a resend job sends the claim's
+// document again, and the engine writes it from the review the load keeps
+// (SettleFoundryReleases). So does a prop
 // decision, a value a person chose: the same job sends the load its
 // decisions, and the engine sets the value (SettleFoundryValue). The
 // decision returned says so (applied), and ListFoundryReviewDecisions what

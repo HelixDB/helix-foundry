@@ -17,8 +17,10 @@ import (
 // something of the document that the load holds changed after its commit: a
 // person's approval of a claim its review holds back, which joins the load's
 // decisions as it is settled (SettleFoundryReleases). A resend job sends each
-// owed document with its saved extraction, and the engine replays it and
-// writes what the approval releases; the document never leaves the load. One
+// owed document again, and the engine writes what the approval releases from
+// the review the load keeps, asking no model (contract 4.17.0; through
+// 4.16.0 it replayed the document's saved extraction); the document never
+// leaves the load. One
 // job at a time writes an ontology's database, so an approval that lands
 // while a job is live stays owed, and that job's end queues the resend
 // (queueAfterFoundryGraphJob).
@@ -475,7 +477,8 @@ WHERE load_id=? AND status='owed' AND reason<>? ORDER BY document_id, reason`, l
 		return out, nil
 	}
 	// Of those, the load still holds the uploaded ones of its membership:
-	// what they lack is an extraction to replay.
+	// what they lack is an extraction the load recorded, so the engine may
+	// hold no review of them to write from.
 	ids := make([]any, 0, len(owed))
 	for id := range owed {
 		ids = append(ids, id)

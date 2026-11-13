@@ -144,14 +144,17 @@ func (s FoundryReleaseStatus) Waits() bool {
 // The reasons the backend gives a refused release; the others are the
 // engine's (ontologyagent.ReleaseOutcome.Reason), stored as they came.
 const (
-	// FoundryReleaseNotReplayed: the document's saved extraction didn't
-	// replay, so applying the approval would have cost a model call.
+	// FoundryReleaseNotReplayed: the engine sent no event for the document
+	// and ended budget_exhausted, so applying the approval would have cost a
+	// model call. Through contract 4.16.0 that was a document whose saved
+	// extraction didn't replay; since 4.17.0 a release asks no model, so a
+	// document the load holds gets one.
 	FoundryReleaseNotReplayed = "not_replayed"
 	// FoundryReleaseDocumentGone: the document left the load or was deleted.
 	FoundryReleaseDocumentGone = "document_gone"
 	// FoundryReleaseDocumentUnread: the load holds the document, but its row
 	// no longer says it is extracted, as when a failure was recorded over the
-	// row its commit wrote: there is no saved extraction to replay it from.
+	// row its commit wrote: the load may hold no review of it to write from.
 	FoundryReleaseDocumentUnread = "document_unread"
 	// FoundryReleaseDocumentFailed: the engine failed the document.
 	FoundryReleaseDocumentFailed = "document_failed"

@@ -675,10 +675,9 @@ const (
 	// documents it waits for. A refresh queues it instead of a new load.
 	FoundryGraphJobApply FoundryGraphJobKind = "apply"
 	// FoundryGraphJobResend sends documents its load already holds to the
-	// engine again, each with its saved extraction: those the load owes a
-	// resend (FoundryLoadResend). A person's approval of a held claim queues
-	// it, so the engine replays the claim's document and writes what the
-	// approval releases.
+	// engine again: those the load owes a resend (FoundryLoadResend). A
+	// person's approval of a held claim queues it, so the engine writes what
+	// the approval releases from the review the load keeps, at no cost.
 	FoundryGraphJobResend FoundryGraphJobKind = "resend"
 )
 
