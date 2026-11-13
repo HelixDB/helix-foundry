@@ -241,11 +241,11 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 			// the facts, as several reviews can hold one claim. A commit that
 			// landed and failed to say so counted nothing.
 			ended, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_extractions
- SET job_id=?, status=?, error_code=NULL, error_retryable=NULL, sections=GREATEST(sections, ?), facts=GREATEST(facts+?-?, 0),
-  reviews=GREATEST(reviews-?, 0)+?, usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+?,
+ SET job_id=?, status=?, error_code=NULL, error_retryable=NULL, sections=GREATEST(sections, ?), facts=facts+?,
+  reviews=GREATEST(reviews-?, 0), usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+?,
   artifact_key=COALESCE(?, artifact_key), finished_at=NOW(6)
  WHERE load_id=? AND document_id=? AND status='failed'`,
-				jobID, string(e.Status), c.Sections, c.Facts, e.Withdrawn, e.Released, e.Withdrawn, e.USDMicros, e.InputTokens, e.OutputTokens,
+				jobID, string(e.Status), c.Sections, c.Facts, e.Released, e.USDMicros, e.InputTokens, e.OutputTokens,
 				e.ArtifactKey, loadID, e.DocumentID)
 			if err != nil {
 				return err
@@ -256,14 +256,15 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 			}
 			// A row that isn't failed stays, and counts what this run released
 			// of the document: an approval settled after its commit moves a
-			// review to the facts (a resend's, mostly), and one taken back
-			// moves it back. A release or a withdraw sent again writes and
-			// counts nothing, so a retry adds nothing twice.
-			if wasFailed == 0 && (c.Facts > 0 || e.Released > 0 || e.Withdrawn > 0 || e.USDMicros > 0 || e.InputTokens > 0 || e.OutputTokens > 0) {
+			// review to the facts (a resend's, mostly); one taken back moves
+			// it back as its outcome is recorded (recordFoundryReleaseOutcomes).
+			// A release sent again writes and counts nothing, so a retry adds
+			// nothing twice.
+			if wasFailed == 0 && (c.Facts > 0 || e.Released > 0 || e.USDMicros > 0 || e.InputTokens > 0 || e.OutputTokens > 0) {
 				if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_extractions
- SET facts=GREATEST(facts+?-?, 0), reviews=GREATEST(reviews-?, 0)+?, usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+?
+ SET facts=facts+?, reviews=GREATEST(reviews-?, 0), usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+?
  WHERE load_id=? AND document_id=?`,
-					c.Facts, e.Withdrawn, e.Released, e.Withdrawn, e.USDMicros, e.InputTokens, e.OutputTokens, loadID, e.DocumentID); err != nil {
+					c.Facts, e.Released, e.USDMicros, e.InputTokens, e.OutputTokens, loadID, e.DocumentID); err != nil {
 					return err
 				}
 			}
@@ -279,7 +280,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 		); err != nil {
 			return fmt.Errorf("record foundry document extraction: %w", err)
 		}
-		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, e.Releases); err != nil {
+		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, e.DocumentID, e.Releases); err != nil {
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_jobs

@@ -356,8 +356,7 @@ WHERE t.ontology_id=? AND t.kind='reject' AND `+foundryClaimAt("t"), append([]an
 			// claim apart. Another the load may have written is taken back
 			// (withdrawFoundryReleases): the engine takes it back first,
 			// then writes this one.
-			if _, err := tx.withdrawFoundryReleases(ctx, loadID, foundryClaimAt("t")+` AND t.id<>?`, append(claim, d.ID),
-				foundryRunning(live, loadID)); err != nil {
+			if _, err := tx.withdrawFoundryReleases(ctx, loadID, foundryClaimAt("t")+` AND t.id<>?`, append(claim, d.ID)); err != nil {
 				return err
 			}
 			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
@@ -422,30 +421,31 @@ func (s *mysqlDB) SettleFoundryReject(ctx context.Context, workspaceID, loadID s
 			return ErrConflict
 		}
 		// The live job's row before any decision's, as every settle takes them.
-		live, err := tx.liveFoundryGraphJob(ctx, d.OntologyID)
-		if err != nil {
+		if _, err := tx.liveFoundryGraphJob(ctx, d.OntologyID); err != nil {
 			return err
 		}
 		claim := foundryClaimArgs(d)
 		// What the current load's list says of the claim's approvals (by its
 		// key, or of what the person read at its place under another key,
 		// which the engine binds to this review: foundryClaimAt): one written,
-		// or one waiting for a job with nothing said of it yet.
-		var written, waits bool
+		// or one waiting for a job with nothing said of it yet while a resend
+		// of the load is in flight (foundryInFlight: running, or queued again
+		// after an attempt that may have written it).
+		var written, sending bool
 		if err := tx.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(t.applied_status='written'), 0) > 0,
-  COALESCE(SUM(t.applied_status IN ('pending', 'carried') AND t.applied_reason IS NULL), 0) > 0 FROM foundry_load_decisions t
-WHERE t.load_id=? AND t.kind='release' AND `+foundryClaimAt("t"), append([]any{loadID}, claim...)...).Scan(&written, &waits); err != nil {
+  COALESCE(SUM(t.applied_status IN ('pending', 'carried') AND t.applied_reason IS NULL), 0) > 0 AND `+
+			foundryInFlight("?", model.FoundryGraphJobResend)+` FROM foundry_load_decisions t
+WHERE t.load_id=? AND t.kind='release' AND `+foundryClaimAt("t"), append([]any{loadID, loadID}, claim...)...).Scan(&written, &sending); err != nil {
 			return err
 		}
-		if written || waits && live != nil && live.Kind == model.FoundryGraphJobResend && live.LoadID == loadID &&
-			live.Status == model.FoundryGraphJobRunning {
+		if written || sending {
 			return ErrConflict
 		}
 		// A deleted load's list went with it. A copy a load may have
 		// written stays for its carry, which takes it back
 		// (carryFoundryReleases), as its decision is gone.
 		if _, err := tx.db.ExecContext(ctx, `DELETE t FROM foundry_load_decisions t JOIN foundry_loads l ON l.id=t.load_id
-WHERE l.ontology_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND NOT `+foundryMayHaveWritten("t", false),
+WHERE l.ontology_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND NOT `+foundryMayHaveWritten("t"),
 			append([]any{d.OntologyID}, claim...)...); err != nil {
 			return err
 		}
@@ -554,7 +554,7 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 //
 // A release is taken back from the current load at once (contract 4.16.0).
 // Its copy there, if the load may have written it (foundryMayHaveWritten:
-// written, unconfirmed, or sent by a job of the load that runs now), becomes
+// written, unconfirmed, or of a load a job of which is in flight), becomes
 // a withdraw, its document owes a resend, and the resend is queued as a
 // settle queues one (queueFoundryResendBehind): the engine takes back what
 // the approval wrote, and the claim is held again, its card back. A copy the
@@ -616,7 +616,7 @@ func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, workspaceID, 
 			if o.CurrentLoadID == nil {
 				return nil
 			}
-			withdrew, err := tx.withdrawFoundryReleases(ctx, *o.CurrentLoadID, "t.id=?", []any{id}, foundryRunning(live, *o.CurrentLoadID))
+			withdrew, err := tx.withdrawFoundryReleases(ctx, *o.CurrentLoadID, "t.id=?", []any{id})
 			if err != nil || !withdrew {
 				return err
 			}

@@ -620,6 +620,8 @@ type FoundryReviewDecisionOutput struct {
 	// on: ranked (in its order of facts written) or random (its random slice,
 	// which measures precision). Absent for a decision made elsewhere.
 	Drawn string `json:"drawn,omitempty" jsonschema:"ranked or random: how the review queue showed the card it was decided on; absent for a decision made elsewhere"`
+	// Applied is what became of a release, a value or a withdraw in the current load.
+	Applied *FoundryDecisionAppliedOutput `json:"applied,omitempty" jsonschema:"What became of a release, a chosen value or a withdraw in the ontology's current load; absent for a resolve or a reject, and for one that load's list doesn't hold yet."`
 }
 
 type ListFoundryReviewDecisionsOutput struct {
@@ -908,7 +910,7 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 		}, s.CancelFoundryQuestion)
 		addFoundryTool(s, server, identity, tool(toolFoundryListReviewDecisions,
-			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release) and a chosen value (prop) also apply to the current load at once. A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review or in the review queue. A decision made on a card of the site's review queue says how it was drawn (drawn). A withdraw is an approval a person took back after the current load wrote it: that load is sent it at once, the claim is held again there, and it is listed only while that load is current."), s.ListFoundryReviewDecisions)
+			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release) and a chosen value (prop) also apply to the current load at once. A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review or in the review queue. A decision made on a card of the site's review queue says how it was drawn (drawn). A withdraw is an approval a person took back from the current load, which may have written it: that load is sent it at once, and it is listed only while that load is current. applied says what became of each in the current load; of a withdraw, withdrawn means the claim is held for review again, and refused that what the approval wrote stays."), s.ListFoundryReviewDecisions)
 	}
 	if s.Workflows != nil && browse {
 		// A grantee, whose reads source grants admit, gets them too: Foundry
@@ -1756,7 +1758,8 @@ func (s *Service) ListFoundryReviewDecisions(
 	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID}) || len(input.PageToken) > 1024 {
 		return ListFoundryReviewDecisionsOutput{}, 0, errCodeInvalidArguments
 	}
-	req := &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, PageToken: input.PageToken}
+	req := &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, PageToken: input.PageToken,
+		IncludeWithdraws: true}
 	if err := s.AuthorizeFoundry(ctx, identity, req, QueryRead,
 		"ListFoundryReviewDecisions"); err != nil {
 		return ListFoundryReviewDecisionsOutput{}, 0, err
@@ -2090,11 +2093,23 @@ func FoundryDocument(doc *foundryv1.FoundryDocument) FoundryDocumentOutput {
 	return out
 }
 
+// FoundryDecisionAppliedOutput is what became of a decision in the ontology's current load.
+type FoundryDecisionAppliedOutput struct {
+	Status string `json:"status" jsonschema:"A release: pending, written, refused, missed or unconfirmed (its job failed before saying). A value: pending, applied or unconfirmed. A withdraw: pending, withdrawn (the claim is held again), not_written (the load held nothing the approval wrote), refused (what the approval wrote stays) or unconfirmed. Empty: the load read it when it was made and no job said what became of it."`
+	Reason string `json:"reason,omitempty" jsonschema:"Why it was refused, in the engine's word or the backend's (job_failed when unconfirmed)."`
+	At     string `json:"at,omitempty" jsonschema:"When a job said so."`
+	// TakesBack is of a release: removing it takes it back from the current load.
+	TakesBack bool `json:"takes_back,omitempty" jsonschema:"Of a release: the current load may have written it, so removing the decision takes it back from that load rather than only dropping it."`
+}
+
 func FoundryReviewDecision(d *foundryv1.FoundryReviewDecision) FoundryReviewDecisionOutput {
 	out := FoundryReviewDecisionOutput{
 		ID: d.GetId(), Kind: d.GetKind(), Type: d.GetType(), DocID: d.GetDocId(), NormName: d.GetNormName(), EntityKey: d.GetEntityKey(),
 		Prop: d.GetProp(), ClaimKey: d.GetClaimKey(), ClaimSection: d.ClaimSection, ClaimStart: d.ClaimStart, ClaimEnd: d.ClaimEnd, StatementHash: d.GetStatementHash(),
 		DecidedByUserID: d.GetDecidedByUserId(), DecidedAt: protoTimestamp(d.GetDecidedAt()), Drawn: d.GetDrawn(),
+	}
+	if a := d.GetApplied(); a != nil {
+		out.Applied = &FoundryDecisionAppliedOutput{Status: a.GetStatus(), Reason: a.GetReason(), At: protoTimestamp(a.GetAt()), TakesBack: a.GetTakesBack()}
 	}
 	switch value := d.GetValue().GetValue().(type) {
 	case *foundryv1.FoundryPropValue_Null:

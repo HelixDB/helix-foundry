@@ -133,6 +133,20 @@ func (s *decisionStore) ListFoundryShownDecisions(_ context.Context, o, after st
 	}
 	return s.rows, nil
 }
+
+// ListFoundryReviewDecisions lists the saved decisions alone: no withdraw.
+func (s *decisionStore) ListFoundryReviewDecisions(_ context.Context, o, after string, docs []string, limit int) ([]*foundrymodel.FoundryReviewDecision, error) {
+	if o != s.ontology.ID {
+		panic("wrong ontology")
+	}
+	var saved []*foundrymodel.FoundryReviewDecision
+	for _, d := range s.rows {
+		if d.Kind != foundrymodel.FoundryReviewWithdraw {
+			saved = append(saved, d)
+		}
+	}
+	return saved, nil
+}
 func (s *decisionStore) DeleteFoundryReviewDecision(_ context.Context, ws, o, id string, resend *foundrymodel.FoundryGraphJob) error {
 	if ws != s.ontology.WorkspaceID || o != s.ontology.ID {
 		panic("wrong ontology")
@@ -471,19 +485,37 @@ func TestListFoundryReviewDecisionsTakenBack(t *testing.T) {
 			DocID: &doc, ClaimKey: &key, ClaimSpan: &foundrymodel.FoundryClaimSpan{Section: 1, Start: 2, End: 9}, StatementHash: &hash,
 			DecidedByUserID: "user-a"})
 	}
+	db.rows = append(db.rows, &foundrymodel.FoundryReviewDecision{ID: "r1", OntologyID: "o", Kind: foundrymodel.FoundryReviewRelease,
+		DocID: &doc, ClaimKey: &key, ClaimSpan: &foundrymodel.FoundryClaimSpan{Section: 2, Start: 2, End: 9}, StatementHash: &hash,
+		DecidedByUserID: "user-a"})
 	db.applied = map[string]foundrymodel.FoundryDecisionApplied{
+		"r1": {Status: foundrymodel.FoundryReleaseWritten, TakesBack: true},
 		"w1": {Status: foundrymodel.FoundryReleasePending},
 		"w2": {Status: foundrymodel.FoundryWithdrawn},
 		"w3": {Status: foundrymodel.FoundryNotWritten},
 		"w4": {Status: foundrymodel.FoundryReleaseRefused, Reason: "differs"},
 		"w5": {Status: foundrymodel.FoundryReleasePending, Reason: foundrymodel.FoundryReleaseJobFailed},
 	}
-	out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o"})
+	// A client that doesn't ask, as a site before 4.16.0, gets none.
+	if out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o"}); err != nil ||
+		len(out.GetDecisions()) != 1 || out.GetDecisions()[0].GetId() != "r1" {
+		t.Fatalf("listed %v, %v without asking", out.GetDecisions(), err)
+	}
+	out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o",
+		IncludeWithdraws: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]string{}
 	for _, d := range out.GetDecisions() {
+		if d.GetId() == "r1" {
+			// Removing a release the load may have written takes it back, as
+			// the backend's one rule says.
+			if d.GetKind() != "release" || !d.GetApplied().GetTakesBack() {
+				t.Fatalf("release listed %v", d)
+			}
+			continue
+		}
 		if d.GetKind() != "withdraw" || d.GetClaimKey() != key || d.GetStatementHash() != hash || d.GetClaimEnd() != 9 {
 			t.Fatalf("listed %v", d)
 		}

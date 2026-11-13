@@ -1450,6 +1450,10 @@ message ListFoundryReviewDecisionsRequest {
   string ontology_id = 2;
   // Last decision id from a previous page.
   string page_token = 3;
+  // Also list the current load's withdraws, approvals taken back from it
+  // (contract 4.16.0, kind withdraw), with what became of each. A client
+  // before them leaves it unset and gets none: it has no way to show one.
+  bool include_withdraws = 4;
 }
 message ListFoundryReviewDecisionsResponse {
   repeated FoundryReviewDecision decisions = 1;

@@ -3298,6 +3298,7 @@ describe("review decisions", () => {
     expect(written.applied).toEqual({
       status: "written",
       at: expect.any(String),
+      takesBack: true,
     });
     expect(held()).toHaveLength(0);
     expect(facts()).toHaveLength(1);
@@ -3381,7 +3382,11 @@ describe("review decisions", () => {
     expect((await approve()).status).toBe(200);
     vi.setSystemTime(Date.now() + 10_000);
     const [d] = (await call("GET", `${O}/review-decisions`)).body.decisions;
-    expect(d.applied).toEqual({ status: "written", at: expect.any(String) });
+    expect(d.applied).toEqual({
+      status: "written",
+      at: expect.any(String),
+      takesBack: true,
+    });
     expect(reviews(g).filter((n) => n.props.reason === "conflict")).toEqual([]);
     expect(signedWith(g)).toEqual(["cus_GLOBEX01"]);
     expect(quotes(g)).toEqual([
@@ -3517,7 +3522,12 @@ describe("review decisions", () => {
         d.kind,
         d.applied,
       ]),
-    ).toEqual([["release", { status: "written", at: expect.any(String) }]]);
+    ).toEqual([
+      [
+        "release",
+        { status: "written", at: expect.any(String), takesBack: true },
+      ],
+    ]);
   });
 
   it("writes an approval saved under the key the claim had, by its place and statement", async () => {

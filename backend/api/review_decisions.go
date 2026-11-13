@@ -399,7 +399,18 @@ func (s *Service) ListFoundryReviewDecisions(ctx context.Context, req *foundryv1
 	if len(req.GetPageToken()) > 26 {
 		return nil, status.Error(codes.InvalidArgument, "invalid page_token")
 	}
-	rows, err := s.deps.DB.ListFoundryShownDecisions(ctx, o.ID, req.GetPageToken(), 101)
+	// Only a client that asks gets the current load's withdraws: a site
+	// before contract 4.16.0, beside this backend in a deploy's window or
+	// after a rollback of the site alone, can't show one.
+	list := func() ([]*foundrymodel.FoundryReviewDecision, error) {
+		return s.deps.DB.ListFoundryReviewDecisions(ctx, o.ID, req.GetPageToken(), nil, 101)
+	}
+	if req.GetIncludeWithdraws() {
+		list = func() ([]*foundrymodel.FoundryReviewDecision, error) {
+			return s.deps.DB.ListFoundryShownDecisions(ctx, o.ID, req.GetPageToken(), 101)
+		}
+	}
+	rows, err := list()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list review decisions: %v", err)
 	}
@@ -478,7 +489,7 @@ func foundryReviewDecisionProto(d *foundrymodel.FoundryReviewDecision) *foundryv
 		case a.Status.Waits():
 			status = string(foundrymodel.FoundryReleasePending)
 		}
-		out.Applied = &foundryv1.FoundryDecisionApplied{Status: status, Reason: a.Reason}
+		out.Applied = &foundryv1.FoundryDecisionApplied{Status: status, Reason: a.Reason, TakesBack: a.TakesBack}
 		if a.At != nil {
 			out.Applied.At = timestamppb.New(*a.At)
 		}

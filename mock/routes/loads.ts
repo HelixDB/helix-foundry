@@ -587,7 +587,14 @@ export function appliedOf(ontologyId: string, d: FoundryReviewDecision) {
     !l?.decisions.some((x) => x.id === d.id)
   )
     return undefined;
-  return state.applied.get(appliedKey(l.id, d.id)) ?? { status: "" as const };
+  const applied = state.applied.get(appliedKey(l.id, d.id)) ?? {
+    status: "" as const,
+  };
+  // The mock writes an approval only in a job's step it records, so it may
+  // have written one exactly when it says so (the backend's takes_back).
+  return d.kind === "release" && applied.status === "written"
+    ? { ...applied, takesBack: true }
+    : applied;
 }
 
 /**

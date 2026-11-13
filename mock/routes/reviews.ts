@@ -466,11 +466,14 @@ export const reviewRoutes: MockRoute[] = [
         return fail("INVALID_ARGUMENT", "invalid page_token");
       // Approvals whose job's step has passed are applied by now.
       advanceLoads(s.o.id);
-      // Keyset paging: every decision after the token's id, and the current
-      // load's withdraws, approvals taken back from it.
+      // Keyset paging: every decision after the token's id, and, for a
+      // client that asks, the current load's withdraws, approvals taken back
+      // from it (a client before them gets none, as the backend's does).
       const after = [
         ...(decisions.get(s.o.id) || []),
-        ...currentWithdraws(s.o.id),
+        ...(req.query.get("includeWithdraws") === "true"
+          ? currentWithdraws(s.o.id)
+          : []),
       ]
         .filter((d) => d.id > token)
         .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

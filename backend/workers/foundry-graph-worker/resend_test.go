@@ -153,7 +153,7 @@ func TestResend(t *testing.T) {
 		}
 		want := []model.FoundryResendEnd{
 			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1},
-			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2, Refused: model.FoundryReleaseNotReplayed},
+			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2, Refused: model.FoundryReleaseNotReplayed, TakenBack: true},
 		}
 		if !reflect.DeepEqual(h.store.ended, want) {
 			t.Fatalf("ended %+v", h.store.ended)
@@ -223,7 +223,7 @@ func TestResend(t *testing.T) {
 		if h.store.extractions["doc-a"] != nil {
 			t.Fatalf("recorded %+v over the row its commit wrote", h.store.extractions["doc-a"])
 		}
-		want := []model.FoundryResendEnd{{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseDocumentFailed}}
+		want := []model.FoundryResendEnd{{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseDocumentFailed, TakenBack: true}}
 		if !reflect.DeepEqual(h.store.ended, want) {
 			t.Fatalf("ended %+v", h.store.ended)
 		}
@@ -907,9 +907,42 @@ func TestResendTakesBackApprovals(t *testing.T) {
 		if a == nil || !reflect.DeepEqual(a.Releases, want) {
 			t.Fatalf("recorded %+v", a)
 		}
-		// One claim taken back, one written: a fact more and one less.
-		if a.Withdrawn != 1 || a.Counts.Facts != 1 || a.Released != 1 {
-			t.Fatalf("withdrawn %d, facts %d, released %d", a.Withdrawn, a.Counts.Facts, a.Released)
+		// The claim written is a fact more; the one taken back moves back as
+		// the store records it (it knows whether the load had written it).
+		if a.Counts.Facts != 1 || a.Released != 1 {
+			t.Fatalf("facts %d, released %d", a.Counts.Facts, a.Released)
+		}
+	})
+	// The engine takes withdraws back before it reads any document, and says
+	// what it did only in the document's event (contract 4.16.0). A document
+	// sent again whose event is failed still says so: recorded, though its
+	// row stays as it was. A document that needed a model call got no event:
+	// its withdraws were taken back all the same, which its end says.
+	t.Run("a take-back stands whatever became of its document", func(t *testing.T) {
+		h := newHarness(t)
+		owes(h, "doc-a", "doc-b")
+		h.store.decisions = []*model.FoundryReviewDecision{withdraw("1", "doc-a", hashA), withdraw("2", "doc-b", hashB)}
+		failed := strings.TrimSuffix(documentEvent("doc-a", `{"kind":"failed","code":"store","retryable":false}`, noUsage), `"releases":[]}`) +
+			`"releases":[{"decision_id":"1","outcome":{"kind":"withdrawn"}}]}`
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{extracted[0], failed, `{"event":"extract_finished"}`},
+				`{"status":"budget_exhausted","totals":`+totals+`}`)
+		}
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		want := map[string][]model.FoundryReleaseOutcome{"doc-a": {
+			{DecisionID: "1", StatementHash: hashA, Withdraw: true, Kind: model.FoundryReleaseOutcomeWithdrawn},
+		}}
+		if !reflect.DeepEqual(h.store.outcomes, want) || h.store.extractions["doc-a"] != nil {
+			t.Fatalf("outcomes %+v, row %+v", h.store.outcomes, h.store.extractions["doc-a"])
+		}
+		ended := []model.FoundryResendEnd{
+			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseDocumentFailed, TakenBack: true},
+			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2, Refused: model.FoundryReleaseNotReplayed, TakenBack: true},
+		}
+		if !reflect.DeepEqual(h.store.ended, ended) {
+			t.Fatalf("ended %+v", h.store.ended)
 		}
 	})
 	t.Run("a list naming one decision twice fails the job", func(t *testing.T) {

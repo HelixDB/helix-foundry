@@ -84,37 +84,58 @@ ON DUPLICATE KEY UPDATE status='owed', requests=requests+1, requested_at=NOW(6),
 // sent it failed before its word was recorded (unconfirmed); the load copied
 // it when it was created and holds its document extracted, with no job's
 // word on it (an engine before contract 4.12.0 said nothing of releases);
-// or, with running, a job of the load runs now and may be sending it. Any
-// other copy is written nowhere: no job sent it, or the engine refused it or
-// found no claim for it. It is never NULL, so NOT of it holds of every copy
-// it doesn't: a copy no job reported on has no status.
-func foundryMayHaveWritten(t string, running bool) string {
-	cond := `COALESCE(` + t + `.applied_status='written'
+// or a job of the load is in flight (foundryInFlight), whatever the copy's
+// status: it may be sending the copy now, a copy made with the load and not
+// yet sent included, or have sent it in an attempt whose word was never
+// recorded. Any other copy is written nowhere: no job sent it, or the engine
+// refused it or found no claim for it. It is never NULL, so NOT of it holds
+// of every copy it doesn't: a copy no job reported on has no status.
+func foundryMayHaveWritten(t string) string {
+	return `COALESCE(` + t + `.applied_status='written'
   OR ` + t + `.applied_status IN ('pending', 'carried') AND ` + t + `.applied_reason IS NOT NULL
   OR ` + t + `.applied_status IS NULL AND EXISTS (SELECT 1 FROM foundry_load_extractions e
-    WHERE e.load_id=` + t + `.load_id AND e.document_id=` + t + `.doc_id AND e.status='extracted')`
-	if running {
-		cond += `
-  OR ` + t + `.applied_status IN ('pending', 'carried')`
+    WHERE e.load_id=` + t + `.load_id AND e.document_id=` + t + `.doc_id AND e.status='extracted')
+  OR ` + foundryInFlight(t+".load_id") + `, FALSE)`
+}
+
+// foundryInFlight is the SQL condition that a job of the load `load` (a
+// column or a placeholder), of one of kinds or of any kind, is in flight: the
+// ontology's live job, running, or queued again after an attempt started (a
+// retry, or one requeued for documents that came during it). An attempt may
+// have sent the engine the load's decisions, and the engine written some,
+// with no word of it recorded: the next attempt sends what the list then
+// holds, and absence never takes anything back.
+func foundryInFlight(load string, kinds ...model.FoundryGraphJobKind) string {
+	cond := `EXISTS (SELECT 1 FROM foundry_load_jobs j WHERE j.load_id=` + load + ` AND j.active_key=1
+    AND (j.status='running' OR j.status='queued' AND j.started_at IS NOT NULL)`
+	if len(kinds) > 0 {
+		names := make([]string, 0, len(kinds))
+		for _, k := range kinds {
+			names = append(names, "'"+string(k)+"'")
+		}
+		cond += ` AND j.kind IN (` + strings.Join(names, ", ") + `)`
 	}
-	return cond + `, FALSE)`
+	return cond + `)`
 }
 
 // withdrawFoundryReleases takes the releases of load loadID that where (SQL
 // over alias t, with args) names out of its list: each the load may have
-// written (foundryMayHaveWritten, running as there) becomes a withdraw of
+// written (foundryMayHaveWritten) becomes a withdraw of
 // it, waiting (pending), and its document is owed a resend
 // (model.FoundryResendApproval), which sends it to the engine; the others
 // are deleted, as nothing of them is in the load. A withdraw keeps the
 // release's id, time, claim and statement, as the engine takes back what
-// that decision wrote, so the list never holds both for one id. withdrew
+// that decision wrote, so the list never holds both for one id. It keeps
+// whether the load had recorded the release written (was_written), which
+// tells what the engine's later word, or its silence, means
+// (model.FoundryDecisionApplied.After, EndFoundryLoadResend). withdrew
 // reports a withdraw made here. Its caller queues the resend
 // (queueFoundryResendBehind), or is the carry that comes before one. The
 // caller holds the ontology's lock.
-func (s *mysqlDB) withdrawFoundryReleases(ctx context.Context, loadID, where string, args []any, running bool) (withdrew bool, err error) {
+func (s *mysqlDB) withdrawFoundryReleases(ctx context.Context, loadID, where string, args []any) (withdrew bool, err error) {
 	scope := append([]any{loadID}, args...)
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT t.doc_id FROM foundry_load_decisions t
-WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritten("t", running)+` ORDER BY t.doc_id`, scope...)
+WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritten("t")+` ORDER BY t.doc_id`, scope...)
 	if err != nil {
 		return false, err
 	}
@@ -132,8 +153,11 @@ WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritt
 		return false, err
 	}
 	if len(documents) > 0 {
-		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions t SET t.kind=?, t.applied_status=?, t.applied_reason=NULL, t.applied_at=NULL
-WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritten("t", running),
+		// was_written first: MySQL assigns left to right, and it reads the
+		// release's status before the withdraw's replaces it.
+		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions t
+SET t.was_written=(t.applied_status <=> 'written'), t.kind=?, t.applied_status=?, t.applied_reason=NULL, t.applied_at=NULL
+WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritten("t"),
 			append([]any{string(model.FoundryReviewWithdraw), string(model.FoundryReleasePending)}, scope...)...); err != nil {
 			return false, err
 		}
@@ -142,12 +166,6 @@ WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritt
 		return false, err
 	}
 	return len(documents) > 0, s.oweFoundryResends(ctx, loadID, model.FoundryResendApproval, documents)
-}
-
-// foundryRunning reports whether live, the ontology's live job, runs now
-// against load loadID, so may be sending that load's decisions.
-func foundryRunning(live *model.FoundryGraphJob, loadID string) bool {
-	return live != nil && live.LoadID == loadID && live.Status == model.FoundryGraphJobRunning
 }
 
 // carryFoundryReleases brings the ontology's current load the release
@@ -194,7 +212,7 @@ func (s *mysqlDB) carryFoundryReleases(ctx context.Context, o *model.FoundryOnto
 	}
 	loadID := *o.CurrentLoadID
 	if _, err := s.withdrawFoundryReleases(ctx, loadID, `t.id NOT IN (SELECT id FROM foundry_review_decisions WHERE ontology_id=?) OR `+
-		foundryRejected("t", "?"), []any{o.ID, o.ID}, false); err != nil {
+		foundryRejected("t", "?"), []any{o.ID, o.ID}); err != nil {
 		return err
 	}
 	// Two anti-joins, each on an index (the list's primary key, and its
@@ -499,8 +517,11 @@ WHERE d.status='uploaded' AND d.id IN (`+idPlaceholders(len(ids))+`)`, append([]
 // since the job read the request, so the Extract that just ended carried
 // each of them. The ones taken back (model.FoundryValueRemoved) leave the
 // list then: that Extract carried none of them, so the engine has withdrawn
-// each, and the load no longer holds a value to withhold. With end.Refused,
-// the document's release decisions and withdraws
+// each, and the load no longer holds a value to withhold. With end.TakenBack
+// the document's withdraws that wait end withdrawn: the run took them back
+// before it read any document, and said nothing of them
+// (takeBackFoundryWithdraws). With end.Refused,
+// the document's release decisions, and withdraws never sent,
 // that wait for the request are refused for that reason, as the engine said
 // nothing of them; a request owed again since is not this job's to answer,
 // so its decisions go on waiting for the job that sends them all. One left
@@ -525,6 +546,11 @@ WHERE load_id=? AND document_id=? AND reason=? AND requests=? AND status='owed'`
 		n, err := ended.RowsAffected()
 		if err != nil || n == 0 {
 			return err
+		}
+		if end.TakenBack {
+			if err := tx.takeBackFoundryWithdraws(ctx, loadID, end.DocumentID); err != nil {
+				return err
+			}
 		}
 		if end.Reason == model.FoundryResendDecisions {
 			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_status=?, applied_reason=NULL, applied_at=NOW(6)
@@ -585,19 +611,24 @@ WHERE load_id=? AND kind IN ('release', 'withdraw') AND applied_status IN ('pend
 }
 
 // recordFoundryReleaseOutcomes records what the engine said of the release
-// decisions and withdraws a job sent with a document of loadID, each on the
-// decision as the load holds it, of the kind and under the hash the job sent
-// (model.FoundryDecisionApplied.After). The caller runs it in the
-// transaction that records the document.
-func (s *mysqlDB) recordFoundryReleaseOutcomes(ctx context.Context, loadID string, outcomes []model.FoundryReleaseOutcome) error {
+// decisions and withdraws a job sent with document docID of loadID, each on
+// the decision as the load holds it, of the kind and under the hash the job
+// sent (model.FoundryDecisionApplied.After). Each withdraw that takes back
+// what the load recorded written moves the document's counts back
+// (MovesBack). The caller runs it in the transaction that records the
+// document, or RecordFoundryReleaseOutcomes does.
+func (s *mysqlDB) recordFoundryReleaseOutcomes(ctx context.Context, loadID, docID string, outcomes []model.FoundryReleaseOutcome) error {
+	back := 0
 	for _, o := range outcomes {
 		kind := model.FoundryReviewRelease
 		if o.Withdraw {
 			kind = model.FoundryReviewWithdraw
 		}
 		var current, currentReason sql.NullString
-		err := s.db.QueryRowContext(ctx, `SELECT applied_status, applied_reason FROM foundry_load_decisions
-WHERE load_id=? AND id=? AND kind=? AND statement_hash=? FOR UPDATE`, loadID, o.DecisionID, string(kind), o.StatementHash).Scan(&current, &currentReason)
+		var wasWritten sql.NullBool
+		err := s.db.QueryRowContext(ctx, `SELECT applied_status, applied_reason, was_written FROM foundry_load_decisions
+WHERE load_id=? AND id=? AND kind=? AND statement_hash=? FOR UPDATE`, loadID, o.DecisionID, string(kind), o.StatementHash).
+			Scan(&current, &currentReason, &wasWritten)
 		if err == sql.ErrNoRows {
 			// A decision removed, or approved as it reads now, after the job
 			// read it: the engine's word on what the job sent is dropped. A
@@ -611,10 +642,14 @@ WHERE load_id=? AND id=? AND kind=? AND statement_hash=? FOR UPDATE`, loadID, o.
 		if err != nil {
 			return err
 		}
-		applied := model.FoundryDecisionApplied{Status: model.FoundryReleaseStatus(current.String), Reason: currentReason.String}
+		applied := model.FoundryDecisionApplied{Status: model.FoundryReleaseStatus(current.String), Reason: currentReason.String,
+			WasWritten: wasWritten.Bool}
 		status, reason, ok := applied.After(o)
 		if !ok {
 			continue
+		}
+		if o.Withdraw && applied.MovesBack(status) {
+			back++
 		}
 		var why any
 		if reason != "" {
@@ -625,11 +660,72 @@ WHERE load_id=? AND id=?`, string(status), why, loadID, o.DecisionID); err != ni
 			return err
 		}
 	}
-	return nil
+	return s.moveFoundryCountsBack(ctx, loadID, docID, back)
+}
+
+// moveFoundryCountsBack moves a document's counts back by n take-backs of
+// what its load recorded written: n facts fewer and n reviews more, as
+// recording each write moved them forward.
+func (s *mysqlDB) moveFoundryCountsBack(ctx context.Context, loadID, docID string, n int) error {
+	if n == 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE foundry_load_extractions SET facts=GREATEST(facts-?, 0), reviews=reviews+?
+WHERE load_id=? AND document_id=?`, n, n, loadID, docID)
+	return err
+}
+
+// takeBackFoundryWithdraws ends the withdraws of document docID in loadID
+// that wait, one unconfirmed by an earlier job included, as taken back: an
+// Extract carried them to a run that reached its documents, and the engine
+// takes every withdraw back before it reads any document, at no cost, saying
+// so only in the document's event, which this run never sent (the document
+// needed a model call, so got none; contract 4.16.0). Sent again they would
+// read not_written. Each of an approval the load recorded written moves the
+// document's counts back. The caller holds the job's row.
+func (s *mysqlDB) takeBackFoundryWithdraws(ctx context.Context, loadID, docID string) error {
+	var back int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_load_decisions
+WHERE load_id=? AND kind='withdraw' AND doc_id=? AND applied_status IN ('pending', 'carried') AND was_written`, loadID, docID).Scan(&back); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_status=?, applied_reason=NULL, applied_at=NOW(6)
+WHERE load_id=? AND kind='withdraw' AND doc_id=? AND applied_status IN ('pending', 'carried')`,
+		string(model.FoundryWithdrawn), loadID, docID); err != nil {
+		return err
+	}
+	return s.moveFoundryCountsBack(ctx, loadID, docID, back)
+}
+
+// RecordFoundryReleaseOutcomes records what the engine said of the decisions
+// a job sent with document docID, where the job keeps no row of the
+// document's own event: a document sent again whose event is failed still
+// lists what became of each withdraw, taken back before the document was
+// read (contract 4.16.0). The job's load is the one its row names, while
+// workerID holds its lease; ErrNotFound means it lost it, and nothing was
+// written.
+func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome) error {
+	if len(outcomes) == 0 {
+		return nil
+	}
+	return s.WithTx(ctx, func(txDB Store) error {
+		tx := txDB.(*mysqlDB)
+		var loadID string
+		if err := tx.db.QueryRowContext(ctx, `SELECT load_id FROM foundry_load_jobs`+ownedFoundryGraphJob+` FOR UPDATE`, jobID, workerID).
+			Scan(&loadID); err != nil {
+			if err == sql.ErrNoRows {
+				return ErrNotFound
+			}
+			return err
+		}
+		return tx.recordFoundryReleaseOutcomes(ctx, loadID, docID, outcomes)
+	})
 }
 
 // ListFoundryDecisionsApplied returns what became of the given release and
-// value decisions, and withdraws, in the ontology's current load, by decision id; a decision
+// value decisions, and withdraws, in the ontology's current load, by decision
+// id, and of each release whether removing it takes it back from that load
+// (TakesBack: foundryMayHaveWritten, the rule the removal applies); a decision
 // that load's list doesn't hold is absent, as is a resolve, and one it holds
 // that no job has reported on has the empty status. One that waits with a
 // reason is unconfirmed (model.FoundryDecisionApplied.Unconfirmed). A value
@@ -640,7 +736,8 @@ func (s *mysqlDB) ListFoundryDecisionsApplied(ctx context.Context, ontologyID st
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT l.id, l.applied_status, l.applied_reason, l.applied_at FROM foundry_ontologies o
+	rows, err := s.db.QueryContext(ctx, `SELECT l.id, l.applied_status, l.applied_reason, l.applied_at,
+  l.kind='release' AND `+foundryMayHaveWritten("l")+` FROM foundry_ontologies o
 JOIN foundry_load_decisions l ON l.load_id=o.current_load_id
 WHERE o.id=? AND l.id IN (`+idPlaceholders(len(ids))+`) AND (l.kind IN ('release', 'withdraw') OR l.kind='prop' AND EXISTS (
   SELECT 1 FROM foundry_review_decisions r WHERE r.ontology_id=o.id AND r.id=l.id AND r.decided_at=l.decided_at))`,
@@ -653,10 +750,11 @@ WHERE o.id=? AND l.id IN (`+idPlaceholders(len(ids))+`) AND (l.kind IN ('release
 		var id string
 		var status, reason sql.NullString
 		var at sql.NullTime
-		if err := rows.Scan(&id, &status, &reason, &at); err != nil {
+		var takesBack bool
+		if err := rows.Scan(&id, &status, &reason, &at, &takesBack); err != nil {
 			return nil, err
 		}
-		applied := model.FoundryDecisionApplied{Status: model.FoundryReleaseStatus(status.String), Reason: reason.String}
+		applied := model.FoundryDecisionApplied{Status: model.FoundryReleaseStatus(status.String), Reason: reason.String, TakesBack: takesBack}
 		if at.Valid {
 			applied.At = &at.Time
 		}
