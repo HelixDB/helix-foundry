@@ -243,3 +243,32 @@ func TestAddSampleDataDependsOnTheHost(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "add_sample_data takes target ontology:<workspace_id>/<ontology_id> and an empty payload")
 }
+
+// A sample document whose bytes the workspace already held in another set stays where someone put
+// it; the result says the sample's draft leaves it out unless the user agrees to move it.
+func TestAddSampleDataSaysWhichDocumentsAnotherSetHolds(t *testing.T) {
+	s, backend, _ := newSampleWorkspace(t)
+	const name = "Acme Corp plans and pricing 2026.md"
+	body, err := fs.ReadFile(sample.Documents, "acme/"+name)
+	require.NoError(t, err)
+	sum := sha256.Sum256(body)
+	backend.documents[hex.EncodeToString(sum[:])] = &foundryv1.FoundryDocument{Id: "document-pricing", Name: "pricing.md", SetId: "set-general"}
+
+	out, err := runAddSampleData(t, s, "confirmation-1")
+	require.NoError(t, err)
+	var general []string
+	for _, doc := range out.Documents {
+		if doc.SetID != out.DocumentSetID {
+			general = append(general, doc.ID)
+		}
+	}
+	assert.Equal(t, []string{"document-pricing"}, general)
+	assert.Contains(t, out.Next, "1 of the sample's documents were already in another set of the workspace, as documents' set_id says (pricing.md)")
+	assert.Contains(t, out.Next, "move_document")
+
+	// With every document in the sample's set, nothing is said of another.
+	s, _, _ = newSampleWorkspace(t)
+	out, err = runAddSampleData(t, s, "confirmation-1")
+	require.NoError(t, err)
+	assert.NotContains(t, out.Next, "another set")
+}

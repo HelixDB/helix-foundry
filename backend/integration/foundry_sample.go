@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/document"
@@ -158,6 +159,17 @@ func (o AddSampleDataOperation) Execute(ctx context.Context, s *Service, identit
 		`{"sample": "acme", "connector_ids": ["` + out.ConnectorID + `"], "document_set_ids": ["` + out.DocumentSetID + `"]}: the ready-made draft, in seconds. ` +
 		"Follow it with " + toolFoundryGetGeneration + ", make its result_version_id current with set_current_version, load it with create_load and follow " + toolFoundryGetLoad +
 		", then ask one of " + toolFoundryGetContext + "'s example questions with " + toolFoundryAsk + "."
+	// A document whose bytes another set already held stays there, so the sample's draft, which
+	// reads only its own set, leaves it out: say which, without moving what someone put there.
+	if elsewhere := slices.DeleteFunc(slices.Clone(out.Documents), func(d FoundryDocumentOutput) bool { return d.SetID == out.DocumentSetID }); len(elsewhere) > 0 {
+		names := make([]string, 0, len(elsewhere))
+		for _, d := range elsewhere {
+			names = append(names, d.Name)
+		}
+		out.Next += fmt.Sprintf(" %d of the sample's documents were already in another set of the workspace, as documents' set_id says (%s): "+
+			"the sample's draft reads only document_set_id, so its loads leave them out unless the user agrees to move them there with move_document.",
+			len(elsewhere), strings.Join(names, ", "))
+	}
 	return out, nil
 }
 
