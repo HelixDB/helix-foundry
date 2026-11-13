@@ -86,9 +86,10 @@ ON DUPLICATE KEY UPDATE status='owed', requests=requests+1, requested_at=NOW(6),
 // word on it (an engine before contract 4.12.0 said nothing of releases);
 // or, with running, a job of the load runs now and may be sending it. Any
 // other copy is written nowhere: no job sent it, or the engine refused it or
-// found no claim for it.
+// found no claim for it. It is never NULL, so NOT of it holds of every copy
+// it doesn't: a copy no job reported on has no status.
 func foundryMayHaveWritten(t string, running bool) string {
-	cond := `(` + t + `.applied_status='written'
+	cond := `COALESCE(` + t + `.applied_status='written'
   OR ` + t + `.applied_status IN ('pending', 'carried') AND ` + t + `.applied_reason IS NOT NULL
   OR ` + t + `.applied_status IS NULL AND EXISTS (SELECT 1 FROM foundry_load_extractions e
     WHERE e.load_id=` + t + `.load_id AND e.document_id=` + t + `.doc_id AND e.status='extracted')`
@@ -96,7 +97,7 @@ func foundryMayHaveWritten(t string, running bool) string {
 		cond += `
   OR ` + t + `.applied_status IN ('pending', 'carried')`
 	}
-	return cond + `)`
+	return cond + `, FALSE)`
 }
 
 // withdrawFoundryReleases takes the releases of load loadID that where (SQL

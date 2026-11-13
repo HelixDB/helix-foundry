@@ -449,6 +449,42 @@ func TestListFoundryReviewDecisionsApplied(t *testing.T) {
 	}
 }
 
+// An approval taken back from the current load (contract 4.16.0) is listed
+// as a withdraw, the release as it was sent, with the engine's word on it as
+// it came: pending while it waits, unconfirmed when its job failed.
+func TestListFoundryReviewDecisionsTakenBack(t *testing.T) {
+	s, db, _ := reviewService(t, `{}`)
+	key, hash := testClaimKey, foundrymodel.FoundryStatementHash("promised_to", testStatement)
+	doc := "doc-1"
+	for _, id := range []string{"w1", "w2", "w3", "w4", "w5"} {
+		db.rows = append(db.rows, &foundrymodel.FoundryReviewDecision{ID: id, OntologyID: "o", Kind: foundrymodel.FoundryReviewWithdraw,
+			DocID: &doc, ClaimKey: &key, ClaimSpan: &foundrymodel.FoundryClaimSpan{Section: 1, Start: 2, End: 9}, StatementHash: &hash,
+			DecidedByUserID: "user-a"})
+	}
+	db.applied = map[string]foundrymodel.FoundryDecisionApplied{
+		"w1": {Status: foundrymodel.FoundryReleasePending},
+		"w2": {Status: foundrymodel.FoundryWithdrawn},
+		"w3": {Status: foundrymodel.FoundryNotWritten},
+		"w4": {Status: foundrymodel.FoundryReleaseRefused, Reason: "differs"},
+		"w5": {Status: foundrymodel.FoundryReleasePending, Reason: foundrymodel.FoundryReleaseJobFailed},
+	}
+	out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, d := range out.GetDecisions() {
+		if d.GetKind() != "withdraw" || d.GetClaimKey() != key || d.GetStatementHash() != hash || d.GetClaimEnd() != 9 {
+			t.Fatalf("listed %v", d)
+		}
+		got[d.GetId()] = d.GetApplied().GetStatus() + "/" + d.GetApplied().GetReason()
+	}
+	want := map[string]string{"w1": "pending/", "w2": "withdrawn/", "w3": "not_written/", "w4": "refused/differs", "w5": "unconfirmed/job_failed"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("applied %v", got)
+	}
+}
+
 // A conflict on a link that holds many values is a property that differs
 // from the fact the graph holds, which no approval changes: the answer says
 // which conflicts can be approved, and nothing is saved. A version whose
