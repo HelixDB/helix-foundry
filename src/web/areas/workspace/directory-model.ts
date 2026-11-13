@@ -20,8 +20,8 @@ export type DirectoryView =
   | { kind: "connected"; provider: string };
 
 /**
- * A workspace without the SSO entitlement (where directory sync is on) shows
- * nothing, as a read that can't be made (a member, an older WFE) does.
+ * A stamp where directory sync is off (`entitled` false) shows nothing, as a
+ * read that can't be made (a member, an older WFE) does.
  */
 export function directoryView(
   directory: WorkspaceDirectory | undefined,
@@ -43,9 +43,19 @@ export type StateView = {
   tone: "ok" | "pending" | "danger";
   /** What to do, when someone has to act. */
   problem?: string;
+  /** What comes next, when nothing is wrong. */
+  hint?: string;
 };
 
-export function stateView(state: DirectoryState | undefined): StateView {
+/**
+ * The directory's state in words. `synced` says whether it ever synced: one
+ * that never linked was chosen in the setup guide and not finished, which is
+ * no breakage.
+ */
+export function stateView(
+  state: DirectoryState | undefined,
+  synced = true,
+): StateView {
   switch (state) {
     case "DIRECTORY_STATE_LINKED":
       return { label: "Connected", tone: "ok" };
@@ -59,6 +69,12 @@ export function stateView(state: DirectoryState | undefined): StateView {
           "Helix can no longer read your directory. Reconnect it in the setup guide.",
       };
     case "DIRECTORY_STATE_UNLINKED":
+      if (!synced)
+        return {
+          label: "Setup not finished",
+          tone: "pending",
+          hint: "Finish connecting it in the setup guide. Its groups and people show here once it sends them.",
+        };
       return {
         label: "Disconnected",
         tone: "danger",
@@ -81,6 +97,10 @@ export function syncText(
   ago: (at: string) => string,
 ): { text: string; tone: "ok" | "pending" | "danger" } {
   if (syncing(d)) return { text: "Syncing…", tone: "pending" };
+  // One that never linked can't have synced: an older WFE's failure for it
+  // ("the directory is unlinked") says nothing the state doesn't.
+  if (!d.lastSyncedAt && d.directory?.state === "DIRECTORY_STATE_UNLINKED")
+    return { text: "Not synced yet", tone: "pending" };
   if (d.syncState === "DIRECTORY_SYNC_STATE_FAILED") {
     const why = d.syncError?.trim();
     return {
