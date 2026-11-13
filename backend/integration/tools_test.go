@@ -1045,3 +1045,15 @@ func TestInputsTakeNoNull(t *testing.T) {
 		}
 	}
 }
+
+// Each input that names a workspace hands its workspace_id field to the default, whatever tool
+// takes it.
+func TestEveryWorkspaceInputDefaultsItsWorkspaceID(t *testing.T) {
+	for _, in := range []WorkspaceInput{
+		&ListFoundryOntologiesInput{}, &OntologyInput{}, &FoundryWorkspaceInput{},
+		&GetFoundrySyncInput{}, &FoundryConnectInput{}, &GetFoundrySignInInput{},
+	} {
+		*in.Workspace() = "workspace-1"
+		assert.Contains(t, mustJSON(t, in), `"workspace_id":"workspace-1"`, "%T", in)
+	}
+}
