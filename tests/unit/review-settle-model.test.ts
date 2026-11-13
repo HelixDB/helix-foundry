@@ -879,9 +879,9 @@ describe("an approval taken back from the current load (contract 4.16.0)", () =>
       "not_replayed",
       "unanswered",
     ])
-      expect(
-        model.takenBack({ status: "refused", reason }).text,
-      ).not.toContain(reason);
+      expect(model.takenBack({ status: "refused", reason }).text).not.toContain(
+        reason,
+      );
     expect(
       model.takenBack({ status: "refused", reason: "a_later_word" }).text,
     ).toContain("it says why as “a_later_word”.");
