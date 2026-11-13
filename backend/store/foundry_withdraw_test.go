@@ -165,8 +165,11 @@ func TestFoundryTakeBackOutcomes(t *testing.T) {
 		DocumentID: owed[1].DocumentID, Reason: owed[1].Reason, Requests: owed[1].Requests, Refused: model.FoundryReleaseDocumentGone,
 	}))
 	f.end(t, job, "words", model.FoundryGraphJobSucceeded)
+	// not_written of an approval the load recorded written is the take-back
+	// done by a run that said nothing of it: withdrawn. (One the load never
+	// recorded written stays not_written: TestFoundryTakeBackWhateverBecameOfItsDocument.)
 	assert.Equal(t, map[string]string{
-		none.ID: "not_written", differs.ID: "refused/differs", gone.ID: "refused/document_gone",
+		none.ID: "withdrawn", differs.ID: "refused/differs", gone.ID: "refused/document_gone",
 	}, f.applied(t, none, differs, gone))
 	assert.Empty(t, f.sentKinds(t, f.a))
 	assert.Empty(t, f.sentKinds(t, f.b))

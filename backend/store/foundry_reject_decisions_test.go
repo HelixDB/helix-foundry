@@ -302,6 +302,11 @@ func TestFoundryRejectTakesTheApprovalFromEveryLoad(t *testing.T) {
 		f.sent(t, job, owed[0], 0, refused(x, "conflict"))
 		f.reject(t, no)
 		assert.Equal(t, map[string]model.FoundryReviewDecisionKind{no.ID: model.FoundryReviewReject}, f.kinds(t))
+		// While the job is in flight its copy stays for the carry, and is sent
+		// no more; the job's end drops it, as nothing of it is in the load.
+		assert.Equal(t, map[string]string{x.ID: "refused/conflict"}, f.copies(t, f.load))
+		assert.Empty(t, f.listed(t, f.load))
+		f.end(t, job, "rejected", model.FoundryGraphJobSucceeded)
 		assert.Empty(t, f.copies(t, f.load))
 	})
 }
