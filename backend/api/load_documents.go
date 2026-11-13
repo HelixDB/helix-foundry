@@ -108,7 +108,7 @@ func (s *Service) foundryLoadDocumentSets(ctx context.Context, ontologyID string
 				SetId: set.SetID, Routed: routes.Routes(set.SetID) || err != nil && set.Read > 0,
 				Documents: int32(set.Documents), Read: int32(set.Read),
 				Duplicate: int32(set.Duplicate), Failed: int32(set.Failed), NotRead: int32(set.NotRead), Waiting: int32(set.Waiting),
-				Facts: set.Facts, Reviews: set.Reviews, Unresolved: set.Unresolved,
+				Facts: set.Facts, Attributes: set.Attributes, Reviews: set.Reviews, Unresolved: set.Unresolved,
 			})
 		}
 	}

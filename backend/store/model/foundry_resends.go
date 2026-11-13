@@ -71,7 +71,8 @@ type FoundryResendEnd struct {
 // the load copied when it was created and no job has reported on yet. A
 // release ends written, refused or missed, as the engine says of each; a
 // value decision ends applied, which is all a load can say of one, and one
-// taken back is removed until the load is told.
+// taken back is removed until the load is told. A withdraw waits as pending
+// and ends withdrawn, not_written or refused.
 type FoundryReleaseStatus string
 
 const (
@@ -113,6 +114,16 @@ const (
 	// list). A resend job that failed leaves it with FoundryReleaseJobFailed,
 	// and the end of the next job of the ontology sends the list again.
 	FoundryValueRemoved FoundryReleaseStatus = "removed"
+	// FoundryWithdrawn is a withdraw (FoundryReviewWithdraw) the engine
+	// carried out: what the approval wrote no longer acts. Its claim is held
+	// again with its review or, where what held it is gone (a conflict with a
+	// document since removed), stays written as its document's own statement
+	// with no approval to rank it.
+	FoundryWithdrawn FoundryReleaseStatus = "withdrawn"
+	// FoundryNotWritten is a withdraw of an approval of which the load holds
+	// nothing: it was never written, was taken back already, or another
+	// decision wrote the claim since.
+	FoundryNotWritten FoundryReleaseStatus = "not_written"
 )
 
 // Waits reports a decision the engine has yet to say anything of.
@@ -165,6 +176,10 @@ const (
 	// no review at the decision's key and place: one a release wrote before,
 	// or a claim this load never held there.
 	FoundryReleaseOutcomeNotHeld FoundryReleaseOutcomeKind = "not_held"
+	// FoundryReleaseOutcomeWithdrawn and FoundryReleaseOutcomeNotWritten are
+	// of a withdraw alone (contract 4.16.0), as are their statuses.
+	FoundryReleaseOutcomeWithdrawn  FoundryReleaseOutcomeKind = "withdrawn"
+	FoundryReleaseOutcomeNotWritten FoundryReleaseOutcomeKind = "not_written"
 )
 
 // FoundryReleaseOutcome is the engine's word on one release decision a job
@@ -174,7 +189,12 @@ const (
 type FoundryReleaseOutcome struct {
 	DecisionID    string
 	StatementHash string
-	Kind          FoundryReleaseOutcomeKind
+	// Withdraw is a withdraw the job sent, not a release: the load's copy of
+	// the decision is read under that kind, and a copy the person took back
+	// while the job ran (a release then, a withdraw now) is not what the
+	// engine speaks of.
+	Withdraw bool
+	Kind     FoundryReleaseOutcomeKind
 	// Reason is the engine's reason for a refusal.
 	Reason string
 }
@@ -219,7 +239,22 @@ func (a FoundryDecisionApplied) Unconfirmed() bool {
 // earlier event said, and stays: ok is false, and nothing changes. An outcome
 // the backend doesn't know wrote nothing it can vouch for: the decision is
 // refused, with the outcome's name as its reason, so none waits for ever.
+//
+// A withdraw ends as the engine says: withdrawn, not_written or refused;
+// another word, which only a release gets, is refused with its name as the
+// reason, as an unknown one is.
 func (a FoundryDecisionApplied) After(o FoundryReleaseOutcome) (status FoundryReleaseStatus, reason string, ok bool) {
+	if o.Withdraw {
+		switch o.Kind {
+		case FoundryReleaseOutcomeWithdrawn:
+			return FoundryWithdrawn, "", true
+		case FoundryReleaseOutcomeNotWritten:
+			return FoundryNotWritten, "", true
+		case FoundryReleaseOutcomeRefused:
+			return FoundryReleaseRefused, o.Reason, true
+		}
+		return FoundryReleaseRefused, string(o.Kind), true
+	}
 	switch o.Kind {
 	case FoundryReleaseOutcomeWritten:
 		return FoundryReleaseWritten, "", true

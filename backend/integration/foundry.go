@@ -416,6 +416,8 @@ type FoundryLoadDocumentsOutput struct {
 	Waiting          int32 `json:"waiting" jsonschema:"Documents the load has not extracted yet."`
 	// FactsWritten adds up each document's created and updated facts: not distinct facts.
 	FactsWritten int64 `json:"facts_written" jsonschema:"Fact writes by the documents: each document counts the facts it created and the stored facts it added its evidence to, so a fact two documents state counts twice. It is not the number of distinct facts in the graph."`
+	// ValuesWritten adds up each document's property values written as evidence: not distinct values.
+	ValuesWritten int64 `json:"values_written" jsonschema:"Values written by the documents: property values each document stated that were written as evidence, counted by document as facts_written is, so a value two documents state counts twice. A value held back or in conflict is a review, not a value written."`
 	// LeftForReview is every review the documents left: Foundry counts a document's reviews in
 	// one number, whatever their kind, as of when the load last wrote the document.
 	LeftForReview int64 `json:"left_for_review" jsonschema:"Reviews the documents left when the load last wrote each one, of every kind: statements held back instead of written as facts (scored under the bar, unverified, conflicting or breaking a rule), names matched to no one record, property values held back or in conflict, statements that fit no link, and links the load did write that a person can undo. A held statement or value is not in the graph. This is not the number of open reviews: a review a person settles stays counted until the load writes the decision, which a later load does (and the current load, where Foundry applies an approval or a chosen value to it at once); a held statement written then leaves this count for facts_written. A property value in conflict stays counted after a person chooses its value: every load lists the conflict, and the choice settles it. helix_foundry_list_review_decisions lists what was settled."`
@@ -440,6 +442,7 @@ type FoundryLoadDocumentSetOutput struct {
 	Failed           int32 `json:"failed"`
 	Waiting          int32 `json:"waiting"`
 	FactsWritten     int64 `json:"facts_written"`
+	ValuesWritten    int64 `json:"values_written"`
 	LeftForReview    int64 `json:"left_for_review"`
 	NamesUnresolved  int64 `json:"names_unresolved"`
 }
@@ -505,6 +508,7 @@ type FoundryExtractionOutput struct {
 	Sections   int32  `json:"sections"`
 	Entities   int32  `json:"entities"`
 	Facts      int32  `json:"facts"`
+	Values     int32  `json:"values" jsonschema:"Values written: property values it stated that were written as evidence."`
 	Reviews    int32  `json:"reviews"`
 	USDMicros  int64  `json:"usd_micros"`
 	FinishedAt string `json:"finished_at,omitempty"`
@@ -892,7 +896,7 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 		}, s.CancelFoundryQuestion)
 		addFoundryTool(s, server, identity, tool(toolFoundryListReviewDecisions,
-			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release) and a chosen value (prop) also apply to the current load at once. A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review."), s.ListFoundryReviewDecisions)
+			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release) and a chosen value (prop) also apply to the current load at once. A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review. A withdraw is an approval a person took back after the current load wrote it: that load is sent it at once, the claim is held again there, and it is listed only while that load is current."), s.ListFoundryReviewDecisions)
 	}
 	if s.Workflows != nil && browse {
 		// A grantee, whose reads source grants admit, gets them too: Foundry
@@ -1579,12 +1583,13 @@ func FoundryLoadDocuments(sets []*foundryv1.FoundryLoadDocumentSet) *FoundryLoad
 		out.Failed += set.GetFailed()
 		out.Waiting += set.GetWaiting()
 		out.FactsWritten += set.GetFacts()
+		out.ValuesWritten += set.GetAttributes()
 		out.LeftForReview += set.GetReviews()
 		out.NamesUnresolved += set.GetUnresolved()
 		out.Sets = append(out.Sets, FoundryLoadDocumentSetOutput{
 			SetID: set.GetSetId(), ReadByVersion: set.GetRouted(), Documents: set.GetDocuments(), Read: set.GetRead(),
 			NotReadByVersion: set.GetNotRead(), Duplicate: set.GetDuplicate(), Failed: set.GetFailed(), Waiting: set.GetWaiting(),
-			FactsWritten: set.GetFacts(), LeftForReview: set.GetReviews(), NamesUnresolved: set.GetUnresolved(),
+			FactsWritten: set.GetFacts(), ValuesWritten: set.GetAttributes(), LeftForReview: set.GetReviews(), NamesUnresolved: set.GetUnresolved(),
 		})
 	}
 	return out
@@ -2066,7 +2071,7 @@ func FoundryDocument(doc *foundryv1.FoundryDocument) FoundryDocumentOutput {
 	if x := doc.GetExtraction(); x != nil {
 		out.Extraction = &FoundryExtractionOutput{
 			Status: x.GetStatus(), DuplicateOf: x.GetDuplicateOf(), ErrorCode: x.GetError().GetCode(), Retryable: x.GetError().GetRetryable(),
-			Sections: x.GetSections(), Entities: x.GetEntities(), Facts: x.GetFacts(), Reviews: x.GetReviews(),
+			Sections: x.GetSections(), Entities: x.GetEntities(), Facts: x.GetFacts(), Values: x.GetAttributes(), Reviews: x.GetReviews(),
 			USDMicros: x.GetUsdMicros(), FinishedAt: protoTimestamp(x.GetFinishedAt()),
 		}
 	}

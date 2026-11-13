@@ -1052,6 +1052,8 @@ message FoundryDocumentExtraction {
   int32 reviews = 8;
   int64 usd_micros = 9;
   google.protobuf.Timestamp finished_at = 10;
+  // Values written: property values it stated that were written as
+  // evidence (the engine's DocumentCounts.attributes).
   int32 attributes = 11;
   int32 attribute_reviews = 12;
   int32 prop_conflicts = 13;
@@ -1190,6 +1192,10 @@ message FoundryLoadDocumentSet {
   // and the stored facts it added its evidence to, so a fact two documents
   // state counts twice. It is not the number of distinct facts in the graph.
   int64 facts = 9;
+  // Values written by its documents: property values each stated that were
+  // written as evidence (the engine's DocumentCounts.attributes), counted as
+  // facts are, by document, so a value two documents state counts twice.
+  int64 attributes = 12;
   // The reviews its documents left when the load last wrote each, of every
   // kind: statements held back instead of written as facts (scored under the
   // bar, unverified, conflicting, breaking a rule), names matched to no one
@@ -1532,6 +1538,16 @@ message FoundryDecisionApplied {
   // until another approval of the same document sends it again), or empty:
   // the load read the decision when it was created, and no job has said
   // what became of it.
+  // Of a withdraw (an approval taken back, contract 4.16.0): pending while
+  // its job has yet to run, withdrawn (what the approval wrote no longer
+  // acts: the claim is held again, or, held for a conflict with a document
+  // since removed, stays written as its document's statement with no
+  // approval to rank it), not_written (the load held nothing the approval
+  // wrote), refused (what it wrote stays: differs, quotes an engine before
+  // 4.16.0 wrote of several claims of the link keep nothing to tell them
+  // apart; too_large; or the backend's document_gone, document_unread,
+  // document_failed, not_replayed, unanswered), or unconfirmed (its job
+  // failed; the end of the ontology's next job sends it again).
   string status = 1;
   // Why a refused claim stays held. The engine's reasons: unresolved (a name
   // in it is matched to no one record: settle that name), legal_form (a name
@@ -1563,11 +1579,16 @@ message FoundryDecisionApplied {
 // A durable ontology-wide override. A resolve decision applies from the next
 // load; a release or a prop decision applies to the current load at once,
 // and later loads read it as they are made. Removing a prop decision
-// withdraws it from the current load at once too. A reject changes no load:
-// it tells readers which held claims a person said are wrong.
+// withdraws it from the current load at once too, and so does removing a
+// release the load may have written (contract 4.16.0): the load's copy
+// becomes a withdraw, listed here, kind withdraw, with what became of it,
+// while that load is current; it is no saved decision, and can't be removed.
+// A reject changes no load: it tells readers which held claims a person said
+// are wrong.
 message FoundryReviewDecision {
   string id = 1;
-  // resolve, prop, release or reject.
+  // resolve, prop, release or reject; withdraw is an approval taken back
+  // from the current load (the release as it was sent).
   string kind = 2;
   string type = 3;
   optional string doc_id = 4;

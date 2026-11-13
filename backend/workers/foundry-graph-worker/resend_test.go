@@ -855,3 +855,73 @@ func TestDocumentEventReleases(t *testing.T) {
 		t.Fatalf("%+v, %v", e, err)
 	}
 }
+
+// A person took back approvals the load wrote (contract 4.16.0): the load's
+// list holds each as a withdraw, the release as it was sent, which goes with
+// its document beside the document's other approvals. The engine says what
+// it did of each, withdrawals first: recorded on the withdraw, never on a
+// release of the same id, and a claim taken back is held again in the
+// document's counts. One the engine said nothing of is refused unanswered,
+// as a release is, so none waits for good. One id is one decision: a list
+// naming one twice fails the job rather than send what the engine refuses.
+func TestResendTakesBackApprovals(t *testing.T) {
+	withdraw := func(id, doc, hash string) *model.FoundryReviewDecision {
+		d := approval(id, doc, hash)
+		d.Kind = model.FoundryReviewWithdraw
+		return d
+	}
+	t.Run("sends each withdraw as its release was sent and records what became of it", func(t *testing.T) {
+		h := newHarness(t)
+		owes(h, "doc-a")
+		again := approval("4", "doc-a", hashA)
+		again.ClaimSpan = &model.FoundryClaimSpan{Section: 1, Start: 0, End: 5}
+		h.store.decisions = []*model.FoundryReviewDecision{withdraw("1", "doc-a", hashA), withdraw("2", "doc-a", hashB), withdraw("3", "doc-a", hashA), again}
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{
+				extracted[0],
+				resent("doc-a", 1, `[{"decision_id":"1","outcome":{"kind":"withdrawn"}},{"decision_id":"2","outcome":{"kind":"not_written"}},`+
+					`{"decision_id":"4","outcome":{"kind":"written"}}]`),
+				`{"event":"extract_finished"}`,
+			}, `{"status":"done","totals":`+totals+`}`)
+		}
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		_, calls := h.agent.calls()
+		req := decodeExtract(t, calls[0])
+		if len(req.Decisions) != 4 || req.Decisions[0].Kind != model.FoundryReviewWithdraw || req.Decisions[3].Kind != model.FoundryReviewRelease {
+			t.Fatalf("decisions %+v", req.Decisions)
+		}
+		sent, _ := json.Marshal(req.Decisions[0])
+		if want := `{"kind":"withdraw","doc_id":"doc-a","claim_key":"` + claim + `","section":0,"start":2,"end":9,"statement_hash":"` + hashA +
+			`","decision_id":"1","decided_at":"2026-10-17T08:02:03Z"}`; string(sent) != want {
+			t.Fatalf("sent %s, want %s", sent, want)
+		}
+		a := h.store.extractions["doc-a"]
+		want := []model.FoundryReleaseOutcome{
+			{DecisionID: "1", StatementHash: hashA, Withdraw: true, Kind: model.FoundryReleaseOutcomeWithdrawn},
+			{DecisionID: "2", StatementHash: hashB, Withdraw: true, Kind: model.FoundryReleaseOutcomeNotWritten},
+			{DecisionID: "4", StatementHash: hashA, Kind: model.FoundryReleaseOutcomeWritten},
+			{DecisionID: "3", StatementHash: hashA, Withdraw: true, Kind: model.FoundryReleaseOutcomeRefused, Reason: model.FoundryReleaseUnanswered},
+		}
+		if a == nil || !reflect.DeepEqual(a.Releases, want) {
+			t.Fatalf("recorded %+v", a)
+		}
+		// One claim taken back, one written: a fact more and one less.
+		if a.Withdrawn != 1 || a.Counts.Facts != 1 || a.Released != 1 {
+			t.Fatalf("withdrawn %d, facts %d, released %d", a.Withdrawn, a.Counts.Facts, a.Released)
+		}
+	})
+	t.Run("a list naming one decision twice fails the job", func(t *testing.T) {
+		h := newHarness(t)
+		owes(h, "doc-a")
+		h.store.decisions = []*model.FoundryReviewDecision{approval("1", "doc-a", hashA), withdraw("1", "doc-a", hashA)}
+		outcome := h.run(t, resendJob())
+		if outcome.Status != model.FoundryGraphJobFailed || !strings.Contains(outcome.Error, "listed twice") {
+			t.Fatalf("%+v", outcome)
+		}
+		if _, calls := h.agent.calls(); len(calls) != 0 {
+			t.Fatalf("%d extracts sent", len(calls))
+		}
+	})
+}

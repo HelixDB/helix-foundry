@@ -117,7 +117,7 @@ func (s *decisionStore) ListFoundryDecisionsApplied(_ context.Context, o string,
 	}
 	return s.applied, nil
 }
-func (s *decisionStore) ListFoundryReviewDecisions(_ context.Context, o, after string, docs []string, limit int) ([]*foundrymodel.FoundryReviewDecision, error) {
+func (s *decisionStore) ListFoundryShownDecisions(_ context.Context, o, after string, limit int) ([]*foundrymodel.FoundryReviewDecision, error) {
 	if o != s.ontology.ID {
 		panic("wrong ontology")
 	}
