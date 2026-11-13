@@ -1,8 +1,12 @@
 import type {
   DeleteReviewDecisionResponse,
   FoundryReviewDecision,
+  FoundryReviewLabel,
   ListReviewDecisionsResponse,
+  ListReviewLabelsResponse,
   ReviewDecisionResponse,
+  ReviewLabelResponse,
+  SettleReviewLabelRequest,
   SettleReviewRequest,
 } from "../../../shared/wfe";
 import type { QueryClient } from "@tanstack/react-query";
@@ -71,6 +75,37 @@ export const reviewQueries = {
       return decisions;
     },
   }),
+};
+// Every label of the ontology, a page (100) at a time: what the review queue
+// measures precision from, and leaves out of its draws.
+export const labelQueries = {
+  list: (ws: string, o: string) => ({
+    queryKey: [ws, "ontology", o, "review-labels"],
+    staleTime: 30_000,
+    queryFn: async () => {
+      const labels: FoundryReviewLabel[] = [];
+      const seen = new Set<string>();
+      let token = "";
+      do {
+        const page = await api<ListReviewLabelsResponse>(
+          `${base(ws, o)}/review-labels${token ? `?pageToken=${enc(token)}` : ""}`,
+        );
+        labels.push(...(page.labels || []));
+        token = page.nextPageToken || "";
+        if (seen.has(token)) throw new Error("Labels repeated a page.");
+        seen.add(token);
+      } while (token);
+      return labels;
+    },
+  }),
+};
+/** Keeps a person's word on a claim the review queue drew (or re-checks). */
+export const settleLabel = async (
+  ws: string,
+  o: string,
+  body: SettleReviewLabelRequest,
+) => {
+  return api<ReviewLabelResponse>(`${base(ws, o)}/review-labels`, body);
 };
 export const settleReview = async (
   ws: string,

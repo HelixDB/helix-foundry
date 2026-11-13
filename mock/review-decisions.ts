@@ -2,6 +2,7 @@ import { parse } from "smol-toml";
 import type {
   FoundryPropValue,
   FoundryReviewDecision,
+  FoundryReviewLabel,
 } from "../src/shared/wfe";
 import { normName } from "./graph/extract";
 import { onReset } from "./state";
@@ -18,6 +19,38 @@ export const decisions = new Map<string, FoundryReviewDecision[]>();
 export const decisionsFor = (o: string): FoundryReviewDecision[] =>
   (decisions.get(o) || []).filter((d) => d.kind !== "reject");
 onReset(() => decisions.clear());
+/**
+ * Labels of claims, by ontology (the backend's foundry_review_labels): a
+ * person's word on a claim the review queue drew at random, or a second
+ * person's re-check, kept to measure precision and read into nothing else.
+ */
+export const labels = new Map<string, FoundryReviewLabel[]>();
+onReset(() => labels.clear());
+/** A label's claim: its document, place and key. One label per person and claim. */
+export const labelClaim = (l: FoundryReviewLabel) =>
+  JSON.stringify([
+    l.docId,
+    l.claimSection,
+    l.claimStart,
+    l.claimEnd,
+    l.claimKey ?? null,
+    l.factKey ?? null,
+  ]);
+/**
+ * Keeps `label`, replacing the same person's label of the same claim (whose
+ * id it keeps), as the backend's SaveFoundryReviewLabel does.
+ */
+export function saveLabel(ontology: string, label: FoundryReviewLabel) {
+  const own = labels.get(ontology) || [];
+  const previous = own.find(
+    (l) =>
+      l.decidedByUserId === label.decidedByUserId &&
+      labelClaim(l) === labelClaim(label),
+  );
+  const saved = { ...label, id: previous?.id ?? label.id };
+  labels.set(ontology, [...own.filter((l) => l !== previous), saved]);
+  return saved;
+}
 
 export type DecisionTypes = Record<
   string,

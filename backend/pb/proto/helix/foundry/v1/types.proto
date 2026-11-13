@@ -1603,6 +1603,43 @@ message FoundryReviewDecision {
   // saved while another load was current joins them when a job of the
   // ontology next ends).
   FoundryDecisionApplied applied = 17;
+  // "ranked" or "random": the review queue's card it was made on, in the
+  // queue's order or drawn at random; empty for a decision made elsewhere.
+  string drawn = 18;
+}
+
+// A person's word on a claim at its place, kept to measure precision: a
+// claim of the review queue's random slice (a held claim, kept as its
+// decision is saved, or an accepted fact's quote), or a second person's
+// re-check. Nothing reads it into a load. One per person and claim: saying
+// it again replaces the verdict.
+message FoundryReviewLabel {
+  string id = 1;
+  // "random" or "recheck".
+  string drawn = 2;
+  string doc_id = 3;
+  uint32 claim_section = 4;
+  uint32 claim_start = 5;
+  uint32 claim_end = 6;
+  // A held claim's key and the hash of the statement read, or an accepted
+  // fact's key: one or the other.
+  optional string claim_key = 7;
+  optional string statement_hash = 8;
+  optional string fact_key = 9;
+  // The claim's link, and the verifier's score when it was read.
+  optional string link = 10;
+  optional double confidence = 11;
+  // "right" or "wrong".
+  string verdict = 12;
+  // The decision a held claim's label came with, or the one re-checked.
+  optional string decision_id = 13;
+  // A re-check: the verdict it checks ("right" for an approval or a label
+  // saying right, "wrong" for a rejection or a label saying wrong).
+  optional string against = 14;
+  // The load whose graph the claim was read from.
+  string load_id = 15;
+  string decided_by_user_id = 16;
+  google.protobuf.Timestamp decided_at = 17;
 }
 
 // Helix Foundry model providers: where a workspace's model calls go

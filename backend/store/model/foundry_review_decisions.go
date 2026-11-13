@@ -63,12 +63,43 @@ type FoundryReviewDecision struct {
 	// which ListFoundryReviewDecisions and SettleFoundryReleases read: nil
 	// when that load's list doesn't hold it, or no job has reported on it.
 	Applied *FoundryDecisionApplied
+	// Drawn is how the review queue showed the card the decision was made
+	// on; nil for one made elsewhere. Only foundry_review_decisions keeps
+	// it: no load's list or Extract carries it.
+	Drawn *FoundryReviewDrawn
+}
+
+// FoundryReviewDrawn is how the review queue showed a card: in its order of
+// facts written, or drawn at random from a score band to measure precision.
+type FoundryReviewDrawn string
+
+const (
+	FoundryDrawnRanked FoundryReviewDrawn = "ranked"
+	FoundryDrawnRandom FoundryReviewDrawn = "random"
+)
+
+// ParseFoundryReviewDrawn reads a settle's drawn: empty is none (a decision
+// made outside the queue), and anything but ranked or random is refused.
+func ParseFoundryReviewDrawn(s string) (*FoundryReviewDrawn, error) {
+	switch d := FoundryReviewDrawn(s); d {
+	case "":
+		return nil, nil
+	case FoundryDrawnRanked, FoundryDrawnRandom:
+		return &d, nil
+	default:
+		return nil, fmt.Errorf("drawn must be ranked or random, not %q", s)
+	}
 }
 
 func (d FoundryReviewDecision) Validate() error {
 	nonempty := func(s *string) bool { return s != nil && *s != "" }
 	if d.ID == "" || d.OntologyID == "" || d.DecidedByUserID == "" {
 		return fmt.Errorf("decision identity and actor are required")
+	}
+	if d.Drawn != nil {
+		if _, err := ParseFoundryReviewDrawn(string(*d.Drawn)); err != nil || *d.Drawn == "" {
+			return fmt.Errorf("invalid drawn %q", *d.Drawn)
+		}
 	}
 	if d.OfClaim() {
 		if d.Type != "" || !nonempty(d.DocID) || !foundrySHA256(d.ClaimKey) || !foundrySHA256(d.StatementHash) || d.ClaimSpan == nil || d.ClaimSpan.Start >= d.ClaimSpan.End ||

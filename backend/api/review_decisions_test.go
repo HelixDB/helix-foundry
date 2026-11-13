@@ -41,6 +41,13 @@ type decisionStore struct {
 	rejectedOn string
 	resends    []*foundrymodel.FoundryGraphJob
 	applied    map[string]foundrymodel.FoundryDecisionApplied
+	// labels are what SaveFoundryReviewLabel kept, labelErr what it fails
+	// with.
+	labels   []*foundrymodel.FoundryReviewLabel
+	labelErr error
+	// firstApprover, when set, is who SettleFoundryReleases says approved
+	// the statement first, as the store keeps them.
+	firstApprover string
 }
 
 func (s *decisionStore) GetFoundryOntology(_ context.Context, ws, id string) (*foundrymodel.FoundryOntology, error) {
@@ -83,6 +90,9 @@ func (s *decisionStore) SettleFoundryReleases(_ context.Context, ws, load string
 	for _, d := range ds {
 		d.DecidedAt = time.Now()
 		d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
+		if s.firstApprover != "" {
+			d.DecidedByUserID, d.Drawn = s.firstApprover, nil
+		}
 	}
 	s.saved, s.releasedTo, s.resends = append(s.saved, ds...), load, append(s.resends, resend)
 	return true, nil
