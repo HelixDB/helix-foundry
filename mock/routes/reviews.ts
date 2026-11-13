@@ -24,6 +24,7 @@ import { tenantGraph } from "./databases";
 import {
   advanceLoads,
   appliedOf,
+  currentWithdraws,
   currentLoadId,
   currentLoadVersionId,
   forgetRelease,
@@ -105,7 +106,7 @@ function valid(b: unknown): b is FoundryReviewChoice {
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 /** The decision for the same identity, which settling again replaces. */
 const sameIdentity = (a: ReviewDecision, b: ReviewDecision) =>
-  a.kind === "release" || a.kind === "reject"
+  a.kind === "release" || a.kind === "reject" || a.kind === "withdraw"
     ? b.kind === a.kind &&
       a.docId === b.docId &&
       a.claimKey === b.claimKey &&
@@ -412,8 +413,12 @@ export const reviewRoutes: MockRoute[] = [
         return fail("INVALID_ARGUMENT", "invalid page_token");
       // Approvals whose job's step has passed are applied by now.
       advanceLoads(s.o.id);
-      // Keyset paging: every decision after the token's id.
-      const after = (decisions.get(s.o.id) || [])
+      // Keyset paging: every decision after the token's id, and the current
+      // load's withdraws, approvals taken back from it.
+      const after = [
+        ...(decisions.get(s.o.id) || []),
+        ...currentWithdraws(s.o.id),
+      ]
         .filter((d) => d.id > token)
         .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       const page = after.slice(0, PAGE);

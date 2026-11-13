@@ -166,7 +166,7 @@ export function decisionFits(
   d: FoundryReviewDecision,
   types: DecisionTypes,
 ): boolean {
-  if (d.kind === "release" || d.kind === "reject")
+  if (d.kind === "release" || d.kind === "reject" || d.kind === "withdraw")
     return (
       !!d.docId.trim() &&
       !!d.claimKey &&

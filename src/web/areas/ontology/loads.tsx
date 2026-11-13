@@ -1334,6 +1334,12 @@ export function LoadPage({ loadId }: { loadId: string }) {
                       value: formatNumber(totals.facts),
                     },
                     {
+                      // Property values written as evidence, once for
+                      // each document that states the value.
+                      label: "Values written from documents",
+                      value: formatNumber(totals.attributes),
+                    },
+                    {
                       // As the load wrote each document, settled since or not.
                       label: "Reviews left by documents",
                       value: formatNumber(totals.reviews),

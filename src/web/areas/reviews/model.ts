@@ -617,15 +617,15 @@ export function reviewGroups<
 }
 
 /**
- * Whether a saved decision names this held claim's review: a release or a
- * reject at its document and place, under its key or, as a rebuild may key
- * the same sentence otherwise, of the statement it reads (`hash`). From
- * contract 4.14.0 the engine binds a release whose key names no review of its
- * document so, and the backend keeps a claim's approval and rejection apart
- * the same way.
+ * Whether a saved decision names this held claim's review: a release, a
+ * reject, or an approval taken back (a withdraw) at its document and place,
+ * under its key or, as a rebuild may key the same sentence otherwise, of the
+ * statement it reads (`hash`). From contract 4.14.0 the engine binds a
+ * release whose key names no review of its document so, and the backend
+ * keeps a claim's approval and rejection apart the same way.
  */
 const ofClaim = (d: ReviewDecision, s: Extract<Settle, { kind: "release" }>) =>
-  (d.kind === "release" || d.kind === "reject") &&
+  (d.kind === "release" || d.kind === "reject" || d.kind === "withdraw") &&
   d.docId === s.docId &&
   d.claimSection === s.section &&
   d.claimStart === s.start &&
@@ -662,7 +662,8 @@ export function unrejected<R extends Settleable>(
  * The held claims of `reviews` that Approve all approves: each settled by a
  * release a person could approve on its card now, with no decision saved for
  * it (ofClaim: not a rejection, nor an approval, of what it reads under any
- * key or of what it said before: that card asks to be read again), not read
+ * key or of what it said before: that card asks to be read again, nor one a
+ * person took back from this load, which only its card approves again), not read
  * two ways (`differs`), and not naming a name the load linked on less than a
  * name where the engine holds the claim for it (holdingEnds): the engine
  * would refuse it until that name is settled, and only a later load can
@@ -929,6 +930,77 @@ export function waiting<D extends Pick<FoundryReviewDecision, "applied">>(
   decisions: readonly D[],
 ): D[] {
   return decisions.filter((d) => d.applied?.status === "pending");
+}
+
+/**
+ * The approval of this held claim that a person took back from the current
+ * load (a withdraw, contract 4.16.0), if the decisions list one: its card is
+ * held again once the engine has taken it back.
+ *
+ * @example
+ * takenBackOf([], release); // undefined
+ */
+export function takenBackOf<D extends ReviewDecision>(
+  decisions: readonly D[],
+  s: Extract<Settle, { kind: "release" }>,
+): D | undefined {
+  return decisions.find((d) => d.kind === "withdraw" && ofClaim(d, s));
+}
+
+/**
+ * What became of an approval a person took back from the current load (a
+ * withdraw), from what that load says of it (`applied`): a `label` for its
+ * line, and a sentence saying what that means: being taken back while its
+ * job has yet to run, taken back, nothing to take back, or why what it wrote
+ * stays. A reason this site doesn't know reads as it came.
+ *
+ * @example
+ * takenBack({ status: "pending" }); // { label: "Approval being taken back", text: "This load’s job takes it back now." }
+ * takenBack({ status: "withdrawn" }); // { label: "Approval taken back", text: "This load holds the claim for review again." }
+ * takenBack({ status: "refused", reason: "differs" }).label; // "Approval not taken back"
+ */
+export function takenBack(applied?: DecisionApplied | null): {
+  label: string;
+  text: string;
+} {
+  switch (applied?.status) {
+    case "pending":
+      return {
+        label: "Approval being taken back",
+        text: "This load’s job takes it back now.",
+      };
+    case "withdrawn":
+      return {
+        label: "Approval taken back",
+        text: "This load holds the claim for review again.",
+      };
+    case "not_written":
+      return {
+        label: "Approval taken back",
+        text: "This load held nothing it wrote.",
+      };
+    case "unconfirmed":
+      return {
+        label: "Approval being taken back",
+        text: "The job that takes it back failed before it said; the ontology’s next job sends it again.",
+      };
+    case "refused": {
+      const why =
+        applied.reason === "differs"
+          ? "an earlier version wrote this sentence’s claims of one link without telling them apart, so it can’t say which to take back"
+          : applied.reason === "too_large"
+            ? "its document holds more than one take-back can be matched among"
+            : applied.reason === "document_gone"
+              ? "its document was deleted, or is no longer part of this load"
+              : `it says why as ${applied.reason ? `“${applied.reason}”` : "nothing"}`;
+      return {
+        label: "Approval not taken back",
+        text: `This load keeps what it wrote: ${why}. The next load won’t write it.`,
+      };
+    }
+    default:
+      return { label: "Approval taken back", text: "" };
+  }
 }
 
 /**

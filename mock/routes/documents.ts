@@ -585,6 +585,20 @@ export function countRelease(loadId: string, documentId: string) {
       reviews: Math.max((x.reviews || 0) - 1, 0),
     });
 }
+/**
+ * Counts an approval a load took back (contract 4.16.0): its claim held
+ * again, one fact fewer and one review more, as countRelease counted it.
+ */
+export function countWithdraw(loadId: string, documentId: string) {
+  const key = readKey(loadId, documentId),
+    x = extractions.get(key);
+  if (x)
+    extractions.set(key, {
+      ...x,
+      facts: Math.max((x.facts || 0) - 1, 0),
+      reviews: (x.reviews || 0) + 1,
+    });
+}
 /** Forgets what a deleted load held and read. */
 export function dropExtractions(loadId: string) {
   members.delete(loadId);
@@ -613,7 +627,12 @@ export function loadDocumentSets(
         FoundryLoadDocumentSet,
         "documents" | "read" | "duplicate" | "failed" | "notRead" | "waiting"
       >
-    > & { facts: number; reviews: number; unresolved: number }
+    > & {
+      facts: number;
+      attributes: number;
+      reviews: number;
+      unresolved: number;
+    }
   >();
   for (const [documentId, setId] of members.get(loadId) || []) {
     if (documents.get(documentId)?.status !== "uploaded") continue;
@@ -625,6 +644,7 @@ export function loadDocumentSets(
       notRead: 0,
       waiting: 0,
       facts: 0,
+      attributes: 0,
       reviews: 0,
       unresolved: 0,
     };
@@ -637,6 +657,7 @@ export function loadDocumentSets(
     else if (x?.status === "out_of_scope") set.notRead += 1;
     else set.waiting += 1;
     set.facts += x?.facts || 0;
+    set.attributes += x?.attributes || 0;
     set.reviews += x?.reviews || 0;
     set.unresolved += unresolvedNames.get(readKey(loadId, documentId)) || 0;
   }
@@ -648,6 +669,7 @@ export function loadDocumentSets(
       setId,
       routed: routed(setId),
       facts: String(set.facts),
+      attributes: String(set.attributes),
       reviews: String(set.reviews),
       unresolved: String(set.unresolved),
     }));
