@@ -807,6 +807,9 @@ type FoundryGraphJob struct {
 	CreatedAt         time.Time
 	StartedAt         *time.Time
 	FinishedAt        *time.Time
+	// IndexesPendingSince is when the job's attempts began finding an index
+	// still building, kept across those retries; nil while none is pending.
+	IndexesPendingSince *time.Time
 	// Sources are the snapshots a load job reads, pinned on its first attempt.
 	Sources []FoundryLoadSource
 	// Origin and RefreshesLoadID are written to the load a load job creates;
@@ -835,6 +838,10 @@ type FoundryGraphJobOutcome struct {
 	// still building an index. The retry gives the attempt back, so it
 	// doesn't count against max_attempts.
 	Uncounted bool
+	// IndexesPendingSince is the job's FoundryGraphJob.IndexesPendingSince
+	// after this attempt: when an index still building was first found, for
+	// a retry of one; nil clears it.
+	IndexesPendingSince *time.Time
 	Status    FoundryGraphJobStatus
 	// Error is why, written for the customer.
 	Error string
