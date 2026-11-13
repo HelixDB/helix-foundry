@@ -72,6 +72,19 @@ export type SyncFrom =
   | "install";
 
 /**
+ * How long a step of the sample company's tour took, in whole seconds: the
+ * step's own time (`seconds`), for its load the wait for a worker to pick the
+ * load up (`queued_seconds`), and the sample's whole time to the step's end
+ * from its database's connection (`total_seconds`). A page that didn't watch
+ * the step end (one opened later) sends none, nor a time Helix didn't give.
+ */
+export type SampleTiming = {
+  seconds?: number;
+  queued_seconds?: number;
+  total_seconds?: number;
+};
+
+/**
  * How the WFE refused a call (src/web/api.ts refusalOf): too many at once,
  * refused as asked (a 4xx: a cap, a plan, a precondition), or it failed.
  */
@@ -112,14 +125,16 @@ export type AnalyticsEvents = {
   reminder_refused: { reason: "invalid" | "rate_limit" | "error" };
   landing_returned: { via: "email" | "github" };
 
-  // The sample company: Use the sample, then its tour reaching each step.
+  // The sample company: Use the sample, then its tour reaching each step,
+  // with how long each took: its data (by the page's clock), its draft made
+  // into a version, and its load (by Helix's).
   sample_clicked: undefined;
-  sample_data_ready: undefined;
-  sample_ontology_ready: undefined;
-  sample_loaded: undefined;
+  sample_data_ready: SampleTiming;
+  sample_ontology_ready: SampleTiming;
+  sample_loaded: SampleTiming;
   sample_ask_opened: undefined;
   // The tour's first question answered, then Connect your own data.
-  sample_answered: undefined;
+  sample_answered: SampleTiming;
   sample_own_data_clicked: undefined;
 
   // The workspace's own data.

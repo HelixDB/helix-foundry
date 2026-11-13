@@ -16,6 +16,12 @@ var refreshLag = promauto.NewHistogram(prometheus.HistogramOpts{
 	Buckets: []float64{1, 10, 30, 60, 300, 900, 1800, 3600, 4 * 3600},
 })
 
+var startingRetries = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_starting_retries_total",
+	Help: "Graph job attempts tried again soon, uncounted, because the gateway had not taken their new database on yet " +
+		"(rate_limit_unavailable) and none of their queries reached it.",
+})
+
 var loadDeletes = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_load_deletes_total",
 	Help: "Delete job attempts by outcome: done, retried, or failed (the load is left delete_failed; alert on it).",
@@ -31,8 +37,9 @@ var jobSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 }, []string{"kind", "origin", "outcome"})
 
 var stepSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
-	Name:    "helix_foundry_graph_step_seconds",
-	Help:    "How long a step of a graph job attempt took: tables (pinning and downloading snapshots), ingest, extract, resend, compare or delete.",
+	Name: "helix_foundry_graph_step_seconds",
+	Help: "How long a step of a graph job attempt took: boost (lifting the database's rate limit and waiting for the gateway to have it), " +
+		"tables (pinning and downloading snapshots), ingest, extract, resend, compare or delete.",
 	Buckets: durationBuckets,
 }, []string{"step"})
 

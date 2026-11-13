@@ -19,7 +19,9 @@
 // loaded yet, or the limiter unreachable), is sent again with backoff for a
 // while before the refusal reaches the agent: it never ran, so it can't apply
 // twice, and a bucket refills, or a gateway pod loads the tenant's
-// limits.json, in the meantime more often than not.
+// limits.json, in the meantime more often than not. A proxy whose attempt
+// was turned away so, with nothing of it reaching the database, says so
+// (Proxy.Starting): a new database's gateway takes it on within minutes.
 //
 // ReadProxy (readonly.go) is the read-only mode foundry-read and the
 // foundry-ask-worker serve: one per pod, a token per read call (a read, or a
@@ -42,6 +44,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -95,6 +98,10 @@ type Binding struct {
 	TenantID   string
 	// Endpoint is the database's query URL.
 	Endpoint string
+	// CreatedAt is when the ontology was created. A database Helix made for
+	// it is no older, and its gateway may not take it on for its first
+	// minutes.
+	CreatedAt time.Time
 }
 
 // Bind resolves an ontology to its database's query URL for a job of kind.
@@ -135,7 +142,7 @@ func bind(ctx context.Context, db Store, dbs ports.Databases, workspaceID, ontol
 	if err != nil {
 		return Binding{}, err
 	}
-	return Binding{OntologyID: o.ID, TenantID: database.TenantID, Endpoint: endpoint}, nil
+	return Binding{OntologyID: o.ID, TenantID: database.TenantID, Endpoint: endpoint, CreatedAt: o.CreatedAt}, nil
 }
 
 // Querier sends a query to a database as the control plane (helixgateway.Client).
@@ -156,7 +163,21 @@ type Proxy struct {
 	// admissionWait is how long a query the gateway turned away is sent again.
 	admissionWait time.Duration
 	now           func() time.Time
+	// reached is set once a query may have reached the database: the gateway
+	// answered it other than by turning it away, or its answer never came.
+	reached atomic.Bool
+	// unknownTenant is set once the agent was answered that the gateway has
+	// not taken the database on (rate_limit_unavailable).
+	unknownTenant atomic.Bool
 }
+
+// Starting reports whether the gateway turned a query away because it has
+// not taken the database on yet (503 rate_limit_unavailable, past
+// admissionWait), as it answers for a new database's first minutes, while
+// no query reached the database. Such an attempt left nothing in flight to
+// settle: it can be tried again as soon as the database may take queries,
+// without the retry backoff's floor, which lets a write in doubt land first.
+func (p *Proxy) Starting() bool { return p.unknownTenant.Load() && !p.reached.Load() }
 
 // Serve starts a proxy for binding on a fresh loopback port with a fresh token.
 // Once ctx ends, every request is refused and those in flight are cancelled.
@@ -217,7 +238,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := forwarder{gateway: p.gateway, admissionWait: p.admissionWait, now: p.now}
-	f.forward(r.Context(), w, refuse, p.binding, body, extra, p.stillBound)
+	switch refusal, reached := f.forward(r.Context(), w, refuse, p.binding, body, extra, p.stillBound); {
+	case reached:
+		p.reached.Store(true)
+	case refusal == unknownTenant:
+		p.unknownTenant.Store(true)
+	}
 }
 
 // refuser answers a refused request with code and reason, and logs it.
@@ -284,9 +310,12 @@ type forwarder struct {
 // forward sends body to binding's gateway and relays the answer to w. A query
 // the gateway turned away before running it is sent again with backoff until
 // admissionWait has passed; stillBound, when set, is checked before each
-// resend, and its refusal ends the query.
+// resend, and its refusal ends the query. It returns the admission refusal
+// relayed (admissionRefusal; "" for any other answer), and whether the query
+// may have reached the database: the gateway answered otherwise, or never
+// answered.
 func (f forwarder) forward(ctx context.Context, w http.ResponseWriter, refuse func(int, string), binding Binding, body []byte, extra http.Header,
-	stillBound func(context.Context) error) {
+	stillBound func(context.Context) error) (refusal string, reached bool) {
 	start := f.now()
 	resp, err := f.gateway.Query(ctx, binding.Endpoint, binding.TenantID, body, extra)
 	retryUntil := start.Add(f.admissionWait)
@@ -300,7 +329,7 @@ func (f forwarder) forward(ctx context.Context, w http.ResponseWriter, refuse fu
 		if stillBound != nil {
 			if err := stillBound(ctx); err != nil {
 				refuse(http.StatusForbidden, status.Convert(err).Message())
-				return
+				return "", false
 			}
 		}
 		resp, err = f.gateway.Query(ctx, binding.Endpoint, binding.TenantID, body, extra)
@@ -315,23 +344,29 @@ func (f forwarder) forward(ctx context.Context, w http.ResponseWriter, refuse fu
 		log.From(ctx).Info("graph proxy: query abandoned before the gateway answered", "ontology", binding.OntologyID,
 			"waited", f.now().Sub(start).Round(time.Millisecond), "err", err)
 		http.Error(w, "the query was cancelled", http.StatusBadGateway)
-		return
+		return "", true
 	case err != nil:
 		log.From(ctx).Warn("graph proxy: gateway request failed", "ontology", binding.OntologyID, "err", err)
 		http.Error(w, "the database could not be reached", http.StatusBadGateway)
-		return
+		return "", true
 	}
 	if resp.ContentType != "" {
 		w.Header().Set("Content-Type", resp.ContentType)
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(resp.Body) // best-effort: the agent sees a short body as a failed request
+	refusal = admissionRefusal(resp)
+	return refusal, refusal == ""
 }
 
+// unknownTenant is the gateway's refusal of a tenant it has no limit loaded
+// for: a new database it has not taken on yet, or a limiter it can't reach.
+const unknownTenant = "rate_limit_unavailable"
+
 // admissionRefusal names why the gateway turned a query away before running
-// it: rate_limited, or rate_limit_unavailable when it has no limit loaded for
-// the tenant or can't reach its limiter. It is empty for any other answer,
-// which may come from a query that ran.
+// it: rate_limited, or rate_limit_unavailable (unknownTenant) when it has no
+// limit loaded for the tenant or can't reach its limiter. It is empty for any
+// other answer, which may come from a query that ran.
 func admissionRefusal(resp helixgateway.Response) string {
 	switch resp.StatusCode {
 	case http.StatusTooManyRequests:
@@ -340,7 +375,7 @@ func admissionRefusal(resp helixgateway.Response) string {
 		var refusal struct {
 			Error string `json:"error"`
 		}
-		if json.Unmarshal(resp.Body, &refusal) == nil && refusal.Error == "rate_limit_unavailable" {
+		if json.Unmarshal(resp.Body, &refusal) == nil && refusal.Error == unknownTenant {
 			return refusal.Error
 		}
 	}

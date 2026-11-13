@@ -50,7 +50,14 @@ import {
   questionQueries,
   setCurrentVersion,
 } from "./queries";
-import { SAMPLE, isSampleSet, sampleDatabaseConfig } from "./sample";
+import {
+  SAMPLE,
+  isSampleSet,
+  sampleAnswerTiming,
+  sampleDatabaseConfig,
+  sampleLoadTiming,
+  secondsBetween,
+} from "./sample";
 import { InOntology } from "./scope";
 import { OntologySchema } from "./suggested-ontology";
 import { useSampleOntology } from "./use-sample-ontology";
@@ -61,10 +68,13 @@ import { useSampleOntology } from "./use-sample-ontology";
 // Opening it runs the whole setup with no AI draft to wait for:
 //  1. Acme Corp's data: its PostgreSQL database (a local stack's acme-db,
 //     or the stamp's) connected and synced, and its documents uploaded and
-//     read;
+//     read, side by side;
 //  2. the goal the ontology serves;
-//  3. the ontology: created on a new database, from the sample's ready-made
-//     draft (GenerateOntologyRequest's sample), made current, and drawn;
+//  3. the ontology: created on a new Helix database as the data's steps
+//     start, since its gateway takes a new database on only after a few
+//     minutes, which a load would otherwise wait out; then drafted from the
+//     sample's ready-made draft (GenerateOntologyRequest's sample) once the
+//     tables are synced and the documents uploaded, made current, and drawn;
 //  4. its load: Acme Corp's records and their links written into the
 //     database, then its documents read with AI;
 //  5. Ask: the draft's first question, asked once the load is written, and
@@ -126,6 +136,49 @@ export async function addSampleFiles(
   };
 }
 
+/**
+ * The sample's ontology on a new Helix database of the workspace's, in the
+ * project newDatabase picks, made if it is new. `clientToken` makes a retry
+ * from the same page the same ontology.
+ */
+async function newSampleOntology(
+  qc: QueryClient,
+  ws: string,
+  workspace: string,
+  clientToken: string,
+) {
+  const pick = newDatabase(
+    SAMPLE.ontology,
+    workspace,
+    (await qc.fetchQuery({ ...databasesQuery(ws), staleTime: 0 })).map(
+      (p) => p.project,
+    ),
+  );
+  const projectId =
+    pick.project.kind === "existing"
+      ? pick.project.id
+      : (
+          await createProject({
+            workspaceId: ws,
+            slug: slugify(pick.project.name, "project"),
+            displayName: pick.project.name,
+          })
+        ).id;
+  const tenant = await createDatabase({
+    projectId,
+    name: pick.name,
+    slug: slugify(pick.name, "database"),
+  });
+  if (!tenant?.id) throw new Error("Helix didn’t return the new database");
+  return (
+    await createOntology(ws, {
+      name: SAMPLE.ontology,
+      tenantId: tenant.id,
+      clientToken,
+    })
+  ).ontology;
+}
+
 // How long one step may wait on Foundry (a sync, the documents' reads, the
 // sample's draft) before it gives up.
 const WAIT_MS = 180_000;
@@ -148,8 +201,38 @@ async function until<T>(
   throw new Error(`${what} is taking longer than it should`);
 }
 
+/**
+ * Runs `steps` side by side, each given `stop` for its waits (until): true
+ * once the page is left (`left`) or another step has failed. The first
+ * failure stops the rest at their next wait and is thrown once every step has
+ * ended, so no step outlives its walk, and Try again finds what they made.
+ */
+async function sideBySide<T extends readonly unknown[]>(
+  left: { current: boolean },
+  ...steps: { [K in keyof T]: (stop: { current: boolean }) => Promise<T[K]> }
+): Promise<T> {
+  let failure: { error: unknown } | undefined;
+  const stop = {
+    get current() {
+      return left.current || !!failure;
+    },
+  };
+  const ended = await Promise.allSettled(
+    steps.map((step) =>
+      step(stop).catch((error: unknown) => {
+        failure ??= { error };
+        throw error;
+      }),
+    ),
+  );
+  if (failure) throw failure.error;
+  return ended.map((e) => (e as PromiseFulfilledResult<unknown>).value) as [
+    ...T,
+  ];
+}
+
 // "checking" until the first reads say what an earlier visit made.
-const STAGES = ["checking", "data", "documents", "ontology", "load"] as const;
+const STAGES = ["checking", "data", "ontology", "load"] as const;
 type Stage = (typeof STAGES)[number];
 
 // One walk of the steps at a time: a visit's waits for the walk of a visit just
@@ -210,50 +293,79 @@ export function SampleTour() {
       setMade((m) => ({ ...m, connectorId: named?.id }));
 
       if (!versionId && !generation) {
-        // 1. Acme Corp's database, connected and synced.
+        // 1. Acme Corp's database, connected and synced, and its documents
+        // uploaded, side by side; and 3. the ontology on a new database,
+        // which its gateway takes minutes to take on, so it starts first.
         setStage("data");
-        const connector =
-          named ??
-          (
-            await createConnector(id, {
-              name: SAMPLE.database.name,
-              config: await sampleDatabaseConfig(),
-            })
-          ).connector;
-        if (!connector.lastSync)
-          await syncConnector(id, connector.id, "sample");
-        setMade((m) => ({ ...m, connectorId: connector.id }));
-        await until(
+        const began = Date.now();
+        const [made, connector, { ids, setIds }] = await sideBySide(
           left,
-          async () => {
-            const c = (
-              await qc.fetchQuery({ ...connectorsQuery(id), staleTime: 0 })
-            ).connectors?.find((x) => x.id === connector.id);
-            if (c?.lastSync?.status === "CONNECTOR_SYNC_STATUS_FAILED")
-              throw new Error(
-                c.lastSync.error || "Acme Corp’s database didn’t sync",
-              );
-            return SAMPLE.database.tables.every((t) =>
-              c?.tables?.some((s) => s.name === t),
-            )
-              ? true
-              : undefined;
+          async () =>
+            ontology ??
+            (await newSampleOntology(qc, id, workspace, token.current)),
+          async (stop) => {
+            const connector =
+              named ??
+              (
+                await createConnector(id, {
+                  name: SAMPLE.database.name,
+                  config: await sampleDatabaseConfig(),
+                })
+              ).connector;
+            if (!connector.lastSync)
+              await syncConnector(id, connector.id, "sample");
+            setMade((m) => ({ ...m, connectorId: connector.id }));
+            await until(
+              stop,
+              async () => {
+                const c = (
+                  await qc.fetchQuery({ ...connectorsQuery(id), staleTime: 0 })
+                ).connectors?.find((x) => x.id === connector.id);
+                if (c?.lastSync?.status === "CONNECTOR_SYNC_STATUS_FAILED")
+                  throw new Error(
+                    c.lastSync.error || "Acme Corp’s database didn’t sync",
+                  );
+                return SAMPLE.database.tables.every((t) =>
+                  c?.tables?.some((s) => s.name === t),
+                )
+                  ? true
+                  : undefined;
+              },
+              "Syncing Acme Corp’s database",
+            );
+            return connector;
           },
-          "Syncing Acme Corp’s database",
+          async () => {
+            const files = await addSampleFiles(
+              qc,
+              id,
+              SAMPLE.documents,
+              setUploaded,
+            );
+            if (files.setIds.length !== 1)
+              throw new Error(
+                `Acme Corp’s documents are in ${files.setIds.length} folders: move them back into ${SAMPLE.set.name}`,
+              );
+            return files;
+          },
         );
-
-        // 1. Its documents, uploaded and read.
-        setStage("documents");
-        const { ids, setIds } = await addSampleFiles(
-          qc,
-          id,
-          SAMPLE.documents,
-          setUploaded,
-        );
-        if (setIds.length !== 1)
-          throw new Error(
-            `Acme Corp’s documents are in ${setIds.length} folders: move them back into ${SAMPLE.set.name}`,
-          );
+        ontology = made;
+        // 3. The ontology's draft needs only the synced tables and the
+        // documents' set, so it is drafted while the documents are read.
+        generation = (
+          await generateOntology(id, made.id, {
+            goal: SAMPLE.goal,
+            connectorIds: [connector.id],
+            documentSetIds: setIds,
+            sample: SAMPLE.id,
+          })
+        ).generation!;
+        // What the sample's banner confirms it by (./use-sample-ontology.ts).
+        await qc.invalidateQueries({
+          queryKey: [id, "ontology", made.id, "generations"],
+        });
+        // 1. The documents read, which the load needs (a PDF still being
+        // read would join it only after).
         await until(
           left,
           async () => {
@@ -270,66 +382,17 @@ export function SampleTour() {
           },
           "Reading Acme Corp’s documents",
         );
-
-        // 3. The ontology, on a new database, its ready-made draft current.
-        trackEvent("sample_data_ready");
-        setStage("ontology");
-        // Someone else may have made it while the data was on its way.
-        ontology ??= (
-          await qc.fetchQuery({ ...ontologyQueries.list(id), staleTime: 0 })
-        ).ontologies?.find((o) => o.name === SAMPLE.ontology);
-        if (!ontology) {
-          const pick = newDatabase(
-            SAMPLE.ontology,
-            workspace,
-            (await qc.fetchQuery({ ...databasesQuery(id), staleTime: 0 })).map(
-              (p) => p.project,
-            ),
-          );
-          const projectId =
-            pick.project.kind === "existing"
-              ? pick.project.id
-              : (
-                  await createProject({
-                    workspaceId: id,
-                    slug: slugify(pick.project.name, "project"),
-                    displayName: pick.project.name,
-                  })
-                ).id;
-          const tenant = await createDatabase({
-            projectId,
-            name: pick.name,
-            slug: slugify(pick.name, "database"),
-          });
-          if (!tenant?.id)
-            throw new Error("Helix didn’t return the new database");
-          ontology = (
-            await createOntology(id, {
-              name: SAMPLE.ontology,
-              tenantId: tenant.id,
-              clientToken: token.current,
-            })
-          ).ontology;
-        }
-        generation = (
-          await generateOntology(id, ontology.id, {
-            goal: SAMPLE.goal,
-            connectorIds: [connector.id],
-            documentSetIds: setIds,
-            sample: SAMPLE.id,
-          })
-        ).generation!;
-        // What the sample's banner confirms it by (./use-sample-ontology.ts).
-        await qc.invalidateQueries({
-          queryKey: [id, "ontology", ontology.id, "generations"],
+        trackEvent("sample_data_ready", {
+          seconds: Math.round((Date.now() - began) / 1000),
         });
       }
       const o = ontology!.id;
       setMade((m) => ({ ...m, ontologyId: o }));
       if (!versionId) {
+        // 3. The ontology's ready-made draft, made current.
         setStage("ontology");
         const drafting = generation!.id;
-        versionId = await until(
+        const drafted = await until(
           left,
           async () => {
             const g = (
@@ -342,15 +405,18 @@ export function SampleTour() {
               throw new Error(
                 g.error || "Acme Corp’s ontology couldn’t be set up",
               );
-            return g?.resultVersionId || undefined;
+            return g?.resultVersionId ? g : undefined;
           },
           "Setting up Acme Corp’s ontology",
         );
+        versionId = drafted.resultVersionId!;
         await setCurrentVersion(id, o, {
           versionId,
           expectedCurrentVersionId: "",
         });
-        trackEvent("sample_ontology_ready");
+        trackEvent("sample_ontology_ready", {
+          seconds: secondsBetween(drafted.createdAt, drafted.finishedAt),
+        });
       }
       // 4. Its load: the records, their links, then the documents. Read before
       // the stage moves on, so a reopened page shows every step as it is at
@@ -412,8 +478,21 @@ export function SampleTour() {
   const load = loads?.find((l) => l.current) ?? loads?.[0];
   const job = load?.jobs?.[0];
   const loaded = load?.status === "ready" || load?.status === "partial";
+  // How long the load and the first answer took, said only by a page that
+  // watched them end: one opened later would count the time it was away.
+  const watchedLoad = useRef(false),
+    watchedAnswer = useRef(false);
   useEffect(() => {
-    if (loaded) trackEvent("sample_loaded");
+    if (load && !loaded) watchedLoad.current = true;
+  }, [load, loaded]);
+  useEffect(() => {
+    if (loaded)
+      trackEvent(
+        "sample_loaded",
+        watchedLoad.current && load
+          ? sampleLoadTiming(load, connector?.createdAt)
+          : {},
+      );
   }, [loaded]);
   const suggestions = useMemo(() => askSuggestions(version), [version]);
   // 5. Once the load is written, the draft's first question is asked, unless
@@ -471,7 +550,16 @@ export function SampleTour() {
   }, [loaded, load, questions, questionList.isFetching, suggestions]);
   const answered = !!first && !isLiveQuestion(first);
   useEffect(() => {
-    if (answered) trackEvent("sample_answered");
+    if (first && !answered) watchedAnswer.current = true;
+  }, [first, answered]);
+  useEffect(() => {
+    if (answered)
+      trackEvent(
+        "sample_answered",
+        watchedAnswer.current && first
+          ? sampleAnswerTiming(first, connector?.createdAt)
+          : {},
+      );
   }, [answered]);
   // The banner's link opens this page on its last step. What sits above that
   // arrives when it arrives (the steps as the walk reads them, then an answer's
@@ -521,7 +609,7 @@ export function SampleTour() {
         />
       </Page>
     );
-  const dataDone = STAGES.indexOf(stage) > STAGES.indexOf("documents");
+  const dataDone = STAGES.indexOf(stage) > STAGES.indexOf("data");
   return (
     <Page width="wide">
       <PageHeader
@@ -576,11 +664,9 @@ export function SampleTour() {
                 <small>
                   {dataDone
                     ? `${plural(SAMPLE.documents.length, "document")}: contracts, call notes, a support escalation, an incident report and the price list.`
-                    : stage === "documents"
-                      ? uploaded < SAMPLE.documents.length
-                        ? `Uploading: ${uploaded} of ${SAMPLE.documents.length}…`
-                        : "Reading the contracts and notes…"
-                      : "Next, once the database has synced."}
+                    : uploaded < SAMPLE.documents.length
+                      ? `Uploading: ${uploaded} of ${SAMPLE.documents.length}…`
+                      : "Reading the contracts and notes…"}
                 </small>
               </span>
             </li>

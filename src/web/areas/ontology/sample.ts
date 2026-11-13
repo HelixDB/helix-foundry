@@ -3,7 +3,10 @@ import type {
   Connector,
   ConnectorConfig,
   FoundryDocumentSet,
+  FoundryLoad,
+  FoundryQuestion,
 } from "../../../shared/wfe";
+import type { SampleTiming } from "../../analytics";
 import { ontologyPaths } from "./paths";
 
 // Acme Corp's documents: three contracts as PDFs, call notes, a support
@@ -129,6 +132,61 @@ export function isSampleConnector(c: Connector) {
  */
 export const isSampleSet = (s: FoundryDocumentSet) =>
   !s.connector && s.name === SAMPLE.set.name;
+
+/**
+ * Whole seconds from `from` to `to`, two of Helix's times (ISO): what the
+ * sample's tour reports a step took (SampleTiming). Undefined when either is
+ * missing or unreadable, or `to` comes first.
+ *
+ * @example
+ * secondsBetween("2026-11-12T10:00:00Z", "2026-11-12T10:01:30.6Z"); // 91
+ * secondsBetween("2026-11-12T10:00:00Z", null); // undefined
+ */
+export function secondsBetween(from?: string | null, to?: string | null) {
+  const span = (Date.parse(to || "") - Date.parse(from || "")) / 1000;
+  return Number.isFinite(span) && span >= 0 ? Math.round(span) : undefined;
+}
+
+/**
+ * How the sample's load went, as its tour reports it once it watched the load
+ * end: how long it took, how long its load job waited for a worker before its
+ * first attempt, and the sample's whole time to then from `since`, when its
+ * database was connected.
+ *
+ * @example
+ * sampleLoadTiming(
+ *   { id: "l1", createdAt: "2026-11-12T10:02:00Z", finishedAt: "2026-11-12T10:05:00Z",
+ *     jobs: [{ id: "j1", kind: "load", createdAt: "2026-11-12T10:02:00Z", startedAt: "2026-11-12T10:02:04Z" }] },
+ *   "2026-11-12T10:00:00Z",
+ * ); // { seconds: 180, queued_seconds: 4, total_seconds: 300 }
+ */
+export function sampleLoadTiming(
+  load: FoundryLoad,
+  since?: string | null,
+): SampleTiming {
+  // Newest first: an extract an upload queues comes after the load's own job.
+  const job = load.jobs?.findLast((j) => j.kind === "load");
+  return {
+    seconds: secondsBetween(load.createdAt, load.finishedAt),
+    queued_seconds: secondsBetween(job?.createdAt, job?.startedAt),
+    total_seconds: secondsBetween(since, load.finishedAt),
+  };
+}
+
+/**
+ * How the tour's first question went, as the tour reports it once it watched
+ * the question end: how long its answer took, and the sample's whole time to
+ * then from `since`, when its database was connected.
+ */
+export function sampleAnswerTiming(
+  question: FoundryQuestion,
+  since?: string | null,
+): SampleTiming {
+  return {
+    seconds: secondsBetween(question.createdAt, question.finishedAt),
+    total_seconds: secondsBetween(since, question.finishedAt),
+  };
+}
 
 /**
  * The sample's database as a PostgreSQL connector's config. A local

@@ -179,6 +179,31 @@ type attempt struct {
 	resends map[string]*model.FoundryLoadResend
 	// resendFailed are those of resends the engine failed.
 	resendFailed map[string]bool
+	// proxy is the attempt's proxy to the database, once serve started it, and
+	// ontologyCreated when the ontology it serves was created (starting).
+	proxy           *graphproxy.Proxy
+	ontologyCreated time.Time
+}
+
+const (
+	// startingWindow is how long after its ontology was created a database
+	// may still be starting: Helix's gateway takes a new database on within
+	// its first minutes (the site's STARTING_MS,
+	// src/web/areas/explore/database-query.ts).
+	startingWindow = 15 * time.Minute
+	// startingRetry is how soon an attempt a database still starting turned
+	// away is tried again. Its proxy already sent each query again for a third
+	// of the Helix timeout; this only lets another gateway sync land.
+	startingRetry = 10 * time.Second
+)
+
+// starting reports whether, at now, the attempt met a database its gateway
+// had not taken on yet, with nothing of it reaching the database
+// (graphproxy.Proxy.Starting), within the database's first minutes. Past them
+// the same refusal is a gateway that can't reach its limiter, which backs off
+// as any failure does.
+func (a *attempt) starting(now time.Time) bool {
+	return a.proxy != nil && a.proxy.Starting() && now.Before(a.ontologyCreated.Add(startingWindow))
 }
 
 // report is the job's report: each call's result, the ingest report cut to
@@ -313,7 +338,7 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 			}
 		}
 	}
-	binding, target, stop, err := r.serve(ctx, job)
+	binding, target, stop, err := r.serve(ctx, job, a)
 	if err != nil {
 		return a, err
 	}
@@ -545,8 +570,9 @@ func (r *runner) tables(ctx context.Context, job *model.FoundryGraphJob, version
 // lives as long as the attempt: a lease that may lapse ends ctx, and with it
 // every write. A query the gateway turns away before running it is sent
 // again for up to a third of the agent's Helix timeout, which leaves the
-// rest to the query itself.
-func (r *runner) serve(ctx context.Context, job *model.FoundryGraphJob) (graphproxy.Binding, ontologyagent.HelixTarget, func(), error) {
+// rest to the query itself. The attempt keeps the proxy, which says once it
+// ends whether a database still starting turned it away (attempt.starting).
+func (r *runner) serve(ctx context.Context, job *model.FoundryGraphJob, a *attempt) (graphproxy.Binding, ontologyagent.HelixTarget, func(), error) {
 	binding, err := graphproxy.Bind(ctx, r.db, r.dbs, job.WorkspaceID, job.OntologyID, job.Kind)
 	switch code := status.Code(err); {
 	case err == nil:
@@ -560,7 +586,10 @@ func (r *runner) serve(ctx context.Context, job *model.FoundryGraphJob) (graphpr
 	}
 	release := func() {}
 	if r.cfg.Foundry.Graph.LoadRateLimit.Enabled() {
-		if release, err = r.boost(ctx, job, binding.TenantID); err != nil {
+		boostStart := r.now()
+		release, err = r.boost(ctx, job, binding.TenantID)
+		r.timeStep("boost", boostStart)
+		if err != nil {
 			return binding, ontologyagent.HelixTarget{}, nil, err
 		}
 	}
@@ -573,6 +602,7 @@ func (r *runner) serve(ctx context.Context, job *model.FoundryGraphJob) (graphpr
 		release()
 		return binding, ontologyagent.HelixTarget{}, nil, retry("the database proxy could not start; Helix will retry", err)
 	}
+	a.proxy, a.ontologyCreated = proxy, binding.CreatedAt
 	stop := func() {
 		_ = proxy.Close() // best-effort: the next attempt has its own
 		release()         // after the proxy closes: no write of the attempt outlives its boost
@@ -1382,7 +1412,7 @@ func (r *runner) deleteLoad(ctx context.Context, job *model.FoundryGraphJob, a *
 	if err := r.update(ctx, job, model.FoundryGraphJobDeleting, a); err != nil {
 		return err
 	}
-	binding, target, stop, err := r.serve(ctx, job)
+	binding, target, stop, err := r.serve(ctx, job, a)
 	if err != nil {
 		return err
 	}
