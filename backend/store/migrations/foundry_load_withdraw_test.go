@@ -11,7 +11,7 @@ const (
 	foundryWorkflowRunsStartedIdx = 20261123000000
 	// foundryLoadWithdraw widens a load decision's applied_status for a
 	// withdraw's outcome (contract 4.16.0).
-	foundryLoadWithdraw = 20261124000000
+	foundryLoadWithdraw = 20261125000000
 )
 
 // The migration widens applied_status so a withdraw's outcome, the engine's
