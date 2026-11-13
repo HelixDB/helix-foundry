@@ -60,8 +60,8 @@ func TestToolsNameAPISourcesOnlyOnAHostWithThem(t *testing.T) {
 	for _, word := range words {
 		assert.NotContains(t, local, word)
 	}
-	assert.Contains(t, local, "One of 13 operations: create_ontology, add_sample_data, sync_connector,")
-	assert.Contains(t, local, "generate_ontology: {goal, connector_ids, document_set_ids, no_connectors, sample}")
+	assert.Contains(t, local, `"enum":["create_ontology","add_sample_data","sync_connector",`)
+	assert.Contains(t, local, "- generate_ontology: {goal, connector_ids, document_set_ids, no_connectors, sample}")
 	assert.Contains(t, local, "or s3.")
 	hosted := listed(&Service{FoundryURL: "https://foundry.example", Events: true})
 	for _, word := range words {
@@ -72,16 +72,18 @@ func TestToolsNameAPISourcesOnlyOnAHostWithThem(t *testing.T) {
 		assert.NotContains(t, local, word)
 		assert.Contains(t, hosted, word)
 	}
-	assert.Contains(t, hosted, "One of 14 operations: create_ontology, create_event_source, add_sample_data, sync_connector,")
+	assert.Contains(t, hosted, `"enum":["create_ontology","create_event_source","add_sample_data","sync_connector",`)
 }
 
 // Clients and MCP directories show a tool's title beside its name: every Foundry tool has one,
 // wherever it is offered.
 func TestEveryToolHasATitle(t *testing.T) {
 	var names []string
+	// The workflow tools need the backend's workflow RPCs, which listing them never calls.
+	workflows := struct{ FoundryWorkflowBackendAPI }{}
 	for _, s := range []*Service{
-		{FoundryURL: "http://localhost:3000"},
-		{FoundryURL: "https://foundry.example", Events: true, SignIn: true},
+		{FoundryURL: "http://localhost:3000", Workflows: workflows},
+		{FoundryURL: "https://foundry.example", Events: true, SignIn: true, Workflows: workflows},
 	} {
 		listed, err := connect(t, s, everyTool()).ListTools(context.Background(), nil)
 		require.NoError(t, err)
@@ -117,11 +119,11 @@ func TestEntryToolsSayWhatTheyAreFor(t *testing.T) {
 	} {
 		assert.True(t, strings.HasPrefix(tools[name], lead), name)
 	}
-	// What each did before follows unchanged.
+	// Then what each takes, in one lead rather than two.
 	assert.Contains(t, tools[toolFoundryListOntologies], "List the Foundry ontologies of one workspace, with their current version and load.")
-	assert.Contains(t, tools[toolFoundryReadGraph], "Read a load of a Foundry ontology's graph, with its version's rules applied: 1 to 20 reads in one call.")
-	assert.Contains(t, tools[toolFoundryAsk], "Ask a question of a Foundry ontology's load in plain language.")
-	assert.Contains(t, tools[toolFoundrySendPieces], "Send pieces of data, JSON objects with an id, to a Foundry API source (a connector of kind events).")
+	assert.Contains(t, tools[toolFoundryReadGraph], "read from a load with its version's rules applied. 1 to 20 reads in one call")
+	assert.Contains(t, tools[toolFoundryAsk], "use it, in plain language, for questions about the user's customers")
+	assert.Contains(t, tools[toolFoundrySendPieces], "sent as JSON pieces (objects with an id) to a Foundry API source (a connector of kind events)")
 	// A send token sees the send tool alone, so its description names no other.
 	for name := range tools {
 		if name != toolFoundrySendPieces {
@@ -982,4 +984,64 @@ func mustJSON(t *testing.T, v any) string {
 	raw, err := json.Marshal(v)
 	require.NoError(t, err)
 	return string(raw)
+}
+
+// An empty workspace_id is the caller's only workspace, a user's as a key's; a user of several is
+// told to name one.
+func TestAnEmptyWorkspaceIsTheCallersOnlyOne(t *testing.T) {
+	for name, only := range map[string]string{"one workspace": "workspace-1", "several": ""} {
+		t.Run(name, func(t *testing.T) {
+			var asked string
+			identity := &Identity{User: true, WorkspaceID: only, HasPermission: func(Permission) bool { return true },
+				Authorize: func(_ context.Context, req any, _ Grant, _ ...string) error {
+					asked = req.(*foundryv1.ListConnectorsRequest).GetWorkspaceId()
+					return nil
+				}}
+			result, err := connect(t, &Service{Foundry: &connectorsBackend{}}, identity).CallTool(context.Background(),
+				&mcp.CallToolParams{Name: toolFoundryListConnectors, Arguments: map[string]any{}})
+			require.NoError(t, err)
+			if only != "" {
+				require.False(t, result.IsError)
+				assert.Equal(t, only, asked)
+				return
+			}
+			require.True(t, result.IsError)
+			assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "workspace_id is required")
+			assert.Empty(t, asked, "nothing is authorized or asked")
+		})
+	}
+}
+
+// Preparing an action changes nothing, so only executing it is destructive: a client that asks
+// before a destructive tool asks once.
+func TestOnlyExecutingAnActionIsDestructive(t *testing.T) {
+	listed, err := connect(t, &Service{FoundryURL: "https://foundry.example", Events: true}, everyTool()).ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	annotations := map[string]*mcp.ToolAnnotations{}
+	for _, tool := range listed.Tools {
+		annotations[tool.Name] = tool.Annotations
+	}
+	prepare, execute := annotations[toolPrepareFoundry], annotations[toolExecuteFoundry]
+	require.NotNil(t, prepare)
+	require.NotNil(t, execute)
+	assert.False(t, prepare.ReadOnlyHint, "it stores a confirmation")
+	assert.False(t, *prepare.DestructiveHint)
+	assert.True(t, *execute.DestructiveHint)
+}
+
+// No input takes null for an array or object, which leaving it out already says, and some clients
+// refuse a list of types; read_graph's reads say how many it takes.
+func TestInputsTakeNoNull(t *testing.T) {
+	s := &Service{FoundryURL: "https://foundry.example", Events: true, SignIn: true, Workflows: struct{ FoundryWorkflowBackendAPI }{}}
+	listed, err := connect(t, s, everyTool()).ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	for _, tool := range listed.Tools {
+		assert.NotContains(t, string(mustJSON(t, tool.InputSchema)), `"null"`, tool.Name)
+		if tool.Name == toolFoundryReadGraph {
+			reads := tool.InputSchema.(map[string]any)["properties"].(map[string]any)["reads"].(map[string]any)
+			assert.Equal(t, "array", reads["type"])
+			assert.EqualValues(t, 1, reads["minItems"])
+			assert.EqualValues(t, ontologyagent.MaxReads, reads["maxItems"])
+		}
+	}
 }

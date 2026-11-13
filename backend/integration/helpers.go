@@ -131,14 +131,6 @@ func errorCode(err error) codes.Code {
 	return code
 }
 
-func queryTool(name, description string, readOnly bool) *mcp.Tool {
-	destructive := !readOnly
-	openWorld := false
-	return &mcp.Tool{Name: name, Description: description, Annotations: &mcp.ToolAnnotations{
-		ReadOnlyHint: readOnly, IdempotentHint: readOnly, DestructiveHint: &destructive, OpenWorldHint: &openWorld,
-	}}
-}
-
 func confirmationPayloadHash(operation, target string, payload []byte) string {
 	hash := sha256.New()
 	_, _ = hash.Write([]byte("helix-mcp-confirmation-v1\x00"))

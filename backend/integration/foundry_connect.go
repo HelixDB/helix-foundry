@@ -21,7 +21,7 @@ import (
 // FoundryConnectInput is helix_foundry_connect's input. Every field but the Workspace and the kind
 // is a sign-in's, and the schema of a caller who can't sign in leaves them out (connectSchema).
 type FoundryConnectInput struct {
-	WorkspaceID string   `json:"workspace_id" jsonschema:"Helix workspace identifier."`
+	WorkspaceID string   `json:"workspace_id,omitempty" jsonschema:"Helix workspace identifier. May be empty when the caller has only one workspace (a service key always does)."`
 	Kind        string   `json:"kind" jsonschema:"The connector's kind: stripe, workos, posthog, github, linear, calcom, granola, slack, notion, google, postgres, mysql, s3 or events (an API source)."`
 	WithKey     bool     `json:"with_key,omitempty" jsonschema:"Open the kind's form to enter a key instead of signing in: for PostHog EU Cloud or a self-hosted PostHog, or when the user asks to use a key."`
 	Name        string   `json:"name,omitempty" jsonschema:"A new connector's name when it signs in; the kind's display name when empty. Not with connector_id."`
