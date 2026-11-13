@@ -1,4 +1,5 @@
 import { localOnboardingPrompt } from "./local-onboarding-prompt";
+import { STAR_ASK } from "../../../shared/github-star";
 import type { FoundryOntology } from "../../../shared/wfe";
 import { paths } from "../../paths";
 import {
@@ -320,6 +321,8 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
       title: "Hand it back",
       body: [
         `Read the ontology with \`helix_foundry_get_ontology\` (\`{${ids}}\`) and give me its links: \`url\`, its page in Foundry; \`explore_url\`, to browse what it holds; and \`ask_url\`, to ask it questions. Offer to ask it one of the goal’s questions with \`helix_foundry_ask\`.`,
+        "",
+        STAR_ASK,
       ],
     },
   };
