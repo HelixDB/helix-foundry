@@ -312,6 +312,12 @@ service FoundryService {
       body: "*"
     };
   }
+  // The reviews the ontology's current load holds, as SettleFoundryReview
+  // reads them: each with what settles it. Read from the load's database as
+  // the caller, a page at a time, or by review key.
+  rpc ListFoundryReviews(ListFoundryReviewsRequest) returns (ListFoundryReviewsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/reviews"};
+  }
   rpc ListFoundryReviewDecisions(ListFoundryReviewDecisionsRequest) returns (ListFoundryReviewDecisionsResponse) {
     option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-decisions"};
   }
@@ -1492,6 +1498,22 @@ message SettleFoundryReviewRequest {
 }
 message FoundryReviewDecisionResponse {
   FoundryReviewDecision decision = 1;
+}
+message ListFoundryReviewsRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  // Only these reviews, at most 50, each listed once if the current load
+  // holds it; never with page_token.
+  repeated string review_keys = 3;
+  // The next_page_token of a previous page.
+  string page_token = 4;
+}
+message ListFoundryReviewsResponse {
+  // The current load the reviews are of.
+  string load_id = 1;
+  repeated FoundryReview reviews = 2;
+  // Set while more reviews follow, up to the 10,000th.
+  string next_page_token = 3;
 }
 message ListFoundryReviewDecisionsRequest {
   string workspace_id = 1;

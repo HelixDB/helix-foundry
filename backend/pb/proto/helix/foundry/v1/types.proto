@@ -1435,6 +1435,74 @@ message FoundryGraphJobProgress {
   int32 documents_total = 3;
 }
 
+// What settles a review (SettleFoundryReview's decision).
+enum FoundryReviewSettle {
+  // No decision settles it: a conflict on a link that holds many values, or
+  // a reason the backend doesn't settle.
+  FOUNDRY_REVIEW_SETTLE_UNSPECIFIED = 0;
+  // resolve: link its name to one of its candidates, or say it is not in
+  // the data.
+  FOUNDRY_REVIEW_SETTLE_RESOLVE = 1;
+  // prop: choose the property's value, or remove it.
+  FOUNDRY_REVIEW_SETTLE_PROP = 2;
+  // release or reject the statement it holds back, by its statement_hash.
+  FOUNDRY_REVIEW_SETTLE_RELEASE = 3;
+  // A reason a decision settles, on a review missing what the backend reads
+  // of it (a load from before decisions): a new load writes it again.
+  FOUNDRY_REVIEW_SETTLE_STALE = 4;
+}
+
+// A review a load holds: something its documents state that it didn't write
+// as it stands. Its text and values come from documents: untrusted.
+message FoundryReview {
+  // The review's id, which SettleFoundryReview takes as review_id.
+  string review_key = 1;
+  // Why it is held: unresolved, ambiguous, collision, identifier_conflict,
+  // adjudicated, legal_form, part_name or own_name (a name to resolve);
+  // prop_conflict (documents state a property differently); low_confidence,
+  // unverified or conflict (a statement held back); or another of the
+  // engine's.
+  string reason = 2;
+  FoundryReviewSettle settle = 3;
+  // The type its name or property is of; empty for a held statement.
+  string type = 4;
+  string doc_id = 5;
+  // The quote it was read from, and where in its document.
+  string quote = 6;
+  optional FoundryReviewSpan span = 7;
+  // A name to resolve, normalized, and the stored identities (entity keys)
+  // it may be.
+  string norm_name = 8;
+  repeated string candidates = 9;
+  // The entity and property of a prop_conflict, and the values its
+  // documents state.
+  string entity_key = 10;
+  string prop = 11;
+  repeated FoundryReviewValue values = 12;
+  // A held statement: its link, the statement as the load stores it (JSON
+  // with subject, object and props), and the hash a release or reject
+  // binds.
+  string link = 13;
+  string statement_json = 14;
+  string statement_hash = 15;
+  // The verifier's score, when it scored it.
+  optional double confidence = 16;
+}
+
+message FoundryReviewSpan {
+  int64 section = 1;
+  int64 start = 2;
+  int64 end = 3;
+}
+
+// One value documents state for a prop_conflict's property.
+message FoundryReviewValue {
+  // The value as JSON, as a prop decision takes it.
+  string value_json = 1;
+  string doc_id = 2;
+  string quote = 3;
+}
+
 // A user choice. Review identity is always derived by the backend.
 message FoundryReviewChoice {
   reserved 2;

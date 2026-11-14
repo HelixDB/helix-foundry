@@ -104,6 +104,7 @@ var rules = map[string]Rule{
 
 	// Review decisions.
 	foundryv1.FoundryService_ListFoundryReviewDecisions_FullMethodName:  Deny,
+	foundryv1.FoundryService_ListFoundryReviews_FullMethodName:          Deny,
 	foundryv1.FoundryService_SettleFoundryReview_FullMethodName:         Deny,
 	foundryv1.FoundryService_DeleteFoundryReviewDecision_FullMethodName: Deny,
 	foundryv1.FoundryService_SettleFoundryReviewLabel_FullMethodName:    Deny,

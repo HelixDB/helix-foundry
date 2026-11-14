@@ -3738,6 +3738,61 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/reviews": {
+      "get": {
+        "summary": "The reviews the ontology's current load holds, as SettleFoundryReview\nreads them: each with what settles it. Read from the load's database as\nthe caller, a page at a time, or by review key.",
+        "operationId": "FoundryService_ListFoundryReviews",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryReviewsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "reviewKeys",
+            "description": "Only these reviews, at most 50, each listed once if the current load\nholds it; never with page_token.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "pageToken",
+            "description": "The next_page_token of a previous page.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/reviews/{reviewId}:settle": {
       "post": {
         "operationId": "FoundryService_SettleFoundryReview",
@@ -8610,6 +8665,76 @@
         }
       }
     },
+    "v1FoundryReview": {
+      "type": "object",
+      "properties": {
+        "reviewKey": {
+          "type": "string",
+          "description": "The review's id, which SettleFoundryReview takes as review_id."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why it is held: unresolved, ambiguous, collision, identifier_conflict,\nadjudicated, legal_form, part_name or own_name (a name to resolve);\nprop_conflict (documents state a property differently); low_confidence,\nunverified or conflict (a statement held back); or another of the\nengine's."
+        },
+        "settle": {
+          "$ref": "#/definitions/v1FoundryReviewSettle"
+        },
+        "type": {
+          "type": "string",
+          "description": "The type its name or property is of; empty for a held statement."
+        },
+        "docId": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string",
+          "description": "The quote it was read from, and where in its document."
+        },
+        "span": {
+          "$ref": "#/definitions/v1FoundryReviewSpan"
+        },
+        "normName": {
+          "type": "string",
+          "description": "A name to resolve, normalized, and the stored identities (entity keys)\nit may be."
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "entityKey": {
+          "type": "string",
+          "description": "The entity and property of a prop_conflict, and the values its\ndocuments state."
+        },
+        "prop": {
+          "type": "string"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewValue"
+          }
+        },
+        "link": {
+          "type": "string",
+          "description": "A held statement: its link, the statement as the load stores it (JSON\nwith subject, object and props), and the hash a release or reject\nbinds."
+        },
+        "statementJson": {
+          "type": "string"
+        },
+        "statementHash": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "format": "double",
+          "description": "The verifier's score, when it scored it."
+        }
+      },
+      "description": "A review a load holds: something its documents state that it didn't write\nas it stands. Its text and values come from documents: untrusted."
+    },
     "v1FoundryReviewChoice": {
       "type": "object",
       "properties": {
@@ -8782,6 +8907,51 @@
           "$ref": "#/definitions/v1FoundryReviewLabel"
         }
       }
+    },
+    "v1FoundryReviewSettle": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_REVIEW_SETTLE_UNSPECIFIED",
+        "FOUNDRY_REVIEW_SETTLE_RESOLVE",
+        "FOUNDRY_REVIEW_SETTLE_PROP",
+        "FOUNDRY_REVIEW_SETTLE_RELEASE",
+        "FOUNDRY_REVIEW_SETTLE_STALE"
+      ],
+      "default": "FOUNDRY_REVIEW_SETTLE_UNSPECIFIED",
+      "description": "What settles a review (SettleFoundryReview's decision).\n\n - FOUNDRY_REVIEW_SETTLE_UNSPECIFIED: No decision settles it: a conflict on a link that holds many values, or\na reason the backend doesn't settle.\n - FOUNDRY_REVIEW_SETTLE_RESOLVE: resolve: link its name to one of its candidates, or say it is not in\nthe data.\n - FOUNDRY_REVIEW_SETTLE_PROP: prop: choose the property's value, or remove it.\n - FOUNDRY_REVIEW_SETTLE_RELEASE: release or reject the statement it holds back, by its statement_hash.\n - FOUNDRY_REVIEW_SETTLE_STALE: A reason a decision settles, on a review missing what the backend reads\nof it (a load from before decisions): a new load writes it again."
+    },
+    "v1FoundryReviewSpan": {
+      "type": "object",
+      "properties": {
+        "section": {
+          "type": "string",
+          "format": "int64"
+        },
+        "start": {
+          "type": "string",
+          "format": "int64"
+        },
+        "end": {
+          "type": "string",
+          "format": "int64"
+        }
+      }
+    },
+    "v1FoundryReviewValue": {
+      "type": "object",
+      "properties": {
+        "valueJson": {
+          "type": "string",
+          "description": "The value as JSON, as a prop decision takes it."
+        },
+        "docId": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string"
+        }
+      },
+      "description": "One value documents state for a prop_conflict's property."
     },
     "v1FoundrySyncRules": {
       "type": "object",
@@ -9950,6 +10120,26 @@
         },
         "nextPageToken": {
           "type": "string"
+        }
+      }
+    },
+    "v1ListFoundryReviewsResponse": {
+      "type": "object",
+      "properties": {
+        "loadId": {
+          "type": "string",
+          "description": "The current load the reviews are of."
+        },
+        "reviews": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReview"
+          }
+        },
+        "nextPageToken": {
+          "type": "string",
+          "description": "Set while more reviews follow, up to the 10,000th."
         }
       }
     },

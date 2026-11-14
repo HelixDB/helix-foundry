@@ -81,6 +81,7 @@ const (
 	FoundryService_GetOntologyGeneration_FullMethodName                 = "/helix.foundry.v1.FoundryService/GetOntologyGeneration"
 	FoundryService_ListOntologyGenerations_FullMethodName               = "/helix.foundry.v1.FoundryService/ListOntologyGenerations"
 	FoundryService_SettleFoundryReview_FullMethodName                   = "/helix.foundry.v1.FoundryService/SettleFoundryReview"
+	FoundryService_ListFoundryReviews_FullMethodName                    = "/helix.foundry.v1.FoundryService/ListFoundryReviews"
 	FoundryService_ListFoundryReviewDecisions_FullMethodName            = "/helix.foundry.v1.FoundryService/ListFoundryReviewDecisions"
 	FoundryService_DeleteFoundryReviewDecision_FullMethodName           = "/helix.foundry.v1.FoundryService/DeleteFoundryReviewDecision"
 	FoundryService_SettleFoundryReviewLabel_FullMethodName              = "/helix.foundry.v1.FoundryService/SettleFoundryReviewLabel"
@@ -225,6 +226,10 @@ type FoundryServiceClient interface {
 	GetOntologyGeneration(ctx context.Context, in *GetOntologyGenerationRequest, opts ...grpc.CallOption) (*OntologyGenerationResponse, error)
 	ListOntologyGenerations(ctx context.Context, in *ListOntologyGenerationsRequest, opts ...grpc.CallOption) (*ListOntologyGenerationsResponse, error)
 	SettleFoundryReview(ctx context.Context, in *SettleFoundryReviewRequest, opts ...grpc.CallOption) (*FoundryReviewDecisionResponse, error)
+	// The reviews the ontology's current load holds, as SettleFoundryReview
+	// reads them: each with what settles it. Read from the load's database as
+	// the caller, a page at a time, or by review key.
+	ListFoundryReviews(ctx context.Context, in *ListFoundryReviewsRequest, opts ...grpc.CallOption) (*ListFoundryReviewsResponse, error)
 	ListFoundryReviewDecisions(ctx context.Context, in *ListFoundryReviewDecisionsRequest, opts ...grpc.CallOption) (*ListFoundryReviewDecisionsResponse, error)
 	DeleteFoundryReviewDecision(ctx context.Context, in *DeleteFoundryReviewDecisionRequest, opts ...grpc.CallOption) (*DeleteFoundryReviewDecisionResponse, error)
 	// A person's word on a claim drawn for the review queue's random slice or
@@ -965,6 +970,16 @@ func (c *foundryServiceClient) SettleFoundryReview(ctx context.Context, in *Sett
 	return out, nil
 }
 
+func (c *foundryServiceClient) ListFoundryReviews(ctx context.Context, in *ListFoundryReviewsRequest, opts ...grpc.CallOption) (*ListFoundryReviewsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryReviewsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryReviews_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) ListFoundryReviewDecisions(ctx context.Context, in *ListFoundryReviewDecisionsRequest, opts ...grpc.CallOption) (*ListFoundryReviewDecisionsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFoundryReviewDecisionsResponse)
@@ -1602,6 +1617,10 @@ type FoundryServiceServer interface {
 	GetOntologyGeneration(context.Context, *GetOntologyGenerationRequest) (*OntologyGenerationResponse, error)
 	ListOntologyGenerations(context.Context, *ListOntologyGenerationsRequest) (*ListOntologyGenerationsResponse, error)
 	SettleFoundryReview(context.Context, *SettleFoundryReviewRequest) (*FoundryReviewDecisionResponse, error)
+	// The reviews the ontology's current load holds, as SettleFoundryReview
+	// reads them: each with what settles it. Read from the load's database as
+	// the caller, a page at a time, or by review key.
+	ListFoundryReviews(context.Context, *ListFoundryReviewsRequest) (*ListFoundryReviewsResponse, error)
 	ListFoundryReviewDecisions(context.Context, *ListFoundryReviewDecisionsRequest) (*ListFoundryReviewDecisionsResponse, error)
 	DeleteFoundryReviewDecision(context.Context, *DeleteFoundryReviewDecisionRequest) (*DeleteFoundryReviewDecisionResponse, error)
 	// A person's word on a claim drawn for the review queue's random slice or
@@ -1913,6 +1932,9 @@ func (UnimplementedFoundryServiceServer) ListOntologyGenerations(context.Context
 }
 func (UnimplementedFoundryServiceServer) SettleFoundryReview(context.Context, *SettleFoundryReviewRequest) (*FoundryReviewDecisionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SettleFoundryReview not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryReviews(context.Context, *ListFoundryReviewsRequest) (*ListFoundryReviewsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryReviews not implemented")
 }
 func (UnimplementedFoundryServiceServer) ListFoundryReviewDecisions(context.Context, *ListFoundryReviewDecisionsRequest) (*ListFoundryReviewDecisionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryReviewDecisions not implemented")
@@ -3197,6 +3219,24 @@ func _FoundryService_SettleFoundryReview_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_ListFoundryReviews_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryReviewsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryReviews(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryReviews_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryReviews(ctx, req.(*ListFoundryReviewsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_ListFoundryReviewDecisions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFoundryReviewDecisionsRequest)
 	if err := dec(in); err != nil {
@@ -4437,6 +4477,10 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SettleFoundryReview",
 			Handler:    _FoundryService_SettleFoundryReview_Handler,
+		},
+		{
+			MethodName: "ListFoundryReviews",
+			Handler:    _FoundryService_ListFoundryReviews_Handler,
 		},
 		{
 			MethodName: "ListFoundryReviewDecisions",
