@@ -1,4 +1,12 @@
-import { Suspense, lazy, useId, useMemo, useState } from "react";
+import "./ask-visual.css";
+import {
+  Suspense,
+  lazy,
+  useId,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import type { EntityRef } from "../../../shared/foundry-read";
@@ -138,8 +146,9 @@ function ResultTable({
 
 /**
  * A query's output as a figure, chart or table (visualPlan, by the visual's
- * hint in an answer), titled. `onShowQuery`, in an answer, lights the step
- * that ran the query.
+ * hint in an answer or a dashboard's tile), titled. `onShowQuery`, in an
+ * answer, lights the step that ran the query; `actions` sit in its head
+ * (Pin to dashboard, a tile's menu).
  */
 export function AskVisual({
   output,
@@ -148,6 +157,7 @@ export function AskVisual({
   href,
   onShowQuery,
   untitled,
+  actions,
 }: {
   output: QueryOutput;
   query: OntologyQuery;
@@ -158,6 +168,7 @@ export function AskVisual({
   // Where what it shows is said already (a step's Result): the title names
   // it to assistive technology only.
   untitled?: boolean;
+  actions?: ReactNode;
 }) {
   const plan = useMemo(
     () => visualPlan(output, query, hint),
@@ -180,16 +191,21 @@ export function AskVisual({
         >
           {plan.title}
         </div>
-        {plan.kind === "chart" && (
-          <Segmented
-            label="Show the result as"
-            value={view}
-            onChange={(v) => setView(v as "chart" | "table")}
-            options={[
-              { value: "chart", label: "Chart" },
-              { value: "table", label: "Table" },
-            ]}
-          />
+        {(plan.kind === "chart" || actions) && (
+          <div className="ak-visual-actions">
+            {plan.kind === "chart" && (
+              <Segmented
+                label="Show the result as"
+                value={view}
+                onChange={(v) => setView(v as "chart" | "table")}
+                options={[
+                  { value: "chart", label: "Chart" },
+                  { value: "table", label: "Table" },
+                ]}
+              />
+            )}
+            {actions}
+          </div>
         )}
       </div>
       {plan.kind === "figure" ? (
