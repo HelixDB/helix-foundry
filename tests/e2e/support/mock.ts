@@ -67,6 +67,13 @@ export const mock = {
     reviseOutcome?: "budget";
     // A load's step, how it ends, and whether reading a document fails.
     loadStepMs?: number;
+    // What the engine says in place of a person's resolve (contract 4.22.0).
+    nameInPlace?:
+      | "written"
+      | "not_replayed"
+      | "bound"
+      | "collides"
+      | "not_asked";
     loadOutcome?: "succeed" | "fail" | "sources_changed" | "budget_exhausted";
     documentOutcome?: "succeed" | "fail";
     // Seeds a variant of a customer's name linked to that customer this way,

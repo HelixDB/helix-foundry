@@ -38,6 +38,7 @@ import {
   forgetRelease,
   forgetValue,
   owePendingRelease,
+  owePendingResolve,
   owePendingValue,
 } from "./loads";
 import { isScope, ontologyOf } from "./ontologies";
@@ -449,6 +450,7 @@ export const reviewRoutes: MockRoute[] = [
         draw,
       );
       if (stored.kind === "prop") owePendingValue(s.o.id, stored);
+      if (stored.kind === "resolve") owePendingResolve(s.o.id, stored);
       const applied = appliedOf(s.o.id, stored);
       return ok({
         decision: applied ? { ...stored, applied } : stored,

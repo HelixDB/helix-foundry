@@ -46,7 +46,9 @@ async function settleNotInData(page: Page) {
   await choose(page.getByLabel("Link this name to"), "Not in data");
   await page.getByRole("button", { name: "Settle review" }).click();
   await expect(
-    page.getByText("Decision saved. Reload to apply."),
+    page.getByText(
+      "This load was built before names could be applied at once; the next load applies it.",
+    ),
   ).toBeVisible();
 }
 
@@ -75,9 +77,11 @@ test("settles a suggested candidate, reloads linked, and removes the saved decis
   await expect(
     page.getByRole("alert").filter({ hasText: "Settlement unavailable" }),
   ).toContainText("Settlement unavailable");
-  await expect(page.getByText("Decision saved. Reload to apply.")).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByText(
+      "This load was built before names could be applied at once; the next load applies it.",
+    ),
+  ).toHaveCount(0);
   await page.unroute("**/papi/**/reviews/*:settle");
   const sent = page.waitForRequest(
     (r) => r.method() === "POST" && /\/reviews\/[^/]+:settle$/.test(r.url()),
@@ -87,7 +91,9 @@ test("settles a suggested candidate, reloads linked, and removes the saved decis
     decision: { resolve: { entityKey: "cus_GLOBEX01" } },
   });
   await expect(
-    page.getByText("Decision saved. Reload to apply."),
+    page.getByText(
+      "This load was built before names could be applied at once; the next load applies it.",
+    ),
   ).toBeVisible();
   await expect(reviews(page)).toContainText(
     "Names something that isn’t in your data",
@@ -112,16 +118,18 @@ test("settles a suggested candidate, reloads linked, and removes the saved decis
   await expect(
     page.getByText("A decision is saved for this review."),
   ).toBeVisible();
-  await expect(page.getByText("Decision saved. Reload to apply.")).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByText(
+      "This load was built before names could be applied at once; the next load applies it.",
+    ),
+  ).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Settle review" })).toHaveCount(
     0,
   );
   await page.goto(`${doc}?tab=review`);
   await page.getByRole("button", { name: "Remove decision" }).click();
   await expect(
-    page.getByText("Decision removed. Reload to apply."),
+    page.getByText("Decision removed. Later loads won’t read it."),
   ).toBeVisible();
   await loadVersion3(page);
   await page.goto(`${doc}?tab=review`);
@@ -160,11 +168,13 @@ test("carries a name's choice to other documents, and says what came of each", a
     const row = page.locator("li.dc-review").filter({ hasText: quote });
     await choose(row.getByLabel("Link this name to"), record);
     await expect(row).toContainText(
-      `Links this name to ${record} here and in other documents where nothing else links that name, from the next load.`,
+      `Links this name to ${record} here and in other documents where nothing else links that name: in this load at once, and in later loads.`,
     );
     await row.getByRole("button", { name: "Settle review" }).click();
     await expect(
-      row.getByText("Decision saved. Reload to apply."),
+      row.getByText(
+        "This load was built before names could be applied at once; the next load applies it.",
+      ),
     ).toBeVisible();
   };
   // Not in data says it's for this document only.
@@ -178,7 +188,7 @@ test("carries a name's choice to other documents, and says what came of each", a
   );
   await expect(
     page.getByText(
-      "Not in data is for this document only, from the next load. Reload to apply.",
+      "Not in data is for this document only: in this load at once, and in later loads.",
     ),
   ).toBeVisible();
   await settle("Globexx Corporation signed", "Globex Corporation");
@@ -1139,7 +1149,9 @@ test("links an adjudicated mention to its review and undoes the link on reload",
   await expect(reviews(page)).toContainText("Matched by the model");
   await page.getByRole("button", { name: "Undo link", exact: true }).click();
   await expect(
-    page.getByText("Decision saved. Reload to apply."),
+    page.getByText(
+      "This load was built before names could be applied at once; the next load applies it.",
+    ),
   ).toBeVisible();
   await loadVersion3(page);
   await page.goto(`${doc}?tab=entities`);
@@ -1170,7 +1182,9 @@ test("links a mention by legal form to its review and undoes the link on reload"
   await expect(reviews(page)).not.toContainText("couldn’t confirm");
   await page.getByRole("button", { name: "Undo link", exact: true }).click();
   await expect(
-    page.getByText("Decision saved. Reload to apply."),
+    page.getByText(
+      "This load was built before names could be applied at once; the next load applies it.",
+    ),
   ).toBeVisible();
   await loadVersion3(page);
   await page.goto(`${doc}?tab=entities`);
@@ -1213,7 +1227,9 @@ for (const [linked, by, title] of [
     await expect(reviews(page)).not.toContainText("% confident");
     await page.getByRole("button", { name: "Undo link", exact: true }).click();
     await expect(
-      page.getByText("Decision saved. Reload to apply."),
+      page.getByText(
+        "This load was built before names could be applied at once; the next load applies it.",
+      ),
     ).toBeVisible();
     await loadVersion3(page);
     await page.goto(`${doc}?tab=entities`);
@@ -1235,7 +1251,9 @@ test("keeps a link by part of a name, and the next load holds it as a person's",
   await choose(page.getByLabel("Link this name to"), "Globex Corporation");
   await page.getByRole("button", { name: "Settle review" }).click();
   await expect(
-    page.getByText("Decision saved. Reload to apply."),
+    page.getByText(
+      "This load was built before names could be applied at once; the next load applies it.",
+    ),
   ).toBeVisible();
   await expect(
     page.getByRole("list", { name: "Saved decisions" }),
@@ -1309,7 +1327,9 @@ for (const [linked, how, title] of [
     await expect(name).toContainText("Linked to:");
     await choose(name.getByLabel("Link this name to"), "Globex Corporation");
     await name.getByRole("button", { name: "Settle review" }).click();
-    await expect(name).toContainText("Decision saved. Reload to apply.");
+    await expect(name).toContainText(
+      "This load was built before names could be applied at once; the next load applies it.",
+    );
   });
 
 test("promises no write in this load, and offers no approval it would refuse, for a claim a name holds", async ({
@@ -1433,11 +1453,13 @@ test("reconciles a decision removed elsewhere without keeping the saved status",
   await page.getByRole("button", { name: "Remove decision" }).click();
   expect((await response).status()).toBe(404);
   await expect(decisions).toHaveCount(0);
-  await expect(page.getByText("Decision saved. Reload to apply.")).toHaveCount(
-    0,
-  );
   await expect(
-    page.getByText("Decision removed. Reload to apply."),
+    page.getByText(
+      "This load was built before names could be applied at once; the next load applies it.",
+    ),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Decision removed. Later loads won’t read it."),
   ).toBeVisible();
   await expect(page.locator("p[role=alert]")).toHaveCount(0);
 });
@@ -1461,7 +1483,9 @@ test("settles while saved decisions are still being read", async ({ page }) => {
   expect((await sent).status()).toBe(200);
   release();
   await expect(
-    page.getByText("Decision saved. Reload to apply."),
+    page.getByText(
+      "This load was built before names could be applied at once; the next load applies it.",
+    ),
   ).toBeVisible();
 });
 
@@ -1494,9 +1518,11 @@ test("says a decision this load read left the review open, without asking to rel
   await expect(reviews(page)).toContainText(
     "This load read the saved decision, and the review is still open",
   );
-  await expect(page.getByText("Decision saved. Reload to apply.")).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByText(
+      "This load was built before names could be applied at once; the next load applies it.",
+    ),
+  ).toHaveCount(0);
   await expect(page.getByLabel("Link this name to")).toBeEnabled();
 });
 
@@ -1588,4 +1614,65 @@ test("keeps a table's value over a document's, and replaces it only by choice", 
     "Decided: GBP. This load holds it.",
   );
   await expect(review).not.toContainText("still open");
+});
+
+// Contract 4.22.0: a person's choice of a name applies to the current load at
+// once, by the document's saved model work, which the engine replays. A load
+// read before that could be (prompt 9) has none that settles it, and the
+// card says so plainly: the next load applies it.
+test("links a chosen name in this load at once, or says the next load applies it", async ({
+  page,
+}) => {
+  await setup(page);
+  const doc = await openDocument(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(reviews(page)).toContainText("Suggestions only:");
+  await mock.configure({ loadStepMs: 1500, nameInPlace: "written" });
+  await choose(page.getByLabel("Link this name to"), "Globex Corporation");
+  await expect(
+    page.getByText("in this load at once, and in later loads"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Settle review" }).click();
+  await expect(
+    page.getByText("Decision saved. Linking this name in this load…"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("· being linked in this load");
+  // Linked: the review goes, with no new load and the page never loaded again.
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("→ cus_GLOBEX01 · linked in this load");
+  await page.getByRole("button", { name: "Remove decision" }).click();
+  await expect(
+    page.getByText(
+      "Decision removed. What it linked stays in this load; later loads won’t read it.",
+    ),
+  ).toBeVisible();
+});
+
+test("says plainly that a load built before names could be applied at once leaves a name to the next load", async ({
+  page,
+}) => {
+  await setup(page);
+  const doc = await openDocument(page);
+  await page.goto(`${doc}?tab=review`);
+  await mock.configure({ loadStepMs: 600, nameInPlace: "not_replayed" });
+  await choose(page.getByLabel("Link this name to"), "Not in data");
+  await page.getByRole("button", { name: "Settle review" }).click();
+  await expect(
+    page.getByText(
+      "This load was built before names could be applied at once; the next load applies it.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText(
+    "not linked in this load, read before names could be applied at once",
+  );
+  // The review stays for this load; the next load reads the choice.
+  await expect(reviews(page)).toContainText(
+    "Names something that isn’t in your data",
+  );
 });

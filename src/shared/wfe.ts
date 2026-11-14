@@ -2795,7 +2795,10 @@ export type ReviewDecision =
       statementHash: string;
     };
 /**
- * What became of a release or a prop decision in the ontology's current load:
+ * What became of a release, a resolve (contract 4.22.0: its word on its own
+ * document; `refused` with `not_replayed` for a load read before names could
+ * be settled in place, which the next load applies) or a prop decision in
+ * the ontology's current load:
  * `pending` while a job has yet to apply it, `written` once a release's claim
  * is a fact, `refused` when it stays held (`reason` says why, in the engine's
  * word or the backend's, and may be one this site doesn't know), `missed`

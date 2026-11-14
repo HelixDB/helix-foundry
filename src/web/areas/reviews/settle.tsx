@@ -31,6 +31,7 @@ import {
   matchesReview,
   propValueText,
   refusalText,
+  resolvedText,
   takenBack,
   takenBackOf,
   waitingText,
@@ -479,9 +480,11 @@ export function SettleReview({
                       ? s.kind === "prop" && s.table === undefined
                       : holds,
                   )
-                : loadRead(saved, load?.createdAt)
-                  ? "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
-                  : "Decision saved. Reload to apply."}
+                : ((editable &&
+                    resolvedText(saved.applied, ontology.activeJob?.kind)) ??
+                  (loadRead(saved, load?.createdAt)
+                    ? "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
+                    : "Decision saved. The next load applies it."))}
           {held && heldBy.length > 0 && (
             <NameReviews ends={heldBy} docId={held.docId} link={link} />
           )}
@@ -583,10 +586,10 @@ export function SettleReview({
                     : ""
                 }It’s sent to this load at once, and later loads read it too. A document dated after your decision still wins.`
               : chosen
-                ? `Links this name to ${label(chosen)} here and in other documents where nothing else links that name, from the next load. Reload to apply.`
+                ? `Links this name to ${label(chosen)} here and in other documents where nothing else links that name: in this load at once, and in later loads.`
                 : choice === "none"
-                  ? "Not in data is for this document only, from the next load. Reload to apply."
-                  : "A record chosen links this name here and in other documents where nothing else links it; Not in data is for this document only. Either applies from the next load. Reload to apply."}
+                  ? "Not in data is for this document only: in this load at once, and in later loads."
+                  : "A record chosen links this name here and in other documents where nothing else links it; Not in data is for this document only. Either applies to this load at once, and to later loads."}
           </p>
           {(error || query.error) && (
             <p role="alert" className="hf-form-error">
@@ -643,6 +646,30 @@ const chosenLine = (
       return `${line} · sent to this load`;
     case "unconfirmed":
       return `${line} · not confirmed as sent to this load`;
+    default:
+      return line;
+  }
+};
+
+/**
+ * A saved name's line: what the current load made of it on its document,
+ * where it says (FoundryReviewDecision.applied, contract 4.22.0).
+ */
+const linkedLine = (
+  d: Extract<ReviewDecision, { kind: "resolve" }> & FoundryReviewDecision,
+) => {
+  const line = `${d.type} · ${d.normName} → ${d.entityKey ?? "Not in data"}`;
+  switch (d.applied?.status) {
+    case "pending":
+      return `${line} · being linked in this load`;
+    case "written":
+      return `${line} · linked in this load`;
+    case "refused":
+      return d.applied.reason === "not_replayed"
+        ? `${line} · not linked in this load, read before names could be applied at once`
+        : `${line} · not linked in this load`;
+    case "unconfirmed":
+      return `${line} · not confirmed as linked in this load`;
     default:
       return line;
   }
@@ -746,7 +773,7 @@ export function SavedDecisions({
                   d.kind === "withdraw"
                     ? `${d.kind === "reject" ? "Rejected" : d.kind === "withdraw" ? takenBack(d.applied).label : approvedLine(d, statusOf?.(d) ?? "unknown")}: “${quoteOf?.(d.claimSection, d.claimStart, d.claimEnd) ?? `section ${d.claimSection + 1}`}”`
                     : d.kind === "resolve"
-                      ? `${d.type} · ${d.normName} → ${d.entityKey ?? "Not in data"}`
+                      ? linkedLine(d)
                       : chosenLine(d)}
                 </p>
                 {d.kind === "withdraw" && takenBack(d.applied).text && (
@@ -795,7 +822,10 @@ export function SavedDecisions({
                                   ? "Decision removed. If this load wrote it, it’s being taken back now; later loads won’t read it."
                                   : d.kind === "release"
                                     ? "Decision removed. Nothing of it is in this load, and later loads won’t read it."
-                                    : "Decision removed. Reload to apply.",
+                                    : d.kind === "resolve" &&
+                                        d.applied?.status === "written"
+                                      ? "Decision removed. What it linked stays in this load; later loads won’t read it."
+                                      : "Decision removed. Later loads won’t read it.",
                         );
                       } catch (e) {
                         setError((e as Error).message);
@@ -811,11 +841,12 @@ export function SavedDecisions({
             ))}
           </ul>
           <p className="on-muted">
-            An approval or a chosen value applies to the current load at once,
-            and taking either back does too: a claim taken back is held for
-            review again. A linked name applies to future loads, and so does an
-            approval held for a name until that name is settled. A rejected
-            claim stays out of Needs review until its decision is removed.
+            An approval, a chosen value or a linked name applies to the current
+            load at once, and taking an approval or a value back does too: a
+            claim taken back is held for review again. A name a load read before
+            names could be applied at once is linked by the next load. A
+            rejected claim stays out of Needs review until its decision is
+            removed.
           </p>
           <ButtonLink to={paths.loads(o)} size="sm">
             Loads

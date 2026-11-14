@@ -3741,14 +3741,25 @@ describe("review decisions", () => {
     expect(
       reviews(g).filter((n) => n.props.reason === "low_confidence"),
     ).toHaveLength(1);
-    // A decision of another kind says nothing of a load.
+    // A resolve applies to the current load at once too (contract 4.22.0):
+    // it waits, and this load, read before names could be settled in place,
+    // leaves it to the next load.
     const name = reviews(g).find((n) => n.props.reason === "legal_form")!;
     const resolved = (
       await call("POST", `${O}/reviews/${name.props.review_key}:settle`, {
         decision: { resolve: { notInData: true } },
       })
     ).body.decision;
-    expect(resolved.applied).toBeUndefined();
+    expect(resolved.applied).toEqual({ status: "pending" });
+    vi.setSystemTime(Date.now() + 10_000);
+    const settled = (
+      await call("GET", `${O}/review-decisions`)
+    ).body.decisions.find((x: { id: string }) => x.id === resolved.id);
+    expect(settled.applied).toEqual({
+      status: "refused",
+      reason: "not_replayed",
+      at: expect.any(String),
+    });
   });
 
   it("keeps how the review queue drew a decision, and labels that measure precision", async () => {
