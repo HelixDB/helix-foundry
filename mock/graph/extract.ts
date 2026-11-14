@@ -76,7 +76,11 @@ import { onReset } from "../state";
 //   quote. A stored entity it names gets the props its scope lets documents
 //   fill the same way (a customer's currency, "is billed in GBP").
 // - A saved decision links a name to a stored entity or to none, and
-//   sets a prop's value whatever the evidence says.
+//   sets a prop's value whatever the evidence says. Another document's
+//   resolve that chose an entity links a name this one leaves for a person
+//   (contract 4.22.0, an alias): resolved_by "carried"; two such choices of
+//   different entities link it to neither. The outcome says what came of
+//   each of the document's own resolves and each alias it met.
 //
 // Offsets are UTF-8 bytes; a mention's, quote's and review's are relative to
 // its section's text.
@@ -900,8 +904,28 @@ export function releaseReview(
   };
 }
 
+/**
+ * What a read made of a name decision it met (contract 4.22.0): the
+ * document's own resolve, or an alias, another document's resolve that
+ * chose an entity, carried to every document naming the name.
+ */
+export type NamedDecision = {
+  decision: "resolve" | "alias";
+  type: string;
+  normName: string;
+  decisionId?: string;
+  outcome: "written" | "not_named" | "refused";
+  reason?: "absent" | "two_rows";
+};
+
 export type ExtractOutcome =
-  | { kind: "ingested"; counts: ExtractCounts }
+  | {
+      kind: "ingested";
+      counts: ExtractCounts;
+      // Its name decisions, and the entities an alias linked.
+      names: NamedDecision[];
+      carried: number;
+    }
   | { kind: "out_of_scope"; counts: ExtractCounts }
   | { kind: "already_ingested" }
   | { kind: "duplicate"; of: string };
@@ -1132,9 +1156,63 @@ export function extractDocument(
       )
       .slice(0, 5);
   const adjudicated: typeof unknown = [];
+  // Aliases: another document's resolves that chose an entity for a name
+  // this one names, one per entity, the earliest kept. Two entities for one
+  // name carry neither (two_rows).
+  const aliases = new Map<string, NamedDecision>();
+  const carriedIds = new Set<number>();
+  const carry = (name: string, type: string) => {
+    const chosen = decisions
+      .filter(
+        (d): d is Extract<ReviewDecision, { kind: "resolve" }> & Approval =>
+          d.kind === "resolve" &&
+          d.docId !== doc.id &&
+          d.type === type &&
+          d.normName === normName(name) &&
+          d.entityKey !== undefined,
+      )
+      .toSorted((a, b) => (a.decidedAt ?? "").localeCompare(b.decidedAt ?? ""))
+      .filter(
+        (d, i, all) => all.findIndex((o) => o.entityKey === d.entityKey) === i,
+      );
+    if (!chosen.length) return undefined;
+    const e =
+      chosen.length === 1
+        ? entities.find(
+            (e) =>
+              g.node(e.id)?.props.entity_key === chosen[0]!.entityKey &&
+              g.node(e.id)?.label === type,
+          )
+        : undefined;
+    for (const d of chosen)
+      aliases.set(`${d.id}\u001f${d.entityKey}`, {
+        decision: "alias",
+        type,
+        normName: normName(name),
+        ...(d.id ? { decisionId: d.id } : {}),
+        ...(e
+          ? { outcome: "written" }
+          : {
+              outcome: "refused",
+              reason: chosen.length > 1 ? "two_rows" : "absent",
+            }),
+      });
+    return e;
+  };
   const unresolved = unknown.filter((u) => {
     const d = resolution(u.name, "Customer");
     if (d?.kind !== "resolve") {
+      // Only a name left for a person carries another document's choice.
+      const carried = carry(u.name, "Customer");
+      if (carried) {
+        carriedIds.add(carried.id);
+        found.push({
+          e: carried,
+          hits: [{ s: u.s, i: u.i, surface: u.name, by: "carried" }],
+          resolvedBy: "carried",
+        });
+        return false;
+      }
       const e = linkedBy ? candidates(u.name)[0] : undefined;
       if (!e) return true;
       found.push({
@@ -1394,6 +1472,11 @@ export function extractDocument(
           ...(held === "no_statement" ? {} : { statement }),
           suggested_link: "signed_with",
           ...(held === "unverified" ? {} : { confidence: 0.72 }),
+          // How its quote states it (contract 4.18.0); an older load's has
+          // none.
+          ...(held === "no_statement"
+            ? {}
+            : { evidence_shape: "prose_sentence" }),
         });
         g.addEdge(E.FROM_SECTION, r, first.s.node);
         g.addEdge(E.CONCERNS, r, contract!);
@@ -1539,9 +1622,49 @@ export function extractDocument(
             reason: "unmatched",
             suggested_link: link,
             confidence: 0.8,
+            // Its ends' types as the model wrote them (contract 4.18.0).
+            subject_type: "company",
+            object_type: "company",
           });
           g.addEdge(E.FROM_SECTION, r, s.node);
           counts.reviews += 1;
         }
-  return { kind: "ingested", counts };
+  // Each of its own resolves: written where it names the name, unless the
+  // entity chosen isn't in the load.
+  const named = (name: string) =>
+    unknown.some((u) => normName(u.name) === name) ||
+    found.some((f) =>
+      f.hits.some(
+        (h) =>
+          normName(h.surface) === name || normName(f.e.name || "") === name,
+      ),
+    );
+  const own = decisions.flatMap((d): NamedDecision[] =>
+    d.kind === "resolve" && d.docId === doc.id && d.type && d.normName
+      ? [
+          {
+            decision: "resolve",
+            type: d.type,
+            normName: d.normName,
+            ...(d.id ? { decisionId: d.id } : {}),
+            ...(!named(d.normName)
+              ? { outcome: "not_named" }
+              : d.entityKey !== undefined &&
+                  !entities.some(
+                    (e) =>
+                      g.node(e.id)?.props.entity_key === d.entityKey &&
+                      g.node(e.id)?.label === d.type,
+                  )
+                ? { outcome: "refused", reason: "absent" }
+                : { outcome: "written" }),
+          },
+        ]
+      : [],
+  );
+  return {
+    kind: "ingested",
+    counts,
+    names: [...own, ...aliases.values()],
+    carried: carriedIds.size,
+  };
 }

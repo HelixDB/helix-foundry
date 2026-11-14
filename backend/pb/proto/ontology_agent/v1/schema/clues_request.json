@@ -396,7 +396,7 @@
           "type": "string"
         },
         "observed": {
-          "description": "When its data was observed, if the backend knows: the connector sync its snapshot was\ntaken at, or the upload of its file. An Ingest records it on the transaction of each\nchunk of the source's rows; a turn reads nothing of it.",
+          "description": "When its data was observed, if the backend knows: the connector sync its snapshot was\ntaken at, or the upload of its file. An Ingest records it on the transaction of each\nchunk of the source's rows, whose statements hold from then; a turn's dry runs read their\nrows so too, so a preview weighs a document against them as a load would.",
           "anyOf": [
             {
               "$ref": "#/$defs/Observed"

@@ -32,7 +32,7 @@ import {
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { useDocumentNames } from "../documents/documents-api";
-import { spanAnchor } from "../documents/model";
+import { evidenceShapeText, spanAnchor } from "../documents/model";
 import { reviewQueries } from "../reviews/api";
 import { ReviewGroups } from "../reviews/groups";
 import { isUndoableLink, markDiffering, unrejected } from "../reviews/model";
@@ -1032,6 +1032,8 @@ function Entity({
                       >
                         Open in {docName(rv.documentId)}
                       </Link>
+                      {evidenceShapeText(rv.evidenceShape) &&
+                        ` · ${evidenceShapeText(rv.evidenceShape)}`}
                       {rv.suggestedLink &&
                         ` · suggested link: ${rv.suggestedLink}`}
                     </small>

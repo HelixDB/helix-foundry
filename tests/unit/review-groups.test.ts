@@ -86,6 +86,21 @@ describe("Needs review's groups", () => {
       ["May be this entity", ["one"]],
     ]);
   });
+  it("part claims held for an end their passage doesn't name from unsure ones, by score", () => {
+    const groups = model.reviewGroups([
+      { ...review("low_confidence", 0, "unsure"), confidence: 0.72 },
+      { ...review("low_confidence", 0, "capped"), confidence: 0.95 },
+      { ...review("low_confidence", 0, "unscored") },
+      { ...review("attribute_low_confidence", 0, "value"), confidence: 0.9 },
+    ]);
+    expect(
+      groups.map((g) => [g.title, g.items.map((i) => i.review.tag)]),
+    ).toEqual([
+      ["The model wasn’t sure", ["unsure", "unscored"]],
+      ["Not sure who it’s about", ["capped"]],
+      ["Not sure whose value it is", ["value"]],
+    ]);
+  });
   it("gather reasons this site doesn't know into one, after the ones it does", () => {
     const groups = model.reviewGroups([
       review("newer_reason"),

@@ -892,6 +892,8 @@ export const TOOL_LABELS: Record<string, string> = {
   violations: "Read rule breaks",
   history_of: "Read the history",
   changes: "Read the changes",
+  search_sections: "Searched documents",
+  read_section: "Read a document section",
   // The call, not its outcome: a refused answer is answered again.
   answer: "Answer",
   cannot_answer: "Can’t answer",
@@ -1165,6 +1167,8 @@ const targetText = (i: Record<string, unknown>, known: Known) => {
  * stepInput({ callId: "b", tool: "evidence", input: { target: { fact: { link: "placed_by", subject: "n1", object: "n2" } } } }, NOTHING_KNOWN); // "For a placed_by fact"
  * stepInput({ callId: "d", tool: "history_of", input: { target: { entity: "n1" }, prop: "status", before: "01JB2", limit: 20 } }, NOTHING_KNOWN); // "History of the status of an entity, further back"
  * stepInput({ callId: "e", tool: "changes", input: { since: "2026-10-01T00:00:00Z", limit: 10 } }, NOTHING_KNOWN); // "Changes since “2026-10-01T00:00:00Z”"
+ * stepInput({ callId: "f", tool: "search_sections", input: { text: "Acme", or: ["Globex"], scope: { sets: "all" } } }, NOTHING_KNOWN); // "“Acme” or “Globex”, in every document set"
+ * stepInput({ callId: "g", tool: "read_section", input: { doc_id: "doc_1", section: 2 } }, NOTHING_KNOWN); // "Section 3 of a document"
  */
 export function stepInput(step: AskStep, known: Known): string | undefined {
   const i = isRecord(step.input) ? step.input : {};
@@ -1172,6 +1176,38 @@ export function stepInput(step: AskStep, known: Known): string | undefined {
   switch (step.tool) {
     case "describe_type":
       return type && `The ${type} type`;
+    case "search_sections": {
+      // Its texts, then where it looked: a scope this site doesn't know
+      // says nothing of where.
+      const texts = [i.text, ...(Array.isArray(i.or) ? i.or : [])].flatMap(
+        (t) => (str(t)?.trim() ? [quoted(str(t)!)] : []),
+      );
+      const scope = isRecord(i.scope) ? i.scope : {};
+      const handles = Array.isArray(scope.entities) ? scope.entities : [];
+      const where =
+        scope.sets === "all"
+          ? "in every document set"
+          : str(scope.set)
+            ? `in the ${str(scope.set)} documents`
+            : handles.length
+              ? `in documents naming ${handles
+                  .map((h) => {
+                    const e = known.entity(h);
+                    return e ? refText(e, known) : "an entity";
+                  })
+                  .join(", ")}`
+              : Array.isArray(scope.documents)
+                ? `in ${plural(scope.documents.length, "document")}`
+                : undefined;
+      const said = [texts.join(" or "), where].filter(Boolean).join(", ");
+      return said ? said.charAt(0).toUpperCase() + said.slice(1) : undefined;
+    }
+    case "read_section": {
+      const section = position(i.section);
+      return section === undefined
+        ? undefined
+        : `Section ${section + 1} of a document`;
+    }
     case "find_entities": {
       // Without a type it searched every type, as its heading says.
       const value = str(i.value);

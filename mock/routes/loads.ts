@@ -1559,6 +1559,14 @@ function read(j: StoredJob, documentId: string, at: string) {
     {
       status: "extracted",
       ...counts,
+      // What it made of the name decisions it met (contract 4.22.0), as
+      // the backend keeps them on the document's row: none, left out.
+      ...(outcome.kind === "ingested" && outcome.carried
+        ? { resolvedCarried: outcome.carried }
+        : {}),
+      ...(outcome.kind === "ingested" && outcome.names.length
+        ? { names: outcome.names }
+        : {}),
       usdMicros: String(DOCUMENT_USD_MICROS),
       finishedAt: at,
     },

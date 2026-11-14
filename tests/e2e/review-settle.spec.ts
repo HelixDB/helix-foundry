@@ -128,6 +128,98 @@ test("settles a suggested candidate, reloads linked, and removes the saved decis
   await expect(page.getByLabel("Link this name to")).toBeVisible();
 });
 
+// Contract 4.22.0: a name linked to a record in one document is linked in
+// every other document of the next load that leaves it for a person, and
+// each document says what the load made of the name choices it met.
+test("carries a name's choice to other documents, and says what came of each", async ({
+  page,
+}) => {
+  await setup(page, [
+    {
+      name: "names-one.md",
+      text: "# Names one\n\nGlobexx Corporation signed. Initechh LLC signed.\n",
+    },
+    {
+      name: "names-two.md",
+      text: "# Names two\n\nGlobexx Corporation agreed. Initechh LLC agreed.\n",
+    },
+    {
+      name: "names-three.md",
+      text: "# Names three\n\nGlobexx Corporation paid.\n",
+    },
+  ]);
+  const open = async (name: string, tab: RegExp) => {
+    await page.goto(`${O}/documents`);
+    await page
+      .getByRole("grid", { name: "Documents" })
+      .getByRole("link", { name, exact: true })
+      .click();
+    await page.getByRole("tab", { name: tab }).click();
+  };
+  const settle = async (quote: string, record: string) => {
+    const row = page.locator("li.dc-review").filter({ hasText: quote });
+    await choose(row.getByLabel("Link this name to"), record);
+    await expect(row).toContainText(
+      `Links this name to ${record} here and in other documents where nothing else links that name, from the next load.`,
+    );
+    await row.getByRole("button", { name: "Settle review" }).click();
+    await expect(
+      row.getByText("Decision saved. Reload to apply."),
+    ).toBeVisible();
+  };
+  // Not in data says it's for this document only.
+  await open("names-one.md", /^Needs review/);
+  await choose(
+    page
+      .locator("li.dc-review")
+      .filter({ hasText: "Initechh LLC signed" })
+      .getByLabel("Link this name to"),
+    "Not in data",
+  );
+  await expect(
+    page.getByText(
+      "Not in data is for this document only, from the next load. Reload to apply.",
+    ),
+  ).toBeVisible();
+  await settle("Globexx Corporation signed", "Globex Corporation");
+  await settle("Initechh LLC signed", "Initech LLC");
+  // Another document chooses another record for the same name.
+  await open("names-two.md", /^Needs review/);
+  await settle("Globexx Corporation agreed", "Tidewell Energy Corporation");
+  await loadVersion3(page);
+
+  // Its own choice written, and the first document's carried.
+  await open("names-two.md", /^Details/);
+  const choices = page.getByRole("list", { name: "Name choices" });
+  await expect(choices.getByRole("listitem")).toHaveText([
+    "globexx corporation · Customer · Your choice for this documentWritten to this load",
+    "initechh llc · Customer · A choice made in another documentWritten to this load",
+  ]);
+  await expect(
+    page.locator(".hf-kv-row").filter({
+      hasText: "Names linked by a choice made in another document",
+    }),
+  ).toContainText("1");
+  await page.getByRole("tab", { name: /^Entities/ }).click();
+  await expect(
+    page.getByText("Linked by a person’s choice in another document"),
+  ).toBeVisible();
+  // Two documents chose different records for the name: neither carries,
+  // and it is said once.
+  await open("names-three.md", /^Details/);
+  await expect(choices.getByRole("listitem")).toHaveText([
+    "globexx corporation · Customer · A choice made in another documentAnother record goes by this name too, or people chose different records for it",
+  ]);
+  await expect(
+    page.locator(".hf-kv-row").filter({
+      hasText: "Names linked by a choice made in another document",
+    }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("main")).not.toContainText(
+    /two_rows|not_asked|not_named|refused|\balias\b|\bresolve\b/,
+  );
+});
+
 test("settles not-in-data without creating an entity or link", async ({
   page,
 }) => {

@@ -31,6 +31,8 @@ import {
   parseEntity,
   parseEntityId,
   parseFactEvidence,
+  parseLoadReviews,
+  loadReviewsRequest,
   heldClaimDocs,
   isLayoutProp,
   nameLinksRequest,
@@ -1241,6 +1243,9 @@ describe("an entity's page, laid out", () => {
     expect(resolvedByText("own_name")).toBe(
       "By an identifier used as its name",
     );
+    expect(resolvedByText("carried")).toBe(
+      "Linked by a person’s choice in another document",
+    );
     for (const r of ["name", "key", undefined, "later"])
       expect(resolvedByText(r)).toBeUndefined();
   });
@@ -1269,5 +1274,61 @@ describe("an entity's page, laid out", () => {
       match: "Globex",
       after: "",
     });
+  });
+});
+
+// Contract 4.18.0: a held claim's evidence shape and an unmatched link's end
+// types, read wherever reviews are, each only when stored.
+describe("review shapes", () => {
+  const at = { doc_id: "doc_1", section: 0, start: 0, end: 4, quote: "Text" };
+  it("asks for them", () => {
+    expect(JSON.stringify(loadReviewsRequest(SCOPE, 0))).toContain(
+      '"evidence_shape","subject_type","object_type"',
+    );
+    expect(JSON.stringify(documentRequest(SCOPE, "doc_1"))).toContain(
+      '"evidence_shape","subject_type","object_type"',
+    );
+  });
+
+  it("reads them as stored, and leaves off what isn't", () => {
+    const reviews = parseLoadReviews({
+      reviews: [
+        {
+          $id: 1,
+          ...at,
+          reason: "low_confidence",
+          evidence_shape: "list_item",
+        },
+        // A shape this site doesn't know is kept: the card words none.
+        { $id: 2, ...at, reason: "low_confidence", evidence_shape: "sung" },
+        {
+          $id: 3,
+          ...at,
+          reason: "unmatched",
+          subject_type: "person",
+          object_type: " Mentee ",
+        },
+        // One end named only: no line half said.
+        { $id: 4, ...at, reason: "unmatched", subject_type: "person" },
+        {
+          $id: 5,
+          ...at,
+          reason: "unmatched",
+          subject_type: "",
+          object_type: "x",
+        },
+        { $id: 6, ...at, reason: "low_confidence", evidence_shape: 7 },
+      ],
+    });
+    expect(reviews.map((r) => [r.evidenceShape, r.endTypes])).toEqual([
+      ["list_item", undefined],
+      ["sung", undefined],
+      [undefined, { subject: "person", object: "Mentee" }],
+      [undefined, undefined],
+      [undefined, undefined],
+      [undefined, undefined],
+    ]);
+    expect("evidenceShape" in reviews[2]!).toBe(false);
+    expect("endTypes" in reviews[3]!).toBe(false);
   });
 });

@@ -722,11 +722,14 @@ WHERE load_id=? AND document_id=?`, n, n, loadID, docID)
 // a job sent with document docID, where the job keeps no row of the
 // document's own event: a document sent again whose event is failed still
 // lists what became of each withdraw, taken back before the document was
-// read (contract 4.16.0). The job's load is the one its row names, while
+// read (contract 4.16.0), and what its settling wrote of its names before
+// it failed (contract 4.22.0), which join the row's names
+// (mergeFoundryDocumentNames). The job's load is the one its row names, while
 // workerID holds its lease; ErrNotFound means it lost it, and nothing was
 // written.
-func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome) error {
-	if len(outcomes) == 0 {
+func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome,
+	names []model.FoundryDocumentName) error {
+	if len(outcomes) == 0 && len(names) == 0 {
 		return nil
 	}
 	return s.WithTx(ctx, func(txDB Store) error {
@@ -737,6 +740,9 @@ func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, worke
 			if err == sql.ErrNoRows {
 				return ErrNotFound
 			}
+			return err
+		}
+		if err := tx.mergeFoundryDocumentNames(ctx, loadID, docID, names); err != nil {
 			return err
 		}
 		return tx.recordFoundryReleaseOutcomes(ctx, loadID, docID, outcomes, true)

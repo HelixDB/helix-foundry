@@ -16,6 +16,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
@@ -426,6 +427,55 @@ func TestSettleValueRefused(t *testing.T) {
 		_, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(propChoice(propText("Chosen"))))
 		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), want) || len(db.saved) != 0 {
 			t.Fatalf("%v: %v", saveErr, err)
+		}
+	}
+}
+
+// A name linked to a record no decision has linked it to yet is one more
+// name every load carries to every document (4.22.0): past what a load can
+// be sent, the answer says so with what to do instead.
+func TestSettleResolvePastTheAliasCap(t *testing.T) {
+	s, db, _ := reviewService(t, `{"items":[{"reason":"unresolved","type":"Customer","doc_id":"doc-a","norm_name":"variant"}]}`)
+	db.saveErr = foundrystore.FoundryAliasesFull
+	_, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(resolveChoice("customer-1")))
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "links 10000 different names to records") || len(db.saved) != 0 {
+		t.Fatalf("%v", err)
+	}
+}
+
+// What a load did with a document's names comes back as the store keeps
+// it, each refusal's reason only on a refusal, with the entities a carried
+// name linked.
+func TestFoundryExtractionNames(t *testing.T) {
+	id := "dec-1"
+	out := foundryExtractionProto(&foundrymodel.FoundryDocumentExtraction{
+		Status: foundrymodel.FoundryExtractionExtracted, Counts: foundrymodel.FoundryExtractionCounts{ResolvedCarried: 2},
+		Names: []foundrymodel.FoundryDocumentName{
+			{Decision: foundrymodel.FoundryNameResolve, Type: "Customer", NormName: "acme", DecisionID: &id, Outcome: foundrymodel.FoundryNameWritten},
+			{Decision: foundrymodel.FoundryNameAlias, Type: "Customer", NormName: "helio", Outcome: foundrymodel.FoundryNameRefused, Reason: "a_later_reason"},
+		},
+	})
+	reason := "a_later_reason"
+	want := []*foundryv1.FoundryDocumentName{
+		{Decision: "resolve", Type: "Customer", NormName: "acme", DecisionId: &id, Outcome: "written"},
+		{Decision: "alias", Type: "Customer", NormName: "helio", Outcome: "refused", Reason: &reason},
+	}
+	if out.GetResolvedCarried() != 2 || len(out.GetNames()) != len(want) {
+		t.Fatalf("%+v", out)
+	}
+	for i := range want {
+		if !proto.Equal(out.GetNames()[i], want[i]) {
+			t.Fatalf("name %d = %+v, want %+v", i, out.GetNames()[i], want[i])
+		}
+	}
+	// The site reads these JSON names.
+	raw, err := protojson.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"resolvedCarried":2`, `"normName":"acme"`, `"decisionId":"dec-1"`, `"outcome":"refused"`, `"reason":"a_later_reason"`} {
+		if !strings.Contains(strings.ReplaceAll(string(raw), " ", ""), field) {
+			t.Fatalf("%s lacks %s", raw, field)
 		}
 	}
 }

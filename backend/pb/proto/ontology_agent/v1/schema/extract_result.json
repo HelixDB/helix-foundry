@@ -377,6 +377,12 @@
           "format": "uint",
           "minimum": 0
         },
+        "carried": {
+          "description": "By its fullest name, a name a person linked to the entity once for the whole load\n(an `alias` decision).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "created": {
           "description": "Created by the document.",
           "type": "integer",
@@ -430,7 +436,8 @@
         "alias",
         "legal_form",
         "part_name",
-        "created"
+        "created",
+        "carried"
       ]
     }
   }

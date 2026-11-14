@@ -1,6 +1,7 @@
 import type {
   DocumentExtraction,
   DocumentMediaType,
+  DocumentNameOutcome,
   DocumentRead,
   DocumentReadOutcome,
   DocumentSetReader,
@@ -1524,6 +1525,36 @@ const oneCandidate = {
   title: "May be this entity",
   text: "The name points at one entity, but not firmly enough to store what the document says of it here: it may be only part of that entity’s name, or match it only loosely, such as by a short name, another legal form or a code the document calls it by. Link the name to that entity if it’s the one meant, and the next load stores it.",
 };
+// A held claim the checker scored high whose end its part of the document
+// doesn't name (contract 4.18.0): the engine holds it under the same
+// reasons as an unsure one, whatever its score.
+const capped = {
+  low_confidence: {
+    title: "Not sure who it’s about",
+    text: "The checker scored it high, but this part of the document doesn’t name who or what it’s about, so it was held for a person. Check the quote names the right one.",
+  },
+  attribute_low_confidence: {
+    title: "Not sure whose value it is",
+    text: "The checker scored the value high, but this part of the document doesn’t name who or what it belongs to, so it was held for a person. Check the quote names the right one.",
+  },
+};
+/**
+ * Whether a review is a claim or value held because its part of the
+ * document doesn't name its end, not for an unsure score: an unsure reason
+ * the checker scored 0.9 or more (contract 4.18.0's cap).
+ *
+ * @example
+ * heldUnnamed("low_confidence", 0.95); // true
+ * heldUnnamed("low_confidence", 0.72); // false
+ * heldUnnamed("unverified", 0.95); // false
+ */
+export const heldUnnamed = (
+  reason?: string,
+  confidence?: number,
+): reason is keyof typeof capped =>
+  (reason === "low_confidence" || reason === "attribute_low_confidence") &&
+  confidence !== undefined &&
+  confidence >= 0.9;
 // A reason a newer engine gives: nothing is known of it but that it waits.
 const newReason = {
   title: "Held for a person to check",
@@ -1532,13 +1563,120 @@ const newReason = {
 
 /**
  * A review's reason as a title and a sentence for people who didn't build the
- * ontology. `candidates` is how many entities it offers.
+ * ontology. `candidates` is how many entities it offers; `confidence` is the
+ * checker's score, which tells an unsure claim from one held because its
+ * part of the document doesn't name its end (heldUnnamed).
  *
  * @example
  * reviewCopy("ambiguous", 2).title; // "Could mean more than one entity"
  * reviewCopy("ambiguous", 1).title; // "May be this entity"
+ * reviewCopy("low_confidence", 0, 0.72).title; // "The model wasn’t sure"
+ * reviewCopy("low_confidence", 0, 0.95).title; // "Not sure who it’s about"
  */
-export const reviewCopy = (reason?: string, candidates?: number) => {
+export const reviewCopy = (
+  reason?: string,
+  candidates?: number,
+  confidence?: number,
+) => {
   if (reason === "ambiguous" && candidates === 1) return oneCandidate;
+  if (heldUnnamed(reason, confidence)) return capped[reason];
   return reviews[(reason || "unverified") as ReviewReason] || newReason;
 };
+
+/**
+ * What a load made of a name decision it met in a document (contract
+ * 4.22.0), in plain words: written, nothing waiting on it, not named here,
+ * or refused for its reason. An outcome or reason this site doesn't know
+ * says only that it wasn't applied, never the code.
+ *
+ * @example
+ * nameOutcomeText({ outcome: "written" }); // "Written to this load"
+ * nameOutcomeText({ outcome: "refused", reason: "role_term" }); // "A role, like “the Customer”, not a name"
+ * nameOutcomeText({ outcome: "refused", reason: "new_rung" }); // "Not applied in this load"
+ */
+export function nameOutcomeText(n: DocumentNameOutcome): string {
+  switch (n.outcome) {
+    case "written":
+      return "Written to this load";
+    case "not_asked":
+      return "Nothing in this load waited on it";
+    case "not_named":
+      return "This document doesn’t name it";
+  }
+  if (n.outcome !== "refused") return "Not applied in this load";
+  switch (n.reason) {
+    case "absent":
+      return "The record chosen isn’t in this load";
+    case "bound":
+      return "This document already links the name another way; that changes when the document is read again";
+    case "collides":
+      return "Another name in this document is already that record";
+    case "differs":
+      return "The load no longer matches what the document gave; it applies when the document is read again";
+    case "too_large":
+      return "Too large to write in place; it applies when the document is read again";
+    case "two_rows":
+      return "Another record goes by this name too, or people chose different records for it";
+    case "role_term":
+      return "A role, like “the Customer”, not a name";
+    case "shared":
+      return "Another party in this document goes by it too";
+    case "identifier":
+      return "The document gives an ID that doesn’t match the record chosen";
+    case "other_identity":
+      return "The names show a different legal company";
+    case "not_replayed":
+      return "Not written in place; it applies when the document is read again";
+    default:
+      return "Not applied in this load";
+  }
+}
+
+/**
+ * Whose choice a name decision is: the document's own, or one made in
+ * another document and carried here; undefined for a kind this site
+ * doesn't know.
+ *
+ * @example
+ * nameDecisionText("alias"); // "A choice made in another document"
+ */
+export function nameDecisionText(decision?: string): string | undefined {
+  switch (decision) {
+    case "resolve":
+      return "Your choice for this document";
+    case "alias":
+      return "A choice made in another document";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * How a held claim's quote states it (a review's `evidence_shape`, contract
+ * 4.18.0), in plain words; undefined for none or a shape this site doesn't
+ * know, so no code shows.
+ *
+ * @example
+ * evidenceShapeText("table_row_or_cell"); // "A table row"
+ * evidenceShapeText("sung"); // undefined
+ */
+export function evidenceShapeText(shape?: string): string | undefined {
+  switch (shape) {
+    case "prose_sentence":
+      return "A sentence";
+    case "list_item":
+      return "A list item";
+    case "table_row_or_cell":
+      return "A table row";
+    case "header_title_or_form_field":
+      return "A heading or form field";
+    case "spread_across_sentences":
+      return "Across several sentences";
+    case "spread_across_sections":
+      return "Across sections";
+    case "implied":
+      return "Implied, not stated";
+    default:
+      return undefined;
+  }
+}

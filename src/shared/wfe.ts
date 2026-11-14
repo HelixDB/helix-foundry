@@ -1418,7 +1418,9 @@ export type AgentDraftView = {
     rev?: number;
     base_version?: string | null;
     items?: Record<string, AgentDraftItem>;
-    left_out?: { what: string; reason: string }[];
+    // `because` (contract 4.19.0): "not_assessed", {user_asked: {said}} or
+    // {documents_state: {route, item}}; readAgentBundle reads it.
+    left_out?: { what: string; reason: string; because?: unknown }[];
     questions?: AgentQuestion[];
   };
 };
@@ -1616,6 +1618,29 @@ export type DocumentExtraction = {
   // int64: what reading it cost, in millionths of a dollar.
   usdMicros?: string;
   finishedAt?: string | null;
+  // Names linked by a person's choice for them in another document
+  // (contract 4.22.0: an alias carried from a settled resolve).
+  resolvedCarried?: number;
+  // What the load made of each name decision it met here: the document's
+  // own resolves, and the choices carried from other documents.
+  names?: DocumentNameOutcome[];
+};
+
+/**
+ * v1FoundryDocumentNameOutcome (contract 4.22.0): a name decision the load
+ * met in a document. `decision` "resolve" is the document's own choice,
+ * "alias" one carried from another document; `outcome` "written",
+ * "not_asked" (nothing in the load waited on it), "not_named" (the document
+ * doesn't name it) or "refused", with `reason` saying why. Each is an open
+ * set: a newer engine may send others.
+ */
+export type DocumentNameOutcome = {
+  decision?: string;
+  type?: string;
+  normName?: string;
+  decisionId?: string;
+  outcome?: string;
+  reason?: string;
 };
 
 /**

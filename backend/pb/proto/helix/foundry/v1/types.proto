@@ -1066,6 +1066,36 @@ message FoundryDocumentExtraction {
   int32 resolved_name = 20;
   int32 resolved_alias = 21;
   int32 resolved_created = 22;
+  // Entities linked by a name a person linked to that record in another
+  // document, which the load carries to every document.
+  int32 resolved_carried = 23;
+  // What the load did with each decision on a name that met the document:
+  // its own name decisions, and the names carried from other documents
+  // where the load would otherwise have asked a person.
+  repeated FoundryDocumentName names = 24;
+}
+
+// FoundryDocumentName is what a load did with one decision on a name of a
+// document.
+message FoundryDocumentName {
+  // resolve (the document's own decision) or alias (a name a person linked
+  // to a record in another document, carried to this one).
+  string decision = 1;
+  // The entity type the name is of.
+  string type = 2;
+  // The name, normalized.
+  string norm_name = 3;
+  // The decision's id: of a resolve, the review decision's; of an alias, the
+  // decision that linked the name. Absent when the engine named none.
+  optional string decision_id = 4;
+  // written, not_asked (nothing in this load waited on it; it applies when
+  // the document is read again), not_named (the document doesn't name it)
+  // or refused.
+  string outcome = 5;
+  // Why it was refused, as the engine said it: absent, bound, collides,
+  // differs, too_large, two_rows, role_term, shared, identifier,
+  // other_identity, not_replayed, or a reason a later engine gives.
+  optional string reason = 6;
 }
 
 message FoundryExtractionError {

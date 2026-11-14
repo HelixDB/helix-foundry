@@ -816,6 +816,16 @@ func foundryExtractionProto(e *foundrymodel.FoundryDocumentExtraction) *foundryv
 		ResolvedName:          int32(c.ResolvedName),
 		ResolvedAlias:         int32(c.ResolvedAlias),
 		ResolvedCreated:       int32(c.ResolvedCreated),
+		ResolvedCarried:       int32(c.ResolvedCarried),
+	}
+	for _, n := range e.Names {
+		name := &foundryv1.FoundryDocumentName{Decision: string(n.Decision), Type: n.Type, NormName: n.NormName, DecisionId: n.DecisionID,
+			Outcome: string(n.Outcome)}
+		if n.Reason != "" {
+			reason := string(n.Reason)
+			name.Reason = &reason
+		}
+		out.Names = append(out.Names, name)
 	}
 	if e.Error != nil {
 		out.Error = &foundryv1.FoundryExtractionError{Code: string(e.Error.Code), Retryable: e.Error.Retryable}

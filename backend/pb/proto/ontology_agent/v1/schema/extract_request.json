@@ -11,12 +11,17 @@
         "auto": false
       }
     },
+    "certified_acceptance": {
+      "description": "Whether a fact is accepted, or held, by people's labels of its cell (its link, evidence\nshape and score tenth) rather than by the verifier's score alone: `\"off\"`, the default,\nor `{\"on\": certificate}`. A certificate judges only the claims of its `ontology_version`\nscored by its `verifier` under its `prompt_version`, all three the run's; any other is\nlogged and judges nothing. One whose version is the request's and that names a link\n`ontology_toml` lacks refuses the request. The document transactions of a run that\njudges under one record the certificate's id, and the artifact key names it.",
+      "$ref": "#/$defs/CertifiedAcceptance",
+      "default": "off"
+    },
     "database": {
       "description": "The graph written to; one request at a time writes to it.",
       "type": "string"
     },
     "decisions": {
-      "description": "Settled review decisions snapshotted for this load: at most 10,000, never truncated.\nTwo of one identity, a resolve decision without a document or a normalized name, or a\ndecision giving one of `decision_id` and `decided_at` without the other, refuse the\nrequest; one that no longer fits `ontology_toml` is counted (`totals.stale_decisions`)\nand left out, except a resolve decision of a type it has, whose name is reviewed again\nrather than matched another way. A value a property decision overwrites keeps the\ndecision's `decision_id` and `decided_at`, so the load tells when it was decided.",
+      "description": "Settled review decisions snapshotted for this load: at most 10,000 of each kind, never\ntruncated. Two of one identity, a resolve decision without a document or a normalized\nname, an alias without a normalized name or an entity, or a decision giving one of\n`decision_id` and `decided_at` without the other, refuse the request; one that no longer\nfits `ontology_toml` is counted (`totals.stale_decisions`) and left out, except a resolve\ndecision of a type it has, whose name is reviewed again rather than matched another way.\nA value a property decision overwrites keeps the decision's `decision_id` and\n`decided_at`, so the load tells when it was decided. A resolve decision sent with a\ndocument the load holds writes what the name held back, where the load still asks about\nit; send every alias with every Extract.",
       "$ref": "#/$defs/Decisions",
       "default": []
     },
@@ -105,6 +110,86 @@
     "AzureEndpoint": {
       "description": "An Azure OpenAI resource's endpoint: https on a host of `openai.azure.com`,\n`cognitiveservices.azure.com` or `services.ai.azure.com`, with no port, user, query or\nfragment, and no path but `/openai/v1`. It is kept as `{origin}/openai/v1`.",
       "type": "string"
+    },
+    "Bucket": {
+      "description": "A tenth of verifier scores, from the review cut (0.6) up: the bands a review queue draws its\nrandom slice from. Below the review cut a claim is refuted, never held, so no bucket.",
+      "oneOf": [
+        {
+          "description": "From 0.6 to under 0.7.",
+          "type": "string",
+          "const": "0.6"
+        },
+        {
+          "description": "From 0.7 to under 0.8.",
+          "type": "string",
+          "const": "0.7"
+        },
+        {
+          "description": "From 0.8 to under 0.9.",
+          "type": "string",
+          "const": "0.8"
+        },
+        {
+          "description": "From 0.9: what the bar accepts.",
+          "type": "string",
+          "const": "0.9"
+        }
+      ]
+    },
+    "Certificate": {
+      "description": "The labels of facts of one ontology version, judged by one verifier model under one prompt\nversion, by cell. No cell is in it twice, no cell's counts overflow, and its id is the hash\nof what it holds.",
+      "type": "object",
+      "properties": {
+        "cells": {
+          "description": "Each cell's labels; a cell is listed once.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WireCell"
+          }
+        },
+        "ontology_version": {
+          "description": "The ontology version the labelled claims were judged under: the request's\n`ontology_version`, or it judges nothing.",
+          "type": "string"
+        },
+        "prompt_version": {
+          "description": "The engine's prompt version they were scored under: the engine's, or it judges nothing.",
+          "type": "string"
+        },
+        "verifier": {
+          "description": "The verifier model that scored them, by its id (provider, model and effort, such as\n`anthropic/claude-sonnet-5-5@high`): the request's verifier, or it judges nothing.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ontology_version",
+        "verifier",
+        "prompt_version",
+        "cells"
+      ]
+    },
+    "CertifiedAcceptance": {
+      "description": "Whether facts are accepted by certificate: a request's switch, off by default.",
+      "oneOf": [
+        {
+          "description": "Every claim is judged under the fixed cuts.",
+          "type": "string",
+          "const": "off"
+        },
+        {
+          "description": "The facts of the cells this certificate decides are judged by their labels, under the\nversion, verifier and prompts it was made for: a certified cell's accepted under the bar,\na breached cell's held at the bar too. Claims already held are not released by it.",
+          "type": "object",
+          "properties": {
+            "on": {
+              "$ref": "#/$defs/Certificate"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "on"
+          ]
+        }
+      ]
     },
     "CompatApi": {
       "description": "The OpenAI API an OpenAI-compatible server speaks.",
@@ -343,15 +428,111 @@
             "decision_id",
             "decided_at"
           ]
+        },
+        {
+          "description": "A name of a type a person linked to an entity, carried to every document of the load:\nwhere a document's entity of the type has this as its fullest name and the names rung\nfinds no other entity for it, the name links the chosen entity, as a name the person\ngave it. A document's own resolve decision of the name wins. Two aliases of one name\nthat choose different entities carry neither. Send them with every Extract, as property\ndecisions go, to link the name in every document the request lists and in those the\nload holds.",
+          "type": "object",
+          "properties": {
+            "decided_at": {
+              "description": "When it was settled.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "decision_id": {
+              "description": "The decision's id, as the backend keeps it.",
+              "type": "string"
+            },
+            "entity_key": {
+              "description": "The entity chosen, as a resolve decision names it. Never null: \"not in data\" is one\ndocument's to say.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "alias"
+            },
+            "norm_name": {
+              "description": "The name, normalized as a resolve decision's is.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "type",
+            "norm_name",
+            "entity_key",
+            "decision_id",
+            "decided_at"
+          ]
         }
       ]
     },
     "Decisions": {
       "type": "array",
+      "allOf": [
+        {
+          "contains": {
+            "properties": {
+              "kind": {
+                "const": "resolve"
+              }
+            }
+          },
+          "maxContains": 10000,
+          "minContains": 0
+        },
+        {
+          "contains": {
+            "properties": {
+              "kind": {
+                "const": "prop"
+              }
+            }
+          },
+          "maxContains": 10000,
+          "minContains": 0
+        },
+        {
+          "contains": {
+            "properties": {
+              "kind": {
+                "const": "release"
+              }
+            }
+          },
+          "maxContains": 10000,
+          "minContains": 0
+        },
+        {
+          "contains": {
+            "properties": {
+              "kind": {
+                "const": "withdraw"
+              }
+            }
+          },
+          "maxContains": 10000,
+          "minContains": 0
+        },
+        {
+          "contains": {
+            "properties": {
+              "kind": {
+                "const": "alias"
+              }
+            }
+          },
+          "maxContains": 10000,
+          "minContains": 0
+        }
+      ],
       "items": {
         "$ref": "#/$defs/Decision"
       },
-      "maxItems": 10000
+      "maxItems": 50000
     },
     "Endpoint": {
       "description": "The endpoint every model of a request is called on.",
@@ -810,6 +991,69 @@
       "minLength": 1,
       "pattern": "^[A-Za-z0-9_-]+$"
     },
+    "Shape": {
+      "description": "How the document carries a claim ([`Shape::of`]).",
+      "oneOf": [
+        {
+          "description": "Plain text whose quote's passage (its sentence and one either side) names every end.",
+          "type": "string",
+          "const": "prose_sentence"
+        },
+        {
+          "description": "A list item: a bulleted or numbered line, or a value of a comma list under a label.",
+          "type": "string",
+          "const": "list_item"
+        },
+        {
+          "description": "A row or cell of a table.",
+          "type": "string",
+          "const": "table_row_or_cell"
+        },
+        {
+          "description": "A heading, the document's title, or a labelled field (\"Status: open\").",
+          "type": "string",
+          "const": "header_title_or_form_field"
+        },
+        {
+          "description": "Plain text whose section names every end, one of them outside the quote's passage.",
+          "type": "string",
+          "const": "spread_across_sentences"
+        },
+        {
+          "description": "Plain text with an end its section doesn't name: the document names it elsewhere, as\nin a header or a heading above.",
+          "type": "string",
+          "const": "spread_across_sections"
+        },
+        {
+          "description": "Plain text with an end the document names nowhere.",
+          "type": "string",
+          "const": "implied"
+        }
+      ]
+    },
+    "Tally": {
+      "description": "Labelled claims, and how many of them were wrong: never more than there are. A label that\ncan't tell isn't counted.",
+      "type": "object",
+      "properties": {
+        "errors": {
+          "description": "Of them, those labelled wrong: at most `n`.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "n": {
+          "description": "Labelled claims, those that can't tell left out.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "errors"
+      ]
+    },
     "Value": {
       "description": "A scalar property decision. Objects and arrays are refused at the contract boundary.",
       "anyOf": [
@@ -825,6 +1069,37 @@
         {
           "type": "number"
         }
+      ]
+    },
+    "WireCell": {
+      "description": "A cell and its labels, as the contract writes them.",
+      "type": "object",
+      "properties": {
+        "bucket": {
+          "$ref": "#/$defs/Bucket"
+        },
+        "learn": {
+          "description": "The labels of claims of documents in the learn half, which picks the cells to test.",
+          "$ref": "#/$defs/Tally"
+        },
+        "link": {
+          "type": "string"
+        },
+        "shape": {
+          "$ref": "#/$defs/Shape"
+        },
+        "test": {
+          "description": "The labels of claims of documents in the held-out half, which tests them.",
+          "$ref": "#/$defs/Tally"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "link",
+        "shape",
+        "bucket",
+        "learn",
+        "test"
       ]
     }
   }

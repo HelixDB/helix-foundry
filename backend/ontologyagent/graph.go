@@ -135,7 +135,8 @@ type ExtractRequest struct {
 	DryRun       bool              `json:"dry_run"`
 	Documents    []ExtractDocument `json:"documents"`
 	Limits       ExtractLimits     `json:"limits"`
-	// Decisions are ontology-wide overrides for this request (at most 10,000).
+	// Decisions are ontology-wide overrides for this request: at most
+	// 10,000 of each kind and 50,000 in all (model.FoundryExtractKindDecisionsMax).
 	Decisions []ExtractDecision `json:"decisions,omitempty"`
 	// Models are the extraction's models, resolved for the workspace; the
 	// key goes in the call's metadata.
@@ -144,6 +145,13 @@ type ExtractRequest struct {
 	// extracted; one the load doesn't hold is nothing to remove.
 	Remove []string `json:"remove,omitempty"`
 }
+
+// AliasDecision is the wire kind of an alias (contract 4.22.0): a name of a
+// type that a person linked to an entity, by a resolve decision of one
+// document, carried to every document of the load. The worker derives one
+// from each such resolve as it sends an Extract; no store keeps one, and
+// model.FoundryReviewDecision.Validate refuses the kind, so none can be.
+const AliasDecision model.FoundryReviewDecisionKind = "alias"
 
 // ExtractDecision is one settled review, internally tagged by kind.
 // Resolve's entity_key is explicitly null for "not in data"; prop's value
@@ -171,10 +179,20 @@ type ExtractDecision struct {
 }
 
 // MarshalJSON writes a release, or a withdraw (contract 4.16.0: the release
-// as it was sent, with kind withdraw), without the fields it refuses: the
-// engine reads a decision strictly, and a resolve's entity_key is written
-// even when null.
+// as it was sent, with kind withdraw), and an alias, without the fields it
+// refuses: the engine reads a decision strictly, and a resolve's entity_key
+// is written even when null.
 func (d ExtractDecision) MarshalJSON() ([]byte, error) {
+	if d.Kind == AliasDecision {
+		return json.Marshal(struct {
+			Kind       model.FoundryReviewDecisionKind `json:"kind"`
+			Type       string                          `json:"type"`
+			NormName   string                          `json:"norm_name"`
+			EntityKey  *string                         `json:"entity_key"`
+			DecisionID string                          `json:"decision_id"`
+			DecidedAt  time.Time                       `json:"decided_at"`
+		}{d.Kind, d.Type, d.NormName, d.EntityKey, d.DecisionID, d.DecidedAt})
+	}
 	if d.Kind == model.FoundryReviewRelease || d.Kind == model.FoundryReviewWithdraw {
 		return json.Marshal(struct {
 			Kind       model.FoundryReviewDecisionKind `json:"kind"`
@@ -542,6 +560,9 @@ type ResolvedCounts struct {
 	PartName  uint64 `json:"part_name"`
 	OwnName   uint64 `json:"own_name"`
 	Created   uint64 `json:"created"`
+	// Carried are entities linked by an alias, as a person's word with no
+	// review (contract 4.22.0).
+	Carried uint64 `json:"carried"`
 }
 
 // DocumentUsage is what one document spent.
@@ -572,6 +593,30 @@ type DocumentEvent struct {
 	// each withdraw, first. Counts counts reviews, of which one decision may
 	// name several, and no withdraw.
 	Releases []DocumentRelease `json:"releases"`
+	// Names are what the run did with each resolve decision of the document
+	// and each alias that met a name of it where the names rung asked
+	// (contract 4.22.0): empty for a duplicate, an out_of_scope document and
+	// one that failed before its commit.
+	Names []NamedDecision `json:"names"`
+}
+
+// NamedDecision is what a run did with one name decision of a document
+// (extract_event.json $defs/NamedDecision). DecisionID is nil when the
+// request named none.
+type NamedDecision struct {
+	Decision   model.FoundryNameDecision `json:"decision"`
+	Type       string                    `json:"type"`
+	NormName   string                    `json:"norm_name"`
+	DecisionID *string                   `json:"decision_id"`
+	Outcome    NameOutcome               `json:"outcome"`
+}
+
+// NameOutcome is what became of a name decision: written, not_asked,
+// not_named, or refused for Reason (the engine's NameRefusal, kept as it
+// came, as ReleaseOutcome.Reason is).
+type NameOutcome struct {
+	Kind   model.FoundryNameOutcomeKind `json:"kind"`
+	Reason model.FoundryNameRefusal     `json:"reason,omitempty"`
 }
 
 // DocumentRelease is what a run did with one release decision of a document.
@@ -611,7 +656,10 @@ func DecodeArtifact(data []byte) (Artifact, error) {
 }
 
 // DecodeDocumentEvent reads a document event, refusing an outcome this
-// contract doesn't name or one missing what its kind needs.
+// contract doesn't name or one missing what its kind needs, a release that
+// names no decision or outcome, a name decision of a kind or outcome it
+// doesn't know, and a refusal without its reason. Releases and names it
+// lacks read as none.
 func DecodeDocumentEvent(data []byte) (DocumentEvent, error) {
 	var raw struct {
 		DocumentEvent
@@ -662,6 +710,20 @@ func DecodeDocumentEvent(data []byte) (DocumentEvent, error) {
 	for _, r := range e.Releases {
 		if r.DecisionID == "" || r.Outcome.Kind == "" || (r.Outcome.Kind == model.FoundryReleaseOutcomeRefused) != (r.Outcome.Reason != "") {
 			return DocumentEvent{}, fmt.Errorf("document %s has a release that names no decision or outcome, or a refusal without its reason", e.DocID)
+		}
+	}
+	for _, n := range e.Names {
+		known := (n.Decision == model.FoundryNameResolve || n.Decision == model.FoundryNameAlias) && n.Type != "" && n.NormName != ""
+		switch n.Outcome.Kind {
+		case model.FoundryNameWritten, model.FoundryNameNotAsked, model.FoundryNameNotNamed:
+			known = known && n.Outcome.Reason == ""
+		case model.FoundryNameRefused:
+			known = known && n.Outcome.Reason != ""
+		default:
+			known = false
+		}
+		if !known {
+			return DocumentEvent{}, fmt.Errorf("document %s has a name decision of an unknown kind or outcome, or a refusal without its reason", e.DocID)
 		}
 	}
 	return e, nil

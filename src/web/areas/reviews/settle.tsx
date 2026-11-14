@@ -185,7 +185,11 @@ function ClaimWritten({
 
 /**
  * Settles a review of the load the page shows (`load`); only the current one
- * settles. A name is saved as an override for the next load. An approval of
+ * settles. A name is saved as an override for the next load: linked to a
+ * record, the next load links that name in its other documents too, where
+ * the names rung would otherwise ask a person (contract 4.22.0, an alias the
+ * backend derives from the resolve), and Not
+ * in data is for this document only. An approval of
  * a held claim is written to the current load at once, by a job of its own:
  * its card says it is being written, or what it waits behind when another
  * job is running, then the claim is a fact and the card goes, or the card
@@ -370,6 +374,8 @@ export function SettleReview({
       setPending(false);
     }
   };
+  // The record a person picked, if any.
+  const chosen = review.candidates.find((c) => `key:${c.key}` === choice);
   // A name two candidates share reads with their keys.
   const label = (c: Candidate) => {
     const name = c.entity?.name ?? c.key;
@@ -576,7 +582,11 @@ export function SettleReview({
                     ? "A chosen value replaces the table’s in this load and every later one, even after the table changes. "
                     : ""
                 }It’s sent to this load at once, and later loads read it too. A document dated after your decision still wins.`
-              : "Applies from the next load. Reload to apply."}
+              : chosen
+                ? `Links this name to ${label(chosen)} here and in other documents where nothing else links that name, from the next load. Reload to apply.`
+                : choice === "none"
+                  ? "Not in data is for this document only, from the next load. Reload to apply."
+                  : "A record chosen links this name here and in other documents where nothing else links it; Not in data is for this document only. Either applies from the next load. Reload to apply."}
           </p>
           {(error || query.error) && (
             <p role="alert" className="hf-form-error">

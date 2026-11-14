@@ -52,6 +52,7 @@ type store interface {
 	graphproxy.Store
 	GetOntologyVersionScope(ctx context.Context, ontologyID, versionID string) ([]string, error)
 	ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error)
+	ListFoundryLoadAliases(ctx context.Context, loadID, afterID string, limit int) ([]*model.FoundryReviewDecision, error)
 	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
 	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)
@@ -72,7 +73,7 @@ type store interface {
 	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
 	FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error)
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
-	RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome) error
+	RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome, names []model.FoundryDocumentName) error
 }
 
 // agent is the sidecar; *ontologyagent.Client calls it.
@@ -143,7 +144,8 @@ func permanent(message string, err error) error {
 }
 
 // tooLarge fails for good an Extract past what one request takes, in
-// decisions (maxExtractDecisions) or in bytes (runner.maxRequestBytes),
+// decisions (maxKindDecisions of a kind, maxExtractDecisions in all) or in
+// bytes (runner.maxRequestBytes),
 // before it is sent: no retry of the same documents sends less.
 func tooLarge(message string, err error) error {
 	return &failure{Message: message, Permanent: true, TooLarge: true, Err: err}
@@ -1609,7 +1611,7 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 			Created: int(c.Created), IdentifiersUnverified: int(c.IdentifiersUnverified), AttributesOverEntries: int(c.AttributesOverEntries),
 			ResolvedUser: int(c.Resolved.User), ResolvedAdjudicated: int(c.Resolved.Adjudicated),
 			ResolvedIdentifier: int(c.Resolved.Identifier), ResolvedName: int(c.Resolved.Name),
-			ResolvedAlias: int(c.Resolved.Alias), ResolvedCreated: int(c.Resolved.Created),
+			ResolvedAlias: int(c.Resolved.Alias), ResolvedCreated: int(c.Resolved.Created), ResolvedCarried: int(c.Resolved.Carried),
 			Sections: int(event.Sections), Entities: int(c.Entities), Mentions: int(c.Mentions), Facts: int(c.Facts),
 			Reviews: int(c.Reviews - moved), Unresolved: int(c.Unresolved), Rejected: int(c.Rejected),
 		},
@@ -1618,6 +1620,23 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 	}
 	if key, ok := artifacts[event.DocID]; ok {
 		extraction.ArtifactKey = &key
+	}
+	// What became of each name decision is the document's, kept on its row;
+	// a resolve's isn't written to the load's list, whose applied status
+	// speaks of releases, withdraws and values.
+	refused := 0
+	for _, n := range event.Names {
+		nameOutcomes.WithLabelValues(string(n.Decision), string(n.Outcome.Kind), string(n.Outcome.Reason)).Inc()
+		if n.Outcome.Kind == model.FoundryNameRefused {
+			refused++
+		}
+		extraction.Names = append(extraction.Names, model.FoundryDocumentName{
+			Decision: n.Decision, Type: n.Type, NormName: n.NormName, DecisionID: n.DecisionID, Outcome: n.Outcome.Kind, Reason: n.Outcome.Reason,
+		})
+	}
+	if refused > 0 {
+		log.From(ctx).Info("graph job: a document's names were not settled", "job", job.ID, "document", event.DocID,
+			"refused", refused, "names", len(event.Names))
 	}
 	said := map[string]bool{}
 	for _, release := range event.Releases {
@@ -1660,8 +1679,9 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		// became of each (contract 4.16.0); one it failed because the load
 		// holds the document with other text refuses each of its releases
 		// as document_changed (contract 4.17.0). Approvals it says nothing
-		// of wait to be refused as document_failed.
-		err := r.db.RecordFoundryReleaseOutcomes(ctx, job.ID, r.workerID, event.DocID, extraction.Releases)
+		// of wait to be refused as document_failed. What a stopped run's
+		// settling wrote of its names joins the row's (contract 4.22.0).
+		err := r.db.RecordFoundryReleaseOutcomes(ctx, job.ID, r.workerID, event.DocID, extraction.Releases, extraction.Names)
 		if errors.Is(err, foundrystore.ErrNotFound) {
 			return retry("the job's lease was lost", err)
 		}

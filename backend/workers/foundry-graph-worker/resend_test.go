@@ -49,8 +49,8 @@ func resent(doc string, released int, releases string) string {
 	return `{"event":"document","doc_id":"` + doc + `","outcome":{"kind":"already_ingested"},"text_bytes":120,"sections":2,` +
 		`"counts":{"entities":0,"mentions":0,"facts":0,"reviews":0,"unresolved":0,"rejected":0,"attributes":0,"attribute_reviews":0,` +
 		`"prop_conflicts":0,"created":0,"identifiers_unverified":0,"attributes_over_entries":0,"released":` + strconv.Itoa(released) +
-		`,"release_refused":0,"release_missed":0,"resolved":{"user":0,"adjudicated":0,"identifier":0,"name":0,"alias":0,"legal_form":0,"part_name":0,"own_name":0,"created":0}},` +
-		noUsage + `,"releases":` + releases + `}`
+		`,"release_refused":0,"release_missed":0,"resolved":{"user":0,"adjudicated":0,"identifier":0,"name":0,"alias":0,"legal_form":0,"part_name":0,"own_name":0,"created":0,"carried":0}},` +
+		noUsage + `,"names":[],"releases":` + releases + `}`
 }
 
 // owes makes load-0 owe each of docs a resend for an approval, as the
@@ -582,7 +582,7 @@ func TestResendCarriesTheLoadsDecisions(t *testing.T) {
 		namedCustomers(t, h)
 		owes(h)
 		h.store.owedDecisions = owedDecisions(1)
-		for i := 0; i <= maxExtractDecisions; i++ {
+		for i := 0; i <= maxKindDecisions; i++ {
 			h.store.decisions = append(h.store.decisions, chosen(fmt.Sprintf("%026d", i+1), fmt.Sprint("customer ", i), "Acme"))
 		}
 		outcome := h.run(t, resendJob())
@@ -692,12 +692,12 @@ func TestResendSplitsWhatOneExtractCannotTake(t *testing.T) {
 		h := newHarness(t)
 		owes(h, "doc-a", "doc-b", "doc-c")
 		massApproved(h, 10, "doc-a")
-		massApproved(h, maxExtractDecisions+1, "doc-b")
+		massApproved(h, maxKindDecisions+1, "doc-b")
 		for _, d := range h.store.decisions[10:] {
 			d.ID = "1" + d.ID[1:]
 		}
 		massApproved(h, 10, "doc-c")
-		for _, d := range h.store.decisions[10+maxExtractDecisions+1:] {
+		for _, d := range h.store.decisions[10+maxKindDecisions+1:] {
 			d.ID = "2" + d.ID[1:]
 		}
 		h.agent.extract = writesAll(t)
@@ -787,7 +787,7 @@ func TestResendSendsTheListBesideWhatItSplitsOrRefuses(t *testing.T) {
 		h := newHarness(t)
 		namedCustomers(t, h)
 		owes(h, "doc-a")
-		massApproved(h, maxExtractDecisions+1, "doc-a")
+		massApproved(h, maxKindDecisions+1, "doc-a")
 		h.store.decisions = append(h.store.decisions, chosen("zz-value", "customer 1", "Acme"))
 		h.store.owedDecisions = owedDecisions(2)
 		h.agent.extract = writesAll(t)
@@ -818,7 +818,7 @@ func TestResendSendsTheListBesideWhatItSplitsOrRefuses(t *testing.T) {
 		namedCustomers(t, h)
 		owes(h, "doc-a", "doc-b")
 		h.store.decisions = []*model.FoundryReviewDecision{approval("00-approval-a", "doc-a", hashA), approval("00-approval-b", "doc-b", hashA)}
-		for i := 0; i <= maxExtractDecisions; i++ {
+		for i := 0; i <= maxKindDecisions; i++ {
 			h.store.decisions = append(h.store.decisions, chosen(fmt.Sprintf("%026d", i+1), fmt.Sprint("customer ", i), "Acme"))
 		}
 		h.store.owedDecisions = owedDecisions(3)

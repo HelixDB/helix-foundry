@@ -6565,9 +6565,52 @@
         "resolvedCreated": {
           "type": "integer",
           "format": "int32"
+        },
+        "resolvedCarried": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Entities linked by a name a person linked to that record in another\ndocument, which the load carries to every document."
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryDocumentName"
+          },
+          "description": "What the load did with each decision on a name that met the document:\nits own name decisions, and the names carried from other documents\nwhere the load would otherwise have asked a person."
         }
       },
       "description": "FoundryDocumentExtraction is how a document ended in its ontology's database."
+    },
+    "v1FoundryDocumentName": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "type": "string",
+          "description": "resolve (the document's own decision) or alias (a name a person linked\nto a record in another document, carried to this one)."
+        },
+        "type": {
+          "type": "string",
+          "description": "The entity type the name is of."
+        },
+        "normName": {
+          "type": "string",
+          "description": "The name, normalized."
+        },
+        "decisionId": {
+          "type": "string",
+          "description": "The decision's id: of a resolve, the review decision's; of an alias, the\ndecision that linked the name. Absent when the engine named none."
+        },
+        "outcome": {
+          "type": "string",
+          "description": "written, not_asked (nothing in this load waited on it; it applies when\nthe document is read again), not_named (the document doesn't name it)\nor refused."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why it was refused, as the engine said it: absent, bound, collides,\ndiffers, too_large, two_rows, role_term, shared, identifier,\nother_identity, not_replayed, or a reason a later engine gives."
+        }
+      },
+      "description": "FoundryDocumentName is what a load did with one decision on a name of a\ndocument."
     },
     "v1FoundryDocumentOntology": {
       "type": "object",

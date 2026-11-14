@@ -613,13 +613,13 @@ func TestFoundryTakeBackWhateverBecameOfItsDocument(t *testing.T) {
 	t.Run("a failed event's word", func(t *testing.T) {
 		f, d, job, o := setup(t, "WFAILD")
 		require.NoError(t, f.db.RecordFoundryReleaseOutcomes(ctx, job.ID, f.worker, f.a,
-			[]model.FoundryReleaseOutcome{withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, "")}))
+			[]model.FoundryReleaseOutcome{withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, "")}, nil))
 		require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
 			DocumentID: f.a, Reason: o.Reason, Requests: o.Requests, Refused: model.FoundryReleaseDocumentFailed, Unsaid: true,
 		}))
 		back(t, f, d)
 		assert.ErrorIs(t, f.db.RecordFoundryReleaseOutcomes(ctx, job.ID, "another-worker", f.a,
-			[]model.FoundryReleaseOutcome{withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, "")}), store.ErrNotFound, "the job's lease")
+			[]model.FoundryReleaseOutcome{withdrawn(d, model.FoundryReleaseOutcomeWithdrawn, "")}, nil), store.ErrNotFound, "the job's lease")
 	})
 
 	t.Run("no event, its document needing a model call", func(t *testing.T) {

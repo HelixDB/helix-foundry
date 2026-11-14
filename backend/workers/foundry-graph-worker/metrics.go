@@ -88,6 +88,13 @@ var releases = promauto.NewCounterVec(prometheus.CounterOpts{
 		"not_held: sent again and already written, or never held by the load) and, for a refusal, the agent's reason.",
 }, []string{"outcome", "reason"})
 
+var nameOutcomes = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_names_total",
+	Help: "Name decisions the ontology agent reported on in a document, by decision (resolve: the document's own; alias: a name another " +
+		"document's resolve linked to an entity, carried to every document), outcome (written, not_asked, not_named or refused) and, for a " +
+		"refusal, the agent's reason.",
+}, []string{"decision", "outcome", "reason"})
+
 var resendsRefused = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_graph_resends_refused_total",
 	Help: "Documents a resend job could not send again or the agent could not replay, whose waiting approvals were refused, by reason: " +

@@ -176,6 +176,67 @@
         }
       ]
     },
+    "Because": {
+      "description": "A kind of reason for leaving a source out that `finish` checks against the draft and the\nturn.",
+      "oneOf": [
+        {
+          "description": "The turn ran out of budget before it could say what the set or table holds: given only\nonce the turn is told to wrap up.",
+          "type": "string",
+          "const": "not_assessed"
+        },
+        {
+          "description": "The user asked for it to be left out.",
+          "type": "object",
+          "properties": {
+            "user_asked": {
+              "type": "object",
+              "properties": {
+                "said": {
+                  "description": "The user's words that ask it, as they wrote them in the workflow, a goal, a comment\nor an answer: at least three in a run, or the whole of a shorter comment or answer.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "said"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "user_asked"
+          ]
+        },
+        {
+          "description": "A document set whose documents state what a route of the draft already reads from\nother sets.",
+          "type": "object",
+          "properties": {
+            "documents_state": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "description": "What its documents state: a link the route asks for, by name, or a property it\nasks for, as `Type.prop`.",
+                  "type": "string"
+                },
+                "route": {
+                  "description": "The route's name: `notes` for `extraction.notes` (finish reads either, and keeps\nthe name).",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "route",
+                "item"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "documents_state"
+          ]
+        }
+      ]
+    },
     "CardRow": {
       "description": "The source and mapping of rows behind a counterexample's premises. A card never names the\nrows: their identities are source data.",
       "type": "object",
@@ -879,6 +940,17 @@
       "description": "A field, object or source left out of the draft, and why.",
       "type": "object",
       "properties": {
+        "because": {
+          "description": "The kind of reason it is, when it is one `finish` checks: absent for a reason it takes\nas written.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Because"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "reason": {
           "description": "Why.",
           "type": "string"
@@ -1091,7 +1163,7 @@
       ]
     },
     "Serves": {
-      "description": "What an item is for: a competency question, an entity key, or a join between sources.\nEvery type, link and mapping traces to at least one ([`Check::Untraced`](crate::Check)).",
+      "description": "What an item is for: a competency question, an entity key, a join between sources, or what\na draft-time probe found documents state. Every type, link and mapping traces to at least\none ([`Check::Untraced`](crate::Check)).",
       "type": "string"
     },
     "Status": {
