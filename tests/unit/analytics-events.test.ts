@@ -16,6 +16,14 @@ import {
   setCurrentVersion,
 } from "@/web/areas/ontology/queries";
 import { deleteReviewDecision, settleReview } from "@/web/areas/reviews/api";
+import { EMPTY_STREAM } from "@/web/areas/agent/model";
+import {
+  agentQueries,
+  dismissAgentAction,
+  executeAgentAction,
+  sendAgentMessage,
+  turnEvents,
+} from "@/web/areas/agent/queries";
 import { cancelPlan, resumePlan } from "@/web/areas/workspace/plan";
 
 // The API calls that report a custom event (src/web/analytics.ts): once the
@@ -241,6 +249,93 @@ describe("reads that see jobs end", () => {
     expect(vi.mocked(jobSeen).mock.calls).toEqual([
       ["read", [read, { id: "d2" }]],
       ["read", [read]],
+    ]);
+  });
+});
+
+describe("the Assistant's events", () => {
+  const action = {
+    id: "act_1",
+    operation: "create_load",
+    payloadHash: "h",
+    targetNamedByUser: false,
+  };
+
+  it("starts a message's turn from its section, or says why it was refused", async () => {
+    call.mockResolvedValueOnce({ turn: { id: "turn_1" }, thread: { id: "t" } });
+    await sendAgentMessage("ws", { text: "Hi", clientToken: "c" }, "ask");
+    expect(vi.mocked(jobStarted).mock.calls).toEqual([
+      [{ job: "agent_turn", section: "ask" }, "turn_1"],
+    ]);
+    call.mockRejectedValueOnce(new ApiError("slow down", 429));
+    await expect(
+      sendAgentMessage("ws", { text: "Hi", clientToken: "d" }, "none"),
+    ).rejects.toThrow();
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["agent_turn_refused", { reason: "rate_limit" }],
+    ]);
+  });
+
+  it("hands a thread's turns to jobSeen", async () => {
+    const turns = [{ id: "turn_1", status: "done", steps: 3 }];
+    call.mockResolvedValueOnce({ thread: { id: "t" }, turns });
+    await agentQueries.thread("ws", "t").queryFn();
+    expect(vi.mocked(jobSeen).mock.calls).toEqual([["agent_turn", turns]]);
+  });
+
+  it.each([
+    ["succeeded", "succeeded"],
+    ["failed", "failed"],
+    ["unknown", "unknown"],
+  ])("reports a run that %s, with its operation", async (status, outcome) => {
+    call.mockResolvedValueOnce({ action: { ...action, status } });
+    await executeAgentAction("ws", action);
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      [
+        "agent_action_executed",
+        { operation: "create_load", outcome, target_named_by_user: false },
+      ],
+    ]);
+  });
+
+  it("reports a refused run, and an unknown operation as other", async () => {
+    call.mockRejectedValueOnce(new ApiError("expired", 400));
+    await expect(executeAgentAction("ws", action)).rejects.toThrow();
+    call.mockResolvedValueOnce({ action: { ...action, status: "dismissed" } });
+    await dismissAgentAction("ws", { ...action, operation: "drop_all" });
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["agent_action_refused", { reason: "refused" }],
+      [
+        "agent_action_dismissed",
+        { operation: "other", target_named_by_user: false },
+      ],
+    ]);
+  });
+
+  it("reports a card shown while its turn runs, never one read after", async () => {
+    const card = {
+      seq: 1,
+      eventJson: JSON.stringify({
+        type: "action_card",
+        action_id: "a",
+        operation: "create_load",
+        target_named_by_user: true,
+      }),
+    };
+    call.mockResolvedValueOnce({ events: [card], status: "done", lastSeq: 1 });
+    await turnEvents("ws", "turn_1", EMPTY_STREAM);
+    expect(trackEvent).not.toHaveBeenCalled();
+    call.mockResolvedValueOnce({
+      events: [card],
+      status: "running",
+      lastSeq: 1,
+    });
+    await turnEvents("ws", "turn_2", EMPTY_STREAM);
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      [
+        "agent_action_prepared",
+        { operation: "create_load", target_named_by_user: true },
+      ],
     ]);
   });
 });

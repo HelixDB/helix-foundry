@@ -9,6 +9,7 @@ import {
   trackError,
 } from "@databuddy/sdk";
 import type {
+  FoundryAgentTurnStatus,
   CannotAnswerKind,
   ConnectorKindName,
   ConnectorSyncStatus,
@@ -23,6 +24,8 @@ import type {
 import { cannotAnswerKind } from "../shared/foundry-ask";
 import { LOCAL } from "../shared/deployment";
 import type { WizardStepId } from "./areas/ontology/model";
+import type { AgentOperation } from "./areas/agent/model";
+import type { SectionId } from "./shell/types";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
 import type { SignInError } from "./sign-in";
 import type { ShellWorkspace, WorkspaceRole } from "./ui";
@@ -70,6 +73,14 @@ export type SyncFrom =
   | "created"
   | "sample"
   | "install";
+
+/**
+ * The section open when the person used the Assistant (shell/nav.ts), none
+ * outside them; an action's operation, "other" for one this page doesn't
+ * know.
+ */
+export type AgentSection = SectionId | "none";
+export type AgentOperationName = AgentOperation | "other";
 
 /**
  * How the WFE refused a call (src/web/api.ts refusalOf): too many at once,
@@ -176,6 +187,35 @@ export type AnalyticsEvents = {
   revision_succeeded: { mode: RevisionMode };
   revision_failed: { mode: RevisionMode };
   revision_refused: { reason: Refusal };
+
+  // The Assistant (src/web/areas/agent): the dock opened, a message's turn
+  // started and ended (its runtime, the section it was sent from, how it
+  // ended and its tool calls), or why it was refused; an action the agent
+  // prepared, then run (how it ended), dismissed or refused, with whether
+  // the person named its target. Never the text, a name or a payload.
+  agent_dock_opened: { from: "shortcut" | "button" | "palette" };
+  agent_turn_started: { section: AgentSection };
+  agent_turn_ended: {
+    runtime: "api";
+    section: AgentSection;
+    status: Exclude<FoundryAgentTurnStatus, "queued" | "running">;
+    steps: number;
+  };
+  agent_turn_refused: { reason: Refusal };
+  agent_action_prepared: {
+    operation: AgentOperationName;
+    target_named_by_user: boolean;
+  };
+  agent_action_executed: {
+    operation: AgentOperationName;
+    outcome: "succeeded" | "failed" | "unknown";
+    target_named_by_user: boolean;
+  };
+  agent_action_dismissed: {
+    operation: AgentOperationName;
+    target_named_by_user: boolean;
+  };
+  agent_action_refused: { reason: Refusal };
 
   // An ontology's versions, loads and reviews.
   version_made_current: undefined;
@@ -517,7 +557,9 @@ export type Started =
   // An uploaded table file or PDF that Foundry reads.
   | { job: "read" }
   | { job: "load" }
-  | { job: "question" };
+  | { job: "question" }
+  // A message to the Assistant, from the section it was sent in.
+  | { job: "agent_turn"; section: AgentSection };
 type Job = Started["job"];
 
 /** What a read of each job gives: its status, and what its end reports. */
@@ -543,6 +585,7 @@ type Seen = {
     jobs?: readonly { status?: JobStatus; error?: string }[];
   };
   question: { id?: string; status?: QuestionStatus; resultJson?: string };
+  agent_turn: { id?: string; status?: FoundryAgentTurnStatus; steps?: number };
 };
 type Status = { [J in Job]: NonNullable<Seen[J]["status"]> };
 
@@ -554,6 +597,16 @@ const sourceOf = (p: Pending): GenerationSource =>
   "source" in p && p.source === "sample" ? "sample" : "ai";
 const modeOf = (p: Pending): RevisionMode =>
   "mode" in p && p.mode === "preview" ? "preview" : "save";
+const SECTIONS: readonly AgentSection[] = [
+  "data",
+  "ontology",
+  "explore",
+  "ask",
+  "settings",
+  "none",
+];
+const sectionOf = (p: Pending): AgentSection =>
+  SECTIONS.find((s) => "section" in p && p.section === s) ?? "none";
 
 /** What a job reports when it starts; a read's upload reports itself. */
 function reportStart(s: Started) {
@@ -570,8 +623,22 @@ function reportStart(s: Started) {
       return trackEvent("load_started");
     case "question":
       return trackEvent("question_asked");
+    case "agent_turn":
+      return trackEvent("agent_turn_started", { section: s.section });
   }
 }
+
+const agentTurnEnded = (
+  p: Pending,
+  t: Seen["agent_turn"],
+  status: AnalyticsEvents["agent_turn_ended"]["status"],
+) =>
+  trackEvent("agent_turn_ended", {
+    runtime: "api",
+    section: sectionOf(p),
+    status,
+    steps: t.steps || 0,
+  });
 
 /**
  * What each job's statuses report once it has ended: an event, or nothing
@@ -650,6 +717,11 @@ const ENDS: {
     },
     failed: () => trackEvent("question_unanswered", { status: "failed" }),
     cancelled: null,
+  },
+  agent_turn: {
+    done: (p, t) => agentTurnEnded(p, t, "done"),
+    failed: (p, t) => agentTurnEnded(p, t, "failed"),
+    cancelled: (p, t) => agentTurnEnded(p, t, "cancelled"),
   },
 };
 
