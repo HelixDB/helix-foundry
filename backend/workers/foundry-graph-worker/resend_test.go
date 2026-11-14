@@ -71,9 +71,11 @@ func owes(h *harness, docs ...string) {
 
 func TestResend(t *testing.T) {
 	// A person approved a claim of doc-a and one of doc-b. One Extract sends
-	// both documents again, each with its saved extraction and its
-	// decisions, with nothing to spend; what the engine says of each
-	// decision is recorded with its document, and each request ends.
+	// both documents again, each with its decisions and no artifact, with
+	// nothing to spend: since contract 4.17.0 the engine writes a release
+	// from the load's held review and reads no saved extraction, so none is
+	// staged, whatever is saved. What the engine says of each decision is
+	// recorded with its document, and each request ends.
 	t.Run("sends the owed documents once, at no cost, and records each decision", func(t *testing.T) {
 		h := newHarness(t)
 		owes(h, "doc-a", "doc-b")
@@ -102,8 +104,8 @@ func TestResend(t *testing.T) {
 		if len(req.Documents) != 2 || req.Documents[0].DocID != "doc-a" || req.Documents[1].DocID != "doc-b" {
 			t.Fatalf("sent %+v", req.Documents)
 		}
-		if len(req.Documents[0].Artifacts) != 1 || len(req.Documents[1].Artifacts) != 0 {
-			t.Fatalf("artifacts %v and %v", req.Documents[0].Artifacts, req.Documents[1].Artifacts)
+		if req.Documents[0].Artifacts == nil || len(req.Documents[0].Artifacts) != 0 || len(req.Documents[1].Artifacts) != 0 {
+			t.Fatalf("artifacts %#v and %#v, want none", req.Documents[0].Artifacts, req.Documents[1].Artifacts)
 		}
 		// The decisions of the documents sent, and no other document's.
 		if len(req.Decisions) != 2 || req.Decisions[0].DecisionID != "1" || req.Decisions[1].DecisionID != "2" {
@@ -134,11 +136,13 @@ func TestResend(t *testing.T) {
 		}
 	})
 
-	// A document whose saved extraction is gone would need a model call the
-	// run has no money for: the engine sends no event for it and ends
-	// budget_exhausted. Its approvals are refused, saying so, and the job
-	// still succeeds: nothing waits for a job that can't apply it.
-	t.Run("a document that doesn't replay refuses its approvals", func(t *testing.T) {
+	// A document the engine sends no event for, ending budget_exhausted,
+	// would have needed a model call the run has no money for (through
+	// contract 4.16.0, one whose saved extraction no longer replayed; since
+	// 4.17.0 a held document needs none). Its approvals are refused, saying
+	// so, and the job still succeeds: nothing waits for a job that can't
+	// apply it.
+	t.Run("a document that gets no event refuses its approvals", func(t *testing.T) {
 		h := newHarness(t)
 		owes(h, "doc-a", "doc-b")
 		h.store.decisions = []*model.FoundryReviewDecision{approval("1", "doc-a", hashA), approval("2", "doc-b", hashB)}
@@ -225,6 +229,40 @@ func TestResend(t *testing.T) {
 		}
 		want := []model.FoundryResendEnd{{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseDocumentFailed, Unsaid: true}}
 		if !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+	})
+
+	// Contract 4.17.0: a document the load holds with other text than the one
+	// sent ends failed, and the engine refuses each of its releases as
+	// document_changed. That word is recorded on the decisions, the row the
+	// commit wrote stays, and the request ends: nothing is left waiting, and
+	// only a new load reads the new text.
+	t.Run("a document the load holds with other text refuses its approvals as changed", func(t *testing.T) {
+		h := newHarness(t)
+		owes(h, "doc-a")
+		h.store.decisions = []*model.FoundryReviewDecision{approval("1", "doc-a", hashA), approval("2", "doc-a", hashB)}
+		failed := strings.TrimSuffix(documentEvent("doc-a", `{"kind":"failed","code":"store","retryable":false}`, noUsage), `"releases":[]}`) +
+			`"releases":[{"decision_id":"1","outcome":{"kind":"refused","reason":"document_changed"}},` +
+			`{"decision_id":"2","outcome":{"kind":"refused","reason":"document_changed"}}]}`
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{extracted[0], failed, `{"event":"extract_finished"}`},
+				`{"status":"done","totals":`+totals+`}`)
+		}
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		want := map[string][]model.FoundryReleaseOutcome{"doc-a": {
+			{DecisionID: "1", StatementHash: hashA, Kind: model.FoundryReleaseOutcomeRefused, Reason: "document_changed"},
+			{DecisionID: "2", StatementHash: hashB, Kind: model.FoundryReleaseOutcomeRefused, Reason: "document_changed"},
+		}}
+		if !reflect.DeepEqual(h.store.outcomes, want) || h.store.extractions["doc-a"] != nil {
+			t.Fatalf("outcomes %+v, row %+v", h.store.outcomes, h.store.extractions["doc-a"])
+		}
+		ended := []model.FoundryResendEnd{
+			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseDocumentFailed, Unsaid: true},
+		}
+		if !reflect.DeepEqual(h.store.ended, ended) {
 			t.Fatalf("ended %+v", h.store.ended)
 		}
 	})

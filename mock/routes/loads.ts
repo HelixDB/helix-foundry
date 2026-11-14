@@ -199,6 +199,10 @@ type Knobs = {
   // and nothing changes), or a refusal (`differs`, `too_large`: what it
   // wrote stays).
   withdrawOutcome?: "not_written" | "differs" | "too_large";
+  // The load holds each approved claim's document with other text than the
+  // one a resend sends (contract 4.17.0): the engine refuses an approval in
+  // place as `document_changed`. A new load reads the text afresh.
+  documentChanged?: boolean;
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // The next n reads find every read slot taken.
   readsBusy?: number;
@@ -378,6 +382,7 @@ onReset(() => {
   delete knobs.documentUnmatched;
   delete knobs.deleteOutcome;
   delete knobs.withdrawOutcome;
+  delete knobs.documentChanged;
   delete knobs.readErrors;
   delete knobs.readsBusy;
   delete knobs.indexesPending;
@@ -464,9 +469,12 @@ function heldReview(l: StoredLoad, d: Release) {
 
 /**
  * Why the engine would keep an approved claim held, from what the mock was
- * told to make of hedged claims (`documentHeld`): none when it writes it.
+ * told to make of hedged claims (`documentHeld`), or, applied in place
+ * (`inPlace`), of the text a resend sends (`documentChanged`): none when it
+ * writes it. A new load reads the text afresh.
  */
-const refusal = () => {
+const refusal = (inPlace = false) => {
+  if (inPlace && knobs.documentChanged) return "document_changed";
   switch (knobs.documentHeld) {
     case "refused":
       return "conflict";
@@ -488,10 +496,10 @@ const appliedKey = (loadId: string, decisionId: string) =>
  * Says what a load made of a release decision of a document it just read:
  * written when no review of it is left, refused when one is.
  */
-function recordRelease(l: StoredLoad, d: Release, at: number) {
+function recordRelease(l: StoredLoad, d: Release, at: number, inPlace = false) {
   state.applied.set(appliedKey(l.id, d.id), {
     ...(heldReview(l, d)
-      ? { status: "refused", reason: refusal() ?? "changed" }
+      ? { status: "refused", reason: refusal(inPlace) ?? "changed" }
       : { status: "written" }),
     at: iso(at),
   });
@@ -537,22 +545,18 @@ function applyReleases(ontologyId: string, now = Date.now()) {
       continue;
     }
     const review = heldReview(l, d);
-    if (review && !refusal()) {
+    if (review && !refusal(true)) {
       const def = ontologyVersion(l.ontologyId, l.versionId)?.definition;
       const w = releaseReview(
         tenantGraph(l.tenantId).view(l.id),
         review.id,
-        {
-          ontologyVersion: versionName(l),
-          model: aiModel(l.workspaceId, "extract") || MODEL,
-          verifier: aiModel(l.workspaceId, "verify") || VERIFIER,
-        },
+        versionName(l),
         holdsOne(def, String(review.props.suggested_link)) ? d : undefined,
       );
       if (w) state.written.set(appliedKey(l.id, d.id), w);
       countRelease(l.id, d.docId);
     }
-    recordRelease(l, d, r.due);
+    recordRelease(l, d, r.due, true);
   }
 }
 

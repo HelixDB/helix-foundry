@@ -725,7 +725,7 @@
           "const": "changed"
         },
         {
-          "description": "The document's model work states no such claim at that place now, as other artifacts,\nmodels or prompts may read the sentence otherwise.",
+          "description": "The document, cut into sections as the run cuts it, doesn't say the review's quote at its\nplace; the load keeps no record of the model work that stated it there; or the document's\nset no longer states its link, or reads an end's type. Since 4.17.0 a release reads no\nmodel work, so another prompt, model or artifact never refuses it.",
           "type": "string",
           "const": "not_stated"
         },
@@ -763,6 +763,11 @@
           "description": "It would open a `block` violation, or checking that needed more reading than the budget\nallows.",
           "type": "string",
           "const": "blocked"
+        },
+        {
+          "description": "The load holds the document under its id with other text: the claim the person read may\nnot be in it any more. Only a new load reads the new text.",
+          "type": "string",
+          "const": "document_changed"
         }
       ]
     },

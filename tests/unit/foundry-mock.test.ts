@@ -3301,6 +3301,7 @@ describe("review decisions", () => {
         (d: { name: string }) => d.name === "variant.md",
       ).extraction;
     expect(await document()).toMatchObject({ facts: 0, reviews: 1 });
+    const cost = (await document()).usdMicros;
 
     // It joins the load's decisions, and waits for its job.
     const saved = (await approve()).body.decision;
@@ -3316,6 +3317,17 @@ describe("review decisions", () => {
 
     // Approved again: a job's step later the claim is a fact of the same
     // load, its review gone, and the document counts it.
+    const section = [...g.nodes()].find(
+      (n) =>
+        n.label === FOUNDRY_NODES.Section &&
+        n.props.doc_id === rv.props.doc_id &&
+        n.props.ordinal === rv.props.section,
+    )!;
+    Object.assign(section.props, {
+      model: "commit-extractor",
+      verifier: "commit-verifier",
+      prompt_version: "6",
+    });
     const again = (await approve()).body.decision;
     vi.setSystemTime(Date.now() + 10_000);
     const [written] = await listed();
@@ -3332,7 +3344,19 @@ describe("review decisions", () => {
       quote: "Globex Corporation may have signed.",
       confidence: 0.72,
     });
-    expect(await document()).toMatchObject({ facts: 1, reviews: 0 });
+    // Contract 4.17.0: written from what the load keeps, its quote names the
+    // model work the commit recorded for its section (set apart here from
+    // the workspace's models), and costs nothing.
+    expect(facts()[0]!.props).toMatchObject({
+      model: "commit-extractor",
+      verifier: "commit-verifier",
+      prompt_version: "6",
+    });
+    expect(await document()).toMatchObject({
+      facts: 1,
+      reviews: 0,
+      usdMicros: cost,
+    });
     // Its review is gone, so it can't be approved twice.
     expect(refusal(await approve())).toEqual([
       404,
@@ -3342,6 +3366,47 @@ describe("review decisions", () => {
     // A later load copies the decision, and its commit says what became of it.
     const next = await loaded("next");
     expect(reviews(next).filter((n) => n.props.claim_key)).toHaveLength(0);
+    expect((await listed())[0].applied).toMatchObject({ status: "written" });
+  });
+
+  // Contract 4.17.0: the load holds the claim's document with other text
+  // than a resend sends, so the engine refuses the approval in place, writes
+  // nothing and spends nothing; a new load reads the text afresh and writes it.
+  it("refuses an approval in place as document_changed, and a new load writes it", async () => {
+    Object.assign(config, { documentChanged: true });
+    await uploaded(
+      "variant.md",
+      Buffer.from("# Hedged deal\n\nGlobex Corporation may have signed.\n"),
+    );
+    const g = await loaded("first");
+    const held = () =>
+      reviews(g).filter((n) => n.props.reason === "low_confidence");
+    const rv = held()[0]!;
+    const document = async () =>
+      (await call("GET", `${O}/documents`)).body.documents.find(
+        (d: { name: string }) => d.name === "variant.md",
+      ).extraction;
+    const before = await document();
+    const statementHash = createHash("sha256")
+      .update(`signed_with\u001f${String(rv.props.statement)}`)
+      .digest("hex");
+    await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+      decision: { release: { statementHash } },
+    });
+    vi.setSystemTime(Date.now() + 10_000);
+    const listed = async () =>
+      (await call("GET", `${O}/review-decisions`)).body.decisions;
+    expect((await listed())[0].applied).toEqual({
+      status: "refused",
+      reason: "document_changed",
+      at: expect.any(String),
+    });
+    expect(held()).toHaveLength(1);
+    expect(await document()).toEqual(before);
+    const next = await loaded("next");
+    expect(
+      reviews(next).filter((n) => n.props.reason === "low_confidence"),
+    ).toHaveLength(0);
     expect((await listed())[0].applied).toMatchObject({ status: "written" });
   });
 

@@ -829,13 +829,16 @@ export function withdrawRelease(g: LoadGraph, w: ReleaseWrite) {
  * more piece of evidence of it, the evidence at the review's quote, at the
  * verifier's confidence (none for a claim no verifier judged), and the review
  * gone. Its ends are the entities the review concerns, in the link's order.
- * On a link that holds one value, `one` is the approval, which decides the
+ * Its evidence names the model, verifier and prompt the commit recorded for
+ * the section, as the engine's release reads them from the review's section
+ * run (contract 4.17.0), not the models the workspace runs now. On a link
+ * that holds one value, `one` is the approval, which decides the
  * link if it is the newest (decide).
  */
 export function releaseReview(
   g: LoadGraph,
   review: number,
-  written: { ontologyVersion: string; model: string; verifier: string },
+  ontologyVersion: string,
   one?: Approval,
 ): ReleaseWrite | undefined {
   const r = g.node(review);
@@ -860,8 +863,11 @@ export function releaseReview(
       provenance: "extracted",
       confidence,
       evidence_count: 1,
-      ontology_version: written.ontologyVersion,
+      ontology_version: ontologyVersion,
     });
+  // Contract 4.17.0: the quote names the model work its commit recorded for
+  // the section, whatever the workspace's models are now.
+  const run = g.node(section)!.props;
   const ev = g.addNode(N.Evidence, {
     fact_key: factKey,
     link,
@@ -869,9 +875,9 @@ export function releaseReview(
     start: r.props.start!,
     end: r.props.end!,
     quote: r.props.quote!,
-    model: written.model,
-    verifier: written.verifier,
-    prompt_version: PROMPT_VERSION,
+    model: run.model!,
+    verifier: run.verifier!,
+    prompt_version: run.prompt_version!,
     confidence,
   });
   g.addEdge(E.FROM_SECTION, ev, section);
