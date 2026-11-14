@@ -442,7 +442,7 @@ func (f agentFixture) preparedAs(t *testing.T, id string, input integration.Foun
 type capture struct{ got integration.PreparedAction }
 
 func (c *capture) Allows(string) bool { return true }
-func (c *capture) Record(_ context.Context, p integration.PreparedAction) (integration.AwaitingPerson, error) {
+func (c *capture) Record(_ context.Context, p integration.PreparedAction) (integration.Recorded, error) {
 	c.got = p
 	return integration.AwaitingPerson{ActionID: "x", ExpiresAt: p.Confirmation.ExpiresAt}, nil
 }

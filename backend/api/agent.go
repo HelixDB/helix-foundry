@@ -349,8 +349,11 @@ func (s *Service) ExecuteFoundryAgentAction(ctx context.Context, req *foundryv1.
 	// and its run ends before a send would sweep it up as unknown.
 	ctx = context.WithoutCancel(ctx)
 	runCtx, cancel := context.WithTimeout(ctx, foundrymodel.FoundryAgentExecutingFor-agentRunMargin)
-	end := s.runAgentAction(runCtx, sessions, a)
+	end := foundryagent.RunAction(runCtx, sessions, s.deps.ConnectorKeys, a)
 	cancel()
+	if end.Status == foundrymodel.FoundryAgentActionSucceeded && (a.Operation == "create_automation" || a.Operation == "update_automation") {
+		end = s.approveOnClick(ctx, ws, userID, end)
+	}
 	continuation := &foundrymodel.FoundryAgentTurn{
 		ID: id.New(), WorkspaceID: ws, ThreadID: a.ThreadID, UserID: userID, Kind: foundrymodel.FoundryAgentTurnActionResult, Input: a.ID,
 		MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
@@ -402,62 +405,31 @@ func (s *Service) agentContinues(ctx context.Context, workspaceID, threadID stri
 	return err != nil || online
 }
 
+// approveOnClick approves the automation a create or an edit the person just
+// ran made: their click on the card, which showed the spec, is their
+// approval, as their click on Approve in the site is. Saved but not
+// approved (what it names is gone, say), the action still succeeded, and
+// says why.
+func (s *Service) approveOnClick(ctx context.Context, workspaceID, userID string, end foundrymodel.FoundryAgentActionEnd) foundrymodel.FoundryAgentActionEnd {
+	var ran struct {
+		Result struct {
+			ID       string `json:"id"`
+			Revision int64  `json:"revision"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(end.Result, &ran); err != nil || ran.Result.ID == "" || ran.Result.Revision < 1 {
+		end.Error = "it was saved, but its approval can't be read: approve it on its page in Foundry"
+		return end
+	}
+	if _, err := s.approveAutomation(ctx, workspaceID, userID, ran.Result.ID, ran.Result.Revision); err != nil {
+		end.Error = "it was saved, but not approved (" + status.Convert(err).Message() + "): approve it on its page in Foundry"
+	}
+	return end
+}
+
 // agentRunMargin is how long before foundrymodel.FoundryAgentExecutingFor a
 // click's run is stopped, leaving it time to record how it ended.
 const agentRunMargin = 15 * time.Second
-
-// runAgentAction runs an action that is executing, as its person now, and
-// says how it ended.
-func (s *Service) runAgentAction(ctx context.Context, sessions integration.SessionHost, a *foundrymodel.FoundryAgentAction) foundrymodel.FoundryAgentActionEnd {
-	failed := func(why string) foundrymodel.FoundryAgentActionEnd {
-		return foundrymodel.FoundryAgentActionEnd{Status: foundrymodel.FoundryAgentActionFailed, Error: why}
-	}
-	token, err := s.deps.ConnectorKeys.Open(a.TokenSealed, a.KeyID, a.ID)
-	if err != nil {
-		return failed("the action's confirmation can't be opened; ask the Assistant to prepare it again")
-	}
-	var payload map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(a.Payload))
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil {
-		return failed("the action's payload can't be read")
-	}
-	session, err := sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: a.UserID, WorkspaceID: a.WorkspaceID},
-		integration.ConfirmByCaller{})
-	if err != nil {
-		return failed("your access to this workspace couldn't be read; nothing ran, so you can ask again")
-	}
-	switch done := session.Service.ExecuteForPerson(session.Ctx, session.Identity, integration.ExecuteFoundryInput{
-		Operation: a.Operation, Target: a.Target, Payload: payload, ConfirmationID: a.ConfirmationID, ConfirmationToken: string(token),
-	}).(type) {
-	case integration.ExecutedOK:
-		result, err := json.Marshal(done.Result)
-		if err != nil {
-			return foundrymodel.FoundryAgentActionEnd{Status: foundrymodel.FoundryAgentActionUnknown, Error: "it ran, and its result can't be shown"}
-		}
-		return foundrymodel.FoundryAgentActionEnd{Status: foundrymodel.FoundryAgentActionSucceeded, Result: result}
-	case integration.ExecutedUnknown:
-		return foundrymodel.FoundryAgentActionEnd{Status: foundrymodel.FoundryAgentActionUnknown,
-			Error: "it may or may not have run: Foundry lost its answer (" + toolErrorText(done.Err) + ")"}
-	case integration.ExecutedFailed:
-		return failed(toolErrorText(done.Err))
-	default:
-		return failed("it ended in a way Foundry doesn't know")
-	}
-}
-
-// toolErrorText is a tool's error for the person: its message, else its code.
-func toolErrorText(err error) string {
-	code, message, ok := integration.ToolErrorDetails(err)
-	switch {
-	case ok && message != "":
-		return message
-	case ok:
-		return strings.ReplaceAll(code, "_", " ")
-	default:
-		return "internal error"
-	}
-}
 
 // agentAction is the caller's action.
 func (s *Service) agentAction(ctx context.Context, workspaceID, userID, actionID string) (*foundrymodel.FoundryAgentAction, error) {
@@ -515,7 +487,7 @@ func (s *Service) RefreshFoundryAgentAction(ctx context.Context, req *foundryv1.
 		return nil, status.Error(codes.NotFound, "action not found")
 	case err != nil:
 		// Checked again as the caller, now: what they may no longer do is refused.
-		return nil, status.Error(codes.FailedPrecondition, toolErrorText(integration.ToolError(err)))
+		return nil, status.Error(codes.FailedPrecondition, foundryagent.ToolErrorText(integration.ToolError(err)))
 	}
 	return &foundryv1.FoundryAgentActionResponse{Action: agentActionToProto(sink.refreshed, time.Now())}, nil
 }
@@ -532,19 +504,19 @@ type refreshSink struct {
 
 func (r *refreshSink) Allows(operation string) bool { return foundryagent.Operations[operation] }
 
-func (r *refreshSink) Record(ctx context.Context, p integration.PreparedAction) (integration.AwaitingPerson, error) {
+func (r *refreshSink) Record(ctx context.Context, p integration.PreparedAction) (integration.Recorded, error) {
 	card, err := r.cards.Draw(ctx, p)
 	if err != nil {
-		return integration.AwaitingPerson{}, err
+		return nil, err
 	}
 	sealed, keyID, err := r.s.deps.ConnectorKeys.Seal([]byte(p.Confirmation.Token), r.action.ID)
 	if err != nil {
-		return integration.AwaitingPerson{}, err
+		return nil, err
 	}
 	refreshed, err := r.s.deps.DB.RefreshFoundryAgentAction(ctx, r.action.WorkspaceID, r.userID, r.action.ID, p.PayloadHash, card.Display,
 		p.Confirmation.ID, sealed, keyID, p.Confirmation.ExpiresAt)
 	if err != nil {
-		return integration.AwaitingPerson{}, err
+		return nil, err
 	}
 	r.refreshed = refreshed
 	return integration.AwaitingPerson{ActionID: refreshed.ID, ExpiresAt: refreshed.ExpiresAt}, nil

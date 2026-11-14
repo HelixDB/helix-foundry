@@ -41,6 +41,11 @@ var Tools = map[string]bool{
 	"helix_foundry_list_dashboards":        true,
 	"helix_foundry_get_dashboard":          true,
 	"helix_foundry_preview_dashboard_tile": true,
+	// Automations: read, and their runs.
+	"helix_foundry_list_automations":     true,
+	"helix_foundry_get_automation":       true,
+	"helix_foundry_list_automation_runs": true,
+	"helix_foundry_get_automation_run":   true,
 	// Link-only: a session's Service offers no sign-in, so it answers with
 	// the site's /data?add=<kind>, where the person enters credentials.
 	"helix_foundry_connect": true,
@@ -49,6 +54,8 @@ var Tools = map[string]bool{
 	"helix_list_databases": true,
 	// Prepare only: its person runs what it prepares (integration.ConfirmByPerson).
 	toolPrepare: true,
+	// An automation's turn's report, registered for those turns alone.
+	toolReport: true,
 }
 
 const (
@@ -82,6 +89,14 @@ var Operations = map[string]bool{
 	"pin_dashboard":       true,
 	"publish_dashboard":   true,
 	"unpublish_dashboard": true,
+	// Automations: the person's click on a create or an edit approves the
+	// spec its card showed (the API's ExecuteFoundryAgentAction).
+	"create_automation": true,
+	"update_automation": true,
+	"pause_automation":  true,
+	"resume_automation": true,
+	"delete_automation": true,
+	"run_automation":    true,
 	// A local install's only (Service.AgentHosts).
 	"set_assistant_runtime":   true,
 	"revoke_assistant_helper": true,

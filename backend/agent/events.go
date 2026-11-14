@@ -94,6 +94,14 @@ type ActionResult struct {
 	Error     string          `json:"error,omitempty"`
 }
 
+// Reported is an automation's step's report (toolReport): what it found and
+// did, for its owner, and the answer or count a condition after it checks.
+type Reported struct {
+	Summary string `json:"summary"`
+	Answer  *bool  `json:"answer,omitempty"`
+	Count   *int64 `json:"count,omitempty"`
+}
+
 // Finished closes an attempt that ended the turn: done, or stopped at one of
 // its caps, or failed (error).
 type Finished struct {
@@ -130,6 +138,7 @@ func (ToolReturned) eventType() string { return "tool_result" }
 func (ActionCard) eventType() string   { return "action_card" }
 func (ActionResult) eventType() string { return "action_result" }
 func (Finished) eventType() string     { return "finished" }
+func (Reported) eventType() string     { return "automation_report" }
 
 // MarshalEvent is e as a turn's event: its fields and its type.
 func MarshalEvent(e Event) (json.RawMessage, error) {

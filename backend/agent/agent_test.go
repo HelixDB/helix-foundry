@@ -51,6 +51,9 @@ type memStore struct {
 	documents  []*model.FoundryDocument
 	// dashboards are the workspace's; none unless a test says.
 	dashboards []*model.FoundryDashboard
+	// automations and runs are the workspace's; none unless a test says.
+	automations []*model.FoundryAutomation
+	runs        []*model.FoundryAutomationRun
 	// decided is what the person did with an action by the time the turn
 	// prepares it again; nothing when empty.
 	decided model.FoundryAgentActionStatus
@@ -259,6 +262,42 @@ func (s *memStore) GetFoundryDashboard(_ context.Context, workspaceID, id string
 	for _, d := range s.dashboards {
 		if d.WorkspaceID == workspaceID && d.ID == id {
 			return d, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
+}
+
+func (s *memStore) FinishFoundryAgentAction(_ context.Context, id string, end model.FoundryAgentActionEnd, _ *model.FoundryAgentTurn, _ json.RawMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := end.Validate(); err != nil {
+		return err
+	}
+	for _, a := range s.actions {
+		if a.ID == id && a.Status == model.FoundryAgentActionExecuting {
+			a.Status, a.Result = end.Status, end.Result
+			if end.Error != "" {
+				a.Error = &end.Error
+			}
+			return nil
+		}
+	}
+	return foundrystore.ErrNotFound
+}
+
+func (s *memStore) GetFoundryAutomation(_ context.Context, workspaceID, id string) (*model.FoundryAutomation, error) {
+	for _, a := range s.automations {
+		if a.WorkspaceID == workspaceID && a.ID == id {
+			return a, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
+}
+
+func (s *memStore) GetFoundryAutomationRun(_ context.Context, workspaceID, id string) (*model.FoundryAutomationRun, error) {
+	for _, r := range s.runs {
+		if r.WorkspaceID == workspaceID && r.ID == id {
+			return r, nil
 		}
 	}
 	return nil, foundrystore.ErrNotFound
@@ -555,8 +594,13 @@ func TestToolsAreAClosedList(t *testing.T) {
 		"helix_foundry_cancel_question", "helix_foundry_create_workflow", "helix_list_workspaces"} {
 		assert.NotContains(t, offered, name)
 	}
-	// Every name the list allows is a tool a full session offers, so none is misspelled.
+	// Every name the list allows is a tool a full session offers, so none is
+	// misspelled; the report is an automation's turn's alone.
 	for name := range Tools {
+		if name == toolReport {
+			assert.NotContains(t, offered, name)
+			continue
+		}
 		assert.Contains(t, offered, name)
 	}
 	refused := h.model.requests[1].Messages

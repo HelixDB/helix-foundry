@@ -68,6 +68,8 @@ type Store interface {
 		card func(*model.FoundryAgentAction) (json.RawMessage, error)) (*model.FoundryAgentAction, error)
 	GetFoundryAgentAction(ctx context.Context, workspaceID, id string) (*model.FoundryAgentAction, error)
 	GetFoundryAgentActionByPayload(ctx context.Context, turnID, payloadHash string) (*model.FoundryAgentAction, error)
+	FinishFoundryAgentAction(ctx context.Context, id string, end model.FoundryAgentActionEnd, continuation *model.FoundryAgentTurn, firstEvent json.RawMessage) error
+	GetFoundryAutomationRun(ctx context.Context, workspaceID, id string) (*model.FoundryAutomationRun, error)
 }
 
 // Resolver is where a workspace's model calls go; *ai.Resolver resolves it.
@@ -127,8 +129,10 @@ type Attempt struct {
 
 // turnRun is one attempt's state.
 type turnRun struct {
-	r       *Runner
-	turn    *model.FoundryAgentTurn
+	r    *Runner
+	turn *model.FoundryAgentTurn
+	// step is an automation's turn's step; nil for a person's turn.
+	step    *automationStep
 	model   llm.Model
 	pricer  llm.Pricer
 	client  *mcp.ClientSession
@@ -174,7 +178,14 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	if err != nil {
 		return out, &Failure{Message: "The Assistant can't call the workspace's model; an owner can check Settings › AI models.", Permanent: true, Err: err}
 	}
-	sink := &actionSink{db: r.DB, keys: r.Keys, turn: turn, workerID: r.WorkerID, maxPending: r.Cfg.MaxPendingActions}
+	sink := &actionSink{db: r.DB, keys: r.Keys, turn: turn, workerID: r.WorkerID, maxPending: r.Cfg.MaxPendingActions, sessions: r.Sessions}
+	var step *automationStep
+	if turn.Kind == model.FoundryAgentTurnAutomation {
+		if step, err = r.automationStep(ctx, turn); err != nil {
+			return out, err
+		}
+		sink.approved = step.allow
+	}
 	session, err := r.Sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: turn.UserID, WorkspaceID: turn.WorkspaceID},
 		integration.ConfirmByPerson{Sink: sink})
 	switch status.Code(err) {
@@ -186,11 +197,13 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	}
 	// A card is drawn as its person reads the workspace.
 	sink.cards = SessionCards(r.DB, r.Databases, session, turn.WorkspaceID)
-	client, offered, err := serve(session)
+	t := &turnRun{r: r, turn: turn, step: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out}
+	client, offered, err := serve(session, t.reportTool)
 	if err != nil {
 		return out, &Failure{Message: "The Assistant's tools couldn't start; Helix will retry", Err: err}
 	}
 	defer func() { _ = client.Close() }()
+	t.client, t.offered = client, offered
 	stored, err := r.DB.ListFoundryAgentMessages(ctx, turn.ThreadID)
 	if err != nil {
 		return out, err
@@ -199,8 +212,8 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	if err != nil {
 		return out, &Failure{Message: "The thread's transcript can't be read", Permanent: true, Err: err}
 	}
-	t := &turnRun{r: r, turn: turn, model: bound.Model, pricer: bound.Pricer, client: client, offered: offered, all: all, started: r.Now(), out: out}
-	fixed := len(system(turn.WorkspaceID))
+	t.all = all
+	fixed := len(t.system())
 	for _, tool := range offered {
 		schema, err := json.Marshal(tool.InputSchema)
 		if err != nil {
@@ -235,11 +248,11 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	return out, t.loop(ctx)
 }
 
-// serve puts the session's tools on a server of their own, Tools alone
-// (toolServer), and connects a client to it in memory. offered is what the
-// client lists.
-func serve(session integration.Session) (*mcp.ClientSession, map[string]*mcp.Tool, error) {
-	server, offered, err := toolServer(session)
+// serve puts the session's tools, and own's, on a server of their own,
+// Tools alone (toolServer), and connects a client to it in memory. offered
+// is what the client lists.
+func serve(session integration.Session, own func(*mcp.Server)) (*mcp.ClientSession, map[string]*mcp.Tool, error) {
+	server, offered, err := toolServer(session, own)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -254,14 +267,17 @@ func serve(session integration.Session) (*mcp.ClientSession, map[string]*mcp.Too
 	return client, offered, nil
 }
 
-// toolServer is a server of the session's tools, Tools alone, and those
-// tools by name: every other tool the session registers is removed before
-// anyone lists them.
-func toolServer(session integration.Session) (*mcp.Server, map[string]*mcp.Tool, error) {
+// toolServer is a server of the session's tools, and own's (nil for none),
+// Tools alone, and those tools by name: every other tool the session
+// registers is removed before anyone lists them.
+func toolServer(session integration.Session, own func(*mcp.Server)) (*mcp.Server, map[string]*mcp.Tool, error) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "helix-foundry-assistant", Version: PromptVersion}, nil)
 	session.Service.AddTools(server, session.Identity)
 	if session.HostTools != nil {
 		session.HostTools(server)
+	}
+	if own != nil {
+		own(server)
 	}
 	// The SDK lists a server's tools only to a client: list them to one of
 	// its own, in memory.
@@ -311,6 +327,10 @@ func openingText(ctx context.Context, db Store, turn *model.FoundryAgentTurn) (s
 	switch turn.Kind {
 	case model.FoundryAgentTurnMessage:
 		return messageText(turn.Input, page(ctx, db, turn)), nil
+	case model.FoundryAgentTurnAutomation:
+		// The step's instruction, with what fired the run, as the
+		// foundry-automation-worker wrote it.
+		return turn.Input, nil
 	case model.FoundryAgentTurnActionResult:
 		a, err := db.GetFoundryAgentAction(ctx, turn.WorkspaceID, turn.Input)
 		if err != nil {
@@ -437,7 +457,7 @@ func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message
 	t.out.Steps++
 	var live strings.Builder
 	shown := t.r.Now()
-	for chunk, err := range t.model.Stream(ctx, llm.Request{System: system(t.turn.WorkspaceID), Messages: messages, Tools: t.tools, MaxOutput: maxOutput}) {
+	for chunk, err := range t.model.Stream(ctx, llm.Request{System: t.system(), Messages: messages, Tools: t.tools, MaxOutput: maxOutput}) {
 		if err != nil {
 			var refused *llm.Error
 			if errors.As(err, &refused) && !refused.Retryable() {

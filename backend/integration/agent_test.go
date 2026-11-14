@@ -56,7 +56,7 @@ type memSink struct {
 
 func (s *memSink) Allows(operation string) bool { return operation == "create_load" }
 
-func (s *memSink) Record(_ context.Context, a PreparedAction) (AwaitingPerson, error) {
+func (s *memSink) Record(_ context.Context, a PreparedAction) (Recorded, error) {
 	s.recorded = append(s.recorded, a)
 	return AwaitingPerson{ActionID: "act-1", ExpiresAt: a.Confirmation.ExpiresAt}, nil
 }
@@ -193,7 +193,7 @@ func TestPrepareAgainHandsTheSinkANewConfirmation(t *testing.T) {
 	s := (&Service{Confirmations: confirmations}).ForAgent()
 	got, err := s.PrepareAgain(context.Background(), reader(), loadInput, sink)
 	require.NoError(t, err)
-	assert.Equal(t, "act-1", got.ActionID)
+	assert.Equal(t, "act-1", got.(AwaitingPerson).ActionID)
 	require.Len(t, sink.recorded, 1)
 	_, err = s.PrepareAgain(context.Background(), reader(), FoundryOperationInput{Operation: "create_load", Target: "ontology:ws1/ont1", Payload: map[string]any{}}, sink)
 	assert.Error(t, err, "a payload prepare refuses is refused again")
@@ -206,4 +206,20 @@ func TestForAgentIsACopy(t *testing.T) {
 	assert.False(t, agent.SignIn)
 	assert.Nil(t, agent.Workflows)
 	assert.Equal(t, "http://localhost:8081/mcp", s.ResourceURI, "the host's own service is untouched")
+}
+
+func TestPreparedForPersonSaysHowAnApprovedActionRan(t *testing.T) {
+	ran := preparedForPerson(RanApproved{ActionID: "act-2", Status: "succeeded", Result: []byte(`{"load_id":"l1"}`)})
+	assert.Equal(t, "ran", ran.Status)
+	assert.Equal(t, "succeeded", ran.Outcome)
+	assert.Equal(t, ranApprovedNext, ran.Next)
+	assert.NotNil(t, ran.Result)
+	assert.Empty(t, ran.ExpiresAt)
+	failed := preparedForPerson(RanApproved{ActionID: "act-3", Status: "failed", Error: "refused"})
+	assert.Equal(t, "refused", failed.Error)
+	assert.Nil(t, failed.Result)
+	waiting := preparedForPerson(AwaitingPerson{ActionID: "act-1", ExpiresAt: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)})
+	assert.Equal(t, "awaiting_person", waiting.Status)
+	assert.Equal(t, "2026-11-14T09:00:00Z", waiting.ExpiresAt)
+	assert.Empty(t, waiting.Outcome)
 }

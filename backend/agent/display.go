@@ -261,6 +261,34 @@ type PinDashboardDisplay struct {
 	Pinned    bool         `json:"pinned"`
 }
 
+// AutomationRef is an automation as it is when the action is prepared: its
+// name, and its status (needs_approval, active or paused).
+type AutomationRef struct {
+	Ref
+	Status string `json:"status,omitempty"`
+}
+
+// CreateAutomationDisplay is create_automation's: its name as the Assistant
+// wrote it. Its steps are its payload's spec, which the card shows.
+type CreateAutomationDisplay struct {
+	Name string `json:"name"`
+}
+
+// UpdateAutomationDisplay is update_automation's: the automation as it is,
+// its new name if it changes, and whether the edit carries steps (its
+// payload's spec), which the person's click then approves.
+type UpdateAutomationDisplay struct {
+	Automation AutomationRef `json:"automation"`
+	Name       *string       `json:"name,omitempty"`
+	Steps      bool          `json:"steps"`
+}
+
+// AutomationDisplay is pause_automation's, resume_automation's,
+// delete_automation's and run_automation's: the automation acted on.
+type AutomationDisplay struct {
+	Automation AutomationRef `json:"automation"`
+}
+
 // AssistantRuntimeDisplay is set_assistant_runtime's: where the
 // workspace's new threads run after it (Runtime) and before (Current), and
 // whether a helper that runs Runtime is online (always, for api).
@@ -301,6 +329,8 @@ type Reads interface {
 	GetFoundryDocument(ctx context.Context, workspaceID, id string) (*model.FoundryDocument, error)
 	GetFoundryDashboard(ctx context.Context, workspaceID, id string) (*model.FoundryDashboard, error)
 	ListFoundryDashboards(ctx context.Context, workspaceID string, pinnedOnly bool) ([]*model.FoundryDashboard, error)
+	GetFoundryAutomation(ctx context.Context, workspaceID, id string) (*model.FoundryAutomation, error)
+	ListFoundryAutomations(ctx context.Context, workspaceID string) ([]*model.FoundryAutomation, error)
 }
 
 // Cards draws the cards of actions prepared in one workspace for one
@@ -409,6 +439,11 @@ func (c Cards) describe(ctx context.Context, a integration.PreparedAction, t tar
 	var board DashboardRef
 	if d := t.dashboard; d != nil {
 		board = DashboardRef{Ref: Ref{ID: d.ID, Name: d.Name}, Pinned: d.PinnedAt != nil, Published: d.Share != nil}
+	}
+	// An automation target is one the workspace holds (target).
+	var automation AutomationRef
+	if au := t.automation; au != nil {
+		automation = AutomationRef{Ref: Ref{ID: au.ID, Name: au.Name}, Status: string(au.Status)}
 	}
 	decode := func(into any) error {
 		if err := json.Unmarshal(a.Payload, into); err != nil {
@@ -575,6 +610,20 @@ func (c Cards) describe(ctx context.Context, a integration.PreparedAction, t tar
 		return PinDashboardDisplay{Dashboard: board, Pinned: p.Pinned}, nil
 	case "delete_dashboard", "publish_dashboard", "unpublish_dashboard":
 		return DashboardDisplay{Dashboard: board}, nil
+	case "create_automation":
+		var p integration.CreateAutomationPayload
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return CreateAutomationDisplay{Name: p.Name}, nil
+	case "update_automation":
+		var p integration.UpdateAutomationPayload
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return UpdateAutomationDisplay{Automation: automation, Name: p.Name, Steps: len(p.Spec) > 0}, nil
+	case "pause_automation", "resume_automation", "delete_automation", "run_automation":
+		return AutomationDisplay{Automation: automation}, nil
 	case "set_assistant_runtime":
 		return AssistantRuntimeDisplay{Runtime: t.id, Current: t.runtime.Runtime, Online: t.id == "api" || slices.Contains(t.runtime.Online, t.id)}, nil
 	case "revoke_assistant_helper":

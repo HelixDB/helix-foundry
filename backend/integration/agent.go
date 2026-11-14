@@ -2,6 +2,8 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -39,34 +41,79 @@ type PreparedAction struct {
 	Confirmation Confirmation
 }
 
+// Recorded is what became of an action the agent prepared: a closed set.
+type Recorded interface{ recorded() }
+
 // AwaitingPerson is a prepared action waiting for its person.
 type AwaitingPerson struct {
 	ActionID  string
 	ExpiresAt time.Time
 }
 
+// RanApproved is an action that ran at once, as its person: an automation's
+// owner approved it for the step whose turn prepared it. Status is how it
+// ended (succeeded, failed, or unknown: it lost its answer after its
+// confirmation was spent), Result its untrusted result, Error why it didn't
+// succeed.
+type RanApproved struct {
+	ActionID string
+	Status   string
+	Result   json.RawMessage
+	Error    string
+}
+
+func (AwaitingPerson) recorded() {}
+func (RanApproved) recorded()    {}
+
 // ActionSink keeps what the agent prepares for its person.
 type ActionSink interface {
 	// Allows reports whether the agent may prepare operation at all, before
 	// anything is checked or a confirmation spent.
 	Allows(operation string) bool
-	// Record keeps the action and its confirmation for its person. Recording
-	// the same payload again in a turn returns the action already kept.
-	Record(ctx context.Context, action PreparedAction) (AwaitingPerson, error)
+	// Record keeps the action and its confirmation for its person, or runs it
+	// at once when they approved it beforehand. Recording the same payload
+	// again in a turn returns what became of the action already kept.
+	Record(ctx context.Context, action PreparedAction) (Recorded, error)
 }
 
-// AwaitingPersonOutput is what the agent learns of an action it prepared: no
-// token, only that its person decides.
-type AwaitingPersonOutput struct {
-	ActionID  string `json:"action_id"`
-	Status    string `json:"status" jsonschema:"awaiting_person: a card shows the person the action, which runs only if they click Run."`
-	ExpiresAt string `json:"expires_at"`
-	Next      string `json:"next"`
+// PreparedForPersonOutput is what the agent learns of an action it prepared:
+// no token, only that its person decides, or how it ran when they approved
+// it beforehand.
+type PreparedForPersonOutput struct {
+	ActionID string `json:"action_id"`
+	Status   string `json:"status" jsonschema:"awaiting_person: a card shows the person the action, which runs only if they click Run; or ran: its person approved it beforehand, and it ran."`
+	// ExpiresAt is an awaiting action's.
+	ExpiresAt string `json:"expires_at,omitempty"`
+	// Outcome, Result and Error are a ran action's.
+	Outcome string `json:"outcome,omitempty" jsonschema:"succeeded, failed, or unknown (it may or may not have taken effect: read its state before saying which, and never prepare it again until you know)."`
+	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
+	Result any    `json:"result,omitempty" jsonschema:"Untrusted: what the action made or changed."`
+	Error  string `json:"error,omitempty"`
+	Next   string `json:"next"`
 }
 
 // awaitingPersonNext tells the agent what happens to its action.
 const awaitingPersonNext = "The person sees this action as a card and runs it, or not, with a click; you can't run it. " +
 	"Say in a sentence what it will do and stop: when they run it, you are told its result and go on from there."
+
+// ranApprovedNext tells the agent what happened to its action.
+const ranApprovedNext = "Its person approved this action beforehand, so it ran. Go on from its outcome."
+
+// preparedForPerson is what the agent reads of r.
+func preparedForPerson(r Recorded) PreparedForPersonOutput {
+	switch r := r.(type) {
+	case RanApproved:
+		out := PreparedForPersonOutput{ActionID: r.ActionID, Status: "ran", Outcome: r.Status, Error: r.Error, Next: ranApprovedNext}
+		if len(r.Result) > 0 {
+			out.Result = UntrustedJSON(string(r.Result))
+		}
+		return out
+	case AwaitingPerson:
+		return PreparedForPersonOutput{ActionID: r.ActionID, Status: "awaiting_person", ExpiresAt: r.ExpiresAt.UTC().Format(time.RFC3339Nano),
+			Next: awaitingPersonNext}
+	}
+	panic(fmt.Sprintf("integration: no output of %T", r))
+}
 
 // Session is the tools one agent turn or one click acts with, as one user:
 // Service and Identity add Foundry's tools to a server, HostTools the host's
@@ -111,17 +158,17 @@ func (s *Service) ForAgent() *Service {
 }
 
 // prepareForPerson checks an action, prepares its confirmation and hands it
-// to sink, returning the agent the action's id and no token.
+// to sink, returning the agent what became of it and no token.
 func (s *Service) prepareForPerson(ctx context.Context, identity *Identity, call *Call, input FoundryOperationInput, sink ActionSink) (
-	AwaitingPerson, error) {
+	Recorded, error) {
 	call.ResourceKind, call.ResourceID = TargetKind(input.Target), input.Target
 	if !sink.Allows(input.Operation) {
-		return AwaitingPerson{}, detailedToolError{code: errCodeInvalidArguments,
+		return nil, detailedToolError{code: errCodeInvalidArguments,
 			message: "the Assistant can't prepare " + input.Operation + " here: tell the person how to do it in Foundry instead"}
 	}
 	operation, err := s.ValidateFoundryOperation(ctx, identity, input)
 	if err != nil {
-		return AwaitingPerson{}, err
+		return nil, err
 	}
 	payload := operation.CanonicalPayload()
 	payloadHash := confirmationPayloadHash(foundryOperationPrefix+input.Operation, input.Target, payload)
@@ -129,7 +176,7 @@ func (s *Service) prepareForPerson(ctx context.Context, identity *Identity, call
 		Operation: foundryOperationPrefix + input.Operation, Target: input.Target, Audience: s.ResourceURI, PayloadHash: payloadHash,
 	})
 	if err != nil {
-		return AwaitingPerson{}, FoundryError(err)
+		return nil, FoundryError(err)
 	}
 	return sink.Record(ctx, PreparedAction{
 		Operation: input.Operation, Target: input.Target, Payload: payload, PayloadHash: payloadHash, Confirmation: prepared,
@@ -138,15 +185,15 @@ func (s *Service) prepareForPerson(ctx context.Context, identity *Identity, call
 
 // PrepareAgain prepares an action its person's confirmation ran out on, as
 // that person and with no model, and hands it to sink as prepare does.
-func (s *Service) PrepareAgain(ctx context.Context, identity *Identity, input FoundryOperationInput, sink ActionSink) (AwaitingPerson, error) {
-	var out AwaitingPerson
+func (s *Service) PrepareAgain(ctx context.Context, identity *Identity, input FoundryOperationInput, sink ActionSink) (Recorded, error) {
+	var out Recorded
 	var raw error
 	_, _, _ = s.Run(ctx, toolPrepareFoundry, func(ctx context.Context, call *Call) (any, int, error) {
 		out, raw = s.prepareForPerson(ctx, identity, call, input, sink)
 		if raw != nil {
 			return nil, 0, raw
 		}
-		return out.ActionID, 1, nil
+		return preparedForPerson(out).ActionID, 1, nil
 	})
 	return out, raw
 }

@@ -103,6 +103,10 @@ var toolTitles = map[string]string{
 	toolFoundryGetWorkflowRun:       "Get a workflow run",
 	toolFoundryListDashboards:       "List Foundry dashboards",
 	toolFoundryGetDashboard:         "Get a Foundry dashboard",
+	toolFoundryListAutomations:      "List Foundry automations",
+	toolFoundryGetAutomation:        "Get a Foundry automation",
+	toolFoundryListAutomationRuns:   "List an automation's runs",
+	toolFoundryGetAutomationRun:     "Get an automation's run",
 	toolFoundryPreviewDashboardTile: "Preview a dashboard tile",
 }
 
@@ -163,6 +167,11 @@ type FoundryBackendAPI interface {
 	GetFoundryDashboard(context.Context, *foundryv1.GetFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
 	PreviewFoundryDashboardTile(context.Context, *foundryv1.PreviewFoundryDashboardTileRequest, ...grpc.CallOption) (
 		*foundryv1.PreviewFoundryDashboardTileResponse, error)
+	ListFoundryAutomations(context.Context, *foundryv1.ListFoundryAutomationsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryAutomationsResponse, error)
+	GetFoundryAutomation(context.Context, *foundryv1.GetFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
+	ListFoundryAutomationRuns(context.Context, *foundryv1.ListFoundryAutomationRunsRequest, ...grpc.CallOption) (
+		*foundryv1.ListFoundryAutomationRunsResponse, error)
+	GetFoundryAutomationRun(context.Context, *foundryv1.GetFoundryAutomationRunRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationRunResponse, error)
 }
 
 type ListFoundryOntologiesInput struct {
@@ -918,6 +927,7 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 	}
 	if browse && user {
 		s.addFoundryDashboardTools(server, identity, reads)
+		s.addFoundryAutomationTools(server, identity)
 	}
 	if user && s.FoundryURL != "" && identity.HasPermission(PermissionWorkspaceConnectorsManage) {
 		s.addFoundryConnectTool(server, identity, signIns)

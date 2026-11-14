@@ -252,10 +252,10 @@ func TestAutomationsAreOffAndPeoples(t *testing.T) {
 	s.deps.Cfg.Foundry.Automations.Enabled = true
 
 	for name, ctx := range map[string]context.Context{
-		"a key":       asActor(ports.Actor{Source: ports.SourceMCP, ServiceCredentialID: "key-1", WorkspaceID: "ws-1"}),
-		"no one":      context.Background(),
-		"an event":    asActor(ports.Actor{Source: ports.SourceEventSource, WorkspaceID: "ws-1"}),
-		"a grantee":   access.WithCaller(asActor(ports.Actor{Source: ports.SourceGrantee, UserID: "user-ada", WorkspaceID: "ws-1"}),
+		"a key":    asActor(ports.Actor{Source: ports.SourceMCP, ServiceCredentialID: "key-1", WorkspaceID: "ws-1"}),
+		"no one":   context.Background(),
+		"an event": asActor(ports.Actor{Source: ports.SourceEventSource, WorkspaceID: "ws-1"}),
+		"a grantee": access.WithCaller(asActor(ports.Actor{Source: ports.SourceGrantee, UserID: "user-ada", WorkspaceID: "ws-1"}),
 			access.Grantee{WorkspaceID: "ws-1", Principal: access.Principal{Kind: access.PrincipalUser, ID: "user-ada"}}),
 		"a no-userID": asActor(ports.Actor{Source: ports.SourceUser, WorkspaceID: "ws-1"}),
 	} {
@@ -480,4 +480,24 @@ func TestRunAutomationNowAndItsRuns(t *testing.T) {
 	list, err = s.ListFoundryAutomations(site("user-ada"), &foundryv1.ListFoundryAutomationsRequest{WorkspaceId: "ws-1"})
 	require.NoError(t, err)
 	require.False(t, list.GetEmail(), "an install sends no email")
+}
+
+// The person's Run on an Assistant's card approves the automation it saved.
+func TestRunningAnAutomationCardApprovesIt(t *testing.T) {
+	s, store := automationService(t)
+	a := createAutomation(t, s, site("user-ada"), weeklyAutomation)
+	succeeded := func(result string) foundrymodel.FoundryAgentActionEnd {
+		return foundrymodel.FoundryAgentActionEnd{Status: foundrymodel.FoundryAgentActionSucceeded, Result: json.RawMessage(result)}
+	}
+	end := s.approveOnClick(context.Background(), "ws-1", "user-ada", succeeded(fmt.Sprintf(`{"result":{"id":%q,"revision":1}}`, a.GetId())))
+	require.Empty(t, end.Error)
+	require.Equal(t, foundrymodel.FoundryAutomationActive, store.automations[a.GetId()].Status)
+	require.NotNil(t, store.approvedNext)
+
+	end = s.approveOnClick(context.Background(), "ws-1", "user-ada", succeeded(`{"result":{}}`))
+	require.Equal(t, foundrymodel.FoundryAgentActionSucceeded, end.Status, "the save stands")
+	require.Contains(t, end.Error, "approve it on its page")
+	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationChanged, Detail: "it changed"}
+	end = s.approveOnClick(context.Background(), "ws-1", "user-ada", succeeded(fmt.Sprintf(`{"result":{"id":%q,"revision":1}}`, a.GetId())))
+	require.Contains(t, end.Error, "not approved (it changed)")
 }

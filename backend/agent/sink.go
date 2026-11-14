@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/automation"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
@@ -24,7 +25,9 @@ import (
 // actionSink keeps what a turn's model prepares, for the turn's person: the
 // confirmation's token sealed with the connectors' keyring, under the
 // action's own id, never shown to the model, and the card Foundry draws of
-// it (cards).
+// it (cards). An automation's turn runs at once, as its owner, what fits an
+// action they approved for its step (approved, through sessions); anything
+// else waits for them as a card.
 type actionSink struct {
 	db         Store
 	keys       *secretbox.Keyring
@@ -33,44 +36,109 @@ type actionSink struct {
 	maxPending int
 	// cards draws as the turn's person, set once their session opens.
 	cards Cards
+	// approved is what an automation's step may run unasked; sessions run it.
+	approved []automation.Action
+	sessions integration.SessionHost
 }
 
 var _ integration.ActionSink = (*actionSink)(nil)
 
-func (s *actionSink) Allows(operation string) bool { return Operations[operation] }
+// Allows is the Assistant's operations, and for an automation's turn the
+// operations its owner may approve for a step too.
+func (s *actionSink) Allows(operation string) bool {
+	return Operations[operation] || len(s.approved) > 0 && automation.Operations[operation]
+}
 
 // Record checks the action acts in the turn's workspace, names what it acts
 // on, and stores it with its card in one write. A payload the turn already
 // prepared is the action already stored, unless its person already decided
 // it, and is never drawn again: a replayed attempt finds the card the first
 // drew, whatever changed since. Its refusals reach the model as their words.
-func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (integration.AwaitingPerson, error) {
+//
+// In an automation's turn, an action that fits one its owner approved for
+// the step (automation.Fits: the same operation and target, its payload in
+// bounds) is stored as executing, decided by them, and runs at once as them
+// (RunAction): authorized again, its confirmation consumed once. A replay
+// finds how it ran, and never runs it again.
+func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (integration.Recorded, error) {
 	if s.keys == nil {
-		return integration.AwaitingPerson{}, status.Error(codes.Unavailable, "the Assistant can't keep actions on this host")
+		return nil, status.Error(codes.Unavailable, "the Assistant can't keep actions on this host")
 	}
+	approved := slices.ContainsFunc(s.approved, func(x automation.Action) bool {
+		return automation.Fits(x, s.turn.WorkspaceID, a.Operation, a.Target, a.Payload)
+	})
+	// actionID is the action this attempt stores; empty when one is stored already.
+	var actionID string
 	stored, err := s.db.GetFoundryAgentActionByPayload(ctx, s.turn.ID, a.PayloadHash)
 	if errors.Is(err, foundrystore.ErrNotFound) {
-		stored, err = s.record(ctx, a)
+		actionID = id.New()
+		stored, err = s.record(ctx, a, actionID, approved)
 	}
 	var refusal model.FoundryAgentRefusal
 	switch {
 	case errors.As(err, &refusal):
-		return integration.AwaitingPerson{}, status.Error(codes.FailedPrecondition, refusal.Detail)
+		return nil, status.Error(codes.FailedPrecondition, refusal.Detail)
 	case errors.Is(err, foundrystore.ErrNotFound):
-		return integration.AwaitingPerson{}, ErrLost
+		return nil, ErrLost
 	case err != nil:
-		return integration.AwaitingPerson{}, err
-	case stored.Status != model.FoundryAgentActionPrepared:
-		// A replayed attempt prepared it again after its person decided.
-		return integration.AwaitingPerson{}, status.Error(codes.FailedPrecondition,
-			"the person already decided this action: it is "+string(stored.Shown(time.Now()))+". Don't prepare it again unless they ask")
+		return nil, err
+	case stored.Status == model.FoundryAgentActionPrepared:
+		return integration.AwaitingPerson{ActionID: stored.ID, ExpiresAt: stored.ExpiresAt}, nil
+	case !approved:
+	case stored.ID == actionID && stored.Status == model.FoundryAgentActionExecuting:
+		return s.runApproved(ctx, stored)
+	case stored.Status == model.FoundryAgentActionExecuting:
+		// A replayed attempt finds the one that died running it.
+		return integration.RanApproved{ActionID: stored.ID, Status: string(model.FoundryAgentActionUnknown),
+			Error: "it was running when the Assistant stopped, so it may or may not have taken effect"}, nil
+	case approvedEnd(stored.Status):
+		ran := integration.RanApproved{ActionID: stored.ID, Status: string(stored.Status), Result: stored.Result}
+		if stored.Error != nil {
+			ran.Error = *stored.Error
+		}
+		return ran, nil
 	}
-	return integration.AwaitingPerson{ActionID: stored.ID, ExpiresAt: stored.ExpiresAt}, nil
+	// A replayed attempt prepared it again after its person decided.
+	return nil, status.Error(codes.FailedPrecondition,
+		"the person already decided this action: it is "+string(stored.Shown(time.Now()))+". Don't prepare it again unless they ask")
 }
 
-// record draws a's card and stores it, with its card's event. ErrNotFound
-// means the turn's lease was lost.
-func (s *actionSink) record(ctx context.Context, a integration.PreparedAction) (*model.FoundryAgentAction, error) {
+// approvedEnd reports how an approved action that ran may have ended.
+func approvedEnd(s model.FoundryAgentActionStatus) bool {
+	return s == model.FoundryAgentActionSucceeded || s == model.FoundryAgentActionFailed || s == model.FoundryAgentActionUnknown
+}
+
+// approvedRunMargin is how long before model.FoundryAgentExecutingFor an
+// approved action's run is stopped, leaving it time to record how it ended.
+const approvedRunMargin = 15 * time.Second
+
+// runApproved runs the approved action stored as executing, records how it
+// ended, and shows the person: whatever happens to the turn meanwhile, its
+// end is recorded, so it never runs again.
+func (s *actionSink) runApproved(ctx context.Context, a *model.FoundryAgentAction) (integration.Recorded, error) {
+	ctx = context.WithoutCancel(ctx)
+	runCtx, cancel := context.WithTimeout(ctx, model.FoundryAgentExecutingFor-approvedRunMargin)
+	end := RunAction(runCtx, s.sessions, s.keys, a)
+	cancel()
+	if err := s.db.FinishFoundryAgentAction(ctx, a.ID, end, nil, nil); err != nil {
+		return nil, fmt.Errorf("record the approved action's end: %w", err)
+	}
+	event, err := MarshalEvent(ActionResult{ActionID: a.ID, Operation: a.Operation, Status: string(end.Status), Result: end.Result, Error: end.Error})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.db.AppendFoundryAgentEvents(ctx, s.turn.ID, s.workerID, []json.RawMessage{event}); errors.Is(err, foundrystore.ErrNotFound) {
+		return nil, ErrLost
+	} else if err != nil {
+		return nil, err
+	}
+	return integration.RanApproved{ActionID: a.ID, Status: string(end.Status), Result: end.Result, Error: end.Error}, nil
+}
+
+// record draws a's card and stores it as actionID, with its card's event:
+// executing, decided by the turn's person, when approved. ErrNotFound means
+// the turn's lease was lost.
+func (s *actionSink) record(ctx context.Context, a integration.PreparedAction, actionID string, approved bool) (*model.FoundryAgentAction, error) {
 	card, err := s.cards.Draw(ctx, a)
 	if err != nil {
 		return nil, err
@@ -79,17 +147,20 @@ func (s *actionSink) record(ctx context.Context, a integration.PreparedAction) (
 	if err != nil {
 		return nil, err
 	}
-	actionID := id.New()
 	sealed, keyID, err := s.keys.Seal([]byte(a.Confirmation.Token), actionID)
 	if err != nil {
 		return nil, fmt.Errorf("seal the action's confirmation: %w", err)
 	}
-	return s.db.RecordFoundryAgentAction(ctx, s.workerID, &model.FoundryAgentAction{
+	action := &model.FoundryAgentAction{
 		ID: actionID, TurnID: s.turn.ID, ThreadID: s.turn.ThreadID, WorkspaceID: s.turn.WorkspaceID, UserID: s.turn.UserID,
 		Operation: a.Operation, Target: a.Target, Payload: a.Payload, PayloadHash: a.PayloadHash, Display: card.Display,
 		TargetNamedByUser: named, ConfirmationID: a.Confirmation.ID, TokenSealed: sealed, KeyID: keyID,
 		Status: model.FoundryAgentActionPrepared, ExpiresAt: a.Confirmation.ExpiresAt,
-	}, s.maxPending, func(stored *model.FoundryAgentAction) (json.RawMessage, error) {
+	}
+	if approved {
+		action.Status, action.DecidedBy = model.FoundryAgentActionExecuting, &s.turn.UserID
+	}
+	return s.db.RecordFoundryAgentAction(ctx, s.workerID, action, s.maxPending, func(stored *model.FoundryAgentAction) (json.RawMessage, error) {
 		return MarshalEvent(ActionCard{
 			ActionID: stored.ID, Operation: stored.Operation, Target: stored.Target, Payload: stored.Payload, PayloadHash: stored.PayloadHash,
 			Display: stored.Display, TargetNamedByUser: stored.TargetNamedByUser, ExpiresAt: stored.ExpiresAt,
@@ -104,10 +175,11 @@ type target struct {
 	id, name string
 	others   []string
 	// ontology is an ontology target's; connectorKind a connector's kind;
-	// dashboard a dashboard's.
+	// dashboard a dashboard's; automation an automation's.
 	ontology      *model.FoundryOntology
 	connectorKind string
 	dashboard     *model.FoundryDashboard
+	automation    *model.FoundryAutomation
 	// runtime is where the Assistant runs, for set_assistant_runtime (whose
 	// id is the runtime chosen) and revoke_assistant_helper (whose host is
 	// the helper revoked).
@@ -150,6 +222,14 @@ func (c Cards) target(ctx context.Context, a integration.PreparedAction) (target
 				return target{}, err
 			}
 			others, err := c.dashboardNames(ctx, "")
+			return target{name: p.Name, others: others}, err
+		case "create_automation":
+			// A new automation: what a person names is its name.
+			var p integration.CreateAutomationPayload
+			if err := json.Unmarshal(a.Payload, &p); err != nil {
+				return target{}, err
+			}
+			others, err := c.automationNames(ctx, "")
 			return target{name: p.Name, others: others}, err
 		}
 		// A new ontology on a new database: what a person names is its name.
@@ -214,6 +294,19 @@ func (c Cards) target(ctx context.Context, a integration.PreparedAction) (target
 		}
 		others, err := c.dashboardNames(ctx, thingID)
 		return target{id: thingID, name: d.Name, dashboard: d, others: others}, err
+	case "automation":
+		if inWorkspace != ws {
+			return target{}, elsewhere
+		}
+		au, err := c.DB.GetFoundryAutomation(ctx, ws, thingID)
+		switch {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			return target{}, status.Error(codes.FailedPrecondition, "this workspace holds no automation "+thingID+": read its automations again")
+		case err != nil:
+			return target{}, err
+		}
+		others, err := c.automationNames(ctx, thingID)
+		return target{id: thingID, name: au.Name, automation: au, others: others}, err
 	}
 	return target{}, status.Error(codes.InvalidArgument, "the Assistant acts on no target of kind "+kind)
 }
@@ -225,6 +318,18 @@ func (c Cards) dashboardNames(ctx context.Context, except string) ([]string, err
 	for _, d := range all {
 		if d.ID != except {
 			names = append(names, d.Name)
+		}
+	}
+	return names, err
+}
+
+// automationNames are the names of the workspace's automations but except.
+func (c Cards) automationNames(ctx context.Context, except string) ([]string, error) {
+	all, err := c.DB.ListFoundryAutomations(ctx, c.WorkspaceID)
+	var names []string
+	for _, au := range all {
+		if au.ID != except {
+			names = append(names, au.Name)
 		}
 	}
 	return names, err

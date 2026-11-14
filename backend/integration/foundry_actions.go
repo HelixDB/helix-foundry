@@ -136,6 +136,13 @@ type FoundryActionAPI interface {
 	PinFoundryDashboard(context.Context, *foundryv1.PinFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
 	PublishFoundryDashboard(context.Context, *foundryv1.PublishFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
 	UnpublishFoundryDashboard(context.Context, *foundryv1.UnpublishFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
+	// Automations (foundry_automations.go). None approves one: its owner does, in Foundry.
+	CreateFoundryAutomation(context.Context, *foundryv1.CreateFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
+	UpdateFoundryAutomation(context.Context, *foundryv1.UpdateFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
+	DeleteFoundryAutomation(context.Context, *foundryv1.DeleteFoundryAutomationRequest, ...grpc.CallOption) (*emptypb.Empty, error)
+	PauseFoundryAutomation(context.Context, *foundryv1.PauseFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
+	ResumeFoundryAutomation(context.Context, *foundryv1.ResumeFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
+	RunFoundryAutomation(context.Context, *foundryv1.RunFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationRunResponse, error)
 }
 
 // FoundryOperationInput is described by foundryOperationSchema, which says an API source's parts
@@ -220,16 +227,16 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 	if person, ok := identity.Confirm.(ConfirmByPerson); ok {
 		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
 			Description: "Check a Foundry action and put it before the person you work for as a card, which they run, or not, with a click. " +
-				"Preparing changes nothing, and you can't run it: you are told its result if they do.",
+				"Preparing changes nothing, and you can't run it: you are told its result if they do. " +
+				"An action they approved beforehand (an automation's step) runs at once, and you get its outcome.",
 			InputSchema: foundryOperationSchema(s, func(op string) bool { return offered(op) && person.Sink.Allows(op) }),
 			Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
-		}, func(ctx context.Context, identity *Identity, call *Call, input FoundryOperationInput) (AwaitingPersonOutput, int, error) {
-			awaiting, err := s.prepareForPerson(ctx, identity, call, input, person.Sink)
+		}, func(ctx context.Context, identity *Identity, call *Call, input FoundryOperationInput) (PreparedForPersonOutput, int, error) {
+			recorded, err := s.prepareForPerson(ctx, identity, call, input, person.Sink)
 			if err != nil {
-				return AwaitingPersonOutput{}, 0, err
+				return PreparedForPersonOutput{}, 0, err
 			}
-			return AwaitingPersonOutput{ActionID: awaiting.ActionID, Status: "awaiting_person",
-				ExpiresAt: awaiting.ExpiresAt.UTC().Format(time.RFC3339Nano), Next: awaitingPersonNext}, 1, nil
+			return preparedForPerson(recorded), 1, nil
 		})
 		return
 	}
@@ -451,6 +458,8 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 		return CreateEventSourceOperation{payload: payload, req: req}, nil
 	case "create_dashboard", "update_dashboard", "delete_dashboard", "pin_dashboard", "publish_dashboard", "unpublish_dashboard":
 		return s.validateDashboardOperation(ctx, identity, input, raw)
+	case "create_automation", "update_automation", "pause_automation", "resume_automation", "delete_automation", "run_automation":
+		return s.validateAutomationOperation(ctx, identity, input, raw)
 	case "sync_connector":
 		workspaceID, connectorID, ok := CutFoundryTarget(input.Target, "connector")
 		if !ok || len(input.Payload) != 0 {
@@ -760,7 +769,7 @@ func CutFoundryTarget(target, kind string) (string, string, bool) {
 // TargetKind is the audit resource kind of a target, or empty for one that doesn't parse.
 func TargetKind(target string) string {
 	kind, _, ok := strings.Cut(target, ":")
-	if !ok || (kind != "tenant" && kind != "workspace" && kind != "connector" && kind != "ontology" && kind != "dashboard") {
+	if !ok || (kind != "tenant" && kind != "workspace" && kind != "connector" && kind != "ontology" && kind != "dashboard" && kind != "automation") {
 		return ""
 	}
 	return kind
