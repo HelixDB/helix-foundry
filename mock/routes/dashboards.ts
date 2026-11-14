@@ -27,7 +27,13 @@ import {
 } from "../http";
 import { LOCAL_TOKEN, config, isReply, membership, onReset } from "../state";
 import { foundryPrecondition as refused } from "./ai";
-import { currentLoadId, readLoad } from "./loads";
+import {
+  currentLoadId,
+  ontologyHasProfiles,
+  ontologyLoad,
+  purgeLoaded,
+  readLoad,
+} from "./loads";
 import { ontologyById } from "./ontologies";
 import { storedQuestion } from "./questions";
 import { manages, queryReads } from "./workspaces";
@@ -42,8 +48,12 @@ import { manages, queryReads } from "./workspaces";
 // the foundry-events door serves: the mock serves it at
 // GET /v1/shared-dashboards/{token} (handleSharedDashboard), with no
 // session. A workspace keeps 200.
-// Edits and publishes name the revision read; another is refused
-// FOUNDRY_DASHBOARD_CHANGED.
+// Edits, pins and publishes name the revision read; another is refused
+// FOUNDRY_DASHBOARD_CHANGED. A member deletes no published dashboard. A
+// snapshot keeps each query's shape only (dashboard.PublicQuery); a publish
+// is refused while a tile's ontology is being purged of People enrichment's
+// profiles, and turning enrichment off ends the links of the ontologies
+// whose loads hold them (endEnrichedShares).
 // - `POST /__mock/config {"dashboardsPublic": false}`: no public links, as a
 //   local build (the default under MOCK_LOCAL_TOKEN) or a stamp with
 //   foundry.dashboards.public_enabled off: publishing is refused
@@ -228,14 +238,46 @@ function layoutOf(tiles: Tile[], rows: unknown[]): Spec | string {
 const specJson = (s: Spec) =>
   JSON.stringify({ v: 1, tiles: s.tiles, layout: { rows: s.rows } });
 
-/** Each tile reads a live ontology of the workspace and, pinned, a load of it. */
-function targetsOf(ws: string, spec: Spec): string | undefined {
+/**
+ * Each tile spec points somewhere new (a tile stored doesn't read the same
+ * ontology and load: dashboard.Spec.NewTargets) reads a live ontology of the
+ * workspace and, pinned, a load of it. A stored tile whose ontology or load
+ * went since blocks no edit.
+ */
+function targetsOf(
+  ws: string,
+  spec: Spec,
+  stored: Spec = { tiles: [], rows: [] },
+): string | undefined {
   for (const t of spec.tiles) {
+    const kept = stored.tiles.find((x) => x.id === t.id);
+    if (
+      kept &&
+      kept.ontology_id === t.ontology_id &&
+      JSON.stringify(kept.load) === JSON.stringify(t.load)
+    )
+      continue;
     const o = ontologyById(t.ontology_id);
     if (!o || o.workspaceId !== ws)
       return `tile ${t.id} reads an ontology this workspace doesn't have`;
+    if (t.load.kind === "pinned" && !ontologyLoad(o.id, t.load.load_id))
+      return `tile ${t.id} pins a load ${o.name} doesn't have`;
   }
   return undefined;
+}
+
+/**
+ * Ends the public links of the workspace's dashboards whose tiles read an
+ * ontology whose loads hold People enrichment's profiles, as turning
+ * enrichment off does (./enrichment.ts).
+ */
+export function endEnrichedShares(workspaceId: string) {
+  for (const d of dashboards.values())
+    if (
+      d.workspaceId === workspaceId &&
+      d.share?.ontologyIds.some((o) => ontologyHasProfiles(o))
+    )
+      d.share = null;
 }
 
 function caller(req: MockRequest) {
@@ -278,6 +320,8 @@ function toDashboard(
     canEdit: mayEdit(c, d),
     canPin: !c.grantee && c.manager,
     canPublish: !c.grantee && c.manager && publicLinks(),
+    canDelete: mayEdit(c, d) && (!d.share || c.manager),
+    canUnpublish: !c.grantee && c.manager && !!d.share,
   };
 }
 
@@ -383,6 +427,26 @@ function readTiles(
     });
   }
   return out;
+}
+
+/**
+ * A query's echo as anyone may see it (dashboard.PublicQuery): its start's
+ * type, each step's link, direction and type, and what it returns; nothing
+ * it tested (start.ids, start.text, where, filters).
+ */
+function publicQuery(
+  echo: unknown,
+): DashboardSnapshot["tiles"][number]["query"] {
+  const q = (isRecord(echo) ? echo : {}) as {
+    start?: { type?: string };
+    steps?: { via: string; dir: "out" | "in"; to: string }[];
+    return?: DashboardSnapshot["tiles"][number]["query"]["return"];
+  };
+  return {
+    start: { type: String(q.start?.type ?? "") },
+    steps: (q.steps || []).map(({ via, dir, to }) => ({ via, dir, to })),
+    return: q.return!,
+  };
 }
 
 /** A query's answer as anyone may see it (dashboard.Public). */
@@ -531,7 +595,7 @@ export const dashboardRoutes: MockRoute[] = [
       if (body.specJson !== undefined) {
         const parsed = specOf(body.specJson);
         if (typeof parsed === "string") return fail("INVALID_ARGUMENT", parsed);
-        const target = targetsOf(c.m.workspaceId, parsed);
+        const target = targetsOf(c.m.workspaceId, parsed, d.spec);
         if (target) return fail("INVALID_ARGUMENT", target);
         spec = parsed;
       }
@@ -559,6 +623,11 @@ export const dashboardRoutes: MockRoute[] = [
           "PERMISSION_DENIED",
           "only an owner or admin deletes another person's dashboard, or a pinned one",
         );
+      if (d.share && !c.manager)
+        return fail(
+          "PERMISSION_DENIED",
+          "the dashboard is published at a public link: only an owner or admin deletes it",
+        );
       dashboards.delete(d.id);
       return ok({});
     },
@@ -574,10 +643,22 @@ export const dashboardRoutes: MockRoute[] = [
           "PERMISSION_DENIED",
           "only an owner or admin pins a dashboard for the workspace",
         );
+      const body = (req.body || {}) as Partial<PinDashboardRequest>,
+        expected = Number(body.expectedRevision ?? 0),
+        pinned = !!body.pinned;
+      if (expected < 1)
+        return fail(
+          "INVALID_ARGUMENT",
+          "id and expected_revision are required",
+        );
       const d = visible(req, c);
       if (!isStored(d)) return d;
-      const pinned = !!(req.body as Partial<PinDashboardRequest> | undefined)
-        ?.pinned;
+      if (d.revision !== expected)
+        return refused(
+          d.workspaceId,
+          "FOUNDRY_DASHBOARD_CHANGED",
+          `the dashboard changed since revision ${expected}: it is at ${d.revision} now; read it again`,
+        );
       if (pinned && !d.pinnedAt) {
         const count = [...dashboards.values()].filter(
           (x) => x.workspaceId === d.workspaceId && x.pinnedAt,
@@ -671,6 +752,11 @@ export const dashboardRoutes: MockRoute[] = [
         d.spec.tiles.length,
       );
       if (typeof tile === "string") return fail("FAILED_PRECONDITION", tile);
+      if (body.pinLoad && !ontologyLoad(o.id, q.loadId))
+        return fail(
+          "FAILED_PRECONDITION",
+          "the question's load was deleted: add its result reading the current load instead",
+        );
       const spec = layoutOf(
         [...d.spec.tiles, tile],
         [...d.spec.rows, [tile.id]],
@@ -773,8 +859,14 @@ export const dashboardRoutes: MockRoute[] = [
         d.spec.tiles.map((t) => t.ontology_id),
       )) {
         const group = d.spec.tiles.filter((t) => t.ontology_id === ontologyId);
-        if (!ontologyById(ontologyId))
-          return tileFailed(group[0]!, "its ontology was deleted");
+        const o = ontologyById(ontologyId);
+        if (!o) return tileFailed(group[0]!, "its ontology was deleted");
+        if (!purgeLoaded(ontologyId))
+          return refused(
+            ws,
+            "FOUNDRY_DASHBOARD_TILE_FAILED",
+            `People enrichment was turned off, and ${o.name} is being loaded again without its profiles: publish once that load is current`,
+          );
         const reads = readTiles(req, c, group);
         if (!Array.isArray(reads)) {
           const reason = ((reads.body as { details?: { reason?: string }[] })
@@ -808,7 +900,7 @@ export const dashboardRoutes: MockRoute[] = [
             outputs.set(t.id, {
               asOf: r.asOf,
               output: publicOutput(answer.result),
-              query: answer.query_echo,
+              query: publicQuery(answer.query_echo),
             });
           }
       }

@@ -3152,11 +3152,15 @@ export type FoundryDashboard = {
   createdAt?: string | null;
   updatedAt?: string | null;
   share?: FoundryDashboardShare | null;
-  // What the caller may do: change its name, description and tiles and
-  // delete it; pin or unpin it; publish and unpublish it.
+  // What the caller may do: change its name, description and tiles; pin or
+  // unpin it; publish and republish it (false wherever public links are off);
+  // delete it (an owner or admin only while it is published); unpublish it
+  // (an owner or admin while it is published, links on or off).
   canEdit?: boolean;
   canPin?: boolean;
   canPublish?: boolean;
+  canDelete?: boolean;
+  canUnpublish?: boolean;
 };
 
 /** GET .../dashboards: every one (at most 200), pinned first, without specs. */
@@ -3184,8 +3188,11 @@ export type UpdateDashboardRequest = {
   description?: string;
   specJson?: string;
 };
-/** POST .../dashboards/{id}:pin, owners and admins. */
-export type PinDashboardRequest = { pinned: boolean };
+/**
+ * POST .../dashboards/{id}:pin, owners and admins: at the revision read
+ * (another is FOUNDRY_DASHBOARD_CHANGED), so what is pinned is what was seen.
+ */
+export type PinDashboardRequest = { pinned: boolean; expectedRevision: string };
 /**
  * POST .../dashboards/{id}:add-question-visual: an answered question's query
  * result (evidenceId, such as e2) as a tile of its own row, last, with its
@@ -3219,7 +3226,9 @@ export type PublishDashboardRequest = { expectedRevision: string };
  * with no session: no workspace's, ontology's, load's or person's id. Each
  * tile's output is its query's answer as :read gave its publisher, strings
  * cut to 1,000 characters, a row's entities as {type, name} only (no id),
- * and each row's edges empty.
+ * and each row's edges empty; its query only its shape (the type at each
+ * position, each step's link and what it returns), never a value it tested
+ * (start.ids, start.text, where, filters).
  */
 export type DashboardSnapshot = {
   v: 1;
@@ -3231,7 +3240,11 @@ export type DashboardSnapshot = {
     id: string;
     title: string;
     visual: { kind?: VisualKind };
-    query: OntologyQuery;
+    query: {
+      start: { type: string };
+      steps: { via: string; dir: "out" | "in"; to: string }[];
+      return: OntologyQuery["return"];
+    };
     as_of: string;
     output: QueryOutput;
   }[];

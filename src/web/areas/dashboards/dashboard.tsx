@@ -69,18 +69,30 @@ import {
   pinDashboard,
   updateDashboard,
 } from "./queries";
-import { ShareDialog, publicLinks } from "./publish";
+import { ShareDialog, sharing } from "./publish";
 import { Tile, type TileState } from "./tile";
 
 // /dashboards/:dashboardId: a dashboard's tiles in their rows, each read by
 // the viewer through its load's :read (the tiles of one load in one call),
 // and what the viewer may do with it, as the WFE says (canEdit, canPin,
-// canPublish): Edit its name, description and tiles (retitle, show as,
-// arrange, remove, and see the read each makes), Pin it for the whole
-// workspace, Publish it at a public link (hosted only) and Delete it.
+// canPublish, canUnpublish, canDelete): Edit its name, description and
+// tiles (retitle, show as, arrange, remove, and see the read each makes),
+// Pin it for the whole workspace, Publish it at a public link (hosted
+// only) or end its link, and Delete it.
 
-/** What an edit holds until it is saved: the name, description and spec, and each tile's title as typed. */
+/**
+ * What an edit holds until it is saved: the dashboard it started from (the
+ * revision it saves against, and what it is compared with, so a refetch
+ * meanwhile never makes it overwrite someone else's change unseen), then
+ * the name, description and spec, and each tile's title as typed.
+ */
 type Draft = {
+  base: {
+    revision: string;
+    name: string;
+    description: string;
+    spec: DashboardSpec;
+  };
   name: string;
   description: string;
   spec: DashboardSpec;
@@ -125,6 +137,12 @@ function useTileStates(spec: DashboardSpec | undefined) {
     queries: reads.map((r) => dashboardQueries.read(ws, r)),
   });
   return (t: DashboardTile): TileState => {
+    if (ontologies.isError)
+      return {
+        kind: "failed",
+        message: ontologies.error.message,
+        retry: () => void ontologies.refetch(),
+      };
     if (!ontologies.data) return { kind: "waiting" };
     if (!byId.has(t.ontology_id)) return { kind: "gone" };
     if (unloaded.includes(t.id)) return { kind: "unloaded" };
@@ -168,7 +186,7 @@ export function DashboardPage() {
     [saving, setSaving] = useState(false),
     [error, setError] = useState(""),
     [changed, setChanged] = useState(false),
-    [sharing, setSharing] = useState(false),
+    [shareOpen, setShareOpen] = useState(false),
     [deleting, setDeleting] = useState(false),
     [busy, setBusy] = useState(false);
   const crumbs = [{ label: "Dashboards", to: paths.dashboards() }];
@@ -218,9 +236,16 @@ export function DashboardPage() {
   const startEdit = () => {
     setError("");
     setChanged(false);
-    setDraft({
+    const base = {
+      revision: d.revision || "",
       name: d.name || "",
       description: d.description || "",
+      spec,
+    };
+    setDraft({
+      base,
+      name: base.name,
+      description: base.description,
       spec,
       titles: Object.fromEntries(spec.tiles.map((t) => [t.id, t.title])),
     });
@@ -240,17 +265,18 @@ export function DashboardPage() {
         );
       next = applyEdit(next, { kind: "title", tile: t.id, title });
     }
-    const description = draft.description.trim(),
-      tiles = JSON.stringify(next) !== JSON.stringify(spec);
-    if (name === d.name && description === (d.description || "") && !tiles)
+    const { base } = draft,
+      description = draft.description.trim(),
+      tiles = JSON.stringify(next) !== JSON.stringify(base.spec);
+    if (name === base.name && description === base.description && !tiles)
       return setDraft(null);
     setSaving(true);
     setError("");
     try {
       const saved = await updateDashboard(ws, d.id, {
-        expectedRevision: d.revision || "",
-        ...(name !== d.name ? { name } : {}),
-        ...(description !== (d.description || "") ? { description } : {}),
+        expectedRevision: base.revision,
+        ...(name !== base.name ? { name } : {}),
+        ...(description !== base.description ? { description } : {}),
         ...(tiles ? { spec: next } : {}),
       });
       keepDashboard(qc, ws, saved);
@@ -268,18 +294,29 @@ export function DashboardPage() {
   const pin = async (pinned: boolean) => {
     setBusy(true);
     try {
-      keepDashboard(qc, ws, await pinDashboard(ws, d.id, pinned));
+      keepDashboard(
+        qc,
+        ws,
+        await pinDashboard(ws, d.id, pinned, d.revision || ""),
+      );
       notify(
         pinned
           ? "Pinned for everyone in the workspace."
           : "Unpinned for everyone in the workspace.",
       );
     } catch (e) {
-      notify((e as Error).message, true);
+      if (dashboardRefusal(e) === "FOUNDRY_DASHBOARD_CHANGED") {
+        void read.refetch();
+        notify(
+          "Someone changed this dashboard since you opened it. Look it over, then try again.",
+          true,
+        );
+      } else notify(sentence((e as Error).message), true);
     } finally {
       setBusy(false);
     }
   };
+  const offered = sharing(d);
 
   const meta = (
     <>
@@ -313,16 +350,16 @@ export function DashboardPage() {
           Edit
         </Button>
       )}
-      {d.canPublish && publicLinks && (
+      {(offered.publish || offered.unpublish) && (
         <Button
           icon={Globe}
           variant={d.share ? "secondary" : "primary"}
-          onClick={() => setSharing(true)}
+          onClick={() => setShareOpen(true)}
         >
           {d.share ? "Public link" : "Publish"}
         </Button>
       )}
-      {(d.canPin || d.canEdit) && (
+      {(d.canPin || d.canDelete) && (
         <DropdownMenu
           label="More actions"
           align="end"
@@ -338,8 +375,8 @@ export function DashboardPage() {
               {d.pinned ? "Unpin for everyone" : "Pin for everyone"}
             </MenuItem>
           )}
-          {d.canPin && d.canEdit && <MenuSeparator />}
-          {d.canEdit && (
+          {d.canPin && d.canDelete && <MenuSeparator />}
+          {d.canDelete && (
             <MenuItem icon={Trash2} danger onSelect={() => setDeleting(true)}>
               Delete dashboard
             </MenuItem>
@@ -406,10 +443,13 @@ export function DashboardPage() {
           text={
             editing
               ? "Every tile is removed. Save to keep it empty, or Cancel to keep its tiles."
-              : "Pin a chart or table from an Analyst answer, or ask the Assistant to build tiles for you."
+              : d.canEdit
+                ? "Pin a chart or table from an Analyst answer, or ask the Assistant to build tiles for you."
+                : "Whoever made it, or an owner or admin, adds its tiles."
           }
           action={
-            !editing && (
+            !editing &&
+            d.canEdit && (
               <ButtonLink to="/ask" icon={Sparkles}>
                 Open the Analyst
               </ButtonLink>
@@ -449,8 +489,8 @@ export function DashboardPage() {
           ))}
         </div>
       )}
-      {sharing && (
-        <ShareDialog dashboard={d} onClose={() => setSharing(false)} />
+      {shareOpen && (offered.publish || offered.unpublish) && (
+        <ShareDialog dashboard={d} onClose={() => setShareOpen(false)} />
       )}
       {deleting && (
         <ConfirmDialog

@@ -109,10 +109,10 @@ import { manages } from "./workspaces";
 //   with helix_foundry_preview_dashboard_tile, the mock's real preview; a
 //   tile that can't be read, nothing loaded or no invoices, says why);
 // - on a dashboard's page, "pin" or "unpin" it, "publish" or "unpublish"
-//   it (publish and unpublish only while public links are on), "delete" it
-//   or "rename it to X" (pin_dashboard, publish_dashboard,
-//   unpublish_dashboard, delete_dashboard, update_dashboard, after
-//   helix_foundry_get_dashboard);
+//   it (publish only while public links are on; unpublish whenever it is
+//   published), "delete" it or "rename it to X" (pin_dashboard,
+//   publish_dashboard, unpublish_dashboard, delete_dashboard,
+//   update_dashboard, after helix_foundry_get_dashboard);
 // - "create an ontology called X on database Y" (create_ontology; "on a new
 //   database Y" makes it in the workspace's first project);
 // - "generate" or "draft" (generate_ontology: the connections and sets the
@@ -142,9 +142,9 @@ import { manages } from "./workspaces";
 //   page, and says what they hold.
 // The ontology an action acts on is the one named, else the page's, else
 // the one this thread last acted on, else the newest (a card that warns it
-// was not named). A member gets the read tools only, as the backend gives
-// them: no prepare and no connect, so the agent says an owner or admin
-// does it. Running a card calls the mock's own WFE routes as the person who
+// was not named). A member gets the read tools, and prepares only their own
+// dashboards (MEMBER_OPERATIONS), as the backend gives them: anything else,
+// connect included, the agent says an owner or admin does. Running a card calls the mock's own WFE routes as the person who
 // clicked (each operation's REST call, as the backend's execute does), after
 // the backend's checks: the person's own action, its hash, still waiting,
 // its confirmation alive, the thread idle; then a continuation turn goes on
@@ -914,6 +914,13 @@ const LIST = "helix_foundry_list_ontologies",
   GET_DASHBOARD = "helix_foundry_get_dashboard",
   PREPARE = "helix_foundry_prepare_operation";
 
+/** What a member, who manages nothing, prepares: their own dashboards (integration.memberOperations). */
+const MEMBER_OPERATIONS: readonly (AgentOperation | "connect")[] = [
+  "create_dashboard",
+  "update_dashboard",
+  "delete_dashboard",
+];
+
 /** What an owner or admin does that a member asked for, in the agent's words. */
 const VERBS: Record<AgentOperation, string> = {
   create_ontology: "create an ontology",
@@ -1338,7 +1345,7 @@ function messageScript(a: Ask, manager: boolean): Step[] {
                                     )
                                   ? "create_load"
                                   : undefined;
-  if (intent && !manager)
+  if (intent && !manager && !MEMBER_OPERATIONS.includes(intent))
     return [
       started,
       ...list,
@@ -2047,17 +2054,18 @@ function onDashboard(
       pinned: d.pinned,
     })),
   ];
-  if (
-    (ask.operation === "publish_dashboard" ||
-      ask.operation === "unpublish_dashboard") &&
-    !publicLinks()
-  )
+  if (ask.operation === "publish_dashboard" && !publicLinks())
     return [
       ...read,
       said(
         () =>
-          "Public links aren't available here, so I can't publish or unpublish this dashboard.",
+          "Public links aren't available here, so I can't publish this dashboard.",
       ),
+    ];
+  if (ask.operation === "unpublish_dashboard" && !d.published)
+    return [
+      ...read,
+      said(() => `“${d.name}” isn't published, so there is no link to end.`),
     ];
   const dashboard = dref(d),
     target = `dashboard:${a.ws}/${d.id}`,
@@ -2084,7 +2092,7 @@ function onDashboard(
         return {
           operation: ask.operation,
           target,
-          payload: { pinned: ask.pinned },
+          payload: { expected_revision: d.revision, pinned: ask.pinned },
           display: { dashboard, pinned: ask.pinned },
           named,
           ontologyId: "",
@@ -2131,8 +2139,12 @@ function dashboardOutput(ws: string, d: FoundryDashboard) {
     can_edit: !!d.canEdit,
     can_pin: !!d.canPin,
     can_publish: !!d.canPublish,
+    can_delete: !!d.canDelete,
+    can_unpublish: !!d.canUnpublish,
+    // Never its link: a tool's output reaches the model and its transcripts.
     ...(d.share && {
       share: {
+        published: true,
         spec_revision: Number(d.share.specRevision),
         published_at: d.share.publishedAt,
       },
@@ -2518,7 +2530,10 @@ function run(a: StoredAction, userId: string): MockReply {
     case "delete_dashboard":
       return wfe(userId, "DELETE", board);
     case "pin_dashboard":
-      return wfe(userId, "POST", `${board}:pin`, { pinned: p.pinned });
+      return wfe(userId, "POST", `${board}:pin`, {
+        expectedRevision: String(p.expected_revision),
+        pinned: p.pinned,
+      });
     case "publish_dashboard":
       return wfe(userId, "POST", `${board}:publish`, {
         expectedRevision: String(p.expected_revision),
@@ -2707,7 +2722,8 @@ function execute(req: MockRequest, userId: string) {
 /** Prepares the action again as the person, as they are now: their role, and what it acts on. */
 function refreshRefusal(a: StoredAction, userId: string) {
   const m = membership(a.workspaceId, userId);
-  if (isReply(m) || !manages(m)) return "permission denied";
+  if (isReply(m) || (!manages(m) && !MEMBER_OPERATIONS.includes(a.operation)))
+    return "permission denied";
   if (a.ontologyId && !ontologyById(a.ontologyId))
     return `this workspace holds no ontology ${a.ontologyId}: read its ontologies again`;
   if (a.operation === "settle_review") return settleRefusal(a);

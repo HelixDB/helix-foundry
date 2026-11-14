@@ -1748,6 +1748,10 @@ describe("dashboards", () => {
       target: `dashboard:ws_acme/${made.id}`,
       targetNamedByUser: true,
     });
+    expect(JSON.parse(pin.action.payloadJson)).toEqual({
+      expected_revision: 1,
+      pinned: true,
+    });
     expect(pin.display).toEqual({
       dashboard: { id: made.id, name: "Revenue" },
       pinned: true,
@@ -1777,10 +1781,12 @@ describe("dashboards", () => {
       error: "the dashboard has no tiles to publish",
     });
     expect(published.said).toContain("That didn't run");
-    const unpublished = await runCard(
-      (await card("Unpublish it", page)).action,
+    // Unpublished, there is no link to end.
+    const unpublished = await card("Unpublish it", page);
+    expect(unpublished.action).toBeUndefined();
+    expect(unpublished.said).toContain(
+      "“Paid invoices” isn't published, so there is no link to end.",
     );
-    expect(unpublished.ran.status).toBe("succeeded");
     const deleted = await runCard(
       (await card("Delete this dashboard", page)).action,
     );
@@ -1795,7 +1801,10 @@ describe("dashboards", () => {
     const c = await card("Delete this dashboard", {
       pageContext: { dashboardId: made.id },
     });
-    await call("POST", `${D}/${made.id}:pin`, { pinned: true });
+    await call("POST", `${D}/${made.id}:pin`, {
+      expectedRevision: "1",
+      pinned: true,
+    });
     later(6 * 60_000);
     const refreshed = await call(
       "POST",
@@ -1817,12 +1826,74 @@ describe("dashboards", () => {
     expect(c.said).toContain("Public links aren't available here");
   });
 
-  it("prepares nothing for a member", async () => {
+  it("publishes, and hands the agent no link; unpublishes with links off too", async () => {
     await loaded("dash");
-    const c = await card(BUILD, {}, "usr_alan");
-    expect(c.action).toBeUndefined();
-    expect(c.said).toContain(
-      "Only an owner or admin of this workspace can make a dashboard",
+    const tile = {
+      id: "t1",
+      title: "Invoices",
+      ontology_id: "ont_acme_contracts",
+      load: { kind: "current" },
+      query: { start: { type: "Invoice" }, return: { count: {} } },
+      visual: {},
+    };
+    const made = (
+      await call("POST", D, {
+        name: "Revenue",
+        clientToken: "c",
+        specJson: JSON.stringify({
+          v: 1,
+          tiles: [tile],
+          layout: { rows: [["t1"]] },
+        }),
+      })
+    ).body.dashboard;
+    const page = { pageContext: { dashboardId: made.id } };
+    const published = await runCard((await card("Publish it", page)).action);
+    expect(published.ran.status).toBe("succeeded");
+    const token = (await call("GET", `${D}/${made.id}`)).body.dashboard.share
+      .token as string;
+    expect(token).toMatch(/^hxd_/);
+    expect(published.result.share).toMatchObject({ published: true });
+    expect(published.ran.resultJson).not.toContain(token);
+    expect(published.said).not.toContain(token);
+
+    // Links turned off: no publishing, but the link can still be ended.
+    Object.assign(config, { dashboardsPublic: false });
+    const again = await card("Publish this", page);
+    expect(again.action).toBeUndefined();
+    expect(again.said).toContain("Public links aren't available here");
+    const unpublished = await runCard(
+      (await card("Unpublish it", page)).action,
+    );
+    expect(unpublished.ran.status).toBe("succeeded");
+    expect(
+      (await call("GET", `${D}/${made.id}`)).body.dashboard.share,
+    ).toBeFalsy();
+  });
+
+  it("builds a member's own dashboard, and leaves pinning to owners and admins", async () => {
+    await loaded("dash");
+    const built = await card(BUILD, {}, "usr_alan");
+    expect(built.action.operation).toBe("create_dashboard");
+    const ran = await call(
+      "POST",
+      `${A}/actions/${built.action.id}:execute`,
+      { payloadHash: built.action.payloadHash },
+      "usr_alan",
+    );
+    expect(ran.body.action.status).toBe("succeeded");
+    const id = JSON.parse(ran.body.action.resultJson).result.id;
+    expect(
+      (await call("GET", `${D}/${id}`)).body.dashboard.createdByUserId,
+    ).toBe("usr_alan");
+    const pin = await card(
+      "Pin this dashboard",
+      { pageContext: { dashboardId: id } },
+      "usr_alan",
+    );
+    expect(pin.action).toBeUndefined();
+    expect(pin.said).toContain(
+      "Only an owner or admin of this workspace can pin a dashboard",
     );
   });
 

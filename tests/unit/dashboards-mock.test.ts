@@ -250,10 +250,30 @@ describe("mock dashboards", () => {
       ).status,
     ).toBe(403);
     expect(
-      (await call("POST", `${D}/${mine.id}:pin`, { pinned: true }, "usr_alan"))
-        .status,
+      (
+        await call(
+          "POST",
+          `${D}/${mine.id}:pin`,
+          { pinned: true, expectedRevision: "2" },
+          "usr_alan",
+        )
+      ).status,
     ).toBe(403);
-    const pinned = await call("POST", `${D}/${mine.id}:pin`, { pinned: true });
+    expect(
+      reason(
+        await call("POST", `${D}/${mine.id}:pin`, {
+          pinned: true,
+          expectedRevision: "1",
+        }),
+      ),
+    ).toBe("FOUNDRY_DASHBOARD_CHANGED");
+    expect(
+      (await call("POST", `${D}/${mine.id}:pin`, { pinned: true })).status,
+    ).toBe(400);
+    const pinned = await call("POST", `${D}/${mine.id}:pin`, {
+      pinned: true,
+      expectedRevision: "2",
+    });
     expect(pinned.body.dashboard).toMatchObject({
       pinned: true,
       pinnedByUserId: "usr_ada",
@@ -325,6 +345,12 @@ describe("mock dashboards", () => {
     const text = JSON.stringify(snapshot);
     for (const id of ["ws_acme", "ont_acme_contracts", loadId, "usr_ada", d.id])
       expect(text).not.toContain(id);
+    expect(snapshot.tiles[1]!.query).toMatchObject({
+      start: { type: "Customer" },
+      steps: [],
+      return: named.return,
+    });
+    expect(Object.keys(snapshot.tiles[1]!.query.start)).toEqual(["type"]);
     expect(
       (await call("GET", `${D}/${d.id}`, undefined, "usr_alan")).body.dashboard
         .share.token,
@@ -334,8 +360,115 @@ describe("mock dashboards", () => {
       await call("POST", `${D}/${d.id}:publish`, { expectedRevision: "1" })
     ).body.dashboard;
     expect(again.share.token).toBe(token);
+    expect(again).toMatchObject({ canDelete: true, canUnpublish: true });
     await call("POST", `${D}/${d.id}:unpublish`, {});
     expect(shared(token).status).toBe(404);
+  });
+
+  it("keeps no value a published query tested", async () => {
+    await loaded();
+    const tested = {
+      start: {
+        type: "Customer",
+        where: [{ prop: "name", op: "contains", value: "secret-text" }],
+      },
+      steps: [
+        {
+          via: "billed_to",
+          dir: "in",
+          to: "Invoice",
+          where: [{ prop: "status", op: "=", value: "secret-status" }],
+        },
+      ],
+      return: { count: {} },
+    };
+    const d = await create(spec([tile("t1", tested)], [["t1"]]));
+    const published = await call("POST", `${D}/${d.id}:publish`, {
+      expectedRevision: "1",
+    });
+    expect(published.status, JSON.stringify(published.body)).toBe(200);
+    const snapshot = shared(published.body.dashboard.share.token)
+      .body as wfe.DashboardSnapshot;
+    expect(snapshot.tiles[0]!.query).toEqual({
+      start: { type: "Customer" },
+      steps: [{ via: "billed_to", dir: "in", to: "Invoice" }],
+      return: { count: { distinct_at: null } },
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(/secret|where/);
+  });
+
+  it("leaves a published dashboard's link to owners and admins", async () => {
+    await loaded();
+    const mine = await create(
+      spec([tile("t1", customers)], [["t1"]]),
+      "usr_alan",
+    );
+    expect(
+      (await call("POST", `${D}/${mine.id}:publish`, { expectedRevision: "1" }))
+        .status,
+    ).toBe(200);
+    const seen = (await call("GET", `${D}/${mine.id}`, undefined, "usr_alan"))
+      .body.dashboard;
+    expect(seen).toMatchObject({
+      canEdit: true,
+      canDelete: false,
+      canUnpublish: false,
+    });
+    expect(
+      (await call("DELETE", `${D}/${mine.id}`, undefined, "usr_alan")).status,
+    ).toBe(403);
+    // With public links off, an owner still takes it down for good.
+    Object.assign(config, { dashboardsPublic: false });
+    const owner = (await call("GET", `${D}/${mine.id}`)).body.dashboard;
+    expect(owner).toMatchObject({ canPublish: false, canUnpublish: true });
+    expect((await call("POST", `${D}/${mine.id}:unpublish`, {})).status).toBe(
+      200,
+    );
+    Object.assign(config, { dashboardsPublic: true });
+    expect(
+      (await call("GET", `${D}/${mine.id}`)).body.dashboard.share,
+    ).toBeFalsy();
+    expect(
+      (await call("DELETE", `${D}/${mine.id}`, undefined, "usr_alan")).status,
+    ).toBe(200);
+  });
+
+  it("checks only tiles an edit points somewhere new", async () => {
+    const first = await loaded();
+    const pinned = tile("t2", customers, {
+      load: { kind: "pinned", load_id: first },
+    });
+    const d = await create(
+      spec([tile("t1", customers), pinned], [["t1", "t2"]]),
+    );
+    // Another load becomes current, and the pinned one is deleted, as loads
+    // past the five kept are.
+    await call("POST", `${O}/loads`, {
+      versionId: "ver_seed_3",
+      clientToken: "l2",
+    });
+    later(10_000);
+    expect((await call("DELETE", `${O}/loads/${first}`)).status).toBe(200);
+    later(10_000);
+    const edit = (tiles: Record<string, unknown>[], revision: string) =>
+      call("PATCH", `${D}/${d.id}`, {
+        expectedRevision: revision,
+        specJson: spec(tiles, [tiles.map((t) => String(t.id))]),
+      });
+    const retitled = { ...tile("t1", customers), title: "All customers" };
+    const kept = await edit([retitled, pinned], "1");
+    expect(kept.status, JSON.stringify(kept.body)).toBe(200);
+    const added = await edit([retitled, pinned, { ...pinned, id: "t3" }], "2");
+    expect(added.body.message).toBe(
+      "tile t3 pins a load Customer contracts doesn't have",
+    );
+    const moved = await edit(
+      [{ ...retitled, load: { kind: "pinned", load_id: first } }, pinned],
+      "2",
+    );
+    expect(moved.body.message).toBe(
+      "tile t1 pins a load Customer contracts doesn't have",
+    );
   });
 
   it("reads and publishes counts by value and aggregates", async () => {
@@ -461,7 +594,10 @@ describe("a restricted member's dashboards", () => {
   it("lists the pinned ones only", async () => {
     const mine = await create();
     const pinned = await create();
-    await call("POST", `${D}/${pinned.id}:pin`, { pinned: true });
+    await call("POST", `${D}/${pinned.id}:pin`, {
+      pinned: true,
+      expectedRevision: "1",
+    });
     const list = (await call("GET", D, undefined, "usr_eve")).body;
     expect(list.canCreate).toBe(false);
     expect(list.dashboards.map((d: wfe.FoundryDashboard) => d.id)).toEqual([

@@ -140,10 +140,12 @@ export async function pinDashboard(
   ws: string,
   id: string,
   pinned: boolean,
+  expectedRevision: string,
 ): Promise<FoundryDashboard> {
   const { dashboard } = await reported("pin", () =>
     api<DashboardResponse>(`${at(ws)}/${enc(id)}:pin`, {
       pinned,
+      expectedRevision,
     } satisfies PinDashboardRequest),
   );
   trackEvent(pinned ? "dashboard_pinned" : "dashboard_unpinned");

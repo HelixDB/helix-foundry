@@ -1003,6 +1003,46 @@ describe("a load that enriches", () => {
       | wfe.FoundryLoad
       | undefined;
 
+  it("ends the public links of what it purges, and publishes them again once clean", async () => {
+    await allow();
+    await load();
+    const D = `${WS}/foundry/dashboards`;
+    const tile = {
+      id: "t1",
+      title: "People",
+      ontology_id: "ont_acme_sales",
+      load: { kind: "current" },
+      query: { start: { type: "Person" }, return: { count: {} } },
+      visual: {},
+    };
+    const made = (
+      await call("POST", D, {
+        name: "People",
+        clientToken: "people",
+        specJson: JSON.stringify({
+          v: 1,
+          tiles: [tile],
+          layout: { rows: [["t1"]] },
+        }),
+      })
+    ).body.dashboard as wfe.FoundryDashboard;
+    const publish = () =>
+      call("POST", `${D}/${made.id}:publish`, { expectedRevision: "1" });
+    expect((await publish()).body.dashboard.share).toBeTruthy();
+    await off();
+    expect(
+      (await call("GET", `${D}/${made.id}`)).body.dashboard.share,
+    ).toBeFalsy();
+    const refused = await publish();
+    expect(refused.body.details?.[0]?.reason).toBe(
+      "FOUNDRY_DASHBOARD_TILE_FAILED",
+    );
+    expect(refused.body.message).toContain("People enrichment was turned off");
+    const loads = (await call("GET", `${O}/loads`)).body.loads;
+    expect((await settle(loads[0].id)).current).toBe(true);
+    expect((await publish()).status).toBe(200);
+  });
+
   it("purges when consent is turned off: a clean load, and old ones can't be current", async () => {
     await allow();
     const enriched = await load();

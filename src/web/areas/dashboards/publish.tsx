@@ -27,7 +27,9 @@ import {
 // who has it opens without signing in (the share page, /share/<token>,
 // which reads the foundry-events door). Publishing again keeps the link
 // and refreshes the snapshot; unpublishing deletes it, and the link shows
-// nothing from then on.
+// nothing from then on. With public links off (here, or on the WFE: no
+// canPublish), a published dashboard's owner or admin can still unpublish
+// it (canUnpublish), so turning links on again revives no link they ended.
 
 /**
  * Whether this build offers public links: never a local one, nor one
@@ -35,6 +37,12 @@ import {
  * The WFE says so per dashboard too (canPublish).
  */
 export const publicLinks = !LOCAL && !!process.env.NEXT_PUBLIC_HELIX_EVENTS_URL;
+
+/** Whether the viewer publishes d here, or ends its link: what the Share dialog offers. */
+export const sharing = (d: FoundryDashboard) => ({
+  publish: !!d.canPublish && publicLinks,
+  unpublish: !!d.canUnpublish,
+});
 
 /** Why publishing was refused, in words for the person who asked. */
 function publishError(e: unknown): string {
@@ -67,6 +75,7 @@ export function ShareDialog({
     [error, setError] = useState(""),
     [confirming, setConfirming] = useState(false);
   const share = d.share,
+    offered = sharing(d),
     url =
       share?.token && typeof window !== "undefined"
         ? window.location.origin + paths.shared(share.token)
@@ -112,15 +121,34 @@ export function ShareDialog({
       onClose={onClose}
     >
       <div className="db-share">
-        <p className="db-share-warn" role="note">
-          <Globe size={15} aria-hidden />
-          <span>
-            Anyone with the link sees this dashboard’s data, without signing in.
-            They see a snapshot of what its tiles read when it was published, as
-            you can read it, and nothing else of the workspace.
-          </span>
-        </p>
-        {share ? (
+        {offered.publish && (
+          <p className="db-share-warn" role="note">
+            <Globe size={15} aria-hidden />
+            <span>
+              Anyone with the link sees this dashboard’s data, without signing
+              in. They see a snapshot of what its tiles read when it was
+              published, as you can read it, and nothing else of the workspace.
+            </span>
+          </p>
+        )}
+        {share && !offered.publish ? (
+          <>
+            <p className="db-share-note">
+              Public links are turned off here, so its link shows nothing now.
+              Unpublish it to keep it that way if they’re turned on again.
+            </p>
+            <div className="db-share-actions">
+              <Button
+                variant="danger"
+                icon={Unlink}
+                disabled={!!pending}
+                onClick={() => setConfirming(true)}
+              >
+                Unpublish
+              </Button>
+            </div>
+          </>
+        ) : share ? (
           <>
             <label className="hf-field">
               <span>Link</span>

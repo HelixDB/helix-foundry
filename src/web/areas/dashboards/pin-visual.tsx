@@ -15,9 +15,11 @@ import {
   keepDashboard,
 } from "./queries";
 
-// An Analyst answer's visual pinned to a dashboard: its query, kind and
+// An Analyst answer's visual added to a dashboard: its query, kind and
 // title as a tile of its own row, last, on a dashboard the person may change
-// or a new one. The tile reads whichever load is current when it is viewed,
+// or a new one. It starts on the dashboard the person changed last that
+// isn't pinned (a pinned one is the whole workspace's, so it is chosen only
+// on purpose), else a new one. The tile reads whichever load is current when it is viewed,
 // or, asked, the load the answer read. A dashboard changed meanwhile is
 // read again and the tile added to it as it is now: adding a tile changes
 // nothing else.
@@ -27,7 +29,7 @@ const NEW = "__new__";
 /** The answer's question and the result its visual shows. */
 type Visual = { ontologyId: string; questionId: string; evidenceId: string };
 
-/** "Pin to dashboard", in a visual's head; nothing for someone who can't make or change one. */
+/** "Add to dashboard", in a visual's head; nothing for someone who can't make or change one. */
 export function PinVisual(visual: Visual & { title: string }) {
   const { id: ws, grantee } = useWorkspace();
   const [open, setOpen] = useState(false);
@@ -40,7 +42,7 @@ export function PinVisual(visual: Visual & { title: string }) {
         icon={LayoutDashboard}
         onClick={() => setOpen(true)}
       >
-        Pin to dashboard
+        Add to dashboard
       </Button>
       {open && (
         <PinDialog ws={ws} visual={visual} onClose={() => setOpen(false)} />
@@ -60,7 +62,14 @@ function PinDialog({
 }) {
   const qc = useQueryClient();
   const list = useQuery(dashboardQueries.list(ws));
-  const editable = (list.data?.dashboards || []).filter((d) => d.canEdit);
+  // Those the person may change, unpinned first, the one changed last first.
+  const editable = (list.data?.dashboards || [])
+    .filter((d) => d.canEdit)
+    .sort(
+      (a, b) =>
+        Number(!!a.pinned) - Number(!!b.pinned) ||
+        (b.updatedAt || "").localeCompare(a.updatedAt || ""),
+    );
   const [chosen, setChosen] = useState(""),
     [name, setName] = useState(""),
     [pinLoad, setPinLoad] = useState(false),
@@ -68,8 +77,7 @@ function PinDialog({
     [error, setError] = useState(""),
     [done, setDone] = useState<FoundryDashboard | null>(null),
     [token] = useState(() => crypto.randomUUID());
-  // The newest dashboard the person may change, else a new one.
-  const target = chosen || editable[0]?.id || NEW,
+  const target = chosen || editable.find((d) => !d.pinned)?.id || NEW,
     making = target === NEW,
     newName = dashboardName(name);
   const add = async () => {
@@ -111,7 +119,7 @@ function PinDialog({
   };
   if (done)
     return (
-      <Dialog title="Pinned to a dashboard" size="sm" onClose={onClose}>
+      <Dialog title="Added to a dashboard" size="sm" onClose={onClose}>
         <p className="db-share-note">
           “{visual.title}” is a tile of {done.name} now.
         </p>
@@ -129,7 +137,7 @@ function PinDialog({
     );
   return (
     <Dialog
-      title="Pin to a dashboard"
+      title="Add to a dashboard"
       description={`“${visual.title}” becomes a tile of its own, last on the dashboard.`}
       size="sm"
       onClose={onClose}
@@ -154,7 +162,7 @@ function PinDialog({
                 ...editable.map((d) => ({
                   value: d.id,
                   label: d.name || d.id,
-                  ...(d.pinned ? { hint: "Pinned" } : {}),
+                  ...(d.pinned ? { hint: "Pinned for everyone" } : {}),
                 })),
                 { value: NEW, label: "New dashboard…" },
               ]}
@@ -199,7 +207,7 @@ function PinDialog({
               pending={pending}
               disabled={making && !newName}
             >
-              Pin
+              Add
             </Button>
           </div>
         </form>

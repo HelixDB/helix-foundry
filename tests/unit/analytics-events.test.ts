@@ -257,13 +257,13 @@ describe("dashboards' events", () => {
     ],
     [
       "its pin",
-      () => pinDashboard("ws", "d", true),
+      () => pinDashboard("ws", "d", true, "1"),
       ["dashboard_pinned"],
       "pin",
     ],
     [
       "its unpin",
-      () => pinDashboard("ws", "d", false),
+      () => pinDashboard("ws", "d", false, "1"),
       ["dashboard_unpinned"],
       "pin",
     ],
