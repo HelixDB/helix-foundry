@@ -295,8 +295,18 @@ func (s *Service) UpdateFoundryAutomation(ctx context.Context, req *foundryv1.Up
 		}
 	}
 	if req.SpecJson != nil {
-		if _, u.Spec, err = s.automationSpec(ctx, ws, req.GetSpecJson()); err != nil {
+		var spec automation.Spec
+		if spec, u.Spec, err = s.automationSpec(ctx, ws, req.GetSpecJson()); err != nil {
 			return nil, err
+		}
+		// Only its positions moved: compared with the revision the edit names,
+		// which the store checks it still is, it keeps its approval.
+		current, err := s.automationOf(ctx, ws, req.GetId())
+		if err != nil {
+			return nil, err
+		}
+		if before, err := automation.ParseSpec(current.Spec); err == nil && current.Revision == req.GetExpectedRevision() {
+			u.Spec.LayoutOnly = automation.SameSteps(before, spec)
 		}
 	}
 	if u.Name == nil && u.Description == nil && u.Spec == nil {

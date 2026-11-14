@@ -34,6 +34,7 @@ type automationStore struct {
 	refuse       error
 	nowRun       *foundrymodel.FoundryAutomationRun
 	triggerNode  string
+	lastUpdate   foundrymodel.FoundryAutomationUpdate
 }
 
 func newAutomationStore() *automationStore {
@@ -117,6 +118,7 @@ func (s *automationStore) UpdateFoundryAutomation(_ context.Context, ws, id, own
 		return nil, s.refuse
 	}
 	a := s.automations[id]
+	s.lastUpdate = u
 	if u.Spec != nil {
 		a.Spec, a.TriggerKind, a.TriggerTarget, a.Status = u.Spec.JSON, u.Spec.TriggerKind, u.Spec.TriggerTarget, foundrymodel.FoundryAutomationNeedsApproval
 	}
@@ -376,8 +378,18 @@ func TestUpdatePauseResumeDeleteAutomation(t *testing.T) {
 		SpecJson: &spec})
 	require.NoError(t, err)
 	require.Contains(t, resp.GetAutomation().GetSpecJson(), `"10:00"`)
+	require.False(t, store.lastUpdate.Spec.LayoutOnly, "a new time is a new spec")
+	moved := strings.Replace(spec, `"position":{"x":200,"y":0}`, `"position":{"x":260,"y":80}`, 1)
+	_, err = s.UpdateFoundryAutomation(site("user-ada"), &foundryv1.UpdateFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId(), ExpectedRevision: 3,
+		SpecJson: &moved})
+	require.NoError(t, err)
+	require.True(t, store.lastUpdate.Spec.LayoutOnly, "moving a node keeps its approval")
+	_, err = s.UpdateFoundryAutomation(site("user-ada"), &foundryv1.UpdateFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId(), ExpectedRevision: 3,
+		SpecJson: &moved})
+	require.NoError(t, err)
+	require.False(t, store.lastUpdate.Spec.LayoutOnly, "compared with a revision it no longer has, it is a new spec")
 	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotOwner, Detail: "only its owner changes an automation"}
-	_, err = s.UpdateFoundryAutomation(site("user-alan"), &foundryv1.UpdateFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId(), ExpectedRevision: 3,
+	_, err = s.UpdateFoundryAutomation(site("user-alan"), &foundryv1.UpdateFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId(), ExpectedRevision: 5,
 		Name: &name})
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 

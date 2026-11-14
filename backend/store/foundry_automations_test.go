@@ -148,6 +148,14 @@ func TestFoundryAutomationUpdateAndApprove(t *testing.T) {
 	require.Equal(t, model.FoundryAutomationActive, a.Status)
 	require.Equal(t, int64(1), a.SpecRevision)
 
+	// The same steps laid out anew keep it approved and running.
+	moved := &model.FoundryAutomationSpec{JSON: json.RawMessage(`{"v": 1, "nodes": [], "edges": [], "moved": true}`), TriggerKind: "manual", LayoutOnly: true}
+	a, err = f.db.UpdateFoundryAutomation(ctx, f.workspaceID, a.ID, automationOwner, a.Revision, model.FoundryAutomationUpdate{Spec: moved})
+	require.NoError(t, err)
+	require.Equal(t, model.FoundryAutomationActive, a.Status)
+	require.Equal(t, int64(1), a.SpecRevision)
+	require.Contains(t, string(a.Spec), "moved")
+
 	// Another spec waits for its owner again, on its new trigger.
 	set := id26("SET")
 	changed := &model.FoundryAutomationSpec{JSON: json.RawMessage(`{"v": 1, "nodes": [1], "edges": []}`), TriggerKind: "document_arrived", TriggerTarget: &set}
@@ -411,7 +419,7 @@ func TestFoundryAutomationFindEnded(t *testing.T) {
 		require.NoError(t, err)
 	}
 	for i, row := range []struct {
-		status  string
+		status   string
 		finished time.Time
 	}{{"succeeded", at(-10)}, {"succeeded", at(5)}, {"failed", at(5)}, {"running", at(6)}, {"succeeded", time.Now().UTC().Add(time.Hour)}} {
 		var finished any = row.finished

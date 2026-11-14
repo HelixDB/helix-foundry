@@ -245,6 +245,23 @@ func (s Spec) Targets() Targets {
 	return t
 }
 
+// SameSteps reports whether s and o run the same steps the same way: the
+// same nodes, configs and edges, wherever the canvas draws them. A change of
+// layout alone changes nothing that runs, so it needs no new approval.
+//
+//	automation.SameSteps(before, moved) // true when only positions changed
+func SameSteps(s, o Spec) bool {
+	steps := func(spec Spec) []byte {
+		laid := Spec{nodes: spec.Nodes(), edges: spec.edges, order: spec.order}
+		for i := range laid.nodes {
+			laid.nodes[i].Position = Position{}
+		}
+		raw, _ := laid.MarshalJSON() // a parsed spec always writes
+		return raw
+	}
+	return bytes.Equal(steps(s), steps(o))
+}
+
 // wireSpec is a spec as JSON:
 //
 //	{"v": 1,

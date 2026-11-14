@@ -33,8 +33,12 @@ func (SyncConnector) Operation() string    { return "sync_connector" }
 func (CreateLoad) Operation() string       { return "create_load" }
 func (PublishDashboard) Operation() string { return "publish_dashboard" }
 
-func (a SyncConnector) Target(workspaceID string) string { return "connector:" + workspaceID + "/" + a.ConnectorID }
-func (a CreateLoad) Target(workspaceID string) string    { return "ontology:" + workspaceID + "/" + a.OntologyID }
+func (a SyncConnector) Target(workspaceID string) string {
+	return "connector:" + workspaceID + "/" + a.ConnectorID
+}
+func (a CreateLoad) Target(workspaceID string) string {
+	return "ontology:" + workspaceID + "/" + a.OntologyID
+}
 func (a PublishDashboard) Target(workspaceID string) string {
 	return "dashboard:" + workspaceID + "/" + a.DashboardID
 }

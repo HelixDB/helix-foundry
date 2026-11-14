@@ -177,18 +177,18 @@ func TestBuildWorkers(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	want := []string{"foundry-agent-worker", "foundry-ask-worker", "foundry-document-worker", "foundry-graph-worker", "foundry-ontology-worker", "foundry-read",
-		"foundry-sync-worker"}
+	want := []string{"foundry-agent-worker", "foundry-ask-worker", "foundry-automation-worker", "foundry-document-worker", "foundry-graph-worker",
+		"foundry-ontology-worker", "foundry-read", "foundry-sync-worker"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("parts = %v, want %v", names, want)
 	}
 
 	// With foundry.heal.enabled, the heal worker runs too; off (above), it
-	// isn't built, and nor is the Assistant's off.
+	// isn't built, and nor are the Assistant's and automations' off.
 	heal := cfg.foundry()
 	heal.Foundry.Heal.Enabled = true
 	heal.Foundry.Read.GRPC.Listen, heal.Foundry.Read.HTTP.Listen = freeAddr(t), freeAddr(t)
-	heal.Foundry.Agent.Enabled = false
+	heal.Foundry.Agent.Enabled, heal.Foundry.Automations.Enabled = false, false
 	parts, err = buildWorkers(heal, logger, newProbes(nil, logger), store.Unimplemented{}, aws.Config{Region: "us-east-1"},
 		local.Databases{HelixURL: cfg.Local.HelixURL}, noSessions{})
 	if err != nil {

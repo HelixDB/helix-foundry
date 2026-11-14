@@ -34,7 +34,6 @@ const (
 // memStore keeps one workspace's automations, runs and steps, and the
 // Assistant turns the runs queue, with the store's rules a run's walk reads.
 type memStore struct {
-	mu          sync.Mutex
 	automations map[string]*model.FoundryAutomation
 	runs        map[string]*model.FoundryAutomationRun
 	nodes       map[string]map[string]*model.FoundryAutomationRunNode

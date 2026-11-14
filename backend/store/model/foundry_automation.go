@@ -100,11 +100,13 @@ type FoundryAutomationUpdate struct {
 }
 
 // FoundryAutomationSpec is a spec as the store keeps it: its canonical JSON
-// and its trigger.
+// and its trigger. LayoutOnly says it runs the same steps as the spec of the
+// revision the edit names (automation.SameSteps), so it keeps its approval.
 type FoundryAutomationSpec struct {
 	JSON          json.RawMessage
 	TriggerKind   string
 	TriggerTarget *string
+	LayoutOnly    bool
 }
 
 // FoundryAutomationRunStatus is where a run is: a closed set.

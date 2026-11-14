@@ -3378,7 +3378,10 @@ export type AutomationSpec = {
 };
 
 export type AutomationStatus = "needs_approval" | "active" | "paused";
-export type AutomationPausedReason = "person" | "failures" | "owner_lost_access";
+export type AutomationPausedReason =
+  | "person"
+  | "failures"
+  | "owner_lost_access";
 export type AutomationRunStatus =
   | "queued"
   | "running"

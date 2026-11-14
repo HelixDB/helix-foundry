@@ -398,3 +398,18 @@ func TestTargetAndKind(t *testing.T) {
 	require.Equal(t, "connector:W/C", automation.SyncConnector{ConnectorID: "C"}.Target("W"))
 	require.Equal(t, "dashboard:W/D", automation.PublishDashboard{DashboardID: "D"}.Target("W"))
 }
+
+func TestSameSteps(t *testing.T) {
+	before, err := automation.ParseSpec([]byte(overdue))
+	require.NoError(t, err)
+	moved, err := automation.ParseSpec([]byte(strings.Replace(overdue, `"position":{"x":0,"y":0}}`, `"position":{"x":120.5,"y":-40}}`, 1)))
+	require.NoError(t, err)
+	require.True(t, automation.SameSteps(before, moved), "moving a node changes nothing that runs")
+	require.Equal(t, 0.0, before.Nodes()[0].Position.X, "the specs compared are left as they were")
+	changed, err := automation.ParseSpec([]byte(strings.Replace(overdue, "Count the overdue invoices.", "Count the paid invoices.", 1)))
+	require.NoError(t, err)
+	require.False(t, automation.SameSteps(before, changed))
+	rewired, err := automation.ParseSpec([]byte(strings.Replace(overdue, `"branch":"true"`, `"branch":"false"`, 1)))
+	require.NoError(t, err)
+	require.False(t, automation.SameSteps(before, rewired))
+}

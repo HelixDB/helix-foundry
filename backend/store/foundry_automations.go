@@ -141,7 +141,9 @@ FROM foundry_automations WHERE id=? AND workspace_id=? FOR UPDATE`, id, workspac
 
 // UpdateFoundryAutomation edits the owner's automation at expected: a spec
 // that changes (as JSON values, not bytes) waits for its owner's approval
-// again, stopping it; a name or description alone changes nothing else.
+// again, stopping it, unless it only lays the same steps out anew
+// (LayoutOnly, which the caller decided against the spec at expected); a name
+// or description alone changes nothing else.
 // Refusals are a FoundryAutomationRefusal: another's automation
 // (FoundryAutomationNotOwner), another revision (FoundryAutomationChanged).
 func (s *mysqlDB) UpdateFoundryAutomation(ctx context.Context, workspaceID, id, ownerUserID string, expected int64,
@@ -171,7 +173,12 @@ func (s *mysqlDB) UpdateFoundryAutomation(ctx context.Context, workspaceID, id, 
 				string(u.Spec.JSON), id).Scan(&same); err != nil {
 				return err
 			}
-			if !same {
+			switch {
+			case same:
+			case u.Spec.LayoutOnly:
+				// The same steps, laid out anew: what was approved runs as it was.
+				sets, args = append(sets, "spec=CAST(? AS JSON)"), append(args, string(u.Spec.JSON))
+			default:
 				sets = append(sets, "spec=CAST(? AS JSON)", "spec_revision=spec_revision+1", "trigger_kind=?", "trigger_target=?",
 					"status='needs_approval'", "paused_reason=NULL", "paused_by_user_id=NULL", "paused_at=NULL", "next_fire_at=NULL",
 					"cursor_at=NULL", "cursor_id=''", "backoff_until=NULL", "failures=0")
