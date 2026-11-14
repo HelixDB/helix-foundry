@@ -137,13 +137,16 @@ function useTileStates(spec: DashboardSpec | undefined) {
     queries: reads.map((r) => dashboardQueries.read(ws, r)),
   });
   return (t: DashboardTile): TileState => {
-    if (ontologies.isError)
-      return {
-        kind: "failed",
-        message: ontologies.error.message,
-        retry: () => void ontologies.refetch(),
-      };
-    if (!ontologies.data) return { kind: "waiting" };
+    // A list that failed before it was ever read (a refetch that fails
+    // keeps the last list).
+    if (!ontologies.data)
+      return ontologies.isError
+        ? {
+            kind: "failed",
+            message: ontologies.error.message,
+            retry: () => void ontologies.refetch(),
+          }
+        : { kind: "waiting" };
     if (!byId.has(t.ontology_id)) return { kind: "gone" };
     if (unloaded.includes(t.id)) return { kind: "unloaded" };
     const i = reads.findIndex((r) => r.tiles.some((x) => x.id === t.id));

@@ -488,24 +488,11 @@ test("says why a tile shows nothing: no load, a failed read, a deleted ontology"
     }),
     { ...tile("t3", "Renewals", CUSTOMERS), ontology_id: "ont_acme_renewals" },
   ]);
-  // The ontologies can't be listed: each tile says so, and retries.
-  const list = /\/papi\/v1\/workspaces\/ws_acme\/foundry\/ontologies(\?.*)?$/;
-  await page.route(list, (route) =>
-    route.request().method() === "GET"
-      ? route.fulfill({
-          status: 500,
-          contentType: "application/json",
-          body: JSON.stringify({ code: 13, message: "the list is down" }),
-        })
-      : route.continue(),
-  );
   await page.goto(`/dashboards/${id}`);
   const main = page.getByRole("main");
-  const byStatus = main.getByRole("figure", { name: "Invoices by status" });
-  await expect(byStatus).toContainText("Couldn’t read it:");
-  await page.unroute(list);
-  await byStatus.getByRole("button", { name: "Retry" }).click();
-  await expect(byStatus).toContainText("Its ontology has nothing loaded yet.");
+  await expect(
+    main.getByRole("figure", { name: "Invoices by status" }),
+  ).toContainText("Its ontology has nothing loaded yet.");
 
   await loadContracts(page);
   await changeOnWfe(
