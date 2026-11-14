@@ -287,14 +287,26 @@ test("connects Granola and says what its key can't read", async ({ page }) => {
   await expect(
     dialog(page).getByRole("button", { name: "Connect and sync" }),
   ).toHaveCount(0);
-  // A personal key can't read spaces: the rest is listed and synced.
+  // A personal key can't read spaces: the rest is listed and synced. Enter
+  // tests it, as Test connection does.
   await keyField.fill("grn_personalE2eGranolaKeyQRST");
-  await dialog(page).getByRole("button", { name: "Test connection" }).click();
+  await keyField.press("Enter");
   const objects = dialog(page).getByRole("group", {
     name: "Granola objects this key can read",
   });
   await expect(objects.getByRole("listitem")).toHaveCount(4);
   await expect(objects).toContainText("This key cannot read: spaces.");
+  // A change to the key after the test hides Connect and says to test again.
+  await keyField.fill("grn_personalE2eGranolaKeyQRSU");
+  await keyField.fill("grn_personalE2eGranolaKeyQRST");
+  await expect(
+    dialog(page).getByRole("button", { name: "Connect and sync" }),
+  ).toHaveCount(0);
+  await expect(dialog(page)).toContainText(
+    "The settings changed since the last test.",
+  );
+  await keyField.press("Enter");
+  await expect(objects.getByRole("listitem")).toHaveCount(4);
   await dialog(page).getByRole("button", { name: "Connect and sync" }).click();
   await dialog(page)
     .getByRole("button", { name: /^Open / })

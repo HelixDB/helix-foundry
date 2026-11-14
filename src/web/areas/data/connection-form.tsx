@@ -338,9 +338,14 @@ export function ConnectionForm({
         className="form-grid"
         onSubmit={(e) => {
           e.preventDefault();
-          // Enter connects once a test passed, and tests until then.
+          // Enter connects once a test passed, and tests until then: Test is
+          // the form's submit button until one passes (a form of several
+          // fields submits on Enter only through one).
           if (pending) return;
-          if (canSubmit) void submit();
+          const by = (e.nativeEvent as SubmitEvent).submitter;
+          if (by instanceof HTMLElement && by.dataset.action === "test")
+            void test();
+          else if (canSubmit) void submit();
           else if (testable && !discovered) void test();
         }}
       >
@@ -776,9 +781,12 @@ export function ConnectionForm({
           <div className="span2">
             <button
               className={discovered ? "button" : "button primary"}
-              type="button"
+              // The WFE says what a test lacks, not the browser.
+              type={discovered ? "button" : "submit"}
+              formNoValidate
+              data-action="test"
               disabled={!!pending}
-              onClick={() => void test()}
+              onClick={discovered ? () => void test() : undefined}
             >
               {pending === "test" ? "Testing connection…" : "Test connection"}
             </button>
