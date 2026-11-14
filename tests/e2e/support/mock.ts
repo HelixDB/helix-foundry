@@ -54,6 +54,8 @@ export const mock = {
     // provider refused the workspace's key).
     ontologyStepMs?: number;
     ontologyOutcome?: "succeed" | "fail" | "retry" | "auth";
+    // A new generation's agent asks three questions before it drafts.
+    ontologyQuestions?: boolean;
     // A revision measuring rules on a comparable load is over its budget.
     reviseOutcome?: "budget";
     // A load's step, how it ends, and whether reading a document fails.

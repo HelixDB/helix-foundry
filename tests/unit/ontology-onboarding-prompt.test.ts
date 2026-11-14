@@ -959,6 +959,25 @@ describe("onboardingPrompt for an ontology under way", () => {
     expect(text).not.toContain("`generate_ontology`, target");
   });
 
+  it("has the agent ask me the questions a draft waits on, never answering them", () => {
+    const text = onboardingPrompt(
+      input({
+        ontology: ontology({
+          step: "draft",
+          state: "waiting",
+          generation: generation(),
+        }),
+      }),
+    );
+    expect(text).toContain(
+      "asked questions about its first draft, generation `g1`, and waits for my answers.",
+    );
+    expect(steps(text)[0]).toBe("Generate a draft");
+    expect(text).toContain("Never answer for me.");
+    expect(text).toContain("`answer_generation_questions`, target");
+    expect(text).not.toContain("`generate_ontology`, target");
+  });
+
   it("says why the last draft failed, and starts over at the data", () => {
     const failed = (error?: string) =>
       onboardingPrompt(

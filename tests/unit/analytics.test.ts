@@ -431,6 +431,28 @@ describe("jobs", () => {
     expect(local.values.has(PENDING)).toBe(false);
   });
 
+  it("reports a generation that asks, then its end once answered here; a cancel ends it quietly", async () => {
+    const a = await load();
+    a.jobStarted({ job: "generation", source: "ai" }, "gen_1");
+    a.jobStarted({ job: "generation", source: "ai" }, "gen_2");
+    a.jobSeen("generation", [
+      { id: "gen_1", status: "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT" },
+      { id: "gen_2", status: "ONTOLOGY_GENERATION_STATUS_CANCELLED" },
+    ]);
+    // Answered: remembered again, with no second start.
+    a.jobStarted({ job: "generation", source: "ai" }, "gen_1", false);
+    a.jobSeen("generation", [
+      { id: "gen_1", status: "ONTOLOGY_GENERATION_STATUS_SUCCEEDED" },
+    ]);
+    expect(sent()).toEqual([
+      ["generation_started", { source: "ai" }],
+      ["generation_started", { source: "ai" }],
+      ["generation_needs_input", { source: "ai" }],
+      ["generation_succeeded", { source: "ai" }],
+    ]);
+    expect(local.values.has(PENDING)).toBe(false);
+  });
+
   it("reports a revision's start and end with its mode, apart from generations", async () => {
     const a = await load();
     a.jobStarted({ job: "revision", mode: "preview" }, "rev_1");
