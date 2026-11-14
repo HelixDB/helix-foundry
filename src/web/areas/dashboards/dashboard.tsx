@@ -41,6 +41,7 @@ import {
   formatRelative,
   useNow,
 } from "../../kit";
+import { ApiError } from "../../api";
 import { RefreshFailed, useWorkspace } from "../../ui";
 import { ontologyPaths } from "../ontology/paths";
 import { ontologyQueries } from "../ontology/queries";
@@ -185,7 +186,7 @@ export function DashboardPage() {
         <EmptyState
           icon={LayoutDashboard}
           title={
-            read.error?.message.includes("not found")
+            read.error instanceof ApiError && read.error.status === 404
               ? "There’s no such dashboard"
               : "Couldn’t open the dashboard"
           }

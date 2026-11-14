@@ -1429,3 +1429,31 @@ test("says how to start a helper that isn't running, and when its Claude Code is
     "Claude Code isn't signed in on the computer running the helper. Run claude, then /login there, then send your message again.",
   );
 });
+
+test("makes dashboards, with no public link", async ({ page }) => {
+  await page.goto("/dashboards");
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "New dashboard" })
+    .click();
+  const create = page.getByRole("dialog", { name: "New dashboard" });
+  await create.getByLabel("Name").fill("Revenue");
+  await create.getByRole("button", { name: "Create dashboard" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Revenue" }),
+  ).toBeVisible();
+  // The owner edits, pins and deletes it; a local build publishes nothing.
+  await expect(
+    page.getByRole("button", { name: "Edit", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Publish", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "More actions" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Pin for everyone" }),
+  ).toBeVisible();
+  // Nor does it serve a public page.
+  const shared = await page.request.get("/share/hxd_" + "a".repeat(43));
+  expect(shared.status()).toBe(404);
+});

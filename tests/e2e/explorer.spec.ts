@@ -44,7 +44,7 @@ test("puts the labels beside the sidebar and the overview down the right", async
 
   // The labels are the section's panel, beside the labelled sidebar.
   const nav = page.getByRole("navigation", { name: "Main navigation" });
-  await expect(nav.locator(".hf-nav-link")).toHaveCount(4);
+  await expect(nav.locator(".hf-nav-link")).toHaveCount(5);
   const labels = page.getByRole("complementary", { name: "Labels" });
   await expect(labels).toContainText("Customer");
   await expect(labels).toContainText("billed_to");
