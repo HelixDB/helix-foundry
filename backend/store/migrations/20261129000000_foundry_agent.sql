@@ -24,12 +24,14 @@ CREATE TABLE foundry_agent_threads (
 -- person ran, which the agent goes on from. The foundry-agent-worker claims a
 -- queued turn, reserving its max_usd against the workspace's monthly budget
 -- in the same transaction, as foundry_questions are claimed; a thread has at
--- most one live turn (live_thread).
+-- most one live turn (live_thread). A turn has its thread's runtime, so each
+-- runtime's worker claims only its own.
 CREATE TABLE foundry_agent_turns (
   id              CHAR(26)    NOT NULL PRIMARY KEY,
   workspace_id    CHAR(26)    NOT NULL,
   thread_id       CHAR(26)    NOT NULL,
   user_id         VARCHAR(64) NOT NULL,
+  runtime         VARCHAR(16) NOT NULL,
   kind            VARCHAR(16) NOT NULL,
   -- The person's text, for a message; the action's id, for an action result.
   input           TEXT        NOT NULL,
@@ -45,6 +47,9 @@ CREATE TABLE foundry_agent_turns (
   max_usd_micros  BIGINT      NOT NULL,
   reserved_micros BIGINT      NOT NULL DEFAULT 0,
   usd_micros      BIGINT      NOT NULL DEFAULT 0,
+  -- What usd_micros holds of reservations whose attempt died unsettled: the
+  -- month pays them, but they aren't the turn's own spend against its cap.
+  lost_micros     BIGINT      NOT NULL DEFAULT 0,
   input_tokens    BIGINT      NOT NULL DEFAULT 0,
   output_tokens   BIGINT      NOT NULL DEFAULT 0,
   steps           INT         NOT NULL DEFAULT 0,
@@ -57,16 +62,17 @@ CREATE TABLE foundry_agent_turns (
   live_thread     CHAR(26) AS (IF(status IN ('queued', 'running'), thread_id, NULL)) STORED,
   UNIQUE KEY foundry_agent_turns_live_uq (live_thread),
   UNIQUE KEY foundry_agent_turns_client_token_uq (workspace_id, user_id, client_token),
-  INDEX foundry_agent_turns_claim_idx (status, next_attempt_at),
+  INDEX foundry_agent_turns_claim_idx (runtime, status, next_attempt_at),
   INDEX foundry_agent_turns_thread_idx (thread_id, created_at, id),
   INDEX foundry_agent_turns_hour_idx (workspace_id, user_id, created_at),
   INDEX foundry_agent_turns_spend_idx (workspace_id, charged_at),
   INDEX foundry_agent_turns_running_idx (workspace_id, status),
+  CONSTRAINT foundry_agent_turns_runtime_chk CHECK (runtime IN ('api', 'claude_code', 'codex')),
   CONSTRAINT foundry_agent_turns_kind_chk CHECK (kind IN ('message', 'action_result')),
   CONSTRAINT foundry_agent_turns_status_chk CHECK (status IN ('queued', 'running', 'done', 'failed', 'cancelled')),
   CONSTRAINT foundry_agent_turns_finished_chk CHECK ((status IN ('queued', 'running')) = (finished_at IS NULL)),
   CONSTRAINT foundry_agent_turns_reserved_chk CHECK (reserved_micros >= 0 AND (status = 'running' OR reserved_micros = 0)),
-  CONSTRAINT foundry_agent_turns_spend_chk CHECK (max_usd_micros > 0 AND usd_micros >= 0),
+  CONSTRAINT foundry_agent_turns_spend_chk CHECK (max_usd_micros > 0 AND usd_micros >= lost_micros AND lost_micros >= 0),
   CONSTRAINT foundry_agent_turns_charged_chk CHECK (charged_at IS NOT NULL OR (status <> 'running' AND usd_micros = 0))
 );
 

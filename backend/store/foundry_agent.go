@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -20,8 +21,8 @@ import (
 
 const foundryAgentThreadColumns = `id, workspace_id, user_id, title, runtime, created_at, updated_at`
 
-const foundryAgentTurnColumns = `id, workspace_id, thread_id, user_id, kind, input, page_context, status, error, client_token,
-       lease_owner, lease_until, attempts, next_attempt_at, max_usd_micros, reserved_micros, usd_micros, input_tokens,
+const foundryAgentTurnColumns = `id, workspace_id, thread_id, user_id, runtime, kind, input, page_context, status, error, client_token,
+       lease_owner, lease_until, attempts, next_attempt_at, max_usd_micros, reserved_micros, usd_micros, lost_micros, input_tokens,
        output_tokens, steps, last_seq, created_at, started_at, finished_at`
 
 const foundryAgentActionColumns = `id, turn_id, thread_id, workspace_id, user_id, operation, target, payload, payload_hash, display,
@@ -41,12 +42,14 @@ const claimFoundryAgentTurnTries = 20
 // limits, in one transaction holding the workspace's lock, then the thread's:
 //   - thread is the new thread t starts, or nil for t.ThreadID, which must be
 //     the user's own live thread (ErrNotFound otherwise);
+//   - the user has no turn with t's client token (ErrConflict: a double
+//     click, which the caller answers with that turn);
 //   - the thread has no live turn and no action running (FoundryAgentThreadBusy);
 //     a click that ran past model.FoundryAgentExecutingFor is ended unknown;
 //   - the user sent fewer than limits.PerHour messages in the last hour;
 //   - what the month's turns settled, plus t's cap, is within limits.CapMicros.
 //
-// ErrConflict means the user has a turn with t's client token.
+// t takes its thread's runtime.
 func (s *mysqlDB) CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAgentTurn, thread *model.FoundryAgentThread, limits model.FoundryAgentLimits) error {
 	switch {
 	case t.ID == "" || t.WorkspaceID == "" || t.ThreadID == "" || t.UserID == "":
@@ -72,6 +75,10 @@ VALUES (?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread.Ti
 			return err
 		}
 		if err := tx.busyFoundryAgentThread(ctx, t.ThreadID); err != nil {
+			if sent, sentErr := tx.sentFoundryAgentTurn(ctx, t); sentErr != nil || sent {
+				// A second click that waited on the first's thread lock finds its turn.
+				return cmp.Or(sentErr, ErrConflict)
+			}
 			return err
 		}
 		var lastHour int
@@ -91,9 +98,9 @@ VALUES (?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread.Ti
 				Detail: fmt.Sprintf("the workspace has spent this month's $%.2f of the Assistant", float64(limits.CapMicros)/1e6)}
 		}
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
-  (id, workspace_id, thread_id, user_id, kind, input, page_context, status, client_token, max_usd_micros)
-VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
-			t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, nullJSON(t.PageContext), t.ClientToken, t.MaxUSDMicros)
+  (id, workspace_id, thread_id, user_id, runtime, kind, input, page_context, status, client_token, max_usd_micros)
+SELECT ?, ?, ?, ?, runtime, ?, ?, ?, 'queued', ?, ? FROM foundry_agent_threads WHERE id=?`,
+			t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, nullJSON(t.PageContext), t.ClientToken, t.MaxUSDMicros, t.ThreadID)
 		if isDuplicateKey(err) {
 			if live, liveErr := tx.liveFoundryAgentTurn(ctx, t.ThreadID); liveErr == nil && live {
 				return model.FoundryAgentRefusal{Reason: model.FoundryAgentThreadBusy, Detail: "the Assistant is still answering in this thread"}
@@ -120,8 +127,24 @@ WHERE id=? AND workspace_id=? AND user_id=? AND deleted_at IS NULL FOR UPDATE`, 
 	return err
 }
 
+// sentFoundryAgentTurn reports whether the user has a turn with t's client token.
+func (s *mysqlDB) sentFoundryAgentTurn(ctx context.Context, t *model.FoundryAgentTurn) (bool, error) {
+	if t.ClientToken == nil {
+		return false, nil
+	}
+	var sent int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_agent_turns WHERE workspace_id=? AND user_id=? AND client_token=?`,
+		t.WorkspaceID, t.UserID, *t.ClientToken).Scan(&sent)
+	return sent > 0, err
+}
+
 // busyFoundryAgentThread refuses a locked thread with a live turn or a click
 // running, ending first the clicks that ran too long to still be running.
+//
+// Its reads are plain, so the transaction must read nothing plainly before
+// it holds the thread's lock: a plain read fixes the transaction's snapshot,
+// and one fixed before the lock misses the send or click that held it. Every
+// write that makes a thread busy holds that lock.
 func (s *mysqlDB) busyFoundryAgentThread(ctx context.Context, threadID string) error {
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_agent_actions
 SET status='unknown', error='the action stopped without saying how it ended; check its result before running it again'
@@ -253,21 +276,22 @@ WHERE id=?`, id); err != nil {
 	return out, err
 }
 
-// ClaimFoundryAgentTurn leases the oldest due turn to workerID, deciding it
+// ClaimFoundryAgentTurn leases the oldest due turn of claim.Runtime to workerID, deciding it
 // under its workspace's lock as ClaimFoundryQuestion decides a question: a
 // month that can't fit it fails it; a workspace running claim.Limits.Running
 // turns, or whose reservations leave too little, defers it; otherwise it
 // runs, reserving its cap. A turn of a deleted thread is cancelled. Nil means
-// none is due, or none of the first few could run.
+// none is due, or none of the first few could run. A reservation an attempt
+// left unsettled (its lease ran out) is charged, and counted lost.
 func (s *mysqlDB) ClaimFoundryAgentTurn(ctx context.Context, workerID string, claim model.FoundryAgentClaim) (*model.FoundryAgentTurn, error) {
 	l := claim.Limits
-	if workerID == "" || claim.Lease <= 0 || claim.Defer <= 0 || l.CapMicros <= 0 || l.Running < 1 {
+	if workerID == "" || claim.Runtime == "" || claim.Lease <= 0 || claim.Defer <= 0 || l.CapMicros <= 0 || l.Running < 1 {
 		return nil, fmt.Errorf("invalid foundry agent turn claim")
 	}
 	for range claimFoundryAgentTurnTries {
 		var candidate, workspaceID string
-		err := s.db.QueryRowContext(ctx, `SELECT id, workspace_id FROM foundry_agent_turns WHERE `+dueFoundryAgentTurn+`
-ORDER BY next_attempt_at, id LIMIT 1`).Scan(&candidate, &workspaceID)
+		err := s.db.QueryRowContext(ctx, `SELECT id, workspace_id FROM foundry_agent_turns WHERE runtime=? AND `+dueFoundryAgentTurn+`
+ORDER BY next_attempt_at, id LIMIT 1`, string(claim.Runtime)).Scan(&candidate, &workspaceID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -317,14 +341,14 @@ FROM foundry_agent_turns WHERE workspace_id=? AND id<>? AND (status='running' OR
 					fmt.Sprintf("the workspace has spent this month's $%.2f of the Assistant", float64(l.CapMicros)/1e6))
 			case running >= l.Running || settled+reserved+own > l.CapMicros:
 				_, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_turns
-SET status='queued', lease_owner=NULL, lease_until=NULL, usd_micros=usd_micros+reserved_micros, reserved_micros=0,
-    next_attempt_at=NOW(6) + INTERVAL ? MICROSECOND
+SET status='queued', lease_owner=NULL, lease_until=NULL, usd_micros=usd_micros+reserved_micros,
+    lost_micros=lost_micros+reserved_micros, reserved_micros=0, next_attempt_at=NOW(6) + INTERVAL ? MICROSECOND
 WHERE id=?`, claim.Defer.Microseconds(), t.ID)
 				return err
 			}
 			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_turns
 SET status='running', attempts=attempts+1, lease_owner=?, lease_until=?, usd_micros=usd_micros+reserved_micros,
-    reserved_micros=max_usd_micros, charged_at=NOW(6), started_at=COALESCE(started_at, NOW(6))
+    lost_micros=lost_micros+reserved_micros, reserved_micros=max_usd_micros, charged_at=NOW(6), started_at=COALESCE(started_at, NOW(6))
 WHERE id=?`, workerID, time.Now().UTC().Add(claim.Lease), t.ID); err != nil {
 				return err
 			}
@@ -566,23 +590,29 @@ FROM foundry_agent_actions WHERE thread_id=? ORDER BY created_at, id`, threadID)
 	return scanAll(rows, scanFoundryAgentAction)
 }
 
-// lockFoundryAgentAction locks the user's action of a live thread, and the
-// thread first: ErrNotFound when either isn't theirs.
-func (s *mysqlDB) lockFoundryAgentAction(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentAction, error) {
+// foundryAgentActionThread is the thread of the user's action, read outside
+// the transaction that then locks it: an action never changes thread, and a
+// read inside would fix the transaction's snapshot before the thread's lock
+// (busyFoundryAgentThread).
+func (s *mysqlDB) foundryAgentActionThread(ctx context.Context, workspaceID, userID, id string) (string, error) {
 	var threadID string
 	err := s.db.QueryRowContext(ctx, `SELECT thread_id FROM foundry_agent_actions WHERE id=? AND workspace_id=? AND user_id=?`,
 		id, workspaceID, userID).Scan(&threadID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+		return "", ErrNotFound
 	}
-	if err != nil {
-		return nil, err
-	}
+	return threadID, err
+}
+
+// lockFoundryAgentAction locks the user's live thread, then their action of
+// it: ErrNotFound when either isn't theirs. It reads nothing before the
+// thread's lock.
+func (s *mysqlDB) lockFoundryAgentAction(ctx context.Context, workspaceID, userID, threadID, id string) (*model.FoundryAgentAction, error) {
 	if err := s.lockFoundryAgentThread(ctx, workspaceID, userID, threadID); err != nil {
 		return nil, err
 	}
 	return scanFoundryAgentAction(s.db.QueryRowContext(ctx, "SELECT "+foundryAgentActionColumns+`
-FROM foundry_agent_actions WHERE id=? FOR UPDATE`, id))
+FROM foundry_agent_actions WHERE id=? AND thread_id=? AND user_id=? FOR UPDATE`, id, threadID, userID))
 }
 
 // ClaimFoundryAgentAction starts the user's click on their action: from
@@ -591,12 +621,16 @@ FROM foundry_agent_actions WHERE id=? FOR UPDATE`, id))
 // model.FoundryAgentRefusal; an action that expired is marked so.
 // ErrNotFound means the action isn't theirs.
 func (s *mysqlDB) ClaimFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string) (*model.FoundryAgentAction, error) {
+	threadID, err := s.foundryAgentActionThread(ctx, workspaceID, userID, id)
+	if err != nil {
+		return nil, err
+	}
 	var out *model.FoundryAgentAction
 	expired := false
-	err := s.WithTx(ctx, func(txDB Store) error {
+	err = s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		out, expired = nil, false
-		a, err := tx.lockFoundryAgentAction(ctx, workspaceID, userID, id)
+		a, err := tx.lockFoundryAgentAction(ctx, workspaceID, userID, threadID, id)
 		if err != nil {
 			return err
 		}
@@ -639,11 +673,25 @@ func (s *mysqlDB) FinishFoundryAgentAction(ctx context.Context, id string, end m
 	if err := end.Validate(); err != nil {
 		return fmt.Errorf("finish foundry agent action %s: %w", id, err)
 	}
-	if continuation != nil && (continuation.Kind != model.FoundryAgentTurnActionResult || continuation.Input != id || continuation.MaxUSDMicros <= 0) {
+	// The thread's lock first, as a send and a click take it, then the
+	// action's: the other order deadlocks against them.
+	var threadID string
+	err := s.db.QueryRowContext(ctx, `SELECT thread_id FROM foundry_agent_actions WHERE id=?`, id).Scan(&threadID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if continuation != nil && (continuation.Kind != model.FoundryAgentTurnActionResult || continuation.Input != id ||
+		continuation.ThreadID != threadID || continuation.MaxUSDMicros <= 0) {
 		return fmt.Errorf("finish foundry agent action %s: the continuation is not its result's turn", id)
 	}
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
+		if err := tx.db.QueryRowContext(ctx, `SELECT id FROM foundry_agent_threads WHERE id=? FOR UPDATE`, threadID).Scan(&threadID); err != nil {
+			return err
+		}
 		if err := execOrNotFound(ctx, tx.db, `UPDATE foundry_agent_actions SET status=?, result=?, error=? WHERE id=? AND status='executing'`,
 			string(end.Status), nullJSON(end.Result), nullString(end.Error), id); err != nil {
 			return err
@@ -653,8 +701,9 @@ func (s *mysqlDB) FinishFoundryAgentAction(ctx context.Context, id string, end m
 		}
 		t := continuation
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
-  (id, workspace_id, thread_id, user_id, kind, input, status, max_usd_micros)
-VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`, t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, t.MaxUSDMicros)
+  (id, workspace_id, thread_id, user_id, runtime, kind, input, status, max_usd_micros)
+SELECT ?, ?, ?, ?, runtime, ?, ?, 'queued', ? FROM foundry_agent_threads WHERE id=?`,
+			t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, t.MaxUSDMicros, t.ThreadID)
 		if isDuplicateKey(err) {
 			// A turn went live after all: the click's end stands, and the
 			// agent reads the action's result with the thread's actions.
@@ -674,10 +723,14 @@ VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`, t.ID, t.WorkspaceID, t.ThreadID, t.User
 // expired) action; dismissing it twice returns it. Refusals are a
 // model.FoundryAgentRefusal; ErrNotFound means it isn't theirs.
 func (s *mysqlDB) DismissFoundryAgentAction(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentAction, error) {
+	threadID, err := s.foundryAgentActionThread(ctx, workspaceID, userID, id)
+	if err != nil {
+		return nil, err
+	}
 	var out *model.FoundryAgentAction
-	err := s.WithTx(ctx, func(txDB Store) error {
+	err = s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
-		a, err := tx.lockFoundryAgentAction(ctx, workspaceID, userID, id)
+		a, err := tx.lockFoundryAgentAction(ctx, workspaceID, userID, threadID, id)
 		switch {
 		case err != nil:
 			return err
@@ -702,10 +755,14 @@ func (s *mysqlDB) DismissFoundryAgentAction(ctx context.Context, workspaceID, us
 // Refusals are a model.FoundryAgentRefusal; ErrNotFound means it isn't theirs.
 func (s *mysqlDB) RefreshFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash, confirmationID string, sealed []byte, keyID string,
 	expiresAt time.Time) (*model.FoundryAgentAction, error) {
+	threadID, err := s.foundryAgentActionThread(ctx, workspaceID, userID, id)
+	if err != nil {
+		return nil, err
+	}
 	var out *model.FoundryAgentAction
-	err := s.WithTx(ctx, func(txDB Store) error {
+	err = s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
-		a, err := tx.lockFoundryAgentAction(ctx, workspaceID, userID, id)
+		a, err := tx.lockFoundryAgentAction(ctx, workspaceID, userID, threadID, id)
 		switch {
 		case err != nil:
 			return err
@@ -740,19 +797,19 @@ func scanFoundryAgentThread(scanner rowScanner) (*model.FoundryAgentThread, erro
 
 func scanFoundryAgentTurn(scanner rowScanner) (*model.FoundryAgentTurn, error) {
 	var t model.FoundryAgentTurn
-	var kind, status string
+	var runtime, kind, status string
 	var pageContext, errText, clientToken, leaseOwner sql.NullString
 	var leaseUntil, startedAt, finishedAt sql.NullTime
 	spend := &t.Spend
-	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.ThreadID, &t.UserID, &kind, &t.Input, &pageContext, &status, &errText, &clientToken,
-		&leaseOwner, &leaseUntil, &t.Attempts, &t.NextAttemptAt, &t.MaxUSDMicros, &t.ReservedMicros, &spend.USDMicros, &spend.InputTokens,
+	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.ThreadID, &t.UserID, &runtime, &kind, &t.Input, &pageContext, &status, &errText, &clientToken,
+		&leaseOwner, &leaseUntil, &t.Attempts, &t.NextAttemptAt, &t.MaxUSDMicros, &t.ReservedMicros, &spend.USDMicros, &t.LostMicros, &spend.InputTokens,
 		&spend.OutputTokens, &t.Steps, &t.LastSeq, &t.CreatedAt, &startedAt, &finishedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	t.Kind, t.Status = model.FoundryAgentTurnKind(kind), model.FoundryAgentTurnStatus(status)
+	t.Runtime, t.Kind, t.Status = model.FoundryAgentRuntime(runtime), model.FoundryAgentTurnKind(kind), model.FoundryAgentTurnStatus(status)
 	if pageContext.Valid {
 		t.PageContext = json.RawMessage(pageContext.String)
 	}

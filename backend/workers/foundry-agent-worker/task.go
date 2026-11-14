@@ -132,7 +132,7 @@ func (t *Task) Stop(ctx context.Context) error {
 func (t *Task) claim() model.FoundryAgentClaim {
 	now := t.now().UTC()
 	return model.FoundryAgentClaim{
-		Lease: t.cfg.Lease, Defer: t.cfg.Defer,
+		Runtime: model.FoundryAgentRuntimeAPI, Lease: t.cfg.Lease, Defer: t.cfg.Defer,
 		Limits: model.FoundryAgentLimits{
 			Since: time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC), CapMicros: t.cfg.MonthlyMicros(),
 			PerHour: t.cfg.PerHour, Running: t.cfg.MaxRunning,

@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -38,7 +39,7 @@ func (f agentFixture) limits() model.FoundryAgentLimits {
 }
 
 func (f agentFixture) claim() model.FoundryAgentClaim {
-	return model.FoundryAgentClaim{Lease: time.Minute, Defer: time.Hour, Limits: f.limits()}
+	return model.FoundryAgentClaim{Runtime: model.FoundryAgentRuntimeAPI, Lease: time.Minute, Defer: time.Hour, Limits: f.limits()}
 }
 
 func (f agentFixture) turnID(n int) string   { return id26(fmt.Sprintf("AT-%s-%03d-", f.tag, n)) }
@@ -305,6 +306,9 @@ func TestFoundryAgentStaleClickReadsUnknown(t *testing.T) {
 	ended, err := f.db.GetFoundryAgentAction(ctx, f.workspaceID, a.ID)
 	require.NoError(t, err)
 	assert.Equal(t, model.FoundryAgentActionUnknown, ended.Status)
+	// The click's process, back after all, records nothing over the unknown.
+	assert.ErrorIs(t, f.db.FinishFoundryAgentAction(ctx, a.ID, model.FoundryAgentActionEnd{Status: model.FoundryAgentActionFailed, Error: "x"}, nil, nil),
+		store.ErrNotFound)
 }
 
 func TestFoundryAgentClickEndsThoughATurnWentLive(t *testing.T) {
@@ -318,8 +322,8 @@ func TestFoundryAgentClickEndsThoughATurnWentLive(t *testing.T) {
 	_, err = f.db.ClaimFoundryAgentAction(ctx, f.workspaceID, agentUser, a.ID, a.PayloadHash)
 	require.NoError(t, err)
 	// Another writer queued a turn in the thread meanwhile.
-	_, err = testDB.Exec(`INSERT INTO foundry_agent_turns (id, workspace_id, thread_id, user_id, kind, input, status, max_usd_micros)
-VALUES (?, ?, ?, ?, 'message', 'hi', 'queued', 1)`, f.turnID(7), f.workspaceID, turn.ThreadID, agentUser)
+	_, err = testDB.Exec(`INSERT INTO foundry_agent_turns (id, workspace_id, thread_id, user_id, runtime, kind, input, status, max_usd_micros)
+VALUES (?, ?, ?, ?, 'api', 'message', 'hi', 'queued', 1)`, f.turnID(7), f.workspaceID, turn.ThreadID, agentUser)
 	require.NoError(t, err)
 	next := &model.FoundryAgentTurn{ID: f.turnID(8), WorkspaceID: f.workspaceID, ThreadID: turn.ThreadID, UserID: agentUser,
 		Kind: model.FoundryAgentTurnActionResult, Input: a.ID, MaxUSDMicros: 500_000}
@@ -330,4 +334,201 @@ VALUES (?, ?, ?, ?, 'message', 'hi', 'queued', 1)`, f.turnID(7), f.workspaceID, 
 	assert.Equal(t, model.FoundryAgentActionFailed, ended.Status, "the click's end stands")
 	_, err = f.db.GetFoundryAgentTurn(ctx, f.workspaceID, next.ID)
 	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
+// whileLocked holds turn's thread locked in a transaction of its own, runs
+// call beside it, and runs change in the holder once call waits for the
+// lock, then commits: what a send or click that committed while call waited
+// must see.
+func whileLocked(t *testing.T, threadID string, call func() error, change func(*sql.Tx) error) (callErr, changeErr error) {
+	t.Helper()
+	tx, err := testDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	var locked string
+	require.NoError(t, tx.QueryRow(`SELECT id FROM foundry_agent_threads WHERE id=? FOR UPDATE`, threadID).Scan(&locked))
+	done := make(chan error, 1)
+	go func() { done <- call() }()
+	var early error
+	returned := false
+	var seen []string
+	waited := assert.Eventually(t, func() bool {
+		select {
+		case early = <-done:
+			returned = true
+			return true
+		default:
+		}
+		rows, err := testDB.Query(`SELECT trx_state, COALESCE(trx_query, '') FROM information_schema.innodb_trx`)
+		if err != nil {
+			seen = []string{err.Error()}
+			return false
+		}
+		defer rows.Close()
+		seen = nil
+		for rows.Next() {
+			var state, query string
+			_ = rows.Scan(&state, &query)
+			seen = append(seen, state+": "+query)
+			if state == "LOCK WAIT" && strings.Contains(query, "foundry_agent_threads") {
+				return true
+			}
+		}
+		return false
+		// InnoDB refreshes innodb_trx only when it wasn't read for 100 ms.
+	}, 10*time.Second, 200*time.Millisecond, "call waits for the thread's lock")
+	require.True(t, waited, "transactions: %v", seen)
+	require.False(t, returned, "call returned before it waited for the lock: %v (%v)", early, seen)
+	changeErr = change(tx)
+	if changeErr != nil {
+		_ = tx.Rollback()
+	} else {
+		require.NoError(t, tx.Commit())
+	}
+	return <-done, changeErr
+}
+
+func TestFoundryAgentClickSeesWhatCommittedWhileItWaited(t *testing.T) {
+	ctx := context.Background()
+	f := newAgentFixture(t, "waited")
+	require.NoError(t, f.send(1, 0))
+	turn := f.claimed(t)
+	a, err := f.prepare(turn, 1, time.Now().Add(5*time.Minute))
+	require.NoError(t, err)
+	b, err := f.prepare(turn, 2, time.Now().Add(5*time.Minute))
+	require.NoError(t, err)
+	f.settle(t, turn)
+	click := func() error {
+		_, err := f.db.ClaimFoundryAgentAction(ctx, f.workspaceID, agentUser, b.ID, b.PayloadHash)
+		return err
+	}
+
+	// Another click started first.
+	clicked, changed := whileLocked(t, turn.ThreadID, click, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE foundry_agent_actions SET status='executing', decided_by=?, decided_at=NOW(6) WHERE id=?`, agentUser, a.ID)
+		return err
+	})
+	require.NoError(t, changed)
+	assert.Equal(t, model.FoundryAgentThreadBusy, refusal(t, clicked), "two clicks of a thread never run at once")
+	require.NoError(t, f.db.FinishFoundryAgentAction(ctx, a.ID, model.FoundryAgentActionEnd{Status: model.FoundryAgentActionFailed, Error: "x"}, nil, nil))
+
+	// A message was sent first.
+	clicked, changed = whileLocked(t, turn.ThreadID, click, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO foundry_agent_turns (id, workspace_id, thread_id, user_id, runtime, kind, input, status, max_usd_micros)
+VALUES (?, ?, ?, ?, 'api', 'message', 'hi', 'queued', 1)`, f.turnID(7), f.workspaceID, turn.ThreadID, agentUser)
+		return err
+	})
+	require.NoError(t, changed)
+	assert.Equal(t, model.FoundryAgentThreadBusy, refusal(t, clicked), "a click waits for the turn sent before it")
+	still, err := f.db.GetFoundryAgentAction(ctx, f.workspaceID, b.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryAgentActionPrepared, still.Status)
+}
+
+// A send's sweep of the thread's actions and a click's end take the thread's
+// lock first, so neither deadlocks the other.
+func TestFoundryAgentClickEndsBesideASend(t *testing.T) {
+	ctx := context.Background()
+	f := newAgentFixture(t, "order")
+	require.NoError(t, f.send(1, 0))
+	turn := f.claimed(t)
+	a, err := f.prepare(turn, 1, time.Now().Add(5*time.Minute))
+	require.NoError(t, err)
+	f.settle(t, turn)
+	_, err = f.db.ClaimFoundryAgentAction(ctx, f.workspaceID, agentUser, a.ID, a.PayloadHash)
+	require.NoError(t, err)
+	next := &model.FoundryAgentTurn{ID: f.turnID(2), WorkspaceID: f.workspaceID, ThreadID: turn.ThreadID, UserID: agentUser,
+		Kind: model.FoundryAgentTurnActionResult, Input: a.ID, MaxUSDMicros: 500_000}
+	finished, swept := whileLocked(t, turn.ThreadID, func() error {
+		return f.db.FinishFoundryAgentAction(ctx, a.ID, model.FoundryAgentActionEnd{Status: model.FoundryAgentActionFailed, Error: "no"}, next,
+			json.RawMessage(`{"type":"action_result"}`))
+	}, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE foundry_agent_actions SET status='unknown', error='x'
+WHERE thread_id=? AND status='executing' AND decided_at < NOW(6) - INTERVAL 1 HOUR`, turn.ThreadID)
+		return err
+	})
+	require.NoError(t, swept)
+	require.NoError(t, finished)
+	queued, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, next.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryAgentRuntimeAPI, queued.Runtime, "it takes its thread's runtime")
+}
+
+// A double click on Send in a thread is the same turn, not a busy thread.
+func TestFoundryAgentDoubleSendInAThread(t *testing.T) {
+	ctx := context.Background()
+	f := newAgentFixture(t, "double")
+	require.NoError(t, f.send(1, 0))
+	f.settle(t, f.claimed(t))
+	sent, changed := whileLocked(t, f.threadID(1), func() error { return f.send(2, 1) }, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO foundry_agent_turns (id, workspace_id, thread_id, user_id, runtime, kind, input, status, client_token, max_usd_micros)
+VALUES (?, ?, ?, ?, 'api', 'message', 'message 2', 'queued', 'send-2', 1)`, f.turnID(9), f.workspaceID, f.threadID(1), agentUser)
+		return err
+	})
+	require.NoError(t, changed)
+	assert.ErrorIs(t, sent, store.ErrConflict)
+	// Another message while the turn is live is still refused as busy.
+	assert.Equal(t, model.FoundryAgentThreadBusy, refusal(t, f.send(3, 1)))
+	_, err := f.db.GetFoundryAgentTurnByClientToken(ctx, f.workspaceID, agentUser, "send-2")
+	require.NoError(t, err)
+}
+
+// A turn whose attempt died is claimed again; the month pays the dead
+// reservation, which isn't the turn's own spend.
+func TestFoundryAgentReclaimCountsADeadReservationLost(t *testing.T) {
+	ctx := context.Background()
+	f := newAgentFixture(t, "lapse")
+	require.NoError(t, f.send(1, 0))
+	first := f.claimed(t)
+	assert.Zero(t, first.LostMicros)
+	_, err := testDB.Exec(`UPDATE foundry_agent_turns SET lease_until = NOW(6) - INTERVAL 1 SECOND WHERE id=?`, first.ID)
+	require.NoError(t, err)
+	again := f.claimed(t)
+	assert.Equal(t, first.ID, again.ID)
+	assert.Equal(t, 2, again.Attempts)
+	assert.EqualValues(t, 500_000, again.Spend.USDMicros, "the month pays the dead attempt's reservation")
+	assert.EqualValues(t, 500_000, again.LostMicros)
+	assert.EqualValues(t, 500_000, again.ReservedMicros)
+	f.settle(t, again)
+	done, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, first.ID)
+	require.NoError(t, err)
+	assert.EqualValues(t, 501_000, done.Spend.USDMicros)
+	assert.EqualValues(t, 500_000, done.LostMicros)
+}
+
+func TestFoundryAgentClaimTakesItsRuntimeOnly(t *testing.T) {
+	ctx := context.Background()
+	f := newAgentFixture(t, "runtime")
+	turn := &model.FoundryAgentTurn{ID: f.turnID(1), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), UserID: agentUser,
+		Kind: model.FoundryAgentTurnMessage, Input: "hi", MaxUSDMicros: 500_000}
+	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, turn, &model.FoundryAgentThread{ID: f.threadID(1), WorkspaceID: f.workspaceID,
+		UserID: agentUser, Title: "hi", Runtime: model.FoundryAgentRuntimeClaudeCode}, f.limits()))
+	none, err := f.db.ClaimFoundryAgentTurn(ctx, "w1", f.claim())
+	require.NoError(t, err)
+	assert.Nil(t, none, "the API's worker leaves a helper's turns")
+	claim := f.claim()
+	claim.Runtime = model.FoundryAgentRuntimeClaudeCode
+	got, err := f.db.ClaimFoundryAgentTurn(ctx, "w1", claim)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, model.FoundryAgentRuntimeClaudeCode, got.Runtime)
+	claim.Runtime = ""
+	_, err = f.db.ClaimFoundryAgentTurn(ctx, "w1", claim)
+	assert.Error(t, err, "a claim names its runtime")
+}
+
+func TestFoundryAgentClaimFailsADeletedWorkspacesTurn(t *testing.T) {
+	ctx := context.Background()
+	f := newAgentFixture(t, "gone")
+	require.NoError(t, f.send(1, 0))
+	_, err := testDB.Exec(`UPDATE workspaces SET deleted_at=NOW(6) WHERE id=?`, f.workspaceID)
+	require.NoError(t, err)
+	none, err := f.db.ClaimFoundryAgentTurn(ctx, "w1", f.claim())
+	require.NoError(t, err)
+	assert.Nil(t, none)
+	failed, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, f.turnID(1))
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryAgentTurnFailed, failed.Status)
+	require.NotNil(t, failed.Error)
+	assert.Equal(t, "the workspace was deleted", *failed.Error)
 }

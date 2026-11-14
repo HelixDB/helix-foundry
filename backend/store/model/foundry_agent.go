@@ -65,8 +65,10 @@ type FoundryAgentTurn struct {
 	WorkspaceID string
 	ThreadID    string
 	UserID      string
-	Kind        FoundryAgentTurnKind
-	Input       string
+	// Runtime is its thread's, which the store copies when it queues the turn.
+	Runtime FoundryAgentRuntime
+	Kind    FoundryAgentTurnKind
+	Input   string
 	// PageContext is what the person was looking at, ids only; nil for none.
 	PageContext    json.RawMessage
 	Status         FoundryAgentTurnStatus
@@ -78,7 +80,12 @@ type FoundryAgentTurn struct {
 	NextAttemptAt  time.Time
 	MaxUSDMicros   int64
 	ReservedMicros int64
-	Spend          FoundryGraphJobSpend
+	// Spend is what the month was charged for the turn, LostMicros included.
+	Spend FoundryGraphJobSpend
+	// LostMicros is what Spend holds of reservations whose attempt died
+	// unsettled: charged to the month, but no part of the turn's own spend,
+	// which its cap bounds.
+	LostMicros int64
 	// Steps is how many model calls its attempts made.
 	Steps      int
 	LastSeq    int
@@ -190,9 +197,11 @@ type FoundryAgentLimits struct {
 
 // FoundryAgentClaim is how a claim leases a turn.
 type FoundryAgentClaim struct {
-	Lease  time.Duration
-	Defer  time.Duration
-	Limits FoundryAgentLimits
+	// Runtime is the turns this claim takes: those of its runtime only.
+	Runtime FoundryAgentRuntime
+	Lease   time.Duration
+	Defer   time.Duration
+	Limits  FoundryAgentLimits
 }
 
 // FoundryAgentRefusalReason is why a write was refused: a closed set the API
