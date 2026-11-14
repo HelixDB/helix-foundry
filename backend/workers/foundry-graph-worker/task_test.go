@@ -1783,34 +1783,39 @@ func TestLoadOutcomes(t *testing.T) {
 
 	// An index still building over the database's data is no fault of the
 	// job's: it waits the backoff's floor and keeps its attempts, even its last,
-	// until indexWait after the job's first attempt began, when it fails: a
-	// build that never finishes would retry it forever. A stopping worker's
-	// attempt is given back whenever the job began.
-	t.Run("retries an index still building without counting the attempt, until indexWait after the job began", func(t *testing.T) {
+	// until indexWait after an attempt first found one, when it fails: a build
+	// that never finishes would retry it forever. How long the job ran before
+	// doesn't count, and a stopping worker's attempt is given back with the
+	// streak kept.
+	t.Run("retries an index still building without counting the attempt, until indexWait after it was first found", func(t *testing.T) {
 		for name, setup := range map[string]func(*harness){
 			"ingest":  func(h *harness) { h.agent.ingest = ingestResult(`{"status":"indexes_pending","label":"Customer"}`) },
 			"extract": func(h *harness) { h.agent.extract = extractResult(`{"status":"indexes_pending","label":"Customer"}`) },
 		} {
 			for _, tc := range []struct {
 				when string
-				// began is how long before now the job's first attempt began; 0 never.
-				began    time.Duration
+				// pending is how long before now an attempt first found an
+				// index building; 0 none has.
+				pending  time.Duration
 				stopping bool
 				fails    bool
 			}{
-				{"never began", 0, false, false},
-				{"began a minute ago", time.Minute, false, false},
-				{"began indexWait ago", indexWait, false, false},
-				{"began past indexWait", indexWait + time.Second, false, true},
-				{"stopping, began past indexWait", indexWait + time.Second, true, false},
+				{"first found now", 0, false, false},
+				{"found a minute ago", time.Minute, false, false},
+				{"found indexWait ago", indexWait, false, false},
+				{"found past indexWait", indexWait + time.Second, false, true},
+				{"stopping, found past indexWait", indexWait + time.Second, true, false},
 			} {
 				h := newHarness(t)
 				setup(h)
 				job := loadJob()
 				job.Attempts = h.task.cfg.MaxAttempts
-				if tc.began > 0 {
-					began := h.task.now().Add(-tc.began)
-					job.StartedAt = &began
+				// The job began long before: only the streak counts.
+				began := h.task.now().Add(-3 * indexWait)
+				job.StartedAt = &began
+				since := h.task.now().Add(-tc.pending)
+				if tc.pending > 0 {
+					job.IndexesPendingSince = &since
 				}
 				ctx, cancel := context.WithCancel(context.Background())
 				if tc.stopping {
@@ -1824,7 +1829,8 @@ func TestLoadOutcomes(t *testing.T) {
 				outcome := h.store.finished[0]
 				if tc.fails {
 					if outcome.Status != model.FoundryGraphJobFailed || outcome.RetryAt != nil || outcome.Uncounted ||
-						outcome.Error != "the database's indexes had not finished building 2 hours after the load started; try the load again" {
+						outcome.IndexesPendingSince != nil ||
+						outcome.Error != "the database's indexes were still building 2 hours after Helix first found them building; start a new load" {
 						t.Fatalf("%s, %s: outcome = %+v, want a failure", name, tc.when, outcome)
 					}
 					continue
@@ -1833,6 +1839,28 @@ func TestLoadOutcomes(t *testing.T) {
 					outcome.Error != "the database is still indexing its data; Helix will retry" {
 					t.Fatalf("%s, %s: outcome = %+v, want an uncounted retry at %v", name, tc.when, outcome, want)
 				}
+				if outcome.IndexesPendingSince == nil || !outcome.IndexesPendingSince.Equal(since) {
+					t.Fatalf("%s, %s: indexes pending since %v, want %v", name, tc.when, outcome.IndexesPendingSince, since)
+				}
+			}
+		}
+	})
+
+	// Any other outcome ends the streak: a later index still building starts
+	// a new one.
+	t.Run("clears the index streak on any other outcome", func(t *testing.T) {
+		for name, setup := range map[string]func(*harness){
+			"a counted retry": func(h *harness) { h.agent.extract = extractResult(`{"status":"store_failed","error":"no"}`) },
+			"a success":       func(*harness) {},
+		} {
+			h := newHarness(t)
+			setup(h)
+			job := loadJob()
+			since := h.task.now().Add(-time.Hour)
+			job.IndexesPendingSince = &since
+			outcome := h.run(t, job)
+			if outcome.IndexesPendingSince != nil {
+				t.Fatalf("%s: indexes pending since %v, want it cleared", name, outcome.IndexesPendingSince)
 			}
 		}
 	})

@@ -457,6 +457,12 @@ export function LiveLoad() {
         }
       />
     );
+  const work =
+    job.kind === "extract"
+      ? "The reading"
+      : job.kind === "resend"
+        ? "Applying the decisions"
+        : "The load";
   return (
     <Callout
       icon={LoaderCircle}
@@ -465,11 +471,15 @@ export function LiveLoad() {
         starting
           ? job.kind === "extract"
             ? "New documents are waiting for the new database"
-            : "A load is waiting for the new database"
+            : job.kind === "resend"
+              ? "Decisions are waiting for the new database"
+              : "A load is waiting for the new database"
           : indexing
             ? job.kind === "extract"
               ? "New documents are waiting for the database’s indexes"
-              : "A load is waiting for the database’s indexes"
+              : job.kind === "resend"
+                ? "Decisions are waiting for the database’s indexes"
+                : "A load is waiting for the database’s indexes"
             : job.status === "queued"
               ? job.kind === "extract"
                 ? "New documents are queued for reading"
@@ -484,9 +494,9 @@ export function LiveLoad() {
       }
       text={
         starting
-          ? `Your new database is starting. The ${job.kind === "extract" ? "reading" : "load"} tries again automatically once it’s ready.`
+          ? `Your new database is starting. ${work} tries again automatically once it’s ready.`
           : indexing
-            ? `Helix builds the database’s indexes before it writes. The ${job.kind === "extract" ? "reading" : "load"} carries on by itself once they’re ready.`
+            ? `Helix builds the database’s indexes before it writes. ${work} carries on by itself once they’re ready.`
             : job.kind === "resend"
               ? "Approved claims are written from their documents’ saved readings, and chosen values are sent, at no model cost."
               : p.documentsTotal
