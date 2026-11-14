@@ -868,6 +868,9 @@
 .on-generate-foot .hf-form-actions {
   margin-top: 0;
 }
+.on-generate-foot .hf-form-actions {
+  flex-wrap: wrap;
+}
 
 /* New ontology, and an unfinished ontology's overview: its steps, a
    numbered row each, done ones ticked with what they chose, the current (or

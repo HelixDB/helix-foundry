@@ -214,9 +214,9 @@ export function GenerationQuestions({
 
 /**
  * One question: its text, what it is about, and, for those who answer, a
- * radio per option, In my own words (a field once chosen) and, where the
- * agent's default isn't one of the options, the agent's default or Leave it
- * to the agent.
+ * radio per option, then, where the agent's default isn't one of the
+ * options, the agent's default or Leave it to the agent, then In my own words
+ * (a field once chosen).
  */
 function AskedQuestion({
   q,
@@ -301,15 +301,6 @@ function AskedQuestion({
             {o === q.defaultAnswer && <Tag tone="accent">Agent’s default</Tag>}
           </label>
         ))}
-        <label className="on-check on-answer-choice">
-          <input
-            type="radio"
-            name={name}
-            checked={answer.kind === "own"}
-            onChange={() => setAnswer({ kind: "own", text: own })}
-          />
-          <span>In my own words</span>
-        </label>
         {agentChoice && (
           <label className="on-check on-answer-choice">
             <input
@@ -325,6 +316,15 @@ function AskedQuestion({
             </span>
           </label>
         )}
+        <label className="on-check on-answer-choice">
+          <input
+            type="radio"
+            name={name}
+            checked={answer.kind === "own"}
+            onChange={() => setAnswer({ kind: "own", text: own })}
+          />
+          <span>In my own words</span>
+        </label>
       </div>
       {answer.kind === "own" && (
         <label className="hf-field on-answer-own">
