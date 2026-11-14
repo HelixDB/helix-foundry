@@ -29,6 +29,9 @@ export const MASK_PATTERNS = [
   "/explore/*/entities/*",
   "/explore/*",
   "/ask/*",
+  "/dashboards/*",
+  // A dashboard's public link: its token is its only key.
+  "/share/**",
 ];
 
 /** `path` masked by `pattern`, or null when it doesn't match. */

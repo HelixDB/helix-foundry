@@ -12,9 +12,10 @@ import {
 // other sections' panels beside it.
 
 describe("the sections", () => {
-  it("lists Ask first, then Ontologies, the Explorer and Connectors", () => {
+  it("lists Ask first, then Dashboards, Ontologies, the Explorer and Connectors", () => {
     expect(primaryNav.map((n) => [n.label, n.to])).toEqual([
       ["Analyst", "/ask"],
+      ["Dashboards", "/dashboards"],
       ["Ontologies", "/ontology"],
       ["Explorer", "/explore"],
       ["Connectors", "/data"],
@@ -41,9 +42,10 @@ describe("activeSection", () => {
 });
 
 describe("what a section shows beside the page", () => {
-  it("puts Ask's threads in the sidebar, under the sections", () => {
-    expect(Object.keys(sectionSidebars)).toEqual(["ask"]);
+  it("puts Ask's threads and the dashboards in the sidebar, under the sections", () => {
+    expect(Object.keys(sectionSidebars).sort()).toEqual(["ask", "dashboards"]);
     expect(sectionSidebars.ask?.label).toBe("Analyst threads");
+    expect(sectionSidebars.dashboards?.label).toBe("Dashboards");
   });
 
   it("gives Connectors, Ontologies and the Explorer a panel beside the sidebar, and Ask none", () => {

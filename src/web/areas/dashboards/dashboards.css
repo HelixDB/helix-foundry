@@ -1,0 +1,392 @@
+/* Dashboards (prefix db-): the section's list in the sidebar, laid out as
+   the Analyst's threads are; the list page; a dashboard's tiles in rows of
+   1 to 3 (one column on a phone), each an Analyst visual (ask-visual.css);
+   editing a tile; publishing; and the public page (src/web/share). */
+
+/* The sidebar's list: New dashboard, then the pinned and the rest. */
+.db-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.db-panel-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 14px 12px 8px;
+}
+.db-new {
+  justify-content: flex-start;
+  width: 100%;
+}
+.db-list {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  padding: 6px 12px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.db-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  min-width: 0;
+}
+.db-group h2 {
+  margin: 0;
+  padding: 4px 10px;
+  color: var(--hf-muted);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.db-group ul {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  margin: 0 0 0 10px;
+  padding: 0;
+  border-left: 1px solid var(--hf-border-strong);
+  list-style: none;
+}
+.db-item {
+  position: relative;
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 6px 10px 6px 13px;
+  border-radius: var(--hf-radius);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-base);
+  line-height: 1.4;
+  text-decoration: none;
+}
+.db-item:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.db-item.is-active {
+  color: var(--hf-text);
+}
+.db-item.is-active::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: -1px;
+  width: 2px;
+  background: var(--hf-accent);
+}
+.db-item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-item.is-active .db-item-title {
+  font-weight: 550;
+}
+.db-item small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  white-space: nowrap;
+}
+.db-note {
+  margin: 0;
+  padding: 5px 10px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.db-retry {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--hf-accent-text);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* The list page's grid. */
+.db-list-name {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+}
+.db-list-link {
+  overflow: hidden;
+  color: var(--hf-text);
+  font-weight: 600;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-list-link:hover,
+.db-list-link:focus-visible {
+  text-decoration: underline;
+}
+.db-list-muted {
+  overflow: hidden;
+  color: var(--hf-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-list-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* A dashboard: its tiles in their rows, each row's tiles side by side. */
+.db-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hf-space-2);
+}
+.db-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hf-space-2);
+  align-items: start;
+}
+.db-row--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.db-row--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 900px) {
+  .db-row--3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .db-row--2,
+  .db-row--3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.db-tile {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+.db-tile > .ak-visual,
+.db-tile .ak-visual-wait {
+  margin: 0;
+}
+/* A tile with nothing to draw: its title and why. */
+.db-tile-why {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+}
+.db-tile-why svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--hf-muted);
+}
+
+/* Editing: the name and description, then each tile with its fields. */
+.db-edit-head {
+  display: grid;
+  gap: 0;
+  max-width: 720px;
+  margin-bottom: var(--hf-space-3);
+}
+.db-tile.is-editing {
+  padding: 10px;
+  border: 1px dashed var(--hf-border-strong);
+  border-radius: var(--hf-radius-lg);
+}
+.db-tile-edit {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.db-tile-edit .hf-field {
+  margin-top: 0;
+  font-size: var(--hf-text-sm);
+}
+@media (max-width: 640px) {
+  .db-tile-edit {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.db-read {
+  font-size: var(--hf-text-sm);
+}
+.db-read summary {
+  color: var(--hf-muted);
+  cursor: pointer;
+}
+.db-read p {
+  margin: 6px 0 0;
+  color: var(--hf-text-2);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.db-code {
+  max-height: 240px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+  color: var(--hf-text);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  line-height: 1.6;
+  white-space: pre;
+}
+.db-callout {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin-top: var(--hf-space-2);
+  padding: 10px 12px;
+  border: 1px solid var(--hf-warning);
+  border-radius: var(--hf-radius);
+  background: var(--hf-warning-soft);
+  color: var(--hf-warning-text);
+  font-size: var(--hf-text-base);
+}
+.db-callout p {
+  margin: 0;
+}
+
+/* Publishing: what a link shows whom, the link and what to do with it. */
+.db-share {
+  display: grid;
+  gap: var(--hf-space-1);
+}
+.db-share-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--hf-warning);
+  border-radius: var(--hf-radius);
+  background: var(--hf-warning-soft);
+  color: var(--hf-warning-text);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.db-share-warn svg {
+  flex: none;
+  margin-top: 3px;
+}
+.db-share-note {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.db-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: var(--hf-space-1);
+}
+
+/* An Analyst answer's visual's Pin to dashboard (pin-visual.tsx). */
+.db-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: var(--hf-space-2);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.45;
+}
+.db-check input {
+  margin-top: 3px;
+  accent-color: var(--hf-accent);
+}
+.db-check small {
+  display: block;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+
+/* The public page (src/web/share): no app around it, the dashboard in one
+   readable column, light or dark as the viewer's browser is. */
+.db-public {
+  min-height: 100dvh;
+  background: var(--hf-bg);
+  color: var(--hf-text);
+  font-family: var(--hf-font-sans);
+}
+.db-public-main {
+  display: grid;
+  gap: var(--hf-space-3);
+  width: min(1200px, 100%);
+  margin: 0 auto;
+  padding: var(--hf-space-4) var(--hf-space-3) var(--hf-space-5);
+}
+@media (max-width: 640px) {
+  .db-public-main {
+    padding: var(--hf-space-3) 16px var(--hf-space-4);
+  }
+}
+.db-public-head {
+  display: grid;
+  gap: 6px;
+}
+.db-public-head h1 {
+  margin: 0;
+  font-size: var(--hf-text-2xl);
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.db-public-head p {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-md);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.db-public-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.db-public-foot {
+  padding-top: var(--hf-space-2);
+  border-top: 1px solid var(--hf-border);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.db-public-foot a {
+  color: var(--hf-text-2);
+}
+.db-public-state {
+  display: grid;
+  place-items: center;
+  min-height: 60dvh;
+}

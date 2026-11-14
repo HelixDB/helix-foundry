@@ -57,7 +57,14 @@ const tile = (id: string, query: unknown, extra: object = {}) => ({
   ...extra,
 });
 const customers = { start: { type: "Customer" }, return: { count: {} } };
-// The mock's engine answers rows and counts.
+const byStatus = {
+  start: { type: "Invoice" },
+  return: { group_count: { at: 0, prop: "status" } },
+};
+const totalDue = {
+  start: { type: "Invoice" },
+  return: { aggregate: { fn: "sum", at: 0, prop: "amount_due" } },
+};
 const named = {
   start: { type: "Customer" },
   return: {
@@ -329,6 +336,41 @@ describe("mock dashboards", () => {
     expect(again.share.token).toBe(token);
     await call("POST", `${D}/${d.id}:unpublish`, {});
     expect(shared(token).status).toBe(404);
+  });
+
+  it("reads and publishes counts by value and aggregates", async () => {
+    await loaded();
+    const d = await create(
+      spec(
+        [tile("t1", byStatus), tile("t2", totalDue, { visual: {} })],
+        [["t1", "t2"]],
+      ),
+    );
+    for (const t of [tile("t1", byStatus), tile("t2", totalDue)]) {
+      const r = (
+        await call("POST", `${D}:preview-tile`, { tileJson: JSON.stringify(t) })
+      ).body;
+      const outcome = JSON.parse(r.outcomeJson);
+      expect(contractErrors("read_result#/$defs/ReadOutcome", outcome)).toEqual(
+        [],
+      );
+    }
+    const published = (
+      await call("POST", `${D}/${d.id}:publish`, { expectedRevision: "1" })
+    ).body.dashboard;
+    const snapshot = shared(published.share.token)
+      .body as wfe.DashboardSnapshot;
+    const [groups, sum] = snapshot.tiles.map((t) => t.output);
+    expect(groups).toMatchObject({ kind: "group_count" });
+    expect(
+      (groups as Extract<wfe.QueryOutput, { kind: "group_count" }>).groups
+        .map((g) => g.count)
+        .reduce((a, b) => a + b, 0),
+    ).toBe(65);
+    expect(sum).toMatchObject({ kind: "aggregate" });
+    expect(
+      (sum as Extract<wfe.QueryOutput, { kind: "aggregate" }>).values,
+    ).toBeGreaterThan(0);
   });
 
   it("refuses a publish it can't make", async () => {

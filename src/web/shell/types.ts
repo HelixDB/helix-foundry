@@ -2,7 +2,13 @@ import type { ComponentType } from "react";
 import type { LucideIcon } from "lucide-react";
 
 // Sidebar sections, in shell/nav.ts.
-export type SectionId = "data" | "ontology" | "explore" | "ask" | "settings";
+export type SectionId =
+  | "data"
+  | "ontology"
+  | "explore"
+  | "ask"
+  | "dashboards"
+  | "settings";
 
 // A sub-page shown under its section in the sidebar while the section is active.
 export type NavChild = {

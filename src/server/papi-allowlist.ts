@@ -526,9 +526,11 @@ export const papiRoutes = [
 
   // Dashboards: tiles of typed queries over ontologies' loads, each read by
   // the viewer through a load's :read. Listed and read by any member; made,
-  // edited, deleted, pinned, given an Analyst answer's visual and a tile
-  // tried; and, hosted only, published at a public link and unpublished. The
-  // public link's snapshot is served by the foundry-events door, never here.
+  // edited, deleted, pinned and given an Analyst answer's visual; and,
+  // hosted only, published at a public link and unpublished. Trying a tile
+  // (:preview-tile) is the Helix MCP's and the Assistant's, not the site's.
+  // The public link's snapshot is the foundry-events door's, which the
+  // share page's browser asks with no session, never through here.
   {
     area: "dashboards",
     method: "GET",
@@ -563,11 +565,6 @@ export const papiRoutes = [
     area: "dashboards",
     method: "POST",
     path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:add-question-visual",
-  },
-  {
-    area: "dashboards",
-    method: "POST",
-    path: "/v1/workspaces/{workspaceId}/foundry/dashboards:preview-tile",
   },
   {
     area: "dashboards",

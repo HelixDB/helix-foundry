@@ -88,15 +88,17 @@ function area<M>(load: () => Promise<M>, name: keyof M) {
 }
 const data = () => import("./areas/data"),
   ontology = () => import("./areas/ontology"),
+  dashboards = () => import("./areas/dashboards"),
   workspace = () => import("./areas/workspace");
 const SettingsRoutes = area(workspace, "SettingsRoutes");
-// Data and Ontology own their whole URL prefix, and the Ontology area also
-// the Explorer's and Ask's: each *Routes component holds its nested route
-// table.
+// Data, Ontology and Dashboards own their whole URL prefix, and the
+// Ontology area also the Explorer's and Ask's: each *Routes component holds
+// its nested route table.
 const DataRoutes = area(data, "DataRoutes"),
   OntologyRoutes = area(ontology, "OntologyRoutes"),
   ExploreRoutes = area(ontology, "ExploreRoutes"),
-  AskRoutes = area(ontology, "AskRoutes");
+  AskRoutes = area(ontology, "AskRoutes"),
+  DashboardsRoutes = area(dashboards, "DashboardsRoutes");
 // Where a provider returns from connecting a source by signing in, where
 // GitHub returns once Helix Foundry's GitHub App is installed, and the
 // shell's notice of connectors that need signing in again: the Data area's.
@@ -169,6 +171,7 @@ function WorkspaceRoutes({
       <Route path="/ontology/*" element={<OntologyRoutes />} />
       <Route path="/explore/*" element={offered(<ExploreRoutes />)} />
       <Route path="/ask/*" element={offered(<AskRoutes />)} />
+      <Route path="/dashboards/*" element={offered(<DashboardsRoutes />)} />
       <Route path="/settings/*" element={<SettingsRoutes />} />
       <Route path="/connect/callback" element={<ConnectCallback />} />
       <Route path="/connect/github" element={<ConnectGitHub />} />

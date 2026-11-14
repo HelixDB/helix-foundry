@@ -83,6 +83,16 @@ export type SyncFrom =
 export type AgentSection = SectionId | "none";
 export type AgentOperationName = AgentOperation | "other";
 
+/** A dashboard call that may be refused (src/web/areas/dashboards/queries.ts). */
+export type DashboardAction =
+  | "create"
+  | "edit"
+  | "delete"
+  | "pin"
+  | "add_visual"
+  | "publish"
+  | "unpublish";
+
 /**
  * How the WFE refused a call (src/web/api.ts refusalOf): too many at once,
  * refused as asked (a 4xx: a cap, a plan, a precondition), or it failed.
@@ -224,6 +234,23 @@ export type AnalyticsEvents = {
   agent_helper_pairing_made: undefined;
   agent_helper_paired: undefined;
   agent_helper_revoked: undefined;
+
+  // Dashboards (src/web/areas/dashboards): made (from the Dashboards page or
+  // an Analyst answer), edited (its tiles, or only its name or
+  // description), deleted, pinned and unpinned, given an Analyst answer's
+  // visual (reading the current load or the question's), published (the
+  // first time, or again for a new snapshot), unpublished, its public link
+  // copied, or why a call was refused. Never a name, a title or a query.
+  dashboard_created: { from: "page" | "analyst" };
+  dashboard_edited: { tiles: boolean };
+  dashboard_deleted: undefined;
+  dashboard_pinned: undefined;
+  dashboard_unpinned: undefined;
+  dashboard_visual_added: { load: "current" | "pinned" };
+  dashboard_published: { first: boolean };
+  dashboard_unpublished: undefined;
+  dashboard_link_copied: undefined;
+  dashboard_refused: { action: DashboardAction; reason: Refusal };
 
   // An ontology's versions, loads and reviews.
   version_made_current: undefined;

@@ -28,6 +28,15 @@ import {
   turnEvents,
 } from "@/web/areas/agent/queries";
 import { cancelPlan, resumePlan } from "@/web/areas/workspace/plan";
+import {
+  addQuestionVisual,
+  createDashboard,
+  deleteDashboard,
+  pinDashboard,
+  publishDashboard,
+  unpublishDashboard,
+  updateDashboard,
+} from "@/web/areas/dashboards/queries";
 
 // The API calls that report a custom event (src/web/analytics.ts): once the
 // WFE accepts them, and never when it refuses; those that start a job start
@@ -202,6 +211,112 @@ describe("custom events of API calls", () => {
     await expect(generateOntology("ws", "o", {})).rejects.toThrow();
     expect(trackEvent).not.toHaveBeenCalled();
   });
+});
+
+describe("dashboards' events", () => {
+  const visual = {
+    expectedRevision: "1",
+    ontologyId: "o",
+    questionId: "q",
+    evidenceId: "e2",
+  };
+  const calls: [string, () => Promise<unknown>, unknown[], string][] = [
+    [
+      "one made from its page",
+      () => createDashboard("ws", { name: "n", clientToken: "t" }, "page"),
+      ["dashboard_created", { from: "page" }],
+      "create",
+    ],
+    [
+      "one made from an Analyst answer",
+      () => createDashboard("ws", { name: "n", clientToken: "t" }, "analyst"),
+      ["dashboard_created", { from: "analyst" }],
+      "create",
+    ],
+    [
+      "its name changed",
+      () => updateDashboard("ws", "d", { expectedRevision: "1", name: "n" }),
+      ["dashboard_edited", { tiles: false }],
+      "edit",
+    ],
+    [
+      "its tiles changed",
+      () =>
+        updateDashboard("ws", "d", {
+          expectedRevision: "1",
+          spec: { v: 1, tiles: [], layout: { rows: [] } },
+        }),
+      ["dashboard_edited", { tiles: true }],
+      "edit",
+    ],
+    [
+      "its delete",
+      () => deleteDashboard("ws", "d"),
+      ["dashboard_deleted"],
+      "delete",
+    ],
+    [
+      "its pin",
+      () => pinDashboard("ws", "d", true),
+      ["dashboard_pinned"],
+      "pin",
+    ],
+    [
+      "its unpin",
+      () => pinDashboard("ws", "d", false),
+      ["dashboard_unpinned"],
+      "pin",
+    ],
+    [
+      "an answer's visual, reading the current load",
+      () => addQuestionVisual("ws", "d", visual),
+      ["dashboard_visual_added", { load: "current" }],
+      "add_visual",
+    ],
+    [
+      "an answer's visual, reading its own load",
+      () => addQuestionVisual("ws", "d", { ...visual, pinLoad: true }),
+      ["dashboard_visual_added", { load: "pinned" }],
+      "add_visual",
+    ],
+    [
+      "its first publish",
+      () => publishDashboard("ws", "d", "1", true),
+      ["dashboard_published", { first: true }],
+      "publish",
+    ],
+    [
+      "a new snapshot",
+      () => publishDashboard("ws", "d", "2", false),
+      ["dashboard_published", { first: false }],
+      "publish",
+    ],
+    [
+      "its unpublish",
+      () => unpublishDashboard("ws", "d"),
+      ["dashboard_unpublished"],
+      "unpublish",
+    ],
+  ];
+
+  it.each(calls)("reports %s once it is accepted", async (_, run, event) => {
+    await run();
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([event]);
+  });
+
+  it.each(calls)(
+    "reports why %s was refused, and nothing else",
+    async (_, run, __, action) => {
+      call.mockRejectedValueOnce(new ApiError("changed", 400));
+      await expect(run()).rejects.toThrow("changed");
+      call.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      await expect(run()).rejects.toThrow("Failed to fetch");
+      expect(vi.mocked(trackEvent).mock.calls).toEqual([
+        ["dashboard_refused", { action, reason: "refused" }],
+        ["dashboard_refused", { action, reason: "error" }],
+      ]);
+    },
+  );
 });
 
 describe("reads that see jobs end", () => {
