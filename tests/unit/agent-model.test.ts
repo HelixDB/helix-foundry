@@ -3,16 +3,13 @@ import type { FoundryAgentAction } from "@/shared/wfe";
 import { ApiError } from "@/web/api";
 import {
   EMPTY_STREAM,
-  OPERATIONS,
   STOP_TEXT,
-  actionOntology,
   agentRefusal,
   analystLink,
   cardState,
   isAgentOperation,
   pageContext,
   parseAgentEvent,
-  parseDisplay,
   payloadText,
   pretty,
   reduceTurnEvents,
@@ -254,7 +251,7 @@ describe("parseAgentEvent", () => {
         target: "ontology:ws/o",
         payload: { version_id: "v" },
         payload_hash: "h",
-        display: { ontology_name: "O", version: 3, extra: "x" },
+        display: { ontology: { id: "o" }, version: { id: "v" }, extra: "x" },
         target_named_by_user: true,
         expires_at: "2030-01-01T00:00:00Z",
       },
@@ -265,7 +262,8 @@ describe("parseAgentEvent", () => {
         target: "ontology:ws/o",
         payload: { version_id: "v" },
         payload_hash: "h",
-        display: { ontology_name: "O", version: 3 },
+        // Read by the card, by its operation (parseCard).
+        display: { ontology: { id: "o" }, version: { id: "v" }, extra: "x" },
         target_named_by_user: true,
         expires_at: "2030-01-01T00:00:00Z",
       },
@@ -538,14 +536,27 @@ describe("actions", () => {
     payloadJson: '{"version_id":"v_3"}',
     payloadHash: "h",
     displayJson:
-      '{"ontology_id":"ont_1","ontology_name":"Customer contracts","version_id":"v_3","version":3}',
+      '{"ontology":{"id":"ont_1","name":"Customer contracts"},"version":{"id":"v_3","number":3}}',
     status: "prepared",
     expiresAt: "2026-11-14T12:05:00Z",
     ...a,
   });
 
   it.each<[string, Partial<FoundryAgentAction>, unknown]>([
-    ["a waiting action", {}, { kind: "waiting", operation: "create_load" }],
+    [
+      "a waiting action",
+      {},
+      {
+        kind: "waiting",
+        card: {
+          operation: "create_load",
+          display: {
+            ontology: { id: "ont_1", name: "Customer contracts" },
+            version: { id: "v_3", number: 3 },
+          },
+        },
+      },
+    ],
     [
       "one past its expiry by the clock",
       { expiresAt: "2026-11-14T11:59:59Z" },
@@ -556,7 +567,12 @@ describe("actions", () => {
     [
       "an operation this page doesn't know",
       { operation: "drop_database" },
-      { kind: "unknown_operation" },
+      { kind: "unreadable" },
+    ],
+    [
+      "a display that isn't its operation's",
+      { displayJson: '{"ontology_name":"Customer contracts","version":3}' },
+      { kind: "unreadable" },
     ],
     ["a running one", { status: "executing" }, { kind: "running" }],
     [
@@ -584,54 +600,27 @@ describe("actions", () => {
     expect(cardState(action(a), NOW)).toEqual(state);
   });
 
-  it("words each operation the agent may prepare", () => {
+  it("knows the operations the agent may prepare, and no other key", () => {
     expect(isAgentOperation("create_load")).toBe(true);
+    expect(isAgentOperation("settle_review")).toBe(true);
+    expect(isAgentOperation("upload_document")).toBe(false);
     expect(isAgentOperation("toString")).toBe(false);
-    expect(
-      OPERATIONS.create_load.title({ ontology_name: "Sales", version: 2 }),
-    ).toBe("Load v2 of Sales");
-    expect(OPERATIONS.create_load.title({})).toBe(
-      "Load a version of an ontology",
-    );
-  });
-
-  it("reads only the display's own fields, each checked", () => {
-    expect(
-      parseDisplay(
-        '{"ontology_id":"o","ontology_name":"N","version_id":"v","version":3}',
-      ),
-    ).toEqual({
-      ontology_id: "o",
-      ontology_name: "N",
-      version_id: "v",
-      version: 3,
-    });
-    expect(
-      parseDisplay('{"ontology_id":"../x","version":-1,"version_id":7}'),
-    ).toEqual({});
-    expect(parseDisplay("{")).toEqual({});
-    expect(parseDisplay(null)).toEqual({});
-  });
-
-  it("names the ontology from Foundry's display, else the target", () => {
-    expect(actionOntology(action({}))).toBe("ont_1");
-    expect(actionOntology(action({ displayJson: "" }))).toBe("ont_1");
-    expect(
-      actionOntology(action({ displayJson: "", target: "ontology:ws/../x" })),
-    ).toBeUndefined();
   });
 
   it("opens a created load, and nothing it can't read", () => {
     const ran = (resultJson: string, a: Partial<FoundryAgentAction> = {}) =>
       resultLink(action({ status: "succeeded", resultJson, ...a }));
-    expect(ran('{"content_trust":"untrusted","result":{"id":"load_9"}}')).toBe(
-      "/ontology/ont_1/loads/load_9",
-    );
+    expect(
+      ran('{"content_trust":"untrusted","result":{"id":"load_9"}}'),
+    ).toEqual({ to: "/ontology/ont_1/loads/load_9", label: "Open the load" });
     expect(ran('{"result":{"id":"load 9"}}')).toBeUndefined();
     expect(ran('{"result":"load_9"}')).toBeUndefined();
     expect(ran("{")).toBeUndefined();
     expect(
       ran('{"result":{"id":"l"}}', { operation: "other" }),
+    ).toBeUndefined();
+    expect(
+      ran('{"result":{"id":"l"}}', { target: "ontology:ws/../x" }),
     ).toBeUndefined();
   });
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, Play, RefreshCw, X, Zap } from "lucide-react";
@@ -7,10 +7,9 @@ import { sentence } from "../../api";
 import { Button, StatusBadge, formatDate, useNow } from "../../kit";
 import { useWorkspace } from "../../ui";
 import {
-  OPERATIONS,
   cardState,
-  isAgentOperation,
-  parseDisplay,
+  cardView,
+  parseCard,
   payloadText,
   resultLink,
   type CardState,
@@ -33,8 +32,9 @@ const ENDED: Record<
 
 /**
  * An action the Assistant prepared, as its person decides on it: the fixed
- * words of its operation, what Foundry names it acts on, a warning when the
- * person never named that themselves, and the whole request it runs. Only
+ * words of its operation (cardView), what Foundry names it acts on, what it
+ * costs where it costs, a warning when the person never named that
+ * themselves, and the whole request it runs. Only
  * the person whose thread it is sees it (threads are private), and Run is
  * theirs alone: the WFE answers anyone else NOT_FOUND. Run waits while the
  * thread's turn is live (`busy`); an expired confirmation offers Refresh.
@@ -42,18 +42,18 @@ const ENDED: Record<
 export function ActionCard({
   action,
   busy,
+  onNavigate,
 }: {
   action: FoundryAgentAction;
   busy: boolean;
+  onNavigate?: () => void;
 }) {
   const { id: ws } = useWorkspace(),
     qc = useQueryClient();
   const now = useNow(5000),
     state = cardState(action, now),
-    display = parseDisplay(action.displayJson),
-    copy = isAgentOperation(action.operation || "")
-      ? OPERATIONS[action.operation as keyof typeof OPERATIONS]
-      : undefined;
+    card = parseCard(action.operation || "", action.displayJson),
+    view = card && cardView(card);
   const [pending, setPending] = useState<"run" | "refresh" | "dismiss" | null>(
       null,
     ),
@@ -78,9 +78,9 @@ export function ActionCard({
     }
   };
   const link = resultLink(action);
-  const title = copy
-    ? copy.title(display)
-    : `An action this page can’t run (${action.operation || "unnamed"})`;
+  const title = view
+    ? view.title
+    : `An action this page can’t show (${action.operation || "unnamed"})`;
   return (
     <section className="ag-card" aria-label={`Action: ${title}`}>
       <header className="ag-card-head">
@@ -105,30 +105,37 @@ export function ActionCard({
           <CircleAlert size={14} aria-hidden />
           <span>
             Not named by you: the Assistant chose{" "}
-            {display.ontology_name
-              ? `“${display.ontology_name}”`
-              : "this target"}
-            . Check it is the one you mean.
+            {view ? `“${view.target}”` : "this target"}. Check it is the one you
+            mean.
           </span>
         </p>
       )}
-      <dl className="ag-card-facts">
-        {display.ontology_name && (
-          <>
-            <dt>Ontology</dt>
-            <dd>{display.ontology_name}</dd>
-          </>
-        )}
-        {display.version && (
-          <>
-            <dt>Version</dt>
-            <dd>v{display.version}</dd>
-          </>
-        )}
-      </dl>
-      {copy && (
+      {view && (
+        <dl className="ag-card-facts">
+          {view.facts.map((f) => (
+            <Fragment key={f.label}>
+              <dt>{f.label}</dt>
+              <dd>{f.value}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
+      {view?.quote && (
+        <blockquote className="ag-card-quote">
+          <span className="ag-label">The document says (its words)</span>
+          <q>{view.quote}</q>
+        </blockquote>
+      )}
+      {view && (
         <p className="ag-card-text">
-          {copy.does} {copy.cost}
+          {view.does}
+          {view.cost && ` ${view.cost}`}
+        </p>
+      )}
+      {view?.caution && state.kind === "waiting" && (
+        <p className="ag-card-warn" role="note">
+          <CircleAlert size={14} aria-hidden />
+          <span>{view.caution}</span>
         </p>
       )}
       <details className="ag-disclosure">
@@ -159,7 +166,7 @@ export function ActionCard({
               disabled={busy || !!pending}
               onClick={() => void act("run")}
             >
-              {OPERATIONS[state.operation].run}
+              {cardView(state.card).run}
             </Button>
             <Button
               variant="ghost"
@@ -175,11 +182,11 @@ export function ActionCard({
           <p className="ag-card-muted">
             {busy
               ? "You can run it once the Assistant has finished."
-              : `Nothing runs until you click ${OPERATIONS[state.operation].run}. Expires ${formatDate(action.expiresAt)}.`}
+              : `Nothing runs until you click ${cardView(state.card).run}. Expires ${formatDate(action.expiresAt)}.`}
           </p>
         </>
       )}
-      {(state.kind === "expired" || state.kind === "unknown_operation") && (
+      {(state.kind === "expired" || state.kind === "unreadable") && (
         <div className="ag-card-actions">
           {state.kind === "expired" && (
             <Button
@@ -211,7 +218,9 @@ export function ActionCard({
       )}
       {state.kind === "ended" && state.status === "succeeded" && link && (
         <p className="ag-card-muted">
-          <Link to={link}>Open the load</Link>
+          <Link to={link.to} onClick={onNavigate}>
+            {link.label}
+          </Link>
         </p>
       )}
       {state.kind === "ended" &&
@@ -221,7 +230,8 @@ export function ActionCard({
         )}
       {state.kind === "ended" && state.status === "unknown" && (
         <p className="ag-card-muted">
-          Check the ontology before asking again: it is never run twice.
+          Check what it was to change before asking again: it is never run
+          twice.
         </p>
       )}
       {error && (

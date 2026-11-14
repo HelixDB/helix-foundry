@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HttpMethod } from "@/shared/route-template";
 import { compileTemplate, matchTemplate } from "@/shared/route-template";
@@ -10,6 +13,7 @@ import {
 import { NOT_CLAUDE } from "../../mock/routes/agent";
 import type { MockReply } from "../../mock/http";
 import { routes } from "../../mock/routes";
+import { handleDocumentUpload } from "../../mock/routes/documents";
 import { config, db, resetState } from "../../mock/state";
 
 // The mock WFE's Assistant (mock/routes/agent.ts) behaves as the backend's
@@ -373,7 +377,10 @@ describe("actions", () => {
       operation: "create_load",
       target: "ontology:ws_acme/ont_acme_contracts",
       payload: { version_id: "ver_seed_3" },
-      display: { ontology_name: "Customer contracts", version: 3 },
+      display: {
+        ontology: { id: "ont_acme_contracts", name: "Customer contracts" },
+        version: { id: "ver_seed_3", number: 3 },
+      },
       target_named_by_user: true,
     });
     const prepared = evs.find(
@@ -545,7 +552,7 @@ describe("actions", () => {
     });
     const { events: evs } = await events(ran.body.continuation.id);
     expect(evs.find((e) => e.type === "text")).toMatchObject({
-      text: expect.stringContaining("didn't start: permission denied"),
+      text: expect.stringContaining("didn't run: permission denied"),
     });
   });
 
@@ -569,10 +576,12 @@ describe("actions", () => {
     );
     expect(action).toBeUndefined();
     expect(evs.some((e) => e.type === "action_card")).toBe(false);
+    // A member's turn has no prepare tool: the agent says who can.
     expect(
-      evs.find((e) => e.type === "tool_result" && e.is_error),
-    ).toMatchObject({
-      error: expect.stringContaining("permission denied"),
+      evs.some((e) => e.type === "tool_call" && e.name.includes("prepare")),
+    ).toBe(false);
+    expect(evs.find((e) => e.type === "text")).toMatchObject({
+      text: "Only an owner or admin of this workspace can load Customer contracts, so I can't prepare that for you.",
     });
   });
 
@@ -586,5 +595,490 @@ describe("actions", () => {
     }
     const thread = await call("GET", `${A}/threads/${sent.body.thread.id}`);
     expect(thread.body.actions).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------- every operation
+
+const WS = "/v1/workspaces/ws_acme/foundry",
+  CONTRACTS = `${WS}/ontologies/ont_acme_contracts`;
+
+/** The bucket's side of a presigned PUT, as the browser sends it. */
+async function put(
+  url: string,
+  bytes: Buffer,
+  headers: Record<string, string>,
+) {
+  const req = Object.assign(Readable.from([bytes]), {
+    method: "PUT",
+    headers: Object.fromEntries(
+      Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]),
+    ),
+  }) as unknown as IncomingMessage;
+  let status = 0;
+  const res = {
+    setHeader: () => res,
+    writeHead: (s: number) => ((status = s), res),
+    end: () => undefined,
+  } as unknown as ServerResponse;
+  expect(await handleDocumentUpload(req, res, new URL(url))).toBe(true);
+  return status;
+}
+/** A Markdown document uploaded into General. */
+async function uploaded(name: string, text: string) {
+  const bytes = Buffer.from(text);
+  const created = await call("POST", `${WS}/documents`, {
+    name,
+    mediaType: "text/markdown",
+    sizeBytes: String(bytes.length),
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    clientToken: `tok-${name}`,
+    setId: "set_acme_general",
+  });
+  const { document, upload } = created.body;
+  expect(await put(upload.url, bytes, upload.headers)).toBe(200);
+  expect(
+    (await call("POST", `${WS}/documents/${document.id}:complete`, {})).status,
+  ).toBe(200);
+  return document.id as string;
+}
+/** A ready load of Customer contracts' v3, now current. */
+async function loaded(token: string) {
+  const load = (
+    await call("POST", `${CONTRACTS}/loads`, {
+      versionId: "ver_seed_3",
+      clientToken: token,
+    })
+  ).body.load;
+  later(10_000);
+  expect(
+    (await call("GET", `${CONTRACTS}/loads/${load.id}`)).body.load.status,
+  ).toBe("ready");
+  return load.id as string;
+}
+
+/** The card a message prepares in a new thread (or `threadId`), and its turn's events. */
+async function card(text: string, extra: object = {}, userId = "usr_ada") {
+  const sent = await send(text, extra, userId);
+  expect(sent.status).toBe(200);
+  const { events: evs } = await events(sent.body.turn.id, userId);
+  const thread = await call(
+    "GET",
+    `${A}/threads/${sent.body.thread.id}`,
+    undefined,
+    userId,
+  );
+  const said = evs
+    .filter((e) => e.type === "text")
+    .map((e) => (e as { text: string }).text)
+    .join(" ");
+  return {
+    sent,
+    events: evs,
+    said,
+    action: (thread.body.actions || []).at(-1),
+    display: JSON.parse(
+      (thread.body.actions || []).at(-1)?.displayJson || "null",
+    ),
+  };
+}
+/** Runs an action, and folds the turn the agent goes on in. */
+async function runCard(action: { id: string; payloadHash: string }) {
+  const ran = await call("POST", `${A}/actions/${action.id}:execute`, {
+    payloadHash: action.payloadHash,
+  });
+  expect(ran.status).toBe(200);
+  const { events: evs } = await events(ran.body.continuation.id);
+  const thread = await call(
+    "GET",
+    `${A}/threads/${ran.body.continuation.threadId}`,
+  );
+  return {
+    ran: ran.body.action,
+    result: JSON.parse(ran.body.action.resultJson || "{}").result,
+    events: evs,
+    said: evs
+      .filter((e) => e.type === "text")
+      .map((e) => (e as { text: string }).text)
+      .join(" "),
+    next: (thread.body.actions || []).at(-1),
+  };
+}
+const display = (a: { displayJson: string }) => JSON.parse(a.displayJson);
+
+describe("operations", () => {
+  it("builds an ontology card by card: create, draft, make current, load", async () => {
+    const created = await card(
+      "Create an ontology called Orders graph on database orders, goal: Which customers order the most",
+    );
+    expect(created.action).toMatchObject({
+      operation: "create_ontology",
+      target: "tenant:ten_acme_orders",
+      payloadJson: '{"name":"Orders graph"}',
+      targetNamedByUser: true,
+    });
+    expect(created.display).toEqual({
+      name: "Orders graph",
+      database: { id: "ten_acme_orders", name: "orders" },
+    });
+    const step1 = await runCard(created.action);
+    expect(step1.ran.status).toBe("succeeded");
+    const ontologyId = step1.result.id;
+    expect(ontologyId).toMatch(/^ont_/);
+    // It goes on: the draft, on every connection, toward the goal asked.
+    expect(step1.next).toMatchObject({
+      operation: "generate_ontology",
+      target: `ontology:ws_acme/${ontologyId}`,
+      status: "prepared",
+      targetNamedByUser: true,
+    });
+    expect(display(step1.next)).toMatchObject({
+      ontology: { id: ontologyId, name: "Orders graph" },
+      goal: "Which customers order the most",
+      connectors_read: "every",
+    });
+    const step2 = await runCard(step1.next);
+    expect(step2.ran.status).toBe("succeeded");
+    // It read the draft until it ended, then offers it as current.
+    expect(
+      step2.events.find(
+        (e) =>
+          e.type === "tool_result" && e.name === "helix_foundry_get_generation",
+      ),
+    ).toMatchObject({
+      output: {
+        generation: { status: "ONTOLOGY_GENERATION_STATUS_SUCCEEDED" },
+      },
+    });
+    expect(step2.next.operation).toBe("set_current_version");
+    expect(display(step2.next)).toMatchObject({
+      ontology: { id: ontologyId },
+      version: { number: 1 },
+    });
+    expect(display(step2.next).current).toBeUndefined();
+    const step3 = await runCard(step2.next);
+    expect(step3.next.operation).toBe("create_load");
+    const step4 = await runCard(step3.next);
+    expect(step4.ran.status).toBe("succeeded");
+    expect(step4.said).toContain(`/ontology/${ontologyId}/loads/`);
+  });
+
+  it("makes an ontology on a new database in the workspace's project", async () => {
+    const c = await card(
+      "Create an ontology called Lab on a new database Lab db",
+    );
+    expect(c.action.target).toBe("workspace:ws_acme");
+    expect(c.display).toMatchObject({
+      name: "Lab",
+      new_database: { name: "Lab db", slug: "lab-db" },
+    });
+    expect(c.display.new_database.project_id).toMatch(/^prj_acme_/);
+    const ran = await runCard(c.action);
+    expect(ran.ran.status).toBe("succeeded");
+    const tenants = await call(
+      "GET",
+      `/v1/tenants?projectId=${c.display.new_database.project_id}`,
+    );
+    expect(
+      tenants.body.tenants.some((t: { slug: string }) => t.slug === "lab-db"),
+    ).toBe(true);
+  });
+
+  it("says what is wrong with a database instead of preparing", async () => {
+    expect(
+      (await card("Create an ontology called X on database nowhere")).said,
+    ).toMatch(/There is no database called nowhere/);
+    expect(
+      (await card("Create an ontology called X on database contracts")).said,
+    ).toMatch(/already holds the ontology Customer contracts/);
+    const vague = await card("Create an ontology please");
+    expect(vague.action).toBeUndefined();
+    expect(vague.said).toMatch(/Tell me what to call the ontology/);
+  });
+
+  it("drafts from the connections and sets a message names, or documents alone", async () => {
+    const chosen = await card("Generate a draft of Sales graph from Stripe");
+    expect(chosen.display).toMatchObject({
+      connectors_read: "chosen",
+      connectors: [{ id: "conn_acme_stripe", kind: "stripe" }],
+    });
+    expect(JSON.parse(chosen.action.payloadJson)).toEqual({
+      connector_ids: ["conn_acme_stripe"],
+    });
+    const docs = await card("Draft Sales graph from General, documents only");
+    expect(JSON.parse(docs.action.payloadJson)).toEqual({
+      document_set_ids: ["set_acme_general"],
+      no_connectors: true,
+    });
+    expect(docs.display).toMatchObject({
+      connectors_read: "none",
+      connectors: [],
+      document_sets: [{ id: "set_acme_general", name: "General" }],
+    });
+  });
+
+  it("makes a version current, against the current one", async () => {
+    const c = await card("Make v3 of Customer contracts current");
+    expect(JSON.parse(c.action.payloadJson)).toEqual({
+      version_id: "ver_seed_3",
+      expected_current_version_id: "ver_seed_1",
+    });
+    expect(c.display).toMatchObject({
+      version: { id: "ver_seed_3", number: 3 },
+      current: { id: "ver_seed_1", number: 1 },
+    });
+    const ran = await runCard(c.action);
+    expect(ran.result).toMatchObject({ id: "ver_seed_3" });
+    // A finished draft made current is offered to load next.
+    expect(ran.next.operation).toBe("create_load");
+    expect((await card("Make v1 of Customer contracts current")).said).toMatch(
+      /I've prepared/,
+    );
+    expect((await card("Make v9 of Customer contracts current")).said).toBe(
+      "Customer contracts has no v9.",
+    );
+  });
+
+  it("makes an earlier load current", async () => {
+    const first = await loaded("one");
+    await loaded("two");
+    const c = await card(
+      "Make the previous load of Customer contracts current",
+    );
+    expect(c.action.operation).toBe("set_current_load");
+    expect(JSON.parse(c.action.payloadJson)).toEqual({ load_id: first });
+    expect(c.display).toMatchObject({
+      load: { id: first, version: { number: 3 }, status: "ready" },
+      current: { version: { number: 3 } },
+    });
+    const ran = await runCard(c.action);
+    expect(ran.ran.status).toBe("succeeded");
+    expect(ran.said).toContain(`/ontology/ont_acme_contracts/loads/${first}`);
+  });
+
+  it("previews a revision of a draft's item", async () => {
+    const c = await card("Preview a revision of v3 of Customer contracts");
+    expect(c.action.operation).toBe("revise_version");
+    const payload = JSON.parse(c.action.payloadJson);
+    expect(payload).toMatchObject({ version_id: "ver_seed_3", dry_run: true });
+    expect(c.display).toMatchObject({
+      dry_run: true,
+      edits: [{ kind: "remove", item_id: payload.edits[0].remove.item_id }],
+    });
+    const ran = await runCard(c.action);
+    expect(ran.ran.status).toBe("succeeded");
+    expect(ran.result.id).toMatch(/^gen/);
+  });
+
+  it("syncs a connection by its name or kind", async () => {
+    const c = await card("Sync Stripe");
+    expect(c.action).toMatchObject({
+      operation: "sync_connector",
+      target: "connector:ws_acme/conn_acme_stripe",
+      payloadJson: "{}",
+      targetNamedByUser: true,
+    });
+    expect(c.display).toEqual({
+      connector: { id: "conn_acme_stripe", name: "Stripe", kind: "stripe" },
+    });
+    const ran = await runCard(c.action);
+    expect(ran.said).toContain("/data/connections/conn_acme_stripe");
+    expect((await card("Sync it")).said).toMatch(/^Which connection\?/);
+  });
+
+  it("adds the sample's connection and set", async () => {
+    const c = await card("Add the sample data to Sales graph");
+    expect(c.display).toEqual({
+      ontology: { id: "ont_acme_sales", name: "Sales graph" },
+    });
+    const ran = await runCard(c.action);
+    expect(ran.ran.status).toBe("succeeded");
+    expect(ran.result).toMatchObject({ documents: [] });
+    const sets = await call("GET", `${WS}/document-sets`);
+    expect(
+      sets.body.sets.some(
+        (s: { name: string }) => s.name === "Acme Corp sample",
+      ),
+    ).toBe(true);
+  });
+
+  it("creates, renames and describes a set, and moves a document into it", async () => {
+    const doc = await uploaded("notes.md", "# Notes\n\nNothing yet.\n");
+    const made = await card(
+      "Create a document set called Leases, described as “Signed leases”",
+    );
+    expect(made.display).toMatchObject({
+      name: "Leases",
+      description: "Signed leases",
+    });
+    expect(made.action.targetNamedByUser).toBe(false);
+    const set = (await runCard(made.action)).result;
+    expect(set).toMatchObject({ name: "Leases" });
+    const renamed = await card("Rename the set Leases to Contracts");
+    expect(renamed.display).toMatchObject({
+      set: { id: set.id, name: "Leases" },
+      name: "Contracts",
+    });
+    expect((await runCard(renamed.action)).ran.status).toBe("succeeded");
+    const described = await card(
+      'Describe the set Contracts as "Signed contracts"',
+    );
+    expect(described.display).toMatchObject({
+      description: "Signed contracts",
+    });
+    expect(described.display.name).toBeUndefined();
+    await runCard(described.action);
+    const moved = await card("Move notes.md to Contracts");
+    expect(moved.display).toMatchObject({
+      document: { id: doc, name: "notes.md" },
+      from: { id: "set_acme_general", name: "General" },
+      to: { id: set.id, name: "Contracts" },
+    });
+    const ran = await runCard(moved.action);
+    expect(ran.result.document).toMatchObject({ id: doc, set_id: set.id });
+  });
+
+  it("settles a review the current load holds, as the review takes it", async () => {
+    await uploaded(
+      "variant.md",
+      "# Variant contract\n\nGlobexx Corporation signed. The Agreement runs for 24 months.\n",
+    );
+    const load = await loaded("first");
+    const c = await card(
+      "Settle the review about Globexx in Customer contracts",
+    );
+    const listed = c.events.find(
+      (e) =>
+        e.type === "tool_result" && e.name === "helix_foundry_list_reviews",
+    ) as { output: { load_id: string; reviews: { review_key: string }[] } };
+    expect(listed.output.load_id).toBe(load);
+    expect(c.display).toMatchObject({
+      load_id: load,
+      review: { reason: "unresolved", settle: "resolve" },
+      document: { name: "variant.md" },
+      decision: { kind: "link", entity_key: "cus_GLOBEX01", candidate: true },
+    });
+    expect(c.said).toMatch(/Globexx Corporation/);
+    const ran = await runCard(c.action);
+    expect(ran.result).toMatchObject({
+      kind: "resolve",
+      entity_key: "cus_GLOBEX01",
+    });
+    expect(ran.said).toMatch(/applies from the next load/);
+
+    expect(
+      (await card("Settle the review about Hooli in Customer contracts")).said,
+    ).toBe(
+      "No review of the current load of Customer contracts is about Hooli.",
+    );
+    const no = await card(
+      "Settle the review about Globexx in Customer contracts: not in the data",
+    );
+    expect(no.display.decision).toEqual({ kind: "not_in_data" });
+    // Once a load no longer holds it, Refresh refuses it in the tool's words.
+    Object.assign(config, { agentActionTtlMs: 1000 });
+    const stale = await card(
+      "Settle the review about Globexx in Customer contracts",
+    );
+    await loaded("second");
+    expect(
+      (await card("Settle the review about Globexx in Customer contracts"))
+        .said,
+    ).toBe("The current load of Customer contracts has no review to settle.");
+    later(2_000);
+    const refreshed = await call(
+      "POST",
+      `${A}/actions/${stale.action.id}:refresh`,
+      {},
+    );
+    expect([refreshed.status, refreshed.body.message]).toEqual([
+      400,
+      expect.stringMatching(/^the current load holds no review/),
+    ]);
+  });
+
+  it("says nothing waits for review without a current load", async () => {
+    expect(
+      (await card("Settle the review about Globexx in Sales graph")).said,
+    ).toBe("Sales graph has no current load, so nothing waits for review.");
+  });
+
+  it("links a kind's form to connect, and nothing else", async () => {
+    const c = await card("Connect Slack");
+    const out = c.events.find(
+      (e) => e.type === "tool_result" && e.name === "helix_foundry_connect",
+    ) as { output: { url: string; kind: string; available: boolean } };
+    expect(new URL(out.output.url).pathname).toBe("/data");
+    expect(Object.fromEntries(new URL(out.output.url).searchParams)).toEqual({
+      add: "slack",
+      workspace: "ws_acme",
+    });
+    expect(out.output).toMatchObject({ kind: "slack", available: true });
+    expect(c.action).toBeUndefined();
+    expect((await card("Connect something")).said).toMatch(
+      /^Which kind of data\?/,
+    );
+  });
+
+  it("gives a member the read tools only: no connect, no prepare", async () => {
+    for (const [text, verb] of [
+      ["Connect Slack", "connect data"],
+      ["Sync Stripe", "sync a connection"],
+      ["Settle the review about Globexx", "settle a review"],
+    ]) {
+      const c = await card(text, {}, "usr_alan");
+      expect(c.action).toBeUndefined();
+      expect(
+        c.events.some(
+          (e) =>
+            e.type === "tool_call" &&
+            [
+              "helix_foundry_connect",
+              "helix_foundry_prepare_operation",
+            ].includes(e.name),
+        ),
+      ).toBe(false);
+      expect(c.said).toBe(
+        `Only an owner or admin of this workspace can ${verb}, so I can't prepare that for you.`,
+      );
+    }
+  });
+
+  it("refreshes an expired card of any operation, and refuses a person who may no longer", async () => {
+    Object.assign(config, { agentActionTtlMs: 1000 });
+    const c = await card("Sync Stripe");
+    later(2_000);
+    const refreshed = await call(
+      "POST",
+      `${A}/actions/${c.action.id}:refresh`,
+      {},
+    );
+    expect(refreshed.body.action.status).toBe("prepared");
+    later(2_000);
+    db.memberships.find((m) => m.id === "mem_ada_acme")!.role =
+      "WORKSPACE_ROLE_MEMBER";
+    const refused = await call(
+      "POST",
+      `${A}/actions/${c.action.id}:refresh`,
+      {},
+    );
+    expect([refused.status, refused.body.message]).toEqual([
+      400,
+      "permission denied",
+    ]);
+  });
+
+  it("shows a call a limit kept from running, as agentOutcome not_run says", async () => {
+    Object.assign(config, { agentOutcome: "not_run" });
+    const c = await card("What ontologies do I have?");
+    expect(
+      c.events.find(
+        (e) => e.type === "tool_result" && e.tool_use_id === "tu_cut",
+      ),
+    ).toMatchObject({ is_error: true, not_run: true });
+    expect(c.events.at(-1)).toMatchObject({
+      type: "finished",
+      reason: "answered",
+    });
   });
 });

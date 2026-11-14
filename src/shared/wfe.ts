@@ -2624,14 +2624,145 @@ export type FoundryAgentAction = {
   createdAt?: string | null;
 };
 
-/** backend/agent Display: what a card names, resolved by Foundry, never the model's words. */
-export type AgentActionDisplay = {
-  ontology_id?: string;
-  ontology_name?: string;
-  version_id?: string;
-  // The version's number (v3).
-  version?: number;
+// What a card names (backend/agent display.go), resolved by Foundry from
+// the workspace when the action is prepared, never the model's words: one
+// shape per operation, read by the action's operation, snake_case. A name
+// that couldn't be read (gone since, or never there) is missing, its id kept.
+
+/** One thing of the workspace: its id and its name. */
+export type AgentRef = { id: string; name?: string };
+/** A connector, with its kind (postgres, stripe, ...). */
+export type AgentConnectorRef = AgentRef & { kind?: string };
+/** An ontology version by its number (v3). */
+export type AgentVersionRef = { id: string; number?: number };
+/** A load: the version it wrote, its status and when it started. */
+export type AgentLoadRef = {
+  id: string;
+  version: AgentVersionRef;
+  status?: string;
+  created_at?: string;
 };
+/** How settle_review settles a review (the MCP's `settle`). */
+export type AgentReviewSettle =
+  | "resolve"
+  | "prop"
+  | "release"
+  | "stale"
+  | "none";
+/**
+ * A review the current load holds, as helix_foundry_list_reviews gives it
+ * (integration.FoundryReviewOutput): its quote, values and statement are a
+ * document's words, untrusted.
+ */
+export type AgentReview = {
+  review_key: string;
+  reason: string;
+  settle: AgentReviewSettle;
+  type?: string;
+  doc_id?: string;
+  quote?: string;
+  section?: number;
+  start?: number;
+  end?: number;
+  norm_name?: string;
+  candidates?: string[];
+  entity_key?: string;
+  prop?: string;
+  values?: { value: unknown; doc_id?: string; quote?: string }[];
+  link?: string;
+  // JSON text {subject: {type, name}, object: {type, name}, props}.
+  statement?: string;
+  statement_hash?: string;
+  confidence?: number;
+};
+/** A value settle_review sets: exactly one arm. */
+export type AgentDecisionValue =
+  | { text: string }
+  | { integer: string }
+  | { number: number }
+  | { boolean: boolean };
+/** What a settle_review decides (DecisionDisplay): a closed set. */
+export type AgentDecision =
+  // The name is entity_key; `candidate` false when the review didn't offer it.
+  | { kind: "link"; entity_key: string; candidate: boolean }
+  | { kind: "not_in_data" }
+  | { kind: "set_value"; value: AgentDecisionValue }
+  | { kind: "remove_value" }
+  | { kind: "approve" }
+  | { kind: "reject" };
+
+/** Each operation's display, by operation. */
+export type AgentActionDisplays = {
+  // Exactly one of database (an existing one) and new_database.
+  create_ontology: { name: string } & (
+    | { database: AgentRef }
+    | {
+        new_database: {
+          name: string;
+          slug: string;
+        } & ({ project_id: string } | { new_project: string });
+      }
+  );
+  generate_ontology: {
+    ontology: AgentRef;
+    goal?: string;
+    // every: connectors lists the workspace's, as they are now (API
+    // sources only when named in event_sources); none: documents alone.
+    connectors_read: "every" | "none" | "chosen";
+    connectors: AgentConnectorRef[];
+    document_sets: AgentRef[];
+    event_sources?: { connector: AgentConnectorRef; mode: string }[];
+    // "acme": the sample company's ready-made draft.
+    sample?: string;
+  };
+  // current: the version current now; missing when none is.
+  set_current_version: {
+    ontology: AgentRef;
+    version: AgentVersionRef;
+    current?: AgentVersionRef;
+  };
+  create_load: { ontology: AgentRef; version: AgentVersionRef };
+  set_current_load: {
+    ontology: AgentRef;
+    load: AgentLoadRef;
+    current?: AgentLoadRef;
+  };
+  revise_version: {
+    ontology: AgentRef;
+    version: AgentVersionRef;
+    edits: { kind: "put" | "remove"; item_id: string }[];
+    dry_run: boolean;
+  };
+  sync_connector: { connector: AgentConnectorRef };
+  add_sample_data: { ontology: AgentRef };
+  create_document_set: {
+    ontology: AgentRef;
+    name: string;
+    description?: string;
+  };
+  // set: as it is named now; a field left out stays, "" clears the description.
+  update_document_set: {
+    ontology: AgentRef;
+    set: AgentRef;
+    name?: string;
+    description?: string;
+  };
+  move_document: {
+    ontology: AgentRef;
+    document: AgentRef;
+    from: AgentRef;
+    to: AgentRef;
+  };
+  settle_review: {
+    ontology: AgentRef;
+    load_id: string;
+    review: AgentReview;
+    document?: AgentRef;
+    decision: AgentDecision;
+  };
+};
+/** The operations the Assistant may prepare (backend agent.Operations). */
+export type AgentOperation = keyof AgentActionDisplays;
 
 /** POST .../agent/turns */
 export type SendAgentMessageRequest = {
@@ -2740,6 +2871,9 @@ export type AgentEvent =
       error?: string;
       output?: unknown;
       truncated?: boolean;
+      // A limit kept the call from running (its reply's 8 calls, a turn's
+      // 3 asks, its time, its length): `error` says why, from "Not run".
+      not_run?: boolean;
     }
   | {
       type: "action_card";
@@ -2748,7 +2882,8 @@ export type AgentEvent =
       target: string;
       payload: unknown;
       payload_hash: string;
-      display: AgentActionDisplay;
+      // AgentActionDisplays[operation], parsed by the page.
+      display: unknown;
       target_named_by_user: boolean;
       expires_at: string;
     }

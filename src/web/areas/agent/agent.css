@@ -145,6 +145,16 @@
   color: var(--hf-danger-text);
   font-weight: 600;
 }
+.ag-step-skipped {
+  margin-left: auto;
+  color: var(--hf-muted);
+  font-weight: 600;
+}
+.ag-connect {
+  justify-self: start;
+  gap: 6px;
+  text-decoration: none;
+}
 .ag-step-body {
   display: grid;
   gap: 6px;
@@ -222,6 +232,19 @@
 }
 .ag-card-facts dd {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+.ag-card-quote {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 2px 0 2px var(--hf-space-15);
+  border-left: 2px solid var(--hf-border);
+  font-size: var(--hf-text-sm);
+}
+.ag-card-quote q {
+  color: var(--hf-text-2);
+  font-style: italic;
   overflow-wrap: anywhere;
 }
 .ag-card-text {

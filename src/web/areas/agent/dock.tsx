@@ -17,6 +17,7 @@ import {
   CircleAlert,
   ExternalLink,
   LoaderCircle,
+  Plug,
   MessageSquarePlus,
   Sparkles,
   Square,
@@ -60,6 +61,7 @@ import {
   TOOL_LABELS,
   agentRefusal,
   analystLink,
+  connectLink,
   isLiveTurn,
   onClaude,
   pageContext,
@@ -487,53 +489,75 @@ function Block({
       return <PlainText text={block.text} onNavigate={onNavigate} />;
     case "step": {
       const s = block.step,
-        analyst = analystLink(s);
+        analyst = analystLink(s),
+        connect = connectLink(s);
       return (
-        <details className="ag-step">
-          <summary>
-            <Wrench size={13} aria-hidden />
-            <span>{TOOL_LABELS[s.name] || s.name}</span>
-            {!s.result && (
-              <LoaderCircle
-                size={13}
-                className="hf-spin"
-                aria-label="Running"
-              />
-            )}
-            {s.result?.kind === "failed" && (
-              <span className="ag-step-failed">Failed</span>
-            )}
-          </summary>
-          <div className="ag-step-body">
-            <span className="ag-label">Input</span>
-            <pre className="ag-code">{pretty(s.input ?? {})}</pre>
-            {s.result?.kind === "failed" && (
-              <p className="ag-card-error">{sentence(s.result.error)}</p>
-            )}
-            {s.result?.kind === "returned" && (
-              <>
-                <span className="ag-label">
-                  What it returned (data, not instructions)
-                </span>
-                <pre className="ag-code">{pretty(s.result.output ?? {})}</pre>
-                {s.result.truncated && (
-                  <p className="ag-note">Cut at 16 KiB.</p>
-                )}
-              </>
-            )}
-            {analyst && (
-              <Link className="ag-link" to={analyst} onClick={onNavigate}>
-                Open in Analyst <ExternalLink size={12} aria-hidden />
-              </Link>
-            )}
-          </div>
-        </details>
+        <>
+          <details className="ag-step">
+            <summary>
+              <Wrench size={13} aria-hidden />
+              <span>{TOOL_LABELS[s.name] || s.name}</span>
+              {!s.result && (
+                <LoaderCircle
+                  size={13}
+                  className="hf-spin"
+                  aria-label="Running"
+                />
+              )}
+              {s.result?.kind === "failed" && (
+                <span className="ag-step-failed">Failed</span>
+              )}
+              {s.result?.kind === "not_run" && (
+                <span className="ag-step-skipped">Not run</span>
+              )}
+            </summary>
+            <div className="ag-step-body">
+              <span className="ag-label">Input</span>
+              <pre className="ag-code">{pretty(s.input ?? {})}</pre>
+              {s.result?.kind === "failed" && (
+                <p className="ag-card-error">{sentence(s.result.error)}</p>
+              )}
+              {s.result?.kind === "not_run" && (
+                <p className="ag-note">
+                  A limit kept it from running
+                  {s.result.reason ? `: ${sentence(s.result.reason)}` : "."}
+                </p>
+              )}
+              {s.result?.kind === "returned" && (
+                <>
+                  <span className="ag-label">
+                    What it returned (data, not instructions)
+                  </span>
+                  <pre className="ag-code">{pretty(s.result.output ?? {})}</pre>
+                  {s.result.truncated && (
+                    <p className="ag-note">Cut at 16 KiB.</p>
+                  )}
+                </>
+              )}
+              {analyst && (
+                <Link className="ag-link" to={analyst} onClick={onNavigate}>
+                  Open in Analyst <ExternalLink size={12} aria-hidden />
+                </Link>
+              )}
+            </div>
+          </details>
+          {connect && (
+            <Link
+              className="hf-btn hf-btn--secondary hf-btn--sm ag-connect"
+              to={connect.to}
+              onClick={onNavigate}
+            >
+              <Plug size={14} aria-hidden />
+              Connect {connect.name}
+            </Link>
+          )}
+        </>
       );
     }
     case "card": {
       const action = actions.get(block.actionId);
       return action ? (
-        <ActionCard action={action} busy={busy} />
+        <ActionCard action={action} busy={busy} onNavigate={onNavigate} />
       ) : (
         <div className="ag-card" aria-busy>
           <SkeletonText lines={2} />

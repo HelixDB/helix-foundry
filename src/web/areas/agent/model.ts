@@ -1,6 +1,15 @@
 import type {
-  AgentActionDisplay,
+  AgentActionDisplays,
   AgentActionStatus,
+  AgentConnectorRef,
+  AgentDecision,
+  AgentDecisionValue,
+  AgentLoadRef,
+  AgentOperation,
+  AgentRef,
+  AgentReview,
+  AgentReviewSettle,
+  AgentVersionRef,
   AgentEvent,
   AgentPageContext,
   AgentRefusalReason,
@@ -13,8 +22,14 @@ import type {
 import { AGENT_REFUSALS } from "../../../shared/wfe";
 import { isRecord } from "../../../shared/json";
 import { ApiError } from "../../api";
+import { connectorLabel } from "../../kit/SourceLogo";
+import { formatDate, plural } from "../../kit/util";
+import { dataPaths } from "../data/paths";
+import { reviewCopy } from "../documents/model";
 import { LOAD_LIMITS } from "../ontology/model";
 import { ontologyPaths } from "../ontology/paths";
+
+export type { AgentOperation };
 import { inForce } from "../workspace/ai-api";
 
 // The Assistant's dock, as pure functions: what a turn's polled events show,
@@ -221,6 +236,7 @@ export function parseAgentEvent(eventJson: string): AgentEvent | undefined {
             ...(str(x.error) !== undefined && { error: x.error as string }),
             ...(x.output !== undefined && { output: x.output }),
             ...(x.truncated === true && { truncated: true }),
+            ...(x.not_run === true && { not_run: true }),
           }
         : undefined;
     case "action_card":
@@ -232,7 +248,7 @@ export function parseAgentEvent(eventJson: string): AgentEvent | undefined {
             target: str(x.target) || "",
             payload: x.payload,
             payload_hash: str(x.payload_hash) || "",
-            display: parseDisplay(x.display),
+            display: x.display,
             target_named_by_user: x.target_named_by_user === true,
             expires_at: str(x.expires_at) || "",
           }
@@ -297,7 +313,9 @@ export type AgentStep = {
   input: unknown;
   result?:
     | { kind: "returned"; output: unknown; truncated: boolean }
-    | { kind: "failed"; error: string };
+    | { kind: "failed"; error: string }
+    // A limit kept it from running: not the tool's failure.
+    | { kind: "not_run"; reason: string };
 };
 
 /** What a turn shows, in order. */
@@ -387,13 +405,18 @@ export function reduceTurnEvents(
             step: { id: ev.tool_use_id, name: ev.name, input: ev.input },
           });
         case "tool_result": {
-          const result: AgentStep["result"] = ev.is_error
-            ? { kind: "failed", error: ev.error || "it failed" }
-            : {
-                kind: "returned",
-                output: ev.output,
-                truncated: !!ev.truncated,
-              };
+          const result: AgentStep["result"] = ev.not_run
+            ? {
+                kind: "not_run",
+                reason: (ev.error || "").replace(/^Not run:?\s*/i, ""),
+              }
+            : ev.is_error
+              ? { kind: "failed", error: ev.error || "it failed" }
+              : {
+                  kind: "returned",
+                  output: ev.output,
+                  truncated: !!ev.truncated,
+                };
           const i = s.blocks.findIndex(
             (b) =>
               b.kind === "step" &&
@@ -463,6 +486,7 @@ export const TOOL_LABELS: Record<string, string> = {
   helix_foundry_list_connectors: "Listed connections",
   helix_foundry_list_connector_kinds: "Listed the kinds of connection",
   helix_foundry_list_review_decisions: "Listed review decisions",
+  helix_foundry_list_reviews: "Listed the reviews to settle",
   helix_foundry_read_graph: "Read the graph",
   helix_foundry_ask: "Asked the Analyst",
   helix_foundry_get_question: "Read a question",
@@ -487,68 +511,724 @@ export const pretty = (x: unknown) =>
 
 // ---------------------------------------------------------------- actions
 
-/** How a card words what it runs; one entry per operation the agent may prepare. */
-type OperationCopy = {
-  title: (d: AgentActionDisplay) => string;
-  does: string;
-  cost: string;
-  run: string;
+/** An action as its card shows it: its operation and Foundry's display for it. */
+export type AgentCard = {
+  [K in AgentOperation]: { operation: K; display: AgentActionDisplays[K] };
+}[AgentOperation];
+
+const num = (x: unknown) =>
+  typeof x === "number" && Number.isFinite(x) ? x : undefined;
+const ids = (x: unknown) =>
+  typeof x === "string" && ID.test(x) ? x : undefined;
+const opt = <K extends string, V>(key: K, v: V | undefined) =>
+  (v === undefined ? {} : { [key]: v }) as Partial<Record<K, V>>;
+const list = <T>(x: unknown, item: (v: unknown) => T | undefined) => {
+  if (!Array.isArray(x)) return undefined;
+  const out = x.map(item);
+  return out.every((v) => v !== undefined) ? (out as T[]) : undefined;
 };
 
-/** The operations the agent may prepare (backend agent.Operations), with each card's fixed words. */
-export const OPERATIONS = {
-  create_load: {
-    title: (d) =>
-      `Load ${d.version ? `v${d.version}` : "a version"} of ${d.ontology_name || "an ontology"}`,
-    does: "Writes this version’s tables and documents into the ontology’s database, beside its other loads. The newest load that finishes ready becomes current.",
-    cost: `Reading documents costs at most $${LOAD_LIMITS.jobUsd} for this load and $${LOAD_LIMITS.monthUsd} a month for the workspace.`,
-    run: "Load",
-  },
-} as const satisfies Record<string, OperationCopy>;
-export type AgentOperation = keyof typeof OPERATIONS;
-export const isAgentOperation = (x: string): x is AgentOperation =>
-  Object.hasOwn(OPERATIONS, x);
+function ref(x: unknown): AgentRef | undefined {
+  if (!isRecord(x)) return undefined;
+  const id = ids(x.id);
+  return id ? { id, ...opt("name", str(x.name) || undefined) } : undefined;
+}
+function connectorRef(x: unknown): AgentConnectorRef | undefined {
+  const r = ref(x);
+  return r && isRecord(x)
+    ? { ...r, ...opt("kind", str(x.kind) || undefined) }
+    : r;
+}
+function versionRef(x: unknown): AgentVersionRef | undefined {
+  if (!isRecord(x)) return undefined;
+  const id = ids(x.id),
+    n = num(x.number);
+  return id
+    ? {
+        id,
+        ...opt("number", n && Number.isInteger(n) && n > 0 ? n : undefined),
+      }
+    : undefined;
+}
+function loadRef(x: unknown): AgentLoadRef | undefined {
+  if (!isRecord(x)) return undefined;
+  // A load that couldn't be read names no version: its id is empty.
+  const id = ids(x.id),
+    version =
+      versionRef(x.version) ??
+      (isRecord(x.version) && x.version.id === "" ? { id: "" } : undefined);
+  return id && version
+    ? {
+        id,
+        version,
+        ...opt("status", str(x.status) || undefined),
+        ...opt("created_at", str(x.created_at) || undefined),
+      }
+    : undefined;
+}
 
-/** Display JSON as the card may show it: only the fields Foundry names, each checked. */
-export function parseDisplay(x: unknown): AgentActionDisplay {
-  const v = typeof x === "string" ? parse(x) : x;
-  if (!isRecord(v)) return {};
+const SETTLES: readonly AgentReviewSettle[] = [
+  "resolve",
+  "prop",
+  "release",
+  "stale",
+  "none",
+];
+function review(x: unknown): AgentReview | undefined {
+  if (!isRecord(x)) return undefined;
+  const key = str(x.review_key),
+    settle = SETTLES.find((s) => s === x.settle);
+  if (!key || !settle) return undefined;
+  const texts = (
+    k:
+      | "type"
+      | "doc_id"
+      | "quote"
+      | "norm_name"
+      | "entity_key"
+      | "prop"
+      | "link"
+      | "statement"
+      | "statement_hash",
+  ) => opt(k, str(x[k]) || undefined);
+  const int = (k: "section" | "start" | "end") => {
+    const v = num(x[k]);
+    return opt(
+      k,
+      v !== undefined && Number.isInteger(v) && v >= 0 ? v : undefined,
+    );
+  };
+  const candidates = x.candidates === undefined ? [] : list(x.candidates, str);
+  const values =
+    x.values === undefined
+      ? []
+      : list(x.values, (v) =>
+          isRecord(v) && "value" in v
+            ? {
+                value: v.value,
+                ...opt("doc_id", str(v.doc_id) || undefined),
+                ...opt("quote", str(v.quote) || undefined),
+              }
+            : undefined,
+        );
+  if (!candidates || !values) return undefined;
   return {
-    ...(str(v.ontology_id) && ID.test(v.ontology_id as string)
-      ? { ontology_id: v.ontology_id as string }
-      : {}),
-    ...(str(v.ontology_name)
-      ? { ontology_name: v.ontology_name as string }
-      : {}),
-    ...(str(v.version_id) && ID.test(v.version_id as string)
-      ? { version_id: v.version_id as string }
-      : {}),
-    ...(Number.isInteger(v.version) && (v.version as number) > 0
-      ? { version: v.version as number }
-      : {}),
+    review_key: key,
+    reason: str(x.reason) || "",
+    settle,
+    ...texts("type"),
+    ...texts("doc_id"),
+    ...texts("quote"),
+    ...int("section"),
+    ...int("start"),
+    ...int("end"),
+    ...texts("norm_name"),
+    ...opt("candidates", candidates.length ? candidates : undefined),
+    ...texts("entity_key"),
+    ...texts("prop"),
+    ...opt("values", values.length ? values : undefined),
+    ...texts("link"),
+    ...texts("statement"),
+    ...texts("statement_hash"),
+    ...opt("confidence", num(x.confidence)),
   };
 }
+function decisionValue(x: unknown): AgentDecisionValue | undefined {
+  if (!isRecord(x) || Object.keys(x).length !== 1) return undefined;
+  if (typeof x.text === "string") return { text: x.text };
+  if (typeof x.integer === "string" && /^-?\d{1,19}$/.test(x.integer))
+    return { integer: x.integer };
+  if (num(x.number) !== undefined) return { number: x.number as number };
+  if (typeof x.boolean === "boolean") return { boolean: x.boolean };
+  return undefined;
+}
+function decision(x: unknown): AgentDecision | undefined {
+  if (!isRecord(x)) return undefined;
+  switch (x.kind) {
+    case "link": {
+      const key = str(x.entity_key);
+      return key
+        ? { kind: "link", entity_key: key, candidate: x.candidate === true }
+        : undefined;
+    }
+    case "set_value": {
+      const value = decisionValue(x.value);
+      return value ? { kind: "set_value", value } : undefined;
+    }
+    case "not_in_data":
+    case "remove_value":
+    case "approve":
+    case "reject":
+      return { kind: x.kind };
+    default:
+      return undefined;
+  }
+}
+
+/** Each operation's display, read without trust: undefined when it isn't one. */
+const DISPLAYS: {
+  [K in AgentOperation]: (
+    d: Record<string, unknown>,
+  ) => AgentActionDisplays[K] | undefined;
+} = {
+  create_ontology: (d) => {
+    const name = str(d.name);
+    if (!name) return undefined;
+    const database = ref(d.database),
+      fresh = isRecord(d.new_database) ? d.new_database : undefined;
+    if (!!database === !!fresh) return undefined;
+    if (database) return { name, database };
+    const n = str(fresh!.name),
+      slug = str(fresh!.slug),
+      project = ids(fresh!.project_id),
+      newProject = str(fresh!.new_project);
+    if (!n || !slug || !!project === !!newProject) return undefined;
+    return {
+      name,
+      new_database: project
+        ? { name: n, slug, project_id: project }
+        : { name: n, slug, new_project: newProject! },
+    };
+  },
+  generate_ontology: (d) => {
+    const ontology = ref(d.ontology),
+      read = (["every", "none", "chosen"] as const).find(
+        (r) => r === d.connectors_read,
+      ),
+      connectors = list(d.connectors ?? [], connectorRef),
+      sets = list(d.document_sets ?? [], ref),
+      sources =
+        d.event_sources === undefined
+          ? []
+          : list(d.event_sources, (e) => {
+              const c = isRecord(e) ? connectorRef(e.connector) : undefined;
+              const mode = isRecord(e) ? str(e.mode) : undefined;
+              return c && mode ? { connector: c, mode } : undefined;
+            });
+    if (!ontology || !read || !connectors || !sets || !sources)
+      return undefined;
+    return {
+      ontology,
+      ...opt("goal", str(d.goal) || undefined),
+      connectors_read: read,
+      connectors,
+      document_sets: sets,
+      ...opt("event_sources", sources.length ? sources : undefined),
+      ...opt("sample", str(d.sample) || undefined),
+    };
+  },
+  set_current_version: (d) => {
+    const ontology = ref(d.ontology),
+      version = versionRef(d.version),
+      current = d.current === undefined ? null : versionRef(d.current);
+    if (!ontology || !version || current === undefined) return undefined;
+    return { ontology, version, ...opt("current", current ?? undefined) };
+  },
+  create_load: (d) => {
+    const ontology = ref(d.ontology),
+      version = versionRef(d.version);
+    return ontology && version ? { ontology, version } : undefined;
+  },
+  set_current_load: (d) => {
+    const ontology = ref(d.ontology),
+      load = loadRef(d.load),
+      current = d.current === undefined ? null : loadRef(d.current);
+    if (!ontology || !load || current === undefined) return undefined;
+    return { ontology, load, ...opt("current", current ?? undefined) };
+  },
+  revise_version: (d) => {
+    const ontology = ref(d.ontology),
+      version = versionRef(d.version),
+      edits = list(d.edits, (e) =>
+        isRecord(e) &&
+        (e.kind === "put" || e.kind === "remove") &&
+        str(e.item_id)
+          ? { kind: e.kind as "put" | "remove", item_id: e.item_id as string }
+          : undefined,
+      );
+    if (
+      !ontology ||
+      !version ||
+      !edits?.length ||
+      typeof d.dry_run !== "boolean"
+    )
+      return undefined;
+    return { ontology, version, edits, dry_run: d.dry_run };
+  },
+  sync_connector: (d) => {
+    const connector = connectorRef(d.connector);
+    return connector ? { connector } : undefined;
+  },
+  add_sample_data: (d) => {
+    const ontology = ref(d.ontology);
+    return ontology ? { ontology } : undefined;
+  },
+  create_document_set: (d) => {
+    const ontology = ref(d.ontology),
+      name = str(d.name);
+    return ontology && name
+      ? {
+          ontology,
+          name,
+          ...opt("description", str(d.description) || undefined),
+        }
+      : undefined;
+  },
+  update_document_set: (d) => {
+    const ontology = ref(d.ontology),
+      set = ref(d.set),
+      name = d.name === undefined ? null : str(d.name) || undefined,
+      description = d.description === undefined ? null : str(d.description);
+    if (!ontology || !set || name === undefined || description === undefined)
+      return undefined;
+    if (name === null && description === null) return undefined;
+    return {
+      ontology,
+      set,
+      ...opt("name", name ?? undefined),
+      ...opt("description", description ?? undefined),
+    };
+  },
+  move_document: (d) => {
+    const ontology = ref(d.ontology),
+      document = ref(d.document),
+      to = ref(d.to);
+    // The set it is in, unknown when the document couldn't be read.
+    const from = ref(d.from) ?? { id: "" };
+    return ontology && document && to
+      ? { ontology, document, from, to }
+      : undefined;
+  },
+  settle_review: (d) => {
+    const ontology = ref(d.ontology),
+      loadId = ids(d.load_id),
+      r = review(d.review),
+      document = d.document === undefined ? null : ref(d.document),
+      decided = decision(d.decision);
+    if (!ontology || !loadId || !r || document === undefined || !decided)
+      return undefined;
+    return {
+      ontology,
+      load_id: loadId,
+      review: r,
+      ...opt("document", document ?? undefined),
+      decision: decided,
+    };
+  },
+};
+
+export const isAgentOperation = (x: string): x is AgentOperation =>
+  Object.hasOwn(DISPLAYS, x);
+
+/**
+ * The card of an action: its operation, and Foundry's display for it read
+ * without trust. Undefined for an operation this page doesn't know, or a
+ * display that isn't its operation's: such a card is never run from here.
+ *
+ * @example
+ * parseCard("sync_connector", '{"connector":{"id":"con_1","name":"Stripe","kind":"stripe"}}');
+ * // { operation: "sync_connector", display: { connector: { id: "con_1", name: "Stripe", kind: "stripe" } } }
+ * parseCard("sync_connector", '{"connector":{"id":"../x"}}'); // undefined
+ * parseCard("drop_database", "{}"); // undefined
+ */
+export function parseCard(
+  operation: string,
+  display: unknown,
+): AgentCard | undefined {
+  const v = typeof display === "string" ? parse(display) : display;
+  if (!isAgentOperation(operation) || !isRecord(v)) return undefined;
+  const d = (DISPLAYS[operation] as (d: Record<string, unknown>) => unknown)(v);
+  return d ? ({ operation, display: d } as AgentCard) : undefined;
+}
+
+/** A card's words: what it is, what it acts on, what running it does. */
+export type CardView = {
+  title: string;
+  // What it acts on, as Foundry names it.
+  facts: { label: string; value: string }[];
+  // The document's words a review was read from: untrusted.
+  quote?: string;
+  does: string;
+  cost?: string;
+  // What to check before running it, beyond the "not named by you" warning.
+  caution?: string;
+  // The button that runs it.
+  run: string;
+  // What the "not named by you" warning names.
+  target: string;
+};
+
+const nameOf = (r: AgentRef) => r.name || r.id;
+const quoted = (r: AgentRef) => (r.name ? `“${r.name}”` : r.id);
+const vN = (v: AgentVersionRef) => (v.number ? `v${v.number}` : "a version");
+const listOf = (rs: AgentRef[]) => rs.map(nameOf).join(", ");
+const MODES: Record<string, string> = {
+  FOUNDRY_EVENT_SOURCE_MODE_STRUCTURED: "as rows",
+  FOUNDRY_EVENT_SOURCE_MODE_EXTRACTION: "as documents",
+};
+const STATUSES: Record<string, string> = {
+  ready: "ready",
+  partial: "partial",
+  failed: "failed",
+  writing: "writing",
+  queued: "queued",
+};
+function loadText(l: AgentLoadRef) {
+  const at = Date.parse(l.created_at || "");
+  return [
+    l.version.number ? `v${l.version.number} load` : "A load",
+    l.status && (STATUSES[l.status] || l.status),
+    Number.isFinite(at) && `started ${formatDate(l.created_at)}`,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+/**
+ * A decided value as the card says it: text quoted, numbers and yes/no as
+ * they are.
+ *
+ * @example
+ * valueText({ text: "GBP" }); // "“GBP”"
+ * valueText({ boolean: false }); // "false"
+ */
+export function valueText(v: AgentDecisionValue) {
+  if ("text" in v) return `“${v.text}”`;
+  if ("integer" in v) return v.integer;
+  if ("number" in v) return String(v.number);
+  return String(v.boolean);
+}
+
+/**
+ * A held statement as words, from its JSON and the link it would write:
+ * "Contract “MSA” signed_with Customer “Globex”"; undefined when it names
+ * neither end.
+ *
+ * @example
+ * statementText('{"subject":{"type":"Commitment","name":"support"}}', "promised_to");
+ * // "Commitment “support” promised_to"
+ */
+export function statementText(
+  json?: string,
+  link?: string,
+): string | undefined {
+  const x = json ? parse(json) : undefined;
+  if (!isRecord(x)) return undefined;
+  const end = (e: unknown) =>
+    isRecord(e) && str(e.type)
+      ? `${e.type}${str(e.name) ? ` “${e.name}”` : ""}`
+      : undefined;
+  const subject = end(x.subject),
+    object = end(x.object);
+  if (!subject && !object) return undefined;
+  return [subject, link, object].filter(Boolean).join(" ");
+}
+
+/** What the review's name is: its quote, else its normalized name. */
+const reviewName = (r: AgentReview) => r.quote || r.norm_name || "this name";
+
+const LOAD_CAPS = `Reading documents costs at most $${LOAD_LIMITS.jobUsd} for this load and $${LOAD_LIMITS.monthUsd} a month for the workspace.`;
+
+/** Each operation's card, in the app's words; the run button names what it does. */
+const VIEWS: {
+  [K in AgentOperation]: (d: AgentActionDisplays[K]) => CardView;
+} = {
+  create_ontology: (d) => {
+    const fresh = "new_database" in d ? d.new_database : undefined;
+    return {
+      title: `Create the ontology “${d.name}”`,
+      facts: [
+        { label: "Name", value: d.name },
+        fresh
+          ? { label: "Database", value: `New: ${fresh.name} (${fresh.slug})` }
+          : {
+              label: "Database",
+              value: nameOf((d as { database: AgentRef }).database),
+            },
+        ...(fresh
+          ? [
+              {
+                label: "Project",
+                value:
+                  "new_project" in fresh
+                    ? `New: ${fresh.new_project}`
+                    : fresh.project_id,
+              },
+            ]
+          : []),
+      ],
+      does: fresh
+        ? "Makes a new Helix database on the shared cluster, then an empty ontology on it. Nothing is drafted or loaded yet."
+        : "Makes an empty ontology on this database, which no other ontology may then use. Nothing is drafted or loaded yet.",
+      run: "Create",
+      target: fresh
+        ? fresh.name
+        : nameOf((d as { database: AgentRef }).database),
+    };
+  },
+  generate_ontology: (d) => ({
+    title: d.sample
+      ? `Draft the sample company’s version of ${quoted(d.ontology)}`
+      : `Draft a new version of ${quoted(d.ontology)}`,
+    facts: [
+      { label: "Ontology", value: nameOf(d.ontology) },
+      { label: "Goal", value: d.goal || "None: the agent decides" },
+      {
+        label: "Connections",
+        value:
+          d.connectors_read === "none"
+            ? "None: documents only"
+            : d.connectors_read === "every"
+              ? `Every connection${d.connectors.length ? `: ${listOf(d.connectors)}` : " (none yet)"}`
+              : listOf(d.connectors),
+      },
+      {
+        label: "Document sets",
+        value: d.document_sets.length ? listOf(d.document_sets) : "None",
+      },
+      ...(d.event_sources
+        ? [
+            {
+              label: "API sources",
+              value: d.event_sources
+                .map(
+                  (e) =>
+                    `${nameOf(e.connector)} ${MODES[e.mode] || `(${e.mode})`}`,
+                )
+                .join(", "),
+            },
+          ]
+        : []),
+    ],
+    does: d.sample
+      ? "Takes the sample company’s ready-made draft as a new version, in seconds, with no AI. Nothing changes until you make it current."
+      : "The ontology agent drafts a new version from these sources. Nothing changes until you make the draft current.",
+    run: "Generate",
+    target: nameOf(d.ontology),
+  }),
+  set_current_version: (d) => ({
+    title: `Make ${vN(d.version)} current for ${quoted(d.ontology)}`,
+    facts: [
+      { label: "Ontology", value: nameOf(d.ontology) },
+      { label: "Version", value: vN(d.version) },
+      { label: "Current now", value: d.current ? vN(d.current) : "None yet" },
+    ],
+    does: "New loads write this version from then on. Loads already written stay as they are, and review decisions it doesn’t take are dropped.",
+    run: "Make current",
+    target: nameOf(d.ontology),
+  }),
+  create_load: (d) => ({
+    title: `Load ${vN(d.version)} of ${quoted(d.ontology)}`,
+    facts: [
+      { label: "Ontology", value: nameOf(d.ontology) },
+      { label: "Version", value: vN(d.version) },
+    ],
+    does: "Writes this version’s tables and documents into the ontology’s database, beside its other loads. The newest load that finishes ready becomes current.",
+    cost: LOAD_CAPS,
+    run: "Load",
+    target: nameOf(d.ontology),
+  }),
+  set_current_load: (d) => ({
+    title: `Make ${d.load.version.number ? `the v${d.load.version.number} load` : "a load"} current for ${quoted(d.ontology)}`,
+    facts: [
+      { label: "Ontology", value: nameOf(d.ontology) },
+      { label: "Load", value: loadText(d.load) },
+      {
+        label: "Current now",
+        value: d.current ? loadText(d.current) : "None yet",
+      },
+    ],
+    does: "The Explorer, Records and the Analyst read this load from then on. Nothing is written or deleted.",
+    run: "Make current",
+    target: nameOf(d.ontology),
+  }),
+  revise_version: (d) => ({
+    title: d.dry_run
+      ? `Preview ${plural(d.edits.length, "edit")} to ${vN(d.version)} of ${quoted(d.ontology)}`
+      : `Save ${plural(d.edits.length, "edit")} to ${vN(d.version)} of ${quoted(d.ontology)} as a new version`,
+    facts: [
+      { label: "Ontology", value: nameOf(d.ontology) },
+      { label: "Version", value: vN(d.version) },
+      {
+        label: "Edits",
+        value: d.edits
+          .map((e) => `${e.kind === "put" ? "Change" : "Remove"} ${e.item_id}`)
+          .join("; "),
+      },
+    ],
+    does: d.dry_run
+      ? "The ontology agent checks these edits against the version and its data, and saves nothing."
+      : "The ontology agent checks these edits and saves them as a new version. The current version stays until you make the new one current.",
+    run: d.dry_run ? "Preview" : "Save version",
+    target: nameOf(d.ontology),
+  }),
+  sync_connector: (d) => ({
+    title: `Sync ${quoted(d.connector)}`,
+    facts: [
+      { label: "Connection", value: nameOf(d.connector) },
+      ...(d.connector.kind
+        ? [{ label: "Kind", value: connectorLabel(d.connector.kind) }]
+        : []),
+    ],
+    does: "Reads the connection’s tables from the source again. Loads that read them take the new rows at their next load.",
+    run: "Sync",
+    target: nameOf(d.connector),
+  }),
+  add_sample_data: (d) => ({
+    title: `Add the sample company’s data for ${quoted(d.ontology)}`,
+    facts: [{ label: "Ontology", value: nameOf(d.ontology) }],
+    does: "Connects Acme Corp’s sample database and uploads its documents into the set “Acme Corp sample”, for drafting from. The data is made up; nothing of yours changes.",
+    run: "Add sample data",
+    target: nameOf(d.ontology),
+  }),
+  create_document_set: (d) => ({
+    title: `Create the document set “${d.name}”`,
+    facts: [
+      { label: "Name", value: d.name },
+      { label: "Description", value: d.description || "None" },
+      { label: "For", value: nameOf(d.ontology) },
+    ],
+    does: "Makes an empty set of documents in the workspace. Upload documents into it from Data; the agent reads its description when it drafts.",
+    run: "Create set",
+    target: nameOf(d.ontology),
+  }),
+  update_document_set: (d) => ({
+    title:
+      d.name !== undefined && d.description === undefined
+        ? `Rename the set ${quoted(d.set)} to “${d.name}”`
+        : d.name === undefined
+          ? `Change the description of the set ${quoted(d.set)}`
+          : `Rename and describe the set ${quoted(d.set)}`,
+    facts: [
+      { label: "Set", value: nameOf(d.set) },
+      ...(d.name !== undefined ? [{ label: "New name", value: d.name }] : []),
+      ...(d.description !== undefined
+        ? [
+            {
+              label: "Description",
+              value: d.description || "Cleared",
+            },
+          ]
+        : []),
+    ],
+    does: "Its documents stay where they are, and ontologies that read the set go on reading it. The agent reads the description when it drafts.",
+    run: "Save",
+    target: nameOf(d.set),
+  }),
+  move_document: (d) => ({
+    title: `Move ${quoted(d.document)} to ${quoted(d.to)}`,
+    facts: [
+      { label: "Document", value: nameOf(d.document) },
+      { label: "From", value: d.from.id ? nameOf(d.from) : "Unknown" },
+      { label: "To", value: nameOf(d.to) },
+    ],
+    does: "Ontologies read it by the sets their versions read: those that read the new set take it, and those that read the old one drop it at their next load.",
+    run: "Move",
+    target: nameOf(d.document),
+  }),
+  settle_review: (d) => {
+    const r = d.review,
+      name = reviewName(r),
+      statement = statementText(r.statement, r.link),
+      what = r.type && r.prop ? `${r.type}’s ${r.prop}` : "the value";
+    const decided: Record<
+      AgentDecision["kind"],
+      { title: string; does: string; run: string }
+    > = {
+      link: {
+        title: `Link “${name}” to ${d.decision.kind === "link" ? d.decision.entity_key : ""}`,
+        does: "The name is this entity in every load from the next one.",
+        run: "Link",
+      },
+      not_in_data: {
+        title: `Mark “${name}” as not in the data`,
+        does: "The name is no one in the data: later loads leave it unlinked.",
+        run: "Mark not in data",
+      },
+      set_value: {
+        title: `Set ${what} to ${d.decision.kind === "set_value" ? valueText(d.decision.value) : ""}`,
+        does: "Replaces the property’s value from the next load on, whatever documents or tables say.",
+        run: "Set value",
+      },
+      remove_value: {
+        title: `Remove ${what}`,
+        does: "Leaves the property without a value from the next load on.",
+        run: "Remove value",
+      },
+      approve: {
+        title: "Approve the held statement",
+        does: "Writes the statement into the current load now.",
+        run: "Approve",
+      },
+      reject: {
+        title: "Reject the held statement",
+        does: "Writes nothing, and the review no longer shows.",
+        run: "Reject",
+      },
+    };
+    const words = decided[d.decision.kind];
+    return {
+      title: words.title,
+      facts: [
+        { label: "Ontology", value: nameOf(d.ontology) },
+        ...(d.document
+          ? [{ label: "Document", value: nameOf(d.document) }]
+          : []),
+        {
+          label: "Review",
+          value: reviewCopy(r.reason, r.candidates?.length).title,
+        },
+        ...(statement ? [{ label: "Statement", value: statement }] : []),
+        ...(r.candidates?.length
+          ? [{ label: "Suggested", value: r.candidates.join(", ") }]
+          : []),
+      ],
+      ...opt("quote", r.quote),
+      does: words.does,
+      ...opt(
+        "caution",
+        d.decision.kind === "link" && !d.decision.candidate
+          ? "This entity isn’t one the review suggested."
+          : d.decision.kind === "set_value"
+            ? "The decision holds in every later load, even after the tables change."
+            : undefined,
+      ),
+      run: words.run,
+      target: nameOf(d.ontology),
+    };
+  },
+};
+
+/**
+ * A card's words, from its operation and display.
+ *
+ * @example
+ * cardView({ operation: "create_load", display: { ontology: { id: "o", name: "Sales" }, version: { id: "v", number: 2 } } }).title;
+ * // "Load v2 of “Sales”"
+ */
+export const cardView = (card: AgentCard): CardView =>
+  (VIEWS[card.operation] as (d: unknown) => CardView)(card.display);
 
 /**
  * What a card offers, from its action as read and this clock: Run or
  * Dismiss while it waits; Refresh or Dismiss once its confirmation ran out
  * (the WFE says so once read, and the clock before); nothing while it runs;
- * its end once decided. An operation this page doesn't know is never run
- * from it, only dismissed.
+ * its end once decided. An action this page can't show (an operation it
+ * doesn't know, a display that isn't its operation's) is never run from
+ * it, only dismissed.
  */
 export type CardState =
-  | { kind: "waiting"; operation: AgentOperation }
-  | { kind: "unknown_operation" }
+  | { kind: "waiting"; card: AgentCard }
+  | { kind: "unreadable" }
   | { kind: "expired" }
   | { kind: "running" }
   | { kind: "ended"; status: "succeeded" | "failed" | "unknown" | "dismissed" };
 
 /**
  * @example
- * cardState({ id: "a", operation: "create_load", status: "prepared", expiresAt: "2030-01-01T00:00:00Z" }, Date.parse("2029-01-01"));
- * // { kind: "waiting", operation: "create_load" }
- * cardState({ id: "a", operation: "create_load", status: "prepared", expiresAt: "2030-01-01T00:00:00Z" }, Date.parse("2031-01-01"));
- * // { kind: "expired" }
+ * const a = { id: "a", operation: "sync_connector", displayJson: '{"connector":{"id":"c"}}', status: "prepared" as const };
+ * cardState({ ...a, expiresAt: "2030-01-01T00:00:00Z" }, Date.parse("2029-01-01")).kind; // "waiting"
+ * cardState({ ...a, expiresAt: "2030-01-01T00:00:00Z" }, Date.parse("2031-01-01")).kind; // "expired"
  */
 export function cardState(a: FoundryAgentAction, now: number): CardState {
   const status = actionStatus(a.status) ?? "unknown";
@@ -557,10 +1237,8 @@ export function cardState(a: FoundryAgentAction, now: number): CardState {
       const expires = Date.parse(a.expiresAt || "");
       if (!Number.isFinite(expires) || now >= expires)
         return { kind: "expired" };
-      const op = a.operation || "";
-      return isAgentOperation(op)
-        ? { kind: "waiting", operation: op }
-        : { kind: "unknown_operation" };
+      const card = parseCard(a.operation || "", a.displayJson);
+      return card ? { kind: "waiting", card } : { kind: "unreadable" };
     }
     case "expired":
       return { kind: "expired" };
@@ -571,33 +1249,74 @@ export function cardState(a: FoundryAgentAction, now: number): CardState {
   }
 }
 
-/** The ontology an action acts on: Foundry's name for it, else its target's id. */
-export function actionOntology(a: FoundryAgentAction): string | undefined {
-  const d = parseDisplay(a.displayJson);
-  if (d.ontology_id) return d.ontology_id;
-  const m = /^ontology:[^/]+\/([A-Za-z0-9_-]{1,128})$/.exec(a.target || "");
-  return m?.[1];
-}
+/** The ontology an action's target names, `ontology:<workspace>/<id>`. */
+const targetOntology = (a: FoundryAgentAction) =>
+  /^ontology:[^/]+\/([A-Za-z0-9_-]{1,128})$/.exec(a.target || "")?.[1];
 
 /**
- * Where a ran action's result opens: a created load's page. Read from the
- * operation's output without trust; undefined when it names none.
+ * Where a ran action's result opens, and the link's words: what it made or
+ * changed. Read from the operation's output and the card without trust;
+ * undefined when they name nothing to open.
  *
  * @example
  * resultLink({ id: "a", operation: "create_load", target: "ontology:ws/ont_1", resultJson: '{"result":{"id":"load_2"}}' });
- * // "/ontology/ont_1/loads/load_2"
+ * // { to: "/ontology/ont_1/loads/load_2", label: "Open the load" }
  */
-export function resultLink(a: FoundryAgentAction): string | undefined {
+export function resultLink(
+  a: FoundryAgentAction,
+): { to: string; label: string } | undefined {
   const out = parse(a.resultJson || ""),
-    ontology = actionOntology(a);
-  const result = isRecord(out) && isRecord(out.result) ? out.result : undefined;
-  const id = str(result?.id);
-  if (!ontology || !id || !ID.test(id)) return undefined;
-  switch (a.operation) {
+    result = isRecord(out) && isRecord(out.result) ? out.result : {},
+    made = ids(result.id),
+    o = targetOntology(a),
+    card = parseCard(a.operation || "", a.displayJson);
+  if (!card) return undefined;
+  const on = (to: string | false | undefined, label: string) =>
+    to ? { to, label } : undefined;
+  switch (card.operation) {
+    case "create_ontology":
+      return on(made && ontologyPaths.ontology(made), "Open the ontology");
+    case "generate_ontology":
+      return on(
+        o && made && ontologyPaths.generation(o, made),
+        "Open the draft",
+      );
+    case "revise_version":
+      return on(
+        o && made && ontologyPaths.generation(o, made),
+        card.display.dry_run ? "Open the preview" : "Open the revision",
+      );
+    case "set_current_version":
+      return on(
+        o && made && ontologyPaths.version(o, made),
+        "Open the version",
+      );
     case "create_load":
-      return ontologyPaths.load(ontology, id);
-    default:
-      return undefined;
+    case "set_current_load":
+      return on(o && made && ontologyPaths.load(o, made), "Open the load");
+    case "add_sample_data":
+      return on(o && ontologyPaths.ontology(o), "Open the ontology");
+    case "sync_connector":
+      return on(
+        dataPaths.connection(card.display.connector.id),
+        "Open the connection",
+      );
+    case "create_document_set":
+    case "update_document_set":
+      return on(dataPaths.connections(), "Open Data");
+    case "move_document": {
+      const doc = isRecord(result.document)
+        ? ids(result.document.id)
+        : undefined;
+      return on(doc && dataPaths.dataDocument(doc), "Open the document");
+    }
+    case "settle_review": {
+      const doc = card.display.review.doc_id;
+      return on(
+        o && doc && ID.test(doc) && ontologyPaths.document(o, doc),
+        "Open the document",
+      );
+    }
   }
 }
 
@@ -606,6 +1325,33 @@ export const payloadText = (a: FoundryAgentAction) => {
   const x = parse(a.payloadJson || "");
   return x === undefined ? a.payloadJson || "" : pretty(x);
 };
+
+/**
+ * The form a connect step links: helix_foundry_connect's `/data?add=<kind>`
+ * (its address is the site's, its workspace the thread's), as this app's
+ * path; undefined for any other step, or an address that isn't that form.
+ *
+ * @example
+ * connectLink({ id: "t", name: "helix_foundry_connect", input: {}, result: { kind: "returned", output: { url: "https://f.example/data?add=slack&workspace=ws_1", display_name: "Slack" }, truncated: false } });
+ * // { to: "/data?add=slack", name: "Slack" }
+ */
+export function connectLink(
+  step: AgentStep,
+): { to: string; name: string } | undefined {
+  if (step.name !== "helix_foundry_connect" || step.result?.kind !== "returned")
+    return undefined;
+  const out = step.result.output;
+  const url = isRecord(out) ? URL.parse(str(out.url) || "") : null;
+  if (!url || !/^https?:$/.test(url.protocol) || url.pathname !== "/data")
+    return undefined;
+  const to = inAppPath(url);
+  if (!to?.startsWith("/data?add=")) return undefined;
+  const kind = url.searchParams.get("add")!;
+  return {
+    to,
+    name: (isRecord(out) && str(out.display_name)) || connectorLabel(kind),
+  };
+}
 
 // ---------------------------------------------------------------- refusals
 
