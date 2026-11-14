@@ -599,8 +599,9 @@ func (s *memStore) ListFoundryLoadDecisions(_ context.Context, loadID, after str
 }
 
 // ListFoundryLoadAliasesNamed is the store's: the resolves that chose an
-// entity whose name's key is one of keys, every one of them. aliasReads
-// counts the keys read, and aliasKeysMax is the most one read took.
+// entity whose name's key is one of keys, the earliest decided of each type,
+// name and entity. aliasReads counts the reads, and aliasKeysMax is the most
+// keys one took.
 func (s *memStore) ListFoundryLoadAliasesNamed(_ context.Context, _ string, keys []int64) ([]*model.FoundryReviewDecision, error) {
 	if s.decisionErr != nil {
 		return nil, s.decisionErr
@@ -614,21 +615,34 @@ func (s *memStore) ListFoundryLoadAliasesNamed(_ context.Context, _ string, keys
 	for _, k := range keys {
 		wanted[k] = true
 	}
-	var out []*model.FoundryReviewDecision
+	earliest := map[[3]string]*model.FoundryReviewDecision{}
 	for _, d := range s.decisions {
 		if d.OntologyID != "ont-1" || d.Kind != model.FoundryReviewResolve || d.EntityKey == nil {
 			continue
 		}
-		if k, ok := namewords.Key(*d.NormName); ok && wanted[k] {
-			out = append(out, d)
+		if k, ok := namewords.Key(*d.NormName); !ok || !wanted[k] {
+			continue
+		}
+		k := [3]string{d.Type, *d.NormName, *d.EntityKey}
+		if e := earliest[k]; e == nil || d.DecidedAt.Before(e.DecidedAt) || d.DecidedAt.Equal(e.DecidedAt) && d.ID < e.ID {
+			earliest[k] = d
 		}
 	}
-	return out, nil
+	return slices.Collect(maps.Values(earliest)), nil
 }
 
 func (s *memStore) FillFoundryLoadNameKeys(context.Context, string) (int, error) {
 	s.keysFilled++
 	return 0, nil
+}
+
+func (s *memStore) FoundryLoadHasAliases(context.Context, string) (bool, error) {
+	if s.decisionErr != nil {
+		return false, s.decisionErr
+	}
+	return slices.ContainsFunc(s.decisions, func(d *model.FoundryReviewDecision) bool {
+		return d.OntologyID == "ont-1" && d.Kind == model.FoundryReviewResolve && d.EntityKey != nil
+	}), nil
 }
 
 func (s *memStore) ListPendingFoundryDocuments(_ context.Context, loadID string) ([]*model.FoundryDocument, error) {
@@ -1350,13 +1364,33 @@ func TestLoad(t *testing.T) {
 
 	// gRPC would refuse a request past the agent's message limit as it
 	// refuses a full agent, which is retried; no retry sends less.
+	// Past it even with no document (what every Extract carries: the
+	// version, its value decisions), as no smaller Extract sends less.
 	t.Run("fails for good a request past the agent's message limit", func(t *testing.T) {
 		h := newHarness(t)
-		h.task.runner.maxRequestBytes = 1000
+		h.task.runner.maxRequestBytes = 10
 		outcome := h.run(t, loadJob())
 		if _, extracts := h.agent.calls(); outcome.Status != model.FoundryGraphJobFailed || outcome.RetryAt != nil ||
 			outcome.Error != "this version reads more documents than one load can send" || len(extracts) != 0 || !outcome.IngestDone {
 			t.Fatalf("outcome = %+v after %d extracts", outcome, len(extracts))
+		}
+	})
+
+	// Past it with all the documents, within it with fewer: they go in halves.
+	t.Run("splits a request past the agent's message limit", func(t *testing.T) {
+		h := newHarness(t)
+		h.task.runner.maxRequestBytes = 1000
+		outcome := h.run(t, loadJob())
+		_, extracts := h.agent.calls()
+		sent := 0
+		for _, c := range extracts {
+			if len(c) > 1000 {
+				t.Fatalf("a request of %d bytes", len(c))
+			}
+			sent += len(decodeExtract(t, c).Documents)
+		}
+		if outcome.Status != model.FoundryGraphJobSucceeded || len(extracts) < 2 || sent != 4 {
+			t.Fatalf("outcome = %+v after %d extracts of %d documents", outcome, len(extracts), sent)
 		}
 	})
 

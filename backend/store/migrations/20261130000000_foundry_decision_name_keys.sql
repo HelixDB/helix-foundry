@@ -5,12 +5,14 @@
 -- sends the aliases its documents write, found through
 -- foundry_load_decisions_names_idx by the keys of the documents' words
 -- (namewords.Text.Keys), at a cost bounded by the documents rather than by
--- the ontology. The settle writes it on foundry_review_decisions, and a
--- load's copy takes it from there. NULL for a decision of another kind, and
--- for a resolve settled before this; the graph worker fills a load's NULLs
--- before it reads the load's aliases (store.FillFoundryLoadNameKeys), so no
--- data step is needed. A change to how namewords reads words sets the
--- column NULL again in a migration of its own.
+-- the ontology. The settle writes it on foundry_review_decisions for a
+-- resolve that chose an entity (an alias), and a load's copy takes it from
+-- there. NULL for "not in data", for a decision of another kind, and for a
+-- resolve settled before this; the graph worker fills a load's NULLs, and
+-- the saved decisions they copy, before it reads the load's aliases
+-- (store.FillFoundryLoadNameKeys), so no data step is needed. A change to
+-- how namewords reads words sets the column NULL again in a migration of its
+-- own.
 --
 -- Additive: one nullable column on each table and one index. Nothing here
 -- changes or deletes a row; an older binary neither reads nor writes either

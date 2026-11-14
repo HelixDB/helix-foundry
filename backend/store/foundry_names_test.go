@@ -45,10 +45,11 @@ func decisionIDs(ds []*model.FoundryReviewDecision) []string {
 }
 
 // The aliases a document may write (contract 4.23.0) are read by the keys
-// of its words: every resolve of the load's list that chose an entity and
-// whose name has one of the keys, of any document, several of one name
-// included; "not in data", another kind, another load and another name give
-// none. At most FoundryAliasKeysPerRead keys a read.
+// of its words: of the resolves of the load's list that chose an entity and
+// whose name has one of the keys, one a type, name and entity, the earliest
+// decided, the smallest id of those decided at once; a name chosen as two
+// entities gives both; "not in data", another kind, another load and another
+// name give none. At most FoundryAliasKeysPerRead keys a read.
 func TestFoundryLoadAliasesNamed(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "ALIAS")
@@ -56,16 +57,29 @@ func TestFoundryLoadAliasesNamed(t *testing.T) {
 	addLoadResolve(t, f, f.load, "AL-1", "resolve", id26("doc-x"), "acme corp", "acme", at.Add(time.Hour), true)
 	addLoadResolve(t, f, f.load, "AL-2", "resolve", id26("doc-y"), "acme corp", "acme", at, true)
 	addLoadResolve(t, f, f.load, "AL-3", "resolve", id26("doc-y"), "helio", "acme", at, true)
+	addLoadResolve(t, f, f.load, "AL-8", "resolve", id26("doc-x"), "helio", "acme", at, true)
 	addLoadResolve(t, f, f.load, "AL-4", "resolve", id26("doc-z"), "helio", "globex", at, true)
 	addLoadResolve(t, f, f.load, "AL-5", "resolve", id26("doc-z"), "initech", nil, at, true)
 	addLoadResolve(t, f, f.load, "AL-6", "prop", "", "", "acme", at, true)
 	addLoadResolve(t, f, f.load, "AL-7", "resolve", id26("doc-w"), "umbrella", "acme", at, true)
 	addLoadResolve(t, f, id26("FJ-other"), "AL-0", "resolve", id26("doc-x"), "acme corp", "acme", at, true)
 
+	has, err := f.db.FoundryLoadHasAliases(ctx, f.load)
+	require.NoError(t, err)
+	assert.True(t, has)
+	has, err = f.db.FoundryLoadHasAliases(ctx, id26("FJ-none"))
+	require.NoError(t, err)
+	assert.False(t, has)
+
 	text := namewords.NewText("ACME Corp. paid Helio; Initech watched.")
 	got, err := f.db.ListFoundryLoadAliasesNamed(ctx, f.load, text.Keys())
 	require.NoError(t, err)
-	assert.Equal(t, []string{id26("AL-1"), id26("AL-2"), id26("AL-3"), id26("AL-4")}, decisionIDs(got))
+	assert.Equal(t, []string{id26("AL-2"), id26("AL-3"), id26("AL-4")}, decisionIDs(got))
+	for _, d := range got {
+		if *d.NormName == "acme corp" {
+			assert.True(t, d.DecidedAt.Equal(at), "the earliest decided: %v", d.DecidedAt)
+		}
+	}
 	for _, d := range got {
 		require.NoError(t, d.Validate(), "each is a resolve as it was stored")
 		assert.True(t, text.Writes(*d.NormName))
@@ -76,14 +90,11 @@ func TestFoundryLoadAliasesNamed(t *testing.T) {
 	_, err = f.db.ListFoundryLoadAliasesNamed(ctx, f.load, make([]int64, store.FoundryAliasKeysPerRead+1))
 	assert.Error(t, err)
 
-	// The read stays on the load's name index.
+	// The read may take the load's name index (the scale test checks it does).
 	var plan string
-	require.NoError(t, testDB.QueryRow(`EXPLAIN FORMAT=JSON SELECT id FROM foundry_load_decisions FORCE INDEX (foundry_load_decisions_names_idx)
-WHERE load_id=? AND kind='resolve' AND name_key IN (1, 2, 3) AND entity_key IS NOT NULL`, f.load).Scan(&plan))
-	assert.Contains(t, plan, "foundry_load_decisions_names_idx")
 	require.NoError(t, testDB.QueryRow(`EXPLAIN FORMAT=JSON SELECT id FROM foundry_load_decisions
 WHERE load_id=? AND kind='resolve' AND name_key IN (1, 2, 3) AND entity_key IS NOT NULL`, f.load).Scan(&plan))
-	assert.Contains(t, plan, `"key": "foundry_load_decisions_names_idx"`, plan)
+	assert.Contains(t, plan, "foundry_load_decisions_names_idx", plan)
 }
 
 // A resolve settled before name keys, or copied by an older binary, has
@@ -94,9 +105,14 @@ func TestFillFoundryLoadNameKeys(t *testing.T) {
 	f := newResendFixture(t, "AFILL")
 	at := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
 	for i := range 1500 {
-		addLoadResolve(t, f, f.load, fmt.Sprintf("AF-%d", i), "resolve", id26("doc-x"), fmt.Sprintf("customer %d", i), "acme", at, false)
+		addLoadResolve(t, f, f.load, fmt.Sprintf("AF%024d", i), "resolve", id26("doc-x"), fmt.Sprintf("customer %d", i), "acme", at, false)
 	}
 	addLoadResolve(t, f, f.load, "AF-prop", "prop", "", "", "acme", at, false)
+	addLoadResolve(t, f, f.load, "AF-none", "resolve", id26("doc-x"), "customer 3", nil, at, false)
+	// The saved decision AF-7 was copied from, settled before name keys.
+	_, err := testDB.Exec(`INSERT INTO foundry_review_decisions (id, ontology_id, kind, type, doc_id, norm_name, entity_key, decided_by_user_id)
+VALUES (?, ?, 'resolve', 'Customer', ?, 'customer 7', 'acme', ?)`, fmt.Sprintf("AF%024d", 7), f.ontology.ID, id26("doc-x"), id26("user"))
+	require.NoError(t, err)
 	addLoadResolve(t, f, id26("FJ-other"), "AF-other", "resolve", id26("doc-x"), "customer 7", "acme", at, false)
 	text := namewords.NewText("Customer 7 and customer 1499 paid.")
 	before, err := f.db.ListFoundryLoadAliasesNamed(ctx, f.load, text.Keys())
@@ -105,16 +121,20 @@ func TestFillFoundryLoadNameKeys(t *testing.T) {
 
 	filled, err := f.db.FillFoundryLoadNameKeys(ctx, f.load)
 	require.NoError(t, err)
-	assert.Equal(t, 1500, filled, "the load's resolves, in pages")
+	assert.Equal(t, 1500, filled, "the load's aliases, in pages; not in data has none")
 	again, err := f.db.FillFoundryLoadNameKeys(ctx, f.load)
 	require.NoError(t, err)
 	assert.Zero(t, again)
 	after, err := f.db.ListFoundryLoadAliasesNamed(ctx, f.load, text.Keys())
 	require.NoError(t, err)
-	assert.Equal(t, []string{id26("AF-1499"), id26("AF-7")}, decisionIDs(after))
+	assert.Equal(t, []string{fmt.Sprintf("AF%024d", 7), fmt.Sprintf("AF%024d", 1499)}, decisionIDs(after))
 	var unkeyed int
 	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_load_decisions WHERE load_id=? AND name_key IS NULL`, id26("FJ-other")).Scan(&unkeyed))
 	assert.Equal(t, 1, unkeyed, "another load's are its own")
+	var saved sql.NullInt64
+	require.NoError(t, testDB.QueryRow(`SELECT name_key FROM foundry_review_decisions WHERE id=?`, fmt.Sprintf("AF%024d", 7)).Scan(&saved))
+	want, _ := namewords.Key("customer 7")
+	assert.Equal(t, sql.NullInt64{Int64: want, Valid: true}, saved, "the saved decision is keyed too, so the next load copies it keyed")
 }
 
 // The settle keys a resolve's name, and a new load's list copies the key,
@@ -133,12 +153,23 @@ func TestSettleKeysAResolvesName(t *testing.T) {
 	require.NoError(t, testDB.QueryRow(`SELECT name_key FROM foundry_review_decisions WHERE id=?`, d.ID).Scan(&key))
 	assert.Equal(t, sql.NullInt64{Int64: want, Valid: true}, key)
 
+	// "Not in data" carries nothing and has no key; choosing an entity again keys it.
+	none := &model.FoundryReviewDecision{ID: id26("AK-2"), OntologyID: f.ontology.ID, Kind: model.FoundryReviewResolve, Type: "Customer",
+		DocID: &f.b, NormName: &name, DecidedByUserID: id26("user")}
+	require.NoError(t, f.db.SettleFoundryReviewDecision(ctx, f.ontology.WorkspaceID, none))
+	require.NoError(t, testDB.QueryRow(`SELECT name_key FROM foundry_review_decisions WHERE id=?`, none.ID).Scan(&key))
+	assert.False(t, key.Valid, "not in data")
+	none.EntityKey = &acme
+	require.NoError(t, f.db.SettleFoundryReviewDecision(ctx, f.ontology.WorkspaceID, none))
+	require.NoError(t, testDB.QueryRow(`SELECT name_key FROM foundry_review_decisions WHERE id=?`, none.ID).Scan(&key))
+	assert.Equal(t, sql.NullInt64{Int64: want, Valid: true}, key, "now an alias")
+
 	f.draftVersion(t, "AKEY2", customerTOML)
 	next := loadJob(f.ontology, "AKEY2")
 	require.NoError(t, f.db.CreateFoundryLoad(ctx, next))
 	got, err := f.db.ListFoundryLoadAliasesNamed(ctx, next.LoadID, namewords.NewText("Paid by ACME Corp.").Keys())
 	require.NoError(t, err)
-	assert.Equal(t, []string{d.ID}, decisionIDs(got))
+	assert.Len(t, got, 1, "one alias of a name, type and entity")
 	filled, err := f.db.FillFoundryLoadNameKeys(ctx, next.LoadID)
 	require.NoError(t, err)
 	assert.Zero(t, filled, "the copy carried its key")
@@ -195,6 +226,18 @@ VALUES `+rows, args...)
 	}
 	took := time.Since(start)
 	assert.Equal(t, wanted, decisionIDs(found))
+	// Among 100,000 aliases the read takes the load's name index.
+	var plan string
+	require.NoError(t, testDB.QueryRow(`EXPLAIN FORMAT=JSON SELECT id FROM foundry_load_decisions
+WHERE load_id=? AND kind='resolve' AND name_key IN (`+strings.TrimSuffix(strings.Repeat("?,", 50), ",")+`) AND entity_key IS NOT NULL`,
+		append([]any{f.load}, func() []any {
+			var ks []any
+			for _, k := range keys[:50] {
+				ks = append(ks, k)
+			}
+			return ks
+		}()...)...).Scan(&plan))
+	assert.Contains(t, plan, `"key": "foundry_load_decisions_names_idx"`, plan)
 	aliasBytes := 0
 	for _, d := range found {
 		raw, _ := json.Marshal(map[string]any{"kind": "alias", "type": d.Type, "norm_name": *d.NormName, "entity_key": *d.EntityKey,

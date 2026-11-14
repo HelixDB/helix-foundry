@@ -55,6 +55,7 @@ type store interface {
 	ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error)
 	ListFoundryLoadAliasesNamed(ctx context.Context, loadID string, keys []int64) ([]*model.FoundryReviewDecision, error)
 	FillFoundryLoadNameKeys(ctx context.Context, loadID string) (int, error)
+	FoundryLoadHasAliases(ctx context.Context, loadID string) (bool, error)
 	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
 	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)
@@ -116,9 +117,11 @@ type failure struct {
 	// Unsupported is an apply the agent can't do in place (unsupported).
 	Unsupported bool
 	// TooLarge is an Extract that was never sent, as it is past what one
-	// request takes (tooLarge): a resend sends its documents in smaller ones.
-	TooLarge bool
-	Err      error
+	// request takes (tooLarge): its documents go in smaller ones (sendSplit,
+	// and a resend's halves). Bytes says it was past the agent's message
+	// limit rather than the engine's decision caps.
+	TooLarge, Bytes bool
+	Err             error
 }
 
 func (f *failure) Error() string {
@@ -188,9 +191,10 @@ type attempt struct {
 	// aliases are the load's aliases each staged document writes, by its id
 	// (documentAliases): an Extract sends those of its documents.
 	aliases map[string][]*model.FoundryReviewDecision
-	// keyed means the load's resolves all have their name keys
-	// (store.FillFoundryLoadNameKeys), as the alias reads need.
-	keyed bool
+	// keyed means the load's aliases all have their name keys
+	// (store.FillFoundryLoadNameKeys), as the alias reads need, and
+	// hasAliases that the load holds one (store.FoundryLoadHasAliases).
+	keyed, hasAliases bool
 }
 
 // report is the job's report: each call's result, the ingest report cut to
@@ -1285,8 +1289,8 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	}
 	if len(body) > r.maxRequestBytes {
 		// gRPC would refuse it as a full agent, and every retry would too.
-		return false, tooLarge("this version reads more documents than one load can send",
-			fmt.Errorf("the extract request is %d bytes; the agent takes %d", len(body), r.maxRequestBytes))
+		return false, &failure{Message: "this version reads more documents than one load can send", Permanent: true, TooLarge: true, Bytes: true,
+			Err: fmt.Errorf("the extract request is %d bytes; the agent takes %d", len(body), r.maxRequestBytes)}
 	}
 	// The job's total counts the documents of the Extracts it sends: one too
 	// large to send, which a resend splits, counts none.
@@ -1566,20 +1570,29 @@ func (r *runner) stage(ctx context.Context, job *model.FoundryGraphJob, jobDir s
 // whose name the text's words hold (namewords.Text.Writes), every row of
 // each, found by the keys of the text's words through the load's name index
 // (store.ListFoundryLoadAliasesNamed), store.FoundryAliasKeysPerRead keys a
-// read. What it reads is bounded by the document, at most namewords.KeyWords
-// keys a word, and not by how many names the ontology links. The first call
-// of an attempt keys the load's resolves that have no key yet
-// (store.FillFoundryLoadNameKeys).
+// read, each alias once (a type, name and entity). What it reads is bounded
+// by the document, at most namewords.KeyWords keys a word, and not by how
+// many names the ontology links. The first call of an attempt keys the
+// load's aliases that have no key yet (store.FillFoundryLoadNameKeys) and
+// asks whether the load holds any: with none, nothing more is read.
 func (r *runner) documentAliases(ctx context.Context, job *model.FoundryGraphJob, a *attempt, text []byte) ([]*model.FoundryReviewDecision, error) {
 	if !a.keyed {
+		started := time.Now()
 		filled, err := r.db.FillFoundryLoadNameKeys(ctx, job.LoadID)
 		if err != nil {
 			return nil, retry("could not read review decisions; Helix will retry", err)
 		}
 		if filled > 0 {
-			log.From(ctx).Info("graph job: keyed the names of settled resolves", "job", job.ID, "load", job.LoadID, "count", filled)
+			log.From(ctx).Info("graph job: keyed the names of settled resolves", "job", job.ID, "load", job.LoadID, "count", filled,
+				"seconds", time.Since(started).Seconds())
+		}
+		if a.hasAliases, err = r.db.FoundryLoadHasAliases(ctx, job.LoadID); err != nil {
+			return nil, retry("could not read review decisions; Helix will retry", err)
 		}
 		a.keyed = true
+	}
+	if !a.hasAliases {
+		return nil, nil
 	}
 	words := namewords.NewText(string(text))
 	var out []*model.FoundryReviewDecision
@@ -1604,40 +1617,67 @@ func (r *runner) documentAliases(ctx context.Context, job *model.FoundryGraphJob
 // carries the aliases its documents write, so fewer documents carry fewer,
 // and a load needs any number of Extracts but never one past the caps. The
 // first goes as requestID and call, each later one numbered after them
-// (requestID:2, call:2, ...). It stops at the first Extract whose budget
-// ran out (exhausted), and each later one may spend what the earlier ones
-// left of maxUSD. A single document too large for an Extract fails the job,
-// as one always has.
+// (requestID:2, call:2, ...). Each may spend what the earlier ones left of
+// maxUSD, and every one goes, with nothing left to spend if need be, as one
+// Extract of them all would have read every document: a document with saved
+// work commits at $0 (exhausted says some Extract's budget ran out). A
+// single document whose own decisions (its resolves, approvals and the
+// aliases it writes) are past the caps is recorded failed, too_large, never
+// retried, and the rest go on: an ontology links any number of names, and
+// one document that writes more than an Extract carries must not stop the
+// load. One past the agent's message limit, or past it with what every
+// Extract carries (the version, its value decisions), fails the job, as no
+// smaller Extract sends less of that.
 func (r *runner) sendSplit(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
 	target ontologyagent.HelixTarget, ontologyVersion, requestID, call string, documents []ontologyagent.ExtractDocument,
 	maxUSD float64, providers []string, a *attempt) (exhausted bool, err error) {
 	sent, start := 0, a.spent
-	var each func(batch []ontologyagent.ExtractDocument) (bool, error)
-	each = func(batch []ontologyagent.ExtractDocument) (bool, error) {
+	var each func(batch []ontologyagent.ExtractDocument) error
+	each = func(batch []ontologyagent.ExtractDocument) error {
 		id, name := requestID, call
-		left := maxUSD
 		if sent > 0 {
 			n := strconv.Itoa(sent + 1)
 			id, name = requestID+":"+n, call+":"+n
-			if left -= float64(a.spent-start) / 1e6; left <= 0 {
-				return true, nil
-			}
 		}
-		exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, id, name, batch, nil, left, providers, a)
+		left := max(maxUSD-float64(a.spent-start)/1e6, 0)
+		ran, err := r.send(ctx, job, def, binding, target, ontologyVersion, id, name, batch, nil, left, providers, a)
 		var f *failure
 		switch {
 		case err == nil:
 			sent++
-			return exhausted, nil
-		case !errors.As(err, &f) || !f.TooLarge || len(batch) < 2:
-			return false, err
+			exhausted = exhausted || ran
+			return nil
+		case !errors.As(err, &f) || !f.TooLarge:
+			return err
+		case len(batch) > 1:
+			if err := each(batch[:len(batch)/2]); err != nil {
+				return err
+			}
+			return each(batch[len(batch)/2:])
+		case len(batch) == 0 || f.Bytes:
+			// The load's value decisions alone are past what an Extract takes,
+			// or the request past the agent's message limit.
+			return err
 		}
-		if exhausted, err := each(batch[:len(batch)/2]); err != nil || exhausted {
-			return exhausted, err
+		if _, shared := r.decisions(ctx, job, def.OntologyTOML, nil, a); shared != nil {
+			return shared
 		}
-		return each(batch[len(batch)/2:])
+		doc := batch[0].DocID
+		log.From(ctx).Warn("graph job: a document is too large for an Extract", "job", job.ID, "document", doc, "err", f.Message)
+		err = r.db.RecordFoundryDocumentExtraction(ctx, job.ID, r.workerID, &model.FoundryDocumentExtraction{
+			DocumentID: doc, Status: model.FoundryExtractionFailed,
+			Error: &model.FoundryExtractionError{Code: model.FoundryExtractionTooLarge, Retryable: false},
+		}, false)
+		if errors.Is(err, foundrystore.ErrNotFound) {
+			return retry("the job's lease was lost", err)
+		}
+		if err != nil {
+			return retry("could not record a document; Helix will retry", err)
+		}
+		return nil
 	}
-	return each(documents)
+	err = each(documents)
+	return exhausted, err
 }
 
 // saveArtifact stores a document's model output so a later run replays it.

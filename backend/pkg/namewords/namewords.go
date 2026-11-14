@@ -1,20 +1,22 @@
 // Package namewords finds the aliases a document can use, without the
 // engine. From contract 4.23.0 an alias acts only on a document whose text
-// writes its name: the name's words, in order, with nothing but what is no
-// word between them, as the engine folds them (NFKC, lowercase, Turkish İ as
-// i, final ς as σ; a word is a run of letters, digits and marks of a script
-// written with spaces, or each letter of a script written without them). So
-// the aliases one Extract needs are those its documents write, however many
-// the ontology holds.
+// writes its name: the engine normalizes the text as it normalizes names
+// (norm_name: NFKC, lowercase, Turkish İ as i, final ς as σ), reads it as
+// words (a run of letters, digits and marks of a script written with spaces,
+// or each letter of a script written without them) and looks for the name's
+// words in a row (text::WordIndex). So the aliases one Extract needs are
+// those its documents write, however many the ontology holds.
 //
-// Words here fold at least as much as the engine's, so whatever the engine
-// finds a document writes, Text.Writes finds too: Words decomposes (NFKD),
-// lowercases, drops every mark, splits at every character that is not a
-// letter or digit, and makes each letter of a script written without spaces
-// a word of its own, as is each part of a character that decomposes into
-// several words ("½" is 1, 2). It may find more, which costs only an alias
-// the engine then ignores; it never finds less, which would leave a name a
-// person settled unapplied.
+// Words here fold each character at least as much as the engine does before
+// reading words, so whatever the engine finds a document writes, Text.Writes
+// finds too: Words decomposes (NFKD), lowercases, drops every mark, and then
+// reads a word as a run of letters and digits, or each letter of a script
+// written without spaces; anything else separates. Folding before reading
+// words, as the engine does, a symbol that folds to letters ("™" to tm) joins
+// the word beside it on both sides. It may find more than the engine, which
+// costs only an alias the engine then ignores; it never finds less, which
+// would leave a name a person settled unapplied, up to differences between
+// Go's and Rust's Unicode tables.
 //
 // Key is how a name is looked up in an index: a hash of its first KeyWords
 // words. Text.Keys gives every key a document's words can match: each run of
@@ -72,12 +74,13 @@ func classOf(c rune) class {
 	switch {
 	case unicode.In(c, unicode.Mn, unicode.Mc, unicode.Me):
 		return mark
+	case !unicode.IsLetter(c) && !unicode.IsNumber(c) && !unicode.Is(unicode.Other_Alphabetic, c):
+		// Punctuation in a script written without spaces too (・, ฿).
+		return separator
 	case spaceless(c):
 		return alone
-	case unicode.IsLetter(c) || unicode.IsNumber(c) || unicode.Is(unicode.Other_Alphabetic, c):
-		return letter
 	}
-	return separator
+	return letter
 }
 
 // fold is c decomposed (NFKD) and lowercased, final ς as σ, decomposed again
@@ -94,11 +97,8 @@ func fold(c rune) []rune {
 	return out
 }
 
-// Words are s's words, folded at least as much as the engine folds them (see
-// the package comment).
-//
-// A character that decomposes into more than one word ("½" into 1⁄2) joins no
-// word beside it, as the engine reads it.
+// Words are s's words, each character folded at least as much as the engine
+// folds it before it reads words (see the package comment).
 func Words(s string) []string {
 	var words []string
 	var run strings.Builder
@@ -121,15 +121,7 @@ func Words(s string) []string {
 			}
 			continue
 		}
-		folded := fold(c)
-		split := len(folded) > 1 && slices.ContainsFunc(folded, func(d rune) bool {
-			k := classOf(d)
-			return k == separator || k == alone
-		})
-		if split {
-			flush()
-		}
-		for _, d := range folded {
+		for _, d := range fold(c) {
 			switch classOf(d) {
 			case separator:
 				flush()
@@ -140,9 +132,6 @@ func Words(s string) []string {
 				flush()
 				words = append(words, string(d))
 			}
-		}
-		if split {
-			flush()
 		}
 	}
 	flush()

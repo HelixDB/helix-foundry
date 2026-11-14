@@ -167,16 +167,8 @@ func TestExtractCarriesAliases(t *testing.T) {
 func TestExtractSplitsPastTheAliasCap(t *testing.T) {
 	h := newHarness(t)
 	namedCustomers(t, h)
-	acme := "acme"
 	per := maxKindDecisions*3/5 + 1
-	var text [2]strings.Builder
-	for i := range 2 * per {
-		name := fmt.Sprintf("customer n%05d", i)
-		h.store.decisions = append(h.store.decisions, linked(fmt.Sprintf("%026d", i+1), "doc-z", name, &acme, settledAt))
-		fmt.Fprintf(&text[i/per], "Customer N%05d paid. ", i)
-	}
-	h.bucket.objects[document.Key("ws-1", "doc-a")] = []byte("# doc-a\n" + text[0].String())
-	h.bucket.objects[document.Key("ws-1", "doc-b")] = []byte("# doc-b\n" + text[1].String())
+	splitLoad(t, h, per)
 	if outcome := h.run(t, extractJob()); outcome.Status != model.FoundryGraphJobSucceeded {
 		t.Fatalf("%+v", outcome)
 	}
@@ -280,5 +272,89 @@ func TestExtractRecordsNames(t *testing.T) {
 				t.Fatalf("%+v", outcome)
 			}
 		})
+	}
+}
+
+// splitLoad gives doc-a and doc-b names enough that together they are past
+// the alias cap and each alone within it: n names each.
+func splitLoad(t *testing.T, h *harness, n int) {
+	t.Helper()
+	acme := "acme"
+	var text [2]strings.Builder
+	for i := range 2 * n {
+		name := fmt.Sprintf("customer n%05d", i)
+		h.store.decisions = append(h.store.decisions, linked(fmt.Sprintf("%026d", i+1), "doc-z", name, &acme, settledAt))
+		fmt.Fprintf(&text[i/n], "Customer N%05d paid. ", i)
+	}
+	h.bucket.objects[document.Key("ws-1", "doc-a")] = []byte("# doc-a\n" + text[0].String())
+	h.bucket.objects[document.Key("ws-1", "doc-b")] = []byte("# doc-b\n" + text[1].String())
+}
+
+// Each split Extract goes even after one's budget ran out, with what is left
+// to spend or none, as one Extract would have read every document: a document
+// with saved work commits at $0.
+func TestExtractSplitGoesOnPastABudgetStop(t *testing.T) {
+	h := newHarness(t)
+	namedCustomers(t, h)
+	splitLoad(t, h, maxKindDecisions*3/5+1)
+	n := 0
+	h.agent.extract = func(raw string, stream agentv1.Agent_ExtractServer) error {
+		req := decodeExtract(t, raw)
+		n++
+		events := []string{extracted[0]}
+		for _, d := range req.Documents {
+			events = append(events, documentEvent(d.DocID, `{"kind":"ingested"}`, noUsage))
+		}
+		result := "done"
+		if n == 1 {
+			result = "budget_exhausted"
+		}
+		return extractEvents(stream, append(events, `{"event":"extract_finished"}`), `{"status":"`+result+`","totals":`+totals+`}`)
+	}
+	outcome := h.run(t, extractJob())
+	_, calls := h.agent.calls()
+	sent := map[string]int{}
+	for _, c := range calls {
+		for _, d := range decodeExtract(t, c).Documents {
+			sent[d.DocID]++
+		}
+	}
+	if len(calls) != 3 || len(sent) != 4 || sent["doc-b"] != 1 || sent["doc-d"] != 1 {
+		t.Fatalf("%d extracts, sent %v", len(calls), sent)
+	}
+	if outcome.Status != model.FoundryGraphJobBudgetExhausted {
+		t.Fatalf("a budget stop: %+v", outcome)
+	}
+}
+
+// One document that writes more names than an Extract carries is recorded
+// failed, too_large, never retried; the load goes on with the rest.
+func TestExtractRecordsADocumentPastTheAliasCap(t *testing.T) {
+	h := newHarness(t)
+	namedCustomers(t, h)
+	acme := "acme"
+	var text strings.Builder
+	for i := range maxKindDecisions + 1 {
+		name := fmt.Sprintf("customer n%05d", i)
+		h.store.decisions = append(h.store.decisions, linked(fmt.Sprintf("%026d", i+1), "doc-z", name, &acme, settledAt))
+		fmt.Fprintf(&text, "Customer N%05d paid. ", i)
+	}
+	h.bucket.objects[document.Key("ws-1", "doc-a")] = []byte("# doc-a\n" + text.String())
+	h.agent.extract = writesAll(t)
+	outcome := h.run(t, extractJob())
+	if outcome.Status != model.FoundryGraphJobSucceeded {
+		t.Fatalf("%+v", outcome)
+	}
+	e := h.store.extractions["doc-a"]
+	if e == nil || e.Status != model.FoundryExtractionFailed || e.Error == nil || e.Error.Code != model.FoundryExtractionTooLarge || e.Error.Retryable {
+		t.Fatalf("doc-a: %+v", e)
+	}
+	_, calls := h.agent.calls()
+	for _, c := range calls {
+		for _, d := range decodeExtract(t, c).Documents {
+			if d.DocID == "doc-a" {
+				t.Fatalf("doc-a was sent: %s", c)
+			}
+		}
 	}
 }

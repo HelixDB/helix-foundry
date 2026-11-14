@@ -219,7 +219,7 @@ func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.Foundr
  drawn=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), drawn, VALUES(drawn)),
  decided_by_user_id=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), decided_by_user_id, VALUES(decided_by_user_id)),
  decided_at=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), decided_at, NOW(6)),
- entity_key=VALUES(entity_key), value=VALUES(value), statement_hash=VALUES(statement_hash)`,
+ entity_key=VALUES(entity_key), value=VALUES(value), statement_hash=VALUES(statement_hash), name_key=VALUES(name_key)`,
 			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID, d.Drawn,
 			foundryNameKey(d)); err != nil {
 			return err
@@ -544,10 +544,11 @@ func (s *mysqlDB) ListFoundryLoadDecisions(ctx context.Context, loadID, afterID 
 	return s.listFoundryDecisions(ctx, "foundry_load_decisions", "load_id", loadID, afterID, documentIDs, limit)
 }
 
-// foundryNameKey is the name_key of a resolve decision (namewords.Key of its
-// norm_name), NULL for any other kind and for a name with no word.
+// foundryNameKey is the name_key of a resolve decision that chose an entity,
+// an alias (namewords.Key of its norm_name); NULL for "not in data", which
+// carries nothing, for any other kind, and for a name with no word.
 func foundryNameKey(d *model.FoundryReviewDecision) any {
-	if d.Kind != model.FoundryReviewResolve || d.NormName == nil {
+	if d.Kind != model.FoundryReviewResolve || d.NormName == nil || d.EntityKey == nil {
 		return nil
 	}
 	key, ok := namewords.Key(*d.NormName)
@@ -562,17 +563,17 @@ func foundryNameKey(d *model.FoundryReviewDecision) any {
 // on foundry_load_decisions_names_idx.
 const FoundryAliasKeysPerRead = 2000
 
-// ListFoundryLoadAliasesNamed reads the resolve decisions of a load's list
-// that chose an entity and whose name_key is one of keys (at most
-// FoundryAliasKeysPerRead): the names a person linked to an entity that a
-// document whose words have those keys may write (namewords.Text.Keys),
-// which the load carries to it as aliases (contract 4.23.0). Every such row
-// is returned, of any document, several of one name, type and entity
-// included: the caller checks that the document writes each name and keeps
-// one alias a name, type and entity. "Not in data" (a NULL entity_key) says
-// something of one document and gives none. Point reads on
-// foundry_load_decisions_names_idx (load_id, kind, name_key): what it costs
-// is bounded by the keys and the rows they find, not by the load.
+// ListFoundryLoadAliasesNamed reads the aliases of a load's list whose
+// name_key is one of keys (at most FoundryAliasKeysPerRead): the names a
+// person linked to an entity that a document whose words have those keys may
+// write (namewords.Text.Keys), which the load carries to it (contract
+// 4.23.0). One a type, name and entity, of any document: the earliest
+// decided, the smallest id among those decided at once, so every Extract
+// sends the same alias; a name chosen as two entities gives both. The caller
+// checks that the document writes each name. Point reads on
+// foundry_load_decisions_names_idx (load_id, kind, name_key), numbered over
+// the rows they find alone: what it costs is bounded by the keys and their
+// rows, not by the load.
 func (s *mysqlDB) ListFoundryLoadAliasesNamed(ctx context.Context, loadID string, keys []int64) ([]*model.FoundryReviewDecision, error) {
 	if len(keys) == 0 {
 		return nil, nil
@@ -585,30 +586,44 @@ func (s *mysqlDB) ListFoundryLoadAliasesNamed(ctx context.Context, loadID string
 	for _, k := range keys {
 		args = append(args, k)
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT "+foundryReviewDecisionColumns+` FROM foundry_load_decisions
-WHERE load_id=? AND kind='resolve' AND name_key IN (`+strings.TrimSuffix(strings.Repeat("?,", len(keys)), ",")+`) AND entity_key IS NOT NULL`, args...)
+	rows, err := s.db.QueryContext(ctx, "SELECT "+foundryReviewDecisionColumns+" FROM (SELECT "+foundryReviewDecisionColumns+`,
+  ROW_NUMBER() OVER (PARTITION BY type, norm_name, entity_key ORDER BY decided_at, id) AS earliest
+  FROM foundry_load_decisions WHERE load_id=? AND kind='resolve' AND name_key IN (`+strings.TrimSuffix(strings.Repeat("?,", len(keys)), ",")+`)
+  AND entity_key IS NOT NULL) a
+WHERE earliest=1`, args...)
 	if err != nil {
 		return nil, err
 	}
 	return scanAll(rows, scanFoundryReviewDecision)
 }
 
-// FillFoundryLoadNameKeys gives the load's resolves that have no name_key
-// theirs: those settled before name keys, and copies an older binary made.
-// A thousand at a time, through foundry_load_decisions_names_idx, so with
-// none left it reads one empty range. It returns how many it filled.
+// FoundryLoadHasAliases reports whether the load's list holds an alias with
+// its name key: with none, no document needs an alias read. One index probe.
+func (s *mysqlDB) FoundryLoadHasAliases(ctx context.Context, loadID string) (bool, error) {
+	var has bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_decisions
+WHERE load_id=? AND kind='resolve' AND name_key IS NOT NULL)`, loadID).Scan(&has)
+	return has, err
+}
+
+// FillFoundryLoadNameKeys gives the load's aliases (resolves that chose an
+// entity) that have no name_key theirs, and the ontology's saved decisions
+// they were copied from (foundry_review_decisions, by id), so the next load
+// copies them keyed: those settled before name keys, and copies an older
+// binary made. A thousand at a time, through foundry_load_decisions_names_idx,
+// so with none left it reads one empty range. It returns how many it filled.
 func (s *mysqlDB) FillFoundryLoadNameKeys(ctx context.Context, loadID string) (int, error) {
-	type unkeyed struct{ id, name string }
+	type unkeyed struct{ id, ontology, name string }
 	filled := 0
 	for {
-		rows, err := s.db.QueryContext(ctx, `SELECT id, norm_name FROM foundry_load_decisions
-WHERE load_id=? AND kind='resolve' AND name_key IS NULL AND norm_name IS NOT NULL ORDER BY id LIMIT 1000`, loadID)
+		rows, err := s.db.QueryContext(ctx, `SELECT id, ontology_id, norm_name FROM foundry_load_decisions
+WHERE load_id=? AND kind='resolve' AND name_key IS NULL AND norm_name IS NOT NULL AND entity_key IS NOT NULL ORDER BY id LIMIT 1000`, loadID)
 		if err != nil {
 			return filled, err
 		}
 		page, err := scanAll(rows, func(row rowScanner) (unkeyed, error) {
 			var u unkeyed
-			return u, row.Scan(&u.id, &u.name)
+			return u, row.Scan(&u.id, &u.ontology, &u.name)
 		})
 		if err != nil {
 			return filled, err
@@ -619,18 +634,27 @@ WHERE load_id=? AND kind='resolve' AND name_key IS NULL AND norm_name IS NOT NUL
 		// A name with no word is keyed 0, which no text's words hash to in
 		// practice, so it is keyed once and never read.
 		var cases strings.Builder
-		args := make([]any, 0, 3*len(page)+1)
+		keys := make([]any, 0, 2*len(page))
+		ids := make([]any, 0, len(page))
 		for _, u := range page {
 			key, _ := namewords.Key(u.name)
 			cases.WriteString(" WHEN ? THEN ?")
-			args = append(args, u.id, key)
+			keys = append(keys, u.id, key)
+			ids = append(ids, u.id)
 		}
-		args = append(args, loadID)
-		for _, u := range page {
-			args = append(args, u.id)
-		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET name_key = CASE id`+cases.String()+` END
-WHERE load_id=? AND id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(page)), ",")+`)`, args...); err != nil {
+		in := strings.TrimSuffix(strings.Repeat("?,", len(page)), ",")
+		if err := s.WithTx(ctx, func(db Store) error {
+			tx := db.(*mysqlDB)
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET name_key = CASE id`+cases.String()+` END
+WHERE load_id=? AND id IN (`+in+`)`, append(append(append([]any{}, keys...), loadID), ids...)...); err != nil {
+				return err
+			}
+			// The saved decision it copies, if it is still the same name.
+			_, err := tx.db.ExecContext(ctx, `UPDATE foundry_review_decisions SET name_key = CASE id`+cases.String()+` END
+WHERE ontology_id=? AND id IN (`+in+`) AND kind='resolve' AND name_key IS NULL AND entity_key IS NOT NULL`,
+				append(append(append([]any{}, keys...), page[0].ontology), ids...)...)
+			return err
+		}); err != nil {
 			return filled, err
 		}
 		filled += len(page)
