@@ -842,7 +842,7 @@ type FoundryGraphJobOutcome struct {
 	// after this attempt: when an index still building was first found, for
 	// a retry of one; nil clears it.
 	IndexesPendingSince *time.Time
-	Status    FoundryGraphJobStatus
+	Status              FoundryGraphJobStatus
 	// Error is why, written for the customer.
 	Error string
 	// IngestDone means the version's tables are in the load: a retry skips
