@@ -294,7 +294,9 @@ func sampleDraft(gen *model.OntologyGeneration) (ontologygen.Result, error) {
 
 // outcome decides what an attempt leaves behind: a draft version, the
 // questions the agent asked (needs_input), a retry after a backoff that
-// doubles from a minute, or a failure for good. The
+// doubles from a minute, or a failure for good. Each answer pays for
+// another turn, so a turn that asks once the generation has had
+// foundry.ontology.max_question_rounds rounds fails it. The
 // agent's internal error is Helix's bug: it is logged as an error, for
 // on-call, and gets ontologyagent.InternalAttempts attempts at most. The
 // version's scope is the sets the generation read: for a revision, its
@@ -306,6 +308,12 @@ func (t *Task) outcome(ctx context.Context, gen *model.OntologyGeneration, resul
 		Model: result.Model, ModelProvider: result.ModelProvider, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
 	}
 	if err == nil && result.Asked != nil {
+		if gen.Questions != nil && gen.Questions.Round >= t.cfg.MaxQuestionRounds {
+			log.From(ctx).Warn("ontology generation asked past its rounds of questions", "generation", gen.ID, "rounds", gen.Questions.Round)
+			usage.Status = model.OntologyGenerationFailed
+			usage.Error = fmt.Sprintf("the ontology agent kept asking after %d rounds of questions; generate again with a goal that says more", gen.Questions.Round)
+			return usage
+		}
 		usage.Status, usage.Asked = model.OntologyGenerationNeedsInput, result.Asked
 		return usage
 	}

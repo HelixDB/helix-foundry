@@ -80,6 +80,10 @@ type OntologyAnswer struct {
 // OntologyQuestions are the questions a turn asked and, once given, their
 // answers.
 type OntologyQuestions struct {
+	// Round is which round of questions they are, from 1: each answer pays
+	// for another turn, which may ask again, so the worker caps the rounds
+	// (foundry.ontology.max_question_rounds).
+	Round int
 	// DraftRev is the draft revision they were asked of, which the answers'
 	// feedback names.
 	DraftRev uint64

@@ -742,8 +742,13 @@ type OntologyConfig struct {
 	// questions: after it, the worker answers each with the agent's default
 	// and carries on, so an ontology is never held by questions no one
 	// answers. The API says when (answers_due_at).
-	AnswerDays int         `koanf:"answer_days"`
-	Agent      AgentConfig `koanf:"agent"`
+	AnswerDays int `koanf:"answer_days"`
+	// MaxQuestionRounds caps the rounds of questions one generation may
+	// ask: each answer pays for another turn, which counts toward no hourly
+	// cap, so a turn that asks once the generation has had this many fails
+	// it.
+	MaxQuestionRounds int         `koanf:"max_question_rounds"`
+	Agent             AgentConfig `koanf:"agent"`
 }
 
 // AnswerWait is AnswerDays as a duration.
@@ -1680,6 +1685,9 @@ func (c *Config) validateRoles(roles Roles) error {
 	if (roles.API || roles.OntologyWorker) && f.Ontology.AnswerDays < 1 {
 		return fmt.Errorf("foundry.ontology.answer_days must be positive")
 	}
+	if roles.OntologyWorker && f.Ontology.MaxQuestionRounds < 1 {
+		return fmt.Errorf("foundry.ontology.max_question_rounds must be positive")
+	}
 	if roles.EnrichmentWorker {
 		if f.Sync.DataBucket == "" {
 			return fmt.Errorf("foundry.sync.data_bucket must be set when 'foundry-enrichment-worker' is in tasks")
@@ -1762,6 +1770,9 @@ func Defaults() Config {
 		MaxTables:    50,
 		PerHour:      10,
 		AnswerDays:   7,
+		// MaxQuestionRounds is 3: a draft rarely needs more, and a fourth
+		// ask means the goal is too thin to draft from.
+		MaxQuestionRounds: 3,
 		// Limits fit the 15m timeout with AgentAttemptMargin to spare; a
 		// deployment that lets turns run longer raises both.
 		Agent: AgentConfig{

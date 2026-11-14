@@ -122,7 +122,7 @@ var now = time.Date(2026, time.October, 17, 12, 0, 0, 0, time.UTC)
 
 func newTask(q *queue, g generatorFunc) *Task {
 	return &Task{
-		cfg:   config.OntologyConfig{Lease: 30 * time.Millisecond, Timeout: time.Minute, MaxAttempts: 3, AnswerDays: 7},
+		cfg:   config.OntologyConfig{Lease: 30 * time.Millisecond, Timeout: time.Minute, MaxAttempts: 3, AnswerDays: 7, MaxQuestionRounds: 3},
 		graph: config.GraphConfig{MonthlyUSD: 100, MaxJobUSD: 20},
 		queue: q, generator: g, workerID: "worker-1", now: func() time.Time { return now },
 	}
@@ -154,6 +154,24 @@ func TestFoundryOntologyWorker(t *testing.T) {
 		if got.Status != model.OntologyGenerationNeedsInput || got.Asked != asked || got.Result != nil || got.Load != nil || got.RetryAt != nil ||
 			got.InputTokens != 900 {
 			t.Fatalf("outcome = %+v", got)
+		}
+	})
+
+	// Each answer pays for a turn, so asking again after the last round
+	// fails the generation, and asking before it waits again.
+	t.Run("fails a generation that asks past its rounds of questions", func(t *testing.T) {
+		asked := &model.OntologyGenerationAsked{State: []byte(`{}`), DraftRev: 9,
+			Questions: []model.OntologyQuestion{{ID: "q9", Text: "And now?", Blocking: true}}}
+		for round, want := range map[int]model.OntologyGenerationStatus{2: model.OntologyGenerationNeedsInput, 3: model.OntologyGenerationFailed} {
+			q := newQueue(&model.OntologyGeneration{ID: "g1", WorkspaceID: "ws-1", OntologyID: "ont-1", Attempts: 1,
+				Questions: &model.OntologyQuestions{Round: round, DraftRev: 8, Answers: []model.OntologyAnswer{{QuestionID: "q8", Text: "Yes"}}}})
+			newTask(q, func(context.Context, *model.OntologyGeneration) (ontologygen.Result, error) {
+				return ontologygen.Result{Asked: asked, InputTokens: 50}, nil
+			}).drain(context.Background())
+			got := q.outcomes["g1"]
+			if got.Status != want || got.InputTokens != 50 || (want == model.OntologyGenerationFailed) != (got.Asked == nil) {
+				t.Fatalf("round %d: outcome = %+v", round, got)
+			}
 		}
 	})
 

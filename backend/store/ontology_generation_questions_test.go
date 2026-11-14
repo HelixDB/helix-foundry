@@ -53,6 +53,7 @@ func TestOntologyGenerationQuestions(t *testing.T) {
 		assert.Equal(t, model.OntologyGenerationNeedsInput, waiting.Status)
 		require.NotNil(t, waiting.Questions)
 		assert.Equal(t, uint64(3), waiting.Questions.DraftRev)
+		assert.Equal(t, 1, waiting.Questions.Round)
 		assert.Equal(t, questions, waiting.Questions.Asked)
 		assert.Nil(t, waiting.Questions.Answers)
 		assert.False(t, waiting.Questions.AskedAt.IsZero())
@@ -117,6 +118,7 @@ func TestOntologyGenerationQuestions(t *testing.T) {
 		require.NotNil(t, retried)
 		assert.JSONEq(t, string(state), string(retried.TurnState), "a retry carries on from the same state")
 		assert.Len(t, retried.Questions.Answers, 1)
+		assert.Equal(t, 1, retried.Questions.Round, "a retry is the same round")
 
 		again := asked
 		again.Asked = &model.OntologyGenerationAsked{State: json.RawMessage(`{"draft":{"rev":5}}`), DraftRev: 5,
@@ -126,6 +128,7 @@ func TestOntologyGenerationQuestions(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, model.OntologyGenerationNeedsInput, waiting.Status)
 		assert.Equal(t, uint64(5), waiting.Questions.DraftRev)
+		assert.Equal(t, 2, waiting.Questions.Round, "the rounds count up")
 		assert.Equal(t, "q3", waiting.Questions.Asked[0].ID)
 		assert.Nil(t, waiting.Questions.Answers, "a new round has no answers yet")
 		assert.JSONEq(t, `{"draft":{"rev":5}}`, string(storedState(t, gen.ID)))
@@ -189,6 +192,20 @@ func TestOntologyGenerationQuestions(t *testing.T) {
 		due, err = db.ListOntologyGenerationsAskedBefore(ctx, time.Now().Add(-7*24*time.Hour), 10)
 		require.NoError(t, err)
 		assert.Empty(t, due, "an answered one waits no longer")
+	})
+
+	// An older binary never clears turn_state, so the checks let an ended
+	// generation keep it: such a binary's end, or its ontology's delete,
+	// mid-deploy never fails.
+	t.Run("lets an older binary end a generation that kept its state", func(t *testing.T) {
+		ctx := context.Background()
+		db, ontologyID := newStore(t)
+		gen := queue(t, db, ontologyID, "A")
+		require.NoError(t, db.FinishOntologyGeneration(ctx, gen.ID, "worker-1", asked))
+		require.NoError(t, db.AnswerOntologyGeneration(ctx, ontologyID, gen.ID, 3, []model.OntologyAnswer{{QuestionID: "q1", Text: "Yes"}}))
+		_, err := testDB.Exec(`UPDATE foundry_ontology_generations SET status='failed', error='old', active_key=NULL, finished_at=NOW(6) WHERE id=?`, gen.ID)
+		require.NoError(t, err)
+		assert.NotNil(t, storedState(t, gen.ID))
 	})
 
 	t.Run("ends with its ontology's delete, dropping the state", func(t *testing.T) {

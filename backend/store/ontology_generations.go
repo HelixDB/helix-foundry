@@ -17,7 +17,7 @@ import (
 // ClaimOntologyGeneration reads (generationStateColumn).
 const ontologyGenerationColumns = `id, workspace_id, ontology_id, status, goal, title, input, lease_owner, lease_until, attempts, next_attempt_at,
        error, result_version_id, model, input_tokens, output_tokens, requested_by_user_id, created_at, started_at, finished_at, revise_result,
-       draft_rev, questions, asked_at, answers, NULL`
+       rounds, draft_rev, questions, asked_at, answers, NULL`
 
 // generationStateColumn replaces ontologyGenerationColumns' last NULL for the
 // claim: the session state the answering attempt carries on from.
@@ -100,7 +100,7 @@ FROM foundry_ontology_generations WHERE id=? AND ontology_id=?`, id, ontologyID)
 // so they stay small; GetOntologyGeneration has both.
 const ontologyGenerationListColumns = `id, workspace_id, ontology_id, status, goal, title, JSON_REMOVE(input, '$.revise.edits'), lease_owner,
        lease_until, attempts, next_attempt_at, error, result_version_id, model, input_tokens, output_tokens, requested_by_user_id,
-       created_at, started_at, finished_at, NULL, draft_rev, questions, asked_at, answers, NULL`
+       created_at, started_at, finished_at, NULL, rounds, draft_rev, questions, asked_at, answers, NULL`
 
 // ListOntologyGenerations returns an ontology's generations, newest first,
 // without a revision's edits or result (ontologyGenerationListColumns).
@@ -191,7 +191,7 @@ SET status='queued', next_attempt_at=?, error=NULLIF(?, ''), lease_owner=NULL, l
 		}
 		// A new round of questions replaces the last, and its answers.
 		return execOrNotFound(ctx, s.db, `UPDATE foundry_ontology_generations
-SET status='needs_input', error=NULL, turn_state=?, draft_rev=?, questions=CAST(? AS JSON), asked_at=NOW(6), answers=NULL,
+SET status='needs_input', error=NULL, turn_state=?, rounds=rounds+1, draft_rev=?, questions=CAST(? AS JSON), asked_at=NOW(6), answers=NULL,
     lease_owner=NULL, lease_until=NULL, `+usage+owned,
 			[]byte(asked.State), asked.DraftRev, string(questions), outcome.Model, outcome.ModelProvider, outcome.InputTokens, outcome.OutputTokens, id, workerID)
 	}
@@ -342,21 +342,22 @@ func scanOntologyGeneration(scanner rowScanner) (*model.OntologyGeneration, erro
 	var goal, title, leaseOwner, errText, resultVersion, modelName, requestedBy sql.NullString
 	var leaseUntil, startedAt, finishedAt, askedAt sql.NullTime
 	var inputTokens, outputTokens sql.NullInt64
+	var rounds int
 	var draftRev sql.Null[uint64]
 	var questions, answers sql.NullString
 	var state []byte
 	if err := scanner.Scan(&gen.ID, &gen.WorkspaceID, &gen.OntologyID, &status, &goal, &title, &input, &leaseOwner, &leaseUntil, &gen.Attempts,
 		&gen.NextAttemptAt, &errText, &resultVersion, &modelName, &inputTokens, &outputTokens, &requestedBy,
-		&gen.CreatedAt, &startedAt, &finishedAt, &reviseResult, &draftRev, &questions, &askedAt, &answers, &state,
+		&gen.CreatedAt, &startedAt, &finishedAt, &reviseResult, &rounds, &draftRev, &questions, &askedAt, &answers, &state,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	// The asked check sets the three together.
+	// The asked check sets the four together.
 	if questions.Valid {
-		gen.Questions = &model.OntologyQuestions{DraftRev: draftRev.V, AskedAt: askedAt.Time}
+		gen.Questions = &model.OntologyQuestions{Round: rounds, DraftRev: draftRev.V, AskedAt: askedAt.Time}
 		if err := json.Unmarshal([]byte(questions.String), &gen.Questions.Asked); err != nil {
 			return nil, fmt.Errorf("decode ontology generation %s questions: %w", gen.ID, err)
 		}
