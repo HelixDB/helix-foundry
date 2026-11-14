@@ -54,6 +54,9 @@ type Identity struct {
 	// admitted ctx as one. Nil on a host without grants.
 	AsGrantee func(context.Context) context.Context
 	IsGrantee func(context.Context) bool
+	// Confirm is who confirms the actions it prepares (agent.go); nil is the
+	// caller, as the MCP's clients do.
+	Confirm ConfirmMode
 }
 
 type EventSourceIdentity struct{ WorkspaceID, ConnectorID string }

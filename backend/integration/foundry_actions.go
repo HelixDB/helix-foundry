@@ -195,6 +195,22 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 		return
 	}
 	no, yes := false, true
+	if person, ok := identity.Confirm.(ConfirmByPerson); ok {
+		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
+			Description: "Check a Foundry action and put it before the person you work for as a card, which they run, or not, with a click. " +
+				"Preparing changes nothing, and you can't run it: you are told its result if they do.",
+			InputSchema: foundryOperationSchema(s.Events),
+			Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
+		}, func(ctx context.Context, identity *Identity, call *Call, input FoundryOperationInput) (AwaitingPersonOutput, int, error) {
+			awaiting, err := s.prepareForPerson(ctx, identity, call, input, person.Sink)
+			if err != nil {
+				return AwaitingPersonOutput{}, 0, err
+			}
+			return AwaitingPersonOutput{ActionID: awaiting.ActionID, Status: "awaiting_person",
+				ExpiresAt: awaiting.ExpiresAt.UTC().Format(time.RFC3339Nano), Next: awaitingPersonNext}, 1, nil
+		})
+		return
+	}
 	// Preparing changes nothing: only executing is destructive.
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
 		Description: "Check a Foundry action and return a one-time confirmation for exactly that action, valid for five minutes; " +
@@ -268,15 +284,28 @@ func (s *Service) PrepareFoundryOperation(
 func (s *Service) ExecuteFoundryOperation(
 	ctx context.Context, identity *Identity, call *Call, input ExecuteFoundryInput,
 ) (FoundryOperationOutput, int, error) {
+	out, count, _, err := s.executeFoundry(ctx, identity, call, input)
+	return out, count, err
+}
+
+// executeFoundry runs a prepared action, and says whether it spent the
+// confirmation: after that, a failure may follow a change the backend made.
+// An identity whose person confirms never executes: its person's click does.
+func (s *Service) executeFoundry(
+	ctx context.Context, identity *Identity, call *Call, input ExecuteFoundryInput,
+) (FoundryOperationOutput, int, bool, error) {
 	call.ResourceKind, call.ResourceID = TargetKind(input.Target), input.Target
+	if _, person := identity.Confirm.(ConfirmByPerson); person {
+		return FoundryOperationOutput{}, 0, false, detailedToolError{code: errCodeFailedPrecondition, message: "only the person runs a prepared action, from Foundry"}
+	}
 	operation, err := s.ValidateFoundryOperation(ctx, identity, FoundryOperationInput{
 		Operation: input.Operation, Target: input.Target, Payload: input.Payload,
 	})
 	if err != nil {
-		return FoundryOperationOutput{}, 0, err
+		return FoundryOperationOutput{}, 0, false, err
 	}
 	if input.ConfirmationID == "" || input.ConfirmationToken == "" {
-		return FoundryOperationOutput{}, 0, detailedToolError{code: errCodeInvalidArguments, message: "confirmation_id and confirmation_token are required"}
+		return FoundryOperationOutput{}, 0, false, detailedToolError{code: errCodeInvalidArguments, message: "confirmation_id and confirmation_token are required"}
 	}
 	err = s.Confirmations.Consume(ctx, ConfirmationBinding{
 		ID: input.ConfirmationID, Token: input.ConfirmationToken, Operation: foundryOperationPrefix + input.Operation,
@@ -284,13 +313,13 @@ func (s *Service) ExecuteFoundryOperation(
 		PayloadHash: confirmationPayloadHash(foundryOperationPrefix+input.Operation, input.Target, operation.CanonicalPayload()),
 	})
 	if err != nil {
-		return FoundryOperationOutput{}, 0, FoundryError(err)
+		return FoundryOperationOutput{}, 0, false, FoundryError(err)
 	}
 	result, err := operation.Execute(ctx, s, identity, input.ConfirmationID)
 	if err != nil {
-		return FoundryOperationOutput{}, 0, FoundryError(err)
+		return FoundryOperationOutput{}, 0, true, FoundryError(err)
 	}
-	return FoundryOperationOutput{ContentTrust: contentTrustUntrusted, Operation: input.Operation, Target: input.Target, Result: result}, 1, nil
+	return FoundryOperationOutput{ContentTrust: contentTrustUntrusted, Operation: input.Operation, Target: input.Target, Result: result}, 1, true, nil
 }
 
 // ValidateFoundryOperation parses an action's target and strict payload, then authorizes the
