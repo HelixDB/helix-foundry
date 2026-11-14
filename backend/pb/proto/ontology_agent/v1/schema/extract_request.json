@@ -21,7 +21,7 @@
       "type": "string"
     },
     "decisions": {
-      "description": "Settled review decisions snapshotted for this load: at most 10,000 of each kind, never\ntruncated. Two of one identity, a resolve decision without a document or a normalized\nname, an alias without a normalized name or an entity, or a decision giving one of\n`decision_id` and `decided_at` without the other, refuse the request; one that no longer\nfits `ontology_toml` is counted (`totals.stale_decisions`) and left out, except a resolve\ndecision of a type it has, whose name is reviewed again rather than matched another way.\nA value a property decision overwrites keeps the decision's `decision_id` and\n`decided_at`, so the load tells when it was decided. A resolve decision sent with a\ndocument the load holds writes what the name held back, where the load still asks about\nit; send every alias with every Extract.",
+      "description": "Settled review decisions snapshotted for this load: at most 10,000 of each kind, never\ntruncated. Two of one identity, a resolve decision without a document or a normalized\nname, an alias without a normalized name or an entity, or a decision giving one of\n`decision_id` and `decided_at` without the other, refuse the request; one that no longer\nfits `ontology_toml` is counted (`totals.stale_decisions`) and left out, except a resolve\ndecision of a type it has, whose name is reviewed again rather than matched another way.\nA value a property decision overwrites keeps the decision's `decision_id` and\n`decided_at`, so the load tells when it was decided. A resolve decision sent with a\ndocument the load holds writes what the name held back, where the load still asks about\nit. An alias acts only on a document whose text writes its name: send those whose names\nthe request's documents write, which leaves the run as every alias the load carries\nwould.",
       "$ref": "#/$defs/Decisions",
       "default": []
     },
@@ -430,7 +430,7 @@
           ]
         },
         {
-          "description": "A name of a type a person linked to an entity, carried to every document of the load:\nwhere a document's entity of the type has this as its fullest name and the names rung\nfinds no other entity for it, the name links the chosen entity, as a name the person\ngave it. A document's own resolve decision of the name wins. Two aliases of one name\nthat choose different entities carry neither. Send them with every Extract, as property\ndecisions go, to link the name in every document the request lists and in those the\nload holds.",
+          "description": "A name of a type a person linked to an entity, carried to every document of the load:\nwhere a document's entity of the type has this as its fullest name and the names rung\nfinds no other entity for it, the name links the chosen entity, as a name the person\ngave it. It acts only on a document whose text writes the name: its words, in order,\nwith nothing but what is no word between them, folded as names are matched. A\ndocument's own resolve decision of the name wins. Two aliases of one name that choose\ndifferent entities carry neither. Send those whose names the request's documents write\n(sending more changes nothing) to link the name in the documents the request lists,\nthose the load holds included.",
           "type": "object",
           "properties": {
             "decided_at": {
