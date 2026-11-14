@@ -17,8 +17,10 @@ import type {
   FoundryLoadEnrichment,
   GraphJob,
   JobPhase,
+  AnswerOntologyGenerationRequest,
   OntologyGeneration,
   OntologyGenerationDocument,
+  OntologyGenerationQuestion,
   OntologyVersion,
   Project,
   Tenant,
@@ -45,7 +47,7 @@ import {
 import { mayBeStarting } from "../explore/database-query";
 import { versionFormat } from "./format";
 import { EVENT_SOURCE_MODE_WORDS } from "./paths";
-import { isLive } from "./queries";
+import { isLive, isWaiting } from "./queries";
 import { isRecord } from "../../../shared/json";
 
 // Reads an ontology version's definition, in either stored format, into what
@@ -762,6 +764,24 @@ export function startingSets(
     .slice(0, max)
     .map((s) => s.id);
 }
+
+/**
+ * The goal Generate starts with: the one written before a sign-in's round
+ * trip, else a link's (`?goal=`, "" for none), else the goal of the
+ * generation that drafted the current version (a revision's is its
+ * parent's), so a new draft carries on from it; "" without one.
+ *
+ * @example
+ * startingGoal(undefined, null, { id: "g", goal: "Trace orders" }); // "Trace orders"
+ * startingGoal(undefined, "", { id: "g", goal: "Trace orders" }); // ""
+ * startingGoal("Mine", "Linked", { id: "g", goal: "Trace orders" }); // "Mine"
+ * startingGoal(undefined, null, undefined); // ""
+ */
+export const startingGoal = (
+  back: string | undefined,
+  link: string | null,
+  drafted: OntologyGeneration | null | undefined,
+) => back ?? link ?? drafted?.goal?.trim() ?? "";
 
 /** A connection's own document sets, as Generate's picker groups them. */
 export type OwnedSets = {
@@ -3337,6 +3357,85 @@ export function draftWizard(
   return { ...at, request: done ? choices.generate : null };
 }
 
+// ---------------------------------------------------------------- Generation questions
+
+/** At most this many characters in one answer, once trimmed (the WFE's). */
+export const MAX_ANSWER = 2000;
+
+/**
+ * How one of the agent's questions is answered: with one of its options,
+ * in the person's own words, or left to the agent, which takes its default
+ * (or, with none, decides from the data and the goal).
+ */
+export type QuestionAnswer =
+  | { kind: "option"; option: string }
+  | { kind: "own"; text: string }
+  | { kind: "agent" };
+
+/**
+ * Where a question's answer starts: on the agent's default when it is one
+ * of its options, else left to the agent (its default, or its own choice).
+ *
+ * @example
+ * startingAnswer({ id: "q1", options: ["A", "B"], defaultAnswer: "B" }); // { kind: "option", option: "B" }
+ * startingAnswer({ id: "q2", options: [], defaultAnswer: "Monthly" }); // { kind: "agent" }
+ * startingAnswer({ id: "q3" }); // { kind: "agent" }
+ */
+export const startingAnswer = (
+  q: OntologyGenerationQuestion,
+): QuestionAnswer =>
+  q.defaultAnswer && q.options?.includes(q.defaultAnswer)
+    ? { kind: "option", option: q.defaultAnswer }
+    : { kind: "agent" };
+
+/**
+ * The request answering a generation's questions, or why it can't be sent:
+ * an answer in the person's own words must be 1 to MAX_ANSWER characters
+ * once trimmed. A question left to the agent is left out, with
+ * `useDefaults`, so the WFE takes its default for it; every other question
+ * is answered, so a blocking one is never left unanswered.
+ *
+ * @example
+ * answersRequest([{ id: "q1" }, { id: "q2" }], {
+ *   q1: { kind: "option", option: "A" },
+ *   q2: { kind: "agent" },
+ * });
+ * // { ok: true, request: { answers: [{ questionId: "q1", text: "A" }], useDefaults: true } }
+ * answersRequest([{ id: "q1" }], { q1: { kind: "own", text: "  " } });
+ * // { ok: false, questionId: "q1", reason: "Write an answer, or choose another." }
+ */
+export function answersRequest(
+  questions: readonly OntologyGenerationQuestion[],
+  answers: Readonly<Record<string, QuestionAnswer>>,
+):
+  | { ok: true; request: AnswerOntologyGenerationRequest }
+  | { ok: false; questionId: string; reason: string } {
+  const request: AnswerOntologyGenerationRequest = { answers: [] };
+  for (const q of questions) {
+    const a = answers[q.id] ?? startingAnswer(q);
+    if (a.kind === "agent") {
+      request.useDefaults = true;
+      continue;
+    }
+    const text = a.kind === "option" ? a.option : a.text.trim();
+    const chars = [...text].length;
+    if (!chars)
+      return {
+        ok: false,
+        questionId: q.id,
+        reason: "Write an answer, or choose another.",
+      };
+    if (chars > MAX_ANSWER)
+      return {
+        ok: false,
+        questionId: q.id,
+        reason: `${formatNumber(chars - MAX_ANSWER)} characters too long.`,
+      };
+    request.answers.push({ questionId: q.id, text });
+  }
+  return { ok: true, request };
+}
+
 // ---------------------------------------------------------------- Setup
 
 /**
@@ -3364,7 +3463,8 @@ export type SetupFacts = {
  * done and how it stands, or done once every one is.
  *
  * - draft: nothing drafted. To do; running while a generation is queued or
- *   running; failed when the newest generation failed (`error` says why).
+ *   running; waiting while it waits for answers to the agent's questions;
+ *   failed when the newest generation failed (`error` says why).
  * - current: drafted, no version current; `versionId` is the newest draft.
  * - load: a version is current, but no load is current and the last one
  *   didn't succeed; running while a load job runs.
@@ -3374,7 +3474,7 @@ export type OntologySetup =
   | { step: "draft"; state: "todo" }
   | {
       step: "draft";
-      state: "running" | "failed";
+      state: "running" | "waiting" | "failed";
       generation: OntologyGeneration;
     }
   | { step: "current"; state: "todo"; versionId: string }
@@ -3392,6 +3492,8 @@ export type OntologySetup =
  * ontologySetup({ ontology: o, ...none }); // { step: "draft", state: "todo" }
  * ontologySetup({ ontology: o, ...none, generations: [{ id: "g", status: "ONTOLOGY_GENERATION_STATUS_RUNNING" }] });
  * // { step: "draft", state: "running", generation: { id: "g", ... } }
+ * ontologySetup({ ontology: o, ...none, generations: [{ id: "g", status: "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT" }] });
+ * // { step: "draft", state: "waiting", generation: { id: "g", ... } }
  * ontologySetup({ ontology: o, ...none, generations: [{ id: "g", status: "ONTOLOGY_GENERATION_STATUS_FAILED" }] });
  * // { step: "draft", state: "failed", generation: { id: "g", ... } }
  * ontologySetup({ ontology: o, ...none, versions: [{ id: "v1" }] });
@@ -3413,6 +3515,9 @@ export function ontologySetup({
     if (draft) return { step: "current", state: "todo", versionId: draft };
     const live = generations.find(isLive);
     if (live) return { step: "draft", state: "running", generation: live };
+    const waiting = generations.find(isWaiting);
+    if (waiting)
+      return { step: "draft", state: "waiting", generation: waiting };
     const last = generations[0];
     return last?.status === "ONTOLOGY_GENERATION_STATUS_FAILED"
       ? { step: "draft", state: "failed", generation: last }

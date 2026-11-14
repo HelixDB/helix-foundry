@@ -1,4 +1,5 @@
 import type {
+  AnswerOntologyGenerationRequest,
   AskQuestionRequest,
   ReviseOntologyVersionRequest,
   CreateLoadRequest,
@@ -38,6 +39,20 @@ export const POLL_MS = 1500;
 export const isLive = (g?: OntologyGeneration | null) =>
   g?.status === "ONTOLOGY_GENERATION_STATUS_QUEUED" ||
   g?.status === "ONTOLOGY_GENERATION_STATUS_RUNNING";
+
+/**
+ * Waiting for answers to the agent's questions: nothing runs, so nothing
+ * polls, but it is still the ontology's one live generation.
+ */
+export const isWaiting = (g?: OntologyGeneration | null) =>
+  g?.status === "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT";
+
+/**
+ * The ontology's one live generation, in the WFE's sense: queued, running
+ * or waiting for answers. Another is refused (409) until it ends.
+ */
+export const isUnderWay = (g?: OntologyGeneration | null) =>
+  isLive(g) || isWaiting(g);
 
 /** A queued generation that has run before: an attempt failed and Helix retries it. */
 export const isRetrying = (g?: OntologyGeneration | null) =>
@@ -210,6 +225,45 @@ export const generateOntology = async (
     { job: "generation", source: body.sample ? "sample" : "ai" },
     r.generation?.id,
   );
+  return r;
+};
+
+/**
+ * Answers the questions a generation waits on and queues it to carry on;
+ * `useDefaults` takes the agent's default for every question left out.
+ */
+export const answerGeneration = async (
+  ws: string,
+  o: string,
+  g: string,
+  body: AnswerOntologyGenerationRequest,
+) => {
+  const r = await api<OntologyGenerationResponse>(
+    `${at(ws, o)}/generations/${enc(g)}:answer`,
+    body,
+  ).catch((e: unknown) => {
+    trackEvent("generation_answer_refused", { reason: refusalOf(e) });
+    throw e;
+  });
+  trackEvent("generation_answered", {
+    with: !body.useDefaults
+      ? "answers"
+      : body.answers.length
+        ? "some_defaults"
+        : "defaults",
+  });
+  // Its end is this browser's to report from now on.
+  jobStarted({ job: "generation", source: "ai" }, r.generation?.id, false);
+  return r;
+};
+
+/** Ends a queued, running or waiting generation without a draft. */
+export const cancelGeneration = async (ws: string, o: string, g: string) => {
+  const r = await api<OntologyGenerationResponse>(
+    `${at(ws, o)}/generations/${enc(g)}:cancel`,
+    {},
+  );
+  trackEvent("generation_cancelled");
   return r;
 };
 

@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   CircleCheck,
+  CircleX,
   History,
   Mail,
   RotateCcw,
@@ -39,13 +40,22 @@ import {
   retryText,
   sourcesText,
 } from "./parts";
-import { isLive, isRetrying, ontologyQueries } from "./queries";
+import {
+  isLive,
+  isRetrying,
+  isUnderWay,
+  isWaiting,
+  ontologyQueries,
+} from "./queries";
+import { AnsweredQuestions, GenerationQuestions } from "./questions";
 import { ontologyName, useOntology } from "./scope";
 import { useSources } from "./sources";
 
 // /ontology/:ontologyId/generations/:generationId: one request to draft a
 // version, polled while it is queued or running, shown as helix-foundry's
-// data feed. Generations are listed among the versions (versions.tsx), named
+// data feed. One waiting for answers to the agent's questions isn't polled:
+// it shows them to answer (./questions.tsx), and once answered, carries on
+// polled again, showing what was answered. Generations are listed among the versions (versions.tsx), named
 // by their one-line title (generationTitle); the goal shows whole only on a
 // generation's own page.
 
@@ -136,8 +146,14 @@ export function GenerationPage({ generationId }: { generationId: string }) {
       </Page>
     );
   const failed = g.status === "ONTOLOGY_GENERATION_STATUS_FAILED",
+    cancelled = g.status === "ONTOLOGY_GENERATION_STATUS_CANCELLED",
     succeeded = g.status === "ONTOLOGY_GENERATION_STATUS_SUCCEEDED",
+    needsInput = isWaiting(g),
     title = generationTitle(g);
+  // The agent asked questions, and they were answered: it carries on from
+  // where it asked.
+  const asked = (g.questions || []).length > 0,
+    answered = (g.questions || []).some((q) => typeof q.answer === "string");
   // A first ontology's draft (loadWhenReady) was made current and its load
   // queued as it was stored, unless a version was current by then.
   const loading =
@@ -183,21 +199,43 @@ export function GenerationPage({ generationId }: { generationId: string }) {
   });
   const running = g.status === "ONTOLOGY_GENERATION_STATUS_RUNNING",
     retrying = isRetrying(g),
-    waiting = g.status === "ONTOLOGY_GENERATION_STATUS_QUEUED" && !retrying;
-  // A running draft reads its tables for its first few seconds, then drafts.
+    waiting =
+      g.status === "ONTOLOGY_GENERATION_STATUS_QUEUED" &&
+      !retrying &&
+      !answered;
+  // A running draft reads its tables for its first few seconds, then
+  // drafts; one carried on from answers drafts at once.
   const drafting =
-    running && now - Date.parse(g.startedAt || g.createdAt || "") >= 4000;
+    (answered && isLive(g)) ||
+    (running && now - Date.parse(g.startedAt || g.createdAt || "") >= 4000);
   const steps: FeedStep[] = [
     step(
       waiting ? "Waiting for the agent" : "Picked up by the agent",
-      running || succeeded || retrying || (failed && !!g.startedAt),
+      running ||
+        succeeded ||
+        retrying ||
+        asked ||
+        ((failed || cancelled) && !!g.startedAt),
       waiting,
     ),
     step(
       `Reading ${sourcesText(g)}`,
-      succeeded || drafting,
+      succeeded || drafting || asked,
       running && !drafting,
     ),
+    ...(asked
+      ? [
+          step(
+            needsInput
+              ? "Waiting for your answers"
+              : answered
+                ? "Answered the agent’s questions"
+                : "Asked you questions",
+            answered,
+            needsInput,
+          ),
+        ]
+      : []),
     step("Drafting types, links and mappings", succeeded, drafting),
     step(
       succeeded && result.data?.version
@@ -246,7 +284,10 @@ export function GenerationPage({ generationId }: { generationId: string }) {
             >
               Review version {result.data?.version?.version ?? ""}
             </ButtonLink>
-          ) : failed && canManage(role) && connectors.data && sets.data ? (
+          ) : (failed || cancelled) &&
+            canManage(role) &&
+            connectors.data &&
+            sets.data ? (
             <ButtonLink
               icon={RotateCcw}
               to={paths.generate(o, {
@@ -260,7 +301,7 @@ export function GenerationPage({ generationId }: { generationId: string }) {
                 ),
               })}
             >
-              Try again
+              {failed ? "Try again" : "Generate again"}
             </ButtonLink>
           ) : undefined
         }
@@ -289,7 +330,16 @@ export function GenerationPage({ generationId }: { generationId: string }) {
             }
           />
         )}
-        {isLive(g) && g.loadWhenReady && (
+        {needsInput && <GenerationQuestions generation={g} />}
+        {cancelled && (
+          <Callout
+            icon={CircleX}
+            tone="muted"
+            title="Cancelled"
+            text="Nothing was drafted. Generate again whenever you’re ready."
+          />
+        )}
+        {isUnderWay(g) && g.loadWhenReady && (
           <Callout
             icon={Mail}
             tone="muted"
@@ -316,6 +366,7 @@ export function GenerationPage({ generationId }: { generationId: string }) {
         )}
         <DataFeed items={items} steps={steps} />
         {g.goal?.trim() && <Goal goal={g.goal.trim()} />}
+        {!needsInput && <AnsweredQuestions generation={g} />}
         <Panel title="Details">
           <KeyValue
             columns={2}

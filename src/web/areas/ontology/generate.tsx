@@ -36,9 +36,15 @@ import {
   STEP_COPY,
   generationSources,
   startingEventSources,
+  startingGoal,
   startingSets,
 } from "./model";
-import { generateOntology, isLive, ontologyQueries } from "./queries";
+import {
+  generateOntology,
+  isUnderWay,
+  isWaiting,
+  ontologyQueries,
+} from "./queries";
 import { isSampleConnector, isSampleSet } from "./sample";
 import { ontologyName, useOntology } from "./scope";
 import { useSampleOntology } from "./use-sample-ontology";
@@ -66,7 +72,11 @@ import { useSampleOntology } from "./use-sample-ontology";
 // starts with none. Connecting by signing in leaves the page: its callback
 // comes back here with what was chosen (SignInReturn's picks, as router
 // state, which a long goal can't outgrow as a link would), the connector it
-// made among them.
+// made among them. The goal starts as the one before a sign-in's round
+// trip, else a link's (`goal=`), else the goal of the generation that
+// drafted the current version (startingGoal), so a new draft carries on
+// from it; until that generation is read (or can't be), the goal waits and
+// nothing is generated.
 
 export function GeneratePage() {
   const { id, role } = useWorkspace(),
@@ -111,22 +121,22 @@ export function GeneratePage() {
         ),
       );
   }, [setsLoaded]);
-  // The chosen API sources start as before a sign-in's round trip, else
-  // the prefill's, else those the current version's generation read; null
-  // until what they come from has loaded.
-  const eventsPrefill = params.get("event_sources"),
-    draftedBy =
-      eventsPrefill === null ? current.data?.version?.generationId : undefined,
+  // The generation that drafted the current version: the API sources and
+  // the goal start from it.
+  const draftedBy = current.data?.version?.generationId,
     drafted = useQuery({
       ...ontologyQueries.generation(id, o, draftedBy || ""),
       enabled: !!draftedBy,
-    });
-  const eventsLoaded =
-    !!connectors.data &&
-    !!sets.data &&
-    (eventsPrefill !== null ||
+    }),
+    draftedRead =
       !ontology.currentVersionId ||
-      (!!current.data && (!draftedBy || !!drafted.data || !!drafted.error)));
+      (!!current.data && (!draftedBy || !!drafted.data || !!drafted.error));
+  // The chosen API sources start as before a sign-in's round trip, else
+  // the prefill's, else those the current version's generation read; null
+  // until what they come from has loaded.
+  const eventsPrefill = params.get("event_sources");
+  const eventsLoaded =
+    !!connectors.data && !!sets.data && (eventsPrefill !== null || draftedRead);
   const [chosenEvents, setChosenEvents] = useState<EventChoices | null>(() =>
     back?.eventSources ? new Map(back.eventSources) : null,
   );
@@ -135,15 +145,24 @@ export function GeneratePage() {
       setChosenEvents(
         startingEventSources(
           eventsPrefill,
-          drafted.data?.generation || undefined,
+          (eventsPrefill === null && drafted.data?.generation) || undefined,
           connectors.data!.connectors || [],
           sets.data!,
         ),
       );
   }, [eventsLoaded]);
-  const [goal, setGoal] = useState(
-    () => back?.goal ?? params.get("goal") ?? "",
+  // null until the goal it starts from is known.
+  const goalLink = params.get("goal");
+  const [goalText, setGoal] = useState<string | null>(() =>
+    back?.goal !== undefined || goalLink !== null
+      ? startingGoal(back?.goal, goalLink, undefined)
+      : null,
   );
+  useEffect(() => {
+    if (draftedRead && goalText === null)
+      setGoal(startingGoal(undefined, null, drafted.data?.generation));
+  }, [draftedRead]);
+  const goal = goalText ?? "";
   // The WFE counts characters (code points), not UTF-16 units.
   const goalChars = [...goal.trim()].length;
   // Chosen connectors; by default every synced one (or the ones asked for).
@@ -171,7 +190,7 @@ export function GeneratePage() {
       documents: documents.data,
     },
   );
-  const live = generations.data?.generations?.find(isLive);
+  const live = generations.data?.generations?.find(isUnderWay);
   const crumbs = [
     { label: "Ontologies", to: paths.ontologies() },
     { label: ontologyName(ontology), to: paths.ontology(o) },
@@ -280,12 +299,16 @@ export function GeneratePage() {
             )}
             {live && (
               <p className="on-muted">
-                A generation is already{" "}
-                {live.status === "ONTOLOGY_GENERATION_STATUS_RUNNING"
-                  ? "running"
-                  : "queued"}
-                .{" "}
-                <Link to={paths.generation(o, live.id)}>See its progress</Link>
+                {isWaiting(live)
+                  ? "A generation is waiting for answers to the agent’s questions."
+                  : `A generation is already ${
+                      live.status === "ONTOLOGY_GENERATION_STATUS_RUNNING"
+                        ? "running"
+                        : "queued"
+                    }.`}{" "}
+                <Link to={paths.generation(o, live.id)}>
+                  {isWaiting(live) ? "Answer them" : "See its progress"}
+                </Link>
               </p>
             )}
             <AiRefusal
@@ -308,6 +331,7 @@ export function GeneratePage() {
                 disabled={
                   state.kind !== "ready" ||
                   goalChars > MAX_GOAL ||
+                  goalText === null ||
                   chosenSets === null ||
                   chosenEvents === null ||
                   aiReady === false
