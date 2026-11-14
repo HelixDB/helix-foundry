@@ -469,6 +469,18 @@ func (u Unimplemented) FinishOntologyGeneration(context.Context, string, string,
 	u.unimplemented("FinishOntologyGeneration")
 	return nil
 }
+func (u Unimplemented) AnswerOntologyGeneration(context.Context, string, string, uint64, []model.OntologyAnswer) error {
+	u.unimplemented("AnswerOntologyGeneration")
+	return nil
+}
+func (u Unimplemented) CancelOntologyGeneration(context.Context, string, string) error {
+	u.unimplemented("CancelOntologyGeneration")
+	return nil
+}
+func (u Unimplemented) ListOntologyGenerationsAskedBefore(context.Context, time.Time, int) ([]*model.OntologyGeneration, error) {
+	u.unimplemented("ListOntologyGenerationsAskedBefore")
+	return nil, nil
+}
 func (u Unimplemented) GetFoundryOntology(context.Context, string, string) (*model.FoundryOntology, error) {
 	u.unimplemented("GetFoundryOntology")
 	return nil, nil

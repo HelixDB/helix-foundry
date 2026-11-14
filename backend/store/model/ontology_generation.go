@@ -15,6 +15,12 @@ const (
 	OntologyGenerationRunning   OntologyGenerationStatus = "running"
 	OntologyGenerationSucceeded OntologyGenerationStatus = "succeeded"
 	OntologyGenerationFailed    OntologyGenerationStatus = "failed"
+	// OntologyGenerationNeedsInput waits for answers to the questions the
+	// agent asked (OntologyGeneration.Questions), still the ontology's live
+	// generation.
+	OntologyGenerationNeedsInput OntologyGenerationStatus = "needs_input"
+	// OntologyGenerationCancelled was cancelled before it stored a draft.
+	OntologyGenerationCancelled OntologyGenerationStatus = "cancelled"
 )
 
 // OntologyGeneration is one request to draft a version of an ontology, and the
@@ -41,6 +47,56 @@ type OntologyGeneration struct {
 	CreatedAt         time.Time
 	StartedAt         *time.Time
 	FinishedAt        *time.Time
+	// Questions are what the agent's last turn asked, nil for a generation
+	// it asked nothing of. With Answers nil the generation needs input;
+	// answered and live, its next attempt carries on from TurnState.
+	Questions *OntologyQuestions
+	// TurnState is the agent's session state the asking turn returned,
+	// opaque and sensitive (it may hold data excerpts): only
+	// ClaimOntologyGeneration reads it, for the attempt that answers, and the
+	// generation's end drops it. It never leaves the backend.
+	TurnState json.RawMessage
+}
+
+// OntologyQuestion is a question the agent asked about its draft, as the
+// turn's draft has it (schema/turn_result.json Question). Its text,
+// options and default are the model's words and may quote the data.
+type OntologyQuestion struct {
+	ID      string   `json:"id"`
+	Items   []string `json:"items"`
+	Text    string   `json:"text"`
+	Options []string `json:"options"`
+	// Default is one of Options when it has any; nil for none.
+	Default  *string `json:"default"`
+	Blocking bool    `json:"blocking"`
+}
+
+// OntologyAnswer answers one question, as the agent's feedback sends it.
+type OntologyAnswer struct {
+	QuestionID string `json:"question_id"`
+	Text       string `json:"text"`
+}
+
+// OntologyQuestions are the questions a turn asked and, once given, their
+// answers.
+type OntologyQuestions struct {
+	// DraftRev is the draft revision they were asked of, which the answers'
+	// feedback names.
+	DraftRev uint64
+	Asked    []OntologyQuestion
+	AskedAt  time.Time
+	// Answers are nil while the generation waits; once given, at most one
+	// per question asked, every blocking one answered.
+	Answers []OntologyAnswer
+}
+
+// OntologyGenerationAsked is a turn that ended asking questions
+// (OntologyGenerationOutcome.Asked): the session state to carry on from,
+// the draft revision it asked of, and the questions, at least one blocking.
+type OntologyGenerationAsked struct {
+	State     json.RawMessage
+	DraftRev  uint64
+	Questions []OntologyQuestion
 }
 
 // OntologyGenerationInput is what the generation was asked to cover. The
@@ -96,15 +152,18 @@ type OntologyGenerationDocument struct {
 
 // OntologyGenerationOutcome ends a generation's attempt. A non-nil RetryAt
 // requeues it; otherwise Status must be succeeded, with Result (except a
-// revision preview), or failed. ReviseResult stores cards and findings.
-// Tokens add to what earlier attempts spent.
+// revision preview), failed, or needs_input with Asked. ReviseResult stores
+// cards and findings. Tokens add to what earlier attempts spent.
 type OntologyGenerationOutcome struct {
 	Status       OntologyGenerationStatus
 	ReviseResult json.RawMessage
-	Error        string
-	RetryAt      *time.Time
-	Result       *OntologyVersion
-	Model        string
+	// Asked is set exactly with Status needs_input: what the turn asked, and
+	// the state the answers carry on from.
+	Asked   *OntologyGenerationAsked
+	Error   string
+	RetryAt *time.Time
+	Result  *OntologyVersion
+	Model   string
 	// ModelProvider is the provider kind that served Model (anthropic, ...).
 	ModelProvider string
 	InputTokens   int

@@ -115,9 +115,10 @@ func (s *mysqlDB) DeleteFoundryOntology(ctx context.Context, workspaceID, id, de
 		}
 		// Its generation can't store a draft any more. Ending it means no
 		// worker claims it, and pays for its turn, again; one running it
-		// loses its lease at its next renewal.
+		// loses its lease at its next renewal. One waiting for answers drops
+		// its session state.
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontology_generations
-SET status='failed', error='the ontology was deleted', active_key=NULL, lease_owner=NULL, lease_until=NULL, finished_at=NOW(6)
+SET status='failed', error='the ontology was deleted', active_key=NULL, turn_state=NULL, lease_owner=NULL, lease_until=NULL, finished_at=NOW(6)
 WHERE ontology_id=? AND active_key=1`, id); err != nil {
 			return err
 		}

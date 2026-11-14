@@ -6,12 +6,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helixdb/helix-foundry/backend/store/model"
+	"slices"
+	"strings"
 	"time"
+
+	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
+// ontologyGenerationColumns leave out the agent's session state, which only
+// ClaimOntologyGeneration reads (generationStateColumn).
 const ontologyGenerationColumns = `id, workspace_id, ontology_id, status, goal, title, input, lease_owner, lease_until, attempts, next_attempt_at,
-       error, result_version_id, model, input_tokens, output_tokens, requested_by_user_id, created_at, started_at, finished_at, revise_result`
+       error, result_version_id, model, input_tokens, output_tokens, requested_by_user_id, created_at, started_at, finished_at, revise_result,
+       draft_rev, questions, asked_at, answers, NULL`
+
+// generationStateColumn replaces ontologyGenerationColumns' last NULL for the
+// claim: the session state the answering attempt carries on from.
+const generationStateColumn = `, turn_state`
 
 // EnqueueOntologyGeneration queues a generation in one transaction that
 // holds its workspace's lock, then its ontology's (in that order, as every
@@ -90,7 +100,7 @@ FROM foundry_ontology_generations WHERE id=? AND ontology_id=?`, id, ontologyID)
 // so they stay small; GetOntologyGeneration has both.
 const ontologyGenerationListColumns = `id, workspace_id, ontology_id, status, goal, title, JSON_REMOVE(input, '$.revise.edits'), lease_owner,
        lease_until, attempts, next_attempt_at, error, result_version_id, model, input_tokens, output_tokens, requested_by_user_id,
-       created_at, started_at, finished_at, NULL`
+       created_at, started_at, finished_at, NULL, draft_rev, questions, asked_at, answers, NULL`
 
 // ListOntologyGenerations returns an ontology's generations, newest first,
 // without a revision's edits or result (ontologyGenerationListColumns).
@@ -105,10 +115,12 @@ FROM foundry_ontology_generations WHERE ontology_id=? ORDER BY created_at DESC, 
 
 // ClaimOntologyGeneration leases the oldest due generation to workerID: a
 // queued one whose retry time has come, or a running one whose lease expired.
-// Nil means none is due.
+// Nil means none is due. One that was answered comes with its TurnState.
+// One waiting for answers is never due.
 func (s *mysqlDB) ClaimOntologyGeneration(ctx context.Context, workerID string, lease time.Duration) (*model.OntologyGeneration, error) {
+	columns := strings.TrimSuffix(ontologyGenerationColumns, ", NULL") + generationStateColumn
 	return claimLease(ctx, s.root, "ontology generation", "foundry_ontology_generations", workerID, lease, func(tx *sql.Tx) (*model.OntologyGeneration, string, error) {
-		gen, err := scanOntologyGeneration(tx.QueryRowContext(ctx, "SELECT "+ontologyGenerationColumns+`
+		gen, err := scanOntologyGeneration(tx.QueryRowContext(ctx, "SELECT "+columns+`
 FROM foundry_ontology_generations
 WHERE (status='queued' AND next_attempt_at <= NOW(6)) OR (status='running' AND lease_until < NOW(6))
 ORDER BY next_attempt_at, id
@@ -133,9 +145,10 @@ func (s *mysqlDB) RenewOntologyGenerationLease(ctx context.Context, id, workerID
 WHERE id=? AND status='running' AND lease_owner=?`, time.Now().UTC().Add(lease), id, workerID)
 }
 
-// FinishOntologyGeneration ends workerID's attempt: requeued for RetryAt, or
-// terminal and no longer live. A success stores its draft version in the same
-// transaction. Revision previews succeed without a version; their findings
+// FinishOntologyGeneration ends workerID's attempt: requeued for RetryAt,
+// waiting for answers to what it asked (needs_input, still live), or
+// terminal and no longer live, its session state dropped. A success stores
+// its draft version in the same transaction. Revision previews succeed without a version; their findings
 // and cards, and those of refused edits, are kept in ReviseResult.
 // ErrNotFound means the lease was lost and nothing was stored, as when the
 // ontology was deleted meanwhile (DeleteFoundryOntology ends its generation).
@@ -160,10 +173,27 @@ func (s *mysqlDB) FinishOntologyGeneration(ctx context.Context, id, workerID str
 	const owned = ` WHERE id=? AND status='running' AND lease_owner=?`
 	usage := `model=COALESCE(NULLIF(?, ''), model), model_provider=COALESCE(NULLIF(?, ''), model_provider),
     input_tokens=COALESCE(input_tokens, 0)+?, output_tokens=COALESCE(output_tokens, 0)+?`
+	if (outcome.Status == model.OntologyGenerationNeedsInput) != (outcome.Asked != nil) || outcome.Asked != nil && outcome.RetryAt != nil {
+		return fmt.Errorf("an ontology generation needs input exactly when its outcome says what it asked")
+	}
 	if outcome.RetryAt != nil {
 		return execOrNotFound(ctx, s.db, `UPDATE foundry_ontology_generations
 SET status='queued', next_attempt_at=?, error=NULLIF(?, ''), lease_owner=NULL, lease_until=NULL, `+usage+owned,
 			outcome.RetryAt.UTC(), outcome.Error, outcome.Model, outcome.ModelProvider, outcome.InputTokens, outcome.OutputTokens, id, workerID)
+	}
+	if asked := outcome.Asked; asked != nil {
+		if len(asked.State) == 0 || !slices.ContainsFunc(asked.Questions, func(q model.OntologyQuestion) bool { return q.Blocking }) {
+			return fmt.Errorf("an ontology generation waits on state and at least one blocking question")
+		}
+		questions, err := json.Marshal(asked.Questions)
+		if err != nil {
+			return fmt.Errorf("encode ontology generation questions: %w", err)
+		}
+		// A new round of questions replaces the last, and its answers.
+		return execOrNotFound(ctx, s.db, `UPDATE foundry_ontology_generations
+SET status='needs_input', error=NULL, turn_state=?, draft_rev=?, questions=CAST(? AS JSON), asked_at=NOW(6), answers=NULL,
+    lease_owner=NULL, lease_until=NULL, `+usage+owned,
+			[]byte(asked.State), asked.DraftRev, string(questions), outcome.Model, outcome.ModelProvider, outcome.InputTokens, outcome.OutputTokens, id, workerID)
 	}
 	var report any
 	if len(outcome.ReviseResult) > 0 {
@@ -173,11 +203,11 @@ SET status='queued', next_attempt_at=?, error=NULLIF(?, ''), lease_owner=NULL, l
 	case outcome.Status == model.OntologyGenerationSucceeded && outcome.Result == nil:
 		// Only an actual preview may succeed without a version.
 		return execOrNotFound(ctx, s.db, `UPDATE foundry_ontology_generations
-SET status='succeeded', error=NULL, revise_result=CAST(? AS JSON), active_key=NULL, lease_owner=NULL, lease_until=NULL, finished_at=NOW(6), `+usage+owned+` AND JSON_EXTRACT(input, '$.revise.dry_run') = true`,
+SET status='succeeded', error=NULL, revise_result=CAST(? AS JSON), active_key=NULL, turn_state=NULL, lease_owner=NULL, lease_until=NULL, finished_at=NOW(6), `+usage+owned+` AND JSON_EXTRACT(input, '$.revise.dry_run') = true`,
 			report, outcome.Model, outcome.ModelProvider, outcome.InputTokens, outcome.OutputTokens, id, workerID)
 	case outcome.Status == model.OntologyGenerationFailed:
 		return execOrNotFound(ctx, s.db, `UPDATE foundry_ontology_generations
-SET status='failed', error=NULLIF(?, ''), revise_result=CAST(? AS JSON), active_key=NULL, lease_owner=NULL, lease_until=NULL, finished_at=NOW(6), `+usage+owned,
+SET status='failed', error=NULLIF(?, ''), revise_result=CAST(? AS JSON), active_key=NULL, turn_state=NULL, lease_owner=NULL, lease_until=NULL, finished_at=NOW(6), `+usage+owned,
 			outcome.Error, report, outcome.Model, outcome.ModelProvider, outcome.InputTokens, outcome.OutputTokens, id, workerID)
 	case outcome.Status != model.OntologyGenerationSucceeded || outcome.Result == nil:
 		return fmt.Errorf("ontology generation outcome %q is not terminal or has no result", outcome.Status)
@@ -204,8 +234,8 @@ SET status='failed', error=NULLIF(?, ''), revise_result=CAST(? AS JSON), active_
 		return err
 	}
 	res, err := tx.ExecContext(ctx, `UPDATE foundry_ontology_generations
-SET status='succeeded', error=NULL, result_version_id=?, revise_result=CAST(? AS JSON), active_key=NULL, lease_owner=NULL, lease_until=NULL,
-    finished_at=NOW(6), `+usage+owned,
+SET status='succeeded', error=NULL, result_version_id=?, revise_result=CAST(? AS JSON), active_key=NULL, turn_state=NULL, lease_owner=NULL,
+    lease_until=NULL, finished_at=NOW(6), `+usage+owned,
 		outcome.Result.ID, report, outcome.Model, outcome.ModelProvider, outcome.InputTokens, outcome.OutputTokens, id, workerID)
 	if err != nil {
 		return fmt.Errorf("finish ontology generation: %w", err)
@@ -227,6 +257,49 @@ SET status='succeeded', error=NULL, result_version_id=?, revise_result=CAST(? AS
 		return fmt.Errorf("commit ontology generation result: %w", err)
 	}
 	return nil
+}
+
+// AnswerOntologyGeneration queues a generation that waits for answers
+// (needs_input) with answers to the questions it asked of draft revision
+// draftRev, for its next attempt to carry on from its session state. The
+// answering turn is a new one, so its attempts start again. Checking the
+// answers is the caller's (ontologygen.Answers). ErrNotFound means it is not
+// waiting on that revision: answered, cancelled, ended or deleted
+// meanwhile, or never asked.
+func (s *mysqlDB) AnswerOntologyGeneration(ctx context.Context, ontologyID, id string, draftRev uint64, answers []model.OntologyAnswer) error {
+	if answers == nil {
+		answers = []model.OntologyAnswer{}
+	}
+	encoded, err := json.Marshal(answers)
+	if err != nil {
+		return fmt.Errorf("encode ontology generation answers: %w", err)
+	}
+	return execOrNotFound(ctx, s.db, `UPDATE foundry_ontology_generations
+SET status='queued', answers=CAST(? AS JSON), attempts=0, next_attempt_at=NOW(6), error=NULL
+WHERE id=? AND ontology_id=? AND status='needs_input' AND draft_rev=?`, string(encoded), id, ontologyID, draftRev)
+}
+
+// CancelOntologyGeneration ends a live generation (queued, running or
+// waiting for answers) as cancelled, storing no draft and dropping its
+// session state, so its ontology may generate again. A worker running it
+// loses its lease at its next renewal and stores nothing. ErrNotFound means
+// it is not live: it ended, or there is no such generation of the ontology.
+func (s *mysqlDB) CancelOntologyGeneration(ctx context.Context, ontologyID, id string) error {
+	return execOrNotFound(ctx, s.db, `UPDATE foundry_ontology_generations
+SET status='cancelled', active_key=NULL, turn_state=NULL, lease_owner=NULL, lease_until=NULL, finished_at=NOW(6)
+WHERE id=? AND ontology_id=? AND active_key=1`, id, ontologyID)
+}
+
+// ListOntologyGenerationsAskedBefore returns at most limit generations that
+// have waited for answers since before asked, oldest first, with their
+// questions: the worker answers each with the agent's defaults.
+func (s *mysqlDB) ListOntologyGenerationsAskedBefore(ctx context.Context, asked time.Time, limit int) ([]*model.OntologyGeneration, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+ontologyGenerationListColumns+`
+FROM foundry_ontology_generations WHERE status='needs_input' AND asked_at < ? ORDER BY asked_at, id LIMIT ?`, asked.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanAll(rows, scanOntologyGeneration)
 }
 
 // loadFirstDraft makes v, a first draft just stored, its ontology's current
@@ -267,16 +340,34 @@ func scanOntologyGeneration(scanner rowScanner) (*model.OntologyGeneration, erro
 	var status, input string
 	var reviseResult sql.NullString
 	var goal, title, leaseOwner, errText, resultVersion, modelName, requestedBy sql.NullString
-	var leaseUntil, startedAt, finishedAt sql.NullTime
+	var leaseUntil, startedAt, finishedAt, askedAt sql.NullTime
 	var inputTokens, outputTokens sql.NullInt64
+	var draftRev sql.Null[uint64]
+	var questions, answers sql.NullString
+	var state []byte
 	if err := scanner.Scan(&gen.ID, &gen.WorkspaceID, &gen.OntologyID, &status, &goal, &title, &input, &leaseOwner, &leaseUntil, &gen.Attempts,
 		&gen.NextAttemptAt, &errText, &resultVersion, &modelName, &inputTokens, &outputTokens, &requestedBy,
-		&gen.CreatedAt, &startedAt, &finishedAt, &reviseResult,
+		&gen.CreatedAt, &startedAt, &finishedAt, &reviseResult, &draftRev, &questions, &askedAt, &answers, &state,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	// The asked check sets the three together.
+	if questions.Valid {
+		gen.Questions = &model.OntologyQuestions{DraftRev: draftRev.V, AskedAt: askedAt.Time}
+		if err := json.Unmarshal([]byte(questions.String), &gen.Questions.Asked); err != nil {
+			return nil, fmt.Errorf("decode ontology generation %s questions: %w", gen.ID, err)
+		}
+		if answers.Valid {
+			if err := json.Unmarshal([]byte(answers.String), &gen.Questions.Answers); err != nil {
+				return nil, fmt.Errorf("decode ontology generation %s answers: %w", gen.ID, err)
+			}
+		}
+	}
+	if state != nil {
+		gen.TurnState = json.RawMessage(state)
 	}
 	if reviseResult.Valid {
 		gen.ReviseResult = json.RawMessage(reviseResult.String)

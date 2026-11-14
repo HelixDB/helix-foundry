@@ -299,6 +299,9 @@ type Store interface {
 	ClaimOntologyGeneration(ctx context.Context, workerID string, lease time.Duration) (*model.OntologyGeneration, error)
 	RenewOntologyGenerationLease(ctx context.Context, id, workerID string, lease time.Duration) error
 	FinishOntologyGeneration(ctx context.Context, id, workerID string, outcome model.OntologyGenerationOutcome) error
+	AnswerOntologyGeneration(ctx context.Context, ontologyID, id string, draftRev uint64, answers []model.OntologyAnswer) error
+	CancelOntologyGeneration(ctx context.Context, ontologyID, id string) error
+	ListOntologyGenerationsAskedBefore(ctx context.Context, asked time.Time, limit int) ([]*model.OntologyGeneration, error)
 	SettleFoundryReviewDecision(ctx context.Context, workspaceID string, decision *model.FoundryReviewDecision) error
 	SettleFoundryReleases(ctx context.Context, workspaceID, loadID string, decisions []*model.FoundryReviewDecision,
 		resend *model.FoundryGraphJob) (queued bool, err error)
