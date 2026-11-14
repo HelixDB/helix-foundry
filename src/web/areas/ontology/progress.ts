@@ -14,7 +14,8 @@ import { phaseLabel } from "./model";
 //   documents it has read of those it knows of (a total that grows set by
 //   set), and nothing of when a phase began. Its bar moves by phase, each a
 //   share of the whole (`PHASE_SHARE`), and through the documents phase by
-//   the documents read. Its time left is the documents left at the rate
+//   the documents read; while it loads tables, which have no total, it
+//   shimmers (no fraction). Its time left is the documents left at the rate
 //   they were read since this browser first saw them being read
 //   (`DocumentSample`), so it shows once two reads of the job are apart by a
 //   document.
@@ -104,10 +105,11 @@ export function loadProgress(
     total = p.documentsTotal || 0,
     reading = phase === "documents" && total > 0,
     within = reading ? Math.min(1, done / total) : 0;
-  const fraction = Math.min(
-    MAX_LIVE_FRACTION,
-    before + (shares[phase] || 0) * within,
-  );
+  // The tables' stretch has no total to measure: it shimmers.
+  const fraction =
+    phase === "ingest"
+      ? null
+      : Math.min(MAX_LIVE_FRACTION, before + (shares[phase] || 0) * within);
   // Documents a minute since first seen: the rest at that rate.
   const rate =
       reading && first && done > first.done && now > first.at

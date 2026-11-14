@@ -66,15 +66,17 @@ describe("a load job's bar", () => {
 
   it("moves by phase, the tables' stretch unmeasured", () => {
     expect(loadProgress(job({}), undefined, T0).fraction).toBe(0);
-    expect(
-      loadProgress(job({ phase: "ingest" }), undefined, T0).fraction,
-    ).toBeCloseTo(0.05);
+    // The tables have no total: unmeasured.
     const tables = loadProgress(
       job({ phase: "ingest", progress: { chunksDone: 40 } }),
       undefined,
       T0,
     );
-    expect(tables).toMatchObject({ remainingMs: null, step: "Loading tables" });
+    expect(tables).toMatchObject({
+      fraction: null,
+      remainingMs: null,
+      step: "Loading tables",
+    });
     // Never full before it succeeded.
     expect(
       loadProgress(job({ phase: "finishing" }), undefined, T0).fraction,
