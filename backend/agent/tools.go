@@ -29,6 +29,7 @@ var Tools = map[string]bool{
 	"helix_foundry_list_connectors":       true,
 	"helix_foundry_list_connector_kinds":  true,
 	"helix_foundry_list_review_decisions": true,
+	"helix_foundry_list_reviews":          true,
 	"helix_foundry_read_graph":            true,
 	"helix_foundry_ask":                   true,
 	"helix_foundry_get_question":          true,
@@ -48,10 +49,24 @@ const (
 	toolAsk     = "helix_foundry_ask"
 )
 
-// Operations are the actions the Assistant may prepare: create_load for now.
-// The sink refuses every other before it is checked or confirmed.
+// Operations are the actions the Assistant may prepare, each drawn as a card
+// (describe). The sink refuses every other before it is checked or
+// confirmed: upload_document (the person's browser holds the file) and
+// create_event_source (an API source is set up with its send tokens, in
+// Foundry).
 var Operations = map[string]bool{
-	"create_load": true,
+	"create_ontology":     true,
+	"generate_ontology":   true,
+	"set_current_version": true,
+	"create_load":         true,
+	"set_current_load":    true,
+	"revise_version":      true,
+	"sync_connector":      true,
+	"add_sample_data":     true,
+	"create_document_set": true,
+	"update_document_set": true,
+	"move_document":       true,
+	"settle_review":       true,
 }
 
 // askClientToken is the client token every ask of a turn's tool call sends,

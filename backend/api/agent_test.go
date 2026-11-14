@@ -175,20 +175,77 @@ func (s *agentStore) DismissFoundryAgentAction(_ context.Context, _, userID, id 
 	return a, nil
 }
 
-// agentLoads makes loads for the actions people run, failing with err when set.
+// agentLoads runs the actions people run, failing with err when set: calls
+// counts them, and ran names each one's backend call.
 type agentLoads struct {
 	integration.FoundryActionAPI
 	err   error
 	calls int
+	ran   []string
+}
+
+// done records a call and answers it with out, or err.
+func done[T any](l *agentLoads, method string, out T) (T, error) {
+	l.calls++
+	l.ran = append(l.ran, method)
+	if l.err != nil {
+		var none T
+		return none, l.err
+	}
+	return out, nil
 }
 
 func (l *agentLoads) CreateFoundryLoad(context.Context, *foundryv1.CreateFoundryLoadRequest, ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error) {
-	l.calls++
-	if l.err != nil {
-		return nil, l.err
-	}
-	return &foundryv1.FoundryLoadResponse{Load: &foundryv1.FoundryLoad{Id: "load-9"}}, nil
+	return done(l, "CreateFoundryLoad", &foundryv1.FoundryLoadResponse{Load: &foundryv1.FoundryLoad{Id: "load-9"}})
 }
+
+func (l *agentLoads) CreateFoundryOntology(context.Context, *foundryv1.CreateFoundryOntologyRequest, ...grpc.CallOption) (*foundryv1.FoundryOntologyResponse, error) {
+	return done(l, "CreateFoundryOntology", &foundryv1.FoundryOntologyResponse{Ontology: &foundryv1.FoundryOntology{Id: "ont-2"}})
+}
+
+func (l *agentLoads) GenerateOntology(context.Context, *foundryv1.GenerateOntologyRequest, ...grpc.CallOption) (*foundryv1.OntologyGenerationResponse, error) {
+	return done(l, "GenerateOntology", &foundryv1.OntologyGenerationResponse{Generation: &foundryv1.OntologyGeneration{Id: "gen-1"}})
+}
+
+func (l *agentLoads) SetCurrentOntologyVersion(context.Context, *foundryv1.SetCurrentOntologyVersionRequest, ...grpc.CallOption) (*foundryv1.OntologyVersionResponse, error) {
+	return done(l, "SetCurrentOntologyVersion", &foundryv1.OntologyVersionResponse{Version: &foundryv1.OntologyVersion{Id: "ver-1"}})
+}
+
+func (l *agentLoads) SetCurrentFoundryLoad(context.Context, *foundryv1.SetCurrentFoundryLoadRequest, ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error) {
+	return done(l, "SetCurrentFoundryLoad", &foundryv1.FoundryLoadResponse{Load: &foundryv1.FoundryLoad{Id: "load-1"}})
+}
+
+func (l *agentLoads) ReviseOntologyVersion(context.Context, *foundryv1.ReviseOntologyVersionRequest, ...grpc.CallOption) (*foundryv1.OntologyGenerationResponse, error) {
+	return done(l, "ReviseOntologyVersion", &foundryv1.OntologyGenerationResponse{Generation: &foundryv1.OntologyGeneration{Id: "gen-2"}})
+}
+
+func (l *agentLoads) SyncConnector(context.Context, *foundryv1.SyncConnectorRequest, ...grpc.CallOption) (*foundryv1.ConnectorSyncResponse, error) {
+	return done(l, "SyncConnector", &foundryv1.ConnectorSyncResponse{Sync: &foundryv1.ConnectorSync{Id: "sync-1"}})
+}
+
+func (l *agentLoads) CreateFoundryOntologyDocumentSet(context.Context, *foundryv1.CreateFoundryOntologyDocumentSetRequest, ...grpc.CallOption) (
+	*foundryv1.FoundryDocumentSetResponse, error) {
+	return done(l, "CreateFoundryOntologyDocumentSet", &foundryv1.FoundryDocumentSetResponse{Set: &foundryv1.FoundryDocumentSet{Id: "set-2"}})
+}
+
+func (l *agentLoads) UpdateFoundryOntologyDocumentSet(context.Context, *foundryv1.UpdateFoundryOntologyDocumentSetRequest, ...grpc.CallOption) (
+	*foundryv1.FoundryDocumentSetResponse, error) {
+	return done(l, "UpdateFoundryOntologyDocumentSet", &foundryv1.FoundryDocumentSetResponse{Set: &foundryv1.FoundryDocumentSet{Id: "set-1"}})
+}
+
+func (l *agentLoads) MoveFoundryOntologyDocument(context.Context, *foundryv1.MoveFoundryOntologyDocumentRequest, ...grpc.CallOption) (
+	*foundryv1.FoundryDocumentReadsResponse, error) {
+	return done(l, "MoveFoundryOntologyDocument", &foundryv1.FoundryDocumentReadsResponse{Document: &foundryv1.FoundryDocument{Id: "doc-1"}})
+}
+
+func (l *agentLoads) SettleFoundryReview(context.Context, *foundryv1.SettleFoundryReviewRequest, ...grpc.CallOption) (*foundryv1.FoundryReviewDecisionResponse, error) {
+	return done(l, "SettleFoundryReview", &foundryv1.FoundryReviewDecisionResponse{Decision: &foundryv1.FoundryReviewDecision{Id: "dec-1", Kind: "release"}})
+}
+
+// agentDirectory holds every database in ws-1.
+type agentDirectory struct{ integration.Directory }
+
+func (agentDirectory) TenantWorkspace(context.Context, string) (string, error) { return "ws-1", nil }
 
 // agentConfirmations spends a confirmation once, bound to its action.
 type agentConfirmations struct {
@@ -211,10 +268,12 @@ func (c *agentConfirmations) Consume(_ context.Context, b integration.Confirmati
 	return nil
 }
 
-// agentHost opens every session as the person whose call it is.
+// agentHost opens every session as the person whose call it is, who may do
+// anything unless refuse says why not.
 type agentHost struct {
 	service *integration.Service
 	err     error
+	refuse  error
 	actors  []ports.Actor
 	// deadlines is how long each session had to run.
 	deadlines []time.Duration
@@ -227,7 +286,9 @@ func (h *agentHost) Session(ctx context.Context, a ports.Actor, confirm integrat
 	}
 	return integration.Session{Ctx: ctx, Service: h.service, Identity: &integration.Identity{
 		User: true, HasPermission: func(integration.Permission) bool { return true },
-		Authorize: func(context.Context, any, integration.Grant, ...string) error { return nil }, Confirm: confirm,
+		Authorize: func(context.Context, any, integration.Grant, ...string) error { return h.refuse }, Confirm: confirm,
+		WithScope: func(ctx context.Context, _ string, _ bool) context.Context { return ctx },
+		Allows:    func(string, string, integration.Grant) bool { return true },
 	}}, h.err
 }
 
@@ -244,24 +305,30 @@ func newAgentFixture(t *testing.T) agentFixture {
 	cfg := config.Defaults()
 	cfg.Foundry.Agent.Enabled = true
 	store, loads, confirm := newAgentStore(), &agentLoads{}, &agentConfirmations{kept: map[string]integration.ConfirmationBinding{}}
-	host := &agentHost{service: (&integration.Service{Actions: loads, Confirmations: confirm}).ForAgent()}
+	host := &agentHost{service: (&integration.Service{Actions: loads, Confirmations: confirm, Directory: agentDirectory{}}).ForAgent()}
 	s := &Service{deps: &runtimeDeps{Cfg: &cfg, DB: store, AI: hostedAI(t), ConnectorKeys: aiKeyring(t), AgentSessions: host}}
 	return agentFixture{s: s, store: store, loads: loads, confirm: confirm, host: host}
 }
 
-// prepared stores an action of person's, with its confirmation kept by the host.
+// prepared stores a create_load of person's, with its confirmation kept by the host.
 func (f agentFixture) prepared(t *testing.T, id string) *foundrymodel.FoundryAgentAction {
+	t.Helper()
+	return f.preparedAs(t, id, integration.FoundryOperationInput{Operation: "create_load", Target: "ontology:ws-1/ont-1",
+		Payload: map[string]any{"version_id": "ver-1"}})
+}
+
+// preparedAs stores an action of person's for input.
+func (f agentFixture) preparedAs(t *testing.T, id string, input integration.FoundryOperationInput) *foundrymodel.FoundryAgentAction {
 	t.Helper()
 	sink := &capture{}
 	_, err := f.host.service.PrepareAgain(context.Background(), &integration.Identity{User: true, HasPermission: func(integration.Permission) bool { return true },
-		Authorize: func(context.Context, any, integration.Grant, ...string) error { return nil }},
-		integration.FoundryOperationInput{Operation: "create_load", Target: "ontology:ws-1/ont-1", Payload: map[string]any{"version_id": "ver-1"}}, sink)
+		Authorize: func(context.Context, any, integration.Grant, ...string) error { return nil }}, input, sink)
 	require.NoError(t, err)
 	sealed, keyID, err := f.s.deps.ConnectorKeys.Seal([]byte(sink.got.Confirmation.Token), id)
 	require.NoError(t, err)
 	f.store.threads["th-1"] = &foundrymodel.FoundryAgentThread{ID: "th-1", WorkspaceID: "ws-1", UserID: person.UserID}
 	a := &foundrymodel.FoundryAgentAction{ID: id, TurnID: "turn-1", ThreadID: "th-1", WorkspaceID: "ws-1", UserID: person.UserID,
-		Operation: "create_load", Target: "ontology:ws-1/ont-1", Payload: sink.got.Payload, PayloadHash: sink.got.PayloadHash,
+		Operation: input.Operation, Target: input.Target, Payload: sink.got.Payload, PayloadHash: sink.got.PayloadHash,
 		ConfirmationID: sink.got.Confirmation.ID, TokenSealed: sealed, KeyID: keyID, Status: foundrymodel.FoundryAgentActionPrepared,
 		ExpiresAt: sink.got.Confirmation.ExpiresAt}
 	f.store.actions[id] = a
@@ -466,4 +533,59 @@ func TestRefreshAndDismissFoundryAgentAction(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "dismissed", dismissed.GetAction().GetStatus())
 	assert.Empty(t, f.store.finished, "dismissing starts no turn")
+}
+
+// Every operation the Assistant prepares runs from its person's click
+// through its own backend call, once, and its card refreshes without a
+// model. What the person may no longer do fails, running nothing.
+func TestEveryAssistantOperationRunsFromAClick(t *testing.T) {
+	hash := strings.Repeat("ab", 32)
+	for _, c := range []struct {
+		input  integration.FoundryOperationInput
+		method string
+	}{
+		{integration.FoundryOperationInput{Operation: "create_ontology", Target: "tenant:t-1", Payload: map[string]any{"name": "Renewals"}}, "CreateFoundryOntology"},
+		{integration.FoundryOperationInput{Operation: "generate_ontology", Target: "ontology:ws-1/ont-1", Payload: map[string]any{"goal": "Renewals"}}, "GenerateOntology"},
+		{integration.FoundryOperationInput{Operation: "set_current_version", Target: "ontology:ws-1/ont-1",
+			Payload: map[string]any{"version_id": "ver-2", "expected_current_version_id": "ver-1"}}, "SetCurrentOntologyVersion"},
+		{integration.FoundryOperationInput{Operation: "create_load", Target: "ontology:ws-1/ont-1", Payload: map[string]any{"version_id": "ver-1"}}, "CreateFoundryLoad"},
+		{integration.FoundryOperationInput{Operation: "set_current_load", Target: "ontology:ws-1/ont-1", Payload: map[string]any{"load_id": "load-1"}}, "SetCurrentFoundryLoad"},
+		{integration.FoundryOperationInput{Operation: "revise_version", Target: "ontology:ws-1/ont-1", Payload: map[string]any{"version_id": "ver-1",
+			"edits": []any{map[string]any{"remove": map[string]any{"item_id": "rule.old"}}}}}, "ReviseOntologyVersion"},
+		{integration.FoundryOperationInput{Operation: "sync_connector", Target: "connector:ws-1/c-1", Payload: map[string]any{}}, "SyncConnector"},
+		{integration.FoundryOperationInput{Operation: "create_document_set", Target: "ontology:ws-1/ont-1", Payload: map[string]any{"name": "Leases"}},
+			"CreateFoundryOntologyDocumentSet"},
+		{integration.FoundryOperationInput{Operation: "update_document_set", Target: "ontology:ws-1/ont-1", Payload: map[string]any{"set_id": "set-1", "name": "Signed"}},
+			"UpdateFoundryOntologyDocumentSet"},
+		{integration.FoundryOperationInput{Operation: "move_document", Target: "ontology:ws-1/ont-1", Payload: map[string]any{"document_id": "doc-1", "set_id": "set-2"}},
+			"MoveFoundryOntologyDocument"},
+		{integration.FoundryOperationInput{Operation: "settle_review", Target: "ontology:ws-1/ont-1", Payload: map[string]any{"review_id": "r-1",
+			"decision": map[string]any{"release": map[string]any{"statement_hash": hash}}}}, "SettleFoundryReview"},
+	} {
+		t.Run(c.input.Operation, func(t *testing.T) {
+			f := newAgentFixture(t)
+			a := f.preparedAs(t, "act-1", c.input)
+			a.Status = foundrymodel.FoundryAgentActionExpired
+			refreshed, err := f.s.RefreshFoundryAgentAction(personCtx, &foundryv1.RefreshFoundryAgentActionRequest{WorkspaceId: "ws-1", Id: "act-1"})
+			require.NoError(t, err)
+			assert.Equal(t, "prepared", refreshed.GetAction().GetStatus())
+			a.Status = foundrymodel.FoundryAgentActionPrepared
+			resp, err := f.s.ExecuteFoundryAgentAction(personCtx, &foundryv1.ExecuteFoundryAgentActionRequest{WorkspaceId: "ws-1", Id: "act-1", PayloadHash: a.PayloadHash})
+			require.NoError(t, err)
+			assert.Equal(t, "succeeded", resp.GetAction().GetStatus(), resp.GetAction().GetError())
+			assert.Equal(t, []string{c.method}, f.loads.ran)
+			assert.Equal(t, "action_result", resp.GetContinuation().GetKind(), "the agent goes on from it")
+		})
+	}
+	t.Run("what the person may no longer do", func(t *testing.T) {
+		f := newAgentFixture(t)
+		a := f.preparedAs(t, "act-1", integration.FoundryOperationInput{Operation: "sync_connector", Target: "connector:ws-1/c-1", Payload: map[string]any{}})
+		f.host.refuse = status.Error(codes.PermissionDenied, "not an admin")
+		resp, err := f.s.ExecuteFoundryAgentAction(personCtx, &foundryv1.ExecuteFoundryAgentActionRequest{WorkspaceId: "ws-1", Id: "act-1", PayloadHash: a.PayloadHash})
+		require.NoError(t, err)
+		assert.Equal(t, "failed", resp.GetAction().GetStatus())
+		assert.Zero(t, f.loads.calls)
+		_, err = f.s.RefreshFoundryAgentAction(personCtx, &foundryv1.RefreshFoundryAgentActionRequest{WorkspaceId: "ws-1", Id: "act-1"})
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err), "nor is it prepared again")
+	})
 }

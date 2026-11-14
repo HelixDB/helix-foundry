@@ -52,6 +52,9 @@ type Deps struct {
 	Plans ports.PlanReader `optional:"true"`
 	// Sessions opens a person's tools; required while the Assistant is on.
 	Sessions integration.SessionHost `optional:"true"`
+	// Databases says whose a database is, for an action on one; without
+	// it, such actions are refused.
+	Databases ports.Databases `optional:"true"`
 }
 
 type turnQueue interface {
@@ -98,7 +101,7 @@ func New(d Deps) (*Task, error) {
 	}
 	t.queue = d.DB
 	t.runner = &agent.Runner{
-		DB: d.DB, Sessions: d.Sessions, AI: resolver, Models: llm.New, Catalog: catalog, Keys: resolver.Keyring,
+		DB: d.DB, Sessions: d.Sessions, AI: resolver, Models: llm.New, Catalog: catalog, Keys: resolver.Keyring, Databases: d.Databases,
 		Cfg: cfg, WorkerID: t.workerID, Now: time.Now,
 	}
 	return t, nil

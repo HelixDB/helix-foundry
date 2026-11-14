@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -45,6 +46,9 @@ type memStore struct {
 	actions  []*model.FoundryAgentAction
 	// ontologies are the workspace's; Sales graph (ont1) unless a test says.
 	ontologies []*model.FoundryOntology
+	connectors []*model.Connector
+	sets       []*model.FoundryDocumentSet
+	documents  []*model.FoundryDocument
 	// decided is what the person did with an action by the time the turn
 	// prepares it again; nothing when empty.
 	decided model.FoundryAgentActionStatus
@@ -130,12 +134,60 @@ func (s *memStore) ListFoundryOntologies(_ context.Context, workspaceID, _ strin
 	return out, "", nil
 }
 
+// GetOntologyVersion numbers ver<n> n, and any other version 3.
 func (s *memStore) GetOntologyVersion(_ context.Context, _, id string) (*model.OntologyVersion, error) {
-	return &model.OntologyVersion{ID: id, Version: 3}, nil
+	if id == "gone" {
+		return nil, foundrystore.ErrNotFound
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(id, "ver"))
+	if err != nil {
+		n = 3
+	}
+	return &model.OntologyVersion{ID: id, Version: n}, nil
 }
 
+// loadedAt is when every load of the store started.
+var loadedAt = time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+
 func (s *memStore) GetFoundryLoad(_ context.Context, _, id string) (*model.FoundryLoad, error) {
-	return &model.FoundryLoad{ID: id, Status: model.FoundryLoadReady}, nil
+	return &model.FoundryLoad{ID: id, Status: model.FoundryLoadReady, VersionID: "ver2", Version: 2, CreatedAt: loadedAt}, nil
+}
+
+func (s *memStore) GetConnector(_ context.Context, workspaceID, id string) (*model.Connector, error) {
+	for _, c := range s.connectors {
+		if c.WorkspaceID == workspaceID && c.ID == id {
+			return c, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
+}
+
+func (s *memStore) ListConnectors(_ context.Context, workspaceID string) ([]*model.Connector, error) {
+	var out []*model.Connector
+	for _, c := range s.connectors {
+		if c.WorkspaceID == workspaceID {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+func (s *memStore) GetFoundryDocumentSet(_ context.Context, workspaceID, id string) (*model.FoundryDocumentSet, error) {
+	for _, set := range s.sets {
+		if set.WorkspaceID == workspaceID && set.ID == id {
+			return set, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
+}
+
+func (s *memStore) GetFoundryDocument(_ context.Context, workspaceID, id string) (*model.FoundryDocument, error) {
+	for _, d := range s.documents {
+		if d.WorkspaceID == workspaceID && d.ID == id {
+			return d, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
 }
 
 // eventTypes are the stored events' types, in order.
@@ -190,6 +242,49 @@ type backend struct {
 	listed int
 	// onCall runs on every read the tools make.
 	onCall func()
+	// reviews are the current load's, by key; reviewErr refuses reading them.
+	reviews   []*foundryv1.FoundryReview
+	reviewErr error
+}
+
+func (b *backend) ListFoundryReviews(_ context.Context, r *foundryv1.ListFoundryReviewsRequest, _ ...grpc.CallOption) (*foundryv1.ListFoundryReviewsResponse, error) {
+	if b.reviewErr != nil {
+		return nil, b.reviewErr
+	}
+	out := &foundryv1.ListFoundryReviewsResponse{LoadId: "load1"}
+	for _, review := range b.reviews {
+		if slices.Contains(r.GetReviewKeys(), review.GetReviewKey()) {
+			out.Reviews = append(out.Reviews, review)
+		}
+	}
+	return out, nil
+}
+
+// directory is the host's, holding every database in ws1.
+type directory struct{}
+
+func (directory) AuthorizeCreate(context.Context, string, string) error { return nil }
+func (directory) TenantWorkspace(context.Context, string) (string, error) {
+	return ws, nil
+}
+func (directory) CreateProject(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+func (directory) CreateDatabase(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+
+// databases are the host's: t1 (sales) in ws1, t2 in another workspace.
+type databases struct{ ports.Databases }
+
+func (databases) Get(_ context.Context, tenantID string) (ports.Database, error) {
+	switch tenantID {
+	case "t1":
+		return ports.Database{TenantID: "t1", WorkspaceID: ws, Name: "sales"}, nil
+	case "t2":
+		return ports.Database{TenantID: "t2", WorkspaceID: "ws2", Name: "theirs"}, nil
+	}
+	return ports.Database{}, foundrystore.ErrNotFound
 }
 
 func (b *backend) ListFoundryOntologies(context.Context, *foundryv1.ListFoundryOntologiesRequest, ...grpc.CallOption) (*foundryv1.ListFoundryOntologiesResponse, error) {
@@ -237,11 +332,13 @@ func (c *confirmations) Consume(_ context.Context, b integration.ConfirmationBin
 	return nil
 }
 
-// sessions opens every session on one service, as an owner who may do anything.
+// sessions opens every session on one service, as an owner who may do
+// anything unless may says otherwise.
 type sessions struct {
 	service *integration.Service
 	actors  []ports.Actor
 	err     error
+	may     func(integration.Permission) bool
 }
 
 func (h *sessions) Session(ctx context.Context, actor ports.Actor, confirm integration.ConfirmMode) (integration.Session, error) {
@@ -249,8 +346,12 @@ func (h *sessions) Session(ctx context.Context, actor ports.Actor, confirm integ
 	if h.err != nil {
 		return integration.Session{}, h.err
 	}
+	may := h.may
+	if may == nil {
+		may = func(integration.Permission) bool { return true }
+	}
 	return integration.Session{Ctx: ctx, Service: h.service, Identity: &integration.Identity{
-		User: true, HasPermission: func(integration.Permission) bool { return true },
+		User: true, HasPermission: may,
 		Authorize: func(context.Context, any, integration.Grant, ...string) error { return nil },
 		Allows:    func(string, string, integration.Grant) bool { return true },
 		WithScope: func(ctx context.Context, _ string, _ bool) context.Context { return ctx },
@@ -294,12 +395,13 @@ func newHarness(t *testing.T, steps ...[]llm.Chunk) *harness {
 	h := &harness{db: &memStore{ontologies: []*model.FoundryOntology{{ID: ontology, WorkspaceID: ws, Name: "Sales graph"}}},
 		model: &scripted{steps: steps}, backend: b, keys: keys}
 	service := (&integration.Service{Foundry: b, Actions: integration.FoundryClients{FoundryServiceClient: b}, Confirmations: &confirmations{},
-		Workflows: b, FoundryURL: "http://localhost:3000", Wait: time.Second}).ForAgent()
+		Workflows: b, FoundryURL: "http://localhost:3000", Wait: time.Second, Directory: directory{},
+		SampleDatabase: &integration.SampleDatabase{Host: "acme-db", DisableTLS: true}}).ForAgent()
 	h.host = &sessions{service: service}
 	catalog, err := ai.VendoredCatalog()
 	require.NoError(t, err)
 	cfg := config.Defaults().Foundry.Agent
-	h.runner = &Runner{DB: h.db, Sessions: h.host, AI: fixedAI{}, Catalog: catalog, Keys: keys, Cfg: cfg, WorkerID: "w1", Now: time.Now,
+	h.runner = &Runner{DB: h.db, Sessions: h.host, AI: fixedAI{}, Catalog: catalog, Keys: keys, Cfg: cfg, WorkerID: "w1", Now: time.Now, Databases: databases{},
 		Models: func(ai.Resolved, ai.Model, *ai.Catalog) (llm.Model, llm.Pricer, error) {
 			return h.model, llm.Pricer{Input: 2000, Output: 10000, CacheRead: 200, CacheWrite: 2500}, nil
 		}}
@@ -366,7 +468,7 @@ func TestToolsAreAClosedList(t *testing.T) {
 func TestPreparedActionsGoToThePersonNotTheModel(t *testing.T) {
 	h := newHarness(t,
 		call("toolu_1", toolPrepare, `{"operation":"create_load","target":"ontology:ws1/ont1","payload":{"version_id":"ver3"}}`),
-		call("toolu_2", toolPrepare, `{"operation":"sync_connector","target":"connector:ws1/c1","payload":{}}`),
+		call("toolu_2", toolPrepare, `{"operation":"upload_document","target":"ontology:ws1/ont1","payload":{}}`),
 		say("Click Run to load v3."))
 	turn := message("Load the Sales graph")
 	h.db.turns = []*model.FoundryAgentTurn{turn}
@@ -375,7 +477,7 @@ func TestPreparedActionsGoToThePersonNotTheModel(t *testing.T) {
 	require.Len(t, h.db.actions, 1)
 	a := h.db.actions[0]
 	assert.Equal(t, "create_load", a.Operation)
-	assert.JSONEq(t, `{"ontology_id":"ont1","ontology_name":"Sales graph","version_id":"ver3","version":3}`, string(a.Display))
+	assert.JSONEq(t, `{"ontology":{"id":"ont1","name":"Sales graph"},"version":{"id":"ver3","number":3}}`, string(a.Display))
 	assert.True(t, a.TargetNamedByUser, "the person named the ontology")
 	token, err := h.keys.Open(a.TokenSealed, a.KeyID, a.ID)
 	require.NoError(t, err)
@@ -649,6 +751,27 @@ func TestToolCallsAreBoundedPerReplyAndAsksPerTurn(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []string{"toolu_3", "toolu_8", "toolu_9"}, unrun)
+	// The person sees each call the limits cut, and why.
+	assert.Equal(t, []string{"toolu_3", "toolu_8", "toolu_9"}, h.db.notRun())
+}
+
+// notRun are the calls whose events say a limit kept them from running, in order.
+func (s *memStore) notRun() []string {
+	var out []string
+	for _, e := range s.events {
+		var r struct {
+			Type      string `json:"type"`
+			ToolUseID string `json:"tool_use_id"`
+			NotRun    bool   `json:"not_run"`
+			IsError   bool   `json:"is_error"`
+			Error     string `json:"error"`
+		}
+		_ = json.Unmarshal(e, &r)
+		if r.Type == "tool_result" && r.NotRun && r.IsError && strings.HasPrefix(r.Error, "Not run") {
+			out = append(out, r.ToolUseID)
+		}
+	}
+	return out
 }
 
 func TestToolsStopAtTheWallTime(t *testing.T) {
@@ -673,6 +796,7 @@ func TestToolsStopAtTheWallTime(t *testing.T) {
 	}
 	require.Len(t, results, 2)
 	assert.Contains(t, results[1].Content, "ran out of time")
+	assert.Equal(t, []string{"toolu_2"}, h.db.notRun())
 }
 
 // A reply cut off at its output's limit, or a call that isn't JSON, runs no
@@ -688,6 +812,8 @@ func TestACutOffCallNeverRuns(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []llm.Block{llm.Text{Text: "Loading"}}, blocks, "the text is kept, the call isn't")
 		assert.Empty(t, h.db.actions)
+		assert.Equal(t, []string{"started", "text", "tool_call", "tool_result", "finished"}, h.db.eventTypes())
+		assert.Equal(t, []string{"toolu_1"}, h.db.notRun(), "the person sees the call cut off")
 	})
 	t.Run("not JSON", func(t *testing.T) {
 		h := newHarness(t, []llm.Chunk{llm.ToolUse{ID: "toolu_1", Name: toolPrepare, Input: json.RawMessage(`{"operation":"create_lo`)},
@@ -696,6 +822,10 @@ func TestACutOffCallNeverRuns(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, StopAnswered, a.Stop, "nothing to run: the reply ends the turn")
 		assert.Empty(t, h.db.actions)
+		assert.Equal(t, []string{"toolu_1"}, h.db.notRun())
+		var called struct{ Input string }
+		require.NoError(t, json.Unmarshal(h.db.events[1], &called))
+		assert.Equal(t, `{"operation":"create_lo`, called.Input, "its input shows as the text it was")
 	})
 }
 

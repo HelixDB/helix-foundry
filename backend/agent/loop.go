@@ -62,6 +62,10 @@ type Store interface {
 	ListFoundryOntologies(ctx context.Context, workspaceID, pageToken string, limit int) ([]*model.FoundryOntology, string, error)
 	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
 	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
+	GetConnector(ctx context.Context, workspaceID, id string) (*model.Connector, error)
+	ListConnectors(ctx context.Context, workspaceID string) ([]*model.Connector, error)
+	GetFoundryDocumentSet(ctx context.Context, workspaceID, id string) (*model.FoundryDocumentSet, error)
+	GetFoundryDocument(ctx context.Context, workspaceID, id string) (*model.FoundryDocument, error)
 }
 
 // Resolver is where a workspace's model calls go; *ai.Resolver resolves it.
@@ -80,10 +84,13 @@ type Runner struct {
 	Models   Models
 	Catalog  *ai.Catalog
 	// Keys seals the confirmations of the actions turns prepare.
-	Keys     *secretbox.Keyring
-	Cfg      config.AssistantConfig
-	WorkerID string
-	Now      func() time.Time
+	Keys *secretbox.Keyring
+	// Databases says whose a database is, for a create_ontology on one;
+	// nil refuses those.
+	Databases ports.Databases
+	Cfg       config.AssistantConfig
+	WorkerID  string
+	Now       func() time.Time
 }
 
 // Failure is why an attempt didn't end its turn, worded for the person:
@@ -160,7 +167,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	if err != nil {
 		return out, &Failure{Message: "The Assistant's model can't be priced; an owner can check Settings › AI models.", Permanent: true, Err: err}
 	}
-	sink := &actionSink{db: r.DB, keys: r.Keys, turn: turn, workerID: r.WorkerID, maxPending: r.Cfg.MaxPendingActions}
+	sink := &actionSink{db: r.DB, keys: r.Keys, turn: turn, workerID: r.WorkerID, maxPending: r.Cfg.MaxPendingActions, databases: r.Databases}
 	session, err := r.Sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: turn.UserID, WorkspaceID: turn.WorkspaceID},
 		integration.ConfirmByPerson{Sink: sink})
 	switch status.Code(err) {
@@ -169,6 +176,20 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 		return out, &Failure{Message: "You no longer have access to this workspace.", Permanent: true, Err: err}
 	default:
 		return out, &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
+	}
+	// A card names a review as its person reads it.
+	sink.reviews = func(ctx context.Context, ontologyID, reviewKey string) (*integration.FoundryReviewOutput, string, error) {
+		listed, _, err := session.Service.ListFoundryReviews(ctx, session.Identity, &integration.Call{}, integration.ListFoundryReviewsInput{
+			OntologyInput: integration.OntologyInput{WorkspaceID: turn.WorkspaceID, OntologyID: ontologyID}, ReviewKeys: []string{reviewKey}})
+		if err != nil {
+			return nil, "", err
+		}
+		for _, r := range listed.Reviews {
+			if r.ReviewKey == reviewKey {
+				return &r, listed.LoadID, nil
+			}
+		}
+		return nil, listed.LoadID, nil
 	}
 	client, offered, err := serve(session)
 	if err != nil {
@@ -314,16 +335,14 @@ func (t *turnRun) loop(ctx context.Context) error {
 		case spent+t.pricer.Micros(llm.Usage{In: int64(in), Out: maxOutput}) > t.turn.MaxUSDMicros:
 			return t.finish(ctx, StopBudget)
 		}
-		answer, stop, err := t.call(ctx, messages)
+		answer, stop, dropped, err := t.call(ctx, messages)
 		if err != nil {
 			return err
 		}
-		if len(answer.Content) == 0 {
-			// Nothing to keep: a refusal before any word, say.
-			return t.finish(ctx, stop)
-		}
-		if err := t.commit(ctx, answer); err != nil {
-			return err
+		if len(answer.Content) > 0 {
+			if err := t.commit(ctx, answer); err != nil {
+				return err
+			}
 		}
 		for _, b := range answer.Content {
 			if said, ok := b.(llm.Text); ok && strings.TrimSpace(said.Text) != "" {
@@ -331,6 +350,19 @@ func (t *turnRun) loop(ctx context.Context) error {
 					return err
 				}
 			}
+		}
+		for _, use := range dropped {
+			why := "Not run: its input wasn't JSON."
+			if stop == StopMaxTokens {
+				why = "Not run: the reply reached its length limit while writing it."
+			}
+			if err := t.notRun(ctx, use, why); err != nil {
+				return err
+			}
+		}
+		if len(answer.Content) == 0 {
+			// Nothing to keep: a refusal before any word, say.
+			return t.finish(ctx, stop)
 		}
 		if stop != StopAnswered || len(toolUses(answer)) == 0 {
 			return t.finish(ctx, stop)
@@ -345,10 +377,11 @@ func (t *turnRun) outOfTime() bool {
 
 // call makes one model call, adding what it used to the attempt. A tool call
 // that isn't JSON, or that a reply cut off at its output's limit was writing,
-// is left out: it never runs.
-func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message, StopReason, error) {
+// is left out of the answer, and returned as dropped: it never runs.
+func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message, StopReason, []llm.ToolUse, error) {
 	answer := llm.Message{Role: llm.Assistant}
 	stop := StopAnswered
+	var dropped []llm.ToolUse
 	t.out.Steps++
 	for chunk, err := range t.model.Stream(ctx, llm.Request{System: system(t.turn.WorkspaceID), Messages: messages, Tools: t.tools, MaxOutput: maxOutput}) {
 		if err != nil {
@@ -358,9 +391,9 @@ func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message
 				if refused.Kind == llm.ErrAuth {
 					message = "The model provider refused the workspace's key. An owner can check it in Settings › AI models."
 				}
-				return answer, "", &Failure{Message: message, Permanent: true, Err: err}
+				return answer, "", nil, &Failure{Message: message, Permanent: true, Err: err}
 			}
-			return answer, "", &Failure{Message: "The model provider is unavailable; Helix will retry", Err: err}
+			return answer, "", nil, &Failure{Message: "The model provider is unavailable; Helix will retry", Err: err}
 		}
 		switch c := chunk.(type) {
 		case llm.Text:
@@ -368,6 +401,8 @@ func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message
 		case llm.ToolUse:
 			if json.Valid(c.Input) {
 				answer.Content = append(answer.Content, c)
+			} else {
+				dropped = append(dropped, c)
 			}
 		case llm.Reasoning:
 			answer.Content = append(answer.Content, c)
@@ -388,9 +423,15 @@ func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message
 	}
 	if stop == StopMaxTokens {
 		// The turn ends here, so no call of this reply would run.
-		answer.Content = slices.DeleteFunc(answer.Content, func(b llm.Block) bool { _, ok := b.(llm.ToolUse); return ok })
+		answer.Content = slices.DeleteFunc(answer.Content, func(b llm.Block) bool {
+			use, ok := b.(llm.ToolUse)
+			if ok {
+				dropped = append(dropped, use)
+			}
+			return ok
+		})
 	}
-	return answer, stop, nil
+	return answer, stop, dropped, nil
 }
 
 // runTools runs the model's calls, in order, and commits their results as one
@@ -419,15 +460,14 @@ func (t *turnRun) runTools(ctx context.Context, uses []llm.ToolUse) error {
 			asked++
 		}
 		if unrun != "" {
+			if err := t.notRun(ctx, use, unrun); err != nil {
+				return err
+			}
 			results = append(results, llm.ToolResult{ToolUseID: use.ID, Content: unrun, IsError: true})
 			continue
 		}
 		tool := t.offered[use.Name]
-		title := use.Name
-		if tool != nil {
-			title = cmp.Or(tool.Title, use.Name)
-		}
-		if err := t.event(ctx, ToolCalled{ToolUseID: use.ID, Name: use.Name, Title: title, Input: use.Input}); err != nil {
+		if err := t.event(ctx, ToolCalled{ToolUseID: use.ID, Name: use.Name, Title: t.title(use.Name), Input: use.Input}); err != nil {
 			return err
 		}
 		content, output, failed := t.callTool(ctx, use, tool != nil)
@@ -445,6 +485,28 @@ func (t *turnRun) runTools(ctx context.Context, uses []llm.ToolUse) error {
 		results = append(results, llm.ToolResult{ToolUseID: use.ID, Content: content, IsError: failed})
 	}
 	return t.commit(ctx, llm.Message{Role: llm.User, Content: results})
+}
+
+// title is a tool's name for people: its title, else its name.
+func (t *turnRun) title(name string) string {
+	if tool := t.offered[name]; tool != nil {
+		return cmp.Or(tool.Title, name)
+	}
+	return name
+}
+
+// notRun shows the person a call the model wrote that a limit kept from
+// running, and why: the model is told the same.
+func (t *turnRun) notRun(ctx context.Context, use llm.ToolUse, why string) error {
+	input := use.Input
+	if !json.Valid(input) {
+		// Shown as text, so the event stays JSON.
+		input, _ = json.Marshal(string(input))
+	}
+	if err := t.event(ctx, ToolCalled{ToolUseID: use.ID, Name: use.Name, Title: t.title(use.Name), Input: input}); err != nil {
+		return err
+	}
+	return t.event(ctx, ToolReturned{ToolUseID: use.ID, Name: use.Name, IsError: true, Error: why, NotRun: true})
 }
 
 // callTool runs one call within toolTimeout: what the model reads of its

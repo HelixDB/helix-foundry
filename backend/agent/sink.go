@@ -17,50 +17,61 @@ import (
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
+	"github.com/helixdb/helix-foundry/backend/ports"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
 // actionSink keeps what a turn's model prepares, for the turn's person: the
 // confirmation's token sealed with the connectors' keyring, under the
-// action's own id, never shown to the model.
+// action's own id, never shown to the model, and the card Foundry draws of
+// it (describe).
 type actionSink struct {
 	db         Store
 	keys       *secretbox.Keyring
 	turn       *model.FoundryAgentTurn
 	workerID   string
 	maxPending int
+	// databases says whose a database is, for create_ontology on one; nil
+	// on a host that can't, which refuses such an action.
+	databases ports.Databases
+	// reviews reads a review as the turn's person, for settle_review's
+	// card; set once the person's session opens.
+	reviews reviewReader
 }
 
 var _ integration.ActionSink = (*actionSink)(nil)
 
 func (s *actionSink) Allows(operation string) bool { return Operations[operation] }
 
-// Record seals the token, names what the action acts on, and stores the
-// action with its card in one write. A payload the turn already prepared is
-// the action already stored, unless its person already decided it. A target
-// of another workspace is refused: a turn acts in its own. Its refusals
-// reach the model as their words.
+// Record checks the action acts in the turn's workspace, names what it acts
+// on, and stores it with its card in one write. A payload the turn already
+// prepared is the action already stored, unless its person already decided
+// it. Its refusals reach the model as their words.
 func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (integration.AwaitingPerson, error) {
 	if s.keys == nil {
 		return integration.AwaitingPerson{}, status.Error(codes.Unavailable, "the Assistant can't keep actions on this host")
 	}
-	if _, rest, _ := strings.Cut(a.Target, ":"); strings.SplitN(rest, "/", 2)[0] != s.turn.WorkspaceID {
-		return integration.AwaitingPerson{}, status.Error(codes.InvalidArgument, "the target is of another workspace: the Assistant acts in this one only")
+	t, err := s.target(ctx, a)
+	if err != nil {
+		return integration.AwaitingPerson{}, err
+	}
+	display, err := s.describe(ctx, a, t)
+	if err != nil {
+		return integration.AwaitingPerson{}, err
+	}
+	rawDisplay, err := json.Marshal(display)
+	if err != nil {
+		return integration.AwaitingPerson{}, err
+	}
+	named, err := s.namedByPerson(ctx, t)
+	if err != nil {
+		return integration.AwaitingPerson{}, err
 	}
 	actionID := id.New()
 	sealed, keyID, err := s.keys.Seal([]byte(a.Confirmation.Token), actionID)
 	if err != nil {
 		return integration.AwaitingPerson{}, fmt.Errorf("seal the action's confirmation: %w", err)
-	}
-	display := describe(ctx, s.db, s.turn.WorkspaceID, a)
-	rawDisplay, err := json.Marshal(display)
-	if err != nil {
-		return integration.AwaitingPerson{}, err
-	}
-	named, err := s.namedByPerson(ctx, a.Target, display)
-	if err != nil {
-		return integration.AwaitingPerson{}, err
 	}
 	stored, err := s.db.RecordFoundryAgentAction(ctx, s.workerID, &model.FoundryAgentAction{
 		ID: actionID, TurnID: s.turn.ID, ThreadID: s.turn.ThreadID, WorkspaceID: s.turn.WorkspaceID, UserID: s.turn.UserID,
@@ -89,82 +100,127 @@ func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (
 	return integration.AwaitingPerson{ActionID: stored.ID, ExpiresAt: stored.ExpiresAt}, nil
 }
 
-// Display is what an action's card names, resolved by Foundry from the
-// workspace: never the model's words.
-type Display struct {
-	OntologyID   string `json:"ontology_id,omitempty"`
-	OntologyName string `json:"ontology_name,omitempty"`
-	VersionID    string `json:"version_id,omitempty"`
-	// Version is the version's number, as the site shows it (v3).
-	Version int `json:"version,omitempty"`
+// target is what an action acts on, read from the turn's workspace: its id
+// and its name, and the names of the workspace's other things of its kind,
+// which a message naming one of them may hold its name within.
+type target struct {
+	id, name string
+	others   []string
+	// ontology is an ontology target's; connectorKind a connector's kind.
+	ontology      *model.FoundryOntology
+	connectorKind string
 }
 
-// describe names what a prepared action acts on: its ontology and the
-// version its payload names. What can't be read is left unnamed.
-func describe(ctx context.Context, db Store, workspaceID string, a integration.PreparedAction) Display {
-	var out Display
-	_, ontologyID, ok := integration.CutFoundryTarget(a.Target, "ontology")
-	if !ok {
-		return out
-	}
-	o, err := db.GetFoundryOntology(ctx, workspaceID, ontologyID)
-	if err != nil || o.DeletedAt != nil {
-		return out
-	}
-	out.OntologyID, out.OntologyName = o.ID, o.Name
-	var payload struct {
-		VersionID string `json:"version_id"`
-	}
-	if json.Unmarshal(a.Payload, &payload) == nil && payload.VersionID != "" {
-		out.VersionID = payload.VersionID
-		if v, err := db.GetOntologyVersion(ctx, o.ID, payload.VersionID); err == nil {
-			out.Version = v.Version
+// target reads what a acts on, refusing one of another workspace: a turn
+// acts in its own. A thing the workspace doesn't hold keeps its id alone;
+// the action is checked again when it runs.
+func (s *actionSink) target(ctx context.Context, a integration.PreparedAction) (target, error) {
+	ws := s.turn.WorkspaceID
+	elsewhere := status.Error(codes.InvalidArgument, "the target is of another workspace: the Assistant acts in this one only")
+	kind, rest, _ := strings.Cut(a.Target, ":")
+	inWorkspace, thingID, _ := strings.Cut(rest, "/")
+	ontologyNames := func(except string) ([]string, error) {
+		all, _, err := s.db.ListFoundryOntologies(ctx, ws, "", 100)
+		var names []string
+		for _, o := range all {
+			if o.ID != except {
+				names = append(names, o.Name)
+			}
 		}
+		return names, err
 	}
-	return out
+	switch kind {
+	case "workspace":
+		if rest != ws {
+			return target{}, elsewhere
+		}
+		// A new ontology on a new database: what a person names is its name.
+		var p integration.CreateOntologyPayload
+		if err := json.Unmarshal(a.Payload, &p); err != nil {
+			return target{}, err
+		}
+		others, err := ontologyNames("")
+		return target{name: p.Name, others: others}, err
+	case "tenant":
+		if s.databases == nil {
+			return target{}, status.Error(codes.FailedPrecondition, "the Assistant can't tell whose a database is here: prepare create_ontology on a new database instead")
+		}
+		d, err := s.databases.Get(ctx, rest)
+		switch {
+		case errors.Is(err, foundrystore.ErrNotFound) || err == nil && d.WorkspaceID != ws:
+			return target{}, elsewhere
+		case err != nil:
+			return target{}, err
+		}
+		return target{id: rest, name: d.Name}, nil
+	case "connector":
+		if inWorkspace != ws {
+			return target{}, elsewhere
+		}
+		all, err := s.db.ListConnectors(ctx, ws)
+		if err != nil {
+			return target{}, err
+		}
+		t := target{id: thingID}
+		for _, c := range all {
+			if c.ID == thingID {
+				t.name, t.connectorKind = c.Name, c.Kind
+			} else {
+				t.others = append(t.others, c.Name)
+			}
+		}
+		return t, nil
+	case "ontology":
+		if inWorkspace != ws {
+			return target{}, elsewhere
+		}
+		t := target{id: thingID}
+		switch o, err := s.db.GetFoundryOntology(ctx, ws, thingID); {
+		case err == nil && o.DeletedAt == nil:
+			t.name, t.ontology = o.Name, o
+		case err != nil && !errors.Is(err, foundrystore.ErrNotFound):
+			return target{}, err
+		}
+		others, err := ontologyNames(thingID)
+		t.others = others
+		return t, err
+	}
+	return target{}, status.Error(codes.InvalidArgument, "the Assistant acts on no target of kind "+kind)
 }
 
-// minNameRunes is the shortest ontology name a message names by its words:
-// a shorter one is in too many sentences by chance.
+// minNameRunes is the shortest name a message names by its words: a
+// shorter one is in too many sentences by chance.
 const minNameRunes = 3
 
 // namedByPerson reports whether the person named the action's target
 // themselves, in a message they sent or a page they were on in this thread:
-// its id, or its ontology's whole name, in words of its own, when no other
-// ontology's name holding it (Sales, in Sales graph) is there too. A card
-// whose target only the model chose says so.
-func (s *actionSink) namedByPerson(ctx context.Context, target string, display Display) (bool, error) {
-	_, targetID, ok := strings.Cut(target, "/")
-	if !ok {
-		return false, nil
-	}
+// its id, or its whole name, in words of its own, when no other name of its
+// kind holding it (Sales, in Sales graph) is there too. A card whose target
+// only the model chose says so.
+func (s *actionSink) namedByPerson(ctx context.Context, t target) (bool, error) {
 	turns, err := s.db.ListFoundryAgentTurns(ctx, s.turn.ThreadID, 100)
 	if err != nil {
 		return false, err
 	}
 	var name *regexp.Regexp
 	var longer []*regexp.Regexp
-	if n := strings.TrimSpace(display.OntologyName); utf8.RuneCountInString(n) >= minNameRunes {
+	if n := strings.TrimSpace(t.name); utf8.RuneCountInString(n) >= minNameRunes {
 		name = wholeWords(n)
-		others, _, err := s.db.ListFoundryOntologies(ctx, s.turn.WorkspaceID, "", 100)
-		if err != nil {
-			return false, err
-		}
-		for _, o := range others {
-			if o.ID != display.OntologyID && len(o.Name) > len(n) && name.MatchString(o.Name) {
-				longer = append(longer, wholeWords(o.Name))
+		for _, other := range t.others {
+			if len(other) > len(n) && name.MatchString(other) {
+				longer = append(longer, wholeWords(other))
 			}
 		}
 	}
-	for _, t := range turns {
-		if t.Kind != model.FoundryAgentTurnMessage {
+	for _, turn := range turns {
+		if turn.Kind != model.FoundryAgentTurnMessage {
 			continue
 		}
-		if strings.Contains(t.Input+" "+string(t.PageContext), targetID) {
+		if t.id != "" && strings.Contains(turn.Input+" "+string(turn.PageContext), t.id) {
 			return true, nil
 		}
-		if name != nil && name.MatchString(t.Input) &&
-			!slices.ContainsFunc(longer, func(l *regexp.Regexp) bool { return l.MatchString(t.Input) }) {
+		if name != nil && name.MatchString(turn.Input) &&
+			!slices.ContainsFunc(longer, func(l *regexp.Regexp) bool { return l.MatchString(turn.Input) }) {
 			return true, nil
 		}
 	}
