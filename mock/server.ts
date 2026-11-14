@@ -29,7 +29,8 @@ import { handleWorkos } from "./workos";
 //
 // Test hooks: POST /__mock/reset, GET /__mock/stats, and POST /__mock/config
 // with { refuseLocalToken, accessTokenTtlSeconds, allowedRegions, checkoutCardOnFile,
-// allowedEmails, ontologyStepMs, ontologyOutcome, documentUploadFailures,
+// allowedEmails, ontologyStepMs, ontologyOutcome, agentStepMs, agentOutcome,
+// agentActionTtlMs, documentUploadFailures,
 // loadStepMs, loadOutcome, documentOutcome, helixSubscription,
 // ontologyDatabaseHidden, startingQueries, indexesPending, readErrors,
 // s3RoleAccess, legacyDocumentSets, dataLayoutConflicts, enrichmentStepMs,
