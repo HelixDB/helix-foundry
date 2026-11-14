@@ -26,6 +26,7 @@ export type PapiArea =
   | "ontology"
   | "databases"
   | "explore"
+  | "agent"
   | "access";
 export type PapiRoute = {
   area: PapiArea;
@@ -447,6 +448,56 @@ export const papiRoutes = [
     area: "ontology",
     method: "POST",
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/questions/{id}:cancel",
+  },
+
+  // Agent: the Assistant. A person's threads with it, their messages (turns)
+  // and turns' events, stopping a turn, and running, refreshing or
+  // dismissing an action it prepared. Only the person runs an action: the
+  // agent's own execute is never here.
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/turns",
+  },
+  {
+    area: "agent",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/threads",
+  },
+  {
+    area: "agent",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/threads/{id}",
+  },
+  {
+    area: "agent",
+    method: "DELETE",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/threads/{id}",
+  },
+  {
+    area: "agent",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/turns/{id}/events",
+  },
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/turns/{id}:cancel",
+  },
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:execute",
+  },
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:refresh",
+  },
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:dismiss",
   },
 
   // Ontology: decisions, applied from the next load.

@@ -2530,6 +2530,244 @@ export type AskResult = (
 };
 export type AskResultStatus = AskResult["status"];
 
+// ---------------------------------------------------------------- Agent
+// Routes under /v1/workspaces/{workspaceId}/foundry/agent/...: the
+// Assistant, a conversation with a model over Foundry's own tools that acts
+// as its person (backend/agent). Threads are private to their user: another
+// user's thread, turn or action answers NOT_FOUND. A person's message queues
+// a turn the foundry-agent-worker runs; its events are polled by `afterSeq`,
+// as a question's are. What would change the workspace the model only
+// prepares: an action its person runs (Execute, with the payload's hash they
+// were shown), dismisses, or refreshes once its confirmation expired. A run
+// action queues a continuation turn (kind action_result) the agent goes on
+// from. Grantees are denied every route; a caller that isn't a person signed
+// in is PERMISSION_DENIED. Refusals carry an ErrorInfo reason
+// (AGENT_REFUSALS); the user's hourly messages are RESOURCE_EXHAUSTED.
+
+/** v1FoundryAgentTurn.status. */
+export type FoundryAgentTurnStatus =
+  | "queued"
+  | "running"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+/** v1FoundryAgentAction.status, as read: a prepared action past its expiry reads expired, one executing for over 2 minutes unknown. */
+export type AgentActionStatus =
+  | "prepared"
+  | "executing"
+  | "succeeded"
+  | "failed"
+  | "unknown"
+  | "expired"
+  | "dismissed";
+
+/** v1FoundryAgentPageContext: what the person was looking at, ids only. */
+export type AgentPageContext = { ontologyId?: string; loadId?: string };
+
+/** v1FoundryAgentThread */
+export type FoundryAgentThread = {
+  id: string;
+  // The first message's start.
+  title?: string;
+  // api (Foundry's own worker), claude_code or codex.
+  runtime?: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+/** v1FoundryAgentTurn */
+export type FoundryAgentTurn = {
+  id: string;
+  threadId?: string;
+  kind?: "message" | "action_result";
+  // The person's text; empty for an action_result.
+  text?: string;
+  // The action an action_result turn goes on from.
+  actionId?: string;
+  pageContext?: AgentPageContext | null;
+  status?: FoundryAgentTurnStatus;
+  error?: string;
+  // int64 millionths of a dollar.
+  usdMicros?: string;
+  steps?: number;
+  lastSeq?: number;
+  // A queued turn with attempts above 0 is retrying.
+  attempts?: number;
+  createdAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+};
+
+/** v1FoundryAgentAction: what the agent prepared, which only its person runs. */
+export type FoundryAgentAction = {
+  id: string;
+  turnId?: string;
+  threadId?: string;
+  // As the MCP's prepare names them: create_load, ontology:<workspace>/<ontology>.
+  operation?: string;
+  target?: string;
+  // The canonical payload, and the hash Execute sends back.
+  payloadJson?: string;
+  payloadHash?: string;
+  // The names Foundry resolved: AgentActionDisplay as JSON.
+  displayJson?: string;
+  // False when the target's ids never appeared in the person's messages or page.
+  targetNamedByUser?: boolean;
+  status?: AgentActionStatus;
+  // The operation's output once it ran (FoundryOperationOutput, untrusted).
+  resultJson?: string;
+  error?: string;
+  expiresAt?: string | null;
+  decidedByUserId?: string;
+  decidedAt?: string | null;
+  createdAt?: string | null;
+};
+
+/** backend/agent Display: what a card names, resolved by Foundry, never the model's words. */
+export type AgentActionDisplay = {
+  ontology_id?: string;
+  ontology_name?: string;
+  version_id?: string;
+  // The version's number (v3).
+  version?: number;
+};
+
+/** POST .../agent/turns */
+export type SendAgentMessageRequest = {
+  // Empty: a new thread.
+  threadId?: string;
+  // At most 4,000 characters.
+  text: string;
+  pageContext?: AgentPageContext;
+  // At most 64 characters: the same token returns the turn it queued.
+  clientToken: string;
+};
+/** v1FoundryAgentTurnResponse: POST turns and turns/{id}:cancel. */
+export type AgentTurnResponse = {
+  turn: FoundryAgentTurn;
+  thread: FoundryAgentThread;
+};
+/** GET .../agent/threads: the caller's, newest first, 50 a page. */
+export type ListAgentThreadsResponse = {
+  threads?: FoundryAgentThread[];
+  nextPageToken?: string;
+};
+/** GET .../agent/threads/{id}: its newest 100 turns, oldest first, and every action prepared in it. */
+export type AgentThreadResponse = {
+  thread: FoundryAgentThread;
+  turns?: FoundryAgentTurn[];
+  actions?: FoundryAgentAction[];
+};
+/** v1FoundryAgentEvent: one event a turn shows, as JSON (AgentEvent). */
+export type FoundryAgentEvent = {
+  seq: number;
+  eventJson: string;
+  createdAt?: string | null;
+};
+/**
+ * GET .../agent/turns/{id}/events?afterSeq=: once `status` is not queued or
+ * running and the events reach `lastSeq`, none follows.
+ */
+export type ListAgentTurnEventsResponse = {
+  events?: FoundryAgentEvent[];
+  status?: FoundryAgentTurnStatus;
+  lastSeq?: number;
+};
+/** POST .../agent/actions/{id}:execute */
+export type ExecuteAgentActionRequest = { payloadHash: string };
+/** v1FoundryAgentActionResponse: execute, refresh and dismiss. */
+export type AgentActionResponse = {
+  action: FoundryAgentAction;
+  // The turn the agent goes on from the action's result in; unset unless it ran.
+  continuation?: FoundryAgentTurn | null;
+};
+
+/** ErrorInfo reasons of the Assistant's FAILED_PRECONDITION refusals. */
+export const AGENT_REFUSALS = [
+  // foundry.agent.enabled is off.
+  "FOUNDRY_AGENT_DISABLED",
+  // The thread has a live turn, or an action of it is running.
+  "FOUNDRY_AGENT_THREAD_BUSY",
+  // The month's Assistant budget is spent.
+  "FOUNDRY_AGENT_BUDGET",
+  // 3 actions already wait in the thread.
+  "FOUNDRY_AGENT_TOO_MANY_ACTIONS",
+  // Execute or refresh of an action that isn't waiting.
+  "FOUNDRY_AGENT_ACTION_NOT_PREPARED",
+  // The payload shown isn't the one prepared.
+  "FOUNDRY_AGENT_ACTION_CHANGED",
+  // The confirmation expired: refresh it.
+  "FOUNDRY_AGENT_ACTION_EXPIRED",
+] as const;
+export type AgentRefusalReason = (typeof AGENT_REFUSALS)[number];
+
+/**
+ * Why a turn ended (backend/agent StopReason): the model finished, a cap
+ * (steps, wall time, budget, its answer's length, its window), it declined,
+ * or it failed.
+ */
+export type AgentStopReason =
+  | "answered"
+  | "max_steps"
+  | "wall_time"
+  | "budget"
+  | "max_tokens"
+  | "refusal"
+  | "context"
+  | "failed";
+
+/**
+ * A turn's events (FoundryAgentEvent.eventJson), each with its `type`: a
+ * closed set the page parses without trust. Text is the model's, shown as
+ * plain text; a tool's output is untrusted data, at most 16 KiB.
+ */
+export type AgentEvent =
+  | { type: "started"; model: string; attempt: number }
+  | { type: "text"; text: string }
+  | {
+      type: "tool_call";
+      tool_use_id: string;
+      name: string;
+      title: string;
+      input: unknown;
+    }
+  | {
+      type: "tool_result";
+      tool_use_id: string;
+      name: string;
+      is_error: boolean;
+      error?: string;
+      output?: unknown;
+      truncated?: boolean;
+    }
+  | {
+      type: "action_card";
+      action_id: string;
+      operation: string;
+      target: string;
+      payload: unknown;
+      payload_hash: string;
+      display: AgentActionDisplay;
+      target_named_by_user: boolean;
+      expires_at: string;
+    }
+  | {
+      // The first event of an action_result turn: how the person's click ended.
+      type: "action_result";
+      action_id: string;
+      operation: string;
+      status: AgentActionStatus;
+      result?: unknown;
+      error?: string;
+    }
+  | {
+      type: "finished";
+      status: "done" | "failed";
+      reason: AgentStopReason;
+      error?: string;
+    };
+
 // ---------------------------------------------------------------- Helix databases
 // The Helix control plane's own routes, as helix-website calls them:
 // projects and their databases (tenants) to bind an ontology to, and reads
