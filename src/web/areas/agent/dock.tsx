@@ -609,7 +609,7 @@ function LiveText({ text }: { text: string }) {
     let frame = requestAnimationFrame(function reveal(now) {
       let n = Math.min(
         text.length,
-        from + Math.ceil((left * (now - start)) / EVENTS_POLL_MS),
+        from + Math.ceil((left * Math.max(0, now - start)) / EVENTS_POLL_MS),
       );
       // Never between a surrogate pair's halves.
       if (/[\uD800-\uDBFF]/.test(text[n - 1] || "")) n += 1;

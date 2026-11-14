@@ -10,6 +10,7 @@ import {
   parseAgentEvent,
   reduceTurnEvents,
 } from "@/web/areas/agent/model";
+import { OLLAMA_MODEL } from "@/web/areas/workspace/ai-api";
 import type { MockReply } from "../../mock/http";
 import { routes } from "../../mock/routes";
 import { handleDocumentUpload } from "../../mock/routes/documents";
@@ -22,28 +23,32 @@ import { config, db, resetState } from "../../mock/state";
 // while its confirmation lives and the thread is idle; a continuation turn
 // after; dismiss and refresh; and its refusals, with their reasons.
 
-const compiled = routes.map((r) => ({ ...r, c: compileTemplate(r.path) }));
-async function call(
-  method: HttpMethod,
-  path: string,
-  body?: unknown,
-  userId = "usr_ada",
-): Promise<MockReply & { body: any }> {
-  const url = new URL(path, "http://mock");
-  for (const r of compiled) {
-    const params = r.method === method && matchTemplate(r.c, url.pathname);
-    if (!params) continue;
-    return (await r.handle({
-      method,
-      path: url.pathname,
-      params,
-      query: url.searchParams,
-      body,
-      principal: { user: db.users.get(userId)!, sessionId: "s" },
-    })) as MockReply & { body: any };
-  }
-  throw new Error(`no mock route for ${method} ${path}`);
+/** The mock's routes as called by a signed-in person (Ada unless named). */
+function harness(rs: typeof routes, users: typeof db.users) {
+  const compiled = rs.map((r) => ({ ...r, c: compileTemplate(r.path) }));
+  return async function call(
+    method: HttpMethod,
+    path: string,
+    body?: unknown,
+    userId = "usr_ada",
+  ): Promise<MockReply & { body: any }> {
+    const url = new URL(path, "http://mock");
+    for (const r of compiled) {
+      const params = r.method === method && matchTemplate(r.c, url.pathname);
+      if (!params) continue;
+      return (await r.handle({
+        method,
+        path: url.pathname,
+        params,
+        query: url.searchParams,
+        body,
+        principal: { user: users.get(userId)!, sessionId: "s" },
+      })) as MockReply & { body: any };
+    }
+    throw new Error(`no mock route for ${method} ${path}`);
+  };
 }
+const call = harness(routes, db.users);
 
 const A = "/v1/workspaces/ws_acme/foundry/agent";
 const later = (ms: number) => vi.setSystemTime(Date.now() + ms);
@@ -306,6 +311,22 @@ describe("messages", () => {
       "gpt-6.1-sol",
     ],
     [
+      "Azure OpenAI",
+      {
+        provider: {
+          azureOpenai: { endpoint: "https://acme.openai.azure.com" },
+        },
+        models: Object.fromEntries(
+          ["draft", "ask", "extract", "verify"].map((r) => [
+            r,
+            { name: "prod-gpt", tableAs: "gpt-6.1-sol" },
+          ]),
+        ),
+        apiKey: "0123456789abcdef0123456789abcdef",
+      },
+      "prod-gpt",
+    ],
+    [
       "Amazon Bedrock",
       {
         provider: { bedrock: { region: "us-east-1" } },
@@ -540,6 +561,42 @@ describe("messages", () => {
       `${A}/turns/${sent.body.turn.id}/events?afterSeq=0`,
     );
     expect(next.body.events).toHaveLength(1);
+  });
+});
+
+describe("a local install", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("answers on its Ollama", async () => {
+    vi.resetModules();
+    vi.stubEnv("MOCK_LOCAL_TOKEN", "local-token");
+    vi.stubEnv("MOCK_AI_DEFAULT", "anthropic");
+    const local = await import("../../mock/state");
+    const at = harness(
+      (await import("../../mock/routes")).routes,
+      local.db.users,
+    );
+    local.resetState();
+    // The install's default: its bundled Ollama's model for every task.
+    Object.assign(local.config, { aiDefaultKind: "ollama" });
+    const sent = await at("POST", `${A}/turns`, {
+      text: "What ontologies do I have?",
+      clientToken: "local-1",
+    });
+    expect(sent.status).toBe(200);
+    later(60_000);
+    const page = (
+      await at("GET", `${A}/turns/${sent.body.turn.id}/events?afterSeq=0`)
+    ).body as ListAgentTurnEventsResponse;
+    expect(page.status).toBe("done");
+    expect(parseAgentEvent(page.events![0]!.eventJson)).toEqual({
+      type: "started",
+      model: OLLAMA_MODEL,
+      attempt: 1,
+    });
   });
 });
 
