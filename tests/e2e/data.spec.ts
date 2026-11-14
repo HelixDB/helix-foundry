@@ -95,6 +95,7 @@ test("connects Stripe, syncs it and opens its tables and keys", async ({
     "This key cannot read: disputes, payouts, balance_transactions.",
   );
   await dialog(page).getByRole("button", { name: "Connect and sync" }).click();
+  await dialog(page).getByRole("button", { name: /^Open / }).click();
 
   await expect(page).toHaveURL(/\/data\/connections\/conn_/);
   await expect(
@@ -208,6 +209,7 @@ test("connects Cal.com, syncs it and edits it keeping the stored key", async ({
   await expect(objects).toContainText("Every object listed is synced.");
   await expect(objects).not.toContainText("cannot read");
   await dialog(page).getByRole("button", { name: "Connect and sync" }).click();
+  await dialog(page).getByRole("button", { name: /^Open / }).click();
 
   await expect(page).toHaveURL(/\/data\/connections\/conn_/);
   await expect(
@@ -290,6 +292,7 @@ test("connects Granola and says what its key can't read", async ({ page }) => {
   await expect(objects.getByRole("listitem")).toHaveCount(4);
   await expect(objects).toContainText("This key cannot read: spaces.");
   await dialog(page).getByRole("button", { name: "Connect and sync" }).click();
+  await dialog(page).getByRole("button", { name: /^Open / }).click();
 
   await expect(
     page.getByRole("heading", { level: 1, name: "Granola" }),
@@ -343,6 +346,7 @@ test("connects a PostgreSQL database with the tables chosen", async ({
     form.getByRole("checkbox", { name: /^products/ }),
   ).toHaveAccessibleName(/Related to your selection/);
   await form.getByRole("button", { name: "Connect and sync 2 tables" }).click();
+  await dialog(page).getByRole("button", { name: /^Open / }).click();
 
   await expect(
     page.getByRole("heading", { level: 1, name: "warehouse" }),
@@ -623,6 +627,7 @@ test("shows a failed sync, refuses a second live sync and deletes the connection
   await expect(form.getByLabel("Project ID (optional)")).toHaveValue("12345");
   await expect(form).toContainText("PostHog objects this key can read");
   await form.getByRole("button", { name: "Connect and sync" }).click();
+  await dialog(page).getByRole("button", { name: /^Open / }).click();
 
   await expect(
     page.getByRole("heading", { level: 1, name: "PostHog" }),
@@ -1079,6 +1084,7 @@ test("connects Amazon S3 with an IAM role, syncs the chosen tables and opens one
   for (const name of ["customers", "events", "orders"])
     await form.getByRole("checkbox", { name: new RegExp(`^${name}`) }).check();
   await form.getByRole("button", { name: "Connect and sync 3 tables" }).click();
+  await dialog(page).getByRole("button", { name: /^Open / }).click();
 
   await expect(
     page.getByRole("heading", { level: 1, name: "acme-exports/e2e" }),
@@ -1232,6 +1238,7 @@ test("connects Amazon S3 with an access key once S3 accepts it, and edits it kee
   await form
     .getByRole("button", { name: "Connect and sync every table" })
     .click();
+    await dialog(page).getByRole("button", { name: /^Open / }).click();
 
   await expect(
     page.getByRole("heading", { level: 1, name: "acme-exports" }),
@@ -1400,6 +1407,7 @@ test("previews S3 tables, warns of a problem and holds Connect over the size lim
   await expect(form.getByRole("status")).toHaveText("Selected 6.1 MB of 1 GB.");
   await expect(connect).toHaveText("Connect and sync 4 tables");
   await connect.click();
+  await dialog(page).getByRole("button", { name: /^Open / }).click();
 
   // events is in the sync, so it fails on the record the test sampled.
   await expect(

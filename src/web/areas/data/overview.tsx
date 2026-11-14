@@ -1,4 +1,9 @@
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Cable, Folder, Plus, Upload } from "lucide-react";
 import type { Connector } from "../../../shared/wfe";
@@ -31,6 +36,7 @@ import { useOntologyNames } from "../documents/sets";
 import { ConnectData } from "./connect-data";
 import { connectorsQuery } from "./data-api";
 import { connectorBadge, lastSyncedAt, rowTotal } from "./model";
+import { PICKER_OPENED, pickerOpened } from "./paths";
 import { useDataUpload } from "./upload";
 
 // The Connectors page (/data): what the workspace holds at a glance. Its totals, its
@@ -63,21 +69,32 @@ export function DataOverview() {
     documents = useQuery(documentQueries.workspace(id)),
     sets = useQuery(documentSetQueries.list(id));
   const files = useDataUpload();
-  const [params, setParams] = useSearchParams();
+  const [params, setParams] = useSearchParams(),
+    location = useLocation();
+  // Opening the picker pushes an entry (Back closes it); closing goes back
+  // to where a link opened it from, else drops the parameters in place.
   const picker = params.has("add") && manage,
-    setPicker = (open: boolean) =>
+    openPicker = () =>
       setParams(
         (p) => {
           const next = new URLSearchParams(p);
-          if (open) next.set("add", "1");
-          else {
-            next.delete("add");
-            next.delete("sign_in");
-          }
+          next.set("add", "1");
+          return next;
+        },
+        { state: PICKER_OPENED },
+      ),
+    closePicker = () => {
+      if (pickerOpened(location.state)) return void navigate(-1);
+      setParams(
+        (p) => {
+          const next = new URLSearchParams(p);
+          next.delete("add");
+          next.delete("sign_in");
           return next;
         },
         { replace: true },
       );
+    };
   const rows = (connectors.data?.connectors || []).map(
     (c): ConnectionRow => ({
       ...c,
@@ -104,7 +121,7 @@ export function DataOverview() {
   const empty = !!connectors.data && !rows.length,
     failed = !connectors.data && !!connectors.error;
   const addData = manage && (
-    <Button variant="primary" icon={Plus} onClick={() => setPicker(true)}>
+    <Button variant="primary" icon={Plus} onClick={openPicker}>
       Add data
     </Button>
   );
@@ -328,9 +345,11 @@ export function DataOverview() {
         </Section>
         {picker && (
           <ConnectData
+            // Another link's kind or sign-in opens afresh.
+            key={`${params.get("add")} ${params.get("sign_in")}`}
             initialKind={params.get("add")}
             signIn={params.get("sign_in")}
-            onClose={() => setPicker(false)}
+            onClose={closePicker}
           />
         )}
       </div>

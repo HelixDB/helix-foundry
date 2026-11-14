@@ -8,9 +8,14 @@ import {
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, X } from "lucide-react";
+import { Check, Plus, X } from "lucide-react";
 import type { Connector, ConnectorKindName } from "../../../shared/wfe";
-import { sourceMark } from "../../kit";
+import {
+  Button,
+  SourceLogo,
+  connectorLabel,
+  sourceMark,
+} from "../../kit";
 import { paths } from "../../paths";
 import { useCurrentTheme, type Theme } from "../../shell/theme";
 import { Loading, canManage, useWorkspace } from "../../ui";
@@ -103,7 +108,10 @@ export function Modal({
   className?: string;
 }) {
   const dialog = useRef<HTMLDialogElement>(null),
-    close = useRef(onClose);
+    close = useRef(onClose),
+    // Where the last press began: a press that starts in the card (a text
+    // selection in a field) and ends over the backdrop keeps the dialog.
+    pressed = useRef<EventTarget | null>(null);
   close.current = onClose;
   useEffect(() => {
     const el = dialog.current!,
@@ -125,9 +133,17 @@ export function Modal({
       ref={dialog}
       className={"modal " + className}
       aria-label={title}
+      onMouseDown={(e) => (pressed.current = e.target)}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && pressed.current === e.target)
+          onClose();
       }}
+      // A page that takes dropped files as documents (the Data page) never
+      // gets one dropped on the dialog: a credential file stays a field's.
+      onDragEnter={(e) => e.stopPropagation()}
+      onDragOver={(e) => e.stopPropagation()}
+      onDragLeave={(e) => e.stopPropagation()}
+      onDrop={(e) => e.stopPropagation()}
     >
       <div className="modal-head">
         <h2>{title}</h2>
@@ -193,6 +209,39 @@ function ConnectionCard({
   );
 }
 
+// What a connect from the picker ends on: the connection made, and where to
+// go next, so adding several sources never leaves the picker.
+function Connected({
+  connector,
+  message,
+  onAnother,
+  onOpen,
+}: {
+  connector: Connector;
+  message: string;
+  onAnother: () => void;
+  onOpen: () => void;
+}) {
+  const name = connector.name || connectorLabel(connector.kind);
+  return (
+    <div className="dc-connected" role="status">
+      <SourceLogo source={connector.kind} size={28} />
+      <p className="dc-connected-text">
+        <strong>{name}</strong>
+        <span>{message}.</span>
+      </p>
+      <div className="dc-connected-actions">
+        <Button icon={Plus} onClick={onAnother} autoFocus>
+          Add another source
+        </Button>
+        <Button variant="primary" onClick={onOpen}>
+          Open {name}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function ConnectData({
   onClose,
   initialKind,
@@ -245,12 +294,18 @@ export function ConnectData({
   );
   const count = (k: ConnectorKindName) =>
     (connectors.data?.connectors || []).filter((c) => c.kind === k).length;
-  const done = async (connector: Connector, message: string) => {
-    await qc.invalidateQueries({ queryKey: [id, "connectors"] });
+  // What was just connected, while the dialog says so: Add another source
+  // goes back to the picker, Open to its page.
+  const [connected, setConnected] = useState<{
+    connector: Connector;
+    message: string;
+  } | null>(null);
+  const done = (connector: Connector, message: string) => {
+    void qc.invalidateQueries({ queryKey: [id, "connectors"] });
+    if (!onConnected) return setConnected({ connector, message });
     onClose();
     notify(message);
-    if (onConnected) onConnected(connector);
-    else navigate(paths.connection(connector.id));
+    onConnected(connector);
   };
   const cards = (choices: typeof appChoices) =>
     choices
@@ -272,11 +327,34 @@ export function ConnectData({
   const chosen = kind ? offered.get(kind) : undefined;
   return (
     <Modal
-      title={kind ? titles[kind] : "Where is your data?"}
+      title={
+        connected
+          ? "Connected"
+          : kind && chosen
+            ? titles[kind]
+            : "Where is your data?"
+      }
       onClose={onClose}
     >
       <div className="pad connection-dialog">
-        {!canManage(role) ? (
+        {connected ? (
+          <Connected
+            connector={connected.connector}
+            message={connected.message}
+            onAnother={() => {
+              setConnected(null);
+              setBound(null);
+              setKind(null);
+            }}
+            // The connection's page takes the picker's entry: Back from it
+            // is where the picker was opened.
+            onOpen={() =>
+              navigate(paths.connection(connected.connector.id), {
+                replace: true,
+              })
+            }
+          />
+        ) : !canManage(role) ? (
           <p>An owner or admin can add data to this workspace.</p>
         ) : kinds.isPending ? (
           <Loading />
