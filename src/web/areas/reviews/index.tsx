@@ -42,6 +42,7 @@ import {
 import { paths } from "../../paths";
 import { canManage, useWorkspace } from "../../ui";
 import { useDocumentNames } from "../documents/documents-api";
+import { evidenceShapeText, heldUnnamed, reviewCopy } from "../documents/model";
 import { useReadAccess } from "../explore/graph-reader";
 import {
   QUEUE_READ,
@@ -565,6 +566,7 @@ function QueueCards({
             <p className="rq-writes">
               Writes one value of {card.review.prop || "a property"}.
             </p>
+            <HeldHow review={card.review} />
             <SettleReview
               review={card.review}
               load={load}
@@ -696,6 +698,40 @@ function Score({ confidence }: { confidence?: number }) {
   );
 }
 
+/**
+ * How a held claim or value is stated, and, for one the checker scored
+ * high but its part of the document doesn't name the end of (contract
+ * 4.18.0), why it is held anyway: nothing for a shape or reason this site
+ * doesn't know.
+ */
+function HeldHow({
+  review,
+}: {
+  review: {
+    reason: string;
+    candidates: readonly unknown[];
+    confidence?: number;
+    evidenceShape?: string;
+  };
+}) {
+  const shape = evidenceShapeText(review.evidenceShape);
+  const copy = reviewCopy(
+    review.reason,
+    review.candidates.length,
+    review.confidence,
+  );
+  return (
+    <>
+      {heldUnnamed(review.reason, review.confidence) && (
+        <p role="note">
+          <strong>{copy.title}.</strong> {copy.text}
+        </p>
+      )}
+      {shape && <p className="on-muted">How it’s stated: {shape}</p>}
+    </>
+  );
+}
+
 const RANDOM_NOTE =
   "Drawn at random from its score band, to measure how often claims scored so are right: approve it only if the quote says it, reject it if not.";
 
@@ -730,6 +766,7 @@ function ClaimItem({
         </p>
       )}
       <Score confidence={card.review.confidence} />
+      <HeldHow review={card.review} />
       <SettleReview
         review={card.review}
         load={load}
@@ -767,7 +804,8 @@ function NameItem({
           `${plural(held, "held claim")} ${held > 1 ? "wait" : "waits"} on it, each approved below. `}
         {!card.blocked && !held && "No claim waits on it. "}A name’s decision
         applies from the next load, not this one: that load writes what it
-        unblocks.
+        unblocks. Linked to a record, the name is linked in every document that
+        names it; Not in data is for this document only.
       </p>
       <SettleReview
         review={card.review}

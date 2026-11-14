@@ -581,7 +581,8 @@ export type ReviewGroup<R> = {
 
 /**
  * Groups reviews by what their card says of their reason (documents' reviewCopy),
- * so an ambiguous name with one candidate is apart from one with several, and
+ * so an ambiguous name with one candidate is apart from one with several, a
+ * claim held for an end its passage doesn't name from an unsure one, and
  * every reason this site doesn't know is one group. Groups go in GROUP_ORDER,
  * then as they first appear; a group keeps its reviews' order.
  *
@@ -594,11 +595,19 @@ export type ReviewGroup<R> = {
  * // [["low_confidence", [2]], ["unmatched", [1]], ["unresolved", [0]]]
  */
 export function reviewGroups<
-  R extends { reason: string; candidates: readonly unknown[] },
+  R extends {
+    reason: string;
+    candidates: readonly unknown[];
+    confidence?: number;
+  },
 >(reviews: readonly R[]): ReviewGroup<R>[] {
   const groups = new Map<string, ReviewGroup<R>>();
   reviews.forEach((review, index) => {
-    const copy = reviewCopy(review.reason, review.candidates.length);
+    const copy = reviewCopy(
+      review.reason,
+      review.candidates.length,
+      review.confidence,
+    );
     const group = groups.get(copy.title) ?? {
       reason: review.reason,
       ...copy,
