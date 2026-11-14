@@ -314,7 +314,7 @@
   margin-top: var(--hf-space-1);
 }
 
-/* An Analyst answer's visual's Pin to dashboard (pin-visual.tsx). */
+/* An Analyst answer's visual's Add to dashboard (pin-visual.tsx). */
 .db-check {
   display: flex;
   align-items: flex-start;

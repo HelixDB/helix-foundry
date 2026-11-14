@@ -148,7 +148,7 @@ function ResultTable({
  * A query's output as a figure, chart or table (visualPlan, by the visual's
  * hint in an answer or a dashboard's tile), titled. `onShowQuery`, in an
  * answer, lights the step that ran the query; `actions` sit in its head
- * (Pin to dashboard, a tile's menu).
+ * (Add to dashboard, a tile's menu).
  */
 export function AskVisual({
   output,
