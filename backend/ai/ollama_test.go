@@ -455,7 +455,7 @@ func TestOllamaLocalDefault(t *testing.T) {
 	}
 	// The request is one the agent takes, as is a pinned one.
 	request := ontologyagent.TurnRequest{SessionID: "s", RequestID: "r", Sources: []ontologyagent.Source{},
-		Input:  ontologyagent.Input{Start: ontologyagent.Start{Workflow: "w", Goals: []string{}}},
+		Input:  ontologyagent.Start{Workflow: "w", Goals: []string{}},
 		Limits: ontologyagent.Limits{MaxUSD: 10, MaxSteps: 200, MaxWallSecs: 2400}, Models: turn}
 	pinned := Resolved{Source: SourceWorkspace, Settings: r.Settings, CallTimeout: r.CallTimeout, Report: ProbeReport{
 		Ollama: &OllamaReport{Digest: digest, ContextLength: 262144},
