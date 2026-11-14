@@ -368,6 +368,18 @@ export const papiRoutes = [
     method: "GET",
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/generations/{id}",
   },
+  // A generation waiting on the agent's questions: answered (or with the
+  // agent's defaults), or cancelled, which any live one may be.
+  {
+    area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/generations/{id}:answer",
+  },
+  {
+    area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/generations/{id}:cancel",
+  },
   // What an ontology reads of the workspace's documents, with its current
   // load's extraction of each, and one of them. Read only: documents and
   // their sets are written in the Data area.
