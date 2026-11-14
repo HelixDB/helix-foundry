@@ -65,7 +65,7 @@
   background: var(--hf-sunken);
 }
 .ag-who {
-  color: var(--hf-faint);
+  color: var(--hf-muted);
   font-size: var(--hf-text-xs);
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -151,7 +151,7 @@
   padding: 0 var(--hf-space-1) var(--hf-space-1);
 }
 .ag-label {
-  color: var(--hf-faint);
+  color: var(--hf-muted);
   font-size: var(--hf-text-xs);
   font-weight: 600;
 }

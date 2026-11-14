@@ -709,6 +709,10 @@ html {
   border-left: 1px solid var(--hf-border);
   background: var(--hf-surface);
 }
+/* Toasts and the star prompt sit left of the column, off its composer. */
+:root:has(.hf-assistant) :is(.hf-toast, .hf-star-prompt) {
+  right: calc(400px + 20px);
+}
 .hf-assistant-drawer.hf-dialog--drawer {
   width: min(440px, 100vw);
 }

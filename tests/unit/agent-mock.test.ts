@@ -7,6 +7,7 @@ import {
   parseAgentEvent,
   reduceTurnEvents,
 } from "@/web/areas/agent/model";
+import { NOT_CLAUDE } from "../../mock/routes/agent";
 import type { MockReply } from "../../mock/http";
 import { routes } from "../../mock/routes";
 import { config, db, resetState } from "../../mock/state";
@@ -240,9 +241,16 @@ describe("messages", () => {
       "m0",
     ]);
     expect(next.body.nextPageToken).toBeUndefined();
+    for (const bad of ["x", "7", "-50", "0"]) {
+      const refused = await call("GET", `${A}/threads?pageToken=${bad}`);
+      expect([refused.status, refused.body.message]).toEqual([
+        400,
+        "page_token is not one this list returned",
+      ]);
+    }
   });
 
-  it("stops a live turn, and refuses to stop an ended one", async () => {
+  it("stops a live turn, returns a stopped one again, and refuses an ended one", async () => {
     const sent = await send("Hi");
     const stop = await call(
       "POST",
@@ -255,7 +263,40 @@ describe("messages", () => {
       `${A}/turns/${sent.body.turn.id}:cancel`,
       {},
     );
-    expect(again.status).toBe(400);
+    expect([again.status, again.body.turn.status]).toEqual([200, "cancelled"]);
+    const done = await send("Hi again");
+    await events(done.body.turn.id);
+    const ended = await call(
+      "POST",
+      `${A}/turns/${done.body.turn.id}:cancel`,
+      {},
+    );
+    expect([ended.status, ended.body.message]).toEqual([
+      400,
+      "the turn already ended",
+    ]);
+  });
+
+  it("fails a turn at once on a provider other than Claude, in the worker's words", async () => {
+    const saved = await call("PUT", "/v1/workspaces/ws_acme/foundry/ai", {
+      provider: { openai: {} },
+      apiKey: "sk-proj-sentinel-0123456789abcdefwxyz",
+    });
+    expect(saved.status).toBe(200);
+    // Past the save's test, it is the setting in force.
+    later(5_000);
+    const sent = await send("What ontologies do I have?");
+    expect(sent.status).toBe(200);
+    const { page, events: evs } = await events(sent.body.turn.id);
+    expect(page.status).toBe("failed");
+    expect(evs).toEqual([
+      {
+        type: "finished",
+        status: "failed",
+        reason: "failed",
+        error: NOT_CLAUDE,
+      },
+    ]);
   });
 
   it("deletes a thread, stopping its live turn", async () => {
@@ -361,6 +402,13 @@ describe("actions", () => {
         userId,
       );
     expect((await run(action.payloadHash, "usr_alan")).status).toBe(404);
+    for (const malformed of ["", "abc", "g".repeat(64)]) {
+      const refused = await run(malformed);
+      expect([refused.status, refused.body.message]).toEqual([
+        400,
+        "payload_hash is the action's 64 hex digits",
+      ]);
+    }
     const changed = await run("0".repeat(64));
     expect([changed.status, reason(changed)]).toEqual([
       400,
@@ -473,6 +521,19 @@ describe("actions", () => {
     expect(evs.find((e) => e.type === "text")).toMatchObject({
       text: expect.stringContaining("didn't start: permission denied"),
     });
+  });
+
+  it("refreshes as the person now: what they may no longer do comes first", async () => {
+    const { action } = await prepareLoad();
+    db.memberships.find((m) => m.id === "mem_ada_acme")!.role =
+      "WORKSPACE_ROLE_MEMBER";
+    const refused = await call("POST", `${A}/actions/${action.id}:refresh`, {});
+    // gRPC's FAILED_PRECONDITION, 9.
+    expect([refused.status, refused.body.code, refused.body.message]).toEqual([
+      400,
+      9,
+      "permission denied",
+    ]);
   });
 
   it("prepares nothing for a member", async () => {

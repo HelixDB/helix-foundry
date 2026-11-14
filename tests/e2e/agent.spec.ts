@@ -148,3 +148,87 @@ test("says when a turn fails", async ({ page }) => {
     dockOf(page).getByText("The model failed: overloaded."),
   ).toBeVisible();
 });
+
+test("sends with Enter, never past what Send refuses, and gives the focus back", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 300 });
+  await signIn(page);
+  const opener = page.getByRole("button", { name: "Assistant", exact: true });
+  await opener.click();
+  const dock = dockOf(page),
+    box = dock.getByRole("textbox", { name: "Message" });
+  // It opens ready to write.
+  await expect(box).toBeFocused();
+  // Empty: Enter sends nothing.
+  await box.press("Enter");
+  await expect(dock.getByRole("alert")).toHaveCount(0);
+  await box.fill("What ontologies do I have?");
+  await box.press("Enter");
+  await expect(
+    dock
+      .getByRole("log", { name: "Conversation" })
+      .getByText("What ontologies do I have?", { exact: true }),
+  ).toBeVisible();
+  // While it answers, Stop stands in for Send, and Enter sends nothing.
+  await box.fill("And another?");
+  await box.press("Enter");
+  await expect(dock.getByRole("alert")).toHaveCount(0);
+  await expect(box).toHaveValue("And another?");
+  await dock.getByRole("button", { name: "Stop" }).click();
+  await expect(dock.getByText("Stopped.")).toBeVisible();
+  // Closing the column gives the focus back to what opened it.
+  await dock.getByRole("button", { name: "Close the Assistant" }).click();
+  await expect(dockOf(page)).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
+test("is a drawer beside a section's panel on a laptop, and on a phone", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 100 });
+  await signIn(page);
+  for (const size of [
+    { width: 1280, height: 800 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(size);
+    await page.goto("/data");
+    await page.keyboard.press("ControlOrMeta+j");
+    const drawer = page.getByRole("dialog", { name: "Assistant" });
+    await expect(drawer).toBeVisible();
+    await expect(dockOf(page)).toHaveCount(0);
+    await drawer.getByRole("textbox", { name: "Message" }).fill("Hi");
+    await drawer.getByRole("textbox", { name: "Message" }).press("Enter");
+    await expect(
+      drawer
+        .getByRole("log", { name: "Conversation" })
+        .getByText("Hi", { exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(drawer).toHaveCount(0);
+  }
+});
+
+test("deletes a thread, and says when the month's budget ended a turn", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 100, agentOutcome: "budget_exhausted" });
+  await signIn(page);
+  await page.keyboard.press("ControlOrMeta+j");
+  await say(page, "What ontologies do I have?");
+  const dock = dockOf(page);
+  await expect(
+    dock.getByText("It stopped at this message’s spending cap."),
+  ).toBeVisible();
+  await dock.getByRole("button", { name: /^Threads/ }).click();
+  await page.getByRole("menuitem", { name: "Delete this thread" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Delete" })
+    .click();
+  await expect(dock.getByText("Ask the Assistant")).toBeVisible();
+  await expect(dock.getByRole("button", { name: /^Threads/ })).toContainText(
+    "New thread",
+  );
+});

@@ -17,6 +17,8 @@ import {
   pretty,
   reduceTurnEvents,
   resultLink,
+  inAppPath,
+  onClaude,
   textParts,
   threadKey,
 } from "@/web/areas/agent/model";
@@ -76,6 +78,67 @@ describe("pageContext", () => {
   });
 });
 
+describe("inAppPath", () => {
+  const at = (path: string) => inAppPath(new URL(path, ORIGIN));
+  it.each([
+    ["/ontology", "/ontology"],
+    ["/ontology/ont_1/", "/ontology/ont_1"],
+    ["/ontology/ont_1?new-load=1", "/ontology/ont_1"],
+    ["/ontology/ont_1/loads/l_2", "/ontology/ont_1/loads/l_2"],
+    ["/ontology/ont_1/versions/v_1", "/ontology/ont_1/versions/v_1"],
+    ["/ontology/ont_1/generations/g_1", "/ontology/ont_1/generations/g_1"],
+    ["/ontology/ont_1/documents", "/ontology/ont_1/documents"],
+    [
+      "/ontology/ont_1/documents/d_1?tab=facts",
+      "/ontology/ont_1/documents/d_1",
+    ],
+    ["/explore/ont_1?load=l_2&node=4", "/explore/ont_1?load=l_2"],
+    ["/explore/ont_1/records?load=l_2", "/explore/ont_1/records?load=l_2"],
+    ["/explore/ont_1/entities/e_1", "/explore/ont_1/entities/e_1"],
+    ["/ask/ont_1?load=bad%20id", "/ask/ont_1"],
+    ["/ask", "/ask"],
+    ["/data?add=postgres&workspace=ws_9", "/data?add=postgres"],
+    ["/data?add=1", "/data"],
+    ["/data/documents/d_1", "/data/documents/d_1"],
+    ["/data/connections/c_1?add=postgres", "/data/connections/c_1"],
+    ["/settings/ai", "/settings/ai"],
+  ])("opens %s as %s", (path, to) => expect(at(path)).toBe(to));
+
+  it.each([
+    "/ontology/sample",
+    "/ontology/new/x",
+    "/ontology/ont_1/generate",
+    "/ontology/ont_1/loads",
+    "/explore/ont_1/records/x",
+    "/papi/v1/whoami",
+    "/settings/secrets",
+  ])("opens nothing for %s", (path) => expect(at(path)).toBeUndefined());
+});
+
+describe("onClaude", () => {
+  it("runs on Claude alone, the workspace's own or the default", () => {
+    expect(onClaude({ default: { kind: "FOUNDRY_AI_KIND_ANTHROPIC" } })).toBe(
+      true,
+    );
+    expect(
+      onClaude({
+        active: { id: "c", kind: "FOUNDRY_AI_KIND_ANTHROPIC" },
+        default: { kind: "FOUNDRY_AI_KIND_OLLAMA" },
+      }),
+    ).toBe(true);
+    expect(
+      onClaude({
+        active: { id: "c", kind: "FOUNDRY_AI_KIND_BEDROCK" },
+        default: { kind: "FOUNDRY_AI_KIND_ANTHROPIC" },
+      }),
+    ).toBe(false);
+    expect(onClaude({ default: { kind: "FOUNDRY_AI_KIND_OLLAMA" } })).toBe(
+      false,
+    );
+    expect(onClaude({})).toBeUndefined();
+  });
+});
+
 describe("textParts", () => {
   it("links paths into the app's sections, keeping the punctuation after them", () => {
     expect(
@@ -91,15 +154,15 @@ describe("textParts", () => {
     ]);
   });
 
-  it("links this origin's addresses as in-app paths, query and hash kept", () => {
+  it("links this origin's addresses as in-app paths, without what a page may not take", () => {
     expect(
-      textParts(`Open (${ORIGIN}/ask/ont_1?workspace=ws_1) now`, ORIGIN),
+      textParts(`Open (${ORIGIN}/ask/ont_1?workspace=ws_1#x) now`, ORIGIN),
     ).toEqual([
       { kind: "text", text: "Open (" },
       {
         kind: "link",
-        text: `${ORIGIN}/ask/ont_1?workspace=ws_1`,
-        to: "/ask/ont_1?workspace=ws_1",
+        text: `${ORIGIN}/ask/ont_1?workspace=ws_1#x`,
+        to: "/ask/ont_1",
       },
       { kind: "text", text: ") now" },
     ]);
@@ -115,6 +178,11 @@ describe("textParts", () => {
     ["a path that climbs out of the app", "See /ontology/../papi/v1/whoami"],
     ["javascript", "javascript:alert(1)"],
     ["a malformed address", "See https://[::1 now"],
+    ["the sample's page, which acts on arrival", "See /ontology/sample"],
+    ["the new-ontology wizard", "See /ontology/new"],
+    ["a page the app doesn't have", "See /data/anything/at-all"],
+    ["words packed into a path", "See /ontology/a/b/c/d/e"],
+    ["a section's page that isn't a route", "See /settings/secrets"],
   ])("leaves %s as text", (_, text) => {
     const parts = textParts(text, ORIGIN);
     expect(parts.every((p) => p.kind === "text")).toBe(true);

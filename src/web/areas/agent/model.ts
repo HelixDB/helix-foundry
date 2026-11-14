@@ -7,6 +7,7 @@ import type {
   AgentStopReason,
   FoundryAgentTurnStatus,
   FoundryAgentAction,
+  FoundryAi,
   ListAgentTurnEventsResponse,
 } from "../../../shared/wfe";
 import { AGENT_REFUSALS } from "../../../shared/wfe";
@@ -14,6 +15,7 @@ import { isRecord } from "../../../shared/json";
 import { ApiError } from "../../api";
 import { LOAD_LIMITS } from "../ontology/model";
 import { ontologyPaths } from "../ontology/paths";
+import { inForce } from "../workspace/ai-api";
 
 // The Assistant's dock, as pure functions: what a turn's polled events show,
 // what an action's card offers, what page the person is on, and which links
@@ -39,6 +41,24 @@ const parse = (text: string): unknown => {
 
 export const isLiveTurn = (t?: { status?: FoundryAgentTurnStatus } | null) =>
   t?.status === "queued" || t?.status === "running";
+
+/**
+ * Whether the Assistant runs on the workspace's AI setting in force: on
+ * Claude alone for now (the backend's agent/llm fails a turn on any other
+ * kind, Bedrock's Claude too); undefined with no provider, which AiGate
+ * says.
+ *
+ * @example
+ * onClaude({ default: { kind: "FOUNDRY_AI_KIND_ANTHROPIC" } }); // true
+ * onClaude({ active: { id: "c", kind: "FOUNDRY_AI_KIND_OLLAMA" } }); // false
+ * onClaude({}); // undefined
+ */
+export function onClaude(ai: FoundryAi): boolean | undefined {
+  const f = inForce(ai);
+  if (f.source === "none") return undefined;
+  const kind = f.source === "workspace" ? f.config.kind : f.default.kind;
+  return kind === "FOUNDRY_AI_KIND_ANTHROPIC";
+}
 
 // ---------------------------------------------------------------- page
 
@@ -81,17 +101,55 @@ export type TextPart =
   | { kind: "text"; text: string }
   | { kind: "link"; text: string; to: string };
 
-// The app's sections a link may open; nothing else is ever a link.
-const IN_APP = /^\/(ontology|explore|ask|data|settings)(\/[\w.~%-]+)*\/?$/;
+// The pages a link may open, as their routes are, each id one segment
+// (SEG); nothing else is ever a link. /ontology/new and /ontology/sample,
+// whose pages act on arrival, are no ontology's id here.
+const SEG = "(?!(?:new|sample)(?:/|$))[A-Za-z0-9_-]{1,128}";
+const LINKABLE = new RegExp(
+  "^(?:" +
+    [
+      `/ontology(?:/${SEG}(?:/documents(?:/${SEG})?|/(?:loads|versions|generations)/${SEG})?)?`,
+      `/explore(?:/${SEG}(?:/records|/entities/${SEG})?)?`,
+      `/ask(?:/${SEG})?`,
+      `/data(?:/documents/${SEG}|/connections/${SEG})?`,
+      "/settings(?:/(?:ai|members|access|billing|enrichment))?",
+    ].join("|") +
+    ")$",
+);
+// A connector kind, in the link helix_foundry_connect gives (/data?add=<kind>).
+const KIND = /^[a-z][a-z0-9_]{0,31}$/;
 const CANDIDATE =
   /https?:\/\/[^\s<>"'`]+|(?<![\w/])\/(?:ontology|explore|ask|data|settings)(?:[/?#][^\s<>"'`]*)?/g;
 const TRAILING = /[.,;:!?)\]'"]+$/;
 
 /**
+ * Where a link of the model's text goes in this app: a page LINKABLE
+ * names, with only the query it may carry (a view's `load=<id>`, the
+ * connect link's `add=<kind>` on /data) and no hash; undefined for any
+ * other. So text can't switch the person's workspace (`?workspace=`), open
+ * a dialog (`?new-load=1`) or pack words into a path.
+ *
+ * @example
+ * inAppPath(new URL("https://f.example/explore/o_1?load=l_2&workspace=w")); // "/explore/o_1?load=l_2"
+ * inAppPath(new URL("https://f.example/ontology/sample")); // undefined
+ */
+export function inAppPath(url: URL): string | undefined {
+  const path = url.pathname.replace(/(.)\/$/, "$1");
+  if (!LINKABLE.test(path)) return undefined;
+  const q = new URLSearchParams(),
+    load = url.searchParams.get("load") ?? "",
+    add = url.searchParams.get("add") ?? "";
+  if (/^\/(explore|ask)\//.test(path) && ID.test(load)) q.set("load", load);
+  if (path === "/data" && KIND.test(add)) q.set("add", add);
+  return path + (q.size ? "?" + q : "");
+}
+
+/**
  * The model's text with the links that open this app made links: an
- * address on `origin`, or a path, under one of the app's sections. Any
- * other address stays text, never a link, so text can't send the person
- * elsewhere (or leak what it read through an address).
+ * address on `origin`, or a path, to a page inAppPath allows, with only
+ * what it keeps of the query. Any other address stays text, never a link,
+ * so text can't send the person elsewhere (or leak what it read through an
+ * address).
  *
  * @example
  * textParts("See /ontology/ont_1/loads/l_2.", "https://foundry.example");
@@ -107,15 +165,12 @@ export function textParts(text: string, origin: string): TextPart[] {
   for (const m of text.matchAll(CANDIDATE)) {
     const raw = m[0].replace(TRAILING, ""),
       start = m.index,
-      url = URL.parse(raw, origin);
-    if (!url || url.origin !== origin || !IN_APP.test(url.pathname)) continue;
+      url = URL.parse(raw, origin),
+      to = url && url.origin === origin ? inAppPath(url) : undefined;
+    if (!to) continue;
     if (start > from)
       parts.push({ kind: "text", text: text.slice(from, start) });
-    parts.push({
-      kind: "link",
-      text: raw,
-      to: url.pathname + url.search + url.hash,
-    });
+    parts.push({ kind: "link", text: raw, to });
     from = start + raw.length;
   }
   if (from < text.length) parts.push({ kind: "text", text: text.slice(from) });

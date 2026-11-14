@@ -95,7 +95,7 @@ test("every main page in both themes", async ({ page }, info) => {
   test.setTimeout(240_000);
   // Animations off: what is checked is where they end.
   await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "light" });
-  await mock.configure({ loadStepMs: 100, askStepMs: 100 });
+  await mock.configure({ loadStepMs: 100, askStepMs: 100, agentStepMs: 100 });
   const failures: string[] = [];
   const shoot = async (name: string) => {
     for (const theme of THEMES) {
@@ -199,6 +199,21 @@ test("every main page in both themes", async ({ page }, info) => {
   });
   await settle(page);
   await shoot("ask-thread");
+
+  // The Assistant's dock, with an answer and its step opened.
+  await page.keyboard.press("ControlOrMeta+j");
+  const dock = page.getByRole("complementary", { name: "Assistant" });
+  await dock
+    .getByRole("textbox", { name: "Message" })
+    .fill("What ontologies do I have?");
+  await dock.getByRole("textbox", { name: "Message" }).press("Enter");
+  await expect(dock.getByText(/^This workspace has \d+ ontolog/)).toBeVisible({
+    timeout: 20_000,
+  });
+  await dock.getByText("Listed the ontologies").click();
+  await settle(page);
+  await shoot("assistant");
+  await page.keyboard.press("ControlOrMeta+j");
 
   await visit("settings", "/settings");
   await visit("members", "/settings/members");

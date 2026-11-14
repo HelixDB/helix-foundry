@@ -26,7 +26,12 @@ import {
   type MockRoute,
 } from "../http";
 import { config, isReply, membership, onReset } from "../state";
-import { aiModel, aiRefusal, foundryPrecondition as refused } from "./ai";
+import {
+  aiModel,
+  aiProvider,
+  aiRefusal,
+  foundryPrecondition as refused,
+} from "./ai";
 import { currentLoadId, ontologyLoad, queueLoad } from "./loads";
 import {
   ontologyById,
@@ -422,6 +427,10 @@ function ending(steps: Step[]): Step[] {
   }
 }
 
+/** The worker's words for a provider it doesn't run (agent.Runner.Run). */
+export const NOT_CLAUDE =
+  "The Assistant runs on Claude for now. An owner can choose Claude in Settings › AI models.";
+
 const LIST = "helix_foundry_list_ontologies",
   GET = "helix_foundry_get_ontology",
   GET_LOAD = "helix_foundry_get_load",
@@ -697,6 +706,12 @@ const BASE = "/v1/workspaces/{workspaceId}/foundry/agent" as const;
 /** Runs the caller's action: the backend's ExecuteFoundryAgentAction. */
 function execute(req: MockRequest, userId: string) {
   const ws = req.params.workspaceId!;
+  const payloadHash = String(req.body?.payloadHash || "");
+  if (!/^[0-9a-fA-F]{64}$/.test(payloadHash))
+    return fail(
+      "INVALID_ARGUMENT",
+      "payload_hash is the action's 64 hex digits",
+    );
   const a = actionOf(ws, userId, req.params.id!);
   if (!a) return fail("NOT_FOUND", "action not found");
   const thread = threadOf(ws, userId, a.threadId)!;
@@ -707,7 +722,7 @@ function execute(req: MockRequest, userId: string) {
       "FOUNDRY_AGENT_ACTION_NOT_PREPARED",
       `the action is ${status}`,
     );
-  if (a.payloadHash !== (req.body?.payloadHash || ""))
+  if (a.payloadHash !== payloadHash)
     return refused(
       ws,
       "FOUNDRY_AGENT_ACTION_CHANGED",
@@ -881,7 +896,19 @@ export const agentRoutes: MockRoute[] = [
         clientToken: token,
         script: [],
       });
-      turn.script = ending(messageScript(ws, thread.id, text, pageContext));
+      // The worker runs Claude alone for now (agent/llm): any other
+      // provider fails the turn for good, before it starts, in its words.
+      turn.script =
+        aiProvider(ws) === "anthropic"
+          ? ending(messageScript(ws, thread.id, text, pageContext))
+          : [
+              () => ({
+                type: "finished",
+                status: "failed",
+                reason: "failed",
+                error: NOT_CLAUDE,
+              }),
+            ];
       return ok({
         turn: toTurn(turn),
         thread: toThread(thread),
@@ -905,8 +932,15 @@ export const agentRoutes: MockRoute[] = [
           (a, b) =>
             b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id),
         );
-      const from = Number(req.query.get("pageToken") || 0) || 0,
-        page = mine.slice(from, from + PAGE);
+      // The tokens it returns: a later page's offset.
+      const token = req.query.get("pageToken") || "",
+        from = Number(token);
+      if (token && (!/^[1-9]\d*$/.test(token) || from % PAGE !== 0))
+        return fail(
+          "INVALID_ARGUMENT",
+          "page_token is not one this list returned",
+        );
+      const page = mine.slice(from, from + PAGE);
       return ok({
         threads: page.map(toThread),
         ...(from + PAGE < mine.length && {
@@ -977,9 +1011,11 @@ export const agentRoutes: MockRoute[] = [
       const t = turnOf(ws, p.userId, req.params.id!);
       if (!t) return fail("NOT_FOUND", "turn not found");
       advance(t);
-      if (!live(t))
-        return fail("FAILED_PRECONDITION", `the turn is ${t.status}`);
-      Object.assign(t, { status: "cancelled", finishedAt: now() });
+      if (t.status !== "cancelled") {
+        if (!live(t))
+          return fail("FAILED_PRECONDITION", "the turn already ended");
+        Object.assign(t, { status: "cancelled", finishedAt: now() });
+      }
       return ok({
         turn: toTurn(t),
         thread: toThread(threadOf(ws, p.userId, t.threadId)!),
@@ -1003,6 +1039,12 @@ export const agentRoutes: MockRoute[] = [
       const ws = req.params.workspaceId!;
       const a = actionOf(ws, p.userId, req.params.id!);
       if (!a) return fail("NOT_FOUND", "action not found");
+      // Prepared again as the person, as they are now, before the action's
+      // state is read: what they may no longer do is refused in the tool's
+      // words.
+      const m = membership(ws, p.userId);
+      if (isReply(m) || !manages(m))
+        return fail("FAILED_PRECONDITION", "permission denied");
       const status = shown(a);
       if (status !== "prepared" && status !== "expired")
         return refused(
@@ -1010,10 +1052,6 @@ export const agentRoutes: MockRoute[] = [
           "FOUNDRY_AGENT_ACTION_NOT_PREPARED",
           `the action is ${status}`,
         );
-      // Prepared again as the person, as they are now.
-      const m = membership(ws, p.userId);
-      if (isReply(m) || !manages(m))
-        return fail("PERMISSION_DENIED", "permission denied");
       Object.assign(a, {
         status: "prepared",
         decidedByUserId: "",

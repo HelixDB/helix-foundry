@@ -159,7 +159,9 @@ function PanelAside({
 // sidebar on every page, with the open section's panel beside it when it has
 // one, mobile bar and drawer, the command palette, and the Assistant's dock
 // (⌘J, the sidebar's button or the palette): a column right of the page on
-// a wide screen, kept open per browser, else a drawer. A grantee has no
+// a wide screen, kept open per browser, else a drawer (below 1100px, or
+// 1400px beside a section's panel, so the page keeps its room). Closing the
+// column gives the focus back to what opened it. A grantee has no
 // Assistant (the WFE denies it every route). While the workspace is
 // onboarding, the sidebar holds only the workspace and the account, and there
 // is no palette; a grantee has no palette either (what it lists, a grantee
@@ -181,12 +183,6 @@ export function Shell({
     searchable = !onboarding && !grantee;
   const [palette, setPalette] = useState<{ query: string } | null>(null),
     [drawer, setDrawer] = useState(false);
-  const assistant = ASSISTANT && !grantee,
-    dockDrawer = useMedia("(max-width: 1100px)"),
-    [dockStored, setDockStored] = useStoredState(DOCK_KEY, ""),
-    [dockDrawerOpen, setDockDrawerOpen] = useState(false),
-    dockOpen =
-      assistant && (dockDrawer ? dockDrawerOpen : dockStored === "open");
   const { pathname } = useLocation();
   // The open section's panel, if it has one. It shows beside the sidebar;
   // the Explorer's [ (useShell().togglePanel) hides and shows it for the
@@ -196,6 +192,29 @@ export function Shell({
   const [panelHidden, setPanelHidden] = useState(false),
     panelOpen = !panelHidden;
   useEffect(() => setPanelHidden(false), [section]);
+  const assistant = ASSISTANT && !grantee,
+    dockDrawer = useMedia(
+      panel && panelOpen ? "(max-width: 1400px)" : "(max-width: 1100px)",
+    ),
+    [dockStored, setDockStored] = useStoredState(DOCK_KEY, ""),
+    [dockDrawerOpen, setDockDrawerOpen] = useState(false),
+    dockOpen =
+      assistant && (dockDrawer ? dockDrawerOpen : dockStored === "open");
+  // What had the focus when the dock opened, which has it back when the
+  // column closes (the drawer, a dialog, gives it back itself).
+  const dockOpener = useRef<HTMLElement | null>(null),
+    dockWasOpen = useRef(dockOpen);
+  useEffect(() => {
+    const closed = dockWasOpen.current && !dockOpen;
+    dockWasOpen.current = dockOpen;
+    if (!closed || dockDrawer) return;
+    const focused = document.activeElement;
+    if (focused && focused !== document.body) return;
+    const back = dockOpener.current?.isConnected
+      ? dockOpener.current
+      : document.getElementById("main");
+    back?.focus();
+  }, [dockOpen, dockDrawer]);
   // A phone shows the panel in the drawer only.
   const narrow = useMedia("(max-width: 800px)");
   useEffect(() => {
@@ -209,7 +228,13 @@ export function Shell({
   );
   const toggleDock = useCallback(
     (from: AssistantFrom) => {
-      if (!dockOpen) trackEvent("agent_dock_opened", { from });
+      if (!dockOpen) {
+        trackEvent("agent_dock_opened", { from });
+        dockOpener.current =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+      }
       if (dockDrawer) setDockDrawerOpen((o) => !o);
       else setDockStored((s) => (s === "open" ? "" : "open"));
     },

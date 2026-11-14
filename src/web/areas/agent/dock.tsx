@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -49,6 +50,8 @@ import { useWorkspace } from "../../ui";
 import { loadVersion } from "../ontology/model";
 import { ontologyQueries } from "../ontology/queries";
 import { AiRefusal, useAiConfigured } from "../workspace/ai-gate";
+import { aiQuery } from "../workspace/ai-api";
+import { paths } from "../../paths";
 import { ActionCard } from "./cards";
 import {
   EMPTY_STREAM,
@@ -58,6 +61,7 @@ import {
   agentRefusal,
   analystLink,
   isLiveTurn,
+  onClaude,
   pageContext,
   pretty,
   textParts,
@@ -121,7 +125,7 @@ export function AgentDock({
         <Sparkles size={16} aria-hidden className="ag-head-icon" />
         <h2 className="ag-head-title">Assistant</h2>
         <DropdownMenu
-          label="Threads"
+          label={`Threads: ${title}`}
           align="end"
           triggerClassName="hf-btn hf-btn--ghost hf-btn--sm ag-threads-trigger"
           trigger={
@@ -285,10 +289,12 @@ function Transcript({
             text="It reads your workspace with Foundry’s tools. What would change anything it prepares as a card, which runs only when you click."
           />
         ) : (
-          data.turns.map((t) => (
+          data.turns.map((t, i, all) => (
             <TurnView
               key={t.id}
               turn={t}
+              recent={all.length - i <= RECENT_TURNS}
+              scroller={log}
               actions={actions}
               busy={busy}
               onNavigate={onNavigate}
@@ -300,12 +306,47 @@ function Transcript({
   );
 }
 
+// The newest turns of a thread, whose events are read as it opens; older
+// ones are read once they near the view, so a long thread opens with a few
+// reads, not one per turn.
+const RECENT_TURNS = 4;
+
 /**
- * A turn's events, polled after the last seq until it is complete. The
- * thread is read again once it ends, or a card shows, so its statuses and
- * actions follow.
+ * Whether el has come within a screen of scroller's view, once (at once
+ * when `already`).
  */
-function useTurnStream(turn: FoundryAgentTurn): TurnStream {
+function useNearView(
+  el: RefObject<HTMLElement | null>,
+  scroller: RefObject<HTMLElement | null>,
+  already: boolean,
+) {
+  const [seen, setSeen] = useState(false);
+  const near = already || seen;
+  useEffect(() => {
+    const node = el.current;
+    if (near || !node) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setSeen(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setSeen(true);
+      },
+      { root: scroller.current, rootMargin: "100% 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [near]);
+  return near;
+}
+
+/**
+ * A turn's events, read once `enabled` and polled after the last seq until
+ * it is complete or a read fails. The thread is read again once it ends, or
+ * a card shows, so its statuses and actions follow.
+ */
+function useTurnStream(turn: FoundryAgentTurn, enabled: boolean) {
   const { id: ws } = useWorkspace(),
     qc = useQueryClient();
   const key = [ws, "agent", "events", turn.id];
@@ -313,7 +354,9 @@ function useTurnStream(turn: FoundryAgentTurn): TurnStream {
     queryKey: key,
     queryFn: () =>
       turnEvents(ws, turn.id, qc.getQueryData<TurnStream>(key) ?? EMPTY_STREAM),
-    refetchInterval: (s) => (s.state.data?.complete ? false : EVENTS_POLL_MS),
+    enabled,
+    refetchInterval: (s) =>
+      s.state.error || s.state.data?.complete ? false : EVENTS_POLL_MS,
     staleTime: (s) => (s.state.data?.complete ? Infinity : 0),
   });
   const data = stream.data ?? EMPTY_STREAM;
@@ -331,21 +374,35 @@ function useTurnStream(turn: FoundryAgentTurn): TurnStream {
       queryKey: [ws, "agent", "thread", turn.threadId],
     });
   }, [seen]);
-  return data;
+  return {
+    data,
+    loading: enabled && stream.isPending,
+    failed: stream.isError,
+    retry: () => void stream.refetch(),
+  };
 }
 
 function TurnView({
   turn,
+  recent,
+  scroller,
   actions,
   busy,
   onNavigate,
 }: {
   turn: FoundryAgentTurn;
+  // One of the thread's newest: read as it opens.
+  recent: boolean;
+  // The conversation's scrolling box.
+  scroller: RefObject<HTMLElement | null>;
   actions: ReadonlyMap<string, FoundryAgentAction>;
   busy: boolean;
   onNavigate?: () => void;
 }) {
-  const stream = useTurnStream(turn),
+  const answer = useRef<HTMLDivElement>(null),
+    near = useNearView(answer, scroller, recent || isLiveTurn(turn));
+  const read = useTurnStream(turn, near),
+    stream = read.data,
     live = isLiveTurn(turn) && !stream.complete;
   const failed =
     stream.ended?.status === "failed" || turn.status === "failed"
@@ -363,8 +420,21 @@ function TurnView({
           <p className="ag-text">{turn.text}</p>
         </div>
       )}
-      <div className="ag-msg ag-msg--agent" aria-busy={live || undefined}>
+      <div
+        ref={answer}
+        className="ag-msg ag-msg--agent"
+        aria-busy={live || read.loading || undefined}
+      >
         <span className="ag-who">Assistant</span>
+        {read.loading && !stream.blocks.length && <SkeletonText lines={2} />}
+        {read.failed && (
+          <p className="ag-card-error">
+            <CircleAlert size={14} aria-hidden /> This answer couldn’t be read.{" "}
+            <Button size="sm" variant="ghost" onClick={read.retry}>
+              Try again
+            </Button>
+          </p>
+        )}
         {stream.blocks.map((b, i) => (
           <Block
             key={i}
@@ -374,7 +444,7 @@ function TurnView({
             onNavigate={onNavigate}
           />
         ))}
-        {live && (
+        {live && !read.failed && (
           <p className="ag-working">
             <LoaderCircle size={14} className="hf-spin" aria-hidden />
             {turn.status === "queued" && (turn.attempts || 0) > 0
@@ -528,7 +598,7 @@ function Composer({
   thread?: AgentThreadResponse;
   onSent: (threadId: string) => void;
 }) {
-  const { id: ws } = useWorkspace(),
+  const { id: ws, role } = useWorkspace(),
     location = useLocation(),
     qc = useQueryClient();
   const page = pageContext(location.pathname, location.search),
@@ -539,13 +609,30 @@ function Composer({
     [token, setToken] = useState(() => crypto.randomUUID()),
     [pending, setPending] = useState(false),
     [error, setError] = useState<unknown>(null);
-  const aiReady = useAiConfigured();
-  const hint = useId();
+  const aiReady = useAiConfigured(),
+    ai = useQuery(aiQuery(ws)),
+    claude = ai.data ? onClaude(ai.data) : undefined;
+  const hint = useId(),
+    input = useRef<HTMLTextAreaElement>(null),
+    sending = useRef(false);
+  // The dock opens ready to write.
+  useEffect(() => input.current?.focus(), []);
   const live = thread?.turns?.find(isLiveTurn);
   const busy = threadBusy(thread) || (!!threadId && !thread);
   const length = [...text.trim()].length,
     tooLong = length > MAX_MESSAGE;
+  const blocked =
+    busy ||
+    !!live ||
+    !text.trim() ||
+    tooLong ||
+    aiReady === false ||
+    claude === false;
   const submit = async () => {
+    // Enter submits past a disabled Send, and twice before a render: the
+    // same checks, and one send at a time.
+    if (blocked || sending.current) return;
+    sending.current = true;
     setPending(true);
     setError(null);
     try {
@@ -565,6 +652,7 @@ function Composer({
     } catch (e) {
       setError(e);
     } finally {
+      sending.current = false;
       setPending(false);
     }
   };
@@ -587,6 +675,7 @@ function Composer({
       )}
       <div className="ag-input-row">
         <textarea
+          ref={input}
           className="ag-input"
           aria-label="Message"
           aria-describedby={hint}
@@ -627,13 +716,28 @@ function Composer({
             aria-label="Send"
             title="Send"
             pending={pending}
-            disabled={busy || !text.trim() || tooLong || aiReady === false}
+            disabled={blocked}
           />
         )}
       </div>
-      <p id={hint} className={cx("ag-hint", tooLong && "is-error")}>
-        {caption}
-      </p>
+      {claude === false ? (
+        <p id={hint} className="ag-card-error" role="note">
+          <CircleAlert size={14} aria-hidden /> The Assistant runs on Claude for
+          now.{" "}
+          {role === "owner" ? (
+            <>
+              Choose Claude in{" "}
+              <Link to={paths.settings("ai")}>Settings › AI models</Link>.
+            </>
+          ) : (
+            "An owner can choose Claude in Settings › AI models."
+          )}
+        </p>
+      ) : (
+        <p id={hint} className={cx("ag-hint", tooLong && "is-error")}>
+          {caption}
+        </p>
+      )}
       <AiRefusal action="The Assistant" error={error} ready={aiReady}>
         {!!error && (
           <p className="ag-card-error" role="alert">
