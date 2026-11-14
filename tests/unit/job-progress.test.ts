@@ -16,7 +16,9 @@ import {
   WATCH_MS,
   followJob,
   parseWatched,
+  readWatched,
   shownOn,
+  subscribeWatched,
   unwatchJob,
   watchJob,
   withJob,
@@ -54,7 +56,11 @@ describe("a load job's bar", () => {
     ).toMatchObject({ fraction: 1, remainingMs: 0, elapsedMs: MIN });
     // Ended any other way, nothing measures it.
     expect(
-      loadProgress(job({ status: "failed", phase: "documents" }), undefined, T0),
+      loadProgress(
+        job({ status: "failed", phase: "documents" }),
+        undefined,
+        T0,
+      ),
     ).toMatchObject({ fraction: null, remainingMs: null });
   });
 
@@ -180,9 +186,9 @@ describe("a generation's bar", () => {
       took("gen_new", 99),
     ];
     expect(expectedDuration(gen({}), history, false)).toBe(6 * MIN);
-    expect(
-      expectedDuration(gen({}), [...history, took("d", 8)], false),
-    ).toBe(7 * MIN);
+    expect(expectedDuration(gen({}), [...history, took("d", 8)], false)).toBe(
+      7 * MIN,
+    );
     // Only the latest five: the oldest, by when it finished, drops out.
     const latest = [1, 2, 3, 4, 5].map((n) =>
       took(`n${n}`, 20, {}, T0 - n * MIN),
@@ -201,9 +207,11 @@ describe("a generation's bar", () => {
       elapsedMs: 5 * MIN,
       step: "Drafting types, links and mappings",
     });
-    expect(
-      generationProgress(gen({}), 15 * MIN, T0 + 20 * MIN),
-    ).toMatchObject({ fraction: 0.95, remainingMs: null, overdue: true });
+    expect(generationProgress(gen({}), 15 * MIN, T0 + 20 * MIN)).toMatchObject({
+      fraction: 0.95,
+      remainingMs: null,
+      overdue: true,
+    });
     expect(
       generationProgress(
         gen({ revision: { parentVersionId: "v", dryRun: true } }),
@@ -230,9 +238,9 @@ describe("a generation's bar", () => {
       elapsedMs: 0,
       step: "Waiting to start",
     });
-    expect(
-      generationProgress({ ...queued, attempts: 1 }, MIN, T0).step,
-    ).toBe("Waiting to retry");
+    expect(generationProgress({ ...queued, attempts: 1 }, MIN, T0).step).toBe(
+      "Waiting to retry",
+    );
   });
 
   it("ends full, or unmeasured when it failed", () => {
@@ -266,7 +274,7 @@ describe("the time in words", () => {
   });
 
   it("says the time so far", () => {
-    expect(timeSoFar(42_000)).toBe("42s so far");
+    expect(timeSoFar(42_000)).toBe("Under a minute so far");
     expect(timeSoFar(185_000)).toBe("3 min so far");
   });
 
@@ -276,15 +284,20 @@ describe("the time in words", () => {
       "About 2 min left",
     );
     expect(
-      progressLine({ ...base, remainingMs: null, overdue: true, elapsedMs: 20 * MIN }),
+      progressLine({
+        ...base,
+        remainingMs: null,
+        overdue: true,
+        elapsedMs: 20 * MIN,
+      }),
     ).toBe("Taking longer than usual · 20 min so far");
     expect(progressLine({ ...base, remainingMs: null, elapsedMs: 5000 })).toBe(
-      "5s so far",
+      "Under a minute so far",
     );
     expect(progressLine({ ...base, remainingMs: null })).toBe("");
-    expect(progressLine({ ...base, fraction: 1, remainingMs: 0, elapsedMs: 9000 })).toBe(
-      "9s so far",
-    );
+    expect(
+      progressLine({ ...base, fraction: 1, remainingMs: 0, elapsedMs: 9000 }),
+    ).toBe("Under a minute so far");
   });
 });
 
@@ -311,7 +324,9 @@ describe("the jobs this browser follows", () => {
       "x",
     ]);
     expect(parseWatched(raw, T0)).toEqual([job("b", T0 - 1), job("a", T0 - 2)]);
-    const many = JSON.stringify([1, 2, 3, 4, 5].map((n) => job(`j${n}`, T0 - n)));
+    const many = JSON.stringify(
+      [1, 2, 3, 4, 5].map((n) => job(`j${n}`, T0 - n)),
+    );
     expect(parseWatched(many, T0).map((j) => j.id)).toEqual(["j1", "j2", "j3"]);
   });
 
@@ -329,17 +344,19 @@ describe("the jobs this browser follows", () => {
   it("leaves a job to the pages that show it", () => {
     const gen = job("gen_1", 0, "generation"),
       load = job("load_1", 0);
-    for (const at of ["/ontology/ont_1", "/ontology/sample"]) {
-      expect(shownOn(gen, at)).toBe(true);
-      expect(shownOn(load, at)).toBe(true);
-    }
+    expect(shownOn(gen, "/ontology/ont_1")).toBe(true);
+    expect(shownOn(load, "/ontology/ont_1")).toBe(true);
     expect(shownOn(gen, "/ontology/ont_1/generations/gen_1")).toBe(true);
     expect(shownOn(gen, "/ontology/ont_1/generations/gen_2")).toBe(false);
     expect(shownOn(load, "/ontology/ont_1/loads/load_1")).toBe(true);
-    expect(shownOn(load, "/ontology/ont_1/loads/load_2")).toBe(true);
-    expect(shownOn(load, "/ontology/ont_1/generations/gen_1")).toBe(false);
+    expect(shownOn(load, "/ontology/ont_1/loads/load_2")).toBe(false);
+    expect(shownOn(load, "/ontology/ont_1/generations/load_1")).toBe(false);
     expect(shownOn(gen, "/ontology/ont_2")).toBe(false);
     expect(shownOn(gen, "/data")).toBe(false);
+    // The sample's tour shows the sample's jobs only.
+    expect(shownOn(load, "/ontology/sample", "ont_1")).toBe(true);
+    expect(shownOn(load, "/ontology/sample", "ont_9")).toBe(false);
+    expect(shownOn(load, "/ontology/sample")).toBe(false);
   });
 
   describe("in storage", () => {
@@ -372,6 +389,27 @@ describe("the jobs this browser follows", () => {
       ]);
       unwatchJob("ws_a", "load", "l");
       expect(store.has("foundry.jobs.watched.v1:ws_a")).toBe(false);
+    });
+
+    it("tells its subscribers of a change, here or in another tab", () => {
+      const added: string[] = [],
+        removed: string[] = [];
+      vi.stubGlobal("window", {
+        addEventListener: (type: string) => added.push(type),
+        removeEventListener: (type: string) => removed.push(type),
+      });
+      const heard = vi.fn(),
+        stop = subscribeWatched(heard);
+      expect(added).toEqual(["storage"]);
+      watchJob("ws_a", { kind: "load", ontologyId: "o", id: "l" });
+      expect(heard).toHaveBeenCalledTimes(1);
+      // Read again only when the stored list changes.
+      expect(readWatched("ws_a")).toBe(readWatched("ws_a"));
+      stop();
+      expect(removed).toEqual(["storage"]);
+      unwatchJob("ws_a", "load", "l");
+      expect(heard).toHaveBeenCalledTimes(1);
+      expect(readWatched("ws_a")).toEqual([]);
     });
 
     it("keeps nothing, and breaks nothing, when storage is blocked", () => {

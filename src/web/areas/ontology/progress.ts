@@ -58,7 +58,7 @@ const ORDER: JobPhase[] = ["provisioning", "ingest", "documents", "finishing"];
 /** The first time this browser saw a job reading documents, and how many were read. */
 export type DocumentSample = { at: number; done: number };
 
-const msSince = (iso: string | undefined, now: number) =>
+const msSince = (iso: string | null | undefined, now: number) =>
   iso ? Math.max(0, now - Date.parse(iso)) : 0;
 
 /**
@@ -245,15 +245,17 @@ export function timeLeft(ms: number): string {
 }
 
 /**
- * A time so far in words.
+ * A time so far in words, to the minute: the bar's line sits in a live
+ * region, which reads each change aloud.
  *
  * @example
- * timeSoFar(42_000) // "42s so far"
+ * timeSoFar(42_000) // "Under a minute so far"
  * timeSoFar(185_000) // "3 min so far"
  */
 export function timeSoFar(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  return s < 60 ? `${s}s so far` : `${Math.floor(s / 60)} min so far`;
+  return ms < 60_000
+    ? "Under a minute so far"
+    : `${Math.floor(ms / 60_000)} min so far`;
 }
 
 /** The line under a bar: the time left, else that it's late, else the time so far. */

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Link,
   useLocation,
@@ -74,7 +74,8 @@ export function DataOverview() {
   const files = useDataUpload(),
     [requesting, setRequesting] = useState(false);
   const [params, setParams] = useSearchParams(),
-    location = useLocation();
+    location = useLocation(),
+    closing = useRef("");
   // Opening the picker pushes an entry (Back closes it); closing goes back
   // to where a link opened it from, else drops the parameters in place.
   const picker = params.has("add") && manage,
@@ -88,6 +89,9 @@ export function DataOverview() {
         { state: PICKER_OPENED },
       ),
     closePicker = () => {
+      // Once per entry: a second Escape before the page moves goes nowhere.
+      if (closing.current === location.key) return;
+      closing.current = location.key;
       if (pickerOpened(location.state)) return void navigate(-1);
       setParams(
         (p) => {

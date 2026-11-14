@@ -678,7 +678,10 @@ export function SampleTour() {
             {load && <Link to={paths.load(o, load.id)}>See the load</Link>}
           </p>
           {progress && (
-            <ProgressBar progress={progress} label="Progress of the sample’s load" />
+            <ProgressBar
+              progress={progress}
+              label="Progress of the sample’s load"
+            />
           )}
         </FlowStep>
         <FlowStep

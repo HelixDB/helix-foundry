@@ -1,8 +1,10 @@
 import {
+  createFirstOntology,
   expect,
   makeContractsCurrent,
   mock,
   signIn,
+  signInToNewWorkspace,
   startContractsLoad,
   test,
 } from "./support/mock";
@@ -40,10 +42,9 @@ test("follows a load from any page with its step and bar, then says it ended", a
       name: "Progress of Customer contracts’s load",
     }),
   ).toBeVisible();
-  await expect(card.getByRole("link", { name: "View progress" })).toHaveAttribute(
-    "href",
-    /\/ontology\/ont_acme_contracts\/loads\/load_/,
-  );
+  await expect(
+    card.getByRole("link", { name: "View progress" }),
+  ).toHaveAttribute("href", /\/ontology\/ont_acme_contracts\/loads\/load_/);
 
   // It ends there, pointing at the Explorer, which it stops following.
   await expect(card).toContainText("Data loaded", { timeout: 30_000 });
@@ -112,4 +113,23 @@ test("draws a live load's bar on the overview's callout", async ({ page }) => {
       name: "Progress of Customer contracts’s load",
     }),
   ).toBeVisible();
+});
+
+test("follows a first draft into the load it queues, from any page", async ({
+  page,
+}) => {
+  await signInToNewWorkspace(page);
+  await mock.configure({ ontologyStepMs: 3000, loadStepMs: 3000 });
+  await createFirstOntology(page);
+  await page.goto("/data");
+  const card = dock(page);
+  await expect(card).toContainText("Drafting");
+  // Drafted, made current and loaded: the card follows the load.
+  await expect(card).toContainText("Loading the database", {
+    timeout: 30_000,
+  });
+  await expect(
+    card.getByRole("link", { name: "View progress" }),
+  ).toHaveAttribute("href", /\/loads\/load_/);
+  await expect(card).toContainText("Data loaded", { timeout: 60_000 });
 });

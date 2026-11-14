@@ -4,18 +4,14 @@ import {
   useId,
   useRef,
   useState,
+  type DragEvent,
   type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Plus, X } from "lucide-react";
 import type { Connector, ConnectorKindName } from "../../../shared/wfe";
-import {
-  Button,
-  SourceLogo,
-  connectorLabel,
-  sourceMark,
-} from "../../kit";
+import { Button, SourceLogo, connectorLabel, sourceMark } from "../../kit";
 import { paths } from "../../paths";
 import { useCurrentTheme, type Theme } from "../../shell/theme";
 import { Loading, canManage, useWorkspace } from "../../ui";
@@ -98,6 +94,14 @@ function logo(kind: ConnectorKindName, theme: Theme) {
   );
 }
 
+// A drag of files over the picker: kept from the page, and refused.
+const refuseFiles = (e: DragEvent<HTMLElement>) => {
+  e.stopPropagation();
+  if (!e.dataTransfer.types.includes("Files")) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "none";
+};
+
 // helix-foundry's Modal (ui.tsx): a native dialog with its header.
 export function Modal({
   title,
@@ -142,11 +146,12 @@ export function Modal({
           onClose();
       }}
       // A page that takes dropped files as documents (the Data page) never
-      // gets one dropped on the dialog: a credential file stays a field's.
+      // gets one dropped on the dialog, and the browser doesn't open it: no
+      // field here takes a file.
       onDragEnter={(e) => e.stopPropagation()}
-      onDragOver={(e) => e.stopPropagation()}
+      onDragOver={refuseFiles}
       onDragLeave={(e) => e.stopPropagation()}
-      onDrop={(e) => e.stopPropagation()}
+      onDrop={refuseFiles}
     >
       <div className="modal-head">
         <h2>{title}</h2>
@@ -353,8 +358,8 @@ export function ConnectData({
           : requesting
             ? "Request a connector"
             : kind && chosen
-            ? titles[kind]
-            : "Where is your data?"
+              ? titles[kind]
+              : "Where is your data?"
       }
       onClose={onClose}
     >
@@ -367,6 +372,12 @@ export function ConnectData({
               setConnected(null);
               setBound(null);
               setKind(null);
+              // The picker's first kind takes the focus the panel had.
+              requestAnimationFrame(() =>
+                document
+                  .querySelector<HTMLElement>("dialog[open] .connection-card")
+                  ?.focus(),
+              );
             }}
             // The connection's page takes the picker's entry: Back from it
             // is where the picker was opened.

@@ -1,5 +1,3 @@
-import { useSyncExternalStore } from "react";
-
 // The generations and loads this browser started, for the job dock
 // (./job-dock.tsx) to follow from any page until each ends and is seen:
 // started by queries.ts (generateOntology, a revision that saves, createLoad),
@@ -83,7 +81,8 @@ const listeners = new Set<() => void>();
 // The last read of each workspace's list, so a snapshot is stable until it changes.
 const cache = new Map<string, { raw: string | null; jobs: WatchedJob[] }>();
 
-function read(ws: string): WatchedJob[] {
+/** The jobs a workspace follows, newest first, as last stored. */
+export function readWatched(ws: string): WatchedJob[] {
   let raw: string | null = null;
   try {
     raw = localStorage.getItem(key(ws));
@@ -109,11 +108,11 @@ function write(ws: string, jobs: readonly WatchedJob[]) {
 
 /** Follows a job this browser just started. */
 export const watchJob = (ws: string, job: Omit<WatchedJob, "at">) =>
-  write(ws, withJob(read(ws), { ...job, at: Date.now() }));
+  write(ws, withJob(readWatched(ws), { ...job, at: Date.now() }));
 
 /** Stops following a job: dismissed, or seen once it ended. */
 export const unwatchJob = (ws: string, kind: WatchedJob["kind"], id: string) =>
-  write(ws, withoutJob(read(ws), kind, id));
+  write(ws, withoutJob(readWatched(ws), kind, id));
 
 /**
  * Follows `next` in the place of `job`, keeping when it started: a first
@@ -126,48 +125,44 @@ export const followJob = (
 ) =>
   write(
     ws,
-    read(ws).map((j) =>
+    readWatched(ws).map((j) =>
       j.kind === job.kind && j.id === job.id ? { ...j, ...next } : j,
     ),
   );
 
-const subscribe = (listener: () => void) => {
+/** Calls `listener` whenever a list changes, in this tab or another. */
+export function subscribeWatched(listener: () => void) {
   listeners.add(listener);
-  // Another tab's change.
   window.addEventListener("storage", listener);
   return () => {
     listeners.delete(listener);
     window.removeEventListener("storage", listener);
   };
-};
-
-const NONE: WatchedJob[] = [];
-
-/** The jobs a workspace follows, newest first. */
-export const useWatchedJobs = (ws: string) =>
-  useSyncExternalStore(
-    subscribe,
-    () => read(ws),
-    () => NONE,
-  );
+}
 
 /**
  * Whether the page at `pathname` already shows `job` as it goes: the
  * ontology's overview (its setup's steps and live callouts), the job's own
- * page (a generation's, or the loads'), and the sample's tour. The dock
- * leaves those to the page.
+ * page, and, for the sample's ontology (`sampleId`), the sample's tour. The
+ * dock leaves those to the page.
  *
  * @example
  * shownOn({ kind: "load", ontologyId: "o", id: "l", at: 0 }, "/ontology/o/loads/l") // true
  * shownOn({ kind: "load", ontologyId: "o", id: "l", at: 0 }, "/data") // false
  */
-export function shownOn(job: WatchedJob, pathname: string): boolean {
-  const at = "/ontology/" + encodeURIComponent(job.ontologyId);
+export function shownOn(
+  job: WatchedJob,
+  pathname: string,
+  sampleId?: string,
+): boolean {
+  const at = "/ontology/" + encodeURIComponent(job.ontologyId),
+    own = encodeURIComponent(job.id);
   return (
     pathname === at ||
-    pathname === "/ontology/sample" ||
-    (job.kind === "generation"
-      ? pathname === `${at}/generations/${encodeURIComponent(job.id)}`
-      : pathname.startsWith(`${at}/loads/`))
+    (pathname === "/ontology/sample" && job.ontologyId === sampleId) ||
+    pathname ===
+      (job.kind === "generation"
+        ? `${at}/generations/${own}`
+        : `${at}/loads/${own}`)
   );
 }

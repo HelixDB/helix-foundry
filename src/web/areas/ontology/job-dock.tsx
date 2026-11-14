@@ -1,5 +1,5 @@
 import "./ontology.css";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { CircleAlert, CircleCheck, LoaderCircle, X } from "lucide-react";
@@ -16,11 +16,12 @@ import {
 import { generationTitle } from "./model";
 import { isBusyLoad, isLive, isLiveJob, ontologyQueries } from "./queries";
 import { ontologyName } from "./scope";
+import { useSampleOntology } from "./use-sample-ontology";
+import { useWatchedJobs } from "./use-watched-jobs";
 import {
   followJob,
   shownOn,
   unwatchJob,
-  useWatchedJobs,
   type WatchedJob,
 } from "./watched-jobs";
 
@@ -36,12 +37,13 @@ import {
 export function JobDock() {
   const { id } = useWorkspace(),
     { pathname } = useLocation(),
-    jobs = useWatchedJobs(id);
+    jobs = useWatchedJobs(id),
+    sample = useSampleOntology()?.id;
   if (!jobs.length) return null;
   return (
     <section className="on-job-dock" aria-label="Jobs in progress">
       {jobs.map((job) => {
-        const hidden = shownOn(job, pathname);
+        const hidden = shownOn(job, pathname, sample);
         return job.kind === "generation" ? (
           <GenerationCard
             key={job.kind + job.id}
@@ -57,7 +59,12 @@ export function JobDock() {
   );
 }
 
-type Ending = { tone: "done" | "failed"; title: string; go: string; label: string };
+type Ending = {
+  tone: "done" | "failed";
+  title: string;
+  go: string;
+  label: string;
+};
 
 function Card({
   ws,
@@ -83,7 +90,11 @@ function Card({
     if (seen) unwatchJob(ws, job.kind, job.id);
   }, [seen]);
   if (hidden) return null;
-  const stop = () => unwatchJob(ws, job.kind, job.id),
+  const stop = () => {
+      unwatchJob(ws, job.kind, job.id);
+      // The card goes: Feedback, right under the dock, takes its focus.
+      document.querySelector<HTMLElement>(".hf-feedback-button")?.focus();
+    },
     Icon = !ending
       ? LoaderCircle
       : ending.tone === "done"
@@ -153,13 +164,21 @@ function GenerationCard({
     g = read.data?.generation,
     name = useOntologyLabel(ws, o),
     progress = useGenerationProgress(ws, o, isLive(g) ? g : undefined);
-  const succeeded = g?.status === "ONTOLOGY_GENERATION_STATUS_SUCCEEDED";
-  // A first draft's load was queued as it was stored: its card follows it.
+  const succeeded = g?.status === "ONTOLOGY_GENERATION_STATUS_SUCCEEDED",
+    // A first draft's load was queued as it was stored: its card follows
+    // that load, once a read of the loads started after the draft was seen
+    // done says (until then it hasn't ended, here or on a page showing it).
+    handoff = succeeded && !!g?.loadWhenReady,
+    [fresh, setFresh] = useState(false);
   const loads = useQuery({
-      ...ontologyQueries.loads(ws, o),
-      enabled: succeeded && !!g?.loadWhenReady,
-    }),
-    next = succeeded && g?.loadWhenReady && liveRead(loads.data?.loads);
+    ...ontologyQueries.loads(ws, o),
+    enabled: handoff,
+  });
+  useEffect(() => {
+    // A read already under way may predate the load: this one replaces it.
+    if (handoff) void loads.refetch().then(() => setFresh(true));
+  }, [handoff]);
+  const next = fresh ? liveRead(loads.data?.loads) : undefined;
   useEffect(() => {
     if (next) followJob(ws, job, { kind: "load", id: next.load.id });
   }, [next && next.load.id]);
@@ -178,7 +197,7 @@ function GenerationCard({
           ? "Creating an edited version"
           : `Drafting ${generationTitle(g, "") ? `“${generationTitle(g, "")}”` : "an ontology"}`
       }
-      ending={generationEnding(g, o)}
+      ending={handoff && !fresh ? null : generationEnding(g, o)}
     >
       {progress && (
         <ProgressBar progress={progress} label={`Progress of ${name}`} />

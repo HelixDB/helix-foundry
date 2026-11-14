@@ -21,9 +21,12 @@ import {
 // its time left goes by. Kept for the visit, so every view of a job agrees.
 const samples = new Map<string, DocumentSample>();
 
-/** A load job's bar, ticking each second; null without a job. */
-export function useLoadJobProgress(job: GraphJob | undefined) {
-  const now = useNow(1000),
+// How often a live bar moves: its words change by the minute at most.
+const TICK_MS = 5000;
+
+/** A load job's bar, moving while there is a job; null without one. */
+export function useLoadJobProgress(job: GraphJob | null | undefined) {
+  const now = useNow(job ? TICK_MS : 60_000),
     p = job?.progress,
     reading =
       job?.status === "running" &&
@@ -44,9 +47,9 @@ export function useLoadJobProgress(job: GraphJob | undefined) {
 export function useGenerationProgress(
   ws: string,
   ontologyId: string,
-  g: OntologyGeneration | undefined,
+  g: OntologyGeneration | null | undefined,
 ) {
-  const now = useNow(1000),
+  const now = useNow(g ? TICK_MS : 60_000),
     history = useQuery({
       ...ontologyQueries.generations(ws, ontologyId),
       enabled: !!g,
@@ -92,7 +95,9 @@ export function ProgressBar({
             "on-progress-fill",
             pct === undefined && "is-indeterminate",
           )}
-          style={pct === undefined ? undefined : { width: `${Math.max(pct, 2)}%` }}
+          style={
+            pct === undefined ? undefined : { width: `${Math.max(pct, 2)}%` }
+          }
         />
       </div>
       <p className="on-progress-line">

@@ -12,7 +12,7 @@ import { SkeletonText, cx, useStoredState } from "../kit";
 import { paths } from "../paths";
 import { useWorkspace, type ShellUser, type ShellWorkspace } from "../ui";
 import { AccountMenu } from "../areas/workspace/account-menu";
-import { useWatchedJobs } from "../areas/ontology/watched-jobs";
+import { useWatchedJobs } from "../areas/ontology/use-watched-jobs";
 import { FeedbackButton } from "./feedback";
 import { WorkspaceSwitcher } from "../areas/workspace/switcher";
 import {

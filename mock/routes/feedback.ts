@@ -25,7 +25,9 @@ const CATEGORIES: readonly FeedbackCategory[] = [
   "FEEDBACK_CATEGORY_CONNECTOR_REQUEST",
 ];
 
-export type MockFeedback = Required<Omit<SendFeedbackRequest, "workspaceId">> & {
+export type MockFeedback = Required<
+  Omit<SendFeedbackRequest, "workspaceId">
+> & {
   id: string;
   userId: string;
   workspaceId: string | null;
