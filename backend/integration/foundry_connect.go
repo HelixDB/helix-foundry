@@ -144,9 +144,13 @@ func (s *Service) FoundryConnect(
 			" form, where they enter the credentials and save. Then helix_foundry_list_connectors lists the new connector.",
 	}
 	if kind.GetKind() == foundrymodel.ConnectorKindEvents {
+		// An agent whose person confirms can't prepare create_event_source: the form is the way.
+		without := "; it takes no credential, and the create_event_source operation makes one without the browser"
+		if _, person := identity.Confirm.(ConfirmByPerson); person {
+			without = ", and makes its send tokens there"
+		}
 		out.Next = "Give the user this link to open in a browser signed in to Foundry: it opens the API source form, where they name the source " +
-			"and say what its pieces are; it takes no credential, and the create_event_source operation makes one without the browser. " +
-			"Then helix_foundry_list_connectors lists the new source."
+			"and say what its pieces are" + without + ". Then helix_foundry_list_connectors lists the new source."
 	}
 	if !kind.GetAvailable() {
 		out.Next = "The workspace's plan doesn't include " + display + "; the link shows owners and admins how to upgrade to Foundry Pro first. " + out.Next

@@ -322,3 +322,33 @@ func TestAnActionResultIsCut(t *testing.T) {
 	assert.Less(t, len(text), 17<<10)
 	assert.Contains(t, text, "[Cut at 16 KiB")
 }
+
+// Connecting is a link to Foundry's form, even for a kind that signs in
+// elsewhere: credentials never pass through the Assistant.
+func TestConnectIsALinkToFoundry(t *testing.T) {
+	for _, events := range []bool{false, true} {
+		h := workspaceHarness(t,
+			call("toolu_1", "helix_foundry_connect", `{"workspace_id":"ws1","kind":"stripe"}`),
+			call("toolu_2", "helix_foundry_connect", `{"workspace_id":"ws1","kind":"events"}`),
+			say("Open the link to connect Stripe."))
+		// A host that signs in at providers, as the Assistant uses it.
+		host := *h.host.service
+		host.Events, host.SignIn = events, true
+		h.host.service = host.ForAgent()
+		_, err := h.runner.Run(context.Background(), message("Connect Stripe"))
+		require.NoError(t, err)
+		told := h.model.requests[1].Messages
+		stripe := told[len(told)-1].Content[0].(llm.ToolResult)
+		require.False(t, stripe.IsError, stripe.Content)
+		assert.Contains(t, stripe.Content, `"url":"http://localhost:3000/data?add=stripe\u0026workspace=ws1"`)
+		assert.NotContains(t, stripe.Content, "sign_in_id")
+		told = h.model.requests[2].Messages
+		source := told[len(told)-1].Content[0].(llm.ToolResult)
+		if !events {
+			assert.True(t, source.IsError, "a host without API sources offers none")
+			continue
+		}
+		require.False(t, source.IsError, source.Content)
+		assert.NotContains(t, source.Content, "create_event_source", "it isn't sent to an operation it can't prepare")
+	}
+}

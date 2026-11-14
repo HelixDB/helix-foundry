@@ -247,6 +247,13 @@ type backend struct {
 	reviewErr error
 }
 
+func (b *backend) ListConnectorKinds(context.Context, *foundryv1.ListConnectorKindsRequest, ...grpc.CallOption) (*foundryv1.ListConnectorKindsResponse, error) {
+	return &foundryv1.ListConnectorKindsResponse{Kinds: []*foundryv1.ConnectorKind{
+		{Kind: "stripe", DisplayName: "Stripe", Available: true, SignIn: true},
+		{Kind: model.ConnectorKindEvents, DisplayName: "API source", Available: true},
+	}}, nil
+}
+
 func (b *backend) ListFoundryReviews(_ context.Context, r *foundryv1.ListFoundryReviewsRequest, _ ...grpc.CallOption) (*foundryv1.ListFoundryReviewsResponse, error) {
 	if b.reviewErr != nil {
 		return nil, b.reviewErr
