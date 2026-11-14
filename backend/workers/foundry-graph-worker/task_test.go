@@ -38,6 +38,7 @@ import (
 	agentv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/ontology_agent/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/helixgateway"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
+	"github.com/helixdb/helix-foundry/backend/pkg/namewords"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/snapshot"
@@ -175,7 +176,7 @@ func deleteDone(req string, stream agentv1.Agent_DeleteLoadServer) error {
 		return status.Error(codes.Internal, err.Error())
 	}
 	return deleteEvents(stream, []string{
-		`{"event":"delete_started","contract_version":"4.22.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
+		`{"event":"delete_started","contract_version":"4.23.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
 		`{"event":"deleted","label":"Customer","element":"node","count":1}`, `{"event":"delete_finished"}`,
 	}, `{"status":"done","nodes":1,"edges":2}`)
 }
@@ -255,7 +256,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 			return status.Error(codes.Internal, err.Error())
 		}
 		return ingestEvents(stream, []string{
-			`{"event":"ingest_started","contract_version":"4.22.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.23.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":2}}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"resolve","rows":2}}`,
 			`{"event":"sweep_page","entities":2}`, `{"event":"ingest_finished"}`,
@@ -266,7 +267,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 // extracted ends doc-a ingested with an artifact, doc-b a duplicate of it,
 // doc-c failed retryably and doc-d already held.
 var extracted = []string{
-	`{"event":"extract_started","contract_version":"4.22.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
+	`{"event":"extract_started","contract_version":"4.23.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
 	`{"event":"artifact","doc_id":"doc-a","key":"key_a","json":"{\"sections\":[1]}"}`,
 	documentEvent("doc-a", `{"kind":"ingested"}`, usage),
 	documentEvent("doc-b", `{"kind":"duplicate","of":"doc-a"}`, noUsage),
@@ -313,10 +314,13 @@ type memStore struct {
 	decisions     []*model.FoundryReviewDecision
 	decisionErr   error
 	decisionLoads []string
-	version       *model.OntologyVersion
-	generation    *model.OntologyGeneration
-	tables        []*model.ConnectorTable
-	pending       []*model.FoundryDocument
+	// aliasReads counts the alias reads by name key, aliasKeysMax is the
+	// most keys one took, and keysFilled counts the fills of name keys.
+	aliasReads, aliasKeysMax, keysFilled int
+	version                              *model.OntologyVersion
+	generation                           *model.OntologyGeneration
+	tables                               []*model.ConnectorTable
+	pending                              []*model.FoundryDocument
 	// pendingFor are the loads the attempt asked for the documents of.
 	pendingFor  []string
 	spent       int64
@@ -594,15 +598,29 @@ func (s *memStore) ListFoundryLoadDecisions(_ context.Context, loadID, after str
 	return out, nil
 }
 
-// ListFoundryLoadAliases is the store's: of the resolves that chose an
-// entity, the earliest decided of each type, name and entity, by id.
-func (s *memStore) ListFoundryLoadAliases(_ context.Context, _, after string, limit int) ([]*model.FoundryReviewDecision, error) {
+// ListFoundryLoadAliasesNamed is the store's: the resolves that chose an
+// entity whose name's key is one of keys, the earliest decided of each type,
+// name and entity. aliasReads counts the reads, and aliasKeysMax is the most
+// keys one took.
+func (s *memStore) ListFoundryLoadAliasesNamed(_ context.Context, _ string, keys []int64) ([]*model.FoundryReviewDecision, error) {
 	if s.decisionErr != nil {
 		return nil, s.decisionErr
+	}
+	if len(keys) > foundrystore.FoundryAliasKeysPerRead {
+		return nil, fmt.Errorf("at most %d name keys a read", foundrystore.FoundryAliasKeysPerRead)
+	}
+	s.aliasReads++
+	s.aliasKeysMax = max(s.aliasKeysMax, len(keys))
+	wanted := map[int64]bool{}
+	for _, k := range keys {
+		wanted[k] = true
 	}
 	earliest := map[[3]string]*model.FoundryReviewDecision{}
 	for _, d := range s.decisions {
 		if d.OntologyID != "ont-1" || d.Kind != model.FoundryReviewResolve || d.EntityKey == nil {
+			continue
+		}
+		if k, ok := namewords.Key(*d.NormName); !ok || !wanted[k] {
 			continue
 		}
 		k := [3]string{d.Type, *d.NormName, *d.EntityKey}
@@ -610,14 +628,21 @@ func (s *memStore) ListFoundryLoadAliases(_ context.Context, _, after string, li
 			earliest[k] = d
 		}
 	}
-	var out []*model.FoundryReviewDecision
-	for _, d := range earliest {
-		if d.ID > after {
-			out = append(out, d)
-		}
+	return slices.Collect(maps.Values(earliest)), nil
+}
+
+func (s *memStore) FillFoundryLoadNameKeys(context.Context, string) (int, error) {
+	s.keysFilled++
+	return 0, nil
+}
+
+func (s *memStore) FoundryLoadHasAliases(context.Context, string) (bool, error) {
+	if s.decisionErr != nil {
+		return false, s.decisionErr
 	}
-	slices.SortFunc(out, func(a, b *model.FoundryReviewDecision) int { return strings.Compare(a.ID, b.ID) })
-	return out[:min(len(out), limit)], nil
+	return slices.ContainsFunc(s.decisions, func(d *model.FoundryReviewDecision) bool {
+		return d.OntologyID == "ont-1" && d.Kind == model.FoundryReviewResolve && d.EntityKey != nil
+	}), nil
 }
 
 func (s *memStore) ListPendingFoundryDocuments(_ context.Context, loadID string) ([]*model.FoundryDocument, error) {
@@ -1339,13 +1364,33 @@ func TestLoad(t *testing.T) {
 
 	// gRPC would refuse a request past the agent's message limit as it
 	// refuses a full agent, which is retried; no retry sends less.
+	// Past it even with no document (what every Extract carries: the
+	// version, its value decisions), as no smaller Extract sends less.
 	t.Run("fails for good a request past the agent's message limit", func(t *testing.T) {
 		h := newHarness(t)
-		h.task.runner.maxRequestBytes = 1000
+		h.task.runner.maxRequestBytes = 10
 		outcome := h.run(t, loadJob())
 		if _, extracts := h.agent.calls(); outcome.Status != model.FoundryGraphJobFailed || outcome.RetryAt != nil ||
 			outcome.Error != "this version reads more documents than one load can send" || len(extracts) != 0 || !outcome.IngestDone {
 			t.Fatalf("outcome = %+v after %d extracts", outcome, len(extracts))
+		}
+	})
+
+	// Past it with all the documents, within it with fewer: they go in halves.
+	t.Run("splits a request past the agent's message limit", func(t *testing.T) {
+		h := newHarness(t)
+		h.task.runner.maxRequestBytes = 1000
+		outcome := h.run(t, loadJob())
+		_, extracts := h.agent.calls()
+		sent := 0
+		for _, c := range extracts {
+			if len(c) > 1000 {
+				t.Fatalf("a request of %d bytes", len(c))
+			}
+			sent += len(decodeExtract(t, c).Documents)
+		}
+		if outcome.Status != model.FoundryGraphJobSucceeded || len(extracts) < 2 || sent != 4 {
+			t.Fatalf("outcome = %+v after %d extracts of %d documents", outcome, len(extracts), sent)
 		}
 	})
 
@@ -3238,6 +3283,8 @@ func TestExtractReviewDecisions(t *testing.T) {
 	rejected := approval("9", "doc-a", hashA)
 	rejected.Kind = model.FoundryReviewReject
 	h.store.decisions = append(h.store.decisions, rejected)
+	// doc-a writes the name its alias carries (contract 4.23.0).
+	h.bucket.objects[document.Key("ws-1", "doc-a")] = []byte("# doc-a\nVariant signed.")
 	outcome := h.run(t, extractJob())
 	if outcome.Status != model.FoundryGraphJobSucceeded {
 		t.Fatalf("%+v", outcome)
@@ -3370,7 +3417,7 @@ func TestExtractReviewDecisionsLeftOutOnceStale(t *testing.T) {
 		prop("3", "sacme", "tier", `3`), &notInData,
 	}
 	toml := "[types.Customer]\nprops = { account = \"string\", tier = \"integer\" }\nkey = [\"account\"]"
-	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}})
+	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}}, writing("doc-a", h.store.decisions))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3400,7 +3447,7 @@ func TestExtractReleaseDecisionsGoWithTheirDocument(t *testing.T) {
 			DocID: ptr(doc), ClaimKey: &key, ClaimSpan: &model.FoundryClaimSpan{Section: 1, Start: 2, End: 9}, StatementHash: &read, DecidedByUserID: "user", DecidedAt: settled}
 	}
 	h.store.decisions = []*model.FoundryReviewDecision{release("1", "doc-a"), release("2", "doc-b")}
-	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), "", []ontologyagent.ExtractDocument{{DocID: "doc-a"}})
+	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), "", []ontologyagent.ExtractDocument{{DocID: "doc-a"}}, &attempt{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3435,7 +3482,7 @@ func TestExtractReviewDecisionsSendStaleResolvesOfAChangedKey(t *testing.T) {
 		resolve("3", "Supplier", "helio inc", "i42"), resolve("4", "Customer", "Helio Inc", "i42"), blankDoc,
 	}
 	toml := "[types.Customer]\nprops = { account = \"string\" }\nkey = [\"account\"]"
-	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}, {DocID: " "}})
+	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}, {DocID: " "}}, writing("doc-a", h.store.decisions))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3453,9 +3500,10 @@ func TestExtractReviewDecisionsSendStaleResolvesOfAChangedKey(t *testing.T) {
 
 // The engine takes at most 10,000 decisions of each kind in one Extract, and
 // 50,000 in all (4.22.0): five kinds at their cap go together, and one more
-// of any kind is past what an Extract takes, which fails for good before it
-// is sent rather than drop a choice. The release and withdraw kinds share no
-// cap, nor do a document's resolves and the load's aliases.
+// of any kind is past what an Extract takes, too large to send rather than
+// drop a choice (sendSplit then sends fewer documents). The release and
+// withdraw kinds share no cap, nor do a document's resolves and the aliases
+// it writes.
 func TestExtractReviewDecisionCaps(t *testing.T) {
 	const toml = "[types.Customer]\nprops = { name = \"string\" }"
 	settled := time.Date(2026, 10, 17, 8, 2, 3, 0, time.UTC)
@@ -3496,7 +3544,7 @@ func TestExtractReviewDecisionCaps(t *testing.T) {
 	}
 	h := newHarness(t)
 	h.store.decisions = full(atCap)
-	decisions, err := h.task.runner.decisions(context.Background(), loadJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}})
+	decisions, err := h.task.runner.decisions(context.Background(), loadJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}}, writing("doc-a", h.store.decisions))
 	if err != nil || len(decisions) != maxExtractDecisions {
 		t.Fatalf("%d decisions, %v", len(decisions), err)
 	}
@@ -3515,7 +3563,7 @@ func TestExtractReviewDecisionCaps(t *testing.T) {
 			}
 			h := newHarness(t)
 			h.store.decisions = full(n)
-			decisions, err := h.task.runner.decisions(context.Background(), loadJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}})
+			decisions, err := h.task.runner.decisions(context.Background(), loadJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}}, writing("doc-a", h.store.decisions))
 			var f *failure
 			if !errors.As(err, &f) || !f.Permanent || !f.TooLarge || decisions != nil || !strings.Contains(f.Message, "of one kind") {
 				t.Fatalf("%v", err)
@@ -3527,13 +3575,13 @@ func TestExtractReviewDecisionCaps(t *testing.T) {
 func TestExtractReviewDecisionFailures(t *testing.T) {
 	h := newHarness(t)
 	h.store.decisionErr = errors.New("db unavailable")
-	_, err := h.task.runner.decisions(context.Background(), loadJob(), "[types.Customer]", nil)
+	_, err := h.task.runner.decisions(context.Background(), loadJob(), "[types.Customer]", nil, &attempt{})
 	var f *failure
 	if !errors.As(err, &f) || f.Permanent {
 		t.Fatalf("%v", err)
 	}
 	h.store.decisionErr = nil
-	_, err = h.task.runner.decisions(context.Background(), loadJob(), "[invalid", nil)
+	_, err = h.task.runner.decisions(context.Background(), loadJob(), "[invalid", nil, &attempt{})
 	if !errors.As(err, &f) || !f.Permanent {
 		t.Fatalf("%v", err)
 	}
@@ -3542,7 +3590,7 @@ func TestExtractReviewDecisionFailures(t *testing.T) {
 	ptr := func(s string) *string { return &s }
 	h.store.decisions = []*model.FoundryReviewDecision{{ID: "1", OntologyID: "ont-1", Kind: model.FoundryReviewProp, Type: "Customer",
 		EntityKey: ptr("c1"), Prop: ptr("name"), Value: json.RawMessage(`"Chosen"`), DecidedByUserID: "user"}}
-	decisions, err := h.task.runner.decisions(context.Background(), loadJob(), "[types.Customer]\nprops = { name = \"string\" }", []ontologyagent.ExtractDocument{{DocID: "doc-a"}})
+	decisions, err := h.task.runner.decisions(context.Background(), loadJob(), "[types.Customer]\nprops = { name = \"string\" }", []ontologyagent.ExtractDocument{{DocID: "doc-a"}}, &attempt{})
 	if !errors.As(err, &f) || !f.Permanent || decisions != nil {
 		t.Fatalf("%+v, %v", decisions, err)
 	}

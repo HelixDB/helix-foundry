@@ -31,12 +31,12 @@ const FoundryResendDecisions FoundryResendReason = "decisions"
 // prop, release, withdraw, alias) one Extract takes, and
 // FoundryExtractAllDecisionsMax the most of all kinds (the engine's Decisions,
 // contract 4.22.0). Every value decision of a load goes with every one of its
-// Extracts, and so does every alias, so an ontology takes no more value
-// decisions than one kind's cap (store.FoundryValueDecisionsFull), nor more
-// names linked to an entity (store.FoundryAliasesFull): one more and no
-// Extract of a load that holds them could be sent. The resolves, releases
-// and withdraws are those of the Extract's documents, so a resend sends
-// documents whose decisions are past a cap in smaller Extracts.
+// Extracts, so an ontology takes no more value decisions than one kind's cap
+// (store.FoundryValueDecisionsFull): one more and no Extract of a load that
+// holds them could be sent. The resolves, releases and withdraws are those of
+// the Extract's documents, and from contract 4.23.0 the aliases are those its
+// documents write, so an ontology links any number of names, and documents
+// whose decisions are past a cap go in smaller Extracts.
 const (
 	FoundryExtractKindDecisionsMax = 10000
 	FoundryExtractAllDecisionsMax  = 50000

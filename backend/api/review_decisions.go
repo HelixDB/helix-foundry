@@ -357,10 +357,6 @@ func settleFoundryReviewError(err error) error {
 		return status.Errorf(codes.FailedPrecondition, "this ontology holds %d value decisions, the most a load can be sent; remove one before deciding another",
 			foundrymodel.FoundryExtractKindDecisionsMax)
 	}
-	if errors.Is(err, foundrystore.FoundryAliasesFull) {
-		return status.Errorf(codes.FailedPrecondition, "this ontology links %d different names to records, the most a load can carry to every document; "+
-			"choose a record this name is already linked to, or not in data, or remove a name's decision first", foundrymodel.FoundryExtractKindDecisionsMax)
-	}
 	return status.Errorf(codes.Internal, "settle review: %v", err)
 }
 

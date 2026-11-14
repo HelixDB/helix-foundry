@@ -197,8 +197,10 @@ VALUES (?, ?, ?, ?, 'writing', ?, ?)`, job.ID, job.WorkspaceID, job.OntologyID, 
 	// Every decision an Extract takes: a reject is the site's to read, and is
 	// sent to no engine, and neither is an approval of a claim it rejects
 	// (foundryRejected), as only an older binary leaves both.
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`)
-SELECT ?, `+foundryReviewDecisionColumns+` FROM foundry_review_decisions r WHERE r.ontology_id=? AND r.kind<>'reject'
+	// Each with its name's key (name_key), by which an Extract finds the
+	// aliases its documents write.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, name_key)
+SELECT ?, `+foundryReviewDecisionColumns+`, name_key FROM foundry_review_decisions r WHERE r.ontology_id=? AND r.kind<>'reject'
   AND NOT (r.kind='release' AND `+foundryRejected("r", "r.ontology_id")+`)`, job.LoadID, job.OntologyID); err != nil {
 		return err
 	}

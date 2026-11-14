@@ -431,18 +431,6 @@ func TestSettleValueRefused(t *testing.T) {
 	}
 }
 
-// A name linked to a record no decision has linked it to yet is one more
-// name every load carries to every document (4.22.0): past what a load can
-// be sent, the answer says so with what to do instead.
-func TestSettleResolvePastTheAliasCap(t *testing.T) {
-	s, db, _ := reviewService(t, `{"items":[{"reason":"unresolved","type":"Customer","doc_id":"doc-a","norm_name":"variant"}]}`)
-	db.saveErr = foundrystore.FoundryAliasesFull
-	_, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(resolveChoice("customer-1")))
-	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "links 10000 different names to records") || len(db.saved) != 0 {
-		t.Fatalf("%v", err)
-	}
-}
-
 // What a load did with a document's names comes back as the store keeps
 // it, each refusal's reason only on a refusal, with the entities a carried
 // name linked.

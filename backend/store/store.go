@@ -122,7 +122,9 @@ type ReadStore interface {
 	ListOntologyGenerations(ctx context.Context, ontologyID string, limit int) ([]*model.OntologyGeneration, error)
 
 	ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error)
-	ListFoundryLoadAliases(ctx context.Context, loadID, afterID string, limit int) ([]*model.FoundryReviewDecision, error)
+	ListFoundryLoadAliasesNamed(ctx context.Context, loadID string, keys []int64) ([]*model.FoundryReviewDecision, error)
+	FillFoundryLoadNameKeys(ctx context.Context, loadID string) (int, error)
+	FoundryLoadHasAliases(ctx context.Context, loadID string) (bool, error)
 	ListFoundryReviewDecisions(ctx context.Context, ontologyID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error)
 	ListFoundryShownDecisions(ctx context.Context, ontologyID, afterID string, limit int) ([]*model.FoundryReviewDecision, error)
 	GetFoundryReviewDecision(ctx context.Context, ontologyID, id string) (*model.FoundryReviewDecision, error)

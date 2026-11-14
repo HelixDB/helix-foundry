@@ -1,13 +1,17 @@
 package foundrygraphworker
 
 import (
+	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/document"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	agentv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/ontology_agent/v1"
+	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -29,13 +33,26 @@ func aliases(r ontologyagent.ExtractRequest) []ontologyagent.ExtractDecision {
 	return out
 }
 
-// Contract 4.22.0: each name a person linked to an entity in any document of
-// the load is an alias every Extract of the load carries, so it links in
-// every document where the names rung would ask; the engine checks each
+// writing is an attempt in which doc writes every name ds's resolves linked
+// to an entity, as documentAliases would find them.
+func writing(doc string, ds []*model.FoundryReviewDecision) *attempt {
+	a := &attempt{aliases: map[string][]*model.FoundryReviewDecision{}}
+	for _, d := range ds {
+		if d.Kind == model.FoundryReviewResolve && d.EntityKey != nil {
+			a.aliases[doc] = append(a.aliases[doc], d)
+		}
+	}
+	return a
+}
+
+// Contract 4.23.0: each name a person linked to an entity in any document of
+// the load is an alias, which acts only on a document whose text writes it,
+// so an Extract carries those its documents write: the engine checks each
 // request against the schema (the fake agent's refused), so an alias it
 // carries is one the engine takes. One alias a name, type and entity, under
 // its first decision's id and time; a name linked to two entities goes as
-// both, for the engine to link neither; "not in data" carries nothing.
+// both, for the engine to link neither; "not in data" carries nothing, nor
+// does a name no document sent writes, nor one inside a longer word.
 func TestExtractCarriesAliases(t *testing.T) {
 	acme, globex := "acme", "globex"
 	decisions := func() []*model.FoundryReviewDecision {
@@ -46,7 +63,13 @@ func TestExtractCarriesAliases(t *testing.T) {
 			linked("3", "doc-y", "helio", &acme, settledAt),
 			linked("4", "doc-x", "helio", &globex, settledAt),
 			linked("5", "doc-w", "initech", nil, settledAt),
+			// Written in no document sent: "Umbrellas" is another word.
+			linked("6", "doc-v", "umbrella", &acme, settledAt),
 		}
+	}
+	// doc-a writes two of the names; the other documents none.
+	writes := func(h *harness) {
+		h.bucket.objects[document.Key("ws-1", "doc-a")] = []byte("# doc-a\nACME Corp. signed with Helio for Initech's Umbrellas.")
 	}
 	want := []ontologyagent.ExtractDecision{
 		{Kind: ontologyagent.AliasDecision, Type: "Customer", NormName: "acme corp", EntityKey: &acme, DecisionID: "2", DecidedAt: settledAt},
@@ -57,6 +80,7 @@ func TestExtractCarriesAliases(t *testing.T) {
 	t.Run("a load's Extract", func(t *testing.T) {
 		h := newHarness(t)
 		namedCustomers(t, h)
+		writes(h)
 		h.store.decisions = decisions()
 		if outcome := h.run(t, extractJob()); outcome.Status != model.FoundryGraphJobSucceeded {
 			t.Fatalf("%+v", outcome)
@@ -73,11 +97,17 @@ func TestExtractCarriesAliases(t *testing.T) {
 		if !strings.Contains(calls[0], first) {
 			t.Fatalf("the request lacks %s: %s", first, calls[0])
 		}
+		// Read by the documents' name keys, each read within the store's
+		// bound, after the load's resolves were keyed once.
+		if h.store.aliasReads != 4 || h.store.aliasKeysMax > foundrystore.FoundryAliasKeysPerRead || h.store.keysFilled != 1 {
+			t.Fatalf("%d reads, %d keys at most, %d fills", h.store.aliasReads, h.store.aliasKeysMax, h.store.keysFilled)
+		}
 	})
 
 	t.Run("a resend, and one of no documents", func(t *testing.T) {
 		h := newHarness(t)
 		namedCustomers(t, h)
+		writes(h)
 		owes(h, "doc-a")
 		h.store.decisions = append(decisions(), approval("9", "doc-a", hashA))
 		h.agent.extract = writesAll(t)
@@ -89,6 +119,7 @@ func TestExtractCarriesAliases(t *testing.T) {
 			t.Fatalf("%d extracts: %v", len(calls), calls)
 		}
 
+		// No document writes any name: the Extract carries none.
 		h = newHarness(t)
 		namedCustomers(t, h)
 		h.store.owedDecisions = &model.FoundryLoadResend{LoadID: "load-0", Reason: model.FoundryResendDecisions, Requests: 1}
@@ -98,7 +129,7 @@ func TestExtractCarriesAliases(t *testing.T) {
 			t.Fatalf("%+v", outcome)
 		}
 		_, calls = h.agent.calls()
-		if len(calls) != 1 || len(decodeExtract(t, calls[0]).Documents) != 0 || !reflect.DeepEqual(aliases(decodeExtract(t, calls[0])), want) {
+		if len(calls) != 1 || len(decodeExtract(t, calls[0]).Documents) != 0 || len(aliases(decodeExtract(t, calls[0]))) != 0 {
 			t.Fatalf("%d extracts: %v", len(calls), calls)
 		}
 	})
@@ -111,11 +142,60 @@ func TestExtractCarriesAliases(t *testing.T) {
 		gone := linked("6", "doc-v", "umbrella", &acme, settledAt)
 		gone.Type = "Supplier"
 		h.store.decisions = []*model.FoundryReviewDecision{gone}
-		decisions, err := h.task.runner.decisions(t.Context(), extractJob(), "[types.Customer]\nprops = { name = \"string\" }", nil)
+		decisions, err := h.task.runner.decisions(t.Context(), extractJob(), "[types.Customer]\nprops = { name = \"string\" }",
+			[]ontologyagent.ExtractDocument{{DocID: "doc-a"}}, writing("doc-a", h.store.decisions))
 		if err != nil || len(decisions) != 0 {
 			t.Fatalf("%+v %v", decisions, err)
 		}
 	})
+
+	t.Run("a read that fails retries", func(t *testing.T) {
+		h := newHarness(t)
+		namedCustomers(t, h)
+		h.store.decisionErr = errors.New("db unavailable")
+		outcome := h.run(t, extractJob())
+		if outcome.Status == model.FoundryGraphJobSucceeded || outcome.RetryAt == nil {
+			t.Fatalf("%+v", outcome)
+		}
+	})
+}
+
+// More aliases than one Extract takes, across documents that each write
+// fewer: the documents go in halves, each split again while it is too large
+// (sendSplit), so every document is sent once, under its own request id, each
+// Extract within the cap and with every alias its documents write.
+func TestExtractSplitsPastTheAliasCap(t *testing.T) {
+	h := newHarness(t)
+	namedCustomers(t, h)
+	per := maxKindDecisions*3/5 + 1
+	splitLoad(t, h, per)
+	if outcome := h.run(t, extractJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+		t.Fatalf("%+v", outcome)
+	}
+	_, calls := h.agent.calls()
+	sent, carried := map[string]int{}, map[string]bool{}
+	var ids []string
+	for _, c := range calls {
+		req := decodeExtract(t, c)
+		ids = append(ids, req.RequestID)
+		got := aliases(req)
+		if len(got) > maxKindDecisions {
+			t.Fatalf("%s carries %d aliases", req.RequestID, len(got))
+		}
+		for _, d := range req.Documents {
+			sent[d.DocID]++
+		}
+		for _, d := range got {
+			carried[d.NormName] = true
+		}
+	}
+	// doc-a and doc-b together are past the cap, each alone within it.
+	if want := []string{"job-2", "job-2:2", "job-2:3"}; !reflect.DeepEqual(ids, want) {
+		t.Fatalf("requests %v", ids)
+	}
+	if len(sent) != 4 || sent["doc-a"] != 1 || sent["doc-b"] != 1 || sent["doc-c"] != 1 || sent["doc-d"] != 1 || len(carried) != 2*per {
+		t.Fatalf("sent %v, %d aliases", sent, len(carried))
+	}
 }
 
 // What the engine says of each name decision of a document is kept on its
@@ -192,5 +272,89 @@ func TestExtractRecordsNames(t *testing.T) {
 				t.Fatalf("%+v", outcome)
 			}
 		})
+	}
+}
+
+// splitLoad gives doc-a and doc-b names enough that together they are past
+// the alias cap and each alone within it: n names each.
+func splitLoad(t *testing.T, h *harness, n int) {
+	t.Helper()
+	acme := "acme"
+	var text [2]strings.Builder
+	for i := range 2 * n {
+		name := fmt.Sprintf("customer n%05d", i)
+		h.store.decisions = append(h.store.decisions, linked(fmt.Sprintf("%026d", i+1), "doc-z", name, &acme, settledAt))
+		fmt.Fprintf(&text[i/n], "Customer N%05d paid. ", i)
+	}
+	h.bucket.objects[document.Key("ws-1", "doc-a")] = []byte("# doc-a\n" + text[0].String())
+	h.bucket.objects[document.Key("ws-1", "doc-b")] = []byte("# doc-b\n" + text[1].String())
+}
+
+// Each split Extract goes even after one's budget ran out, with what is left
+// to spend or none, as one Extract would have read every document: a document
+// with saved work commits at $0.
+func TestExtractSplitGoesOnPastABudgetStop(t *testing.T) {
+	h := newHarness(t)
+	namedCustomers(t, h)
+	splitLoad(t, h, maxKindDecisions*3/5+1)
+	n := 0
+	h.agent.extract = func(raw string, stream agentv1.Agent_ExtractServer) error {
+		req := decodeExtract(t, raw)
+		n++
+		events := []string{extracted[0]}
+		for _, d := range req.Documents {
+			events = append(events, documentEvent(d.DocID, `{"kind":"ingested"}`, noUsage))
+		}
+		result := "done"
+		if n == 1 {
+			result = "budget_exhausted"
+		}
+		return extractEvents(stream, append(events, `{"event":"extract_finished"}`), `{"status":"`+result+`","totals":`+totals+`}`)
+	}
+	outcome := h.run(t, extractJob())
+	_, calls := h.agent.calls()
+	sent := map[string]int{}
+	for _, c := range calls {
+		for _, d := range decodeExtract(t, c).Documents {
+			sent[d.DocID]++
+		}
+	}
+	if len(calls) != 3 || len(sent) != 4 || sent["doc-b"] != 1 || sent["doc-d"] != 1 {
+		t.Fatalf("%d extracts, sent %v", len(calls), sent)
+	}
+	if outcome.Status != model.FoundryGraphJobBudgetExhausted {
+		t.Fatalf("a budget stop: %+v", outcome)
+	}
+}
+
+// One document that writes more names than an Extract carries is recorded
+// failed, too_large, never retried; the load goes on with the rest.
+func TestExtractRecordsADocumentPastTheAliasCap(t *testing.T) {
+	h := newHarness(t)
+	namedCustomers(t, h)
+	acme := "acme"
+	var text strings.Builder
+	for i := range maxKindDecisions + 1 {
+		name := fmt.Sprintf("customer n%05d", i)
+		h.store.decisions = append(h.store.decisions, linked(fmt.Sprintf("%026d", i+1), "doc-z", name, &acme, settledAt))
+		fmt.Fprintf(&text, "Customer N%05d paid. ", i)
+	}
+	h.bucket.objects[document.Key("ws-1", "doc-a")] = []byte("# doc-a\n" + text.String())
+	h.agent.extract = writesAll(t)
+	outcome := h.run(t, extractJob())
+	if outcome.Status != model.FoundryGraphJobSucceeded {
+		t.Fatalf("%+v", outcome)
+	}
+	e := h.store.extractions["doc-a"]
+	if e == nil || e.Status != model.FoundryExtractionFailed || e.Error == nil || e.Error.Code != model.FoundryExtractionTooLarge || e.Error.Retryable {
+		t.Fatalf("doc-a: %+v", e)
+	}
+	_, calls := h.agent.calls()
+	for _, c := range calls {
+		for _, d := range decodeExtract(t, c).Documents {
+			if d.DocID == "doc-a" {
+				t.Fatalf("doc-a was sent: %s", c)
+			}
+		}
 	}
 }

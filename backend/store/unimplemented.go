@@ -37,9 +37,19 @@ func (u Unimplemented) ListFoundryLoadDecisions(context.Context, string, string,
 	return nil, nil
 }
 
-func (u Unimplemented) ListFoundryLoadAliases(context.Context, string, string, int) ([]*model.FoundryReviewDecision, error) {
-	u.unimplemented("ListFoundryLoadAliases")
+func (u Unimplemented) ListFoundryLoadAliasesNamed(context.Context, string, []int64) ([]*model.FoundryReviewDecision, error) {
+	u.unimplemented("ListFoundryLoadAliasesNamed")
 	return nil, nil
+}
+
+func (u Unimplemented) FillFoundryLoadNameKeys(context.Context, string) (int, error) {
+	u.unimplemented("FillFoundryLoadNameKeys")
+	return 0, nil
+}
+
+func (u Unimplemented) FoundryLoadHasAliases(context.Context, string) (bool, error) {
+	u.unimplemented("FoundryLoadHasAliases")
+	return false, nil
 }
 func (u Unimplemented) ListFoundryShownDecisions(context.Context, string, string, int) ([]*model.FoundryReviewDecision, error) {
 	u.unimplemented("ListFoundryShownDecisions")
