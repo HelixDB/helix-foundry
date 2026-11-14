@@ -192,11 +192,12 @@
 }
 .ag-card-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--hf-space-1);
 }
 .ag-card-icon {
   flex: none;
+  margin-top: 2px;
   color: var(--hf-accent-text);
 }
 .ag-card-title {

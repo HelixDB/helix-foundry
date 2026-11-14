@@ -115,9 +115,10 @@ export const mock = {
     askVisuals?: boolean;
     askSpentUsdMicros?: number;
     // The Assistant (mock/routes/agent.ts): each event's time, how a turn
-    // ends otherwise, and how long a card's confirmation lives (5 minutes).
+    // ends otherwise (or a call a limit kept from running), and how long a
+    // card's confirmation lives (5 minutes).
     agentStepMs?: number;
-    agentOutcome?: "fail" | "budget_exhausted";
+    agentOutcome?: "fail" | "budget_exhausted" | "not_run";
     agentActionTtlMs?: number;
     // false: the WFE has no foundry-connector role, so S3 offers keys only.
     s3RoleAccess?: boolean;

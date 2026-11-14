@@ -924,8 +924,11 @@ export function statementText(
   return [subject, link, object].filter(Boolean).join(" ");
 }
 
-/** What the review's name is: its quote, else its normalized name. */
-const reviewName = (r: AgentReview) => r.quote || r.norm_name || "this name";
+/**
+ * The name a resolve review decides, as the decision binds it: its
+ * normalized name (its quote is the sentence it was read in).
+ */
+const reviewName = (r: AgentReview) => r.norm_name || r.quote || "this name";
 
 const LOAD_CAPS = `Reading documents costs at most $${LOAD_LIMITS.jobUsd} for this load and $${LOAD_LIMITS.monthUsd} a month for the workspace.`;
 

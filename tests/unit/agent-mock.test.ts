@@ -958,7 +958,7 @@ describe("operations", () => {
       document: { name: "variant.md" },
       decision: { kind: "link", entity_key: "cus_GLOBEX01", candidate: true },
     });
-    expect(c.said).toMatch(/Globexx Corporation/);
+    expect(c.said).toMatch(/“globexx corporation”/);
     const ran = await runCard(c.action);
     expect(ran.result).toMatchObject({
       kind: "resolve",

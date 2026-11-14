@@ -1,5 +1,14 @@
 import type { Page } from "@playwright/test";
-import { expect, mock, signIn, test } from "./support/mock";
+import {
+  expect,
+  file,
+  loadVersion3,
+  makeContractsCurrent,
+  mock,
+  signIn,
+  test,
+  uploadInData,
+} from "./support/mock";
 
 // The Assistant: a dock beside every page (⌘J, the sidebar's button or the
 // palette), kept open per browser, which sends the page the person is on
@@ -82,7 +91,7 @@ test("loads an ontology from a card the person runs, and reports it", async ({
   await say(page, "Load Customer contracts");
   const dock = dockOf(page);
   const card = dock.getByRole("region", {
-    name: "Action: Load v3 of Customer contracts",
+    name: "Action: Load v3 of “Customer contracts”",
   });
   await expect(card).toBeVisible();
   // Named by the person: no warning. The whole request is on view.
@@ -242,4 +251,151 @@ test("deletes a thread, and says when the month's budget ended a turn", async ({
   await expect(dock.getByRole("button", { name: /^Threads/ })).toContainText(
     "New thread",
   );
+});
+
+// ---------------------------------------------------------------- every operation
+
+const cardOf = (page: Page, title: string) =>
+  dockOf(page).getByRole("region", { name: `Action: ${title}` });
+/** Runs a card by its button, and waits until it ran. */
+async function run(page: Page, title: string, button: string) {
+  const card = cardOf(page, title);
+  await card.getByRole("button", { name: button, exact: true }).click();
+  await expect(card.getByText("Ran", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+  return card;
+}
+
+test("builds an ontology card by card: create, draft, make current, load", async ({
+  page,
+}) => {
+  await mock.configure({
+    agentStepMs: 100,
+    ontologyStepMs: 300,
+    loadStepMs: 100,
+  });
+  await signIn(page);
+  await shortcut(page);
+  await say(
+    page,
+    "Create an ontology called Orders graph on database orders, goal: Which customers order the most",
+  );
+  const created = cardOf(page, "Create the ontology “Orders graph”");
+  await expect(created.getByText("orders", { exact: true })).toBeVisible();
+  await expect(created.getByText(/Not named by you/)).toHaveCount(0);
+  await run(page, "Create the ontology “Orders graph”", "Create");
+  // The agent goes on from each result with the next card.
+  const draft = cardOf(page, "Draft a new version of “Orders graph”");
+  await expect(
+    draft.getByText("Which customers order the most", { exact: true }),
+  ).toBeVisible();
+  await expect(draft.getByText(/^Every connection: /)).toBeVisible();
+  await run(page, "Draft a new version of “Orders graph”", "Generate");
+  await expect(
+    cardOf(page, "Make v1 current for “Orders graph”").getByText("None yet"),
+  ).toBeVisible({ timeout: 20_000 });
+  await run(page, "Make v1 current for “Orders graph”", "Make current");
+  const load = cardOf(page, "Load v1 of “Orders graph”");
+  // A load's card keeps its caps.
+  await expect(load.getByText(/Reading documents costs at most/)).toBeVisible();
+  await run(page, "Load v1 of “Orders graph”", "Load");
+  await load.getByRole("link", { name: "Open the load" }).click();
+  await expect(page).toHaveURL(/\/ontology\/ont_[^/]+\/loads\/load_/);
+});
+
+test("settles a review from a card", async ({ page }) => {
+  await mock.configure({ agentStepMs: 100, loadStepMs: 200 });
+  await signIn(page);
+  await makeContractsCurrent(page);
+  await uploadInData(page, [
+    file(
+      "variant.md",
+      "# Variant contract\n\nGlobexx Corporation signed. The Agreement runs for 24 months.\n",
+    ),
+  ]);
+  await loadVersion3(page);
+  await shortcut(page);
+  await say(page, "Settle the review about Globexx in Customer contracts");
+  const card = cardOf(page, "Link “globexx corporation” to cus_GLOBEX01");
+  // The document's words, set apart; what the review is and suggests.
+  await expect(card.getByText("The document says (its words)")).toBeVisible();
+  await expect(card.getByText("variant.md", { exact: true })).toBeVisible();
+  await expect(
+    card.getByText("Names something that isn’t in your data"),
+  ).toBeVisible();
+  await expect(
+    card.getByText("The name is this entity in every load from the next one."),
+  ).toBeVisible();
+  await run(page, "Link “globexx corporation” to cus_GLOBEX01", "Link");
+  await expect(
+    dockOf(page).getByText(
+      /The decision is saved\. It applies from the next load/,
+    ),
+  ).toBeVisible();
+  await card.getByRole("link", { name: "Open the document" }).click();
+  await expect(page).toHaveURL(/\/ontology\/ont_acme_contracts\/documents\//);
+});
+
+test("opens the Add data form from a connect link", async ({ page }) => {
+  await mock.configure({ agentStepMs: 100 });
+  await signIn(page);
+  await shortcut(page);
+  await say(page, "Connect Slack");
+  const dock = dockOf(page);
+  await expect(
+    dock.getByText(/Connect Slack from the link above/),
+  ).toBeVisible();
+  // The tool's link, as a link into this app: never the address it named.
+  await dock.getByRole("link", { name: "Connect Slack" }).click();
+  await expect(page).toHaveURL(/\/data\?add=slack$/);
+  await expect(page.getByRole("dialog", { name: "Slack" })).toBeVisible();
+});
+
+test("a member gets no card for any operation", async ({ page }) => {
+  await mock.configure({ agentStepMs: 100 });
+  await signIn(page, "alan@example.com");
+  await shortcut(page);
+  await say(page, "Sync Stripe");
+  const dock = dockOf(page);
+  await expect(
+    dock.getByText(
+      "Only an owner or admin of this workspace can sync a connection, so I can't prepare that for you.",
+    ),
+  ).toBeVisible();
+  await expect(dock.getByRole("region", { name: /^Action:/ })).toHaveCount(0);
+});
+
+test("refreshes an expired card of another operation, then runs it", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 100, agentActionTtlMs: 1500 });
+  await signIn(page);
+  await shortcut(page);
+  await say(page, "Sync Stripe");
+  const card = cardOf(page, "Sync “Stripe”");
+  await expect(card.getByText("Expired", { exact: true })).toBeVisible({
+    timeout: 10_000,
+  });
+  await card.getByRole("button", { name: "Refresh" }).click();
+  await card.getByRole("button", { name: "Sync", exact: true }).click();
+  await expect(card.getByText("Ran", { exact: true })).toBeVisible();
+  await expect(
+    dockOf(page).getByRole("link", {
+      name: "/data/connections/conn_acme_stripe",
+    }),
+  ).toBeVisible();
+});
+
+test("shows a call a limit kept from running as not run", async ({ page }) => {
+  await mock.configure({ agentStepMs: 100, agentOutcome: "not_run" });
+  await signIn(page);
+  await shortcut(page);
+  await say(page, "What ontologies do I have?");
+  const step = dockOf(page).getByRole("group").filter({ hasText: "Not run" });
+  await expect(step).toBeVisible();
+  await step.getByText("Not run").click();
+  await expect(
+    step.getByText(/A limit kept it from running: A reply makes at most 8/),
+  ).toBeVisible();
 });

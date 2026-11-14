@@ -705,7 +705,7 @@ function Composer({
           aria-describedby={hint}
           rows={2}
           value={text}
-          placeholder="Ask about your ontologies, or ask it to load one…"
+          placeholder="Ask about your workspace, or ask it to do something…"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (

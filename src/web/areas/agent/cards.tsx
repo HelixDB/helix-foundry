@@ -218,7 +218,7 @@ export function ActionCard({
       )}
       {state.kind === "ended" && state.status === "succeeded" && link && (
         <p className="ag-card-muted">
-          <Link to={link.to} onClick={onNavigate}>
+          <Link className="ag-link" to={link.to} onClick={onNavigate}>
             {link.label}
           </Link>
         </p>

@@ -1550,7 +1550,7 @@ function settlePlan(a: Ask, o: StoredOntology, named: boolean): Plan | string {
       }),
       decision,
     },
-    `I've prepared settling the review of “${r.quote || r.norm_name || "a statement"}”. Run it from the card when you're ready.`,
+    `I've prepared settling the review of “${r.norm_name || r.quote || "a statement"}”. Run it from the card when you're ready.`,
   );
 }
 
