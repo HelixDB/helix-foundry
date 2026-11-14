@@ -449,11 +449,16 @@ function messageScript(
       ontologies: workspaceOntologies(workspaceId).map(ontologyOutput),
     })),
   ];
+  // A question about the ontologies (plural) is about all of them, whatever
+  // page it was asked on.
   const ontologies = workspaceOntologies(workspaceId),
     pageOntology = page?.ontologyId ? ontologyById(page.ontologyId) : undefined,
     asked =
       named(workspaceId, text) ??
-      (pageOntology?.workspaceId === workspaceId ? pageOntology : undefined);
+      (pageOntology?.workspaceId === workspaceId &&
+      !/\bontologies\b/i.test(text)
+        ? pageOntology
+        : undefined);
   const loading =
     /\b(re)?load\b/i.test(text) &&
     !/\b(how many|which|what|when|why)\b/i.test(text);

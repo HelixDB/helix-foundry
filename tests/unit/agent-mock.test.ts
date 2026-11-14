@@ -139,6 +139,22 @@ describe("messages", () => {
     });
   });
 
+  it("lists every ontology when asked about them, whatever page it is on", async () => {
+    const sent = await send("What ontologies do I have?", {
+      pageContext: { ontologyId: "ont_acme_sales" },
+    });
+    const { events: evs } = await events(sent.body.turn.id);
+    expect(
+      evs.some(
+        (e) =>
+          e.type === "tool_call" && e.name === "helix_foundry_get_ontology",
+      ),
+    ).toBe(false);
+    expect(evs.find((e) => e.type === "text")).toMatchObject({
+      text: expect.stringMatching(/^This workspace has \d+ ontologies: /),
+    });
+  });
+
   it("returns the same turn for the same client token, and refuses it for another text", async () => {
     const body = { text: "Hi", clientToken: "same" };
     const first = await call("POST", `${A}/turns`, body);
