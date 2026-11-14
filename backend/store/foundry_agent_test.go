@@ -306,3 +306,28 @@ func TestFoundryAgentStaleClickReadsUnknown(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.FoundryAgentActionUnknown, ended.Status)
 }
+
+func TestFoundryAgentClickEndsThoughATurnWentLive(t *testing.T) {
+	ctx := context.Background()
+	f := newAgentFixture(t, "raced")
+	require.NoError(t, f.send(1, 0))
+	turn := f.claimed(t)
+	a, err := f.prepare(turn, 1, time.Now().Add(5*time.Minute))
+	require.NoError(t, err)
+	f.settle(t, turn)
+	_, err = f.db.ClaimFoundryAgentAction(ctx, f.workspaceID, agentUser, a.ID, a.PayloadHash)
+	require.NoError(t, err)
+	// Another writer queued a turn in the thread meanwhile.
+	_, err = testDB.Exec(`INSERT INTO foundry_agent_turns (id, workspace_id, thread_id, user_id, kind, input, status, max_usd_micros)
+VALUES (?, ?, ?, ?, 'message', 'hi', 'queued', 1)`, f.turnID(7), f.workspaceID, turn.ThreadID, agentUser)
+	require.NoError(t, err)
+	next := &model.FoundryAgentTurn{ID: f.turnID(8), WorkspaceID: f.workspaceID, ThreadID: turn.ThreadID, UserID: agentUser,
+		Kind: model.FoundryAgentTurnActionResult, Input: a.ID, MaxUSDMicros: 500_000}
+	require.NoError(t, f.db.FinishFoundryAgentAction(ctx, a.ID, model.FoundryAgentActionEnd{Status: model.FoundryAgentActionFailed, Error: "no"},
+		next, json.RawMessage(`{"type":"action_result"}`)))
+	ended, err := f.db.GetFoundryAgentAction(ctx, f.workspaceID, a.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryAgentActionFailed, ended.Status, "the click's end stands")
+	_, err = f.db.GetFoundryAgentTurn(ctx, f.workspaceID, next.ID)
+	assert.ErrorIs(t, err, store.ErrNotFound)
+}

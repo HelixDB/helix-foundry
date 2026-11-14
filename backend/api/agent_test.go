@@ -316,10 +316,12 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 	t.Run("malformed", func(t *testing.T) {
 		f := newAgentFixture(t)
 		for name, mutate := range map[string]func(*foundryv1.SendFoundryAgentMessageRequest){
-			"no token":       func(r *foundryv1.SendFoundryAgentMessageRequest) { r.ClientToken = "" },
-			"long token":     func(r *foundryv1.SendFoundryAgentMessageRequest) { r.ClientToken = strings.Repeat("c", 65) },
-			"no text":        func(r *foundryv1.SendFoundryAgentMessageRequest) { r.Text = "   " },
-			"long text":      func(r *foundryv1.SendFoundryAgentMessageRequest) { r.Text = strings.Repeat("é", maxAgentMessageChars+1) },
+			"no token":   func(r *foundryv1.SendFoundryAgentMessageRequest) { r.ClientToken = "" },
+			"long token": func(r *foundryv1.SendFoundryAgentMessageRequest) { r.ClientToken = strings.Repeat("c", 65) },
+			"no text":    func(r *foundryv1.SendFoundryAgentMessageRequest) { r.Text = "   " },
+			"long text": func(r *foundryv1.SendFoundryAgentMessageRequest) {
+				r.Text = strings.Repeat("é", maxAgentMessageChars+1)
+			},
 			"bad thread":     func(r *foundryv1.SendFoundryAgentMessageRequest) { r.ThreadId = "a/b" },
 			"bad page":       func(r *foundryv1.SendFoundryAgentMessageRequest) { r.PageContext.OntologyId = "x y" },
 			"load, no owner": func(r *foundryv1.SendFoundryAgentMessageRequest) { r.PageContext.OntologyId = "" },

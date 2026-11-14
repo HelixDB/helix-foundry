@@ -631,7 +631,8 @@ func (s *mysqlDB) ClaimFoundryAgentAction(ctx context.Context, workspaceID, user
 // FinishFoundryAgentAction ends a click that is executing with end and, when
 // continuation is set, queues the action-result turn the agent goes on from
 // with its first event, in the same transaction. The thread is idle (the
-// claim checked, and sends wait for the click), so the turn is live alone.
+// claim checked, and sends wait for the click), so the turn is live alone;
+// should one be live after all, the click still ends, with no continuation.
 // ErrNotFound means the action isn't executing.
 func (s *mysqlDB) FinishFoundryAgentAction(ctx context.Context, id string, end model.FoundryAgentActionEnd, continuation *model.FoundryAgentTurn,
 	firstEvent json.RawMessage) error {
@@ -651,9 +652,15 @@ func (s *mysqlDB) FinishFoundryAgentAction(ctx context.Context, id string, end m
 			return nil
 		}
 		t := continuation
-		if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
+		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
   (id, workspace_id, thread_id, user_id, kind, input, status, max_usd_micros)
-VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`, t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, t.MaxUSDMicros); err != nil {
+VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`, t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, t.MaxUSDMicros)
+		if isDuplicateKey(err) {
+			// A turn went live after all: the click's end stands, and the
+			// agent reads the action's result with the thread's actions.
+			return nil
+		}
+		if err != nil {
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_threads SET updated_at=NOW(6) WHERE id=?`, t.ThreadID); err != nil {

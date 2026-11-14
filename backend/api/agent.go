@@ -352,11 +352,16 @@ func (s *Service) ExecuteFoundryAgentAction(ctx context.Context, req *foundryv1.
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read the action: %v", err)
 	}
-	queued, err := s.deps.DB.GetFoundryAgentTurn(ctx, ws, continuation.ID)
-	if err != nil {
+	out := &foundryv1.FoundryAgentActionResponse{Action: agentActionToProto(done, time.Now())}
+	switch queued, err := s.deps.DB.GetFoundryAgentTurn(ctx, ws, continuation.ID); {
+	case errors.Is(err, foundrystore.ErrNotFound):
+		// Another turn went live first: the click ended with no continuation.
+	case err != nil:
 		return nil, status.Errorf(codes.Internal, "read the next turn: %v", err)
+	default:
+		out.Continuation = agentTurnToProto(queued)
 	}
-	return &foundryv1.FoundryAgentActionResponse{Action: agentActionToProto(done, time.Now()), Continuation: agentTurnToProto(queued)}, nil
+	return out, nil
 }
 
 // runAgentAction runs an action that is executing, as its person now, and

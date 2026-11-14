@@ -39,7 +39,9 @@ func (q *queue) ClaimFoundryAgentTurn(context.Context, string, model.FoundryAgen
 	return t, nil
 }
 
-func (q *queue) RenewFoundryAgentTurnLease(context.Context, string, string, time.Duration) error { return q.renewErr }
+func (q *queue) RenewFoundryAgentTurnLease(context.Context, string, string, time.Duration) error {
+	return q.renewErr
+}
 
 func (q *queue) AppendFoundryAgentEvents(_ context.Context, id, _ string, events []json.RawMessage) error {
 	q.mu.Lock()

@@ -451,7 +451,9 @@ func TestFailuresSayWhetherToRetry(t *testing.T) {
 	h.model.err = &llm.Error{Kind: llm.ErrRateLimited, Err: errors.New("429")}
 	assert.False(t, failure(t, h).Permanent)
 	h = newHarness(t)
-	h.runner.Models = func(ai.Resolved, ai.Model, *ai.Catalog) (llm.Model, llm.Pricer, error) { return nil, llm.Pricer{}, llm.ErrUnsupported }
+	h.runner.Models = func(ai.Resolved, ai.Model, *ai.Catalog) (llm.Model, llm.Pricer, error) {
+		return nil, llm.Pricer{}, llm.ErrUnsupported
+	}
 	assert.True(t, failure(t, h).Permanent)
 	h = newHarness(t)
 	h.runner.AI = fixedAI{err: ai.ErrNotConfigured}
