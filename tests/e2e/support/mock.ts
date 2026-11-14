@@ -114,6 +114,11 @@ export const mock = {
     // false: answers as a 3.10.0 engine did, without outputs or visuals.
     askVisuals?: boolean;
     askSpentUsdMicros?: number;
+    // The Assistant (mock/routes/agent.ts): each event's time, how a turn
+    // ends otherwise, and how long a card's confirmation lives (5 minutes).
+    agentStepMs?: number;
+    agentOutcome?: "fail" | "budget_exhausted";
+    agentActionTtlMs?: number;
     // false: the WFE has no foundry-connector role, so S3 offers keys only.
     s3RoleAccess?: boolean;
     // Another writer comes first on each of the next n data-layout PUTs.

@@ -520,7 +520,11 @@ function view(ws: string, owner = true): FoundryAi {
 }
 
 /** FailedPrecondition with the ErrorInfo the WFE's foundryPrecondition adds. */
-function foundryPrecondition(ws: string, reason: string, message: string) {
+export function foundryPrecondition(
+  ws: string,
+  reason: string,
+  message: string,
+) {
   const reply = fail("FAILED_PRECONDITION", message);
   return {
     ...reply,

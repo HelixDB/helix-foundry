@@ -472,6 +472,11 @@ const liveScope = (workspaceId: string, ids: readonly string[]) =>
 /** The document sets a version of the ontology reads; none for no version. */
 export const versionScope = (ontologyId: string, versionId: string) =>
   ontologyVersion(ontologyId, versionId)?.documentSetIds || [];
+/** An ontology's versions, newest first, for other mocks. */
+export const ontologyVersions = (ontologyId: string) =>
+  state.versions
+    .filter((v) => v.ontologyId === ontologyId)
+    .sort((a, b) => b.version - a.version);
 /** An ontology's current version id, or undefined. */
 export const currentVersionOf = (ontologyId: string) =>
   state.current.get(ontologyId);
