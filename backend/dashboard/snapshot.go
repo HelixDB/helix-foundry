@@ -49,25 +49,29 @@ type Snapshot struct {
 
 // SnapshotTile is one tile with its output.
 type SnapshotTile struct {
-	ID     string          `json:"id"`
-	Title  string          `json:"title"`
-	Visual wireVisual      `json:"visual"`
-	Query  json.RawMessage `json:"query"`
+	ID     string     `json:"id"`
+	Title  string     `json:"title"`
+	Visual wireVisual `json:"visual"`
+	// Query is the query as the engine read it, every field written
+	// (query_echo), as an Analyst answer records its queries.
+	Query json.RawMessage `json:"query"`
 	// AsOf is the day the load's rules were read as of.
 	AsOf   string          `json:"as_of"`
 	Output json.RawMessage `json:"output"`
 }
 
 // Read is one tile's read at publish: the day it was read as of, and its
-// query's answer (read_result.json's ok).
+// read's answer (read_result.json's ok of a query read: {"kind": "query",
+// "query_echo", "result", "stats"}).
 type Read struct {
 	AsOf   string
 	Answer json.RawMessage
 }
 
 // NewSnapshot is spec's snapshot, from reads, one per tile by its id: each
-// answer checked to be a query's and made public (Public). It is
-// ErrTooLarge past MaxOutputBytes for a tile or MaxSnapshotBytes in all.
+// answer checked to be a query read's, its result made public (Public) and
+// its query echoed. It is ErrTooLarge past MaxOutputBytes for a tile or
+// MaxSnapshotBytes in all.
 func NewSnapshot(name, description string, spec Spec, reads map[string]Read, at time.Time) ([]byte, error) {
 	s := Snapshot{V: SpecVersion, Name: name, Description: description, PublishedAt: at.UTC().Format(time.RFC3339),
 		Layout: wireLayout{Rows: spec.Rows()}, Tiles: make([]SnapshotTile, 0, len(spec.tiles))}
@@ -76,14 +80,22 @@ func NewSnapshot(name, description string, spec Spec, reads map[string]Read, at 
 		if !ok {
 			return nil, fmt.Errorf("tile %s has no read", t.ID)
 		}
-		output, err := Public(read.Answer)
+		var answer struct {
+			Kind   string          `json:"kind"`
+			Echo   json.RawMessage `json:"query_echo"`
+			Result json.RawMessage `json:"result"`
+		}
+		if err := json.Unmarshal(read.Answer, &answer); err != nil || answer.Kind != "query" || len(answer.Result) == 0 || len(answer.Echo) == 0 {
+			return nil, fmt.Errorf("tile %s: the read's answer is not a query read's", t.ID)
+		}
+		output, err := Public(answer.Result)
 		if err != nil {
 			return nil, fmt.Errorf("tile %s: %w", t.ID, err)
 		}
 		if len(output) > MaxOutputBytes {
 			return nil, fmt.Errorf("%w: tile %s's output is %d KiB, past %d KiB: ask for fewer rows or columns", ErrTooLarge, t.ID, len(output)>>10, MaxOutputBytes>>10)
 		}
-		s.Tiles = append(s.Tiles, SnapshotTile{ID: t.ID, Title: t.Title, Visual: wireVisual{Kind: string(t.Visual)}, Query: t.Query,
+		s.Tiles = append(s.Tiles, SnapshotTile{ID: t.ID, Title: t.Title, Visual: wireVisual{Kind: string(t.Visual)}, Query: answer.Echo,
 			AsOf: read.AsOf, Output: output})
 	}
 	out, err := json.Marshal(s)
@@ -98,7 +110,8 @@ func NewSnapshot(name, description string, spec Spec, reads map[string]Read, at 
 
 // Public is a query's answer as anyone may see it: of one of the answer
 // kinds, every string cut to maxStringChars characters, each row's entities
-// by type and name only (their stored identity left out), and no row's edges.
+// by type and name only (their stored identity left out), and each row's
+// edges empty (they name facts and entities).
 // Numbers stay exactly as the engine wrote them.
 func Public(answer json.RawMessage) (json.RawMessage, error) {
 	decoder := json.NewDecoder(bytes.NewReader(answer))
@@ -127,7 +140,7 @@ func Public(answer json.RawMessage) (json.RawMessage, error) {
 					cells[j] = map[string]any{"type": e["type"], "name": e["name"]}
 				}
 			}
-			rows[i] = map[string]any{"cells": cells}
+			rows[i] = map[string]any{"cells": cells, "edges": []any{}}
 		}
 	}
 	return json.Marshal(cut(out))

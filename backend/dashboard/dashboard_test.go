@@ -192,7 +192,7 @@ func TestPublic(t *testing.T) {
 	require.Equal(t, "rows", got.Kind)
 	require.Equal(t, 2, got.Total)
 	require.JSONEq(t, `{"type":"Customer","name":"Globex"}`, string(got.Rows[0].Cells[0]), "an entity loses its stored identity")
-	require.Nil(t, got.Rows[0].Edges, "rows lose their edges")
+	require.Equal(t, []any{}, got.Rows[0].Edges, "rows lose their edges")
 	var untrusted map[string]string
 	require.NoError(t, json.Unmarshal(got.Rows[0].Cells[1], &untrusted))
 	require.Equal(t, 1000, len([]rune(untrusted["untrusted"])))
@@ -221,9 +221,13 @@ func TestNewSnapshot(t *testing.T) {
 	spec, err := dashboard.ParseSpec([]byte(specJSON([]string{tileJSON("t1", countQuery), tileJSON("t2", groupQuery)}, `[["t1"],["t2"]]`)))
 	require.NoError(t, err)
 	at := time.Date(2026, 11, 14, 9, 0, 0, 0, time.FixedZone("x", 3600))
+	read := func(result string) json.RawMessage {
+		return json.RawMessage(`{"kind":"query","query_echo":{"start":{"type":"Invoice","where":[]},"steps":[],"filters":[],"return":{"count":{"distinct_at":null}}},` +
+			`"result":` + result + `,"stats":{"matched":3}}`)
+	}
 	reads := map[string]dashboard.Read{
-		"t1": {AsOf: "2026-11-14", Answer: json.RawMessage(`{"kind":"count","count":3}`)},
-		"t2": {AsOf: "2026-11-14", Answer: json.RawMessage(`{"kind":"group_count","groups":[],"total_groups":0}`)},
+		"t1": {AsOf: "2026-11-14", Answer: read(`{"kind":"count","count":3}`)},
+		"t2": {AsOf: "2026-11-14", Answer: read(`{"kind":"group_count","groups":[],"total_groups":0}`)},
 	}
 	raw, err := dashboard.NewSnapshot("Revenue", "Weekly", spec, reads, at)
 	require.NoError(t, err)
@@ -234,6 +238,7 @@ func TestNewSnapshot(t *testing.T) {
 	require.Len(t, s.Tiles, 2)
 	require.Equal(t, "t1", s.Tiles[0].ID)
 	require.JSONEq(t, `{"kind":"count","count":3}`, string(s.Tiles[0].Output))
+	require.Contains(t, string(s.Tiles[0].Query), `"distinct_at":null`, "the query as the engine read it")
 	require.NotContains(t, string(raw), "01ONTOLOGY", "a snapshot names no ontology")
 
 	delete(reads, "t2")
@@ -242,13 +247,16 @@ func TestNewSnapshot(t *testing.T) {
 
 	reads["t2"] = dashboard.Read{Answer: json.RawMessage(`{"kind":"view"}`)}
 	_, err = dashboard.NewSnapshot("Revenue", "", spec, reads, at)
+	require.ErrorContains(t, err, "not a query read's")
+	reads["t2"] = dashboard.Read{Answer: read(`{"kind":"entity"}`)}
+	_, err = dashboard.NewSnapshot("Revenue", "", spec, reads, at)
 	require.ErrorContains(t, err, "not a query's")
 
 	var rows []string
 	for range 300 {
 		rows = append(rows, `{"cells":["`+strings.Repeat("x", 990)+`","`+strings.Repeat("y", 990)+`"],"edges":[]}`)
 	}
-	reads["t2"] = dashboard.Read{Answer: json.RawMessage(`{"kind":"rows","total":300,"rows":[` + strings.Join(rows, ",") + `]}`)}
+	reads["t2"] = dashboard.Read{Answer: read(`{"kind":"rows","total":300,"rows":[` + strings.Join(rows, ",") + `]}`)}
 	_, err = dashboard.NewSnapshot("Revenue", "", spec, reads, at)
 	require.True(t, errors.Is(err, dashboard.ErrTooLarge), "a tile past its bound: %v", err)
 }

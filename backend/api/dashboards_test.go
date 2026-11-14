@@ -227,11 +227,17 @@ func newDashboardFixture(t *testing.T) dashboardFixture {
 	fs.ontologies["ont-1"].CurrentLoadID = &current
 	store := &dashboardStore{foundryStore: fs, dashboards: map[string]*foundrymodel.FoundryDashboard{}, snapshots: map[string]json.RawMessage{},
 		questions: map[string]*foundrymodel.FoundryQuestion{}}
-	reader := &fakeFoundryRead{result: `{"as_of":"2026-11-14","results":[{"ok":{"kind":"count","count":3}},` +
-		`{"ok":{"kind":"rows","total":1,"rows":[{"cells":[{"type":"Customer","id":"scus_1","name":"Globex"}],"edges":[]}]}}]}`}
+	reader := &fakeFoundryRead{result: `{"as_of":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `,` +
+		queryOK(`{"kind":"rows","total":1,"rows":[{"cells":[{"type":"Customer","id":"scus_1","name":"Globex"}],"edges":[]}]}`) + `]}`}
 	s.deps.DB, s.deps.FoundryRead, s.deps.ConnectorKeys = store, reader, aiKeyring(t)
 	s.deps.People = dashboardPeople{"user-owner": ports.RoleOwner, "user-member": ports.RoleMember, "user-other": ports.RoleMember}
 	return dashboardFixture{s: s, store: store, reader: reader}
+}
+
+// queryOK is a query read's outcome: its answer, result as given.
+func queryOK(result string) string {
+	return `{"ok":{"kind":"query","query_echo":{"start":{"type":"Customer"},"steps":[],"filters":[],"return":{"count":{"distinct_at":null}}},` +
+		`"result":` + result + `,"stats":{"matched":1}}}`
 }
 
 func asActor(a ports.Actor) context.Context { return ports.WithActor(context.Background(), a) }
@@ -388,12 +394,12 @@ func TestEditingDashboards(t *testing.T) {
 
 func TestPreviewFoundryDashboardTile(t *testing.T) {
 	f := newDashboardFixture(t)
-	f.reader.result = `{"as_of":"2026-11-14","results":[{"ok":{"kind":"count","count":3}}]}`
+	f.reader.result = `{"as_of":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `]}`
 	resp, err := f.s.PreviewFoundryDashboardTile(asActor(dashboardMember), &foundryv1.PreviewFoundryDashboardTileRequest{WorkspaceId: "ws-1", TileJson: countTile})
 	require.NoError(t, err)
 	assert.Equal(t, "load-1", resp.GetLoadId(), "the current load")
 	assert.Equal(t, "2026-11-14", resp.GetAsOf())
-	assert.JSONEq(t, `{"ok":{"kind":"count","count":3}}`, resp.GetOutcomeJson())
+	assert.JSONEq(t, queryOK(`{"kind":"count","count":3}`), resp.GetOutcomeJson())
 	require.Len(t, f.reader.requests, 1)
 	assert.JSONEq(t, `[{"query":{"return":{"count":{}},"start":{"type":"Customer"}}}]`, f.reader.requests[0].GetReadsJson())
 
@@ -490,17 +496,17 @@ func TestPublishingADashboard(t *testing.T) {
 		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 
 		d := f.create(t, dashboardOwner, twoTiles())
-		f.reader.result = `{"as_of":"2026-11-14","results":[{"ok":{"kind":"count","count":3}},{"error":{"code":"too_broad","message":"too broad","limit":1,"count":2}}]}`
+		f.reader.result = `{"as_of":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `,{"error":{"code":"too_broad","message":"too broad","limit":1,"count":2}}]}`
 		_, err = publish(f, dashboardOwner, d.GetId(), 1)
 		assert.Equal(t, "FOUNDRY_DASHBOARD_TILE_FAILED", reasonOf(err))
 		assert.Contains(t, status.Convert(err).Message(), `"By country" (t2) can't be read: too broad`)
 
-		f.reader.result = `{"as_of":"2026-11-14","results":[{"ok":{"kind":"count","count":3}}]}`
+		f.reader.result = `{"as_of":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `]}`
 		_, err = publish(f, dashboardOwner, d.GetId(), 1)
 		assert.Equal(t, codes.Internal, status.Code(err), "a result that doesn't answer each tile")
 
-		f.reader.result = `{"as_of":"2026-11-14","results":[{"ok":{"kind":"count","count":3}},{"ok":{"kind":"rows","total":1,"rows":[{"cells":["` +
-			strings.Repeat("x", 990) + `"],"edges":[]}` + strings.Repeat(`,{"cells":["`+strings.Repeat("y", 990)+`"],"edges":[]}`, 600) + `]}}]}`
+		f.reader.result = `{"as_of":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `,` + queryOK(`{"kind":"rows","total":1,"rows":[{"cells":["`+
+			strings.Repeat("x", 990)+`"],"edges":[]}`+strings.Repeat(`,{"cells":["`+strings.Repeat("y", 990)+`"],"edges":[]}`, 600)+`]}`) + `]}`
 		_, err = publish(f, dashboardOwner, d.GetId(), 1)
 		assert.Equal(t, "FOUNDRY_DASHBOARD_TOO_LARGE", reasonOf(err))
 
