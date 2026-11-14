@@ -27,6 +27,17 @@ const FoundryResendApproval FoundryResendReason = "approval"
 // so any Extract that ends answers the request, one of no documents included.
 const FoundryResendDecisions FoundryResendReason = "decisions"
 
+// FoundryResendName is a person's choice of what a name of a document is (a
+// resolve decision) that the load's list gained after the document was
+// committed: the resolve's own document, and, for a choice of an entity,
+// which is an alias of every document, each document whose reviews ask about
+// that name. The engine settles the name in place by replaying the
+// document's saved model work (contract 4.22.0), so the document goes with
+// its artifacts, still with nothing to spend: a call no artifact holds, as
+// under a load read before prompt 9, leaves the name not_replayed, and the
+// next load applies it.
+const FoundryResendName FoundryResendReason = "name"
+
 // FoundryExtractKindDecisionsMax is the most decisions of one kind (resolve,
 // prop, release, withdraw, alias) one Extract takes, and
 // FoundryExtractAllDecisionsMax the most of all kinds (the engine's Decisions,

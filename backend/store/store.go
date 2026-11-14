@@ -305,6 +305,8 @@ type Store interface {
 	SettleFoundryReviewDecision(ctx context.Context, workspaceID string, decision *model.FoundryReviewDecision) error
 	SettleFoundryReleases(ctx context.Context, workspaceID, loadID string, decisions []*model.FoundryReviewDecision,
 		resend *model.FoundryGraphJob) (queued bool, err error)
+	SettleFoundryResolve(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision, documentIDs []string,
+		resend *model.FoundryGraphJob) (bool, error)
 	SettleFoundryValue(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision,
 		resend *model.FoundryGraphJob) (queued bool, err error)
 	SettleFoundryReject(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision) error

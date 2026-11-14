@@ -580,8 +580,14 @@ WHERE load_id=? AND kind='prop' AND applied_status IN ('pending', 'carried')`, s
 		if end.Refused == "" {
 			return nil
 		}
+		// A name's request refuses the document's resolves that wait, and an
+		// approval's its releases and withdraws: each its own.
+		kinds := "'release', 'withdraw'"
+		if end.Reason == model.FoundryResendName {
+			kinds = "'resolve'"
+		}
 		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_status='refused', applied_reason=?, applied_at=NOW(6)
-WHERE load_id=? AND kind IN ('release', 'withdraw') AND doc_id=? AND applied_status IN ('pending', 'carried') AND applied_reason IS NULL`,
+WHERE load_id=? AND kind IN (`+kinds+`) AND doc_id=? AND applied_status IN ('pending', 'carried') AND applied_reason IS NULL`,
 			end.Refused, loadID, end.DocumentID)
 		return err
 	})
@@ -619,6 +625,14 @@ WHERE load_id=? AND kind='prop' AND applied_status IN ('pending', 'carried', 're
 WHERE load_id=? AND kind IN ('release', 'withdraw') AND applied_status IN ('pending', 'carried')
   AND doc_id IN (SELECT document_id FROM foundry_load_resends WHERE load_id=? AND reason=? AND status='owed')`,
 		model.FoundryReleaseJobFailed, job.LoadID, job.LoadID, string(model.FoundryResendApproval)); err != nil {
+		return err
+	}
+	// A resolve that waits on its document's resend is unconfirmed the same
+	// way: choosing again owes the document anew.
+	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_reason=?
+WHERE load_id=? AND kind='resolve' AND applied_status IN ('pending', 'carried')
+  AND doc_id IN (SELECT document_id FROM foundry_load_resends WHERE load_id=? AND reason=? AND status='owed')`,
+		model.FoundryReleaseJobFailed, job.LoadID, job.LoadID, string(model.FoundryResendName)); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE foundry_load_resends SET status='done', ended_at=NOW(6), job_id=? WHERE load_id=? AND status='owed'`,
@@ -718,6 +732,30 @@ WHERE load_id=? AND document_id=?`, n, n, loadID, docID)
 	return err
 }
 
+// recordFoundryNameOutcomes records what the engine said of the resolve
+// decisions of document docID that the load waits to settle in place
+// (SettleFoundryResolve): each on the load's copy, by its id, of that
+// document, while it waits (model.FoundryNameApplied). An alias's word on
+// another document is the document's (its row's names), not the decision's.
+// A copy the load was created with waits on nothing, and is left as it is.
+// The caller runs it in the transaction that records the document.
+func (s *mysqlDB) recordFoundryNameOutcomes(ctx context.Context, loadID, docID string, names []model.FoundryDocumentName) error {
+	for _, n := range names {
+		if n.Decision != model.FoundryNameResolve || n.DecisionID == nil {
+			continue
+		}
+		status, reason := model.FoundryNameApplied(n)
+		// applied_reason is VARCHAR(32); a later engine's refusal may be longer.
+		reason = reason[:min(len(reason), 32)]
+		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_status=?, applied_reason=NULLIF(?, ''), applied_at=NOW(6)
+WHERE load_id=? AND id=? AND kind='resolve' AND doc_id=? AND applied_status IN ('pending', 'carried')`,
+			string(status), reason, loadID, *n.DecisionID, docID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // RecordFoundryReleaseOutcomes records what the engine said of the decisions
 // a job sent with document docID, where the job keeps no row of the
 // document's own event: a document sent again whose event is failed still
@@ -745,16 +783,21 @@ func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, worke
 		if err := tx.mergeFoundryDocumentNames(ctx, loadID, docID, names); err != nil {
 			return err
 		}
+		if err := tx.recordFoundryNameOutcomes(ctx, loadID, docID, names); err != nil {
+			return err
+		}
 		return tx.recordFoundryReleaseOutcomes(ctx, loadID, docID, outcomes, true)
 	})
 }
 
-// ListFoundryDecisionsApplied returns what became of the given release and
-// value decisions, and withdraws, in the ontology's current load, by decision
-// id, and of each release whether removing it takes it back from that load
-// (TakesBack: foundryMayHaveWritten, the rule the removal applies); a decision
-// that load's list doesn't hold is absent, as is a resolve, and one it holds
-// that no job has reported on has the empty status. One that waits with a
+// ListFoundryDecisionsApplied returns what became of the given release,
+// resolve and value decisions, and withdraws, in the ontology's current load,
+// by decision id, and of each release whether removing it takes it back from
+// that load (TakesBack: foundryMayHaveWritten, the rule the removal applies);
+// a decision that load's list doesn't hold is absent, and one it holds that
+// no job has reported on has the empty status (a resolve the load was
+// created with). A resolve the list holds from another time (chosen again
+// since) is not that decision, and is absent too. One that waits with a
 // reason is unconfirmed (model.FoundryDecisionApplied.Unconfirmed). A value
 // the list holds under the decision's id from another time is not that
 // decision (carryFoundryValues), and is absent too.
@@ -766,7 +809,7 @@ func (s *mysqlDB) ListFoundryDecisionsApplied(ctx context.Context, ontologyID st
 	rows, err := s.db.QueryContext(ctx, `SELECT l.id, l.applied_status, l.applied_reason, l.applied_at,
   l.kind='release' AND `+foundryMayHaveWritten("l")+` FROM foundry_ontologies o
 JOIN foundry_load_decisions l ON l.load_id=o.current_load_id
-WHERE o.id=? AND l.id IN (`+idPlaceholders(len(ids))+`) AND (l.kind IN ('release', 'withdraw') OR l.kind='prop' AND EXISTS (
+WHERE o.id=? AND l.id IN (`+idPlaceholders(len(ids))+`) AND (l.kind IN ('release', 'withdraw') OR l.kind IN ('prop', 'resolve') AND EXISTS (
   SELECT 1 FROM foundry_review_decisions r WHERE r.ontology_id=o.id AND r.id=l.id AND r.decided_at=l.decided_at))`,
 		append([]any{ontologyID}, toAnySlice(ids)...)...)
 	if err != nil {

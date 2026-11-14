@@ -731,6 +731,20 @@ const (
 	FoundryNameNotReplayed FoundryNameRefusal = "not_replayed"
 )
 
+// FoundryNameApplied is what the load's copy of resolve decision records of
+// the engine's word on its own document (foundry_load_decisions
+// applied_status and applied_reason): written is written, anything else is
+// refused, with the refusal, or not_asked or not_named, as its reason.
+func FoundryNameApplied(n FoundryDocumentName) (FoundryReleaseStatus, string) {
+	switch n.Outcome {
+	case FoundryNameWritten:
+		return FoundryReleaseWritten, ""
+	case FoundryNameRefused:
+		return FoundryReleaseRefused, string(n.Reason)
+	}
+	return FoundryReleaseRefused, string(n.Outcome)
+}
+
 // FoundryDocumentName is what a run did with one name decision of a
 // document: Reason is set exactly for refused. DecisionID is the decision's
 // id, nil when the engine named none. Stored as JSON on the load's
