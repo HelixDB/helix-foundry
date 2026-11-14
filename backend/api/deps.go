@@ -12,6 +12,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ai/detect"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/document"
+	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/store"
 )
@@ -43,4 +44,8 @@ type Deps struct {
 	// models. nil hosted, where DetectFoundryAIDefault and
 	// ListFoundryOllamaModels are refused.
 	LocalAI *detect.Detector
+	// AgentSessions opens a person's tools for the Assistant's clicks
+	// (execute and refresh); nil where the host has none, and those are then
+	// Unavailable.
+	AgentSessions integration.SessionHost
 }

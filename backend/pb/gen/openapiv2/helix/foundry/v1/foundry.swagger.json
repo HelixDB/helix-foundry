@@ -479,6 +479,371 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:dismiss": {
+      "post": {
+        "operationId": "FoundryService_DismissFoundryAgentAction",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceDismissFoundryAgentActionBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:execute": {
+      "post": {
+        "operationId": "FoundryService_ExecuteFoundryAgentAction",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceExecuteFoundryAgentActionBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:refresh": {
+      "post": {
+        "operationId": "FoundryService_RefreshFoundryAgentAction",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceRefreshFoundryAgentActionBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/threads": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryAgentThreads",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryAgentThreadsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageToken",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/threads/{id}": {
+      "get": {
+        "operationId": "FoundryService_GetFoundryAgentThread",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentThreadResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "delete": {
+        "operationId": "FoundryService_DeleteFoundryAgentThread",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/turns": {
+      "post": {
+        "summary": "The Assistant: a person's conversations with Foundry's own agent, which\nreads the workspace with Foundry's tools and prepares actions only that\nperson runs, with a click. Each thread and its actions are its user's\nown: another user's answer NotFound. The UI polls a turn's events as it\npolls a question's.",
+        "operationId": "FoundryService_SendFoundryAgentMessage",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentTurnResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceSendFoundryAgentMessageBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/turns/{id}/events": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryAgentTurnEvents",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryAgentTurnEventsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "afterSeq",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/turns/{id}:cancel": {
+      "post": {
+        "operationId": "FoundryService_CancelFoundryAgentTurn",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentTurnResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCancelFoundryAgentTurnBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ai": {
       "get": {
         "summary": "Helix Foundry model providers",
@@ -4524,6 +4889,10 @@
         }
       }
     },
+    "FoundryServiceCancelFoundryAgentTurnBody": {
+      "type": "object",
+      "description": "CancelFoundryAgentTurnRequest ends the caller's queued or running turn. One\nthat ended otherwise is FAILED_PRECONDITION."
+    },
     "FoundryServiceCancelFoundryQuestionBody": {
       "type": "object",
       "description": "CancelFoundryQuestionRequest ends a queued or running question; a running\none is charged what it reserved. One that ended otherwise is\nFAILED_PRECONDITION."
@@ -4704,9 +5073,22 @@
       "type": "object",
       "description": "DetectFoundryAIDefaultRequest looks again for a local install's default;\nit answers the workspace's AI settings, as GetFoundryAI does. FAILED_PRECONDITION\nwhere the install names its default (FOUNDRY_AI_PROVIDER)."
     },
+    "FoundryServiceDismissFoundryAgentActionBody": {
+      "type": "object",
+      "description": "DismissFoundryAgentActionRequest records the caller's no; no turn starts."
+    },
     "FoundryServiceDismissFoundryHealFindingBody": {
       "type": "object",
       "description": "DismissFoundryHealFindingRequest dismisses an open finding by its\nfingerprint, for the caller. NOT_FOUND for a fingerprint the ontology has\nno finding of; FAILED_PRECONDITION for one superseded. One already\ndismissed is returned as it is."
+    },
+    "FoundryServiceExecuteFoundryAgentActionBody": {
+      "type": "object",
+      "properties": {
+        "payloadHash": {
+          "type": "string"
+        }
+      },
+      "description": "ExecuteFoundryAgentActionRequest runs the caller's prepared action once,\nfor the payload they were shown (payload_hash), authorized again as the\ncaller. A thread with a live turn is FAILED_PRECONDITION (reason\nFOUNDRY_AGENT_THREAD_BUSY), as are an action that isn't prepared\n(FOUNDRY_AGENT_ACTION_NOT_PREPARED), another payload\n(FOUNDRY_AGENT_ACTION_CHANGED) and an expired confirmation\n(FOUNDRY_AGENT_ACTION_EXPIRED: refresh it). The action then ends\nsucceeded, failed or unknown, and the agent goes on from it in a new turn\n(continuation)."
     },
     "FoundryServiceFinishConnectorSignInBody": {
       "type": "object",
@@ -4832,6 +5214,10 @@
       },
       "description": "ReadFoundryGraphRequest reads a load of the ontology's database: entities\nwith the facts its version's rules derive, patterns, explanations (\"why\"),\nrule breaks and evidence. reads_json is a JSON array of 1 to 20 reads, each\nthe `reads` item of the ontology agent's read_request.json. NOT_FOUND for a\nload of another ontology or one deleted; FAILED_PRECONDITION while it is\nbeing deleted; RESOURCE_EXHAUSTED while the workspace has as many reads\nrunning as it may."
     },
+    "FoundryServiceRefreshFoundryAgentActionBody": {
+      "type": "object",
+      "description": "RefreshFoundryAgentActionRequest prepares the caller's expired (or\nprepared) action again as the caller, with no model call."
+    },
     "FoundryServiceReviseOntologyVersionBody": {
       "type": "object",
       "properties": {
@@ -4849,6 +5235,26 @@
     },
     "FoundryServiceRevokeFoundryEventSourceTokenBody": {
       "type": "object"
+    },
+    "FoundryServiceSendFoundryAgentMessageBody": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string",
+          "description": "At most 4,000 characters."
+        },
+        "pageContext": {
+          "$ref": "#/definitions/v1FoundryAgentPageContext"
+        },
+        "clientToken": {
+          "type": "string",
+          "description": "At most 64 characters."
+        }
+      },
+      "description": "SendFoundryAgentMessageRequest queues a person's message in their thread,\nor in a new one when thread_id is empty. The same client_token returns the\nturn it queued. A thread with a live turn, or an action running, is\nFAILED_PRECONDITION (reason FOUNDRY_AGENT_THREAD_BUSY); the user's hourly\nmessages RESOURCE_EXHAUSTED; the month's budget FAILED_PRECONDITION."
     },
     "FoundryServiceSetCurrentFoundryLoadBody": {
       "type": "object",
@@ -6354,6 +6760,231 @@
       ],
       "default": "KIND_UNSPECIFIED",
       "description": " - KIND_CONNECTOR: A connector: every table it syncs, now and later, and every document\nset it owns. connector_id.\n - KIND_TABLE: One table of a connector. connector_id and table.\n - KIND_DOCUMENT_SET: One document set. document_set_id.\n - KIND_ENRICHMENT: The People enrichment profiles a load applies. Nothing else."
+    },
+    "v1FoundryAgentAction": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "The operation and target, as the MCP's prepare names them (create_load,\nontology:\u003cworkspace\u003e/\u003contology\u003e)."
+        },
+        "target": {
+          "type": "string"
+        },
+        "payloadJson": {
+          "type": "string",
+          "description": "The canonical payload, and the hash Execute must send back."
+        },
+        "payloadHash": {
+          "type": "string"
+        },
+        "displayJson": {
+          "type": "string",
+          "description": "The names the server resolved for it, as JSON."
+        },
+        "targetNamedByUser": {
+          "type": "boolean",
+          "description": "False when the target's ids never appeared in the person's messages or\npage: the card warns."
+        },
+        "status": {
+          "type": "string",
+          "description": "prepared, executing, succeeded, failed, unknown (it ran and lost its\nanswer: never run again), expired or dismissed."
+        },
+        "resultJson": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "decidedByUserId": {
+          "type": "string"
+        },
+        "decidedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryAgentAction is an action the agent prepared, which only its person\nruns."
+    },
+    "v1FoundryAgentActionResponse": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/v1FoundryAgentAction"
+        },
+        "continuation": {
+          "$ref": "#/definitions/v1FoundryAgentTurn",
+          "description": "The turn the agent goes on from the action's result in; unset unless it ran."
+        }
+      }
+    },
+    "v1FoundryAgentEvent": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "eventJson": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryAgentEvent is one event a turn shows, as JSON: started, text,\ntool_call, tool_result, action_card, action_result and finished."
+    },
+    "v1FoundryAgentPageContext": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "loadId": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryAgentPageContext is what the person was looking at as they sent a\nmessage: ids only, each checked to be the workspace's before the agent is\ntold of it."
+    },
+    "v1FoundryAgentThread": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string",
+          "description": "The first message's start."
+        },
+        "runtime": {
+          "type": "string",
+          "description": "api (Foundry's own worker), claude_code or codex."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryAgentThread is a conversation with the Assistant, private to its user."
+    },
+    "v1FoundryAgentThreadResponse": {
+      "type": "object",
+      "properties": {
+        "thread": {
+          "$ref": "#/definitions/v1FoundryAgentThread"
+        },
+        "turns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAgentTurn"
+          }
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAgentAction"
+          }
+        }
+      },
+      "description": "FoundryAgentThreadResponse is a thread with its newest 100 turns, oldest\nfirst, and every action the agent prepared in it."
+    },
+    "v1FoundryAgentTurn": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "description": "message or action_result."
+        },
+        "text": {
+          "type": "string",
+          "description": "The person's text; empty for an action_result."
+        },
+        "actionId": {
+          "type": "string",
+          "description": "The action an action_result turn goes on from."
+        },
+        "pageContext": {
+          "$ref": "#/definitions/v1FoundryAgentPageContext"
+        },
+        "status": {
+          "type": "string",
+          "description": "queued, running, done, failed or cancelled."
+        },
+        "error": {
+          "type": "string"
+        },
+        "usdMicros": {
+          "type": "string",
+          "format": "int64"
+        },
+        "steps": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "lastSeq": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "attempts": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Attempts claimed so far; a queued turn with attempts above 0 is retrying."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryAgentTurn is one turn of a thread: a person's message, or the result\nof an action they ran."
+    },
+    "v1FoundryAgentTurnResponse": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "#/definitions/v1FoundryAgentTurn"
+        },
+        "thread": {
+          "$ref": "#/definitions/v1FoundryAgentThread"
+        }
+      }
     },
     "v1FoundryCatalogPlan": {
       "type": "object",
@@ -9082,6 +9713,41 @@
             "$ref": "#/definitions/v1FoundryPrincipal"
           },
           "description": "The principals whose Workflows permission is off; every other principal\nhas it on. A member is refused it while they or any of their teams has it\noff."
+        }
+      }
+    },
+    "v1ListFoundryAgentThreadsResponse": {
+      "type": "object",
+      "properties": {
+        "threads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAgentThread"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ListFoundryAgentTurnEventsResponse": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAgentEvent"
+          }
+        },
+        "status": {
+          "type": "string",
+          "description": "The turn's status when read: once it is not queued or running and the\nevents reach last_seq, none follows."
+        },
+        "lastSeq": {
+          "type": "integer",
+          "format": "int32"
         }
       }
     },

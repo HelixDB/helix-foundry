@@ -136,6 +136,17 @@ var methods = map[string]check{
 	foundry("ListFoundryHealFindings"):   checkOntology,
 	foundry("DismissFoundryHealFinding"): checkWorkspace,
 
+	// The Assistant: each handler reads the owner's own thread, turn or action.
+	foundry("SendFoundryAgentMessage"):    checkWorkspace,
+	foundry("ListFoundryAgentThreads"):    checkWorkspace,
+	foundry("GetFoundryAgentThread"):      checkWorkspace,
+	foundry("DeleteFoundryAgentThread"):   checkWorkspace,
+	foundry("ListFoundryAgentTurnEvents"): checkWorkspace,
+	foundry("CancelFoundryAgentTurn"):     checkWorkspace,
+	foundry("ExecuteFoundryAgentAction"):  checkWorkspace,
+	foundry("RefreshFoundryAgentAction"):  checkWorkspace,
+	foundry("DismissFoundryAgentAction"):  checkWorkspace,
+
 	foundry("CreateFoundryWorkflow"):          checkOntology,
 	foundry("ListFoundryWorkflows"):           checkOntology,
 	foundry("GetFoundryWorkflow"):             checkOntology,

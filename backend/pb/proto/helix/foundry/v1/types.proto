@@ -2314,3 +2314,85 @@ message FoundryWorkflowUpload {
   string document_id = 1;
   string set_id = 2;
 }
+
+// FoundryAgentPageContext is what the person was looking at as they sent a
+// message: ids only, each checked to be the workspace's before the agent is
+// told of it.
+message FoundryAgentPageContext {
+  string ontology_id = 1;
+  string load_id = 2;
+}
+
+// FoundryAgentThread is a conversation with the Assistant, private to its user.
+message FoundryAgentThread {
+  string id = 1;
+  // The first message's start.
+  string title = 2;
+  // api (Foundry's own worker), claude_code or codex.
+  string runtime = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// FoundryAgentTurn is one turn of a thread: a person's message, or the result
+// of an action they ran.
+message FoundryAgentTurn {
+  string id = 1;
+  string thread_id = 2;
+  // message or action_result.
+  string kind = 3;
+  // The person's text; empty for an action_result.
+  string text = 4;
+  // The action an action_result turn goes on from.
+  string action_id = 5;
+  FoundryAgentPageContext page_context = 6;
+  // queued, running, done, failed or cancelled.
+  string status = 7;
+  string error = 8;
+  int64 usd_micros = 9;
+  int32 steps = 10;
+  int32 last_seq = 11;
+  // Attempts claimed so far; a queued turn with attempts above 0 is retrying.
+  int32 attempts = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp started_at = 14;
+  google.protobuf.Timestamp finished_at = 15;
+}
+
+// FoundryAgentEvent is one event a turn shows, as JSON: started, text,
+// tool_call, tool_result, action_card, action_result and finished.
+message FoundryAgentEvent {
+  int32 seq = 1;
+  string event_json = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+// FoundryAgentAction is an action the agent prepared, which only its person
+// runs.
+message FoundryAgentAction {
+  string id = 1;
+  string turn_id = 2;
+  string thread_id = 3;
+  // The operation and target, as the MCP's prepare names them (create_load,
+  // ontology:<workspace>/<ontology>).
+  string operation = 4;
+  string target = 5;
+  // The canonical payload, and the hash Execute must send back.
+  string payload_json = 6;
+  string payload_hash = 7;
+  // The names the server resolved for it, as JSON.
+  string display_json = 8;
+  // False when the target's ids never appeared in the person's messages or
+  // page: the card warns.
+  bool target_named_by_user = 9;
+  // prepared, executing, succeeded, failed, unknown (it ran and lost its
+  // answer: never run again), expired or dismissed.
+  string status = 10;
+  string result_json = 11;
+  string error = 12;
+  google.protobuf.Timestamp expires_at = 13;
+  string decided_by_user_id = 14;
+  google.protobuf.Timestamp decided_at = 15;
+  google.protobuf.Timestamp created_at = 16;
+}
+

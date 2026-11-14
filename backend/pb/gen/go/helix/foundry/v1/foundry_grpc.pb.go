@@ -112,6 +112,15 @@ const (
 	FoundryService_ListFoundryQuestionEvents_FullMethodName             = "/helix.foundry.v1.FoundryService/ListFoundryQuestionEvents"
 	FoundryService_CancelFoundryQuestion_FullMethodName                 = "/helix.foundry.v1.FoundryService/CancelFoundryQuestion"
 	FoundryService_StopFoundryLoadEnrichment_FullMethodName             = "/helix.foundry.v1.FoundryService/StopFoundryLoadEnrichment"
+	FoundryService_SendFoundryAgentMessage_FullMethodName               = "/helix.foundry.v1.FoundryService/SendFoundryAgentMessage"
+	FoundryService_ListFoundryAgentThreads_FullMethodName               = "/helix.foundry.v1.FoundryService/ListFoundryAgentThreads"
+	FoundryService_GetFoundryAgentThread_FullMethodName                 = "/helix.foundry.v1.FoundryService/GetFoundryAgentThread"
+	FoundryService_DeleteFoundryAgentThread_FullMethodName              = "/helix.foundry.v1.FoundryService/DeleteFoundryAgentThread"
+	FoundryService_ListFoundryAgentTurnEvents_FullMethodName            = "/helix.foundry.v1.FoundryService/ListFoundryAgentTurnEvents"
+	FoundryService_CancelFoundryAgentTurn_FullMethodName                = "/helix.foundry.v1.FoundryService/CancelFoundryAgentTurn"
+	FoundryService_ExecuteFoundryAgentAction_FullMethodName             = "/helix.foundry.v1.FoundryService/ExecuteFoundryAgentAction"
+	FoundryService_RefreshFoundryAgentAction_FullMethodName             = "/helix.foundry.v1.FoundryService/RefreshFoundryAgentAction"
+	FoundryService_DismissFoundryAgentAction_FullMethodName             = "/helix.foundry.v1.FoundryService/DismissFoundryAgentAction"
 	FoundryService_GetFoundryUsage_FullMethodName                       = "/helix.foundry.v1.FoundryService/GetFoundryUsage"
 	FoundryService_GetFoundryEnrichment_FullMethodName                  = "/helix.foundry.v1.FoundryService/GetFoundryEnrichment"
 	FoundryService_UpdateFoundryEnrichment_FullMethodName               = "/helix.foundry.v1.FoundryService/UpdateFoundryEnrichment"
@@ -262,6 +271,20 @@ type FoundryServiceClient interface {
 	ListFoundryQuestionEvents(ctx context.Context, in *ListFoundryQuestionEventsRequest, opts ...grpc.CallOption) (*ListFoundryQuestionEventsResponse, error)
 	CancelFoundryQuestion(ctx context.Context, in *CancelFoundryQuestionRequest, opts ...grpc.CallOption) (*FoundryQuestionResponse, error)
 	StopFoundryLoadEnrichment(ctx context.Context, in *StopFoundryLoadEnrichmentRequest, opts ...grpc.CallOption) (*FoundryLoadResponse, error)
+	// The Assistant: a person's conversations with Foundry's own agent, which
+	// reads the workspace with Foundry's tools and prepares actions only that
+	// person runs, with a click. Each thread and its actions are its user's
+	// own: another user's answer NotFound. The UI polls a turn's events as it
+	// polls a question's.
+	SendFoundryAgentMessage(ctx context.Context, in *SendFoundryAgentMessageRequest, opts ...grpc.CallOption) (*FoundryAgentTurnResponse, error)
+	ListFoundryAgentThreads(ctx context.Context, in *ListFoundryAgentThreadsRequest, opts ...grpc.CallOption) (*ListFoundryAgentThreadsResponse, error)
+	GetFoundryAgentThread(ctx context.Context, in *GetFoundryAgentThreadRequest, opts ...grpc.CallOption) (*FoundryAgentThreadResponse, error)
+	DeleteFoundryAgentThread(ctx context.Context, in *DeleteFoundryAgentThreadRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ListFoundryAgentTurnEvents(ctx context.Context, in *ListFoundryAgentTurnEventsRequest, opts ...grpc.CallOption) (*ListFoundryAgentTurnEventsResponse, error)
+	CancelFoundryAgentTurn(ctx context.Context, in *CancelFoundryAgentTurnRequest, opts ...grpc.CallOption) (*FoundryAgentTurnResponse, error)
+	ExecuteFoundryAgentAction(ctx context.Context, in *ExecuteFoundryAgentActionRequest, opts ...grpc.CallOption) (*FoundryAgentActionResponse, error)
+	RefreshFoundryAgentAction(ctx context.Context, in *RefreshFoundryAgentActionRequest, opts ...grpc.CallOption) (*FoundryAgentActionResponse, error)
+	DismissFoundryAgentAction(ctx context.Context, in *DismissFoundryAgentActionRequest, opts ...grpc.CallOption) (*FoundryAgentActionResponse, error)
 	// Helix Foundry usage: the workspace's AI spend this month, by task
 	//
 	// The UTC calendar month's spend of loads, of API sources' extraction no
@@ -1252,6 +1275,96 @@ func (c *foundryServiceClient) StopFoundryLoadEnrichment(ctx context.Context, in
 	return out, nil
 }
 
+func (c *foundryServiceClient) SendFoundryAgentMessage(ctx context.Context, in *SendFoundryAgentMessageRequest, opts ...grpc.CallOption) (*FoundryAgentTurnResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAgentTurnResponse)
+	err := c.cc.Invoke(ctx, FoundryService_SendFoundryAgentMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ListFoundryAgentThreads(ctx context.Context, in *ListFoundryAgentThreadsRequest, opts ...grpc.CallOption) (*ListFoundryAgentThreadsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryAgentThreadsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryAgentThreads_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) GetFoundryAgentThread(ctx context.Context, in *GetFoundryAgentThreadRequest, opts ...grpc.CallOption) (*FoundryAgentThreadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAgentThreadResponse)
+	err := c.cc.Invoke(ctx, FoundryService_GetFoundryAgentThread_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) DeleteFoundryAgentThread(ctx context.Context, in *DeleteFoundryAgentThreadRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, FoundryService_DeleteFoundryAgentThread_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ListFoundryAgentTurnEvents(ctx context.Context, in *ListFoundryAgentTurnEventsRequest, opts ...grpc.CallOption) (*ListFoundryAgentTurnEventsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryAgentTurnEventsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryAgentTurnEvents_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) CancelFoundryAgentTurn(ctx context.Context, in *CancelFoundryAgentTurnRequest, opts ...grpc.CallOption) (*FoundryAgentTurnResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAgentTurnResponse)
+	err := c.cc.Invoke(ctx, FoundryService_CancelFoundryAgentTurn_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ExecuteFoundryAgentAction(ctx context.Context, in *ExecuteFoundryAgentActionRequest, opts ...grpc.CallOption) (*FoundryAgentActionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAgentActionResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ExecuteFoundryAgentAction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) RefreshFoundryAgentAction(ctx context.Context, in *RefreshFoundryAgentActionRequest, opts ...grpc.CallOption) (*FoundryAgentActionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAgentActionResponse)
+	err := c.cc.Invoke(ctx, FoundryService_RefreshFoundryAgentAction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) DismissFoundryAgentAction(ctx context.Context, in *DismissFoundryAgentActionRequest, opts ...grpc.CallOption) (*FoundryAgentActionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAgentActionResponse)
+	err := c.cc.Invoke(ctx, FoundryService_DismissFoundryAgentAction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) GetFoundryUsage(ctx context.Context, in *GetFoundryUsageRequest, opts ...grpc.CallOption) (*FoundryUsageResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FoundryUsageResponse)
@@ -1535,6 +1648,20 @@ type FoundryServiceServer interface {
 	ListFoundryQuestionEvents(context.Context, *ListFoundryQuestionEventsRequest) (*ListFoundryQuestionEventsResponse, error)
 	CancelFoundryQuestion(context.Context, *CancelFoundryQuestionRequest) (*FoundryQuestionResponse, error)
 	StopFoundryLoadEnrichment(context.Context, *StopFoundryLoadEnrichmentRequest) (*FoundryLoadResponse, error)
+	// The Assistant: a person's conversations with Foundry's own agent, which
+	// reads the workspace with Foundry's tools and prepares actions only that
+	// person runs, with a click. Each thread and its actions are its user's
+	// own: another user's answer NotFound. The UI polls a turn's events as it
+	// polls a question's.
+	SendFoundryAgentMessage(context.Context, *SendFoundryAgentMessageRequest) (*FoundryAgentTurnResponse, error)
+	ListFoundryAgentThreads(context.Context, *ListFoundryAgentThreadsRequest) (*ListFoundryAgentThreadsResponse, error)
+	GetFoundryAgentThread(context.Context, *GetFoundryAgentThreadRequest) (*FoundryAgentThreadResponse, error)
+	DeleteFoundryAgentThread(context.Context, *DeleteFoundryAgentThreadRequest) (*emptypb.Empty, error)
+	ListFoundryAgentTurnEvents(context.Context, *ListFoundryAgentTurnEventsRequest) (*ListFoundryAgentTurnEventsResponse, error)
+	CancelFoundryAgentTurn(context.Context, *CancelFoundryAgentTurnRequest) (*FoundryAgentTurnResponse, error)
+	ExecuteFoundryAgentAction(context.Context, *ExecuteFoundryAgentActionRequest) (*FoundryAgentActionResponse, error)
+	RefreshFoundryAgentAction(context.Context, *RefreshFoundryAgentActionRequest) (*FoundryAgentActionResponse, error)
+	DismissFoundryAgentAction(context.Context, *DismissFoundryAgentActionRequest) (*FoundryAgentActionResponse, error)
 	// Helix Foundry usage: the workspace's AI spend this month, by task
 	//
 	// The UTC calendar month's spend of loads, of API sources' extraction no
@@ -1879,6 +2006,33 @@ func (UnimplementedFoundryServiceServer) CancelFoundryQuestion(context.Context, 
 }
 func (UnimplementedFoundryServiceServer) StopFoundryLoadEnrichment(context.Context, *StopFoundryLoadEnrichmentRequest) (*FoundryLoadResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method StopFoundryLoadEnrichment not implemented")
+}
+func (UnimplementedFoundryServiceServer) SendFoundryAgentMessage(context.Context, *SendFoundryAgentMessageRequest) (*FoundryAgentTurnResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SendFoundryAgentMessage not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryAgentThreads(context.Context, *ListFoundryAgentThreadsRequest) (*ListFoundryAgentThreadsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryAgentThreads not implemented")
+}
+func (UnimplementedFoundryServiceServer) GetFoundryAgentThread(context.Context, *GetFoundryAgentThreadRequest) (*FoundryAgentThreadResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryAgentThread not implemented")
+}
+func (UnimplementedFoundryServiceServer) DeleteFoundryAgentThread(context.Context, *DeleteFoundryAgentThreadRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteFoundryAgentThread not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryAgentTurnEvents(context.Context, *ListFoundryAgentTurnEventsRequest) (*ListFoundryAgentTurnEventsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryAgentTurnEvents not implemented")
+}
+func (UnimplementedFoundryServiceServer) CancelFoundryAgentTurn(context.Context, *CancelFoundryAgentTurnRequest) (*FoundryAgentTurnResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelFoundryAgentTurn not implemented")
+}
+func (UnimplementedFoundryServiceServer) ExecuteFoundryAgentAction(context.Context, *ExecuteFoundryAgentActionRequest) (*FoundryAgentActionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ExecuteFoundryAgentAction not implemented")
+}
+func (UnimplementedFoundryServiceServer) RefreshFoundryAgentAction(context.Context, *RefreshFoundryAgentActionRequest) (*FoundryAgentActionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RefreshFoundryAgentAction not implemented")
+}
+func (UnimplementedFoundryServiceServer) DismissFoundryAgentAction(context.Context, *DismissFoundryAgentActionRequest) (*FoundryAgentActionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DismissFoundryAgentAction not implemented")
 }
 func (UnimplementedFoundryServiceServer) GetFoundryUsage(context.Context, *GetFoundryUsageRequest) (*FoundryUsageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryUsage not implemented")
@@ -3601,6 +3755,168 @@ func _FoundryService_StopFoundryLoadEnrichment_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_SendFoundryAgentMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendFoundryAgentMessageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).SendFoundryAgentMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_SendFoundryAgentMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).SendFoundryAgentMessage(ctx, req.(*SendFoundryAgentMessageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ListFoundryAgentThreads_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryAgentThreadsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryAgentThreads(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryAgentThreads_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryAgentThreads(ctx, req.(*ListFoundryAgentThreadsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_GetFoundryAgentThread_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetFoundryAgentThreadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).GetFoundryAgentThread(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_GetFoundryAgentThread_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).GetFoundryAgentThread(ctx, req.(*GetFoundryAgentThreadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_DeleteFoundryAgentThread_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteFoundryAgentThreadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).DeleteFoundryAgentThread(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_DeleteFoundryAgentThread_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).DeleteFoundryAgentThread(ctx, req.(*DeleteFoundryAgentThreadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ListFoundryAgentTurnEvents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryAgentTurnEventsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryAgentTurnEvents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryAgentTurnEvents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryAgentTurnEvents(ctx, req.(*ListFoundryAgentTurnEventsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_CancelFoundryAgentTurn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelFoundryAgentTurnRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).CancelFoundryAgentTurn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_CancelFoundryAgentTurn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).CancelFoundryAgentTurn(ctx, req.(*CancelFoundryAgentTurnRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ExecuteFoundryAgentAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecuteFoundryAgentActionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ExecuteFoundryAgentAction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ExecuteFoundryAgentAction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ExecuteFoundryAgentAction(ctx, req.(*ExecuteFoundryAgentActionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_RefreshFoundryAgentAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RefreshFoundryAgentActionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).RefreshFoundryAgentAction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_RefreshFoundryAgentAction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).RefreshFoundryAgentAction(ctx, req.(*RefreshFoundryAgentActionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_DismissFoundryAgentAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DismissFoundryAgentActionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).DismissFoundryAgentAction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_DismissFoundryAgentAction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).DismissFoundryAgentAction(ctx, req.(*DismissFoundryAgentActionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_GetFoundryUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetFoundryUsageRequest)
 	if err := dec(in); err != nil {
@@ -4245,6 +4561,42 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "StopFoundryLoadEnrichment",
 			Handler:    _FoundryService_StopFoundryLoadEnrichment_Handler,
+		},
+		{
+			MethodName: "SendFoundryAgentMessage",
+			Handler:    _FoundryService_SendFoundryAgentMessage_Handler,
+		},
+		{
+			MethodName: "ListFoundryAgentThreads",
+			Handler:    _FoundryService_ListFoundryAgentThreads_Handler,
+		},
+		{
+			MethodName: "GetFoundryAgentThread",
+			Handler:    _FoundryService_GetFoundryAgentThread_Handler,
+		},
+		{
+			MethodName: "DeleteFoundryAgentThread",
+			Handler:    _FoundryService_DeleteFoundryAgentThread_Handler,
+		},
+		{
+			MethodName: "ListFoundryAgentTurnEvents",
+			Handler:    _FoundryService_ListFoundryAgentTurnEvents_Handler,
+		},
+		{
+			MethodName: "CancelFoundryAgentTurn",
+			Handler:    _FoundryService_CancelFoundryAgentTurn_Handler,
+		},
+		{
+			MethodName: "ExecuteFoundryAgentAction",
+			Handler:    _FoundryService_ExecuteFoundryAgentAction_Handler,
+		},
+		{
+			MethodName: "RefreshFoundryAgentAction",
+			Handler:    _FoundryService_RefreshFoundryAgentAction_Handler,
+		},
+		{
+			MethodName: "DismissFoundryAgentAction",
+			Handler:    _FoundryService_DismissFoundryAgentAction_Handler,
 		},
 		{
 			MethodName: "GetFoundryUsage",

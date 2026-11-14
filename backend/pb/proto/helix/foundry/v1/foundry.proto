@@ -458,6 +458,54 @@ service FoundryService {
     };
   }
 
+  // The Assistant: a person's conversations with Foundry's own agent, which
+  // reads the workspace with Foundry's tools and prepares actions only that
+  // person runs, with a click. Each thread and its actions are its user's
+  // own: another user's answer NotFound. The UI polls a turn's events as it
+  // polls a question's.
+  rpc SendFoundryAgentMessage(SendFoundryAgentMessageRequest) returns (FoundryAgentTurnResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/turns"
+      body: "*"
+    };
+  }
+  rpc ListFoundryAgentThreads(ListFoundryAgentThreadsRequest) returns (ListFoundryAgentThreadsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/agent/threads"};
+  }
+  rpc GetFoundryAgentThread(GetFoundryAgentThreadRequest) returns (FoundryAgentThreadResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/agent/threads/{id}"};
+  }
+  rpc DeleteFoundryAgentThread(DeleteFoundryAgentThreadRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/agent/threads/{id}"};
+  }
+  rpc ListFoundryAgentTurnEvents(ListFoundryAgentTurnEventsRequest) returns (ListFoundryAgentTurnEventsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/agent/turns/{id}/events"};
+  }
+  rpc CancelFoundryAgentTurn(CancelFoundryAgentTurnRequest) returns (FoundryAgentTurnResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/turns/{id}:cancel"
+      body: "*"
+    };
+  }
+  rpc ExecuteFoundryAgentAction(ExecuteFoundryAgentActionRequest) returns (FoundryAgentActionResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/actions/{id}:execute"
+      body: "*"
+    };
+  }
+  rpc RefreshFoundryAgentAction(RefreshFoundryAgentActionRequest) returns (FoundryAgentActionResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/actions/{id}:refresh"
+      body: "*"
+    };
+  }
+  rpc DismissFoundryAgentAction(DismissFoundryAgentActionRequest) returns (FoundryAgentActionResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/actions/{id}:dismiss"
+      body: "*"
+    };
+  }
+
   // Helix Foundry usage: the workspace's AI spend this month, by task
   //
   // The UTC calendar month's spend of loads, of API sources' extraction no
@@ -1799,4 +1847,99 @@ message AssessFoundryWorkflowRunRequest {
   string ontology_id = 2;
   string workflow_id = 3;
   string id = 4;
+}
+
+// SendFoundryAgentMessageRequest queues a person's message in their thread,
+// or in a new one when thread_id is empty. The same client_token returns the
+// turn it queued. A thread with a live turn, or an action running, is
+// FAILED_PRECONDITION (reason FOUNDRY_AGENT_THREAD_BUSY); the user's hourly
+// messages RESOURCE_EXHAUSTED; the month's budget FAILED_PRECONDITION.
+message SendFoundryAgentMessageRequest {
+  string workspace_id = 1;
+  string thread_id = 2;
+  // At most 4,000 characters.
+  string text = 3;
+  FoundryAgentPageContext page_context = 4;
+  // At most 64 characters.
+  string client_token = 5;
+}
+message FoundryAgentTurnResponse {
+  FoundryAgentTurn turn = 1;
+  FoundryAgentThread thread = 2;
+}
+// ListFoundryAgentThreadsRequest lists the caller's threads, most recently
+// active first, 50 a page.
+message ListFoundryAgentThreadsRequest {
+  string workspace_id = 1;
+  string page_token = 2;
+}
+message ListFoundryAgentThreadsResponse {
+  repeated FoundryAgentThread threads = 1;
+  string next_page_token = 2;
+}
+message GetFoundryAgentThreadRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// FoundryAgentThreadResponse is a thread with its newest 100 turns, oldest
+// first, and every action the agent prepared in it.
+message FoundryAgentThreadResponse {
+  FoundryAgentThread thread = 1;
+  repeated FoundryAgentTurn turns = 2;
+  repeated FoundryAgentAction actions = 3;
+}
+// DeleteFoundryAgentThreadRequest deletes the caller's thread, cancelling its
+// live turn.
+message DeleteFoundryAgentThreadRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// ListFoundryAgentTurnEventsRequest returns up to 200 events after after_seq.
+message ListFoundryAgentTurnEventsRequest {
+  string workspace_id = 1;
+  string id = 2;
+  int32 after_seq = 3;
+}
+message ListFoundryAgentTurnEventsResponse {
+  repeated FoundryAgentEvent events = 1;
+  // The turn's status when read: once it is not queued or running and the
+  // events reach last_seq, none follows.
+  string status = 2;
+  int32 last_seq = 3;
+}
+// CancelFoundryAgentTurnRequest ends the caller's queued or running turn. One
+// that ended otherwise is FAILED_PRECONDITION.
+message CancelFoundryAgentTurnRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// ExecuteFoundryAgentActionRequest runs the caller's prepared action once,
+// for the payload they were shown (payload_hash), authorized again as the
+// caller. A thread with a live turn is FAILED_PRECONDITION (reason
+// FOUNDRY_AGENT_THREAD_BUSY), as are an action that isn't prepared
+// (FOUNDRY_AGENT_ACTION_NOT_PREPARED), another payload
+// (FOUNDRY_AGENT_ACTION_CHANGED) and an expired confirmation
+// (FOUNDRY_AGENT_ACTION_EXPIRED: refresh it). The action then ends
+// succeeded, failed or unknown, and the agent goes on from it in a new turn
+// (continuation).
+message ExecuteFoundryAgentActionRequest {
+  string workspace_id = 1;
+  string id = 2;
+  string payload_hash = 3;
+}
+// RefreshFoundryAgentActionRequest prepares the caller's expired (or
+// prepared) action again as the caller, with no model call.
+message RefreshFoundryAgentActionRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// DismissFoundryAgentActionRequest records the caller's no; no turn starts.
+message DismissFoundryAgentActionRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+message FoundryAgentActionResponse {
+  FoundryAgentAction action = 1;
+  // The turn the agent goes on from the action's result in; unset unless it ran.
+  FoundryAgentTurn continuation = 2;
 }

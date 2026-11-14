@@ -28,6 +28,18 @@ const (
 // reads, asks and cancels its own questions, and starts and finishes its own
 // workflow runs: it changes nothing else.
 var rules = map[string]Rule{
+	// The Assistant: for people with the workspace's whole view, not
+	// grantees, until it narrows what its tools read to their grants.
+	foundryv1.FoundryService_SendFoundryAgentMessage_FullMethodName:    Deny,
+	foundryv1.FoundryService_ListFoundryAgentThreads_FullMethodName:    Deny,
+	foundryv1.FoundryService_GetFoundryAgentThread_FullMethodName:      Deny,
+	foundryv1.FoundryService_DeleteFoundryAgentThread_FullMethodName:   Deny,
+	foundryv1.FoundryService_ListFoundryAgentTurnEvents_FullMethodName: Deny,
+	foundryv1.FoundryService_CancelFoundryAgentTurn_FullMethodName:     Deny,
+	foundryv1.FoundryService_ExecuteFoundryAgentAction_FullMethodName:  Deny,
+	foundryv1.FoundryService_RefreshFoundryAgentAction_FullMethodName:  Deny,
+	foundryv1.FoundryService_DismissFoundryAgentAction_FullMethodName:  Deny,
+
 	// Source grants, restricted members and teams: managed by owners and
 	// admins; a grantee reads its own.
 	foundryv1.FoundryService_ListFoundryAccess_FullMethodName:          Deny,
