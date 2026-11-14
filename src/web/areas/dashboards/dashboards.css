@@ -317,6 +317,8 @@
 /* An Analyst answer's visual's Add to dashboard (pin-visual.tsx). */
 .db-check {
   display: flex;
+  /* The app's global label is a column. */
+  flex-direction: row;
   align-items: flex-start;
   gap: 8px;
   margin-top: var(--hf-space-2);
