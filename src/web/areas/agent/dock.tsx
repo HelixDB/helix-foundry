@@ -619,7 +619,7 @@ function LiveText({ text }: { text: string }) {
     });
     return () => cancelAnimationFrame(frame);
   }, [text]);
-  return <p className="ag-text ag-live">{text.slice(0, shown)}</p>;
+  return <p className="ag-text ag-live">{text.slice(0, shown).trimEnd()}</p>;
 }
 
 /** The model's words as plain text, with only paths into this app as links. */

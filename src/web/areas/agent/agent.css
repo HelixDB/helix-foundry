@@ -124,16 +124,11 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-/* The text the model is writing, ending in a caret while it writes. */
+/* The text the model is writing, ending in a caret while it writes: a
+   glyph joined to the last word, so it never wraps alone. */
 .ag-live::after {
-  content: "";
-  display: inline-block;
-  width: 0.5em;
-  height: 1em;
-  margin-left: 2px;
-  vertical-align: text-bottom;
-  border-radius: 1px;
-  background: var(--hf-muted);
+  content: "\2060\258D";
+  color: var(--hf-muted);
   animation: hf-pulse 1s ease-in-out infinite;
 }
 
