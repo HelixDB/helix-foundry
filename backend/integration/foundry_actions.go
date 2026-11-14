@@ -674,9 +674,11 @@ func ReviewChoice(decision ReviewDecisionPayload) (*foundryv1.FoundryReviewChoic
 			set, value = set+1, &foundryv1.FoundryPropValue{Value: &foundryv1.FoundryPropValue_Text{Text: *prop.Text}}
 		}
 		if prop.Integer != nil {
+			// As JSON writes it, so the card and the decision read the same digits: no plus sign or
+			// leading zero.
 			n, err := strconv.ParseInt(*prop.Integer, 10, 64)
-			if err != nil {
-				return nil, errors.New("an integer is a string of digits within int64")
+			if err != nil || strconv.FormatInt(n, 10) != *prop.Integer {
+				return nil, errors.New("an integer is a string of its digits within int64, as JSON writes it: no plus sign or leading zeros")
 			}
 			set, value = set+1, &foundryv1.FoundryPropValue{Value: &foundryv1.FoundryPropValue_Integer{Integer: n}}
 		}

@@ -23,9 +23,10 @@ type reviewsBackend struct {
 func (b *reviewsBackend) ListFoundryReviews(_ context.Context, r *foundryv1.ListFoundryReviewsRequest, _ ...grpc.CallOption) (*foundryv1.ListFoundryReviewsResponse, error) {
 	b.got = r
 	confidence := 0.4
-	return &foundryv1.ListFoundryReviewsResponse{LoadId: "load-1", NextPageToken: "50", Reviews: []*foundryv1.FoundryReview{
+	return &foundryv1.ListFoundryReviewsResponse{LoadId: "load-1", NextPageToken: "load-1:50", Reviews: []*foundryv1.FoundryReview{
 		{ReviewKey: "r-resolve", Reason: "unresolved", Settle: foundryv1.FoundryReviewSettle_FOUNDRY_REVIEW_SETTLE_RESOLVE, Type: "Customer", DocId: "doc-a",
-			NormName: "globexx", Candidates: []string{"scus_1"}, Quote: "Globexx", Span: &foundryv1.FoundryReviewSpan{Section: 1, Start: 4, End: 11}, Confidence: &confidence},
+			NormName: "globexx", Candidates: []string{"scus_1"}, Quote: "Globexx", Span: &foundryv1.FoundryReviewSpan{Section: 1, Start: 4, End: 11}, Confidence: &confidence,
+			Entities: []*foundryv1.FoundryReviewEntity{{Type: "Customer", EntityKey: "scus_1", Name: "Globex"}, {Type: "Person", NormName: "ada"}}},
 		{ReviewKey: "r-prop", Reason: "prop_conflict", Settle: foundryv1.FoundryReviewSettle_FOUNDRY_REVIEW_SETTLE_PROP, Type: "Customer", EntityKey: "scus_1", Prop: "seats",
 			Values: []*foundryv1.FoundryReviewValue{{ValueJson: "12345678901234567890", DocId: "doc-b"}, {ValueJson: "not json"}, {ValueJson: `"GBP"`, Quote: "in GBP"}}},
 		{ReviewKey: "r-held", Reason: "low_confidence", Settle: foundryv1.FoundryReviewSettle_FOUNDRY_REVIEW_SETTLE_RELEASE, Link: "promised_to",
@@ -41,7 +42,7 @@ func TestListFoundryReviewsTool(t *testing.T) {
 	assert.True(t, proto.Equal(b.got, &foundryv1.ListFoundryReviewsRequest{WorkspaceId: "ws1", OntologyId: "ont1", ReviewKeys: []string{"r-resolve"}}))
 	assert.Equal(t, contentTrustUntrusted, out["content_trust"])
 	assert.Equal(t, "load-1", out["load_id"])
-	assert.Equal(t, "50", out["next_page_token"])
+	assert.Equal(t, "load-1:50", out["next_page_token"])
 	reviews := out["reviews"].([]any)
 	require.Len(t, reviews, 4)
 	resolve := reviews[0].(map[string]any)
@@ -50,6 +51,8 @@ func TestListFoundryReviewsTool(t *testing.T) {
 	assert.EqualValues(t, 1, resolve["section"])
 	assert.EqualValues(t, 11, resolve["end"])
 	assert.EqualValues(t, 0.4, resolve["confidence"])
+	assert.Equal(t, []any{map[string]any{"type": "Customer", "entity_key": "scus_1", "name": "Globex"}, map[string]any{"type": "Person", "norm_name": "ada"}},
+		resolve["entities"], "the entities it concerns, by name")
 	prop := reviews[1].(map[string]any)
 	assert.Equal(t, "prop", prop["settle"])
 	values := prop["values"].([]any)
@@ -74,7 +77,7 @@ func TestListFoundryReviewsToolRefusals(t *testing.T) {
 		"no ontology":   {"workspace_id": "ws1"},
 		"a bad id":      {"workspace_id": "ws1", "ontology_id": "a b"},
 		"too many keys": {"workspace_id": "ws1", "ontology_id": "ont1", "review_keys": make([]string, 51)},
-		"a long token":  {"workspace_id": "ws1", "ontology_id": "ont1", "page_token": strings.Repeat("1", 17)},
+		"a long token":  {"workspace_id": "ws1", "ontology_id": "ont1", "page_token": strings.Repeat("1", 161)},
 	} {
 		result, err := connect(t, s, reader()).CallTool(context.Background(), &mcp.CallToolParams{Name: toolFoundryListReviews, Arguments: args})
 		require.NoError(t, err, name)
@@ -100,7 +103,7 @@ func TestListFoundryReviewsToolRefusals(t *testing.T) {
 // settle_review takes exactly one decision, each as the backend takes it.
 func TestReviewChoice(t *testing.T) {
 	hash := strings.Repeat("0f", 32)
-	text, integer, bad, number, yes := "GBP", "42", "4.2", 4.2, true
+	text, integer, negative, bad, plus, padded, number, yes := "GBP", "42", "-42", "4.2", "+42", "0042", 4.2, true
 	for _, tc := range []struct {
 		name     string
 		decision ReviewDecisionPayload
@@ -130,7 +133,11 @@ func TestReviewChoice(t *testing.T) {
 		{"an empty resolve", ReviewDecisionPayload{Resolve: &ReviewResolvePayload{}}, nil},
 		{"two values", ReviewDecisionPayload{Prop: &PropValuePayload{Text: &text, Null: true}}, nil},
 		{"no value given", ReviewDecisionPayload{Prop: &PropValuePayload{}}, nil},
+		{"a negative integer", ReviewDecisionPayload{Prop: &PropValuePayload{Integer: &negative}}, &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Prop{
+			Prop: &foundryv1.FoundryPropValue{Value: &foundryv1.FoundryPropValue_Integer{Integer: -42}}}}},
 		{"a fraction as an integer", ReviewDecisionPayload{Prop: &PropValuePayload{Integer: &bad}}, nil},
+		{"a plus sign", ReviewDecisionPayload{Prop: &PropValuePayload{Integer: &plus}}, nil},
+		{"leading zeros", ReviewDecisionPayload{Prop: &PropValuePayload{Integer: &padded}}, nil},
 		{"a short hash", ReviewDecisionPayload{Release: &StatementPayload{StatementHash: "ab"}}, nil},
 		{"an upper-case hash", ReviewDecisionPayload{Reject: &StatementPayload{StatementHash: strings.ToUpper(hash)}}, nil},
 	} {

@@ -437,7 +437,11 @@ func (s *Service) agentAction(ctx context.Context, workspaceID, userID, actionID
 }
 
 // RefreshFoundryAgentAction prepares the caller's action again, as the caller
-// and with no model: its new confirmation replaces the one that ran out.
+// and with no model: its card is drawn again as they read the workspace now
+// (a review must still be in the current load, the load current named as it
+// is), and its new confirmation replaces the one that ran out. What the
+// card's checks refuse, or the caller may no longer do, is refused in the
+// tool's words.
 func (s *Service) RefreshFoundryAgentAction(ctx context.Context, req *foundryv1.RefreshFoundryAgentActionRequest) (*foundryv1.FoundryAgentActionResponse, error) {
 	ws := req.GetWorkspaceId()
 	userID, err := s.agentUser(ctx, ws)
@@ -464,6 +468,7 @@ func (s *Service) RefreshFoundryAgentAction(ctx context.Context, req *foundryv1.
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "open your session: %v", err)
 	}
+	sink.cards = foundryagent.SessionCards(s.deps.DB, s.deps.Databases, session, a.WorkspaceID)
 	_, err = session.Service.PrepareAgain(session.Ctx, session.Identity, integration.FoundryOperationInput{
 		Operation: a.Operation, Target: a.Target, Payload: payload,
 	}, sink)
@@ -480,22 +485,28 @@ func (s *Service) RefreshFoundryAgentAction(ctx context.Context, req *foundryv1.
 	return &foundryv1.FoundryAgentActionResponse{Action: agentActionToProto(sink.refreshed, time.Now())}, nil
 }
 
-// refreshSink gives an action the confirmation prepared again for it.
+// refreshSink gives an action its card drawn again, as its clicker, and the
+// confirmation prepared again for it.
 type refreshSink struct {
 	s         *Service
 	action    *foundrymodel.FoundryAgentAction
 	userID    string
+	cards     foundryagent.Cards
 	refreshed *foundrymodel.FoundryAgentAction
 }
 
 func (r *refreshSink) Allows(operation string) bool { return foundryagent.Operations[operation] }
 
 func (r *refreshSink) Record(ctx context.Context, p integration.PreparedAction) (integration.AwaitingPerson, error) {
+	card, err := r.cards.Draw(ctx, p)
+	if err != nil {
+		return integration.AwaitingPerson{}, err
+	}
 	sealed, keyID, err := r.s.deps.ConnectorKeys.Seal([]byte(p.Confirmation.Token), r.action.ID)
 	if err != nil {
 		return integration.AwaitingPerson{}, err
 	}
-	refreshed, err := r.s.deps.DB.RefreshFoundryAgentAction(ctx, r.action.WorkspaceID, r.userID, r.action.ID, p.PayloadHash,
+	refreshed, err := r.s.deps.DB.RefreshFoundryAgentAction(ctx, r.action.WorkspaceID, r.userID, r.action.ID, p.PayloadHash, card.Display,
 		p.Confirmation.ID, sealed, keyID, p.Confirmation.ExpiresAt)
 	if err != nil {
 		return integration.AwaitingPerson{}, err

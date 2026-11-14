@@ -17,7 +17,6 @@ import (
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
-	"github.com/helixdb/helix-foundry/backend/ports"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -25,19 +24,16 @@ import (
 // actionSink keeps what a turn's model prepares, for the turn's person: the
 // confirmation's token sealed with the connectors' keyring, under the
 // action's own id, never shown to the model, and the card Foundry draws of
-// it (describe).
+// it (cards).
 type actionSink struct {
 	db         Store
 	keys       *secretbox.Keyring
 	turn       *model.FoundryAgentTurn
 	workerID   string
 	maxPending int
-	// databases says whose a database is, for create_ontology on one; nil
-	// on a host that can't, which refuses such an action.
-	databases ports.Databases
-	// reviews reads a review as the turn's person, for settle_review's
-	// card; set once the person's session opens.
-	reviews reviewReader
+	// cards draws as the turn's person; its reviews are set once the
+	// person's session opens.
+	cards Cards
 }
 
 var _ integration.ActionSink = (*actionSink)(nil)
@@ -47,43 +43,16 @@ func (s *actionSink) Allows(operation string) bool { return Operations[operation
 // Record checks the action acts in the turn's workspace, names what it acts
 // on, and stores it with its card in one write. A payload the turn already
 // prepared is the action already stored, unless its person already decided
-// it. Its refusals reach the model as their words.
+// it, and is never drawn again: a replayed attempt finds the card the first
+// drew, whatever changed since. Its refusals reach the model as their words.
 func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (integration.AwaitingPerson, error) {
 	if s.keys == nil {
 		return integration.AwaitingPerson{}, status.Error(codes.Unavailable, "the Assistant can't keep actions on this host")
 	}
-	t, err := s.target(ctx, a)
-	if err != nil {
-		return integration.AwaitingPerson{}, err
+	stored, err := s.db.GetFoundryAgentActionByPayload(ctx, s.turn.ID, a.PayloadHash)
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		stored, err = s.record(ctx, a)
 	}
-	display, err := s.describe(ctx, a, t)
-	if err != nil {
-		return integration.AwaitingPerson{}, err
-	}
-	rawDisplay, err := json.Marshal(display)
-	if err != nil {
-		return integration.AwaitingPerson{}, err
-	}
-	named, err := s.namedByPerson(ctx, t)
-	if err != nil {
-		return integration.AwaitingPerson{}, err
-	}
-	actionID := id.New()
-	sealed, keyID, err := s.keys.Seal([]byte(a.Confirmation.Token), actionID)
-	if err != nil {
-		return integration.AwaitingPerson{}, fmt.Errorf("seal the action's confirmation: %w", err)
-	}
-	stored, err := s.db.RecordFoundryAgentAction(ctx, s.workerID, &model.FoundryAgentAction{
-		ID: actionID, TurnID: s.turn.ID, ThreadID: s.turn.ThreadID, WorkspaceID: s.turn.WorkspaceID, UserID: s.turn.UserID,
-		Operation: a.Operation, Target: a.Target, Payload: a.Payload, PayloadHash: a.PayloadHash, Display: rawDisplay,
-		TargetNamedByUser: named, ConfirmationID: a.Confirmation.ID, TokenSealed: sealed, KeyID: keyID,
-		Status: model.FoundryAgentActionPrepared, ExpiresAt: a.Confirmation.ExpiresAt,
-	}, s.maxPending, func(stored *model.FoundryAgentAction) (json.RawMessage, error) {
-		return MarshalEvent(ActionCard{
-			ActionID: stored.ID, Operation: stored.Operation, Target: stored.Target, Payload: stored.Payload, PayloadHash: stored.PayloadHash,
-			Display: stored.Display, TargetNamedByUser: stored.TargetNamedByUser, ExpiresAt: stored.ExpiresAt,
-		})
-	})
 	var refusal model.FoundryAgentRefusal
 	switch {
 	case errors.As(err, &refusal):
@@ -100,6 +69,35 @@ func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (
 	return integration.AwaitingPerson{ActionID: stored.ID, ExpiresAt: stored.ExpiresAt}, nil
 }
 
+// record draws a's card and stores it, with its card's event. ErrNotFound
+// means the turn's lease was lost.
+func (s *actionSink) record(ctx context.Context, a integration.PreparedAction) (*model.FoundryAgentAction, error) {
+	card, err := s.cards.Draw(ctx, a)
+	if err != nil {
+		return nil, err
+	}
+	named, err := s.namedByPerson(ctx, card.target)
+	if err != nil {
+		return nil, err
+	}
+	actionID := id.New()
+	sealed, keyID, err := s.keys.Seal([]byte(a.Confirmation.Token), actionID)
+	if err != nil {
+		return nil, fmt.Errorf("seal the action's confirmation: %w", err)
+	}
+	return s.db.RecordFoundryAgentAction(ctx, s.workerID, &model.FoundryAgentAction{
+		ID: actionID, TurnID: s.turn.ID, ThreadID: s.turn.ThreadID, WorkspaceID: s.turn.WorkspaceID, UserID: s.turn.UserID,
+		Operation: a.Operation, Target: a.Target, Payload: a.Payload, PayloadHash: a.PayloadHash, Display: card.Display,
+		TargetNamedByUser: named, ConfirmationID: a.Confirmation.ID, TokenSealed: sealed, KeyID: keyID,
+		Status: model.FoundryAgentActionPrepared, ExpiresAt: a.Confirmation.ExpiresAt,
+	}, s.maxPending, func(stored *model.FoundryAgentAction) (json.RawMessage, error) {
+		return MarshalEvent(ActionCard{
+			ActionID: stored.ID, Operation: stored.Operation, Target: stored.Target, Payload: stored.Payload, PayloadHash: stored.PayloadHash,
+			Display: stored.Display, TargetNamedByUser: stored.TargetNamedByUser, ExpiresAt: stored.ExpiresAt,
+		})
+	})
+}
+
 // target is what an action acts on, read from the turn's workspace: its id
 // and its name, and the names of the workspace's other things of its kind,
 // which a message naming one of them may hold its name within.
@@ -111,16 +109,18 @@ type target struct {
 	connectorKind string
 }
 
-// target reads what a acts on, refusing one of another workspace: a turn
-// acts in its own. A thing the workspace doesn't hold keeps its id alone;
-// the action is checked again when it runs.
-func (s *actionSink) target(ctx context.Context, a integration.PreparedAction) (target, error) {
-	ws := s.turn.WorkspaceID
+// target reads what a acts on, refusing one of another workspace (a card
+// acts in its own) and an ontology the workspace doesn't hold, whose
+// versions and loads a card would otherwise read. A connector the workspace
+// doesn't hold keeps its id alone: its card reads nothing under it, and the
+// action is checked again when it runs.
+func (c Cards) target(ctx context.Context, a integration.PreparedAction) (target, error) {
+	ws := c.WorkspaceID
 	elsewhere := status.Error(codes.InvalidArgument, "the target is of another workspace: the Assistant acts in this one only")
 	kind, rest, _ := strings.Cut(a.Target, ":")
 	inWorkspace, thingID, _ := strings.Cut(rest, "/")
 	ontologyNames := func(except string) ([]string, error) {
-		all, _, err := s.db.ListFoundryOntologies(ctx, ws, "", 100)
+		all, _, err := c.DB.ListFoundryOntologies(ctx, ws, "", 100)
 		var names []string
 		for _, o := range all {
 			if o.ID != except {
@@ -142,10 +142,10 @@ func (s *actionSink) target(ctx context.Context, a integration.PreparedAction) (
 		others, err := ontologyNames("")
 		return target{name: p.Name, others: others}, err
 	case "tenant":
-		if s.databases == nil {
+		if c.Databases == nil {
 			return target{}, status.Error(codes.FailedPrecondition, "the Assistant can't tell whose a database is here: prepare create_ontology on a new database instead")
 		}
-		d, err := s.databases.Get(ctx, rest)
+		d, err := c.Databases.Get(ctx, rest)
 		switch {
 		case errors.Is(err, foundrystore.ErrNotFound) || err == nil && d.WorkspaceID != ws:
 			return target{}, elsewhere
@@ -157,16 +157,16 @@ func (s *actionSink) target(ctx context.Context, a integration.PreparedAction) (
 		if inWorkspace != ws {
 			return target{}, elsewhere
 		}
-		all, err := s.db.ListConnectors(ctx, ws)
+		all, err := c.DB.ListConnectors(ctx, ws)
 		if err != nil {
 			return target{}, err
 		}
 		t := target{id: thingID}
-		for _, c := range all {
-			if c.ID == thingID {
-				t.name, t.connectorKind = c.Name, c.Kind
+		for _, co := range all {
+			if co.ID == thingID {
+				t.name, t.connectorKind = co.Name, co.Kind
 			} else {
-				t.others = append(t.others, c.Name)
+				t.others = append(t.others, co.Name)
 			}
 		}
 		return t, nil
@@ -174,16 +174,15 @@ func (s *actionSink) target(ctx context.Context, a integration.PreparedAction) (
 		if inWorkspace != ws {
 			return target{}, elsewhere
 		}
-		t := target{id: thingID}
-		switch o, err := s.db.GetFoundryOntology(ctx, ws, thingID); {
-		case err == nil && o.DeletedAt == nil:
-			t.name, t.ontology = o.Name, o
-		case err != nil && !errors.Is(err, foundrystore.ErrNotFound):
+		o, err := c.DB.GetFoundryOntology(ctx, ws, thingID)
+		switch {
+		case errors.Is(err, foundrystore.ErrNotFound) || err == nil && o.DeletedAt != nil:
+			return target{}, status.Error(codes.FailedPrecondition, "this workspace holds no ontology "+thingID+": read its ontologies again")
+		case err != nil:
 			return target{}, err
 		}
 		others, err := ontologyNames(thingID)
-		t.others = others
-		return t, err
+		return target{id: thingID, name: o.Name, ontology: o, others: others}, err
 	}
 	return target{}, status.Error(codes.InvalidArgument, "the Assistant acts on no target of kind "+kind)
 }

@@ -42,25 +42,29 @@ var (
 
 // ListFoundryReviews lists the reviews the ontology's current load holds,
 // read from its database as the caller, each with what settles it as
-// SettleFoundryReview would: a page at a time (an offset, at most 10,000
-// deep), or the reviews review_keys names. A review a decision settled stays
-// listed until a load writes the decision; ListFoundryReviewDecisions lists
-// those.
+// SettleFoundryReview would and the entities it concerns: a page at a time
+// (an offset into one load, at most 10,000 deep), or the reviews review_keys
+// names. A review a decision settled stays listed until a load writes the
+// decision; ListFoundryReviewDecisions lists those.
 func (s *Service) ListFoundryReviews(ctx context.Context, req *foundryv1.ListFoundryReviewsRequest) (*foundryv1.ListFoundryReviewsResponse, error) {
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
 		return nil, err
 	}
 	keys := req.GetReviewKeys()
-	offset := 0
+	// A page token is the load its list read and where the next page
+	// starts: <load id>:<offset>.
+	tokenLoad, offset := "", 0
 	switch token := req.GetPageToken(); {
 	case len(keys) > maxReviewKeys:
 		return nil, status.Errorf(codes.InvalidArgument, "review_keys names at most %d reviews", maxReviewKeys)
 	case len(keys) > 0 && token != "":
 		return nil, status.Error(codes.InvalidArgument, "review_keys and page_token can't be used together")
 	case token != "":
-		offset, err = strconv.Atoi(token)
-		if err != nil || offset <= 0 || offset > maxReviewOffset || strconv.Itoa(offset) != token {
+		var at string
+		tokenLoad, at, _ = strings.Cut(token, ":")
+		offset, err = strconv.Atoi(at)
+		if err != nil || tokenLoad == "" || offset <= 0 || offset > maxReviewOffset || strconv.Itoa(offset) != at {
 			return nil, status.Error(codes.InvalidArgument, "page_token is not one this list returned")
 		}
 	}
@@ -80,6 +84,8 @@ func (s *Service) ListFoundryReviews(ctx context.Context, req *foundryv1.ListFou
 		return nil, status.Errorf(codes.Internal, "get load: %v", err)
 	case !load.Status.Servable():
 		return nil, status.Error(codes.FailedPrecondition, "the load is not ready")
+	case tokenLoad != "" && tokenLoad != load.ID:
+		return nil, status.Error(codes.FailedPrecondition, "another load became current since the first page: list the reviews again")
 	case s.deps.Graph == nil:
 		return nil, status.Error(codes.Unavailable, "graph reads are not available here")
 	}
@@ -96,12 +102,26 @@ func (s *Service) ListFoundryReviews(ctx context.Context, req *foundryv1.ListFou
 	if len(keys) > 0 {
 		end = len(keys)
 	}
-	root := map[string]any{"value_map": map[string]any{"input": map[string]any{"range": map[string]any{
-		"input": map[string]any{"nodes_where": map[string]any{"predicate": map[string]any{"and": map[string]any{"predicates": predicates}}}},
-		"start": map[string]int{"literal": offset}, "end": map[string]int{"literal": end},
-	}}, "properties": reviewProperties}}
+	reviews := map[string]any{"nodes": map[string]any{"reference": map[string]string{"var": "review_nodes"}}}
+	concerns := func(step string) map[string]any {
+		return map[string]any{step: map[string]any{"input": reviews, "label": "FOUNDRY_CONCERNS"}}
+	}
+	entries := []any{
+		map[string]any{"query": map[string]any{"name": "review_nodes", "root": map[string]any{"range": map[string]any{
+			"input": map[string]any{"nodes_where": map[string]any{"predicate": map[string]any{"and": map[string]any{"predicates": predicates}}}},
+			"start": map[string]int{"literal": offset}, "end": map[string]int{"literal": end},
+		}}}},
+		map[string]any{"query": map[string]any{"name": "items", "root": map[string]any{"value_map": map[string]any{"input": reviews,
+			"properties": append([]string{"$id"}, reviewProperties...)}}}},
+		// The entities each concerns: the edges say whose, the nodes who.
+		map[string]any{"query": map[string]any{"name": "review_concerns", "root": map[string]any{"edge_properties": map[string]any{"input": concerns("out_e")}}}},
+		map[string]any{"query": map[string]any{"name": "concerned", "root": map[string]any{"values": map[string]any{
+			"input":      map[string]any{"dedup": map[string]any{"input": concerns("out")}},
+			"properties": []string{"$id", "$label", "entity_key", "norm_name", "name"},
+		}}}},
+	}
 	body, err := json.Marshal(map[string]any{"request_type": "read", "query": map[string]any{"read": map[string]any{
-		"entries": []any{map[string]any{"query": map[string]any{"name": "items", "root": root}}}, "returns": []string{"items"}}}})
+		"entries": entries, "returns": []string{"items", "review_concerns", "concerned"}}}})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "build the read: %v", err)
 	}
@@ -113,7 +133,18 @@ func (s *Service) ListFoundryReviews(ctx context.Context, req *foundryv1.ListFou
 		return nil, status.Error(codes.Unavailable, "the review graph could not be read; try again")
 	}
 	var response struct {
-		Items []map[string]json.RawMessage `json:"items"`
+		Items    []map[string]json.RawMessage `json:"items"`
+		Concerns []struct {
+			From int64 `json:"$from"`
+			To   int64 `json:"$to"`
+		} `json:"review_concerns"`
+		Concerned []struct {
+			ID        int64  `json:"$id"`
+			Label     string `json:"$label"`
+			EntityKey string `json:"entity_key"`
+			NormName  string `json:"norm_name"`
+			Name      string `json:"name"`
+		} `json:"concerned"`
 	}
 	if err := json.Unmarshal(out, &response); err != nil {
 		return nil, status.Error(codes.Internal, "read review graph response")
@@ -122,7 +153,21 @@ func (s *Service) ListFoundryReviews(ctx context.Context, req *foundryv1.ListFou
 	if len(keys) == 0 && len(response.Items) > reviewPage {
 		response.Items = response.Items[:reviewPage]
 		if next := offset + reviewPage; next <= maxReviewOffset {
-			result.NextPageToken = strconv.Itoa(next)
+			result.NextPageToken = load.ID + ":" + strconv.Itoa(next)
+		}
+	}
+	// An entity is one of the ontology's, by the identity a review names it
+	// by: Foundry's own nodes, and one with neither, are left out.
+	entities := map[int64]*foundryv1.FoundryReviewEntity{}
+	for _, e := range response.Concerned {
+		if e.Label != "" && !strings.HasPrefix(e.Label, "Foundry") && (e.EntityKey != "") != (e.NormName != "") {
+			entities[e.ID] = &foundryv1.FoundryReviewEntity{Type: e.Label, EntityKey: e.EntityKey, NormName: e.NormName, Name: e.Name}
+		}
+	}
+	concerned := map[int64][]*foundryv1.FoundryReviewEntity{}
+	for _, edge := range response.Concerns {
+		if e, ok := entities[edge.To]; ok && !slices.Contains(concerned[edge.From], e) {
+			concerned[edge.From] = append(concerned[edge.From], e)
 		}
 	}
 	// Whether a conflict can be approved is its link's: read the load's
@@ -130,6 +175,10 @@ func (s *Service) ListFoundryReviews(ctx context.Context, req *foundryv1.ListFou
 	var oneValued func(link string) bool
 	for _, item := range response.Items {
 		r := foundryReviewToProto(item)
+		var nodeID int64
+		if json.Unmarshal(item["$id"], &nodeID) == nil {
+			r.Entities = concerned[nodeID]
+		}
 		if r.GetReason() == "conflict" && r.GetSettle() == foundryv1.FoundryReviewSettle_FOUNDRY_REVIEW_SETTLE_RELEASE {
 			if oneValued == nil {
 				ontologyTOML, err := s.loadOntologyTOML(ctx, o.ID, load.VersionID)

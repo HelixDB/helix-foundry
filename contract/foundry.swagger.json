@@ -3782,7 +3782,7 @@
           },
           {
             "name": "pageToken",
-            "description": "The next_page_token of a previous page.",
+            "description": "The next_page_token of a previous page, of the load still current:\nFAILED_PRECONDITION once another load became current.",
             "in": "query",
             "required": false,
             "type": "string"
@@ -8731,6 +8731,14 @@
           "type": "number",
           "format": "double",
           "description": "The verifier's score, when it scored it."
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewEntity"
+          },
+          "description": "The entities it concerns as the load holds them (FOUNDRY_CONCERNS): a\nname's candidates, a property's entity. Their names are untrusted."
         }
       },
       "description": "A review a load holds: something its documents state that it didn't write\nas it stands. Its text and values come from documents: untrusted."
@@ -8830,6 +8838,25 @@
           "$ref": "#/definitions/v1FoundryReviewDecision"
         }
       }
+    },
+    "v1FoundryReviewEntity": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "entityKey": {
+          "type": "string"
+        },
+        "normName": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "Its stored name; empty when the load stored none."
+        }
+      },
+      "description": "An entity a review concerns, by the stored identity its candidates and\nentity_key name it by: its entity_key, or a type without a key's\nnorm_name; exactly one is set."
     },
     "v1FoundryReviewLabel": {
       "type": "object",

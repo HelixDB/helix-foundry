@@ -7450,7 +7450,8 @@ type ListFoundryReviewsRequest struct {
 	// Only these reviews, at most 50, each listed once if the current load
 	// holds it; never with page_token.
 	ReviewKeys []string `protobuf:"bytes,3,rep,name=review_keys,json=reviewKeys,proto3" json:"review_keys,omitempty"`
-	// The next_page_token of a previous page.
+	// The next_page_token of a previous page, of the load still current:
+	// FAILED_PRECONDITION once another load became current.
 	PageToken string `protobuf:"bytes,4,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 }
 

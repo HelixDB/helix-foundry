@@ -237,6 +237,7 @@ type ReadStore interface {
 	ListFoundryAgentEvents(ctx context.Context, turnID string, afterSeq, limit int) ([]model.FoundryAgentEvent, error)
 	ListFoundryAgentMessages(ctx context.Context, threadID string) ([]model.FoundryAgentMessage, error)
 	GetFoundryAgentAction(ctx context.Context, workspaceID, id string) (*model.FoundryAgentAction, error)
+	GetFoundryAgentActionByPayload(ctx context.Context, turnID, payloadHash string) (*model.FoundryAgentAction, error)
 	ListFoundryAgentActions(ctx context.Context, threadID string) ([]*model.FoundryAgentAction, error)
 }
 
@@ -444,8 +445,8 @@ type Store interface {
 	ClaimFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string) (*model.FoundryAgentAction, error)
 	FinishFoundryAgentAction(ctx context.Context, id string, end model.FoundryAgentActionEnd, continuation *model.FoundryAgentTurn, firstEvent json.RawMessage) error
 	DismissFoundryAgentAction(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentAction, error)
-	RefreshFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash, confirmationID string, sealed []byte, keyID string,
-		expiresAt time.Time) (*model.FoundryAgentAction, error)
+	RefreshFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string, display json.RawMessage, confirmationID string,
+		sealed []byte, keyID string, expiresAt time.Time) (*model.FoundryAgentAction, error)
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

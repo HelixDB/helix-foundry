@@ -51,6 +51,7 @@ const (
 
 // Store is what a turn reads and records of Foundry's store.
 type Store interface {
+	Reads
 	ListFoundryAgentMessages(ctx context.Context, threadID string) ([]model.FoundryAgentMessage, error)
 	ListFoundryAgentTurns(ctx context.Context, threadID string, limit int) ([]*model.FoundryAgentTurn, error)
 	AppendFoundryAgentMessages(ctx context.Context, turnID, workerID string, messages []model.FoundryAgentMessage, keep int) error
@@ -58,14 +59,7 @@ type Store interface {
 	RecordFoundryAgentAction(ctx context.Context, workerID string, a *model.FoundryAgentAction, maxPending int,
 		card func(*model.FoundryAgentAction) (json.RawMessage, error)) (*model.FoundryAgentAction, error)
 	GetFoundryAgentAction(ctx context.Context, workspaceID, id string) (*model.FoundryAgentAction, error)
-	GetFoundryOntology(ctx context.Context, workspaceID, id string) (*model.FoundryOntology, error)
-	ListFoundryOntologies(ctx context.Context, workspaceID, pageToken string, limit int) ([]*model.FoundryOntology, string, error)
-	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
-	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
-	GetConnector(ctx context.Context, workspaceID, id string) (*model.Connector, error)
-	ListConnectors(ctx context.Context, workspaceID string) ([]*model.Connector, error)
-	GetFoundryDocumentSet(ctx context.Context, workspaceID, id string) (*model.FoundryDocumentSet, error)
-	GetFoundryDocument(ctx context.Context, workspaceID, id string) (*model.FoundryDocument, error)
+	GetFoundryAgentActionByPayload(ctx context.Context, turnID, payloadHash string) (*model.FoundryAgentAction, error)
 }
 
 // Resolver is where a workspace's model calls go; *ai.Resolver resolves it.
@@ -167,7 +161,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	if err != nil {
 		return out, &Failure{Message: "The Assistant's model can't be priced; an owner can check Settings › AI models.", Permanent: true, Err: err}
 	}
-	sink := &actionSink{db: r.DB, keys: r.Keys, turn: turn, workerID: r.WorkerID, maxPending: r.Cfg.MaxPendingActions, databases: r.Databases}
+	sink := &actionSink{db: r.DB, keys: r.Keys, turn: turn, workerID: r.WorkerID, maxPending: r.Cfg.MaxPendingActions}
 	session, err := r.Sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: turn.UserID, WorkspaceID: turn.WorkspaceID},
 		integration.ConfirmByPerson{Sink: sink})
 	switch status.Code(err) {
@@ -177,20 +171,8 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	default:
 		return out, &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
 	}
-	// A card names a review as its person reads it.
-	sink.reviews = func(ctx context.Context, ontologyID, reviewKey string) (*integration.FoundryReviewOutput, string, error) {
-		listed, _, err := session.Service.ListFoundryReviews(ctx, session.Identity, &integration.Call{}, integration.ListFoundryReviewsInput{
-			OntologyInput: integration.OntologyInput{WorkspaceID: turn.WorkspaceID, OntologyID: ontologyID}, ReviewKeys: []string{reviewKey}})
-		if err != nil {
-			return nil, "", err
-		}
-		for _, r := range listed.Reviews {
-			if r.ReviewKey == reviewKey {
-				return &r, listed.LoadID, nil
-			}
-		}
-		return nil, listed.LoadID, nil
-	}
+	// A card is drawn as its person reads the workspace.
+	sink.cards = SessionCards(r.DB, r.Databases, session, turn.WorkspaceID)
 	client, offered, err := serve(session)
 	if err != nil {
 		return out, &Failure{Message: "The Assistant's tools couldn't start; Helix will retry", Err: err}
@@ -352,9 +334,9 @@ func (t *turnRun) loop(ctx context.Context) error {
 			}
 		}
 		for _, use := range dropped {
-			why := "Not run: its input wasn't JSON."
+			why := NotRunInput
 			if stop == StopMaxTokens {
-				why = "Not run: the reply reached its length limit while writing it."
+				why = NotRunLength
 			}
 			if err := t.notRun(ctx, use, why); err != nil {
 				return err
@@ -447,23 +429,25 @@ func (t *turnRun) runTools(ctx context.Context, uses []llm.ToolUse) error {
 	}
 	results := make([]llm.Block, 0, len(uses))
 	for i, use := range uses {
-		var unrun string
+		// Why it isn't run, for the person, and for the model.
+		var why NotRunReason
+		var told string
 		switch {
 		case i >= maxCallsPerReply:
-			unrun = fmt.Sprintf("Not run: at most %d tool calls of one reply run. Call it again if you still need it.", maxCallsPerReply)
+			why, told = NotRunCalls, fmt.Sprintf("Not run: at most %d tool calls of one reply run. Call it again if you still need it.", maxCallsPerReply)
 		case t.outOfTime():
-			unrun = "Not run: the turn ran out of time. Tell the person what you found so far."
+			why, told = NotRunTime, "Not run: the turn ran out of time. Tell the person what you found so far."
 		case use.Name == toolAsk && asked >= maxAsksPerTurn:
-			unrun = fmt.Sprintf("Not run: a turn asks at most %d questions. Answer with what you have, or let the person ask again.", maxAsksPerTurn)
+			why, told = NotRunAsks, fmt.Sprintf("Not run: a turn asks at most %d questions. Answer with what you have, or let the person ask again.", maxAsksPerTurn)
 		}
 		if use.Name == toolAsk {
 			asked++
 		}
-		if unrun != "" {
-			if err := t.notRun(ctx, use, unrun); err != nil {
+		if why != "" {
+			if err := t.notRun(ctx, use, why); err != nil {
 				return err
 			}
-			results = append(results, llm.ToolResult{ToolUseID: use.ID, Content: unrun, IsError: true})
+			results = append(results, llm.ToolResult{ToolUseID: use.ID, Content: told, IsError: true})
 			continue
 		}
 		tool := t.offered[use.Name]
@@ -497,7 +481,7 @@ func (t *turnRun) title(name string) string {
 
 // notRun shows the person a call the model wrote that a limit kept from
 // running, and why: the model is told the same.
-func (t *turnRun) notRun(ctx context.Context, use llm.ToolUse, why string) error {
+func (t *turnRun) notRun(ctx context.Context, use llm.ToolUse, why NotRunReason) error {
 	input := use.Input
 	if !json.Valid(input) {
 		// Shown as text, so the event stays JSON.
@@ -506,7 +490,7 @@ func (t *turnRun) notRun(ctx context.Context, use llm.ToolUse, why string) error
 	if err := t.event(ctx, ToolCalled{ToolUseID: use.ID, Name: use.Name, Title: t.title(use.Name), Input: input}); err != nil {
 		return err
 	}
-	return t.event(ctx, ToolReturned{ToolUseID: use.ID, Name: use.Name, IsError: true, Error: why, NotRun: true})
+	return t.event(ctx, ToolReturned{ToolUseID: use.ID, Name: use.Name, IsError: true, NotRun: why})
 }
 
 // callTool runs one call within toolTimeout: what the model reads of its

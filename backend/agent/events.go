@@ -31,19 +31,33 @@ type ToolCalled struct {
 
 // ToolReturned is what the tool answered: its structured output, untrusted
 // data, unless it failed (error) or was too large to show (truncated). A
-// call a limit kept from running (a reply's calls past the first eight, an
-// ask past a turn's three, a call after the turn's time ran out, or one cut
-// off at the reply's length limit or that isn't JSON) is not_run, and error
-// says why.
+// call that never ran says why as not_run, which the site words for the
+// person (the model is told in words of its own), with no error.
 type ToolReturned struct {
-	ToolUseID string `json:"tool_use_id"`
-	Name      string `json:"name"`
-	IsError   bool   `json:"is_error"`
-	Error     string `json:"error,omitempty"`
-	Output    any    `json:"output,omitempty"`
-	Truncated bool   `json:"truncated,omitempty"`
-	NotRun    bool   `json:"not_run,omitempty"`
+	ToolUseID string       `json:"tool_use_id"`
+	Name      string       `json:"name"`
+	IsError   bool         `json:"is_error"`
+	Error     string       `json:"error,omitempty"`
+	Output    any          `json:"output,omitempty"`
+	Truncated bool         `json:"truncated,omitempty"`
+	NotRun    NotRunReason `json:"not_run,omitempty"`
 }
+
+// NotRunReason is why a call the model wrote never ran: a closed set.
+type NotRunReason string
+
+const (
+	// NotRunCalls is a reply's call past its first maxCallsPerReply.
+	NotRunCalls NotRunReason = "calls"
+	// NotRunAsks is an ask past a turn's maxAsksPerTurn.
+	NotRunAsks NotRunReason = "asks"
+	// NotRunTime is a call after the turn's wall time ran out.
+	NotRunTime NotRunReason = "time"
+	// NotRunLength is a call the reply was writing when it reached its length limit.
+	NotRunLength NotRunReason = "length"
+	// NotRunInput is a call whose input isn't JSON.
+	NotRunInput NotRunReason = "input"
+)
 
 // ActionCard is an action the agent prepared, for its person to run or
 // dismiss: the action's own fields are read from the thread.

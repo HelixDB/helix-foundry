@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -44,6 +45,13 @@ func (d SampleDatabase) config() *foundryv1.DatabaseConnectorConfig {
 func (d SampleDatabase) reads(c *foundryv1.Connector) bool {
 	postgres := c.GetConfig().GetPostgres()
 	return postgres != nil && postgres.GetHost() == d.Host && postgres.GetDatabase() == sample.DatabaseName && postgres.GetUser() == sample.DatabaseUser
+}
+
+// Holds says the same of a connector as the store keeps it: its kind and its settings' JSON.
+func (d SampleDatabase) Holds(kind string, settings json.RawMessage) bool {
+	var db struct{ Host, Database, User string }
+	return kind == "postgres" && json.Unmarshal(settings, &db) == nil &&
+		db.Host == d.Host && db.Database == sample.DatabaseName && db.User == sample.DatabaseUser
 }
 
 // AddSampleDataOperation adds the sample company's data to a workspace for one ontology, as the

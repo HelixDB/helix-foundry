@@ -1256,6 +1256,11 @@ func (u Unimplemented) GetFoundryAgentAction(context.Context, string, string) (*
 	return nil, nil
 }
 
+func (u Unimplemented) GetFoundryAgentActionByPayload(context.Context, string, string) (*model.FoundryAgentAction, error) {
+	u.unimplemented("GetFoundryAgentActionByPayload")
+	return nil, nil
+}
+
 func (u Unimplemented) ListFoundryAgentActions(context.Context, string) ([]*model.FoundryAgentAction, error) {
 	u.unimplemented("ListFoundryAgentActions")
 	return nil, nil
@@ -1321,7 +1326,7 @@ func (u Unimplemented) DismissFoundryAgentAction(context.Context, string, string
 	return nil, nil
 }
 
-func (u Unimplemented) RefreshFoundryAgentAction(context.Context, string, string, string, string, string, []byte, string, time.Time) (*model.FoundryAgentAction, error) {
+func (u Unimplemented) RefreshFoundryAgentAction(context.Context, string, string, string, string, json.RawMessage, string, []byte, string, time.Time) (*model.FoundryAgentAction, error) {
 	u.unimplemented("RefreshFoundryAgentAction")
 	return nil, nil
 }

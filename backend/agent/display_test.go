@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -40,7 +42,8 @@ func workspaceHarness(t *testing.T, steps ...[]llm.Chunk) *harness {
 	h.db.documents = []*model.FoundryDocument{{ID: "doc1", WorkspaceID: ws, SetID: "set1", Name: "contract.md"}}
 	h.backend.reviews = []*foundryv1.FoundryReview{
 		{ReviewKey: "r1", Reason: "unresolved", Settle: foundryv1.FoundryReviewSettle_FOUNDRY_REVIEW_SETTLE_RESOLVE, Type: "Customer", DocId: "doc1",
-			NormName: "globexx", Candidates: []string{"scus_1"}, Quote: "Globexx"},
+			NormName: "globexx", Candidates: []string{"scus_1"}, Quote: "Globexx",
+			Entities: []*foundryv1.FoundryReviewEntity{{Type: "Customer", EntityKey: "scus_1", Name: "Globex Corporation"}}},
 		{ReviewKey: "r2", Reason: "prop_conflict", Settle: foundryv1.FoundryReviewSettle_FOUNDRY_REVIEW_SETTLE_PROP, Type: "Customer", EntityKey: "scus_1",
 			Prop: "currency", Values: []*foundryv1.FoundryReviewValue{{ValueJson: `"GBP"`, DocId: "doc1", Quote: "billed in GBP"}}},
 		{ReviewKey: "r3", Reason: "low_confidence", Settle: foundryv1.FoundryReviewSettle_FOUNDRY_REVIEW_SETTLE_RELEASE, DocId: "doc1", Link: "promised_to",
@@ -260,7 +263,94 @@ func TestSettleReviewCards(t *testing.T) {
 	var d SettleDisplay
 	require.NoError(t, json.Unmarshal(a.Display, &d))
 	assert.Equal(t, integration.FoundryReviewOutput{ReviewKey: "r1", Reason: "unresolved", Settle: "resolve", Type: "Customer", DocID: "doc1",
-		Quote: "Globexx", NormName: "globexx", Candidates: []string{"scus_1"}}, d.Review)
+		Quote: "Globexx", NormName: "globexx", Candidates: []string{"scus_1"},
+		Entities: []integration.FoundryReviewEntityOutput{{Type: "Customer", EntityKey: "scus_1", Name: "Globex Corporation"}}}, d.Review,
+		"the card names the entities the review concerns")
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(a.Display, &raw))
+	assert.Equal(t, []any{map[string]any{"type": "Customer", "entity_key": "scus_1", "name": "Globex Corporation"}}, raw["review"].(map[string]any)["entities"],
+		"in the shape the site reads")
+}
+
+// A replayed attempt finds the card the first drew, though the review it
+// read is gone since: it isn't drawn, or refused, again.
+func TestAReplayedPrepareIsNotDrawnAgain(t *testing.T) {
+	prepare := `{"operation":"settle_review","target":"ontology:ws1/ont1","payload":{"review_id":"r1","decision":{"resolve":{"not_in_data":true}}}}`
+	h := workspaceHarness(t, call("toolu_1", toolPrepare, prepare), call("toolu_2", toolPrepare, prepare), say("ok"))
+	turn := message("Settle the Globexx review")
+	h.db.turns = []*model.FoundryAgentTurn{turn}
+	h.backend.onReviews = func() { h.backend.reviews = nil }
+	_, err := h.runner.Run(context.Background(), turn)
+	require.NoError(t, err)
+	require.Len(t, h.db.actions, 1)
+	replayed := h.model.requests[2].Messages
+	result := replayed[len(replayed)-1].Content[0].(llm.ToolResult)
+	assert.False(t, result.IsError, result.Content)
+	assert.Contains(t, result.Content, h.db.actions[0].ID)
+	assert.Equal(t, 1, strings.Count(strings.Join(h.db.eventTypes(), " "), "action_card"), "one card")
+}
+
+// A card reads nothing of an ontology the workspace doesn't hold: its
+// versions and loads are another workspace's.
+func TestAnOntologyTheWorkspaceDoesntHoldIsRefused(t *testing.T) {
+	for _, c := range []struct{ operation, payload string }{
+		{"set_current_version", `{"version_id":"ver3","expected_current_version_id":"ver2"}`},
+		{"set_current_load", `{"load_id":"load5"}`},
+		{"create_load", `{"version_id":"ver3"}`},
+	} {
+		h := workspaceHarness(t)
+		h.db.ontologies = append(h.db.ontologies, &model.FoundryOntology{ID: "theirs", WorkspaceID: "ws2", Name: "Theirs"})
+		deleted := time.Now()
+		h.db.ontologies = append(h.db.ontologies, &model.FoundryOntology{ID: "gone", WorkspaceID: ws, Name: "Gone", DeletedAt: &deleted})
+		for _, id := range []string{"theirs", "gone", "nowhere"} {
+			a, result := prepared(t, h, "Do it to "+id, c.operation, "ontology:ws1/"+id, c.payload)
+			assert.Nil(t, a, id)
+			assert.True(t, result.IsError)
+			assert.Contains(t, result.Content, "holds no ontology "+id)
+			assert.Zero(t, h.db.versionReads, "nothing of it is read")
+		}
+	}
+}
+
+// A generation names the API sources it reads and how, as the payload says
+// them (structured or extraction).
+func TestAGenerationNamesItsAPISources(t *testing.T) {
+	h := workspaceHarness(t)
+	h.host.service.Events = true
+	a, result := prepared(t, h, "Draft the Sales graph from the notes", "generate_ontology", "ontology:ws1/ont1",
+		`{"connector_ids":["c1"],"event_sources":[{"connector_id":"ev1","mode":"extraction"},{"connector_id":"gone2","mode":"structured"}]}`)
+	require.NotNil(t, a, result.Content)
+	assert.JSONEq(t, `{"ontology":{"id":"ont1","name":"Sales graph"},"connectors_read":"chosen",
+		"connectors":[{"id":"c1","name":"Shop database","kind":"postgres"}],"document_sets":[],
+		"event_sources":[{"connector":{"id":"ev1","name":"Notes API","kind":"events"},"mode":"extraction"},
+		  {"connector":{"id":"gone2"},"mode":"structured"}]}`, string(a.Display))
+}
+
+// The sample company's made-up data is read only when named: every
+// connector would read it too, and a card naming it says so.
+func TestTheSamplesConnectorIsReadOnlyWhenNamed(t *testing.T) {
+	h := workspaceHarness(t)
+	h.db.connectors = append(h.db.connectors, &model.Connector{ID: "acme", WorkspaceID: ws, Name: "Acme Corp", Kind: "postgres",
+		Config: json.RawMessage(`{"host":"acme-db","port":5432,"database":"` + sample.DatabaseName + `","user":"` + sample.DatabaseUser + `"}`)})
+	a, result := prepared(t, h, "Draft the Sales graph", "generate_ontology", "ontology:ws1/ont1", `{}`)
+	assert.Nil(t, a)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "the made-up sample company's (acme) too")
+	a, result = prepared(t, h, "Draft the Sales graph", "generate_ontology", "ontology:ws1/ont1", `{"connector_ids":["c1","acme"]}`)
+	require.NotNil(t, a, result.Content)
+	var d GenerateDisplay
+	require.NoError(t, json.Unmarshal(a.Display, &d))
+	assert.Equal(t, []ConnectorRef{{Ref: Ref{ID: "c1", Name: "Shop database"}, Kind: "postgres"},
+		{Ref: Ref{ID: "acme", Name: "Acme Corp"}, Kind: "postgres", Sample: true}}, d.Connectors)
+	a, _ = prepared(t, h, "Draft the Sales graph from documents", "generate_ontology", "ontology:ws1/ont1", `{"no_connectors":true}`)
+	require.NotNil(t, a, "documents alone read no connector")
+	// Another host's sample database isn't this one's.
+	h.host.service.SampleDatabase = &integration.SampleDatabase{Host: "rds.example"}
+	a, result = prepared(t, h, "Draft the Sales graph", "generate_ontology", "ontology:ws1/ont1", `{}`)
+	require.NotNil(t, a, result.Content)
+	h.host.service.SampleDatabase = nil
+	a, result = prepared(t, h, "Draft the Sales graph", "generate_ontology", "ontology:ws1/ont1", `{"goal":"x"}`)
+	require.NotNil(t, a, "a host without a sample database has none to leave out: "+result.Content)
 }
 
 // A decision the review doesn't take is refused with why, before a card.
@@ -351,4 +441,21 @@ func TestConnectIsALinkToFoundry(t *testing.T) {
 		require.False(t, source.IsError, source.Content)
 		assert.NotContains(t, source.Content, "create_event_source", "it isn't sent to an operation it can't prepare")
 	}
+}
+
+// An API source is made in its form, which makes its send tokens: nothing
+// the Assistant reads points it at an operation it can't prepare.
+func TestAnAPISourceIsMadeInItsForm(t *testing.T) {
+	h := workspaceHarness(t, call("toolu_1", "helix_foundry_list_connector_kinds", `{"workspace_id":"ws1"}`), say("Open its form."))
+	h.host.service.Events = true
+	_, err := h.runner.Run(context.Background(), message("How do I make an API source?"))
+	require.NoError(t, err)
+	for _, tool := range h.model.requests[0].Tools {
+		assert.NotContains(t, tool.Description, "create_event_source", tool.Name)
+	}
+	told := h.model.requests[1].Messages
+	kinds := told[len(told)-1].Content[0].(llm.ToolResult)
+	require.False(t, kinds.IsError, kinds.Content)
+	assert.NotContains(t, kinds.Content, "create_event_source")
+	assert.Contains(t, kinds.Content, "helix_foundry_connect links it")
 }

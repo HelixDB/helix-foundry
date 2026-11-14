@@ -1487,6 +1487,20 @@ message FoundryReview {
   string statement_hash = 15;
   // The verifier's score, when it scored it.
   optional double confidence = 16;
+  // The entities it concerns as the load holds them (FOUNDRY_CONCERNS): a
+  // name's candidates, a property's entity. Their names are untrusted.
+  repeated FoundryReviewEntity entities = 17;
+}
+
+// An entity a review concerns, by the stored identity its candidates and
+// entity_key name it by: its entity_key, or a type without a key's
+// norm_name; exactly one is set.
+message FoundryReviewEntity {
+  string type = 1;
+  string entity_key = 2;
+  string norm_name = 3;
+  // Its stored name; empty when the load stored none.
+  string name = 4;
 }
 
 message FoundryReviewSpan {

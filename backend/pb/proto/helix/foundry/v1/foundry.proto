@@ -1505,7 +1505,8 @@ message ListFoundryReviewsRequest {
   // Only these reviews, at most 50, each listed once if the current load
   // holds it; never with page_token.
   repeated string review_keys = 3;
-  // The next_page_token of a previous page.
+  // The next_page_token of a previous page, of the load still current:
+  // FAILED_PRECONDITION once another load became current.
   string page_token = 4;
 }
 message ListFoundryReviewsResponse {

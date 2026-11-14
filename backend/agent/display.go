@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/integration"
+	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -25,10 +26,12 @@ type Ref struct {
 	Name string `json:"name,omitempty"`
 }
 
-// ConnectorRef is a connector, with its kind (postgres, stripe, ...).
+// ConnectorRef is a connector, with its kind (postgres, stripe, ...), and
+// whether it reads the sample company's made-up database.
 type ConnectorRef struct {
 	Ref
-	Kind string `json:"kind,omitempty"`
+	Kind   string `json:"kind,omitempty"`
+	Sample bool   `json:"sample,omitempty"`
 }
 
 // VersionRef is an ontology version by its number, as the site shows it (v3).
@@ -205,41 +208,113 @@ type DecisionDisplay struct {
 	Value     map[string]any `json:"value,omitempty"`
 }
 
-// reviewReader reads one review of an ontology's current load as the
-// turn's person, and the load it is of; nil when the load doesn't hold it.
-type reviewReader func(ctx context.Context, ontologyID, reviewKey string) (*integration.FoundryReviewOutput, string, error)
+// ReviewReader reads one review of an ontology's current load as one
+// person, and the load it is of; nil when the load doesn't hold it.
+type ReviewReader func(ctx context.Context, ontologyID, reviewKey string) (*integration.FoundryReviewOutput, string, error)
+
+// Reads is what drawing a card reads of Foundry's store.
+type Reads interface {
+	GetFoundryOntology(ctx context.Context, workspaceID, id string) (*model.FoundryOntology, error)
+	ListFoundryOntologies(ctx context.Context, workspaceID, pageToken string, limit int) ([]*model.FoundryOntology, string, error)
+	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
+	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
+	GetConnector(ctx context.Context, workspaceID, id string) (*model.Connector, error)
+	ListConnectors(ctx context.Context, workspaceID string) ([]*model.Connector, error)
+	GetFoundryDocumentSet(ctx context.Context, workspaceID, id string) (*model.FoundryDocumentSet, error)
+	GetFoundryDocument(ctx context.Context, workspaceID, id string) (*model.FoundryDocument, error)
+}
+
+// Cards draws the cards of actions prepared in one workspace for one
+// person: what an action acts on, which the workspace must hold, and its
+// display, checked as that person reads it now. A turn draws a card when
+// its model prepares an action; a Refresh draws it again, as its clicker,
+// with the confirmation it renews.
+type Cards struct {
+	DB          Reads
+	WorkspaceID string
+	// Databases says whose a database is, for create_ontology on one; nil
+	// on a host that can't, which refuses such an action.
+	Databases ports.Databases
+	// Reviews reads a review as the person, for settle_review; nil refuses it.
+	Reviews ReviewReader
+	// Sample is the host's sample company database; nil on a host without.
+	Sample *integration.SampleDatabase
+}
+
+// SessionCards are the cards of a person's session: its reviews read as
+// them, and its host's sample database.
+func SessionCards(db Reads, databases ports.Databases, session integration.Session, workspaceID string) Cards {
+	return Cards{DB: db, WorkspaceID: workspaceID, Databases: databases, Sample: session.Service.SampleDatabase,
+		Reviews: func(ctx context.Context, ontologyID, reviewKey string) (*integration.FoundryReviewOutput, string, error) {
+			listed, _, err := session.Service.ListFoundryReviews(ctx, session.Identity, &integration.Call{}, integration.ListFoundryReviewsInput{
+				OntologyInput: integration.OntologyInput{WorkspaceID: workspaceID, OntologyID: ontologyID}, ReviewKeys: []string{reviewKey}})
+			if err != nil {
+				return nil, "", err
+			}
+			for _, r := range listed.Reviews {
+				if r.ReviewKey == reviewKey {
+					return &r, listed.LoadID, nil
+				}
+			}
+			return nil, listed.LoadID, nil
+		}}
+}
+
+// Card is an action's card as drawn: its display, and what it acts on.
+type Card struct {
+	Display json.RawMessage
+	target  target
+}
+
+// Draw checks a acts in the workspace on something it holds, and draws its
+// card. Its refusals are the action's words for whoever prepared it.
+func (c Cards) Draw(ctx context.Context, a integration.PreparedAction) (Card, error) {
+	t, err := c.target(ctx, a)
+	if err != nil {
+		return Card{}, err
+	}
+	display, err := c.describe(ctx, a, t)
+	if err != nil {
+		return Card{}, err
+	}
+	raw, err := json.Marshal(display)
+	return Card{Display: raw, target: t}, err
+}
 
 // describe is a's display, in the target t names. settle_review is refused
-// when its decision isn't one the review takes, before its person sees it.
-func (s *actionSink) describe(ctx context.Context, a integration.PreparedAction, t target) (any, error) {
-	ws := s.turn.WorkspaceID
+// when its decision isn't one the review takes, and generate_ontology when
+// reading every connector would read the sample's, before its person sees it.
+func (c Cards) describe(ctx context.Context, a integration.PreparedAction, t target) (any, error) {
+	ws := c.WorkspaceID
 	ontology := Ref{ID: t.id, Name: t.name}
+	// An ontology target is one the workspace holds (target): its versions and
+	// loads are read under it.
 	version := func(id string) VersionRef {
 		out := VersionRef{ID: id}
-		if v, err := s.db.GetOntologyVersion(ctx, t.id, id); err == nil {
+		if v, err := c.DB.GetOntologyVersion(ctx, t.id, id); err == nil {
 			out.Number = v.Version
 		}
 		return out
 	}
 	set := func(id string) Ref {
 		out := Ref{ID: id}
-		if set, err := s.db.GetFoundryDocumentSet(ctx, ws, id); err == nil {
+		if set, err := c.DB.GetFoundryDocumentSet(ctx, ws, id); err == nil {
 			out.Name = set.DisplayName()
 		}
 		return out
 	}
-	connector := func(c *model.Connector) ConnectorRef {
-		return ConnectorRef{Ref: Ref{ID: c.ID, Name: c.Name}, Kind: c.Kind}
+	connector := func(co *model.Connector) ConnectorRef {
+		return ConnectorRef{Ref: Ref{ID: co.ID, Name: co.Name}, Kind: co.Kind, Sample: c.Sample != nil && c.Sample.Holds(co.Kind, co.Config)}
 	}
 	connectorOf := func(id string) ConnectorRef {
-		if c, err := s.db.GetConnector(ctx, ws, id); err == nil {
-			return connector(c)
+		if co, err := c.DB.GetConnector(ctx, ws, id); err == nil {
+			return connector(co)
 		}
 		return ConnectorRef{Ref: Ref{ID: id}}
 	}
 	load := func(id string) LoadRef {
 		out := LoadRef{ID: id}
-		if l, err := s.db.GetFoundryLoad(ctx, t.id, id); err == nil {
+		if l, err := c.DB.GetFoundryLoad(ctx, t.id, id); err == nil {
 			out.Version, out.Status, out.CreatedAt = VersionRef{ID: l.VersionID, Number: l.Version}, string(l.Status), &l.CreatedAt
 		}
 		return out
@@ -279,15 +354,21 @@ func (s *actionSink) describe(ctx context.Context, a integration.PreparedAction,
 			}
 		default:
 			out.ConnectorsRead = ConnectorsEvery
-			all, err := s.db.ListConnectors(ctx, ws)
+			all, err := c.DB.ListConnectors(ctx, ws)
 			if err != nil {
 				return nil, err
 			}
 			// API sources are read only when named, as event_sources.
-			for _, c := range all {
-				if c.Kind != model.ConnectorKindEvents {
-					out.Connectors = append(out.Connectors, connector(c))
+			for _, co := range all {
+				if co.Kind != model.ConnectorKindEvents {
+					out.Connectors = append(out.Connectors, connector(co))
 				}
+			}
+			// The sample's made-up data is only for the sample's own draft, as the site
+			// leaves it out of every other: it is read only when named.
+			if i := slices.IndexFunc(out.Connectors, func(r ConnectorRef) bool { return r.Sample }); i >= 0 {
+				return nil, status.Error(codes.FailedPrecondition, "an empty connector_ids would read every connector, the made-up sample company's ("+
+					out.Connectors[i].ID+") too: name the connector_ids to read, or set no_connectors")
 			}
 		}
 		for _, id := range p.DocumentSetIDs {
@@ -361,7 +442,7 @@ func (s *actionSink) describe(ctx context.Context, a integration.PreparedAction,
 			return nil, err
 		}
 		out := MoveDisplay{Ontology: ontology, Document: Ref{ID: p.DocumentID}, To: set(p.SetID)}
-		if d, err := s.db.GetFoundryDocument(ctx, ws, p.DocumentID); err == nil {
+		if d, err := c.DB.GetFoundryDocument(ctx, ws, p.DocumentID); err == nil {
 			out.Document.Name, out.From = d.Name, set(d.SetID)
 		}
 		return out, nil
@@ -370,7 +451,7 @@ func (s *actionSink) describe(ctx context.Context, a integration.PreparedAction,
 		if err := decode(&p); err != nil {
 			return nil, err
 		}
-		return s.describeSettle(ctx, ontology, p)
+		return c.describeSettle(ctx, ontology, p)
 	}
 	return nil, fmt.Errorf("no card for %s", a.Operation)
 }
@@ -379,12 +460,12 @@ func (s *actionSink) describe(ctx context.Context, a integration.PreparedAction,
 // refuses a decision it doesn't take: the review must be in the current
 // load, settled by that kind of decision, and, for an approval or a reject,
 // read as the statement the decision names.
-func (s *actionSink) describeSettle(ctx context.Context, ontology Ref, p integration.SettleReviewPayload) (any, error) {
+func (c Cards) describeSettle(ctx context.Context, ontology Ref, p integration.SettleReviewPayload) (any, error) {
 	refuse := func(why string) error { return status.Error(codes.FailedPrecondition, why) }
-	if s.reviews == nil {
+	if c.Reviews == nil {
 		return nil, status.Error(codes.Unavailable, "the Assistant can't read reviews here")
 	}
-	review, loadID, err := s.reviews(ctx, ontology.ID, p.ReviewID)
+	review, loadID, err := c.Reviews(ctx, ontology.ID, p.ReviewID)
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +475,7 @@ func (s *actionSink) describeSettle(ctx context.Context, ontology Ref, p integra
 	out := SettleDisplay{Ontology: ontology, LoadID: loadID, Review: *review}
 	if review.DocID != "" {
 		doc := Ref{ID: review.DocID}
-		if d, err := s.db.GetFoundryDocument(ctx, s.turn.WorkspaceID, review.DocID); err == nil {
+		if d, err := c.DB.GetFoundryDocument(ctx, c.WorkspaceID, review.DocID); err == nil {
 			doc.Name = d.Name
 		}
 		out.Document = &doc

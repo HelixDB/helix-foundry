@@ -53,6 +53,8 @@ type memStore struct {
 	// prepares it again; nothing when empty.
 	decided model.FoundryAgentActionStatus
 	lost    bool
+	// versionReads counts the versions and loads read.
+	versionReads int
 }
 
 func (s *memStore) ListFoundryAgentMessages(context.Context, string) ([]model.FoundryAgentMessage, error) {
@@ -106,6 +108,20 @@ func (s *memStore) RecordFoundryAgentAction(_ context.Context, _ string, a *mode
 	return a, err
 }
 
+func (s *memStore) GetFoundryAgentActionByPayload(_ context.Context, turnID, payloadHash string) (*model.FoundryAgentAction, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.actions {
+		if existing.TurnID == turnID && existing.PayloadHash == payloadHash {
+			if s.decided != "" {
+				existing.Status = s.decided
+			}
+			return existing, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
+}
+
 func (s *memStore) GetFoundryAgentAction(_ context.Context, _, id string) (*model.FoundryAgentAction, error) {
 	for _, a := range s.actions {
 		if a.ID == id {
@@ -136,6 +152,7 @@ func (s *memStore) ListFoundryOntologies(_ context.Context, workspaceID, _ strin
 
 // GetOntologyVersion numbers ver<n> n, and any other version 3.
 func (s *memStore) GetOntologyVersion(_ context.Context, _, id string) (*model.OntologyVersion, error) {
+	s.versionReads++
 	if id == "gone" {
 		return nil, foundrystore.ErrNotFound
 	}
@@ -150,6 +167,7 @@ func (s *memStore) GetOntologyVersion(_ context.Context, _, id string) (*model.O
 var loadedAt = time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
 
 func (s *memStore) GetFoundryLoad(_ context.Context, _, id string) (*model.FoundryLoad, error) {
+	s.versionReads++
 	return &model.FoundryLoad{ID: id, Status: model.FoundryLoadReady, VersionID: "ver2", Version: 2, CreatedAt: loadedAt}, nil
 }
 
@@ -245,6 +263,8 @@ type backend struct {
 	// reviews are the current load's, by key; reviewErr refuses reading them.
 	reviews   []*foundryv1.FoundryReview
 	reviewErr error
+	// onReviews runs after each read of the reviews.
+	onReviews func()
 }
 
 func (b *backend) ListConnectorKinds(context.Context, *foundryv1.ListConnectorKindsRequest, ...grpc.CallOption) (*foundryv1.ListConnectorKindsResponse, error) {
@@ -263,6 +283,9 @@ func (b *backend) ListFoundryReviews(_ context.Context, r *foundryv1.ListFoundry
 		if slices.Contains(r.GetReviewKeys(), review.GetReviewKey()) {
 			out.Reviews = append(out.Reviews, review)
 		}
+	}
+	if b.onReviews != nil {
+		b.onReviews()
 	}
 	return out, nil
 }
@@ -758,24 +781,26 @@ func TestToolCallsAreBoundedPerReplyAndAsksPerTurn(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []string{"toolu_3", "toolu_8", "toolu_9"}, unrun)
-	// The person sees each call the limits cut, and why.
-	assert.Equal(t, []string{"toolu_3", "toolu_8", "toolu_9"}, h.db.notRun())
+	// The person sees each call the limits cut, and why, by its code: the
+	// model's words are for the model.
+	assert.Equal(t, []string{"toolu_3:asks", "toolu_8:calls", "toolu_9:calls"}, h.db.notRun())
 }
 
-// notRun are the calls whose events say a limit kept them from running, in order.
+// notRun are the calls whose events say why they never ran, in order, as
+// <tool use id>:<reason>, each with no words of the model's.
 func (s *memStore) notRun() []string {
 	var out []string
 	for _, e := range s.events {
 		var r struct {
-			Type      string `json:"type"`
-			ToolUseID string `json:"tool_use_id"`
-			NotRun    bool   `json:"not_run"`
-			IsError   bool   `json:"is_error"`
-			Error     string `json:"error"`
+			Type      string       `json:"type"`
+			ToolUseID string       `json:"tool_use_id"`
+			NotRun    NotRunReason `json:"not_run"`
+			IsError   bool         `json:"is_error"`
+			Error     *string      `json:"error"`
 		}
 		_ = json.Unmarshal(e, &r)
-		if r.Type == "tool_result" && r.NotRun && r.IsError && strings.HasPrefix(r.Error, "Not run") {
-			out = append(out, r.ToolUseID)
+		if r.Type == "tool_result" && r.NotRun != "" && r.IsError && r.Error == nil {
+			out = append(out, r.ToolUseID+":"+string(r.NotRun))
 		}
 	}
 	return out
@@ -803,7 +828,7 @@ func TestToolsStopAtTheWallTime(t *testing.T) {
 	}
 	require.Len(t, results, 2)
 	assert.Contains(t, results[1].Content, "ran out of time")
-	assert.Equal(t, []string{"toolu_2"}, h.db.notRun())
+	assert.Equal(t, []string{"toolu_2:time"}, h.db.notRun())
 }
 
 // A reply cut off at its output's limit, or a call that isn't JSON, runs no
@@ -820,7 +845,7 @@ func TestACutOffCallNeverRuns(t *testing.T) {
 		assert.Equal(t, []llm.Block{llm.Text{Text: "Loading"}}, blocks, "the text is kept, the call isn't")
 		assert.Empty(t, h.db.actions)
 		assert.Equal(t, []string{"started", "text", "tool_call", "tool_result", "finished"}, h.db.eventTypes())
-		assert.Equal(t, []string{"toolu_1"}, h.db.notRun(), "the person sees the call cut off")
+		assert.Equal(t, []string{"toolu_1:length"}, h.db.notRun(), "the person sees the call cut off")
 	})
 	t.Run("not JSON", func(t *testing.T) {
 		h := newHarness(t, []llm.Chunk{llm.ToolUse{ID: "toolu_1", Name: toolPrepare, Input: json.RawMessage(`{"operation":"create_lo`)},
@@ -829,7 +854,7 @@ func TestACutOffCallNeverRuns(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, StopAnswered, a.Stop, "nothing to run: the reply ends the turn")
 		assert.Empty(t, h.db.actions)
-		assert.Equal(t, []string{"toolu_1"}, h.db.notRun())
+		assert.Equal(t, []string{"toolu_1:input"}, h.db.notRun())
 		var called struct{ Input string }
 		require.NoError(t, json.Unmarshal(h.db.events[1], &called))
 		assert.Equal(t, `{"operation":"create_lo`, called.Input, "its input shows as the text it was")

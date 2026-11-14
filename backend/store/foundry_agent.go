@@ -580,6 +580,13 @@ func (s *mysqlDB) GetFoundryAgentAction(ctx context.Context, workspaceID, id str
 FROM foundry_agent_actions WHERE id=? AND workspace_id=?`, id, workspaceID))
 }
 
+// GetFoundryAgentActionByPayload returns the action a turn prepared for the
+// payload payloadHash names: a turn prepares each payload once.
+func (s *mysqlDB) GetFoundryAgentActionByPayload(ctx context.Context, turnID, payloadHash string) (*model.FoundryAgentAction, error) {
+	return scanFoundryAgentAction(s.db.QueryRowContext(ctx, "SELECT "+foundryAgentActionColumns+`
+FROM foundry_agent_actions WHERE turn_id=? AND payload_hash=?`, turnID, payloadHash))
+}
+
 // ListFoundryAgentActions returns the thread's actions, oldest first.
 func (s *mysqlDB) ListFoundryAgentActions(ctx context.Context, threadID string) ([]*model.FoundryAgentAction, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT "+foundryAgentActionColumns+`
@@ -751,10 +758,14 @@ func (s *mysqlDB) DismissFoundryAgentAction(ctx context.Context, workspaceID, us
 }
 
 // RefreshFoundryAgentAction gives the user's prepared or expired action the
-// new confirmation prepared for the same payload, waiting for them again.
-// Refusals are a model.FoundryAgentRefusal; ErrNotFound means it isn't theirs.
-func (s *mysqlDB) RefreshFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash, confirmationID string, sealed []byte, keyID string,
-	expiresAt time.Time) (*model.FoundryAgentAction, error) {
+// new confirmation prepared for the same payload, and its card as drawn
+// again with it (display), waiting for them again. Refusals are a
+// model.FoundryAgentRefusal; ErrNotFound means it isn't theirs.
+func (s *mysqlDB) RefreshFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string, display json.RawMessage, confirmationID string,
+	sealed []byte, keyID string, expiresAt time.Time) (*model.FoundryAgentAction, error) {
+	if !json.Valid(display) {
+		return nil, fmt.Errorf("refresh foundry agent action %s: its display isn't JSON", id)
+	}
 	threadID, err := s.foundryAgentActionThread(ctx, workspaceID, userID, id)
 	if err != nil {
 		return nil, err
@@ -772,8 +783,8 @@ func (s *mysqlDB) RefreshFoundryAgentAction(ctx context.Context, workspaceID, us
 			return model.FoundryAgentRefusal{Reason: model.FoundryAgentChanged, Detail: "the refreshed action is not the one prepared"}
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_actions
-SET status='prepared', decided_by=NULL, decided_at=NULL, confirmation_id=?, confirmation_token_sealed=?, confirmation_key_id=?, expires_at=?
-WHERE id=?`, confirmationID, sealed, keyID, expiresAt.UTC(), id); err != nil {
+SET status='prepared', decided_by=NULL, decided_at=NULL, display=?, confirmation_id=?, confirmation_token_sealed=?, confirmation_key_id=?, expires_at=?
+WHERE id=?`, string(display), confirmationID, sealed, keyID, expiresAt.UTC(), id); err != nil {
 			return err
 		}
 		out, err = scanFoundryAgentAction(tx.db.QueryRowContext(ctx, "SELECT "+foundryAgentActionColumns+` FROM foundry_agent_actions WHERE id=?`, id))

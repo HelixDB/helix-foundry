@@ -241,7 +241,7 @@ type ListFoundryReviewDecisionsInput struct {
 type ListFoundryReviewsInput struct {
 	OntologyInput
 	ReviewKeys []string `json:"review_keys,omitempty" jsonschema:"Only these reviews, by review_key, at most 50; never with page_token."`
-	PageToken  string   `json:"page_token,omitempty" jsonschema:"Opaque continuation token from the previous call."`
+	PageToken  string   `json:"page_token,omitempty" jsonschema:"Opaque continuation token from the previous call, of the same load: once another load is current it is refused, and the list starts again."`
 }
 
 type GetFoundrySyncInput struct {
@@ -625,6 +625,16 @@ type FoundryReviewOutput struct {
 	// StatementHash is what a release or reject binds: the statement the caller read.
 	StatementHash string   `json:"statement_hash,omitempty"`
 	Confidence    *float64 `json:"confidence,omitempty"`
+	// Entities name the candidates and the property's entity as the load holds them.
+	Entities []FoundryReviewEntityOutput `json:"entities,omitempty" jsonschema:"The entities it concerns as the load holds them: its candidates and its property's entity, each by the identity candidates and entity_key name it by, with its stored name (untrusted)."`
+}
+
+// FoundryReviewEntityOutput is an entity a review concerns: exactly one of EntityKey and NormName.
+type FoundryReviewEntityOutput struct {
+	Type      string `json:"type"`
+	EntityKey string `json:"entity_key,omitempty"`
+	NormName  string `json:"norm_name,omitempty"`
+	Name      string `json:"name,omitempty"`
 }
 
 type FoundryReviewValueOutput struct {
@@ -862,6 +872,12 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 		}
 		return ""
 	}
+	// An API source takes no credential: an agent whose person confirms opens its form, which
+	// makes its send tokens; any other prepares create_event_source.
+	eventsKind := "; an API source (events) has no credential, so create one with the create_event_source operation"
+	if _, person := identity.Confirm.(ConfirmByPerson); person {
+		eventsKind = "; an API source (events) through its form too, which makes its send tokens"
+	}
 	if browse && user {
 		addFoundryTool(s, server, identity, tool(toolFoundryListConnectors,
 			"List a workspace's Foundry connectors with their synced tables and newest sync. Credentials are never returned."+
@@ -872,7 +888,7 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 		addFoundryTool(s, server, identity, tool(toolFoundryListConnectorKinds,
 			"List the kinds of connector Foundry offers a workspace, and whether its plan includes each: a Foundry Pro kind is unavailable without Pro. "+toolFoundryConnect+" connects one"+
 				signingIn(", a kind with sign_in by signing in at its provider and any other through its form")+
-				apiSources("; an API source (events) has no credential, so create one with the create_event_source operation")+"."), s.ListFoundryConnectorKinds)
+				apiSources(eventsKind)+"."), s.ListFoundryConnectorKinds)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetSync,
 			"Get one sync of a Foundry connector, with its status, rows and error. With wait, waits up to 25 s while it runs; call again until it ends."), s.GetFoundrySync)
 	}
@@ -908,7 +924,8 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 		addFoundryTool(s, server, identity, tool(toolFoundryListReviews,
 			"List the reviews a Foundry ontology's current load holds: what its documents state that it didn't write as it stands. "+
 				"A name it matched to no one record (settle resolve, with its candidates), a property its documents state differently (prop, with each value and its quote), "+
-				"or a statement it held back (release: approve or reject it by its statement_hash). 50 a page, or the ones review_keys names. "+
+				"or a statement it held back (release: approve or reject it by its statement_hash), each with the entities it concerns by name. "+
+				"50 a page of one load, or the ones review_keys names. "+
 				"Settle one with the settle_review action. A review someone settled stays listed until a load writes the decision: "+toolFoundryListReviewDecisions+" lists those."), s.ListFoundryReviews)
 		addFoundryTool(s, server, identity, tool(toolFoundryListReviewDecisions,
 			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release) and a chosen value (prop) also apply to the current load at once. A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review or in the review queue. A decision made on a card of the site's review queue says how it was drawn (drawn). A withdraw is an approval a person took back from the current load, which may have written it: that load is sent it at once, and it is listed only while that load is current. applied says what became of each in the current load; of a withdraw, withdrawn means the claim is held for review again, and refused that what the approval wrote stays."), s.ListFoundryReviewDecisions)
@@ -1770,7 +1787,7 @@ func (s *Service) ListFoundryReviews(
 	ctx context.Context, identity *Identity, call *Call, input ListFoundryReviewsInput,
 ) (ListFoundryReviewsOutput, int, error) {
 	call.ResourceKind, call.ResourceID = "ontology", input.OntologyID
-	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID}) || len(input.PageToken) > 16 || len(input.ReviewKeys) > 50 {
+	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID}) || len(input.PageToken) > 160 || len(input.ReviewKeys) > 50 {
 		return ListFoundryReviewsOutput{}, 0, errCodeInvalidArguments
 	}
 	req := &foundryv1.ListFoundryReviewsRequest{WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, ReviewKeys: input.ReviewKeys,
@@ -1803,6 +1820,9 @@ func FoundryReview(r *foundryv1.FoundryReview) FoundryReviewOutput {
 	}
 	if span := r.GetSpan(); span != nil {
 		out.Section, out.Start, out.End = &span.Section, &span.Start, &span.End
+	}
+	for _, e := range r.GetEntities() {
+		out.Entities = append(out.Entities, FoundryReviewEntityOutput{Type: e.GetType(), EntityKey: e.GetEntityKey(), NormName: e.GetNormName(), Name: e.GetName()})
 	}
 	for _, v := range r.GetValues() {
 		decoder := json.NewDecoder(strings.NewReader(v.GetValueJson()))
@@ -1876,6 +1896,10 @@ func (s *Service) ListFoundryConnectorKinds(
 		})
 		if kind.GetKind() == foundrymodel.ConnectorKindEvents {
 			out.Kinds[len(out.Kinds)-1].Create = "Create one with the create_event_source operation (" + toolPrepareFoundry + "), then send it pieces with " + toolFoundrySendPieces + "."
+			if _, person := identity.Confirm.(ConfirmByPerson); person {
+				// Its person confirms what it prepares, and create_event_source isn't one of those.
+				out.Kinds[len(out.Kinds)-1].Create = "Its form in Foundry makes one, and its send tokens: " + toolFoundryConnect + " links it."
+			}
 		}
 	}
 	return out, len(out.Kinds), nil

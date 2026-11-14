@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	foundryagent "github.com/helixdb/helix-foundry/backend/agent"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
@@ -35,11 +38,74 @@ type agentStore struct {
 	events   map[string][]json.RawMessage
 	refusal  error
 	finished []foundrymodel.FoundryAgentActionEnd
+	// currentLoad is Sales graph's (ont-1).
+	currentLoad string
 }
 
 func newAgentStore() *agentStore {
 	return &agentStore{threads: map[string]*foundrymodel.FoundryAgentThread{}, turns: map[string]*foundrymodel.FoundryAgentTurn{},
-		actions: map[string]*foundrymodel.FoundryAgentAction{}, events: map[string][]json.RawMessage{}}
+		actions: map[string]*foundrymodel.FoundryAgentAction{}, events: map[string][]json.RawMessage{}, currentLoad: "load-1"}
+}
+
+// What a card names of ws-1: Sales graph (ont-1), its versions ver-<n> and
+// loads, Stripe (c-1), the sets General (set-1) and Contracts (set-2), and
+// contract.md (doc-1).
+func (s *agentStore) GetFoundryOntology(_ context.Context, ws, id string) (*foundrymodel.FoundryOntology, error) {
+	if ws != "ws-1" || id != "ont-1" {
+		return nil, foundrystore.ErrNotFound
+	}
+	return &foundrymodel.FoundryOntology{ID: id, WorkspaceID: ws, Name: "Sales graph", CurrentLoadID: &s.currentLoad}, nil
+}
+
+func (s *agentStore) ListFoundryOntologies(ctx context.Context, ws, _ string, _ int) ([]*foundrymodel.FoundryOntology, string, error) {
+	o, err := s.GetFoundryOntology(ctx, ws, "ont-1")
+	if err != nil {
+		return nil, "", nil
+	}
+	return []*foundrymodel.FoundryOntology{o}, "", nil
+}
+
+func (s *agentStore) GetOntologyVersion(_ context.Context, _, id string) (*foundrymodel.OntologyVersion, error) {
+	n, err := strconv.Atoi(strings.TrimPrefix(id, "ver-"))
+	if err != nil {
+		return nil, foundrystore.ErrNotFound
+	}
+	return &foundrymodel.OntologyVersion{ID: id, Version: n}, nil
+}
+
+func (s *agentStore) GetFoundryLoad(_ context.Context, _, id string) (*foundrymodel.FoundryLoad, error) {
+	return &foundrymodel.FoundryLoad{ID: id, VersionID: "ver-1", Version: 1, Status: foundrymodel.FoundryLoadReady,
+		CreatedAt: time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)}, nil
+}
+
+var agentConnectors = []*foundrymodel.Connector{{ID: "c-1", WorkspaceID: "ws-1", Name: "Stripe", Kind: "stripe"}}
+
+func (s *agentStore) GetConnector(_ context.Context, ws, id string) (*foundrymodel.Connector, error) {
+	for _, c := range agentConnectors {
+		if c.WorkspaceID == ws && c.ID == id {
+			return c, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
+}
+
+func (s *agentStore) ListConnectors(context.Context, string) ([]*foundrymodel.Connector, error) {
+	return agentConnectors, nil
+}
+
+func (s *agentStore) GetFoundryDocumentSet(_ context.Context, ws, id string) (*foundrymodel.FoundryDocumentSet, error) {
+	name := map[string]string{"set-1": "General", "set-2": "Contracts"}[id]
+	if name == "" {
+		return nil, foundrystore.ErrNotFound
+	}
+	return &foundrymodel.FoundryDocumentSet{ID: id, WorkspaceID: ws, Name: name}, nil
+}
+
+func (s *agentStore) GetFoundryDocument(_ context.Context, ws, id string) (*foundrymodel.FoundryDocument, error) {
+	if id != "doc-1" {
+		return nil, foundrystore.ErrNotFound
+	}
+	return &foundrymodel.FoundryDocument{ID: id, WorkspaceID: ws, SetID: "set-1", Name: "contract.md"}, nil
 }
 
 func (s *agentStore) GetActiveFoundryAIConfig(context.Context, string) (*foundrymodel.FoundryAIConfig, error) {
@@ -157,12 +223,14 @@ func (s *agentStore) FinishFoundryAgentAction(_ context.Context, id string, end 
 	return nil
 }
 
-func (s *agentStore) RefreshFoundryAgentAction(_ context.Context, _, _, id, hash, confirmationID string, sealed []byte, keyID string, expires time.Time) (*foundrymodel.FoundryAgentAction, error) {
+func (s *agentStore) RefreshFoundryAgentAction(_ context.Context, _, _, id, hash string, display json.RawMessage, confirmationID string, sealed []byte,
+	keyID string, expires time.Time) (*foundrymodel.FoundryAgentAction, error) {
 	a := s.actions[id]
 	if a.PayloadHash != hash {
 		return nil, foundrymodel.FoundryAgentRefusal{Reason: foundrymodel.FoundryAgentChanged, Detail: "changed"}
 	}
-	a.Status, a.ConfirmationID, a.TokenSealed, a.KeyID, a.ExpiresAt = foundrymodel.FoundryAgentActionPrepared, confirmationID, sealed, keyID, expires
+	a.Status, a.Display, a.ConfirmationID, a.TokenSealed, a.KeyID, a.ExpiresAt = foundrymodel.FoundryAgentActionPrepared, display, confirmationID, sealed,
+		keyID, expires
 	return a, nil
 }
 
@@ -242,6 +310,33 @@ func (l *agentLoads) SettleFoundryReview(context.Context, *foundryv1.SettleFound
 	return done(l, "SettleFoundryReview", &foundryv1.FoundryReviewDecisionResponse{Decision: &foundryv1.FoundryReviewDecision{Id: "dec-1", Kind: "release"}})
 }
 
+// agentReviews is the current load's reviews, as the person reads them.
+type agentReviews struct {
+	foundryv1.FoundryServiceClient
+	reviews []*foundryv1.FoundryReview
+}
+
+func (r *agentReviews) ListFoundryReviews(_ context.Context, req *foundryv1.ListFoundryReviewsRequest, _ ...grpc.CallOption) (
+	*foundryv1.ListFoundryReviewsResponse, error) {
+	out := &foundryv1.ListFoundryReviewsResponse{LoadId: "load-1"}
+	for _, review := range r.reviews {
+		if slices.Contains(req.GetReviewKeys(), review.GetReviewKey()) {
+			out.Reviews = append(out.Reviews, review)
+		}
+	}
+	return out, nil
+}
+
+// agentDatabases holds t-1 in ws-1.
+type agentDatabases struct{ ports.Databases }
+
+func (agentDatabases) Get(_ context.Context, tenantID string) (ports.Database, error) {
+	if tenantID != "t-1" {
+		return ports.Database{}, foundrystore.ErrNotFound
+	}
+	return ports.Database{TenantID: tenantID, WorkspaceID: "ws-1", Name: "sales"}, nil
+}
+
 // agentDirectory holds every database in ws-1.
 type agentDirectory struct{ integration.Directory }
 
@@ -298,16 +393,22 @@ type agentFixture struct {
 	loads   *agentLoads
 	confirm *agentConfirmations
 	host    *agentHost
+	reviews *agentReviews
 }
+
+// agentStatement is the statement review r-1 holds back.
+var agentStatement = strings.Repeat("ab", 32)
 
 func newAgentFixture(t *testing.T) agentFixture {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.Foundry.Agent.Enabled = true
 	store, loads, confirm := newAgentStore(), &agentLoads{}, &agentConfirmations{kept: map[string]integration.ConfirmationBinding{}}
-	host := &agentHost{service: (&integration.Service{Actions: loads, Confirmations: confirm, Directory: agentDirectory{}}).ForAgent()}
-	s := &Service{deps: &runtimeDeps{Cfg: &cfg, DB: store, AI: hostedAI(t), ConnectorKeys: aiKeyring(t), AgentSessions: host}}
-	return agentFixture{s: s, store: store, loads: loads, confirm: confirm, host: host}
+	reviews := &agentReviews{reviews: []*foundryv1.FoundryReview{{ReviewKey: "r-1", Reason: "low_confidence",
+		Settle: foundryv1.FoundryReviewSettle_FOUNDRY_REVIEW_SETTLE_RELEASE, DocId: "doc-1", Link: "signed_with", StatementHash: agentStatement}}}
+	host := &agentHost{service: (&integration.Service{Foundry: reviews, Actions: loads, Confirmations: confirm, Directory: agentDirectory{}}).ForAgent()}
+	s := &Service{deps: &runtimeDeps{Cfg: &cfg, DB: store, AI: hostedAI(t), ConnectorKeys: aiKeyring(t), AgentSessions: host, Databases: agentDatabases{}}}
+	return agentFixture{s: s, store: store, loads: loads, confirm: confirm, host: host, reviews: reviews}
 }
 
 // prepared stores a create_load of person's, with its confirmation kept by the host.
@@ -535,11 +636,65 @@ func TestRefreshAndDismissFoundryAgentAction(t *testing.T) {
 	assert.Empty(t, f.store.finished, "dismissing starts no turn")
 }
 
+// A refresh draws the card again as its clicker reads the workspace now,
+// in the same write as its new confirmation; what its checks refuse is
+// refused, and leaves the action as it was.
+func TestRefreshDrawsTheCardAgain(t *testing.T) {
+	refresh := func(f agentFixture) (*foundryv1.FoundryAgentActionResponse, error) {
+		return f.s.RefreshFoundryAgentAction(personCtx, &foundryv1.RefreshFoundryAgentActionRequest{WorkspaceId: "ws-1", Id: "act-1"})
+	}
+	t.Run("the current load named as it is now", func(t *testing.T) {
+		f := newAgentFixture(t)
+		a := f.preparedAs(t, "act-1", integration.FoundryOperationInput{Operation: "set_current_load", Target: "ontology:ws-1/ont-1",
+			Payload: map[string]any{"load_id": "load-2"}})
+		a.Status, a.Display = foundrymodel.FoundryAgentActionExpired, json.RawMessage(`{"ontology":{"id":"ont-1"},"load":{"id":"load-2"},"current":{"id":"load-1"}}`)
+		f.store.currentLoad = "load-7"
+		resp, err := refresh(f)
+		require.NoError(t, err)
+		var d foundryagent.SetCurrentLoadDisplay
+		require.NoError(t, json.Unmarshal([]byte(resp.GetAction().GetDisplayJson()), &d))
+		require.NotNil(t, d.Current)
+		assert.Equal(t, "load-7", d.Current.ID, "in place of the load current now")
+		assert.Equal(t, foundryagent.Ref{ID: "ont-1", Name: "Sales graph"}, d.Ontology)
+	})
+	t.Run("a review the current load no longer holds", func(t *testing.T) {
+		f := newAgentFixture(t)
+		a := f.preparedAs(t, "act-1", integration.FoundryOperationInput{Operation: "settle_review", Target: "ontology:ws-1/ont-1",
+			Payload: map[string]any{"review_id": "r-1", "decision": map[string]any{"release": map[string]any{"statement_hash": agentStatement}}}})
+		a.Status = foundrymodel.FoundryAgentActionExpired
+		before := *a
+		f.reviews.reviews = nil
+		_, err := refresh(f)
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+		assert.Contains(t, status.Convert(err).Message(), "holds no review r-1")
+		assert.Equal(t, before, *a, "nothing of it changes")
+	})
+	t.Run("a statement that reads differently now", func(t *testing.T) {
+		f := newAgentFixture(t)
+		a := f.preparedAs(t, "act-1", integration.FoundryOperationInput{Operation: "settle_review", Target: "ontology:ws-1/ont-1",
+			Payload: map[string]any{"review_id": "r-1", "decision": map[string]any{"release": map[string]any{"statement_hash": agentStatement}}}})
+		a.Status = foundrymodel.FoundryAgentActionExpired
+		f.reviews.reviews[0].StatementHash = strings.Repeat("cd", 32)
+		_, err := refresh(f)
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+		assert.Contains(t, status.Convert(err).Message(), "reads differently now")
+	})
+	t.Run("an ontology the workspace no longer holds", func(t *testing.T) {
+		f := newAgentFixture(t)
+		a := f.preparedAs(t, "act-1", integration.FoundryOperationInput{Operation: "create_load", Target: "ontology:ws-1/ont-9",
+			Payload: map[string]any{"version_id": "ver-1"}})
+		a.Status = foundrymodel.FoundryAgentActionExpired
+		_, err := refresh(f)
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+		assert.Contains(t, status.Convert(err).Message(), "holds no ontology ont-9")
+	})
+}
+
 // Every operation the Assistant prepares runs from its person's click
 // through its own backend call, once, and its card refreshes without a
 // model. What the person may no longer do fails, running nothing.
 func TestEveryAssistantOperationRunsFromAClick(t *testing.T) {
-	hash := strings.Repeat("ab", 32)
+	hash := agentStatement
 	for _, c := range []struct {
 		input  integration.FoundryOperationInput
 		method string
@@ -569,6 +724,8 @@ func TestEveryAssistantOperationRunsFromAClick(t *testing.T) {
 			refreshed, err := f.s.RefreshFoundryAgentAction(personCtx, &foundryv1.RefreshFoundryAgentActionRequest{WorkspaceId: "ws-1", Id: "act-1"})
 			require.NoError(t, err)
 			assert.Equal(t, "prepared", refreshed.GetAction().GetStatus())
+			assert.True(t, json.Valid([]byte(refreshed.GetAction().GetDisplayJson())) && refreshed.GetAction().GetDisplayJson() != "",
+				"its card is drawn again")
 			a.Status = foundrymodel.FoundryAgentActionPrepared
 			resp, err := f.s.ExecuteFoundryAgentAction(personCtx, &foundryv1.ExecuteFoundryAgentActionRequest{WorkspaceId: "ws-1", Id: "act-1", PayloadHash: a.PayloadHash})
 			require.NoError(t, err)

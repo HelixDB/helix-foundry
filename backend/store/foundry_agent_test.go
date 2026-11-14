@@ -218,6 +218,13 @@ func TestFoundryAgentActions(t *testing.T) {
 	again, err := f.prepare(turn, 1, time.Now().Add(5*time.Minute))
 	require.NoError(t, err)
 	assert.Equal(t, a.ID, again.ID)
+	found, err := f.db.GetFoundryAgentActionByPayload(ctx, turn.ID, a.PayloadHash)
+	require.NoError(t, err)
+	assert.Equal(t, a.ID, found.ID, "a turn's payload finds its action")
+	_, err = f.db.GetFoundryAgentActionByPayload(ctx, turn.ID, strings.Repeat("e", 64))
+	assert.ErrorIs(t, err, store.ErrNotFound)
+	_, err = f.db.GetFoundryAgentActionByPayload(ctx, f.turnID(9), a.PayloadHash)
+	assert.ErrorIs(t, err, store.ErrNotFound, "another turn's payload is its own")
 	events, err := f.db.ListFoundryAgentEvents(ctx, turn.ID, 0, 10)
 	require.NoError(t, err)
 	assert.Len(t, events, 1)
@@ -265,20 +272,26 @@ func TestFoundryAgentActions(t *testing.T) {
 	assert.Equal(t, 1, queued.LastSeq)
 
 	// Refresh and dismiss: the expired card comes back, then is dismissed.
-	_, err = f.db.RefreshFoundryAgentAction(ctx, f.workspaceID, agentUser, expired.ID, strings.Repeat("f", 64), "c2", []byte("s2"), "k", time.Now().Add(time.Minute))
+	redrawn := json.RawMessage(`{"ontology":{"id":"o1","name":"Renamed"}}`)
+	_, err = f.db.RefreshFoundryAgentAction(ctx, f.workspaceID, agentUser, expired.ID, strings.Repeat("f", 64), redrawn, "c2", []byte("s2"), "k",
+		time.Now().Add(time.Minute))
 	assert.Equal(t, model.FoundryAgentChanged, refusal(t, err))
-	refreshed, err := f.db.RefreshFoundryAgentAction(ctx, f.workspaceID, agentUser, expired.ID, expired.PayloadHash, "c2", []byte("s2"), "k",
+	_, err = f.db.RefreshFoundryAgentAction(ctx, f.workspaceID, agentUser, expired.ID, expired.PayloadHash, json.RawMessage(`{`), "c2", []byte("s2"), "k",
+		time.Now().Add(time.Minute))
+	assert.Error(t, err, "a display that isn't JSON is never stored")
+	refreshed, err := f.db.RefreshFoundryAgentAction(ctx, f.workspaceID, agentUser, expired.ID, expired.PayloadHash, redrawn, "c2", []byte("s2"), "k",
 		time.Now().Add(time.Minute))
 	require.NoError(t, err)
 	assert.Equal(t, model.FoundryAgentActionPrepared, refreshed.Status)
 	assert.Equal(t, "c2", refreshed.ConfirmationID)
+	assert.JSONEq(t, string(redrawn), string(refreshed.Display), "the card as drawn again")
 	assert.Nil(t, refreshed.DecidedAt)
 	dismissed, err := f.db.DismissFoundryAgentAction(ctx, f.workspaceID, agentUser, expired.ID)
 	require.NoError(t, err)
 	assert.Equal(t, model.FoundryAgentActionDismissed, dismissed.Status)
 	_, err = f.db.DismissFoundryAgentAction(ctx, f.workspaceID, agentUser, a.ID)
 	assert.Equal(t, model.FoundryAgentNotPrepared, refusal(t, err))
-	_, err = f.db.RefreshFoundryAgentAction(ctx, f.workspaceID, agentUser, a.ID, a.PayloadHash, "c3", []byte("s3"), "k", time.Now())
+	_, err = f.db.RefreshFoundryAgentAction(ctx, f.workspaceID, agentUser, a.ID, a.PayloadHash, redrawn, "c3", []byte("s3"), "k", time.Now())
 	assert.Equal(t, model.FoundryAgentNotPrepared, refusal(t, err), "a run action is never prepared again")
 
 	actions, err := f.db.ListFoundryAgentActions(ctx, turn.ThreadID)

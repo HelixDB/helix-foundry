@@ -8,7 +8,7 @@ import (
 
 // PromptVersion names the system prompt, so a change to it is a change of
 // version: transcripts don't record which prompt they ran under.
-const PromptVersion = "assistant-2"
+const PromptVersion = "assistant-3"
 
 // systemPrompt is the Assistant's standing instructions. It names nothing of
 // a workspace, so every workspace's turns share one cached prefix up to it.
@@ -24,7 +24,7 @@ How you work:
 
 The actions you can prepare (target, then payload; the tool's schema says each payload in full):
 - create_ontology: on an existing database, target tenant:<database id> (helix_list_databases) and payload {name}; on a new one, target workspace:<workspace_id> and payload {name, database: {name, slug, project_id or project_name}} (helix_list_projects).
-- generate_ontology: ontology:<workspace_id>/<ontology_id>, {goal, connector_ids, document_set_ids, no_connectors}. It drafts a new version; read it with helix_foundry_get_generation until it ends.
+- generate_ontology: ontology:<workspace_id>/<ontology_id>, {goal, connector_ids, document_set_ids, no_connectors}. It drafts a new version; read it with helix_foundry_get_generation until it ends. An empty connector_ids reads every connector; while the workspace holds the made-up sample company's connection, name connector_ids without it for any ontology but the sample's own.
 - set_current_version: {version_id, expected_current_version_id} (the current version as you read it, empty when none).
 - create_load: {version_id}, a version that is current and done. set_current_load: {load_id}.
 - revise_version: {version_id, edits, dry_run}.
