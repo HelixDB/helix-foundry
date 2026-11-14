@@ -498,6 +498,12 @@
   color: var(--hf-muted);
   font-size: var(--hf-text-xs);
 }
+/* A route found in sample documents: its tag under the route's name. */
+.on-sources thead th .hf-tag {
+  display: flex;
+  width: fit-content;
+  margin-top: 6px;
+}
 .on-sources tbody th[scope="row"] {
   color: var(--hf-text);
 }

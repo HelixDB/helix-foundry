@@ -21,7 +21,7 @@ import {
   WORK_HISTORY_DEFAULT,
   type ProfileField,
 } from "./enrichment-fields";
-import { cluesText, type AgentBundle } from "./model";
+import { cluesText, isProbeRoute, type AgentBundle } from "./model";
 import {
   CardFields,
   EnrichmentNotes,
@@ -327,7 +327,30 @@ export function AgentEdit({
                 .filter((id) =>
                   HAND_EDITED.includes(id.split(".")[0] as EditKind),
                 )
-                .map((id) => ({ value: id, label: id })),
+                .map((id) => {
+                  // A route found in sample documents has a made-up name
+                  // (`probe_<set>`, hashed when long): said by its sets.
+                  if (!isProbeRoute(bundle.items[id]))
+                    return { value: id, label: id };
+                  const route = bundle.routes.ok
+                    ? bundle.routes.value.find(
+                        (r) => `extraction.${r.name}` === id,
+                      )
+                    : undefined;
+                  const names =
+                    route?.documents.kind === "sets"
+                      ? route.documents.ids.flatMap((set) => {
+                          const name = sets.data?.find(
+                            (x) => x.id === set,
+                          )?.name;
+                          return name ? [name] : [];
+                        })
+                      : [];
+                  return {
+                    value: id,
+                    label: `Document route · found in sample documents${names.length ? ` of ${names.join(", ")}` : ""}`,
+                  };
+                }),
               { value: "new:extraction", label: "Add document route" },
               { value: "new:rule", label: "Add rule" },
               { value: "new:constraint", label: "Add constraint" },
