@@ -1046,6 +1046,7 @@ export function loadDocumentTotals(load: Pick<FoundryLoad, "documentSets">) {
     failed: sum((s) => s.failed),
     waiting: sum((s) => s.waiting),
     facts: sum((s) => s.facts),
+    attributes: sum((s) => s.attributes),
     reviews: sum((s) => s.reviews),
     unresolved: sum((s) => s.unresolved),
   };
@@ -1082,10 +1083,10 @@ const NAMED_SETS = 6;
  *
  * @example
  * loadDocumentsOutcome(
- *   { unreadSetIds: ["m"], documents: 3, read: 1, notRead: 2, duplicate: 0, failed: 0, waiting: 0, facts: 4, reviews: 2, unresolved: 1 },
+ *   { unreadSetIds: ["m"], documents: 3, read: 1, notRead: 2, duplicate: 0, failed: 0, waiting: 0, facts: 4, attributes: 3, reviews: 2, unresolved: 1 },
  *   ["Minutes"],
  * );
- * // "1 of 3 documents was read for the names and facts it holds. 2 documents in Minutes are stored and searchable, but no route of this version reads that set, so nothing from them is in the graph: to read them, generate a version whose goal covers them. The document read made 4 fact writes (a fact counts once for each document that states it) and left 2 reviews. 1 name matched no one record: its review is among them. A review settled since stays counted until this load writes the decision, and a disputed value stays counted once chosen."
+ * // "1 of 3 documents was read for the names and facts it holds. 2 documents in Minutes are stored and searchable, but no route of this version reads that set, so nothing from them is in the graph: to read them, generate a version whose goal covers them. The document read made 4 fact writes and wrote 3 values (each counts once for each document that states it) and left 2 reviews. 1 name matched no one record: its review is among them. A review settled since stays counted until this load writes the decision, and a disputed value stays counted once chosen."
  */
 export function loadDocumentsOutcome(
   t: Omit<LoadDocumentTotals, "sets" | "setsRead">,
@@ -1122,7 +1123,7 @@ export function loadDocumentsOutcome(
       : []),
     ...(t.read
       ? [
-          `${t.read === 1 ? "The document read" : "The documents read"} made ${plural(t.facts, "fact write")} (a fact counts once for each document that states it) and left ${plural(t.reviews, "review")}.`,
+          `${t.read === 1 ? "The document read" : "The documents read"} made ${plural(t.facts, "fact write")}${t.attributes ? ` and wrote ${plural(t.attributes, "value")}` : ""} (${t.attributes ? "each" : "a fact"} counts once for each document that states it) and left ${plural(t.reviews, "review")}.`,
           ...(t.unresolved
             ? [
                 `${plural(t.unresolved, "name")} matched no one record: ${t.unresolved === 1 ? "its review is" : "their reviews are"} among them.`,
@@ -2087,16 +2088,22 @@ export function jobBadge(
 
 /**
  * A load waiting for Helix to try it again (queued, with the worker's words
- * for its last attempt): the new database still starting, when the attempt
- * failed at the database within the database's first minutes
- * (mayBeStarting, from its ontology's creation); otherwise why it failed.
+ * for its last attempt): the database still building its indexes, which
+ * Helix does before it writes, whatever the database's age; the new
+ * database still starting, when the attempt failed at the database within
+ * the database's first minutes (mayBeStarting, from its ontology's
+ * creation); otherwise why it failed.
  * The worker words a write the gateway refused as starting
  * (rate_limit_unavailable) as any refused write, so the words alone can't
  * tell; the window can.
  */
 export type LoadRetry =
+  | { kind: "indexing" }
   | { kind: "starting" }
   | { kind: "failed"; reason: string };
+
+// The worker's words for an attempt that found an index still building.
+const STILL_INDEXING = /still indexing/i;
 
 // The worker's words for an attempt the database refused. Its "database
 // can't be reached" is about Helix's own records of the database (it never
@@ -2107,6 +2114,7 @@ const AT_THE_DATABASE = /rate_limit_unavailable|database refused a write/i;
  * What a load waiting to be tried again says; null for one that isn't.
  *
  * @example
+ * loadRetry({ id: "j", status: "queued", error: "the database is still indexing its data; Helix will retry" }, createdAt, now); // { kind: "indexing" }
  * loadRetry({ id: "j", status: "queued", error: "the database refused a write; Helix will retry" }, createdAt, now); // { kind: "starting" } in the window
  */
 export function loadRetry(
@@ -2115,6 +2123,7 @@ export function loadRetry(
   now: number,
 ): LoadRetry | null {
   if (j.status !== "queued" || !j.error) return null;
+  if (STILL_INDEXING.test(j.error)) return { kind: "indexing" };
   return AT_THE_DATABASE.test(j.error) && mayBeStarting(ontologyCreatedAt, now)
     ? { kind: "starting" }
     : { kind: "failed", reason: j.error };

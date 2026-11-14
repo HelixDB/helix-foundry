@@ -300,7 +300,7 @@ export const VERDICT_LABELS: Record<
   { label: string; tone: "success" | "info" | "neutral" | "warning" | "danger" }
 > = {
   essential: { label: "Essential", tone: "success" },
-  helpful: { label: "Helpful", tone: "info" },
+  helpful: { label: "Helpful", tone: "success" },
   marginal: { label: "Marginal", tone: "neutral" },
   unused: { label: "Unused", tone: "warning" },
   misleading: { label: "Misleading", tone: "danger" },
@@ -404,24 +404,36 @@ export function verdictsText(
 const formatCount = (n: number) => n.toLocaleString("en-US");
 
 /**
- * The goal a draft takes to act on a suggestion: the suggestion, then why,
- * the run's gaps, within the goal's cap.
+ * The goal a draft takes to act on suggestions: the one suggestion, or each
+ * as a line of a list, then why, the gaps runs named, within the goal's cap.
+ *
+ *   suggestionGoal(["Add x.", "Add y."], [], 2000) // "Make these changes:\n- Add x.\n- Add y."
  */
 export function suggestionGoal(
-  suggestion: string,
-  gaps: Assessment["gaps"],
+  suggestions: readonly string[],
+  gaps: readonly { label: string; what: string }[],
   max: number,
 ): string {
+  const what =
+    suggestions.length === 1
+      ? suggestions[0]!
+      : ["Make these changes:", ...suggestions.map((s) => `- ${s}`)].join("\n");
   const why = gaps.length
     ? `\n\nAn agent's run lacked: ${gaps.map((g) => `${g.label.toLowerCase()}: ${g.what}`).join("; ")}.`
     : "";
-  return [...(suggestion + why)].slice(0, max).join("");
+  return [...(what + why)].slice(0, max).join("");
 }
 
 // ---------------------------------------------------------------- insights
 
 /** The windows the pages offer, in days. */
 export const INSIGHT_WINDOWS = [7, 30, 90] as const;
+
+/**
+ * Fewer assessed runs than this read as the counts a rate comes from ("3 of
+ * 4"), and move no trend: a rate of a handful of runs says more than it knows.
+ */
+export const MIN_SAMPLE = 10;
 
 type Totals = FoundryWorkflowInsightTotals;
 const num = (v?: number | string) => Number(v || 0);
@@ -434,14 +446,15 @@ const share = (part: number, whole: number) =>
 export const helpedShare = (t?: Totals) =>
   share(num(t?.helped), num(t?.assessed));
 
+/** Every claim the assessments read. */
+export const claimsOf = (t?: Totals) =>
+  num(t?.claimsSupported) +
+  num(t?.claimsUnsupported) +
+  num(t?.claimsContradicted);
+
 /** The claims a call backed, of all claims assessed. */
 export const backedShare = (t?: Totals) =>
-  share(
-    num(t?.claimsSupported),
-    num(t?.claimsSupported) +
-      num(t?.claimsUnsupported) +
-      num(t?.claimsContradicted),
-  );
+  share(num(t?.claimsSupported), claimsOf(t));
 
 /** Calls to the ontology a run. */
 export const callsPerRun = (t?: Totals) =>
@@ -450,12 +463,16 @@ export const callsPerRun = (t?: Totals) =>
       num(t?.runs)
     : undefined;
 
-/** What a page charts: runs, or one of the shares a run comes to. */
-export type InsightMetric = "runs" | "helped" | "backed" | "calls";
+/** The runs of a verdict. */
+export const verdictRuns = (t: Totals | undefined, verdict: Verdict) =>
+  num(t?.verdicts?.find((v) => v.verdict === verdict)?.runs);
+
+/** What the cards show and the overview charts. */
+export type InsightMetric = "runs" | "helped" | "backed" | "misleading";
 
 const percent = (v: number) => `${Math.round(v * 100)}%`;
 
-/** Each metric: its label, its value over totals, and how it reads. */
+/** Each metric: its label, its value over totals, how it reads, and which way is better. */
 export const INSIGHT_METRICS: Record<
   InsightMetric,
   {
@@ -463,6 +480,7 @@ export const INSIGHT_METRICS: Record<
     value: (t?: Totals) => number | undefined;
     format: (v: number) => string;
     share: boolean;
+    better: "up" | "down";
   }
 > = {
   runs: {
@@ -470,77 +488,149 @@ export const INSIGHT_METRICS: Record<
     value: (t) => num(t?.runs),
     format: (v) => formatCount(v),
     share: false,
+    better: "up",
   },
   helped: {
     label: "Ontology helped",
     value: helpedShare,
     format: percent,
     share: true,
+    better: "up",
   },
   backed: {
-    label: "Claims backed by reads",
+    label: "Claims grounded",
     value: backedShare,
     format: percent,
     share: true,
+    better: "up",
   },
-  calls: {
-    label: "Calls per run",
-    value: callsPerRun,
-    format: (v) => v.toFixed(1),
+  misleading: {
+    label: "Misleading runs",
+    value: (t) => (num(t?.assessed) ? verdictRuns(t, "misleading") : undefined),
+    format: (v) => formatCount(v),
     share: false,
+    better: "down",
   },
 };
 
 /**
- * How a metric moved from the window before: points for a share, a percent
- * for a count; undefined when either side has nothing to compare.
+ * A metric as a card shows it: its rate, or with fewer than MIN_SAMPLE
+ * assessed runs the counts the rate comes from; "—" with nothing to show.
  *
- *     insightChange("helped", { helped: 8, assessed: 10 }, { helped: 6, assessed: 10 })
- *     // { text: "▲ 20 pts", direction: "up" }
+ *     metricText("helped", { assessed: 1, helped: 1 }) // { text: "1 of 1", few: true }
+ *     metricText("helped", { assessed: 20, helped: 15 }) // { text: "75%", few: false }
+ */
+export function metricText(
+  metric: InsightMetric,
+  t?: Totals,
+): { text: string; few: boolean } {
+  const m = INSIGHT_METRICS[metric],
+    v = m.value(t);
+  if (v === undefined) return { text: "—", few: false };
+  if (!m.share || num(t?.assessed) >= MIN_SAMPLE)
+    return { text: m.format(v), few: false };
+  const [part, whole] =
+    metric === "helped"
+      ? [num(t?.helped), num(t?.assessed)]
+      : [num(t?.claimsSupported), claimsOf(t)];
+  return { text: `${formatCount(part)} of ${formatCount(whole)}`, few: true };
+}
+
+/**
+ * How a metric moved from the window before: points for a rate, runs for a
+ * count; whether that is good news by which way the metric is better; none
+ * when either side has nothing, or a rate too few runs to move.
+ *
+ *     insightChange("helped", { helped: 16, assessed: 20 }, { helped: 6, assessed: 10 })
+ *     // { text: "▲ 20 pts", tone: "good" }
  */
 export function insightChange(
   metric: InsightMetric,
   now?: Totals,
   before?: Totals,
-): { text: string; direction: "up" | "down" | "flat" } | undefined {
+): { text: string; tone: "good" | "bad" | "flat" } | undefined {
   const m = INSIGHT_METRICS[metric];
+  if (
+    m.share &&
+    (num(now?.assessed) < MIN_SAMPLE || num(before?.assessed) < MIN_SAMPLE)
+  )
+    return;
   const a = m.value(now),
     b = m.value(before);
-  if (a === undefined || b === undefined || (!m.share && b === 0)) return;
-  const delta = m.share
-    ? Math.round((a - b) * 100)
-    : metric === "calls"
-      ? Math.round((a - b) * 10) / 10
-      : Math.round(((a - b) / b) * 100);
-  const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
-  const size = Math.abs(delta);
-  const unit = m.share ? " pts" : metric === "calls" ? "" : "%";
+  if (a === undefined || b === undefined) return;
+  const delta = m.share ? Math.round((a - b) * 100) : a - b;
+  if (!delta) return { text: "No change", tone: "flat" };
+  const up = delta > 0;
   return {
-    text:
-      direction === "flat"
-        ? "No change"
-        : `${direction === "up" ? "▲" : "▼"} ${metric === "calls" ? size.toFixed(1) : size}${unit}`,
-    direction,
+    text: `${up ? "▲" : "▼"} ${formatCount(Math.abs(delta))}${m.share ? " pts" : ""}`,
+    tone: up === (m.better === "up") ? "good" : "bad",
   };
 }
 
-/** A metric day by day, for a sparkline or the main chart; undefined on a day it has no value. */
+/** Two windows' totals as one: their counts and verdicts summed. */
+function addTotals(a: Totals | undefined, b: Totals | undefined): Totals {
+  const keys = [
+    "runs",
+    "open",
+    "finished",
+    "assessed",
+    "helped",
+    "used",
+    "claimsSupported",
+    "claimsUnsupported",
+    "claimsContradicted",
+    "reads",
+    "questions",
+    "sends",
+    "uploads",
+  ] as const;
+  return {
+    ...Object.fromEntries(keys.map((k) => [k, num(a?.[k]) + num(b?.[k])])),
+    verdicts: VERDICTS.map((verdict) => ({
+      verdict,
+      runs: String(verdictRuns(a, verdict) + verdictRuns(b, verdict)),
+    })),
+  };
+}
+
+/**
+ * A metric day by day, for a sparkline or the trend; undefined on a day it
+ * has no value. A rate over `rolling` days reads each day with the days
+ * before it, so a day of few runs doesn't swing it.
+ *
+ *     insightSeries("helped", [{ date: "d1", totals: { assessed: 1, helped: 1 } },
+ *       { date: "d2", totals: { assessed: 1 } }], 2)
+ *     // [{ date: "d1", value: 1 }, { date: "d2", value: 0.5 }]
+ */
 export const insightSeries = (
   metric: InsightMetric,
   series: FoundryWorkflowInsightDay[] | undefined,
-) =>
-  (series || []).map((d) => ({
+  rolling = 1,
+) => {
+  const days = series || [];
+  const m = INSIGHT_METRICS[metric];
+  return days.map((d, i) => ({
     date: d.date || "",
-    value: INSIGHT_METRICS[metric].value(d.totals),
+    value: m.value(
+      m.share && rolling > 1
+        ? days
+            .slice(Math.max(0, i - rolling + 1), i + 1)
+            .reduce<
+              Totals | undefined
+            >((sum, x) => addTotals(sum, x.totals), undefined)
+        : d.totals,
+    ),
   }));
+};
 
-/** A day's runs by verdict, and those not assessed, for the stacked chart. */
+/** The days a rate's trend reads each day over: a week, in a window long enough. */
+export const rollingDays = (windowDays: number) => (windowDays >= 30 ? 7 : 1);
+
+/** A day's runs by verdict, and those not assessed yet, for the runs chart. */
 export function verdictDay(d: FoundryWorkflowInsightDay) {
-  const t = d.totals;
   const out: Record<string, number | string> = { date: d.date || "" };
-  for (const v of VERDICTS)
-    out[v] = num(t?.verdicts?.find((x) => x.verdict === v)?.runs);
-  out.pending = Math.max(0, num(t?.runs) - num(t?.assessed));
+  for (const v of VERDICTS) out[v] = verdictRuns(d.totals, v);
+  out.pending = Math.max(0, num(d.totals?.runs) - num(d.totals?.assessed));
   return out;
 }
 
@@ -548,7 +638,7 @@ export function verdictDay(d: FoundryWorkflowInsightDay) {
 export function verdictParts(t?: Totals) {
   const assessed = num(t?.assessed);
   return VERDICTS.map((verdict) => {
-    const runs = num(t?.verdicts?.find((x) => x.verdict === verdict)?.runs);
+    const runs = verdictRuns(t, verdict);
     return { verdict, runs, share: assessed ? runs / assessed : 0 };
   }).filter((p) => p.runs > 0);
 }
@@ -603,6 +693,21 @@ export function funnelSteps(f?: FoundryWorkflowInsightFunnel): FunnelStep[] {
   });
 }
 
+/**
+ * Where a window's runs went as one sentence, when none left on the way;
+ * undefined when some did (the steps say where) or there were none.
+ *
+ *     funnelText({ started: 2, finished: 2, assessed: 2, used: 2, helped: 2 })
+ *     // "Every run finished, was assessed and used the ontology, and the ontology helped."
+ */
+export function funnelText(
+  f?: FoundryWorkflowInsightFunnel,
+): string | undefined {
+  const steps = funnelSteps(f);
+  if (!steps[0]?.runs || steps.some((s) => (s.left?.runs || 0) > 0)) return;
+  return `${steps[0].runs === 1 ? "The run" : "Every run"} finished, was assessed and used the ontology, and the ontology helped.`;
+}
+
 /** A gap kind as the pages say it. */
 export const gapKindLabel = (kind?: string) =>
   GAP_KINDS[(kind || "other") as keyof typeof GAP_KINDS] || GAP_KINDS.other;
@@ -621,5 +726,88 @@ export function starterLabel(
   return (
     names.get(p.id) ||
     (p.kind === "KIND_SERVICE_CREDENTIAL" ? "An agent’s key" : "A member")
+  );
+}
+
+/** The principal who started a run. */
+export const starterOf = (r: FoundryWorkflowRun): FoundryPrincipal =>
+  r.startedByServiceCredentialId
+    ? { kind: "KIND_SERVICE_CREDENTIAL", id: r.startedByServiceCredentialId }
+    : { kind: "KIND_USER", id: r.startedByUserId || "" };
+
+/** A principal as one string, for a choice's value; "" for none. */
+export const principalKey = (p?: FoundryPrincipal) =>
+  p?.kind && p.id ? `${p.kind}:${p.id}` : "";
+
+// ---------------------------------------------------------------- runs list
+
+/** How a workflow's runs list narrows by what their assessments found. */
+export const RUN_FILTERS = {
+  all: "All",
+  helped: "Helped",
+  not_helped: "Didn’t help",
+  misleading: "Misleading",
+  pending: "Not assessed",
+} as const;
+export type RunFilter = keyof typeof RUN_FILTERS;
+
+export const isRunFilter = (v: unknown): v is RunFilter =>
+  typeof v === "string" && Object.hasOwn(RUN_FILTERS, v);
+
+/**
+ * The filter a run falls under besides All: helped (essential, helpful),
+ * didn't help (marginal, unused), misleading, or not assessed (open, queued,
+ * failed or skipped).
+ */
+export function runBucket(r: FoundryWorkflowRun): Exclude<RunFilter, "all"> {
+  const a = r.assessment;
+  if (a?.status !== "done" || !isVerdict(a.verdict)) return "pending";
+  if (a.verdict === "essential" || a.verdict === "helpful") return "helped";
+  return a.verdict === "misleading" ? "misleading" : "not_helped";
+}
+
+/**
+ * The first instant of a window of `days` whole UTC days ending on `now`'s,
+ * as the insights count runs by the day they started.
+ */
+export const windowStart = (days: number, now: Date) =>
+  Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) -
+  days * 86_400_000;
+
+/**
+ * A gap's or suggestion's text as the insights match runs by it: case,
+ * spacing and end punctuation aside (the backend's rule).
+ *
+ *     issueKey("  Add a  Health score.") // "add a health score"
+ */
+export const issueKey = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.!?;:,]+$/, "")
+    .trim();
+
+/** What narrows a workflow's runs list: the window, who, the filter, a gap or suggestion. */
+export type RunQuery = {
+  from: number;
+  who?: FoundryPrincipal;
+  filter: RunFilter;
+  // issueKey of a gap or suggestion the run's assessment names.
+  issue?: string;
+};
+
+/** Whether a run is one the list shows. */
+export function runShown(r: FoundryWorkflowRun, q: RunQuery): boolean {
+  if (!r.startedAt || Date.parse(r.startedAt) < q.from) return false;
+  if (q.who && principalKey(starterOf(r)) !== principalKey(q.who)) return false;
+  if (q.filter !== "all" && runBucket(r) !== q.filter) return false;
+  if (!q.issue) return true;
+  const a = assessmentOf(r.assessment?.assessmentJson);
+  return (
+    !!a &&
+    [...a.gaps.map((g) => g.what), ...a.suggestions].some(
+      (text) => issueKey(text) === q.issue,
+    )
   );
 }

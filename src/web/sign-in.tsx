@@ -1,17 +1,19 @@
 import "./sign-in.css";
-import { useEffect, useState, type ReactNode } from "react";
-import { Navigate, useSearchParams } from "react-router-dom";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { signInStarted, trackEvent } from "./analytics";
+import { signInStarted, trackBeforeLeaving, trackEvent } from "./analytics";
 import { signOut } from "./api";
 import { Button, useTitle } from "./kit";
 import { whoamiQuery } from "./workspaces";
 import { LOCAL } from "../shared/deployment";
-import { parseReturnPath } from "../shared/return-path";
+import { parseReturnPath, signInPath } from "../shared/return-path";
 
 // Sign-in, outside the shell. Each provider is a full-page navigation to
 // /auth/login, which starts the WFE-brokered WorkOS flow; WorkOS returns to
-// /login/callback, which lands back here with ?error=<reason> if it failed.
+// /login/callback, which lands back here with ?error=<reason> if it failed,
+// on /login/verify when WorkOS emailed a code to check the address first, or
+// goes through the company's single sign-on when it requires it.
 
 type Provider = { id: "github" | "google" | "microsoft"; label: string };
 const providers: Provider[] = [
@@ -39,11 +41,11 @@ const errors = {
   },
   verify: {
     title: "Your email isn’t verified yet.",
-    text: "Verify it with your provider, or sign in with another provider.",
+    text: "The code ran out or was tried too many times. Sign in again to get a new one.",
   },
   sso: {
     title: "Your company signs in with single sign-on.",
-    text: "Single sign-on isn’t available on Helix Foundry yet. Sign in to the Helix dashboard instead.",
+    text: "Helix couldn’t start your company’s sign-in. Try again in a moment, or ask whoever manages Helix at your company.",
   },
 } satisfies Record<string, { title: string; text: string }>;
 
@@ -208,6 +210,141 @@ export function SignInPage() {
         By continuing, you agree to the HelixDB{" "}
         <a href="https://www.helix-db.com/terms">Terms</a> and acknowledge the{" "}
         <a href="https://www.helix-db.com/privacy">Privacy Policy</a>.
+      </p>
+    </GatePage>
+  );
+}
+
+/** What /auth/verify-email answers (src/app/auth/verify-email/route.ts). */
+export type VerifyEmailAnswer =
+  // GET: the sign-in waits for the code sent to `email`.
+  | { email: string; returnTo: string }
+  // Where to go next: signed in, the company's single sign-on, or the
+  // sign-in page saying why it ended.
+  | { redirectTo: string }
+  // POST: a wrong code, or the check couldn't run; try again.
+  | { error: "code" | "unavailable" };
+
+const codeErrors = {
+  code: "That code isn’t right. Check the email and try again.",
+  unavailable: "Helix couldn’t check the code. Try again in a moment.",
+} as const;
+
+/**
+ * /login/verify?flow=: WorkOS hasn't seen this address verified (a GitHub
+ * or Microsoft account, often) and emailed it a code; the sign-in the
+ * callback kept waits for it. Once it's right, the page the sign-in started
+ * from opens.
+ */
+export function VerifyEmailPage() {
+  const [params] = useSearchParams();
+  const flow = params.get("flow") ?? "";
+  const [code, setCode] = useState(""),
+    [pending, setPending] = useState(false),
+    [error, setError] = useState<keyof typeof codeErrors | null>(null);
+  const waiting = useQuery({
+    queryKey: ["sign-in", "verify-email", flow],
+    queryFn: async () => {
+      const res = await fetch(
+        `/auth/verify-email?${new URLSearchParams({ flow })}`,
+        { cache: "no-store" },
+      );
+      return (await res.json()) as VerifyEmailAnswer;
+    },
+    staleTime: Infinity,
+    retry: false,
+  });
+  const answer = waiting.data,
+    email = answer && "email" in answer ? answer.email : "",
+    returnTo = answer && "returnTo" in answer ? answer.returnTo : null;
+  const shown = !!answer && "email" in answer;
+  useEffect(() => {
+    if (shown) trackEvent("email_verification_shown");
+  }, [shown]);
+  if (answer && "redirectTo" in answer)
+    return <Navigate to={answer.redirectTo} replace />;
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setPending(true);
+    setError(null);
+    let next: VerifyEmailAnswer;
+    try {
+      const res = await fetch("/auth/verify-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flow, code }),
+      });
+      next = (await res.json()) as VerifyEmailAnswer;
+    } catch {
+      next = { error: "unavailable" };
+    }
+    if ("redirectTo" in next && typeof next.redirectTo === "string") {
+      // The sign-in page says itself why a sign-in ended (sign_in_failed).
+      if (!next.redirectTo.startsWith("/login"))
+        await trackBeforeLeaving("email_verified");
+      window.location.assign(next.redirectTo);
+      return;
+    }
+    const reason =
+      "error" in next && next.error === "code" ? "code" : "unavailable";
+    trackEvent("email_verification_failed", { reason });
+    setError(reason);
+    setPending(false);
+  };
+
+  return (
+    <GatePage
+      title="Check your email"
+      lede={
+        email ? (
+          <>
+            Enter the code we sent to <strong data-replay-block>{email}</strong>{" "}
+            to finish signing in.
+          </>
+        ) : (
+          "Enter the code we emailed you to finish signing in."
+        )
+      }
+    >
+      <form className="hf-gate-body" onSubmit={(e) => void submit(e)}>
+        <label className="hf-field">
+          <span>Verification code</span>
+          <input
+            name="code"
+            autoFocus
+            required
+            autoComplete="one-time-code"
+            inputMode="numeric"
+            spellCheck={false}
+            maxLength={32}
+            value={code}
+            aria-invalid={error === "code" || undefined}
+            aria-describedby={error ? "verify-email-error" : undefined}
+            onChange={(e) => {
+              setCode(e.target.value);
+              setError(null);
+            }}
+          />
+        </label>
+        {error && (
+          <p id="verify-email-error" role="alert" className="hf-form-error">
+            {codeErrors[error]}
+          </p>
+        )}
+        <Button
+          type="submit"
+          variant="primary"
+          size="lg"
+          pending={pending}
+          disabled={!code.trim()}
+        >
+          Verify email
+        </Button>
+      </form>
+      <p className="hf-gate-fine">
+        No email? Check your spam folder, or{" "}
+        <Link to={signInPath(returnTo)}>sign in again</Link> to get a new code.
       </p>
     </GatePage>
   );

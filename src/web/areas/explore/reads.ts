@@ -10,15 +10,29 @@ import {
 import type { Scope } from "./load-scope";
 import {
   documentFactsRequest,
+  documentQuotesRequest,
   documentRequest,
   entityRequest,
   factEvidenceRequest,
   nameLinksRequest,
+  loadReviewCountRequest,
+  loadReviewsRequest,
+  parseQuoteFacts,
+  parseRangeQuotes,
+  quoteCountsRequest,
+  quoteFactsRequest,
+  rangeQuotesRequest,
   parseDocument,
   parseDocumentFacts,
+  parseDocumentQuotes,
+  parseLoadReviewCount,
+  parseQuoteCounts,
+  parseLoadReviews,
   parseEntity,
   parseFactEvidence,
   parseNameLinks,
+  type FactQuote,
+  type ScoreRange,
   type DocumentGraph,
   type EntityGraph,
   type EntityIdentity,
@@ -379,4 +393,139 @@ export const readQueries = {
       ...readOptions,
     };
   },
+  // The review queue's reads of the current load (../reviews/queue.ts): how
+  // many reviews it holds and quotes of facts in each score range, its
+  // reviews a page at a time, the quotes at offsets the queue drew, their
+  // facts' ends, and a few documents' quotes. Each under the load, so a job
+  // that ends reads them again. All but the counts wait their turn at the
+  // database's limiter (`readLater`).
+  queueReviewCount: (
+    ws: string,
+    o: string,
+    read: QueryExecutor,
+    scope: Scope,
+  ) => ({
+    queryKey: [ws, "ontology", o, "read", scope.id, "queue-review-count"],
+    queryFn: async ({ signal }: { signal?: AbortSignal }) =>
+      parseLoadReviewCount(
+        await runRead(read, loadReviewCountRequest(scope), signal),
+      ),
+    ...readOptions,
+  }),
+  quoteCounts: (
+    ws: string,
+    o: string,
+    read: QueryExecutor,
+    scope: Scope,
+    ranges: Readonly<Record<string, ScoreRange>>,
+  ) => ({
+    queryKey: [ws, "ontology", o, "read", scope.id, "quote-counts", ranges],
+    queryFn: async ({ signal }: { signal?: AbortSignal }) =>
+      parseQuoteCounts(
+        await runRead(read, quoteCountsRequest(scope, ranges), signal),
+        Object.keys(ranges),
+      ),
+    ...readOptions,
+  }),
+  queueReviews: (
+    ws: string,
+    o: string,
+    read: QueryExecutor,
+    scope: Scope,
+    page: number,
+    naming: Naming = NO_NAMING,
+  ) => ({
+    queryKey: [
+      ws,
+      "ontology",
+      o,
+      "read",
+      scope.id,
+      "queue-reviews",
+      page,
+      naming.version,
+    ],
+    queryFn: async ({ signal }: { signal?: AbortSignal }) =>
+      parseLoadReviews(
+        await runRead(read, loadReviewsRequest(scope, page), signal),
+      ).map((r) => ({
+        ...r,
+        candidates: r.candidates.map((c) =>
+          c.entity ? { ...c, entity: named(naming, c.entity) } : c,
+        ),
+      })),
+    ...readOptions,
+  }),
+  rangeQuotes: (
+    ws: string,
+    o: string,
+    read: QueryExecutor,
+    scope: Scope,
+    range: ScoreRange,
+    offsets: readonly number[],
+  ) => ({
+    queryKey: [
+      ws,
+      "ontology",
+      o,
+      "read",
+      scope.id,
+      "quotes-at",
+      range,
+      offsets,
+    ],
+    queryFn: async ({ signal }: { signal?: AbortSignal }) =>
+      parseRangeQuotes(
+        await runRead(read, rangeQuotesRequest(scope, range, offsets), signal),
+        offsets.length,
+      ),
+    ...readOptions,
+  }),
+  quoteFacts: (
+    ws: string,
+    o: string,
+    read: QueryExecutor,
+    scope: Scope,
+    quotes: readonly FactQuote[],
+    naming: Naming = NO_NAMING,
+  ) => ({
+    queryKey: [
+      ws,
+      "ontology",
+      o,
+      "read",
+      scope.id,
+      "quote-facts",
+      quotes.map((q) => `${q.link}\u001f${q.factKey}`),
+      naming.version,
+    ],
+    queryFn: async ({ signal }: { signal?: AbortSignal }) => {
+      const request = quoteFactsRequest(scope, quotes, namingKeys(naming));
+      if (!request) return [];
+      return parseQuoteFacts(
+        await runRead(read, request, signal),
+        quotes.length,
+      ).map(({ from, to }) => ({
+        ...(from ? { from: named(naming, from) } : {}),
+        ...(to ? { to: named(naming, to) } : {}),
+      }));
+    },
+    ...readOptions,
+  }),
+  documentQuotes: (
+    ws: string,
+    o: string,
+    read: QueryExecutor,
+    scope: Scope,
+    documents: readonly string[],
+  ) => ({
+    queryKey: [ws, "ontology", o, "read", scope.id, "quotes", documents],
+    queryFn: async ({ signal }: { signal?: AbortSignal }) => {
+      const request = documentQuotesRequest(scope, documents);
+      return request
+        ? parseDocumentQuotes(await runRead(read, request, signal), documents)
+        : [];
+    },
+    ...readOptions,
+  }),
 };

@@ -72,6 +72,8 @@ export const LIMITS = Object.freeze({
   evidenceFacts: 50,
   evidencePerFact: 20,
   documentFacts: 100,
+  // The quotes of one document a re-check reads.
+  documentQuotes: 1000,
 });
 
 // ---------------------------------------------------------------- Entity ids
@@ -213,6 +215,28 @@ const valueMap = (input: Ast): Ast => ({ value_map: { input } });
 const edgeProps = (input: Ast): Ast => ({ edge_properties: { input } });
 
 const ENTITY = ["$id", "$label", "name", "entity_key", "norm_name"];
+// What a review is read with: its place, its reason and what settles it.
+const REVIEW_FIELDS = [
+  "$id",
+  "reason",
+  "review_key",
+  "claim_key",
+  "claim",
+  "statement",
+  "section",
+  "type",
+  "doc_id",
+  "norm_name",
+  "entity_key",
+  "values",
+  "prop",
+  "start",
+  "end",
+  "quote",
+  "candidates",
+  "suggested_link",
+  "confidence",
+];
 
 // The entities `review_nodes` concern, every property each (a property
 // review's stored value, a candidate's name), and which review each is of.
@@ -367,27 +391,7 @@ export function documentRequest(
       },
       {
         name: "reviews",
-        root: values(v("review_nodes"), [
-          "$id",
-          "reason",
-          "review_key",
-          "claim_key",
-          "claim",
-          "statement",
-          "section",
-          "type",
-          "doc_id",
-          "norm_name",
-          "entity_key",
-          "values",
-          "prop",
-          "start",
-          "end",
-          "quote",
-          "candidates",
-          "suggested_link",
-          "confidence",
-        ]),
+        root: values(v("review_nodes"), REVIEW_FIELDS),
       },
       ...concernedEntries,
     ],
@@ -1514,4 +1518,439 @@ export function snippet(text: string, start: number, end: number) {
     match,
     after: stop ? tail.slice(0, stop.index + 1).replace(/\n$/, "") : tail,
   };
+}
+
+// ---------------------------------------------------------------- A load's reviews
+
+/**
+ * The review queue's reads of one load (../reviews/queue.ts): every review
+ * the load holds, a page at a time in the database's order, each with the
+ * entities it concerns, as a document's reviews are read; and its documents'
+ * quotes of facts (a fact's evidence in a section) in a score range,
+ * counted, and read one at a time at offsets the queue draws at random.
+ * Offset paging reads every row before its page, so the reviews read stop
+ * at `reviews`, and the page says how many it left.
+ */
+export const QUEUE_READ = Object.freeze({
+  page: 500,
+  reviews: 5000,
+});
+
+/** A score range: from (inclusive) and below (exclusive), either open. */
+export type ScoreRange = { from?: number; below?: number };
+
+const sectionsIn = (scope: Scope): Ast => nodesOf(scope, N.Section);
+/**
+ * The load's quotes of facts in documents: a fact's evidence (it has a fact
+ * key, where a property's quote has none) in a section. No index serves it:
+ * it walks the load's sections' quotes and reviews, so a request reads it
+ * once, into a variable its entries filter.
+ */
+const factQuotes = (scope: Scope): Ast =>
+  where(step("in", sectionsIn(scope), E.FROM_SECTION), {
+    and: {
+      predicates: [
+        label(N.Evidence),
+        { not: { predicate: { is_null: { property: "fact_key" } } } },
+      ],
+    },
+  });
+/** Of `input`, those scored in `range`, whose bounds are the parameters `from` and `below`. */
+const scoredIn = (
+  input: Ast,
+  range: ScoreRange,
+  from: string,
+  below: string,
+): Ast => {
+  const predicates: Ast[] = [
+    ...(range.from === undefined
+      ? []
+      : [
+          { gte: { left: { property: "confidence" }, right: { param: from } } },
+        ]),
+    ...(range.below === undefined
+      ? []
+      : [
+          { lt: { left: { property: "confidence" }, right: { param: below } } },
+        ]),
+  ];
+  return predicates.length ? where(input, { and: { predicates } }) : input;
+};
+const rangeParams = (range: ScoreRange, from: string, below: string) => ({
+  ...(range.from === undefined
+    ? {}
+    : { [from]: { value: range.from, type: "f64" } }),
+  ...(range.below === undefined
+    ? {}
+    : { [below]: { value: range.below, type: "f64" } }),
+});
+
+/** How many reviews a load holds: a bitmap count. */
+export function loadReviewCountRequest(scope: Scope): DynamicQueryRequest {
+  return readRequest("foundry_queue_reviews_count", [
+    { name: "reviews", root: { count: { input: nodesOf(scope, N.Review) } } },
+  ]);
+}
+
+/** loadReviewCountRequest's answer; none when missing. */
+export function parseLoadReviewCount(body: unknown): number {
+  const n = int(isRecord(body) ? body.reviews : undefined);
+  return n !== undefined && n >= 0 ? n : 0;
+}
+
+/**
+ * How many quotes of facts the load holds in each of `ranges` (by name):
+ * the quotes read once, then counted in each range.
+ */
+export function quoteCountsRequest(
+  scope: Scope,
+  ranges: Readonly<Record<string, ScoreRange>>,
+): DynamicQueryRequest {
+  const named = Object.entries(ranges);
+  return readRequest(
+    "foundry_queue_quote_counts",
+    [
+      { name: "facts", root: factQuotes(scope), returned: false },
+      ...named.map(([, range], i) => ({
+        name: `quotes_${i}`,
+        root: {
+          count: {
+            input: scoredIn(v("facts"), range, `from_${i}`, `below_${i}`),
+          },
+        },
+      })),
+    ],
+    Object.assign(
+      {},
+      ...named.map(([, range], i) =>
+        rangeParams(range, `from_${i}`, `below_${i}`),
+      ),
+    ),
+  );
+}
+
+/** quoteCountsRequest's answer, by range name; a count missing reads as none. */
+export function parseQuoteCounts(
+  body: unknown,
+  ranges: readonly string[],
+): Record<string, number> {
+  const data = isRecord(body) ? body : {};
+  return Object.fromEntries(
+    ranges.map((name, i) => {
+      const n = int(data[`quotes_${i}`]);
+      return [name, n !== undefined && n >= 0 ? n : 0];
+    }),
+  );
+}
+
+/** One page (from 0) of a load's reviews, QUEUE_READ.page at a time, with the entities they concern. */
+export function loadReviewsRequest(
+  scope: Scope,
+  page: number,
+): DynamicQueryRequest {
+  const start = Math.max(0, Math.floor(page)) * QUEUE_READ.page;
+  return readRequest("foundry_queue_reviews", [
+    {
+      name: "review_nodes",
+      root: {
+        range: {
+          input: nodesOf(scope, N.Review),
+          start: { literal: start },
+          end: { literal: start + QUEUE_READ.page },
+        },
+      },
+      returned: false,
+    },
+    { name: "reviews", root: values(v("review_nodes"), REVIEW_FIELDS) },
+    ...concernedEntries,
+  ]);
+}
+
+/**
+ * loadReviewsRequest's answer: the reviews of documents, each at its
+ * stored place, with what settles it (a review of a table's rows has no
+ * document, and is left out). Nothing in it is trusted.
+ */
+export function parseLoadReviews(body: unknown): EntityReview[] {
+  const data = isRecord(body) ? body : {};
+  const concerned = concernedBy(data);
+  return rows(data.reviews).flatMap((r): EntityReview[] => {
+    const documentId = str(r.doc_id),
+      section = int(r.section),
+      start = int(r.start),
+      end = int(r.end);
+    return documentId &&
+      section !== undefined &&
+      start !== undefined &&
+      end !== undefined
+      ? [
+          {
+            documentId,
+            section,
+            start,
+            end,
+            ...settleable(r, concerned.get(int(r.$id) ?? -1) || []),
+            quote: str(r.quote) || "",
+            reason: str(r.reason) || "unverified",
+            prop: str(r.prop),
+            suggestedLink: str(r.suggested_link),
+            confidence: num(r.confidence),
+          },
+        ]
+      : [];
+  });
+}
+
+/** A quote of a fact in a document: where it is, its fact and the verifier's score. */
+export type FactQuote = Span & {
+  documentId: string;
+  factKey: string;
+  link: string;
+  quote: string;
+  confidence?: number;
+};
+
+/**
+ * The quotes of facts scored in `range` at `offsets` among the load's (in
+ * the order its sections are read), each with its section's ordinal: one
+ * entry each.
+ */
+export function rangeQuotesRequest(
+  scope: Scope,
+  range: ScoreRange,
+  offsets: readonly number[],
+): DynamicQueryRequest {
+  return readRequest(
+    "foundry_queue_quotes_at",
+    [
+      {
+        name: "band",
+        root: scoredIn(factQuotes(scope), range, "from", "below"),
+        returned: false,
+      },
+      ...offsets.flatMap((at, i): ReadEntry[] => {
+        const o = Math.max(0, Math.floor(at));
+        return [
+          {
+            name: `q_${i}`,
+            root: {
+              range: {
+                input: v("band"),
+                start: { literal: o },
+                end: { literal: o + 1 },
+              },
+            },
+            returned: false,
+          },
+          {
+            name: `quote_${i}`,
+            root: values(v(`q_${i}`), [
+              "doc_id",
+              "fact_key",
+              "link",
+              "start",
+              "end",
+              "quote",
+              "confidence",
+            ]),
+          },
+          {
+            name: `section_${i}`,
+            root: values(step("out", v(`q_${i}`), E.FROM_SECTION), ["ordinal"]),
+          },
+        ];
+      }),
+    ],
+    rangeParams(range, "from", "below"),
+  );
+}
+
+/** rangeQuotesRequest's answer, one per offset: undefined where none read. */
+export function parseRangeQuotes(
+  body: unknown,
+  count: number,
+): (FactQuote | undefined)[] {
+  const data = isRecord(body) ? body : {};
+  return Array.from({ length: count }, (_, i) => {
+    const q = rows(data[`quote_${i}`])[0],
+      section = int(rows(data[`section_${i}`])[0]?.ordinal);
+    if (!q || section === undefined) return undefined;
+    const documentId = str(q.doc_id),
+      factKey = str(q.fact_key),
+      link = str(q.link),
+      start = int(q.start),
+      end = int(q.end);
+    return documentId &&
+      factKey &&
+      link &&
+      start !== undefined &&
+      end !== undefined &&
+      start < end
+      ? {
+          documentId,
+          factKey,
+          link,
+          section,
+          start,
+          end,
+          quote: str(q.quote) || "",
+          confidence: num(q.confidence),
+        }
+      : undefined;
+  });
+}
+
+/**
+ * The ends of each quote's fact (by its link and key, index-backed), named
+ * by `names` (naming.ts namingKeys). Null when there are none.
+ */
+export function quoteFactsRequest(
+  scope: Scope,
+  quotes: readonly FactQuote[],
+  names: string[] = [],
+): DynamicQueryRequest | null {
+  if (!quotes.length) return null;
+  return readRequest(
+    "foundry_queue_quote_facts",
+    quotes.flatMap(({ link }, i): ReadEntry[] => [
+      {
+        name: `e_${i}`,
+        root: limit(edgesOf(scope, link, propIs("fact_key", `key_${i}`)), 1),
+        returned: false,
+      },
+      {
+        name: `from_${i}`,
+        root: values(step("in_n", ve(`e_${i}`)), [...ENTITY, ...names]),
+      },
+      {
+        name: `to_${i}`,
+        root: values(step("out_n", ve(`e_${i}`)), [...ENTITY, ...names]),
+      },
+    ]),
+    Object.fromEntries(
+      quotes.map(({ factKey }, i) => [
+        `key_${i}`,
+        { value: factKey, type: "string" },
+      ]),
+    ),
+  );
+}
+
+/** quoteFactsRequest's answer: each quote's fact's ends, where read. */
+export function parseQuoteFacts(
+  body: unknown,
+  count: number,
+): { from?: EntityRow; to?: EntityRow }[] {
+  const data = isRecord(body) ? body : {};
+  return Array.from({ length: count }, (_, i) => {
+    const end = (v: unknown) => {
+      const r = rows(v)[0];
+      return r ? entityRow(r) : undefined;
+    };
+    const from = end(data[`from_${i}`]),
+      to = end(data[`to_${i}`]);
+    return { ...(from ? { from } : {}), ...(to ? { to } : {}) };
+  });
+}
+
+/**
+ * The quotes the load holds of each document of `documents`, in its
+ * sections, by the document's id (index-backed): what a re-check of a
+ * decision shows when the claim's review is gone (an approval it wrote).
+ */
+export function documentQuotesRequest(
+  scope: Scope,
+  documents: readonly string[],
+): DynamicQueryRequest | null {
+  if (!documents.length) return null;
+  return readRequest(
+    "foundry_queue_quotes",
+    documents.flatMap((_, i): ReadEntry[] => [
+      {
+        name: `q_${i}`,
+        root: limit(
+          nodesOf(scope, N.Evidence, propIs("doc_id", `doc_${i}`)),
+          LIMITS.documentQuotes,
+        ),
+        returned: false,
+      },
+      {
+        name: `quotes_${i}`,
+        root: values(v(`q_${i}`), [
+          "$id",
+          "fact_key",
+          "link",
+          "start",
+          "end",
+          "quote",
+          "confidence",
+        ]),
+      },
+      {
+        name: `in_${i}`,
+        root: edgeProps(step("out_e", v(`q_${i}`), E.FROM_SECTION)),
+      },
+      {
+        name: `sections_${i}`,
+        root: values(dedup(step("out", v(`q_${i}`), E.FROM_SECTION)), [
+          "$id",
+          "ordinal",
+        ]),
+      },
+    ]),
+    Object.fromEntries(
+      documents.map((d, i) => [`doc_${i}`, { value: d, type: "string" }]),
+    ),
+  );
+}
+
+/** documentQuotesRequest's answer: every quote of each document, at its place. */
+export function parseDocumentQuotes(
+  body: unknown,
+  documents: readonly string[],
+): FactQuote[] {
+  const data = isRecord(body) ? body : {};
+  return documents.flatMap((documentId, i) => {
+    const ordinal = new Map(
+      rows(data[`sections_${i}`]).flatMap((r) => {
+        const id = int(r.$id),
+          o = int(r.ordinal);
+        return id !== undefined && o !== undefined ? [[id, o] as const] : [];
+      }),
+    );
+    const section = new Map(
+      rows(data[`in_${i}`]).flatMap((e) => {
+        const from = int(e.$from),
+          at = ordinal.get(int(e.$to) ?? -1);
+        return from !== undefined && at !== undefined
+          ? [[from, at] as const]
+          : [];
+      }),
+    );
+    return rows(data[`quotes_${i}`]).flatMap((q): FactQuote[] => {
+      const at = section.get(int(q.$id) ?? -1),
+        factKey = str(q.fact_key),
+        link = str(q.link),
+        start = int(q.start),
+        end = int(q.end);
+      return at !== undefined &&
+        factKey &&
+        link &&
+        start !== undefined &&
+        end !== undefined
+        ? [
+            {
+              documentId,
+              factKey,
+              link,
+              section: at,
+              start,
+              end,
+              quote: str(q.quote) || "",
+              confidence: num(q.confidence),
+            },
+          ]
+        : [];
+    });
+  });
 }

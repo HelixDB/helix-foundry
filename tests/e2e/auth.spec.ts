@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import {
   APP_ORIGIN,
   csrfToken,
@@ -8,8 +9,9 @@ import {
   test,
 } from "./support/mock";
 
-// Sign-in through the WFE-brokered flow (mock WFE and mock WorkOS), the
-// session's refresh, sign-out, and what the /papi BFF refuses.
+// Sign-in through the WFE-brokered flow (mock WFE and mock WorkOS), with the
+// code WorkOS emails an unverified address and a company's single sign-on,
+// the session's refresh, sign-out, and what the /papi BFF refuses.
 
 test("signs in and returns to the page it came from", async ({ page }) => {
   await page.goto("/data");
@@ -91,6 +93,126 @@ test("says when this environment refuses the account", async ({ page }) => {
     "This account can’t sign in here",
   );
   expect(await sessionCookie(page)).toBeUndefined();
+});
+
+/** Starts signing in with `provider` as `email`, through the mock's page. */
+async function startSignIn(
+  page: Page,
+  email: string,
+  provider: "GitHub" | "Microsoft" = "GitHub",
+) {
+  await page.getByRole("button", { name: `Continue with ${provider}` }).click();
+  await page.getByLabel("Email").fill(email);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+}
+
+/** The sign-ins in progress, by their cookies' names. */
+const pendingLogins = async (page: Page) =>
+  (await page.context().cookies())
+    .filter((c) => c.name.includes("foundry-login-"))
+    .map((c) => c.name);
+
+// A new address containing "unverified" is one WorkOS hasn't seen verified,
+// as a GitHub or Microsoft account's often is; the mock's code is 424242.
+const UNVERIFIED = "grace.unverified@example.com";
+
+test("asks for the code WorkOS emailed before signing in an unverified address", async ({
+  page,
+}) => {
+  await page.goto("/data");
+  await expect(page).toHaveURL(/\/login\?return_to=%2Fdata$/);
+  await startSignIn(page, UNVERIFIED);
+  await expect(page).toHaveURL(/\/login\/verify\?flow=[\w-]{43}$/);
+  await expect(
+    page.getByRole("heading", { name: "Check your email" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(`Enter the code we sent to ${UNVERIFIED}`),
+  ).toBeVisible();
+  expect(await sessionCookie(page)).toBeUndefined();
+
+  // A wrong code keeps the sign-in for another try.
+  const code = page.getByLabel("Verification code"),
+    submit = page.getByRole("button", { name: "Verify email" });
+  await code.fill("111111");
+  await submit.click();
+  await expect(page.getByRole("alert").filter({ hasText: /./ })).toContainText(
+    "That code isn’t right",
+  );
+  await code.fill("424242");
+  await submit.click();
+  // Signed in, back where it started: a new user, so with no workspace yet.
+  await expect(page).toHaveURL(/\/data$/);
+  await expect(
+    page.getByRole("heading", { name: "Create your first workspace" }),
+  ).toBeVisible();
+  expect(await sessionCookie(page)).toBeDefined();
+  expect(await pendingLogins(page)).toEqual([]);
+  expect(
+    (await mock.stats()).requests.filter((r) => r.includes("verify-email")),
+  ).toEqual([
+    "POST /v1/auth/verify-email 400",
+    "POST /v1/auth/verify-email 200",
+  ]);
+
+  // Verified now: the next sign-in asks for no code.
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await signIn(page, UNVERIFIED);
+  await expect(
+    page.getByRole("heading", { name: "Create your first workspace" }),
+  ).toBeVisible();
+});
+
+test("starts again once the sign-in waiting for its code has ended", async ({
+  page,
+}) => {
+  // The browser lost the sign-in it kept: the page says it ran out.
+  await page.goto("/login");
+  await startSignIn(page, UNVERIFIED, "Microsoft");
+  await expect(page).toHaveURL(/\/login\/verify\?/);
+  await page.context().clearCookies();
+  await page.reload();
+  await expect(page).toHaveURL(/\/login\?error=verify$/);
+  await expect(page.getByRole("alert").filter({ hasText: /./ })).toContainText(
+    "Your email isn’t verified yet.",
+  );
+
+  // The WFE forgot it (its ten minutes ran out): the same, keeping where to
+  // land, and a new sign-in from there asks for a new code.
+  await page.goto("/login?return_to=%2Fdata");
+  await startSignIn(page, UNVERIFIED);
+  await expect(page).toHaveURL(/\/login\/verify\?/);
+  await mock.reset();
+  await page.getByLabel("Verification code").fill("424242");
+  await page.getByRole("button", { name: "Verify email" }).click();
+  await expect(page).toHaveURL(/\/login\?error=verify&return_to=%2Fdata$/);
+  expect(await pendingLogins(page)).toEqual([]);
+  await startSignIn(page, UNVERIFIED);
+  await expect(
+    page.getByRole("heading", { name: "Check your email" }),
+  ).toBeVisible();
+});
+
+test("signs in through the company's single sign-on when it requires it", async ({
+  page,
+}) => {
+  await page.goto("/login?return_to=%2Fdata");
+  // sso.example's company signs its people in with its own IdP, so WorkOS
+  // refuses Microsoft for them: the sign-in goes on through the IdP.
+  await startSignIn(page, "grace@sso.example", "Microsoft");
+  await expect(
+    page.getByRole("heading", { name: "Mock single sign-on" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Email")).toHaveValue("grace@sso.example");
+  expect(await pendingLogins(page)).toHaveLength(1);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page).toHaveURL(/\/data$/);
+  await expect(
+    page.getByRole("heading", { name: "Create your first workspace" }),
+  ).toBeVisible();
+  expect((await mock.stats()).loginStarts).toBe(2);
+  expect(await pendingLogins(page)).toEqual([]);
 });
 
 test("refreshes an expired session once for parallel calls", async ({

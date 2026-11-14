@@ -3,6 +3,9 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +33,7 @@ type signInBackend struct {
 	connector  *foundryv1.Connector
 	connectors []*foundryv1.Connector
 	startErr   error
+	kindsErr   error
 	calls      map[string]int
 	started    *foundryv1.StartConnectorSignInRequest
 }
@@ -63,6 +67,9 @@ func (b *signInBackend) called(method string) {
 
 func (b *signInBackend) ListConnectorKinds(context.Context, *foundryv1.ListConnectorKindsRequest, ...grpc.CallOption) (*foundryv1.ListConnectorKindsResponse, error) {
 	b.called("ListConnectorKinds")
+	if b.kindsErr != nil {
+		return nil, b.kindsErr
+	}
 	return &foundryv1.ListConnectorKindsResponse{Kinds: b.kinds}, nil
 }
 
@@ -150,62 +157,91 @@ func call(t *testing.T, session *mcp.ClientSession, name string, arguments map[s
 	return out, ""
 }
 
-func toolNames(t *testing.T, s *Service, identity *Identity) []string {
+// listedTools are the tools the identity discovers, by name.
+func listedTools(t *testing.T, s *Service, identity *Identity) map[string]*mcp.Tool {
 	t.Helper()
 	listed, err := connect(t, s, identity).ListTools(context.Background(), nil)
 	require.NoError(t, err)
-	names := make([]string, 0, len(listed.Tools))
+	tools := map[string]*mcp.Tool{}
 	for _, tool := range listed.Tools {
-		names = append(names, tool.Name)
+		tools[tool.Name] = tool
 	}
-	return names
+	return tools
+}
+
+func toolNames(t *testing.T, s *Service, identity *Identity) []string {
+	t.Helper()
+	return slices.Collect(maps.Keys(listedTools(t, s, identity)))
+}
+
+// inputFields are a tool's input schema's properties.
+func inputFields(t *testing.T, tool *mcp.Tool) []string {
+	t.Helper()
+	raw, err := json.Marshal(tool.InputSchema)
+	require.NoError(t, err)
+	var schema struct {
+		Properties map[string]any `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &schema))
+	return slices.Sorted(maps.Keys(schema.Properties))
 }
 
 func TestSignInDiscovery(t *testing.T) {
-	// Owners and admins may connect a kind by signing in where the host offers it.
-	t.Run("offers the sign-in tools to those who manage connectors", func(t *testing.T) {
-		got := toolNames(t, signInHost(newSignInBackend()), manager())
-		assert.Contains(t, got, toolFoundryStartSignIn)
-		assert.Contains(t, got, toolFoundryGetSignIn)
+	// Owners and admins may connect a kind by signing in where the host offers it: connect takes
+	// a sign-in's fields, and get_sign_in follows one.
+	t.Run("offers signing in to those who manage connectors", func(t *testing.T) {
+		tools := listedTools(t, signInHost(newSignInBackend()), manager())
+		require.Contains(t, tools, toolFoundryConnect)
+		assert.Contains(t, tools, toolFoundryGetSignIn)
+		assert.Equal(t, []string{"client_token", "connector_id", "kind", "name", "project_id", "repos", "with_key", "workspace_id"},
+			inputFields(t, tools[toolFoundryConnect]))
 	})
 	// Off on the host (pipes.enabled hosted; always locally), or with no website for the link to
 	// open, there is nothing to sign in through; members don't manage connectors, and keys, agent
-	// registrations and send tokens never reach a user's browser.
+	// registrations and send tokens never reach a user's browser. A manager on a host without it
+	// still connects through the kind's form, with the Workspace and the kind alone.
 	for name, tc := range map[string]struct {
 		host     func(*Service)
 		identity func() *Identity
+		connect  bool
 	}{
-		"on a host that doesn't offer it": {func(s *Service) { s.SignIn = false }, manager},
-		"without the website":             {func(s *Service) { s.FoundryURL = "" }, manager},
-		"to a member":                     {nil, member},
+		"on a host that doesn't offer it": {func(s *Service) { s.SignIn = false }, manager, true},
+		"without the website":             {func(s *Service) { s.FoundryURL = "" }, manager, false},
+		"to a member":                     {nil, member, false},
 		"to a key": {nil, func() *Identity {
 			identity := manager()
 			identity.User, identity.ServiceKey = false, true
 			return identity
-		}},
+		}, false},
 		"to an agent registration": {nil, func() *Identity {
 			identity := manager()
 			identity.Agent = true
 			return identity
-		}},
+		}, false},
+		// A host gives a send token the send tool alone; given the rest, it links forms only.
 		"to a send token": {nil, func() *Identity {
 			identity := manager()
 			identity.EventSource = &EventSourceIdentity{WorkspaceID: "workspace-1", ConnectorID: "source-1"}
 			return identity
-		}},
+		}, true},
 	} {
 		t.Run("offers none "+name, func(t *testing.T) {
 			s := signInHost(newSignInBackend())
 			if tc.host != nil {
 				tc.host(s)
 			}
-			got := toolNames(t, s, tc.identity())
-			assert.NotContains(t, got, toolFoundryStartSignIn)
-			assert.NotContains(t, got, toolFoundryGetSignIn)
+			tools := listedTools(t, s, tc.identity())
+			assert.NotContains(t, tools, toolFoundryGetSignIn)
+			if !tc.connect {
+				assert.NotContains(t, tools, toolFoundryConnect)
+				return
+			}
+			require.Contains(t, tools, toolFoundryConnect)
+			assert.Equal(t, []string{"kind", "workspace_id"}, inputFields(t, tools[toolFoundryConnect]))
 		})
 	}
-	// What the other tools say of signing in, only where the caller has the tools.
-	t.Run("names the sign-in tools only where they are offered", func(t *testing.T) {
+	// What the other tools say of signing in, only where the caller has it.
+	t.Run("speaks of signing in only where it is offered", func(t *testing.T) {
 		listing := func(s *Service) string {
 			listed, err := connect(t, s, manager()).ListTools(context.Background(), nil)
 			require.NoError(t, err)
@@ -215,29 +251,29 @@ func TestSignInDiscovery(t *testing.T) {
 		}
 		off := signInHost(newSignInBackend())
 		off.SignIn = false
-		assert.NotContains(t, listing(off), "sign_in_")
-		assert.NotContains(t, listing(off), "start_sign_in")
-		assert.Contains(t, listing(signInHost(newSignInBackend())), "a kind with sign_in connects by signing in at its provider instead (helix_foundry_start_sign_in)")
-	})
-	// Starting writes a sign-in, so it isn't read-only; it destroys nothing. Getting one is a read.
-	t.Run("annotates starting as a write", func(t *testing.T) {
-		listed, err := connect(t, signInHost(newSignInBackend()), manager()).ListTools(context.Background(), nil)
-		require.NoError(t, err)
-		annotations := map[string]*mcp.ToolAnnotations{}
-		for _, tool := range listed.Tools {
-			annotations[tool.Name] = tool.Annotations
+		for _, word := range []string{"sign_in_", "get_sign_in", "with_key", "by signing in"} {
+			assert.NotContains(t, listing(off), word)
 		}
-		start := annotations[toolFoundryStartSignIn]
-		require.NotNil(t, start)
+		assert.Contains(t, listing(signInHost(newSignInBackend())),
+			"helix_foundry_connect connects one, a kind with sign_in by signing in at its provider and any other through its form")
+	})
+	// Connecting may start a sign-in, so it isn't read-only; it destroys nothing. Without signing
+	// in it only links a form, a read. Getting a sign-in is a read.
+	t.Run("annotates connecting as a write only where it may sign in", func(t *testing.T) {
+		tools := listedTools(t, signInHost(newSignInBackend()), manager())
+		start := tools[toolFoundryConnect].Annotations
 		assert.False(t, start.ReadOnlyHint)
 		assert.False(t, start.IdempotentHint)
 		require.NotNil(t, start.DestructiveHint)
 		assert.False(t, *start.DestructiveHint)
-		assert.True(t, annotations[toolFoundryGetSignIn].ReadOnlyHint)
+		assert.True(t, tools[toolFoundryGetSignIn].Annotations.ReadOnlyHint)
+		off := signInHost(newSignInBackend())
+		off.SignIn = false
+		assert.True(t, listedTools(t, off, manager())[toolFoundryConnect].Annotations.ReadOnlyHint)
 	})
 }
 
-func TestStartSignIn(t *testing.T) {
+func TestConnectSignsIn(t *testing.T) {
 	// The agent's sign-in becomes a link to the GitHub form bound to it, with the settings it
 	// chose and the kind's name.
 	t.Run("starts a GitHub sign-in and links its form", func(t *testing.T) {
@@ -250,16 +286,19 @@ func TestStartSignIn(t *testing.T) {
 			authorized = methods
 			return authorize(ctx, req, grant, methods...)
 		}
-		got, errText := call(t, connect(t, signInHost(b), identity), toolFoundryStartSignIn, map[string]any{
+		got, errText := call(t, connect(t, signInHost(b), identity), toolFoundryConnect, map[string]any{
 			"workspace_id": "workspace-1", "kind": "github", "repos": []string{"acme/api", "acme/web"}, "client_token": "token-1",
 		})
 		require.Empty(t, errText)
 		assert.Equal(t, "sign-in-1", got["sign_in_id"])
 		assert.Equal(t, "https://foundry.example/data?add=github&sign_in=sign-in-1&workspace=workspace-1", got["url"])
 		assert.Equal(t, "2023-11-14T22:28:20Z", got["expires_at"])
+		assert.Equal(t, "github", got["kind"])
+		assert.Equal(t, "GitHub", got["display_name"])
+		assert.Equal(t, true, got["available"])
 		assert.Contains(t, got["next"], "xdg-open")
 		assert.Contains(t, got["next"], toolFoundryGetSignIn)
-		assert.Equal(t, []string{"ListConnectorKinds", "StartConnectorSignIn"}, authorized)
+		assert.Equal(t, []string{"ListConnectorKinds", "CreateConnector", "StartConnectorSignIn"}, authorized)
 		assert.Equal(t, "GitHub", b.started.GetName())
 		assert.Equal(t, "token-1", b.started.GetClientToken())
 		assert.Equal(t, []string{"acme/api", "acme/web"}, b.started.GetConfig().GetGithub().GetRepos())
@@ -270,7 +309,7 @@ func TestStartSignIn(t *testing.T) {
 	for _, kind := range []string{"github", "linear"} {
 		t.Run("signs a "+kind+" connector in again", func(t *testing.T) {
 			b := newSignInBackend()
-			got, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryStartSignIn, map[string]any{
+			got, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryConnect, map[string]any{
 				"workspace_id": "workspace-1", "kind": kind, "connector_id": "connector-7",
 			})
 			require.Empty(t, errText)
@@ -291,7 +330,7 @@ func TestStartSignIn(t *testing.T) {
 	} {
 		t.Run("starts "+kind+" from its default settings", func(t *testing.T) {
 			b := newSignInBackend()
-			_, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryStartSignIn, map[string]any{"workspace_id": "workspace-1", "kind": kind})
+			_, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryConnect, map[string]any{"workspace_id": "workspace-1", "kind": kind})
 			require.Empty(t, errText)
 			config := b.started.GetConfig().ProtoReflect()
 			field := config.WhichOneof(config.Descriptor().Oneofs().ByName("kind"))
@@ -303,7 +342,7 @@ func TestStartSignIn(t *testing.T) {
 	// PostHog's project is the agent's to choose, in PostHog US Cloud.
 	t.Run("starts PostHog in US Cloud with a project", func(t *testing.T) {
 		b := newSignInBackend()
-		_, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryStartSignIn, map[string]any{
+		_, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryConnect, map[string]any{
 			"workspace_id": "workspace-1", "kind": "posthog", "project_id": " 4242 ",
 		})
 		require.Empty(t, errText)
@@ -312,61 +351,80 @@ func TestStartSignIn(t *testing.T) {
 		assert.Empty(t, b.started.GetConfig().GetPosthog().GetApiKey())
 		assert.Equal(t, "PostHog", b.started.GetName())
 	})
-	// The tool takes no region: PostHog EU Cloud and a self-hosted PostHog connect through the
-	// connector link with a key, and the schema refuses one before anything starts.
+	// The tool takes no region: PostHog EU Cloud and a self-hosted PostHog connect with_key,
+	// through the kind's form, and the schema refuses one before anything starts.
 	t.Run("takes no PostHog region", func(t *testing.T) {
 		b := newSignInBackend()
-		_, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryStartSignIn, map[string]any{"workspace_id": "workspace-1", "kind": "posthog", "region": "eu"})
+		_, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryConnect, map[string]any{"workspace_id": "workspace-1", "kind": "posthog", "region": "eu"})
 		assert.Contains(t, errText, `unexpected additional properties ["region"]`)
 		assert.Zero(t, b.count("StartConnectorSignIn"))
 	})
-	// Settings a kind doesn't take, a name or settings with connector_id, and bad arguments are
-	// refused before any sign-in starts.
+	// with_key opens the kind's own form, where the user enters a key: PostHog EU Cloud's way in.
+	t.Run("opens the form with_key", func(t *testing.T) {
+		b := newSignInBackend()
+		got, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryConnect, map[string]any{"workspace_id": "workspace-1", "kind": "posthog", "with_key": true})
+		require.Empty(t, errText)
+		assert.Equal(t, "https://foundry.example/data?add=posthog&workspace=workspace-1", got["url"])
+		assert.NotContains(t, got, "sign_in_id")
+		assert.True(t, strings.HasPrefix(got["next"].(string), "Give the user this link"), got["next"])
+		assert.Zero(t, b.count("StartConnectorSignIn"))
+	})
+	// A kind that doesn't sign in links its form, and starts nothing.
+	t.Run("links the form of a kind that doesn't sign in", func(t *testing.T) {
+		b := newSignInBackend()
+		got, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryConnect, map[string]any{"workspace_id": "workspace-1", "kind": "granola", "client_token": "token-1"})
+		require.Empty(t, errText)
+		assert.Equal(t, "https://foundry.example/data?add=granola&workspace=workspace-1", got["url"])
+		assert.NotContains(t, got, "sign_in_id")
+		assert.NotContains(t, got, "expires_at")
+		assert.Zero(t, b.count("StartConnectorSignIn"))
+	})
+	// Settings a kind doesn't take, a name or settings with connector_id, a sign-in's fields on a
+	// form, and bad arguments are refused before any sign-in starts.
+	form := "invalid_arguments: %s connects through its form, where the user names it and chooses its settings: name, repos, project_id and connector_id are for signing in"
 	for name, tc := range map[string]struct {
 		arguments map[string]any
 		want      string
 	}{
-		"repos when signing again":     {map[string]any{"kind": "github", "connector_id": "connector-7", "repos": []string{"acme/api"}}, "invalid_arguments: signing a connector in again keeps its name and settings; change them on its page"},
-		"a name when signing again":    {map[string]any{"kind": "github", "connector_id": "connector-7", "name": "Renamed"}, "invalid_arguments: signing a connector in again keeps its name and settings; change them on its page"},
-		"a project when signing again": {map[string]any{"kind": "posthog", "connector_id": "connector-7", "project_id": "4242"}, "invalid_arguments: signing a connector in again keeps its name and settings; change them on its page"},
-		"a project for Slack":          {map[string]any{"kind": "slack", "project_id": "4242"}, "invalid_arguments: project_id is PostHog's only"},
-		"repos for PostHog":            {map[string]any{"kind": "posthog", "repos": []string{"acme/api"}}, "invalid_arguments: repos are GitHub's only"},
-		"repos for Linear":             {map[string]any{"kind": "linear", "repos": []string{"acme/api"}}, "invalid_arguments: repos are GitHub's only"},
-		"a project that isn't one":     {map[string]any{"kind": "posthog", "project_id": "acme"}, "invalid_arguments: the PostHog project id is a number, found in its project settings"},
-		"an unknown kind":              {map[string]any{"kind": "jira"}, `invalid_arguments: Foundry has no "jira" connector; it offers granola, github, linear, slack, notion, posthog, calcom, stripe, google`},
-		"a long client token":          {map[string]any{"kind": "github", "client_token": strings.Repeat("x", 65)}, "invalid_arguments"},
-		"a malformed connector":        {map[string]any{"kind": "github", "connector_id": "a b"}, "invalid_arguments"},
+		"repos when signing again":       {map[string]any{"kind": "github", "connector_id": "connector-7", "repos": []string{"acme/api"}}, "invalid_arguments: signing a connector in again keeps its name and settings; change them on its page"},
+		"a name when signing again":      {map[string]any{"kind": "github", "connector_id": "connector-7", "name": "Renamed"}, "invalid_arguments: signing a connector in again keeps its name and settings; change them on its page"},
+		"a project when signing again":   {map[string]any{"kind": "posthog", "connector_id": "connector-7", "project_id": "4242"}, "invalid_arguments: signing a connector in again keeps its name and settings; change them on its page"},
+		"a project for Slack":            {map[string]any{"kind": "slack", "project_id": "4242"}, "invalid_arguments: project_id is PostHog's only"},
+		"repos for PostHog":              {map[string]any{"kind": "posthog", "repos": []string{"acme/api"}}, "invalid_arguments: repos are GitHub's only"},
+		"repos for Linear":               {map[string]any{"kind": "linear", "repos": []string{"acme/api"}}, "invalid_arguments: repos are GitHub's only"},
+		"a project that isn't one":       {map[string]any{"kind": "posthog", "project_id": "acme"}, "invalid_arguments: the PostHog project id is a number, found in its project settings"},
+		"a name for a form":              {map[string]any{"kind": "granola", "name": "Notes"}, fmt.Sprintf(form, "Granola")},
+		"a connector for a form":         {map[string]any{"kind": "granola", "connector_id": "connector-7"}, fmt.Sprintf(form, "Granola")},
+		"a connector with_key":           {map[string]any{"kind": "github", "connector_id": "connector-7", "with_key": true}, fmt.Sprintf(form, "GitHub")},
+		"repos with_key":                 {map[string]any{"kind": "github", "repos": []string{"acme/api"}, "with_key": true}, fmt.Sprintf(form, "GitHub")},
+		"a project with_key":             {map[string]any{"kind": "posthog", "project_id": "4242", "with_key": true}, fmt.Sprintf(form, "PostHog")},
+		"an unknown kind":                {map[string]any{"kind": "jira"}, `invalid_arguments: Foundry has no "jira" connector; it offers granola, github, linear, slack, notion, posthog, calcom, stripe, google`},
+		"a long client token":            {map[string]any{"kind": "github", "client_token": strings.Repeat("x", 65)}, "invalid_arguments"},
+		"a malformed connector":          {map[string]any{"kind": "github", "connector_id": "a b"}, "invalid_arguments"},
+		"a malformed connector for form": {map[string]any{"kind": "granola", "connector_id": "a b"}, "invalid_arguments"},
 	} {
 		t.Run("refuses "+name, func(t *testing.T) {
 			b := newSignInBackend()
 			tc.arguments["workspace_id"] = "workspace-1"
-			_, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryStartSignIn, tc.arguments)
+			_, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryConnect, tc.arguments)
 			assert.Equal(t, tc.want, errText)
 			assert.Zero(t, b.count("StartConnectorSignIn"))
 		})
 	}
-	// A kind that doesn't sign in for this user says why in Foundry's words, and where to go.
-	t.Run("says where a kind that doesn't sign in goes", func(t *testing.T) {
-		b := newSignInBackend()
-		b.startErr = status.Error(codes.FailedPrecondition, "Granola isn't connected by signing in")
-		_, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryStartSignIn, map[string]any{"workspace_id": "workspace-1", "kind": "granola"})
-		assert.Equal(t, "failed_precondition: Granola isn't connected by signing in "+toolFoundryConnectorLink+
-			" opens its form, where the user enters a key instead.", errText)
-	})
 	// The backend's caps and refusals pass through with their own words.
 	t.Run("passes the backend's refusals through", func(t *testing.T) {
 		b := newSignInBackend()
 		b.startErr = status.Error(codes.ResourceExhausted, "you have 5 sign-ins under way; finish or let one expire first")
-		_, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryStartSignIn, map[string]any{"workspace_id": "workspace-1", "kind": "github"})
+		_, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryConnect, map[string]any{"workspace_id": "workspace-1", "kind": "github"})
 		assert.Equal(t, "resource_exhausted: you have 5 sign-ins under way; finish or let one expire first", errText)
 	})
 	// A workspace the user doesn't manage gets nothing, as if it weren't there.
 	t.Run("refuses another workspace before any call", func(t *testing.T) {
 		b := newSignInBackend()
 		s := signInHost(b)
-		_, _, err := s.StartFoundrySignIn(context.Background(), manager(), &Call{}, StartFoundrySignInInput{WorkspaceID: "workspace-2", Kind: "github"})
+		_, _, err := s.FoundryConnect(context.Background(), manager(), &Call{}, FoundryConnectInput{WorkspaceID: "workspace-2", Kind: "github"})
 		assert.Equal(t, errCodeNotFound, err)
-		_, _, err = s.StartFoundrySignIn(context.Background(), member(), &Call{}, StartFoundrySignInInput{WorkspaceID: "workspace-1", Kind: "github"})
+		_, _, err = s.FoundryConnect(context.Background(), member(), &Call{}, FoundryConnectInput{WorkspaceID: "workspace-1", Kind: "github"})
 		assert.Equal(t, errCodeNotFound, err)
 		assert.Empty(t, b.calls)
 	})
@@ -468,7 +526,7 @@ func TestGetSignIn(t *testing.T) {
 		})}
 		got := get(t, b, true)
 		assert.NotContains(t, got, "url")
-		assert.Contains(t, got["next"], toolFoundryStartSignIn+" and connector_id connector-7")
+		assert.Contains(t, got["next"], toolFoundryConnect+" and connector_id connector-7")
 	})
 	// Only the member who started a sign-in can authorize it.
 	t.Run("says another member's sign-in is theirs", func(t *testing.T) {
@@ -501,8 +559,8 @@ func TestGetSignIn(t *testing.T) {
 }
 
 // A signed-in connector shows whose access it reads with and whether it needs signing in
-// again, never its provider label; kinds say which sign in; the link points those at the
-// sign-in tool.
+// again, never its provider label; kinds say which sign in; connect signs those in where the
+// host offers it.
 func TestSignInConnectors(t *testing.T) {
 	t.Run("lists a connector's account without its label", func(t *testing.T) {
 		b := newSignInBackend()
@@ -528,22 +586,22 @@ func TestSignInConnectors(t *testing.T) {
 		assert.Equal(t, map[string]any{"granola": false, "github": true, "linear": true, "slack": true, "notion": true,
 			"posthog": true, "calcom": true, "stripe": true, "google": true}, signIn)
 	})
-	t.Run("points a sign-in kind's link at the sign-in tool", func(t *testing.T) {
-		session := connect(t, signInHost(newSignInBackend()), manager())
-		got, errText := call(t, session, toolFoundryConnectorLink, map[string]any{"workspace_id": "workspace-1", "kind": "github"})
+	// Where the host offers signing in, a kind that signs in starts a sign-in; elsewhere the
+	// same kind links its form, and nothing starts.
+	t.Run("signs a kind in only where the host offers it", func(t *testing.T) {
+		b := newSignInBackend()
+		got, errText := call(t, connect(t, signInHost(b), manager()), toolFoundryConnect, map[string]any{"workspace_id": "workspace-1", "kind": "github"})
 		require.Empty(t, errText)
-		assert.Contains(t, got["next"], toolFoundryStartSignIn)
-		got, errText = call(t, session, toolFoundryConnectorLink, map[string]any{"workspace_id": "workspace-1", "kind": "granola"})
+		assert.Equal(t, "sign-in-1", got["sign_in_id"])
+		off := signInHost(b)
+		off.SignIn = false
+		got, errText = call(t, connect(t, off, manager()), toolFoundryConnect, map[string]any{"workspace_id": "workspace-1", "kind": "github"})
 		require.Empty(t, errText)
-		assert.NotContains(t, got["next"], toolFoundryStartSignIn)
-	})
-	// Where the tool isn't offered, the link keeps sending the user to the form.
-	t.Run("keeps the link's form where the host doesn't offer signing in", func(t *testing.T) {
-		s := signInHost(newSignInBackend())
-		s.SignIn = false
-		got, errText := call(t, connect(t, s, manager()), toolFoundryConnectorLink, map[string]any{"workspace_id": "workspace-1", "kind": "github"})
-		require.Empty(t, errText)
-		assert.NotContains(t, got["next"], toolFoundryStartSignIn)
+		assert.Equal(t, "https://foundry.example/data?add=github&workspace=workspace-1", got["url"])
+		assert.NotContains(t, got, "sign_in_id")
+		assert.NotContains(t, got["next"], "signing in")
+		assert.NotContains(t, got["next"], toolFoundryGetSignIn)
+		assert.Equal(t, 1, b.count("StartConnectorSignIn"))
 	})
 }
 

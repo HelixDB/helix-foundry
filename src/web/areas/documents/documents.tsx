@@ -270,6 +270,16 @@ export function DocumentsPage() {
                   render: (d) => (d.extraction ? d.extraction.facts || 0 : "—"),
                 },
                 {
+                  // Property values it stated that were written as evidence.
+                  key: "attributes",
+                  label: "Values",
+                  type: "integer",
+                  width: 90,
+                  sortValue: (d) => d.extraction?.attributes ?? -1,
+                  render: (d) =>
+                    d.extraction ? d.extraction.attributes || 0 : "—",
+                },
+                {
                   key: "sizeBytes",
                   label: "Size",
                   type: "integer",

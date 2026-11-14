@@ -14,6 +14,9 @@ export type MockUser = {
   firstName: string;
   lastName: string;
   createdAt: string;
+  // WorkOS hasn't seen the address verified: its next sign-in emails a
+  // code first (mock/routes/auth.ts).
+  emailUnverified?: true;
 };
 export type Membership = {
   id: string;
@@ -30,6 +33,8 @@ export type PendingLogin = {
   state: string;
   redirectUri: string;
   provider: string;
+  // AUTH_PROVIDER_SSO's email, which chose the company's IdP.
+  email?: string;
   code?: string;
   userId?: string;
 };
@@ -38,6 +43,8 @@ export const db = {
   users: new Map<string, MockUser>(),
   sessions: new Map<string, MockSession>(),
   logins: new Map<string, PendingLogin>(),
+  // Exchanges waiting for the emailed code, by the login's sessionId.
+  verifications: new Map<string, { userId: string }>(),
   workspaces: new Map<string, Workspace>(),
   memberships: [] as Membership[],
 };
@@ -91,10 +98,21 @@ export function onReset(reset: () => void) {
 export const SEED_EMAIL = "ada@example.com";
 const SEED_TIME = "2026-10-01T09:00:00.000Z";
 
+// Sign-in's rules (mock/routes/auth.ts). A new address containing
+// "unverified" is one WorkOS hasn't seen verified, as a GitHub or Microsoft
+// account's often is: its first sign-in asks for the code WorkOS would have
+// emailed, which in the mock is always this one.
+export const EMAIL_CODE = "424242";
+// Addresses at this domain belong to a company that requires its single
+// sign-on (WorkOS's domainSsoRequired): any other way in answers
+// ssoRequired, and AUTH_PROVIDER_SSO signs them in. No other domain has SSO.
+export const SSO_DOMAIN = "sso.example";
+
 export function resetState() {
   db.users.clear();
   db.sessions.clear();
   db.logins.clear();
+  db.verifications.clear();
   db.workspaces.clear();
   db.memberships.length = 0;
   stats.loginStarts = 0;

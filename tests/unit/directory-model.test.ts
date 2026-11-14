@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FoundryTeam, WorkspaceDirectory } from "../../src/shared/wfe";
 import {
   directoryCounts,
+  directoryNotOffered,
   directoryView,
   issueGroups,
   providerName,
@@ -60,6 +61,17 @@ describe("stateView", () => {
     expect(stateView("DIRECTORY_STATE_DELETING").label).toBe("Being removed");
     expect(stateView(undefined).label).toBe("Unknown");
   });
+  it("calls one that never linked unfinished, not broken", () => {
+    expect(stateView("DIRECTORY_STATE_UNLINKED", false)).toEqual({
+      label: "Setup not finished",
+      tone: "pending",
+      hint: "Finish connecting it in the setup guide. Its groups and people show here once it sends them.",
+    });
+    // Credentials that failed before it ever synced are still broken.
+    expect(stateView("DIRECTORY_STATE_INVALID_CREDENTIALS", false).tone).toBe(
+      "danger",
+    );
+  });
 });
 
 describe("syncText", () => {
@@ -88,6 +100,40 @@ describe("syncText", () => {
       text: "Not synced yet",
       tone: "pending",
     });
+  });
+  it("shows no failure for one that never linked", () => {
+    const settingUp: WorkspaceDirectory = {
+      entitled: true,
+      directory: { state: "DIRECTORY_STATE_UNLINKED" },
+    };
+    // An older WFE reports it failed.
+    expect(
+      syncText(
+        {
+          ...settingUp,
+          syncState: "DIRECTORY_SYNC_STATE_FAILED",
+          syncError:
+            "the directory is unlinked; reconnect it in the setup guide",
+        },
+        ago,
+      ),
+    ).toEqual({ text: "Not synced yet", tone: "pending" });
+    expect(
+      syncText({ ...settingUp, syncState: "DIRECTORY_SYNC_STATE_PENDING" }, ago)
+        .text,
+    ).toBe("Syncing…");
+    // Once it synced, unlinking is a failure worth saying.
+    expect(
+      syncText(
+        {
+          ...settingUp,
+          lastSyncedAt: "2026-11-11T10:00:00Z",
+          syncState: "DIRECTORY_SYNC_STATE_FAILED",
+          syncError: "the directory is unlinked",
+        },
+        ago,
+      ).tone,
+    ).toBe("danger");
   });
   it("counts people and groups", () => {
     expect(directoryCounts({ userCount: 1, groups: [{}] })).toBe(
@@ -201,5 +247,15 @@ describe("teamsWithoutSources", () => {
         "Okta",
       ),
     ).toMatch(/^A, B and 3 more teams were synced/);
+  });
+});
+
+describe("directoryNotOffered", () => {
+  it("hides the panel only where it isn't for this workspace", () => {
+    for (const status of [403, 404, 501])
+      expect(directoryNotOffered(status)).toBe(true);
+    // A busy WFE, a bad request or an outage is a failure to say, not "no directory sync".
+    for (const status of [400, 409, 429, 500, 502, 503, undefined])
+      expect(directoryNotOffered(status)).toBe(false);
   });
 });

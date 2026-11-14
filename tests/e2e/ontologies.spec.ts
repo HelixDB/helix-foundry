@@ -119,10 +119,11 @@ test("creates an ontology on an existing database and explores what it holds", a
     "true",
   );
   // Its Overview, then Documents, what it reads of the workspace's, with
-  // its count, then Suggestions and Workflows.
+  // its count, then the Review queue, Suggestions and Workflows.
   await expect(list.locator(".hf-subnav-link")).toHaveText([
     "Overview",
     /^Documents\d*$/,
+    "Review queue",
     "Suggestions",
     "Workflows",
   ]);
@@ -170,11 +171,12 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
   );
   // Only the open one's pages show, the page open marked: its Overview,
   // Documents, with its documents as a file system under it (none yet),
-  // Suggestions and Workflows.
+  // the Review queue, Suggestions and Workflows.
   const pages = list.locator(".hf-subnav-link");
   await expect(pages).toHaveText([
     "Overview",
     /^Documents\d*$/,
+    "Review queue",
     "Suggestions",
     "Workflows",
   ]);
@@ -207,6 +209,7 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
   await expect(pages).toHaveText([
     "Overview",
     /^Documents\d*$/,
+    "Review queue",
     "Suggestions",
     "Workflows",
   ]);

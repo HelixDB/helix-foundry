@@ -66,6 +66,7 @@ export type StartLoginRequest = {
   provider: AuthProvider;
   application: AuthApplication;
   invitationSession?: string;
+  // Required for AUTH_PROVIDER_SSO, which routes by its domain.
   email?: string;
 };
 /** v1StartLoginResponse: the WorkOS authorize URL and the pending login. */
@@ -77,13 +78,35 @@ export type ExchangeAuthCodeRequest = {
   code: string;
   state: string;
 };
-/** v1ExchangeAuthCodeResponse */
+/**
+ * v1ExchangeAuthCodeResponse. Tokens, or no tokens and one of: the code
+ * WorkOS emailed to `email` is needed (emailVerificationRequired: VerifyEmail
+ * under the same sessionId), or the email's company requires its single
+ * sign-on (ssoRequired: a new login with AUTH_PROVIDER_SSO and `email`).
+ */
 export type ExchangeAuthCodeResponse = {
   accessToken?: string;
   refreshToken?: string;
   expiresAt?: string;
   email?: string;
   emailVerificationRequired?: boolean;
+  workspaceId?: string;
+  invitationOnboarding?: boolean;
+  ssoRequired?: boolean;
+};
+
+/** v1VerifyEmailRequest: POST /v1/auth/verify-email, under the exchange's sessionId. */
+export type VerifyEmailRequest = { sessionId: string; code: string };
+/**
+ * v1VerifyEmailResponse: tokens, or ssoRequired as an exchange answers it.
+ * A wrong code is INVALID_ARGUMENT and keeps the session for another try;
+ * an expired or unknown one is UNAUTHENTICATED.
+ */
+export type VerifyEmailResponse = {
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  email?: string;
   workspaceId?: string;
   invitationOnboarding?: boolean;
   ssoRequired?: boolean;
@@ -1557,6 +1580,8 @@ export type DocumentExtraction = {
   entities?: number;
   mentions?: number;
   facts?: number;
+  // Values written: property values it stated that were written as evidence.
+  attributes?: number;
   reviews?: number;
   // int64: what reading it cost, in millionths of a dollar.
   usdMicros?: string;
@@ -2070,6 +2095,9 @@ export type FoundryLoadDocumentSet = {
   // (int64) Its documents' fact writes: a fact counts once for each
   // document that created it or added evidence to it.
   facts?: string;
+  // (int64) Its documents' values written: property values each stated
+  // that were written as evidence, a value counting once for each document.
+  attributes?: string;
   // (int64) The reviews its documents left when the load last wrote each,
   // of every kind. Not the open reviews: one settled since stays counted
   // until the load writes the decision, and a disputed value's once chosen.
@@ -2696,6 +2724,20 @@ export type ReviewDecision =
       claimStart: number;
       claimEnd: number;
       statementHash: string;
+    }
+  // An approval taken back from the current load after it may have written
+  // it (contract 4.16.0): the release as it was sent, under its id. It is no
+  // saved decision: the list shows it, with what became of it (`applied`),
+  // while that load is current, and it can't be removed.
+  | {
+      kind: "withdraw";
+      type: "";
+      docId: string;
+      claimKey: string;
+      claimSection: number;
+      claimStart: number;
+      claimEnd: number;
+      statementHash: string;
     };
 /**
  * What became of a release or a prop decision in the ontology's current load:
@@ -2711,7 +2753,16 @@ export type ReviewDecision =
  * load, and if the claim was written there is no review left to approve,
  * only the fact; choosing a value again finishes a value, as the end of the
  * ontology's next job does), and empty when the load read it as it was
- * created and no job has said what became of it.
+ * created and no job has said what became of it. A withdraw is `pending`
+ * until the engine takes the approval back, then `withdrawn` (the claim is
+ * held again, or, held for a conflict with a document since removed, stays
+ * written as its document's own statement), `not_written` (the load held
+ * nothing the approval wrote), `refused` (what it wrote stays: `differs`,
+ * `too_large`, or a backend reason), or `unconfirmed`: no word came, with
+ * `job_failed` (the ontology's next job sends it again), `document_failed`
+ * (the next approval or take-back in its document does) or `not_replayed`
+ * (its document's saved reading can't be reused: no word can come while the
+ * load is current, and the next load won't write the approval).
  */
 export type DecisionApplied = {
   status?:
@@ -2721,9 +2772,14 @@ export type DecisionApplied = {
     | "missed"
     | "applied"
     | "unconfirmed"
+    | "withdrawn"
+    | "not_written"
     | "";
   reason?: string;
   at?: string | null;
+  // Of a release: removing it takes it back from the current load, which may
+  // have written it (the backend's one rule); otherwise removing only drops it.
+  takesBack?: boolean;
 };
 export type FoundryReviewDecision = ReviewDecision & {
   id: string;
@@ -2731,8 +2787,22 @@ export type FoundryReviewDecision = ReviewDecision & {
   decidedAt?: string | null;
   // Unset for a decision the current load's list doesn't hold.
   applied?: DecisionApplied | null;
+  // How the review queue showed the card it was made on; unset (or empty)
+  // for a decision made anywhere else.
+  drawn?: ReviewDrawn | "";
 };
-export type SettleReviewRequest = { decision: FoundryReviewChoice };
+/**
+ * How the review queue showed a card: in its order of the facts each
+ * decision writes, or drawn at random from a score band, which measures
+ * precision.
+ */
+export type ReviewDrawn = "ranked" | "random";
+export type SettleReviewRequest = {
+  decision: FoundryReviewChoice;
+  // A held claim's decision drawn at random is kept as a label of the claim
+  // too, with the score it was read at.
+  drawn?: ReviewDrawn;
+};
 export type ReviewDecisionResponse = { decision: FoundryReviewDecision };
 // Making a version current drops the decisions it doesn't take, but keeps a
 // resolve of a type it keeps whose entityKey its key no longer reads: the
@@ -2742,6 +2812,56 @@ export type ListReviewDecisionsResponse = {
   nextPageToken?: string;
 };
 export type DeleteReviewDecisionResponse = Record<string, never>;
+// POST and GET .../ontologies/{ontologyId}/review-labels: a person's word on
+// a claim at its place, kept to measure precision and read into nothing
+// else. A held claim's (claimKey and statementHash) is kept as its decision
+// of the queue's random slice is saved; an accepted fact's quote (factKey)
+// is labelled here. A re-check is a second person's word on a decision of a
+// held claim or on someone else's label of a fact: `against` is the verdict
+// it checks. One label per person and claim: saying it again replaces it.
+export type ReviewVerdict = "right" | "wrong";
+export type FoundryReviewLabel = {
+  id: string;
+  drawn: "random" | "recheck";
+  docId: string;
+  claimSection?: number;
+  claimStart?: number;
+  claimEnd?: number;
+  claimKey?: string;
+  statementHash?: string;
+  factKey?: string;
+  link?: string;
+  // The verifier's score as the claim was read; unset when it had none.
+  confidence?: number;
+  verdict: ReviewVerdict;
+  decisionId?: string;
+  against?: ReviewVerdict;
+  loadId?: string;
+  decidedByUserId?: string;
+  decidedAt?: string | null;
+};
+/** An accepted fact's quote in the current load, as its evidence holds it. */
+export type LabelFact = {
+  docId: string;
+  section: number;
+  start: number;
+  end: number;
+  factKey: string;
+};
+// A claim drawn at random (a fact's quote, or a held claim of the current
+// load by its review), or a second person's re-check of a decision on a
+// held claim or of another's label drawn at random.
+export type SettleReviewLabelRequest = { verdict: ReviewVerdict } & (
+  | { fact: LabelFact; drawn: "random" }
+  | { reviewId: string; drawn: "random" }
+  | { decisionId: string; drawn: "recheck" }
+  | { labelId: string; drawn: "recheck" }
+);
+export type ReviewLabelResponse = { label: FoundryReviewLabel };
+export type ListReviewLabelsResponse = {
+  labels?: FoundryReviewLabel[];
+  nextPageToken?: string;
+};
 
 // ---------------------------------------------------------------- Ontology: suggestions
 // GET .../ontologies/{ontologyId}/heal-findings and POST

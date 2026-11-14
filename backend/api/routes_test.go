@@ -231,6 +231,16 @@ func (r *routeRecorder) DeleteFoundryReviewDecision(_ context.Context, req *foun
 	return &foundryv1.DeleteFoundryReviewDecisionResponse{}, nil
 }
 
+func (r *routeRecorder) SettleFoundryReviewLabel(_ context.Context, req *foundryv1.SettleFoundryReviewLabelRequest) (*foundryv1.FoundryReviewLabelResponse, error) {
+	r.hit("SettleFoundryReviewLabel", req, fmt.Sprint(req.GetFact().GetFactKey(), req.GetDecisionId(), " ", req.GetVerdict(), " ", req.GetDrawn()))
+	return &foundryv1.FoundryReviewLabelResponse{}, nil
+}
+
+func (r *routeRecorder) ListFoundryReviewLabels(_ context.Context, req *foundryv1.ListFoundryReviewLabelsRequest) (*foundryv1.ListFoundryReviewLabelsResponse, error) {
+	r.hit("ListFoundryReviewLabels", req, req.GetPageToken())
+	return &foundryv1.ListFoundryReviewLabelsResponse{}, nil
+}
+
 func (r *routeRecorder) ListFoundryHealFindings(_ context.Context, req *foundryv1.ListFoundryHealFindingsRequest) (*foundryv1.ListFoundryHealFindingsResponse, error) {
 	r.hit("ListFoundryHealFindings", req, "")
 	return &foundryv1.ListFoundryHealFindingsResponse{}, nil
@@ -461,6 +471,12 @@ func TestFoundryRoutes(t *testing.T) {
 		{http.MethodPost, o + "/ont-1/reviews/r-1:settle", `{"decision":{"resolve":{"notInData":true}}}`, "SettleFoundryReview ws-1 ont-1 r-1"},
 		{http.MethodGet, o + "/ont-1/review-decisions?pageToken=d-1", "", "ListFoundryReviewDecisions ws-1 ont-1 d-1"},
 		{http.MethodDelete, o + "/ont-1/review-decisions/d-1", "", "DeleteFoundryReviewDecision ws-1 ont-1 d-1"},
+		{http.MethodPost, o + "/ont-1/reviews/r-1:settle", `{"decision":{"release":{"statementHash":"h"}},"drawn":"random"}`, "SettleFoundryReview ws-1 ont-1 r-1"},
+		{http.MethodPost, o + "/ont-1/review-labels", `{"fact":{"docId":"d","section":1,"start":2,"end":5,"factKey":"f-1"},"verdict":"right","drawn":"random"}`,
+			"SettleFoundryReviewLabel ws-1 ont-1 f-1 right random"},
+		{http.MethodPost, o + "/ont-1/review-labels", `{"decisionId":"d-1","verdict":"wrong","drawn":"recheck"}`,
+			"SettleFoundryReviewLabel ws-1 ont-1 d-1 wrong recheck"},
+		{http.MethodGet, o + "/ont-1/review-labels?pageToken=l-1", "", "ListFoundryReviewLabels ws-1 ont-1 l-1"},
 		{http.MethodGet, o + "/ont-1/heal-findings", "", "ListFoundryHealFindings ws-1 ont-1 "},
 		{http.MethodPost, o + "/ont-1/heal-findings/ab12:dismiss", "{}", "DismissFoundryHealFinding ws-1 ont-1 ab12"},
 		{http.MethodPost, o + "/ont-1/workflows", `{"name":"Triage","description":"tickets","clientToken":"t"}`,

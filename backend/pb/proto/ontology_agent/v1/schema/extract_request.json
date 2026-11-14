@@ -228,12 +228,12 @@
               "pattern": "^[0-9a-f]{64}$"
             },
             "decided_at": {
-              "description": "When it was settled. Of a link that holds one value the approval holds the link from\nthen: it beats undated statements and those dated up to that day, a statement dated\nlater beats it, and of two approvals the later settled holds it.",
+              "description": "When it was settled. Of a link that holds one value the approval also decides the\nlink, from the date its quote gives, else its document's date, else from this:\nit beats undated statements and those dated up to then, and a statement dated later\nbeats it. Of two approvals of one link the later settled is the link's decision,\nand the other's quote still states the link from its own date.",
               "type": "string",
               "format": "date-time"
             },
             "decision_id": {
-              "description": "The decision's id, as the backend keeps it. Of two approvals of one link that holds\none value settled at the same instant, the one whose id sorts last holds it.",
+              "description": "The decision's id, as the backend keeps it: one id is one decision. Of two\napprovals of one link that holds one value settled at the same instant, the one\nwhose id sorts last is the link's decision.",
               "type": "string"
             },
             "doc_id": {
@@ -264,6 +264,69 @@
             },
             "statement_hash": {
               "description": "The hash of what the review stated when the person read it: its `suggested_link`, a\nunit separator and its `statement`, as stored.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "doc_id",
+            "claim_key",
+            "section",
+            "start",
+            "end",
+            "statement_hash",
+            "decision_id",
+            "decided_at"
+          ]
+        },
+        {
+          "description": "A withdrawal of a release decision: the release, as it was sent, whose approval the\nperson took back.",
+          "type": "object",
+          "properties": {
+            "claim_key": {
+              "description": "The claim's key, as the release named it.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "decided_at": {
+              "description": "When the release was settled, as it was sent.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "decision_id": {
+              "description": "The release decision's id: what its release wrote is known by it.",
+              "type": "string"
+            },
+            "doc_id": {
+              "description": "The document of the release it withdraws.",
+              "type": "string"
+            },
+            "end": {
+              "description": "Where the review's quote ends in its section, as the release named it.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "withdraw"
+            },
+            "section": {
+              "description": "The section of the review's quote, as the release named it.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "start": {
+              "description": "Where the review's quote starts in its section, as the release named it.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "statement_hash": {
+              "description": "The hash of what the person read, as the release named it.",
               "type": "string",
               "pattern": "^[0-9a-f]{64}$"
             }
