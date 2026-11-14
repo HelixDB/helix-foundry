@@ -38,6 +38,7 @@ import { QuestionCard } from "./ask";
 import { askSuggestions } from "./ask-model";
 import { createDatabase, createProject, databasesQuery } from "./databases-api";
 import { agentGraph, newDatabase, readAgentBundle, slugify } from "./model";
+import { ProgressBar, useLoadJobProgress } from "./job-progress";
 import { Callout, FlowStep } from "./parts";
 import {
   askQuestion,
@@ -45,6 +46,7 @@ import {
   createOntology,
   generateOntology,
   isLive,
+  isLiveJob,
   isLiveQuestion,
   ontologyQueries,
   questionQueries,
@@ -411,7 +413,10 @@ export function SampleTour() {
   // The load reads go to, else the newest.
   const load = loads?.find((l) => l.current) ?? loads?.[0];
   const job = load?.jobs?.[0];
-  const loaded = load?.status === "ready" || load?.status === "partial";
+  const loaded = load?.status === "ready" || load?.status === "partial",
+    progress = useLoadJobProgress(
+      !loaded && job && isLiveJob(job) ? job : undefined,
+    );
   useEffect(() => {
     if (loaded) trackEvent("sample_loaded");
   }, [loaded]);
@@ -672,6 +677,9 @@ export function SampleTour() {
                     : "Starting the load…"}{" "}
             {load && <Link to={paths.load(o, load.id)}>See the load</Link>}
           </p>
+          {progress && (
+            <ProgressBar progress={progress} label="Progress of the sample’s load" />
+          )}
         </FlowStep>
         <FlowStep
           number={5}
