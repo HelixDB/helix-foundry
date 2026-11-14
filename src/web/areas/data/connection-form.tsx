@@ -156,6 +156,9 @@ export function ConnectionForm({
     // What is in flight: a test or a save.
     [pending, setPending] = useState<"test" | "save" | null>(null),
     [error, setError] = useState<Error | null>(null),
+    // The settings changed after a test passed, or while one ran: Connect
+    // waits for another test, and the form says so.
+    [retest, setRetest] = useState(false),
     // A kind that signs in: its credential's form instead.
     [useKey, setUseKey] = useState(false);
   // One sign-in per form (its client token): a retry after a refusal finds
@@ -183,6 +186,7 @@ export function ConnectionForm({
   // Any change to the settings or credential invalidates the last test.
   const change = (patch: Partial<Form>) => {
     edits.current++;
+    if (discovered || pending === "test") setRetest(true);
     setForm((f) => ({ ...f, ...patch }) as Form);
     setDirty(true);
     setDiscovered(null);
@@ -230,6 +234,7 @@ export function ConnectionForm({
     overLimit = maxBytes > 0 && chosenBytes > maxBytes;
   const test = () =>
     run("test", async () => {
+      setRetest(false);
       const at = edits.current;
       // A test of settings changed since reports nothing, pass or fail: its
       // tables and its error describe the old ones.
@@ -325,14 +330,23 @@ export function ConnectionForm({
       : !!discovered);
   const credentialRequired = !editing,
     // A role can't be tested where role access is off.
-    untestable = form.kind === "s3" && form.access === "role" && roleOff;
+    untestable = form.kind === "s3" && form.access === "role" && roleOff,
+    testable = !signingIn && (!editing || hasCredential(form)) && !untestable;
   return (
     <div className="connect-data">
       <form
         className="form-grid"
         onSubmit={(e) => {
           e.preventDefault();
-          if (canSubmit && !pending) void submit();
+          // Enter connects once a test passed, and tests until then: Test is
+          // the form's submit button until one passes (a form of several
+          // fields submits on Enter only through one).
+          if (pending) return;
+          const by = (e.nativeEvent as SubmitEvent).submitter;
+          if (by instanceof HTMLElement && by.dataset.action === "test")
+            void test();
+          else if (canSubmit) void submit();
+          else if (testable && !discovered) void test();
         }}
       >
         {/* The steps end "paste it below": they come before the fields. */}
@@ -763,16 +777,25 @@ export function ConnectionForm({
             {widenRefusal(connector!)}
           </p>
         )}
-        {!signingIn && (!editing || hasCredential(form)) && !untestable && (
+        {testable && (
           <div className="span2">
             <button
               className={discovered ? "button" : "button primary"}
-              type="button"
+              // The WFE says what a test lacks, not the browser.
+              type={discovered ? "button" : "submit"}
+              formNoValidate
+              data-action="test"
               disabled={!!pending}
-              onClick={() => void test()}
+              onClick={discovered ? () => void test() : undefined}
             >
               {pending === "test" ? "Testing connection…" : "Test connection"}
             </button>
+            {retest && !discovered && pending !== "test" && (
+              <p className="muted small" role="status">
+                The settings changed since the last test. Test the connection
+                again to connect.
+              </p>
+            )}
           </div>
         )}
         {discovered && choice && (

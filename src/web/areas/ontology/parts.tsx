@@ -42,6 +42,7 @@ import {
   setCurrentVersion,
 } from "./queries";
 import { versionFormat } from "./format";
+import { ProgressBar, useGenerationProgress } from "./job-progress";
 import {
   generationTitle,
   jobBadge,
@@ -150,6 +151,7 @@ export function Callout({
   action,
   tone,
   live,
+  children,
 }: {
   icon: LucideIcon;
   title: ReactNode;
@@ -157,6 +159,8 @@ export function Callout({
   action?: ReactNode;
   tone?: "danger" | "muted";
   live?: boolean;
+  // Under the text: a job's bar.
+  children?: ReactNode;
 }) {
   return (
     <div
@@ -169,6 +173,7 @@ export function Callout({
       <div className="on-card-text">
         <strong>{title}</strong>
         {text && <p>{text}</p>}
+        {children}
       </div>
       {action}
     </div>
@@ -269,7 +274,14 @@ export function LiveGeneration() {
       void qc.invalidateQueries({ queryKey: [id, "ontology", o] });
     }
   }, [live?.id]);
+  const progress = useGenerationProgress(id, o, live);
   if (!live) return null;
+  const bar = progress && (
+    <ProgressBar
+      progress={progress}
+      label={`Progress of ${ontologyName(ontology)}`}
+    />
+  );
   if (live.revision)
     return (
       <Callout
@@ -288,7 +300,9 @@ export function LiveGeneration() {
             View progress
           </ButtonLink>
         }
-      />
+      >
+        {bar}
+      </Callout>
     );
   const title = generationTitle(live, "");
   return (
@@ -314,7 +328,9 @@ export function LiveGeneration() {
           View progress
         </ButtonLink>
       }
-    />
+    >
+      {bar}
+    </Callout>
   );
 }
 

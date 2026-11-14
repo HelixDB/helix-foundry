@@ -247,6 +247,9 @@ test("data: connect Stripe, sync it and read a table", async ({ page }) => {
   await shot(page, "data", "stripe-tested");
 
   await dialog(page).getByRole("button", { name: "Connect and sync" }).click();
+  await dialog(page)
+    .getByRole("button", { name: /^Open / })
+    .click();
   await expect(page).toHaveURL(/\/data\/connections\/conn_/);
   await expect(header(page).getByText("Synced", { exact: true })).toBeVisible(
     SYNCED,
@@ -337,6 +340,9 @@ test("data: an API source, its send panel and its page", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await made.getByRole("button", { name: "Done" }).click();
   await dialog(page).getByRole("button", { name: "Done" }).click();
+  await dialog(page)
+    .getByRole("button", { name: /^Open / })
+    .click();
   await expect(page).toHaveURL(/\/data\/connections\/conn_/);
   const id = new URL(page.url()).pathname.split("/").pop()!;
 
@@ -400,6 +406,8 @@ test("data: video", async ({ browser }) => {
   await page.waitForTimeout(1800);
   await caption(page, "Connect and sync: the first sync starts at once");
   await click(dialog(page).getByRole("button", { name: "Connect and sync" }));
+  await caption(page, "Open it to watch the first sync, or add another source");
+  await click(dialog(page).getByRole("button", { name: /^Open / }));
   await expect(header(page).getByText("Synced", { exact: true })).toBeVisible(
     SYNCED,
   );

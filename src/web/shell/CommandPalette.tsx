@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useWorkspace, type ShellWorkspace } from "../ui";
 import { cx, useMedia } from "../kit";
+import { PICKER_OPENED } from "../areas/data/paths";
 import { paths } from "../paths";
 import { paletteSources, primaryNav, secondaryNav } from "./nav";
 import { readRecents, recordRecent, sectionIcon } from "./recents";
@@ -96,9 +97,9 @@ export function CommandPalette({
   });
   const loading = results.some((r) => r.isPending);
   const q = query.trim().toLowerCase();
-  const go = (to: string) => () => {
+  const go = (to: string, state?: unknown) => () => {
     onClose();
-    navigate(to);
+    navigate(to, { state });
   };
   const entries = useMemo(() => {
     const out: Entry[] = [];
@@ -134,7 +135,7 @@ export function CommandPalette({
               subtitle: "Connect a database or an app",
               terms: "add data connect source connection",
               icon: Plus,
-              run: go(paths.connections(true)),
+              run: go(paths.connections(true), PICKER_OPENED),
             },
             ...(LOCAL
               ? []
@@ -148,7 +149,7 @@ export function CommandPalette({
                       : "Send pieces of data from your agent",
                     terms: "new api source event agent pieces send mcp json",
                     icon: Braces,
-                    run: go(paths.connections("events")),
+                    run: go(paths.connections("events"), PICKER_OPENED),
                   },
                 ]),
             {

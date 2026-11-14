@@ -1184,3 +1184,122 @@
   justify-content: flex-start;
   margin: 0 0 14px;
 }
+
+/* A job's bar (job-progress.tsx): its step, a bar and the time left. An
+   unmeasured stretch (a load's tables) shimmers across the bar. */
+.on-progress {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+.on-progress-track {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-sunken);
+}
+.on-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--hf-accent);
+  transition: width 0.6s ease;
+}
+.on-progress-fill.is-indeterminate {
+  width: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--hf-accent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: hf-shimmer 1.6s linear infinite;
+}
+.on-progress-line {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.on-progress-time {
+  color: var(--hf-muted);
+  font-variant-numeric: tabular-nums;
+}
+.on-progress--page {
+  margin-top: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+}
+
+/* The job dock (job-dock.tsx): the generations and loads this browser
+   started, at the sidebar's foot on every page that doesn't show them. */
+.on-job-dock {
+  display: grid;
+  flex: none;
+  gap: 6px;
+  margin-top: 6px;
+}
+.on-job-dock:empty {
+  display: none;
+}
+.on-job-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 8px;
+  padding: 10px 4px 10px 10px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-1);
+  animation: hf-pop 160ms var(--hf-ease);
+}
+.on-job-card-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--hf-radius);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.on-job-card.is-done .on-job-card-icon {
+  background: var(--hf-success-soft);
+  color: var(--hf-success-text);
+}
+.on-job-card.is-failed .on-job-card-icon {
+  background: var(--hf-danger-soft);
+  color: var(--hf-danger-text);
+}
+.on-job-card-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--hf-text-sm);
+}
+.on-job-card-text strong {
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  font-weight: 600;
+}
+.on-job-card-name {
+  overflow: hidden;
+  color: var(--hf-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.on-job-card .on-progress {
+  margin-top: 6px;
+}
+.on-job-card-link {
+  justify-self: start;
+  margin-top: 6px;
+  color: var(--hf-accent-text);
+  font-weight: 500;
+}
