@@ -697,6 +697,26 @@ html {
   line-height: 1.45;
 }
 
+/* The Assistant's dock (areas/agent): a column right of the page, in view as
+   it scrolls; below 1100px, a drawer from the right. */
+.hf-assistant {
+  position: sticky;
+  top: var(--hf-shell-top);
+  z-index: 19;
+  flex: none;
+  width: 400px;
+  height: calc(100dvh - var(--hf-shell-top));
+  border-left: 1px solid var(--hf-border);
+  background: var(--hf-surface);
+}
+.hf-assistant-drawer.hf-dialog--drawer {
+  width: min(440px, 100vw);
+}
+.hf-assistant-drawer .hf-dialog-body {
+  height: 100%;
+  padding: 0;
+}
+
 /* Main column */
 .hf-main-col {
   display: flex;

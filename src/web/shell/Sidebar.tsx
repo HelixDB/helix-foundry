@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Search, Settings, X } from "lucide-react";
+import { Bot, Search, Settings, X } from "lucide-react";
 import { SkeletonText, cx, useStoredState } from "../kit";
 import { paths } from "../paths";
 import { useWorkspace, type ShellUser, type ShellWorkspace } from "../ui";
@@ -30,7 +30,12 @@ import {
   maxSectionOffset,
   storedSectionOffset,
 } from "./section-offset";
-import { ariaShortcut, shortcut } from "./shortcut";
+import {
+  ariaAssistantShortcut,
+  ariaShortcut,
+  assistantShortcut,
+  shortcut,
+} from "./shortcut";
 
 // Settings sits beside the user in the footer rather than in the section list.
 export function SettingsLink() {
@@ -305,6 +310,25 @@ export function Sidebar({
       )}
       <div className="hf-sidebar-foot">
         <AccountMenu user={user} current={current} collapsed={false} />
+        {shell.assistant.available && (
+          <button
+            type="button"
+            className={cx(
+              "hf-btn hf-btn--ghost hf-btn--md hf-btn--icon hf-settings-link",
+              shell.assistant.open && "is-active",
+            )}
+            aria-label="Assistant"
+            aria-pressed={shell.assistant.open}
+            aria-keyshortcuts={ariaAssistantShortcut}
+            title={`Assistant (${assistantShortcut})`}
+            onClick={() => {
+              onClose?.();
+              shell.assistant.toggle("button");
+            }}
+          >
+            <Bot size={17} aria-hidden />
+          </button>
+        )}
         {!onboarding && !grantee && <SettingsLink />}
       </div>
     </div>

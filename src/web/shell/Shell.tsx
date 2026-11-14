@@ -1,5 +1,6 @@
 import {
   Suspense,
+  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -8,12 +9,25 @@ import {
   type ReactNode,
 } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Menu, Search } from "lucide-react";
-import { Dialog, PageVisitContext, SkeletonText, cx, useMedia } from "../kit";
+import { Bot, Menu, Search } from "lucide-react";
+import { trackEvent } from "../analytics";
+import {
+  Dialog,
+  PageVisitContext,
+  SkeletonText,
+  cx,
+  useMedia,
+  useStoredState,
+} from "../kit";
 import { useWorkspace, type ShellUser, type ShellWorkspace } from "../ui";
 import { CommandPalette } from "./CommandPalette";
 import { ChromeBoundary } from "./ErrorBoundary";
-import { PanelSlotContext, ShellContext, type PanelSlot } from "./context";
+import {
+  PanelSlotContext,
+  ShellContext,
+  type AssistantFrom,
+  type PanelSlot,
+} from "./context";
 import {
   ShellBanner,
   activeSection,
@@ -25,6 +39,27 @@ import { Rail } from "./Rail";
 import { recordRecent } from "./recents";
 import { Sidebar } from "./Sidebar";
 import type { SectionPanel } from "./types";
+
+// The Assistant (areas/agent): in this build (next.config.ts), its dock
+// loaded once opened.
+const ASSISTANT = !!process.env.NEXT_PUBLIC_FOUNDRY_ASSISTANT;
+const AgentDock = lazy(() =>
+  import("../areas/agent/dock").then((m) => ({ default: m.AgentDock })),
+);
+// Whether the dock is open on a wide screen, per browser ("open" or "").
+const DOCK_KEY = "foundry.agent.dock";
+
+// What the Assistant's dock shows while it loads, or if it fails.
+const dockLoading = (
+  <div className="hf-section-panel-note" aria-busy="true">
+    <SkeletonText lines={4} />
+  </div>
+);
+const dockFailed = (
+  <p className="hf-section-panel-note">
+    The Assistant hit a problem. Reload to try again.
+  </p>
+);
 
 // Says where a navigation landed. When the old page took focus with it, focus
 // moves to the new page's heading so keyboard users continue from there.
@@ -122,7 +157,10 @@ function PanelAside({
 
 // Workspace chrome: an area's banner across the top when it shows one, the
 // sidebar on every page, with the open section's panel beside it when it has
-// one, mobile bar and drawer, and the command palette. While the workspace is
+// one, mobile bar and drawer, the command palette, and the Assistant's dock
+// (⌘J, the sidebar's button or the palette): a column right of the page on
+// a wide screen, kept open per browser, else a drawer. A grantee has no
+// Assistant (the WFE denies it every route). While the workspace is
 // onboarding, the sidebar holds only the workspace and the account, and there
 // is no palette; a grantee has no palette either (what it lists, a grantee
 // can't read).
@@ -143,6 +181,12 @@ export function Shell({
     searchable = !onboarding && !grantee;
   const [palette, setPalette] = useState<{ query: string } | null>(null),
     [drawer, setDrawer] = useState(false);
+  const assistant = ASSISTANT && !grantee,
+    dockDrawer = useMedia("(max-width: 1100px)"),
+    [dockStored, setDockStored] = useStoredState(DOCK_KEY, ""),
+    [dockDrawerOpen, setDockDrawerOpen] = useState(false),
+    dockOpen =
+      assistant && (dockDrawer ? dockDrawerOpen : dockStored === "open");
   const { pathname } = useLocation();
   // The open section's panel, if it has one. It shows beside the sidebar;
   // the Explorer's [ (useShell().togglePanel) hides and shows it for the
@@ -157,7 +201,31 @@ export function Shell({
   useEffect(() => {
     setDrawer(false);
     setPalette(null);
+    setDockDrawerOpen(false);
   }, [pathname, current.id]);
+  const closeDock = useCallback(() => {
+    setDockDrawerOpen(false);
+    setDockStored("");
+  }, [setDockStored]);
+  const toggleDock = useCallback(
+    (from: AssistantFrom) => {
+      if (!dockOpen) trackEvent("agent_dock_opened", { from });
+      if (dockDrawer) setDockDrawerOpen((o) => !o);
+      else setDockStored((s) => (s === "open" ? "" : "open"));
+    },
+    [dockOpen, dockDrawer, setDockStored],
+  );
+  useEffect(() => {
+    if (!assistant) return;
+    const key = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        toggleDock("shortcut");
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [assistant, toggleDock]);
   // A page panel's slot, beside the sidebar or in the drawer (the drawer's
   // while it is open), and the label of the content a page put there.
   const [pageSlot, setPageSlot] = useState<HTMLElement | null>(null),
@@ -193,8 +261,9 @@ export function Shell({
       },
       togglePanel: () =>
         narrow ? setDrawer((d) => !d) : setPanelHidden((h) => !h),
+      assistant: { available: assistant, open: dockOpen, toggle: toggleDock },
     }),
-    [narrow],
+    [narrow, assistant, dockOpen, toggleDock],
   );
   const visit = useCallback(
     (title: string) =>
@@ -265,11 +334,46 @@ export function Shell({
                     <Search size={17} aria-hidden />
                   </button>
                 )}
+                {assistant && (
+                  <button
+                    type="button"
+                    className="hf-btn hf-btn--ghost hf-btn--md hf-btn--icon"
+                    aria-label="Assistant"
+                    aria-pressed={dockOpen}
+                    onClick={() => toggleDock("button")}
+                  >
+                    <Bot size={17} aria-hidden />
+                  </button>
+                )}
               </header>
               <main className="hf-main" id="main" tabIndex={-1}>
                 {children}
               </main>
             </div>
+            {dockOpen && !dockDrawer && (
+              <aside className="hf-assistant" aria-label="Assistant">
+                <ChromeBoundary name="Assistant" fallback={dockFailed}>
+                  <Suspense fallback={dockLoading}>
+                    <AgentDock onClose={closeDock} />
+                  </Suspense>
+                </ChromeBoundary>
+              </aside>
+            )}
+            {dockOpen && dockDrawer && (
+              <Dialog
+                title="Assistant"
+                hideTitle
+                variant="drawer"
+                className="hf-assistant-drawer"
+                onClose={closeDock}
+              >
+                <ChromeBoundary name="Assistant" fallback={dockFailed}>
+                  <Suspense fallback={dockLoading}>
+                    <AgentDock onClose={closeDock} onNavigate={closeDock} />
+                  </Suspense>
+                </ChromeBoundary>
+              </Dialog>
+            )}
             <RouteAnnouncer />
             {palette && (
               <ChromeBoundary

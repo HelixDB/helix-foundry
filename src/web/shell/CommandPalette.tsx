@@ -5,6 +5,7 @@ import { LOCAL } from "../../shared/deployment";
 import {
   ArrowLeftRight,
   ArrowRight,
+  Bot,
   Braces,
   CornerDownLeft,
   History,
@@ -20,6 +21,7 @@ import {
 import { useWorkspace, type ShellWorkspace } from "../ui";
 import { cx, useMedia } from "../kit";
 import { paths } from "../paths";
+import { useShell } from "./context";
 import { paletteSources, primaryNav, secondaryNav } from "./nav";
 import { readRecents, recordRecent, sectionIcon } from "./recents";
 import { shortcutKeys } from "./shortcut";
@@ -64,7 +66,8 @@ export function CommandPalette({
     navigate = useNavigate(),
     { pathname } = useLocation(),
     [theme, setTheme] = useTheme(),
-    small = useMedia("(max-width: 800px)");
+    small = useMedia("(max-width: 800px)"),
+    { assistant } = useShell();
   const [query, setQuery] = useState(initialQuery),
     [active, setActive] = useState(0);
   const dialog = useRef<HTMLDialogElement>(null),
@@ -123,6 +126,24 @@ export function CommandPalette({
         })),
     ]);
     const actions: (Entry & { terms: string })[] = [
+      ...(assistant.available
+        ? [
+            {
+              key: "action:assistant",
+              group: "Actions",
+              title: assistant.open
+                ? "Close the Assistant"
+                : "Open the Assistant",
+              subtitle: "Ask about your workspace, or have it prepare a load",
+              terms: "assistant agent chat ask help load",
+              icon: Bot,
+              run: () => {
+                onClose();
+                assistant.toggle("palette");
+              },
+            },
+          ]
+        : []),
       // Owners and admins connect data, make API sources (not in a local
       // build, which has no Helix MCP for them) and create ontologies.
       ...(role !== "member"
@@ -239,7 +260,13 @@ export function CommandPalette({
       out.push(...actions.filter((a) => score(a.terms + " " + a.title, q)));
     return out;
     // `go` is recreated each render but only closes over stable values.
-  }, [query, results.map((r) => r.dataUpdatedAt).join(), theme, role]);
+  }, [
+    query,
+    results.map((r) => r.dataUpdatedAt).join(),
+    theme,
+    role,
+    assistant,
+  ]);
   useEffect(() => setActive(0), [q]);
   useEffect(() => {
     list.current
