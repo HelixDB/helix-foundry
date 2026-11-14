@@ -63,6 +63,8 @@ func TestValidateRoles(t *testing.T) {
 		"foundry-read's sidecar":      {func(c *Config) { c.Foundry.Read.AgentAddr = "agent:50051" }, Roles{Read: true}, "loopback"},
 		"the door's backend":          {func(c *Config) { c.Foundry.Events.Endpoint.Backend.Address = "" }, Roles{Events: true}, "backend.address"},
 		"the API's generation cap":    {func(c *Config) { c.Foundry.Ontology.PerHour = 0 }, Roles{API: true}, "foundry.ontology.per_hour"},
+		"the API's answer wait":       {func(c *Config) { c.Foundry.Ontology.AnswerDays = 0 }, Roles{API: true}, "foundry.ontology.answer_days"},
+		"the worker's answer wait":    {func(c *Config) { c.Foundry.Ontology.AnswerDays = 0 }, Roles{OntologyWorker: true}, "foundry.ontology.answer_days"},
 		"the hosted default's key":    {func(c *Config) { c.Foundry.AI.Default.APIKey = "" }, Roles{GraphWorker: true}, "api_key must be set"},
 		"the graph worker's rate":     {func(c *Config) { c.Foundry.Graph.LoadRateLimit.Burst = 5 }, Roles{GraphWorker: true}, "load_rate_limit"},
 		"the ask worker's read caps":  {func(c *Config) { c.Foundry.Ask.ReadScanEntities = 0 }, Roles{AskWorker: true}, "read_scan_entities"},
