@@ -90,7 +90,7 @@ func TestListFoundryReviewsPages(t *testing.T) {
 	for i := range 51 {
 		many = append(many, fmt.Sprintf(`{"review_key":"r-%d","reason":"no_link"}`, i))
 	}
-	s, _, queries := reviewService(t, `{"items":[`+strings.Join(many, ",")+`]}`)
+	s, _, _ := reviewService(t, `{"items":[`+strings.Join(many, ",")+`]}`)
 	out, err := s.ListFoundryReviews(ports.WithActor(context.Background(), reviewer), listReviews(nil, ""))
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestListFoundryReviewsPages(t *testing.T) {
 	if len(out.GetReviews()) != 50 || out.GetNextPageToken() != "50" {
 		t.Fatalf("%d reviews, next %q", len(out.GetReviews()), out.GetNextPageToken())
 	}
-	s, _, queries = reviewService(t, `{"items":[`+strings.Join(many, ",")+`]}`)
+	s, _, queries := reviewService(t, `{"items":[`+strings.Join(many, ",")+`]}`)
 	out, err = s.ListFoundryReviews(ports.WithActor(context.Background(), reviewer), listReviews(nil, "9950"))
 	if err != nil {
 		t.Fatal(err)

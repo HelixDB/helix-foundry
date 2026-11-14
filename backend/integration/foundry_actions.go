@@ -201,7 +201,7 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
 			Description: "Check a Foundry action and put it before the person you work for as a card, which they run, or not, with a click. " +
 				"Preparing changes nothing, and you can't run it: you are told its result if they do.",
-			InputSchema: foundryOperationSchema(s.Events),
+			InputSchema: foundryOperationSchema(s.Events, person.Sink.Allows),
 			Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
 		}, func(ctx context.Context, identity *Identity, call *Call, input FoundryOperationInput) (AwaitingPersonOutput, int, error) {
 			awaiting, err := s.prepareForPerson(ctx, identity, call, input, person.Sink)
@@ -217,7 +217,7 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
 		Description: "Check a Foundry action and return a one-time confirmation for exactly that action, valid for five minutes; " +
 			toolExecuteFoundry + " runs it. Preparing changes nothing. A create_ontology on workspace:<id> makes the ontology's database first, and its project when new.",
-		InputSchema: foundryOperationSchema(s.Events),
+		InputSchema: foundryOperationSchema(s.Events, everyOperation),
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.PrepareFoundryOperation)
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolExecuteFoundry,

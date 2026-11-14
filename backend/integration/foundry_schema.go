@@ -69,11 +69,12 @@ const generateReads = "No connector_ids reads every connector unless no_connecto
 	"A generation needs at least one table, table file or set holding text. " +
 	"sample \"acme\" drafts the Acme Corp sample company from its connector, with its six tables synced, and its document set, as its one connector_ids and document_set_ids: a ready-made draft, in seconds and with no model."
 
-// foundryOperations is each operation the host offers, in order, and what its payload is.
-func foundryOperations(events bool) (names []any, payloads string) {
+// foundryOperations is each operation the host offers and allows lets the caller prepare, in
+// order, and what its payload is.
+func foundryOperations(events bool, allows func(string) bool) (names []any, payloads string) {
 	lines := []string{"Each operation's payload:"}
 	for _, op := range foundryOperationDocs {
-		if op.eventsOnly && !events {
+		if op.eventsOnly && !events || !allows(op.name) {
 			continue
 		}
 		doc := op.doc
@@ -86,12 +87,13 @@ func foundryOperations(events bool) (names []any, payloads string) {
 	return names, strings.Join(lines, "\n")
 }
 
-// foundryOperationSchema is the input schema of helix_foundry_prepare_operation.
-func foundryOperationSchema(events bool) *jsonschema.Schema {
+// foundryOperationSchema is the input schema of helix_foundry_prepare_operation, naming the
+// operations allows lets the caller prepare.
+func foundryOperationSchema(events bool, allows func(string) bool) *jsonschema.Schema {
 	schema := schemaFor[FoundryOperationInput]()
-	names, payloads := foundryOperations(events)
+	names, payloads := foundryOperations(events, allows)
 	target := "create_ontology: tenant:<database id> for an existing database, or workspace:<workspace_id> for a new one."
-	if events {
+	if events && allows("create_event_source") {
 		target += " create_event_source: workspace:<workspace_id>."
 	}
 	target += " sync_connector: connector:<workspace_id>/<connector_id>. Every other operation: ontology:<workspace_id>/<ontology_id>."
@@ -102,10 +104,13 @@ func foundryOperationSchema(events bool) *jsonschema.Schema {
 	return schema
 }
 
+// everyOperation allows every operation the host offers: an MCP client's.
+func everyOperation(string) bool { return true }
+
 // executeOperationSchema is the input schema of helix_foundry_execute_operation.
 func executeOperationSchema(events bool) *jsonschema.Schema {
 	schema := schemaFor[ExecuteFoundryInput]()
-	schema.Properties["operation"].Enum, _ = foundryOperations(events)
+	schema.Properties["operation"].Enum, _ = foundryOperations(events, everyOperation)
 	return schema
 }
 
