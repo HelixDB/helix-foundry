@@ -239,6 +239,12 @@ type ReadStore interface {
 	GetFoundryAgentAction(ctx context.Context, workspaceID, id string) (*model.FoundryAgentAction, error)
 	GetFoundryAgentActionByPayload(ctx context.Context, turnID, payloadHash string) (*model.FoundryAgentAction, error)
 	ListFoundryAgentActions(ctx context.Context, threadID string) ([]*model.FoundryAgentAction, error)
+
+	// Dashboards and their public snapshots (foundry_dashboards.go)
+	GetFoundryDashboard(ctx context.Context, workspaceID, id string) (*model.FoundryDashboard, error)
+	GetFoundryDashboardByClientToken(ctx context.Context, workspaceID, userID, clientToken string) (*model.FoundryDashboard, error)
+	ListFoundryDashboards(ctx context.Context, workspaceID string, pinnedOnly bool) ([]*model.FoundryDashboard, error)
+	GetSharedFoundryDashboard(ctx context.Context, tokenSHA256 string) (*model.FoundryDashboardShare, error)
 }
 
 // Store is ReadStore plus every write.
@@ -456,6 +462,15 @@ type Store interface {
 	DismissFoundryAgentAction(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentAction, error)
 	RefreshFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string, display json.RawMessage, confirmationID string,
 		sealed []byte, keyID string, expiresAt time.Time) (*model.FoundryAgentAction, error)
+
+	// Dashboards and their public snapshots (foundry_dashboards.go)
+	CreateFoundryDashboard(ctx context.Context, d *model.FoundryDashboard, max int) error
+	UpdateFoundryDashboard(ctx context.Context, workspaceID, id string, editor model.FoundryDashboardEditor, expected int64,
+		u model.FoundryDashboardUpdate) error
+	SetFoundryDashboardPinned(ctx context.Context, workspaceID, id, userID string, pinned bool, maxPinned int) error
+	DeleteFoundryDashboard(ctx context.Context, workspaceID, id string, editor model.FoundryDashboardEditor) error
+	PublishFoundryDashboard(ctx context.Context, share *model.FoundryDashboardShare) (*model.FoundryDashboardShare, error)
+	UnpublishFoundryDashboard(ctx context.Context, workspaceID, id string) error
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

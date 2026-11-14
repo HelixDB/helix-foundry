@@ -136,7 +136,7 @@ ON DUPLICATE KEY UPDATE requested_at=NOW(6), attempts=0, last_load_id=NULL, done
 // cancelled, preparing and running ones are asked to cancel, and every step
 // is purged, so its files are swept; its pending purges end, as its
 // databases go with it; and its model providers drop their keys, a pending
-// one superseded.
+// one superseded; and its dashboards' public snapshots are deleted.
 func (s *mysqlDB) CancelWorkspaceFoundryWork(ctx context.Context, workspaceID string) error {
 	ontologies, err := s.lockWorkspaceFoundryOntologies(ctx, workspaceID)
 	if err != nil {
@@ -156,6 +156,10 @@ WHERE ontology_id=? AND status='writing'`, ontologyID); err != nil {
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_enrichment_purges SET done_at=NOW(6) WHERE workspace_id=? AND done_at IS NULL`,
 		workspaceID); err != nil {
+		return err
+	}
+	// Its dashboards' public links stop at once.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_dashboard_shares WHERE workspace_id=?`, workspaceID); err != nil {
 		return err
 	}
 	return s.dropFoundryAIConfigs(ctx, workspaceID)

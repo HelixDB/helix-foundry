@@ -1345,3 +1345,53 @@ func (u Unimplemented) RefreshFoundryAgentAction(context.Context, string, string
 	u.unimplemented("RefreshFoundryAgentAction")
 	return nil, nil
 }
+
+func (u Unimplemented) GetFoundryDashboard(context.Context, string, string) (*model.FoundryDashboard, error) {
+	u.unimplemented("GetFoundryDashboard")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryDashboardByClientToken(context.Context, string, string, string) (*model.FoundryDashboard, error) {
+	u.unimplemented("GetFoundryDashboardByClientToken")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryDashboards(context.Context, string, bool) ([]*model.FoundryDashboard, error) {
+	u.unimplemented("ListFoundryDashboards")
+	return nil, nil
+}
+
+func (u Unimplemented) GetSharedFoundryDashboard(context.Context, string) (*model.FoundryDashboardShare, error) {
+	u.unimplemented("GetSharedFoundryDashboard")
+	return nil, nil
+}
+
+func (u Unimplemented) CreateFoundryDashboard(context.Context, *model.FoundryDashboard, int) error {
+	u.unimplemented("CreateFoundryDashboard")
+	return nil
+}
+
+func (u Unimplemented) UpdateFoundryDashboard(context.Context, string, string, model.FoundryDashboardEditor, int64, model.FoundryDashboardUpdate) error {
+	u.unimplemented("UpdateFoundryDashboard")
+	return nil
+}
+
+func (u Unimplemented) SetFoundryDashboardPinned(context.Context, string, string, string, bool, int) error {
+	u.unimplemented("SetFoundryDashboardPinned")
+	return nil
+}
+
+func (u Unimplemented) DeleteFoundryDashboard(context.Context, string, string, model.FoundryDashboardEditor) error {
+	u.unimplemented("DeleteFoundryDashboard")
+	return nil
+}
+
+func (u Unimplemented) PublishFoundryDashboard(context.Context, *model.FoundryDashboardShare) (*model.FoundryDashboardShare, error) {
+	u.unimplemented("PublishFoundryDashboard")
+	return nil, nil
+}
+
+func (u Unimplemented) UnpublishFoundryDashboard(context.Context, string, string) error {
+	u.unimplemented("UnpublishFoundryDashboard")
+	return nil
+}

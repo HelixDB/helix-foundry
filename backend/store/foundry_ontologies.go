@@ -133,6 +133,10 @@ WHERE ontology_id=? AND active_key=1`, id); err != nil {
 		if err := tx.deleteFoundryWorkflowRows(ctx, "ontology_id", id); err != nil {
 			return err
 		}
+		// So do the public snapshots of dashboards that read it.
+		if err := tx.deleteFoundryOntologyShares(ctx, workspaceID, id); err != nil {
+			return err
+		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting', finished_at=COALESCE(finished_at, NOW(6))
 WHERE ontology_id=? AND status NOT IN ('deleting', 'deleted')`, id); err != nil {
 			return err
