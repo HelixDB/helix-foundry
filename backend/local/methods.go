@@ -154,6 +154,17 @@ var methods = map[string]check{
 	foundry("CreateFoundryAgentHostPairing"): checkWorkspace,
 	foundry("RevokeFoundryAgentHost"):        checkWorkspace,
 
+	// Dashboards: each handler reads the workspace's own. An install
+	// publishes no public link (no door serves one).
+	foundry("ListFoundryDashboards"):             checkWorkspace,
+	foundry("GetFoundryDashboard"):               checkWorkspace,
+	foundry("CreateFoundryDashboard"):            checkWorkspace,
+	foundry("UpdateFoundryDashboard"):            checkWorkspace,
+	foundry("DeleteFoundryDashboard"):            checkWorkspace,
+	foundry("PinFoundryDashboard"):               checkWorkspace,
+	foundry("AddFoundryDashboardQuestionVisual"): checkWorkspace,
+	foundry("PreviewFoundryDashboardTile"):       checkWorkspace,
+
 	foundry("CreateFoundryWorkflow"):          checkOntology,
 	foundry("ListFoundryWorkflows"):           checkOntology,
 	foundry("GetFoundryWorkflow"):             checkOntology,

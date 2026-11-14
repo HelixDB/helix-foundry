@@ -56,6 +56,10 @@ var refused = map[string]string{
 	"/helix.foundry.v1.FoundryEventsService/CreateFoundryReminder":           noReminders,
 	"/helix.foundry.v1.FoundryEventsService/StopFoundryReminders":            noReminders,
 
+	foundry("PublishFoundryDashboard"):                                 noPublicLinks,
+	foundry("UnpublishFoundryDashboard"):                               noPublicLinks,
+	"/helix.foundry.v1.FoundryEventsService/GetSharedFoundryDashboard": noPublicLinks,
+
 	foundry("ListFoundryAccess"):          noGrantees,
 	foundry("SetFoundryAccessGrants"):     noGrantees,
 	foundry("PreviewFoundryAccessChange"): noGrantees,
@@ -79,6 +83,7 @@ const (
 	noSenders      = "an API source's senders reach it through a door an install doesn't run"
 	noReminders    = "reminders come from the hosted site's landing page, through a door an install doesn't run"
 	noGrantees     = "an install has one owner, so no one to grant sources to"
+	noPublicLinks  = "public dashboard links are hosted only, served by a door an install doesn't run"
 	notCalled      = "the local site doesn't call it"
 	noOntologySets = "documents are the workspace's: the site calls the workspace's routes"
 )

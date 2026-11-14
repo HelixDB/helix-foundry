@@ -169,6 +169,21 @@ var rules = map[string]Rule{
 	foundryv1.FoundryEventsService_CreateFoundryReminder_FullMethodName: Deny,
 	foundryv1.FoundryEventsService_StopFoundryReminders_FullMethodName:  Deny,
 
+	// Dashboards: a grantee sees the pinned ones, whose tiles it reads
+	// through ReadFoundryGraph as its grants allow, and changes none. A
+	// dashboard's public snapshot is the door's, for anyone with its link.
+	foundryv1.FoundryService_ListFoundryDashboards_FullMethodName:             Workspace,
+	foundryv1.FoundryService_GetFoundryDashboard_FullMethodName:               Workspace,
+	foundryv1.FoundryService_CreateFoundryDashboard_FullMethodName:            Deny,
+	foundryv1.FoundryService_UpdateFoundryDashboard_FullMethodName:            Deny,
+	foundryv1.FoundryService_DeleteFoundryDashboard_FullMethodName:            Deny,
+	foundryv1.FoundryService_PinFoundryDashboard_FullMethodName:               Deny,
+	foundryv1.FoundryService_AddFoundryDashboardQuestionVisual_FullMethodName: Deny,
+	foundryv1.FoundryService_PreviewFoundryDashboardTile_FullMethodName:       Deny,
+	foundryv1.FoundryService_PublishFoundryDashboard_FullMethodName:           Deny,
+	foundryv1.FoundryService_UnpublishFoundryDashboard_FullMethodName:         Deny,
+	foundryv1.FoundryEventsService_GetSharedFoundryDashboard_FullMethodName:   Deny,
+
 	// The workspace's settings, plan and spend.
 	foundryv1.FoundryService_GetFoundryAI_FullMethodName:             Deny,
 	foundryv1.FoundryService_UpdateFoundryAI_FullMethodName:          Deny,

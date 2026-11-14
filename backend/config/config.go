@@ -105,6 +105,22 @@ type Foundry struct {
 	Heal       HealConfig       `koanf:"heal"`
 	Workflows  WorkflowsConfig  `koanf:"workflows"`
 	Agent      AssistantConfig  `koanf:"agent"`
+	Dashboards DashboardsConfig `koanf:"dashboards"`
+}
+
+// DashboardsConfig drives dashboards (package dashboard, api/dashboards.go).
+type DashboardsConfig struct {
+	// PublicEnabled lets owners and admins publish a dashboard's snapshot at a
+	// public link, served by the foundry-events door. Off, publishing is
+	// refused and every link answers not found at once. A standalone install
+	// never publishes, whatever it says (PublicDashboards).
+	PublicEnabled bool `koanf:"public_enabled"`
+}
+
+// PublicDashboards reports whether dashboards may be published at public
+// links: foundry.dashboards.public_enabled, and never on a standalone install.
+func (c *Config) PublicDashboards() bool {
+	return c.Foundry.Dashboards.PublicEnabled && !c.Host.Local
 }
 
 // WorkflowsConfig drives workflows' runs: an agent's request, every call it
@@ -1952,6 +1968,8 @@ func Defaults() Config {
 		Every:        24 * time.Hour,
 		RetryAfter:   15 * time.Minute,
 		Lease:        2 * time.Minute,
+	}, Dashboards: DashboardsConfig{
+		PublicEnabled: true,
 	}, Agent: AssistantConfig{
 		HTTP:              ServiceHTTPConfig{Listen: ":8102"},
 		PollInterval:      time.Second,

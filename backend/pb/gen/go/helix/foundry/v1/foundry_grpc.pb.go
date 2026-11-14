@@ -126,6 +126,16 @@ const (
 	FoundryService_UpdateFoundryAgentRuntime_FullMethodName             = "/helix.foundry.v1.FoundryService/UpdateFoundryAgentRuntime"
 	FoundryService_CreateFoundryAgentHostPairing_FullMethodName         = "/helix.foundry.v1.FoundryService/CreateFoundryAgentHostPairing"
 	FoundryService_RevokeFoundryAgentHost_FullMethodName                = "/helix.foundry.v1.FoundryService/RevokeFoundryAgentHost"
+	FoundryService_ListFoundryDashboards_FullMethodName                 = "/helix.foundry.v1.FoundryService/ListFoundryDashboards"
+	FoundryService_GetFoundryDashboard_FullMethodName                   = "/helix.foundry.v1.FoundryService/GetFoundryDashboard"
+	FoundryService_CreateFoundryDashboard_FullMethodName                = "/helix.foundry.v1.FoundryService/CreateFoundryDashboard"
+	FoundryService_UpdateFoundryDashboard_FullMethodName                = "/helix.foundry.v1.FoundryService/UpdateFoundryDashboard"
+	FoundryService_DeleteFoundryDashboard_FullMethodName                = "/helix.foundry.v1.FoundryService/DeleteFoundryDashboard"
+	FoundryService_PinFoundryDashboard_FullMethodName                   = "/helix.foundry.v1.FoundryService/PinFoundryDashboard"
+	FoundryService_AddFoundryDashboardQuestionVisual_FullMethodName     = "/helix.foundry.v1.FoundryService/AddFoundryDashboardQuestionVisual"
+	FoundryService_PreviewFoundryDashboardTile_FullMethodName           = "/helix.foundry.v1.FoundryService/PreviewFoundryDashboardTile"
+	FoundryService_PublishFoundryDashboard_FullMethodName               = "/helix.foundry.v1.FoundryService/PublishFoundryDashboard"
+	FoundryService_UnpublishFoundryDashboard_FullMethodName             = "/helix.foundry.v1.FoundryService/UnpublishFoundryDashboard"
 	FoundryService_GetFoundryUsage_FullMethodName                       = "/helix.foundry.v1.FoundryService/GetFoundryUsage"
 	FoundryService_GetFoundryEnrichment_FullMethodName                  = "/helix.foundry.v1.FoundryService/GetFoundryEnrichment"
 	FoundryService_UpdateFoundryEnrichment_FullMethodName               = "/helix.foundry.v1.FoundryService/UpdateFoundryEnrichment"
@@ -304,6 +314,23 @@ type FoundryServiceClient interface {
 	UpdateFoundryAgentRuntime(ctx context.Context, in *UpdateFoundryAgentRuntimeRequest, opts ...grpc.CallOption) (*FoundryAgentRuntimeResponse, error)
 	CreateFoundryAgentHostPairing(ctx context.Context, in *CreateFoundryAgentHostPairingRequest, opts ...grpc.CallOption) (*FoundryAgentHostPairingResponse, error)
 	RevokeFoundryAgentHost(ctx context.Context, in *RevokeFoundryAgentHostRequest, opts ...grpc.CallOption) (*FoundryAgentHostResponse, error)
+	// Dashboards: tiles of typed queries over ontologies' loads (package
+	// dashboard), which every member of the workspace sees and reads as
+	// themselves through ReadFoundryGraph. A member creates dashboards and edits
+	// and deletes their own while unpinned; owners and admins edit and delete
+	// any, pin them in every member's sidebar, and publish one's snapshot at a
+	// public link (hosted only, with foundry.dashboards.public_enabled). A
+	// grantee of source grants sees the pinned ones and changes none.
+	ListFoundryDashboards(ctx context.Context, in *ListFoundryDashboardsRequest, opts ...grpc.CallOption) (*ListFoundryDashboardsResponse, error)
+	GetFoundryDashboard(ctx context.Context, in *GetFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
+	CreateFoundryDashboard(ctx context.Context, in *CreateFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
+	UpdateFoundryDashboard(ctx context.Context, in *UpdateFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
+	DeleteFoundryDashboard(ctx context.Context, in *DeleteFoundryDashboardRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	PinFoundryDashboard(ctx context.Context, in *PinFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
+	AddFoundryDashboardQuestionVisual(ctx context.Context, in *AddFoundryDashboardQuestionVisualRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
+	PreviewFoundryDashboardTile(ctx context.Context, in *PreviewFoundryDashboardTileRequest, opts ...grpc.CallOption) (*PreviewFoundryDashboardTileResponse, error)
+	PublishFoundryDashboard(ctx context.Context, in *PublishFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
+	UnpublishFoundryDashboard(ctx context.Context, in *UnpublishFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
 	// Helix Foundry usage: the workspace's AI spend this month, by task
 	//
 	// The UTC calendar month's spend of loads, of API sources' extraction no
@@ -1434,6 +1461,106 @@ func (c *foundryServiceClient) RevokeFoundryAgentHost(ctx context.Context, in *R
 	return out, nil
 }
 
+func (c *foundryServiceClient) ListFoundryDashboards(ctx context.Context, in *ListFoundryDashboardsRequest, opts ...grpc.CallOption) (*ListFoundryDashboardsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryDashboardsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryDashboards_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) GetFoundryDashboard(ctx context.Context, in *GetFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryDashboardResponse)
+	err := c.cc.Invoke(ctx, FoundryService_GetFoundryDashboard_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) CreateFoundryDashboard(ctx context.Context, in *CreateFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryDashboardResponse)
+	err := c.cc.Invoke(ctx, FoundryService_CreateFoundryDashboard_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) UpdateFoundryDashboard(ctx context.Context, in *UpdateFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryDashboardResponse)
+	err := c.cc.Invoke(ctx, FoundryService_UpdateFoundryDashboard_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) DeleteFoundryDashboard(ctx context.Context, in *DeleteFoundryDashboardRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, FoundryService_DeleteFoundryDashboard_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) PinFoundryDashboard(ctx context.Context, in *PinFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryDashboardResponse)
+	err := c.cc.Invoke(ctx, FoundryService_PinFoundryDashboard_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) AddFoundryDashboardQuestionVisual(ctx context.Context, in *AddFoundryDashboardQuestionVisualRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryDashboardResponse)
+	err := c.cc.Invoke(ctx, FoundryService_AddFoundryDashboardQuestionVisual_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) PreviewFoundryDashboardTile(ctx context.Context, in *PreviewFoundryDashboardTileRequest, opts ...grpc.CallOption) (*PreviewFoundryDashboardTileResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PreviewFoundryDashboardTileResponse)
+	err := c.cc.Invoke(ctx, FoundryService_PreviewFoundryDashboardTile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) PublishFoundryDashboard(ctx context.Context, in *PublishFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryDashboardResponse)
+	err := c.cc.Invoke(ctx, FoundryService_PublishFoundryDashboard_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) UnpublishFoundryDashboard(ctx context.Context, in *UnpublishFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryDashboardResponse)
+	err := c.cc.Invoke(ctx, FoundryService_UnpublishFoundryDashboard_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) GetFoundryUsage(ctx context.Context, in *GetFoundryUsageRequest, opts ...grpc.CallOption) (*FoundryUsageResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FoundryUsageResponse)
@@ -1745,6 +1872,23 @@ type FoundryServiceServer interface {
 	UpdateFoundryAgentRuntime(context.Context, *UpdateFoundryAgentRuntimeRequest) (*FoundryAgentRuntimeResponse, error)
 	CreateFoundryAgentHostPairing(context.Context, *CreateFoundryAgentHostPairingRequest) (*FoundryAgentHostPairingResponse, error)
 	RevokeFoundryAgentHost(context.Context, *RevokeFoundryAgentHostRequest) (*FoundryAgentHostResponse, error)
+	// Dashboards: tiles of typed queries over ontologies' loads (package
+	// dashboard), which every member of the workspace sees and reads as
+	// themselves through ReadFoundryGraph. A member creates dashboards and edits
+	// and deletes their own while unpinned; owners and admins edit and delete
+	// any, pin them in every member's sidebar, and publish one's snapshot at a
+	// public link (hosted only, with foundry.dashboards.public_enabled). A
+	// grantee of source grants sees the pinned ones and changes none.
+	ListFoundryDashboards(context.Context, *ListFoundryDashboardsRequest) (*ListFoundryDashboardsResponse, error)
+	GetFoundryDashboard(context.Context, *GetFoundryDashboardRequest) (*FoundryDashboardResponse, error)
+	CreateFoundryDashboard(context.Context, *CreateFoundryDashboardRequest) (*FoundryDashboardResponse, error)
+	UpdateFoundryDashboard(context.Context, *UpdateFoundryDashboardRequest) (*FoundryDashboardResponse, error)
+	DeleteFoundryDashboard(context.Context, *DeleteFoundryDashboardRequest) (*emptypb.Empty, error)
+	PinFoundryDashboard(context.Context, *PinFoundryDashboardRequest) (*FoundryDashboardResponse, error)
+	AddFoundryDashboardQuestionVisual(context.Context, *AddFoundryDashboardQuestionVisualRequest) (*FoundryDashboardResponse, error)
+	PreviewFoundryDashboardTile(context.Context, *PreviewFoundryDashboardTileRequest) (*PreviewFoundryDashboardTileResponse, error)
+	PublishFoundryDashboard(context.Context, *PublishFoundryDashboardRequest) (*FoundryDashboardResponse, error)
+	UnpublishFoundryDashboard(context.Context, *UnpublishFoundryDashboardRequest) (*FoundryDashboardResponse, error)
 	// Helix Foundry usage: the workspace's AI spend this month, by task
 	//
 	// The UTC calendar month's spend of loads, of API sources' extraction no
@@ -2131,6 +2275,36 @@ func (UnimplementedFoundryServiceServer) CreateFoundryAgentHostPairing(context.C
 }
 func (UnimplementedFoundryServiceServer) RevokeFoundryAgentHost(context.Context, *RevokeFoundryAgentHostRequest) (*FoundryAgentHostResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RevokeFoundryAgentHost not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryDashboards(context.Context, *ListFoundryDashboardsRequest) (*ListFoundryDashboardsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryDashboards not implemented")
+}
+func (UnimplementedFoundryServiceServer) GetFoundryDashboard(context.Context, *GetFoundryDashboardRequest) (*FoundryDashboardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryDashboard not implemented")
+}
+func (UnimplementedFoundryServiceServer) CreateFoundryDashboard(context.Context, *CreateFoundryDashboardRequest) (*FoundryDashboardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateFoundryDashboard not implemented")
+}
+func (UnimplementedFoundryServiceServer) UpdateFoundryDashboard(context.Context, *UpdateFoundryDashboardRequest) (*FoundryDashboardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateFoundryDashboard not implemented")
+}
+func (UnimplementedFoundryServiceServer) DeleteFoundryDashboard(context.Context, *DeleteFoundryDashboardRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteFoundryDashboard not implemented")
+}
+func (UnimplementedFoundryServiceServer) PinFoundryDashboard(context.Context, *PinFoundryDashboardRequest) (*FoundryDashboardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PinFoundryDashboard not implemented")
+}
+func (UnimplementedFoundryServiceServer) AddFoundryDashboardQuestionVisual(context.Context, *AddFoundryDashboardQuestionVisualRequest) (*FoundryDashboardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AddFoundryDashboardQuestionVisual not implemented")
+}
+func (UnimplementedFoundryServiceServer) PreviewFoundryDashboardTile(context.Context, *PreviewFoundryDashboardTileRequest) (*PreviewFoundryDashboardTileResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PreviewFoundryDashboardTile not implemented")
+}
+func (UnimplementedFoundryServiceServer) PublishFoundryDashboard(context.Context, *PublishFoundryDashboardRequest) (*FoundryDashboardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PublishFoundryDashboard not implemented")
+}
+func (UnimplementedFoundryServiceServer) UnpublishFoundryDashboard(context.Context, *UnpublishFoundryDashboardRequest) (*FoundryDashboardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UnpublishFoundryDashboard not implemented")
 }
 func (UnimplementedFoundryServiceServer) GetFoundryUsage(context.Context, *GetFoundryUsageRequest) (*FoundryUsageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryUsage not implemented")
@@ -4105,6 +4279,186 @@ func _FoundryService_RevokeFoundryAgentHost_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_ListFoundryDashboards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryDashboardsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryDashboards(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryDashboards_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryDashboards(ctx, req.(*ListFoundryDashboardsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_GetFoundryDashboard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetFoundryDashboardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).GetFoundryDashboard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_GetFoundryDashboard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).GetFoundryDashboard(ctx, req.(*GetFoundryDashboardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_CreateFoundryDashboard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateFoundryDashboardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).CreateFoundryDashboard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_CreateFoundryDashboard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).CreateFoundryDashboard(ctx, req.(*CreateFoundryDashboardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_UpdateFoundryDashboard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateFoundryDashboardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).UpdateFoundryDashboard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_UpdateFoundryDashboard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).UpdateFoundryDashboard(ctx, req.(*UpdateFoundryDashboardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_DeleteFoundryDashboard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteFoundryDashboardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).DeleteFoundryDashboard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_DeleteFoundryDashboard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).DeleteFoundryDashboard(ctx, req.(*DeleteFoundryDashboardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_PinFoundryDashboard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PinFoundryDashboardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).PinFoundryDashboard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_PinFoundryDashboard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).PinFoundryDashboard(ctx, req.(*PinFoundryDashboardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_AddFoundryDashboardQuestionVisual_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddFoundryDashboardQuestionVisualRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).AddFoundryDashboardQuestionVisual(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_AddFoundryDashboardQuestionVisual_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).AddFoundryDashboardQuestionVisual(ctx, req.(*AddFoundryDashboardQuestionVisualRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_PreviewFoundryDashboardTile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreviewFoundryDashboardTileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).PreviewFoundryDashboardTile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_PreviewFoundryDashboardTile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).PreviewFoundryDashboardTile(ctx, req.(*PreviewFoundryDashboardTileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_PublishFoundryDashboard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PublishFoundryDashboardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).PublishFoundryDashboard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_PublishFoundryDashboard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).PublishFoundryDashboard(ctx, req.(*PublishFoundryDashboardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_UnpublishFoundryDashboard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnpublishFoundryDashboardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).UnpublishFoundryDashboard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_UnpublishFoundryDashboard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).UnpublishFoundryDashboard(ctx, req.(*UnpublishFoundryDashboardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_GetFoundryUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetFoundryUsageRequest)
 	if err := dec(in); err != nil {
@@ -4805,6 +5159,46 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RevokeFoundryAgentHost",
 			Handler:    _FoundryService_RevokeFoundryAgentHost_Handler,
+		},
+		{
+			MethodName: "ListFoundryDashboards",
+			Handler:    _FoundryService_ListFoundryDashboards_Handler,
+		},
+		{
+			MethodName: "GetFoundryDashboard",
+			Handler:    _FoundryService_GetFoundryDashboard_Handler,
+		},
+		{
+			MethodName: "CreateFoundryDashboard",
+			Handler:    _FoundryService_CreateFoundryDashboard_Handler,
+		},
+		{
+			MethodName: "UpdateFoundryDashboard",
+			Handler:    _FoundryService_UpdateFoundryDashboard_Handler,
+		},
+		{
+			MethodName: "DeleteFoundryDashboard",
+			Handler:    _FoundryService_DeleteFoundryDashboard_Handler,
+		},
+		{
+			MethodName: "PinFoundryDashboard",
+			Handler:    _FoundryService_PinFoundryDashboard_Handler,
+		},
+		{
+			MethodName: "AddFoundryDashboardQuestionVisual",
+			Handler:    _FoundryService_AddFoundryDashboardQuestionVisual_Handler,
+		},
+		{
+			MethodName: "PreviewFoundryDashboardTile",
+			Handler:    _FoundryService_PreviewFoundryDashboardTile_Handler,
+		},
+		{
+			MethodName: "PublishFoundryDashboard",
+			Handler:    _FoundryService_PublishFoundryDashboard_Handler,
+		},
+		{
+			MethodName: "UnpublishFoundryDashboard",
+			Handler:    _FoundryService_UnpublishFoundryDashboard_Handler,
 		},
 		{
 			MethodName: "GetFoundryUsage",

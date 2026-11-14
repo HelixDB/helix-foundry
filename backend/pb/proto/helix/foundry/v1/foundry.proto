@@ -541,6 +541,65 @@ service FoundryService {
     };
   }
 
+  // Dashboards: tiles of typed queries over ontologies' loads (package
+  // dashboard), which every member of the workspace sees and reads as
+  // themselves through ReadFoundryGraph. A member creates dashboards and edits
+  // and deletes their own while unpinned; owners and admins edit and delete
+  // any, pin them in every member's sidebar, and publish one's snapshot at a
+  // public link (hosted only, with foundry.dashboards.public_enabled). A
+  // grantee of source grants sees the pinned ones and changes none.
+  rpc ListFoundryDashboards(ListFoundryDashboardsRequest) returns (ListFoundryDashboardsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/dashboards"};
+  }
+  rpc GetFoundryDashboard(GetFoundryDashboardRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}"};
+  }
+  rpc CreateFoundryDashboard(CreateFoundryDashboardRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/dashboards"
+      body: "*"
+    };
+  }
+  rpc UpdateFoundryDashboard(UpdateFoundryDashboardRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {
+      patch: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}"
+      body: "*"
+    };
+  }
+  rpc DeleteFoundryDashboard(DeleteFoundryDashboardRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}"};
+  }
+  rpc PinFoundryDashboard(PinFoundryDashboardRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}:pin"
+      body: "*"
+    };
+  }
+  rpc AddFoundryDashboardQuestionVisual(AddFoundryDashboardQuestionVisualRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}:add-question-visual"
+      body: "*"
+    };
+  }
+  rpc PreviewFoundryDashboardTile(PreviewFoundryDashboardTileRequest) returns (PreviewFoundryDashboardTileResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/dashboards:preview-tile"
+      body: "*"
+    };
+  }
+  rpc PublishFoundryDashboard(PublishFoundryDashboardRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}:publish"
+      body: "*"
+    };
+  }
+  rpc UnpublishFoundryDashboard(UnpublishFoundryDashboardRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}:unpublish"
+      body: "*"
+    };
+  }
+
   // Helix Foundry usage: the workspace's AI spend this month, by task
   //
   // The UTC calendar month's spend of loads, of API sources' extraction no
@@ -2034,3 +2093,114 @@ message RevokeFoundryAgentHostRequest {
 message FoundryAgentHostResponse {
   FoundryAgentHost host = 1;
 }
+
+// ListFoundryDashboardsRequest lists the workspace's dashboards, pinned ones
+// first, without their specs: at most foundry.dashboards' cap of them, so one
+// answer holds all.
+message ListFoundryDashboardsRequest {
+  string workspace_id = 1;
+}
+message ListFoundryDashboardsResponse {
+  repeated FoundryDashboard dashboards = 1;
+  // Whether the caller may create one.
+  bool can_create = 2;
+}
+message GetFoundryDashboardRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+message FoundryDashboardResponse {
+  FoundryDashboard dashboard = 1;
+}
+// CreateFoundryDashboardRequest makes a dashboard, unpinned. The same
+// client_token returns the one it made. Past the workspace's cap is
+// FAILED_PRECONDITION, reason FOUNDRY_DASHBOARD_LIMIT; a spec that isn't one
+// is INVALID_ARGUMENT, saying what is wrong.
+message CreateFoundryDashboardRequest {
+  string workspace_id = 1;
+  // 1 to 120 characters.
+  string name = 2;
+  // At most 1,000 characters.
+  string description = 3;
+  // The spec: {"v": 1, "tiles": [...], "layout": {"rows": [...]}} (package
+  // dashboard); empty is a dashboard with no tiles.
+  string spec_json = 4;
+  // 1 to 64 characters.
+  string client_token = 5;
+}
+// UpdateFoundryDashboardRequest edits the dashboard at expected_revision: each
+// field set is changed, at least one. Another revision is FAILED_PRECONDITION,
+// reason FOUNDRY_DASHBOARD_CHANGED; a dashboard the caller may not edit
+// (another member's, or pinned, for a member) PERMISSION_DENIED.
+message UpdateFoundryDashboardRequest {
+  string workspace_id = 1;
+  string id = 2;
+  int64 expected_revision = 3;
+  optional string name = 4;
+  optional string description = 5;
+  optional string spec_json = 6;
+}
+message DeleteFoundryDashboardRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// PinFoundryDashboardRequest pins the dashboard in every member's sidebar, or
+// unpins it: owners and admins only. Past the workspace's pinned cap is
+// FAILED_PRECONDITION, reason FOUNDRY_DASHBOARD_LIMIT.
+message PinFoundryDashboardRequest {
+  string workspace_id = 1;
+  string id = 2;
+  bool pinned = 3;
+}
+// AddFoundryDashboardQuestionVisualRequest adds an Analyst answer's query
+// result, as its visual shows it, to the dashboard at expected_revision as a
+// tile of its own row, last: the query the question recorded, the visual's
+// kind and title (else the question's text). The question must be answered and
+// record evidence_id as a query result.
+message AddFoundryDashboardQuestionVisualRequest {
+  string workspace_id = 1;
+  string id = 2;
+  int64 expected_revision = 3;
+  string ontology_id = 4;
+  string question_id = 5;
+  // The query result, such as e2.
+  string evidence_id = 6;
+  // The tile reads the question's load rather than the current one.
+  bool pin_load = 7;
+}
+// PreviewFoundryDashboardTileRequest checks a tile and reads it once, as the
+// caller: the tile as a spec writes it (package dashboard).
+message PreviewFoundryDashboardTileRequest {
+  string workspace_id = 1;
+  string tile_json = 2;
+}
+message PreviewFoundryDashboardTileResponse {
+  // The tile as a spec would keep it.
+  string tile_json = 1;
+  // The load it read: the ontology's current one, or the one it pins.
+  string load_id = 2;
+  // Its read's outcome as ReadFoundryGraph gives it: {"ok": <the query's
+  // answer>} or {"error": <why it has none>}.
+  string outcome_json = 3;
+  string as_of = 4;
+}
+// PublishFoundryDashboardRequest reads every tile as the caller, an owner or
+// admin, and keeps their outputs as the dashboard's public snapshot, at its
+// link: a new one the first time, the same one when published already. The
+// dashboard must still be at expected_revision (FOUNDRY_DASHBOARD_CHANGED) and
+// have a tile. Where public links are off it is FAILED_PRECONDITION, reason
+// FOUNDRY_DASHBOARDS_PUBLIC_OFF; a tile that can't be read,
+// FOUNDRY_DASHBOARD_TILE_FAILED, naming it and why; a snapshot past its size,
+// FOUNDRY_DASHBOARD_TOO_LARGE.
+message PublishFoundryDashboardRequest {
+  string workspace_id = 1;
+  string id = 2;
+  int64 expected_revision = 3;
+}
+// UnpublishFoundryDashboardRequest deletes the dashboard's snapshot, so its
+// link shows nothing: owners and admins only.
+message UnpublishFoundryDashboardRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+

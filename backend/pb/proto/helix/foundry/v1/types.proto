@@ -2552,3 +2552,44 @@ message FoundryAgentAction {
   google.protobuf.Timestamp created_at = 16;
 }
 
+// FoundryDashboard is a dashboard of a workspace.
+message FoundryDashboard {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  // The spec, as package dashboard writes it; empty in a list.
+  string spec_json = 4;
+  // Counts its edits, from 1: an edit or a publish names the revision it was
+  // made from.
+  int64 revision = 5;
+  string created_by_user_id = 6;
+  string updated_by_user_id = 7;
+  // Pinned: in every member's sidebar.
+  bool pinned = 8;
+  google.protobuf.Timestamp pinned_at = 9;
+  string pinned_by_user_id = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+  // Its public snapshot; unset unless published.
+  FoundryDashboardShare share = 13;
+  // What the caller may do: change its name, description and tiles, and
+  // delete it; pin or unpin it; publish, republish and unpublish it (false
+  // wherever public links are off).
+  bool can_edit = 14;
+  bool can_pin = 15;
+  bool can_publish = 16;
+}
+
+// FoundryDashboardShare is a dashboard's public snapshot.
+message FoundryDashboardShare {
+  // The link's token, for owners and admins only: the site's page for it is
+  // /share/<token>. Empty for anyone else.
+  string token = 1;
+  // The dashboard's revision it shows: older than the dashboard's after an
+  // edit, until it is published again.
+  int64 spec_revision = 2;
+  google.protobuf.Timestamp published_at = 3;
+  google.protobuf.Timestamp first_published_at = 4;
+  string published_by_user_id = 5;
+}
+

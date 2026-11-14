@@ -1689,6 +1689,400 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards": {
+      "get": {
+        "summary": "Dashboards: tiles of typed queries over ontologies' loads (package\ndashboard), which every member of the workspace sees and reads as\nthemselves through ReadFoundryGraph. A member creates dashboards and edits\nand deletes their own while unpinned; owners and admins edit and delete\nany, pin them in every member's sidebar, and publish one's snapshot at a\npublic link (hosted only, with foundry.dashboards.public_enabled). A\ngrantee of source grants sees the pinned ones and changes none.",
+        "operationId": "FoundryService_ListFoundryDashboards",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryDashboardsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "post": {
+        "operationId": "FoundryService_CreateFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCreateFoundryDashboardBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}": {
+      "get": {
+        "operationId": "FoundryService_GetFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "delete": {
+        "operationId": "FoundryService_DeleteFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "patch": {
+        "operationId": "FoundryService_UpdateFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUpdateFoundryDashboardBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:add-question-visual": {
+      "post": {
+        "operationId": "FoundryService_AddFoundryDashboardQuestionVisual",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceAddFoundryDashboardQuestionVisualBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:pin": {
+      "post": {
+        "operationId": "FoundryService_PinFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServicePinFoundryDashboardBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:publish": {
+      "post": {
+        "operationId": "FoundryService_PublishFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServicePublishFoundryDashboardBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:unpublish": {
+      "post": {
+        "operationId": "FoundryService_UnpublishFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUnpublishFoundryDashboardBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards:preview-tile": {
+      "post": {
+        "operationId": "FoundryService_PreviewFoundryDashboardTile",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PreviewFoundryDashboardTileResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServicePreviewFoundryDashboardTileBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/data-layout": {
       "get": {
         "operationId": "FoundryService_GetFoundryDataLayout",
@@ -5051,6 +5445,30 @@
         }
       }
     },
+    "FoundryServiceAddFoundryDashboardQuestionVisualBody": {
+      "type": "object",
+      "properties": {
+        "expectedRevision": {
+          "type": "string",
+          "format": "int64"
+        },
+        "ontologyId": {
+          "type": "string"
+        },
+        "questionId": {
+          "type": "string"
+        },
+        "evidenceId": {
+          "type": "string",
+          "description": "The query result, such as e2."
+        },
+        "pinLoad": {
+          "type": "boolean",
+          "description": "The tile reads the question's load rather than the current one."
+        }
+      },
+      "description": "AddFoundryDashboardQuestionVisualRequest adds an Analyst answer's query\nresult, as its visual shows it, to the dashboard at expected_revision as a\ntile of its own row, last: the query the question recorded, the visual's\nkind and title (else the question's text). The question must be answered and\nrecord evidence_id as a query result."
+    },
     "FoundryServiceAskFoundryQuestionBody": {
       "type": "object",
       "properties": {
@@ -5128,6 +5546,28 @@
     "FoundryServiceCreateFoundryAgentHostPairingBody": {
       "type": "object",
       "description": "CreateFoundryAgentHostPairingRequest makes a one-time code, valid for 10\nminutes, that pairs a helper with the install: `npx\n@helixdb/foundry-agent-host pair \u003ccode\u003e` on the owner's machine."
+    },
+    "FoundryServiceCreateFoundryDashboardBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "1 to 120 characters."
+        },
+        "description": {
+          "type": "string",
+          "description": "At most 1,000 characters."
+        },
+        "specJson": {
+          "type": "string",
+          "description": "The spec: {\"v\": 1, \"tiles\": [...], \"layout\": {\"rows\": [...]}} (package\ndashboard); empty is a dashboard with no tiles."
+        },
+        "clientToken": {
+          "type": "string",
+          "description": "1 to 64 characters."
+        }
+      },
+      "description": "CreateFoundryDashboardRequest makes a dashboard, unpinned. The same\nclient_token returns the one it made. Past the workspace's cap is\nFAILED_PRECONDITION, reason FOUNDRY_DASHBOARD_LIMIT; a spec that isn't one\nis INVALID_ARGUMENT, saying what is wrong."
     },
     "FoundryServiceCreateFoundryDocumentBody": {
       "type": "object",
@@ -5385,6 +5825,15 @@
         }
       }
     },
+    "FoundryServicePinFoundryDashboardBody": {
+      "type": "object",
+      "properties": {
+        "pinned": {
+          "type": "boolean"
+        }
+      },
+      "description": "PinFoundryDashboardRequest pins the dashboard in every member's sidebar, or\nunpins it: owners and admins only. Past the workspace's pinned cap is\nFAILED_PRECONDITION, reason FOUNDRY_DASHBOARD_LIMIT."
+    },
     "FoundryServicePreviewFoundryAccessChangeBody": {
       "type": "object",
       "properties": {
@@ -5393,6 +5842,25 @@
         }
       },
       "description": "PreviewFoundryAccessChangeRequest asks what a change would take away."
+    },
+    "FoundryServicePreviewFoundryDashboardTileBody": {
+      "type": "object",
+      "properties": {
+        "tileJson": {
+          "type": "string"
+        }
+      },
+      "description": "PreviewFoundryDashboardTileRequest checks a tile and reads it once, as the\ncaller: the tile as a spec writes it (package dashboard)."
+    },
+    "FoundryServicePublishFoundryDashboardBody": {
+      "type": "object",
+      "properties": {
+        "expectedRevision": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "PublishFoundryDashboardRequest reads every tile as the caller, an owner or\nadmin, and keeps their outputs as the dashboard's public snapshot, at its\nlink: a new one the first time, the same one when published already. The\ndashboard must still be at expected_revision (FOUNDRY_DASHBOARD_CHANGED) and\nhave a tile. Where public links are off it is FAILED_PRECONDITION, reason\nFOUNDRY_DASHBOARDS_PUBLIC_OFF; a tile that can't be read,\nFOUNDRY_DASHBOARD_TILE_FAILED, naming it and why; a snapshot past its size,\nFOUNDRY_DASHBOARD_TOO_LARGE."
     },
     "FoundryServicePutFoundryDataLayoutBody": {
       "type": "object",
@@ -5609,6 +6077,10 @@
         }
       }
     },
+    "FoundryServiceUnpublishFoundryDashboardBody": {
+      "type": "object",
+      "description": "UnpublishFoundryDashboardRequest deletes the dashboard's snapshot, so its\nlink shows nothing: owners and admins only."
+    },
     "FoundryServiceUpdateConnectorBody": {
       "type": "object",
       "properties": {
@@ -5655,6 +6127,25 @@
         }
       },
       "description": "UpdateFoundryAgentRuntimeRequest sets the runtime the workspace's new\nthreads take (a thread keeps its own): api or claude_code. codex is\nFAILED_PRECONDITION (reason FOUNDRY_AGENT_RUNTIME_UNAVAILABLE): no\nconfiguration of its app-server gives it Foundry's tools alone yet. A\nhelper need not be online to choose one; sending in its thread then is\nFAILED_PRECONDITION (reason FOUNDRY_AGENT_HOST_OFFLINE) until it is."
+    },
+    "FoundryServiceUpdateFoundryDashboardBody": {
+      "type": "object",
+      "properties": {
+        "expectedRevision": {
+          "type": "string",
+          "format": "int64"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "specJson": {
+          "type": "string"
+        }
+      },
+      "description": "UpdateFoundryDashboardRequest edits the dashboard at expected_revision: each\nfield set is changed, at least one. Another revision is FAILED_PRECONDITION,\nreason FOUNDRY_DASHBOARD_CHANGED; a dashboard the caller may not edit\n(another member's, or pinned, for a member) PERMISSION_DENIED."
     },
     "FoundryServiceUpdateFoundryDocumentBody": {
       "type": "object",
@@ -7376,6 +7867,103 @@
         }
       },
       "description": "FoundryCatalogPlan is one plan the deployment's catalog offers."
+    },
+    "v1FoundryDashboard": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "specJson": {
+          "type": "string",
+          "description": "The spec, as package dashboard writes it; empty in a list."
+        },
+        "revision": {
+          "type": "string",
+          "format": "int64",
+          "description": "Counts its edits, from 1: an edit or a publish names the revision it was\nmade from."
+        },
+        "createdByUserId": {
+          "type": "string"
+        },
+        "updatedByUserId": {
+          "type": "string"
+        },
+        "pinned": {
+          "type": "boolean",
+          "description": "Pinned: in every member's sidebar."
+        },
+        "pinnedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pinnedByUserId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "share": {
+          "$ref": "#/definitions/v1FoundryDashboardShare",
+          "description": "Its public snapshot; unset unless published."
+        },
+        "canEdit": {
+          "type": "boolean",
+          "description": "What the caller may do: change its name, description and tiles, and\ndelete it; pin or unpin it; publish, republish and unpublish it (false\nwherever public links are off)."
+        },
+        "canPin": {
+          "type": "boolean"
+        },
+        "canPublish": {
+          "type": "boolean"
+        }
+      },
+      "description": "FoundryDashboard is a dashboard of a workspace."
+    },
+    "v1FoundryDashboardResponse": {
+      "type": "object",
+      "properties": {
+        "dashboard": {
+          "$ref": "#/definitions/v1FoundryDashboard"
+        }
+      }
+    },
+    "v1FoundryDashboardShare": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "The link's token, for owners and admins only: the site's page for it is\n/share/\u003ctoken\u003e. Empty for anyone else."
+        },
+        "specRevision": {
+          "type": "string",
+          "format": "int64",
+          "description": "The dashboard's revision it shows: older than the dashboard's after an\nedit, until it is published again."
+        },
+        "publishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "firstPublishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "publishedByUserId": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryDashboardShare is a dashboard's public snapshot."
     },
     "v1FoundryDataLayoutResponse": {
       "type": "object",
@@ -10259,6 +10847,22 @@
         }
       }
     },
+    "v1ListFoundryDashboardsResponse": {
+      "type": "object",
+      "properties": {
+        "dashboards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryDashboard"
+          }
+        },
+        "canCreate": {
+          "type": "boolean",
+          "description": "Whether the caller may create one."
+        }
+      }
+    },
     "v1ListFoundryDocumentSetsResponse": {
       "type": "object",
       "properties": {
@@ -10888,6 +11492,26 @@
             "$ref": "#/definitions/v1FoundryAccessLoss"
           },
           "description": "Each principal that reads an ontology through grants now and wouldn't\nafter the change."
+        }
+      }
+    },
+    "v1PreviewFoundryDashboardTileResponse": {
+      "type": "object",
+      "properties": {
+        "tileJson": {
+          "type": "string",
+          "description": "The tile as a spec would keep it."
+        },
+        "loadId": {
+          "type": "string",
+          "description": "The load it read: the ontology's current one, or the one it pins."
+        },
+        "outcomeJson": {
+          "type": "string",
+          "description": "Its read's outcome as ReadFoundryGraph gives it: {\"ok\": \u003cthe query's\nanswer\u003e} or {\"error\": \u003cwhy it has none\u003e}."
+        },
+        "asOf": {
+          "type": "string"
         }
       }
     },

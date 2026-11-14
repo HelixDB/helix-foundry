@@ -264,3 +264,36 @@ func ExampleParseSpec() {
 	fmt.Println(dashboard.Reads(spec.Tiles()))
 	// Output: [{"query":{"return":{"count":{}},"start":{"type":"Invoice"}}}]
 }
+
+func TestFromQuestion(t *testing.T) {
+	result := `{"status":"answered","answer":{"blocks":[],"visuals":[{"evidence_id":"e2","kind":"bar","title":"  By\nstatus  "},{"evidence_id":"e3","kind":"pie"}]},
+	  "citations":[],"queries":[{"evidence_id":"e2","query":` + groupQuery + `,"output":{"kind":"group_count","groups":[],"total_groups":0}},
+	  {"evidence_id":"e3","query":` + countQuery + `},{"evidence_id":"e4","query":{"start":{}}}],"usage":{}}`
+	v, err := dashboard.FromQuestion(json.RawMessage(result), "e2")
+	require.NoError(t, err)
+	require.Equal(t, dashboard.VisualBar, v.Visual)
+	require.Equal(t, "By status", v.Title)
+	require.JSONEq(t, groupQuery, string(v.Query))
+
+	v, err = dashboard.FromQuestion(json.RawMessage(result), "e3")
+	require.NoError(t, err)
+	require.Equal(t, dashboard.VisualAuto, v.Visual, "an unknown kind is no hint")
+	require.Empty(t, v.Title)
+
+	_, err = dashboard.FromQuestion(json.RawMessage(result), "e4")
+	require.ErrorContains(t, err, "not a Query")
+	_, err = dashboard.FromQuestion(json.RawMessage(result), "e9")
+	require.ErrorContains(t, err, "no query result e9")
+	_, err = dashboard.FromQuestion(json.RawMessage(`{"status":"cannot_answer","queries":[]}`), "e2")
+	require.ErrorContains(t, err, "no answer")
+	_, err = dashboard.FromQuestion(json.RawMessage(`[`), "e2")
+	require.Error(t, err)
+}
+
+func TestTileTitle(t *testing.T) {
+	require.Equal(t, "a b", dashboard.TileTitle(" a\u0007\tb "))
+	long := dashboard.TileTitle(strings.Repeat("x", 100))
+	require.Equal(t, dashboard.MaxTitleChars, len([]rune(long)))
+	require.True(t, strings.HasSuffix(long, "…"))
+	require.Empty(t, dashboard.TileTitle(" \n "))
+}
