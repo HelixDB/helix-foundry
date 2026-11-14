@@ -3,7 +3,7 @@
 // (koanf tags, with HELIX_ environment overrides), so the same settings mean
 // the same thing in every deployment:
 //
-//	foundry.*                Foundry           connectors, sync, ontologies, AI, documents, graph, read, ask, enrichment, events, notify
+//	foundry.*                Foundry           connectors, sync, ontologies, AI, documents, graph, read, ask, enrichment, events, notify, agent
 //	billing.autumn.foundry.* Billing           the plan catalog and the checkout return page
 //	backend.foundry_read.*   Read              where the API reaches foundry-read
 //
@@ -104,6 +104,7 @@ type Foundry struct {
 	Reminders  RemindersConfig  `koanf:"reminders"`
 	Heal       HealConfig       `koanf:"heal"`
 	Workflows  WorkflowsConfig  `koanf:"workflows"`
+	Agent      AssistantConfig  `koanf:"agent"`
 }
 
 // WorkflowsConfig drives workflows' runs: an agent's request, every call it
@@ -643,6 +644,73 @@ func (a AskConfig) validate() error {
 		return fmt.Errorf("foundry.ask.grantee_monthly_usd must be at least max_usd")
 	case a.GranteePerHour < 1:
 		return fmt.Errorf("foundry.ask.grantee_per_hour must be positive")
+	}
+	return nil
+}
+
+// AssistantConfig is the Assistant (foundry.agent): Foundry's own agent,
+// which a person talks to in the site and which prepares actions they run
+// with a click. The foundry-agent-worker runs its turns on the workspace's
+// model provider (the ask model) and Foundry's tools, under budgets of its
+// own, apart from questions'. Off unless enabled: hosted, sends are refused
+// and the worker idles; a standalone install turns it on.
+type AssistantConfig struct {
+	Enabled bool `koanf:"enabled"`
+	// HTTP is the worker's health listener.
+	HTTP         ServiceHTTPConfig `koanf:"http"`
+	PollInterval time.Duration     `koanf:"poll_interval"`
+	// Lease is how long a claimed turn stays owned without a renewal.
+	Lease time.Duration `koanf:"lease"`
+	// Concurrency is how many turns one worker runs at once.
+	Concurrency int `koanf:"concurrency"`
+	// MaxAttempts caps a turn's attempts; a turn that stopped resumes from
+	// what its transcript committed.
+	MaxAttempts  int           `koanf:"max_attempts"`
+	RetryBackoff time.Duration `koanf:"retry_backoff"`
+	// Defer is how long a turn held back by its workspace's running turns or
+	// their reservations waits before it is tried again.
+	Defer time.Duration `koanf:"defer"`
+	// MaxUSD, MaxSteps and MaxWallSecs cap one turn: its spend, model calls
+	// and time.
+	MaxUSD      float64 `koanf:"max_usd"`
+	MaxSteps    int     `koanf:"max_steps"`
+	MaxWallSecs int     `koanf:"max_wall_secs"`
+	// PerHour is how many messages one user may send in an hour;
+	// MonthlyUSD a workspace's monthly budget, reserved as each turn is
+	// claimed; MaxRunning its turns at once.
+	PerHour    int     `koanf:"per_hour"`
+	MonthlyUSD float64 `koanf:"monthly_usd"`
+	MaxRunning int     `koanf:"max_running"`
+	// ContextTokens is about how much of the transcript a call sends: the
+	// oldest turns past it are left out (the first message stays).
+	ContextTokens int `koanf:"context_tokens"`
+	// MaxPendingActions is how many prepared actions a thread may wait on
+	// its person for at once.
+	MaxPendingActions int `koanf:"max_pending_actions"`
+}
+
+// MaxMicros is a turn's cap, MaxUSD, in millionths of a US dollar.
+func (a AssistantConfig) MaxMicros() int64 { return int64(math.Round(a.MaxUSD * 1e6)) }
+
+// MonthlyMicros is a workspace's monthly budget, in millionths of a US dollar.
+func (a AssistantConfig) MonthlyMicros() int64 { return int64(math.Round(a.MonthlyUSD * 1e6)) }
+
+// AttemptTimeout bounds one attempt of a turn: its wall time and a minute
+// for its last tool call and settling.
+func (a AssistantConfig) AttemptTimeout() time.Duration {
+	return time.Duration(a.MaxWallSecs)*time.Second + time.Minute
+}
+
+func (a AssistantConfig) validate() error {
+	switch {
+	case a.MaxUSD <= 0 || a.MaxSteps < 1 || a.MaxWallSecs < 1:
+		return fmt.Errorf("foundry.agent max_usd, max_steps and max_wall_secs must be positive")
+	case a.MonthlyUSD < a.MaxUSD:
+		return fmt.Errorf("foundry.agent.monthly_usd must be at least max_usd")
+	case a.PerHour < 1 || a.MaxRunning < 1 || a.MaxPendingActions < 1:
+		return fmt.Errorf("foundry.agent per_hour, max_running and max_pending_actions must be positive")
+	case a.ContextTokens < 8000:
+		return fmt.Errorf("foundry.agent.context_tokens must be at least 8000")
 	}
 	return nil
 }
@@ -1427,12 +1495,16 @@ type Roles struct {
 	// foundry-ask-worker, foundry-enrichment-worker,
 	// foundry-notify-worker and foundry-heal-worker.
 	SyncWorker, DocumentWorker, OntologyWorker, GraphWorker, AskWorker, EnrichmentWorker, NotifyWorker, HealWorker bool
+	// AgentWorker is the foundry-agent-worker, the Assistant's turns.
+	AgentWorker bool
 }
 
 // modelCalls reports whether the roles call models: the workers that draft,
-// load and answer, and foundry-read, which titles. The API only reads and
-// saves the setting.
-func (r Roles) modelCalls() bool { return r.OntologyWorker || r.GraphWorker || r.AskWorker || r.Read }
+// load and answer, the Assistant's, and foundry-read, which titles. The API
+// only reads and saves the setting.
+func (r Roles) modelCalls() bool {
+	return r.OntologyWorker || r.GraphWorker || r.AskWorker || r.AgentWorker || r.Read
+}
 
 // Validate checks c for a process that runs roles, beyond what each value's
 // type says: a standalone install's own rules first (Host.Local), then each
@@ -1657,6 +1729,21 @@ func (c *Config) validateRoles(roles Roles) error {
 			return err
 		}
 	}
+	if roles.AgentWorker && f.Agent.Enabled {
+		a := f.Agent
+		switch {
+		case a.HTTP.Listen == "":
+			return fmt.Errorf("foundry.agent.http.listen must be set when 'foundry-agent-worker' is in tasks")
+		case a.PollInterval <= 0 || a.Lease < 30*time.Second || a.Concurrency < 1 || a.MaxAttempts < 1 || a.RetryBackoff <= 0 || a.Defer <= 0:
+			return fmt.Errorf("foundry.agent poll_interval, concurrency, max_attempts, retry_backoff and defer must be positive, and lease at least 30s")
+		}
+	}
+	// The API checks a user's limits when they send; the worker when it claims.
+	if (roles.API || roles.AgentWorker) && f.Agent.Enabled {
+		if err := f.Agent.validate(); err != nil {
+			return err
+		}
+	}
 	// The API reads and saves the setting; the workers and foundry-read
 	// make the model calls.
 	if roles.modelCalls() || roles.API {
@@ -1855,6 +1942,22 @@ func Defaults() Config {
 		Every:        24 * time.Hour,
 		RetryAfter:   15 * time.Minute,
 		Lease:        2 * time.Minute,
+	}, Agent: AssistantConfig{
+		HTTP:              ServiceHTTPConfig{Listen: ":8102"},
+		PollInterval:      time.Second,
+		Lease:             time.Minute,
+		Concurrency:       4,
+		MaxAttempts:       3,
+		RetryBackoff:      10 * time.Second,
+		Defer:             15 * time.Second,
+		MaxUSD:            0.5,
+		MaxSteps:          20,
+		MaxWallSecs:       240,
+		PerHour:           30,
+		MonthlyUSD:        30,
+		MaxRunning:        2,
+		ContextTokens:     100_000,
+		MaxPendingActions: 3,
 	}, Workflows: WorkflowsConfig{Assess: WorkflowAssessConfig{
 		Enabled:      true,
 		MonthlyUSD:   20,

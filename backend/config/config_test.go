@@ -25,7 +25,7 @@ func helixClaude() AIDefault {
 // every runs each of Foundry's roles but foundry-notify-worker, which needs
 // the site's origin (TestFoundryNotifyValidate).
 var every = Roles{API: true, Read: true, Events: true, SyncWorker: true, DocumentWorker: true, OntologyWorker: true, GraphWorker: true,
-	AskWorker: true, EnrichmentWorker: true, HealWorker: true}
+	AskWorker: true, EnrichmentWorker: true, HealWorker: true, AgentWorker: true}
 
 // The defaults, with a model provider and the connectors' key, serve every
 // role; each role's own settings are checked only where it runs.
@@ -70,6 +70,9 @@ func TestValidateRoles(t *testing.T) {
 		"the shared plan catalog":     {func(c *Config) { c.Billing.Plans = nil }, Roles{}, "at least the Free plan"},
 		"a stream's extracts":         {func(c *Config) { c.Foundry.Events.MaxExtracted = c.Foundry.Documents.MaxPerStream + 1 }, Roles{}, "max_extracted"},
 		"the heal worker's lease":     {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Lease = true, time.Second }, Roles{HealWorker: true}, "foundry.heal.lease"},
+		"the agent worker's lease":    {func(c *Config) { c.Foundry.Agent.Enabled, c.Foundry.Agent.Lease = true, time.Second }, Roles{AgentWorker: true}, "foundry.agent"},
+		"the Assistant's month":       {func(c *Config) { c.Foundry.Agent.Enabled, c.Foundry.Agent.MonthlyUSD = true, 0.1 }, Roles{API: true}, "monthly_usd"},
+		"the agent worker's key":      {func(c *Config) { c.Foundry.AI.Default.APIKey = "" }, Roles{AgentWorker: true}, "api_key must be set"},
 		"the heal worker's every":     {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Every = true, 0 }, Roles{HealWorker: true}, "foundry.heal"},
 		"the heal worker's sidecar": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Graph.Agent.Addr = true, "agent:50051" }, Roles{HealWorker: true},
 			"foundry.graph.agent.addr"},
