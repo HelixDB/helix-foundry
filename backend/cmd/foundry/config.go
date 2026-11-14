@@ -227,12 +227,12 @@ func (c *Config) validate() error {
 		}
 	}
 	// The install runs the API, foundry-read and every worker but people
-	// enrichment's and the emails', and self-healing's with
-	// foundry.heal.enabled.
+	// enrichment's and the emails', self-healing's with foundry.heal.enabled
+	// and the Assistant's with foundry.agent.enabled.
 	f := c.foundry()
 	if err := f.Validate(foundryconfig.Roles{
 		API: true, Read: true, SyncWorker: true, DocumentWorker: true, OntologyWorker: true, GraphWorker: true, AskWorker: true,
-		HealWorker: f.Foundry.Heal.Enabled,
+		HealWorker: f.Foundry.Heal.Enabled, AgentWorker: f.Foundry.Agent.Enabled,
 	}); err != nil {
 		return err
 	}

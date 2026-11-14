@@ -114,3 +114,14 @@ foundry:
     per_hour: 30
     grantee_monthly_usd: 10
     grantee_per_hour: 10
+  # The Assistant: Foundry's own agent, which the owner talks to in the site
+  # and which prepares actions they run with a click. Its turns run on the
+  # install's model provider (the ask model) under these caps, apart from
+  # questions'.
+  agent:
+    enabled: true
+    http: { listen: "127.0.0.1:8102" }
+    max_usd: 0.5
+    max_steps: 20
+    max_wall_secs: 240
+    monthly_usd: 30
