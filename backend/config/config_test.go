@@ -73,7 +73,10 @@ func TestValidateRoles(t *testing.T) {
 		"the agent worker's lease":    {func(c *Config) { c.Foundry.Agent.Enabled, c.Foundry.Agent.Lease = true, time.Second }, Roles{AgentWorker: true}, "foundry.agent"},
 		"the Assistant's month":       {func(c *Config) { c.Foundry.Agent.Enabled, c.Foundry.Agent.MonthlyUSD = true, 0.1 }, Roles{API: true}, "monthly_usd"},
 		"the agent worker's key":      {func(c *Config) { c.Foundry.AI.Default.APIKey = "" }, Roles{AgentWorker: true}, "api_key must be set"},
-		"the heal worker's every":     {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Every = true, 0 }, Roles{HealWorker: true}, "foundry.heal"},
+		"the probe's tool check": {func(c *Config) {
+			c.Foundry.Agent.Enabled, c.Foundry.AI.Probe.Lease = true, c.Foundry.AI.Probe.Timeout+AIProbeOverhead+AIToolCheckTimeout-time.Second
+		}, Roles{AskWorker: true}, "tool check"},
+		"the heal worker's every": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Every = true, 0 }, Roles{HealWorker: true}, "foundry.heal"},
 		"the heal worker's sidecar": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Graph.Agent.Addr = true, "agent:50051" }, Roles{HealWorker: true},
 			"foundry.graph.agent.addr"},
 		"the heal worker's timeout": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Graph.HelixTimeoutSecs = true, 0 }, Roles{HealWorker: true},

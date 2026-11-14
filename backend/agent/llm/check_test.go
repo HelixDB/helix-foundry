@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,6 +60,42 @@ func TestCheckToolsSaysWhatARetryWouldFindAgain(t *testing.T) {
 		Models: ai.Roles{Ask: ai.Model{Name: "claude-unknown", Price: ai.PriceTable{}}}}}, catalog)
 	assert.Error(t, err)
 	assert.Equal(t, ai.AssistantUnchecked, check)
+}
+
+// Whether a model calls the tool varies from answer to answer: the check
+// reads checkTries of them before it records one that doesn't, and stops
+// at the first that does.
+func TestCheckToolsTriesBeforeRecordingNoToolCall(t *testing.T) {
+	catalog, err := ai.VendoredCatalog()
+	require.NoError(t, err)
+	free := ai.Model{Name: "qwen3", Price: ai.PriceFree{}}
+	check := func(calledOn int) (ai.AssistantCheck, int32) {
+		var hits atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if int(hits.Add(1)) == calledOn {
+				writeChunks(w, chunk(`{"tool_calls":[{"index":0,"id":"c","function":{"name":"record_word","arguments":"{\"word\":\"ready\"}"}}]}`, "tool_calls"))
+				return
+			}
+			writeChunks(w, chunk(`{"content":"ready"}`, "stop"))
+		}))
+		defer server.Close()
+		got, err := CheckTools(context.Background(), ai.Resolved{
+			Settings: ai.Settings{Provider: ai.Compatible{BaseURL: server.URL + "/v1", API: ai.CompatChatCompletions, MaxCallsInFlight: 1},
+				Models: ai.Roles{Draft: free, Ask: free, Extract: free, Verify: free}},
+			Rules: ai.Rules{AllowPrivate: true},
+		}, catalog)
+		require.NoError(t, err)
+		return got, hits.Load()
+	}
+	got, hits := check(checkTries)
+	assert.Equal(t, ai.AssistantPassed, got)
+	assert.EqualValues(t, checkTries, hits)
+	got, hits = check(1)
+	assert.Equal(t, ai.AssistantPassed, got)
+	assert.EqualValues(t, 1, hits, "the first call that passes ends the check")
+	got, hits = check(0)
+	assert.Equal(t, ai.AssistantNoToolCall, got)
+	assert.EqualValues(t, checkTries, hits)
 }
 
 func TestAssistantCheckRuns(t *testing.T) {

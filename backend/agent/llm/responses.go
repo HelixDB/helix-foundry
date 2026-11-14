@@ -57,14 +57,16 @@ type responsesModel struct {
 	host      responsesHost
 	model     string
 	reasoning bool
-	calls     gate
+	calls     *gate
+	// writer names the model at its endpoint: only its own reasoning goes back.
+	writer string
 }
 
 // newResponses is model at baseURL under key, through client. It is built
 // from the Responses service alone, never openai.NewClient, which would read
 // OPENAI_* from the process's environment into every call. opts follow, for
 // tests.
-func newResponses(host responsesHost, baseURL, key, model string, reasoning bool, timeout time.Duration, client *http.Client, calls gate,
+func newResponses(host responsesHost, baseURL, key, model string, reasoning bool, timeout time.Duration, client *http.Client, calls *gate,
 	opts ...option.RequestOption) *responsesModel {
 	base := []option.RequestOption{option.WithBaseURL(baseURL), option.WithHTTPClient(client), option.WithMaxRetries(2)}
 	switch {
@@ -76,7 +78,8 @@ func newResponses(host responsesHost, baseURL, key, model string, reasoning bool
 	if timeout > 0 {
 		base = append(base, option.WithRequestTimeout(timeout))
 	}
-	return &responsesModel{service: responses.NewResponseService(append(base, opts...)...), host: host, model: model, reasoning: reasoning, calls: calls}
+	return &responsesModel{service: responses.NewResponseService(append(base, opts...)...), host: host, model: model, reasoning: reasoning, calls: calls,
+		writer: writerOf(host.kind(), baseURL, model)}
 }
 
 // responsesEvent is what the Assistant reads of a stream's event; the rest
@@ -169,7 +172,7 @@ func (m *responsesModel) Stream(ctx context.Context, r Request) iter.Seq2[Chunk,
 				case "reasoning":
 					// Without its encrypted content, a reasoning item can't be sent back.
 					if it.EncryptedContent != "" {
-						blocks = append(blocks, Reasoning{Provider: m.host.kind(), Signature: it.ID, Redacted: it.EncryptedContent})
+						blocks = append(blocks, Reasoning{Writer: m.writer, Signature: it.ID, Redacted: it.EncryptedContent})
 					}
 				}
 			case "response.completed", "response.incomplete":
@@ -276,8 +279,9 @@ func (m *responsesModel) params(r Request) (responses.ResponseNewParams, error) 
 					CallID: b.ToolUseID, Output: responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: openai.String(output)},
 				}})
 			case Reasoning:
-				// Only the host that wrote it can read it.
-				if b.Provider == m.host.kind() && b.Redacted != "" {
+				// Only the model that wrote it, at the same endpoint, reads
+				// it, and only with the reasoning knob it was written with.
+				if m.reasoning && b.Writer == m.writer && b.Redacted != "" {
 					items = append(items, responses.ResponseInputItemUnionParam{OfReasoning: &responses.ResponseReasoningItemParam{
 						ID: b.Signature, EncryptedContent: openai.String(b.Redacted), Summary: []responses.ResponseReasoningItemSummaryParam{},
 					}})

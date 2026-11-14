@@ -92,7 +92,7 @@ func TestAnthropicStreamsBlocksUsageAndStop(t *testing.T) {
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"workspace_id":{"type":"string"}},"required":["workspace_id"],"additionalProperties":false,"$schema":"x"}`)}},
 		Messages: []Message{
 			{Role: User, Content: []Block{Text{Text: "What ontologies?"}}},
-			{Role: Assistant, Content: []Block{Reasoning{Provider: ai.KindAnthropic, Signature: "s0", Text: "t0"}, Reasoning{Provider: ai.KindOpenAI, Text: "dropped"},
+			{Role: Assistant, Content: []Block{Reasoning{Writer: m.writer, Signature: "s0", Text: "t0"}, Reasoning{Writer: writerOf(ai.KindAnthropic, "", "claude-opus-5-5"), Text: "dropped"},
 				ToolUse{ID: "toolu_0", Name: "helix_foundry_get_context", Input: json.RawMessage(`{"x":1}`)}}},
 			{Role: User, Content: []Block{ToolResult{ToolUseID: "toolu_0", Content: "nothing", IsError: true}}},
 		},
@@ -101,7 +101,7 @@ func TestAnthropicStreamsBlocksUsageAndStop(t *testing.T) {
 	assert.Equal(t, "Bearer sk-ws", key)
 	assert.Equal(t, []Chunk{
 		TextDelta{Text: "Let me "}, TextDelta{Text: "check."},
-		Reasoning{Provider: ai.KindAnthropic, Signature: "sig-1", Text: "Look it up."},
+		Reasoning{Writer: m.writer, Signature: "sig-1", Text: "Look it up."},
 		Text{Text: "Let me check."},
 		ToolUse{ID: "toolu_1", Name: "helix_foundry_list_ontologies", Input: json.RawMessage(`{"workspace_id":"ws1"}`)},
 		Usage{In: 100, Out: 40, CacheRead: 2000, CacheWrite: 300},
@@ -109,7 +109,7 @@ func TestAnthropicStreamsBlocksUsageAndStop(t *testing.T) {
 	}, chunks)
 
 	// The prefix is cached, the tool's schema sent whole but for $schema, and
-	// another provider's reasoning dropped.
+	// another model's reasoning dropped.
 	system := body["system"].([]any)[0].(map[string]any)
 	assert.Equal(t, "ephemeral", system["cache_control"].(map[string]any)["type"])
 	assert.NotNil(t, body["cache_control"])
@@ -200,8 +200,8 @@ func TestAnthropicToolCallCutAtMaxTokens(t *testing.T) {
 
 func TestBlocksRoundTrip(t *testing.T) {
 	blocks := []Block{Text{Text: "a"}, ToolUse{ID: "t", Name: "n", Input: json.RawMessage(`{"a":1}`)},
-		ToolResult{ToolUseID: "t", Content: "c", IsError: true}, Reasoning{Provider: ai.KindAnthropic, Signature: "s", Text: "x"},
-		Reasoning{Provider: ai.KindAnthropic, Redacted: "r"}}
+		ToolResult{ToolUseID: "t", Content: "c", IsError: true}, Reasoning{Writer: "anthropic:x", Signature: "s", Text: "x"},
+		Reasoning{Writer: "anthropic:x", Redacted: "r"}}
 	raw, err := MarshalBlocks(blocks)
 	require.NoError(t, err)
 	back, err := UnmarshalBlocks(raw)
@@ -277,21 +277,27 @@ func TestHostedCallsRefusePrivateAddresses(t *testing.T) {
 }
 
 func TestGateBoundsCallsInFlight(t *testing.T) {
-	g := gateOf("test\x00one", 1)
-	assert.Equal(t, g, gateOf("test\x00one", 1), "one gate per endpoint and bound")
+	g := gateOf("cfg_a", "https://one", 1)
 	release, err := g.enter(context.Background())
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	_, err = g.enter(ctx)
+	_, err = gateOf("cfg_a", "https://one", 1).enter(ctx)
 	var e *Error
-	require.ErrorAs(t, err, &e, "a second call waits, until its context ends")
+	require.ErrorAs(t, err, &e, "a second call of the setting waits, until its context ends")
 	assert.True(t, e.Retryable())
+	// Another workspace's setting naming the same server has slots of its own.
+	other, err := gateOf("cfg_b", "https://one", 1).enter(context.Background())
+	require.NoError(t, err)
+	other()
 	release()
 	again, err := g.enter(context.Background())
 	require.NoError(t, err)
 	again()
-	none, err := gate(nil).enter(context.Background())
+	slotsMu.Lock()
+	assert.Empty(t, slots, "a gate no call holds or waits for is let go")
+	slotsMu.Unlock()
+	none, err := (*gate)(nil).enter(context.Background())
 	require.NoError(t, err, "nil bounds nothing")
 	none()
 }

@@ -291,7 +291,8 @@ export const STOP_TEXT: Record<AgentStopReason, string | null> = {
   budget: "It stopped at this message’s spending cap.",
   max_tokens: "Its answer reached its length limit.",
   refusal: "The model declined to answer.",
-  context: "This thread is too long for the model. Start a new thread.",
+  context:
+    "It ran out of room in the model’s context window. Ask for less at once, or start a new thread.",
   failed: "It failed.",
 };
 const STOP_REASONS = Object.keys(STOP_TEXT) as AgentStopReason[];

@@ -35,10 +35,10 @@ type ollamaModel struct {
 	window  int
 	timeout time.Duration
 	client  *http.Client
-	calls   gate
+	calls   *gate
 }
 
-func newOllama(baseURL, model string, window int, timeout time.Duration, client *http.Client, calls gate) *ollamaModel {
+func newOllama(baseURL, model string, window int, timeout time.Duration, client *http.Client, calls *gate) *ollamaModel {
 	return &ollamaModel{url: strings.TrimSuffix(baseURL, "/") + "/api/chat", model: model, window: window, timeout: timeout, client: client, calls: calls}
 }
 

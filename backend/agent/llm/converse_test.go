@@ -10,8 +10,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/helixdb/helix-foundry/backend/ai"
 )
 
 // frame is one message of a Converse stream: an event, or an exception.
@@ -64,7 +62,7 @@ func TestConverseStreamsWithTheBearerKey(t *testing.T) {
 	}))
 	defer server.Close()
 	m := newConverse(server.URL, "ABSK-workspace", "global.anthropic.claude-sonnet-5-5", 0, local)
-	chunks, err := collect(t, m, Request{System: "You are the Assistant.", MaxOutput: 8192, Tools: []Tool{listTool}, Messages: transcript(ai.KindBedrock)})
+	chunks, err := collect(t, m, Request{System: "You are the Assistant.", MaxOutput: 8192, Tools: []Tool{listTool}, Messages: transcript("bedrock:x")})
 	require.NoError(t, err)
 	assert.Equal(t, []Chunk{
 		TextDelta{Text: "Let me "}, TextDelta{Text: "check."},
@@ -110,7 +108,7 @@ func TestConverseOtherModels(t *testing.T) {
 		writeFrames(t, w, converseStream...)
 	}))
 	defer server.Close()
-	_, err := collect(t, newConverse(server.URL, "k", "mistral.mistral-large-3:0", 0, local), Request{System: "s", MaxOutput: 10, Tools: []Tool{listTool}, Messages: transcript(ai.KindBedrock)})
+	_, err := collect(t, newConverse(server.URL, "k", "mistral.mistral-large-3:0", 0, local), Request{System: "s", MaxOutput: 10, Tools: []Tool{listTool}, Messages: transcript("bedrock:x")})
 	require.NoError(t, err)
 	assert.Equal(t, "/model/mistral.mistral-large-3%3A0/converse-stream", got.path)
 	assert.Len(t, got.body["system"], 1)
@@ -119,7 +117,7 @@ func TestConverseOtherModels(t *testing.T) {
 	require.Len(t, last, 1)
 	assert.Equal(t, map[string]any{"toolUseId": "call_0", "content": []any{map[string]any{"text": "Error: unavailable"}}}, last[0].(map[string]any)["toolResult"])
 
-	_, err = collect(t, newConverse(server.URL, "k", "us.amazon.nova-pro-v1:0", 0, local), Request{System: "s", MaxOutput: 10, Messages: transcript(ai.KindBedrock)})
+	_, err = collect(t, newConverse(server.URL, "k", "us.amazon.nova-pro-v1:0", 0, local), Request{System: "s", MaxOutput: 10, Messages: transcript("bedrock:x")})
 	require.NoError(t, err)
 	assert.NotContains(t, got.body, "toolConfig", "no tools, no tool config")
 	last = got.body["messages"].([]any)[2].(map[string]any)["content"].([]any)

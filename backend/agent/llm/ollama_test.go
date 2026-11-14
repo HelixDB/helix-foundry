@@ -12,8 +12,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/helixdb/helix-foundry/backend/ai"
 )
 
 // fastRetries makes the raw wires' retries quick for a test.
@@ -45,7 +43,7 @@ func TestOllamaStreamsInItsWindow(t *testing.T) {
 	}))
 	defer server.Close()
 	m := newOllama(server.URL+"/", "qwen3", 65536, 0, local, nil)
-	chunks, err := collect(t, m, Request{System: "You are the Assistant.", MaxOutput: 8192, Tools: []Tool{listTool}, Messages: transcript(ai.KindOllama)})
+	chunks, err := collect(t, m, Request{System: "You are the Assistant.", MaxOutput: 8192, Tools: []Tool{listTool}, Messages: transcript("ollama:x")})
 	require.NoError(t, err)
 	require.Len(t, chunks, 6)
 	assert.Equal(t, []Chunk{TextDelta{Text: "Let me "}, TextDelta{Text: "check."}, Text{Text: "Let me check."}}, chunks[:3])
@@ -155,7 +153,7 @@ func TestOllamaRunsOneCallAtATime(t *testing.T) {
 		writeLines(w, ollamaDone)
 	}))
 	defer server.Close()
-	calls := gateOf("test-ollama\x00"+server.URL, 1)
+	calls := gateOf("cfg", server.URL, 1)
 	done := make(chan error, 3)
 	for range 3 {
 		go func() {
@@ -168,7 +166,7 @@ func TestOllamaRunsOneCallAtATime(t *testing.T) {
 	}
 	assert.EqualValues(t, 1, most.Load())
 	raw, err := newOllama("http://x", "m", 65536, 0, local, nil).body(Request{System: "s", MaxOutput: 10,
-		Messages: []Message{{Role: Assistant, Content: []Block{Reasoning{Provider: ai.KindOllama, Text: "t"}}}}})
+		Messages: []Message{{Role: Assistant, Content: []Block{Reasoning{Writer: "ollama:x", Text: "t"}}}}})
 	require.NoError(t, err)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(raw, &body))

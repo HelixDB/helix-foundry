@@ -161,7 +161,7 @@ func TestProbe(t *testing.T) {
 	t.Run("records a passed probe", func(t *testing.T) {
 		h := newProbeHarness(t)
 		logs := h.tick(t)
-		if len(h.queue.claims) != 1 || h.queue.claims[0] != 3*time.Minute || len(h.queue.finished) != 1 || len(h.queue.released) != 0 {
+		if len(h.queue.claims) != 1 || h.queue.claims[0] != 5*time.Minute || len(h.queue.finished) != 1 || len(h.queue.released) != 0 {
 			t.Fatalf("claims %v, finished %v, released %v", h.queue.claims, h.queue.finished, h.queue.released)
 		}
 		got := h.queue.finished[0]
@@ -525,9 +525,24 @@ func TestProbeChecksTheAssistantsToolCalls(t *testing.T) {
 		}
 	}
 
+	// The check has time of its own, which the lease counts past the probe's.
+	h, _ := check(ai.AssistantPassed, nil)
+	var left time.Duration
+	h.prober.checkTools = func(ctx context.Context, _ ai.Resolved) (ai.AssistantCheck, error) {
+		deadline, ok := ctx.Deadline()
+		if ok {
+			left = time.Until(deadline)
+		}
+		return ai.AssistantPassed, nil
+	}
+	h.tick(t)
+	if left <= config.AIToolCheckTimeout-10*time.Second || left > config.AIToolCheckTimeout {
+		t.Fatalf("the check had %s, want about %s", left, config.AIToolCheckTimeout)
+	}
+
 	// A check that couldn't run leaves the setting unchecked: the Assistant
 	// runs, and finds out for itself.
-	h, _ := check(ai.AssistantUnchecked, errors.New("429"))
+	h, _ = check(ai.AssistantUnchecked, errors.New("429"))
 	logs := h.tick(t)
 	if len(h.queue.finished) != 1 || h.queue.finished[0].Failure != nil || strings.Contains(string(h.queue.finished[0].Report), `"assistant"`) {
 		t.Fatalf("finished %+v", h.queue.finished)

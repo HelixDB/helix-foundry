@@ -883,6 +883,12 @@ type AIModels struct {
 // all, so no other replica probes the same key while one still is.
 const AIProbeOverhead = time.Minute
 
+// AIToolCheckTimeout bounds the Assistant's tool check of a setting the
+// sidecar passed (llm.CheckTools, its few calls together), which the
+// foundry-ask-worker runs while foundry.agent is on: the lease covers it
+// too, past AIProbeOverhead, so a slow probe never leaves it no time.
+const AIToolCheckTimeout = 2 * time.Minute
+
 // AIProbe is how the foundry-ask-worker tests a saved choice: it
 // polls every PollInterval, a probe runs at most Timeout under a Lease of at
 // least Timeout plus AIProbeOverhead, a probe that loses its worker
@@ -1751,6 +1757,10 @@ func (c *Config) validateRoles(roles Roles) error {
 			return err
 		}
 	}
+	if p := f.AI.Probe; roles.AskWorker && f.Agent.Enabled && p.Lease < p.Timeout+AIProbeOverhead+AIToolCheckTimeout {
+		return fmt.Errorf("foundry.ai.probe.lease %s must be at least its timeout %s plus %s, and %s for the Assistant's tool check while foundry.agent is on",
+			p.Lease, p.Timeout, AIProbeOverhead, AIToolCheckTimeout)
+	}
 	if roles.API && f.Ontology.PerHour < 1 {
 		return fmt.Errorf("foundry.ontology.per_hour must be positive")
 	}
@@ -1849,7 +1859,7 @@ func Defaults() Config {
 		Kinds:       []string{"anthropic"},
 		CallTimeout: 10 * time.Minute,
 		Probe: AIProbe{
-			PollInterval: 2 * time.Second, Timeout: 2 * time.Minute, Lease: 3 * time.Minute, PerHour: 10, MaxAttempts: 3,
+			PollInterval: 2 * time.Second, Timeout: 2 * time.Minute, Lease: 5 * time.Minute, PerHour: 10, MaxAttempts: 3,
 		},
 	}, Documents: DocumentsConfig{
 		MaxBytes:        1 << 20,

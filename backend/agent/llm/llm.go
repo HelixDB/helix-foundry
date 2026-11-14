@@ -9,7 +9,7 @@
 //   - ai.OpenAI and ai.AzureOpenAI: the Responses API (openai-go), Azure on
 //     its resource's v1 API with the api-key header (responses.go);
 //   - ai.Compatible: Chat Completions (chat.go) or Responses, as its owner
-//     chose, at most MaxCallsInFlight calls at once;
+//     chose, at most the setting's MaxCallsInFlight calls at once;
 //   - ai.Ollama: the native /api/chat (ollama.go), whose options set the
 //     context window: Ollama's OpenAI-compatible /v1 has no way to, and
 //     would load the model in the server's default window and cut the
@@ -26,6 +26,7 @@ package llm
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -105,13 +106,22 @@ type ToolResult struct {
 }
 
 // Reasoning is a provider's opaque record of the model's thinking, sent back
-// unchanged to the provider that wrote it and dropped for any other:
-// Anthropic's thinking (Signature, Text) or redacted thinking (Redacted).
+// unchanged to the model that wrote it (Writer, writerOf) and dropped for
+// any other, another endpoint or model of the same kind too: Anthropic's
+// thinking (Signature, Text) or redacted thinking (Redacted), or a
+// Responses API's encrypted reasoning item (Signature its id, Redacted).
 type Reasoning struct {
-	Provider  ai.Kind
+	Writer    string
 	Signature string
 	Text      string
 	Redacted  string
+}
+
+// writerOf names the model of kind at endpoint, as Reasoning.Writer: a
+// digest, so a transcript keeps no endpoint.
+func writerOf(kind ai.Kind, endpoint, model string) string {
+	sum := sha256.Sum256([]byte(string(kind) + "\x00" + endpoint + "\x00" + model))
+	return string(kind) + ":" + hex.EncodeToString(sum[:8])
 }
 
 // Usage is what a call used: input tokens read in full, from the prompt
@@ -205,7 +215,7 @@ func New(r ai.Resolved, catalog *ai.Catalog) (Binding, error) {
 		}
 		out.Model = newResponses(responsesAzure, endpoint, key, m.Name, reasoning, r.CallTimeout, client, nil)
 	case ai.Compatible:
-		calls := gateOf(string(ai.KindCompatible)+"\x00"+p.BaseURL, int(p.MaxCallsInFlight))
+		calls := gateOf(r.ConfigID, p.BaseURL, int(p.MaxCallsInFlight))
 		switch p.API {
 		case ai.CompatChatCompletions:
 			out.Model = newChat(p.BaseURL, key, m.Name, reasoning, r.CallTimeout, client, calls)
@@ -218,7 +228,7 @@ func New(r ai.Resolved, catalog *ai.Catalog) (Binding, error) {
 		// The window the engine loads the model with: the owner's, at most
 		// what the probe read of the model.
 		out.Window = int(r.Ask().Ask.ContextTokens)
-		out.Model = newOllama(p.BaseURL, m.Name, out.Window, r.CallTimeout, client, gateOf(string(ai.KindOllama)+"\x00"+p.BaseURL, 1))
+		out.Model = newOllama(p.BaseURL, m.Name, out.Window, r.CallTimeout, client, gateOf(r.ConfigID, p.BaseURL, 1))
 	case ai.Bedrock:
 		out.Model = newConverse(converseURL(p.Region, p.FIPS), key, m.Name, r.CallTimeout, client)
 	default:
@@ -238,29 +248,59 @@ func guarded(rules ai.Rules) *http.Client {
 	}
 }
 
-// gate bounds the calls in flight to one endpoint from this process, as its
-// owner set (an OpenAI-compatible server's MaxCallsInFlight; Ollama's one):
-// a call holds a slot for its whole stream. nil bounds nothing.
-type gate chan struct{}
+// gate bounds the calls in flight to one endpoint of one setting from this
+// process, as its owner set (an OpenAI-compatible server's
+// MaxCallsInFlight; Ollama's one): a call holds a slot for its whole
+// stream. The bound is the setting's, so another workspace naming the same
+// server has slots of its own. nil bounds nothing.
+type gate struct {
+	key string
+	n   int
+}
 
-// gates are the gates by endpoint and bound: one per endpoint a setting
-// names, kept while the process runs.
-var gates sync.Map
+// gateOf is the gate of endpoint under the setting configID, n calls at once.
+func gateOf(configID, endpoint string, n int) *gate {
+	return &gate{key: fmt.Sprintf("%s\x00%s\x00%d", configID, endpoint, n), n: max(n, 1)}
+}
 
-func gateOf(endpoint string, n int) gate {
-	g, _ := gates.LoadOrStore(fmt.Sprintf("%s\x00%d", endpoint, n), make(gate, max(n, 1)))
-	return g.(gate)
+// slots are the gates' slots by key, each kept while a call holds or waits
+// for one of them: as many as the calls in flight, whatever servers owners
+// name.
+var (
+	slotsMu sync.Mutex
+	slots   = map[string]*gateSlots{}
+)
+
+type gateSlots struct {
+	held  chan struct{}
+	users int
 }
 
 // enter waits for a slot: the release, or ctx's end as an unavailable call.
-func (g gate) enter(ctx context.Context) (func(), error) {
+func (g *gate) enter(ctx context.Context) (func(), error) {
 	if g == nil {
 		return func() {}, nil
 	}
+	slotsMu.Lock()
+	s := slots[g.key]
+	if s == nil {
+		s = &gateSlots{held: make(chan struct{}, g.n)}
+		slots[g.key] = s
+	}
+	s.users++
+	slotsMu.Unlock()
+	leave := func() {
+		slotsMu.Lock()
+		defer slotsMu.Unlock()
+		if s.users--; s.users == 0 {
+			delete(slots, g.key)
+		}
+	}
 	select {
-	case g <- struct{}{}:
-		return func() { <-g }, nil
+	case s.held <- struct{}{}:
+		return func() { <-s.held; leave() }, nil
 	case <-ctx.Done():
+		leave()
 		return nil, &Error{Kind: ErrUnavailable, Err: fmt.Errorf("waiting for a free call to the server: %w", ctx.Err())}
 	}
 }
@@ -347,7 +387,7 @@ type blockJSON struct {
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   string          `json:"content,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
-	Provider  ai.Kind         `json:"provider,omitempty"`
+	Writer    string          `json:"writer,omitempty"`
 	Signature string          `json:"signature,omitempty"`
 	Redacted  string          `json:"redacted,omitempty"`
 }
@@ -364,7 +404,7 @@ func MarshalBlocks(blocks []Block) (json.RawMessage, error) {
 		case ToolResult:
 			out = append(out, blockJSON{Type: "tool_result", ToolUseID: b.ToolUseID, Content: b.Content, IsError: b.IsError})
 		case Reasoning:
-			out = append(out, blockJSON{Type: "reasoning", Provider: b.Provider, Signature: b.Signature, Text: b.Text, Redacted: b.Redacted})
+			out = append(out, blockJSON{Type: "reasoning", Writer: b.Writer, Signature: b.Signature, Text: b.Text, Redacted: b.Redacted})
 		default:
 			return nil, fmt.Errorf("llm: unknown block %T", b)
 		}
@@ -388,7 +428,7 @@ func UnmarshalBlocks(raw json.RawMessage) ([]Block, error) {
 		case "tool_result":
 			out = append(out, ToolResult{ToolUseID: b.ToolUseID, Content: b.Content, IsError: b.IsError})
 		case "reasoning":
-			out = append(out, Reasoning{Provider: b.Provider, Signature: b.Signature, Text: b.Text, Redacted: b.Redacted})
+			out = append(out, Reasoning{Writer: b.Writer, Signature: b.Signature, Text: b.Text, Redacted: b.Redacted})
 		default:
 			return nil, fmt.Errorf("llm: unknown block type %q", b.Type)
 		}

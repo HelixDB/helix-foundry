@@ -25,6 +25,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/integration"
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
@@ -334,6 +335,10 @@ func (t *turnRun) loop(ctx context.Context) error {
 		// paid, isn't some of it.
 		spent := t.turn.Spend.USDMicros - t.turn.LostMicros + t.out.Spend.USDMicros
 		switch {
+		case in-t.fixedTokens > t.budget:
+			// The turn running is never left out, so it alone may pass the
+			// budget: a call now would be cut, or refused, by the model's window.
+			return t.finish(ctx, StopContext)
 		case t.turn.Steps+t.out.Steps >= t.r.Cfg.MaxSteps:
 			return t.finish(ctx, StopSteps)
 		case t.outOfTime():
@@ -409,11 +414,18 @@ func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message
 		case llm.TextDelta:
 			live.WriteString(c.Text)
 			if now := t.r.Now(); now.Sub(shown) >= liveTextEvery {
-				if err := t.event(ctx, TextDelta{Step: t.step(), Text: live.String()}); err != nil {
-					return answer, "", nil, streamed, err
-				}
-				live.Reset()
+				// Live text is for show: a write that failed keeps its text
+				// for the next, and the call streams on, since the step's text
+				// event replaces it. Only a lost lease ends the call.
 				shown, streamed = now, true
+				switch err := t.event(ctx, TextDelta{Step: t.step(), Text: live.String()}); {
+				case errors.Is(err, ErrLost):
+					return answer, "", nil, streamed, err
+				case err != nil:
+					log.From(ctx).Warn("the Assistant's live text couldn't be written; it streams on", "turn", t.turn.ID, "err", err)
+				default:
+					live.Reset()
+				}
 			}
 		case llm.Text:
 			answer.Content = append(answer.Content, c)

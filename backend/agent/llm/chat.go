@@ -22,14 +22,14 @@ type chatModel struct {
 	service   openai.ChatCompletionService
 	model     string
 	reasoning bool
-	calls     gate
+	calls     *gate
 }
 
 // newChat is model at baseURL, under key where there is one, through
 // client: built from the Chat Completions service alone, never
 // openai.NewClient, which would read OPENAI_* from the process's
 // environment. opts follow, for tests.
-func newChat(baseURL, key, model string, reasoning bool, timeout time.Duration, client *http.Client, calls gate, opts ...option.RequestOption) *chatModel {
+func newChat(baseURL, key, model string, reasoning bool, timeout time.Duration, client *http.Client, calls *gate, opts ...option.RequestOption) *chatModel {
 	base := []option.RequestOption{option.WithBaseURL(baseURL), option.WithHTTPClient(client), option.WithMaxRetries(2)}
 	if key != "" {
 		base = append(base, option.WithAPIKey(key))
@@ -130,8 +130,14 @@ func (m *chatModel) Stream(ctx context.Context, r Request) iter.Seq2[Chunk, erro
 						call = &chatCall{index: tc.Index}
 						calls = append(calls, call)
 					}
-					call.id += tc.ID
-					call.name += tc.Function.Name
+					// An id and a name come whole, but some servers and
+					// proxies repeat them on every chunk of the call.
+					if call.id == "" {
+						call.id = tc.ID
+					}
+					if tc.Function.Name != call.name {
+						call.name += tc.Function.Name
+					}
 					call.args += tc.Function.Arguments
 				}
 			}

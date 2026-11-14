@@ -180,7 +180,11 @@ func (p *prober) probe(ctx context.Context, c *model.FoundryAIConfig) (model.Fou
 			Source: ai.SourceWorkspace, Settings: settings, Key: key, ConfigID: c.ID, Report: found,
 			CallTimeout: p.deployment.CallTimeout, Rules: p.deployment.Rules,
 		}
-		check, err := p.checkTools(ctx, resolved)
+		// Its own time, which the lease counts past the probe's
+		// (config.AIToolCheckTimeout), however long the sidecar took.
+		checkCtx, cancelCheck := context.WithTimeout(ctx, config.AIToolCheckTimeout)
+		check, err := p.checkTools(checkCtx, resolved)
+		cancelCheck()
 		if err != nil {
 			log.From(ctx).Warn("the Assistant's tool check couldn't run; the setting stays unchecked", "err", err)
 		}

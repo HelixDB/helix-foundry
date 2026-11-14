@@ -14,8 +14,6 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/helixdb/helix-foundry/backend/ai"
 )
 
 // writeChunks writes a Chat Completions stream: each chunk as data, then [DONE].
@@ -53,7 +51,7 @@ func TestChatStreamsTextCallsAndUsage(t *testing.T) {
 	}))
 	defer server.Close()
 	m := newChat(server.URL+"/v1", "local-key", "qwen3", true, 0, local, nil, option.WithMaxRetries(0))
-	chunks, err := collect(t, m, Request{System: "You are the Assistant.", MaxOutput: 8192, Tools: []Tool{listTool}, Messages: transcript(ai.KindCompatible)})
+	chunks, err := collect(t, m, Request{System: "You are the Assistant.", MaxOutput: 8192, Tools: []Tool{listTool}, Messages: transcript("openai_compatible:x")})
 	require.NoError(t, err)
 	assert.Equal(t, []Chunk{
 		TextDelta{Text: "Let me "}, TextDelta{Text: "check."},
@@ -107,6 +105,31 @@ func TestChatCallsByIDAndUncountedUsage(t *testing.T) {
 	assert.Positive(t, usage.In)
 	assert.Empty(t, got.header.Get("Authorization"), "a server without a key is sent none")
 	assert.NotContains(t, got.body, "reasoning_effort", "a model without the knob is sent none")
+}
+
+// Some servers and proxies repeat a call's id and name on every chunk of
+// it: still one call, its arguments whole.
+func TestChatCallsWithRepeatedIDsAndNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeChunks(w,
+			chunk(`{"tool_calls":[{"index":0,"id":"c1","function":{"name":"record_word","arguments":""}}]}`, ""),
+			chunk(`{"tool_calls":[{"index":0,"id":"c1","function":{"name":"record_word","arguments":"{\"word\""}}]}`, ""),
+			chunk(`{"tool_calls":[{"index":0,"id":"c1","function":{"name":"record_word","arguments":":\"ready\"}"}}]}`, ""),
+			// A name a server streams in pieces still adds up.
+			chunk(`{"tool_calls":[{"index":1,"id":"c2","function":{"name":"record_","arguments":"{}"}}]}`, ""),
+			chunk(`{"tool_calls":[{"index":1,"function":{"name":"word"}}]}`, "tool_calls"),
+			chatUsage)
+	}))
+	defer server.Close()
+	m := newChat(server.URL, "", "m", false, 0, local, nil, option.WithMaxRetries(0))
+	chunks, err := collect(t, m, Request{System: "s", MaxOutput: 10})
+	require.NoError(t, err)
+	assert.Equal(t, []Chunk{
+		ToolUse{ID: "c1", Name: "record_word", Input: json.RawMessage(`{"word":"ready"}`)},
+		ToolUse{ID: "c2", Name: "record_word", Input: json.RawMessage(`{}`)},
+		Usage{In: 200, Out: 40, CacheRead: 800},
+		Stop{Reason: StopToolUse},
+	}, chunks)
 }
 
 func TestChatStopsAndFailures(t *testing.T) {
@@ -169,7 +192,7 @@ func TestChatHonoursCallsInFlight(t *testing.T) {
 		writeChunks(w, chunk(`{"content":"ok"}`, "stop"), chatUsage)
 	}))
 	defer server.Close()
-	calls := gateOf("test\x00"+server.URL, 2)
+	calls := gateOf("cfg", server.URL, 2)
 	var wg sync.WaitGroup
 	for range 6 {
 		wg.Add(1)

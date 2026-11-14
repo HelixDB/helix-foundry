@@ -44,14 +44,14 @@ func record(t *testing.T, into *recorded, r *http.Request) {
 	require.NoError(t, json.Unmarshal(raw, &into.body))
 }
 
-// transcript is a turn's: a question, a call with its reasoning (one of this
-// host's, one of another's), its failed result, and the model's last word.
-func transcript(reasoning ai.Kind) []Message {
+// transcript is a turn's: a question, a call with its reasoning (one of
+// writer's, one of another model's), its failed result, and the model's last word.
+func transcript(writer string) []Message {
 	return []Message{
 		{Role: User, Content: []Block{Text{Text: "What ontologies?"}}},
 		{Role: Assistant, Content: []Block{
-			Reasoning{Provider: reasoning, Signature: "rs_1", Redacted: "gAAA-sealed"},
-			Reasoning{Provider: ai.KindAnthropic, Signature: "sig", Text: "dropped"},
+			Reasoning{Writer: writer, Signature: "rs_1", Redacted: "gAAA-sealed"},
+			Reasoning{Writer: writerOf(ai.KindAnthropic, "", "claude-opus-5-5"), Signature: "sig", Text: "dropped"},
 			Text{Text: "Let me look."},
 			ToolUse{ID: "call_0", Name: "helix_foundry_list_ontologies", Input: json.RawMessage(`{"workspace_id":"ws1"}`)},
 		}},
@@ -81,11 +81,11 @@ func TestResponsesStreamsTextCallsReasoningAndUsage(t *testing.T) {
 	}))
 	defer server.Close()
 	m := newResponses(responsesOpenAI, server.URL+"/v1", "sk-oa", "gpt-6.1-sol", true, 0, local, nil, option.WithMaxRetries(0))
-	chunks, err := collect(t, m, Request{System: "You are the Assistant.", MaxOutput: 8192, Tools: []Tool{listTool}, Messages: transcript(ai.KindOpenAI)})
+	chunks, err := collect(t, m, Request{System: "You are the Assistant.", MaxOutput: 8192, Tools: []Tool{listTool}, Messages: transcript(m.writer)})
 	require.NoError(t, err)
 	assert.Equal(t, []Chunk{
 		TextDelta{Text: "Let me "}, TextDelta{Text: "check."},
-		Reasoning{Provider: ai.KindOpenAI, Signature: "rs_2", Redacted: "gAAA-next"},
+		Reasoning{Writer: m.writer, Signature: "rs_2", Redacted: "gAAA-next"},
 		Text{Text: "Let me check."},
 		ToolUse{ID: "call_1", Name: "helix_foundry_list_ontologies", Input: json.RawMessage(`{"workspace_id":"ws1"}`)},
 		Usage{In: 400, Out: 50, CacheRead: 600},
@@ -145,16 +145,16 @@ func TestResponsesAzureAndCompatibleAuthorize(t *testing.T) {
 		writeOpenAISSE(w, responsesStream...)
 	}))
 	defer server.Close()
-	request := Request{System: "s", MaxOutput: 10, Messages: transcript(ai.KindAzureOpenAI)}
+	azure := newResponses(responsesAzure, server.URL+"/openai/v1", "az-key", "sol-deployment", true, 0, local, nil, option.WithMaxRetries(0))
+	request := Request{System: "s", MaxOutput: 10, Messages: transcript(azure.writer)}
 
-	azure := newResponses(responsesAzure, server.URL+"/openai/v1", "az-key", "sol-deployment", false, 0, local, nil, option.WithMaxRetries(0))
 	chunks, err := collect(t, azure, request)
 	require.NoError(t, err)
 	assert.Equal(t, "/openai/v1/responses", got.path)
 	assert.Equal(t, "az-key", got.header.Get("api-key"))
 	assert.Empty(t, got.header.Get("Authorization"), "Azure takes its key in api-key alone")
 	assert.Equal(t, "sol-deployment", got.body["model"], "a model is a deployment")
-	assert.Contains(t, chunks, Chunk(Reasoning{Provider: ai.KindAzureOpenAI, Signature: "rs_2", Redacted: "gAAA-next"}))
+	assert.Contains(t, chunks, Chunk(Reasoning{Writer: azure.writer, Signature: "rs_2", Redacted: "gAAA-next"}))
 	assert.Len(t, got.body["input"], 5, "Azure's own reasoning goes back to it")
 
 	keyless := newResponses(responsesCompatible, server.URL+"/v1", "", "local-model", false, 0, local, nil, option.WithMaxRetries(0))
@@ -166,6 +166,23 @@ func TestResponsesAzureAndCompatibleAuthorize(t *testing.T) {
 	_, err = collect(t, keyed, request)
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer local-key", got.header.Get("Authorization"))
+}
+
+// Reasoning goes back to the model that wrote it, at its endpoint, while
+// it reasons: never to another resource or server of its kind, another
+// model, or a setting without the knob, which would refuse it.
+func TestResponsesReasoningGoesBackToItsWriterOnly(t *testing.T) {
+	wrote := newResponses(responsesAzure, "https://a.openai.azure.com/openai/v1", "k", "sol", true, 0, local, nil)
+	sent := func(m *responsesModel) int {
+		p, err := m.params(Request{System: "s", MaxOutput: 10, Messages: transcript(wrote.writer)})
+		require.NoError(t, err)
+		return len(p.Input.OfInputItemList)
+	}
+	assert.Equal(t, 5, sent(wrote))
+	assert.Equal(t, 4, sent(newResponses(responsesAzure, "https://b.openai.azure.com/openai/v1", "k", "sol", true, 0, local, nil)), "another resource")
+	assert.Equal(t, 4, sent(newResponses(responsesAzure, "https://a.openai.azure.com/openai/v1", "k", "luna", true, 0, local, nil)), "another model")
+	assert.Equal(t, 4, sent(newResponses(responsesAzure, "https://a.openai.azure.com/openai/v1", "k", "sol", false, 0, local, nil)), "no reasoning knob")
+	assert.Equal(t, 4, sent(newResponses(responsesCompatible, "https://a.openai.azure.com/openai/v1", "k", "sol", true, 0, local, nil)), "another kind")
 }
 
 func TestResponsesStops(t *testing.T) {

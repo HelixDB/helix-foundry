@@ -21,6 +21,8 @@ import (
 type anthropicModel struct {
 	client anthropic.Client
 	model  string
+	// writer names the model: only its own thinking goes back.
+	writer string
 }
 
 // newAnthropic is model under key, called through client. The client reads
@@ -31,7 +33,7 @@ func newAnthropic(key, model string, timeout time.Duration, client *http.Client,
 	if timeout > 0 {
 		base = append(base, option.WithRequestTimeout(timeout))
 	}
-	return &anthropicModel{client: anthropic.NewClient(append(base, opts...)...), model: model}
+	return &anthropicModel{client: anthropic.NewClient(append(base, opts...)...), model: model, writer: writerOf(ai.KindAnthropic, "", model)}
 }
 
 func (m *anthropicModel) Stream(ctx context.Context, r Request) iter.Seq2[Chunk, error] {
@@ -88,9 +90,9 @@ func (m *anthropicModel) Stream(ctx context.Context, r Request) iter.Seq2[Chunk,
 				}
 				chunk = ToolUse{ID: b.ID, Name: b.Name, Input: input}
 			case anthropic.ThinkingBlock:
-				chunk = Reasoning{Provider: ai.KindAnthropic, Signature: b.Signature, Text: b.Thinking}
+				chunk = Reasoning{Writer: m.writer, Signature: b.Signature, Text: b.Thinking}
 			case anthropic.RedactedThinkingBlock:
-				chunk = Reasoning{Provider: ai.KindAnthropic, Redacted: b.Data}
+				chunk = Reasoning{Writer: m.writer, Redacted: b.Data}
 			default:
 				continue // server tools, which the Assistant doesn't declare
 			}
@@ -146,7 +148,7 @@ func (m *anthropicModel) params(r Request) (anthropic.MessageNewParams, error) {
 				blocks = append(blocks, anthropic.NewToolResultBlock(b.ToolUseID, b.Content, b.IsError))
 			case Reasoning:
 				switch {
-				case b.Provider != ai.KindAnthropic:
+				case b.Writer != m.writer:
 				case b.Redacted != "":
 					blocks = append(blocks, anthropic.NewRedactedThinkingBlock(b.Redacted))
 				default:

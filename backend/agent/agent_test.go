@@ -58,6 +58,9 @@ type memStore struct {
 	// deltas are every text_delta event appended, though a step's final
 	// text dropped it since.
 	deltas []json.RawMessage
+	// deltaFailures fails that many text_delta writes, as a store that
+	// errs for a moment.
+	deltaFailures int
 }
 
 func (s *memStore) ListFoundryAgentMessages(context.Context, string) ([]model.FoundryAgentMessage, error) {
@@ -88,6 +91,10 @@ func (s *memStore) AppendFoundryAgentEvents(_ context.Context, _, _ string, even
 	defer s.mu.Unlock()
 	if s.lost {
 		return foundrystore.ErrNotFound
+	}
+	if s.deltaFailures > 0 && strings.Contains(string(events[0]), `"text_delta"`) {
+		s.deltaFailures--
+		return errors.New("lock wait timeout")
 	}
 	s.events = append(s.events, events...)
 	for _, e := range events {
@@ -286,7 +293,7 @@ func say(text string) []llm.Chunk {
 }
 
 func call(id, name, input string) []llm.Chunk {
-	return []llm.Chunk{llm.Reasoning{Provider: ai.KindAnthropic, Signature: "sig", Text: "think"},
+	return []llm.Chunk{llm.Reasoning{Writer: "w", Signature: "sig", Text: "think"},
 		llm.ToolUse{ID: id, Name: name, Input: json.RawMessage(input)}, llm.Usage{In: 100, Out: 10}, llm.Stop{Reason: llm.StopToolUse}}
 }
 
@@ -695,7 +702,7 @@ func TestPromptKeepsWhatAModelNeeds(t *testing.T) {
 	all := []entry{
 		{turnID: "a", msg: llm.Message{Role: llm.User, Content: []llm.Block{llm.ToolResult{ToolUseID: "gone", Content: "orphan"}}}},
 		{turnID: "a", msg: llm.Message{Role: llm.User, Content: []llm.Block{llm.Text{Text: "first"}}}},
-		{turnID: "a", msg: llm.Message{Role: llm.Assistant, Content: []llm.Block{llm.Reasoning{Provider: ai.KindAnthropic, Text: "r"}, use}}},
+		{turnID: "a", msg: llm.Message{Role: llm.Assistant, Content: []llm.Block{llm.Reasoning{Writer: "w", Text: "r"}, use}}},
 		{turnID: "a", msg: llm.Message{Role: llm.User, Content: []llm.Block{llm.ToolResult{ToolUseID: "t1", Content: strings.Repeat("x", 4000)}}}},
 		{turnID: "b", msg: llm.Message{Role: llm.User, Content: []llm.Block{llm.Text{Text: "second"}}}},
 		{turnID: "b", msg: llm.Message{Role: llm.Assistant, Content: []llm.Block{use}}},
@@ -968,6 +975,47 @@ func TestABrokenStreamKeepsItsDeltas(t *testing.T) {
 	assert.False(t, f.Permanent)
 	assert.Equal(t, []string{"started", "text_delta"}, h.db.eventTypes())
 	assert.Len(t, h.db.messages, 1, "nothing of the broken answer is committed")
+}
+
+// Live text is for show: a write of it that fails keeps its text for the
+// next, and the call streams on to its usage, which the turn counts.
+func TestALiveTextWriteThatFailsLetsTheCallFinish(t *testing.T) {
+	h := newHarness(t, []llm.Chunk{
+		llm.TextDelta{Text: "Hel"}, llm.TextDelta{Text: "lo "}, llm.TextDelta{Text: "the"}, llm.TextDelta{Text: "re."},
+		llm.Text{Text: "Hello there."}, llm.Usage{In: 100, Out: 10}, llm.Stop{Reason: llm.StopEnd},
+	})
+	clock := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+	h.runner.Now = func() time.Time { return clock }
+	h.model.tick = func() { clock = clock.Add(200 * time.Millisecond) }
+	h.db.deltaFailures = 1
+	a, err := h.runner.Run(context.Background(), message("Hi"))
+	require.NoError(t, err)
+	assert.Equal(t, StopAnswered, a.Stop)
+	assert.Positive(t, a.Spend.USDMicros, "the call's usage is counted")
+	require.Len(t, h.db.deltas, 1, "the failed write's text goes with the next")
+	assert.JSONEq(t, `{"type":"text_delta","step":1,"text":"Hello there."}`, string(h.db.deltas[0]))
+	assert.Equal(t, []string{"started", "text", "finished"}, h.db.eventTypes())
+}
+
+// A turn whose own work outgrows the model's window ends before a call the
+// window would cut: earlier turns go first, but the running one never does.
+func TestATurnPastTheWindowStopsBeforeTheCall(t *testing.T) {
+	h := newHarness(t, say("never"))
+	h.runner.Models = func(ai.Resolved, *ai.Catalog) (llm.Binding, error) {
+		return llm.Binding{Model: h.model, Window: 65_536}, nil
+	}
+	a, err := h.runner.Run(context.Background(), message(strings.Repeat("long ", 48_000)))
+	require.NoError(t, err)
+	assert.Equal(t, StopContext, a.Stop)
+	assert.Empty(t, h.model.requests, "no call is made")
+	assert.Equal(t, []string{"started", "finished"}, h.db.eventTypes())
+	// The Assistant's own cap bounds a turn the same way.
+	h = newHarness(t, say("never"))
+	h.runner.Cfg.ContextTokens = 8_000
+	a, err = h.runner.Run(context.Background(), message(strings.Repeat("long ", 10_000)))
+	require.NoError(t, err)
+	assert.Equal(t, StopContext, a.Stop)
+	assert.Empty(t, h.model.requests)
 }
 
 // A step that streamed no text writes nothing more: no text, no drop.
