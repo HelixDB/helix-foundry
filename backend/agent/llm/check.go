@@ -11,8 +11,10 @@ import (
 // checkTool is the tool CheckTools asks the model to call.
 const checkTool = "record_word"
 
-// checkMaxOutput leaves a reasoning model room to reason before it calls.
-const checkMaxOutput = 2048
+// MaxOutput is the most one of the Assistant's calls may write: its tool
+// check asks for as much, so a model that can't write that much fails the
+// check, not every turn.
+const MaxOutput = 8192
 
 // CheckTools calls r's ask model once, on the Assistant's own wire, with one
 // tool it is asked to call: whether the Assistant can run on the setting.
@@ -33,7 +35,7 @@ func CheckTools(ctx context.Context, r ai.Resolved, catalog *ai.Catalog) (ai.Ass
 		return ai.AssistantUnchecked, err
 	}
 	req := Request{
-		System: "You check that tool calls work. Answer only by calling the tool.", MaxOutput: checkMaxOutput,
+		System: "You check that tool calls work. Answer only by calling the tool.", MaxOutput: MaxOutput,
 		Messages: []Message{{Role: User, Content: []Block{Text{Text: "Call " + checkTool + " with the word \"ready\"."}}}},
 		Tools: []Tool{{Name: checkTool, Description: "Records one word.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"word":{"type":"string","description":"The word to record."}},"required":["word"]}`)}},

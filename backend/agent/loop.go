@@ -33,7 +33,7 @@ import (
 
 const (
 	// maxOutput is the most one call may write.
-	maxOutput = 8192
+	maxOutput = llm.MaxOutput
 	// toolTimeout bounds one tool call; ask waits 25 s of it.
 	toolTimeout = 30 * time.Second
 	// maxResultBytes is the most of one tool's result the model reads, and

@@ -273,7 +273,7 @@ func (m *responsesModel) params(r Request) (responses.ResponseNewParams, error) 
 					output = "Error: " + output
 				}
 				items = append(items, responses.ResponseInputItemUnionParam{OfFunctionCallOutput: &responses.ResponseInputItemFunctionCallOutputParam{
-					CallID: openai.String(b.ToolUseID), Output: responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: openai.String(output)},
+					CallID: b.ToolUseID, Output: responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: openai.String(output)},
 				}})
 			case Reasoning:
 				// Only the host that wrote it can read it.
