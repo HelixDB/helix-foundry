@@ -382,7 +382,7 @@ func TestSettleReviewRefusals(t *testing.T) {
 
 // A member who manages nothing gets the read tools alone: nothing to
 // prepare and no connector links.
-func TestMembersGetReadToolsOnly(t *testing.T) {
+func TestMembersGetReadToolsAndTheirOwnDashboards(t *testing.T) {
 	h := workspaceHarness(t, say("Here is what I can see."))
 	h.host.may = func(p integration.Permission) bool {
 		return p == integration.PermissionWorkspaceRead || p == integration.PermissionDatabaseQueryRead
@@ -390,13 +390,25 @@ func TestMembersGetReadToolsOnly(t *testing.T) {
 	_, err := h.runner.Run(context.Background(), message("What can you do?"))
 	require.NoError(t, err)
 	var offered []string
+	var prepare llm.Tool
 	for _, tool := range h.model.requests[0].Tools {
 		offered = append(offered, tool.Name)
+		if tool.Name == toolPrepare {
+			prepare = tool
+		}
 	}
-	assert.NotContains(t, offered, toolPrepare)
 	assert.NotContains(t, offered, "helix_foundry_connect")
 	assert.Contains(t, offered, "helix_foundry_list_reviews")
 	assert.Contains(t, offered, toolAsk)
+	// A member makes dashboards and changes their own, as in the site; nothing else.
+	require.Contains(t, offered, toolPrepare)
+	schema := string(prepare.InputSchema)
+	for _, op := range []string{"create_dashboard", "update_dashboard", "delete_dashboard"} {
+		assert.Contains(t, schema, `"`+op+`"`)
+	}
+	for _, op := range []string{"create_load", "generate_ontology", "pin_dashboard", "publish_dashboard", "settle_review"} {
+		assert.NotContains(t, schema, `"`+op+`"`)
+	}
 }
 
 // The model reads at most 16 KiB of an action's result.

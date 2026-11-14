@@ -2574,12 +2574,16 @@ message FoundryDashboard {
   google.protobuf.Timestamp updated_at = 12;
   // Its public snapshot; unset unless published.
   FoundryDashboardShare share = 13;
-  // What the caller may do: change its name, description and tiles, and
-  // delete it; pin or unpin it; publish, republish and unpublish it (false
-  // wherever public links are off).
+  // What the caller may do: change its name, description and tiles; pin or
+  // unpin it; publish and republish it (false wherever public links are off);
+  // delete it (an owner or admin only while it is published); and unpublish
+  // it (an owner or admin while it is published, public links on or off, so
+  // a link turned off is never revived).
   bool can_edit = 14;
   bool can_pin = 15;
   bool can_publish = 16;
+  bool can_delete = 17;
+  bool can_unpublish = 18;
 }
 
 // FoundryDashboardShare is a dashboard's public snapshot.

@@ -59,20 +59,23 @@ type FoundryDashboardOutput struct {
 	Revision int64 `json:"revision"`
 	Pinned   bool  `json:"pinned"`
 	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
-	Spec       any                          `json:"spec,omitempty" jsonschema:"Untrusted dashboard spec: its tiles and layout. Left out of a list. An integer past 2^53 in a query comes as a string of its digits: write it back as a number."`
-	CanEdit    bool                         `json:"can_edit"`
-	CanPin     bool                         `json:"can_pin"`
-	CanPublish bool                         `json:"can_publish"`
-	Share      *FoundryDashboardShareOutput `json:"share,omitempty"`
-	URL        string                       `json:"url,omitempty"`
+	Spec         any                          `json:"spec,omitempty" jsonschema:"Untrusted dashboard spec: its tiles and layout. Left out of a list. An integer past 2^53 in a query comes as a string of its digits: write it back as a number."`
+	CanEdit      bool                         `json:"can_edit"`
+	CanPin       bool                         `json:"can_pin"`
+	CanPublish   bool                         `json:"can_publish"`
+	CanDelete    bool                         `json:"can_delete"`
+	CanUnpublish bool                         `json:"can_unpublish"`
+	Share        *FoundryDashboardShareOutput `json:"share,omitempty"`
+	URL          string                       `json:"url,omitempty"`
 }
 
-// FoundryDashboardShareOutput is a dashboard's public snapshot.
+// FoundryDashboardShareOutput is a dashboard's public snapshot. Its link is never returned: a
+// tool's output goes to an agent, its model provider and its transcripts, and a link is a
+// credential to the data. Owners and admins copy it from the dashboard's page in Foundry (url).
 type FoundryDashboardShareOutput struct {
+	Published    bool   `json:"published" jsonschema:"Always true: the dashboard has a public link, which its page in Foundry shows owners and admins. No tool returns the link."`
 	SpecRevision int64  `json:"spec_revision" jsonschema:"The dashboard's revision the snapshot shows: older than its revision after an edit, until it is published again."`
 	PublishedAt  string `json:"published_at"`
-	// URL is the public link, for owners and admins only.
-	URL string `json:"url,omitempty" jsonschema:"The public link: anyone who has it sees the snapshot, with no sign-in. Owners and admins only."`
 }
 
 type PreviewFoundryDashboardTileOutput struct {
@@ -163,21 +166,19 @@ func (s *Service) PreviewFoundryDashboardTile(ctx context.Context, identity *Ide
 		AsOf: resp.GetAsOf(), Outcome: UntrustedJSON(resp.GetOutcomeJson())}, 1, nil
 }
 
-// FoundryDashboard is d as the tools return it, with its page in Foundry and, for an owner or
-// admin, its public link.
+// FoundryDashboard is d as the tools return it, with its page in Foundry: never its public
+// link (FoundryDashboardShareOutput).
 func (s *Service) FoundryDashboard(workspaceID string, d *foundryv1.FoundryDashboard) FoundryDashboardOutput {
 	out := FoundryDashboardOutput{
 		ID: d.GetId(), WorkspaceID: workspaceID, Name: d.GetName(), Description: d.GetDescription(), Revision: d.GetRevision(), Pinned: d.GetPinned(),
-		CanEdit: d.GetCanEdit(), CanPin: d.GetCanPin(), CanPublish: d.GetCanPublish(), URL: s.FoundryLink(workspaceID, "dashboards", d.GetId()),
+		CanEdit: d.GetCanEdit(), CanPin: d.GetCanPin(), CanPublish: d.GetCanPublish(), CanDelete: d.GetCanDelete(), CanUnpublish: d.GetCanUnpublish(),
+		URL: s.FoundryLink(workspaceID, "dashboards", d.GetId()),
 	}
 	if d.GetSpecJson() != "" {
 		out.Spec = UntrustedJSON(d.GetSpecJson())
 	}
 	if share := d.GetShare(); share != nil {
-		out.Share = &FoundryDashboardShareOutput{SpecRevision: share.GetSpecRevision(), PublishedAt: protoTimestamp(share.GetPublishedAt())}
-		if share.GetToken() != "" && s.FoundryURL != "" {
-			out.Share.URL = s.FoundryURL + "/share/" + share.GetToken()
-		}
+		out.Share = &FoundryDashboardShareOutput{Published: true, SpecRevision: share.GetSpecRevision(), PublishedAt: protoTimestamp(share.GetPublishedAt())}
 	}
 	return out
 }
@@ -197,8 +198,11 @@ type UpdateDashboardPayload struct {
 	Spec             json.RawMessage `json:"spec,omitempty"`
 }
 
+// PinDashboardPayload is pin_dashboard's: the revision read, so what is pinned for the whole
+// workspace is what its pinner saw.
 type PinDashboardPayload struct {
-	Pinned bool `json:"pinned"`
+	ExpectedRevision int64 `json:"expected_revision"`
+	Pinned           bool  `json:"pinned"`
 }
 
 type PublishDashboardPayload struct {
@@ -224,11 +228,12 @@ func dashboardSpecPayload(raw json.RawMessage) (json.RawMessage, dashboard.Spec,
 	return mustCanonical(spec), spec, nil
 }
 
-// dashboardOntologies checks each ontology spec's tiles read is one the caller may read in the
-// workspace, so a card is never prepared for tiles the backend would refuse.
-func (s *Service) dashboardOntologies(ctx context.Context, identity *Identity, workspaceID string, spec dashboard.Spec) error {
+// dashboardOntologies checks each ontology tiles read is one the caller may read in the
+// workspace, so a card is never prepared for tiles the backend would refuse: the tiles of a new
+// spec, or those of an edit with new targets (dashboard.Spec.NewTargets), as the backend checks.
+func (s *Service) dashboardOntologies(ctx context.Context, identity *Identity, workspaceID string, tiles []dashboard.Tile) error {
 	seen := map[string]bool{}
-	for _, t := range spec.Tiles() {
+	for _, t := range tiles {
 		if seen[t.OntologyID] {
 			continue
 		}
@@ -265,7 +270,7 @@ func (s *Service) validateDashboardOperation(ctx context.Context, identity *Iden
 		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "CreateFoundryDashboard"); err != nil {
 			return nil, err
 		}
-		if err := s.dashboardOntologies(ctx, identity, workspaceID, parsed); err != nil {
+		if err := s.dashboardOntologies(ctx, identity, workspaceID, parsed.Tiles()); err != nil {
 			return nil, err
 		}
 		return dashboardOperation[*foundryv1.CreateFoundryDashboardRequest]{payload: payload, req: req, workspaceID: workspaceID,
@@ -295,20 +300,34 @@ func (s *Service) validateDashboardOperation(ctx context.Context, identity *Iden
 			description := strings.TrimSpace(*payload.Description)
 			payload.Description, req.Description = &description, &description
 		}
-		var parsed dashboard.Spec
+		var parsed *dashboard.Spec
 		if len(payload.Spec) > 0 {
 			spec, p, err := dashboardSpecPayload(payload.Spec)
 			if err != nil {
 				return nil, invalid("update_dashboard's spec: " + err.Error())
 			}
 			specJSON := string(spec)
-			payload.Spec, parsed, req.SpecJson = spec, p, &specJSON
+			payload.Spec, parsed, req.SpecJson = spec, &p, &specJSON
 		}
 		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "UpdateFoundryDashboard"); err != nil {
 			return nil, err
 		}
-		if err := s.dashboardOntologies(ctx, identity, workspaceID, parsed); err != nil {
-			return nil, err
+		if parsed != nil {
+			get := &foundryv1.GetFoundryDashboardRequest{WorkspaceId: workspaceID, Id: dashboardID}
+			if err := s.AuthorizeFoundry(ctx, identity, get, foundryUserOnly, "GetFoundryDashboard"); err != nil {
+				return nil, err
+			}
+			current, err := s.Foundry.GetFoundryDashboard(ctx, get)
+			if err != nil {
+				return nil, FoundryError(err)
+			}
+			stored, err := dashboard.ParseSpec([]byte(current.GetDashboard().GetSpecJson()))
+			if err != nil {
+				return nil, detailedToolError{code: errCodeFailedPrecondition, message: "the dashboard's stored spec can't be read: " + err.Error()}
+			}
+			if err := s.dashboardOntologies(ctx, identity, workspaceID, parsed.NewTargets(stored)); err != nil {
+				return nil, err
+			}
 		}
 		return dashboardOperation[*foundryv1.UpdateFoundryDashboardRequest]{payload: payload, req: req, workspaceID: workspaceID,
 			call: func(ctx context.Context, s *Service, req *foundryv1.UpdateFoundryDashboardRequest, _ string) (*foundryv1.FoundryDashboardResponse, error) {
@@ -325,10 +344,11 @@ func (s *Service) validateDashboardOperation(ctx context.Context, identity *Iden
 		return DeleteDashboardOperation{req: req}, nil
 	case "pin_dashboard":
 		var payload PinDashboardPayload
-		if decodeStrict(raw, &payload) != nil || len(input.Payload) != 1 {
-			return nil, invalid("pin_dashboard takes payload {pinned}: true to pin it in every member's sidebar, false to unpin it")
+		_, hasPinned := input.Payload["pinned"]
+		if decodeStrict(raw, &payload) != nil || !hasPinned || payload.ExpectedRevision < 1 {
+			return nil, invalid("pin_dashboard takes payload {expected_revision, pinned}: the revision you read, and true to pin it in every member's sidebar, false to unpin it")
 		}
-		req := &foundryv1.PinFoundryDashboardRequest{WorkspaceId: workspaceID, Id: dashboardID, Pinned: payload.Pinned}
+		req := &foundryv1.PinFoundryDashboardRequest{WorkspaceId: workspaceID, Id: dashboardID, Pinned: payload.Pinned, ExpectedRevision: payload.ExpectedRevision}
 		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "PinFoundryDashboard"); err != nil {
 			return nil, err
 		}
@@ -336,22 +356,23 @@ func (s *Service) validateDashboardOperation(ctx context.Context, identity *Iden
 			call: func(ctx context.Context, s *Service, req *foundryv1.PinFoundryDashboardRequest, _ string) (*foundryv1.FoundryDashboardResponse, error) {
 				return s.Actions.PinFoundryDashboard(ctx, req)
 			}}, nil
-	case "publish_dashboard", "unpublish_dashboard":
+	case "unpublish_dashboard":
+		// Offered whether or not public links are on: a link taken down while they are off
+		// stays down when they come back on.
+		if len(input.Payload) != 0 {
+			return nil, invalid("unpublish_dashboard takes an empty payload")
+		}
+		req := &foundryv1.UnpublishFoundryDashboardRequest{WorkspaceId: workspaceID, Id: dashboardID}
+		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "UnpublishFoundryDashboard"); err != nil {
+			return nil, err
+		}
+		return dashboardOperation[*foundryv1.UnpublishFoundryDashboardRequest]{payload: struct{}{}, req: req, workspaceID: workspaceID,
+			call: func(ctx context.Context, s *Service, req *foundryv1.UnpublishFoundryDashboardRequest, _ string) (*foundryv1.FoundryDashboardResponse, error) {
+				return s.Actions.UnpublishFoundryDashboard(ctx, req)
+			}}, nil
+	case "publish_dashboard":
 		if !s.PublicDashboards {
 			return nil, detailedToolError{code: errCodeFailedPrecondition, message: "public dashboard links are not available here"}
-		}
-		if input.Operation == "unpublish_dashboard" {
-			if len(input.Payload) != 0 {
-				return nil, invalid("unpublish_dashboard takes an empty payload")
-			}
-			req := &foundryv1.UnpublishFoundryDashboardRequest{WorkspaceId: workspaceID, Id: dashboardID}
-			if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "UnpublishFoundryDashboard"); err != nil {
-				return nil, err
-			}
-			return dashboardOperation[*foundryv1.UnpublishFoundryDashboardRequest]{payload: struct{}{}, req: req, workspaceID: workspaceID,
-				call: func(ctx context.Context, s *Service, req *foundryv1.UnpublishFoundryDashboardRequest, _ string) (*foundryv1.FoundryDashboardResponse, error) {
-					return s.Actions.UnpublishFoundryDashboard(ctx, req)
-				}}, nil
 		}
 		var payload PublishDashboardPayload
 		if decodeStrict(raw, &payload) != nil || payload.ExpectedRevision < 1 {

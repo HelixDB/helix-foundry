@@ -43,7 +43,16 @@ func (s *mysqlDB) CreateFoundryDashboard(ctx context.Context, d *model.FoundryDa
 		if err := tx.workspaces.Lock(ctx, tx.db, d.WorkspaceID); err != nil {
 			return err
 		}
+		// The same create again answers the dashboard it made, even at the
+		// cap that dashboard filled.
 		var count int
+		if err := tx.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_dashboards WHERE workspace_id=? AND created_by_user_id=? AND client_token=?`,
+			d.WorkspaceID, d.CreatedByUserID, d.ClientToken).Scan(&count); err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrConflict
+		}
 		if err := tx.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_dashboards WHERE workspace_id=?`, d.WorkspaceID).Scan(&count); err != nil {
 			return err
 		}
@@ -152,16 +161,21 @@ SET name=?, description=?, spec=?, revision=revision+1, updated_by_user_id=?, up
 }
 
 // SetFoundryDashboardPinned pins the dashboard for the whole workspace, or
-// unpins it, as userID; its revision stays. Pinning one pinned already, or
-// unpinning one that isn't, changes nothing. A workspace pins at most
-// maxPinned (a FoundryDashboardLimit refusal), counted under its lock.
-func (s *mysqlDB) SetFoundryDashboardPinned(ctx context.Context, workspaceID, id, userID string, pinned bool, maxPinned int) error {
+// unpins it, as userID, when it is at revision expected (a
+// FoundryDashboardChanged refusal otherwise: what is pinned is what its
+// pinner saw); its revision stays. Pinning one pinned already, or unpinning
+// one that isn't, changes nothing. A workspace pins at most maxPinned (a
+// FoundryDashboardLimit refusal), counted under its lock.
+func (s *mysqlDB) SetFoundryDashboardPinned(ctx context.Context, workspaceID, id, userID string, expected int64, pinned bool, maxPinned int) error {
+	if expected < 1 {
+		return fmt.Errorf("pinning foundry dashboard %s needs the revision it was read at", id)
+	}
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		if err := tx.workspaces.Lock(ctx, tx.db, workspaceID); err != nil {
 			return err
 		}
-		d, err := tx.lockFoundryDashboard(ctx, workspaceID, id, 0)
+		d, err := tx.lockFoundryDashboard(ctx, workspaceID, id, expected)
 		if err != nil || (d.PinnedAt != nil) == pinned {
 			return err
 		}
@@ -185,7 +199,8 @@ func (s *mysqlDB) SetFoundryDashboardPinned(ctx context.Context, workspaceID, id
 
 // DeleteFoundryDashboard deletes the dashboard and its public snapshot, as
 // editor: ErrNotFound when it is gone, FoundryDashboardNotEditable when the
-// editor may not.
+// editor may not change it, or it is published and they manage nothing
+// (taking its link down is an owner's or admin's, as unpublishing is).
 func (s *mysqlDB) DeleteFoundryDashboard(ctx context.Context, workspaceID, id string, editor model.FoundryDashboardEditor) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -195,6 +210,10 @@ func (s *mysqlDB) DeleteFoundryDashboard(ctx context.Context, workspaceID, id st
 		}
 		if err := editable(d, editor); err != nil {
 			return err
+		}
+		if d.Share != nil && !editor.Manager {
+			return model.FoundryDashboardRefusal{Reason: model.FoundryDashboardNotEditable,
+				Detail: "the dashboard is published at a public link: only an owner or admin deletes it"}
 		}
 		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_dashboard_shares WHERE dashboard_id=?`, id); err != nil {
 			return err
@@ -209,6 +228,14 @@ func (s *mysqlDB) DeleteFoundryDashboard(ctx context.Context, workspaceID, id st
 // refusal otherwise). A dashboard published already keeps its token, and the
 // first time it was published: share's token is used only for the first
 // publish. It returns the share as stored, without its snapshot.
+//
+// The snapshot was read before this transaction, so under the locks of the
+// ontologies it read (taken first, in id order, as deleting an ontology and
+// turning People enrichment off take them) it is refused,
+// FoundryDashboardUnreadable, when one of them was deleted meanwhile or is
+// queued to be purged of enrichment's profiles: either would leave data
+// public that Foundry has promised to remove. Both of those delete the
+// shares that read the ontology, so one committed after this one removes it.
 func (s *mysqlDB) PublishFoundryDashboard(ctx context.Context, share *model.FoundryDashboardShare) (*model.FoundryDashboardShare, error) {
 	switch {
 	case share.DashboardID == "" || share.WorkspaceID == "" || share.PublishedByUserID == "" || len(share.TokenSHA256) != 64:
@@ -216,13 +243,33 @@ func (s *mysqlDB) PublishFoundryDashboard(ctx context.Context, share *model.Foun
 	case len(share.Snapshot) == 0 || len(share.TokenSealed) == 0 || share.TokenKeyID == "" || share.SpecRevision < 1:
 		return nil, fmt.Errorf("foundry dashboard share %s is missing its snapshot, sealed token or revision", share.DashboardID)
 	}
-	ontologies, err := json.Marshal(slices.Compact(slices.Sorted(slices.Values(share.OntologyIDs))))
+	ontologyIDs := slices.Compact(slices.Sorted(slices.Values(share.OntologyIDs)))
+	ontologies, err := json.Marshal(ontologyIDs)
 	if err != nil {
 		return nil, err
 	}
 	var stored *model.FoundryDashboardShare
 	err = s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
+		for _, ontologyID := range ontologyIDs {
+			o, err := tx.lockFoundryOntology(ctx, share.WorkspaceID, ontologyID)
+			if errors.Is(err, ErrNotFound) || err == nil && o.DeletedAt != nil {
+				return model.FoundryDashboardRefusal{Reason: model.FoundryDashboardUnreadable,
+					Detail: "an ontology its tiles read was deleted while they were read"}
+			}
+			if err != nil {
+				return err
+			}
+			var purging int
+			if err := tx.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_enrichment_purges WHERE ontology_id=? AND done_at IS NULL`,
+				ontologyID).Scan(&purging); err != nil {
+				return err
+			}
+			if purging > 0 {
+				return model.FoundryDashboardRefusal{Reason: model.FoundryDashboardUnreadable,
+					Detail: fmt.Sprintf("People enrichment was turned off, and %s is being loaded again without its profiles: publish once that load is current", o.Name)}
+			}
+		}
 		if _, err := tx.lockFoundryDashboard(ctx, share.WorkspaceID, share.DashboardID, share.SpecRevision); err != nil {
 			return err
 		}
@@ -275,6 +322,19 @@ WHERE s.token_sha256=? AND w.deleted_at IS NULL AND w.status NOT IN ('deleting',
 		return nil, fmt.Errorf("read share %s's ontologies: %w", share.DashboardID, err)
 	}
 	return &share, nil
+}
+
+// deleteFoundryEnrichedShares deletes the workspace's public snapshots that
+// read an ontology any of whose loads, live or deleted since, applied People
+// enrichment's profiles: turning enrichment off removes them from what
+// anyone sees, a snapshot read of such a load included.
+func (s *mysqlDB) deleteFoundryEnrichedShares(ctx context.Context, workspaceID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_dashboard_shares
+WHERE workspace_id=? AND EXISTS (
+  SELECT 1 FROM foundry_load_enrichments e JOIN foundry_ontologies o ON o.id = e.ontology_id
+  WHERE o.workspace_id = foundry_dashboard_shares.workspace_id AND e.applied_key <> ''
+    AND JSON_CONTAINS(foundry_dashboard_shares.ontology_ids, JSON_QUOTE(o.id)))`, workspaceID)
+	return err
 }
 
 // deleteFoundryOntologyShares deletes the public snapshots that read the

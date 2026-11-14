@@ -82,6 +82,9 @@ func TestFoundryDashboards(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, list, 2)
 		assert.Nil(t, list[0].Spec, "a list leaves specs out")
+
+		assert.ErrorIs(t, db.CreateFoundryDashboard(ctx, newDashboard(workspaceID, 1, dashAda), 2), store.ErrConflict,
+			"a retry of the create that filled the cap finds its dashboard, not the cap")
 	})
 
 	t.Run("caps a workspace's dashboards", func(t *testing.T) {
@@ -143,7 +146,7 @@ func TestFoundryDashboards(t *testing.T) {
 		assert.Equal(t, "user-admin", got.UpdatedByUserID)
 		assert.Equal(t, dashAda, got.CreatedByUserID)
 
-		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, d.ID, "user-admin", true, 5))
+		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, d.ID, "user-admin", 3, true, 5))
 		assert.Equal(t, model.FoundryDashboardNotEditable, dashboardRefusal(t, db.UpdateFoundryDashboard(ctx, workspaceID, d.ID, adaEdits, 3,
 			model.FoundryDashboardUpdate{Name: &name})), "its creator, once it is pinned")
 		assert.Equal(t, model.FoundryDashboardNotEditable, dashboardRefusal(t, db.DeleteFoundryDashboard(ctx, workspaceID, d.ID, adaEdits)))
@@ -159,9 +162,9 @@ func TestFoundryDashboards(t *testing.T) {
 		first, second := newDashboard(workspaceID, 1, dashAda), newDashboard(workspaceID, 2, dashAlan)
 		require.NoError(t, db.CreateFoundryDashboard(ctx, first, 10))
 		require.NoError(t, db.CreateFoundryDashboard(ctx, second, 10))
-		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, first.ID, "user-admin", true, 1))
-		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, first.ID, "user-admin", true, 1), "pinning twice is one pin")
-		assert.Equal(t, model.FoundryDashboardLimit, dashboardRefusal(t, db.SetFoundryDashboardPinned(ctx, workspaceID, second.ID, "user-admin", true, 1)))
+		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, first.ID, "user-admin", 1, true, 1))
+		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, first.ID, "user-admin", 1, true, 1), "pinning twice is one pin")
+		assert.Equal(t, model.FoundryDashboardLimit, dashboardRefusal(t, db.SetFoundryDashboardPinned(ctx, workspaceID, second.ID, "user-admin", 1, true, 1)))
 
 		pinned, err := db.ListFoundryDashboards(ctx, workspaceID, true)
 		require.NoError(t, err)
@@ -175,22 +178,37 @@ func TestFoundryDashboards(t *testing.T) {
 		require.Len(t, all, 2)
 		assert.Equal(t, first.ID, all[0].ID, "pinned ones first")
 
-		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, first.ID, "user-admin", false, 1))
-		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, first.ID, "user-admin", false, 1))
-		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, second.ID, "user-admin", true, 1), "unpinning freed its place")
-		assert.ErrorIs(t, db.SetFoundryDashboardPinned(ctx, workspaceID, id26("DB-none"), "user-admin", true, 1), store.ErrNotFound)
+		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, first.ID, "user-admin", 1, false, 1))
+		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, first.ID, "user-admin", 1, false, 1))
+		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, second.ID, "user-admin", 1, true, 1), "unpinning freed its place")
+		assert.ErrorIs(t, db.SetFoundryDashboardPinned(ctx, workspaceID, id26("DB-none"), "user-admin", 1, true, 1), store.ErrNotFound)
+		assert.Error(t, db.SetFoundryDashboardPinned(ctx, workspaceID, first.ID, "user-admin", 0, true, 1), "a pin names the revision it saw")
 	})
 
-	t.Run("publishes at a revision, keeping the first token", func(t *testing.T) {
+	t.Run("pins only the revision its pinner saw", func(t *testing.T) {
 		db := newTestStore(t)
 		createWorkspace(t, workspaceID)
 		d := newDashboard(workspaceID, 1, dashAda)
 		require.NoError(t, db.CreateFoundryDashboard(ctx, d, 10))
+		name := "Changed while an owner looked"
+		require.NoError(t, db.UpdateFoundryDashboard(ctx, workspaceID, d.ID, adaEdits, 1, model.FoundryDashboardUpdate{Name: &name}))
+		assert.Equal(t, model.FoundryDashboardChanged, dashboardRefusal(t, db.SetFoundryDashboardPinned(ctx, workspaceID, d.ID, "user-admin", 1, true, 5)))
+		got, err := db.GetFoundryDashboard(ctx, workspaceID, d.ID)
+		require.NoError(t, err)
+		assert.Nil(t, got.PinnedAt, "nothing it didn't see is pinned")
+		require.NoError(t, db.SetFoundryDashboardPinned(ctx, workspaceID, d.ID, "user-admin", 2, true, 5))
+	})
 
-		stored, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a", "o1", "o2", "o1"))
+	t.Run("publishes at a revision, keeping the first token", func(t *testing.T) {
+		db := newTestStore(t)
+		o1, o2, o3 := sampleOntology(t, db, workspaceID, "P1"), sampleOntology(t, db, workspaceID, "P2"), sampleOntology(t, db, workspaceID, "P3")
+		d := newDashboard(workspaceID, 1, dashAda)
+		require.NoError(t, db.CreateFoundryDashboard(ctx, d, 10))
+
+		stored, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a", o2.ID, o1.ID, o2.ID))
 		require.NoError(t, err)
 		assert.Equal(t, strings.Repeat("a", 64), stored.TokenSHA256)
-		assert.Equal(t, []string{"o1", "o2"}, stored.OntologyIDs)
+		assert.Equal(t, []string{o1.ID, o2.ID}, stored.OntologyIDs)
 		assert.Nil(t, stored.Snapshot)
 		first := stored.FirstPublishedAt
 
@@ -206,14 +224,14 @@ func TestFoundryDashboards(t *testing.T) {
 			return err
 		}()), "a publish of a revision since edited")
 
-		again := dashboardShare(d, 2, "b", "o3")
+		again := dashboardShare(d, 2, "b", o3.ID)
 		again.Snapshot = json.RawMessage(`{"v":1,"tiles":[],"name":"Renamed"}`)
 		stored, err = db.PublishFoundryDashboard(ctx, again)
 		require.NoError(t, err)
 		assert.Equal(t, strings.Repeat("a", 64), stored.TokenSHA256, "republishing keeps the link")
 		assert.Equal(t, []byte("sealed-a"), stored.TokenSealed)
 		assert.Equal(t, int64(2), stored.SpecRevision)
-		assert.Equal(t, []string{"o3"}, stored.OntologyIDs)
+		assert.Equal(t, []string{o3.ID}, stored.OntologyIDs)
 		assert.Equal(t, first, stored.FirstPublishedAt)
 		_, err = db.GetSharedFoundryDashboard(ctx, strings.Repeat("b", 64))
 		assert.ErrorIs(t, err, store.ErrNotFound, "the second token is no link")
@@ -249,21 +267,32 @@ func TestFoundryDashboards(t *testing.T) {
 		_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a"))
 		require.NoError(t, err)
 		assert.Equal(t, model.FoundryDashboardNotEditable, dashboardRefusal(t, db.DeleteFoundryDashboard(ctx, workspaceID, d.ID, alanEdits)))
-		require.NoError(t, db.DeleteFoundryDashboard(ctx, workspaceID, d.ID, adaEdits))
+		assert.Equal(t, model.FoundryDashboardNotEditable, dashboardRefusal(t, db.DeleteFoundryDashboard(ctx, workspaceID, d.ID, adaEdits)),
+			"its creator, a member, can't take its public link down")
+		_, err = db.GetSharedFoundryDashboard(ctx, strings.Repeat("a", 64))
+		require.NoError(t, err)
+		require.NoError(t, db.UnpublishFoundryDashboard(ctx, workspaceID, d.ID))
+		require.NoError(t, db.DeleteFoundryDashboard(ctx, workspaceID, d.ID, adaEdits), "unpublished, its creator deletes it")
 		assert.ErrorIs(t, db.DeleteFoundryDashboard(ctx, workspaceID, d.ID, adaEdits), store.ErrNotFound)
+
+		d = newDashboard(workspaceID, 2, dashAda)
+		require.NoError(t, db.CreateFoundryDashboard(ctx, d, 10))
+		_, err = db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a"))
+		require.NoError(t, err)
+		require.NoError(t, db.DeleteFoundryDashboard(ctx, workspaceID, d.ID, adminEdits), "an owner or admin deletes a published one")
 		_, err = db.GetSharedFoundryDashboard(ctx, strings.Repeat("a", 64))
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
 	t.Run("ends links with their workspace or an ontology they read", func(t *testing.T) {
 		db := newTestStore(t)
-		o := sampleOntology(t, db, workspaceID, "DS")
+		o, elsewhere := sampleOntology(t, db, workspaceID, "DS"), sampleOntology(t, db, workspaceID, "DS-else")
 		d, other := newDashboard(workspaceID, 1, dashAda), newDashboard(workspaceID, 2, dashAda)
 		require.NoError(t, db.CreateFoundryDashboard(ctx, d, 10))
 		require.NoError(t, db.CreateFoundryDashboard(ctx, other, 10))
-		_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a", o.ID, "o-else"))
+		_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a", o.ID, elsewhere.ID))
 		require.NoError(t, err)
-		_, err = db.PublishFoundryDashboard(ctx, dashboardShare(other, 1, "b", "o-else"))
+		_, err = db.PublishFoundryDashboard(ctx, dashboardShare(other, 1, "b", elsewhere.ID))
 		require.NoError(t, err)
 
 		require.NoError(t, db.DeleteFoundryOntology(ctx, workspaceID, o.ID, id26("FN-DS")))
@@ -271,6 +300,19 @@ func TestFoundryDashboards(t *testing.T) {
 		assert.ErrorIs(t, err, store.ErrNotFound, "deleting an ontology deletes the snapshots that read it")
 		_, err = db.GetSharedFoundryDashboard(ctx, strings.Repeat("b", 64))
 		require.NoError(t, err, "and no other")
+
+		// A publish that read it before it was deleted commits after: refused,
+		// so nothing of it is left public.
+		assert.Equal(t, model.FoundryDashboardUnreadable, dashboardRefusal(t, func() error {
+			_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "c", o.ID, elsewhere.ID))
+			return err
+		}()))
+		assert.Equal(t, model.FoundryDashboardUnreadable, dashboardRefusal(t, func() error {
+			_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "c", id26("FO-none")))
+			return err
+		}()), "an ontology the workspace never had")
+		_, err = db.GetSharedFoundryDashboard(ctx, strings.Repeat("c", 64))
+		assert.ErrorIs(t, err, store.ErrNotFound)
 
 		setWorkspaceStatus(t, workspaceID, "deleting")
 		_, err = db.GetSharedFoundryDashboard(ctx, strings.Repeat("b", 64))

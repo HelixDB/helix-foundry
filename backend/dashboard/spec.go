@@ -80,6 +80,22 @@ func (s Spec) Rows() [][]string {
 	return out
 }
 
+// NewTargets are the tiles of s that read an ontology or load from's tile of
+// the same id doesn't: tiles new to s, and tiles moved to another ontology
+// or load. What a tile reads is checked when it is first given; a tile kept
+// as it was, retitled or with a new query keeps reading what was checked,
+// even once its pinned load is deleted, so it never blocks an edit of
+// another tile.
+//
+//	before, _ := dashboard.ParseSpec(stored)
+//	after, _ := dashboard.ParseSpec(edited)
+//	for _, t := range after.NewTargets(before) { /* check t's ontology and load */ }
+func (s Spec) NewTargets(from Spec) []Tile {
+	return slices.DeleteFunc(s.Tiles(), func(t Tile) bool {
+		return slices.ContainsFunc(from.tiles, func(f Tile) bool { return f.ID == t.ID && f.OntologyID == t.OntologyID && f.Load == t.Load })
+	})
+}
+
 // Tile is one table or chart: a typed query of one ontology's load.
 type Tile struct {
 	ID         string

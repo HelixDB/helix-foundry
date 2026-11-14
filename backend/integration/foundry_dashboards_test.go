@@ -125,15 +125,19 @@ func TestDashboardReadTools(t *testing.T) {
 	spec := got["spec"].(map[string]any)
 	assert.Len(t, spec["tiles"], 1)
 	share := got["share"].(map[string]any)
-	assert.Equal(t, "https://foundry.example/share/hxd_token", share["url"])
+	assert.Equal(t, true, share["published"])
 	assert.EqualValues(t, 2, share["spec_revision"])
+	raw, err := json.Marshal(got)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "hxd_token", "no tool hands an agent the public link")
+	assert.NotContains(t, string(raw), "/share/")
 
 	preview := called(t, s, toolFoundryPreviewDashboardTile, map[string]any{"workspace_id": dashWorkspace, "tile": tileArgs(t)})
 	assert.Equal(t, "load-1", preview["load_id"])
 	require.Len(t, b.previews, 1)
 	assert.JSONEq(t, `{"id":"t1","title":"Invoices","ontology_id":"ont-1","load":{"kind":"current"},"query":{"return":{"count":{}},"start":{"type":"Invoice"}},"visual":{"kind":"figure"}}`,
 		b.previews[0].GetTileJson(), "the tile is sent as a spec keeps it")
-	raw, err := json.Marshal(preview["outcome"])
+	raw, err = json.Marshal(preview["outcome"])
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"12345678901234567890"`, "a large count stays exact, as a string")
 
@@ -199,17 +203,19 @@ func TestDashboardOperations(t *testing.T) {
 		assert.Equal(t, "Renamed", b.updates[0].GetName())
 		assert.Nil(t, b.updates[0].Description, "what an update leaves out stays")
 
-		op, err = prepare(s, "pin_dashboard", dashboardTarget, map[string]any{"pinned": true})
+		op, err = prepare(s, "pin_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("3"), "pinned": true})
 		require.NoError(t, err)
 		_, err = op.Execute(context.Background(), s, reader(), "conf-3")
 		require.NoError(t, err)
 		assert.True(t, b.pins[0].GetPinned())
+		assert.EqualValues(t, 3, b.pins[0].GetExpectedRevision(), "what is pinned is the revision its pinner saw")
 
 		op, err = prepare(s, "publish_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("3")})
 		require.NoError(t, err)
 		published, err := op.Execute(context.Background(), s, reader(), "conf-4")
 		require.NoError(t, err)
-		assert.Equal(t, "https://foundry.example/share/hxd_token", published.(FoundryDashboardOutput).Share.URL)
+		assert.True(t, published.(FoundryDashboardOutput).Share.Published)
+		assert.NotContains(t, string(mustCanonical(published)), "hxd_token", "the card's result, which the model reads, holds no link")
 
 		op, err = prepare(s, "unpublish_dashboard", dashboardTarget, map[string]any{})
 		require.NoError(t, err)
@@ -237,19 +243,26 @@ func TestDashboardOperations(t *testing.T) {
 			payload           map[string]any
 			want              string
 		}{
-			"create on a dashboard":  {"create_dashboard", dashboardTarget, map[string]any{"name": "x"}, "create_dashboard takes"},
-			"no name":                {"create_dashboard", "workspace:" + dashWorkspace, map[string]any{"name": " "}, "create_dashboard takes"},
-			"control in the name":    {"create_dashboard", "workspace:" + dashWorkspace, map[string]any{"name": "a\u0000b"}, "create_dashboard takes"},
-			"long description":       {"create_dashboard", "workspace:" + dashWorkspace, map[string]any{"name": "x", "description": strings.Repeat("d", 1001)}, "create_dashboard takes"},
-			"unknown field":          {"create_dashboard", "workspace:" + dashWorkspace, map[string]any{"name": "x", "tiles": []any{}}, "create_dashboard takes"},
-			"bad spec":               {"create_dashboard", "workspace:" + dashWorkspace, map[string]any{"name": "x", "spec": map[string]any{"v": 2}}, "this Foundry reads v 1"},
-			"another ontology":       {"create_dashboard", "workspace:" + dashWorkspace, map[string]any{"name": "x", "spec": otherOntology}, "doesn't have"},
-			"an ontology target":     {"update_dashboard", "ontology:" + dashWorkspace + "/ont-1", map[string]any{"expected_revision": json.Number("1"), "name": "x"}, "takes target dashboard:"},
-			"no revision":            {"update_dashboard", dashboardTarget, map[string]any{"name": "x"}, "update_dashboard takes"},
-			"no change":              {"update_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("1")}, "update_dashboard takes"},
-			"update to a bad spec":   {"update_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("1"), "spec": map[string]any{"v": 1, "tiles": []any{tileArgs(t)}}}, "leaves out tile t1"},
-			"delete with a payload":  {"delete_dashboard", dashboardTarget, map[string]any{"x": 1}, "empty payload"},
-			"pin without pinned":     {"pin_dashboard", dashboardTarget, map[string]any{}, "pin_dashboard takes"},
+			"create on a dashboard": {"create_dashboard", dashboardTarget, map[string]any{"name": "x"}, "create_dashboard takes"},
+			"no name":               {"create_dashboard", "workspace:" + dashWorkspace, map[string]any{"name": " "}, "create_dashboard takes"},
+			"control in the name":   {"create_dashboard", "workspace:" + dashWorkspace, map[string]any{"name": "a\u0000b"}, "create_dashboard takes"},
+			"long description":      {"create_dashboard", "workspace:" + dashWorkspace, map[string]any{"name": "x", "description": strings.Repeat("d", 1001)}, "create_dashboard takes"},
+			"unknown field":         {"create_dashboard", "workspace:" + dashWorkspace, map[string]any{"name": "x", "tiles": []any{}}, "create_dashboard takes"},
+			"bad spec":              {"create_dashboard", "workspace:" + dashWorkspace, map[string]any{"name": "x", "spec": map[string]any{"v": 2}}, "this Foundry reads v 1"},
+			"another ontology":      {"create_dashboard", "workspace:" + dashWorkspace, map[string]any{"name": "x", "spec": otherOntology}, "doesn't have"},
+			"an ontology target":    {"update_dashboard", "ontology:" + dashWorkspace + "/ont-1", map[string]any{"expected_revision": json.Number("1"), "name": "x"}, "takes target dashboard:"},
+			"no revision":           {"update_dashboard", dashboardTarget, map[string]any{"name": "x"}, "update_dashboard takes"},
+			"no change":             {"update_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("1")}, "update_dashboard takes"},
+			"update to a bad spec":  {"update_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("1"), "spec": map[string]any{"v": 1, "tiles": []any{tileArgs(t)}}}, "leaves out tile t1"},
+			"delete with a payload": {"delete_dashboard", dashboardTarget, map[string]any{"x": 1}, "empty payload"},
+			"pin without pinned":    {"pin_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("3")}, "pin_dashboard takes"},
+			"pin without revision":  {"pin_dashboard", dashboardTarget, map[string]any{"pinned": true}, "pin_dashboard takes"},
+			"update to another ontology": {"update_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("3"),
+				"spec": map[string]any{"v": 1, "tiles": []any{tileArgs(t), func() map[string]any {
+					tile := tileArgs(t)
+					tile["id"], tile["ontology_id"] = "t2", "ont-9"
+					return tile
+				}()}, "layout": map[string]any{"rows": []any{[]any{"t1", "t2"}}}}}, "tile t2 reads an ontology"},
 			"publish no revision":    {"publish_dashboard", dashboardTarget, map[string]any{}, "publish_dashboard takes"},
 			"unpublish with payload": {"unpublish_dashboard", dashboardTarget, map[string]any{"x": 1}, "empty payload"},
 		} {
@@ -259,19 +272,84 @@ func TestDashboardOperations(t *testing.T) {
 		}
 	})
 
-	t.Run("offers public links only where the host does", func(t *testing.T) {
-		s, _ := dashService(false)
-		for _, operation := range []string{"publish_dashboard", "unpublish_dashboard"} {
-			_, err := prepare(s, operation, dashboardTarget, map[string]any{"expected_revision": json.Number("1")})
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "not available here")
-		}
-		names, payloads := foundryOperations(false, false)
+	t.Run("publishes only where the host has public links, and unpublishes anywhere", func(t *testing.T) {
+		s, b := dashService(false)
+		_, err := prepare(s, "publish_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("1")})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not available here")
+		op, err := prepare(s, "unpublish_dashboard", dashboardTarget, map[string]any{})
+		require.NoError(t, err, "a link turned off is taken down for good")
+		_, err = op.Execute(context.Background(), s, reader(), "conf-1")
+		require.NoError(t, err)
+		assert.Equal(t, 1, b.unpublish)
+
+		names, payloads := foundryOperations(&Service{}, everyOperation)
 		assert.NotContains(t, names, "publish_dashboard")
+		assert.Contains(t, names, "unpublish_dashboard")
 		assert.Contains(t, names, "create_dashboard")
-		assert.NotContains(t, payloads, "publish_dashboard")
-		names, _ = foundryOperations(false, true)
+		assert.NotContains(t, payloads, "- publish_dashboard")
+		names, _ = foundryOperations(&Service{PublicDashboards: true}, everyOperation)
 		assert.True(t, slices.Contains(names, any("publish_dashboard")))
+	})
+
+	t.Run("checks only tiles an edit points somewhere new", func(t *testing.T) {
+		s, b := dashService(true)
+		delete(b.ontologies, "ont-1") // the stored tile's ontology is gone
+		renamed := map[string]any{"v": 1, "tiles": []any{func() map[string]any {
+			tile := tileArgs(t)
+			tile["title"] = "Renamed"
+			return tile
+		}()}, "layout": map[string]any{"rows": []any{[]any{"t1"}}}}
+		_, err := prepare(s, "update_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("3"), "spec": renamed})
+		require.NoError(t, err, "a stale tile is no reason to refuse retitling it or another")
+	})
+
+	t.Run("offers a member their own dashboards only", func(t *testing.T) {
+		s, b := dashService(true)
+		member := reader()
+		member.HasPermission = func(p Permission) bool { return p == PermissionWorkspaceRead || p == PermissionDatabaseQueryRead }
+		listed, err := connect(t, s, member).ListTools(context.Background(), nil)
+		require.NoError(t, err)
+		var prepareTool *mcp.Tool
+		var names []string
+		for _, tool := range listed.Tools {
+			names = append(names, tool.Name)
+			if tool.Name == toolPrepareFoundry {
+				prepareTool = tool
+			}
+		}
+		require.NotNil(t, prepareTool, "a member prepares dashboards too")
+		assert.Contains(t, names, toolExecuteFoundry)
+		assert.NotContains(t, names, toolFoundryCompleteUpload, "nothing a member prepares uploads")
+		raw, err := json.Marshal(prepareTool.InputSchema)
+		require.NoError(t, err)
+		var schema struct {
+			Properties struct {
+				Operation struct {
+					Enum []string `json:"enum"`
+				} `json:"operation"`
+			} `json:"properties"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &schema))
+		assert.Equal(t, []string{"create_dashboard", "update_dashboard", "delete_dashboard"}, schema.Properties.Operation.Enum)
+
+		_, err = s.ValidateFoundryOperation(context.Background(), member, FoundryOperationInput{Operation: "create_dashboard",
+			Target: "workspace:" + dashWorkspace, Payload: map[string]any{"name": "Mine"}})
+		require.NoError(t, err)
+		for _, operation := range []string{"pin_dashboard", "publish_dashboard", "unpublish_dashboard", "create_load"} {
+			_, err := s.ValidateFoundryOperation(context.Background(), member, FoundryOperationInput{Operation: operation, Target: dashboardTarget,
+				Payload: map[string]any{"expected_revision": json.Number("3"), "pinned": true}})
+			assert.ErrorIs(t, err, errCodeNotFound, operation)
+		}
+		assert.Empty(t, b.pins)
+
+		nobody := reader()
+		nobody.HasPermission = func(Permission) bool { return false }
+		listed, err = connect(t, s, nobody).ListTools(context.Background(), nil)
+		require.NoError(t, err)
+		for _, tool := range listed.Tools {
+			assert.NotEqual(t, toolPrepareFoundry, tool.Name, "one who can't read the workspace prepares nothing")
+		}
 	})
 
 	t.Run("refuses a caller the host refuses", func(t *testing.T) {

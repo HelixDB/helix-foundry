@@ -163,6 +163,38 @@ func TestNewSpec(t *testing.T) {
 	require.ErrorContains(t, err, "leaves out")
 }
 
+func TestNewTargets(t *testing.T) {
+	pinned := `{"id":"t2","title":"Pinned","ontology_id":"01ONTOLOGY","load":{"kind":"pinned","load_id":"01LOAD"},"query":` + groupQuery + `}`
+	before, err := dashboard.ParseSpec([]byte(specJSON([]string{tileJSON("t1", countQuery), pinned}, `[["t1","t2"]]`)))
+	require.NoError(t, err)
+	ids := func(tiles []dashboard.Tile) []string {
+		out := []string{}
+		for _, t := range tiles {
+			out = append(out, t.ID)
+		}
+		return out
+	}
+	require.Equal(t, []string{"t1", "t2"}, ids(before.NewTargets(dashboard.Spec{})), "every tile of a new dashboard")
+	require.Empty(t, before.NewTargets(before))
+
+	// Retitled, another query, another visual, moved: the same targets.
+	retitled := strings.Replace(tileJSON("t1", groupQuery), `"Invoices"`, `"Renamed"`, 1)
+	after, err := dashboard.ParseSpec([]byte(specJSON([]string{retitled, pinned}, `[["t2"],["t1"]]`)))
+	require.NoError(t, err)
+	require.Empty(t, after.NewTargets(before))
+
+	// A tile added, one moved to another load, one to another ontology.
+	repinned := strings.Replace(pinned, "01LOAD", "02LOAD", 1)
+	elsewhere := strings.Replace(tileJSON("t1", countQuery), "01ONTOLOGY", "02ONTOLOGY", 1)
+	after, err = dashboard.ParseSpec([]byte(specJSON([]string{elsewhere, repinned, tileJSON("t3", countQuery)}, `[["t1","t2","t3"]]`)))
+	require.NoError(t, err)
+	require.Equal(t, []string{"t1", "t2", "t3"}, ids(after.NewTargets(before)))
+	current := strings.Replace(pinned, `{"kind":"pinned","load_id":"01LOAD"}`, `{"kind":"current"}`, 1)
+	after, err = dashboard.ParseSpec([]byte(specJSON([]string{tileJSON("t1", countQuery), current}, `[["t1","t2"]]`)))
+	require.NoError(t, err)
+	require.Equal(t, []string{"t2"}, ids(after.NewTargets(before)), "pinned to current is another load")
+}
+
 func TestParseVisualKind(t *testing.T) {
 	for _, k := range []string{"", "table", "bar", "line", "figure"} {
 		got, err := dashboard.ParseVisualKind(k)
@@ -222,7 +254,9 @@ func TestNewSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	at := time.Date(2026, 11, 14, 9, 0, 0, 0, time.FixedZone("x", 3600))
 	read := func(result string) json.RawMessage {
-		return json.RawMessage(`{"kind":"query","query_echo":{"start":{"type":"Invoice","where":[]},"steps":[],"filters":[],"return":{"count":{"distinct_at":null}}},` +
+		return json.RawMessage(`{"kind":"query","query_echo":{"start":{"type":"Customer","ids":["scus_ada"],"text":"Ada","where":[{"prop":"email","op":"=","value":"ada@example.com"}]},` +
+			`"steps":[{"via":"billed_to","dir":"in","to":"Invoice","where":[{"prop":"status","op":"=","value":"overdue-secret"}]}],"filters":[{"at":0,"holds":"vip"}],` +
+			`"return":{"count":{"distinct_at":null}}},` +
 			`"result":` + result + `,"stats":{"matched":3}}`)
 	}
 	reads := map[string]dashboard.Read{
@@ -238,13 +272,20 @@ func TestNewSnapshot(t *testing.T) {
 	require.Len(t, s.Tiles, 2)
 	require.Equal(t, "t1", s.Tiles[0].ID)
 	require.JSONEq(t, `{"kind":"count","count":3}`, string(s.Tiles[0].Output))
-	require.Contains(t, string(s.Tiles[0].Query), `"distinct_at":null`, "the query as the engine read it")
+	require.JSONEq(t, `{"start":{"type":"Customer"},"steps":[{"via":"billed_to","dir":"in","to":"Invoice"}],"return":{"count":{"distinct_at":null}}}`,
+		string(s.Tiles[0].Query), "the query's shape as the engine read it, and nothing it tested")
+	for _, tested := range []string{"scus_ada", "Ada", "ada@example.com", "overdue-secret", "vip", "where", "filters"} {
+		require.NotContains(t, string(raw), tested, "a snapshot keeps no value its queries tested")
+	}
 	require.NotContains(t, string(raw), "01ONTOLOGY", "a snapshot names no ontology")
 
 	delete(reads, "t2")
 	_, err = dashboard.NewSnapshot("Revenue", "", spec, reads, at)
 	require.ErrorContains(t, err, "tile t2 has no read")
 
+	reads["t2"] = dashboard.Read{Answer: json.RawMessage(`{"kind":"query","query_echo":{"start":{}},"result":{"kind":"count","count":1}}`)}
+	_, err = dashboard.NewSnapshot("Revenue", "", spec, reads, at)
+	require.ErrorContains(t, err, "echo is not a query")
 	reads["t2"] = dashboard.Read{Answer: json.RawMessage(`{"kind":"view"}`)}
 	_, err = dashboard.NewSnapshot("Revenue", "", spec, reads, at)
 	require.ErrorContains(t, err, "not a query read's")
@@ -259,6 +300,16 @@ func TestNewSnapshot(t *testing.T) {
 	reads["t2"] = dashboard.Read{Answer: read(`{"kind":"rows","total":300,"rows":[` + strings.Join(rows, ",") + `]}`)}
 	_, err = dashboard.NewSnapshot("Revenue", "", spec, reads, at)
 	require.True(t, errors.Is(err, dashboard.ErrTooLarge), "a tile past its bound: %v", err)
+}
+
+func TestPublicQuery(t *testing.T) {
+	q, err := dashboard.PublicQuery(json.RawMessage(`{"start":{"type":"Invoice","ids":null,"text":null,"where":[]},"return":{"rows":{"columns":[{"at":0,"prop":"total"}],"limit":10}}}`))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"start":{"type":"Invoice"},"steps":[],"return":{"rows":{"columns":[{"at":0,"prop":"total"}],"limit":10}}}`, string(q))
+	for _, bad := range []string{`[`, `{"start":{"type":"Invoice"}}`, `{"return":{"count":{}}}`, `{"start":{"type":""},"return":{"count":{}}}`} {
+		_, err := dashboard.PublicQuery(json.RawMessage(bad))
+		require.Error(t, err, bad)
+	}
 }
 
 func ExampleParseSpec() {

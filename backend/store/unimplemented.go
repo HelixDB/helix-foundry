@@ -1376,7 +1376,7 @@ func (u Unimplemented) UpdateFoundryDashboard(context.Context, string, string, m
 	return nil
 }
 
-func (u Unimplemented) SetFoundryDashboardPinned(context.Context, string, string, string, bool, int) error {
+func (u Unimplemented) SetFoundryDashboardPinned(context.Context, string, string, string, int64, bool, int) error {
 	u.unimplemented("SetFoundryDashboardPinned")
 	return nil
 }

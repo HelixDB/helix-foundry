@@ -80,6 +80,10 @@ const (
 	// FoundryDashboardLimit: the workspace has as many dashboards, or pinned
 	// ones, as it may.
 	FoundryDashboardLimit FoundryDashboardRefusalReason = "limit"
+	// FoundryDashboardUnreadable: what a publish read can't be kept public:
+	// an ontology it read was deleted meanwhile, or is being purged of
+	// People enrichment's profiles.
+	FoundryDashboardUnreadable FoundryDashboardRefusalReason = "unreadable"
 )
 
 // FoundryDashboardRefusal is a dashboard's write the store refused, by reason.

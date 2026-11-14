@@ -2145,12 +2145,15 @@ message DeleteFoundryDashboardRequest {
   string id = 2;
 }
 // PinFoundryDashboardRequest pins the dashboard in every member's sidebar, or
-// unpins it: owners and admins only. Past the workspace's pinned cap is
-// FAILED_PRECONDITION, reason FOUNDRY_DASHBOARD_LIMIT.
+// unpins it, at expected_revision: owners and admins only. Another revision is
+// FAILED_PRECONDITION, reason FOUNDRY_DASHBOARD_CHANGED, so what is pinned is
+// what its pinner saw; past the workspace's pinned cap, reason
+// FOUNDRY_DASHBOARD_LIMIT.
 message PinFoundryDashboardRequest {
   string workspace_id = 1;
   string id = 2;
   bool pinned = 3;
+  int64 expected_revision = 4;
 }
 // AddFoundryDashboardQuestionVisualRequest adds an Analyst answer's query
 // result, as its visual shows it, to the dashboard at expected_revision as a
@@ -2189,16 +2192,18 @@ message PreviewFoundryDashboardTileResponse {
 // link: a new one the first time, the same one when published already. The
 // dashboard must still be at expected_revision (FOUNDRY_DASHBOARD_CHANGED) and
 // have a tile. Where public links are off it is FAILED_PRECONDITION, reason
-// FOUNDRY_DASHBOARDS_PUBLIC_OFF; a tile that can't be read,
-// FOUNDRY_DASHBOARD_TILE_FAILED, naming it and why; a snapshot past its size,
-// FOUNDRY_DASHBOARD_TOO_LARGE.
+// FOUNDRY_DASHBOARDS_PUBLIC_OFF; a tile that can't be read, or an ontology it
+// read that was deleted meanwhile or is being purged of People enrichment's
+// profiles, FOUNDRY_DASHBOARD_TILE_FAILED, saying which and why; a snapshot
+// past its size, FOUNDRY_DASHBOARD_TOO_LARGE.
 message PublishFoundryDashboardRequest {
   string workspace_id = 1;
   string id = 2;
   int64 expected_revision = 3;
 }
 // UnpublishFoundryDashboardRequest deletes the dashboard's snapshot, so its
-// link shows nothing: owners and admins only.
+// link shows nothing: owners and admins only, whether or not public links are
+// on.
 message UnpublishFoundryDashboardRequest {
   string workspace_id = 1;
   string id = 2;

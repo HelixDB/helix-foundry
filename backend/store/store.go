@@ -467,7 +467,7 @@ type Store interface {
 	CreateFoundryDashboard(ctx context.Context, d *model.FoundryDashboard, max int) error
 	UpdateFoundryDashboard(ctx context.Context, workspaceID, id string, editor model.FoundryDashboardEditor, expected int64,
 		u model.FoundryDashboardUpdate) error
-	SetFoundryDashboardPinned(ctx context.Context, workspaceID, id, userID string, pinned bool, maxPinned int) error
+	SetFoundryDashboardPinned(ctx context.Context, workspaceID, id, userID string, expected int64, pinned bool, maxPinned int) error
 	DeleteFoundryDashboard(ctx context.Context, workspaceID, id string, editor model.FoundryDashboardEditor) error
 	PublishFoundryDashboard(ctx context.Context, share *model.FoundryDashboardShare) (*model.FoundryDashboardShare, error)
 	UnpublishFoundryDashboard(ctx context.Context, workspaceID, id string) error

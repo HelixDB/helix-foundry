@@ -5830,9 +5830,13 @@
       "properties": {
         "pinned": {
           "type": "boolean"
+        },
+        "expectedRevision": {
+          "type": "string",
+          "format": "int64"
         }
       },
-      "description": "PinFoundryDashboardRequest pins the dashboard in every member's sidebar, or\nunpins it: owners and admins only. Past the workspace's pinned cap is\nFAILED_PRECONDITION, reason FOUNDRY_DASHBOARD_LIMIT."
+      "description": "PinFoundryDashboardRequest pins the dashboard in every member's sidebar, or\nunpins it, at expected_revision: owners and admins only. Another revision is\nFAILED_PRECONDITION, reason FOUNDRY_DASHBOARD_CHANGED, so what is pinned is\nwhat its pinner saw; past the workspace's pinned cap, reason\nFOUNDRY_DASHBOARD_LIMIT."
     },
     "FoundryServicePreviewFoundryAccessChangeBody": {
       "type": "object",
@@ -5860,7 +5864,7 @@
           "format": "int64"
         }
       },
-      "description": "PublishFoundryDashboardRequest reads every tile as the caller, an owner or\nadmin, and keeps their outputs as the dashboard's public snapshot, at its\nlink: a new one the first time, the same one when published already. The\ndashboard must still be at expected_revision (FOUNDRY_DASHBOARD_CHANGED) and\nhave a tile. Where public links are off it is FAILED_PRECONDITION, reason\nFOUNDRY_DASHBOARDS_PUBLIC_OFF; a tile that can't be read,\nFOUNDRY_DASHBOARD_TILE_FAILED, naming it and why; a snapshot past its size,\nFOUNDRY_DASHBOARD_TOO_LARGE."
+      "description": "PublishFoundryDashboardRequest reads every tile as the caller, an owner or\nadmin, and keeps their outputs as the dashboard's public snapshot, at its\nlink: a new one the first time, the same one when published already. The\ndashboard must still be at expected_revision (FOUNDRY_DASHBOARD_CHANGED) and\nhave a tile. Where public links are off it is FAILED_PRECONDITION, reason\nFOUNDRY_DASHBOARDS_PUBLIC_OFF; a tile that can't be read, or an ontology it\nread that was deleted meanwhile or is being purged of People enrichment's\nprofiles, FOUNDRY_DASHBOARD_TILE_FAILED, saying which and why; a snapshot\npast its size, FOUNDRY_DASHBOARD_TOO_LARGE."
     },
     "FoundryServicePutFoundryDataLayoutBody": {
       "type": "object",
@@ -6079,7 +6083,7 @@
     },
     "FoundryServiceUnpublishFoundryDashboardBody": {
       "type": "object",
-      "description": "UnpublishFoundryDashboardRequest deletes the dashboard's snapshot, so its\nlink shows nothing: owners and admins only."
+      "description": "UnpublishFoundryDashboardRequest deletes the dashboard's snapshot, so its\nlink shows nothing: owners and admins only, whether or not public links are\non."
     },
     "FoundryServiceUpdateConnectorBody": {
       "type": "object",
@@ -7924,12 +7928,18 @@
         },
         "canEdit": {
           "type": "boolean",
-          "description": "What the caller may do: change its name, description and tiles, and\ndelete it; pin or unpin it; publish, republish and unpublish it (false\nwherever public links are off)."
+          "description": "What the caller may do: change its name, description and tiles; pin or\nunpin it; publish and republish it (false wherever public links are off);\ndelete it (an owner or admin only while it is published); and unpublish\nit (an owner or admin while it is published, public links on or off, so\na link turned off is never revived)."
         },
         "canPin": {
           "type": "boolean"
         },
         "canPublish": {
+          "type": "boolean"
+        },
+        "canDelete": {
+          "type": "boolean"
+        },
+        "canUnpublish": {
           "type": "boolean"
         }
       },

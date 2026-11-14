@@ -108,10 +108,17 @@ func (c dashboardCaller) editor() foundrymodel.FoundryDashboardEditor {
 	return foundrymodel.FoundryDashboardEditor{UserID: c.userID, Manager: c.manager}
 }
 
-// mayEdit reports whether c may change d's name, description and tiles, and
-// delete it, as the store decides at the write.
+// mayEdit reports whether c may change d's name, description and tiles, as
+// the store decides at the write.
 func (c dashboardCaller) mayEdit(d *foundrymodel.FoundryDashboard) bool {
 	return !c.grantee && (c.manager || d.CreatedByUserID == c.userID && d.PinnedAt == nil)
+}
+
+// mayDelete reports whether c may delete d, as the store decides at the
+// write: as they may edit it, and only as an owner or admin while it is
+// published, as unpublishing is.
+func (c dashboardCaller) mayDelete(d *foundrymodel.FoundryDashboard) bool {
+	return c.mayEdit(d) && (d.Share == nil || c.manager)
 }
 
 // dashboardRefusal is the API's answer to a refusal of the store's; false
@@ -126,6 +133,8 @@ func dashboardRefusal(workspaceID string, err error) (error, bool) {
 		return status.Error(codes.PermissionDenied, r.Detail), true
 	case foundrymodel.FoundryDashboardChanged:
 		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_CHANGED", r.Detail), true
+	case foundrymodel.FoundryDashboardUnreadable:
+		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_TILE_FAILED", r.Detail), true
 	default:
 		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_LIMIT", r.Detail), true
 	}
@@ -192,9 +201,13 @@ func dashboardName(name, description string) (string, string, error) {
 	return name, description, nil
 }
 
-// dashboardSpec checks a spec of the workspace's (empty: no tiles): its shape,
-// and that each tile reads a live ontology of the workspace and a load of it.
-func (s *Service) dashboardSpec(ctx context.Context, workspaceID, raw string) (dashboard.Spec, error) {
+// dashboardSpec checks a spec of the workspace's (empty: no tiles) that
+// replaces stored (none for a new dashboard): its shape, and that each tile
+// with a new target (dashboard.Spec.NewTargets) reads a live ontology of the
+// workspace and a load of it. A tile whose target is as stored was checked
+// when it was given: its load deleted since, or its ontology, it is no
+// reason to refuse an edit of another tile.
+func (s *Service) dashboardSpec(ctx context.Context, workspaceID, raw string, stored dashboard.Spec) (dashboard.Spec, error) {
 	if raw == "" {
 		raw = `{"v":1,"tiles":[],"layout":{"rows":[]}}`
 	}
@@ -203,7 +216,7 @@ func (s *Service) dashboardSpec(ctx context.Context, workspaceID, raw string) (d
 		return dashboard.Spec{}, status.Error(codes.InvalidArgument, err.Error())
 	}
 	ontologies := map[string]*foundrymodel.FoundryOntology{}
-	for _, t := range spec.Tiles() {
+	for _, t := range spec.NewTargets(stored) {
 		if err := s.dashboardTileTarget(ctx, workspaceID, t, ontologies); err != nil {
 			return dashboard.Spec{}, err
 		}
@@ -253,7 +266,7 @@ func (s *Service) CreateFoundryDashboard(ctx context.Context, req *foundryv1.Cre
 	if err != nil {
 		return nil, err
 	}
-	spec, err := s.dashboardSpec(ctx, ws, req.GetSpecJson())
+	spec, err := s.dashboardSpec(ctx, ws, req.GetSpecJson(), dashboard.Spec{})
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +325,11 @@ func (s *Service) UpdateFoundryDashboard(ctx context.Context, req *foundryv1.Upd
 		u.Name, u.Description = &name, &description
 	}
 	if req.SpecJson != nil {
-		spec, err := s.dashboardSpec(ctx, ws, req.GetSpecJson())
+		stored, err := dashboard.ParseSpec(d.Spec)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "read the dashboard's spec: %v", err)
+		}
+		spec, err := s.dashboardSpec(ctx, ws, req.GetSpecJson(), stored)
 		if err != nil {
 			return nil, err
 		}
@@ -373,10 +390,10 @@ func (s *Service) PinFoundryDashboard(ctx context.Context, req *foundryv1.PinFou
 	if !c.manager {
 		return nil, status.Error(codes.PermissionDenied, "only an owner or admin pins a dashboard for the workspace")
 	}
-	if req.GetId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "id is required")
+	if req.GetId() == "" || req.GetExpectedRevision() < 1 {
+		return nil, status.Error(codes.InvalidArgument, "id and expected_revision are required")
 	}
-	err = s.deps.DB.SetFoundryDashboardPinned(ctx, ws, req.GetId(), c.userID, req.GetPinned(), maxPinnedDashboards)
+	err = s.deps.DB.SetFoundryDashboardPinned(ctx, ws, req.GetId(), c.userID, req.GetExpectedRevision(), req.GetPinned(), maxPinnedDashboards)
 	if refused, ok := dashboardRefusal(ws, err); ok {
 		return nil, refused
 	}
@@ -428,6 +445,13 @@ func (s *Service) AddFoundryDashboardQuestionVisual(ctx context.Context, req *fo
 		Load: dashboard.CurrentLoad{}, Query: visual.Query, Visual: visual.Visual}
 	if req.GetPinLoad() {
 		tile.Load = dashboard.PinnedLoad{ID: q.LoadID}
+		err := s.dashboardTileTarget(ctx, ws, tile, map[string]*foundrymodel.FoundryOntology{o.ID: o})
+		if status.Code(err) == codes.InvalidArgument {
+			return nil, status.Error(codes.FailedPrecondition, "the question's load was deleted: add its result reading the current load instead")
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	added, err := dashboard.NewSpec(append(tiles, tile), append(rows, []string{tile.ID}))
 	if err != nil {
@@ -746,6 +770,7 @@ func (s *Service) dashboardToProto(d *foundrymodel.FoundryDashboard, c dashboard
 		Id: d.ID, Name: d.Name, Description: d.Description, SpecJson: string(d.Spec), Revision: d.Revision, CreatedByUserId: d.CreatedByUserID,
 		UpdatedByUserId: d.UpdatedByUserID, Pinned: d.PinnedAt != nil, CreatedAt: timestamppb.New(d.CreatedAt), UpdatedAt: timestamppb.New(d.UpdatedAt),
 		CanEdit: c.mayEdit(d), CanPin: !c.grantee && c.manager, CanPublish: !c.grantee && c.manager && s.deps.Cfg.PublicDashboards(),
+		CanDelete: c.mayDelete(d), CanUnpublish: !c.grantee && c.manager && d.Share != nil,
 	}
 	if d.PinnedAt != nil && d.PinnedByUserID != nil {
 		out.PinnedAt, out.PinnedByUserId = timestamppb.New(*d.PinnedAt), *d.PinnedByUserID

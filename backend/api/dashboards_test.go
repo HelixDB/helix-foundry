@@ -117,8 +117,8 @@ func (s *dashboardStore) UpdateFoundryDashboard(_ context.Context, ws, id string
 	return nil
 }
 
-func (s *dashboardStore) SetFoundryDashboardPinned(_ context.Context, ws, id, userID string, pinned bool, _ int) error {
-	d, err := s.editable(ws, id, foundrymodel.FoundryDashboardEditor{Manager: true}, 0)
+func (s *dashboardStore) SetFoundryDashboardPinned(_ context.Context, ws, id, userID string, expected int64, pinned bool, _ int) error {
+	d, err := s.editable(ws, id, foundrymodel.FoundryDashboardEditor{Manager: true}, expected)
 	if err != nil {
 		return err
 	}
@@ -132,8 +132,12 @@ func (s *dashboardStore) SetFoundryDashboardPinned(_ context.Context, ws, id, us
 }
 
 func (s *dashboardStore) DeleteFoundryDashboard(_ context.Context, ws, id string, editor foundrymodel.FoundryDashboardEditor) error {
-	if _, err := s.editable(ws, id, editor, 0); err != nil {
+	d, err := s.editable(ws, id, editor, 0)
+	if err != nil {
 		return err
+	}
+	if d.Share != nil && !editor.Manager {
+		return foundrymodel.FoundryDashboardRefusal{Reason: foundrymodel.FoundryDashboardNotEditable, Detail: "published"}
 	}
 	delete(s.dashboards, id)
 	delete(s.snapshots, id)
@@ -234,9 +238,18 @@ func newDashboardFixture(t *testing.T) dashboardFixture {
 	return dashboardFixture{s: s, store: store, reader: reader}
 }
 
+// deleteLoad marks one of the fixture's loads deleted.
+func (f dashboardFixture) deleteLoad(id string) {
+	for _, l := range f.store.loads {
+		if l.ID == id {
+			l.Status = foundrymodel.FoundryLoadDeleted
+		}
+	}
+}
+
 // queryOK is a query read's outcome: its answer, result as given.
 func queryOK(result string) string {
-	return `{"ok":{"kind":"query","query_echo":{"start":{"type":"Customer"},"steps":[],"filters":[],"return":{"count":{"distinct_at":null}}},` +
+	return `{"ok":{"kind":"query","query_echo":{"start":{"type":"Customer","ids":["scus_1"],"text":null,"where":[]},"steps":[],"filters":[],"return":{"count":{"distinct_at":null}}},` +
 		`"result":` + result + `,"stats":{"matched":1}}}`
 }
 
@@ -262,7 +275,7 @@ func TestDashboardCallers(t *testing.T) {
 
 	mine := f.create(t, dashboardMember, "")
 	pinned := f.create(t, dashboardOwner, "")
-	_, err = f.s.PinFoundryDashboard(asActor(dashboardOwner), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: pinned.GetId(), Pinned: true})
+	_, err = f.s.PinFoundryDashboard(asActor(dashboardOwner), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: pinned.GetId(), Pinned: true, ExpectedRevision: 1})
 	require.NoError(t, err)
 
 	list, err := f.s.ListFoundryDashboards(asActor(dashboardOther), req)
@@ -368,9 +381,13 @@ func TestEditingDashboards(t *testing.T) {
 	assert.Equal(t, "Renamed", resp.GetDashboard().GetName())
 	assert.NotContains(t, resp.GetDashboard().GetSpecJson(), "t2")
 
-	_, err = f.s.PinFoundryDashboard(asActor(dashboardMember), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(), Pinned: true})
+	_, err = f.s.PinFoundryDashboard(asActor(dashboardMember), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(), Pinned: true, ExpectedRevision: 3})
 	assert.Equal(t, codes.PermissionDenied, status.Code(err), "a member pins nothing")
-	pinned, err := f.s.PinFoundryDashboard(asActor(dashboardOwner), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(), Pinned: true})
+	_, err = f.s.PinFoundryDashboard(asActor(dashboardOwner), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(), Pinned: true, ExpectedRevision: 2})
+	assert.Equal(t, "FOUNDRY_DASHBOARD_CHANGED", reasonOf(err), "a pin of a revision its pinner didn't see")
+	_, err = f.s.PinFoundryDashboard(asActor(dashboardOwner), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(), Pinned: true})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "a pin names the revision it saw")
+	pinned, err := f.s.PinFoundryDashboard(asActor(dashboardOwner), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(), Pinned: true, ExpectedRevision: 3})
 	require.NoError(t, err)
 	assert.True(t, pinned.GetDashboard().GetPinned())
 	assert.Equal(t, "user-owner", pinned.GetDashboard().GetPinnedByUserId())
@@ -388,12 +405,35 @@ func TestEditingDashboards(t *testing.T) {
 	_, err = update(f, dashboardOwner, "missing", 1, "x")
 	assert.Equal(t, codes.NotFound, status.Code(err))
 
-	_, err = f.s.PinFoundryDashboard(asActor(dashboardOwner), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(), Pinned: false})
+	_, err = f.s.PinFoundryDashboard(asActor(dashboardOwner), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(), Pinned: false, ExpectedRevision: 3})
 	require.NoError(t, err)
 	_, err = f.s.DeleteFoundryDashboard(asActor(dashboardMember), &foundryv1.DeleteFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
 	require.NoError(t, err, "unpinned, it is its creator's again")
 	_, err = f.s.GetFoundryDashboard(asActor(dashboardMember), &foundryv1.GetFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
 	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestEditingAroundAStaleTile(t *testing.T) {
+	f := newDashboardFixture(t)
+	d := f.create(t, dashboardMember, twoTiles())
+	// t2's pinned load is deleted, as loads past the five kept are.
+	f.deleteLoad("load-1")
+
+	retitled := strings.Replace(twoTiles(), `"title":"Customers"`, `"title":"All customers"`, 1)
+	resp, err := f.s.UpdateFoundryDashboard(asActor(dashboardMember), &foundryv1.UpdateFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(),
+		ExpectedRevision: 1, SpecJson: &retitled})
+	require.NoError(t, err, "a tile whose load went is no reason to refuse an edit of another")
+	assert.Contains(t, resp.GetDashboard().GetSpecJson(), "All customers")
+
+	added := `{"v":1,"tiles":[` + countTile + `,` + groupTile + `,` + strings.Replace(groupTile, `"id":"t2"`, `"id":"t3"`, 1) + `],"layout":{"rows":[["t1","t2","t3"]]}}`
+	_, err = f.s.UpdateFoundryDashboard(asActor(dashboardMember), &foundryv1.UpdateFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(),
+		ExpectedRevision: 2, SpecJson: &added})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "a new tile pinned to a deleted load")
+	assert.Contains(t, status.Convert(err).Message(), "tile t3 pins a load")
+	moved := strings.Replace(twoTiles(), `{"kind":"current"}`, `{"kind":"pinned","load_id":"load-1"}`, 1)
+	_, err = f.s.UpdateFoundryDashboard(asActor(dashboardMember), &foundryv1.UpdateFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(),
+		ExpectedRevision: 2, SpecJson: &moved})
+	assert.Contains(t, status.Convert(err).Message(), "tile t1 pins a load", "a tile moved to a deleted load")
 }
 
 func TestPreviewFoundryDashboardTile(t *testing.T) {
@@ -464,6 +504,11 @@ func TestPublishingADashboard(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, member.GetDashboard().GetShare().GetToken(), "only owners and admins see the link")
 		assert.NotNil(t, member.GetDashboard().GetShare().GetPublishedAt())
+		assert.True(t, member.GetDashboard().GetCanEdit(), "its creator still edits it")
+		assert.False(t, member.GetDashboard().GetCanDelete() || member.GetDashboard().GetCanUnpublish(), "but takes its link down neither way")
+		_, err = f.s.DeleteFoundryDashboard(asActor(dashboardMember), &foundryv1.DeleteFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
+		assert.Equal(t, codes.PermissionDenied, status.Code(err), "a member deletes no published dashboard")
+		assert.True(t, resp.GetDashboard().GetCanDelete() && resp.GetDashboard().GetCanUnpublish(), "an owner does both")
 
 		// Republishing reads again and keeps the link.
 		name := "Renamed"
@@ -551,6 +596,21 @@ func TestPublishingADashboard(t *testing.T) {
 		f.s.deps.Cfg.Foundry.Dashboards.PublicEnabled = false
 		_, err = shared(f, token)
 		assert.Equal(t, codes.NotFound, status.Code(err), "turning links off stops every one at once")
+
+		// Off, an owner still takes a link down, so turning links on again
+		// revives none they meant to end.
+		got, err = f.s.GetFoundryDashboard(asActor(dashboardOwner), &foundryv1.GetFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
+		require.NoError(t, err)
+		assert.False(t, got.GetDashboard().GetCanPublish())
+		assert.True(t, got.GetDashboard().GetCanUnpublish())
+		_, err = f.s.UnpublishFoundryDashboard(asActor(dashboardOwner), &foundryv1.UnpublishFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
+		require.NoError(t, err)
+		f.s.deps.Cfg.Foundry.Dashboards.PublicEnabled = true
+		_, err = shared(f, token)
+		assert.Equal(t, codes.NotFound, status.Code(err))
+		got, err = f.s.GetFoundryDashboard(asActor(dashboardOwner), &foundryv1.GetFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
+		require.NoError(t, err)
+		assert.False(t, got.GetDashboard().GetCanUnpublish(), "nothing left to unpublish")
 	})
 
 	t.Run("serves only the door, by a token's hash", func(t *testing.T) {
@@ -615,4 +675,11 @@ func TestAddFoundryDashboardQuestionVisual(t *testing.T) {
 		Id: d.GetId(), ExpectedRevision: 3, OntologyId: "ont-1", QuestionId: "q-x", EvidenceId: "e2"})
 	assert.Equal(t, codes.NotFound, status.Code(err))
 	assert.Equal(t, "t1", freeTileID(nil))
+
+	f.deleteLoad("load-1")
+	_, err = add(3, true, "e2")
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "pinning a load deleted since the question")
+	assert.Contains(t, status.Convert(err).Message(), "the question's load was deleted")
+	_, err = add(3, false, "e2")
+	require.NoError(t, err, "the current load's still reads")
 }

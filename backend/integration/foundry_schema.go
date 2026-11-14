@@ -20,9 +20,17 @@ type foundryOperationDoc struct {
 	hostsOnly bool
 	// publicOnly is an operation only a host with dashboards' public links offers
 	// (Service.PublicDashboards).
-	publicOnly  bool
+	publicOnly bool
 	doc, events string
 }
+
+// memberOperations are the operations of a user who manages nothing of the workspace (no
+// connectors or ontologies): making dashboards and changing and deleting their own, as the site
+// lets every member. Foundry refuses what isn't theirs when it runs.
+var memberOperations = map[string]bool{"create_dashboard": true, "update_dashboard": true, "delete_dashboard": true}
+
+// memberOperation allows memberOperations alone: a user's who manages nothing.
+func memberOperation(op string) bool { return memberOperations[op] }
 
 var foundryOperationDocs = []foundryOperationDoc{
 	{name: "create_ontology",
@@ -79,12 +87,14 @@ var foundryOperationDocs = []foundryOperationDoc{
 	{name: "update_dashboard",
 		doc: "{expected_revision, name, description, spec}: the revision " + toolFoundryGetDashboard + " gave and at least one change, " +
 			"spec the whole new spec. Its creator changes a dashboard that isn't pinned; owners and admins change any."},
-	{name: "delete_dashboard", doc: "{}: deletes the dashboard and its public link."},
-	{name: "pin_dashboard", doc: "{pinned}: true pins the dashboard in every member's sidebar, false unpins it. Owners and admins only."},
+	{name: "delete_dashboard",
+		doc: "{}: deletes the dashboard and its public link. Its creator deletes a dashboard that is neither pinned nor published; owners and admins delete any."},
+	{name: "pin_dashboard",
+		doc: "{expected_revision, pinned}: the revision " + toolFoundryGetDashboard + " gave, and true to pin the dashboard in every member's sidebar, false to unpin it. Owners and admins only."},
 	{name: "publish_dashboard", publicOnly: true,
 		doc: "{expected_revision}: reads every tile as you and keeps their outputs as a snapshot at a public link, which anyone who has it sees with no sign-in, " +
 			"until it is unpublished; publishing again refreshes the snapshot at the same link. Owners and admins only: say plainly that anyone with the link sees the data."},
-	{name: "unpublish_dashboard", publicOnly: true, doc: "{}: deletes the public snapshot, so its link shows nothing. Owners and admins only."},
+	{name: "unpublish_dashboard", doc: "{}: deletes the public snapshot, so its link shows nothing, whether or not public links are on. Owners and admins only."},
 }
 
 // generateReads is what a generation reads, on every host.
@@ -114,16 +124,31 @@ func foundryOperations(s *Service, allows func(string) bool) (names []any, paylo
 }
 
 // foundryOperationSchema is the input schema of helix_foundry_prepare_operation, naming the
-// operations allows lets the caller prepare.
+// operations allows lets the caller prepare: a caller allowed no create_ontology manages
+// nothing of the workspace, and is told only of dashboards' targets.
 func foundryOperationSchema(s *Service, allows func(string) bool) *jsonschema.Schema {
 	schema := schemaFor[FoundryOperationInput]()
 	names, payloads := foundryOperations(s, allows)
-	target := "create_ontology: tenant:<database id> for an existing database, or workspace:<workspace_id> for a new one."
-	if s.Events && allows("create_event_source") {
-		target += " create_event_source: workspace:<workspace_id>."
+	target := "create_dashboard: workspace:<workspace_id>; the other dashboard operations: dashboard:<workspace_id>/<dashboard_id>."
+	if allows("create_ontology") {
+		target = "create_ontology: tenant:<database id> for an existing database, or workspace:<workspace_id> for a new one."
+		if s.Events && allows("create_event_source") {
+			target += " create_event_source: workspace:<workspace_id>."
+		}
+		if s.AgentHosts {
+			var ops []string
+			for _, op := range []string{"set_assistant_runtime", "pair_assistant_helper", "revoke_assistant_helper"} {
+				if allows(op) {
+					ops = append(ops, op)
+				}
+			}
+			if len(ops) > 0 {
+				target += " " + strings.Join(ops, ", ") + ": workspace:<workspace_id>."
+			}
+		}
+		target += " sync_connector: connector:<workspace_id>/<connector_id>. create_dashboard: workspace:<workspace_id>; " +
+			"the other dashboard operations: dashboard:<workspace_id>/<dashboard_id>. Every other operation: ontology:<workspace_id>/<ontology_id>."
 	}
-	target += " sync_connector: connector:<workspace_id>/<connector_id>. create_dashboard: workspace:<workspace_id>; " +
-		"the other dashboard operations: dashboard:<workspace_id>/<dashboard_id>. Every other operation: ontology:<workspace_id>/<ontology_id>."
 	schema.Properties["operation"].Description = "The action to prepare; payload says what each takes."
 	schema.Properties["operation"].Enum = names
 	schema.Properties["target"].Description = target
@@ -135,9 +160,9 @@ func foundryOperationSchema(s *Service, allows func(string) bool) *jsonschema.Sc
 func everyOperation(string) bool { return true }
 
 // executeOperationSchema is the input schema of helix_foundry_execute_operation.
-func executeOperationSchema(s *Service) *jsonschema.Schema {
+func executeOperationSchema(s *Service, allows func(string) bool) *jsonschema.Schema {
 	schema := schemaFor[ExecuteFoundryInput]()
-	schema.Properties["operation"].Enum, _ = foundryOperations(s, everyOperation)
+	schema.Properties["operation"].Enum, _ = foundryOperations(s, allows)
 	return schema
 }
 

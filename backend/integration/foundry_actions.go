@@ -197,8 +197,11 @@ type FoundryOperation interface {
 }
 
 // AddFoundryActionTools registers prepare and Execute for a user who may manage connectors or
-// ontologies, and for a service key with database.query.write on some project.
+// ontologies, for a service key with database.query.write on some project, and, offering only
+// memberOperations, for a user who may read the workspace.
 func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) {
+	// offered is what the caller may prepare: every operation the host offers, or a member's.
+	offered, member := everyOperation, false
 	switch {
 	case identity.Agent:
 		return
@@ -206,15 +209,19 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 		if !identity.HasPermission(PermissionDatabaseQueryWrite) {
 			return
 		}
-	case !identity.HasPermission(PermissionWorkspaceConnectorsManage) && !identity.HasPermission(PermissionWorkspaceOntologyManage):
-		return
+	case !managesFoundry(identity):
+		// A member makes dashboards, and changes their own, as in the site.
+		if !identity.HasPermission(PermissionWorkspaceRead) {
+			return
+		}
+		offered, member = memberOperation, true
 	}
 	no, yes := false, true
 	if person, ok := identity.Confirm.(ConfirmByPerson); ok {
 		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
 			Description: "Check a Foundry action and put it before the person you work for as a card, which they run, or not, with a click. " +
 				"Preparing changes nothing, and you can't run it: you are told its result if they do.",
-			InputSchema: foundryOperationSchema(s, person.Sink.Allows),
+			InputSchema: foundryOperationSchema(s, func(op string) bool { return offered(op) && person.Sink.Allows(op) }),
 			Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
 		}, func(ctx context.Context, identity *Identity, call *Call, input FoundryOperationInput) (AwaitingPersonOutput, int, error) {
 			awaiting, err := s.prepareForPerson(ctx, identity, call, input, person.Sink)
@@ -230,18 +237,27 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
 		Description: "Check a Foundry action and return a one-time confirmation for exactly that action, valid for five minutes; " +
 			toolExecuteFoundry + " runs it. Preparing changes nothing. A create_ontology on workspace:<id> makes the ontology's database first, and its project when new.",
-		InputSchema: foundryOperationSchema(s, everyOperation),
+		InputSchema: foundryOperationSchema(s, offered),
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.PrepareFoundryOperation)
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolExecuteFoundry,
 		Description: "Run the Foundry action " + toolPrepareFoundry + " prepared: the same operation, target and payload, with its confirmation. A confirmation runs once, and the action is never retried.",
-		InputSchema: executeOperationSchema(s),
+		InputSchema: executeOperationSchema(s, offered),
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &yes, OpenWorldHint: &no},
 	}, s.ExecuteFoundryOperation)
+	if member {
+		return
+	}
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryCompleteUpload,
 		Description: "After an upload_document action, once its bytes are PUT to the upload URL: check them and add the document to its document set, which every ontology whose current version reads the set then reads (reads says how). Completing twice is no error.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.CompleteFoundryUpload)
+}
+
+// managesFoundry reports whether a user manages any of the workspace's Foundry: its connectors
+// or its ontologies. One who doesn't prepares only memberOperations.
+func managesFoundry(identity *Identity) bool {
+	return identity.HasPermission(PermissionWorkspaceConnectorsManage) || identity.HasPermission(PermissionWorkspaceOntologyManage)
 }
 
 func (s *Service) CompleteFoundryUpload(
@@ -344,9 +360,13 @@ func (s *Service) executeFoundry(
 // an agent may make: an event source has no credential to pass through it. A create_ontology
 // on a new database is authorized for every call the website's wizard makes: CreateProject
 // when it makes the project, CreateTenant and CreateFoundryOntology; and it needs the Helix
-// subscription CreateTenant's gate requires.
+// subscription CreateTenant's gate requires. A user who manages nothing of the workspace
+// (managesFoundry) prepares only memberOperations: any other is not found.
 func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identity, input FoundryOperationInput) (FoundryOperation, error) {
 	invalid := func(message string) error { return detailedToolError{code: errCodeInvalidArguments, message: message} }
+	if identity.User && !identity.ServiceKey && !managesFoundry(identity) && !memberOperations[input.Operation] {
+		return nil, errCodeNotFound
+	}
 	raw, err := json.Marshal(input.Payload)
 	if input.Payload == nil || err != nil {
 		return nil, invalid("operation, target and a payload object are required")

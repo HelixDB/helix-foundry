@@ -52,8 +52,8 @@ type SnapshotTile struct {
 	ID     string     `json:"id"`
 	Title  string     `json:"title"`
 	Visual wireVisual `json:"visual"`
-	// Query is the query as the engine read it, every field written
-	// (query_echo), as an Analyst answer records its queries.
+	// Query is the query's shape as the engine read it (PublicQuery): what
+	// drawing the output needs, and none of the values it tested.
 	Query json.RawMessage `json:"query"`
 	// AsOf is the day the load's rules were read as of.
 	AsOf   string          `json:"as_of"`
@@ -70,7 +70,7 @@ type Read struct {
 
 // NewSnapshot is spec's snapshot, from reads, one per tile by its id: each
 // answer checked to be a query read's, its result made public (Public) and
-// its query echoed. It is ErrTooLarge past MaxOutputBytes for a tile or
+// its query's shape kept (PublicQuery). It is ErrTooLarge past MaxOutputBytes for a tile or
 // MaxSnapshotBytes in all.
 func NewSnapshot(name, description string, spec Spec, reads map[string]Read, at time.Time) ([]byte, error) {
 	s := Snapshot{V: SpecVersion, Name: name, Description: description, PublishedAt: at.UTC().Format(time.RFC3339),
@@ -92,10 +92,14 @@ func NewSnapshot(name, description string, spec Spec, reads map[string]Read, at 
 		if err != nil {
 			return nil, fmt.Errorf("tile %s: %w", t.ID, err)
 		}
+		query, err := PublicQuery(answer.Echo)
+		if err != nil {
+			return nil, fmt.Errorf("tile %s: %w", t.ID, err)
+		}
 		if len(output) > MaxOutputBytes {
 			return nil, fmt.Errorf("%w: tile %s's output is %d KiB, past %d KiB: ask for fewer rows or columns", ErrTooLarge, t.ID, len(output)>>10, MaxOutputBytes>>10)
 		}
-		s.Tiles = append(s.Tiles, SnapshotTile{ID: t.ID, Title: t.Title, Visual: wireVisual{Kind: string(t.Visual)}, Query: answer.Echo,
+		s.Tiles = append(s.Tiles, SnapshotTile{ID: t.ID, Title: t.Title, Visual: wireVisual{Kind: string(t.Visual)}, Query: query,
 			AsOf: read.AsOf, Output: output})
 	}
 	out, err := json.Marshal(s)
@@ -106,6 +110,41 @@ func NewSnapshot(name, description string, spec Spec, reads map[string]Read, at 
 		return nil, fmt.Errorf("%w: the snapshot is %d KiB, past %d KiB: show fewer rows", ErrTooLarge, len(out)>>10, MaxSnapshotBytes>>10)
 	}
 	return out, nil
+}
+
+// publicQuery is the part of a query (read_request.json Query) a snapshot
+// keeps: the type at each position and what it returns, which is what
+// drawing its output names columns and axes by.
+type publicQuery struct {
+	Start struct {
+		Type string `json:"type"`
+	} `json:"start"`
+	Steps  []publicStep    `json:"steps"`
+	Return json.RawMessage `json:"return"`
+}
+
+type publicStep struct {
+	Via string `json:"via"`
+	Dir string `json:"dir"`
+	To  string `json:"to"`
+}
+
+// PublicQuery is a query's echo as anyone may see it: its start's type, each
+// step's link, direction and type, and what it returns. What it tested is
+// left out: the stored identities of start.ids (a keyed type's key
+// encoding, an email), start.text, every where value and the filters.
+//
+//	q, _ := dashboard.PublicQuery([]byte(`{"start": {"type": "Customer", "ids": ["scus_1"]}, "return": {"count": {}}}`))
+//	// {"start":{"type":"Customer"},"steps":[],"return":{"count":{}}}
+func PublicQuery(echo json.RawMessage) (json.RawMessage, error) {
+	var q publicQuery
+	if err := json.Unmarshal(echo, &q); err != nil || q.Start.Type == "" || len(q.Return) == 0 {
+		return nil, errors.New("the read's query echo is not a query")
+	}
+	if q.Steps == nil {
+		q.Steps = []publicStep{}
+	}
+	return json.Marshal(q)
 }
 
 // Public is a query's answer as anyone may see it: of one of the answer

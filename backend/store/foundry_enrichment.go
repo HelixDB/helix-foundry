@@ -94,7 +94,9 @@ ORDER BY c.created_at, c.id LIMIT 1`, workspaceID).
 // load applies them; and queues a purge for each live ontology with a load,
 // current or not, that applied profiles: the purge's clean load becomes
 // current and the others are deleted. A load still writing counts, so
-// profiles it chose just before are removed once it ends.
+// profiles it chose just before are removed once it ends. The public
+// snapshots of dashboards that read an ontology whose loads ever applied
+// profiles are deleted at once, their links with them.
 func (s *mysqlDB) SetFoundryEnrichmentConsent(ctx context.Context, c *model.FoundryEnrichmentConsent) error {
 	if c.ID == "" || c.WorkspaceID == "" || c.UserID == "" || c.NoticeVersion == "" || c.MonthlyCreditCap < 0 {
 		return fmt.Errorf("invalid foundry enrichment consent")
@@ -124,7 +126,10 @@ SELECT DISTINCT o.id, o.workspace_id FROM foundry_ontologies o
 JOIN foundry_load_enrichments e ON e.ontology_id = o.id JOIN foundry_loads l ON l.id = e.load_id
 WHERE o.workspace_id=? AND o.deleted_at IS NULL AND e.applied_key <> '' AND l.status NOT IN ('deleting', 'deleted')
 ON DUPLICATE KEY UPDATE requested_at=NOW(6), attempts=0, last_load_id=NULL, done_at=NULL`, c.WorkspaceID)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.deleteFoundryEnrichedShares(ctx, c.WorkspaceID)
 	})
 }
 
