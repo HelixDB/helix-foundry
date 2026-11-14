@@ -52,9 +52,10 @@ const (
 	// stopMargin is what Stop allows past the drain and the finish, for the
 	// lease renewal in flight and the loop's return.
 	stopMargin = 5 * time.Second
-	// indexWait is how long after its first attempt began a job is retried
-	// for an index still building. Those retries give their attempts back,
-	// so without it a build that never finishes would retry the job forever.
+	// indexWait is how long a job is retried for an index still building,
+	// from the attempt that first found one (FoundryGraphJob.
+	// IndexesPendingSince). Those retries give their attempts back, so
+	// without it a build that never finishes would retry the job forever.
 	indexWait = 2 * time.Hour
 )
 
@@ -408,7 +409,7 @@ func (t *Task) renewLease(ctx context.Context, cancel context.CancelFunc, jobID 
 // retried while the worker is stopping was stopped, not failed, and one that
 // found an index still building did nothing wrong: either is retried after
 // the floor and given back, whatever attempt it was, until an index still
-// building indexWait after the job's first attempt began fails the job. The
+// building indexWait after an attempt first found one fails the job. The
 // agent's internal error is Helix's bug: it is logged as an error, for
 // on-call, and gets ontologyagent.InternalAttempts attempts at most.
 func (t *Task) outcome(ctx context.Context, job *model.FoundryGraphJob, a *attempt, err error, stopping bool) model.FoundryGraphJobOutcome {
@@ -436,12 +437,25 @@ func (t *Task) outcome(ctx context.Context, job *model.FoundryGraphJob, a *attem
 		outcome.Status, outcome.Error, outcome.HeldSets = model.FoundryGraphJobBudgetExhausted, f.Message, a.held
 	case f.Permanent:
 		outcome.Status, outcome.Error = model.FoundryGraphJobFailed, f.Message
-	case f.Uncounted && !stopping && job.StartedAt != nil && t.now().Sub(*job.StartedAt) > indexWait:
-		outcome.Status, outcome.Error = model.FoundryGraphJobFailed,
-			"the database's indexes had not finished building 2 hours after the load started; try the load again"
-	case stopping || f.Uncounted:
+	case stopping:
+		// Interrupted, not refused: a streak of indexes still building goes on.
 		retryAt := t.now().Add(t.cfg.RetryBackoff)
 		outcome.RetryAt, outcome.Uncounted, outcome.Error = &retryAt, true, f.Message
+		outcome.IndexesPendingSince = job.IndexesPendingSince
+	case f.Uncounted:
+		since := t.now()
+		if job.IndexesPendingSince != nil {
+			since = *job.IndexesPendingSince
+		}
+		if t.now().Sub(since) > indexWait {
+			outcome.Status, outcome.Error = model.FoundryGraphJobFailed, fmt.Sprintf(
+				"the database's indexes were still building %d hours after Helix first found them building; start a new load",
+				int(indexWait.Hours()))
+			break
+		}
+		retryAt := t.now().Add(t.cfg.RetryBackoff)
+		outcome.RetryAt, outcome.Uncounted, outcome.Error = &retryAt, true, f.Message
+		outcome.IndexesPendingSince = &since
 	case job.Attempts < maxAttempts:
 		retryAt := t.now().Add(t.cfg.RetryBackoff << (job.Attempts - 1))
 		outcome.RetryAt, outcome.Error = &retryAt, f.Message

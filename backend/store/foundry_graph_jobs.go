@@ -14,7 +14,8 @@ import (
 
 const foundryGraphJobColumns = `id, workspace_id, ontology_id, version_id, load_id, kind, status, phase, client_token, lease_owner,
        lease_until, attempts, next_attempt_at, error, report, chunks_done, documents_done, documents_total, usd_micros,
-       input_tokens, output_tokens, requested_by_user_id, created_at, started_at, finished_at, sources`
+       input_tokens, output_tokens, requested_by_user_id, created_at, started_at, finished_at, sources,
+       indexes_pending_since`
 
 // insertFoundryGraphJob inserts job as queued. The caller holds the
 // ontology's lock and has checked no job of it is live. ErrConflict means
@@ -408,8 +409,13 @@ func (s *mysqlDB) FinishFoundryGraphJob(ctx context.Context, jobID, workerID str
 		}
 		p := outcome.Progress
 		attempt := `error=NULLIF(?, ''), report=COALESCE(CAST(? AS JSON), report), chunks_done=?, documents_done=?,
-  documents_total=?, lease_owner=NULL, lease_until=NULL`
-		attemptArgs := []any{outcome.Error, nullJSON(outcome.Report), p.ChunksDone, p.DocumentsDone, p.DocumentsTotal}
+  documents_total=?, indexes_pending_since=?, lease_owner=NULL, lease_until=NULL`
+		var indexesPendingSince any
+		if outcome.IndexesPendingSince != nil {
+			indexesPendingSince = outcome.IndexesPendingSince.UTC()
+		}
+		attemptArgs := []any{outcome.Error, nullJSON(outcome.Report), p.ChunksDone, p.DocumentsDone, p.DocumentsTotal,
+			indexesPendingSince}
 		if outcome.RetryAt != nil {
 			finish = model.FoundryGraphJobRetried
 			// A retry resumes where the tables are.
@@ -678,12 +684,12 @@ func scanFoundryGraphJob(scanner rowScanner) (*model.FoundryGraphJob, error) {
 	var job model.FoundryGraphJob
 	var kind, status, phase string
 	var clientToken, leaseOwner, errText, report, requestedBy, sources sql.NullString
-	var leaseUntil, startedAt, finishedAt sql.NullTime
+	var leaseUntil, startedAt, finishedAt, indexesPendingSince sql.NullTime
 	p, spend := &job.Progress, &job.Spend
 	if err := scanner.Scan(&job.ID, &job.WorkspaceID, &job.OntologyID, &job.VersionID, &job.LoadID, &kind, &status, &phase, &clientToken,
 		&leaseOwner, &leaseUntil, &job.Attempts, &job.NextAttemptAt, &errText, &report, &p.ChunksDone, &p.DocumentsDone,
 		&p.DocumentsTotal, &spend.USDMicros, &spend.InputTokens, &spend.OutputTokens, &requestedBy, &job.CreatedAt, &startedAt,
-		&finishedAt, &sources,
+		&finishedAt, &sources, &indexesPendingSince,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
@@ -710,7 +716,8 @@ func scanFoundryGraphJob(scanner rowScanner) (*model.FoundryGraphJob, error) {
 	for _, f := range []struct {
 		src sql.NullTime
 		dst **time.Time
-	}{{leaseUntil, &job.LeaseUntil}, {startedAt, &job.StartedAt}, {finishedAt, &job.FinishedAt}} {
+	}{{leaseUntil, &job.LeaseUntil}, {startedAt, &job.StartedAt}, {finishedAt, &job.FinishedAt},
+		{indexesPendingSince, &job.IndexesPendingSince}} {
 		if f.src.Valid {
 			*f.dst = &f.src.Time
 		}
