@@ -581,11 +581,11 @@ func TestCalcomSync(t *testing.T) {
 		}
 		// The server sees a request when it arrives, which a busy machine can
 		// delay, so the gap between two arrivals can be shorter than the pace.
-		// The limiter lets request i go no sooner than i paces after the
-		// first, and an arrival is never earlier than its send.
+		// The limiter lets request i go no sooner than i paces after the syncs
+		// start, and an arrival is never earlier than its send.
 		for i := 1; i < len(times); i++ {
 			if since := times[i].Sub(start); since < time.Duration(i)*40*time.Millisecond-5*time.Millisecond {
-				t.Fatalf("request %d came %s after the first was sent, want at least %d paces of 40ms", i, since, i)
+				t.Fatalf("request %d came %s after the syncs started, want at least %d paces of 40ms", i, since, i)
 			}
 		}
 	})
