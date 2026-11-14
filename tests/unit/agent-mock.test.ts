@@ -408,6 +408,16 @@ describe("actions", () => {
     expect(thread.body.actions[0].targetNamedByUser).toBe(true);
   });
 
+  it("loads the page's ontology even when the message says ontologies", async () => {
+    const sent = await send("Reload one of my ontologies", {
+      pageContext: { ontologyId: "ont_acme_renewals" },
+    });
+    const { events: evs } = await events(sent.body.turn.id);
+    expect(evs.find((e) => e.type === "action_card")).toMatchObject({
+      target: "ontology:ws_acme/ont_acme_renewals",
+    });
+  });
+
   it("runs a card once, as its person, with the hash shown: the load queues and the agent goes on", async () => {
     const { action } = await prepareLoad();
     const run = (hash = action.payloadHash, userId = "usr_ada") =>
