@@ -28,6 +28,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ontologygen"
 	agentv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/ontology_agent/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
+	"github.com/helixdb/helix-foundry/backend/pkg/namewords"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -52,7 +53,8 @@ type store interface {
 	graphproxy.Store
 	GetOntologyVersionScope(ctx context.Context, ontologyID, versionID string) ([]string, error)
 	ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error)
-	ListFoundryLoadAliases(ctx context.Context, loadID, afterID string, limit int) ([]*model.FoundryReviewDecision, error)
+	ListFoundryLoadAliasesNamed(ctx context.Context, loadID string, keys []int64) ([]*model.FoundryReviewDecision, error)
+	FillFoundryLoadNameKeys(ctx context.Context, loadID string) (int, error)
 	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
 	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)
@@ -183,6 +185,12 @@ type attempt struct {
 	resends map[string]*model.FoundryLoadResend
 	// resendFailed are those of resends the engine failed.
 	resendFailed map[string]bool
+	// aliases are the load's aliases each staged document writes, by its id
+	// (documentAliases): an Extract sends those of its documents.
+	aliases map[string][]*model.FoundryReviewDecision
+	// keyed means the load's resolves all have their name keys
+	// (store.FillFoundryLoadNameKeys), as the alias reads need.
+	keyed bool
 }
 
 // report is the job's report: each call's result, the ingest report cut to
@@ -276,7 +284,7 @@ type runner struct {
 // first read of them pinned, and its table files still uploaded in the
 // version's sets (documentTables).
 func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt, error) {
-	a := &attempt{ingestDone: !job.Phase.RunsIngest(), results: map[string]json.RawMessage{}}
+	a := &attempt{ingestDone: !job.Phase.RunsIngest(), results: map[string]json.RawMessage{}, aliases: map[string][]*model.FoundryReviewDecision{}}
 	infoCtx, cancelInfo := context.WithTimeout(ctx, agentReadyWait)
 	info, err := r.agent.Info(infoCtx)
 	cancelInfo()
@@ -863,12 +871,12 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 		if err != nil {
 			return err
 		}
-		documents, err := r.stage(ctx, job, jobDir, free, true)
+		documents, err := r.stage(ctx, job, jobDir, free, true, a)
 		if err != nil {
 			return err
 		}
 		if len(documents) > 0 {
-			exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID, "extract", documents, nil, maxUSD, providers, a)
+			exhausted, err := r.sendSplit(ctx, job, def, binding, target, ontologyVersion, job.ID, "extract", documents, maxUSD, providers, a)
 			switch {
 			case err != nil:
 				return err
@@ -903,7 +911,7 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 		if err != nil {
 			return err
 		}
-		documents, err := r.stage(ctx, job, jobDir, set.docs, true)
+		documents, err := r.stage(ctx, job, jobDir, set.docs, true, a)
 		if err != nil {
 			return err
 		}
@@ -912,7 +920,7 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 			continue
 		}
 		remainingUSD := float64(remaining) / 1e6
-		exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID+":"+set.id, "extract:"+set.id, documents, nil,
+		exhausted, err := r.sendSplit(ctx, job, def, binding, target, ontologyVersion, job.ID+":"+set.id, "extract:"+set.id, documents,
 			min(maxUSD, remainingUSD), providers, a)
 		switch {
 		case err != nil:
@@ -1053,7 +1061,7 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 			return retry("could not prepare the documents; Helix will retry", err)
 		}
 		defer func() { _ = os.RemoveAll(filepath.Join(r.snapshots.WorkDir, jobDir)) }() // best-effort: the next attempt starts afresh
-		if documents, err = r.stage(ctx, job, jobDir, docs, false); err != nil {
+		if documents, err = r.stage(ctx, job, jobDir, docs, false, a); err != nil {
 			return err
 		}
 	}
@@ -1253,7 +1261,7 @@ func allowanceSpent(spend model.FoundryDocumentSetSpend, a model.FoundrySetAllow
 func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
 	target ontologyagent.HelixTarget, ontologyVersion, requestID, call string, documents []ontologyagent.ExtractDocument, remove []string,
 	maxUSD float64, providers []string, a *attempt) (exhausted bool, err error) {
-	decisions, err := r.decisions(ctx, job, def.OntologyTOML, documents)
+	decisions, err := r.decisions(ctx, job, def.OntologyTOML, documents, a)
 	if err != nil {
 		return false, err
 	}
@@ -1477,7 +1485,7 @@ func (r *runner) budget(ctx context.Context, job *model.FoundryGraphJob, a *atte
 // A PDF still being read never gets here: it is not pending until its read
 // ends.
 func (r *runner) stage(ctx context.Context, job *model.FoundryGraphJob, jobDir string, pending []*model.FoundryDocument,
-	replay bool) ([]ontologyagent.ExtractDocument, error) {
+	replay bool, a *attempt) ([]ontologyagent.ExtractDocument, error) {
 	root := r.snapshots.WorkDir
 	var out []ontologyagent.ExtractDocument
 	for _, doc := range pending {
@@ -1519,6 +1527,9 @@ func (r *runner) stage(ctx context.Context, job *model.FoundryGraphJob, jobDir s
 		if err := writeFile(filepath.Join(root, docPath), bytes.NewReader(text)); err != nil {
 			return nil, retry("could not prepare the documents; Helix will retry", err)
 		}
+		if a.aliases[doc.ID], err = r.documentAliases(ctx, job, a, text); err != nil {
+			return nil, err
+		}
 		prefix := document.ArtifactPrefix(job.WorkspaceID, doc.ID)
 		var keys []string
 		if replay {
@@ -1547,6 +1558,86 @@ func (r *runner) stage(ctx context.Context, job *model.FoundryGraphJob, jobDir s
 		})
 	}
 	return out, nil
+}
+
+// documentAliases are the aliases of job's load that a document whose staged
+// text is text writes (contract 4.23.0: an alias acts only on a document
+// whose text writes its name): the load's resolves that chose an entity
+// whose name the text's words hold (namewords.Text.Writes), every row of
+// each, found by the keys of the text's words through the load's name index
+// (store.ListFoundryLoadAliasesNamed), store.FoundryAliasKeysPerRead keys a
+// read. What it reads is bounded by the document, at most namewords.KeyWords
+// keys a word, and not by how many names the ontology links. The first call
+// of an attempt keys the load's resolves that have no key yet
+// (store.FillFoundryLoadNameKeys).
+func (r *runner) documentAliases(ctx context.Context, job *model.FoundryGraphJob, a *attempt, text []byte) ([]*model.FoundryReviewDecision, error) {
+	if !a.keyed {
+		filled, err := r.db.FillFoundryLoadNameKeys(ctx, job.LoadID)
+		if err != nil {
+			return nil, retry("could not read review decisions; Helix will retry", err)
+		}
+		if filled > 0 {
+			log.From(ctx).Info("graph job: keyed the names of settled resolves", "job", job.ID, "load", job.LoadID, "count", filled)
+		}
+		a.keyed = true
+	}
+	words := namewords.NewText(string(text))
+	var out []*model.FoundryReviewDecision
+	for keys := range slices.Chunk(words.Keys(), foundrystore.FoundryAliasKeysPerRead) {
+		page, err := r.db.ListFoundryLoadAliasesNamed(ctx, job.LoadID, keys)
+		if err != nil {
+			return nil, retry("could not read review decisions; Helix will retry", err)
+		}
+		for _, d := range page {
+			if words.Writes(*d.NormName) {
+				out = append(out, d)
+			}
+		}
+	}
+	return out, nil
+}
+
+// sendSplit sends documents in one Extract, as send does, or, past what one
+// takes (failure.TooLarge: more decisions of their documents than an Extract
+// takes, their aliases included, or more bytes), in halves, in their order,
+// each split again while it is too large: since contract 4.23.0 an Extract
+// carries the aliases its documents write, so fewer documents carry fewer,
+// and a load needs any number of Extracts but never one past the caps. The
+// first goes as requestID and call, each later one numbered after them
+// (requestID:2, call:2, ...). It stops at the first Extract whose budget
+// ran out (exhausted), and each later one may spend what the earlier ones
+// left of maxUSD. A single document too large for an Extract fails the job,
+// as one always has.
+func (r *runner) sendSplit(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
+	target ontologyagent.HelixTarget, ontologyVersion, requestID, call string, documents []ontologyagent.ExtractDocument,
+	maxUSD float64, providers []string, a *attempt) (exhausted bool, err error) {
+	sent, start := 0, a.spent
+	var each func(batch []ontologyagent.ExtractDocument) (bool, error)
+	each = func(batch []ontologyagent.ExtractDocument) (bool, error) {
+		id, name := requestID, call
+		left := maxUSD
+		if sent > 0 {
+			n := strconv.Itoa(sent + 1)
+			id, name = requestID+":"+n, call+":"+n
+			if left -= float64(a.spent-start) / 1e6; left <= 0 {
+				return true, nil
+			}
+		}
+		exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, id, name, batch, nil, left, providers, a)
+		var f *failure
+		switch {
+		case err == nil:
+			sent++
+			return exhausted, nil
+		case !errors.As(err, &f) || !f.TooLarge || len(batch) < 2:
+			return false, err
+		}
+		if exhausted, err := each(batch[:len(batch)/2]); err != nil || exhausted {
+			return exhausted, err
+		}
+		return each(batch[len(batch)/2:])
+	}
+	return each(documents)
 }
 
 // saveArtifact stores a document's model output so a later run replays it.
