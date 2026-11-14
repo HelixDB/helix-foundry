@@ -4,6 +4,7 @@ import { Copy, ExternalLink, Globe, RefreshCw, Unlink } from "lucide-react";
 import type { FoundryDashboard } from "../../../shared/wfe";
 import { LOCAL } from "../../../shared/deployment";
 import { trackEvent } from "../../analytics";
+import { sentence } from "../../api";
 import {
   Button,
   ButtonAnchor,
@@ -49,7 +50,7 @@ function publishError(e: unknown): string {
     case "FOUNDRY_DASHBOARD_NOT_LOADED":
     case "FOUNDRY_DASHBOARD_TILE_FAILED":
     default:
-      return (e as Error).message;
+      return sentence((e as Error).message);
   }
 }
 
@@ -99,7 +100,7 @@ export function ShareDialog({
       setConfirming(false);
       notify("Unpublished: the link shows nothing now.");
     } catch (e) {
-      setError((e as Error).message);
+      setError(sentence((e as Error).message));
     } finally {
       setPending(null);
     }

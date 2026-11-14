@@ -146,14 +146,16 @@ export function SharedDashboardPage({
             </MemoryRouter>
           </>
         )}
-        <footer className="db-public-foot">
-          A snapshot shared from{" "}
-          <a href="/" rel="noreferrer">
-            Helix Foundry
-          </a>
-          . Whoever shared it chose what it shows; it doesn’t change until they
-          publish it again.
-        </footer>
+        {shown && (
+          <footer className="db-public-foot">
+            A snapshot shared from{" "}
+            <a href="/" rel="noreferrer">
+              Helix Foundry
+            </a>
+            . Whoever shared it chose what it shows; it doesn’t change until
+            they publish it again.
+          </footer>
+        )}
       </main>
     </div>
   );

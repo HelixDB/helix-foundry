@@ -41,7 +41,7 @@ import {
   formatRelative,
   useNow,
 } from "../../kit";
-import { ApiError } from "../../api";
+import { ApiError, sentence } from "../../api";
 import { RefreshFailed, useWorkspace } from "../../ui";
 import { ontologyPaths } from "../ontology/paths";
 import { ontologyQueries } from "../ontology/queries";
@@ -260,7 +260,7 @@ export function DashboardPage() {
       if (dashboardRefusal(e) === "FOUNDRY_DASHBOARD_CHANGED") {
         setChanged(true);
         void read.refetch();
-      } else setError((e as Error).message);
+      } else setError(sentence((e as Error).message));
     } finally {
       setSaving(false);
     }

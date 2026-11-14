@@ -27,6 +27,7 @@ import {
   formatRelative,
   useNow,
 } from "../../kit";
+import { sentence } from "../../api";
 import { RefreshFailed, useWorkspace } from "../../ui";
 import { DashboardPage } from "./dashboard";
 import { MAX_DESCRIPTION, MAX_NAME, dashboardName } from "./model";
@@ -217,7 +218,7 @@ function NewDashboardDialog({
             keepDashboard(qc, ws, d);
             onCreated(d);
           } catch (err) {
-            setError((err as Error).message);
+            setError(sentence((err as Error).message));
           } finally {
             setPending(false);
           }

@@ -227,6 +227,10 @@
   margin-top: 0;
   font-size: var(--hf-text-sm);
 }
+/* A third of the row is too narrow for both fields side by side. */
+.db-row--3 .db-tile-edit {
+  grid-template-columns: minmax(0, 1fr);
+}
 @media (max-width: 640px) {
   .db-tile-edit {
     grid-template-columns: minmax(0, 1fr);
@@ -321,8 +325,14 @@
   line-height: 1.45;
 }
 .db-check input {
+  flex: none;
+  width: auto;
   margin-top: 3px;
   accent-color: var(--hf-accent);
+}
+.db-check > span {
+  flex: 1;
+  min-width: 0;
 }
 .db-check small {
   display: block;

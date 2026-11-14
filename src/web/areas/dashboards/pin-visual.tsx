@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LayoutDashboard } from "lucide-react";
 import type { FoundryDashboard } from "../../../shared/wfe";
 import { Button, ButtonLink, Dialog, Select, SkeletonText } from "../../kit";
+import { sentence } from "../../api";
 import { useWorkspace } from "../../ui";
 import { MAX_NAME, dashboardName, dashboardRefusal } from "./model";
 import { dashboardPaths as paths } from "./paths";
@@ -103,7 +104,7 @@ function PinDialog({
       keepDashboard(qc, ws, added);
       setDone(added);
     } catch (e) {
-      setError((e as Error).message);
+      setError(sentence((e as Error).message));
     } finally {
       setPending(false);
     }
