@@ -450,6 +450,36 @@ export type FoundryUsage = {
 /** helixwfev1FoundryUsageResponse */
 export type FoundryUsageResponse = { usage?: FoundryUsage };
 
+// ---------------------------------------------------------------- Feedback
+
+/**
+ * v1FeedbackCategory: what feedback is about. The site sends bug, missing
+ * capability (an idea), confusing result and other from its Feedback
+ * button, and connector request from Request a connector.
+ */
+export type FeedbackCategory =
+  | "FEEDBACK_CATEGORY_BUG"
+  | "FEEDBACK_CATEGORY_MISSING_CAPABILITY"
+  | "FEEDBACK_CATEGORY_CONFUSING_RESULT"
+  | "FEEDBACK_CATEGORY_OTHER"
+  | "FEEDBACK_CATEGORY_CONNECTOR_REQUEST";
+
+/**
+ * v1SendFeedbackRequest (POST /v1/feedback): a person's feedback, which the
+ * WFE stores and tells Helix's team of. `message` is 1 to 4096 bytes of
+ * UTF-8; `workspaceId`, when set, is one the caller belongs to; `page` is
+ * the path they were on (at most 255 bytes, starting "/").
+ */
+export type SendFeedbackRequest = {
+  category: FeedbackCategory;
+  message: string;
+  workspaceId?: string;
+  page?: string;
+};
+
+/** v1SendFeedbackResponse */
+export type SendFeedbackResponse = { id?: string };
+
 // ---------------------------------------------------------------- Data: connectors and syncs
 // Routes under /v1/workspaces/{workspaceId}/foundry/connectors....
 // Credentials are

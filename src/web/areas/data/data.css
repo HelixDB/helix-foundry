@@ -970,3 +970,19 @@
   gap: 8px;
   grid-column: 1 / -1;
 }
+
+/* Request a connector (request-connector.tsx): under the picker's kinds,
+   and its form in the picker's place or a dialog. */
+.dc-request-line {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.dc-request-intro {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.dc-request .hf-form-actions {
+  margin-top: var(--hf-space-3);
+}

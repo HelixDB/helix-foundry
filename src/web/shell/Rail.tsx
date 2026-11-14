@@ -7,6 +7,7 @@ import { WorkspaceSwitcher } from "../areas/workspace/switcher";
 import { useShell } from "./context";
 import { activeSection, granteeNav, onboardingNav, primaryNav } from "./nav";
 import { ariaShortcut, shortcut } from "./shortcut";
+import { FeedbackButton } from "./feedback";
 import { SettingsLink } from "./Sidebar";
 
 /** Helix's mark (helix-website's favicon), in the text's color. */
@@ -109,6 +110,7 @@ export function Rail({
           current={current}
           onSwitch={onSwitch}
         />
+        <FeedbackButton compact />
         <AccountMenu user={user} current={current} collapsed />
         {!onboarding && !grantee && <SettingsLink />}
       </div>

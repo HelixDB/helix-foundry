@@ -398,6 +398,47 @@ test("has no New API source in the palette", async ({ page }) => {
   ).toHaveCount(0);
 });
 
+test("sends feedback and connector requests as GitHub issues it fills in", async ({
+  page,
+  context,
+}) => {
+  // An install has no Helix to tell: it opens GitHub's new-issue page, which
+  // the person reads and sends there.
+  await context.route("https://github.com/**", (route) =>
+    route.fulfill({ status: 200, contentType: "text/html", body: "issue" }),
+  );
+  await page.goto("/data");
+  await page.getByRole("button", { name: "Feedback" }).click();
+  const dialog = page.getByRole("dialog", { name: "Send feedback" });
+  await expect(dialog).toContainText("opens an issue on GitHub");
+  await dialog
+    .getByLabel("What happened, and what did you expect?")
+    .fill("The sync stalled\nafter an hour");
+  let opened = context.waitForEvent("page");
+  await dialog.getByRole("button", { name: "Open a GitHub issue" }).click();
+  let issue = await opened;
+  await issue.waitForURL(/github\.com/);
+  let url = new URL(issue.url());
+  expect(url.pathname).toBe("/helixdb/helix-foundry/issues/new");
+  expect(url.searchParams.get("title")).toBe("Bug: The sync stalled");
+  expect(url.searchParams.get("body")).toBe(
+    "The sync stalled\nafter an hour\n\n---\nPage: /data\nFoundry, local build",
+  );
+  await expect(dialog).toHaveCount(0);
+  await issue.close();
+
+  await page.getByRole("button", { name: "Request a connector" }).click();
+  const request = page.getByRole("dialog", { name: "Request a connector" });
+  await request.getByLabel("Tool or database").fill("DuckDB");
+  opened = context.waitForEvent("page");
+  await request.getByRole("button", { name: "Open a GitHub issue" }).click();
+  issue = await opened;
+  await issue.waitForURL(/github\.com/);
+  url = new URL(issue.url());
+  expect(url.searchParams.get("title")).toBe("Connector request: DuckDB");
+  expect(url.searchParams.get("body")).toContain("Connector: DuckDB");
+});
+
 test("creates a database in this computer's Helix, without a plan or keys to revoke", async ({
   page,
 }) => {

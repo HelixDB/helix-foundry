@@ -38,6 +38,15 @@ export const mock = {
       stopReason: "signed_in" | null;
     }[]
   > => (await (await fetch(`${MOCK}/__mock/reminders`)).json()).reminders,
+  /** The feedback POST /v1/feedback took (mock/routes/feedback.ts). */
+  feedback: async (): Promise<
+    {
+      category: string;
+      message: string;
+      page: string;
+      workspaceId: string | null;
+    }[]
+  > => (await (await fetch(`${MOCK}/__mock/feedback`)).json()).feedback,
   configure: (config: {
     // Seeds Customer contracts' demo workflows and 45 days of their runs.
     workflowDemo?: boolean;

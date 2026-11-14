@@ -23,6 +23,7 @@ import { ProGate } from "../workspace/pro-gate";
 import { ConnectionForm } from "./connection-form";
 import { connectorKindsQuery, connectorsQuery, signInQuery } from "./data-api";
 import { EventSourceForm } from "./event-source-form";
+import { RequestConnectorForm } from "./request-connector";
 import { isEventSource, isKnownKind } from "./model";
 import { AgentSignIn, SignInReturn } from "./sign-in";
 
@@ -34,8 +35,10 @@ import { AgentSignIn, SignInReturn } from "./sign-in";
 // API card, has a form of its own (./event-source-form.tsx), whose send
 // panel shows in the modal once the source is made; `onCreated` hears of a
 // source as soon as it is made, before Done, since the modal may be closed
-// without it. A new connection opens its page, unless the caller takes it
-// (`onConnected`) to stay where it is.
+// without it. A new connection ends on what was made (`Connected`), with Add
+// another source and Open, unless the caller takes it (`onConnected`) to
+// stay where it is. Under the kinds, Request a connector takes the
+// picker's place (./request-connector.tsx), for members too.
 //
 // A kind may connect by signing in at its provider (the kind's
 // `signIn`), a round trip that leaves the page: the callback comes back to
@@ -296,6 +299,23 @@ export function ConnectData({
     (connectors.data?.connectors || []).filter((c) => c.kind === k).length;
   // What was just connected, while the dialog says so: Add another source
   // goes back to the picker, Open to its page.
+  // Request a connector, in the picker's place.
+  const [requesting, setRequesting] = useState(false);
+  const requestLine = (
+    <>
+      <hr className="connection-divider" />
+      <p className="dc-request-line">
+        Don’t see your tool or database?{" "}
+        <button
+          type="button"
+          className="text-button"
+          onClick={() => setRequesting(true)}
+        >
+          Request a connector
+        </button>
+      </p>
+    </>
+  );
   const [connected, setConnected] = useState<{
     connector: Connector;
     message: string;
@@ -330,7 +350,9 @@ export function ConnectData({
       title={
         connected
           ? "Connected"
-          : kind && chosen
+          : requesting
+            ? "Request a connector"
+            : kind && chosen
             ? titles[kind]
             : "Where is your data?"
       }
@@ -354,8 +376,16 @@ export function ConnectData({
               })
             }
           />
+        ) : requesting ? (
+          <RequestConnectorForm
+            onDone={() => setRequesting(false)}
+            onCancel={() => setRequesting(false)}
+          />
         ) : !canManage(role) ? (
-          <p>An owner or admin can add data to this workspace.</p>
+          <>
+            <p>An owner or admin can add data to this workspace.</p>
+            {requestLine}
+          </>
         ) : kinds.isPending ? (
           <Loading />
         ) : kinds.error ? (
@@ -408,6 +438,7 @@ export function ConnectData({
                 </div>
               </>
             )}
+            {requestLine}
           </>
         ) : (
           <>

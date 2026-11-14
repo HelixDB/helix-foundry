@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Link,
   useLocation,
@@ -5,7 +6,7 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Cable, Folder, Plus, Upload } from "lucide-react";
+import { Cable, Folder, MessageSquarePlus, Plus, Upload } from "lucide-react";
 import type { Connector } from "../../../shared/wfe";
 import { number } from "../../api";
 import { paths } from "../../paths";
@@ -37,6 +38,7 @@ import { ConnectData } from "./connect-data";
 import { connectorsQuery } from "./data-api";
 import { connectorBadge, lastSyncedAt, rowTotal } from "./model";
 import { PICKER_OPENED, pickerOpened } from "./paths";
+import { RequestConnectorDialog } from "./request-connector";
 import { useDataUpload } from "./upload";
 
 // The Connectors page (/data): what the workspace holds at a glance. Its totals, its
@@ -48,7 +50,8 @@ import { useDataUpload } from "./upload";
 // ?add=<kind> that kind's form, as the Helix MCP's links do, bound to the
 // sign-in an agent started with &sign_in=<id>) and upload
 // documents, with Upload documents or by dropping files on a set people
-// made or anywhere else on the page (./upload.tsx). One list each, so it
+// made or anywhere else on the page (./upload.tsx). Anyone may request a
+// connector Foundry lacks (./request-connector.tsx). One list each, so it
 // stays light.
 
 type ConnectionRow = Connector & {
@@ -68,7 +71,8 @@ export function DataOverview() {
   const connectors = useQuery(connectorsQuery(id)),
     documents = useQuery(documentQueries.workspace(id)),
     sets = useQuery(documentSetQueries.list(id));
-  const files = useDataUpload();
+  const files = useDataUpload(),
+    [requesting, setRequesting] = useState(false);
   const [params, setParams] = useSearchParams(),
     location = useLocation();
   // Opening the picker pushes an entry (Back closes it); closing goes back
@@ -169,7 +173,20 @@ export function DataOverview() {
         {files.chooser}
         {connectors.data && <RefreshFailed query={connectors} />}
         {files.list}
-        <Section title="Connections" id="dt-connections">
+        <Section
+          title="Connections"
+          id="dt-connections"
+          actions={
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={MessageSquarePlus}
+              onClick={() => setRequesting(true)}
+            >
+              Request a connector
+            </Button>
+          }
+        >
           {failed ? (
             <EmptyState
               icon={Cable}
@@ -343,6 +360,9 @@ export function DataOverview() {
             </ul>
           )}
         </Section>
+        {requesting && (
+          <RequestConnectorDialog onClose={() => setRequesting(false)} />
+        )}
         {picker && (
           <ConnectData
             // Another link's kind or sign-in opens afresh.

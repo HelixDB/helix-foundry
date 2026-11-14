@@ -9,6 +9,7 @@ import { databaseRoutes } from "./databases";
 import { documentRoutes } from "./documents";
 import { enrichmentRoutes } from "./enrichment";
 import { eventSourceRoutes } from "./event-sources";
+import { feedbackRoutes } from "./feedback";
 import { reviewRoutes } from "./reviews";
 import { signInRoutes } from "./sign-ins";
 import { loadRoutes } from "./loads";
@@ -26,6 +27,7 @@ import { workspaceRoutes } from "./workspaces";
 // Foundry's routes run source grants' access check first (./access.ts).
 export const routes: MockRoute[] = [
   ...authRoutes,
+  ...feedbackRoutes,
   ...workspaceRoutes,
   ...billingRoutes,
   ...usageRoutes,

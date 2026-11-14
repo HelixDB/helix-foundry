@@ -11,6 +11,7 @@ import { SkeletonText, cx, useStoredState } from "../kit";
 import { paths } from "../paths";
 import { useWorkspace, type ShellUser, type ShellWorkspace } from "../ui";
 import { AccountMenu } from "../areas/workspace/account-menu";
+import { FeedbackButton } from "./feedback";
 import { WorkspaceSwitcher } from "../areas/workspace/switcher";
 import {
   activeSection,
@@ -210,7 +211,7 @@ function SectionSplit({
 // The sidebar, on every page beside the page (and in a phone's drawer where
 // the open section has no panel: Rail.tsx): the mark and search, the
 // workspace, the sections with their names, what the open section shows
-// under them (Ask's threads), then the account and settings. While the
+// under them (Ask's threads), then Feedback, the account and settings. While the
 // workspace is onboarding it holds only the mark, the workspace, the way
 // back to the onboarding and the account; for a grantee, no search or
 // settings, and only Analyst, Ontologies and the Explorer.
@@ -303,6 +304,7 @@ export function Sidebar({
           </ChromeBoundary>
         </SectionSplit>
       )}
+      <FeedbackButton />
       <div className="hf-sidebar-foot">
         <AccountMenu user={user} current={current} collapsed={false} />
         {!onboarding && !grantee && <SettingsLink />}
