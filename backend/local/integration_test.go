@@ -25,10 +25,13 @@ import (
 )
 
 // Every method the shared tools authorize or call is one an install serves, but
-// for API sources' own, which only a host with them reaches (Service.Events). An
-// unlisted one fails its tool at every call, so this keeps them in step.
+// for API sources' own, which only a host with them reaches (Service.Events), and
+// dashboards' public links', which only a host with them offers
+// (Service.PublicDashboards). An unlisted one fails its tool at every call, so
+// this keeps them in step.
 func TestToolsUseOnlyServedMethods(t *testing.T) {
-	apiSourcesOnly := map[string]bool{"ListFoundryEventBatches": true, "SendFoundryEvents": true}
+	hostedOnly := map[string]bool{"ListFoundryEventBatches": true, "SendFoundryEvents": true,
+		"PublishFoundryDashboard": true, "UnpublishFoundryDashboard": true}
 	files, err := filepath.Glob("../integration/*.go")
 	require.NoError(t, err)
 	calls := regexp.MustCompile(`s\.(?:Foundry|Actions)\.([A-Z]\w+)\(`)
@@ -58,7 +61,7 @@ func TestToolsUseOnlyServedMethods(t *testing.T) {
 		require.True(t, seen[method], method)
 	}
 	for method := range seen {
-		if apiSourcesOnly[method] {
+		if hostedOnly[method] {
 			continue
 		}
 		_, served := methods[foundry(method)]

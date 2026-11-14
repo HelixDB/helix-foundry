@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // Foundry's actions take the same two calls as every MCP mutation: prepare returns a five-minute,
@@ -128,6 +129,13 @@ type FoundryActionAPI interface {
 	// An event source, made by create_event_source, and the pieces helix_foundry_send_pieces sends it.
 	CreateConnector(context.Context, *foundryv1.CreateConnectorRequest, ...grpc.CallOption) (*foundryv1.ConnectorResponse, error)
 	SendFoundryEvents(context.Context, *foundryv1.SendFoundryEventsRequest, ...grpc.CallOption) (*foundryv1.SendFoundryEventsResponse, error)
+	// Dashboards (foundry_dashboards.go).
+	CreateFoundryDashboard(context.Context, *foundryv1.CreateFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
+	UpdateFoundryDashboard(context.Context, *foundryv1.UpdateFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
+	DeleteFoundryDashboard(context.Context, *foundryv1.DeleteFoundryDashboardRequest, ...grpc.CallOption) (*emptypb.Empty, error)
+	PinFoundryDashboard(context.Context, *foundryv1.PinFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
+	PublishFoundryDashboard(context.Context, *foundryv1.PublishFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
+	UnpublishFoundryDashboard(context.Context, *foundryv1.UnpublishFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
 }
 
 // FoundryOperationInput is described by foundryOperationSchema, which says an API source's parts
@@ -421,6 +429,8 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 			return nil, err
 		}
 		return CreateEventSourceOperation{payload: payload, req: req}, nil
+	case "create_dashboard", "update_dashboard", "delete_dashboard", "pin_dashboard", "publish_dashboard", "unpublish_dashboard":
+		return s.validateDashboardOperation(ctx, identity, input, raw)
 	case "sync_connector":
 		workspaceID, connectorID, ok := CutFoundryTarget(input.Target, "connector")
 		if !ok || len(input.Payload) != 0 {
@@ -730,7 +740,7 @@ func CutFoundryTarget(target, kind string) (string, string, bool) {
 // TargetKind is the audit resource kind of a target, or empty for one that doesn't parse.
 func TargetKind(target string) string {
 	kind, _, ok := strings.Cut(target, ":")
-	if !ok || (kind != "tenant" && kind != "workspace" && kind != "connector" && kind != "ontology") {
+	if !ok || (kind != "tenant" && kind != "workspace" && kind != "connector" && kind != "ontology" && kind != "dashboard") {
 		return ""
 	}
 	return kind

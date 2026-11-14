@@ -70,37 +70,40 @@ const (
 // toolTitles are the tools' names for people, which clients and MCP directories show beside
 // the name an agent calls. TestEveryToolHasATitle keeps one for each.
 var toolTitles = map[string]string{
-	toolFoundryListOntologies:      "List Foundry ontologies",
-	toolFoundryGetOntology:         "Get a Foundry ontology",
-	toolFoundryGetVersion:          "Get an ontology version",
-	toolFoundryGetContext:          "Get an ontology's schema and example questions",
-	toolFoundryListConnectors:      "List Foundry connectors",
-	toolFoundryReadGuide:           "Describe Foundry graph reads",
-	toolFoundryReadGraph:           "Read a Foundry graph",
-	toolFoundryAsk:                 "Ask a Foundry ontology",
-	toolFoundryGetQuestion:         "Get a Foundry question",
-	toolFoundryCancelQuestion:      "Cancel a Foundry question",
-	toolFoundryGetGeneration:       "Get an ontology generation",
-	toolFoundryListDocuments:       "List Foundry documents",
-	toolFoundryListQuestions:       "List Foundry questions",
-	toolFoundryListReviewDecisions: "List review decisions",
-	toolFoundryListReviews:         "List an ontology's reviews",
-	toolFoundryGetLoad:             "Get a Foundry load",
-	toolFoundryGetSync:             "Get a connector sync",
-	toolFoundryConnect:             "Connect a source",
-	toolFoundryListConnectorKinds:  "List connector kinds",
-	toolFoundryGetAISettings:       "Get a workspace's AI settings",
-	toolFoundryGetAssistantRuntime: "Get where the Assistant runs",
-	toolFoundryGetSignIn:           "Get a connector sign-in",
-	toolFoundrySendPieces:          "Send pieces to an API source",
-	toolPrepareFoundry:             "Prepare a Foundry action",
-	toolExecuteFoundry:             "Run a prepared Foundry action",
-	toolFoundryCompleteUpload:      "Complete a document upload",
-	toolFoundryCreateWorkflow:      "Create a Foundry workflow",
-	toolFoundryListWorkflows:       "List Foundry workflows",
-	toolFoundryStartWorkflowRun:    "Start a workflow run",
-	toolFoundryFinishWorkflowRun:   "Finish a workflow run",
-	toolFoundryGetWorkflowRun:      "Get a workflow run",
+	toolFoundryListOntologies:       "List Foundry ontologies",
+	toolFoundryGetOntology:          "Get a Foundry ontology",
+	toolFoundryGetVersion:           "Get an ontology version",
+	toolFoundryGetContext:           "Get an ontology's schema and example questions",
+	toolFoundryListConnectors:       "List Foundry connectors",
+	toolFoundryReadGuide:            "Describe Foundry graph reads",
+	toolFoundryReadGraph:            "Read a Foundry graph",
+	toolFoundryAsk:                  "Ask a Foundry ontology",
+	toolFoundryGetQuestion:          "Get a Foundry question",
+	toolFoundryCancelQuestion:       "Cancel a Foundry question",
+	toolFoundryGetGeneration:        "Get an ontology generation",
+	toolFoundryListDocuments:        "List Foundry documents",
+	toolFoundryListQuestions:        "List Foundry questions",
+	toolFoundryListReviewDecisions:  "List review decisions",
+	toolFoundryListReviews:          "List an ontology's reviews",
+	toolFoundryGetLoad:              "Get a Foundry load",
+	toolFoundryGetSync:              "Get a connector sync",
+	toolFoundryConnect:              "Connect a source",
+	toolFoundryListConnectorKinds:   "List connector kinds",
+	toolFoundryGetAISettings:        "Get a workspace's AI settings",
+	toolFoundryGetAssistantRuntime:  "Get where the Assistant runs",
+	toolFoundryGetSignIn:            "Get a connector sign-in",
+	toolFoundrySendPieces:           "Send pieces to an API source",
+	toolPrepareFoundry:              "Prepare a Foundry action",
+	toolExecuteFoundry:              "Run a prepared Foundry action",
+	toolFoundryCompleteUpload:       "Complete a document upload",
+	toolFoundryCreateWorkflow:       "Create a Foundry workflow",
+	toolFoundryListWorkflows:        "List Foundry workflows",
+	toolFoundryStartWorkflowRun:     "Start a workflow run",
+	toolFoundryFinishWorkflowRun:    "Finish a workflow run",
+	toolFoundryGetWorkflowRun:       "Get a workflow run",
+	toolFoundryListDashboards:       "List Foundry dashboards",
+	toolFoundryGetDashboard:         "Get a Foundry dashboard",
+	toolFoundryPreviewDashboardTile: "Preview a dashboard tile",
 }
 
 const (
@@ -156,6 +159,10 @@ type FoundryBackendAPI interface {
 	ListConnectorKinds(context.Context, *foundryv1.ListConnectorKindsRequest, ...grpc.CallOption) (*foundryv1.ListConnectorKindsResponse, error)
 	ListFoundryEventBatches(context.Context, *foundryv1.ListFoundryEventBatchesRequest, ...grpc.CallOption) (*foundryv1.ListFoundryEventBatchesResponse, error)
 	GetMyFoundryAccess(context.Context, *foundryv1.GetMyFoundryAccessRequest, ...grpc.CallOption) (*foundryv1.GetMyFoundryAccessResponse, error)
+	ListFoundryDashboards(context.Context, *foundryv1.ListFoundryDashboardsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDashboardsResponse, error)
+	GetFoundryDashboard(context.Context, *foundryv1.GetFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
+	PreviewFoundryDashboardTile(context.Context, *foundryv1.PreviewFoundryDashboardTileRequest, ...grpc.CallOption) (
+		*foundryv1.PreviewFoundryDashboardTileResponse, error)
 }
 
 type ListFoundryOntologiesInput struct {
@@ -908,6 +915,9 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			"Get where this install's Assistant runs a workspace's new threads: api (Foundry's own worker, on the workspace's model) or claude_code or codex "+
 				"(a helper on the owner's computer, on the Claude or ChatGPT subscription its CLI is signed in to), and the helpers paired with the install: "+
 				"what each offers and whether it is online. set_assistant_runtime, pair_assistant_helper and revoke_assistant_helper change them."), s.GetAssistantRuntime)
+	}
+	if browse && user {
+		s.addFoundryDashboardTools(server, identity, reads)
 	}
 	if user && s.FoundryURL != "" && identity.HasPermission(PermissionWorkspaceConnectorsManage) {
 		s.addFoundryConnectTool(server, identity, signIns)

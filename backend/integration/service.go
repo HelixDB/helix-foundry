@@ -123,6 +123,10 @@ type Service struct {
 	// (hosted: pipes.enabled). Only then are the sign-in tools registered; a local install
 	// has no provider accounts and leaves it false.
 	SignIn bool
+	// PublicDashboards is whether the host offers dashboards' public links
+	// (config.PublicDashboards: hosted, with foundry.dashboards.public_enabled).
+	// Only then are publish_dashboard and unpublish_dashboard offered.
+	PublicDashboards bool
 }
 
 func (s *Service) AddTools(server *mcp.Server, identity *Identity) {

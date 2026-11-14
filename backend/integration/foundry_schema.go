@@ -17,7 +17,10 @@ type foundryOperationDoc struct {
 	// such a host when set.
 	eventsOnly bool
 	// hostsOnly is an operation only a host with the Assistant's helpers offers (Service.AgentHosts).
-	hostsOnly   bool
+	hostsOnly bool
+	// publicOnly is an operation only a host with dashboards' public links offers
+	// (Service.PublicDashboards).
+	publicOnly  bool
 	doc, events string
 }
 
@@ -69,6 +72,19 @@ var foundryOperationDocs = []foundryOperationDoc{
 			"resolve {resolve: {entity_key}} with one of its candidates or {resolve: {not_in_data: true}}; " +
 			"prop {prop: {text|integer|number|boolean: value}} (an integer as a string of digits) or {prop: {null: true}} to remove the property; " +
 			"release {release: {statement_hash}} to approve the statement it holds back or {reject: {statement_hash}} to say it is wrong, with its statement_hash."},
+	{name: "create_dashboard",
+		doc: "{name, description, spec}: a dashboard of the workspace, unpinned, which every member sees and reads as themselves; " +
+			"a name of 1 to 120 characters, a description of at most 1000, and a spec (none for no tiles yet). Preview each tile with " + toolFoundryPreviewDashboardTile + " first. " +
+			dashboardSpecDoc},
+	{name: "update_dashboard",
+		doc: "{expected_revision, name, description, spec}: the revision " + toolFoundryGetDashboard + " gave and at least one change, " +
+			"spec the whole new spec. Its creator changes a dashboard that isn't pinned; owners and admins change any."},
+	{name: "delete_dashboard", doc: "{}: deletes the dashboard and its public link."},
+	{name: "pin_dashboard", doc: "{pinned}: true pins the dashboard in every member's sidebar, false unpins it. Owners and admins only."},
+	{name: "publish_dashboard", publicOnly: true,
+		doc: "{expected_revision}: reads every tile as you and keeps their outputs as a snapshot at a public link, which anyone who has it sees with no sign-in, " +
+			"until it is unpublished; publishing again refreshes the snapshot at the same link. Owners and admins only: say plainly that anyone with the link sees the data."},
+	{name: "unpublish_dashboard", publicOnly: true, doc: "{}: deletes the public snapshot, so its link shows nothing. Owners and admins only."},
 }
 
 // generateReads is what a generation reads, on every host.
@@ -79,11 +95,12 @@ const generateReads = "No connector_ids reads every connector unless no_connecto
 	"sample \"acme\" drafts the Acme Corp sample company from its connector, with its six tables synced, and its document set, as its one connector_ids and document_set_ids: a ready-made draft, in seconds and with no model."
 
 // foundryOperations is each operation the host offers and allows lets the caller prepare, in
-// order, and what its payload is.
+// order, and what its payload is: those of API sources only with events, of the Assistant's
+// helpers only with them, of dashboards' public links only with public links.
 func foundryOperations(s *Service, allows func(string) bool) (names []any, payloads string) {
 	lines := []string{"Each operation's payload:"}
 	for _, op := range foundryOperationDocs {
-		if op.eventsOnly && !s.Events || op.hostsOnly && !s.AgentHosts || !allows(op.name) {
+		if op.eventsOnly && !s.Events || op.hostsOnly && !s.AgentHosts || op.publicOnly && !s.PublicDashboards || !allows(op.name) {
 			continue
 		}
 		doc := op.doc
@@ -105,18 +122,8 @@ func foundryOperationSchema(s *Service, allows func(string) bool) *jsonschema.Sc
 	if s.Events && allows("create_event_source") {
 		target += " create_event_source: workspace:<workspace_id>."
 	}
-	if s.AgentHosts {
-		var ops []string
-		for _, op := range []string{"set_assistant_runtime", "pair_assistant_helper", "revoke_assistant_helper"} {
-			if allows(op) {
-				ops = append(ops, op)
-			}
-		}
-		if len(ops) > 0 {
-			target += " " + strings.Join(ops, ", ") + ": workspace:<workspace_id>."
-		}
-	}
-	target += " sync_connector: connector:<workspace_id>/<connector_id>. Every other operation: ontology:<workspace_id>/<ontology_id>."
+	target += " sync_connector: connector:<workspace_id>/<connector_id>. create_dashboard: workspace:<workspace_id>; " +
+		"the other dashboard operations: dashboard:<workspace_id>/<dashboard_id>. Every other operation: ontology:<workspace_id>/<ontology_id>."
 	schema.Properties["operation"].Description = "The action to prepare; payload says what each takes."
 	schema.Properties["operation"].Enum = names
 	schema.Properties["target"].Description = target
