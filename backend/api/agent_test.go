@@ -216,10 +216,15 @@ type agentHost struct {
 	service *integration.Service
 	err     error
 	actors  []ports.Actor
+	// deadlines is how long each session had to run.
+	deadlines []time.Duration
 }
 
 func (h *agentHost) Session(ctx context.Context, a ports.Actor, confirm integration.ConfirmMode) (integration.Session, error) {
 	h.actors = append(h.actors, a)
+	if d, ok := ctx.Deadline(); ok {
+		h.deadlines = append(h.deadlines, time.Until(d))
+	}
 	return integration.Session{Ctx: ctx, Service: h.service, Identity: &integration.Identity{
 		User: true, HasPermission: func(integration.Permission) bool { return true },
 		Authorize: func(context.Context, any, integration.Grant, ...string) error { return nil }, Confirm: confirm,
@@ -367,7 +372,10 @@ func TestExecuteFoundryAgentAction(t *testing.T) {
 		assert.Equal(t, "succeeded", resp.GetAction().GetStatus())
 		assert.Contains(t, resp.GetAction().GetResultJson(), "load-9")
 		assert.Equal(t, 1, f.loads.calls)
-		assert.Equal(t, []ports.Actor{person}, f.host.actors, "the session is the clicker's, now")
+		assert.Equal(t, []ports.Actor{{Source: ports.SourceUser, UserID: person.UserID, WorkspaceID: "ws-1"}}, f.host.actors,
+			"the session is the clicker's, now, in the action's workspace")
+		require.Len(t, f.host.deadlines, 1, "a click's run has a deadline")
+		assert.Less(t, f.host.deadlines[0], foundrymodel.FoundryAgentExecutingFor, "it ends before a send reads it as unknown")
 		next := resp.GetContinuation()
 		assert.Equal(t, "action_result", next.GetKind())
 		assert.Equal(t, "act-1", next.GetActionId())

@@ -93,7 +93,10 @@ type Session struct {
 // fewer tools), and sets Ctx up as its MCP's request context: the principal
 // its Confirmations bind (the worker that prepares and the API that consumes
 // must bind the same principal for the same user), and its audit source
-// "foundry-agent". It refuses an actor that isn't a user of actor.WorkspaceID.
+// "foundry-agent". It refuses an actor that isn't a user of actor.WorkspaceID,
+// and its Identity is bound to that workspace: Authorize refuses (not found)
+// every request naming another, and Allows allows none, though the user may
+// belong to it, so a turn reads and acts in its own workspace only.
 type SessionHost interface {
 	Session(ctx context.Context, actor ports.Actor, confirm ConfirmMode) (Session, error)
 }

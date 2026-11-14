@@ -124,6 +124,62 @@ func TestAnthropicErrorsSayWhetherToRetry(t *testing.T) {
 	}
 }
 
+// writeSSE writes events, each a JSON object whose type names it.
+func writeSSE(w http.ResponseWriter, events ...string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	for _, e := range events {
+		var head struct{ Type string }
+		_ = json.Unmarshal([]byte(e), &head)
+		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", head.Type, e)
+	}
+}
+
+const started = `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5-5","content":[],"stop_reason":null,"usage":{"input_tokens":90000,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":5000}}}`
+
+// A stream that breaks after it started reports what it used, which the
+// provider bills, then its error, which a retry may pass.
+func TestAnthropicBrokenStreamReportsItsUsage(t *testing.T) {
+	for name, tail := range map[string][]string{
+		"error event": {`{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`},
+		"cut off": {`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Half"}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				writeSSE(w, append([]string{started}, tail...)...)
+			}))
+			defer server.Close()
+			m := newAnthropic("sk", "claude-sonnet-5-5", 0, option.WithBaseURL(server.URL), option.WithMaxRetries(0))
+			chunks, err := collect(t, m, Request{System: "s", MaxOutput: 10, Messages: []Message{{Role: User, Content: []Block{Text{Text: "hi"}}}}})
+			assert.Equal(t, []Chunk{Usage{In: 90000, Out: 1, CacheWrite: 5000}}, chunks, "nothing but what it used")
+			var e *Error
+			require.ErrorAs(t, err, &e)
+			assert.True(t, e.Retryable(), "%v", err)
+		})
+	}
+}
+
+// max_tokens can stop a reply in the middle of a tool call's input: the
+// call comes back as JSON, never as bytes that don't parse.
+func TestAnthropicToolCallCutAtMaxTokens(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeSSE(w, started,
+			`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"helix_foundry_prepare_operation","input":{}}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"operation\":\"create_lo"}}`,
+			`{"type":"content_block_stop","index":0}`,
+			`{"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"output_tokens":10}}`,
+			`{"type":"message_stop"}`)
+	}))
+	defer server.Close()
+	m := newAnthropic("sk", "claude-sonnet-5-5", 0, option.WithBaseURL(server.URL), option.WithMaxRetries(0))
+	chunks, err := collect(t, m, Request{System: "s", MaxOutput: 10, Messages: []Message{{Role: User, Content: []Block{Text{Text: "hi"}}}}})
+	require.NoError(t, err)
+	require.Len(t, chunks, 3)
+	use := chunks[0].(ToolUse)
+	assert.True(t, json.Valid(use.Input), "%s", use.Input)
+	assert.Equal(t, Stop{Reason: StopMaxTokens}, chunks[2])
+}
+
 func TestBlocksRoundTrip(t *testing.T) {
 	blocks := []Block{Text{Text: "a"}, ToolUse{ID: "t", Name: "n", Input: json.RawMessage(`{"a":1}`)},
 		ToolResult{ToolUseID: "t", Content: "c", IsError: true}, Reasoning{Provider: ai.KindAnthropic, Signature: "s", Text: "x"},

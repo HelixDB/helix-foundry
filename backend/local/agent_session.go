@@ -36,8 +36,10 @@ func NewAgentSessions(auth *Authenticator, service *integration.Service, directo
 	return &AgentSessions{auth: auth, service: service.ForAgent(), directory: directory, siteToken: siteToken}
 }
 
-// Session opens the owner's tools in actor's workspace. Any other user, or a
-// workspace the owner no longer has, is refused: an install has one person.
+// Session opens the owner's tools in actor's workspace, and that workspace
+// alone: a call naming another is not found, though the owner has it, so a
+// turn reads and prepares only in its own. Any other user, or a workspace the
+// owner no longer has, is refused: an install has one person.
 func (s *AgentSessions) Session(ctx context.Context, actor ports.Actor, confirm integration.ConfirmMode) (integration.Session, error) {
 	owner, err := s.auth.directory.Owner(ctx)
 	switch {
@@ -62,7 +64,15 @@ func (s *AgentSessions) Session(ctx context.Context, actor ports.Actor, confirm 
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+s.siteToken))
 	identity := ownerIdentity(s.auth, func(context.Context) string { return actor.WorkspaceID })
 	identity.Confirm = confirm
+	authorize := identity.Authorize
+	identity.Authorize = func(ctx context.Context, req any, grant integration.Grant, methods ...string) error {
+		if r, ok := req.(interface{ GetWorkspaceId() string }); ok && r.GetWorkspaceId() != actor.WorkspaceID {
+			return status.Error(codes.NotFound, "resource not found")
+		}
+		return authorize(ctx, req, grant, methods...)
+	}
+	identity.Allows = func(workspaceID, _ string, _ integration.Grant) bool { return workspaceID == actor.WorkspaceID }
 	return integration.Session{Ctx: ctx, Service: s.service, Identity: identity, HostTools: func(server *mcp.Server) {
-		addLocalDiscovery(s.service, server, identity, s.directory)
+		addLocalDiscovery(s.service, server, identity, s.directory, actor.WorkspaceID)
 	}}, nil
 }

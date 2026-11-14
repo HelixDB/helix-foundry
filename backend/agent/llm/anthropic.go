@@ -44,14 +44,30 @@ func (m *anthropicModel) Stream(ctx context.Context, r Request) iter.Seq2[Chunk,
 		stream := m.client.Messages.NewStreaming(ctx, params)
 		defer func() { _ = stream.Close() }()
 		var message anthropic.Message
+		usage := func() Usage {
+			u := message.Usage
+			return Usage{In: u.InputTokens, Out: u.OutputTokens, CacheRead: u.CacheReadInputTokens, CacheWrite: u.CacheCreationInputTokens}
+		}
+		// fail reports a stream that broke, after what it used: once the
+		// message started, its input is billed whether or not it ends.
+		fail := func(err error) {
+			if used := usage(); used != (Usage{}) && !yield(used, nil) {
+				return
+			}
+			yield(nil, err)
+		}
 		for stream.Next() {
 			if err := message.Accumulate(stream.Current()); err != nil {
-				yield(nil, &Error{Kind: ErrUnavailable, Err: err})
+				fail(&Error{Kind: ErrUnavailable, Err: err})
 				return
 			}
 		}
 		if err := stream.Err(); err != nil {
-			yield(nil, anthropicError(err))
+			fail(anthropicError(err))
+			return
+		}
+		if message.StopReason == "" {
+			fail(&Error{Kind: ErrUnavailable, Err: errors.New("the stream ended before its message did")})
 			return
 		}
 		for _, block := range message.Content {
@@ -76,8 +92,7 @@ func (m *anthropicModel) Stream(ctx context.Context, r Request) iter.Seq2[Chunk,
 				return
 			}
 		}
-		u := message.Usage
-		if !yield(Usage{In: u.InputTokens, Out: u.OutputTokens, CacheRead: u.CacheReadInputTokens, CacheWrite: u.CacheCreationInputTokens}, nil) {
+		if !yield(usage(), nil) {
 			return
 		}
 		yield(Stop{Reason: anthropicStop(message.StopReason)}, nil)
@@ -163,13 +178,17 @@ func anthropicStop(reason anthropic.StopReason) StopReason {
 }
 
 // anthropicError is a failed call as an *Error: the API's status says
-// whether a retry may pass; no answer at all may.
+// whether a retry may pass; no answer at all, or an answer that broke
+// off, may.
 func anthropicError(err error) error {
 	var apiErr *anthropic.Error
 	if !errors.As(err, &apiErr) {
 		return &Error{Kind: ErrUnavailable, Err: err}
 	}
 	switch code := apiErr.StatusCode; {
+	case code < http.StatusBadRequest:
+		// An error event in a stream the API had accepted: overloaded, say.
+		return &Error{Kind: ErrUnavailable, Err: err}
 	case code == http.StatusUnauthorized || code == http.StatusForbidden:
 		return &Error{Kind: ErrAuth, Err: err}
 	case code == http.StatusTooManyRequests:

@@ -73,6 +73,21 @@ func TestAgentSessionsAreTheOwnersAlone(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	assert.Subset(t, names, []string{"helix_list_projects", "helix_list_databases"})
+
+	// A turn is of its workspace alone, though the owner has others.
+	err = session.Identity.Authorize(ctx, &foundryv1.ListFoundryOntologiesRequest{WorkspaceId: "other"}, integration.ProjectRead,
+		"ListFoundryOntologies")
+	assert.Equal(t, codes.NotFound, status.Code(err), "a read of another workspace")
+	err = session.Identity.Authorize(ctx, &foundryv1.CreateFoundryLoadRequest{WorkspaceId: "other", OntologyId: "o"}, integration.QueryWrite,
+		"CreateFoundryLoad")
+	assert.Equal(t, codes.NotFound, status.Code(err), "an action on another workspace")
+	assert.NoError(t, session.Identity.Authorize(ctx, &foundryv1.ListFoundryOntologiesRequest{WorkspaceId: "ws"}, integration.ProjectRead,
+		"ListFoundryOntologies"))
+	assert.False(t, session.Identity.Allows("other", "p", integration.ProjectRead))
+	assert.True(t, session.Identity.Allows("ws", "p", integration.ProjectRead))
+	listed, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "helix_list_projects", Arguments: map[string]any{"workspace_id": "other"}})
+	require.NoError(t, err)
+	assert.True(t, listed.IsError, "the host's tools name its workspace alone")
 }
 
 func connectTo(t *testing.T, server *mcp.Server) *mcp.ClientSession {

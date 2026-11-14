@@ -334,9 +334,12 @@ func (s *Service) ExecuteFoundryAgentAction(ctx context.Context, req *foundryv1.
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "start the action: %v", err)
 	}
-	// From here the click's end is recorded, whatever happens to the caller.
+	// From here the click's end is recorded, whatever happens to the caller,
+	// and its run ends before a send would sweep it up as unknown.
 	ctx = context.WithoutCancel(ctx)
-	end := s.runAgentAction(ctx, sessions, a)
+	runCtx, cancel := context.WithTimeout(ctx, foundrymodel.FoundryAgentExecutingFor-agentRunMargin)
+	end := s.runAgentAction(runCtx, sessions, a)
+	cancel()
 	continuation := &foundrymodel.FoundryAgentTurn{
 		ID: id.New(), WorkspaceID: ws, ThreadID: a.ThreadID, UserID: userID, Kind: foundrymodel.FoundryAgentTurnActionResult, Input: a.ID,
 		MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
@@ -364,6 +367,10 @@ func (s *Service) ExecuteFoundryAgentAction(ctx context.Context, req *foundryv1.
 	return out, nil
 }
 
+// agentRunMargin is how long before foundrymodel.FoundryAgentExecutingFor a
+// click's run is stopped, leaving it time to record how it ended.
+const agentRunMargin = 15 * time.Second
+
 // runAgentAction runs an action that is executing, as its person now, and
 // says how it ended.
 func (s *Service) runAgentAction(ctx context.Context, sessions integration.SessionHost, a *foundrymodel.FoundryAgentAction) foundrymodel.FoundryAgentActionEnd {
@@ -380,7 +387,8 @@ func (s *Service) runAgentAction(ctx context.Context, sessions integration.Sessi
 	if err := decoder.Decode(&payload); err != nil {
 		return failed("the action's payload can't be read")
 	}
-	session, err := sessions.Session(ctx, actor(ctx), integration.ConfirmByCaller{})
+	session, err := sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: a.UserID, WorkspaceID: a.WorkspaceID},
+		integration.ConfirmByCaller{})
 	if err != nil {
 		return failed("your access to this workspace couldn't be read; nothing ran, so you can ask again")
 	}
@@ -451,7 +459,8 @@ func (s *Service) RefreshFoundryAgentAction(ctx context.Context, req *foundryv1.
 		return nil, status.Errorf(codes.Internal, "read the action's payload: %v", err)
 	}
 	sink := &refreshSink{s: s, action: a, userID: userID}
-	session, err := sessions.Session(ctx, actor(ctx), integration.ConfirmByPerson{Sink: sink})
+	session, err := sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: userID, WorkspaceID: a.WorkspaceID},
+		integration.ConfirmByPerson{Sink: sink})
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "open your session: %v", err)
 	}

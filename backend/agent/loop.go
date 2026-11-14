@@ -41,6 +41,12 @@ const (
 	maxResultBytes = 16 << 10
 	// maxTitleChars is how much of a thread's first message titles it.
 	maxTitleChars = 80
+	// maxCallsPerReply is how many of one reply's tool calls run; the rest
+	// are answered unrun, so one reply can't queue a turn's worth of work.
+	maxCallsPerReply = 8
+	// maxAsksPerTurn is how many Analyst questions a turn asks: each spends
+	// the workspace's questions budget.
+	maxAsksPerTurn = 3
 )
 
 // Store is what a turn reads and records of Foundry's store.
@@ -53,6 +59,7 @@ type Store interface {
 		card func(*model.FoundryAgentAction) (json.RawMessage, error)) (*model.FoundryAgentAction, error)
 	GetFoundryAgentAction(ctx context.Context, workspaceID, id string) (*model.FoundryAgentAction, error)
 	GetFoundryOntology(ctx context.Context, workspaceID, id string) (*model.FoundryOntology, error)
+	ListFoundryOntologies(ctx context.Context, workspaceID, pageToken string, limit int) ([]*model.FoundryOntology, string, error)
 	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
 	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
 }
@@ -117,9 +124,12 @@ type turnRun struct {
 	client  *mcp.ClientSession
 	offered map[string]*mcp.Tool
 	tools   []llm.Tool
-	all     []entry
-	started time.Time
-	out     *Attempt
+	// fixedTokens is about what every call sends besides the transcript: the
+	// system prompt and the tools' definitions.
+	fixedTokens int
+	all         []entry
+	started     time.Time
+	out         *Attempt
 }
 
 // Run runs an attempt of turn:
@@ -174,13 +184,16 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 		return out, &Failure{Message: "The thread's transcript can't be read", Permanent: true, Err: err}
 	}
 	t := &turnRun{r: r, turn: turn, model: m, pricer: pricer, client: client, offered: offered, all: all, started: r.Now(), out: out}
+	fixed := len(system(turn.WorkspaceID))
 	for _, tool := range offered {
 		schema, err := json.Marshal(tool.InputSchema)
 		if err != nil {
 			return out, err
 		}
 		t.tools = append(t.tools, llm.Tool{Name: tool.Name, Description: tool.Description, InputSchema: schema})
+		fixed += len(tool.Name) + len(tool.Description) + len(schema)
 	}
+	t.fixedTokens = fixed / 4
 	// One order every call, so the cached prefix holds.
 	slices.SortFunc(t.tools, func(a, b llm.Tool) int { return strings.Compare(a.Name, b.Name) })
 	if err := t.event(ctx, Started{Model: ask.Name, Attempt: turn.Attempts}); err != nil {
@@ -286,17 +299,19 @@ func (t *turnRun) loop(ctx context.Context) error {
 			continue
 		}
 		messages := prompt(t.all, t.turn.ID, t.r.Cfg.ContextTokens)
-		in := 0
+		in := t.fixedTokens
 		for _, m := range messages {
 			in += estTokens(m)
 		}
-		spent := t.turn.Spend.USDMicros + t.out.Spend.USDMicros
+		// The turn's own spend: a dead attempt's reservation, which the month
+		// paid, isn't some of it.
+		spent := t.turn.Spend.USDMicros - t.turn.LostMicros + t.out.Spend.USDMicros
 		switch {
 		case t.turn.Steps+t.out.Steps >= t.r.Cfg.MaxSteps:
 			return t.finish(ctx, StopSteps)
-		case t.r.Now().Sub(t.started) >= time.Duration(t.r.Cfg.MaxWallSecs)*time.Second:
+		case t.outOfTime():
 			return t.finish(ctx, StopWallTime)
-		case spent+t.pricer.Micros(llm.Usage{In: int64(in + len(system(t.turn.WorkspaceID))/4), Out: maxOutput}) > t.turn.MaxUSDMicros:
+		case spent+t.pricer.Micros(llm.Usage{In: int64(in), Out: maxOutput}) > t.turn.MaxUSDMicros:
 			return t.finish(ctx, StopBudget)
 		}
 		answer, stop, err := t.call(ctx, messages)
@@ -323,7 +338,14 @@ func (t *turnRun) loop(ctx context.Context) error {
 	}
 }
 
-// call makes one model call, adding what it used to the attempt.
+// outOfTime reports an attempt past the turn's wall time.
+func (t *turnRun) outOfTime() bool {
+	return t.r.Now().Sub(t.started) >= time.Duration(t.r.Cfg.MaxWallSecs)*time.Second
+}
+
+// call makes one model call, adding what it used to the attempt. A tool call
+// that isn't JSON, or that a reply cut off at its output's limit was writing,
+// is left out: it never runs.
 func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message, StopReason, error) {
 	answer := llm.Message{Role: llm.Assistant}
 	stop := StopAnswered
@@ -344,7 +366,9 @@ func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message
 		case llm.Text:
 			answer.Content = append(answer.Content, c)
 		case llm.ToolUse:
-			answer.Content = append(answer.Content, c)
+			if json.Valid(c.Input) {
+				answer.Content = append(answer.Content, c)
+			}
 		case llm.Reasoning:
 			answer.Content = append(answer.Content, c)
 		case llm.Usage:
@@ -362,14 +386,42 @@ func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message
 			}
 		}
 	}
+	if stop == StopMaxTokens {
+		// The turn ends here, so no call of this reply would run.
+		answer.Content = slices.DeleteFunc(answer.Content, func(b llm.Block) bool { _, ok := b.(llm.ToolUse); return ok })
+	}
 	return answer, stop, nil
 }
 
 // runTools runs the model's calls, in order, and commits their results as one
-// message. A tool the model wasn't offered isn't called.
+// message. A tool the model wasn't offered isn't called, nor are the calls
+// past maxCallsPerReply, an ask past maxAsksPerTurn, or anything once the
+// turn's wall time is up: each is answered with why.
 func (t *turnRun) runTools(ctx context.Context, uses []llm.ToolUse) error {
+	asked := 0
+	for _, e := range t.all[:len(t.all)-1] {
+		if e.turnID == t.turn.ID {
+			asked += len(slices.DeleteFunc(toolUses(e.msg), func(u llm.ToolUse) bool { return u.Name != toolAsk }))
+		}
+	}
 	results := make([]llm.Block, 0, len(uses))
-	for _, use := range uses {
+	for i, use := range uses {
+		var unrun string
+		switch {
+		case i >= maxCallsPerReply:
+			unrun = fmt.Sprintf("Not run: at most %d tool calls of one reply run. Call it again if you still need it.", maxCallsPerReply)
+		case t.outOfTime():
+			unrun = "Not run: the turn ran out of time. Tell the person what you found so far."
+		case use.Name == toolAsk && asked >= maxAsksPerTurn:
+			unrun = fmt.Sprintf("Not run: a turn asks at most %d questions. Answer with what you have, or let the person ask again.", maxAsksPerTurn)
+		}
+		if use.Name == toolAsk {
+			asked++
+		}
+		if unrun != "" {
+			results = append(results, llm.ToolResult{ToolUseID: use.ID, Content: unrun, IsError: true})
+			continue
+		}
 		tool := t.offered[use.Name]
 		title := use.Name
 		if tool != nil {

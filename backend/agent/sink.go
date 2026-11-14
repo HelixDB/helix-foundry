@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -34,10 +38,15 @@ func (s *actionSink) Allows(operation string) bool { return Operations[operation
 
 // Record seals the token, names what the action acts on, and stores the
 // action with its card in one write. A payload the turn already prepared is
-// the action already stored. Its refusals reach the model as their words.
+// the action already stored, unless its person already decided it. A target
+// of another workspace is refused: a turn acts in its own. Its refusals
+// reach the model as their words.
 func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (integration.AwaitingPerson, error) {
 	if s.keys == nil {
 		return integration.AwaitingPerson{}, status.Error(codes.Unavailable, "the Assistant can't keep actions on this host")
+	}
+	if _, rest, _ := strings.Cut(a.Target, ":"); strings.SplitN(rest, "/", 2)[0] != s.turn.WorkspaceID {
+		return integration.AwaitingPerson{}, status.Error(codes.InvalidArgument, "the target is of another workspace: the Assistant acts in this one only")
 	}
 	actionID := id.New()
 	sealed, keyID, err := s.keys.Seal([]byte(a.Confirmation.Token), actionID)
@@ -72,6 +81,10 @@ func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (
 		return integration.AwaitingPerson{}, ErrLost
 	case err != nil:
 		return integration.AwaitingPerson{}, err
+	case stored.Status != model.FoundryAgentActionPrepared:
+		// A replayed attempt prepared it again after its person decided.
+		return integration.AwaitingPerson{}, status.Error(codes.FailedPrecondition,
+			"the person already decided this action: it is "+string(stored.Shown(time.Now()))+". Don't prepare it again unless they ask")
 	}
 	return integration.AwaitingPerson{ActionID: stored.ID, ExpiresAt: stored.ExpiresAt}, nil
 }
@@ -111,10 +124,15 @@ func describe(ctx context.Context, db Store, workspaceID string, a integration.P
 	return out
 }
 
+// minNameRunes is the shortest ontology name a message names by its words:
+// a shorter one is in too many sentences by chance.
+const minNameRunes = 3
+
 // namedByPerson reports whether the person named the action's target
-// themselves: its id, or the ontology's name, in a message they sent or a
-// page they were on in this thread. A card whose target only the model chose
-// says so.
+// themselves, in a message they sent or a page they were on in this thread:
+// its id, or its ontology's whole name, in words of its own, when no other
+// ontology's name holding it (Sales, in Sales graph) is there too. A card
+// whose target only the model chose says so.
 func (s *actionSink) namedByPerson(ctx context.Context, target string, display Display) (bool, error) {
 	_, targetID, ok := strings.Cut(target, "/")
 	if !ok {
@@ -124,15 +142,36 @@ func (s *actionSink) namedByPerson(ctx context.Context, target string, display D
 	if err != nil {
 		return false, err
 	}
-	name := strings.ToLower(strings.TrimSpace(display.OntologyName))
+	var name *regexp.Regexp
+	var longer []*regexp.Regexp
+	if n := strings.TrimSpace(display.OntologyName); utf8.RuneCountInString(n) >= minNameRunes {
+		name = wholeWords(n)
+		others, _, err := s.db.ListFoundryOntologies(ctx, s.turn.WorkspaceID, "", 100)
+		if err != nil {
+			return false, err
+		}
+		for _, o := range others {
+			if o.ID != display.OntologyID && len(o.Name) > len(n) && name.MatchString(o.Name) {
+				longer = append(longer, wholeWords(o.Name))
+			}
+		}
+	}
 	for _, t := range turns {
 		if t.Kind != model.FoundryAgentTurnMessage {
 			continue
 		}
-		said := t.Input + " " + string(t.PageContext)
-		if strings.Contains(said, targetID) || name != "" && strings.Contains(strings.ToLower(t.Input), name) {
+		if strings.Contains(t.Input+" "+string(t.PageContext), targetID) {
+			return true, nil
+		}
+		if name != nil && name.MatchString(t.Input) &&
+			!slices.ContainsFunc(longer, func(l *regexp.Regexp) bool { return l.MatchString(t.Input) }) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// wholeWords matches phrase in a text, any case, as words of its own.
+func wholeWords(phrase string) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)(?:^|[^\pL\pN_])` + regexp.QuoteMeta(strings.TrimSpace(phrase)) + `(?:$|[^\pL\pN_])`)
 }

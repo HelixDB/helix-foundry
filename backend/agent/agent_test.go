@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
 	"slices"
 	"strings"
@@ -42,7 +43,12 @@ type memStore struct {
 	events   []json.RawMessage
 	turns    []*model.FoundryAgentTurn
 	actions  []*model.FoundryAgentAction
-	lost     bool
+	// ontologies are the workspace's; Sales graph (ont1) unless a test says.
+	ontologies []*model.FoundryOntology
+	// decided is what the person did with an action by the time the turn
+	// prepares it again; nothing when empty.
+	decided model.FoundryAgentActionStatus
+	lost    bool
 }
 
 func (s *memStore) ListFoundryAgentMessages(context.Context, string) ([]model.FoundryAgentMessage, error) {
@@ -84,6 +90,9 @@ func (s *memStore) RecordFoundryAgentAction(_ context.Context, _ string, a *mode
 	defer s.mu.Unlock()
 	for _, existing := range s.actions {
 		if existing.TurnID == a.TurnID && existing.PayloadHash == a.PayloadHash {
+			if s.decided != "" {
+				existing.Status = s.decided
+			}
 			return existing, nil
 		}
 	}
@@ -103,10 +112,22 @@ func (s *memStore) GetFoundryAgentAction(_ context.Context, _, id string) (*mode
 }
 
 func (s *memStore) GetFoundryOntology(_ context.Context, workspaceID, id string) (*model.FoundryOntology, error) {
-	if workspaceID != ws || id != ontology {
-		return nil, foundrystore.ErrNotFound
+	for _, o := range s.ontologies {
+		if o.WorkspaceID == workspaceID && o.ID == id {
+			return o, nil
+		}
 	}
-	return &model.FoundryOntology{ID: ontology, WorkspaceID: ws, Name: "Sales graph"}, nil
+	return nil, foundrystore.ErrNotFound
+}
+
+func (s *memStore) ListFoundryOntologies(_ context.Context, workspaceID, _ string, _ int) ([]*model.FoundryOntology, string, error) {
+	var out []*model.FoundryOntology
+	for _, o := range s.ontologies {
+		if o.WorkspaceID == workspaceID {
+			out = append(out, o)
+		}
+	}
+	return out, "", nil
 }
 
 func (s *memStore) GetOntologyVersion(_ context.Context, _, id string) (*model.OntologyVersion, error) {
@@ -164,11 +185,18 @@ func call(id, name, input string) []llm.Chunk {
 // backend is Foundry's API as the tools call it.
 type backend struct {
 	foundryv1.FoundryServiceClient
-	asked []*foundryv1.AskFoundryQuestionRequest
-	loads int
+	asked  []*foundryv1.AskFoundryQuestionRequest
+	loads  int
+	listed int
+	// onCall runs on every read the tools make.
+	onCall func()
 }
 
 func (b *backend) ListFoundryOntologies(context.Context, *foundryv1.ListFoundryOntologiesRequest, ...grpc.CallOption) (*foundryv1.ListFoundryOntologiesResponse, error) {
+	b.listed++
+	if b.onCall != nil {
+		b.onCall()
+	}
 	return &foundryv1.ListFoundryOntologiesResponse{Ontologies: []*foundryv1.FoundryOntology{{Id: ontology, Name: "Sales graph"}}}, nil
 }
 
@@ -263,7 +291,8 @@ func newHarness(t *testing.T, steps ...[]llm.Chunk) *harness {
 	keys, err := secretbox.NewKeyring("k1", map[string][]byte{"k1": []byte(strings.Repeat("k", 32))})
 	require.NoError(t, err)
 	b := &backend{}
-	h := &harness{db: &memStore{}, model: &scripted{steps: steps}, backend: b, keys: keys}
+	h := &harness{db: &memStore{ontologies: []*model.FoundryOntology{{ID: ontology, WorkspaceID: ws, Name: "Sales graph"}}},
+		model: &scripted{steps: steps}, backend: b, keys: keys}
 	service := (&integration.Service{Foundry: b, Actions: integration.FoundryClients{FoundryServiceClient: b}, Confirmations: &confirmations{},
 		Workflows: b, FoundryURL: "http://localhost:3000", Wait: time.Second}).ForAgent()
 	h.host = &sessions{service: service}
@@ -515,4 +544,170 @@ func TestTitle(t *testing.T) {
 	long := Title(strings.Repeat("é", 200))
 	assert.Equal(t, maxTitleChars, len([]rune(long)))
 	assert.True(t, strings.HasSuffix(long, "…"))
+}
+
+func TestAPrepareActsInItsTurnsWorkspaceOnly(t *testing.T) {
+	h := newHarness(t, call("toolu_1", toolPrepare, `{"operation":"create_load","target":"ontology:ws2/ont1","payload":{"version_id":"ver3"}}`), say("ok"))
+	turn := message("Load ont1")
+	h.db.turns = []*model.FoundryAgentTurn{turn}
+	_, err := h.runner.Run(context.Background(), turn)
+	require.NoError(t, err)
+	assert.Empty(t, h.db.actions, "no card for another workspace's ontology")
+	refused := h.model.requests[1].Messages
+	result := refused[len(refused)-1].Content[0].(llm.ToolResult)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "another workspace")
+}
+
+// A replayed attempt that prepares an action its person already decided is
+// told so, and shows no card again.
+func TestAReplayedPrepareOfADecidedActionIsRefused(t *testing.T) {
+	for _, decided := range []model.FoundryAgentActionStatus{model.FoundryAgentActionDismissed, model.FoundryAgentActionExpired} {
+		h := newHarness(t,
+			call("toolu_1", toolPrepare, `{"operation":"create_load","target":"ontology:ws1/ont1","payload":{"version_id":"ver3"}}`),
+			call("toolu_2", toolPrepare, `{"operation":"create_load","target":"ontology:ws1/ont1","payload":{"version_id":"ver3"}}`),
+			say("ok"))
+		turn := message("Load the Sales graph")
+		h.db.turns = []*model.FoundryAgentTurn{turn}
+		h.db.decided = decided
+		_, err := h.runner.Run(context.Background(), turn)
+		require.NoError(t, err)
+		require.Len(t, h.db.actions, 1)
+		replayed := h.model.requests[2].Messages
+		result := replayed[len(replayed)-1].Content[0].(llm.ToolResult)
+		assert.True(t, result.IsError, string(decided))
+		assert.Contains(t, result.Content, "already decided")
+		assert.Equal(t, 1, strings.Count(strings.Join(h.db.eventTypes(), " "), "action_card"), "one card")
+	}
+}
+
+func TestATargetIsNamedByItsWholeName(t *testing.T) {
+	for name, c := range map[string]struct {
+		ontologies []string
+		said       string
+		named      bool
+	}{
+		"its name":                   {[]string{"Sales graph"}, "load the sales graph please", true},
+		"part of a word":             {[]string{"Sales"}, "load the Salesforce data", false},
+		"inside a longer ontology's": {[]string{"Sales", "Sales graph"}, "load the Sales graph", false},
+		"beside a longer one":        {[]string{"Sales", "Sales graph"}, "load Sales", true},
+		"too short to count":         {[]string{"a"}, "load a version", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, call("toolu_1", toolPrepare, `{"operation":"create_load","target":"ontology:ws1/ont1","payload":{"version_id":"ver3"}}`), say("ok"))
+			h.db.ontologies = nil
+			for i, n := range c.ontologies {
+				id := ontology
+				if i > 0 {
+					id = fmt.Sprintf("ont%d", i+1)
+				}
+				h.db.ontologies = append(h.db.ontologies, &model.FoundryOntology{ID: id, WorkspaceID: ws, Name: n})
+			}
+			turn := message(c.said)
+			h.db.turns = []*model.FoundryAgentTurn{turn}
+			_, err := h.runner.Run(context.Background(), turn)
+			require.NoError(t, err)
+			require.Len(t, h.db.actions, 1)
+			assert.Equal(t, c.named, h.db.actions[0].TargetNamedByUser)
+		})
+	}
+}
+
+// A turn whose attempt died is resumed: the reservation the month paid for
+// the dead attempt isn't spend against the turn's cap.
+func TestAReclaimedTurnCallsTheModel(t *testing.T) {
+	h := newHarness(t, say("Here."))
+	turn := message("Go")
+	turn.Attempts = 2
+	turn.Spend.USDMicros, turn.LostMicros = turn.MaxUSDMicros, turn.MaxUSDMicros
+	a, err := h.runner.Run(context.Background(), turn)
+	require.NoError(t, err)
+	assert.Equal(t, StopAnswered, a.Stop)
+	assert.Len(t, h.model.requests, 1)
+}
+
+func TestToolCallsAreBoundedPerReplyAndAsksPerTurn(t *testing.T) {
+	var uses []llm.Chunk
+	for i := range maxCallsPerReply + 2 {
+		uses = append(uses, llm.ToolUse{ID: fmt.Sprintf("toolu_%d", i), Name: "helix_foundry_list_ontologies", Input: json.RawMessage(`{"workspace_id":"ws1"}`)})
+	}
+	for i := range maxAsksPerTurn + 1 {
+		uses[i] = llm.ToolUse{ID: fmt.Sprintf("toolu_%d", i), Name: toolAsk,
+			Input: json.RawMessage(fmt.Sprintf(`{"workspace_id":"ws1","ontology_id":"ont1","question":"Q%d?"}`, i))}
+	}
+	h := newHarness(t, append(uses, llm.Usage{In: 100, Out: 10}, llm.Stop{Reason: llm.StopToolUse}), say("Done."))
+	_, err := h.runner.Run(context.Background(), message("Go"))
+	require.NoError(t, err)
+	assert.Len(t, h.backend.asked, maxAsksPerTurn, "asks past the turn's are left")
+	results := h.model.requests[1].Messages
+	answered := results[len(results)-1].Content
+	require.Len(t, answered, maxCallsPerReply+2, "every call is answered")
+	var unrun []string
+	for _, b := range answered {
+		if r := b.(llm.ToolResult); strings.HasPrefix(r.Content, "Not run") {
+			unrun = append(unrun, r.ToolUseID)
+		}
+	}
+	assert.Equal(t, []string{"toolu_3", "toolu_8", "toolu_9"}, unrun)
+}
+
+func TestToolsStopAtTheWallTime(t *testing.T) {
+	uses := []llm.Chunk{
+		llm.ToolUse{ID: "toolu_1", Name: "helix_foundry_list_ontologies", Input: json.RawMessage(`{"workspace_id":"ws1"}`)},
+		llm.ToolUse{ID: "toolu_2", Name: "helix_foundry_list_ontologies", Input: json.RawMessage(`{"workspace_id":"ws1"}`)},
+		llm.Usage{In: 100, Out: 10}, llm.Stop{Reason: llm.StopToolUse},
+	}
+	h := newHarness(t, uses)
+	start := time.Now()
+	h.runner.Now = func() time.Time { return start }
+	h.backend.onCall = func() { h.runner.Now = func() time.Time { return start.Add(time.Hour) } }
+	a, err := h.runner.Run(context.Background(), message("Go"))
+	require.NoError(t, err)
+	assert.Equal(t, StopWallTime, a.Stop)
+	assert.Equal(t, 1, h.backend.listed, "the call after the time ran out isn't made")
+	var results []llm.ToolResult
+	blocks, err := llm.UnmarshalBlocks(h.db.messages[len(h.db.messages)-1].Content)
+	require.NoError(t, err)
+	for _, b := range blocks {
+		results = append(results, b.(llm.ToolResult))
+	}
+	require.Len(t, results, 2)
+	assert.Contains(t, results[1].Content, "ran out of time")
+}
+
+// A reply cut off at its output's limit, or a call that isn't JSON, runs no
+// tool: the cut call's input may be half written.
+func TestACutOffCallNeverRuns(t *testing.T) {
+	t.Run("max tokens", func(t *testing.T) {
+		h := newHarness(t, []llm.Chunk{llm.Text{Text: "Loading"},
+			llm.ToolUse{ID: "toolu_1", Name: toolPrepare, Input: json.RawMessage(`{}`)}, llm.Usage{In: 100, Out: 10}, llm.Stop{Reason: llm.StopMaxTokens}})
+		a, err := h.runner.Run(context.Background(), message("Load it"))
+		require.NoError(t, err)
+		assert.Equal(t, StopMaxTokens, a.Stop)
+		blocks, err := llm.UnmarshalBlocks(h.db.messages[len(h.db.messages)-1].Content)
+		require.NoError(t, err)
+		assert.Equal(t, []llm.Block{llm.Text{Text: "Loading"}}, blocks, "the text is kept, the call isn't")
+		assert.Empty(t, h.db.actions)
+	})
+	t.Run("not JSON", func(t *testing.T) {
+		h := newHarness(t, []llm.Chunk{llm.ToolUse{ID: "toolu_1", Name: toolPrepare, Input: json.RawMessage(`{"operation":"create_lo`)},
+			llm.Usage{In: 100, Out: 10}, llm.Stop{Reason: llm.StopToolUse}})
+		a, err := h.runner.Run(context.Background(), message("Load it"))
+		require.NoError(t, err)
+		assert.Equal(t, StopAnswered, a.Stop, "nothing to run: the reply ends the turn")
+		assert.Empty(t, h.db.actions)
+	})
+}
+
+// The check before a call counts the tools' definitions it sends.
+func TestTheEstimateCountsTheTools(t *testing.T) {
+	h := newHarness(t, say("ok"))
+	turn := message("Go")
+	pricer := llm.Pricer{Input: 2000, Output: 10000, CacheRead: 200, CacheWrite: 2500}
+	// Enough for the system prompt and the message, not for the tools too.
+	turn.MaxUSDMicros = pricer.Micros(llm.Usage{In: int64(len(system(ws))/4 + 200), Out: maxOutput})
+	a, err := h.runner.Run(context.Background(), turn)
+	require.NoError(t, err)
+	assert.Equal(t, StopBudget, a.Stop)
+	assert.Empty(t, h.model.requests)
 }
