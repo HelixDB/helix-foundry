@@ -1439,7 +1439,7 @@
         },
         "page": {
           "type": "string",
-          "description": "The website path the person was on, such as \"/ontology/abc\": at most 255\nbytes, starting with \"/\", without control characters; empty for none."
+          "description": "The website path the person was on, such as \"/ontology/abc\": a path,\nwithout a query or fragment, starting with \"/\", of at most 255 bytes and\nwithout control characters; empty for none."
         }
       },
       "description": "Feedback the signed-in user sends Helix's team from a website, stored under\ntheir account with the feedback agents send through the MCP. The message is\nuntrusted text, stored and relayed as plain text only. Each user's feedback,\nfrom here and the MCP together, is capped per hour: past the cap it is\nRESOURCE_EXHAUSTED."

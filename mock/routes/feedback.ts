@@ -10,10 +10,10 @@ import { isReply, membership, onReset } from "../state";
 // RecordMcpFeedback stores it (the site's source, the page the person was
 // on) and tells Helix's team in Slack with a Linear issue. A named category,
 // a message of 1 to 4096 bytes of UTF-8, a page of at most 255 bytes that
-// starts "/" with no control character, a workspace the caller belongs to
-// (else NOT_FOUND), and at most 20 an hour a person, shared with what their
-// agents send through the MCP. The mock tells no one: GET /__mock/feedback
-// lists what it holds.
+// starts "/" with no control character, query or fragment, a workspace the
+// caller belongs to (else NOT_FOUND), and at most 20 an hour a person,
+// shared with what their agents send through the MCP. The mock tells no
+// one: GET /__mock/feedback lists what it holds.
 
 const PER_HOUR = 20;
 const HOUR_MS = 3_600_000;
@@ -63,13 +63,15 @@ export const feedbackRoutes: MockRoute[] = [
         page &&
         (!page.startsWith("/") ||
           Buffer.byteLength(page) > 255 ||
+          // A path alone: no query or fragment.
+          /[?#]/.test(page) ||
           // Go's unicode.IsControl: C0, DEL and C1.
           // eslint-disable-next-line no-control-regex
           /[\u0000-\u001f\u007f-\u009f]/.test(page))
       )
         return fail(
           "INVALID_ARGUMENT",
-          "page is a path starting with / of at most 255 bytes, without control characters",
+          "page is a path, without a query or fragment: starting with /, at most 255 bytes, no control characters",
         );
       const since = Date.now() - HOUR_MS;
       if (

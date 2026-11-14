@@ -4,6 +4,7 @@ import { Link, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { CircleAlert, CircleCheck, LoaderCircle, X } from "lucide-react";
 import type { FoundryLoad, OntologyGeneration } from "../../../shared/wfe";
+import { ApiError } from "../../api";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { liveRead } from "../documents/model";
@@ -29,8 +30,8 @@ import {
 // ended and where to go next. In the sidebar, it never covers the page.
 // A first draft that queues its load (loadWhenReady) hands its card to that
 // load. Dismissing a card, opening where it points once it ended, or
-// seeing it end on a page that shows it stops following it; a job that
-// can't be read (deleted, or no longer the person's to read) is dropped.
+// seeing it end on a page that shows it stops following it; a job the WFE
+// says is gone or not the person's to read is dropped.
 
 export function JobDock() {
   const { id } = useWorkspace(),
@@ -122,6 +123,11 @@ function Card({
   );
 }
 
+// A job the WFE says is gone (deleted, with its ontology) or no longer the
+// person's to read; any other failure is read again.
+const gone = (e: unknown) =>
+  e instanceof ApiError && (e.status === 404 || e.status === 403);
+
 const jobPath = (job: WatchedJob) =>
   job.kind === "generation"
     ? paths.generation(job.ontologyId, job.id)
@@ -158,7 +164,7 @@ function GenerationCard({
     if (next) followJob(ws, job, { kind: "load", id: next.load.id });
   }, [next && next.load.id]);
   useEffect(() => {
-    if (read.error) unwatchJob(ws, job.kind, job.id);
+    if (gone(read.error)) unwatchJob(ws, job.kind, job.id);
   }, [read.error]);
   if (!g || next) return null;
   return (
@@ -216,7 +222,7 @@ function LoadCard({
     name = useOntologyLabel(ws, o),
     progress = useLoadJobProgress(live);
   useEffect(() => {
-    if (read.error) unwatchJob(ws, job.kind, job.id);
+    if (gone(read.error)) unwatchJob(ws, job.kind, job.id);
   }, [read.error]);
   if (!l) return null;
   return (

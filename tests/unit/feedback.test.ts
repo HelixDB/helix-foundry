@@ -155,6 +155,8 @@ describe("the mock's POST /v1/feedback", () => {
       /^page is/,
     );
     expect(refused({ ...valid, page: "/a\nb" })).toMatch(/^page is/);
+    expect(refused({ ...valid, page: "/ask?q=1" })).toMatch(/^page is/);
+    expect(refused({ ...valid, page: "/doc#s1-2-3" })).toMatch(/^page is/);
     expect(mockFeedback()).toHaveLength(0);
   });
 
