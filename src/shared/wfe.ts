@@ -3250,6 +3250,291 @@ export type DashboardSnapshot = {
   }[];
 };
 
+// ---------------------------------------------------------------- Automations
+// Routes under /v1/workspaces/{workspaceId}/foundry/automations...
+// (backend/api/automations.go, backend/automation): a person's graph of
+// steps Foundry runs as them, its owner, when its trigger fires. Every member
+// lists and reads every automation and creates their own; only its owner
+// edits, approves, resumes and runs one; its owner or an owner or admin
+// pauses, deletes and cancels a run. It runs only once its owner approved its
+// spec here (:approve, never through an agent): new, and after every spec
+// edit, it is needs_approval. An edit or an approval names the revision read
+// (int64, as a string): another is FAILED_PRECONDITION
+// FOUNDRY_AUTOMATION_CHANGED. Refusals carry an ErrorInfo reason
+// (AUTOMATION_REFUSALS); one the caller may not make is PERMISSION_DENIED,
+// and past the workspace's runs of the day RESOURCE_EXHAUSTED. "Workflows"
+// are another thing: an outside agent's recorded runs.
+
+/** The ErrorInfo reasons of the automations' FAILED_PRECONDITION refusals. */
+export const AUTOMATION_REFUSALS = [
+  // Automations are off on this stamp or build.
+  "FOUNDRY_AUTOMATIONS_DISABLED",
+  // An edit or approval of a revision another write has passed: read it again.
+  "FOUNDRY_AUTOMATION_CHANGED",
+  // The workspace's 50 automations.
+  "FOUNDRY_AUTOMATION_LIMIT",
+  // Resume or Run now while its spec waits for its owner's approval.
+  "FOUNDRY_AUTOMATION_UNAPPROVED",
+  // Run now while a run of it is live.
+  "FOUNDRY_AUTOMATION_BUSY",
+  // Pause while it waits for approval: it isn't running.
+  "FOUNDRY_AUTOMATION_NOT_ACTIVE",
+  // Cancel of a run that already ended.
+  "FOUNDRY_AUTOMATION_RUN_ENDED",
+] as const;
+export type AutomationRefusal = (typeof AUTOMATION_REFUSALS)[number];
+
+/**
+ * An automation's trigger (backend/automation, snake_case): a schedule in an
+ * IANA zone (every hour at minute 0 to 59, every day at "HH:MM", every week
+ * on a day at "HH:MM"), work that ended on one target, or by hand only.
+ */
+export type AutomationTrigger =
+  | { kind: "schedule"; every: "hour"; minute: number; time_zone: string }
+  | { kind: "schedule"; every: "day"; at: string; time_zone: string }
+  | {
+      kind: "schedule";
+      every: "week";
+      weekday:
+        | "monday"
+        | "tuesday"
+        | "wednesday"
+        | "thursday"
+        | "friday"
+        | "saturday"
+        | "sunday";
+      at: string;
+      time_zone: string;
+    }
+  | {
+      kind: "sync_finished";
+      connector_id: string;
+      outcome: "succeeded" | "failed" | "any";
+    }
+  | { kind: "load_ready"; ontology_id: string }
+  | { kind: "document_arrived"; set_id: string }
+  | {
+      kind: "generation_finished";
+      ontology_id: string;
+      outcome: "succeeded" | "failed" | "any";
+    }
+  | { kind: "manual" };
+
+/**
+ * An action, as an action step runs it and an Assistant step's allow
+ * approves it: one operation on one fixed target. create_load loads the
+ * ontology's current version; publish_dashboard refreshes its snapshot.
+ */
+export type AutomationAction =
+  | { operation: "sync_connector"; connector_id: string }
+  | { operation: "create_load"; ontology_id: string }
+  | { operation: "publish_dashboard"; dashboard_id: string };
+
+/** A node's kind and config. */
+export type AutomationNodeConfig =
+  | { kind: "trigger"; config: AutomationTrigger }
+  // instruction: 1 to 2,000 characters; allow: at most 10, each once.
+  | {
+      kind: "assistant";
+      config: { instruction: string; allow?: AutomationAction[] };
+    }
+  | { kind: "action"; config: AutomationAction }
+  // answer: the Assistant step before it said yes or no; count: its count,
+  // or a document_arrived or sync_finished trigger's.
+  | { kind: "condition"; config: { check: "answer"; equals: "yes" | "no" } }
+  | {
+      kind: "condition";
+      config: {
+        check: "count";
+        op: "at_least" | "at_most" | "equals";
+        value: number;
+      };
+    }
+  // message: at most 500 characters.
+  | { kind: "notify"; config: { message: string } };
+
+/** One node of a spec: id 1 to 32 of a-z, 0-9, - and _, unique; position is the canvas's only. */
+export type AutomationNode = AutomationNodeConfig & {
+  id: string;
+  position: { x: number; y: number };
+};
+
+/** An edge; branch exactly on an edge out of a condition, each at most once. */
+export type AutomationEdge = {
+  from: string;
+  to: string;
+  branch?: "true" | "false";
+};
+
+/**
+ * An automation's spec: exactly one trigger with no edge in, every node
+ * reached from it with no cycle, at most 50 nodes and 100 edges; a condition
+ * has exactly one edge in.
+ */
+export type AutomationSpec = {
+  v: 1;
+  nodes: AutomationNode[];
+  edges: AutomationEdge[];
+};
+
+export type AutomationStatus = "needs_approval" | "active" | "paused";
+export type AutomationPausedReason = "person" | "failures" | "owner_lost_access";
+export type AutomationRunStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "skipped";
+export type AutomationNodeStatus =
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "skipped"
+  | "blocked";
+
+/** What a step gave (outputJson): untrusted text from the workspace. */
+export type AutomationNodeOutput = {
+  summary?: string;
+  // An Assistant step's yes (true) or no.
+  answer?: boolean;
+  count?: number;
+  // The branch a condition took.
+  branch?: boolean;
+  // An action's result, as the MCP's tools return it.
+  result?: unknown;
+  // Actions an Assistant step left for the owner, as cards in the run's thread.
+  pending?: number;
+};
+
+/** What fired a run (triggerEventJson). */
+export type AutomationTriggerEvent = {
+  kind: AutomationTrigger["kind"];
+  at: string;
+  sync_id?: string;
+  load_id?: string;
+  generation_id?: string;
+  document_ids?: string[];
+  outcome?: string;
+  count?: number;
+  rows?: number;
+  by_user_id?: string;
+};
+
+/** v1FoundryAutomationRunNode: a step that started. */
+export type FoundryAutomationRunNode = {
+  nodeId: string;
+  status?: AutomationNodeStatus;
+  outputJson?: string;
+  error?: string;
+  // An Assistant step's turn, in the run's thread (threadId).
+  turnId?: string;
+  // int64.
+  usdMicros?: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+};
+
+/** v1FoundryAutomationRun */
+export type FoundryAutomationRun = {
+  id: string;
+  automationId?: string;
+  status?: AutomationRunStatus;
+  // Why it failed, was cancelled or skipped, or why a queued one retries.
+  error?: string;
+  triggerEventJson?: string;
+  // int64.
+  specRevision?: string;
+  // AutomationSpec as JSON, on a run got alone.
+  specJson?: string;
+  // The owner's Assistant thread its Assistant steps ran in.
+  threadId?: string;
+  // int64.
+  usdMicros?: string;
+  attempts?: number;
+  createdAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  // Its steps that started, on a run got alone.
+  nodes?: FoundryAutomationRunNode[];
+  canCancel?: boolean;
+};
+
+/** v1FoundryAutomation */
+export type FoundryAutomation = {
+  id: string;
+  name?: string;
+  description?: string;
+  // AutomationSpec as JSON; empty in a list.
+  specJson?: string;
+  // int64, from 1: what an edit or an approval names.
+  revision?: string;
+  // int64.
+  specRevision?: string;
+  ownerUserId?: string;
+  status?: AutomationStatus;
+  pausedReason?: AutomationPausedReason;
+  pausedByUserId?: string;
+  pausedAt?: string | null;
+  // int64; missing or "0": never approved.
+  approvedSpecRevision?: string;
+  approvedAt?: string | null;
+  triggerKind?: AutomationTrigger["kind"];
+  triggerTarget?: string;
+  // An active schedule's next time.
+  nextRunAt?: string | null;
+  failures?: number;
+  backoffUntil?: string | null;
+  lastRun?: FoundryAutomationRun | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  canEdit?: boolean;
+  canApprove?: boolean;
+  canPause?: boolean;
+  canResume?: boolean;
+  canRun?: boolean;
+  canDelete?: boolean;
+};
+
+/** GET .../automations: every one (at most 50), each with its newest run, without specs. */
+export type ListAutomationsResponse = {
+  automations?: FoundryAutomation[];
+  canCreate?: boolean;
+  // Whether a notify step emails here (false on a local build).
+  email?: boolean;
+};
+/** v1FoundryAutomationResponse: get, create, update, approve, pause and resume. */
+export type AutomationResponse = { automation: FoundryAutomation };
+/** POST .../automations: needs_approval; the same clientToken returns the one made. */
+export type CreateAutomationRequest = {
+  // 1 to 120 characters.
+  name: string;
+  // At most 1,000 characters.
+  description?: string;
+  // AutomationSpec as JSON.
+  specJson: string;
+  // 1 to 64 characters.
+  clientToken: string;
+};
+/** PATCH .../automations/{id}: each field set is changed, at least one. */
+export type UpdateAutomationRequest = {
+  expectedRevision: string;
+  name?: string;
+  description?: string;
+  specJson?: string;
+};
+/** POST .../automations/{id}:approve: its owner's click on the revision read. */
+export type ApproveAutomationRequest = { expectedRevision: string };
+/** POST .../automations/{id}:run: the same clientToken returns the run it queued. */
+export type RunAutomationRequest = { clientToken: string };
+/** GET .../automations/{automationId}/runs: newest first, 50 a page. */
+export type ListAutomationRunsResponse = {
+  runs?: FoundryAutomationRun[];
+  nextPageToken?: string;
+};
+/** v1FoundryAutomationRunResponse: run, get run and cancel. */
+export type AutomationRunResponse = { run: FoundryAutomationRun };
+
 // ---------------------------------------------------------------- Helix databases
 // The Helix control plane's own routes, as helix-website calls them:
 // projects and their databases (tenants) to bind an ontology to, and reads
