@@ -136,6 +136,9 @@ type FoundryLoadDocumentSet struct {
 	// it created and those it added its evidence to, so a fact two documents
 	// state counts twice.
 	Facts int64
+	// Attributes are its documents' values written: property values each
+	// stated that were written as evidence, counted by document as Facts are.
+	Attributes int64
 	// Reviews are the reviews its documents left when the load last wrote
 	// each, of every kind; one a person settled since stays counted until
 	// the load writes the decision.
@@ -672,10 +675,9 @@ const (
 	// documents it waits for. A refresh queues it instead of a new load.
 	FoundryGraphJobApply FoundryGraphJobKind = "apply"
 	// FoundryGraphJobResend sends documents its load already holds to the
-	// engine again, each with its saved extraction: those the load owes a
-	// resend (FoundryLoadResend). A person's approval of a held claim queues
-	// it, so the engine replays the claim's document and writes what the
-	// approval releases.
+	// engine again: those the load owes a resend (FoundryLoadResend). A
+	// person's approval of a held claim queues it, so the engine writes what
+	// the approval releases from the review the load keeps, at no cost.
 	FoundryGraphJobResend FoundryGraphJobKind = "resend"
 )
 
@@ -804,6 +806,9 @@ type FoundryGraphJob struct {
 	CreatedAt         time.Time
 	StartedAt         *time.Time
 	FinishedAt        *time.Time
+	// IndexesPendingSince is when the job's attempts began finding an index
+	// still building, kept across those retries; nil while none is pending.
+	IndexesPendingSince *time.Time
 	// Sources are the snapshots a load job reads, pinned on its first attempt.
 	Sources []FoundryLoadSource
 	// Origin and RefreshesLoadID are written to the load a load job creates;
@@ -832,7 +837,11 @@ type FoundryGraphJobOutcome struct {
 	// still building an index. The retry gives the attempt back, so it
 	// doesn't count against max_attempts.
 	Uncounted bool
-	Status    FoundryGraphJobStatus
+	// IndexesPendingSince is the job's FoundryGraphJob.IndexesPendingSince
+	// after this attempt: when an index still building was first found, for
+	// a retry of one; nil clears it.
+	IndexesPendingSince *time.Time
+	Status              FoundryGraphJobStatus
 	// Error is why, written for the customer.
 	Error string
 	// IngestDone means the version's tables are in the load: a retry skips

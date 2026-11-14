@@ -96,6 +96,8 @@ export const mock = {
     // The database with that slug refuses its next n requests with the
     // gateway's 503 rate_limit_unavailable, as a new database does.
     startingQueries?: Record<string, number>;
+    // The next n load ingests find an index still building.
+    indexesPending?: number;
     // How many customers only Stripe's invoices table states, in a load
     // written from now on: Customer then has two sources.
     invoiceOnlyCustomers?: number;
@@ -126,6 +128,8 @@ export const mock = {
     // Acme is entitled to directory sync (SSO) with nothing connected yet;
     // what its directory reports; how long a sync asked for runs.
     directoryEntitled?: boolean;
+    directorySettingUp?: boolean;
+    directoryReadFailures?: number;
     directoryIssues?: { kind: string; displayName?: string; email?: string }[];
     directorySyncMs?: number;
     // People enrichment: a batch of lookups (and the wait for a slot), and
@@ -177,6 +181,12 @@ export const mock = {
     assessEnabled?: boolean;
     assessMs?: number;
     assessOutcome?: "fail" | "skip";
+    // What the engine says of an approval taken back (contract 4.16.0), in
+    // place of withdrawn: nothing of it in the load, or a refusal.
+    withdrawOutcome?: "not_written" | "differs" | "too_large";
+    // The load holds an approved claim's document with other text than a
+    // resend sends (contract 4.17.0): refused in place as document_changed.
+    documentChanged?: boolean;
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",

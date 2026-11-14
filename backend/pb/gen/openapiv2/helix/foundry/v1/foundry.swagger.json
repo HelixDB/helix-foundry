@@ -3231,6 +3231,13 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "includeWithdraws",
+            "description": "Also list the current load's withdraws, approvals taken back from it\n(contract 4.16.0, kind withdraw), with what became of each. A client\nbefore them leaves it unset and gets none: it has no way to show one.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [
@@ -3273,6 +3280,92 @@
             "in": "path",
             "required": true,
             "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-labels": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryReviewLabels",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryReviewLabelsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageToken",
+            "description": "Last label id from a previous page.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "post": {
+        "summary": "A person's word on a claim drawn for the review queue's random slice or\nre-checked by a second person: a label that measures precision. It\nchanges no decision and no load.",
+        "operationId": "FoundryService_SettleFoundryReviewLabel",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryReviewLabelResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceSettleFoundryReviewLabelBody"
+            }
           }
         ],
         "tags": [
@@ -4807,9 +4900,39 @@
       "properties": {
         "decision": {
           "$ref": "#/definitions/v1FoundryReviewChoice"
+        },
+        "drawn": {
+          "type": "string",
+          "description": "How the review queue showed the card the decision was made on: \"ranked\"\n(in its order of facts written) or \"random\" (its random slice, which\nmeasures precision); empty for a decision made elsewhere. A release or\nreject drawn at random is also kept as a label of the claim\n(FoundryReviewLabel), with the score it was read at."
         }
       },
       "description": "Reads the current load's review and stores a decision. A resolve decision\napplies from the next load; a release or a prop decision applies to the\ncurrent load at once (FoundryReviewChoice.release, FoundryReviewChoice.prop);\na reject changes no load (FoundryReviewChoice.reject)."
+    },
+    "FoundryServiceSettleFoundryReviewLabelBody": {
+      "type": "object",
+      "properties": {
+        "fact": {
+          "$ref": "#/definitions/v1FoundryLabelFact"
+        },
+        "decisionId": {
+          "type": "string"
+        },
+        "reviewId": {
+          "type": "string"
+        },
+        "labelId": {
+          "type": "string"
+        },
+        "verdict": {
+          "type": "string",
+          "description": "\"right\" or \"wrong\"."
+        },
+        "drawn": {
+          "type": "string",
+          "description": "\"random\" (a card of the queue's random slice) or \"recheck\" (a second\nperson's word, never the first person's own)."
+        }
+      },
+      "description": "A label of a claim at its place, drawn at random (`fact`, a fact's quote\nthe current load holds; `review_id`, a held claim of the current load\nsomeone has decided) or a second person's re-check (`decision_id`, a\ndecision on a held claim; `label_id`, another person's label drawn at\nrandom). The backend reads the claim from the current load, the decision\nor the label, never from the request."
     },
     "FoundryServiceStartConnectorSignInBody": {
       "type": "object",
@@ -6277,16 +6400,20 @@
       "properties": {
         "status": {
           "type": "string",
-          "description": "pending (a job has yet to apply it), written (the claim is a fact; on a\nlink that holds one value, a statement dated after the approval takes\neffect, or a later approval, may hold the link instead, with the claim\nkept as its evidence),\nrefused (it stays held: reason says why), missed (this load holds no\nreview at the decision's key, nor one at its place stating what was\napproved, so it has nothing to release),\napplied (a prop decision: the load was sent it, and the job that sent it\nsucceeded; the engine reports nothing more of a value, so this doesn't\nsay the property holds it: a document dated after the decision still\nbeats it, and an entity the load doesn't hold takes none),\nunconfirmed (the job that applies it failed before the engine's word on\nit was recorded, reason job_failed: the claim may or may not have been\nwritten, or the value sent, and no job is coming. Approving it again\nfinishes it while the load still holds the claim's review; choosing a\nvalue again finishes a value, and so does the end of the ontology's next\njob, which sends the load its values again. If the engine wrote the\nclaim before the job failed, that review is gone and there is nothing\nto approve: the fact is in the load, and the decision stays unconfirmed\nuntil another approval of the same document sends it again), or empty:\nthe load read the decision when it was created, and no job has said\nwhat became of it."
+          "description": "pending (a job has yet to apply it), written (the claim is a fact; on a\nlink that holds one value, a statement dated after the approval takes\neffect, or a later approval, may hold the link instead, with the claim\nkept as its evidence),\nrefused (it stays held: reason says why), missed (this load holds no\nreview at the decision's key, nor one at its place stating what was\napproved, so it has nothing to release),\napplied (a prop decision: the load was sent it, and the job that sent it\nsucceeded; the engine reports nothing more of a value, so this doesn't\nsay the property holds it: a document dated after the decision still\nbeats it, and an entity the load doesn't hold takes none),\nunconfirmed (the job that applies it failed before the engine's word on\nit was recorded, reason job_failed: the claim may or may not have been\nwritten, or the value sent, and no job is coming. Approving it again\nfinishes it while the load still holds the claim's review; choosing a\nvalue again finishes a value, and so does the end of the ontology's next\njob, which sends the load its values again. If the engine wrote the\nclaim before the job failed, that review is gone and there is nothing\nto approve: the fact is in the load, and the decision stays unconfirmed\nuntil another approval of the same document sends it again), or empty:\nthe load read the decision when it was created, and no job has said\nwhat became of it.\nOf a withdraw (an approval taken back, contract 4.16.0): pending while\nits job has yet to run, withdrawn (what the approval wrote no longer\nacts: the claim is held again, or, held for a conflict with a document\nsince removed, stays written as its document's statement with no\napproval to rank it), not_written (the load held nothing the approval\nwrote), refused (what it wrote stays: differs, quotes an engine before\n4.16.0 wrote of several claims of the link keep nothing to tell them\napart; too_large; or the backend's document_gone, document_unread,\nunanswered), or unconfirmed: no word came, so whether it was taken back\nis not known. With job_failed its job failed, and the end of the\nontology's next job sends it again; with document_failed the engine\nfailed its document, and the next approval or take-back in that\ndocument sends it again; with not_replayed its document's saved reading\ncan't be reused, so no word can come while this load is current, and\nthe next load won't write the approval."
         },
         "reason": {
           "type": "string",
-          "description": "Why a refused claim stays held. The engine's reasons: unresolved (a name\nin it is matched to no one record: settle that name), legal_form (a name\nis linked only by its legal form, on a link that holds one value: settle\nthat name), part_name and own_name (a name is linked only by part of a\nrecord's name, or only by an identifier that is the name the text calls\nit by, whatever the link holds: settle that name), changed (the claim\nreads differently now from what was approved), differs (its sentence is\nread more than one way), conflict (a property of the fact differs from\nthe one the load holds; or the link holds one value and the claim gives\na date still to come, which a load or resend after it writes; or a load\nbuilt before statements were kept wrote its edge, or an engine before\ncontract 4.14.0 refused it: load again), blocked (it would break\na blocking rule, or checking that took more reading than a load allows),\nno_statement (its review keeps nothing to write), not_stated (the\ndocument, read again, no longer states it there), too_large,\nnot_allowed. The backend's: not_replayed (the document's saved\nextraction didn't replay, so applying it would have cost a model call: a\nnew load applies it), document_gone, document_unread (the load holds\nthe document but no extraction of it to replay), document_failed,\ntoo_large (the document with its decisions is more than one request to\nthe engine takes), unanswered. With unconfirmed it is job_failed. A\nreader shows a reason it doesn't know as it is."
+          "description": "Why a refused claim stays held. The engine's reasons: unresolved (a name\nin it is matched to no one record: settle that name), legal_form (a name\nis linked only by its legal form, on a link that holds one value: settle\nthat name), part_name and own_name (a name is linked only by part of a\nrecord's name, or only by an identifier that is the name the text calls\nit by, whatever the link holds: settle that name), changed (the claim\nreads differently now from what was approved), differs (its sentence is\nread more than one way), conflict (a property of the fact differs from\nthe one the load holds; or the link holds one value and the claim gives\na date still to come, which a load or resend after it writes; or a load\nbuilt before statements were kept wrote its edge, or an engine before\ncontract 4.14.0 refused it: load again), blocked (it would break\na blocking rule, or checking that took more reading than a load allows),\nno_statement (its review keeps nothing to write), not_stated (the\ndocument doesn't say its quote at its place, the load keeps no record of\nthe model work that stated it, or its set no longer reads its link or an\nend's type; through contract 4.16.0 also the document,\nread again, no longer stating it there), document_changed (contract\n4.17.0: the load holds the document with other text than it read the\nclaim in, so only a new load, which reads the new text, can write it),\ntoo_large, not_allowed. The backend's: not_replayed (the engine said\nnothing of the document, which would have cost a model call: a new load\napplies it; through contract 4.16.0, a document whose saved extraction\ndidn't replay), document_gone, document_unread (the load holds the\ndocument but recorded no extraction of it), document_failed,\ntoo_large (the document with its decisions is more than one request to\nthe engine takes), unanswered. With unconfirmed it is job_failed, or, of\na withdraw, document_failed or not_replayed. A reader shows a reason it\ndoesn't know as it is."
         },
         "at": {
           "type": "string",
           "format": "date-time",
           "description": "When a job said so; unset while pending."
+        },
+        "takesBack": {
+          "type": "boolean",
+          "description": "Of a release: the load may have written it, so removing the decision\ntakes it back from the load (a withdraw, contract 4.16.0) rather than\nonly dropping it. The backend's one rule: written, unconfirmed, copied\nwith the load and its document read with no word of it, or any copy\nwhile a job of the load is in flight."
         }
       },
       "description": "What became of a release or a prop decision in the ontology's current load."
@@ -6392,7 +6519,8 @@
         },
         "attributes": {
           "type": "integer",
-          "format": "int32"
+          "format": "int32",
+          "description": "Values written: property values it stated that were written as\nevidence (the engine's DocumentCounts.attributes)."
         },
         "attributeReviews": {
           "type": "integer",
@@ -7055,6 +7183,30 @@
       },
       "description": "FoundryHealRun is one audit of an ontology's load."
     },
+    "v1FoundryLabelFact": {
+      "type": "object",
+      "properties": {
+        "docId": {
+          "type": "string"
+        },
+        "section": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "start": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "end": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "factKey": {
+          "type": "string"
+        }
+      },
+      "description": "An accepted fact's quote in the current load: its document, its section\nand byte range there, and its fact's key."
+    },
     "v1FoundryLoad": {
       "type": "object",
       "properties": {
@@ -7212,6 +7364,11 @@
           "type": "string",
           "format": "int64",
           "description": "Fact writes by its documents: each document counts the facts it created\nand the stored facts it added its evidence to, so a fact two documents\nstate counts twice. It is not the number of distinct facts in the graph."
+        },
+        "attributes": {
+          "type": "string",
+          "format": "int64",
+          "description": "Values written by its documents: property values each stated that were\nwritten as evidence (the engine's DocumentCounts.attributes), counted as\nfacts are, by document, so a value two documents state counts twice."
         },
         "reviews": {
           "type": "string",
@@ -7851,7 +8008,7 @@
         },
         "kind": {
           "type": "string",
-          "description": "resolve, prop, release or reject."
+          "description": "resolve, prop, release or reject; withdraw is an approval taken back\nfrom the current load (the release as it was sent)."
         },
         "type": {
           "type": "string"
@@ -7902,15 +8059,96 @@
         "applied": {
           "$ref": "#/definitions/v1FoundryDecisionApplied",
           "description": "A release or prop decision's state in the ontology's current load; unset\nfor a resolve, and when that load's decisions don't hold it yet (one\nsaved while another load was current joins them when a job of the\nontology next ends)."
+        },
+        "drawn": {
+          "type": "string",
+          "description": "\"ranked\" or \"random\": the review queue's card it was made on, in the\nqueue's order or drawn at random; empty for a decision made elsewhere."
         }
       },
-      "description": "A durable ontology-wide override. A resolve decision applies from the next\nload; a release or a prop decision applies to the current load at once,\nand later loads read it as they are made. Removing a prop decision\nwithdraws it from the current load at once too. A reject changes no load:\nit tells readers which held claims a person said are wrong."
+      "description": "A durable ontology-wide override. A resolve decision applies from the next\nload; a release or a prop decision applies to the current load at once,\nand later loads read it as they are made. Removing a prop decision\nwithdraws it from the current load at once too, and so does removing a\nrelease the load may have written (contract 4.16.0): the load's copy\nbecomes a withdraw, listed here, kind withdraw, with what became of it,\nwhile that load is current; it is no saved decision, and can't be removed.\nA reject changes no load: it tells readers which held claims a person said\nare wrong."
     },
     "v1FoundryReviewDecisionResponse": {
       "type": "object",
       "properties": {
         "decision": {
           "$ref": "#/definitions/v1FoundryReviewDecision"
+        }
+      }
+    },
+    "v1FoundryReviewLabel": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "drawn": {
+          "type": "string",
+          "description": "\"random\" or \"recheck\"."
+        },
+        "docId": {
+          "type": "string"
+        },
+        "claimSection": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "claimStart": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "claimEnd": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "claimKey": {
+          "type": "string",
+          "description": "A held claim's key and the hash of the statement read, or an accepted\nfact's key: one or the other."
+        },
+        "statementHash": {
+          "type": "string"
+        },
+        "factKey": {
+          "type": "string"
+        },
+        "link": {
+          "type": "string",
+          "description": "The claim's link, and the verifier's score when it was read."
+        },
+        "confidence": {
+          "type": "number",
+          "format": "double"
+        },
+        "verdict": {
+          "type": "string",
+          "description": "\"right\" or \"wrong\"."
+        },
+        "decisionId": {
+          "type": "string",
+          "description": "The decision a held claim's label came with, or the one re-checked."
+        },
+        "against": {
+          "type": "string",
+          "description": "A re-check: the verdict it checks (\"right\" for an approval or a label\nsaying right, \"wrong\" for a rejection or a label saying wrong)."
+        },
+        "loadId": {
+          "type": "string",
+          "description": "The load whose graph the claim was read from."
+        },
+        "decidedByUserId": {
+          "type": "string"
+        },
+        "decidedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "A person's word on a claim at its place, kept to measure precision: a\nclaim of the review queue's random slice (a held claim, kept as its\ndecision is saved, or an accepted fact's quote), or a second person's\nre-check. Nothing reads it into a load. One per person and claim: saying\nit again replaces the verdict."
+    },
+    "v1FoundryReviewLabelResponse": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "$ref": "#/definitions/v1FoundryReviewLabel"
         }
       }
     },
@@ -9027,6 +9265,21 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1FoundryReviewDecision"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ListFoundryReviewLabelsResponse": {
+      "type": "object",
+      "properties": {
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewLabel"
           }
         },
         "nextPageToken": {

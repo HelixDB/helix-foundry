@@ -6,6 +6,7 @@ import type {
   FoundryReviewChoice,
   FoundryReviewDecision,
   ReviewDecision,
+  ReviewDrawn,
 } from "../../../shared/wfe";
 import { Button, ButtonLink, Select } from "../../kit";
 import { paths } from "../../paths";
@@ -26,9 +27,12 @@ import {
   isUndoableLink,
   isWeakLink,
   loadRead,
+  rejectionOf,
   matchesReview,
   propValueText,
   refusalText,
+  takenBack,
+  takenBackOf,
   waitingText,
   WEAK_LINK_TEXT,
   type Candidate,
@@ -193,19 +197,25 @@ function ClaimWritten({
  * sends the load its decisions, the card says so, and the value shows
  * wherever the page reads it, with no reload. A held claim can be rejected
  * instead: that only saves the person's word, and the page that lists the
- * card leaves it out from then on (`unrejected`).
+ * card leaves it out from then on (`unrejected`). On the review queue each
+ * decision says how its card was drawn (`drawn`), and the queue hears of it
+ * once it is saved (`onSettled`).
  */
 export function SettleReview({
   review,
   load,
   link,
   naming,
+  drawn,
+  onSettled,
 }: {
   review: Settleable & { reason: string };
   load?: FoundryLoad;
   link: (path: string) => string;
   // The rules of the page's version: which links hold one value.
   naming: Naming;
+  drawn?: ReviewDrawn;
+  onSettled?: () => void;
 }) {
   const { id: ws, role } = useWorkspace();
   const { id: o, ontology } = useOntology();
@@ -280,6 +290,12 @@ export function SettleReview({
     : undefined;
   const saved = approval?.saved ?? query.data?.find((d) => matchesReview(d, s));
   const moved = !!approval?.moved;
+  // An approval of this claim a person took back from this load (contract
+  // 4.16.0): the claim is held again, and approving it saves a new one.
+  const withdrawn =
+    isRelease && editable && !saved
+      ? takenBackOf(query.data ?? [], s)
+      : undefined;
   // What the current load made of a saved approval: nothing yet when its
   // list doesn't hold it (saved while another load was current), and
   // nothing to write when it found no claim at the approval's place. Either
@@ -302,15 +318,20 @@ export function SettleReview({
   // being written or written: its job may have sent it. Neither until the
   // saved decisions are read: one may be a rejection of this claim, which
   // an approval would replace, or the approval it has.
+  // A rejection saved: pages that list the claim leave it out, but the
+  // review queue keeps a card decided on it in place, saying so.
+  const rejected = !!held && !!rejectionOf(query.data ?? [], held);
   const approves =
       isRelease &&
       !!query.data &&
+      !rejected &&
       !fixed &&
       !s.differs &&
       (!saved || moved || (!unsettled.length && (unread || missed || retry))),
     rejects =
       isRelease &&
       !!query.data &&
+      !rejected &&
       !fixed &&
       applied?.status !== "pending" &&
       applied?.status !== "written";
@@ -335,7 +356,11 @@ export function SettleReview({
     setPending(true);
     setError("");
     try {
-      await settleReview(ws, o, s.reviewId, { decision: choice });
+      await settleReview(ws, o, s.reviewId, {
+        decision: choice,
+        ...(drawn ? { drawn } : {}),
+      });
+      onSettled?.();
       await qc.invalidateQueries({
         queryKey: reviewQueries.list(ws, o).queryKey,
       });
@@ -399,10 +424,22 @@ export function SettleReview({
       {!editable && (
         <p className="on-muted">Open the current load to settle this review.</p>
       )}
+      {rejected && (
+        <p role="status">
+          Rejected: nothing is written, and it stays out of Needs review and the
+          review queue until the decision is removed.
+        </p>
+      )}
       {moved && (
         <p role="status">
           This claim reads differently from what was approved, so it stays held.
           Read it again before approving it.
+        </p>
+      )}
+      {withdrawn && (
+        <p role="status">
+          {takenBack(withdrawn.applied).label}.{" "}
+          {takenBack(withdrawn.applied).text}
         </p>
       )}
       {saved && !moved && (
@@ -573,6 +610,15 @@ export function SettleReview({
 }
 
 /**
+ * Whether removing `d` takes an approval back from the current load, as the
+ * backend says by its one rule (`applied.takesBack`: the load may have
+ * written it, its job in flight included). The backend then sends that load
+ * a withdraw; one never written is only dropped.
+ */
+const takesBack = (d: FoundryReviewDecision) =>
+  d.kind === "release" && !!d.applied?.takesBack;
+
+/**
  * A saved value's line: what the current load made of it, where it says
  * (FoundryReviewDecision.applied). The load says only that it was sent it.
  */
@@ -622,7 +668,14 @@ const approvedLine = (
           ? "Approved, not confirmed as written"
           : APPROVED.unknown;
 
-/** Saved overrides stay available to remove after their review disappears. */
+/**
+ * Saved overrides stay available to remove after their review disappears. An
+ * approval the current load wrote is taken back from it at once (contract
+ * 4.16.0): "Take back approval" removes it, the load's job takes back what it
+ * wrote, the line says what became of that while the load is current, and
+ * the claim's card is held again. Removing one the load never wrote sends
+ * nothing.
+ */
 export function SavedDecisions({
   documentId,
   quoteOf,
@@ -678,13 +731,18 @@ export function SavedDecisions({
             {own.map((d) => (
               <li key={d.id} className="dc-review">
                 <p>
-                  {d.kind === "release" || d.kind === "reject"
-                    ? `${d.kind === "reject" ? "Rejected" : approvedLine(d, statusOf?.(d) ?? "unknown")}: “${quoteOf?.(d.claimSection, d.claimStart, d.claimEnd) ?? `section ${d.claimSection + 1}`}”`
+                  {d.kind === "release" ||
+                  d.kind === "reject" ||
+                  d.kind === "withdraw"
+                    ? `${d.kind === "reject" ? "Rejected" : d.kind === "withdraw" ? takenBack(d.applied).label : approvedLine(d, statusOf?.(d) ?? "unknown")}: “${quoteOf?.(d.claimSection, d.claimStart, d.claimEnd) ?? `section ${d.claimSection + 1}`}”`
                     : d.kind === "resolve"
                       ? `${d.type} · ${d.normName} → ${d.entityKey ?? "Not in data"}`
                       : chosenLine(d)}
                 </p>
-                {canManage(role) && (
+                {d.kind === "withdraw" && takenBack(d.applied).text && (
+                  <p className="on-muted">{takenBack(d.applied).text}</p>
+                )}
+                {canManage(role) && d.kind !== "withdraw" && (
                   <Button
                     size="sm"
                     disabled={!!pending}
@@ -703,10 +761,11 @@ export function SavedDecisions({
                         await qc.invalidateQueries({
                           queryKey: reviewQueries.list(ws, o).queryKey,
                         });
-                        // A value is taken back from the current load by a
+                        // A value, and an approval the load may have
+                        // written, are taken back from the current load by a
                         // job: the ontology's live job is read again, and
                         // the page's reads follow when it ends.
-                        if (d.kind === "prop")
+                        if (d.kind === "prop" || takesBack(d))
                           await Promise.all(
                             [ontologyQueries.ontology, ontologyQueries.loads]
                               .map((q) => q(ws, o).queryKey)
@@ -719,7 +778,14 @@ export function SavedDecisions({
                             ? "Decision removed. This load is taking the value back now; later loads won’t read it."
                             : d.kind === "reject"
                               ? "Decision removed. The claim is listed for review again."
-                              : "Decision removed. Reload to apply.",
+                              : d.kind === "release" &&
+                                  d.applied?.status === "written"
+                                ? "Taking the approval back from this load now. Its claim is held for review again once that’s done; later loads won’t read the approval."
+                                : takesBack(d)
+                                  ? "Decision removed. If this load wrote it, it’s being taken back now; later loads won’t read it."
+                                  : d.kind === "release"
+                                    ? "Decision removed. Nothing of it is in this load, and later loads won’t read it."
+                                    : "Decision removed. Reload to apply.",
                         );
                       } catch (e) {
                         setError((e as Error).message);
@@ -728,7 +794,7 @@ export function SavedDecisions({
                       }
                     }}
                   >
-                    Remove decision
+                    {takesBack(d) ? "Take back approval" : "Remove decision"}
                   </Button>
                 )}
               </li>
@@ -736,10 +802,10 @@ export function SavedDecisions({
           </ul>
           <p className="on-muted">
             An approval or a chosen value applies to the current load at once,
-            and removing a chosen value takes it back at once. A linked name
-            applies to future loads, and so does an approval held for a name
-            until that name is settled. A rejected claim stays out of Needs
-            review until its decision is removed.
+            and taking either back does too: a claim taken back is held for
+            review again. A linked name applies to future loads, and so does an
+            approval held for a name until that name is settled. A rejected
+            claim stays out of Needs review until its decision is removed.
           </p>
           <ButtonLink to={paths.loads(o)} size="sm">
             Loads

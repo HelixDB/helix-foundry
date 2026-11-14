@@ -99,6 +99,7 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
     onDocuments = !!documents && open !== "",
     onDocumentsList = onDocuments && !documentId,
     onSuggestions = open !== "" && pathname === paths.suggestions(open),
+    onReviewQueue = open !== "" && pathname === paths.reviewQueue(open),
     onWorkflows =
       open !== "" &&
       (pathname === paths.workflows(open) ||
@@ -209,6 +210,21 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                           documentId={documentId}
                           onNavigate={onNavigate}
                         />
+                      </li>
+                    )}
+                    {!grantee && (
+                      <li>
+                        <Link
+                          to={paths.reviewQueue(open)}
+                          onClick={onNavigate}
+                          className={cx(
+                            "hf-subnav-link",
+                            onReviewQueue && "is-active",
+                          )}
+                          aria-current={onReviewQueue ? "page" : undefined}
+                        >
+                          <span>Review queue</span>
+                        </Link>
                       </li>
                     )}
                     {!grantee && heal.data?.enabled && (

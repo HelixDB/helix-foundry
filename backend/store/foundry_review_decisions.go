@@ -14,6 +14,11 @@ import (
 
 const foundryReviewDecisionColumns = "id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id, decided_at"
 
+// foundryReviewDecisionDrawnColumns are a saved decision's columns with how
+// the review queue drew its card, which only foundry_review_decisions keeps:
+// a load's list copies foundryReviewDecisionColumns, and no Extract carries it.
+const foundryReviewDecisionDrawnColumns = foundryReviewDecisionColumns + ", drawn"
+
 // FoundryValueDecisionsFull refuses a value decision of a property the
 // ontology has decided no value of: it holds
 // model.FoundryExtractDecisionsMax value decisions already, and every one
@@ -201,19 +206,23 @@ func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.Foundr
 		section, start, end = span.Section, span.Start, span.End
 	}
 	if !stands {
+		// drawn goes with who decided and when: an approval of the statement
+		// it approved keeps all three, as it is the decision first made; any
+		// other settle is a decision made now, from the queue or not.
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_review_decisions
- (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)
+ (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id, drawn)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, ?)
  ON DUPLICATE KEY UPDATE
+ drawn=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), drawn, VALUES(drawn)),
  decided_by_user_id=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), decided_by_user_id, VALUES(decided_by_user_id)),
  decided_at=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), decided_at, NOW(6)),
  entity_key=VALUES(entity_key), value=VALUES(value), statement_hash=VALUES(statement_hash)`,
-			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID); err != nil {
+			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID, d.Drawn); err != nil {
 			return err
 		}
 	}
 	// <=> is NULL-safe equality; resolve's chosen entity is not its identity.
-	stored, err := scanFoundryReviewDecision(s.db.QueryRowContext(ctx, "SELECT "+foundryReviewDecisionColumns+`
+	stored, err := scanFoundryReviewDecisionDrawn(s.db.QueryRowContext(ctx, "SELECT "+foundryReviewDecisionDrawnColumns+`
  FROM foundry_review_decisions WHERE ontology_id=? AND kind=? AND type=? AND doc_id <=> ? AND norm_name <=> ?
  AND prop <=> ? AND claim_key <=> ? AND claim_section <=> ? AND claim_start <=> ? AND claim_end <=> ?
  AND (kind='resolve' OR entity_key <=> ?)`, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.Prop, d.ClaimKey, section, start, end, d.EntityKey))
@@ -311,6 +320,7 @@ func (s *mysqlDB) SettleFoundryReleases(ctx context.Context, workspaceID, loadID
 			return err
 		}
 		var documents []string
+		owed := false
 		for _, d := range decisions {
 			claim := foundryClaimArgs(d)
 			// The first approval of what the person read at this place, under
@@ -342,16 +352,39 @@ WHERE t.ontology_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND t.id<
 WHERE t.ontology_id=? AND t.kind='reject' AND `+foundryClaimAt("t"), append([]any{ontologyID}, claim...)...); err != nil {
 				return err
 			}
-			// One decision a claim in a load's list: the engine refuses an
+			// One release a claim in a load's list: the engine refuses an
 			// Extract that lists a release twice, and would weigh two of one
-			// claim apart.
-			if _, err := tx.db.ExecContext(ctx, `DELETE t FROM foundry_load_decisions t
-WHERE t.load_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND t.id<>?`, append(append([]any{loadID}, claim...), d.ID)...); err != nil {
+			// claim apart. Another the load may have written is taken back
+			// (withdrawFoundryReleases): the engine takes it back first,
+			// then writes this one.
+			withdrew, err := tx.withdrawFoundryReleases(ctx, loadID, foundryClaimAt("t")+` AND t.id<>?`, append(claim, d.ID))
+			if err != nil {
 				return err
+			}
+			owed = owed || withdrew
+			// The same decision approved again as the load wrote it (one
+			// approval read before its job wrote it, saved after) stays
+			// written and owes nothing: sent again it would read not_held,
+			// and count the write a second time (MovesForward).
+			var writtenAt sql.NullTime
+			if err := tx.db.QueryRowContext(ctx, `SELECT MAX(applied_at) FROM foundry_load_decisions
+WHERE load_id=? AND id=? AND kind='release' AND applied_status='written' AND statement_hash=? FOR UPDATE`,
+				loadID, d.ID, d.StatementHash).Scan(&writtenAt); err != nil {
+				return err
+			}
+			if writtenAt.Valid {
+				if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions l JOIN foundry_review_decisions r ON r.ontology_id=? AND r.id=l.id
+SET l.claim_key=r.claim_key, l.decided_by_user_id=r.decided_by_user_id, l.decided_at=r.decided_at WHERE l.load_id=? AND l.id=?`,
+					ontologyID, loadID, d.ID); err != nil {
+					return err
+				}
+				// Written, so removing it takes it back (foundryMayHaveWritten).
+				d.Applied = &model.FoundryDecisionApplied{Status: model.FoundryReleaseWritten, At: &writtenAt.Time, TakesBack: true}
+				continue
 			}
 			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
 SELECT ?, `+foundryReviewDecisionColumns+`, 'pending' FROM foundry_review_decisions WHERE ontology_id=? AND id=?
-ON DUPLICATE KEY UPDATE claim_key=VALUES(claim_key), statement_hash=VALUES(statement_hash), decided_by_user_id=VALUES(decided_by_user_id),
+ON DUPLICATE KEY UPDATE kind=VALUES(kind), claim_key=VALUES(claim_key), statement_hash=VALUES(statement_hash), decided_by_user_id=VALUES(decided_by_user_id),
  decided_at=VALUES(decided_at), applied_status='pending', applied_reason=NULL, applied_at=NULL`, loadID, ontologyID, d.ID); err != nil {
 				return err
 			}
@@ -362,6 +395,12 @@ ON DUPLICATE KEY UPDATE claim_key=VALUES(claim_key), statement_hash=VALUES(state
 		}
 		if err := tx.oweFoundryResends(ctx, loadID, model.FoundryResendApproval, documents); err != nil {
 			return err
+		}
+		// Each approved again as the load wrote it, with nothing taken back:
+		// nothing is owed, and the live job is left as it is (a delete is
+		// not put off for a resend that won't come).
+		if len(documents) == 0 && !owed {
+			return nil
 		}
 		queued, err = tx.queueFoundryResendBehind(ctx, o, live, resend)
 		return err
@@ -411,29 +450,32 @@ func (s *mysqlDB) SettleFoundryReject(ctx context.Context, workspaceID, loadID s
 			return ErrConflict
 		}
 		// The live job's row before any decision's, as every settle takes them.
-		live, err := tx.liveFoundryGraphJob(ctx, d.OntologyID)
-		if err != nil {
+		if _, err := tx.liveFoundryGraphJob(ctx, d.OntologyID); err != nil {
 			return err
 		}
 		claim := foundryClaimArgs(d)
 		// What the current load's list says of the claim's approvals (by its
 		// key, or of what the person read at its place under another key,
 		// which the engine binds to this review: foundryClaimAt): one written,
-		// or one waiting for a job with nothing said of it yet.
-		var written, waits bool
+		// or one waiting for a job with nothing said of it yet while a resend
+		// of the load is in flight (foundryInFlight: running, queued again
+		// after an attempt that may have written it, or cancelled with its
+		// attempt's lease not yet ended; it reads the load id twice).
+		var written, sending bool
 		if err := tx.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(t.applied_status='written'), 0) > 0,
-  COALESCE(SUM(t.applied_status IN ('pending', 'carried') AND t.applied_reason IS NULL), 0) > 0 FROM foundry_load_decisions t
-WHERE t.load_id=? AND t.kind='release' AND `+foundryClaimAt("t"), append([]any{loadID}, claim...)...).Scan(&written, &waits); err != nil {
+  COALESCE(SUM(t.applied_status IN ('pending', 'carried') AND t.applied_reason IS NULL), 0) > 0 AND `+
+			foundryInFlight("?", model.FoundryGraphJobResend)+` FROM foundry_load_decisions t
+WHERE t.load_id=? AND t.kind='release' AND `+foundryClaimAt("t"), append([]any{loadID, loadID, loadID}, claim...)...).Scan(&written, &sending); err != nil {
 			return err
 		}
-		if written || waits && live != nil && live.Kind == model.FoundryGraphJobResend && live.LoadID == loadID &&
-			live.Status == model.FoundryGraphJobRunning {
+		if written || sending {
 			return ErrConflict
 		}
-		// <=> is NULL-safe: a copy no job has reported on has no status. A
-		// deleted load's list went with it.
+		// A deleted load's list went with it. A copy a load may have
+		// written stays for its carry, which takes it back
+		// (carryFoundryReleases), as its decision is gone.
 		if _, err := tx.db.ExecContext(ctx, `DELETE t FROM foundry_load_decisions t JOIN foundry_loads l ON l.id=t.load_id
-WHERE l.ontology_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND NOT (t.applied_status <=> 'written')`,
+WHERE l.ontology_id=? AND t.kind='release' AND `+foundryClaimAt("t")+` AND NOT `+foundryMayHaveWritten("t"),
 			append([]any{d.OntologyID}, claim...)...); err != nil {
 			return err
 		}
@@ -455,6 +497,33 @@ func (s *mysqlDB) ListFoundryReviewDecisions(ctx context.Context, ontologyID, af
 	return s.listFoundryDecisions(ctx, "foundry_review_decisions", "ontology_id", ontologyID, afterID, documentIDs, limit)
 }
 
+// ListFoundryShownDecisions lists what a reader is shown of an ontology's
+// decisions, limit at a time by id: its decisions (ListFoundryReviewDecisions),
+// and its current load's withdraws (model.FoundryReviewWithdraw), approvals
+// taken back from that load that the ontology no longer holds, which a page
+// shows with what became of each while that load is current. A withdraw
+// keeps the id of its release, which the ontology no longer holds, so no id
+// is listed twice. Two reads, each of at most limit rows in id order, merged.
+func (s *mysqlDB) ListFoundryShownDecisions(ctx context.Context, ontologyID, afterID string, limit int) ([]*model.FoundryReviewDecision, error) {
+	decisions, err := s.listFoundryDecisions(ctx, "foundry_review_decisions", "ontology_id", ontologyID, afterID, nil, limit)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT "+foundryReviewDecisionColumns+` FROM foundry_load_decisions
+WHERE load_id=(SELECT current_load_id FROM foundry_ontologies WHERE id=?) AND kind=? AND id>? ORDER BY id LIMIT ?`,
+		ontologyID, string(model.FoundryReviewWithdraw), afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	withdraws, err := scanAll(rows, scanFoundryReviewDecision)
+	if err != nil || len(withdraws) == 0 {
+		return decisions, err
+	}
+	shown := append(decisions, withdraws...)
+	slices.SortFunc(shown, func(a, b *model.FoundryReviewDecision) int { return strings.Compare(a.ID, b.ID) })
+	return shown[:min(len(shown), limit)], nil
+}
+
 // ListFoundryLoadDecisions reads the decisions a load sends the engine: those
 // the ontology held when the load was created, the releases and value
 // decisions settled against it or carried to it since, and no value decision
@@ -464,8 +533,9 @@ func (s *mysqlDB) ListFoundryReviewDecisions(ctx context.Context, ontologyID, af
 // rejection of (foundryClaimAt), whatever put it there: a rejection settled
 // since takes the claim's approvals from every list (SettleFoundryReject),
 // and this keeps one saved before that did, or by an older binary, from
-// writing a claim a person said is wrong. A resolve replaced or removed, and
-// schema pruning, affect only future loads.
+// writing a claim a person said is wrong. A withdraw is sent while it waits
+// (pending), and never once the engine has said what it did. A resolve
+// replaced or removed, and schema pruning, affect only future loads.
 func (s *mysqlDB) ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error) {
 	return s.listFoundryDecisions(ctx, "foundry_load_decisions", "load_id", loadID, afterID, documentIDs, limit)
 }
@@ -475,10 +545,15 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 	if limit < 1 || limit > 10001 {
 		return nil, fmt.Errorf("decision limit must be 1..10001")
 	}
-	query := "SELECT " + foundryReviewDecisionColumns + " FROM " + table + " WHERE " + key + "=? AND id>?"
+	columns, scan := foundryReviewDecisionDrawnColumns, scanFoundryReviewDecisionDrawn
+	if table == "foundry_load_decisions" {
+		columns, scan = foundryReviewDecisionColumns, scanFoundryReviewDecision
+	}
+	query := "SELECT " + columns + " FROM " + table + " WHERE " + key + "=? AND id>?"
 	if table == "foundry_load_decisions" {
 		// <=> is NULL-safe: a copy no job has reported on has no status.
 		query += " AND NOT (applied_status <=> '" + string(model.FoundryValueRemoved) + `')
+ AND NOT (kind='withdraw' AND NOT (applied_status <=> 'pending'))
  AND NOT (kind='release' AND ` + foundryRejected("foundry_load_decisions",
 			"(SELECT o.ontology_id FROM foundry_loads o WHERE o.id=foundry_load_decisions.load_id)") + `)`
 	}
@@ -499,7 +574,7 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 	if err != nil {
 		return nil, err
 	}
-	return scanAll(rows, scanFoundryReviewDecision)
+	return scanAll(rows, scan)
 }
 
 // DeleteFoundryReviewDecision removes a decision from those later loads
@@ -507,15 +582,19 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 // can be. A resolve stays in the loads that copied it, with what it wrote. A
 // reject is in no load: with it gone, its claim's card is listed again.
 //
-// The current load's copy of a release it has not written goes with it,
-// whatever a job said of it (waiting, refused, missed, or nothing yet): a
-// resend sends every release its load's list holds of a document, so a copy
-// left there would be written by the next approval of another claim of that
-// document, after the person took it back, with no decision left to show
-// for it. One the load wrote stays: the fact is in the load, and sent again
-// it finds no review. A copy in a load that is not current is not reached
-// here: it goes when that load is made current again, before any resend of
-// it is queued (carryFoundryReleases).
+// A release is taken back from the current load at once (contract 4.16.0).
+// Its copy there, if the load may have written it (foundryMayHaveWritten:
+// written, unconfirmed, or of a load a job of which is in flight), becomes
+// a withdraw, its document owes a resend, and the resend is queued as a
+// settle queues one (queueFoundryResendBehind): the engine takes back what
+// the approval wrote, and the claim is held again, its card back. A copy the
+// load never wrote goes, whatever a job said of it (waiting, refused, missed,
+// or nothing yet), and nothing is sent: a resend sends every release its
+// load's list holds of a document, so a copy left there would be written by
+// the next approval of another claim of that document. A copy in a load
+// that is not current is not reached here: when that load is current again,
+// its carry takes it back or drops it alike, before any resend of it is
+// queued (carryFoundryReleases).
 //
 // A value decision is sent to no load again: its copy in every load of the
 // ontology that holds one, under its id or one the property's decision had
@@ -567,9 +646,11 @@ func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, workspaceID, 
 			if o.CurrentLoadID == nil {
 				return nil
 			}
-			// <=> is NULL-safe: a copy no job has reported on has no status.
-			_, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
-WHERE load_id=? AND id=? AND kind='release' AND NOT (applied_status <=> 'written')`, *o.CurrentLoadID, id)
+			withdrew, err := tx.withdrawFoundryReleases(ctx, *o.CurrentLoadID, "t.id=?", []any{id})
+			if err != nil || !withdrew {
+				return err
+			}
+			_, err = tx.queueFoundryResendBehind(ctx, o, live, resend)
 			return err
 		case model.FoundryReviewProp:
 			// Every copy of the property's decision, under this id or one it
@@ -613,12 +694,28 @@ WHERE load_id=? AND kind='prop' AND type=? AND entity_key=? AND prop=?`, string(
 	})
 }
 
+// scanFoundryReviewDecision reads foundryReviewDecisionColumns, which both
+// tables keep.
 func scanFoundryReviewDecision(row rowScanner) (*model.FoundryReviewDecision, error) {
+	return scanDecision(row, false)
+}
+
+// scanFoundryReviewDecisionDrawn reads foundryReviewDecisionDrawnColumns: a
+// saved decision, with how the review queue drew its card.
+func scanFoundryReviewDecisionDrawn(row rowScanner) (*model.FoundryReviewDecision, error) {
+	return scanDecision(row, true)
+}
+
+func scanDecision(row rowScanner, withDrawn bool) (*model.FoundryReviewDecision, error) {
 	var d model.FoundryReviewDecision
-	var doc, name, entity, prop, claim, hash sql.NullString
+	var doc, name, entity, prop, claim, hash, drawn sql.NullString
 	var section, start, end sql.NullInt64
 	var value []byte
-	err := row.Scan(&d.ID, &d.OntologyID, &d.Kind, &d.Type, &doc, &name, &entity, &prop, &value, &claim, &section, &start, &end, &hash, &d.DecidedByUserID, &d.DecidedAt)
+	dest := []any{&d.ID, &d.OntologyID, &d.Kind, &d.Type, &doc, &name, &entity, &prop, &value, &claim, &section, &start, &end, &hash, &d.DecidedByUserID, &d.DecidedAt}
+	if withDrawn {
+		dest = append(dest, &drawn)
+	}
+	err := row.Scan(dest...)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -645,6 +742,10 @@ func scanFoundryReviewDecision(row rowScanner) (*model.FoundryReviewDecision, er
 	}
 	if section.Valid && start.Valid && end.Valid {
 		d.ClaimSpan = &model.FoundryClaimSpan{Section: uint32(section.Int64), Start: uint32(start.Int64), End: uint32(end.Int64)}
+	}
+	if drawn.Valid {
+		v := model.FoundryReviewDrawn(drawn.String)
+		d.Drawn = &v
 	}
 	d.Value = value
 	if err := d.Validate(); err != nil {

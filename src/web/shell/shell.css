@@ -1052,6 +1052,40 @@ main.hf-main:focus {
   opacity: 1;
 }
 
+/* GitHub star prompt (star-prompt.tsx): a card where toasts show, under them. */
+.hf-star-prompt {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 89;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  width: min(360px, calc(100vw - 32px));
+  padding: 14px 16px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+  color: var(--hf-text);
+  box-shadow: var(--hf-shadow-3);
+  font-size: var(--hf-text-base);
+  animation: hf-pop 160ms var(--hf-ease);
+}
+.hf-star-prompt-icon {
+  margin-top: 2px;
+  color: var(--hf-warning-text);
+}
+.hf-star-prompt-text p {
+  margin: 2px 0 0;
+  color: var(--hf-text-2);
+}
+.hf-star-prompt-actions {
+  grid-column: 2;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* Full-page states outside the shell (loading, gate errors) */
 .hf-center {
   display: grid;
@@ -1157,10 +1191,14 @@ main.hf-main:focus {
   .hf-palette-subtitle {
     display: none;
   }
-  .hf-toast {
+  .hf-toast,
+  .hf-star-prompt {
     right: 12px;
     left: 12px;
     bottom: 12px;
+  }
+  .hf-star-prompt {
+    width: auto;
   }
 }
 .hf-gate-error {

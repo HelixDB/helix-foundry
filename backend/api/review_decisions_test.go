@@ -41,6 +41,13 @@ type decisionStore struct {
 	rejectedOn string
 	resends    []*foundrymodel.FoundryGraphJob
 	applied    map[string]foundrymodel.FoundryDecisionApplied
+	// labels are what SaveFoundryReviewLabel kept, labelErr what it fails
+	// with.
+	labels   []*foundrymodel.FoundryReviewLabel
+	labelErr error
+	// firstApprover, when set, is who SettleFoundryReleases says approved
+	// the statement first, as the store keeps them.
+	firstApprover string
 }
 
 func (s *decisionStore) GetFoundryOntology(_ context.Context, ws, id string) (*foundrymodel.FoundryOntology, error) {
@@ -83,6 +90,9 @@ func (s *decisionStore) SettleFoundryReleases(_ context.Context, ws, load string
 	for _, d := range ds {
 		d.DecidedAt = time.Now()
 		d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
+		if s.firstApprover != "" {
+			d.DecidedByUserID, d.Drawn = s.firstApprover, nil
+		}
 	}
 	s.saved, s.releasedTo, s.resends = append(s.saved, ds...), load, append(s.resends, resend)
 	return true, nil
@@ -117,11 +127,25 @@ func (s *decisionStore) ListFoundryDecisionsApplied(_ context.Context, o string,
 	}
 	return s.applied, nil
 }
-func (s *decisionStore) ListFoundryReviewDecisions(_ context.Context, o, after string, docs []string, limit int) ([]*foundrymodel.FoundryReviewDecision, error) {
+func (s *decisionStore) ListFoundryShownDecisions(_ context.Context, o, after string, limit int) ([]*foundrymodel.FoundryReviewDecision, error) {
 	if o != s.ontology.ID {
 		panic("wrong ontology")
 	}
 	return s.rows, nil
+}
+
+// ListFoundryReviewDecisions lists the saved decisions alone: no withdraw.
+func (s *decisionStore) ListFoundryReviewDecisions(_ context.Context, o, after string, docs []string, limit int) ([]*foundrymodel.FoundryReviewDecision, error) {
+	if o != s.ontology.ID {
+		panic("wrong ontology")
+	}
+	var saved []*foundrymodel.FoundryReviewDecision
+	for _, d := range s.rows {
+		if d.Kind != foundrymodel.FoundryReviewWithdraw {
+			saved = append(saved, d)
+		}
+	}
+	return saved, nil
 }
 func (s *decisionStore) DeleteFoundryReviewDecision(_ context.Context, ws, o, id string, resend *foundrymodel.FoundryGraphJob) error {
 	if ws != s.ontology.WorkspaceID || o != s.ontology.ID {
@@ -444,6 +468,60 @@ func TestListFoundryReviewDecisionsApplied(t *testing.T) {
 	// and whether it was written isn't known.
 	want := map[string]string{"a": "unset", "b": "pending/", "c": "refused/unresolved", "d": "written/", "e": "/",
 		"f": "unconfirmed/job_failed", "g": "unconfirmed/job_failed", "h": "applied/"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("applied %v", got)
+	}
+}
+
+// An approval taken back from the current load (contract 4.16.0) is listed
+// as a withdraw, the release as it was sent, with the engine's word on it as
+// it came: pending while it waits, unconfirmed when its job failed.
+func TestListFoundryReviewDecisionsTakenBack(t *testing.T) {
+	s, db, _ := reviewService(t, `{}`)
+	key, hash := testClaimKey, foundrymodel.FoundryStatementHash("promised_to", testStatement)
+	doc := "doc-1"
+	for _, id := range []string{"w1", "w2", "w3", "w4", "w5"} {
+		db.rows = append(db.rows, &foundrymodel.FoundryReviewDecision{ID: id, OntologyID: "o", Kind: foundrymodel.FoundryReviewWithdraw,
+			DocID: &doc, ClaimKey: &key, ClaimSpan: &foundrymodel.FoundryClaimSpan{Section: 1, Start: 2, End: 9}, StatementHash: &hash,
+			DecidedByUserID: "user-a"})
+	}
+	db.rows = append(db.rows, &foundrymodel.FoundryReviewDecision{ID: "r1", OntologyID: "o", Kind: foundrymodel.FoundryReviewRelease,
+		DocID: &doc, ClaimKey: &key, ClaimSpan: &foundrymodel.FoundryClaimSpan{Section: 2, Start: 2, End: 9}, StatementHash: &hash,
+		DecidedByUserID: "user-a"})
+	db.applied = map[string]foundrymodel.FoundryDecisionApplied{
+		"r1": {Status: foundrymodel.FoundryReleaseWritten, TakesBack: true},
+		"w1": {Status: foundrymodel.FoundryReleasePending},
+		"w2": {Status: foundrymodel.FoundryWithdrawn},
+		"w3": {Status: foundrymodel.FoundryNotWritten},
+		"w4": {Status: foundrymodel.FoundryReleaseRefused, Reason: "differs"},
+		"w5": {Status: foundrymodel.FoundryReleasePending, Reason: foundrymodel.FoundryReleaseJobFailed},
+	}
+	// A client that doesn't ask, as a site before 4.16.0, gets none.
+	if out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o"}); err != nil ||
+		len(out.GetDecisions()) != 1 || out.GetDecisions()[0].GetId() != "r1" {
+		t.Fatalf("listed %v, %v without asking", out.GetDecisions(), err)
+	}
+	out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o",
+		IncludeWithdraws: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, d := range out.GetDecisions() {
+		if d.GetId() == "r1" {
+			// Removing a release the load may have written takes it back, as
+			// the backend's one rule says.
+			if d.GetKind() != "release" || !d.GetApplied().GetTakesBack() {
+				t.Fatalf("release listed %v", d)
+			}
+			continue
+		}
+		if d.GetKind() != "withdraw" || d.GetClaimKey() != key || d.GetStatementHash() != hash || d.GetClaimEnd() != 9 {
+			t.Fatalf("listed %v", d)
+		}
+		got[d.GetId()] = d.GetApplied().GetStatus() + "/" + d.GetApplied().GetReason()
+	}
+	want := map[string]string{"w1": "pending/", "w2": "withdrawn/", "w3": "not_written/", "w4": "refused/differs", "w5": "unconfirmed/job_failed"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("applied %v", got)
 	}

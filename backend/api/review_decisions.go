@@ -23,8 +23,9 @@ import (
 // SettleFoundryReview reads trusted identity from the current load's review
 // and stores an override. A resolve decision applies from the next load. A
 // release, a person's approval of a held claim, applies to the current load
-// at once: it joins that load's decisions and a resend job replays the
-// claim's document, which writes it (SettleFoundryReleases). So does a prop
+// at once: it joins that load's decisions and a resend job sends the claim's
+// document again, and the engine writes it from the review the load keeps
+// (SettleFoundryReleases). So does a prop
 // decision, a value a person chose: the same job sends the load its
 // decisions, and the engine sets the value (SettleFoundryValue). The
 // decision returned says so (applied), and ListFoundryReviewDecisions what
@@ -38,6 +39,10 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	}
 	if req.GetReviewId() == "" || req.GetDecision() == nil {
 		return nil, status.Error(codes.InvalidArgument, "review_id and decision are required")
+	}
+	drawn, err := foundrymodel.ParseFoundryReviewDrawn(req.GetDrawn())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	if actor(ctx).UserID == "" {
 		return nil, status.Error(codes.Unauthenticated, "a user is required to settle a review")
@@ -55,7 +60,7 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	if !load.Status.Servable() {
 		return nil, status.Error(codes.FailedPrecondition, "the load is not ready")
 	}
-	rows, err := s.foundryDecisionRead(ctx, o, load.ID, map[string]string{"$label": "FoundryReview", "review_key": req.GetReviewId()}, []string{"reason", "type", "doc_id", "norm_name", "entity_key", "prop", "values", "claim_key", "section", "start", "end", "suggested_link", "statement"})
+	rows, err := s.foundryDecisionRead(ctx, o, load.ID, map[string]string{"$label": "FoundryReview", "review_key": req.GetReviewId()}, []string{"reason", "type", "doc_id", "norm_name", "entity_key", "prop", "values", "claim_key", "section", "start", "end", "suggested_link", "statement", "confidence"})
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +69,7 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	}
 	review := rows[0]
 	text := func(key string) string { var s string; _ = json.Unmarshal(review[key], &s); return s }
-	d := &foundrymodel.FoundryReviewDecision{ID: id.New(), OntologyID: o.ID, Type: text("type"), DecidedByUserID: actor(ctx).UserID}
+	d := &foundrymodel.FoundryReviewDecision{ID: id.New(), OntologyID: o.ID, Type: text("type"), DecidedByUserID: actor(ctx).UserID, Drawn: drawn}
 	// A held claim names no type: the engine reads what it states from its
 	// document. A claim held as conflicting with what a link that holds one
 	// value holds is one from contract 4.14.0, where the approval decides
@@ -92,12 +97,17 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 			if err := s.deps.DB.SettleFoundryReject(ctx, o.WorkspaceID, load.ID, d); err != nil {
 				return nil, settleFoundryReviewError(err)
 			}
-			return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
+		} else {
+			userID := actor(ctx).UserID
+			resend := &foundrymodel.FoundryGraphJob{ID: id.New(), RequestedByUserID: &userID}
+			if _, err := s.deps.DB.SettleFoundryReleases(ctx, o.WorkspaceID, load.ID, []*foundrymodel.FoundryReviewDecision{d}, resend); err != nil {
+				return nil, settleFoundryReviewError(err)
+			}
 		}
-		userID := actor(ctx).UserID
-		resend := &foundrymodel.FoundryGraphJob{ID: id.New(), RequestedByUserID: &userID}
-		if _, err := s.deps.DB.SettleFoundryReleases(ctx, o.WorkspaceID, load.ID, []*foundrymodel.FoundryReviewDecision{d}, resend); err != nil {
-			return nil, settleFoundryReviewError(err)
+		if drawn != nil && *drawn == foundrymodel.FoundryDrawnRandom {
+			if err := s.labelDrawnClaim(ctx, o, load.ID, d, review); err != nil {
+				return nil, err
+			}
 		}
 		return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
 	}
@@ -268,6 +278,47 @@ func settleHeldClaim(req *foundryv1.SettleFoundryReviewRequest, d *foundrymodel.
 	return nil
 }
 
+// labelDrawnClaim keeps the decision d of a held claim the review queue drew
+// at random as a label of that claim (a release says it is right, a reject
+// that it is wrong), with the link and the verifier's score its review was
+// read at: the measure of precision in the claim's score band, which outlives
+// the decision. The decision is saved first; a label that fails to save says
+// so, and settling again (which saves the same decision) saves it.
+func (s *Service) labelDrawnClaim(ctx context.Context, o *foundrymodel.FoundryOntology, loadID string, d *foundrymodel.FoundryReviewDecision, review map[string]json.RawMessage) error {
+	verdict := foundrymodel.FoundryVerdictRight
+	if d.Kind == foundrymodel.FoundryReviewReject {
+		verdict = foundrymodel.FoundryVerdictWrong
+	}
+	// The person's own word, with the decision that stands: an approval of a
+	// statement someone approved before keeps theirs (saveFoundryReviewDecision).
+	label := &foundrymodel.FoundryReviewLabel{ID: id.New(), OntologyID: o.ID, LoadID: loadID, Drawn: foundrymodel.FoundryLabelRandom,
+		DocID: *d.DocID, Span: *d.ClaimSpan, ClaimKey: d.ClaimKey, StatementHash: d.StatementHash, Verdict: verdict,
+		DecisionID: &d.ID, DecidedByUserID: actor(ctx).UserID}
+	var link string
+	if json.Unmarshal(review["suggested_link"], &link) == nil && link != "" {
+		label.Link = &link
+	}
+	// A review with no score (unverified) reads as null or nothing.
+	var confidence *float64
+	if json.Unmarshal(review["confidence"], &confidence) == nil && confidence != nil && *confidence >= 0 && *confidence <= 1 {
+		label.Confidence = confidence
+	}
+	// A re-check this person made of the claim stands: one label a claim.
+	labels, err := s.deps.DB.FoundryReviewLabelsOf(ctx, o.ID, label.DocID, label.Span, label.ClaimKey, nil)
+	if err != nil {
+		return status.Errorf(codes.Internal, "the decision is saved, but not its label of the random slice; settle it again: %v", err)
+	}
+	for _, l := range labels {
+		if l.DecidedByUserID == label.DecidedByUserID && l.Drawn == foundrymodel.FoundryLabelRecheck {
+			return nil
+		}
+	}
+	if err := s.deps.DB.SaveFoundryReviewLabel(ctx, o.WorkspaceID, label); err != nil {
+		return status.Errorf(codes.Internal, "the decision is saved, but not its label of the random slice; settle it again: %v", err)
+	}
+	return nil
+}
+
 // loadOntologyTOML is the ontology TOML of one of o's versions, what a
 // decision is checked against.
 func (s *Service) loadOntologyTOML(ctx context.Context, ontologyID, versionID string) (string, error) {
@@ -349,7 +400,18 @@ func (s *Service) ListFoundryReviewDecisions(ctx context.Context, req *foundryv1
 	if len(req.GetPageToken()) > 26 {
 		return nil, status.Error(codes.InvalidArgument, "invalid page_token")
 	}
-	rows, err := s.deps.DB.ListFoundryReviewDecisions(ctx, o.ID, req.GetPageToken(), nil, 101)
+	// Only a client that asks gets the current load's withdraws: a site
+	// before contract 4.16.0, beside this backend in a deploy's window or
+	// after a rollback of the site alone, can't show one.
+	list := func() ([]*foundrymodel.FoundryReviewDecision, error) {
+		return s.deps.DB.ListFoundryReviewDecisions(ctx, o.ID, req.GetPageToken(), nil, 101)
+	}
+	if req.GetIncludeWithdraws() {
+		list = func() ([]*foundrymodel.FoundryReviewDecision, error) {
+			return s.deps.DB.ListFoundryShownDecisions(ctx, o.ID, req.GetPageToken(), 101)
+		}
+	}
+	rows, err := list()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list review decisions: %v", err)
 	}
@@ -379,9 +441,13 @@ func (s *Service) ListFoundryReviewDecisions(ctx context.Context, req *foundryv1
 // DeleteFoundryReviewDecision removes a saved decision. A value decision is
 // withdrawn from the current load at once, as it was applied: a resend job
 // sends the load its decisions without it, and the property goes back to
-// what its other statements give. An approval not yet written is taken back
-// from the current load; one written stays a fact until a new load. A
-// resolve stops applying from the next load.
+// what its other statements give. An approval is taken back from the current
+// load at once too (contract 4.16.0): one the load may have written becomes
+// a withdraw there, which a resend job sends, and the engine holds the claim
+// again (the list shows the withdraw, and what became of it, while that load
+// is current); one it never wrote is only dropped from the load, with
+// nothing sent. A resolve stops applying from the next load. A withdraw is
+// no saved decision: it is not found.
 func (s *Service) DeleteFoundryReviewDecision(ctx context.Context, req *foundryv1.DeleteFoundryReviewDecisionRequest) (*foundryv1.DeleteFoundryReviewDecisionResponse, error) {
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
@@ -407,12 +473,17 @@ func (s *Service) DeleteFoundryReviewDecision(ctx context.Context, req *foundryv
 
 func foundryReviewDecisionProto(d *foundrymodel.FoundryReviewDecision) *foundryv1.FoundryReviewDecision {
 	out := &foundryv1.FoundryReviewDecision{Id: d.ID, Kind: string(d.Kind), Type: d.Type, DocId: d.DocID, NormName: d.NormName, EntityKey: d.EntityKey, Prop: d.Prop, ClaimKey: d.ClaimKey, StatementHash: d.StatementHash, DecidedByUserId: d.DecidedByUserID, DecidedAt: timestamppb.New(d.DecidedAt)}
+	if d.Drawn != nil {
+		out.Drawn = string(*d.Drawn)
+	}
 	if span := d.ClaimSpan; span != nil {
 		out.ClaimSection, out.ClaimStart, out.ClaimEnd = &span.Section, &span.Start, &span.End
 	}
 	if a := d.Applied; a != nil {
 		// Carried or settled here, a decision a resend owes is pending to a
-		// reader; one whose job failed is unconfirmed, and nothing is coming.
+		// reader; one no word came of (its job failed, or, a withdraw, its
+		// document's run said nothing of it) is unconfirmed, and nothing is
+		// coming for it alone.
 		// A value decision's applied goes as it is.
 		status := string(a.Status)
 		switch {
@@ -421,7 +492,7 @@ func foundryReviewDecisionProto(d *foundrymodel.FoundryReviewDecision) *foundryv
 		case a.Status.Waits():
 			status = string(foundrymodel.FoundryReleasePending)
 		}
-		out.Applied = &foundryv1.FoundryDecisionApplied{Status: status, Reason: a.Reason}
+		out.Applied = &foundryv1.FoundryDecisionApplied{Status: status, Reason: a.Reason, TakesBack: a.TakesBack}
 		if a.At != nil {
 			out.Applied.At = timestamppb.New(*a.At)
 		}

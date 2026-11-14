@@ -1161,6 +1161,7 @@ describe("mock document sets", () => {
         notRead: 1,
         waiting: 0,
         facts: "0",
+        attributes: "0",
         reviews: "0",
         unresolved: "0",
       },
@@ -1743,6 +1744,31 @@ describe("mock documents and loads", () => {
       progress: { chunksDone: 2 },
     });
     expect(config).toMatchObject({ startingQueries: { contracts: 0 } });
+  });
+
+  it("retries a load's attempt while its database builds its indexes", async () => {
+    Object.assign(config, { loadStepMs: 100, indexesPending: 1 });
+    const id = (
+      await call("POST", `${O}/loads`, {
+        versionId: "ver_seed_3",
+        clientToken: "go",
+      })
+    ).body.load.id;
+    const at = async (ms: number) => {
+      vi.setSystemTime(Date.now() + ms);
+      return (await call("GET", `${O}/loads/${id}`)).body.load.jobs[0];
+    };
+    expect(await at(350)).toMatchObject({
+      status: "queued",
+      phase: "ingest",
+      error: "the database is still indexing its data; Helix will retry",
+    });
+    expect(await at(10_000)).toMatchObject({
+      status: "succeeded",
+      error: "",
+      progress: { chunksDone: 2 },
+    });
+    expect(config).toMatchObject({ indexesPending: 0 });
   });
 
   it("writes foundry_load on every node and edge, and a marker per load", async () => {
@@ -3275,6 +3301,7 @@ describe("review decisions", () => {
         (d: { name: string }) => d.name === "variant.md",
       ).extraction;
     expect(await document()).toMatchObject({ facts: 0, reviews: 1 });
+    const cost = (await document()).usdMicros;
 
     // It joins the load's decisions, and waits for its job.
     const saved = (await approve()).body.decision;
@@ -3290,6 +3317,17 @@ describe("review decisions", () => {
 
     // Approved again: a job's step later the claim is a fact of the same
     // load, its review gone, and the document counts it.
+    const section = [...g.nodes()].find(
+      (n) =>
+        n.label === FOUNDRY_NODES.Section &&
+        n.props.doc_id === rv.props.doc_id &&
+        n.props.ordinal === rv.props.section,
+    )!;
+    Object.assign(section.props, {
+      model: "commit-extractor",
+      verifier: "commit-verifier",
+      prompt_version: "6",
+    });
     const again = (await approve()).body.decision;
     vi.setSystemTime(Date.now() + 10_000);
     const [written] = await listed();
@@ -3297,6 +3335,7 @@ describe("review decisions", () => {
     expect(written.applied).toEqual({
       status: "written",
       at: expect.any(String),
+      takesBack: true,
     });
     expect(held()).toHaveLength(0);
     expect(facts()).toHaveLength(1);
@@ -3305,7 +3344,19 @@ describe("review decisions", () => {
       quote: "Globex Corporation may have signed.",
       confidence: 0.72,
     });
-    expect(await document()).toMatchObject({ facts: 1, reviews: 0 });
+    // Contract 4.17.0: written from what the load keeps, its quote names the
+    // model work the commit recorded for its section (set apart here from
+    // the workspace's models), and costs nothing.
+    expect(facts()[0]!.props).toMatchObject({
+      model: "commit-extractor",
+      verifier: "commit-verifier",
+      prompt_version: "6",
+    });
+    expect(await document()).toMatchObject({
+      facts: 1,
+      reviews: 0,
+      usdMicros: cost,
+    });
     // Its review is gone, so it can't be approved twice.
     expect(refusal(await approve())).toEqual([
       404,
@@ -3315,6 +3366,47 @@ describe("review decisions", () => {
     // A later load copies the decision, and its commit says what became of it.
     const next = await loaded("next");
     expect(reviews(next).filter((n) => n.props.claim_key)).toHaveLength(0);
+    expect((await listed())[0].applied).toMatchObject({ status: "written" });
+  });
+
+  // Contract 4.17.0: the load holds the claim's document with other text
+  // than a resend sends, so the engine refuses the approval in place, writes
+  // nothing and spends nothing; a new load reads the text afresh and writes it.
+  it("refuses an approval in place as document_changed, and a new load writes it", async () => {
+    Object.assign(config, { documentChanged: true });
+    await uploaded(
+      "variant.md",
+      Buffer.from("# Hedged deal\n\nGlobex Corporation may have signed.\n"),
+    );
+    const g = await loaded("first");
+    const held = () =>
+      reviews(g).filter((n) => n.props.reason === "low_confidence");
+    const rv = held()[0]!;
+    const document = async () =>
+      (await call("GET", `${O}/documents`)).body.documents.find(
+        (d: { name: string }) => d.name === "variant.md",
+      ).extraction;
+    const before = await document();
+    const statementHash = createHash("sha256")
+      .update(`signed_with\u001f${String(rv.props.statement)}`)
+      .digest("hex");
+    await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+      decision: { release: { statementHash } },
+    });
+    vi.setSystemTime(Date.now() + 10_000);
+    const listed = async () =>
+      (await call("GET", `${O}/review-decisions`)).body.decisions;
+    expect((await listed())[0].applied).toEqual({
+      status: "refused",
+      reason: "document_changed",
+      at: expect.any(String),
+    });
+    expect(held()).toHaveLength(1);
+    expect(await document()).toEqual(before);
+    const next = await loaded("next");
+    expect(
+      reviews(next).filter((n) => n.props.reason === "low_confidence"),
+    ).toHaveLength(0);
     expect((await listed())[0].applied).toMatchObject({ status: "written" });
   });
 
@@ -3380,7 +3472,11 @@ describe("review decisions", () => {
     expect((await approve()).status).toBe(200);
     vi.setSystemTime(Date.now() + 10_000);
     const [d] = (await call("GET", `${O}/review-decisions`)).body.decisions;
-    expect(d.applied).toEqual({ status: "written", at: expect.any(String) });
+    expect(d.applied).toEqual({
+      status: "written",
+      at: expect.any(String),
+      takesBack: true,
+    });
     expect(reviews(g).filter((n) => n.props.reason === "conflict")).toEqual([]);
     expect(signedWith(g)).toEqual(["cus_GLOBEX01"]);
     expect(quotes(g)).toEqual([
@@ -3516,7 +3612,12 @@ describe("review decisions", () => {
         d.kind,
         d.applied,
       ]),
-    ).toEqual([["release", { status: "written", at: expect.any(String) }]]);
+    ).toEqual([
+      [
+        "release",
+        { status: "written", at: expect.any(String), takesBack: true },
+      ],
+    ]);
   });
 
   it("writes an approval saved under the key the claim had, by its place and statement", async () => {
@@ -3648,6 +3749,234 @@ describe("review decisions", () => {
       })
     ).body.decision;
     expect(resolved.applied).toBeUndefined();
+  });
+
+  it("keeps how the review queue drew a decision, and labels that measure precision", async () => {
+    await uploaded("contract.md", CONTRACT);
+    await uploaded(
+      "variant.md",
+      Buffer.from(
+        "# Hedged deal\n\nGlobex Corporation and Initech may have signed.\n",
+      ),
+    );
+    const g = await loaded("first");
+    const rv = reviews(g).find((n) => n.props.reason === "low_confidence")!;
+    const statementHash = createHash("sha256")
+      .update(`signed_with\u001f${String(rv.props.statement)}`)
+      .digest("hex");
+    const at = `${O}/reviews/${rv.props.review_key}:settle`;
+    const labels = async (user = "usr_ada") =>
+      (await call("GET", `${O}/review-labels`, undefined, user)).body.labels;
+    // A draw the backend doesn't know is refused, and nothing is saved.
+    expect(
+      refusal(
+        await call("POST", at, {
+          decision: { release: { statementHash } },
+          drawn: "lucky",
+        }),
+      ),
+    ).toEqual([400, 'drawn must be ranked or random, not "lucky"']);
+    expect(await labels()).toEqual([]);
+    // Drawn at random: the decision says so, and is a label of the claim,
+    // with the score its review was read at.
+    const approved = (
+      await call("POST", at, {
+        decision: { release: { statementHash } },
+        drawn: "random",
+      })
+    ).body.decision;
+    expect(approved.drawn).toBe("random");
+    expect(await labels()).toMatchObject([
+      {
+        drawn: "random",
+        verdict: "right",
+        docId: rv.props.doc_id,
+        claimKey: rv.props.claim_key,
+        claimSection: rv.props.section,
+        statementHash,
+        link: "signed_with",
+        confidence: rv.props.confidence,
+        decisionId: approved.id,
+        decidedByUserId: "usr_ada",
+      },
+    ]);
+    expect(
+      (await call("GET", `${O}/review-decisions`)).body.decisions[0].drawn,
+    ).toBe("random");
+
+    // An accepted fact's quote, labelled as the load holds it.
+    const graph = tenantGraph("ten_acme_contracts");
+    const quote = [...g.nodes()].find(
+      (n) =>
+        n.label === FOUNDRY_NODES.Evidence &&
+        typeof n.props.doc_id === "string" &&
+        typeof n.props.fact_key === "string" &&
+        Number(n.props.confidence) >= 0.9,
+    )!;
+    const section = graph.nodes.get(
+      (graph.outgoing.get(quote.id) || [])
+        .map((e) => graph.edges.get(e)!)
+        .find((e) => e.label === "FOUNDRY_FROM_SECTION")!.to,
+    )!.props.ordinal as number;
+    const fact = {
+      docId: quote.props.doc_id,
+      section,
+      start: quote.props.start,
+      end: quote.props.end,
+      factKey: quote.props.fact_key,
+    };
+    const label = (body: unknown, user = "usr_ada") =>
+      call("POST", `${O}/review-labels`, body, user);
+    const wrong = (await label({ fact, verdict: "wrong", drawn: "random" }))
+      .body.label;
+    expect(wrong).toMatchObject({
+      drawn: "random",
+      verdict: "wrong",
+      factKey: quote.props.fact_key,
+      link: quote.props.link,
+      confidence: quote.props.confidence,
+    });
+    // Said again: the same label.
+    expect(
+      (await label({ fact, verdict: "right", drawn: "random" })).body.label,
+    ).toMatchObject({ id: wrong.id, verdict: "right" });
+    expect(
+      refusal(
+        await label({
+          fact: { ...fact, section: section + 1 },
+          verdict: "right",
+          drawn: "random",
+        }),
+      ),
+    ).toEqual([404, "the current load holds no such quote of the fact"]);
+    expect(
+      (await label({ fact, verdict: "maybe", drawn: "random" })).status,
+    ).toBe(400);
+    // A member settles nothing, and labels nothing.
+    expect(
+      (await label({ fact, verdict: "right", drawn: "random" }, "usr_alan"))
+        .status,
+    ).toBe(403);
+
+    // A second person re-checks: the decision, or the label, of another.
+    Object.assign(config, { alanRole: "WORKSPACE_ROLE_ADMIN" });
+    expect(
+      refusal(
+        await label({
+          decisionId: approved.id,
+          verdict: "right",
+          drawn: "recheck",
+        }),
+      ),
+    ).toEqual([
+      400,
+      "a re-check is another person's word, not the decision's own",
+    ]);
+    expect(
+      (
+        await label(
+          { decisionId: approved.id, verdict: "wrong", drawn: "recheck" },
+          "usr_alan",
+        )
+      ).body.label,
+    ).toMatchObject({
+      drawn: "recheck",
+      verdict: "wrong",
+      against: "right",
+      decisionId: approved.id,
+      confidence: rv.props.confidence,
+    });
+    // Ada's label of the fact, by its id: against what it says.
+    expect(
+      (
+        await label(
+          { labelId: wrong.id, verdict: "wrong", drawn: "recheck" },
+          "usr_alan",
+        )
+      ).body.label,
+    ).toMatchObject({
+      drawn: "recheck",
+      against: "right",
+      factKey: quote.props.fact_key,
+      link: quote.props.link,
+    });
+    expect(
+      refusal(
+        await label({ labelId: wrong.id, verdict: "right", drawn: "recheck" }),
+      ),
+    ).toEqual([
+      400,
+      "a re-check is another person's word, not the label's own",
+    ]);
+    // A fact is labelled when drawn, never re-checked by itself; a decision
+    // or a label is re-checked, never drawn.
+    expect(
+      refusal(await label({ fact, verdict: "right", drawn: "recheck" })),
+    ).toEqual([400, "a claim the load holds is labelled when drawn at random"]);
+    expect(
+      refusal(
+        await label({
+          decisionId: approved.id,
+          verdict: "wrong",
+          drawn: "random",
+        }),
+      ),
+    ).toEqual([400, "a decision or a label is re-checked, never drawn"]);
+    // A re-check stands: the same person drawing the claim later can't
+    // replace it with a random label.
+    expect(
+      refusal(
+        await label({ fact, verdict: "wrong", drawn: "random" }, "usr_alan"),
+      ),
+    ).toEqual([400, "you have re-checked this claim; that word stands"]);
+    // A held claim someone decided, drawn at random: labelled from its
+    // review, its decision left as it is.
+    const other = reviews(g).find(
+      (n) =>
+        n.props.reason === "low_confidence" &&
+        n.props.review_key !== rv.props.review_key,
+    );
+    expect(other).toBeDefined();
+    const held = (
+      await label(
+        {
+          reviewId: other!.props.review_key,
+          verdict: "right",
+          drawn: "random",
+        },
+        "usr_alan",
+      )
+    ).body.label;
+    expect(held).toMatchObject({
+      drawn: "random",
+      claimKey: other!.props.claim_key,
+      link: "signed_with",
+    });
+    // One who labelled the claim at random re-checks no one's word on it.
+    const otherHash = createHash("sha256")
+      .update(`signed_with\u001f${String(other!.props.statement)}`)
+      .digest("hex");
+    const rejected = (
+      await call("POST", `${O}/reviews/${other!.props.review_key}:settle`, {
+        decision: { reject: { statementHash: otherHash } },
+      })
+    ).body.decision;
+    expect(
+      refusal(
+        await label(
+          { decisionId: rejected.id, verdict: "right", drawn: "recheck" },
+          "usr_alan",
+        ),
+      ),
+    ).toEqual([
+      400,
+      "you have labelled this claim already; a re-check is another person's",
+    ]);
+    expect(
+      refusal(
+        await label({ reviewId: "nope", verdict: "right", drawn: "random" }),
+      ),
+    ).toEqual([404, "review not found in the current load"]);
   });
 
   it("saves a rejection of a held claim, and tells no load", async () => {

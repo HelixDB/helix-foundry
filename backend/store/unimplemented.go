@@ -36,6 +36,10 @@ func (u Unimplemented) ListFoundryLoadDecisions(context.Context, string, string,
 	u.unimplemented("ListFoundryLoadDecisions")
 	return nil, nil
 }
+func (u Unimplemented) ListFoundryShownDecisions(context.Context, string, string, int) ([]*model.FoundryReviewDecision, error) {
+	u.unimplemented("ListFoundryShownDecisions")
+	return nil, nil
+}
 func (u Unimplemented) ListFoundryReviewDecisions(context.Context, string, string, []string, int) ([]*model.FoundryReviewDecision, error) {
 	u.unimplemented("ListFoundryReviewDecisions")
 	return nil, nil
@@ -72,8 +76,32 @@ func (u Unimplemented) EndFoundryLoadResend(context.Context, string, string, mod
 	u.unimplemented("EndFoundryLoadResend")
 	return nil
 }
+func (u Unimplemented) RecordFoundryReleaseOutcomes(context.Context, string, string, string, []model.FoundryReleaseOutcome) error {
+	u.unimplemented("RecordFoundryReleaseOutcomes")
+	return nil
+}
 func (u Unimplemented) DeleteFoundryReviewDecision(context.Context, string, string, string, *model.FoundryGraphJob) error {
 	u.unimplemented("DeleteFoundryReviewDecision")
+	return nil
+}
+func (u Unimplemented) GetFoundryReviewDecision(context.Context, string, string) (*model.FoundryReviewDecision, error) {
+	u.unimplemented("GetFoundryReviewDecision")
+	return nil, nil
+}
+func (u Unimplemented) GetFoundryReviewLabel(context.Context, string, string) (*model.FoundryReviewLabel, error) {
+	u.unimplemented("GetFoundryReviewLabel")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryReviewLabels(context.Context, string, string, int) ([]*model.FoundryReviewLabel, error) {
+	u.unimplemented("ListFoundryReviewLabels")
+	return nil, nil
+}
+func (u Unimplemented) FoundryReviewLabelsOf(context.Context, string, string, model.FoundryClaimSpan, *string, *string) ([]*model.FoundryReviewLabel, error) {
+	u.unimplemented("FoundryReviewLabelsOf")
+	return nil, nil
+}
+func (u Unimplemented) SaveFoundryReviewLabel(context.Context, string, *model.FoundryReviewLabel) error {
+	u.unimplemented("SaveFoundryReviewLabel")
 	return nil
 }
 func (u Unimplemented) GetConnector(context.Context, string, string) (*model.Connector, error) {

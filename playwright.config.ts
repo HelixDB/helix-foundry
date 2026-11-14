@@ -5,8 +5,16 @@ import { e2eLocalPorts, e2ePorts, localMockEnv, mockEnv } from "./mock/env";
 // ports and build directories so a running `pnpm dev:mock` is left alone. The
 // hosted site runs tests/e2e; a local build (src/shared/deployment.ts), with
 // its own mock as its API, runs tests/e2e/local.
+// A local build stars helixdb/helix-foundry with the shell's GitHub token
+// (src/server/github-star.ts): the tests' site has none, whatever this
+// shell has.
 const env = { ...mockEnv(e2ePorts), NEXT_DIST_DIR: ".next-e2e" },
-  local = { ...localMockEnv(e2eLocalPorts), NEXT_DIST_DIR: ".next-e2e-local" };
+  local = {
+    ...localMockEnv(e2eLocalPorts),
+    NEXT_DIST_DIR: ".next-e2e-local",
+    GH_TOKEN: "",
+    GITHUB_TOKEN: "",
+  };
 
 export default defineConfig({
   testDir: "tests/e2e",

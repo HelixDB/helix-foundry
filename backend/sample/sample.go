@@ -14,7 +14,7 @@
 package sample
 
 import (
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -23,6 +23,38 @@ import (
 
 // Acme is the one sample.
 const Acme = "acme"
+
+// What the website's sample tour makes (src/web/areas/ontology/sample.ts, SAMPLE), by the same
+// names, so the website knows an agent's sample as its own (the ontology by its name, the set by
+// its name and no connector): sample_test.go checks that they match.
+const (
+	OntologyName   = "Acme Corp customers"
+	ConnectorName  = "Acme Corp"
+	SetName        = "Acme Corp sample"
+	SetDescription = "Acme Corp, a made-up field-service scheduling software company, as of 27 October 2026: its customer accounts, contacts, subscriptions, invoices, support tickets and monthly product usage as tables, with three customer contracts, call notes, a support escalation, an incident report and its price list."
+	Goal           = "Understand Acme Corp's customers: each account with its people, plan and subscription, contract terms, invoices, support tickets, usage and what was said on calls, so we can see which renewals are at risk, what we have promised, and what we owe."
+)
+
+// The sample database's login, a read-only user of its one database, the same wherever it is
+// served: the stamp's sample RDS (helix-hyperscale infra/sample-db) or a local install's acme-db.
+const (
+	DatabasePort     = 5432
+	DatabaseName     = "acme"
+	DatabaseUser     = "acme_reader"
+	DatabasePassword = "acme"
+)
+
+// Documents holds the sample company's documents under acme/, the files the website serves at
+// /samples/acme/.
+//
+//go:embed acme
+var Documents embed.FS
+
+// RDSCA is the CA bundle a hosted stamp's sample database (Amazon RDS) is verified with, the
+// website's /samples/rds-ca.pem.
+//
+//go:embed rds-ca.pem
+var RDSCA string
 
 // Title is the sample generation's title, as the AI titled its goal.
 const Title = "Acme Corp customer accounts, contracts and renewal risk"

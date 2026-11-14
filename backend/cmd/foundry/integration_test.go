@@ -75,14 +75,14 @@ func TestFrontAgentIntegration(t *testing.T) {
 	for _, tool := range listed["tools"].([]any) {
 		names[tool.(map[string]any)["name"].(string)] = true
 	}
-	for _, name := range []string{"helix_list_workspaces", "helix_list_projects", "helix_list_databases", "helix_foundry_ask", "helix_foundry_read_graph", "helix_foundry_get_question", "helix_prepare_foundry_operation", "helix_execute_foundry_operation", "helix_foundry_complete_document_upload"} {
+	for _, name := range []string{"helix_list_workspaces", "helix_list_projects", "helix_list_databases", "helix_foundry_ask", "helix_foundry_read_graph", "helix_foundry_get_question", "helix_foundry_prepare_operation", "helix_foundry_execute_operation", "helix_foundry_complete_document_upload"} {
 		require.True(t, names[name], name)
 	}
 	require.False(t, names["helix_foundry_send_pieces"])
 	// No tool sends an agent to what this install refuses.
 	described, err := json.Marshal(listed["tools"])
 	require.NoError(t, err)
-	for _, word := range []string{"API source", "create_event_source", "event_source", "send_pieces", "Helix subscription", "shared cluster", "start_sign_in", "get_sign_in"} {
+	for _, word := range []string{"API source", "create_event_source", "event_source", "send_pieces", "Helix subscription", "shared cluster", "get_sign_in", "with_key", "sign_in_id"} {
 		assert.NotContains(t, string(described), word)
 	}
 	tool := func(name string, args map[string]any) (map[string]any, bool) {
@@ -96,15 +96,15 @@ func TestFrontAgentIntegration(t *testing.T) {
 	for _, kind := range kinds["kinds"].([]any) {
 		require.NotEqual(t, "events", kind.(map[string]any)["kind"])
 	}
-	// connector_link's next step, and the only tool that names a new connector.
+	// connect's next step, and the only tool that names a new connector.
 	connectors, failed := tool("helix_foundry_list_connectors", map[string]any{"workspace_id": workspaceID})
 	require.False(t, failed, connectors)
 	require.Empty(t, connectors["connectors"])
-	link, failed := tool("helix_foundry_connector_link", map[string]any{"workspace_id": workspaceID, "kind": "postgres"})
+	link, failed := tool("helix_foundry_connect", map[string]any{"workspace_id": workspaceID, "kind": "postgres"})
 	require.False(t, failed, link)
 	assert.Contains(t, link["url"], "http://localhost:3100/data?")
 	operation := map[string]any{"operation": "create_ontology", "target": "workspace:" + workspaceID, "payload": map[string]any{"name": "MCP ontology", "database": map[string]any{"name": "MCP database", "slug": "mcp-database", "project_name": "MCP project"}}}
-	confirmation, failed := tool("helix_prepare_foundry_operation", operation)
+	confirmation, failed := tool("helix_foundry_prepare_operation", operation)
 	require.False(t, failed, confirmation)
 	operation["confirmation_id"] = confirmation["confirmation_id"]
 	operation["confirmation_token"] = confirmation["confirmation_token"]
@@ -114,29 +114,29 @@ func TestFrontAgentIntegration(t *testing.T) {
 		changed[key] = value
 	}
 	changed["payload"] = map[string]any{"name": "Another ontology", "database": operation["payload"].(map[string]any)["database"]}
-	refused, failed := tool("helix_execute_foundry_operation", changed)
+	refused, failed := tool("helix_foundry_execute_operation", changed)
 	require.True(t, failed, refused)
 	assert.Contains(t, failureText(refused), "failed_precondition")
 	assert.Contains(t, failureText(refused), "prepare it again")
-	created, failed := tool("helix_execute_foundry_operation", operation)
+	created, failed := tool("helix_foundry_execute_operation", operation)
 	require.False(t, failed, created)
 	ontologyID := created["result"].(map[string]any)["id"].(string)
-	_, failed = tool("helix_execute_foundry_operation", operation)
+	_, failed = tool("helix_foundry_execute_operation", operation)
 	require.True(t, failed, "confirmation must be one-use")
 	ontology, failed := tool("helix_foundry_get_ontology", map[string]any{"workspace_id": workspaceID, "ontology_id": ontologyID})
 	require.False(t, failed, ontology)
 	setOperation := map[string]any{"operation": "create_document_set", "target": "ontology:" + workspaceID + "/" + ontologyID, "payload": map[string]any{"name": "MCP documents", "description": "Uploaded through an agent"}}
-	confirmation, failed = tool("helix_prepare_foundry_operation", setOperation)
+	confirmation, failed = tool("helix_foundry_prepare_operation", setOperation)
 	require.False(t, failed, confirmation)
 	setOperation["confirmation_id"] = confirmation["confirmation_id"]
 	setOperation["confirmation_token"] = confirmation["confirmation_token"]
-	set, failed := tool("helix_execute_foundry_operation", setOperation)
+	set, failed := tool("helix_foundry_execute_operation", setOperation)
 	require.False(t, failed, set)
 	_, failed = tool("helix_foundry_list_documents", map[string]any{"workspace_id": workspaceID, "ontology_id": ontologyID})
 	require.False(t, failed)
 	// revise_version's 1 MiB of TOML, at its worst as JSON, reaches the tool, which says
 	// what's wrong with it, rather than stopping at the transport with a bare 413.
-	revision, failed := tool("helix_prepare_foundry_operation", map[string]any{"operation": "revise_version", "target": "ontology:" + workspaceID + "/" + ontologyID,
+	revision, failed := tool("helix_foundry_prepare_operation", map[string]any{"operation": "revise_version", "target": "ontology:" + workspaceID + "/" + ontologyID,
 		"payload": map[string]any{"version_id": "no-such-version", "edits": []any{map[string]any{"put": map[string]any{"item_id": "rule.big", "toml": strings.Repeat("<", 1<<20)}}}}})
 	if failed {
 		assert.NotContains(t, failureText(revision), "exceeds")

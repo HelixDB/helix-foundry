@@ -465,6 +465,17 @@ export const papiRoutes = [
     method: "DELETE",
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-decisions/{id}",
   },
+  // Ontology: labels of claims the review queue drew, to measure precision.
+  {
+    area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-labels",
+  },
+  {
+    area: "ontology",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-labels",
+  },
 
   // Ontology: suggestions, what audits of the current load found it lacks.
   {

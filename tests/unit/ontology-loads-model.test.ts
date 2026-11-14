@@ -420,6 +420,40 @@ describe("loads", () => {
       expect(loadRetry({ ...refused, status }, created, t), status).toBeNull();
   });
 
+  it("says a load waiting on the database's indexes is building them, at any age", () => {
+    const created = "2026-10-19T08:13:15.000Z",
+      t = Date.parse(created);
+    const indexing = job({
+      status: "queued",
+      error: "the database is still indexing its data; Helix will retry",
+    });
+    // Index building is never a failure: no window, no ontology needed.
+    for (const now of [t, t + 15 * 60_000, t + 30 * 86_400_000])
+      expect(loadRetry(indexing, created, now)).toEqual({ kind: "indexing" });
+    expect(loadRetry(indexing, undefined, t)).toEqual({ kind: "indexing" });
+    expect(
+      loadRetry(
+        job({ status: "queued", error: "The database is STILL INDEXING" }),
+        created,
+        t,
+      ),
+    ).toEqual({ kind: "indexing" });
+    // The worker giving up on the build fails the load: not a retry.
+    for (const status of ["running", "failed", "succeeded"] as const)
+      expect(loadRetry({ ...indexing, status }, created, t), status).toBeNull();
+    expect(
+      loadRetry(
+        job({
+          status: "failed",
+          error:
+            "the database's indexes had not finished building 2 hours after the load started; try the load again",
+        }),
+        created,
+        t,
+      ),
+    ).toBeNull();
+  });
+
   it("never says a local build's database is starting: it has one HelixDB, always up", async () => {
     vi.stubEnv("NEXT_PUBLIC_FOUNDRY_MODE", "local");
     vi.resetModules();
@@ -431,6 +465,17 @@ describe("loads", () => {
       expect(
         local.loadRetry(job({ status: "queued", error }), created, t),
       ).toEqual({ kind: "failed", reason: error });
+      // Its HelixDB builds indexes all the same.
+      expect(
+        local.loadRetry(
+          job({
+            status: "queued",
+            error: "the database is still indexing its data; Helix will retry",
+          }),
+          created,
+          t,
+        ),
+      ).toEqual({ kind: "indexing" });
     } finally {
       vi.unstubAllEnvs();
       vi.resetModules();
@@ -681,6 +726,7 @@ describe("what a load and a version read of their documents", () => {
       failed: 1,
       waiting: 2,
       facts: 3,
+      attributes: 0,
       reviews: 67,
       unresolved: 5,
     });
@@ -749,6 +795,29 @@ describe("what a load and a version read of their documents", () => {
     ).toBe(
       "None of its 3 documents was read for names and facts. " +
         "3 documents are stored and searchable, but no route of this version reads those sets, so nothing from them is in the graph: to read them, generate a version whose goal covers them.",
+    );
+    // Values written are said beside the fact writes, counted the same way.
+    expect(
+      loadDocumentsOutcome(
+        loadDocumentTotals({
+          documentSets: [
+            {
+              setId: "g",
+              routed: true,
+              documents: 2,
+              read: 2,
+              facts: "3",
+              attributes: "4",
+              reviews: "1",
+            },
+          ],
+        })!,
+        [],
+      ),
+    ).toBe(
+      "2 of 2 documents were read for the names and facts they hold. " +
+        "The documents read made 3 fact writes and wrote 4 values (each counts once for each document that states it) and left 1 review. " +
+        "A review settled since stays counted until this load writes the decision, and a disputed value stays counted once chosen.",
     );
     // Everything read, nothing held back.
     expect(

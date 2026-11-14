@@ -33,6 +33,40 @@ describe("login transactions", () => {
     expect(openLoginTransaction(sealed, "d".repeat(40), 2_000)).toBeNull();
   });
 
+  it("carry a sign-in through single sign-on and the emailed code", () => {
+    const sealed = sealLoginTransaction(
+      {
+        sessionId,
+        returnPath: "/",
+        sso: true,
+        verifyEmail: "grace@example.com",
+      },
+      secret,
+    )!;
+    expect(openLoginTransaction(sealed, secret)).toEqual({
+      sessionId,
+      returnPath: "/",
+      sso: true,
+      verifyEmail: "grace@example.com",
+    });
+    // The address may be unknown, never something else.
+    expect(
+      openLoginTransaction(
+        sealLoginTransaction(
+          { sessionId, returnPath: "/", verifyEmail: "" },
+          secret,
+        )!,
+        secret,
+      ),
+    ).toEqual({ sessionId, returnPath: "/", verifyEmail: "" });
+    expect(
+      sealLoginTransaction(
+        { sessionId, returnPath: "/", verifyEmail: "not an address" },
+        secret,
+      ),
+    ).toBeNull();
+  });
+
   it("refuse tampering and unsafe destinations", () => {
     const sealed = sealLoginTransaction(
       { sessionId, returnPath: "/" },

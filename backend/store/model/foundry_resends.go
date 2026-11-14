@@ -64,6 +64,16 @@ type FoundryResendEnd struct {
 	// Refused, when set, is why the document's decisions that still wait were
 	// not applied: one of the FoundryRelease… reasons the backend gives.
 	Refused string
+	// Unsaid is a document an Extract of the job carried to a run that
+	// reached its documents, which said nothing of its withdraws (contract
+	// 4.16.0: it needed a model call, so got no event; or its event failed
+	// and left one out). The engine decides each before it reads any
+	// document, and may have refused one (differs, too_large), so nothing
+	// here says it was taken back: the withdraws that wait stay waiting,
+	// unconfirmed with Refused as their reason
+	// (FoundryDecisionApplied.Unconfirmed). Its releases are refused as
+	// Refused says, which Unsaid needs.
+	Unsaid bool
 }
 
 // FoundryReleaseStatus is what became of a release or a value decision in a
@@ -71,7 +81,8 @@ type FoundryResendEnd struct {
 // the load copied when it was created and no job has reported on yet. A
 // release ends written, refused or missed, as the engine says of each; a
 // value decision ends applied, which is all a load can say of one, and one
-// taken back is removed until the load is told.
+// taken back is removed until the load is told. A withdraw waits as pending
+// and ends withdrawn, not_written or refused.
 type FoundryReleaseStatus string
 
 const (
@@ -113,6 +124,16 @@ const (
 	// list). A resend job that failed leaves it with FoundryReleaseJobFailed,
 	// and the end of the next job of the ontology sends the list again.
 	FoundryValueRemoved FoundryReleaseStatus = "removed"
+	// FoundryWithdrawn is a withdraw (FoundryReviewWithdraw) the engine
+	// carried out: what the approval wrote no longer acts. Its claim is held
+	// again with its review or, where what held it is gone (a conflict with a
+	// document since removed), stays written as its document's own statement
+	// with no approval to rank it.
+	FoundryWithdrawn FoundryReleaseStatus = "withdrawn"
+	// FoundryNotWritten is a withdraw of an approval of which the load holds
+	// nothing: it was never written, was taken back already, or another
+	// decision wrote the claim since.
+	FoundryNotWritten FoundryReleaseStatus = "not_written"
 )
 
 // Waits reports a decision the engine has yet to say anything of.
@@ -123,14 +144,17 @@ func (s FoundryReleaseStatus) Waits() bool {
 // The reasons the backend gives a refused release; the others are the
 // engine's (ontologyagent.ReleaseOutcome.Reason), stored as they came.
 const (
-	// FoundryReleaseNotReplayed: the document's saved extraction didn't
-	// replay, so applying the approval would have cost a model call.
+	// FoundryReleaseNotReplayed: the engine sent no event for the document
+	// and ended budget_exhausted, so applying the approval would have cost a
+	// model call. Through contract 4.16.0 that was a document whose saved
+	// extraction didn't replay; since 4.17.0 a release asks no model, so a
+	// document the load holds gets one.
 	FoundryReleaseNotReplayed = "not_replayed"
 	// FoundryReleaseDocumentGone: the document left the load or was deleted.
 	FoundryReleaseDocumentGone = "document_gone"
 	// FoundryReleaseDocumentUnread: the load holds the document, but its row
 	// no longer says it is extracted, as when a failure was recorded over the
-	// row its commit wrote: there is no saved extraction to replay it from.
+	// row its commit wrote: the load may hold no review of it to write from.
 	FoundryReleaseDocumentUnread = "document_unread"
 	// FoundryReleaseDocumentFailed: the engine failed the document.
 	FoundryReleaseDocumentFailed = "document_failed"
@@ -151,6 +175,12 @@ const (
 	FoundryReleaseUnanswered = "unanswered"
 )
 
+// FoundryReleaseDocumentChanged is the engine's refusal of every release
+// decision of a document the load holds with other text (contract 4.17.0):
+// it judged none of them, so it says nothing of what the load holds of an
+// approval written or unconfirmed before (FoundryDecisionApplied.After).
+const FoundryReleaseDocumentChanged = "document_changed"
+
 // FoundryReleaseOutcomeKind is what the engine did with a release decision of
 // a document it was sent (the document event's releases[].outcome.kind).
 type FoundryReleaseOutcomeKind string
@@ -165,6 +195,10 @@ const (
 	// no review at the decision's key and place: one a release wrote before,
 	// or a claim this load never held there.
 	FoundryReleaseOutcomeNotHeld FoundryReleaseOutcomeKind = "not_held"
+	// FoundryReleaseOutcomeWithdrawn and FoundryReleaseOutcomeNotWritten are
+	// of a withdraw alone (contract 4.16.0), as are their statuses.
+	FoundryReleaseOutcomeWithdrawn  FoundryReleaseOutcomeKind = "withdrawn"
+	FoundryReleaseOutcomeNotWritten FoundryReleaseOutcomeKind = "not_written"
 )
 
 // FoundryReleaseOutcome is the engine's word on one release decision a job
@@ -174,7 +208,12 @@ const (
 type FoundryReleaseOutcome struct {
 	DecisionID    string
 	StatementHash string
-	Kind          FoundryReleaseOutcomeKind
+	// Withdraw is a withdraw the job sent, not a release: the load's copy of
+	// the decision is read under that kind, and a copy the person took back
+	// while the job ran (a release then, a withdraw now) is not what the
+	// engine speaks of.
+	Withdraw bool
+	Kind     FoundryReleaseOutcomeKind
 	// Reason is the engine's reason for a refusal.
 	Reason string
 }
@@ -183,11 +222,37 @@ type FoundryReleaseOutcome struct {
 // current load.
 type FoundryDecisionApplied struct {
 	Status FoundryReleaseStatus
-	// Reason is why a refused one stays held, or FoundryReleaseJobFailed on
-	// one that still waits (Unconfirmed).
+	// Reason is why a refused one stays held, or, on one that still waits,
+	// why the engine's word on it is not known (Unconfirmed).
 	Reason string
 	// At is when a job reported it; nil while it waits.
 	At *time.Time
+	// WasWritten is of a withdraw: its load had recorded the release it takes
+	// back written (foundry_load_decisions.was_written).
+	WasWritten bool
+	// TakesBack is of a release: the load may have written it
+	// (store.foundryMayHaveWritten), so removing it takes it back.
+	TakesBack bool
+}
+
+// MovesBack reports whether a withdraw that ends at status takes back what
+// its load recorded written, which moves its document's counts back: a fact
+// fewer and a review more, as they moved forward when the release was
+// written. Only once, from waiting.
+func (a FoundryDecisionApplied) MovesBack(status FoundryReleaseStatus) bool {
+	return status == FoundryWithdrawn && a.WasWritten && a.Status.Waits()
+}
+
+// MovesForward reports whether a release that ends at status after o was
+// written by a run whose word was lost: not_held of one settled here
+// (After). The worker counts a fact only for a written word, so that run's
+// document counts never moved; they move now, a fact more and a review
+// fewer, so the take-back (MovesBack) moves back only what moved forward.
+// Only where the document's counts add up what each run wrote: a fresh
+// commit's counts are its own, so the store asks only of a run that kept
+// the document's row (store.recordFoundryReleaseOutcomes).
+func (a FoundryDecisionApplied) MovesForward(o FoundryReleaseOutcome, status FoundryReleaseStatus) bool {
+	return !o.Withdraw && o.Kind == FoundryReleaseOutcomeNotHeld && status == FoundryReleaseWritten && a.Status.Waits()
 }
 
 // FoundryReleaseUnconfirmed is how a reader is told of an unconfirmed
@@ -196,16 +261,25 @@ type FoundryDecisionApplied struct {
 const FoundryReleaseUnconfirmed = "unconfirmed"
 
 // Unconfirmed reports a decision that still waits for the engine's word
-// after the resend job that sent its document failed for good: whether its
-// claim was written is not known. The engine may have written it before the
-// job failed, and the event that said so was never recorded. No job is
-// queued for it, so no reader waits; the next resend of its document, as
-// approving it again queues, says what became of it
-// (FoundryDecisionApplied.After), where it can: a carried one the engine
-// holds no review for stays unconfirmed, as that is true both of one it
-// wrote and of one this load never held.
+// after the resend job that sent its document failed for good
+// (FoundryReleaseJobFailed): whether its claim was written is not known. The
+// engine may have written it before the job failed, and the event that said
+// so was never recorded. No job is queued for it, so no reader waits; the
+// next resend of its document, as approving it again queues, says what
+// became of it (FoundryDecisionApplied.After), where it can: a carried one
+// the engine holds no review for stays unconfirmed, as that is true both of
+// one it wrote and of one this load never held. A withdraw is unconfirmed
+// too, with the run's reason, where the run that carried it said nothing of
+// it (FoundryResendEnd.Unsaid): whether the engine took it back or refused
+// it is not known. Only job_failed ones are sent again at the next job's
+// end. One whose document failed (FoundryReleaseDocumentFailed) goes with
+// the document's next resend, which may read it. One whose document's saved
+// reading doesn't replay (FoundryReleaseNotReplayed) gets no word while
+// this load is current: every resend costs nothing, and that document needs
+// a model call. Sent again it would get none either, so nothing queues one
+// for it; the next load holds no copy of the approval, and won't write it.
 func (a FoundryDecisionApplied) Unconfirmed() bool {
-	return a.Status.Waits() && a.Reason == FoundryReleaseJobFailed
+	return a.Status.Waits() && a.Reason != ""
 }
 
 // After is the status and reason a decision at a has once the engine said o
@@ -219,11 +293,41 @@ func (a FoundryDecisionApplied) Unconfirmed() bool {
 // earlier event said, and stays: ok is false, and nothing changes. An outcome
 // the backend doesn't know wrote nothing it can vouch for: the decision is
 // refused, with the outcome's name as its reason, so none waits for ever.
+//
+// A release refused because the load holds its document with other text
+// (FoundryReleaseDocumentChanged) was not judged: it refuses one that waits
+// with no reason, and leaves any other as it was (ok is false), so one
+// written, unconfirmed, or never reported on keeps what the load may hold of
+// it, and removing it still takes it back.
+//
+// A withdraw ends as the engine says: withdrawn, not_written or refused;
+// another word, which only a release gets, is refused with its name as the
+// reason, as an unknown one is. not_written of an approval its load had
+// recorded written (WasWritten) is the take-back done already, by a run that
+// stopped, or whose document needed a model call, before its event said so
+// (the engine takes withdraws back before it reads any document): withdrawn.
 func (a FoundryDecisionApplied) After(o FoundryReleaseOutcome) (status FoundryReleaseStatus, reason string, ok bool) {
+	if o.Withdraw {
+		switch o.Kind {
+		case FoundryReleaseOutcomeWithdrawn:
+			return FoundryWithdrawn, "", true
+		case FoundryReleaseOutcomeNotWritten:
+			if a.WasWritten {
+				return FoundryWithdrawn, "", true
+			}
+			return FoundryNotWritten, "", true
+		case FoundryReleaseOutcomeRefused:
+			return FoundryReleaseRefused, o.Reason, true
+		}
+		return FoundryReleaseRefused, string(o.Kind), true
+	}
 	switch o.Kind {
 	case FoundryReleaseOutcomeWritten:
 		return FoundryReleaseWritten, "", true
 	case FoundryReleaseOutcomeRefused:
+		if o.Reason == FoundryReleaseDocumentChanged && (!a.Status.Waits() || a.Unconfirmed()) {
+			return a.Status, a.Reason, false
+		}
 		return FoundryReleaseRefused, o.Reason, true
 	case FoundryReleaseOutcomeMissed:
 		return FoundryReleaseMissed, "", true

@@ -826,6 +826,105 @@ describe("whether a load read a decision", () => {
   });
 });
 
+describe("an approval taken back from the current load (contract 4.16.0)", () => {
+  const settle = model.settleable(held, []).settle as Extract<
+    model.Settle,
+    { kind: "release" }
+  >;
+  const withdraw = { ...decided, kind: "withdraw" as const, id: "w1" };
+  it("is found for its claim's card, and is no approval of it", () => {
+    expect(model.takenBackOf([withdraw], settle)?.id).toBe("w1");
+    expect(model.approvalOf([withdraw], settle, true).saved).toBeUndefined();
+    expect(model.matchesReview(withdraw, settle)).toBe(false);
+    const elsewhere = {
+      ...withdraw,
+      claimStart: withdraw.claimStart + 1,
+      claimEnd: withdraw.claimEnd + 1,
+    };
+    expect(model.takenBackOf([elsewhere], settle)).toBeUndefined();
+    expect(
+      model.takenBackOf([{ ...decided, id: "d1" }], settle),
+    ).toBeUndefined();
+  });
+  it("says what became of it in the load's words", () => {
+    expect(model.takenBack({ status: "pending" })).toEqual({
+      label: "Approval being taken back",
+      text: "This load’s job takes it back now.",
+    });
+    expect(model.takenBack({ status: "withdrawn" })).toEqual({
+      label: "Approval taken back",
+      text: "This load holds the claim for review again.",
+    });
+    expect(model.takenBack({ status: "not_written" })).toEqual({
+      label: "Approval taken back",
+      text: "This load held nothing it wrote.",
+    });
+    expect(model.takenBack({ status: "unconfirmed" }).text).toContain(
+      "the ontology’s next job sends it again",
+    );
+    expect(
+      model.takenBack({ status: "unconfirmed", reason: "job_failed" }).text,
+    ).toContain("the ontology’s next job sends it again");
+    // No event said what became of it: nothing claims it was taken back, or
+    // that a resend that can't say will say.
+    expect(
+      model.takenBack({ status: "unconfirmed", reason: "not_replayed" }),
+    ).toEqual({
+      label: "Approval maybe taken back",
+      text: "This load can’t say whether it was taken back: its document’s saved reading couldn’t be reused, as the models or the reading changed since. The next load won’t write it.",
+    });
+    expect(
+      model.takenBack({ status: "unconfirmed", reason: "document_failed" }),
+    ).toEqual({
+      label: "Approval maybe taken back",
+      text: "The engine said nothing of it: the load couldn’t read its document again. The next approval or take-back in its document sends it again.",
+    });
+    expect(
+      model.takenBack({ status: "unconfirmed", reason: "a_later_word" }).text,
+    ).toContain("can’t say whether it was taken back: “a_later_word”.");
+    expect(model.takenBack({ status: "refused", reason: "differs" })).toEqual({
+      label: "Approval not taken back",
+      text: "This load keeps what it wrote: an earlier version wrote this sentence’s claims of one link without telling them apart, so it can’t say which to take back. The next load won’t write it.",
+    });
+    expect(
+      model.takenBack({ status: "refused", reason: "too_large" }).text,
+    ).toContain("more than one take-back can be matched among");
+    expect(
+      model.takenBack({ status: "refused", reason: "document_gone" }).text,
+    ).toContain("its document was deleted");
+    // Every reason the backend gives a document it couldn't send is words.
+    for (const reason of [
+      "document_unread",
+      "document_failed",
+      "not_replayed",
+      "unanswered",
+    ])
+      expect(model.takenBack({ status: "refused", reason }).text).not.toContain(
+        reason,
+      );
+    expect(
+      model.takenBack({ status: "refused", reason: "a_later_word" }).text,
+    ).toContain("it says why as “a_later_word”.");
+    expect(model.takenBack({ status: "refused" }).text).toContain(
+      "it says why as nothing.",
+    );
+    expect(model.takenBack(undefined)).toEqual({
+      label: "Approval taken back",
+      text: "",
+    });
+  });
+  it("is read again while it waits", () => {
+    expect(
+      model
+        .waiting([
+          { ...withdraw, applied: { status: "pending" as const } },
+          { ...withdraw, id: "w2", applied: { status: "withdrawn" as const } },
+        ])
+        .map((d) => d.id),
+    ).toEqual(["w1"]);
+  });
+});
+
 describe("an approval the current load has yet to apply", () => {
   it("is one whose job hasn't said what became of it", () => {
     const decisions = [
@@ -930,7 +1029,14 @@ describe("why a load kept an approved claim held", () => {
     );
     expect(said("blocked")).toContain("break a rule");
     expect(said("no_statement")).toContain("keeps nothing to write");
-    expect(said("not_stated")).toContain("no longer states it");
+    expect(said("not_stated")).toContain("no longer finds it stated");
+    // Contract 4.17.0: the load holds the document with other text.
+    expect(said("document_changed")).toContain(
+      "text changed after this load read it",
+    );
+    expect(said("document_changed")).toContain(
+      "find the claim in that load’s review and approve it there",
+    );
     expect(said("too_large")).toContain("more held claims");
   });
   const end = (name: string, by: model.WeakLink) => ({ name, by });

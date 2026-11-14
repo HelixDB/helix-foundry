@@ -1,13 +1,18 @@
-import { getWorkOS, saveSession } from "@workos-inc/authkit-nextjs";
-import { after, type NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { authConfig } from "@/server/config";
-import { expireCookie, loginCookiePrefix } from "@/server/cookies";
 import {
+  cookieOptions,
+  expireCookie,
+  loginCookiePrefix,
+} from "@/server/cookies";
+import {
+  LOGIN_TRANSACTION_TTL_SECONDS,
   loginCookieName,
   loginFlowId,
   openLoginTransaction,
+  sealLoginTransaction,
 } from "@/server/login-transaction";
-import { remindersConfig, stopReminders } from "@/server/reminders";
+import { finishSignIn, signInErrorPath, throughSso } from "@/server/sign-in";
 import type {
   ExchangeAuthCodeRequest,
   ExchangeAuthCodeResponse,
@@ -17,33 +22,31 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // GET /login/callback?code&state from WorkOS. The WFE exchanges the code for
-// the pending login it started; the tokens become the sealed AuthKit session.
-// Every failure lands on the sign-in page with ?error=<reason>. Once signed in,
-// the landing page's reminders to that address stop (src/server/reminders.ts),
-// after the answer, so a sign-in never waits on them.
+// the pending login it started; the tokens become the sealed AuthKit session
+// (finishSignIn). Two answers carry no tokens. WorkOS wants the code it
+// emailed when it hasn't seen the address verified (a GitHub or Microsoft
+// account, often): the pending login is kept for /login/verify, which sends
+// the code to /auth/verify-email. The email's company requires its single
+// sign-on: a new login goes through it, once. Every failure lands on the
+// sign-in page with ?error=<reason>.
 
 type Failure = "callback" | "denied" | "verify" | "sso";
 
-function fail(request: NextRequest, reason: Failure, cookie?: string | null) {
+const NO_STORE = { "Cache-Control": "no-store" } as const;
+
+function fail(
+  request: NextRequest,
+  reason: Failure,
+  cookie?: string | null,
+  returnPath?: string,
+) {
   const response = NextResponse.redirect(
-    new URL(`/login?error=${reason}`, request.url),
-    { status: 303, headers: { "Cache-Control": "no-store" } },
+    new URL(signInErrorPath(reason, returnPath), request.url),
+    { status: 303, headers: NO_STORE },
   );
   const config = authConfig();
   if (cookie && config) expireCookie(response, cookie, config);
   return response;
-}
-
-// The WorkOS user ID: the access token's subject.
-function subject(accessToken: string): string | null {
-  try {
-    const claims = JSON.parse(
-      Buffer.from(accessToken.split(".")[1] || "", "base64url").toString(),
-    ) as { sub?: unknown };
-    return typeof claims.sub === "string" && claims.sub ? claims.sub : null;
-  } catch {
-    return null;
-  }
 }
 
 export async function GET(request: NextRequest) {
@@ -62,7 +65,7 @@ export async function GET(request: NextRequest) {
           config.cookiePassword,
         )
       : null;
-  if (!config || !code || !state || !transaction)
+  if (!config || !code || !state || !flowId || !cookie || !transaction)
     return fail(request, "callback", cookie);
 
   let tokens: ExchangeAuthCodeResponse;
@@ -87,28 +90,54 @@ export async function GET(request: NextRequest) {
   } catch {
     return fail(request, "callback", cookie);
   }
-  // Password and SSO sign-in are not offered yet; say why instead of looping.
-  if (tokens.ssoRequired === true) return fail(request, "sso", cookie);
-  if (tokens.emailVerificationRequired === true)
-    return fail(request, "verify", cookie);
-  const { accessToken, refreshToken } = tokens;
-  const userId = accessToken ? subject(accessToken) : null;
-  if (!accessToken || !refreshToken || !userId)
-    return fail(request, "callback", cookie);
-  let email: string;
-  try {
-    const user = await getWorkOS().userManagement.getUser(userId);
-    await saveSession({ accessToken, refreshToken, user }, request);
-    email = user.email;
-  } catch {
-    return fail(request, "callback", cookie);
-  }
-  after(() => stopReminders(remindersConfig(), email));
 
+  if (tokens.ssoRequired === true) {
+    const sso = await throughSso(
+      request,
+      config,
+      transaction,
+      tokens.email,
+      cookie,
+    );
+    if (!sso) return fail(request, "sso", cookie, transaction.returnPath);
+    const response = NextResponse.redirect(sso.to, {
+      status: 303,
+      headers: NO_STORE,
+    });
+    sso.set(response);
+    return response;
+  }
+
+  if (tokens.emailVerificationRequired === true) {
+    // The WFE keeps the pending login for its code for as long as a new
+    // one, so the cookie starts again too.
+    const waiting = sealLoginTransaction(
+      { ...transaction, verifyEmail: tokens.email ?? "" },
+      config.cookiePassword,
+    );
+    if (!waiting) return fail(request, "callback", cookie);
+    const response = NextResponse.redirect(
+      new URL(
+        `/login/verify?${new URLSearchParams({ flow: flowId })}`,
+        request.url,
+      ),
+      { status: 303, headers: NO_STORE },
+    );
+    response.cookies.set({
+      name: cookie,
+      value: waiting,
+      ...cookieOptions(config),
+      maxAge: LOGIN_TRANSACTION_TTL_SECONDS,
+    });
+    return response;
+  }
+
+  if (!(await finishSignIn(request, tokens)))
+    return fail(request, "callback", cookie);
   const response = NextResponse.redirect(
     new URL(transaction.returnPath, request.url),
-    { status: 303, headers: { "Cache-Control": "no-store" } },
+    { status: 303, headers: NO_STORE },
   );
-  expireCookie(response, cookie!, config);
+  expireCookie(response, cookie, config);
   return response;
 }

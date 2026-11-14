@@ -19,6 +19,7 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/document"
 	"github.com/helixdb/helix-foundry/backend/events"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/text/unicode/norm"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -34,8 +35,8 @@ import (
 // connector and generation per ontology, the hourly generation cap, the load budget, and the
 // current version's compare-and-set.
 const (
-	toolPrepareFoundry = "helix_prepare_foundry_operation"
-	toolExecuteFoundry = "helix_execute_foundry_operation"
+	toolPrepareFoundry = "helix_foundry_prepare_operation"
+	toolExecuteFoundry = "helix_foundry_execute_operation"
 	// toolFoundryCompleteUpload ends the upload upload_document started. It is not confirmed on
 	// its own: it only checks the bytes the confirmed upload declared, and completing twice is
 	// no error.
@@ -134,8 +135,8 @@ type ExecuteFoundryInput struct {
 	Operation         string         `json:"operation" jsonschema:"The operation prepared."`
 	Target            string         `json:"target" jsonschema:"The target prepared."`
 	Payload           map[string]any `json:"payload" jsonschema:"The payload prepared, unchanged."`
-	ConfirmationID    string         `json:"confirmation_id"`
-	ConfirmationToken string         `json:"confirmation_token"`
+	ConfirmationID    string         `json:"confirmation_id" jsonschema:"The confirmation_id helix_foundry_prepare_operation returned."`
+	ConfirmationToken string         `json:"confirmation_token" jsonschema:"The confirmation_token helix_foundry_prepare_operation returned."`
 }
 
 type FoundryOperationOutput struct {
@@ -193,13 +194,19 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 	case !identity.HasPermission(PermissionWorkspaceConnectorsManage) && !identity.HasPermission(PermissionWorkspaceOntologyManage):
 		return
 	}
-	prepare := queryTool(toolPrepareFoundry,
-		"Validate a Foundry action and prepare a five-minute, one-time confirmation for exactly that action. A create_ontology on workspace:<id> makes the ontology's database first, and its project when new.", false)
-	prepare.InputSchema = foundryOperationSchema(s.Events)
-	addFoundryTool(s, server, identity, prepare, s.PrepareFoundryOperation)
-	addFoundryTool(s, server, identity, queryTool(toolExecuteFoundry,
-		"Consume a matching one-time confirmation, then run exactly one Foundry action, without retry.", false), s.ExecuteFoundryOperation)
-	no := false
+	no, yes := false, true
+	// Preparing changes nothing: only executing is destructive.
+	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
+		Description: "Check a Foundry action and return a one-time confirmation for exactly that action, valid for five minutes; " +
+			toolExecuteFoundry + " runs it. Preparing changes nothing. A create_ontology on workspace:<id> makes the ontology's database first, and its project when new.",
+		InputSchema: foundryOperationSchema(s.Events),
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
+	}, s.PrepareFoundryOperation)
+	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolExecuteFoundry,
+		Description: "Run the Foundry action " + toolPrepareFoundry + " prepared: the same operation, target and payload, with its confirmation. A confirmation runs once, and the action is never retried.",
+		InputSchema: executeOperationSchema(s.Events),
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &yes, OpenWorldHint: &no},
+	}, s.ExecuteFoundryOperation)
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryCompleteUpload,
 		Description: "After an upload_document action, once its bytes are PUT to the upload URL: check them and add the document to its document set, which every ontology whose current version reads the set then reads (reads says how). Completing twice is no error.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
@@ -288,7 +295,7 @@ func (s *Service) ExecuteFoundryOperation(
 
 // ValidateFoundryOperation parses an action's target and strict payload, then authorizes the
 // caller for it: a user by the WFE method's registry entry, a key by its grant on the project
-// of the ontology's database. create_ontology, create_event_source, sync_connector,
+// of the ontology's database. create_ontology, create_event_source, add_sample_data, sync_connector,
 // generate_ontology and settle_review are user-only. create_event_source is the one connector
 // an agent may make: an event source has no credential to pass through it. A create_ontology
 // on a new database is authorized for every call the website's wizard makes: CreateProject
@@ -388,20 +395,45 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 		return nil, invalid(input.Operation + " takes target ontology:<workspace_id>/<ontology_id>")
 	}
 	switch input.Operation {
+	case "add_sample_data":
+		if s.SampleDatabase == nil {
+			return nil, status.Error(codes.FailedPrecondition, "this host serves no sample database")
+		}
+		if len(input.Payload) != 0 {
+			return nil, invalid("add_sample_data takes target ontology:<workspace_id>/<ontology_id> and an empty payload")
+		}
+		// What the website's sample tour calls: the connector's, the sets' and the uploads'.
+		if err := s.AuthorizeFoundry(ctx, identity, &foundryv1.CreateConnectorRequest{WorkspaceId: workspaceID}, foundryUserOnly,
+			"ListConnectors", "CreateConnector", "SyncConnector"); err != nil {
+			return nil, err
+		}
+		if err := s.AuthorizeFoundry(ctx, identity, &foundryv1.GetFoundryOntologyRequest{WorkspaceId: workspaceID, OntologyId: ontologyID}, QueryRead,
+			"ListFoundryDocumentSets"); err != nil {
+			return nil, err
+		}
+		if err := s.AuthorizeFoundry(ctx, identity, &foundryv1.CreateFoundryOntologyDocumentRequest{WorkspaceId: workspaceID, OntologyId: ontologyID}, writeGrant,
+			"CreateFoundryOntologyDocumentSet", "CreateFoundryOntologyDocument", "CompleteFoundryOntologyDocumentUpload"); err != nil {
+			return nil, err
+		}
+		return AddSampleDataOperation{workspaceID: workspaceID, ontologyID: ontologyID}, nil
 	case "generate_ontology":
 		var payload GenerateOntologyPayload
-		malformed := invalid("generate_ontology takes payload {goal, connector_ids, document_set_ids, no_connectors}, a goal of at most 2000 characters and no connector_ids with no_connectors")
+		malformed := invalid("generate_ontology takes payload {goal, connector_ids, document_set_ids, no_connectors, sample}, a goal of at most 2000 characters, no connector_ids with no_connectors, " +
+			"and with sample \"acme\" exactly one connector and one document set")
 		if s.Events {
-			malformed = invalid("generate_ontology takes payload {goal, connector_ids, document_set_ids, no_connectors, event_sources}, a goal of at most 2000 characters, " +
-				"no connector_ids with no_connectors, and event_sources naming each API source once as {connector_id, mode}, mode structured or extraction")
+			malformed = invalid("generate_ontology takes payload {goal, connector_ids, document_set_ids, no_connectors, event_sources, sample}, a goal of at most 2000 characters, " +
+				"no connector_ids with no_connectors, event_sources naming each API source once as {connector_id, mode}, mode structured or extraction, " +
+				"and with sample \"acme\" exactly one connector, one document set and no event_sources")
 		}
 		if decodeStrict(raw, &payload) != nil || utf8.RuneCountInString(payload.Goal) > maxFoundryGoalChars ||
-			!ValidIDs(payload.ConnectorIDs) || !ValidIDs(payload.DocumentSetIDs) || payload.NoConnectors && len(payload.ConnectorIDs) > 0 {
+			!ValidIDs(payload.ConnectorIDs) || !ValidIDs(payload.DocumentSetIDs) || payload.NoConnectors && len(payload.ConnectorIDs) > 0 ||
+			// The sample's ready-made draft maps its one database and reads its one set, as the backend checks.
+			payload.Sample != "" && (payload.Sample != sample.Acme || len(payload.ConnectorIDs) != 1 || len(payload.DocumentSetIDs) != 1 || len(payload.EventSources) > 0) {
 			return nil, malformed
 		}
 		req := &foundryv1.GenerateOntologyRequest{
 			WorkspaceId: workspaceID, OntologyId: ontologyID, Goal: payload.Goal,
-			ConnectorIds: payload.ConnectorIDs, DocumentSetIds: payload.DocumentSetIDs, NoConnectors: payload.NoConnectors,
+			ConnectorIds: payload.ConnectorIDs, DocumentSetIds: payload.DocumentSetIDs, NoConnectors: payload.NoConnectors, Sample: payload.Sample,
 		}
 		if !s.Events && len(payload.EventSources) > 0 {
 			return nil, status.Error(codes.FailedPrecondition, "API sources are not available in local mode")
@@ -807,6 +839,9 @@ type GenerateOntologyPayload struct {
 	DocumentSetIDs []string                 `json:"document_set_ids,omitempty"`
 	NoConnectors   bool                     `json:"no_connectors,omitempty"`
 	EventSources   []EventSourcePickPayload `json:"event_sources,omitempty"`
+	// Sample "acme" takes the sample company's ready-made draft in place of the ontology agent's:
+	// no model is called, and it is done in seconds.
+	Sample string `json:"sample,omitempty"`
 }
 
 // EventSourcePickPayload is an API source a generation drafts from; mode is a key of

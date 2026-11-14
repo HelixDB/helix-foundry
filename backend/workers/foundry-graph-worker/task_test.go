@@ -174,7 +174,7 @@ func deleteDone(req string, stream agentv1.Agent_DeleteLoadServer) error {
 		return status.Error(codes.Internal, err.Error())
 	}
 	return deleteEvents(stream, []string{
-		`{"event":"delete_started","contract_version":"4.15.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
+		`{"event":"delete_started","contract_version":"4.17.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
 		`{"event":"deleted","label":"Customer","element":"node","count":1}`, `{"event":"delete_finished"}`,
 	}, `{"status":"done","nodes":1,"edges":2}`)
 }
@@ -254,7 +254,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 			return status.Error(codes.Internal, err.Error())
 		}
 		return ingestEvents(stream, []string{
-			`{"event":"ingest_started","contract_version":"4.15.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.17.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":2}}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"resolve","rows":2}}`,
 			`{"event":"sweep_page","entities":2}`, `{"event":"ingest_finished"}`,
@@ -265,7 +265,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 // extracted ends doc-a ingested with an artifact, doc-b a duplicate of it,
 // doc-c failed retryably and doc-d already held.
 var extracted = []string{
-	`{"event":"extract_started","contract_version":"4.15.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
+	`{"event":"extract_started","contract_version":"4.17.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
 	`{"event":"artifact","doc_id":"doc-a","key":"key_a","json":"{\"sections\":[1]}"}`,
 	documentEvent("doc-a", `{"kind":"ingested"}`, usage),
 	documentEvent("doc-b", `{"kind":"duplicate","of":"doc-a"}`, noUsage),
@@ -385,7 +385,10 @@ type memStore struct {
 	resends       []*model.FoundryLoadResend
 	owedDecisions *model.FoundryLoadResend
 	ended         []model.FoundryResendEnd
-	endErr        error
+	// outcomes are the engine's words a job recorded apart from a document's
+	// row (RecordFoundryReleaseOutcomes), by document.
+	outcomes map[string][]model.FoundryReleaseOutcome
+	endErr   error
 }
 
 func (s *memStore) FoundryLoadDecisionsOwed(context.Context, string) (*model.FoundryLoadResend, error) {
@@ -407,6 +410,16 @@ func (s *memStore) EndFoundryLoadResend(_ context.Context, _, _ string, end mode
 		return s.endErr
 	}
 	s.ended = append(s.ended, end)
+	return nil
+}
+
+func (s *memStore) RecordFoundryReleaseOutcomes(_ context.Context, _, _, docID string, outcomes []model.FoundryReleaseOutcome) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.outcomes == nil {
+		s.outcomes = map[string][]model.FoundryReleaseOutcome{}
+	}
+	s.outcomes[docID] = append(s.outcomes[docID], outcomes...)
 	return nil
 }
 
@@ -1769,20 +1782,85 @@ func TestLoadOutcomes(t *testing.T) {
 	})
 
 	// An index still building over the database's data is no fault of the
-	// job's: it waits the backoff's floor and keeps its attempts, even its last.
-	t.Run("retries an index still building without counting the attempt", func(t *testing.T) {
+	// job's: it waits the backoff's floor and keeps its attempts, even its last,
+	// until indexWait after an attempt first found one, when it fails: a build
+	// that never finishes would retry it forever. How long the job ran before
+	// doesn't count, and a stopping worker's attempt is given back with the
+	// streak kept.
+	t.Run("retries an index still building without counting the attempt, until indexWait after it was first found", func(t *testing.T) {
 		for name, setup := range map[string]func(*harness){
 			"ingest":  func(h *harness) { h.agent.ingest = ingestResult(`{"status":"indexes_pending","label":"Customer"}`) },
 			"extract": func(h *harness) { h.agent.extract = extractResult(`{"status":"indexes_pending","label":"Customer"}`) },
 		} {
+			for _, tc := range []struct {
+				when string
+				// pending is how long before now an attempt first found an
+				// index building; 0 none has.
+				pending  time.Duration
+				stopping bool
+				fails    bool
+			}{
+				{"first found now", 0, false, false},
+				{"found a minute ago", time.Minute, false, false},
+				{"found indexWait ago", indexWait, false, false},
+				{"found past indexWait", indexWait + time.Second, false, true},
+				{"stopping, found past indexWait", indexWait + time.Second, true, false},
+			} {
+				h := newHarness(t)
+				setup(h)
+				job := loadJob()
+				job.Attempts = h.task.cfg.MaxAttempts
+				// The job began long before: only the streak counts.
+				began := h.task.now().Add(-3 * indexWait)
+				job.StartedAt = &began
+				since := h.task.now().Add(-tc.pending)
+				if tc.pending > 0 {
+					job.IndexesPendingSince = &since
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				if tc.stopping {
+					cancel()
+				}
+				h.task.process(ctx, job)
+				cancel()
+				if len(h.store.finished) != 1 {
+					t.Fatalf("%s, %s: finished = %+v, want one outcome", name, tc.when, h.store.finished)
+				}
+				outcome := h.store.finished[0]
+				if tc.fails {
+					if outcome.Status != model.FoundryGraphJobFailed || outcome.RetryAt != nil || outcome.Uncounted ||
+						outcome.IndexesPendingSince != nil ||
+						outcome.Error != "the database's indexes were still building 2 hours after Helix first found them building; start a new load" {
+						t.Fatalf("%s, %s: outcome = %+v, want a failure", name, tc.when, outcome)
+					}
+					continue
+				}
+				if want := h.task.now().Add(h.task.cfg.RetryBackoff); outcome.RetryAt == nil || !outcome.RetryAt.Equal(want) || !outcome.Uncounted ||
+					outcome.Error != "the database is still indexing its data; Helix will retry" {
+					t.Fatalf("%s, %s: outcome = %+v, want an uncounted retry at %v", name, tc.when, outcome, want)
+				}
+				if outcome.IndexesPendingSince == nil || !outcome.IndexesPendingSince.Equal(since) {
+					t.Fatalf("%s, %s: indexes pending since %v, want %v", name, tc.when, outcome.IndexesPendingSince, since)
+				}
+			}
+		}
+	})
+
+	// Any other outcome ends the streak: a later index still building starts
+	// a new one.
+	t.Run("clears the index streak on any other outcome", func(t *testing.T) {
+		for name, setup := range map[string]func(*harness){
+			"a counted retry": func(h *harness) { h.agent.extract = extractResult(`{"status":"store_failed","error":"no"}`) },
+			"a success":       func(*harness) {},
+		} {
 			h := newHarness(t)
 			setup(h)
 			job := loadJob()
-			job.Attempts = h.task.cfg.MaxAttempts
+			since := h.task.now().Add(-time.Hour)
+			job.IndexesPendingSince = &since
 			outcome := h.run(t, job)
-			if want := h.task.now().Add(h.task.cfg.RetryBackoff); outcome.RetryAt == nil || !outcome.RetryAt.Equal(want) || !outcome.Uncounted ||
-				!strings.Contains(outcome.Error, "indexing") {
-				t.Fatalf("%s: outcome = %+v, want an uncounted retry at %v", name, outcome, want)
+			if outcome.IndexesPendingSince != nil {
+				t.Fatalf("%s: indexes pending since %v, want it cleared", name, outcome.IndexesPendingSince)
 			}
 		}
 	})

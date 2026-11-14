@@ -272,7 +272,16 @@ func TestFoundryRejectTakesTheApprovalFromEveryLoad(t *testing.T) {
 
 		f.reject(t, f.rejected(f.b, 0, readA))
 		assert.Equal(t, map[string]string{x.ID: "written"}, f.copies(t, first))
-		assert.Empty(t, f.copies(t, second))
+		// The second load copied it and holds its document, and no job said
+		// what became of it there, so it may have written it (contract
+		// 4.16.0): the copy is left for the carry, which takes it back. The
+		// next settle runs one.
+		assert.Equal(t, map[string]string{x.ID: ""}, f.copies(t, second))
+		assert.Empty(t, f.listed(t, second), "no Extract sends an approval of a rejected claim")
+		other := f.held(f.a, 0, readA)
+		require.True(t, f.approve(t, "2", other))
+		assert.Equal(t, map[string]string{x.ID: "withdraw", other.ID: "release"}, kinds(t, second))
+		assert.Equal(t, map[string]int{f.a: 1, f.b: 1}, f.owed(t))
 	})
 
 	// While a resend of the load runs with the approval waiting for it, the
@@ -293,6 +302,11 @@ func TestFoundryRejectTakesTheApprovalFromEveryLoad(t *testing.T) {
 		f.sent(t, job, owed[0], 0, refused(x, "conflict"))
 		f.reject(t, no)
 		assert.Equal(t, map[string]model.FoundryReviewDecisionKind{no.ID: model.FoundryReviewReject}, f.kinds(t))
+		// While the job is in flight its copy stays for the carry, and is sent
+		// no more; the job's end drops it, as nothing of it is in the load.
+		assert.Equal(t, map[string]string{x.ID: "refused/conflict"}, f.copies(t, f.load))
+		assert.Empty(t, f.listed(t, f.load))
+		f.end(t, job, "rejected", model.FoundryGraphJobSucceeded)
 		assert.Empty(t, f.copies(t, f.load))
 	})
 }

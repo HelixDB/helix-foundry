@@ -72,6 +72,7 @@ type store interface {
 	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
 	FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error)
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
+	RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome) error
 }
 
 // agent is the sidecar; *ontologyagent.Client calls it.
@@ -100,8 +101,9 @@ type documentStore interface {
 // failure is why an attempt did not succeed, worded for the customer.
 // Permanent ends the job; Budget ends it as budget_exhausted; anything else
 // is retried with backoff, and an Uncounted one (the database still building
-// an index) gives its attempt back. An Internal one (the agent's own error,
-// gRPC INTERNAL) is retried within ontologyagent.InternalAttempts attempts.
+// an index, its only cause) gives its attempt back until indexWait after the
+// job began. An Internal one (the agent's own error, gRPC INTERNAL) is
+// retried within ontologyagent.InternalAttempts attempts.
 type failure struct {
 	Message   string
 	Permanent bool
@@ -859,7 +861,7 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 		if err != nil {
 			return err
 		}
-		documents, err := r.stage(ctx, job, jobDir, free)
+		documents, err := r.stage(ctx, job, jobDir, free, true)
 		if err != nil {
 			return err
 		}
@@ -899,7 +901,7 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 		if err != nil {
 			return err
 		}
-		documents, err := r.stage(ctx, job, jobDir, set.docs)
+		documents, err := r.stage(ctx, job, jobDir, set.docs, true)
 		if err != nil {
 			return err
 		}
@@ -943,13 +945,14 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 
 // resend sends the engine what the job's load owes it again. The documents
 // the load owes a resend (ListFoundryLoadResends) go to Extract, each with
-// every artifact saved for it and the load's decisions of it, with nothing
-// to spend: the load holds
-// them, so the engine commits none again and takes none out. It replays each
-// one's model work from its artifacts and writes what the decisions release,
-// and each document's event says what became of every one (recordDocument).
-// So a person's approval of a held claim is a fact of the load within one
-// job, at no model cost, and the document is never out of the load.
+// the load's decisions of it and no artifact, with nothing to spend: the
+// load holds them, so the engine commits none again and takes none out.
+// Since contract 4.17.0 it writes what each release names from the load's
+// held review, its statement at its place with its score, and asks no
+// model, whatever prompt or model the load was built under; each document's
+// event says what became of every decision (recordDocument). So a person's
+// approval of a held claim is a fact of the load within one job, at no model
+// cost, and the document is never out of the load.
 //
 // They go in one Extract where one takes them. A mass of approvals, as the
 // first carry after a deploy or a large Approve all brings, may be past what
@@ -959,11 +962,15 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 // too large for an Extract is not sent: its approvals are refused as
 // too_large, and the resend goes on with the rest.
 //
-// A document whose saved extraction doesn't replay (it is gone, or the
-// models or the engine's prompts changed since) would need a model call the
-// run has no money for: the engine sends no event for it and ends
-// budget_exhausted, and the approvals that waited for it are refused as
-// not_replayed, as a new load is what applies them. One the load can no
+// A document the engine sends no event for, though the run ended, would
+// have needed a model call the run has no money for, so the run ended
+// budget_exhausted: its approvals are refused as not_replayed, as a new
+// load is what applies them. Through contract 4.16.0 that was a document
+// whose saved extraction didn't replay (the models or the engine's prompts
+// changed since); since 4.17.0 a document the load holds needs none. A
+// document the load holds with other text than it sends ends failed, and
+// the engine refuses its releases as document_changed (contract 4.17.0):
+// only a new load reads the new text. One the load can no
 // longer send refuses them as document_gone (deleted, out of the load, or
 // its text gone) or as document_unread (the load holds it, but no extraction
 // of it to replay), one the engine failed as document_failed, one too large
@@ -1006,9 +1013,12 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 	if err != nil {
 		return retry("could not list the documents to send again; Helix will retry", err)
 	}
-	end := func(o *model.FoundryLoadResend, refused string) error {
+	// unsaid is a document an Extract carried to a run that reached its
+	// documents and said nothing of its withdraws: they wait, unconfirmed
+	// (model.FoundryResendEnd.Unsaid).
+	end := func(o *model.FoundryLoadResend, refused string, unsaid bool) error {
 		err := r.db.EndFoundryLoadResend(ctx, job.ID, r.workerID, model.FoundryResendEnd{
-			DocumentID: o.DocumentID, Reason: o.Reason, Requests: o.Requests, Refused: refused,
+			DocumentID: o.DocumentID, Reason: o.Reason, Requests: o.Requests, Refused: refused, Unsaid: unsaid,
 		})
 		if errors.Is(err, foundrystore.ErrNotFound) {
 			return retry("the job's lease was lost", err)
@@ -1026,7 +1036,7 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 	var docs []*model.FoundryDocument
 	for _, o := range owed {
 		if o.Document == nil {
-			if err := end(o, cmp.Or(o.Unsendable, model.FoundryReleaseDocumentGone)); err != nil {
+			if err := end(o, cmp.Or(o.Unsendable, model.FoundryReleaseDocumentGone), false); err != nil {
 				return err
 			}
 			continue
@@ -1041,7 +1051,7 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 			return retry("could not prepare the documents; Helix will retry", err)
 		}
 		defer func() { _ = os.RemoveAll(filepath.Join(r.snapshots.WorkDir, jobDir)) }() // best-effort: the next attempt starts afresh
-		if documents, err = r.stage(ctx, job, jobDir, docs); err != nil {
+		if documents, err = r.stage(ctx, job, jobDir, docs, false); err != nil {
 			return err
 		}
 	}
@@ -1054,7 +1064,7 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 		if staged[doc.ID] {
 			continue
 		}
-		if err := end(a.resends[doc.ID], model.FoundryReleaseDocumentGone); err != nil {
+		if err := end(a.resends[doc.ID], model.FoundryReleaseDocumentGone, false); err != nil {
 			return err
 		}
 		delete(a.resends, doc.ID)
@@ -1090,7 +1100,7 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 		// One document no Extract takes: failing the job for it would leave
 		// every document after it unsent, and their approvals unconfirmed.
 		doc := batch[0].DocID
-		if err := end(a.resends[doc], model.FoundryReleaseTooLarge); err != nil {
+		if err := end(a.resends[doc], model.FoundryReleaseTooLarge, false); err != nil {
 			return err
 		}
 		delete(a.resends, doc)
@@ -1102,6 +1112,8 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 		}
 	}
 	// Each run reached its end: what it sent no event for needed a model call.
+	// The engine decided its withdraws before it read any document, and said
+	// nothing of them: they wait, unconfirmed.
 	for _, d := range documents {
 		o, waiting := a.resends[d.DocID]
 		if !waiting {
@@ -1111,7 +1123,7 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 		if a.resendFailed[d.DocID] {
 			refused = model.FoundryReleaseDocumentFailed
 		}
-		if err := end(o, refused); err != nil {
+		if err := end(o, refused, true); err != nil {
 			return err
 		}
 	}
@@ -1122,7 +1134,7 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 				return err
 			}
 		}
-		if err := end(decisions, ""); err != nil {
+		if err := end(decisions, "", false); err != nil {
 			return err
 		}
 	}
@@ -1276,11 +1288,11 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	for _, d := range documents {
 		sent[d.DocID] = true
 	}
-	// released is each release decision sent, by its id.
+	// released is each release decision and withdraw sent, by its id.
 	released := map[string]sentRelease{}
 	for _, d := range decisions {
-		if d.Kind == model.FoundryReviewRelease {
-			released[d.DecisionID] = sentRelease{doc: d.DocID, hash: d.StatementHash}
+		if d.Kind == model.FoundryReviewRelease || d.Kind == model.FoundryReviewWithdraw {
+			released[d.DecisionID] = sentRelease{doc: d.DocID, hash: d.StatementHash, withdraw: d.Kind == model.FoundryReviewWithdraw}
 		}
 	}
 	artifacts := map[string]string{}
@@ -1349,9 +1361,12 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	}
 }
 
-// sentRelease is a release decision an Extract sent: its document, and the
-// statement it binds.
-type sentRelease struct{ doc, hash string }
+// sentRelease is a release decision an Extract sent, or a withdraw of one:
+// its document, and the statement it binds.
+type sentRelease struct {
+	doc, hash string
+	withdraw  bool
+}
 
 // recordRemoval forgets a document the agent took out of the job's load,
 // once: a lost lease ends the attempt, and any other failure leaves it for
@@ -1444,9 +1459,12 @@ func (r *runner) budget(ctx context.Context, job *model.FoundryGraphJob, a *atte
 	return float64(min(jobLeft, monthLeft)) / 1e6, nil, nil
 }
 
-// stage downloads each pending document's text and every artifact saved for
-// it under jobDir, for the agent, which reads the work directory and replays
-// each model call it finds in any of them. The text is a text document's
+// stage downloads each pending document's text under jobDir, for the agent,
+// which reads the work directory, and with replay every artifact saved for
+// it, whose model calls the agent replays at no cost: a document a run may
+// commit. A resend's documents are held by its load, which writes their
+// approvals from what its reviews keep and reads no artifact (contract
+// 4.17.0), so a resend stages none. The text is a text document's
 // original, or what a PDF's read stored (model.FoundryDocument.TextKey),
 // staged as ontologyagent.StageText writes it: a PDF is plain_text. A
 // document whose text is gone is left out and marked deleted: a delete that
@@ -1456,7 +1474,8 @@ func (r *runner) budget(ctx context.Context, job *model.FoundryGraphJob, a *atte
 // read's code (the document's read says why), anything else as unsupported.
 // A PDF still being read never gets here: it is not pending until its read
 // ends.
-func (r *runner) stage(ctx context.Context, job *model.FoundryGraphJob, jobDir string, pending []*model.FoundryDocument) ([]ontologyagent.ExtractDocument, error) {
+func (r *runner) stage(ctx context.Context, job *model.FoundryGraphJob, jobDir string, pending []*model.FoundryDocument,
+	replay bool) ([]ontologyagent.ExtractDocument, error) {
 	root := r.snapshots.WorkDir
 	var out []ontologyagent.ExtractDocument
 	for _, doc := range pending {
@@ -1499,9 +1518,11 @@ func (r *runner) stage(ctx context.Context, job *model.FoundryGraphJob, jobDir s
 			return nil, retry("could not prepare the documents; Helix will retry", err)
 		}
 		prefix := document.ArtifactPrefix(job.WorkspaceID, doc.ID)
-		keys, err := r.documents.List(ctx, prefix)
-		if err != nil {
-			return nil, retry("could not read a document's saved extraction; Helix will retry", err)
+		var keys []string
+		if replay {
+			if keys, err = r.documents.List(ctx, prefix); err != nil {
+				return nil, retry("could not read a document's saved extraction; Helix will retry", err)
+			}
 		}
 		saved := []string{}
 		for _, key := range keys {
@@ -1556,9 +1577,9 @@ func (r *runner) saveArtifact(ctx context.Context, job *model.FoundryGraphJob, e
 // What the run did with each release decision sent with the document
 // (released) is recorded on the load's decisions with it. A document a resend
 // job sent ends its request too (attempt.resends), and one the engine failed
-// there is recorded nowhere: its row says what its commit put in the load,
-// which a failure to replay it doesn't change, and resend ends its request
-// once the run has. A decision a resend sent that the engine's event says
+// there is recorded nowhere but on its decisions: its row says what its
+// commit put in the load, which a failure to send it again doesn't change,
+// and resend ends its request once the run has. A decision a resend sent that the engine's event says
 // nothing of is refused as unanswered, so its card never waits for a word
 // that isn't coming.
 func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob, e json.RawMessage, sent map[string]bool,
@@ -1609,12 +1630,13 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		said[release.DecisionID] = true
 		releases.WithLabelValues(string(release.Outcome.Kind), release.Outcome.Reason).Inc()
 		// A decision written is one claim written: one fact, however many
-		// reviews held it.
-		if release.Outcome.Kind == model.FoundryReleaseOutcomeWritten {
+		// reviews held it. One taken back moves that back as the store
+		// records it, knowing whether the load had recorded it written.
+		if !of.withdraw && release.Outcome.Kind == model.FoundryReleaseOutcomeWritten {
 			extraction.Counts.Facts++
 		}
 		extraction.Releases = append(extraction.Releases, model.FoundryReleaseOutcome{
-			DecisionID: release.DecisionID, StatementHash: of.hash, Kind: release.Outcome.Kind, Reason: release.Outcome.Reason,
+			DecisionID: release.DecisionID, StatementHash: of.hash, Withdraw: of.withdraw, Kind: release.Outcome.Kind, Reason: release.Outcome.Reason,
 		})
 	}
 	owed := a.resends[event.DocID]
@@ -1626,13 +1648,26 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 			log.From(ctx).Error("graph job: the ontology agent said nothing of a release sent with a document", "job", job.ID,
 				"document", event.DocID, "decision", id)
 			extraction.Releases = append(extraction.Releases, model.FoundryReleaseOutcome{
-				DecisionID: id, StatementHash: of.hash, Kind: model.FoundryReleaseOutcomeRefused, Reason: model.FoundryReleaseUnanswered,
+				DecisionID: id, StatementHash: of.hash, Withdraw: of.withdraw, Kind: model.FoundryReleaseOutcomeRefused, Reason: model.FoundryReleaseUnanswered,
 			})
 		}
 	}
 	if owed != nil && event.Outcome.Kind == ontologyagent.OutcomeFailed {
 		log.From(ctx).Warn("graph job: the ontology agent failed a document sent again", "job", job.ID, "document", event.DocID,
 			"code", event.Outcome.Code, "retryable", event.Outcome.Retryable)
+		// Its row stays as the load wrote it. The engine took back its
+		// withdraws before it read the document, and its event says what
+		// became of each (contract 4.16.0); one it failed because the load
+		// holds the document with other text refuses each of its releases
+		// as document_changed (contract 4.17.0). Approvals it says nothing
+		// of wait to be refused as document_failed.
+		err := r.db.RecordFoundryReleaseOutcomes(ctx, job.ID, r.workerID, event.DocID, extraction.Releases)
+		if errors.Is(err, foundrystore.ErrNotFound) {
+			return retry("the job's lease was lost", err)
+		}
+		if err != nil {
+			return retry("could not record a document sent again; Helix will retry", err)
+		}
 		a.resendFailed[event.DocID] = true
 		a.progress.DocumentsDone++
 		return r.update(ctx, job, model.FoundryGraphJobDocuments, a)

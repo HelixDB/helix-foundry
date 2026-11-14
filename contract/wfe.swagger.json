@@ -80,6 +80,38 @@
         ]
       }
     },
+    "/v1/auth/verify-email": {
+      "post": {
+        "operationId": "WfeService_VerifyEmail",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1VerifyEmailResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1VerifyEmailRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
     "/v1/billing/portal": {
       "post": {
         "operationId": "WfeService_OpenBillingPortal",
@@ -1540,6 +1572,48 @@
         },
         "timestamps": {
           "$ref": "#/definitions/v1Timestamps"
+        }
+      }
+    },
+    "v1VerifyEmailRequest": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      }
+    },
+    "v1VerifyEmailResponse": {
+      "type": "object",
+      "properties": {
+        "accessToken": {
+          "type": "string"
+        },
+        "refreshToken": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "int64"
+        },
+        "email": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "invitationOnboarding": {
+          "type": "boolean"
+        },
+        "agentSandboxDestination": {
+          "$ref": "#/definitions/v1AgentSandboxLoginDestination"
+        },
+        "ssoRequired": {
+          "type": "boolean",
+          "description": "True when the email's company requires single sign-on. Tokens are empty;\nthe client starts a login with AUTH_PROVIDER_SSO and `email`."
         }
       }
     },

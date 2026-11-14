@@ -90,6 +90,11 @@ export type AnalyticsEvents = {
   // Sign-in (src/web/sign-in.tsx, main.tsx).
   sign_in_started: { method: "github" | "google" | "microsoft" };
   sign_in_failed: { reason: SignInError };
+  // WorkOS emailed a code before it signs the address in (/login/verify):
+  // shown, a code refused or not checked, and a right one.
+  email_verification_shown: undefined;
+  email_verification_failed: { reason: "code" | "unavailable" };
+  email_verified: undefined;
   login_completed: { destination: "workspace" | "onboarding" };
   workspace_created: undefined;
   // A workspace with no ontology shows only the new-ontology wizard, which
@@ -193,6 +198,12 @@ export type AnalyticsEvents = {
   people_enrichment_enabled: undefined;
   people_enrichment_disabled: undefined;
   signed_out: undefined;
+
+  // The GitHub star prompt (src/web/shell/star-prompt.tsx): shown, with how
+  // its button stars; then starred in place, GitHub opened, or dismissed.
+  star_prompt_shown: { via: "in_place" | "on_github" };
+  star_prompt_clicked: { outcome: "starred" | "opened_github" };
+  star_prompt_dismissed: undefined;
 
   // Where the app stood in the way: a Pro-only feature (its gate's label,
   // which names the feature, never data), or a page that crashed.

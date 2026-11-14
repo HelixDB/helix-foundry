@@ -393,6 +393,137 @@ test("approves a held claim, and the load writes it as a fact at once", async ({
   ).toContainText("Approved: “Globex Corporation may have signed.”");
 });
 
+const HEDGED = [
+  {
+    name: "variant.md",
+    text: "# Hedged deal\n\nGlobex Corporation may have signed.\n",
+  },
+];
+const SETTLE = (r: { request(): { method(): string }; url(): string }) =>
+  r.request().method() === "POST" && /\/reviews\/[^/]+:settle$/.test(r.url());
+/** Approves the open document's hedged claim and waits for the load to write it. */
+async function approveHedged(page: Page) {
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  const settled = page.waitForResponse(SETTLE);
+  await reviews(page)
+    .getByRole("listitem")
+    .filter({ hasText: "The model wasn’t sure" })
+    .getByRole("button", { name: "Approve", exact: true })
+    .click();
+  const id = ((await (await settled).json()) as { decision: { id: string } })
+    .decision.id;
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved: “Globex Corporation may have signed.”");
+  return id;
+}
+
+// Contract 4.16.0: an approval the current load wrote is taken back from it
+// at once, by the same job that writes one, and the claim is held again.
+test("takes back an approval the load wrote, holds the claim again, and approves it anew", async ({
+  page,
+}) => {
+  await setup(page, HEDGED);
+  const doc = await openDocument(page);
+  await page.goto(`${doc}?tab=review`);
+  const first = await approveHedged(page);
+  const decisions = page.getByRole("list", { name: "Saved decisions" });
+  // Written: the saved approval is taken back, not only removed.
+  await expect(
+    decisions.getByRole("button", { name: "Remove decision" }),
+  ).toHaveCount(0);
+  await mock.configure({ loadStepMs: 1500 });
+  const removed = page.waitForRequest(
+    (r) =>
+      r.method() === "DELETE" && r.url().endsWith(`/review-decisions/${first}`),
+  );
+  await decisions.getByRole("button", { name: "Take back approval" }).click();
+  await removed;
+  await expect(
+    page.getByText(
+      "Taking the approval back from this load now. Its claim is held for review again once that’s done; later loads won’t read the approval.",
+    ),
+  ).toBeVisible();
+  await expect(decisions).toContainText(
+    "Approval being taken back: “Globex Corporation may have signed.”",
+  );
+  // Taken back: the card is held again and the fact is gone, with no new
+  // load and the page never loaded again. A take-back can't be removed.
+  await expect(decisions).toContainText(
+    "Approval taken back: “Globex Corporation may have signed.”This load holds the claim for review again.",
+  );
+  const held = reviews(page).getByRole("listitem").filter({
+    hasText: "The model wasn’t sure",
+  });
+  await expect(held).toContainText("Globex Corporation may have signed");
+  await expect(held.getByRole("status")).toHaveText(
+    "Approval taken back. This load holds the claim for review again.",
+  );
+  await expect(decisions.getByRole("button")).toHaveCount(0);
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  await expect(page.getByRole("list", { name: "Facts" })).toHaveCount(0);
+  // Approved again: a new decision, written again.
+  await mock.configure({ loadStepMs: 200 });
+  const second = await approveHedged(page);
+  expect(second).not.toBe(first);
+  await expect(decisions).toContainText(
+    "This load holds the claim for review again.",
+  );
+  await expect(
+    decisions.getByRole("button", { name: "Take back approval" }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  await expect(page.getByRole("list", { name: "Facts" })).toContainText(
+    "signed_with",
+  );
+});
+
+test("says when a take-back finds nothing the load wrote", async ({ page }) => {
+  await setup(page, HEDGED);
+  const doc = await openDocument(page);
+  await page.goto(`${doc}?tab=review`);
+  await approveHedged(page);
+  await mock.configure({ withdrawOutcome: "not_written" });
+  const decisions = page.getByRole("list", { name: "Saved decisions" });
+  await decisions.getByRole("button", { name: "Take back approval" }).click();
+  await expect(decisions).toContainText(
+    "Approval taken back: “Globex Corporation may have signed.”This load held nothing it wrote.",
+  );
+});
+
+test("says why the load kept what a taken-back approval wrote, and the next load doesn't write it", async ({
+  page,
+}) => {
+  await setup(page, HEDGED);
+  const doc = await openDocument(page);
+  await page.goto(`${doc}?tab=review`);
+  await approveHedged(page);
+  await mock.configure({ withdrawOutcome: "differs" });
+  const decisions = page.getByRole("list", { name: "Saved decisions" });
+  await decisions.getByRole("button", { name: "Take back approval" }).click();
+  await expect(decisions).toContainText(
+    "Approval not taken back: “Globex Corporation may have signed.”This load keeps what it wrote: an earlier version wrote this sentence’s claims of one link without telling them apart, so it can’t say which to take back. The next load won’t write it.",
+  );
+  // What it wrote stays in this load: no card, the fact still there.
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  await expect(page.getByRole("list", { name: "Facts" })).toContainText(
+    "signed_with",
+  );
+  // The next load never had the approval: it holds the claim for review.
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(
+    reviews(page).getByRole("listitem").filter({
+      hasText: "The model wasn’t sure",
+    }),
+  ).toContainText("Globex Corporation may have signed");
+  await expect(page.getByRole("list", { name: "Saved decisions" })).toHaveCount(
+    0,
+  );
+});
+
 test("asks again when an approval was of what the claim said before", async ({
   page,
 }) => {
@@ -481,6 +612,56 @@ test("says why the load kept an approved claim held", async ({ page }) => {
   await expect(held.getByRole("status")).toContainText(
     "this load kept it held. It conflicts with what the graph holds",
   );
+});
+
+// Contract 4.17.0: a release asks no model, so writing an approval in place
+// costs nothing: the document's cost to read stays what its commit spent,
+// and its facts gain the one written.
+test("writes an approval in place at no cost", async ({ page }) => {
+  const { held } = await hedged(page);
+  const row = (label: string) =>
+    page.locator(".hf-kv-row").filter({
+      has: page.getByRole("term").filter({ hasText: new RegExp(`^${label}$`) }),
+    });
+  await page.getByRole("tab", { name: /^Details/ }).click();
+  await expect(row("Facts written").getByRole("definition")).toHaveText("0");
+  const cost = await row("Cost to read").getByRole("definition").textContent();
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await approve(held);
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await page.getByRole("tab", { name: /^Details/ }).click();
+  await expect(row("Facts written").getByRole("definition")).toHaveText("1");
+  await expect(row("Cost to read").getByRole("definition")).toHaveText(cost!);
+});
+
+// Contract 4.17.0: the load holds the claim's document with other text than
+// the resend sends, so the engine refuses the approval in place as
+// document_changed, and the card says what to do. The next load reads the
+// text afresh and writes it.
+test("says a changed document's approval can't be written in this load, and the next load writes it", async ({
+  page,
+}) => {
+  await mock.configure({ documentChanged: true });
+  const { doc, held } = await hedged(page);
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText(
+    "Approved, and this load kept it held. Its document’s text changed after this load read it",
+  );
+  await expect(held.getByRole("status")).toContainText(
+    "find the claim in that load’s review and approve it there",
+  );
+  await expect(
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved, not written: “");
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved: “Globex Corporation may have signed.”");
 });
 
 // A conflict refusal on a link that holds one value: from contract 4.14.0 a
