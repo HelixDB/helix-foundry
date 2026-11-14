@@ -369,8 +369,9 @@ export const EMPTY_STREAM: TurnStream = {
  * blocks stay; a result without its call is a step of its own. A step's
  * deltas add to `live`; any other event ends it, since deltas are written
  * only while a call streams: its text supersedes them (never shown twice),
- * or the stream broke. Complete once the page says the turn ended and its
- * events reach its `lastSeq`, with no live text left.
+ * or the stream broke, as it did once the page says the turn isn't running
+ * (queued for a retry, or ended). Complete once the page says the turn
+ * ended and its events reach its `lastSeq`, with no live text left.
  *
  * @example
  * const s = reduceTurnEvents(EMPTY_STREAM, {
@@ -483,9 +484,12 @@ export function reduceTurnEvents(
     }, stream);
   const complete =
     !!page.status && !isLiveTurn(page) && next.lastSeq >= (page.lastSeq || 0);
-  return complete === next.complete && !(complete && next.live)
+  // Deltas stream only while an attempt runs: a turn back in the queue to
+  // retry, or ended, broke off what was live.
+  const live = page.status === "running" ? next.live : undefined;
+  return complete === next.complete && live === next.live
     ? next
-    : { ...next, complete, live: complete ? undefined : next.live };
+    : { ...next, complete, live };
 }
 
 /** A tool's step, as the dock names it; the tool's own name for another. */

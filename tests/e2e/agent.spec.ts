@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import {
+  csrfToken,
   expect,
   file,
   loadVersion3,
@@ -460,7 +461,7 @@ test("answers on another provider once it is the setting", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("says why it can't run on a model that doesn't call tools, with a link to the setting", async ({
+test("won't send on a model that doesn't call tools, and says why, with a link to the setting", async ({
   page,
 }) => {
   await mock.configure({ agentStepMs: 100, aiProbeMs: 600 });
@@ -480,25 +481,103 @@ test("says why it can't run on a model that doesn't call tools, with a link to t
     page.getByText("AI models now run on llm.example.com."),
   ).toBeVisible();
   // The setting runs everything else; its owner is told the Assistant can't.
+  const why =
+    "The Assistant can’t run on qwen-notoolcall: it answered the Assistant’s test without calling a tool. Drafts, loads and the Analyst still run on it. Choose a model for questions that calls tools to use the Assistant.";
   await expect(
     page.getByRole("note").filter({ hasText: "The Assistant can’t run" }),
-  ).toHaveText(
-    "The Assistant can’t run on qwen-notoolcall: it answered the Assistant’s test without calling a tool. Drafts, loads and the Analyst still run on it. Choose a model for questions that calls tools to use the Assistant.",
-  );
+  ).toHaveText(why);
+  // The dock says so before a message is spent on a turn that would fail.
   await page.goto("/data");
   await shortcut(page);
-  await say(page, "What ontologies do I have?");
-  const failure = dockOf(page).locator(".ag-card-error");
-  await expect(failure).toHaveText(
-    "The workspace's model, qwen-notoolcall, doesn't call tools, which the Assistant needs. An owner can choose another in Settings › AI models.",
+  const dock = dockOf(page),
+    box = dock.getByRole("textbox", { name: "Message" });
+  await expect(dock.locator(".ag-hint")).toHaveText(
+    `${why} Open Settings › AI models.`,
   );
-  await failure.getByRole("link", { name: "Settings › AI models" }).click();
+  await box.fill("What ontologies do I have?");
+  await expect(
+    dock.getByRole("button", { name: "Send", exact: true }),
+  ).toBeDisabled();
+  await box.press("Enter");
+  await expect(box).toHaveValue("What ontologies do I have?");
+  await expect(
+    dock
+      .getByRole("log", { name: "Conversation" })
+      .getByText("What ontologies do I have?"),
+  ).toHaveCount(0);
+  // On a phone the dock is a drawer, which the link closes as it opens the setting.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await shortcut(page);
+  const drawer = page.getByRole("dialog", { name: "Assistant" });
+  await expect(drawer).toBeVisible();
+  await drawer.getByRole("link", { name: "Settings › AI models" }).click();
   await expect(page).toHaveURL(/\/settings\/ai$/);
+  await expect(drawer).toHaveCount(0);
 
-  // A member reads where AI runs, without the owner's notice.
+  // A member reads where AI runs, without the owner's notice, and the dock
+  // says only that an owner can fix it.
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page.context().clearCookies();
   await signIn(page, "alan@example.com");
   await page.goto("/settings/ai");
   await expect(page.getByText(/^AI runs on llm\.example\.com/)).toBeVisible();
-  await expect(page.getByText(/The Assistant can’t run/)).toHaveCount(0);
+  await expect(
+    page.getByRole("note").filter({ hasText: "The Assistant can’t run" }),
+  ).toHaveCount(0);
+  // The dock is still open in this browser.
+  await expect(dockOf(page).locator(".ag-hint")).toHaveText(
+    "The Assistant can’t run on this workspace’s AI model. An owner can fix this in Settings › AI models.",
+  );
+  await dockOf(page)
+    .getByRole("textbox", { name: "Message" })
+    .fill("What ontologies do I have?");
+  await expect(
+    dockOf(page).getByRole("button", { name: "Send", exact: true }),
+  ).toBeDisabled();
+});
+
+test("a turn sent before the setting failed its check says why, and its link closes a phone's drawer", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 100, aiProbeMs: 300 });
+  await signIn(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  // On the settings page itself, so following the link changes no route:
+  // the link closes the drawer, not the route change.
+  await page.goto("/settings/ai");
+  await shortcut(page);
+  const drawer = page.getByRole("dialog", { name: "Assistant" });
+  await expect(drawer).toBeVisible();
+  // Another tab changes the setting while the dock is open, to a key the
+  // Assistant's calls are refused on.
+  const res = await page.request.put("/papi/v1/workspaces/ws_acme/foundry/ai", {
+    data: {
+      provider: { openai: {} },
+      apiKey: "sk-proj-agentauth-0123456789abcdef",
+    },
+    headers: {
+      origin: new URL(page.url()).origin,
+      "x-helix-csrf": await csrfToken(page),
+    },
+  });
+  expect(res.status(), await res.text()).toBe(200);
+  await expect
+    .poll(async () => {
+      const r = await page.request.get(
+        "/papi/v1/workspaces/ws_acme/foundry/ai",
+      );
+      return (await r.json()).ai?.active?.assistantCheck;
+    })
+    .toBe("FOUNDRY_AI_ASSISTANT_CHECK_AUTH");
+  await drawer
+    .getByRole("textbox", { name: "Message" })
+    .fill("What ontologies do I have?");
+  await drawer.getByRole("button", { name: "Send", exact: true }).click();
+  const failure = drawer.locator(".ag-card-error");
+  await expect(failure).toHaveText(
+    "OpenAI refused the workspace's key for the Assistant. An owner can check it in Settings › AI models.",
+  );
+  await failure.getByRole("link", { name: "Settings › AI models" }).click();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+  await expect(drawer).toHaveCount(0);
 });

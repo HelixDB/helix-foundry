@@ -607,6 +607,37 @@ describe("live text", () => {
     ).toBeUndefined();
   });
 
+  it("drops what was live once the turn is back in the queue to retry", () => {
+    const live = reduceTurnEvents(EMPTY_STREAM, {
+      events: [
+        event(1, { type: "started", model: "m", attempt: 1 }),
+        delta(2, 1, "Half an ans"),
+      ],
+      status: "running",
+      lastSeq: 2,
+    });
+    expect(live.live?.text).toBe("Half an ans");
+    // The stream broke and the worker queued a retry: no event says so,
+    // only the turn's status.
+    const queued = reduceTurnEvents(live, {
+      events: [],
+      status: "queued",
+      lastSeq: 2,
+    });
+    expect(queued.live).toBeUndefined();
+    expect(queued.complete).toBe(false);
+    // The retry's own deltas show again once it runs.
+    const again = reduceTurnEvents(queued, {
+      events: [
+        event(3, { type: "started", model: "m", attempt: 2 }),
+        delta(4, 2, "A whole"),
+      ],
+      status: "running",
+      lastSeq: 4,
+    });
+    expect(shown(again)).toEqual(["retry", "live:A whole"]);
+  });
+
   it("counts a delta it can't read, and keeps what is live", () => {
     const s = reduceTurnEvents(EMPTY_STREAM, {
       events: [delta(1, 1, "a"), event(2, { type: "text_delta", text: "b" })],

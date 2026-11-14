@@ -136,17 +136,24 @@ export function AiRefusal({
 
 /**
  * A failure's text with "Settings › AI models", where the WFE's copy says
- * an owner can fix it, linked to the AI settings.
+ * an owner can fix it, linked to the AI settings. `onNavigate` runs as the
+ * link is followed (a phone's drawer closes).
  *
  * @example
  * <SettingsLinked text="Claude refused the API key. An owner can enter a new one in Settings › AI models." />
  */
-export function SettingsLinked({ text }: { text: string }) {
+export function SettingsLinked({
+  text,
+  onNavigate,
+}: {
+  text: string;
+  onNavigate?: () => void;
+}) {
   return (
     <>
       {splitSettingsLink(text).map((part, i) =>
         i % 2 ? (
-          <Link key={i} to={paths.settings("ai")}>
+          <Link key={i} to={paths.settings("ai")} onClick={onNavigate}>
             {part}
           </Link>
         ) : (

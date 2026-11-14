@@ -55,6 +55,7 @@ import {
   SettingsLinked,
   useAiConfigured,
 } from "../workspace/ai-gate";
+import { aiQuery, assistantCheckText, inForce } from "../workspace/ai-api";
 import { ActionCard } from "./cards";
 import {
   EMPTY_STREAM,
@@ -195,6 +196,7 @@ export function AgentDock({
           <Composer
             threadId={threadId}
             thread={threadId ? thread.data : undefined}
+            onNavigate={onNavigate}
             onSent={(id) => {
               if (id !== threadId) open(id);
               void qc.invalidateQueries({ queryKey: [ws, "agent", "threads"] });
@@ -466,7 +468,7 @@ function TurnView({
           <p className="ag-card-error">
             <CircleAlert size={14} aria-hidden />
             <span>
-              <SettingsLinked text={sentence(failed)} />
+              <SettingsLinked text={sentence(failed)} onNavigate={onNavigate} />
             </span>
           </p>
         )}
@@ -649,19 +651,23 @@ function PlainText({
 /**
  * What the person writes, with the page they're on as a chip they can
  * take off. Send waits while a turn of the thread is live or an action of
- * it runs; Stop ends the live turn.
+ * it runs, and while the setting's tool check failed (its turns would fail
+ * at once, each a message of the hour's), saying why; Stop ends the live
+ * turn.
  */
 function Composer({
   threadId,
   thread,
   onSent,
+  onNavigate,
 }: {
   // The open thread; empty for a new one. `thread` once it is read.
   threadId: string;
   thread?: AgentThreadResponse;
   onSent: (threadId: string) => void;
+  onNavigate?: () => void;
 }) {
-  const { id: ws } = useWorkspace(),
+  const { id: ws, role } = useWorkspace(),
     location = useLocation(),
     qc = useQueryClient();
   const page = pageContext(location.pathname, location.search),
@@ -673,6 +679,9 @@ function Composer({
     [pending, setPending] = useState(false),
     [error, setError] = useState<unknown>(null);
   const aiReady = useAiConfigured();
+  const setting = useQuery(aiQuery(ws)).data,
+    now = setting && inForce(setting),
+    checkFailed = now?.source === "workspace" && assistantCheckText(now.config);
   const hint = useId(),
     input = useRef<HTMLTextAreaElement>(null),
     sending = useRef(false);
@@ -683,7 +692,12 @@ function Composer({
   const length = [...text.trim()].length,
     tooLong = length > MAX_MESSAGE;
   const blocked =
-    busy || !!live || !text.trim() || tooLong || aiReady === false;
+    busy ||
+    !!live ||
+    !text.trim() ||
+    tooLong ||
+    aiReady === false ||
+    !!checkFailed;
   const submit = async () => {
     // Enter submits past a disabled Send, and twice before a render: the
     // same checks, and one send at a time.
@@ -712,11 +726,22 @@ function Composer({
       setPending(false);
     }
   };
-  const caption = tooLong
-    ? `${length - MAX_MESSAGE} characters too long.`
-    : busy
-      ? "You can send once the Assistant has finished."
-      : "Enter to send, Shift+Enter for a new line. Nothing runs until you click a card’s button.";
+  const caption: ReactNode = checkFailed ? (
+    <SettingsLinked
+      text={
+        role === "owner"
+          ? `${checkFailed} Open Settings › AI models.`
+          : "The Assistant can’t run on this workspace’s AI model. An owner can fix this in Settings › AI models."
+      }
+      onNavigate={onNavigate}
+    />
+  ) : tooLong ? (
+    `${length - MAX_MESSAGE} characters too long.`
+  ) : busy ? (
+    "You can send once the Assistant has finished."
+  ) : (
+    "Enter to send, Shift+Enter for a new line. Nothing runs until you click a card’s button."
+  );
   return (
     <form
       className="ag-composer"
@@ -776,7 +801,10 @@ function Composer({
           />
         )}
       </div>
-      <p id={hint} className={cx("ag-hint", tooLong && "is-error")}>
+      <p
+        id={hint}
+        className={cx("ag-hint", (tooLong || !!checkFailed) && "is-error")}
+      >
         {caption}
       </p>
       <AiRefusal action="The Assistant" error={error} ready={aiReady}>
