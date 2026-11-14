@@ -501,10 +501,20 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 			"bad thread":     func(r *foundryv1.SendFoundryAgentMessageRequest) { r.ThreadId = "a/b" },
 			"bad page":       func(r *foundryv1.SendFoundryAgentMessageRequest) { r.PageContext.OntologyId = "x y" },
 			"load, no owner": func(r *foundryv1.SendFoundryAgentMessageRequest) { r.PageContext.OntologyId = "" },
+			"bad dashboard":  func(r *foundryv1.SendFoundryAgentMessageRequest) { r.PageContext.DashboardId = "a/b" },
 		} {
 			_, err := send(f, mutate)
 			assert.Equal(t, codes.InvalidArgument, status.Code(err), name)
 		}
+	})
+	t.Run("a dashboard the person looks at", func(t *testing.T) {
+		f := newAgentFixture(t)
+		resp, err := send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) {
+			r.PageContext = &foundryv1.FoundryAgentPageContext{DashboardId: "dash-1"}
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "dash-1", resp.GetTurn().GetPageContext().GetDashboardId())
+		assert.JSONEq(t, `{"dashboard_id":"dash-1"}`, string(f.store.turns[resp.GetTurn().GetId()].PageContext))
 	})
 	t.Run("another user's thread isn't found", func(t *testing.T) {
 		f := newAgentFixture(t)

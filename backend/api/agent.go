@@ -89,7 +89,8 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		return nil, err
 	}
 	text, token := strings.TrimSpace(req.GetText()), req.GetClientToken()
-	page := foundryagent.PageContext{OntologyID: req.GetPageContext().GetOntologyId(), LoadID: req.GetPageContext().GetLoadId()}
+	page := foundryagent.PageContext{OntologyID: req.GetPageContext().GetOntologyId(), LoadID: req.GetPageContext().GetLoadId(),
+		DashboardID: req.GetPageContext().GetDashboardId()}
 	switch {
 	case token == "" || len(token) > maxClientTokenLength:
 		return nil, status.Errorf(codes.InvalidArgument, "client_token is required, at most %d characters", maxClientTokenLength)
@@ -98,8 +99,8 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	case req.GetThreadId() != "" && !agentIDPattern.MatchString(req.GetThreadId()):
 		return nil, status.Error(codes.InvalidArgument, "thread_id is malformed")
 	case page.OntologyID != "" && !agentIDPattern.MatchString(page.OntologyID), page.LoadID != "" && !agentIDPattern.MatchString(page.LoadID),
-		page.LoadID != "" && page.OntologyID == "":
-		return nil, status.Error(codes.InvalidArgument, "page_context names a load of an ontology, by their ids")
+		page.LoadID != "" && page.OntologyID == "", page.DashboardID != "" && !agentIDPattern.MatchString(page.DashboardID):
+		return nil, status.Error(codes.InvalidArgument, "page_context names a load of an ontology, or a dashboard, by their ids")
 	}
 	existing, err := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, userID, token)
 	switch {
@@ -124,7 +125,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		ID: id.New(), WorkspaceID: ws, UserID: userID, Kind: foundrymodel.FoundryAgentTurnMessage, Input: text, ClientToken: &token,
 		MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
 	}
-	if page.OntologyID != "" {
+	if page != (foundryagent.PageContext{}) {
 		t.PageContext, _ = json.Marshal(page) // strings only: it can't fail
 	}
 	var thread *foundrymodel.FoundryAgentThread
@@ -586,7 +587,7 @@ func agentTurnToProto(t *foundrymodel.FoundryAgentTurn) *foundryv1.FoundryAgentT
 	}
 	var page foundryagent.PageContext
 	if len(t.PageContext) > 0 && json.Unmarshal(t.PageContext, &page) == nil {
-		out.PageContext = &foundryv1.FoundryAgentPageContext{OntologyId: page.OntologyID, LoadId: page.LoadID}
+		out.PageContext = &foundryv1.FoundryAgentPageContext{OntologyId: page.OntologyID, LoadId: page.LoadID, DashboardId: page.DashboardID}
 	}
 	if t.Error != nil {
 		out.Error = *t.Error

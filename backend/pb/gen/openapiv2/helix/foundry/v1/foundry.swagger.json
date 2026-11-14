@@ -7684,6 +7684,10 @@
         },
         "loadId": {
           "type": "string"
+        },
+        "dashboardId": {
+          "type": "string",
+          "description": "The dashboard open, if any."
         }
       },
       "description": "FoundryAgentPageContext is what the person was looking at as they sent a\nmessage: ids only, each checked to be the workspace's before the agent is\ntold of it."

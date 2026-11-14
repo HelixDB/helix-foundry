@@ -103,9 +103,11 @@ func (s *actionSink) record(ctx context.Context, a integration.PreparedAction) (
 type target struct {
 	id, name string
 	others   []string
-	// ontology is an ontology target's; connectorKind a connector's kind.
+	// ontology is an ontology target's; connectorKind a connector's kind;
+	// dashboard a dashboard's.
 	ontology      *model.FoundryOntology
 	connectorKind string
+	dashboard     *model.FoundryDashboard
 	// runtime is where the Assistant runs, for set_assistant_runtime (whose
 	// id is the runtime chosen) and revoke_assistant_helper (whose host is
 	// the helper revoked).
@@ -141,6 +143,14 @@ func (c Cards) target(ctx context.Context, a integration.PreparedAction) (target
 		switch a.Operation {
 		case "set_assistant_runtime", "revoke_assistant_helper":
 			return c.runtimeTarget(ctx, a)
+		case "create_dashboard":
+			// A new dashboard: what a person names is its name.
+			var p integration.CreateDashboardPayload
+			if err := json.Unmarshal(a.Payload, &p); err != nil {
+				return target{}, err
+			}
+			others, err := c.dashboardNames(ctx, "")
+			return target{name: p.Name, others: others}, err
 		}
 		// A new ontology on a new database: what a person names is its name.
 		var p integration.CreateOntologyPayload
@@ -191,8 +201,33 @@ func (c Cards) target(ctx context.Context, a integration.PreparedAction) (target
 		}
 		others, err := ontologyNames(thingID)
 		return target{id: thingID, name: o.Name, ontology: o, others: others}, err
+	case "dashboard":
+		if inWorkspace != ws {
+			return target{}, elsewhere
+		}
+		d, err := c.DB.GetFoundryDashboard(ctx, ws, thingID)
+		switch {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			return target{}, status.Error(codes.FailedPrecondition, "this workspace holds no dashboard "+thingID+": read its dashboards again")
+		case err != nil:
+			return target{}, err
+		}
+		others, err := c.dashboardNames(ctx, thingID)
+		return target{id: thingID, name: d.Name, dashboard: d, others: others}, err
 	}
 	return target{}, status.Error(codes.InvalidArgument, "the Assistant acts on no target of kind "+kind)
+}
+
+// dashboardNames are the names of the workspace's dashboards but except.
+func (c Cards) dashboardNames(ctx context.Context, except string) ([]string, error) {
+	all, err := c.DB.ListFoundryDashboards(ctx, c.WorkspaceID, false)
+	var names []string
+	for _, d := range all {
+		if d.ID != except {
+			names = append(names, d.Name)
+		}
+	}
+	return names, err
 }
 
 // runtimeTarget is what set_assistant_runtime and revoke_assistant_helper

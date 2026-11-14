@@ -49,6 +49,8 @@ type memStore struct {
 	connectors []*model.Connector
 	sets       []*model.FoundryDocumentSet
 	documents  []*model.FoundryDocument
+	// dashboards are the workspace's; none unless a test says.
+	dashboards []*model.FoundryDashboard
 	// decided is what the person did with an action by the time the turn
 	// prepares it again; nothing when empty.
 	decided model.FoundryAgentActionStatus
@@ -236,6 +238,25 @@ func (s *memStore) GetFoundryDocumentSet(_ context.Context, workspaceID, id stri
 
 func (s *memStore) GetFoundryDocument(_ context.Context, workspaceID, id string) (*model.FoundryDocument, error) {
 	for _, d := range s.documents {
+		if d.WorkspaceID == workspaceID && d.ID == id {
+			return d, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
+}
+
+func (s *memStore) ListFoundryDashboards(_ context.Context, workspaceID string, _ bool) ([]*model.FoundryDashboard, error) {
+	var out []*model.FoundryDashboard
+	for _, d := range s.dashboards {
+		if d.WorkspaceID == workspaceID {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+func (s *memStore) GetFoundryDashboard(_ context.Context, workspaceID, id string) (*model.FoundryDashboard, error) {
+	for _, d := range s.dashboards {
 		if d.WorkspaceID == workspaceID && d.ID == id {
 			return d, nil
 		}
@@ -476,7 +497,7 @@ func newHarness(t *testing.T, steps ...[]llm.Chunk) *harness {
 		model: &scripted{steps: steps}, backend: b, keys: keys}
 	service := (&integration.Service{Foundry: b, Actions: integration.FoundryClients{FoundryServiceClient: b}, Confirmations: &confirmations{},
 		Workflows: b, FoundryURL: "http://localhost:3000", Wait: time.Second, Directory: directory{},
-		SampleDatabase: &integration.SampleDatabase{Host: "acme-db", DisableTLS: true}, AgentHosts: true}).ForAgent()
+		SampleDatabase: &integration.SampleDatabase{Host: "acme-db", DisableTLS: true}, AgentHosts: true, PublicDashboards: true}).ForAgent()
 	h.host = &sessions{service: service}
 	catalog, err := ai.VendoredCatalog()
 	require.NoError(t, err)
@@ -575,6 +596,43 @@ func TestPreparedActionsGoToThePersonNotTheModel(t *testing.T) {
 	refusal := afterRefusal[len(afterRefusal)-1].Content[0].(llm.ToolResult)
 	assert.True(t, refusal.IsError, "an operation outside Operations is refused")
 	assert.Contains(t, h.db.eventTypes(), "action_card")
+}
+
+// Dashboards are prepared as every action is: a card names the dashboard as
+// Foundry has it, and the page the person is on names what they look at.
+func TestTheAssistantPreparesDashboards(t *testing.T) {
+	h := newHarness(t,
+		call("toolu_1", toolPrepare, `{"operation":"update_dashboard","target":"dashboard:ws1/dash1","payload":{"expected_revision":2,"name":"Revenue by month"}}`),
+		call("toolu_2", toolPrepare, `{"operation":"create_dashboard","target":"workspace:ws1","payload":{"name":"Pipeline"}}`),
+		say("Click Run to rename it."))
+	h.db.dashboards = []*model.FoundryDashboard{{ID: "dash1", WorkspaceID: ws, Name: "Revenue", Share: &model.FoundryDashboardShare{}}}
+	turn := message("Rename this dashboard")
+	turn.PageContext = json.RawMessage(`{"dashboard_id":"dash1"}`)
+	h.db.turns = []*model.FoundryAgentTurn{turn}
+	_, err := h.runner.Run(context.Background(), turn)
+	require.NoError(t, err)
+	text := h.model.requests[0].Messages[0].Content[0].(llm.Text).Text
+	assert.Contains(t, text, `<page_context>{"dashboard_id":"dash1","dashboard_name":"Revenue"}</page_context>`)
+	require.Len(t, h.db.actions, 2)
+	renamed := h.db.actions[0]
+	assert.Equal(t, "update_dashboard", renamed.Operation)
+	assert.JSONEq(t, `{"dashboard":{"id":"dash1","name":"Revenue","published":true},"name":"Revenue by month"}`, string(renamed.Display))
+	assert.True(t, renamed.TargetNamedByUser, "the page the person was on named it")
+	assert.Equal(t, "create_dashboard", h.db.actions[1].Operation)
+	assert.JSONEq(t, `{"name":"Pipeline","spec":{"tiles":[]}}`, string(h.db.actions[1].Display))
+	for _, op := range []string{"create_dashboard", "update_dashboard", "delete_dashboard", "pin_dashboard", "publish_dashboard", "unpublish_dashboard"} {
+		assert.True(t, Operations[op], op)
+	}
+}
+
+// A page context naming nothing of the workspace tells the model nothing.
+func TestAPageOfNothingIsNoPage(t *testing.T) {
+	h := newHarness(t, say("Hello."))
+	turn := message("Hi")
+	turn.PageContext = json.RawMessage(`{"ontology_id":"gone","dashboard_id":"gone"}`)
+	_, err := h.runner.Run(context.Background(), turn)
+	require.NoError(t, err)
+	assert.NotContains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, "page_context")
 }
 
 func TestTheTargetOnlyTheModelChoseIsFlagged(t *testing.T) {

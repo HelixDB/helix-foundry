@@ -2425,6 +2425,8 @@ message FoundryWorkflowUpload {
 message FoundryAgentPageContext {
   string ontology_id = 1;
   string load_id = 2;
+  // The dashboard open, if any.
+  string dashboard_id = 3;
 }
 
 // FoundryAgentThread is a conversation with the Assistant, private to its user.

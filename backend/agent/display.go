@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/dashboard"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -208,6 +209,58 @@ type DecisionDisplay struct {
 	Value     map[string]any `json:"value,omitempty"`
 }
 
+// DashboardRef is a dashboard as it is when the action is prepared: its
+// name, and whether it is pinned for everyone and at a public link.
+type DashboardRef struct {
+	Ref
+	Pinned    bool `json:"pinned,omitempty"`
+	Published bool `json:"published,omitempty"`
+}
+
+// TileDisplay is one tile of a spec: its title, the ontology whose load it
+// reads, and how it is drawn (empty for as the result suits).
+type TileDisplay struct {
+	Title    string `json:"title"`
+	Ontology Ref    `json:"ontology"`
+	Visual   string `json:"visual,omitempty"`
+}
+
+// SpecDisplay is a dashboard's spec as its card shows it: its tiles.
+type SpecDisplay struct {
+	Tiles []TileDisplay `json:"tiles"`
+}
+
+// CreateDashboardDisplay is create_dashboard's: the new dashboard's name
+// and description, as the Assistant wrote them, and its tiles.
+type CreateDashboardDisplay struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Spec        SpecDisplay `json:"spec"`
+}
+
+// UpdateDashboardDisplay is update_dashboard's: the dashboard as it is, and
+// what changes; a field left nil stays as it is, an empty description
+// clears it.
+type UpdateDashboardDisplay struct {
+	Dashboard   DashboardRef `json:"dashboard"`
+	Name        *string      `json:"name,omitempty"`
+	Description *string      `json:"description,omitempty"`
+	Spec        *SpecDisplay `json:"spec,omitempty"`
+}
+
+// DashboardDisplay is delete_dashboard's, publish_dashboard's and
+// unpublish_dashboard's: the dashboard acted on.
+type DashboardDisplay struct {
+	Dashboard DashboardRef `json:"dashboard"`
+}
+
+// PinDashboardDisplay is pin_dashboard's: whether it pins the dashboard or
+// unpins it.
+type PinDashboardDisplay struct {
+	Dashboard DashboardRef `json:"dashboard"`
+	Pinned    bool         `json:"pinned"`
+}
+
 // AssistantRuntimeDisplay is set_assistant_runtime's: where the
 // workspace's new threads run after it (Runtime) and before (Current), and
 // whether a helper that runs Runtime is online (always, for api).
@@ -246,6 +299,8 @@ type Reads interface {
 	ListConnectors(ctx context.Context, workspaceID string) ([]*model.Connector, error)
 	GetFoundryDocumentSet(ctx context.Context, workspaceID, id string) (*model.FoundryDocumentSet, error)
 	GetFoundryDocument(ctx context.Context, workspaceID, id string) (*model.FoundryDocument, error)
+	GetFoundryDashboard(ctx context.Context, workspaceID, id string) (*model.FoundryDashboard, error)
+	ListFoundryDashboards(ctx context.Context, workspaceID string, pinnedOnly bool) ([]*model.FoundryDashboard, error)
 }
 
 // Cards draws the cards of actions prepared in one workspace for one
@@ -349,6 +404,11 @@ func (c Cards) describe(ctx context.Context, a integration.PreparedAction, t tar
 			out.Version, out.Status, out.CreatedAt = VersionRef{ID: l.VersionID, Number: l.Version}, string(l.Status), &l.CreatedAt
 		}
 		return out
+	}
+	// A dashboard target is one the workspace holds (target).
+	var board DashboardRef
+	if d := t.dashboard; d != nil {
+		board = DashboardRef{Ref: Ref{ID: d.ID, Name: d.Name}, Pinned: d.PinnedAt != nil, Published: d.Share != nil}
 	}
 	decode := func(into any) error {
 		if err := json.Unmarshal(a.Payload, into); err != nil {
@@ -483,12 +543,66 @@ func (c Cards) describe(ctx context.Context, a integration.PreparedAction, t tar
 			return nil, err
 		}
 		return c.describeSettle(ctx, ontology, p)
+	case "create_dashboard":
+		var p integration.CreateDashboardPayload
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		spec, err := c.specDisplay(ctx, p.Spec)
+		if err != nil {
+			return nil, err
+		}
+		return CreateDashboardDisplay{Name: p.Name, Description: p.Description, Spec: spec}, nil
+	case "update_dashboard":
+		var p integration.UpdateDashboardPayload
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		out := UpdateDashboardDisplay{Dashboard: board, Name: p.Name, Description: p.Description}
+		if len(p.Spec) > 0 {
+			spec, err := c.specDisplay(ctx, p.Spec)
+			if err != nil {
+				return nil, err
+			}
+			out.Spec = &spec
+		}
+		return out, nil
+	case "pin_dashboard":
+		var p integration.PinDashboardPayload
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return PinDashboardDisplay{Dashboard: board, Pinned: p.Pinned}, nil
+	case "delete_dashboard", "publish_dashboard", "unpublish_dashboard":
+		return DashboardDisplay{Dashboard: board}, nil
 	case "set_assistant_runtime":
 		return AssistantRuntimeDisplay{Runtime: t.id, Current: t.runtime.Runtime, Online: t.id == "api" || slices.Contains(t.runtime.Online, t.id)}, nil
 	case "revoke_assistant_helper":
 		return AssistantHelperDisplay{Host: Ref{ID: t.id, Name: t.name}, Runtimes: t.host.Runtimes, Online: t.host.Online}, nil
 	}
 	return nil, fmt.Errorf("no card for %s", a.Operation)
+}
+
+// specDisplay names a spec's tiles, each with the ontology it reads; a spec
+// of none has no tiles. The prepared payload's spec is valid (the prepare
+// checked it).
+func (c Cards) specDisplay(ctx context.Context, raw json.RawMessage) (SpecDisplay, error) {
+	out := SpecDisplay{Tiles: []TileDisplay{}}
+	if len(raw) == 0 {
+		return out, nil
+	}
+	spec, err := dashboard.ParseSpec(raw)
+	if err != nil {
+		return out, fmt.Errorf("read the dashboard's spec: %w", err)
+	}
+	for _, tile := range spec.Tiles() {
+		ontology := Ref{ID: tile.OntologyID}
+		if o, err := c.DB.GetFoundryOntology(ctx, c.WorkspaceID, tile.OntologyID); err == nil && o.DeletedAt == nil {
+			ontology.Name = o.Name
+		}
+		out.Tiles = append(out.Tiles, TileDisplay{Title: tile.Title, Ontology: ontology, Visual: string(tile.Visual)})
+	}
+	return out, nil
 }
 
 // describeSettle reads the review settle_review decides as the person, and

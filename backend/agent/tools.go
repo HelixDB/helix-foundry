@@ -37,6 +37,10 @@ var Tools = map[string]bool{
 	"helix_foundry_ask":                   true,
 	"helix_foundry_get_question":          true,
 	"helix_foundry_list_questions":        true,
+	// Dashboards: read, and a tile's query tried before it is proposed.
+	"helix_foundry_list_dashboards":        true,
+	"helix_foundry_get_dashboard":          true,
+	"helix_foundry_preview_dashboard_tile": true,
 	// Link-only: a session's Service offers no sign-in, so it answers with
 	// the site's /data?add=<kind>, where the person enters credentials.
 	"helix_foundry_connect": true,
@@ -57,7 +61,8 @@ const (
 // confirmed: upload_document (the person's browser holds the file),
 // create_event_source (an API source is set up with its send tokens, in
 // Foundry) and pair_assistant_helper (its result is a credential, which
-// would pass through the model's provider).
+// would pass through the model's provider). publish_dashboard and
+// unpublish_dashboard are prepared only where the host offers public links.
 var Operations = map[string]bool{
 	"create_ontology":     true,
 	"generate_ontology":   true,
@@ -71,6 +76,12 @@ var Operations = map[string]bool{
 	"update_document_set": true,
 	"move_document":       true,
 	"settle_review":       true,
+	"create_dashboard":    true,
+	"update_dashboard":    true,
+	"delete_dashboard":    true,
+	"pin_dashboard":       true,
+	"publish_dashboard":   true,
+	"unpublish_dashboard": true,
 	// A local install's only (Service.AgentHosts).
 	"set_assistant_runtime":   true,
 	"revoke_assistant_helper": true,

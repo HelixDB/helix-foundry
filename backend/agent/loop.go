@@ -322,23 +322,33 @@ func openingText(ctx context.Context, db Store, turn *model.FoundryAgentTurn) (s
 }
 
 // page is the turn's page context as the model is told it: each id the
-// workspace's, with the ontology's name; nil when it names nothing that is.
+// workspace's, with the ontology's and the dashboard's names; nil when it
+// names nothing that is.
 func page(ctx context.Context, db Reads, turn *model.FoundryAgentTurn) *shownPage {
 	var p PageContext
-	if len(turn.PageContext) == 0 || json.Unmarshal(turn.PageContext, &p) != nil || p.OntologyID == "" {
+	if len(turn.PageContext) == 0 || json.Unmarshal(turn.PageContext, &p) != nil {
 		return nil
 	}
-	o, err := db.GetFoundryOntology(ctx, turn.WorkspaceID, p.OntologyID)
-	if err != nil || o.DeletedAt != nil {
-		return nil
-	}
-	out := &shownPage{OntologyID: o.ID, OntologyName: o.Name}
-	if p.LoadID != "" {
-		if l, err := db.GetFoundryLoad(ctx, o.ID, p.LoadID); err == nil && l.Status != model.FoundryLoadDeleted {
-			out.LoadID = l.ID
+	var out shownPage
+	if p.OntologyID != "" {
+		if o, err := db.GetFoundryOntology(ctx, turn.WorkspaceID, p.OntologyID); err == nil && o.DeletedAt == nil {
+			out.OntologyID, out.OntologyName = o.ID, o.Name
+			if p.LoadID != "" {
+				if l, err := db.GetFoundryLoad(ctx, o.ID, p.LoadID); err == nil && l.Status != model.FoundryLoadDeleted {
+					out.LoadID = l.ID
+				}
+			}
 		}
 	}
-	return out
+	if p.DashboardID != "" {
+		if d, err := db.GetFoundryDashboard(ctx, turn.WorkspaceID, p.DashboardID); err == nil {
+			out.DashboardID, out.DashboardName = d.ID, d.Name
+		}
+	}
+	if out == (shownPage{}) {
+		return nil
+	}
+	return &out
 }
 
 // loop calls the model and runs its calls until the turn ends.
