@@ -56,8 +56,10 @@ var foundryOperationDocs = []foundryOperationDoc{
 	{name: "update_document_set", doc: "{set_id, name, description}, name and description each optional."},
 	{name: "move_document", doc: "{document_id, set_id}."},
 	{name: "settle_review",
-		doc: "{review_id, decision}: the review_key of a FoundryReview the current load holds, and a decision of {resolve: {entity_key}}, {resolve: {not_in_data: true}}, " +
-			"{prop: {text|integer|number|boolean: value}} (an integer as a string of digits), or {prop: {null: true}} to remove the property."},
+		doc: "{review_id, decision}: the review_key of a review the current load holds (" + toolFoundryListReviews + "), and the decision its settle names: " +
+			"resolve {resolve: {entity_key}} with one of its candidates or {resolve: {not_in_data: true}}; " +
+			"prop {prop: {text|integer|number|boolean: value}} (an integer as a string of digits) or {prop: {null: true}} to remove the property; " +
+			"release {release: {statement_hash}} to approve the statement it holds back or {reject: {statement_hash}} to say it is wrong, with its statement_hash."},
 }
 
 // generateReads is what a generation reads, on every host.

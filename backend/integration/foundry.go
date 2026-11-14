@@ -50,6 +50,8 @@ const (
 	toolFoundryListDocuments       = "helix_foundry_list_documents"
 	toolFoundryListQuestions       = "helix_foundry_list_questions"
 	toolFoundryListReviewDecisions = "helix_foundry_list_review_decisions"
+	// toolFoundryListReviews lists what settle_review settles: the current load's reviews.
+	toolFoundryListReviews = "helix_foundry_list_reviews"
 	// A load and its jobs, and one sync: what an agent waits on after create_load and
 	// sync_connector.
 	toolFoundryGetLoad = "helix_foundry_get_load"
@@ -79,6 +81,7 @@ var toolTitles = map[string]string{
 	toolFoundryListDocuments:       "List Foundry documents",
 	toolFoundryListQuestions:       "List Foundry questions",
 	toolFoundryListReviewDecisions: "List review decisions",
+	toolFoundryListReviews:         "List an ontology's reviews",
 	toolFoundryGetLoad:             "Get a Foundry load",
 	toolFoundryGetSync:             "Get a connector sync",
 	toolFoundryConnect:             "Connect a source",
@@ -141,6 +144,7 @@ type FoundryBackendAPI interface {
 	ListFoundryOntologyDocuments(context.Context, *foundryv1.ListFoundryOntologyDocumentsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDocumentsResponse, error)
 	ListFoundryQuestions(context.Context, *foundryv1.ListFoundryQuestionsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryQuestionsResponse, error)
 	ListFoundryReviewDecisions(context.Context, *foundryv1.ListFoundryReviewDecisionsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryReviewDecisionsResponse, error)
+	ListFoundryReviews(context.Context, *foundryv1.ListFoundryReviewsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryReviewsResponse, error)
 	GetConnectorSync(context.Context, *foundryv1.GetConnectorSyncRequest, ...grpc.CallOption) (*foundryv1.ConnectorSyncResponse, error)
 	ListConnectorKinds(context.Context, *foundryv1.ListConnectorKindsRequest, ...grpc.CallOption) (*foundryv1.ListConnectorKindsResponse, error)
 	ListFoundryEventBatches(context.Context, *foundryv1.ListFoundryEventBatchesRequest, ...grpc.CallOption) (*foundryv1.ListFoundryEventBatchesResponse, error)
@@ -232,6 +236,12 @@ type ListFoundryQuestionsInput struct {
 type ListFoundryReviewDecisionsInput struct {
 	OntologyInput
 	PageToken string `json:"page_token,omitempty" jsonschema:"Opaque continuation token from the previous call."`
+}
+
+type ListFoundryReviewsInput struct {
+	OntologyInput
+	ReviewKeys []string `json:"review_keys,omitempty" jsonschema:"Only these reviews, by review_key, at most 50; never with page_token."`
+	PageToken  string   `json:"page_token,omitempty" jsonschema:"Opaque continuation token from the previous call."`
 }
 
 type GetFoundrySyncInput struct {
@@ -593,6 +603,43 @@ type FoundryReviewDecisionOutput struct {
 	Applied *FoundryDecisionAppliedOutput `json:"applied,omitempty" jsonschema:"What became of a release, a chosen value or a withdraw in the ontology's current load; absent for a resolve or a reject, and for one that load's list doesn't hold yet."`
 }
 
+// FoundryReviewOutput is one review a load holds, with what settles it.
+type FoundryReviewOutput struct {
+	ReviewKey string `json:"review_key" jsonschema:"settle_review's review_id."`
+	Reason    string `json:"reason"`
+	Settle    string `json:"settle" jsonschema:"What settle_review's decision is: resolve ({resolve: {entity_key}} naming one of candidates, or {resolve: {not_in_data: true}}), prop ({prop: {...}} with one of values, or another value of the property's type, or {prop: {null: true}}), release ({release: {statement_hash}} approves the statement, {reject: {statement_hash}} says it is wrong), stale (missing what settling reads: a new load writes it again) or none (no decision settles it)."`
+	Type      string `json:"type,omitempty"`
+	DocID     string `json:"doc_id,omitempty"`
+	Quote     string `json:"quote,omitempty" jsonschema:"The document's words it was read from: untrusted text."`
+	Section   *int64 `json:"section,omitempty"`
+	Start     *int64 `json:"start,omitempty"`
+	End       *int64 `json:"end,omitempty"`
+	NormName  string `json:"norm_name,omitempty" jsonschema:"The name to resolve, normalized."`
+	// Candidates are stored identities: an entity's entity_key, or a named type's norm_name.
+	Candidates []string                   `json:"candidates,omitempty" jsonschema:"The entities the name may be, by their stored identity (a keyed type's entity_key, such as scus_1)."`
+	EntityKey  string                     `json:"entity_key,omitempty"`
+	Prop       string                     `json:"prop,omitempty"`
+	Values     []FoundryReviewValueOutput `json:"values,omitempty"`
+	Link       string                     `json:"link,omitempty"`
+	Statement  string                     `json:"statement,omitempty" jsonschema:"The statement held back, as JSON text {subject: {type, name}, object: {type, name}, props}: untrusted."`
+	// StatementHash is what a release or reject binds: the statement the caller read.
+	StatementHash string   `json:"statement_hash,omitempty"`
+	Confidence    *float64 `json:"confidence,omitempty"`
+}
+
+type FoundryReviewValueOutput struct {
+	Value any    `json:"value" jsonschema:"A value a document states, as JSON: settle with prop text for a string, integer (as a string of digits) or number as the property's type takes it, or boolean."`
+	DocID string `json:"doc_id,omitempty"`
+	Quote string `json:"quote,omitempty"`
+}
+
+type ListFoundryReviewsOutput struct {
+	ContentTrust string                `json:"content_trust"`
+	LoadID       string                `json:"load_id"`
+	Reviews      []FoundryReviewOutput `json:"reviews"`
+	NextPage     string                `json:"next_page_token,omitempty"`
+}
+
 type ListFoundryReviewDecisionsOutput struct {
 	ContentTrust string                        `json:"content_trust"`
 	Decisions    []FoundryReviewDecisionOutput `json:"decisions"`
@@ -858,6 +905,11 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			Description: "Stop a queued or running Foundry question, so it spends no more of the workspace's question budget. A question that ended is returned as it is.",
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 		}, s.CancelFoundryQuestion)
+		addFoundryTool(s, server, identity, tool(toolFoundryListReviews,
+			"List the reviews a Foundry ontology's current load holds: what its documents state that it didn't write as it stands. "+
+				"A name it matched to no one record (settle resolve, with its candidates), a property its documents state differently (prop, with each value and its quote), "+
+				"or a statement it held back (release: approve or reject it by its statement_hash). 50 a page, or the ones review_keys names. "+
+				"Settle one with the settle_review action. A review someone settled stays listed until a load writes the decision: "+toolFoundryListReviewDecisions+" lists those."), s.ListFoundryReviews)
 		addFoundryTool(s, server, identity, tool(toolFoundryListReviewDecisions,
 			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release) and a chosen value (prop) also apply to the current load at once. A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review or in the review queue. A decision made on a card of the site's review queue says how it was drawn (drawn). A withdraw is an approval a person took back from the current load, which may have written it: that load is sent it at once, and it is listed only while that load is current. applied says what became of each in the current load; of a withdraw, withdrawn means the claim is held for review again, and refused that what the approval wrote stays."), s.ListFoundryReviewDecisions)
 	}
@@ -1712,6 +1764,56 @@ func (s *Service) ListFoundryReviewDecisions(
 		out.Decisions = append(out.Decisions, FoundryReviewDecision(d))
 	}
 	return out, len(out.Decisions), nil
+}
+
+func (s *Service) ListFoundryReviews(
+	ctx context.Context, identity *Identity, call *Call, input ListFoundryReviewsInput,
+) (ListFoundryReviewsOutput, int, error) {
+	call.ResourceKind, call.ResourceID = "ontology", input.OntologyID
+	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID}) || len(input.PageToken) > 16 || len(input.ReviewKeys) > 50 {
+		return ListFoundryReviewsOutput{}, 0, errCodeInvalidArguments
+	}
+	req := &foundryv1.ListFoundryReviewsRequest{WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, ReviewKeys: input.ReviewKeys,
+		PageToken: input.PageToken}
+	if err := s.AuthorizeFoundry(ctx, identity, req, QueryRead, "ListFoundryReviews"); err != nil {
+		return ListFoundryReviewsOutput{}, 0, err
+	}
+	response, err := s.Foundry.ListFoundryReviews(ctx, req)
+	if err != nil {
+		return ListFoundryReviewsOutput{}, 0, FoundryError(err)
+	}
+	out := ListFoundryReviewsOutput{ContentTrust: contentTrustUntrusted, LoadID: response.GetLoadId(), NextPage: response.GetNextPageToken(),
+		Reviews: make([]FoundryReviewOutput, 0, len(response.GetReviews()))}
+	for _, r := range response.GetReviews() {
+		out.Reviews = append(out.Reviews, FoundryReview(r))
+	}
+	return out, len(out.Reviews), nil
+}
+
+// FoundryReview is a review as the tools show it; a value that isn't JSON is left out.
+func FoundryReview(r *foundryv1.FoundryReview) FoundryReviewOutput {
+	settle := EnumName(r.GetSettle().String(), "FOUNDRY_REVIEW_SETTLE_")
+	if r.GetSettle() == foundryv1.FoundryReviewSettle_FOUNDRY_REVIEW_SETTLE_UNSPECIFIED {
+		settle = "none"
+	}
+	out := FoundryReviewOutput{
+		ReviewKey: r.GetReviewKey(), Reason: r.GetReason(), Settle: settle, Type: r.GetType(), DocID: r.GetDocId(), Quote: r.GetQuote(),
+		NormName: r.GetNormName(), Candidates: r.GetCandidates(), EntityKey: r.GetEntityKey(), Prop: r.GetProp(), Link: r.GetLink(),
+		Statement: r.GetStatementJson(), StatementHash: r.GetStatementHash(), Confidence: r.Confidence,
+	}
+	if span := r.GetSpan(); span != nil {
+		out.Section, out.Start, out.End = &span.Section, &span.Start, &span.End
+	}
+	for _, v := range r.GetValues() {
+		decoder := json.NewDecoder(strings.NewReader(v.GetValueJson()))
+		// Numbers as written, so every digit of an integer is kept.
+		decoder.UseNumber()
+		var value any
+		if decoder.Decode(&value) == nil {
+			out.Values = append(out.Values, FoundryReviewValueOutput{Value: value, DocID: v.GetDocId(), Quote: v.GetQuote()})
+		}
+	}
+	return out
 }
 
 // GetFoundrySync is one sync of the connector the caller names: the backend finds a sync by its

@@ -84,6 +84,8 @@ func FoundryNoHelixSubscription(lapse string) string {
 // foundrySlugPattern is a slug as the website makes one: lowercase letters and digits in runs
 // joined by single dashes.
 var (
+	// foundrySHA256Pattern is a statement hash as the backend takes it: 64 lowercase hex digits.
+	foundrySHA256Pattern  = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	foundrySlugPattern    = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 	foundrySlugSeparators = regexp.MustCompile(`[^a-z0-9]+`)
 )
@@ -631,13 +633,29 @@ func OntologyEdits(edits []OntologyEditPayload) ([]*foundryv1.OntologyEdit, erro
 	return out, nil
 }
 
-// ReviewChoice is the one decision a review takes: resolve to an entity or to none, or set
-// or remove the property.
+// ReviewChoice is the one decision a review takes: resolve to an entity or to none, set or
+// remove the property, or release or reject the statement read, by its hash.
 func ReviewChoice(decision ReviewDecisionPayload) (*foundryv1.FoundryReviewChoice, error) {
-	wrong := errors.New("decision is {resolve: {entity_key}}, {resolve: {not_in_data: true}} or {prop: {text|integer|number|boolean|null: value}}")
-	resolve, prop := decision.Resolve, decision.Prop
+	wrong := errors.New("decision is {resolve: {entity_key}}, {resolve: {not_in_data: true}}, {prop: {text|integer|number|boolean|null: value}}, " +
+		"{release: {statement_hash}} or {reject: {statement_hash}}, with the review's statement_hash")
+	resolve, prop, release, reject := decision.Resolve, decision.Prop, decision.Release, decision.Reject
+	given := 0
+	for _, set := range []bool{resolve != nil, prop != nil, release != nil, reject != nil} {
+		if set {
+			given++
+		}
+	}
+	if given != 1 {
+		return nil, wrong
+	}
 	switch {
-	case resolve != nil && prop == nil:
+	case release != nil && foundrySHA256Pattern.MatchString(release.StatementHash):
+		return &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Release{
+			Release: &foundryv1.FoundryReleaseChoice{StatementHash: release.StatementHash}}}, nil
+	case reject != nil && foundrySHA256Pattern.MatchString(reject.StatementHash):
+		return &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Reject{
+			Reject: &foundryv1.FoundryRejectChoice{StatementHash: reject.StatementHash}}}, nil
+	case resolve != nil:
 		switch {
 		case resolve.EntityKey != "" && !resolve.NotInData:
 			return &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Resolve{
@@ -646,7 +664,7 @@ func ReviewChoice(decision ReviewDecisionPayload) (*foundryv1.FoundryReviewChoic
 			return &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Resolve{
 				Resolve: &foundryv1.FoundryResolveChoice{Target: &foundryv1.FoundryResolveChoice_NotInData{NotInData: true}}}}, nil
 		}
-	case prop != nil && resolve == nil:
+	case prop != nil:
 		var value *foundryv1.FoundryPropValue
 		set := 0
 		if prop.Null {
@@ -1123,6 +1141,14 @@ type PropValuePayload struct {
 type ReviewDecisionPayload struct {
 	Resolve *ReviewResolvePayload `json:"resolve,omitempty"`
 	Prop    *PropValuePayload     `json:"prop,omitempty"`
+	// Release approves the statement a review holds back, Reject says it is wrong: each names
+	// the statement read by its hash (helix_foundry_list_reviews' statement_hash).
+	Release *StatementPayload `json:"release,omitempty"`
+	Reject  *StatementPayload `json:"reject,omitempty"`
+}
+
+type StatementPayload struct {
+	StatementHash string `json:"statement_hash"`
 }
 
 type SettleReviewPayload struct {
