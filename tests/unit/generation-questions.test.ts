@@ -539,8 +539,9 @@ describe("the mock's questions", () => {
     });
   });
 
-  it("asks nothing without the knob", async () => {
-    Object.assign(config, { ontologyQuestions: false });
+  it("asks nothing once a reset turns the knob off", async () => {
+    resetState();
+    Object.assign(config, { ontologyStepMs: 100 });
     const g = (
       await call("POST", `${O}:generate`, {
         connectorIds: ["conn_acme_stripe"],

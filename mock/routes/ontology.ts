@@ -472,6 +472,7 @@ function seed() {
     [RENEWALS, "ver_renewals_1"],
   ]);
   state.plans.clear();
+  delete knobs.ontologyQuestions;
   delete knobs.ontologyStepMs;
   delete knobs.ontologyOutcome;
   delete knobs.reviseOutcome;
