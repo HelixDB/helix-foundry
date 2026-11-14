@@ -5,9 +5,11 @@ import type {
   AgentDecision,
   AgentDecisionValue,
   AgentLoadRef,
+  AgentNotRunReason,
   AgentOperation,
   AgentRef,
   AgentReview,
+  AgentReviewEntity,
   AgentReviewSettle,
   AgentVersionRef,
   AgentEvent,
@@ -26,6 +28,7 @@ import { connectorLabel } from "../../kit/SourceLogo";
 import { formatDate, plural } from "../../kit/util";
 import { dataPaths } from "../data/paths";
 import { reviewCopy } from "../documents/model";
+import { entityId } from "../explore/model";
 import { LOAD_LIMITS } from "../ontology/model";
 import { ontologyPaths } from "../ontology/paths";
 
@@ -236,7 +239,10 @@ export function parseAgentEvent(eventJson: string): AgentEvent | undefined {
             ...(str(x.error) !== undefined && { error: x.error as string }),
             ...(x.output !== undefined && { output: x.output }),
             ...(x.truncated === true && { truncated: true }),
-            ...(x.not_run === true && { not_run: true }),
+            ...opt(
+              "not_run",
+              NOT_RUN.find((r) => r === x.not_run),
+            ),
           }
         : undefined;
     case "action_card":
@@ -306,6 +312,16 @@ export const STOP_TEXT: Record<AgentStopReason, string | null> = {
 };
 const STOP_REASONS = Object.keys(STOP_TEXT) as AgentStopReason[];
 
+/** Why a call never ran, in words for the person. */
+export const NOT_RUN_TEXT: Record<AgentNotRunReason, string> = {
+  calls: "One reply runs at most 8 tool calls, and this was past them.",
+  asks: "One message asks the Analyst at most 3 questions, and this was past them.",
+  time: "The Assistant ran out of time for this message.",
+  length: "The reply reached its length limit while writing it.",
+  input: "The model wrote its input in a form Foundry can’t read.",
+};
+const NOT_RUN = Object.keys(NOT_RUN_TEXT) as AgentNotRunReason[];
+
 /** One tool call and, once it returned, what it gave. */
 export type AgentStep = {
   id: string;
@@ -314,8 +330,8 @@ export type AgentStep = {
   result?:
     | { kind: "returned"; output: unknown; truncated: boolean }
     | { kind: "failed"; error: string }
-    // A limit kept it from running: not the tool's failure.
-    | { kind: "not_run"; reason: string };
+    // It never ran: not the tool's failure.
+    | { kind: "not_run"; reason: AgentNotRunReason };
 };
 
 /** What a turn shows, in order. */
@@ -406,10 +422,7 @@ export function reduceTurnEvents(
           });
         case "tool_result": {
           const result: AgentStep["result"] = ev.not_run
-            ? {
-                kind: "not_run",
-                reason: (ev.error || "").replace(/^Not run:?\s*/i, ""),
-              }
+            ? { kind: "not_run", reason: ev.not_run }
             : ev.is_error
               ? { kind: "failed", error: ev.error || "it failed" }
               : {
@@ -536,7 +549,11 @@ function ref(x: unknown): AgentRef | undefined {
 function connectorRef(x: unknown): AgentConnectorRef | undefined {
   const r = ref(x);
   return r && isRecord(x)
-    ? { ...r, ...opt("kind", str(x.kind) || undefined) }
+    ? {
+        ...r,
+        ...opt("kind", str(x.kind) || undefined),
+        ...opt("sample", x.sample === true ? (true as const) : undefined),
+      }
     : r;
 }
 function versionRef(x: unknown): AgentVersionRef | undefined {
@@ -599,6 +616,7 @@ function review(x: unknown): AgentReview | undefined {
     );
   };
   const candidates = x.candidates === undefined ? [] : list(x.candidates, str);
+  const entities = x.entities === undefined ? [] : list(x.entities, entity);
   const values =
     x.values === undefined
       ? []
@@ -611,7 +629,7 @@ function review(x: unknown): AgentReview | undefined {
               }
             : undefined,
         );
-  if (!candidates || !values) return undefined;
+  if (!candidates || !entities || !values) return undefined;
   return {
     review_key: key,
     reason: str(x.reason) || "",
@@ -631,7 +649,20 @@ function review(x: unknown): AgentReview | undefined {
     ...texts("statement"),
     ...texts("statement_hash"),
     ...opt("confidence", num(x.confidence)),
+    ...opt("entities", entities.length ? entities : undefined),
   };
+}
+function entity(x: unknown): AgentReviewEntity | undefined {
+  if (!isRecord(x)) return undefined;
+  const type = str(x.type),
+    key = str(x.entity_key),
+    norm = str(x.norm_name),
+    name = opt("name", str(x.name) || undefined);
+  // Exactly one identity.
+  if (!type || !key === !norm) return undefined;
+  return key
+    ? { type, entity_key: key, ...name }
+    : { type, norm_name: norm!, ...name };
 }
 function decisionValue(x: unknown): AgentDecisionValue | undefined {
   if (!isRecord(x) || Object.keys(x).length !== 1) return undefined;
@@ -844,8 +875,12 @@ export function parseCard(
 /** A card's words: what it is, what it acts on, what running it does. */
 export type CardView = {
   title: string;
-  // What it acts on, as Foundry names it.
-  facts: { label: string; value: string }[];
+  // What it acts on, as Foundry names it: words, or entities each opening
+  // its page when the load names it.
+  facts: (
+    | { label: string; value: string }
+    | { label: string; entities: { text: string; to?: string }[] }
+  )[];
   // The document's words a review was read from: untrusted.
   quote?: string;
   does: string;
@@ -862,9 +897,10 @@ const nameOf = (r: AgentRef) => r.name || r.id;
 const quoted = (r: AgentRef) => (r.name ? `“${r.name}”` : r.id);
 const vN = (v: AgentVersionRef) => (v.number ? `v${v.number}` : "a version");
 const listOf = (rs: AgentRef[]) => rs.map(nameOf).join(", ");
+// As the payload names them (generate_ontology's event_sources mode).
 const MODES: Record<string, string> = {
-  FOUNDRY_EVENT_SOURCE_MODE_STRUCTURED: "as rows",
-  FOUNDRY_EVENT_SOURCE_MODE_EXTRACTION: "as documents",
+  structured: "as rows",
+  extraction: "as documents",
 };
 const STATUSES: Record<string, string> = {
   ready: "ready",
@@ -929,6 +965,37 @@ export function statementText(
  * normalized name (its quote is the sentence it was read in).
  */
 const reviewName = (r: AgentReview) => r.norm_name || r.quote || "this name";
+
+/**
+ * An entity a review names by its stored identity, as the card shows it: by
+ * the name the load stored, opening its page, when the review says which
+ * entity it is; by the identity alone otherwise.
+ *
+ * @example
+ * const r = { review_key: "r", reason: "unresolved", settle: "resolve" as const, type: "Customer", entities: [{ type: "Customer", entity_key: "scus_1", name: "Globex" }] };
+ * reviewEntity("o", r, "scus_1"); // { text: "Globex", to: "/explore/o/entities/Q3VzdG9tZXIAazpzY3VzXzE" }
+ * reviewEntity("o", r, "scus_9"); // { text: "scus_9" }
+ */
+export function reviewEntity(
+  ontologyId: string,
+  r: AgentReview,
+  key: string,
+): { text: string; to?: string } {
+  const e = r.entities?.find(
+    (e) =>
+      e.type === r.type &&
+      ("entity_key" in e ? e.entity_key : e.norm_name) === key,
+  );
+  if (!e) return { text: key };
+  const identity =
+    "entity_key" in e
+      ? { type: e.type, key: e.entity_key }
+      : { type: e.type, name: e.norm_name };
+  return {
+    text: e.name || key,
+    to: ontologyPaths.entity(ontologyId, entityId(identity)),
+  };
+}
 
 const LOAD_CAPS = `Reading documents costs at most $${LOAD_LIMITS.jobUsd} for this load and $${LOAD_LIMITS.monthUsd} a month for the workspace.`;
 
@@ -1006,6 +1073,13 @@ const VIEWS: {
     does: d.sample
       ? "Takes the sample company’s ready-made draft as a new version, in seconds, with no AI. Nothing changes until you make it current."
       : "The ontology agent drafts a new version from these sources. Nothing changes until you make the draft current.",
+    // The sample's made-up records are only for the sample's own draft.
+    ...opt(
+      "caution",
+      !d.sample && d.connectors.some((c) => c.sample)
+        ? `${listOf(d.connectors.filter((c) => c.sample))} is the made-up sample company’s data: this draft would hold its records beside yours.`
+        : undefined,
+    ),
     run: "Generate",
     target: nameOf(d.ontology),
   }),
@@ -1133,13 +1207,20 @@ const VIEWS: {
     const r = d.review,
       name = reviewName(r),
       statement = statementText(r.statement, r.link),
-      what = r.type && r.prop ? `${r.type}’s ${r.prop}` : "the value";
+      named = (key: string) => reviewEntity(d.ontology.id, r, key),
+      owner = r.entity_key ? named(r.entity_key) : undefined,
+      linked =
+        d.decision.kind === "link" ? named(d.decision.entity_key) : undefined,
+      what =
+        r.type && r.prop
+          ? `${owner?.to ? owner.text : r.type}’s ${r.prop}`
+          : "the value";
     const decided: Record<
       AgentDecision["kind"],
       { title: string; does: string; run: string }
     > = {
       link: {
-        title: `Link “${name}” to ${d.decision.kind === "link" ? d.decision.entity_key : ""}`,
+        title: `Link “${name}” to ${linked?.text}`,
         does: "The name is this entity in every load from the next one.",
         run: "Link",
       },
@@ -1182,8 +1263,10 @@ const VIEWS: {
           value: reviewCopy(r.reason, r.candidates?.length).title,
         },
         ...(statement ? [{ label: "Statement", value: statement }] : []),
+        ...(owner ? [{ label: "Entity", entities: [owner] }] : []),
+        ...(linked ? [{ label: "Links to", entities: [linked] }] : []),
         ...(r.candidates?.length
-          ? [{ label: "Suggested", value: r.candidates.join(", ") }]
+          ? [{ label: "Suggested", entities: r.candidates.map(named) }]
           : []),
       ],
       ...opt("quote", r.quote),

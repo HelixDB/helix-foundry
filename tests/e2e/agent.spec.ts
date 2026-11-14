@@ -317,7 +317,7 @@ test("settles a review from a card", async ({ page }) => {
   await loadVersion3(page);
   await shortcut(page);
   await say(page, "Settle the review about Globexx in Customer contracts");
-  const card = cardOf(page, "Link “globexx corporation” to cus_GLOBEX01");
+  const card = cardOf(page, "Link “globexx corporation” to Globex Corporation");
   // The document's words, set apart; what the review is and suggests.
   await expect(card.getByText("The document says (its words)")).toBeVisible();
   await expect(card.getByText("variant.md", { exact: true })).toBeVisible();
@@ -327,7 +327,14 @@ test("settles a review from a card", async ({ page }) => {
   await expect(
     card.getByText("The name is this entity in every load from the next one."),
   ).toBeVisible();
-  await run(page, "Link “globexx corporation” to cus_GLOBEX01", "Link");
+  // The entity it links to by name, opening its page.
+  await expect(
+    card.getByRole("link", { name: "Globex Corporation" }).first(),
+  ).toHaveAttribute(
+    "href",
+    `/explore/ont_acme_contracts/entities/${Buffer.from("Customer\0k:cus_GLOBEX01").toString("base64url")}`,
+  );
+  await run(page, "Link “globexx corporation” to Globex Corporation", "Link");
   await expect(
     dockOf(page).getByText(
       /The decision is saved\. It applies from the next load/,
@@ -396,6 +403,8 @@ test("shows a call a limit kept from running as not run", async ({ page }) => {
   await expect(step).toBeVisible();
   await step.getByText("Not run").click();
   await expect(
-    step.getByText(/A limit kept it from running: A reply makes at most 8/),
+    step.getByText(
+      "One reply runs at most 8 tool calls, and this was past them.",
+    ),
   ).toBeVisible();
 });

@@ -57,6 +57,7 @@ import { ActionCard } from "./cards";
 import {
   EMPTY_STREAM,
   MAX_MESSAGE,
+  NOT_RUN_TEXT,
   STOP_TEXT,
   TOOL_LABELS,
   agentRefusal,
@@ -518,10 +519,7 @@ function Block({
                 <p className="ag-card-error">{sentence(s.result.error)}</p>
               )}
               {s.result?.kind === "not_run" && (
-                <p className="ag-note">
-                  A limit kept it from running
-                  {s.result.reason ? `: ${sentence(s.result.reason)}` : "."}
-                </p>
+                <p className="ag-note">{NOT_RUN_TEXT[s.result.reason]}</p>
               )}
               {s.result?.kind === "returned" && (
                 <>

@@ -115,7 +115,26 @@ export function ActionCard({
           {view.facts.map((f) => (
             <Fragment key={f.label}>
               <dt>{f.label}</dt>
-              <dd>{f.value}</dd>
+              <dd>
+                {"value" in f
+                  ? f.value
+                  : f.entities.map((e, i) => (
+                      <Fragment key={i}>
+                        {i > 0 && ", "}
+                        {e.to ? (
+                          <Link
+                            className="ag-link"
+                            to={e.to}
+                            onClick={onNavigate}
+                          >
+                            {e.text}
+                          </Link>
+                        ) : (
+                          e.text
+                        )}
+                      </Fragment>
+                    ))}
+              </dd>
             </Fragment>
           ))}
         </dl>

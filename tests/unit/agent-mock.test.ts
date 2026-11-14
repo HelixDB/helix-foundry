@@ -851,7 +851,15 @@ describe("operations", () => {
       load: { id: first, version: { number: 3 }, status: "ready" },
       current: { version: { number: 3 } },
     });
-    const ran = await runCard(c.action);
+    // Refreshed after another load became current, it names that one.
+    const third = await loaded("three");
+    const refreshed = await call(
+      "POST",
+      `${A}/actions/${c.action.id}:refresh`,
+      {},
+    );
+    expect(display(refreshed.body.action).current.id).toBe(third);
+    const ran = await runCard(refreshed.body.action);
     expect(ran.ran.status).toBe("succeeded");
     expect(ran.said).toContain(`/ontology/ont_acme_contracts/loads/${first}`);
   });
@@ -900,6 +908,25 @@ describe("operations", () => {
         (s: { name: string }) => s.name === "Acme Corp sample",
       ),
     ).toBe(true);
+    // Its made-up data is read only when named: a draft of every
+    // connection names the others, and one naming it says so.
+    const draft = await card("Generate a draft of Sales graph");
+    const drafted = display(draft.action);
+    expect(drafted.connectors_read).toBe("chosen");
+    expect(drafted.connectors.length).toBeGreaterThan(0);
+    expect(
+      drafted.connectors.filter(
+        (c: { name: string; sample?: true }) =>
+          c.sample || c.name === "Acme Corp",
+      ),
+    ).toEqual([]);
+    expect(JSON.parse(draft.action.payloadJson).connector_ids).toEqual(
+      drafted.connectors.map((c: { id: string }) => c.id),
+    );
+    const named = await card("Generate a draft of Sales graph from Acme Corp");
+    expect(display(named.action).connectors).toEqual([
+      expect.objectContaining({ name: "Acme Corp", sample: true }),
+    ]);
   });
 
   it("creates, renames and describes a set, and moves a document into it", async () => {
@@ -958,6 +985,10 @@ describe("operations", () => {
       document: { name: "variant.md" },
       decision: { kind: "link", entity_key: "cus_GLOBEX01", candidate: true },
     });
+    // It names the entities the review concerns, as ListFoundryReviews does.
+    expect(c.display.review.entities).toContainEqual(
+      expect.objectContaining({ type: "Customer", entity_key: "cus_GLOBEX01" }),
+    );
     expect(c.said).toMatch(/“globexx corporation”/);
     const ran = await runCard(c.action);
     expect(ran.result).toMatchObject({
@@ -1075,7 +1106,7 @@ describe("operations", () => {
       c.events.find(
         (e) => e.type === "tool_result" && e.tool_use_id === "tu_cut",
       ),
-    ).toMatchObject({ is_error: true, not_run: true });
+    ).toMatchObject({ is_error: true, not_run: "calls" });
     expect(c.events.at(-1)).toMatchObject({
       type: "finished",
       reason: "answered",

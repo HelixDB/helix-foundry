@@ -6,8 +6,10 @@ import {
   type HttpMethod,
 } from "../../src/shared/route-template";
 import {
+  FOUNDRY_EDGES as E,
   FOUNDRY_LOAD,
   FOUNDRY_NODES as N,
+  isFoundryLabel,
 } from "../../src/shared/foundry-labels";
 import { isRecord } from "../../src/shared/json";
 import type {
@@ -20,8 +22,10 @@ import type {
   AgentOperation,
   AgentPageContext,
   AgentReview,
+  AgentReviewEntity,
   AgentThreadResponse,
   AgentTurnResponse,
+  Connector,
   ConnectorKind,
   FoundryAgentTurnStatus,
   FoundryAgentAction,
@@ -524,10 +528,30 @@ const HELD = ["low_confidence", "unverified", "conflict"],
 function reviewsOf(o: StoredOntology): AgentReview[] {
   const load = currentLoadId(o.id);
   if (!load) return [];
-  const text = (v: unknown) => (typeof v === "string" ? v : "");
-  return [...tenantGraph(o.tenantId).nodes.values()]
+  const text = (v: unknown) => (typeof v === "string" ? v : ""),
+    graph = tenantGraph(o.tenantId);
+  // The entities a review concerns, as ListFoundryReviews names them.
+  const concerned = (review: number): AgentReviewEntity[] =>
+    (graph.outgoing.get(review) || []).flatMap((e) => {
+      const edge = graph.edges.get(e),
+        n = edge?.label === E.CONCERNS ? graph.nodes.get(edge.to) : undefined;
+      if (!n || isFoundryLabel("node", n.label)) return [];
+      const key = text(n.props.entity_key),
+        norm = text(n.props.norm_name),
+        name = text(n.props.name);
+      if (!key === !norm) return [];
+      return [
+        {
+          type: n.label,
+          ...(key ? { entity_key: key } : { norm_name: norm }),
+          ...(name && { name }),
+        },
+      ];
+    });
+  return [...graph.nodes.values()]
     .filter((n) => n.label === N.Review && n.props[FOUNDRY_LOAD] === load)
-    .map(({ props: r }) => {
+    .map(({ id: node, props: r }) => {
+      const entities = concerned(node);
       const reason = text(r.reason),
         statement = text(r.statement),
         link = text(r.suggested_link);
@@ -578,6 +602,7 @@ function reviewsOf(o: StoredOntology): AgentReview[] {
             .digest("hex"),
         }),
         ...(typeof r.confidence === "number" && { confidence: r.confidence }),
+        ...(entities.length && { entities }),
       };
     });
 }
@@ -744,9 +769,7 @@ function ending(steps: Step[]): Step[] {
           tool_use_id: "tu_cut",
           name: LIST,
           is_error: true,
-          error:
-            "Not run: a reply makes at most 8 tool calls; ask for the rest in another step",
-          not_run: true,
+          not_run: "calls",
         }),
         ...steps.slice(3),
         answered,
@@ -1054,8 +1077,16 @@ function generatePlan(
     picked = sets(a.ws, a.userId).filter(
       (s) => !s.connector && says(a.text, s.name || ""),
     );
-  const read = none ? "none" : chosen.length ? "chosen" : "every";
+  // Every connector reads the sample's made-up data too, which the backend
+  // refuses (agent.Cards): the agent then names the others.
+  const own = connectors.filter((c) => !isSample(c));
+  const read = none
+    ? "none"
+    : chosen.length || own.length < connectors.length
+      ? "chosen"
+      : "every";
   const shown = read === "none" ? [] : read === "chosen" ? chosen : connectors;
+  if (read === "chosen" && !chosen.length) shown.push(...own);
   return onOntology(
     a.ws,
     o,
@@ -1063,7 +1094,7 @@ function generatePlan(
     "generate_ontology",
     {
       ...(goal && { goal }),
-      ...(read === "chosen" && { connector_ids: chosen.map((c) => c.id) }),
+      ...(read === "chosen" && { connector_ids: shown.map((c) => c.id) }),
       ...(picked.length && { document_set_ids: picked.map((s) => s.id) }),
       ...(none && { no_connectors: true }),
     },
@@ -1071,10 +1102,15 @@ function generatePlan(
       ontology: ref(o),
       ...(goal && { goal }),
       connectors_read: read,
-      connectors: shown.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
+      connectors: shown.map((c) => ({
+        id: c.id,
+        name: c.name,
+        kind: c.kind,
+        ...(isSample(c) && { sample: true as const }),
+      })),
       document_sets: picked.map((s) => ({ id: s.id, name: s.name })),
     },
-    `I've prepared a draft of ${o.name} from ${read === "none" ? "its documents alone" : read === "every" ? "every connection" : chosen.map((c) => c.name).join(" and ")}. Run it from the card, and I'll offer to make it current once it's done.`,
+    `I've prepared a draft of ${o.name} from ${read === "none" ? "its documents alone" : read === "every" ? "every connection" : shown.map((c) => c.name).join(" and ")}. Run it from the card, and I'll offer to make it current once it's done.`,
   );
 }
 
@@ -1791,6 +1827,16 @@ const firstMessage = (threadId: string) =>
     ?.text || "";
 
 /** The sample's database, as the sample's page connects it. */
+/** Whether a connector reads the sample's database, as SampleDatabase.Holds tells. */
+function isSample(c: Connector) {
+  const db = c.config && "postgres" in c.config ? c.config.postgres : undefined;
+  return (
+    db?.host === SAMPLE_HOST &&
+    db.database === "acme" &&
+    db.user === "acme_reader"
+  );
+}
+
 const SAMPLE_CONFIG = () => ({
   postgres: {
     host: SAMPLE_HOST,
@@ -2072,9 +2118,33 @@ function execute(req: MockRequest, userId: string) {
 function refreshRefusal(a: StoredAction, userId: string) {
   const m = membership(a.workspaceId, userId);
   if (isReply(m) || !manages(m)) return "permission denied";
-  if (a.ontologyId && !ontologyById(a.ontologyId)) return "ontology not found";
+  if (a.ontologyId && !ontologyById(a.ontologyId))
+    return `this workspace holds no ontology ${a.ontologyId}: read its ontologies again`;
   if (a.operation === "settle_review") return settleRefusal(a);
   return undefined;
+}
+
+/**
+ * The card drawn again, as the backend's Refresh draws it: its ontology as
+ * named now, a review as the current load holds it, and the load current
+ * now in place of the one current then.
+ */
+function redraw(a: StoredAction) {
+  const o = a.ontologyId ? ontologyById(a.ontologyId) : undefined;
+  if (!o) return;
+  if ("ontology" in a.display) a.display.ontology = ref(o);
+  if (a.operation === "settle_review") {
+    const r = reviewsOf(o).find(
+      (x) => x.review_key === a.display.review.review_key,
+    );
+    if (r) a.display.review = r;
+    a.display.load_id = currentLoadId(o.id) || a.display.load_id;
+  }
+  if (a.operation === "set_current_load") {
+    const current = currentLoadId(o.id);
+    if (current) a.display.current = lref(o.id, current);
+    else delete a.display.current;
+  }
 }
 
 export const agentRoutes: MockRoute[] = [
@@ -2349,6 +2419,7 @@ export const agentRoutes: MockRoute[] = [
           "FOUNDRY_AGENT_ACTION_NOT_PREPARED",
           `the action is ${status}`,
         );
+      redraw(a);
       Object.assign(a, {
         status: "prepared",
         decidedByUserId: "",

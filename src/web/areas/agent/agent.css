@@ -201,7 +201,9 @@
   color: var(--hf-accent-text);
 }
 .ag-card-title {
+  min-width: 0;
   margin-right: auto;
+  overflow-wrap: anywhere;
   font-size: var(--hf-text-base);
   font-weight: 600;
 }

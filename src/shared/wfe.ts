@@ -2631,8 +2631,11 @@ export type FoundryAgentAction = {
 
 /** One thing of the workspace: its id and its name. */
 export type AgentRef = { id: string; name?: string };
-/** A connector, with its kind (postgres, stripe, ...). */
-export type AgentConnectorRef = AgentRef & { kind?: string };
+/**
+ * A connector, with its kind (postgres, stripe, ...); `sample` when it reads
+ * the made-up sample company's database.
+ */
+export type AgentConnectorRef = AgentRef & { kind?: string; sample?: true };
 /** An ontology version by its number (v3). */
 export type AgentVersionRef = { id: string; number?: number };
 /** A load: the version it wrote, its status and when it started. */
@@ -2674,7 +2677,19 @@ export type AgentReview = {
   statement?: string;
   statement_hash?: string;
   confidence?: number;
+  // The entities it concerns as the load holds them: its candidates, its
+  // property's entity.
+  entities?: AgentReviewEntity[];
 };
+/**
+ * An entity a review concerns, by the stored identity its candidates and
+ * entity_key name it by (a type without a key's normalized name), with its
+ * stored name: untrusted.
+ */
+export type AgentReviewEntity = { type: string; name?: string } & (
+  | { entity_key: string }
+  | { norm_name: string }
+);
 /** A value settle_review sets: exactly one arm. */
 export type AgentDecisionValue =
   | { text: string }
@@ -2849,6 +2864,13 @@ export type AgentStopReason =
   | "failed";
 
 /**
+ * Why a call the model wrote never ran (agent.NotRunReason): a reply's
+ * calls past its first 8, a turn's asks past its 3, a call after the turn's
+ * time ran out, one the reply was writing at its length limit, or one whose
+ * input isn't JSON.
+ */
+export type AgentNotRunReason = "calls" | "asks" | "time" | "length" | "input";
+/**
  * A turn's events (FoundryAgentEvent.eventJson), each with its `type`: a
  * closed set the page parses without trust. Text is the model's, shown as
  * plain text; a tool's output is untrusted data, at most 16 KiB.
@@ -2871,9 +2893,8 @@ export type AgentEvent =
       error?: string;
       output?: unknown;
       truncated?: boolean;
-      // A limit kept the call from running (its reply's 8 calls, a turn's
-      // 3 asks, its time, its length): `error` says why, from "Not run".
-      not_run?: boolean;
+      // Why the call never ran, which the page words (no `error`).
+      not_run?: AgentNotRunReason;
     }
   | {
       type: "action_card";

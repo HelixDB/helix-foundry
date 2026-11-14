@@ -3,11 +3,13 @@ import type { FoundryAgentAction } from "@/shared/wfe";
 import { formatDate } from "@/web/kit/util";
 import {
   EMPTY_STREAM,
+  NOT_RUN_TEXT,
   cardView,
   connectLink,
   parseCard,
   reduceTurnEvents,
   resultLink,
+  reviewEntity,
   statementText,
   valueText,
   type AgentCard,
@@ -29,7 +31,12 @@ const REVIEW = {
   norm_name: "globexx",
   candidates: ["scus_1"],
   quote: "Globexx",
+  entities: [
+    { type: "Customer", entity_key: "scus_1", name: "Globex Corporation" },
+  ],
 };
+// Globex Corporation's entity page.
+const GLOBEX = "/explore/ont1/entities/Q3VzdG9tZXIAazpzY3VzXzE";
 
 /** One display per case, as the backend writes it. */
 const DISPLAYS: [string, string, unknown][] = [
@@ -76,8 +83,9 @@ const DISPLAYS: [string, string, unknown][] = [
       event_sources: [
         {
           connector: { id: "ev1", name: "Notes API", kind: "events" },
-          mode: "FOUNDRY_EVENT_SOURCE_MODE_EXTRACTION",
+          mode: "extraction",
         },
+        { connector: { id: "gone2" }, mode: "structured" },
       ],
     },
   ],
@@ -276,6 +284,13 @@ const DISPLAYS: [string, string, unknown][] = [
         entity_key: "scus_1",
         prop: "currency",
         values: [{ value: "GBP", doc_id: "doc1", quote: "billed in GBP" }],
+        entities: [
+          {
+            type: "Customer",
+            entity_key: "scus_1",
+            name: "Globex Corporation",
+          },
+        ],
       },
       decision: { kind: "set_value", value: { text: "GBP" } },
     },
@@ -537,6 +552,21 @@ describe("parseCard", () => {
         decision: { kind: "not_in_data" },
       },
     ],
+    ...[
+      { type: "Customer" },
+      { type: "Customer", entity_key: "k", norm_name: "n" },
+      { entity_key: "k" },
+      "scus_1",
+    ].map((entity): [string, string, unknown] => [
+      `a review entity ${JSON.stringify(entity)}`,
+      "settle_review",
+      {
+        ontology: ONT,
+        load_id: "l",
+        review: { ...REVIEW, entities: [entity] },
+        decision: { kind: "not_in_data" },
+      },
+    ]),
     [
       "a document that isn't one",
       "settle_review",
@@ -727,7 +757,7 @@ describe("cardView", () => {
         "Move",
         "doc1",
       ],
-      ["a link", "Link “globexx” to scus_1", "Link", "Sales graph"],
+      ["a link", "Link “globexx” to Globex Corporation", "Link", "Sales graph"],
       [
         "a link to another entity",
         "Link “globexx” to scus_9",
@@ -742,7 +772,7 @@ describe("cardView", () => {
       ],
       [
         "a value",
-        "Set Customer’s currency to “GBP”",
+        "Set Globex Corporation’s currency to “GBP”",
         "Set value",
         "Sales graph",
       ],
@@ -754,7 +784,12 @@ describe("cardView", () => {
 
   it("lists what it acts on", () => {
     const facts = (name: string) =>
-      Object.fromEntries(of(name).facts.map((f) => [f.label, f.value]));
+      Object.fromEntries(
+        of(name).facts.map((f) => [
+          f.label,
+          "value" in f ? f.value : f.entities.map((e) => e.text).join(", "),
+        ]),
+      );
     expect(facts("an ontology on a database")).toEqual({
       Name: "Renewals",
       Database: "sales",
@@ -772,7 +807,7 @@ describe("cardView", () => {
       Goal: "Track renewals",
       Connections: "Shop database, gone1",
       "Document sets": "General, Granola / Notes",
-      "API sources": "Notes API as documents",
+      "API sources": "Notes API as documents, gone2 as rows",
     });
     expect(facts("a generation of every connector")).toMatchObject({
       Goal: "None: the agent decides",
@@ -786,7 +821,7 @@ describe("cardView", () => {
         connectors: [],
         document_sets: [],
         event_sources: [{ connector: { id: "e" }, mode: "LATER" }],
-      }).facts.map((f) => f.value),
+      }).facts.map((f) => ("value" in f ? f.value : "")),
     ).toEqual([
       "Sales graph",
       "None: the agent decides",
@@ -822,11 +857,100 @@ describe("cardView", () => {
       Ontology: "Sales graph",
       Document: "contract.md",
       Review: "Names something that isn’t in your data",
-      Suggested: "scus_1",
+      "Links to": "Globex Corporation",
+      Suggested: "Globex Corporation",
     });
+    expect(facts("a link to another entity")).toMatchObject({
+      "Links to": "scus_9",
+      Suggested: "Globex Corporation",
+    });
+    expect(facts("a value").Entity).toBe("Globex Corporation");
     expect(facts("an approval")).toMatchObject({
       Statement: "Commitment “support” promised_to",
     });
+  });
+
+  it("names a review's entities, each opening its page", () => {
+    const facts = of("a link").facts;
+    const entities = (label: string) => {
+      const f = facts.find((x) => x.label === label);
+      return f && "entities" in f ? f.entities : undefined;
+    };
+    expect(entities("Links to")).toEqual([
+      { text: "Globex Corporation", to: GLOBEX },
+    ]);
+    expect(entities("Suggested")).toEqual([
+      { text: "Globex Corporation", to: GLOBEX },
+    ]);
+    // One the review doesn't name is its identity alone, with no page.
+    expect(reviewEntity("ont1", REVIEW as never, "scus_9")).toEqual({
+      text: "scus_9",
+    });
+    // A type without a key is named by its normalized name.
+    expect(
+      reviewEntity(
+        "ont1",
+        {
+          ...REVIEW,
+          settle: "resolve",
+          type: "Person",
+          entities: [{ type: "Person", norm_name: "ada" }],
+        },
+        "ada",
+      ),
+    ).toEqual({ text: "ada", to: "/explore/ont1/entities/UGVyc29uAG46YWRh" });
+    // Another type's entity of the same identity is not this one.
+    expect(
+      reviewEntity(
+        "ont1",
+        {
+          ...REVIEW,
+          settle: "resolve",
+          entities: [{ type: "Supplier", entity_key: "scus_1", name: "X" }],
+        },
+        "scus_1",
+      ),
+    ).toEqual({ text: "scus_1" });
+  });
+
+  it("warns when a draft would read the sample's made-up data", () => {
+    const sample = {
+      id: "c9",
+      name: "Acme Corp",
+      kind: "postgres",
+      sample: true,
+    };
+    expect(
+      view("generate_ontology", {
+        ontology: ONT,
+        connectors_read: "chosen",
+        connectors: [{ id: "c1", name: "Shop database" }, sample],
+        document_sets: [],
+      }).caution,
+    ).toBe(
+      "Acme Corp is the made-up sample company’s data: this draft would hold its records beside yours.",
+    );
+    expect(
+      view("generate_ontology", {
+        ontology: ONT,
+        connectors_read: "chosen",
+        connectors: [sample],
+        document_sets: [{ id: "s9", name: "Acme Corp sample" }],
+        sample: "acme",
+      }).caution,
+    ).toBeUndefined();
+    expect(of("a generation of chosen sources").caution).toBeUndefined();
+    expect(
+      parseCard(
+        "generate_ontology",
+        JSON.stringify({
+          ontology: ONT,
+          connectors_read: "chosen",
+          connectors: [{ ...sample, sample: "yes" }],
+          document_sets: [],
+        }),
+      )?.display,
+    ).toMatchObject({ connectors: [{ id: "c9", name: "Acme Corp" }] });
   });
 
   it("says what running it costs, and what to check", () => {
@@ -1063,20 +1187,27 @@ describe("calls a limit kept from running", () => {
           tool_use_id: "t9",
           name: "helix_foundry_ask",
           is_error: true,
-          error: "Not run: a turn asks at most 3 questions",
-          not_run: true,
+          not_run: "asks",
         }),
         e(3, {
           type: "tool_result",
           tool_use_id: "t10",
           name: "helix_foundry_ask",
           is_error: true,
-          error: "Not run",
-          not_run: true,
+          not_run: "input",
+        }),
+        // A reason this page doesn't know is no reason: the call failed.
+        e(4, {
+          type: "tool_result",
+          tool_use_id: "t11",
+          name: "helix_foundry_ask",
+          is_error: true,
+          error: "it stopped",
+          not_run: "later",
         }),
       ],
       status: "running",
-      lastSeq: 3,
+      lastSeq: 4,
     });
     expect(s.blocks).toEqual([
       {
@@ -1085,10 +1216,7 @@ describe("calls a limit kept from running", () => {
           id: "t9",
           name: "helix_foundry_ask",
           input: '{"ontology_id":"ont1","quest',
-          result: {
-            kind: "not_run",
-            reason: "a turn asks at most 3 questions",
-          },
+          result: { kind: "not_run", reason: "asks" },
         },
       },
       {
@@ -1097,9 +1225,29 @@ describe("calls a limit kept from running", () => {
           id: "t10",
           name: "helix_foundry_ask",
           input: null,
-          result: { kind: "not_run", reason: "" },
+          result: { kind: "not_run", reason: "input" },
+        },
+      },
+      {
+        kind: "step",
+        step: {
+          id: "t11",
+          name: "helix_foundry_ask",
+          input: null,
+          result: { kind: "failed", error: "it stopped" },
         },
       },
     ]);
+  });
+
+  it("words each reason for the person, never as the model was told", () => {
+    expect(Object.keys(NOT_RUN_TEXT).sort()).toEqual(
+      ["asks", "calls", "input", "length", "time"].sort(),
+    );
+    for (const text of Object.values(NOT_RUN_TEXT)) {
+      expect(text).toMatch(/\.$/);
+      expect(text).not.toMatch(/\b(you|Call it again|Tell the person)\b/);
+    }
+    expect(NOT_RUN_TEXT.input).not.toMatch(/limit/);
   });
 });
