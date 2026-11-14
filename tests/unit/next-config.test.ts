@@ -189,7 +189,19 @@ describe("next.config.ts", () => {
     );
     expect(sources.some((s) => s.endsWith("/a-4-a/c.js"))).toBe(on);
     const headers = (await built.headers?.()) ?? [];
-    expect(headers.length).toBe(on ? 2 : 1);
+    expect(headers.length).toBe(on ? 3 : 2);
+  });
+
+  it("sends no referrer from a published dashboard's page, and keeps it from search and caches", async () => {
+    const built = await config({ NEXT_PUBLIC_APP_ENV: "prod" });
+    const share = ((await built.headers?.()) ?? []).find(
+      (h) => h.source === "/share/:path*",
+    );
+    expect(share?.headers).toEqual([
+      { key: "Referrer-Policy", value: "no-referrer" },
+      { key: "X-Robots-Tag", value: "noindex, nofollow" },
+      { key: "Cache-Control", value: "no-store" },
+    ]);
   });
 
   it("names an origin the prompt can append a path to", async () => {
