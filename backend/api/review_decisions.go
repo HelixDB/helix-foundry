@@ -238,6 +238,15 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 		}
 		return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
 	}
+	// A name the load already links, by a rung a person can overturn, isn't
+	// settled in place: the engine says bound. Its decision is saved for the
+	// next load, which reads the document again with it.
+	if !foundryAsks(text("reason")) {
+		if err := s.deps.DB.SettleFoundryReviewDecision(ctx, o.WorkspaceID, d); err != nil {
+			return nil, settleFoundryReviewError(err)
+		}
+		return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
+	}
 	var asking []string
 	if d.EntityKey != nil {
 		if asking, err = s.documentsAsking(ctx, o, load.ID, d.Type, *d.NormName); err != nil {
@@ -248,6 +257,17 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 		return nil, settleFoundryReviewError(err)
 	}
 	return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
+}
+
+// foundryAsks is a review reason that asks about a name the load links to
+// nothing, or to nothing a person could stand by: one the engine settles in
+// place when the name's decision is sent with the document (contract 4.22.0).
+func foundryAsks(reason string) bool {
+	switch reason {
+	case "unresolved", "ambiguous", "collision", "identifier_conflict":
+		return true
+	}
+	return false
 }
 
 // foundryAskingDocumentsMax is the most documents a resolve that chose an
@@ -295,12 +315,13 @@ func (s *Service) documentsAsking(ctx context.Context, o *foundrymodel.FoundryOn
 	if err := json.Unmarshal(out, &response); err != nil {
 		return nil, status.Error(codes.Internal, "read review graph response")
 	}
+	if len(response.Items) >= 4*foundryAskingDocumentsMax {
+		log.From(ctx).Warn("settle: a name's reviews fill the read; documents past it wait for the next load", "ontology", o.ID)
+	}
 	var docs []string
 	for _, r := range response.Items {
 		linked := len(r.EntityKey) > 0 && string(r.EntityKey) != "null"
-		switch {
-		case linked, r.DocID == "", slices.Contains(docs, r.DocID):
-		case r.Reason == "unresolved", r.Reason == "ambiguous", r.Reason == "collision", r.Reason == "identifier_conflict":
+		if !linked && r.DocID != "" && foundryAsks(r.Reason) && !slices.Contains(docs, r.DocID) {
 			docs = append(docs, r.DocID)
 		}
 	}

@@ -395,6 +395,7 @@ onReset(() => {
   delete knobs.indexesPending;
   delete knobs.readsPaused;
   delete knobs.invoiceOnlyCustomers;
+  delete knobs.nameInPlace;
 });
 
 const live = (j: StoredJob) => j.status === "queued" || j.status === "running";
@@ -474,6 +475,24 @@ export function owePendingResolve(ontologyId: string, d: Resolve) {
     decisionId: d.id,
     due: Date.now() + (knobs.loadStepMs ?? STEP_MS),
   });
+}
+
+/**
+ * Drops a removed resolve's copy from the current load while it waits, as
+ * the backend does: it is never settled.
+ */
+export function forgetResolve(ontologyId: string, decisionId: string) {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  if (
+    !l ||
+    !l.decisions.some((x) => x.kind === "resolve" && x.id === decisionId) ||
+    state.applied.get(appliedKey(l.id, decisionId))?.status !== "pending"
+  )
+    return;
+  l.decisions = l.decisions.filter(
+    (x) => !(x.kind === "resolve" && x.id === decisionId),
+  );
+  state.applied.delete(appliedKey(l.id, decisionId));
 }
 
 /**

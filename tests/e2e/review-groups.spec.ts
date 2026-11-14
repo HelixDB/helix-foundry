@@ -273,7 +273,7 @@ test("leaves claims held for a name out of Approve all, on the page of their oth
     "“Globex Corporation” is linked only by part of a row’s name. Settle that name too, or this stays held.",
   );
   await expect(globex).toContainText(
-    "the first load after that name is settled writes it",
+    "until that name is settled, then writes it",
   );
   await expect(globex).not.toContainText("written to this load at once");
   await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(

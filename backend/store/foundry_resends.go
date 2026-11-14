@@ -735,10 +735,15 @@ WHERE load_id=? AND document_id=?`, n, n, loadID, docID)
 // recordFoundryNameOutcomes records what the engine said of the resolve
 // decisions of document docID that the load waits to settle in place
 // (SettleFoundryResolve): each on the load's copy, by its id, of that
-// document, while it waits (model.FoundryNameApplied). An alias's word on
-// another document is the document's (its row's names), not the decision's.
-// A copy the load was created with waits on nothing, and is left as it is.
-// The caller runs it in the transaction that records the document.
+// document, while it waits (model.FoundryNameApplied). Only a run that read
+// the document with its saved model work says it
+// (FoundryDocumentExtraction.SettlesNames); a failed event leaves the copy
+// to the end of the document's request. A changed choice is a new decision
+// under a new id, so the word on an earlier choice finds no copy. An alias's
+// word on another document is the document's (its row's names), not the
+// decision's. A copy the load was created with waits on nothing, and is
+// left as it is. The caller runs it in the transaction that records the
+// document.
 func (s *mysqlDB) recordFoundryNameOutcomes(ctx context.Context, loadID, docID string, names []model.FoundryDocumentName) error {
 	for _, n := range names {
 		if n.Decision != model.FoundryNameResolve || n.DecisionID == nil {
@@ -781,9 +786,6 @@ func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, worke
 			return err
 		}
 		if err := tx.mergeFoundryDocumentNames(ctx, loadID, docID, names); err != nil {
-			return err
-		}
-		if err := tx.recordFoundryNameOutcomes(ctx, loadID, docID, names); err != nil {
 			return err
 		}
 		return tx.recordFoundryReleaseOutcomes(ctx, loadID, docID, outcomes, true)

@@ -456,7 +456,7 @@ export function SettleReview({
             : isRelease
               ? applied?.status === "pending"
                 ? unsettled.length
-                  ? `Approved. This load keeps it held: the first load after ${unsettled.length > 1 ? "those names are" : "that name is"} settled writes it.`
+                  ? `Approved. This load keeps it held until ${unsettled.length > 1 ? "those names are" : "that name is"} settled, then writes it.`
                   : waitingText(ontology.activeJob?.kind)
                 : applied?.status === "written"
                   ? "Approved, and written to this load."
@@ -496,7 +496,7 @@ export function SettleReview({
             <p className="on-muted">
               On your word, from this sentence alone.{" "}
               {unsettled.length
-                ? `This load keeps it held: the first load after ${unsettled.length > 1 ? "those names are" : "that name is"} settled writes it.`
+                ? `This load keeps it held until ${unsettled.length > 1 ? "those names are" : "that name is"} settled, then writes it.`
                 : "It’s written to this load at once."}{" "}
               Later loads read the approval too, and each says what it made of
               it.
@@ -585,11 +585,15 @@ export function SettleReview({
                     ? "A chosen value replaces the table’s in this load and every later one, even after the table changes. "
                     : ""
                 }It’s sent to this load at once, and later loads read it too. A document dated after your decision still wins.`
-              : chosen
-                ? `Links this name to ${label(chosen)} here and in other documents where nothing else links that name: in this load at once, and in later loads.`
-                : choice === "none"
-                  ? "Not in data is for this document only: in this load at once, and in later loads."
-                  : "A record chosen links this name here and in other documents where nothing else links it; Not in data is for this document only. Either applies to this load at once, and to later loads."}
+              : isUndoableLink(review.reason)
+                ? // This load links the name already: the engine keeps that
+                  // link in place, and the next load reads the choice.
+                  "This load keeps its link; a choice here, or Undo link, applies from the next load. A record chosen links this name in other documents too, where nothing else links it."
+                : chosen
+                  ? `Links this name to ${label(chosen)} here and in other documents where nothing else links that name: in this load at once, and in later loads.`
+                  : choice === "none"
+                    ? "Not in data is for this document only: in this load at once, and in later loads."
+                    : "A record chosen links this name here and in other documents where nothing else links it; Not in data is for this document only. Either applies to this load at once, and to later loads."}
           </p>
           {(error || query.error) && (
             <p role="alert" className="hf-form-error">
@@ -663,7 +667,9 @@ const linkedLine = (
     case "pending":
       return `${line} · being linked in this load`;
     case "written":
-      return `${line} · linked in this load`;
+      return d.applied.reason === "not_asked"
+        ? `${line} · settled in this load already`
+        : `${line} · linked in this load`;
     case "refused":
       return d.applied.reason === "not_replayed"
         ? `${line} · not linked in this load, read before names could be applied at once`

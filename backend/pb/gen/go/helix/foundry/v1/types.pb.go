@@ -9214,13 +9214,18 @@ type FoundryDecisionApplied struct {
 	// document sends it again; with not_replayed its document's saved reading
 	// can't be reused, so no word can come while this load is current, and
 	// the next load won't write the approval.
-	// Of a resolve (contract 4.22.0), its word on its own document: pending,
-	// written (the load holds what the name held back, as a load read with the
-	// decision holds it), refused (nothing was written in place: reason says
-	// why, and the next load applies the choice), unconfirmed (job_failed:
-	// choosing again sends it again), or empty for a resolve the load read
-	// when it was created. What an alias of the name did in other documents is
-	// theirs (FoundryDocumentExtraction.names).
+	// Of a resolve of a name the load links to no one (contract 4.22.0), its
+	// word on its own document: pending, written (the load holds what the name
+	// held back, as a load read with the decision holds it; with reason
+	// not_asked, no review asks about the name now: settled already, by this
+	// choice in a run whose word was lost, or by another since), refused
+	// (nothing was written in place: reason says why, and the next load
+	// applies the choice), unconfirmed (job_failed: choosing again sends it
+	// again), or empty for a resolve the load read when it was created. A
+	// resolve of a name the load links already (adjudicated, legal_form,
+	// part_name, own_name) is unset: the next load applies it. What an alias
+	// of the name did in other documents is theirs
+	// (FoundryDocumentExtraction.names).
 	Status string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	// Why a refused claim stays held. The engine's reasons: unresolved (a name
 	// in it is matched to no one record: settle that name), legal_form (a name
@@ -9254,11 +9259,9 @@ type FoundryDecisionApplied struct {
 	// names could be settled in place, under an earlier prompt, so its saved
 	// model work can't settle it; bound, collides, differs, too_large,
 	// two_rows, role_term, shared, identifier, other_identity, absent),
-	// not_asked (the load's reviews of the document no longer ask about the
-	// name, as when it was linked already or chosen otherwise since), or
-	// not_named (the document names no entity so); and the backend's
-	// not_replayed (no word came: the document's saved work didn't replay),
-	// document_gone, document_unread, document_failed, too_large. The same
+	// or not_named (the document names no entity so); and the backend's
+	// no_word (the job ended with no event of the document), document_gone,
+	// document_unread, document_failed, too_large. The same
 	// word means different things of different kinds: read it by the
 	// decision's kind. A reader shows a reason it doesn't know as it is.
 	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`

@@ -1149,9 +1149,7 @@ test("links an adjudicated mention to its review and undoes the link on reload",
   await expect(reviews(page)).toContainText("Matched by the model");
   await page.getByRole("button", { name: "Undo link", exact: true }).click();
   await expect(
-    page.getByText(
-      "This load was built before names could be applied at once; the next load applies it.",
-    ),
+    page.getByText("Decision saved. The next load applies it."),
   ).toBeVisible();
   await loadVersion3(page);
   await page.goto(`${doc}?tab=entities`);
@@ -1182,9 +1180,7 @@ test("links a mention by legal form to its review and undoes the link on reload"
   await expect(reviews(page)).not.toContainText("couldn’t confirm");
   await page.getByRole("button", { name: "Undo link", exact: true }).click();
   await expect(
-    page.getByText(
-      "This load was built before names could be applied at once; the next load applies it.",
-    ),
+    page.getByText("Decision saved. The next load applies it."),
   ).toBeVisible();
   await loadVersion3(page);
   await page.goto(`${doc}?tab=entities`);
@@ -1227,9 +1223,7 @@ for (const [linked, by, title] of [
     await expect(reviews(page)).not.toContainText("% confident");
     await page.getByRole("button", { name: "Undo link", exact: true }).click();
     await expect(
-      page.getByText(
-        "This load was built before names could be applied at once; the next load applies it.",
-      ),
+      page.getByText("Decision saved. The next load applies it."),
     ).toBeVisible();
     await loadVersion3(page);
     await page.goto(`${doc}?tab=entities`);
@@ -1251,9 +1245,7 @@ test("keeps a link by part of a name, and the next load holds it as a person's",
   await choose(page.getByLabel("Link this name to"), "Globex Corporation");
   await page.getByRole("button", { name: "Settle review" }).click();
   await expect(
-    page.getByText(
-      "This load was built before names could be applied at once; the next load applies it.",
-    ),
+    page.getByText("Decision saved. The next load applies it."),
   ).toBeVisible();
   await expect(
     page.getByRole("list", { name: "Saved decisions" }),
@@ -1298,7 +1290,7 @@ for (const [linked, how, title] of [
     );
     // No approval writes it to this load, and the card promises none.
     await expect(held).toContainText(
-      "This load keeps it held: the first load after that name is settled writes it.",
+      "This load keeps it held until that name is settled, then writes it.",
     );
     await expect(held).not.toContainText("written to this load at once");
     await approve(held);
@@ -1328,7 +1320,7 @@ for (const [linked, how, title] of [
     await choose(name.getByLabel("Link this name to"), "Globex Corporation");
     await name.getByRole("button", { name: "Settle review" }).click();
     await expect(name).toContainText(
-      "This load was built before names could be applied at once; the next load applies it.",
+      "Decision saved. The next load applies it.",
     );
   });
 
@@ -1364,7 +1356,7 @@ test("promises no write in this load, and offers no approval it would refuse, fo
   // Its job yet to run: the card doesn't say it is being written.
   await reads({ status: "pending" });
   await expect(held.getByRole("status")).toContainText(
-    "Approved. This load keeps it held: the first load after that name is settled writes it.",
+    "Approved. This load keeps it held until that name is settled, then writes it.",
   );
   await expect(held.getByRole("status")).not.toContainText(
     "Writing it to this load",
@@ -1519,9 +1511,7 @@ test("says a decision this load read left the review open, without asking to rel
     "This load read the saved decision, and the review is still open",
   );
   await expect(
-    page.getByText(
-      "This load was built before names could be applied at once; the next load applies it.",
-    ),
+    page.getByText("Decision saved. The next load applies it."),
   ).toHaveCount(0);
   await expect(page.getByLabel("Link this name to")).toBeEnabled();
 });

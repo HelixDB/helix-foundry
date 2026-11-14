@@ -1164,8 +1164,13 @@ describe("why a load kept an approved claim held", () => {
     ).toBe(
       "This load was built before names could be applied at once; the next load applies it.",
     );
+    // No review asks about it now: settled in this load, by this choice in
+    // a run whose word was lost, or by another since.
+    expect(
+      model.resolvedText({ status: "written", reason: "not_asked" }),
+    ).toContain("already settled this name");
     for (const reason of [
-      "not_asked",
+      "no_word",
       "not_named",
       "bound",
       "collides",

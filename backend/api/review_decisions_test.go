@@ -74,6 +74,17 @@ func (s *decisionStore) GetOntologyVersion(_ context.Context, o, id string) (*fo
 	}
 	return s.version, nil
 }
+func (s *decisionStore) SettleFoundryReviewDecision(_ context.Context, ws string, d *foundrymodel.FoundryReviewDecision) error {
+	if ws != s.ontology.WorkspaceID {
+		return foundrystore.ErrNotFound
+	}
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	d.DecidedAt = time.Now()
+	s.saved = append(s.saved, d)
+	return nil
+}
 func (s *decisionStore) SettleFoundryResolve(_ context.Context, ws, load string, d *foundrymodel.FoundryReviewDecision, docs []string,
 	resend *foundrymodel.FoundryGraphJob) (bool, error) {
 	if ws != s.ontology.WorkspaceID {
@@ -284,11 +295,17 @@ func TestSettleFoundryReview(t *testing.T) {
 						t.Fatalf("unscoped read %s", q)
 					}
 				}
-				// A name applies at once (contract 4.22.0): to the load its review
-				// was read from, by a resend job the person asked for.
-				if db.releasedTo != "load-1" || len(db.resends) != 1 || db.resends[0].RequestedByUserID == nil ||
-					out.Decision.GetApplied().GetStatus() != "pending" {
+				// A name the load links to no one applies at once (contract
+				// 4.22.0): to the load its review was read from, by a resend job
+				// the person asked for. One it links already is the next load's:
+				// the engine would say bound.
+				asks := reason == "unresolved" || reason == "ambiguous" || reason == "collision" || reason == "identifier_conflict"
+				if asks && (db.releasedTo != "load-1" || len(db.resends) != 1 || db.resends[0].RequestedByUserID == nil ||
+					out.Decision.GetApplied().GetStatus() != "pending") {
 					t.Fatalf("applied to %q by %+v: %+v", db.releasedTo, db.resends, out.Decision.GetApplied())
+				}
+				if !asks && (len(db.resends) != 0 || out.Decision.Applied != nil) {
+					t.Fatalf("%s applied at once: %+v %+v", reason, db.resends, out.Decision.GetApplied())
 				}
 			})
 		}

@@ -761,7 +761,7 @@ function ClaimItem({
       ) : (
         <p className="rq-writes">
           {nested
-            ? "Approve it once the name is settled: the first load after that writes it."
+            ? "Approve it once the name is settled: the load that settles it writes it."
             : "Writes one fact once approved."}
         </p>
       )}

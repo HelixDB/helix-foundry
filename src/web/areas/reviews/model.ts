@@ -1282,15 +1282,17 @@ export function resolvedText(
     case "pending":
       return waitingText(live, "resolve");
     case "written":
-      return "Linked in this load. Later loads read the choice too.";
+      return applied.reason === "not_asked"
+        ? "This load already settled this name in this document. Later loads read your choice; the next load applies it if it differs."
+        : "Linked in this load. Later loads read the choice too.";
     case "unconfirmed":
       return "Decision saved, but the job that links it failed before it said whether it did. Choose it again to finish.";
     case "refused":
       switch (applied.reason) {
         case "not_replayed":
           return "This load was built before names could be applied at once; the next load applies it.";
-        case "not_asked":
-          return `Nothing to link in this load: it no longer asks about this name in this document. ${next}`;
+        case "no_word":
+          return `The job that links it ended without saying what became of it. ${next}`;
         case "not_named":
           return `This load doesn’t name anyone so in this document, so nothing was linked. ${next}`;
         case "bound":

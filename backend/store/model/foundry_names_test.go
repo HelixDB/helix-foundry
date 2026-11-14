@@ -89,6 +89,6 @@ func ExampleFoundryNameApplied() {
 	// Output:
 	// written ""
 	// refused "not_replayed"
-	// refused "not_asked"
+	// written "not_asked"
 	// refused "not_named"
 }

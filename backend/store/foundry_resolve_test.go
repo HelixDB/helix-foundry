@@ -68,36 +68,60 @@ func TestSettleFoundryResolveAppliesAtOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, list, 1, "the document's Extract sends it")
 
-	// Chosen again before the job: one copy, the new entity, waiting.
+	// The same choice again keeps its decision.
+	same := f.resolveOf("1b", f.a, "acme corp", &acme)
+	require.False(t, f.settleName(t, "1b", same), "it joins the queued job")
+	assert.Equal(t, d.ID, same.ID, "the same choice is the same decision")
+	// Changed before the job: a new decision, the only copy, waiting; a word
+	// on the earlier choice finds nothing to land on.
 	again := f.resolveOf("2", f.a, "acme corp", &globex)
 	require.False(t, f.settleName(t, "2", again), "it joins the queued job")
-	assert.Equal(t, d.ID, again.ID, "one decision a name of a document")
-	var entity string
+	assert.NotEqual(t, d.ID, again.ID, "a changed choice is a new decision")
+	var entity, copyID string
 	var copies int
-	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*), MAX(entity_key) FROM foundry_load_decisions WHERE load_id=? AND kind='resolve' AND doc_id=?`,
-		f.load, f.a).Scan(&copies, &entity))
+	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*), MAX(entity_key), MAX(id) FROM foundry_load_decisions WHERE load_id=? AND kind='resolve' AND doc_id=?`,
+		f.load, f.a).Scan(&copies, &entity, &copyID))
 	assert.Equal(t, 1, copies)
 	assert.Equal(t, "globex", entity)
-	assert.Equal(t, map[string]int{f.a + "/name": 2, f.b + "/name": 1}, f.owedFor(t))
+	assert.Equal(t, again.ID, copyID)
+	var saved int
+	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_review_decisions WHERE ontology_id=? AND kind='resolve' AND doc_id=?`,
+		f.ontology.ID, f.a).Scan(&saved))
+	assert.Equal(t, 1, saved, "one decision a name of a document")
+	assert.Equal(t, map[string]int{f.a + "/name": 3, f.b + "/name": 1}, f.owedFor(t))
 
 	claimed := f.claim(t)
 	require.Equal(t, job.ID, claimed.ID)
-	id := d.ID
+	old := d.ID
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, claimed.ID, f.worker, &model.FoundryDocumentExtraction{
+		DocumentID: f.a, Status: model.FoundryExtractionExtracted, SettlesNames: true,
+		Names: []model.FoundryDocumentName{{Decision: model.FoundryNameResolve, Type: "Customer", NormName: "acme corp", DecisionID: &old, Outcome: model.FoundryNameWritten}},
+	}, true))
+	assert.Equal(t, map[string]string{again.ID: "pending"}, f.applied(t, again), "the earlier choice's word lands nowhere")
+	// A send that didn't read the document's saved work says nothing of it.
+	id := again.ID
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, claimed.ID, f.worker, &model.FoundryDocumentExtraction{
+		DocumentID: f.a, Status: model.FoundryExtractionExtracted,
+		Names: []model.FoundryDocumentName{{Decision: model.FoundryNameResolve, Type: "Customer", NormName: "acme corp", DecisionID: &id,
+			Outcome: model.FoundryNameRefused, Reason: model.FoundryNameNotReplayed}},
+	}, true))
+	assert.Equal(t, map[string]string{again.ID: "pending"}, f.applied(t, again))
+	d = again
 	// The decision's own document: written. The other: what an alias did
 	// there is the document's, and the copy is left as it is.
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, claimed.ID, f.worker, &model.FoundryDocumentExtraction{
-		DocumentID: f.b, Status: model.FoundryExtractionExtracted,
+		DocumentID: f.b, Status: model.FoundryExtractionExtracted, SettlesNames: true,
 		Names: []model.FoundryDocumentName{{Decision: model.FoundryNameAlias, Type: "Customer", NormName: "acme corp", DecisionID: &id, Outcome: model.FoundryNameWritten}},
 	}, true))
 	assert.Equal(t, map[string]string{d.ID: "pending"}, f.applied(t, d))
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, claimed.ID, f.worker, &model.FoundryDocumentExtraction{
-		DocumentID: f.a, Status: model.FoundryExtractionExtracted,
+		DocumentID: f.a, Status: model.FoundryExtractionExtracted, SettlesNames: true,
 		Names: []model.FoundryDocumentName{{Decision: model.FoundryNameResolve, Type: "Customer", NormName: "acme corp", DecisionID: &id, Outcome: model.FoundryNameWritten}},
 	}, true))
 	assert.Equal(t, map[string]string{d.ID: "written"}, f.applied(t, d))
 	for _, doc := range []string{f.a, f.b} {
 		require.NoError(t, f.db.EndFoundryLoadResend(ctx, claimed.ID, f.worker, model.FoundryResendEnd{
-			DocumentID: doc, Reason: model.FoundryResendName, Requests: map[string]int{f.a: 2, f.b: 1}[doc]}))
+			DocumentID: doc, Reason: model.FoundryResendName, Requests: map[string]int{f.a: 3, f.b: 1}[doc]}))
 	}
 	assert.Empty(t, f.owedFor(t))
 	// A later word on it, as a resend's not_replayed, changes nothing.
@@ -128,7 +152,7 @@ func TestFoundryResolveOutcomes(t *testing.T) {
 	}{
 		{"not replayed", model.FoundryDocumentName{Outcome: model.FoundryNameRefused, Reason: model.FoundryNameNotReplayed}, "refused/not_replayed"},
 		{"two rows", model.FoundryDocumentName{Outcome: model.FoundryNameRefused, Reason: model.FoundryNameTwoRows}, "refused/two_rows"},
-		{"not asked", model.FoundryDocumentName{Outcome: model.FoundryNameNotAsked}, "refused/not_asked"},
+		{"not asked", model.FoundryDocumentName{Outcome: model.FoundryNameNotAsked}, "written/not_asked"},
 		{"not named", model.FoundryDocumentName{Outcome: model.FoundryNameNotNamed}, "refused/not_named"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -139,7 +163,7 @@ func TestFoundryResolveOutcomes(t *testing.T) {
 			said := c.said
 			said.Decision, said.Type, said.NormName, said.DecisionID = model.FoundryNameResolve, "Customer", "acme corp", &d.ID
 			require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, &model.FoundryDocumentExtraction{
-				DocumentID: f.a, Status: model.FoundryExtractionExtracted, Names: []model.FoundryDocumentName{said},
+				DocumentID: f.a, Status: model.FoundryExtractionExtracted, Names: []model.FoundryDocumentName{said}, SettlesNames: true,
 			}, true))
 			assert.Equal(t, map[string]string{d.ID: c.want}, f.applied(t, d))
 		})
@@ -153,8 +177,8 @@ func TestFoundryResolveOutcomes(t *testing.T) {
 		f.settleName(t, "1", d)
 		job := f.claim(t)
 		require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
-			DocumentID: f.a, Reason: model.FoundryResendName, Requests: 1, Refused: model.FoundryReleaseNotReplayed}))
-		assert.Equal(t, map[string]string{d.ID: "refused/not_replayed", approval.ID: "pending"}, f.applied(t, d, approval),
+			DocumentID: f.a, Reason: model.FoundryResendName, Requests: 1, Refused: model.FoundryNameNoWord}))
+		assert.Equal(t, map[string]string{d.ID: "refused/no_word", approval.ID: "pending"}, f.applied(t, d, approval),
 			"a name's request refuses its resolves alone")
 	})
 
@@ -182,13 +206,15 @@ func TestFoundryResolveRemovedAndListed(t *testing.T) {
 	waiting := f.resolveOf("1", f.a, "acme corp", &acme)
 	f.settleName(t, "1", waiting)
 	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, waiting.ID, &model.FoundryGraphJob{ID: id26("RD-1")}))
-	assert.Empty(t, f.applied(t, waiting), "not sent")
+	var left int
+	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_load_decisions WHERE load_id=? AND id=?`, f.load, waiting.ID).Scan(&left))
+	assert.Zero(t, left, "not sent")
 
 	done := f.resolveOf("2", f.b, "helio", &acme)
 	f.settleName(t, "2", done)
 	job := f.claim(t)
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, &model.FoundryDocumentExtraction{
-		DocumentID: f.b, Status: model.FoundryExtractionExtracted,
+		DocumentID: f.b, Status: model.FoundryExtractionExtracted, SettlesNames: true,
 		Names: []model.FoundryDocumentName{{Decision: model.FoundryNameResolve, Type: "Customer", NormName: "helio", DecisionID: &done.ID, Outcome: model.FoundryNameWritten}},
 	}, true))
 	require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, done.ID, &model.FoundryGraphJob{ID: id26("RD-2")}))

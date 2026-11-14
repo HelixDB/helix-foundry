@@ -64,7 +64,9 @@ func (s *mysqlDB) SettleFoundryReviewDecision(ctx context.Context, workspaceID s
 // load's own list as pending in place of any copy the list holds of its
 // identity (its type, document and name: the engine refuses an Extract that
 // decides a name of a document twice), with its name key, and the load owes
-// the engine a resend of documents (model.FoundryResendName): the decision's
+// the engine a resend of documents (model.FoundryResendName): a changed
+// choice is a new decision under d's id, and the same choice again keeps
+// its decision; the decision's
 // own, and those the caller found whose reviews ask about the name, as an
 // alias reaches them. Then resend is queued as SettleFoundryReleases queues
 // one (queueFoundryResendBehind). The engine settles the name in place by
@@ -98,6 +100,13 @@ func (s *mysqlDB) SettleFoundryResolve(ctx context.Context, workspaceID, loadID 
 		// takes them.
 		live, err := tx.liveFoundryGraphJob(ctx, d.OntologyID)
 		if err != nil {
+			return err
+		}
+		// A changed choice is a new decision, under d's id: the engine's word
+		// on the earlier one, from a job already sent, then finds no copy to
+		// land on. The same choice again keeps its decision, sent again.
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_review_decisions WHERE ontology_id=? AND kind='resolve' AND type=? AND doc_id=?
+  AND norm_name=? AND NOT (entity_key <=> ?)`, d.OntologyID, d.Type, *d.DocID, *d.NormName, d.EntityKey); err != nil {
 			return err
 		}
 		if err := tx.saveFoundryReviewDecision(ctx, d, false); err != nil {
@@ -835,13 +844,14 @@ func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, workspaceID, 
 		}
 		switch model.FoundryReviewDecisionKind(kind) {
 		case model.FoundryReviewResolve:
-			// A copy the current load waits to settle is not sent; one the
-			// engine has its word on stays, as what it wrote stays.
+			// A copy the current load waits to settle, or one it refused, has
+			// written nothing, and is not sent again; one it wrote stays, as
+			// what it wrote stays, and so does one the load was created with.
 			if o.CurrentLoadID == nil {
 				return nil
 			}
 			_, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions WHERE load_id=? AND id=? AND kind='resolve'
-  AND applied_status IN ('pending', 'carried')`, *o.CurrentLoadID, id)
+  AND applied_status IN ('pending', 'carried', 'refused')`, *o.CurrentLoadID, id)
 			return err
 		case model.FoundryReviewRelease:
 			if o.CurrentLoadID == nil {

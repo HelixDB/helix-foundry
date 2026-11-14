@@ -390,8 +390,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, e.DocumentID, e.Releases, keepExisting); err != nil {
 			return err
 		}
-		if err := tx.recordFoundryNameOutcomes(ctx, loadID, e.DocumentID, e.Names); err != nil {
-			return err
+		if e.SettlesNames {
+			if err := tx.recordFoundryNameOutcomes(ctx, loadID, e.DocumentID, e.Names); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_jobs
 SET usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+? WHERE id=?`,

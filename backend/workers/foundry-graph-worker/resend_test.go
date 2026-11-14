@@ -1040,6 +1040,11 @@ func TestResendSettlesNames(t *testing.T) {
 		if !reflect.DeepEqual(h.store.ended, want) {
 			t.Fatalf("ended %+v", h.store.ended)
 		}
+		// Only the document read with its saved work says what became of
+		// its resolves.
+		if !h.store.extractions["doc-a"].SettlesNames || h.store.extractions["doc-b"].SettlesNames {
+			t.Fatalf("settles names: doc-a %v, doc-b %v", h.store.extractions["doc-a"].SettlesNames, h.store.extractions["doc-b"].SettlesNames)
+		}
 	})
 	t.Run("no event", func(t *testing.T) {
 		h := setup(t)
@@ -1051,7 +1056,7 @@ func TestResendSettlesNames(t *testing.T) {
 		}
 		want := []model.FoundryResendEnd{
 			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseNotReplayed, Unsaid: true},
-			{DocumentID: "doc-a", Reason: model.FoundryResendName, Requests: 1, Refused: model.FoundryReleaseNotReplayed},
+			{DocumentID: "doc-a", Reason: model.FoundryResendName, Requests: 1, Refused: model.FoundryNameNoWord},
 			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2, Refused: model.FoundryReleaseNotReplayed, Unsaid: true},
 		}
 		if !reflect.DeepEqual(h.store.ended, want) {
