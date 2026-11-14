@@ -117,7 +117,7 @@
           "$ref": "#/$defs/DocumentOutcome"
         },
         "releases": {
-          "description": "What the run did with each release decision of the request that names the document,\nby its `decision_id`: written, refused and why, `missed` (the run committed the\ndocument, and its commit held no review at that key and place) or `not_held` (the\nload held the document already, with no such review: one a release wrote before, or\na claim this load never held there). `counts` counts reviews, of which one decision\nmay name several.",
+          "description": "What the run did with each release decision of the request that names the document,\nby its `decision_id`: written, refused and why, `missed` (the run committed the\ndocument, and its commit held no review at that key and place) or `not_held` (the\nload held the document already, with no such review: one a release wrote before, or\na claim this load never held there). Each withdrawal comes first: `withdrawn`,\n`not_written` (the load holds nothing its approval wrote) or refused and why.\n`counts` counts reviews, of which one decision may name several, and no withdrawal.",
           "type": "array",
           "default": [],
           "items": {
@@ -630,7 +630,7 @@
           ]
         },
         {
-          "description": "Its reviews stay held.",
+          "description": "Its reviews stay held; of a withdrawal, what its approval wrote stays.",
           "type": "object",
           "properties": {
             "kind": {
@@ -672,6 +672,32 @@
           "required": [
             "kind"
           ]
+        },
+        {
+          "description": "Of a withdrawal: what the approval wrote no longer acts. Its claim is held again, with\nits review, or, where nothing holds it back any more (it was held for a conflict that is\ngone), stays written as its document's own statement, with no approval to rank it.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "withdrawn"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Of a withdrawal: the load holds nothing the approval wrote. It was never written, was\ntaken back already, as a withdrawal sent again finds, or another decision wrote the claim\nsince.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_written"
+            }
+          },
+          "required": [
+            "kind"
+          ]
         }
       ]
     },
@@ -679,7 +705,7 @@
       "description": "Why a release decision's reviews stay held.",
       "oneOf": [
         {
-          "description": "The document holds more reviews under the keys its decisions name than one read takes,\nor the write was past what the store takes in one.",
+          "description": "The document holds more reviews under the keys its decisions name than one read takes,\nor the write, a release's or a withdrawal's, was past what the store takes in one.",
           "type": "string",
           "const": "too_large"
         },
@@ -689,7 +715,7 @@
           "const": "no_statement"
         },
         {
-          "description": "Reviews at its place state different things, and no word of a person's says which.",
+          "description": "Reviews at its place state different things, and no word of a person's says which. Of a\nwithdrawal: quotes a release before 4.16.0 wrote at its place, of several claims of its\nlink, keep no decision to tell them apart.",
           "type": "string",
           "const": "differs"
         },

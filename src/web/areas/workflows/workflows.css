@@ -87,57 +87,30 @@
   font-size: var(--hf-text-sm);
 }
 
-/* Insights (insights.tsx): who ran them and the window, the metric cards,
-   the chosen metric's chart, where runs go, gaps and suggested changes. */
+/* Insights (insights.tsx). Layout rules both pages keep: boxes in a row
+   share one height (a row's grid stretches them, and what they hold is laid
+   out from the top with any foot pinned to the bottom), columns in a row share
+   the width, a list shows a set number before Show all, and the space between
+   sections is one token. */
 .wf-insights {
   display: grid;
   gap: var(--hf-space-2);
 }
-.wf-insights-bar {
+/* Who started the runs and the window: one row, its controls one height
+   (the kit's filter select and segmented control are both 34px). */
+.wf-toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: var(--hf-space-1);
   align-items: center;
-  justify-content: space-between;
 }
-.wf-insights-bar > .hf-segmented {
+.wf-toolbar > .hf-segmented {
   margin-left: auto;
-}
-.wf-agents {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--hf-space-1);
-}
-.wf-agent {
-  display: grid;
-  gap: 2px;
-  min-width: 140px;
-  padding: var(--hf-space-1) var(--hf-space-15);
-  border: 1px solid var(--hf-border);
-  background: transparent;
-  color: var(--hf-text);
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
-}
-.wf-agent:hover {
-  border-color: var(--hf-border-strong);
-}
-.wf-agent.is-active {
-  border-color: var(--hf-accent-border);
-  background: var(--hf-accent-soft);
-}
-.wf-agent-name {
-  font-weight: 500;
-}
-.wf-agent-meta {
-  color: var(--hf-muted);
-  font-size: var(--hf-text-sm);
-  font-variant-numeric: tabular-nums;
 }
 .wf-cards {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
   gap: var(--hf-space-15);
 }
 @media (max-width: 900px) {
@@ -145,54 +118,69 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+@media (max-width: 520px) {
+  .wf-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .wf-card {
-  display: grid;
-  gap: 2px;
-  padding: 0 0 var(--hf-space-15);
+  display: flex;
+  flex-direction: column;
+  gap: var(--hf-space-05);
+  min-height: 128px;
+  padding: var(--hf-space-15) var(--hf-space-2);
   border: 1px solid var(--hf-border);
-  background: transparent;
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
   color: var(--hf-text);
   text-align: left;
   font: inherit;
-  cursor: pointer;
-  overflow: hidden;
 }
-.wf-card:hover {
+button.wf-card {
+  cursor: pointer;
+}
+button.wf-card:hover {
   border-color: var(--hf-border-strong);
 }
 .wf-card.is-active {
   border-color: var(--hf-text-2);
 }
-.wf-card > :not(.wf-spark) {
-  padding: 0 var(--hf-space-15);
-}
-.wf-card .wf-spark {
-  height: 56px;
-  margin-bottom: var(--hf-space-1);
-  border-bottom: 1px solid var(--hf-border);
-}
-.wf-card-label {
+.wf-card-label,
+.wf-strip dt {
   color: var(--hf-muted);
   font-size: var(--hf-text-sm);
 }
 .wf-card-value {
-  font-size: var(--hf-text-2xl);
+  font-size: var(--hf-text-3xl);
   font-weight: 500;
   letter-spacing: -0.02em;
+  line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
-.wf-card-detail {
+.wf-card-detail,
+.wf-strip-detail {
+  margin-top: auto;
   color: var(--hf-text-2);
   font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+/* Something misled: the value in the danger color. */
+.wf-card.is-alert .wf-card-value,
+.wf-strip-cell.is-alert .wf-strip-value {
+  color: var(--hf-danger-text);
 }
 .wf-change {
   margin-right: var(--hf-space-1);
+  font-variant-numeric: tabular-nums;
 }
-.wf-change.is-up {
+.wf-change.is-good {
   color: var(--hf-success-text);
 }
-.wf-change.is-down {
+.wf-change.is-bad {
   color: var(--hf-danger-text);
+}
+.wf-change.is-flat {
+  color: var(--hf-muted);
 }
 .wf-spark {
   height: 28px;
@@ -235,76 +223,144 @@
   color: var(--hf-text-2);
   font-variant-numeric: tabular-nums;
 }
-.wf-grid3 {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--hf-space-15);
-  align-items: start;
+
+/* A workflow's numbers: equal cells in one box, where its runs went under
+   them. */
+.wf-strip {
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-1);
 }
-@media (max-width: 1100px) {
-  .wf-grid3 {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-.wf-funnel {
+.wf-strip dl {
   display: grid;
-  gap: var(--hf-space-1);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 0;
-  padding: 0;
-  list-style: none;
 }
-.wf-step {
+.wf-strip-cell {
   display: flex;
-  justify-content: space-between;
-  gap: var(--hf-space-1);
-  margin-bottom: var(--hf-space-05);
+  flex-direction: column;
+  gap: var(--hf-space-05);
+  min-width: 0;
+  padding: var(--hf-space-15) var(--hf-space-2);
 }
-.wf-step-n,
-.wf-kind-n {
-  color: var(--hf-text-2);
+.wf-strip-cell + .wf-strip-cell {
+  border-left: 1px solid var(--hf-border);
+}
+.wf-strip dd {
+  margin: 0;
+}
+.wf-strip-value {
+  font-size: var(--hf-text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
   font-variant-numeric: tabular-nums;
 }
-.wf-step-bar,
-.wf-kind-bar {
-  display: block;
-  height: 8px;
-  background: var(--hf-border);
+@media (max-width: 760px) {
+  .wf-strip dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .wf-strip-cell:nth-child(3) {
+    border-left: 0;
+  }
+  .wf-strip-cell:nth-child(n + 3) {
+    border-top: 1px solid var(--hf-border);
+  }
 }
-.wf-step-bar > span {
-  display: block;
-  height: 100%;
-  background: var(--hf-chart-1);
-}
-.wf-left {
-  margin: 0 0 var(--hf-space-05);
-  color: var(--hf-muted);
+.wf-flow-text {
+  margin: 0;
+  padding: var(--hf-space-15) var(--hf-space-2);
+  border-top: 1px solid var(--hf-border);
+  border-radius: 0 0 var(--hf-radius-lg) var(--hf-radius-lg);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
   font-size: var(--hf-text-sm);
 }
-.wf-kinds {
+/* Where runs went: five equal steps, each with what left before it, an
+   arrow between them and no dividers (they'd not line up with the cells'). */
+.wf-flow {
   display: grid;
-  gap: var(--hf-space-05);
-  margin: 0 0 var(--hf-space-15);
-  padding: 0;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--hf-space-2);
+  margin: 0;
+  padding: var(--hf-space-15) var(--hf-space-2);
+  border-top: 1px solid var(--hf-border);
+  background: var(--hf-sunken);
+  border-radius: 0 0 var(--hf-radius-lg) var(--hf-radius-lg);
   list-style: none;
   font-size: var(--hf-text-sm);
 }
-.wf-kinds > li {
+.wf-flow > li {
+  position: relative;
   display: grid;
-  grid-template-columns: 120px minmax(0, 1fr) 32px;
+  grid-template-rows: auto auto auto;
+  gap: 2px;
+  min-width: 0;
+}
+.wf-flow > li + li::before {
+  content: "→";
+  position: absolute;
+  left: calc(-1 * var(--hf-space-2) + 2px);
+  top: 1.35em;
+  color: var(--hf-faint);
+}
+.wf-flow-label {
+  color: var(--hf-muted);
+}
+.wf-flow-n {
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.wf-flow-left {
+  min-height: 1.4em;
+  color: var(--hf-warning-text);
+}
+@media (max-width: 760px) {
+  .wf-flow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .wf-flow > li + li::before {
+    content: none;
+  }
+}
+
+/* What to change: the gaps and the suggestions as two equal columns of one
+   panel, so they share its height; each issue a row of a fixed lead column
+   (its kind, or its checkbox) and its text, its numbers under the text. */
+.wf-changes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.wf-changes > section {
+  display: flex;
+  flex-direction: column;
   gap: var(--hf-space-1);
-  align-items: center;
-  color: var(--hf-text-2);
+  min-width: 0;
+  padding: var(--hf-space-2);
 }
-.wf-kind-bar {
-  background: transparent;
+.wf-changes > section + section {
+  border-left: 1px solid var(--hf-border);
 }
-.wf-kind-bar > span {
-  display: block;
-  height: 100%;
-  background: var(--hf-chart-2);
+@media (max-width: 900px) {
+  .wf-changes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .wf-changes > section + section {
+    border-left: 0;
+    border-top: 1px solid var(--hf-border);
+  }
 }
-.wf-kind-n {
-  text-align: right;
+.wf-changes h4 {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+}
+.wf-changes p {
+  margin: 0;
 }
 .wf-issues {
   display: grid;
@@ -312,27 +368,73 @@
   padding: 0;
   list-style: none;
 }
-.wf-issues > li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2px var(--hf-space-1);
-  align-items: center;
-  padding: var(--hf-space-1) 0;
+.wf-issues > li + li {
   border-top: 1px solid var(--hf-border);
 }
-.wf-issues > li:first-child {
-  border-top: 0;
-  padding-top: 0;
+.wf-issue {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 2px var(--hf-space-15);
+  align-items: start;
+  padding: var(--hf-space-1) 0;
+}
+.wf-changes > section:last-child .wf-issue {
+  grid-template-columns: 20px minmax(0, 1fr);
+}
+.wf-issue.is-active {
+  background: var(--hf-selected);
+  box-shadow:
+    -8px 0 0 var(--hf-selected),
+    8px 0 0 var(--hf-selected);
+}
+.wf-issue-kind {
+  display: flex;
+  min-height: 22px;
+  align-items: center;
+}
+.wf-issue-kind input {
+  margin: 0;
+}
+.wf-issue-text {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .wf-issue-meta {
-  grid-column: 1;
+  grid-column: 2;
   color: var(--hf-muted);
   font-size: var(--hf-text-sm);
 }
-.wf-issue-action {
-  grid-column: 2;
-  grid-row: 1 / span 2;
+.wf-issue-meta a {
+  color: inherit;
 }
+.wf-issue-runs,
+.wf-more-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--hf-accent-text);
+  font: inherit;
+  cursor: pointer;
+}
+.wf-issue-runs:hover,
+.wf-more-link:hover {
+  text-decoration: underline;
+}
+.wf-more-link {
+  align-self: flex-start;
+  font-size: var(--hf-text-sm);
+}
+.wf-changes-foot {
+  display: flex;
+  gap: var(--hf-space-1);
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: var(--hf-space-1);
+  border-top: 1px solid var(--hf-border);
+  font-size: var(--hf-text-sm);
+}
+
 /* A verdict mix: each verdict's share as a segment. */
 .wf-vbar {
   display: inline-flex;
@@ -344,7 +446,16 @@
 .wf-vbar.is-empty {
   background: var(--hf-border);
 }
-/* The ontology's workflows, a row each. */
+
+/* The ontology's workflows, a row each, inside their panel: the panel draws
+   the border, and headers are their names alone. */
+.wf-grid.hf-grid-wrap {
+  border: 0;
+  border-radius: 0 0 var(--hf-radius-lg) var(--hf-radius-lg);
+}
+.wf-grid .hf-grid-type {
+  display: none;
+}
 .wf-row-name {
   display: grid;
   width: 100%;
@@ -359,8 +470,162 @@
   font-variant-numeric: tabular-nums;
 }
 .wf-row-trend .wf-spark {
-  width: 110px;
+  width: 90px;
 }
 .wf-row-n {
   margin-left: auto;
+}
+.wf-alert-link {
+  color: var(--hf-danger-text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A workflow's runs: a row each on one grid of columns, the head's too. */
+.wf-runs-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hf-space-1);
+  align-items: center;
+  padding: var(--hf-space-15) var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-border);
+  scroll-margin-top: calc(var(--hf-shell-top) + var(--hf-space-2));
+}
+.wf-runs-issue {
+  display: inline-flex;
+  gap: var(--hf-space-05);
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  padding-left: var(--hf-space-1);
+  border-radius: var(--hf-radius);
+  background: var(--hf-selected);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.wf-runs-issue > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wf-runs {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wf-run {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 120px 100px 32px;
+  gap: 0 var(--hf-space-2);
+  align-items: start;
+  padding: var(--hf-space-15) var(--hf-space-2);
+}
+.wf-runs > .wf-run {
+  border-top: 1px solid var(--hf-border);
+}
+.wf-runs > .wf-run:first-child {
+  border-top: 0;
+}
+.wf-runs-head {
+  padding-block: var(--hf-space-1);
+  border-bottom: 1px solid var(--hf-border);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+}
+.wf-run .is-right,
+.wf-run-claims,
+.wf-run-at {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.wf-run-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.wf-run-request {
+  overflow: hidden;
+  color: var(--hf-text);
+  font-weight: 600;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wf-run-request:hover,
+.wf-run-request:focus-visible {
+  text-decoration: underline;
+}
+.wf-run-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--hf-text-2);
+  line-height: 1.5;
+}
+.wf-run-summary:empty {
+  display: none;
+}
+.wf-run-meta {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.wf-run-verdict,
+.wf-run-claims,
+.wf-run-at {
+  display: flex;
+  min-height: 22px;
+  align-items: center;
+}
+.wf-run-claims,
+.wf-run-at {
+  justify-content: flex-end;
+}
+.wf-run-at {
+  color: var(--hf-text-2);
+}
+.wf-run-toggle {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -4px;
+}
+.wf-run-detail {
+  grid-column: 1 / -1;
+  margin-top: var(--hf-space-15);
+  padding: var(--hf-space-15) var(--hf-space-2);
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+}
+.wf-runs-none {
+  margin: 0;
+  padding: var(--hf-space-3) var(--hf-space-2);
+  color: var(--hf-muted);
+  text-align: center;
+}
+.wf-runs-more {
+  display: flex;
+  gap: var(--hf-space-15);
+  align-items: center;
+  justify-content: center;
+  font-size: var(--hf-text-sm);
+  padding: var(--hf-space-15);
+  border-top: 1px solid var(--hf-border);
+}
+@media (max-width: 760px) {
+  .wf-runs-head {
+    display: none;
+  }
+  .wf-run {
+    grid-template-columns: auto minmax(0, 1fr) auto 32px;
+    gap: var(--hf-space-05) var(--hf-space-1);
+  }
+  .wf-run-main {
+    grid-column: 1 / -1;
+  }
+  .wf-run-claims {
+    justify-content: flex-start;
+  }
 }

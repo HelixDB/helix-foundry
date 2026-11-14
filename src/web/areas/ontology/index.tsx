@@ -40,6 +40,9 @@ const DocumentsPage = lazy(() =>
   SuggestionsPage = lazy(() =>
     import("../suggestions").then((m) => ({ default: m.SuggestionsPage })),
   ),
+  ReviewQueuePage = lazy(() =>
+    import("../reviews").then((m) => ({ default: m.ReviewQueuePage })),
+  ),
   WorkflowsPage = lazy(() =>
     import("../workflows").then((m) => ({ default: m.WorkflowsPage })),
   ),
@@ -100,6 +103,7 @@ export function OntologyRoutes() {
         <Route path="documents" element={<DocumentsPage />} />
         <Route path="documents/:documentId" element={<DocumentPage />} />
         <Route path="suggestions" element={<SuggestionsPage />} />
+        <Route path="review" element={<ReviewQueuePage />} />
         <Route path="workflows" element={<WorkflowsPage />} />
         <Route path="workflows/:workflowId" element={<WorkflowPage />} />
         <Route

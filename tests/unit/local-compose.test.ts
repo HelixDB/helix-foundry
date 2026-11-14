@@ -294,6 +294,26 @@ describe.skipIf(!compose)("local/compose.yaml's AI default", () => {
     ).toMatchObject({ ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" });
   });
 
+  // The star prompt's (src/server/github-star.ts), to the site alone.
+  it("passes the shell's GitHub token to the site, and no other service", () => {
+    const { services } = composed({}, undefined, {
+      GH_TOKEN: "gho_shell",
+      GITHUB_TOKEN: "ghp_shell",
+    });
+    expect(services.site.environment).toMatchObject({
+      GH_TOKEN: "gho_shell",
+      GITHUB_TOKEN: "ghp_shell",
+    });
+    for (const [name, service] of Object.entries(services))
+      if (name !== "site")
+        expect(
+          Object.keys(service.environment ?? {}).filter((k) =>
+            /^(GH|GITHUB)_TOKEN$/.test(k),
+          ),
+          name,
+        ).toEqual([]);
+  });
+
   // An .env written by hand from .env.example, as its comments say: no
   // task keeps another provider's model.
   it("runs every task on FOUNDRY_AI_MODEL in an .env filled in from .env.example", () => {
@@ -422,13 +442,16 @@ describe.skipIf(!compose)("local/compose.yaml's secrets", () => {
         name,
       ).toBe(false);
     // No secret from the .env: an old one's values reach the volume alone.
-    // The .env may turn usage analytics off (local/README.md).
+    // The .env may turn usage analytics off (local/README.md), and the
+    // shell's GitHub token stars the repository when asked.
     expect(services.site.environment).toEqual({
       HELIX_WFE_ORIGIN: "http://pod:8081",
       FOUNDRY_ORIGIN: "http://localhost:3000",
       FOUNDRY_LOCAL_TOKEN_FILE: "/secrets/site-token",
       FOUNDRY_TELEMETRY: "",
       DO_NOT_TRACK: "",
+      GH_TOKEN: "",
+      GITHUB_TOKEN: "",
     });
     expect(services.helix.environment).toEqual({
       HELIX_DATA_DIR: "/var/lib/helix",

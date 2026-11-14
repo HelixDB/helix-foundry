@@ -154,6 +154,13 @@ describe("what Approve all approves", () => {
       ),
     ).toEqual(["held-0", "held-20"]);
   });
+  it("leaves a claim whose approval a person took back to its card", () => {
+    const reviews = [settled(held(0)), settled(held(20))];
+    const takenBack = { ...approved(20), kind: "withdraw" as const };
+    expect(ids(model.approvable(reviews, [takenBack], many))).toEqual([
+      "held-0",
+    ]);
+  });
   it("leaves out a claim held as conflicting with what its link holds, which a many-valued link never writes", () => {
     const reviews = [settled(held(0)), settled(held(20, "Globex", "conflict"))];
     expect(ids(model.approvable(reviews, [], many))).toEqual(["held-0"]);

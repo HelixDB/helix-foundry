@@ -1,10 +1,15 @@
 package sample
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -100,4 +105,49 @@ func ExampleDraft() {
 	_ = json.Unmarshal(raw, &def)
 	fmt.Println(strings.Split(def.MappingsTOML, "\n")[4])
 	// Output: source = "src-accounts"
+}
+
+// The sample an agent builds through the MCP is the website's: the same documents and CA bundle
+// the site serves, and the names its sample tour gives what it makes.
+func TestSampleMatchesTheWebsite(t *testing.T) {
+	served, err := os.ReadDir("../../public/samples/acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	embedded, err := fs.ReadDir(Documents, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(embedded) != len(served) {
+		t.Fatalf("%d documents embedded, %d served", len(embedded), len(served))
+	}
+	tour, err := os.ReadFile("../../src/web/areas/ontology/sample.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range served {
+		want, err := os.ReadFile(filepath.Join("../../public/samples/acme", file.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := fs.ReadFile(Documents, "acme/"+file.Name())
+		if err != nil || !bytes.Equal(got, want) {
+			t.Errorf("%s differs from the one the website serves (%v)", file.Name(), err)
+		}
+		if !strings.Contains(string(tour), strconv.Quote(file.Name())) {
+			t.Errorf("the sample tour doesn't upload %s", file.Name())
+		}
+	}
+	ca, err := os.ReadFile("../../public/samples/rds-ca.pem")
+	if err != nil || string(ca) != RDSCA {
+		t.Errorf("RDSCA differs from the website's rds-ca.pem (%v)", err)
+	}
+	for _, s := range []string{OntologyName, ConnectorName, SetName, SetDescription, Goal, DatabaseName, DatabaseUser, DatabasePassword} {
+		if !strings.Contains(string(tour), strconv.Quote(s)) {
+			t.Errorf("the sample tour has no %q", s)
+		}
+	}
+	if !strings.Contains(string(tour), fmt.Sprintf("port: %d,", DatabasePort)) {
+		t.Errorf("the sample tour's port isn't %d", DatabasePort)
+	}
 }

@@ -31,6 +31,18 @@ const maxMCPRequestBytes = 8 << 20
 // the MCP is reached: moving the published port (FOUNDRY_MCP_PORT) doesn't change it.
 const mcpAudience = "http://localhost:8081/mcp"
 
+// onlyWorkspace is the install's one live workspace, which the owner may leave workspace_id empty
+// for; empty while it has none or several.
+func onlyWorkspace(dir *directory.Store) func(context.Context) string {
+	return func(ctx context.Context) string {
+		workspaces, err := dir.ListWorkspaces(ctx, "", 2)
+		if err != nil || len(workspaces) != 1 {
+			return ""
+		}
+		return workspaces[0].ID
+	}
+}
+
 // IntegrationHandler serves local MCP and HTTP Ask on the existing REST listener. siteOrigin is
 // where the browser reaches the Foundry site, which links into it start from.
 // Every call is authenticated as the owner before tools or ontology IDs are exposed.
@@ -43,6 +55,8 @@ func IntegrationHandler(auth *Authenticator, dir *directory.Store, conn *grpc.Cl
 		Workflows: client,
 		Directory: localIntegrationDirectory{dir, directoryClient}, Confirmations: directory.Confirmations{Store: dir},
 		Documents: documents, FoundryURL: strings.TrimRight(siteOrigin, "/"), ResourceURI: mcpAudience, Logger: logger,
+		// The sample company's tables, in the install's acme-db (local/compose.yaml), which serves no TLS.
+		SampleDatabase: &integration.SampleDatabase{Host: "acme-db", DisableTLS: true},
 	}
 	identity := &integration.Identity{
 		User:          true,
@@ -50,6 +64,7 @@ func IntegrationHandler(auth *Authenticator, dir *directory.Store, conn *grpc.Cl
 		Allows:        func(string, string, integration.Grant) bool { return true },
 		WithScope:     func(ctx context.Context, _ string, _ bool) context.Context { return ctx },
 		Authorize:     authorizeTool(auth),
+		OnlyWorkspace: onlyWorkspace(dir),
 	}
 	// One owner and one identity, so every call shares one server and its tools.
 	server := mcp.NewServer(&mcp.Implementation{Name: "helix-foundry", Version: "1.0.0"}, &mcp.ServerOptions{

@@ -170,10 +170,12 @@ type ExtractDecision struct {
 	DecidedAt     time.Time `json:"decided_at"`
 }
 
-// MarshalJSON writes a release without the fields it refuses: the engine reads
-// a decision strictly, and a resolve's entity_key is written even when null.
+// MarshalJSON writes a release, or a withdraw (contract 4.16.0: the release
+// as it was sent, with kind withdraw), without the fields it refuses: the
+// engine reads a decision strictly, and a resolve's entity_key is written
+// even when null.
 func (d ExtractDecision) MarshalJSON() ([]byte, error) {
-	if d.Kind == model.FoundryReviewRelease {
+	if d.Kind == model.FoundryReviewRelease || d.Kind == model.FoundryReviewWithdraw {
 		return json.Marshal(struct {
 			Kind       model.FoundryReviewDecisionKind `json:"kind"`
 			DocID      string                          `json:"doc_id"`
@@ -566,8 +568,9 @@ type DocumentEvent struct {
 	Counts    DocumentCounts  `json:"counts"`
 	Usage     DocumentUsage   `json:"usage"`
 	// Releases are what the run did with each release decision sent with the
-	// document, by the decision's id (contract 4.12.0). Counts counts reviews,
-	// of which one decision may name several.
+	// document, by the decision's id (contract 4.12.0), and from 4.16.0 with
+	// each withdraw, first. Counts counts reviews, of which one decision may
+	// name several, and no withdraw.
 	Releases []DocumentRelease `json:"releases"`
 }
 
@@ -577,7 +580,9 @@ type DocumentRelease struct {
 	Outcome    ReleaseOutcome `json:"outcome"`
 }
 
-// ReleaseOutcome is what became of a release decision: written (from contract
+// ReleaseOutcome is what became of a release decision, or a withdraw
+// (contract 4.16.0: withdrawn, not_written, or refused with differs or
+// too_large; listed before the releases): written (from contract
 // 4.14.0, on a link that holds one value, also when a statement dated after
 // the approval takes effect holds the link and the quote is kept as evidence
 // alone);

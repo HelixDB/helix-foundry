@@ -44,3 +44,72 @@
   padding-left: 12px;
   border-left: 2px solid var(--hf-border);
 }
+
+/* The review queue: one card per decision, its evidence first. */
+.rq-summary {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: var(--hf-text-sm);
+}
+.rq-summary p {
+  margin: 0;
+}
+.rq-list {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+.rq-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-surface);
+}
+.rq-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rq-head h3 {
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+}
+.rq-evidence {
+  display: grid;
+  gap: 4px;
+}
+.rq-evidence blockquote {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--hf-border);
+  font-size: var(--hf-text-sm);
+}
+.rq-evidence p,
+.rq-writes,
+.rq-score {
+  margin: 0;
+  font-size: var(--hf-text-sm);
+}
+.rq-held {
+  display: grid;
+  gap: 8px;
+  padding-left: 12px;
+  border-left: 2px solid var(--hf-border);
+}
+.rq-precision {
+  border-collapse: collapse;
+  font-size: var(--hf-text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.rq-precision th,
+.rq-precision td {
+  padding: 4px 12px 4px 0;
+  text-align: left;
+}

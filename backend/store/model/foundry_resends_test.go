@@ -52,6 +52,69 @@ func TestFoundryDecisionAppliedAfter(t *testing.T) {
 	}
 }
 
+// A release written by a run whose word was lost moves its document's counts
+// forward when a later run hears not_held of it; nothing else does here, as
+// a written word is counted by the worker.
+func TestFoundryDecisionAppliedMovesForward(t *testing.T) {
+	notHeld := FoundryReleaseOutcome{DecisionID: "d", StatementHash: "h", Kind: FoundryReleaseOutcomeNotHeld}
+	written := FoundryReleaseOutcome{DecisionID: "d", StatementHash: "h", Kind: FoundryReleaseOutcomeWritten}
+	for name, tc := range map[string]struct {
+		from    FoundryDecisionApplied
+		outcome FoundryReleaseOutcome
+		forward bool
+	}{
+		"not_held, settled here":                 {FoundryDecisionApplied{Status: FoundryReleasePending}, notHeld, true},
+		"not_held, settled here, its job failed": {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseJobFailed}, notHeld, true},
+		"not_held, carried":                      {FoundryDecisionApplied{Status: FoundryReleaseCarried}, notHeld, false},
+		"not_held, written before":               {FoundryDecisionApplied{Status: FoundryReleaseWritten}, notHeld, false},
+		"written, counted by the worker":         {FoundryDecisionApplied{Status: FoundryReleasePending}, written, false},
+		"a withdraw's not_held":                  {FoundryDecisionApplied{Status: FoundryReleasePending}, FoundryReleaseOutcome{Withdraw: true, Kind: FoundryReleaseOutcomeNotHeld}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			to, _, _ := tc.from.After(tc.outcome)
+			if got := tc.from.MovesForward(tc.outcome, to); got != tc.forward {
+				t.Fatalf("%+v after %+v (%q) moves forward %t, want %t", tc.from, tc.outcome, to, got, tc.forward)
+			}
+		})
+	}
+}
+
+// A withdraw ends as the engine says, and a not_written of an approval its
+// load had recorded written is the take-back done already, by a run that
+// stopped or whose document needed a model call before its event said so:
+// withdrawn. Only a withdraw that ends withdrawn from waiting, of what the
+// load recorded written, moves its document's counts back.
+func TestFoundryWithdrawAfter(t *testing.T) {
+	outcome := func(kind FoundryReleaseOutcomeKind, reason string) FoundryReleaseOutcome {
+		return FoundryReleaseOutcome{DecisionID: "d", StatementHash: "h", Withdraw: true, Kind: kind, Reason: reason}
+	}
+	waits := FoundryDecisionApplied{Status: FoundryReleasePending}
+	written := FoundryDecisionApplied{Status: FoundryReleasePending, WasWritten: true}
+	for name, tc := range map[string]struct {
+		from    FoundryDecisionApplied
+		outcome FoundryReleaseOutcome
+		to      FoundryReleaseStatus
+		reason  string
+		back    bool
+	}{
+		"withdrawn":                       {written, outcome(FoundryReleaseOutcomeWithdrawn, ""), FoundryWithdrawn, "", true},
+		"withdrawn, of one it may have":   {waits, outcome(FoundryReleaseOutcomeWithdrawn, ""), FoundryWithdrawn, "", false},
+		"not written":                     {waits, outcome(FoundryReleaseOutcomeNotWritten, ""), FoundryNotWritten, "", false},
+		"not written, as taken back":      {written, outcome(FoundryReleaseOutcomeNotWritten, ""), FoundryWithdrawn, "", true},
+		"refused":                         {written, outcome(FoundryReleaseOutcomeRefused, "differs"), FoundryReleaseRefused, "differs", false},
+		"a release's word":                {written, outcome(FoundryReleaseOutcomeWritten, ""), FoundryReleaseRefused, "written", false},
+		"its job failed, then taken back": {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseJobFailed, WasWritten: true}, outcome(FoundryReleaseOutcomeNotWritten, ""), FoundryWithdrawn, "", true},
+		"answered already":                {FoundryDecisionApplied{Status: FoundryWithdrawn, WasWritten: true}, outcome(FoundryReleaseOutcomeNotWritten, ""), FoundryWithdrawn, "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			to, reason, ok := tc.from.After(tc.outcome)
+			if !ok || to != tc.to || reason != tc.reason || tc.from.MovesBack(to) != tc.back {
+				t.Fatalf("%+v after %+v = (%q, %q, %t), moves back %t", tc.from, tc.outcome, to, reason, ok, tc.from.MovesBack(to))
+			}
+		})
+	}
+}
+
 // A decision is unconfirmed while it still waits and its job failed: one a
 // job reported on is what that job said, whatever reason it carries.
 func TestFoundryDecisionAppliedUnconfirmed(t *testing.T) {
@@ -59,13 +122,15 @@ func TestFoundryDecisionAppliedUnconfirmed(t *testing.T) {
 		applied FoundryDecisionApplied
 		want    bool
 	}{
-		"settled here, its job failed": {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseJobFailed}, true},
-		"carried, its job failed":      {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: FoundryReleaseJobFailed}, true},
-		"waiting for its job":          {FoundryDecisionApplied{Status: FoundryReleasePending}, false},
-		"refused by the engine":        {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: "unresolved"}, false},
-		"refused, the reason reused":   {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: FoundryReleaseJobFailed}, false},
-		"written":                      {FoundryDecisionApplied{Status: FoundryReleaseWritten}, false},
-		"never reported":               {FoundryDecisionApplied{}, false},
+		"settled here, its job failed":               {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseJobFailed}, true},
+		"carried, its job failed":                    {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: FoundryReleaseJobFailed}, true},
+		"waiting for its job":                        {FoundryDecisionApplied{Status: FoundryReleasePending}, false},
+		"a withdraw no event spoke of":               {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseNotReplayed}, true},
+		"a withdraw its failed document left unsaid": {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseDocumentFailed}, true},
+		"refused by the engine":                      {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: "unresolved"}, false},
+		"refused, the reason reused":                 {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: FoundryReleaseJobFailed}, false},
+		"written":                                    {FoundryDecisionApplied{Status: FoundryReleaseWritten}, false},
+		"never reported":                             {FoundryDecisionApplied{}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := tc.applied.Unconfirmed(); got != tc.want {
