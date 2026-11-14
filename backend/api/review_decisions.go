@@ -17,11 +17,18 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 )
 
 // SettleFoundryReview reads trusted identity from the current load's review
-// and stores an override. A resolve decision applies from the next load. A
+// and stores an override. A resolve decision applies to the current load at
+// once (contract 4.22.0): it joins that load's decisions and a resend job
+// sends its document again, with the documents whose reviews ask about the
+// same name where it chose an entity (an alias of every document), with their
+// saved model work, which the engine replays to write what the name held
+// back (SettleFoundryResolve); a load read before prompt 9 has no saved work
+// to replay, and the next load applies it. A
 // release, a person's approval of a held claim, applies to the current load
 // at once: it joins that load's decisions and a resend job sends the claim's
 // document again, and the engine writes it from the review the load keeps
@@ -223,15 +230,86 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 			return nil, status.Error(codes.InvalidArgument, "the chosen entity is not in this load")
 		}
 	}
+	userID := actor(ctx).UserID
+	resend := &foundrymodel.FoundryGraphJob{ID: id.New(), RequestedByUserID: &userID}
 	if d.Kind == foundrymodel.FoundryReviewProp {
-		userID := actor(ctx).UserID
-		resend := &foundrymodel.FoundryGraphJob{ID: id.New(), RequestedByUserID: &userID}
 		if _, err := s.deps.DB.SettleFoundryValue(ctx, o.WorkspaceID, load.ID, d, resend); err != nil {
 			return nil, settleFoundryReviewError(err)
 		}
 		return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
 	}
-	return s.saveFoundryReviewDecision(ctx, o, d)
+	var asking []string
+	if d.EntityKey != nil {
+		if asking, err = s.documentsAsking(ctx, o, load.ID, d.Type, *d.NormName); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := s.deps.DB.SettleFoundryResolve(ctx, o.WorkspaceID, load.ID, d, asking, resend); err != nil {
+		return nil, settleFoundryReviewError(err)
+	}
+	return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
+}
+
+// foundryAskingDocumentsMax is the most documents a resolve that chose an
+// entity sends again at once for its alias. Past it the rest wait for the
+// next load, which carries the alias to every document that writes its name.
+const foundryAskingDocumentsMax = 10000
+
+// documentsAsking are the documents of load whose reviews still ask about
+// name ty/name (unresolved, ambiguous, collision, identifier_conflict, with
+// no entity linked), which an alias of that name settles in place when they
+// are sent again (contract 4.22.0): one bounded read of the load's reviews
+// of that type and name, each document once, at most
+// foundryAskingDocumentsMax. The engine keeps no index of reviews by name,
+// so the read filters the load's reviews; a person's settle makes it, not an
+// Extract. A document sent that no longer asks costs nothing: the engine
+// says not_asked and writes nothing.
+func (s *Service) documentsAsking(ctx context.Context, o *foundrymodel.FoundryOntology, load, ty, name string) ([]string, error) {
+	predicates := []any{}
+	for key, value := range map[string]string{"foundry_load": load, "$label": "FoundryReview", "type": ty, "norm_name": name} {
+		predicates = append(predicates, map[string]any{"eq": map[string]any{"left": map[string]string{"property": key}, "right": map[string]any{"constant": map[string]string{"string": value}}}})
+	}
+	root := map[string]any{"value_map": map[string]any{"input": map[string]any{"limit": map[string]any{"input": map[string]any{"nodes_where": map[string]any{"predicate": map[string]any{"and": map[string]any{"predicates": predicates}}}},
+		"count": map[string]int{"literal": 4 * foundryAskingDocumentsMax}}}, "properties": []string{"doc_id", "reason", "entity_key"}}}
+	body, err := json.Marshal(map[string]any{"request_type": "read", "query": map[string]any{"read": map[string]any{"entries": []any{map[string]any{"query": map[string]any{"name": "items", "root": root}}}, "returns": []string{"items"}}}})
+	if err != nil {
+		return nil, err
+	}
+	if s.deps.Graph == nil {
+		return nil, status.Error(codes.Unavailable, "graph reads are not available here")
+	}
+	code, out, err := s.deps.Graph.ReadQuery(ctx, o.TenantID, body)
+	if err != nil {
+		return nil, err
+	}
+	if code != 200 {
+		return nil, status.Error(codes.Unavailable, "the review graph could not be read; try again")
+	}
+	var response struct {
+		Items []struct {
+			DocID     string          `json:"doc_id"`
+			Reason    string          `json:"reason"`
+			EntityKey json.RawMessage `json:"entity_key"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(out, &response); err != nil {
+		return nil, status.Error(codes.Internal, "read review graph response")
+	}
+	var docs []string
+	for _, r := range response.Items {
+		linked := len(r.EntityKey) > 0 && string(r.EntityKey) != "null"
+		switch {
+		case linked, r.DocID == "", slices.Contains(docs, r.DocID):
+		case r.Reason == "unresolved", r.Reason == "ambiguous", r.Reason == "collision", r.Reason == "identifier_conflict":
+			docs = append(docs, r.DocID)
+		}
+	}
+	if len(docs) > foundryAskingDocumentsMax {
+		log.From(ctx).Warn("settle: an alias asks more documents than a settle sends again; the rest wait for the next load",
+			"ontology", o.ID, "documents", len(docs))
+		docs = docs[:foundryAskingDocumentsMax]
+	}
+	return docs, nil
 }
 
 // settleHeldClaim makes d the release or the reject of the one review it
@@ -290,7 +368,7 @@ func (s *Service) labelDrawnClaim(ctx context.Context, o *foundrymodel.FoundryOn
 		verdict = foundrymodel.FoundryVerdictWrong
 	}
 	// The person's own word, with the decision that stands: an approval of a
-	// statement someone approved before keeps theirs (saveFoundryReviewDecision).
+	// statement someone approved before keeps theirs (store saveFoundryReviewDecision).
 	label := &foundrymodel.FoundryReviewLabel{ID: id.New(), OntologyID: o.ID, LoadID: loadID, Drawn: foundrymodel.FoundryLabelRandom,
 		DocID: *d.DocID, Span: *d.ClaimSpan, ClaimKey: d.ClaimKey, StatementHash: d.StatementHash, Verdict: verdict,
 		DecisionID: &d.ID, DecidedByUserID: actor(ctx).UserID}
@@ -331,14 +409,6 @@ func (s *Service) loadOntologyTOML(ctx context.Context, ontologyID, versionID st
 		return "", status.Error(codes.Internal, "read load definition")
 	}
 	return def.OntologyTOML, nil
-}
-
-// saveFoundryReviewDecision stores d, whose identity the review gave.
-func (s *Service) saveFoundryReviewDecision(ctx context.Context, o *foundrymodel.FoundryOntology, d *foundrymodel.FoundryReviewDecision) (*foundryv1.FoundryReviewDecisionResponse, error) {
-	if err := s.deps.DB.SettleFoundryReviewDecision(ctx, o.WorkspaceID, d); err != nil {
-		return nil, settleFoundryReviewError(err)
-	}
-	return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
 }
 
 // settleFoundryReviewError maps a settle the store refused to its status: the

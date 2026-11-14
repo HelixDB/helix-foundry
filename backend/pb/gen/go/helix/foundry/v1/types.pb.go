@@ -9170,7 +9170,8 @@ func (*FoundryResolveChoice_EntityKey) isFoundryResolveChoice_Target() {}
 
 func (*FoundryResolveChoice_NotInData) isFoundryResolveChoice_Target() {}
 
-// What became of a release or a prop decision in the ontology's current load.
+// What became of a release, resolve or prop decision in the ontology's
+// current load.
 type FoundryDecisionApplied struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -9213,6 +9214,13 @@ type FoundryDecisionApplied struct {
 	// document sends it again; with not_replayed its document's saved reading
 	// can't be reused, so no word can come while this load is current, and
 	// the next load won't write the approval.
+	// Of a resolve (contract 4.22.0), its word on its own document: pending,
+	// written (the load holds what the name held back, as a load read with the
+	// decision holds it), refused (nothing was written in place: reason says
+	// why, and the next load applies the choice), unconfirmed (job_failed:
+	// choosing again sends it again), or empty for a resolve the load read
+	// when it was created. What an alias of the name did in other documents is
+	// theirs (FoundryDocumentExtraction.names).
 	Status string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	// Why a refused claim stays held. The engine's reasons: unresolved (a name
 	// in it is matched to no one record: settle that name), legal_form (a name
@@ -9241,8 +9249,18 @@ type FoundryDecisionApplied struct {
 	// document but recorded no extraction of it), document_failed,
 	// too_large (the document with its decisions is more than one request to
 	// the engine takes), unanswered. With unconfirmed it is job_failed, or, of
-	// a withdraw, document_failed or not_replayed. A reader shows a reason it
-	// doesn't know as it is.
+	// a withdraw, document_failed or not_replayed. Of a refused resolve: the
+	// engine's refusal of the name (not_replayed: the load was read before
+	// names could be settled in place, under an earlier prompt, so its saved
+	// model work can't settle it; bound, collides, differs, too_large,
+	// two_rows, role_term, shared, identifier, other_identity, absent),
+	// not_asked (the load's reviews of the document no longer ask about the
+	// name, as when it was linked already or chosen otherwise since), or
+	// not_named (the document names no entity so); and the backend's
+	// not_replayed (no word came: the document's saved work didn't replay),
+	// document_gone, document_unread, document_failed, too_large. The same
+	// word means different things of different kinds: read it by the
+	// decision's kind. A reader shows a reason it doesn't know as it is.
 	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 	// When a job said so; unset while pending.
 	At *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=at,proto3" json:"at,omitempty"`
@@ -9312,9 +9330,11 @@ func (x *FoundryDecisionApplied) GetTakesBack() bool {
 	return false
 }
 
-// A durable ontology-wide override. A resolve decision applies from the next
-// load; a release or a prop decision applies to the current load at once,
-// and later loads read it as they are made. Removing a prop decision
+// A durable ontology-wide override. A resolve, a release or a prop decision
+// applies to the current load at once, and later loads read it as they are
+// made: a resolve by its document's saved model work, which a load read
+// before names could be settled in place lacks (applied refused,
+// not_replayed), so the next load applies it. Removing a prop decision
 // withdraws it from the current load at once too, and so does removing a
 // release the load may have written (contract 4.16.0): the load's copy
 // becomes a withdraw, listed here, kind withdraw, with what became of it,
@@ -9358,10 +9378,10 @@ type FoundryReviewDecision struct {
 	ClaimStart    *uint32 `protobuf:"varint,14,opt,name=claim_start,json=claimStart,proto3,oneof" json:"claim_start,omitempty"`
 	ClaimEnd      *uint32 `protobuf:"varint,15,opt,name=claim_end,json=claimEnd,proto3,oneof" json:"claim_end,omitempty"`
 	StatementHash *string `protobuf:"bytes,16,opt,name=statement_hash,json=statementHash,proto3,oneof" json:"statement_hash,omitempty"`
-	// A release or prop decision's state in the ontology's current load; unset
-	// for a resolve, and when that load's decisions don't hold it yet (one
-	// saved while another load was current joins them when a job of the
-	// ontology next ends).
+	// A release, resolve or prop decision's state in the ontology's current
+	// load; unset when that load's decisions don't hold it yet (one saved while
+	// another load was current joins them when a job of the ontology next
+	// ends; a resolve, when the next load is made).
 	Applied *FoundryDecisionApplied `protobuf:"bytes,17,opt,name=applied,proto3" json:"applied,omitempty"`
 	// "ranked" or "random": the review queue's card it was made on, in the
 	// queue's order or drawn at random; empty for a decision made elsewhere.
