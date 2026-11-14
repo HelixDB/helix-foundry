@@ -545,3 +545,52 @@ func TestFoundryAgentClaimFailsADeletedWorkspacesTurn(t *testing.T) {
 	require.NotNil(t, failed.Error)
 	assert.Equal(t, "the workspace was deleted", *failed.Error)
 }
+
+// A step's final text replaces its text_delta events in one transaction, and
+// a poller past some of them reads on from the text.
+func TestFoundryAgentTextSupersedesItsDeltas(t *testing.T) {
+	ctx := context.Background()
+	f := newAgentFixture(t, "text")
+	require.NoError(t, f.send(1, 0))
+	turn := f.claimed(t)
+	ev := func(s string) json.RawMessage { return json.RawMessage(s) }
+	require.NoError(t, f.db.AppendFoundryAgentEvents(ctx, turn.ID, "w1", []json.RawMessage{
+		ev(`{"type":"started","model":"m","attempt":1}`),
+		ev(`{"type":"text_delta","step":1,"text":"Hel"}`),
+		ev(`{"type":"text_delta","step":1,"text":"lo"}`),
+		ev(`{"type":"tool_call","tool_use_id":"a"}`),
+		ev(`{"type":"text_delta","step":2,"text":"Still going"}`),
+	}))
+	seen, err := f.db.ListFoundryAgentEvents(ctx, turn.ID, 0, 2)
+	require.NoError(t, err)
+	require.Len(t, seen, 2, "a poller that read the first delta")
+
+	assert.ErrorIs(t, f.db.FinishFoundryAgentText(ctx, turn.ID, "w2", 1, nil), store.ErrNotFound, "only under the lease")
+	require.NoError(t, f.db.FinishFoundryAgentText(ctx, turn.ID, "w1", 1, []json.RawMessage{ev(`{"type":"text","step":1,"text":"Hello"}`)}))
+	all, err := f.db.ListFoundryAgentEvents(ctx, turn.ID, 0, 100)
+	require.NoError(t, err)
+	var types []string
+	for _, e := range all {
+		var head struct {
+			Type string
+			Step int
+		}
+		require.NoError(t, json.Unmarshal(e.Event, &head))
+		types = append(types, fmt.Sprintf("%s/%d", head.Type, head.Step))
+	}
+	assert.Equal(t, []string{"started/0", "tool_call/0", "text_delta/2", "text/1"}, types, "only step 1's deltas go")
+	next, err := f.db.ListFoundryAgentEvents(ctx, turn.ID, seen[1].Seq, 100)
+	require.NoError(t, err)
+	require.Len(t, next, 3)
+	assert.Equal(t, 6, next[2].Seq, "the text comes after every event before it")
+
+	// A step that ended with no text (its words were blank) drops its deltas alone.
+	require.NoError(t, f.db.FinishFoundryAgentText(ctx, turn.ID, "w1", 2, nil))
+	all, err = f.db.ListFoundryAgentEvents(ctx, turn.ID, 0, 100)
+	require.NoError(t, err)
+	assert.Len(t, all, 3)
+	f.settle(t, turn)
+	done, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, turn.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 6, done.LastSeq, "seq never goes back")
+}

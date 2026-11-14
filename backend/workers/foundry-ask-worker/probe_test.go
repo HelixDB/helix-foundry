@@ -486,3 +486,67 @@ func TestProbeCompatible(t *testing.T) {
 		}
 	})
 }
+
+// While the Assistant is on, a setting the agent passed gets the Assistant's
+// own tool check, on the key and settings it saved and the report the probe
+// just found; what it found joins the report and never fails the setting.
+func TestProbeChecksTheAssistantsToolCalls(t *testing.T) {
+	type sent struct {
+		r   ai.Resolved
+		key string
+	}
+	check := func(found ai.AssistantCheck, err error) (*probeHarness, *[]sent) {
+		h := newProbeHarness(t)
+		var calls []sent
+		h.prober.checkTools = func(_ context.Context, r ai.Resolved) (ai.AssistantCheck, error) {
+			calls = append(calls, sent{r: r, key: r.Key.Reveal()})
+			return found, err
+		}
+		return h, &calls
+	}
+	for found, want := range map[ai.AssistantCheck]string{
+		ai.AssistantPassed: `"assistant":"passed"`, ai.AssistantNoToolCall: `"assistant":"no_tool_call"`, ai.AssistantAuth: `"assistant":"auth"`,
+	} {
+		h, calls := check(found, nil)
+		logs := h.tick(t)
+		if len(h.queue.finished) != 1 || h.queue.finished[0].Failure != nil || !strings.Contains(string(h.queue.finished[0].Report), want) {
+			t.Fatalf("%s: finished %+v", found, h.queue.finished)
+		}
+		if len(*calls) != 1 {
+			t.Fatalf("%s: checks %v", found, *calls)
+		}
+		c := (*calls)[0]
+		if c.key != ownKey || c.r.ConfigID != "cfg-1" || c.r.Settings.Models.Ask.Name != "claude-sonnet-5-5" || len(c.r.Report.Checks) != 5 ||
+			c.r.Rules != h.prober.deployment.Rules || c.r.CallTimeout != h.prober.deployment.CallTimeout {
+			t.Fatalf("%s: checked %+v", found, c.r)
+		}
+		if strings.Contains(logs, ownKey) || strings.Contains(string(h.queue.finished[0].Report), ownKey) {
+			t.Fatalf("the key reached a log or the report")
+		}
+	}
+
+	// A check that couldn't run leaves the setting unchecked: the Assistant
+	// runs, and finds out for itself.
+	h, _ := check(ai.AssistantUnchecked, errors.New("429"))
+	logs := h.tick(t)
+	if len(h.queue.finished) != 1 || h.queue.finished[0].Failure != nil || strings.Contains(string(h.queue.finished[0].Report), `"assistant"`) {
+		t.Fatalf("finished %+v", h.queue.finished)
+	}
+	if !strings.Contains(logs, "the Assistant's tool check couldn't run") {
+		t.Fatalf("log = %s", logs)
+	}
+
+	// A setting the agent failed isn't checked; nor is any while the
+	// Assistant is off.
+	h, calls := check(ai.AssistantPassed, nil)
+	h.agent.probe = probeResult("ask", "unsupported", "tools_rejected")
+	h.tick(t)
+	if len(*calls) != 0 || h.queue.finished[0].Failure == nil {
+		t.Fatalf("checks %v, finished %+v", *calls, h.queue.finished)
+	}
+	h = newProbeHarness(t)
+	h.tick(t)
+	if strings.Contains(string(h.queue.finished[0].Report), `"assistant"`) {
+		t.Fatalf("report = %s", h.queue.finished[0].Report)
+	}
+}
