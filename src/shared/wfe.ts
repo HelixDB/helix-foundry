@@ -2801,6 +2801,33 @@ export type AgentActionDisplays = {
     runtimes: AgentHelperRuntime[];
     online: boolean;
   };
+  // A dashboard's name and description as the Assistant wrote them.
+  create_dashboard: {
+    name: string;
+    description?: string;
+    spec: AgentSpecDisplay;
+  };
+  // What changes; a field missing stays as it is, "" clears the description.
+  update_dashboard: {
+    dashboard: AgentDashboardRef;
+    name?: string;
+    description?: string;
+    spec?: AgentSpecDisplay;
+  };
+  delete_dashboard: { dashboard: AgentDashboardRef };
+  // pinned: whether it pins the dashboard (else unpins it).
+  pin_dashboard: { dashboard: AgentDashboardRef; pinned: boolean };
+  publish_dashboard: { dashboard: AgentDashboardRef };
+  unpublish_dashboard: { dashboard: AgentDashboardRef };
+};
+/** A dashboard as it was when the action was prepared. */
+export type AgentDashboardRef = AgentRef & { pinned?: true; published?: true };
+/**
+ * A spec's tiles as a card names them: each tile's title, the ontology
+ * whose load it reads, and its visual's kind (missing: as the result suits).
+ */
+export type AgentSpecDisplay = {
+  tiles: { title: string; ontology: AgentRef; visual?: string }[];
 };
 /** The operations the Assistant may prepare (backend agent.Operations). */
 export type AgentOperation = keyof AgentActionDisplays;

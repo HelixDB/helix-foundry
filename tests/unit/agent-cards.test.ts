@@ -16,7 +16,7 @@ import {
   type AgentStep,
 } from "@/web/areas/agent/model";
 
-// The Assistant's cards (src/web/areas/agent/model.ts): each of the 14
+// The Assistant's cards (src/web/areas/agent/model.ts): each of the 20
 // operations' displays as the backend's display.go writes them (its
 // display_test.go's), read without trust, worded by its card, and where a
 // ran one opens; a connect step's form; a call a limit kept from running.
@@ -372,6 +372,72 @@ const DISPLAYS: [string, string, unknown][] = [
     "a helper that runs nothing yet",
     "revoke_assistant_helper",
     { host: { id: "01HOSTAAAAAAAAAAAAAAAAAAAA" }, runtimes: [], online: false },
+  ],
+  [
+    "a dashboard made",
+    "create_dashboard",
+    {
+      name: "Invoices by status",
+      description: "Its invoices, counted by status.",
+      spec: {
+        tiles: [
+          { title: "Invoices by status", ontology: ONT, visual: "bar" },
+          { title: "Customers", ontology: { id: "gone1" } },
+        ],
+      },
+    },
+  ],
+  [
+    "a dashboard of no tiles yet",
+    "create_dashboard",
+    { name: "Pipeline", spec: { tiles: [] } },
+  ],
+  [
+    "a dashboard renamed",
+    "update_dashboard",
+    {
+      dashboard: { id: "dash1", name: "Revenue", published: true },
+      name: "Revenue by month",
+    },
+  ],
+  [
+    "a dashboard's tiles changed",
+    "update_dashboard",
+    {
+      dashboard: { id: "dash1", name: "Revenue" },
+      description: "",
+      spec: { tiles: [{ title: "Paid", ontology: ONT }] },
+    },
+  ],
+  [
+    "a dashboard deleted",
+    "delete_dashboard",
+    { dashboard: { id: "dash1", name: "Revenue", pinned: true } },
+  ],
+  [
+    "a dashboard pinned",
+    "pin_dashboard",
+    { dashboard: { id: "dash1", name: "Revenue" }, pinned: true },
+  ],
+  [
+    "a dashboard unpinned",
+    "pin_dashboard",
+    { dashboard: { id: "dash1", name: "Revenue", pinned: true }, pinned: false },
+  ],
+  [
+    "a dashboard published",
+    "publish_dashboard",
+    { dashboard: { id: "dash1", name: "Revenue" } },
+  ],
+  [
+    "a published dashboard's snapshot refreshed",
+    "publish_dashboard",
+    { dashboard: { id: "dash1", name: "Revenue", published: true } },
+  ],
+  [
+    "a dashboard unpublished",
+    "unpublish_dashboard",
+    { dashboard: { id: "dash1", published: true } },
   ],
 ];
 
@@ -838,7 +904,93 @@ describe("cardView", () => {
         "Revoke",
         "01HOSTAAAAAAAAAAAAAAAAAAAA",
       ],
+      [
+        "a dashboard made",
+        "Make the dashboard “Invoices by status”",
+        "Create",
+        "Invoices by status",
+      ],
+      [
+        "a dashboard of no tiles yet",
+        "Make the dashboard “Pipeline”",
+        "Create",
+        "Pipeline",
+      ],
+      [
+        "a dashboard renamed",
+        "Change the dashboard “Revenue”",
+        "Save",
+        "Revenue",
+      ],
+      [
+        "a dashboard's tiles changed",
+        "Change the dashboard “Revenue”",
+        "Save",
+        "Revenue",
+      ],
+      [
+        "a dashboard deleted",
+        "Delete the dashboard “Revenue”",
+        "Delete",
+        "Revenue",
+      ],
+      [
+        "a dashboard pinned",
+        "Pin the dashboard “Revenue” for everyone",
+        "Pin",
+        "Revenue",
+      ],
+      [
+        "a dashboard unpinned",
+        "Unpin the dashboard “Revenue” for everyone",
+        "Unpin",
+        "Revenue",
+      ],
+      [
+        "a dashboard published",
+        "Publish the dashboard “Revenue” at a public link",
+        "Publish",
+        "Revenue",
+      ],
+      [
+        "a published dashboard's snapshot refreshed",
+        "Refresh the public snapshot of “Revenue”",
+        "Publish",
+        "Revenue",
+      ],
+      [
+        "a dashboard unpublished",
+        "Unpublish the dashboard dash1",
+        "Unpublish",
+        "dash1",
+      ],
     ]);
+  });
+
+  it("names a dashboard's state and its tiles' ontologies", () => {
+    const facts = (name: string) => Object.fromEntries(
+      of(name).facts.map((f) => [f.label, "value" in f ? f.value : ""]),
+    );
+    expect(facts("a dashboard made")).toEqual({
+      Name: "“Invoices by status” (as the Assistant wrote it)",
+      Tiles: "Invoices by status (Sales graph), Customers (gone1)",
+    });
+    expect(facts("a dashboard of no tiles yet").Tiles).toBe("None");
+    expect(facts("a dashboard renamed")).toEqual({
+      Dashboard: "Revenue · at a public link",
+      "New name": "“Revenue by month”",
+    });
+    expect(facts("a dashboard's tiles changed")).toEqual({
+      Dashboard: "Revenue",
+      "New description": "None",
+      Tiles: "Paid (Sales graph)",
+    });
+    expect(facts("a dashboard deleted").Dashboard).toBe(
+      "Revenue · pinned for everyone",
+    );
+    expect(of("a dashboard published").caution).toBe(
+      "Anyone who has the link sees this data.",
+    );
   });
 
   it("says where new threads run, and that a helper must run first", () => {
@@ -1221,6 +1373,40 @@ describe("resultLink", () => {
         "workspace:ws1",
       ),
       { to: "/settings/ai", label: "Open Settings › AI models" },
+    ],
+    [
+      "a dashboard made",
+      ran(
+        "create_dashboard",
+        d("a dashboard made"),
+        { id: "dash9" },
+        "workspace:ws1",
+      ),
+      { to: "/dashboards/dash9", label: "Open the dashboard" },
+    ],
+    ...(
+      [
+        ["update_dashboard", "a dashboard renamed"],
+        ["pin_dashboard", "a dashboard pinned"],
+        ["publish_dashboard", "a dashboard published"],
+        ["unpublish_dashboard", "a dashboard unpublished"],
+      ] as const
+    ).map(
+      ([op, name]): [string, FoundryAgentAction, unknown] => [
+        name,
+        ran(op, d(name), { id: "dash1" }, "dashboard:ws1/dash1"),
+        { to: "/dashboards/dash1", label: "Open the dashboard" },
+      ],
+    ),
+    [
+      "a deleted dashboard",
+      ran(
+        "delete_dashboard",
+        d("a dashboard deleted"),
+        { deleted: true, dashboard_id: "dash1" },
+        "dashboard:ws1/dash1",
+      ),
+      undefined,
     ],
     [
       "a card it can't read",

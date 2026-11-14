@@ -2,6 +2,7 @@ import type {
   AgentActionDisplays,
   AgentActionStatus,
   AgentConnectorRef,
+  AgentDashboardRef,
   AgentDecision,
   AgentDecisionValue,
   AgentLoadRef,
@@ -11,6 +12,7 @@ import type {
   AgentReview,
   AgentReviewEntity,
   AgentReviewSettle,
+  AgentSpecDisplay,
   AgentVersionRef,
   AgentEvent,
   AgentPageContext,
@@ -29,6 +31,7 @@ import { isRecord } from "../../../shared/json";
 import { ApiError } from "../../api";
 import { connectorLabel } from "../../kit/SourceLogo";
 import { formatDate, plural } from "../../kit/util";
+import { dashboardPaths } from "../dashboards/paths";
 import { dataPaths } from "../data/paths";
 import { reviewCopy } from "../documents/model";
 import { entityId } from "../explore/model";
@@ -67,12 +70,13 @@ export const isLiveTurn = (t?: { status?: FoundryAgentTurnStatus } | null) =>
 
 /**
  * What the person is looking at, from the URL: an ontology's pages, its
- * Explorer or Analyst, and the load they read (a load's page, or `?load=`).
- * Ids only, never names; null anywhere else.
+ * Explorer or Analyst, and the load they read (a load's page, or `?load=`),
+ * or a dashboard. Ids only, never names; null anywhere else.
  *
  * @example
  * pageContext("/ontology/ont_1/loads/load_2", ""); // { ontologyId: "ont_1", loadId: "load_2" }
  * pageContext("/explore/ont_1/records", "?load=load_3"); // { ontologyId: "ont_1", loadId: "load_3" }
+ * pageContext("/dashboards/dash_1", ""); // { dashboardId: "dash_1" }
  * pageContext("/ontology/new", ""); // null
  * pageContext("/data", ""); // null
  */
@@ -81,6 +85,10 @@ export function pageContext(
   search: string,
 ): AgentPageContext | null {
   const [, section, ontologyId = "", sub, loadId = ""] = pathname.split("/");
+  if (section === "dashboards")
+    return ID.test(ontologyId) && sub === undefined
+      ? { dashboardId: ontologyId }
+      : null;
   if (
     !["ontology", "explore", "ask"].includes(section || "") ||
     !ID.test(ontologyId) ||
@@ -114,6 +122,7 @@ const LINKABLE = new RegExp(
       `/ontology(?:/${SEG}(?:/documents(?:/${SEG})?|/(?:loads|versions|generations)/${SEG})?)?`,
       `/explore(?:/${SEG}(?:/records|/entities/${SEG})?)?`,
       `/ask(?:/${SEG})?`,
+      `/dashboards(?:/${SEG})?`,
       `/data(?:/documents/${SEG}|/connections/${SEG})?`,
       "/settings(?:/(?:ai|members|access|billing|enrichment))?",
     ].join("|") +
@@ -122,7 +131,7 @@ const LINKABLE = new RegExp(
 // A connector kind, in the link helix_foundry_connect gives (/data?add=<kind>).
 const KIND = /^[a-z][a-z0-9_]{0,31}$/;
 const CANDIDATE =
-  /https?:\/\/[^\s<>"'`]+|(?<![\w/])\/(?:ontology|explore|ask|data|settings)(?:[/?#][^\s<>"'`]*)?/g;
+  /https?:\/\/[^\s<>"'`]+|(?<![\w/])\/(?:ontology|explore|ask|dashboards|data|settings)(?:[/?#][^\s<>"'`]*)?/g;
 const TRAILING = /[.,;:!?)\]'"]+$/;
 
 /**
@@ -521,6 +530,9 @@ export const TOOL_LABELS: Record<string, string> = {
   helix_list_projects: "Listed projects",
   helix_list_databases: "Listed databases",
   helix_foundry_prepare_operation: "Prepared an action",
+  helix_foundry_list_dashboards: "Listed the dashboards",
+  helix_foundry_get_dashboard: "Read a dashboard",
+  helix_foundry_preview_dashboard_tile: "Tried a dashboard tile",
 };
 
 /** The Analyst page an ask step's question is on, when its input names an ontology. */
@@ -595,6 +607,33 @@ function loadRef(x: unknown): AgentLoadRef | undefined {
         ...opt("created_at", str(x.created_at) || undefined),
       }
     : undefined;
+}
+
+function dashboardRef(x: unknown): AgentDashboardRef | undefined {
+  const r = ref(x);
+  return r && isRecord(x)
+    ? {
+        ...r,
+        ...opt("pinned", x.pinned === true ? (true as const) : undefined),
+        ...opt("published", x.published === true ? (true as const) : undefined),
+      }
+    : r;
+}
+function specDisplay(x: unknown): AgentSpecDisplay | undefined {
+  const tiles = isRecord(x)
+    ? list(x.tiles ?? [], (t) => {
+        const ontology = isRecord(t) ? ref(t.ontology) : undefined,
+          title = isRecord(t) ? str(t.title) : undefined;
+        return ontology && title !== undefined
+          ? {
+              title,
+              ontology,
+              ...opt("visual", str((t as { visual?: unknown }).visual) || undefined),
+            }
+          : undefined;
+      })
+    : undefined;
+  return tiles ? { tiles } : undefined;
 }
 
 const SETTLES: readonly AgentReviewSettle[] = [
@@ -872,6 +911,56 @@ const DISPLAYS: {
     return host && runtimes && typeof d.online === "boolean"
       ? { host, runtimes, online: d.online }
       : undefined;
+  },
+  create_dashboard: (d) => {
+    const name = str(d.name),
+      spec = specDisplay(d.spec);
+    return name && spec
+      ? {
+          name,
+          ...opt("description", str(d.description) || undefined),
+          spec,
+        }
+      : undefined;
+  },
+  update_dashboard: (d) => {
+    const dashboard = dashboardRef(d.dashboard),
+      name = d.name === undefined ? null : str(d.name) || undefined,
+      description = d.description === undefined ? null : str(d.description),
+      spec = d.spec === undefined ? null : specDisplay(d.spec);
+    if (
+      !dashboard ||
+      name === undefined ||
+      description === undefined ||
+      spec === undefined
+    )
+      return undefined;
+    if (name === null && description === null && spec === null)
+      return undefined;
+    return {
+      dashboard,
+      ...opt("name", name ?? undefined),
+      ...opt("description", description ?? undefined),
+      ...opt("spec", spec ?? undefined),
+    };
+  },
+  delete_dashboard: (d) => {
+    const dashboard = dashboardRef(d.dashboard);
+    return dashboard ? { dashboard } : undefined;
+  },
+  pin_dashboard: (d) => {
+    const dashboard = dashboardRef(d.dashboard);
+    return dashboard && typeof d.pinned === "boolean"
+      ? { dashboard, pinned: d.pinned }
+      : undefined;
+  },
+  publish_dashboard: (d) => {
+    const dashboard = dashboardRef(d.dashboard);
+    return dashboard ? { dashboard } : undefined;
+  },
+  unpublish_dashboard: (d) => {
+    const dashboard = dashboardRef(d.dashboard);
+    return dashboard ? { dashboard } : undefined;
   },
 };
 
@@ -1353,7 +1442,89 @@ const VIEWS: {
     run: "Revoke",
     target: nameOf(d.host),
   }),
+  create_dashboard: (d) => ({
+    title: `Make the dashboard “${d.name}”`,
+    facts: [
+      { label: "Name", value: `“${d.name}” (as the Assistant wrote it)` },
+      ...tileFacts(d.spec),
+    ],
+    does: "Makes a dashboard of these tiles. Everyone in the workspace sees it, and each reads its tiles as themselves.",
+    run: "Create",
+    target: d.name,
+  }),
+  update_dashboard: (d) => ({
+    title: `Change the dashboard ${quoted(d.dashboard)}`,
+    facts: [
+      { label: "Dashboard", value: dashboardText(d.dashboard) },
+      ...(d.name !== undefined ? [{ label: "New name", value: `“${d.name}”` }] : []),
+      ...(d.description !== undefined
+        ? [
+            {
+              label: "New description",
+              value: d.description ? `“${d.description}”` : "None",
+            },
+          ]
+        : []),
+      ...(d.spec ? tileFacts(d.spec) : []),
+    ],
+    does: "Changes its name, description or tiles to what the full request holds. Everyone who opens it sees the change.",
+    run: "Save",
+    target: nameOf(d.dashboard),
+  }),
+  delete_dashboard: (d) => ({
+    title: `Delete the dashboard ${quoted(d.dashboard)}`,
+    facts: [{ label: "Dashboard", value: dashboardText(d.dashboard) }],
+    does: "Deletes the dashboard for everyone in the workspace, and its public link if it has one (only an owner or admin deletes a published one). The data its tiles read stays.",
+    run: "Delete",
+    target: nameOf(d.dashboard),
+  }),
+  pin_dashboard: (d) => ({
+    title: `${d.pinned ? "Pin" : "Unpin"} the dashboard ${quoted(d.dashboard)} for everyone`,
+    facts: [{ label: "Dashboard", value: dashboardText(d.dashboard) }],
+    does: "Pinned dashboards lead every member’s list of dashboards, and are the ones people reading through shared sources see.",
+    run: d.pinned ? "Pin" : "Unpin",
+    target: nameOf(d.dashboard),
+  }),
+  publish_dashboard: (d) => ({
+    title: d.dashboard.published
+      ? `Refresh the public snapshot of ${quoted(d.dashboard)}`
+      : `Publish the dashboard ${quoted(d.dashboard)} at a public link`,
+    facts: [{ label: "Dashboard", value: dashboardText(d.dashboard) }],
+    does: "Anyone with the link sees a snapshot of what its tiles read now, as you can read it, without signing in. Nothing else of the workspace shows. The link is on the dashboard’s page, never given to the Assistant.",
+    caution: "Anyone who has the link sees this data.",
+    run: "Publish",
+    target: nameOf(d.dashboard),
+  }),
+  unpublish_dashboard: (d) => ({
+    title: `Unpublish the dashboard ${quoted(d.dashboard)}`,
+    facts: [{ label: "Dashboard", value: dashboardText(d.dashboard) }],
+    does: "Its public link stops showing anything at once, for everyone who has it.",
+    run: "Unpublish",
+    target: nameOf(d.dashboard),
+  }),
 };
+
+/** A dashboard as a card names it, with whether it is pinned and published. */
+const dashboardText = (d: AgentDashboardRef) =>
+  [
+    nameOf(d),
+    d.pinned && "pinned for everyone",
+    d.published && "at a public link",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+/** A spec's tiles as a card's facts: how many, and each with the ontology it reads. */
+const tileFacts = (spec: AgentSpecDisplay) => [
+  {
+    label: "Tiles",
+    value: spec.tiles.length
+      ? spec.tiles
+          .map((t) => `${t.title || "Untitled"} (${nameOf(t.ontology)})`)
+          .join(", ")
+      : "None",
+  },
+];
 
 /**
  * A card's words, from its operation and display.
@@ -1476,6 +1647,18 @@ export function resultLink(
     case "set_assistant_runtime":
     case "revoke_assistant_helper":
       return on(workspacePaths.settings("ai"), "Open Settings › AI models");
+    case "create_dashboard":
+      return on(made && dashboardPaths.dashboard(made), "Open the dashboard");
+    case "update_dashboard":
+    case "pin_dashboard":
+    case "publish_dashboard":
+    case "unpublish_dashboard":
+      return on(
+        dashboardPaths.dashboard(card.display.dashboard.id),
+        "Open the dashboard",
+      );
+    case "delete_dashboard":
+      return undefined;
   }
 }
 

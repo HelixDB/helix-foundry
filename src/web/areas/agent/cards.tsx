@@ -1,11 +1,13 @@
 import { Fragment, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, Play, RefreshCw, X, Zap } from "lucide-react";
 import type { FoundryAgentAction } from "../../../shared/wfe";
 import { sentence } from "../../api";
 import { Button, StatusBadge, formatDate, useNow } from "../../kit";
 import { useWorkspace } from "../../ui";
+import { dashboardPaths } from "../dashboards/paths";
+import { dashboardQueries } from "../dashboards/queries";
 import {
   cardState,
   cardView,
@@ -49,7 +51,9 @@ export function ActionCard({
   onNavigate?: () => void;
 }) {
   const { id: ws } = useWorkspace(),
-    qc = useQueryClient();
+    qc = useQueryClient(),
+    navigate = useNavigate(),
+    { pathname } = useLocation();
   const now = useNow(5000),
     state = cardState(action, now),
     card = parseCard(action.operation || "", action.displayJson),
@@ -62,12 +66,33 @@ export function ActionCard({
     qc.invalidateQueries({
       queryKey: [ws, "agent", "thread", action.threadId],
     });
+  // A dashboard action ran: every page and list showing dashboards reads
+  // them again, and a deleted one's page, if open, gives way to the list.
+  const ranOnDashboards = (ran: FoundryAgentAction) => {
+    const id =
+      card && "dashboard" in card.display ? card.display.dashboard.id : "";
+    if (ran.status === "succeeded" && action.operation === "delete_dashboard") {
+      qc.removeQueries({
+        queryKey: dashboardQueries.dashboard(ws, id).queryKey,
+      });
+      if (pathname === dashboardPaths.dashboard(id))
+        navigate(dashboardPaths.dashboards(), { replace: true });
+    }
+    void qc.invalidateQueries({
+      queryKey: dashboardQueries.list(ws).queryKey,
+    });
+    if (id)
+      void qc.invalidateQueries({
+        queryKey: dashboardQueries.dashboard(ws, id).queryKey,
+      });
+  };
   const act = async (which: "run" | "refresh" | "dismiss") => {
     setPending(which);
     setError("");
     try {
       if (which === "run") {
-        await executeAgentAction(ws, action);
+        const ran = await executeAgentAction(ws, action);
+        if (action.operation?.endsWith("_dashboard")) ranOnDashboards(ran.action);
         // Where the Assistant runs, as the dock and the settings show it.
         if (
           action.operation === "set_assistant_runtime" ||

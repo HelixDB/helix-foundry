@@ -52,6 +52,7 @@ import {
 import { activeSection } from "../../shell/nav";
 import { useWorkspace } from "../../ui";
 import { loadVersion } from "../ontology/model";
+import { dashboardQueries } from "../dashboards/queries";
 import { ontologyQueries } from "../ontology/queries";
 import {
   AiRefusal,
@@ -780,7 +781,9 @@ function Composer({
     location = useLocation(),
     qc = useQueryClient();
   const page = pageContext(location.pathname, location.search),
-    pageKey = page ? `${page.ontologyId}/${page.loadId || ""}` : "";
+    pageKey = page
+      ? `${page.ontologyId || ""}/${page.loadId || ""}/${page.dashboardId || ""}`
+      : "";
   const [dropped, setDropped] = useState("");
   const context = page && dropped !== pageKey ? page : null;
   const [text, setText] = useState(""),
@@ -947,7 +950,7 @@ function Composer({
   );
 }
 
-/** "Looking at: <ontology> / <load>", named from what the app has read. */
+/** "Looking at: <ontology> / <load>" or "<dashboard>", named from what the app has read. */
 function PageChip({
   context,
   onDrop,
@@ -956,14 +959,23 @@ function PageChip({
   onDrop: () => void;
 }): ReactNode {
   const { id: ws } = useWorkspace();
-  const ontologies = useQuery(ontologyQueries.list(ws));
+  const ontologies = useQuery({
+    ...ontologyQueries.list(ws),
+    enabled: !!context.ontologyId,
+  });
   const loads = useQuery({
     ...ontologyQueries.loads(ws, context.ontologyId || ""),
     enabled: !!context.loadId,
   });
-  const name =
-    ontologies.data?.ontologies?.find((o) => o.id === context.ontologyId)
-      ?.name || "this ontology";
+  const dashboards = useQuery({
+    ...dashboardQueries.list(ws),
+    enabled: !!context.dashboardId,
+  });
+  const name = context.dashboardId
+    ? dashboards.data?.dashboards?.find((d) => d.id === context.dashboardId)
+        ?.name || "this dashboard"
+    : ontologies.data?.ontologies?.find((o) => o.id === context.ontologyId)
+        ?.name || "this ontology";
   const load = loads.data?.loads?.find((l) => l.id === context.loadId);
   return (
     <span className="ag-chip">

@@ -33,6 +33,7 @@ import type {
   FoundryAgentEvent,
   FoundryAgentThread,
   FoundryAgentTurn,
+  FoundryDashboard,
   FoundryDocument,
   FoundryDocumentSet,
   FoundryLoad,
@@ -74,6 +75,7 @@ import {
   runtimeOf,
   workspaceRuntime,
 } from "./agent-hosts";
+import { dashboardRoutes, publicLinks, storedDashboard } from "./dashboards";
 import { dataRoutes, workspaceConnectors } from "./data";
 import { databaseRoutes, tenantGraph } from "./databases";
 import { documentRoutes } from "./documents";
@@ -99,8 +101,18 @@ import { manages } from "./workspaces";
 // by afterSeq, in the backend's shapes (src/shared/wfe.ts "Agent"). The
 // mock's agent is scripted, with the read tools' outputs in their shapes.
 // It reads what a message asks for by its words and prepares one action of
-// the 14 the backend allows (agent.Operations), its display as the
+// the 20 the backend allows (agent.Operations), its display as the
 // backend's display.go names it:
+// - "build a dashboard of invoices by status for Customer contracts"
+//   (create_dashboard: tries a tile of the ontology named, else the page's,
+//   else the first with a current load, counting its invoices by status
+//   with helix_foundry_preview_dashboard_tile, the mock's real preview; a
+//   tile that can't be read, nothing loaded or no invoices, says why);
+// - on a dashboard's page, "pin" or "unpin" it, "publish" or "unpublish"
+//   it (publish and unpublish only while public links are on), "delete" it
+//   or "rename it to X" (pin_dashboard, publish_dashboard,
+//   unpublish_dashboard, delete_dashboard, update_dashboard, after
+//   helix_foundry_get_dashboard);
 // - "create an ontology called X on database Y" (create_ontology; "on a new
 //   database Y" makes it in the workspace's first project);
 // - "generate" or "draft" (generate_ontology: the connections and sets the
@@ -521,6 +533,7 @@ function wfe(
     ...reviewRoutes,
     ...databaseRoutes,
     ...agentHostRoutes,
+    ...dashboardRoutes,
   ].map((r) => ({ ...r, c: compileTemplate(r.path) }));
   const url = new URL(path, "http://mock");
   for (const r of compiled) {
@@ -897,6 +910,8 @@ const LIST = "helix_foundry_list_ontologies",
   DATABASES = "helix_list_databases",
   CONNECT = "helix_foundry_connect",
   RUNTIME = "helix_foundry_get_assistant_runtime",
+  PREVIEW = "helix_foundry_preview_dashboard_tile",
+  GET_DASHBOARD = "helix_foundry_get_dashboard",
   PREPARE = "helix_foundry_prepare_operation";
 
 /** What an owner or admin does that a member asked for, in the agent's words. */
@@ -915,6 +930,12 @@ const VERBS: Record<AgentOperation, string> = {
   settle_review: "settle a review",
   set_assistant_runtime: "choose where the Assistant runs",
   revoke_assistant_helper: "revoke a helper",
+  create_dashboard: "make a dashboard",
+  update_dashboard: "change a dashboard",
+  delete_dashboard: "delete a dashboard",
+  pin_dashboard: "pin a dashboard",
+  publish_dashboard: "publish a dashboard",
+  unpublish_dashboard: "unpublish a dashboard",
 };
 
 /**
@@ -1272,8 +1293,16 @@ function messageScript(a: Ask, manager: boolean): Step[] {
     })),
   ];
   const t = a.text;
+  const board = a.page?.dashboardId
+      ? storedDashboard(a.ws, a.page.dashboardId)
+      : undefined,
+    asked = board && dashboardAsk(t);
   const intent: AgentOperation | "connect" | undefined =
-    /\brevoke\b.*\bhelper\b/i.test(t)
+    /\bdashboard\b/i.test(t) && /\b(build|make|create)\b/i.test(t)
+      ? "create_dashboard"
+      : asked
+        ? asked.operation
+        : /\brevoke\b.*\bhelper\b/i.test(t)
       ? "revoke_assistant_helper"
       : /\b(run|switch|move)\b.*\b(subscription|claude code|foundry['’]s model)\b/i.test(
             t,
@@ -1332,6 +1361,14 @@ function messageScript(a: Ask, manager: boolean): Step[] {
       return [started, ...list, ...connect(a)];
     case "create_ontology":
       return [started, ...list, ...createOntology(a)];
+    case "create_dashboard":
+      return [started, ...list, ...buildDashboard(a)];
+    case "update_dashboard":
+    case "delete_dashboard":
+    case "pin_dashboard":
+    case "publish_dashboard":
+    case "unpublish_dashboard":
+      return [started, ...onDashboard(a, board!, asked!)];
     case undefined:
       return [started, ...list, ...describe(a)];
   }
@@ -1440,7 +1477,10 @@ function runtimeOperation(
 function operationOf(
   intent: Exclude<
     AgentOperation,
-    "create_ontology" | "set_assistant_runtime" | "revoke_assistant_helper"
+    | "create_ontology"
+    | "set_assistant_runtime"
+    | "revoke_assistant_helper"
+    | `${string}_dashboard`
   >,
   a: Ask,
   o: StoredOntology,
@@ -1860,6 +1900,246 @@ function describe(a: Ask): Step[] {
   ];
 }
 
+/** A dashboard as a card names it. */
+const dref = (d: NonNullable<ReturnType<typeof storedDashboard>>) => ({
+  id: d.id,
+  name: d.name,
+  ...(d.pinned && { pinned: true as const }),
+  ...(d.published && { published: true as const }),
+});
+
+/**
+ * A dashboard of an ontology's invoices by status: its tile tried as the
+ * person (the mock's real preview), then create_dashboard of it, or why it
+ * can't be read.
+ */
+function buildDashboard(a: Ask): Step[] {
+  const all = workspaceOntologies(a.ws),
+    page = a.page?.ontologyId ? ontologyById(a.page.ontologyId) : undefined;
+  const o =
+    named(a.ws, a.text) ??
+    (page?.workspaceId === a.ws ? page : undefined) ??
+    all.find((x) => currentLoadId(x.id)) ??
+    all[0];
+  if (!o)
+    return [
+      said(
+        () =>
+          "This workspace has no ontology yet, so there is no data for a dashboard. Create one first.",
+      ),
+    ];
+  const tile = {
+    id: "t1",
+    title: "Invoices by status",
+    ontology_id: o.id,
+    load: { kind: "current" },
+    query: {
+      start: { type: "Invoice" },
+      return: { group_count: { at: 0, prop: "status" } },
+    },
+    visual: { kind: "bar" },
+  };
+  // Tried once, when the turn first shows its result.
+  let tried: ReturnType<typeof wfe> | undefined;
+  const preview = () =>
+    (tried ??= wfe(a.userId, "POST", `${WS(a.ws)}/dashboards:preview-tile`, {
+      tileJson: JSON.stringify(tile),
+    }));
+  const outcome = () => {
+    const r = preview();
+    return r.status === 200
+      ? (JSON.parse(r.body.outcomeJson || "{}") as {
+          ok?: unknown;
+          error?: { message?: string };
+        })
+      : undefined;
+  };
+  const payload = {
+    name: "Invoices by status",
+    description: `${o.name}: its invoices, counted by status.`,
+    spec: { v: 1, tiles: [tile], layout: { rows: [["t1"]] } },
+  };
+  return [
+    call("tu_preview", PREVIEW, { tile }),
+    () => {
+      const r = preview();
+      return r.status !== 200
+        ? {
+            type: "tool_result",
+            tool_use_id: "tu_preview",
+            name: PREVIEW,
+            is_error: true,
+            error: why(r),
+          }
+        : {
+            type: "tool_result",
+            tool_use_id: "tu_preview",
+            name: PREVIEW,
+            is_error: false,
+            output: {
+              content_trust: "untrusted",
+              tile: JSON.parse(r.body.tileJson || "{}") as unknown,
+              load_id: r.body.loadId,
+              as_of: r.body.asOf,
+              outcome: outcome(),
+            },
+          };
+    },
+    // Only a tile that reads goes on a card.
+    ...prepare(() => {
+      const read = outcome();
+      if (!read?.ok)
+        return `I couldn't read invoices by status from ${o.name}: ${read ? read.error?.message || "it has no answer" : why(preview())}.`;
+      return {
+        operation: "create_dashboard",
+        target: `workspace:${a.ws}`,
+        payload,
+        display: {
+          name: payload.name,
+          description: payload.description,
+          spec: {
+            tiles: [{ title: tile.title, ontology: ref(o), visual: "bar" }],
+          },
+        },
+        named: namedByPerson(a.threadId, [payload.name]),
+        ontologyId: "",
+        said: `I've prepared a dashboard of ${o.name}'s invoices by status, as one bar chart. Create it from the card when you're ready.`,
+      };
+    }),
+  ];
+}
+
+type DashboardAsk =
+  | { operation: "update_dashboard"; name: string }
+  | { operation: "pin_dashboard"; pinned: boolean }
+  | {
+      operation:
+        | "delete_dashboard"
+        | "publish_dashboard"
+        | "unpublish_dashboard";
+    };
+
+/** What the person asks of the dashboard they are on, if anything the agent prepares. */
+function dashboardAsk(text: string): DashboardAsk | undefined {
+  const rename = /\brename\b.*?\bto\s+["“]?([^"”]+?)["”]?\s*$/i.exec(text);
+  if (rename) return { operation: "update_dashboard", name: rename[1]! };
+  if (/\bunpublish\b/i.test(text)) return { operation: "unpublish_dashboard" };
+  if (/\bpublish\b/i.test(text)) return { operation: "publish_dashboard" };
+  if (/\bunpin\b/i.test(text))
+    return { operation: "pin_dashboard", pinned: false };
+  if (/\bpin\b/i.test(text)) return { operation: "pin_dashboard", pinned: true };
+  if (/\bdelete\b/i.test(text)) return { operation: "delete_dashboard" };
+  return undefined;
+}
+
+/** Reads the dashboard the person is on, then prepares what they asked of it. */
+function onDashboard(
+  a: Ask,
+  d: NonNullable<ReturnType<typeof storedDashboard>>,
+  ask: DashboardAsk,
+): Step[] {
+  const read = [
+    call("tu_dash", GET_DASHBOARD, { dashboard_id: d.id }),
+    result("tu_dash", GET_DASHBOARD, () => ({
+      id: d.id,
+      name: d.name,
+      revision: d.revision,
+      pinned: d.pinned,
+    })),
+  ];
+  if (
+    (ask.operation === "publish_dashboard" ||
+      ask.operation === "unpublish_dashboard") &&
+    !publicLinks()
+  )
+    return [
+      ...read,
+      said(
+        () =>
+          "Public links aren't available here, so I can't publish or unpublish this dashboard.",
+      ),
+    ];
+  const dashboard = dref(d),
+    target = `dashboard:${a.ws}/${d.id}`,
+    named =
+      namedByPerson(a.threadId, [d.name, d.id]) ||
+      state.turns.some(
+        (t) =>
+          t.threadId === a.threadId && t.pageContext?.dashboardId === d.id,
+      ),
+    run = " Run it from the card when you're ready.";
+  const plan = (): Plan => {
+    switch (ask.operation) {
+      case "update_dashboard":
+        return {
+          operation: ask.operation,
+          target,
+          payload: { expected_revision: d.revision, name: ask.name },
+          display: { dashboard, name: ask.name },
+          named,
+          ontologyId: "",
+          said: `I've prepared renaming “${d.name}” to “${ask.name}”.${run}`,
+        };
+      case "pin_dashboard":
+        return {
+          operation: ask.operation,
+          target,
+          payload: { pinned: ask.pinned },
+          display: { dashboard, pinned: ask.pinned },
+          named,
+          ontologyId: "",
+          said: `I've prepared ${ask.pinned ? "pinning" : "unpinning"} “${d.name}” for everyone.${run}`,
+        };
+      case "publish_dashboard":
+        return {
+          operation: ask.operation,
+          target,
+          payload: { expected_revision: d.revision },
+          display: { dashboard },
+          named,
+          ontologyId: "",
+          said: `I've prepared publishing “${d.name}” at a public link: anyone who has the link will see a snapshot of its data, without signing in.${run}`,
+        };
+      case "unpublish_dashboard":
+      case "delete_dashboard":
+        return {
+          operation: ask.operation,
+          target,
+          payload: {},
+          display: { dashboard },
+          named,
+          ontologyId: "",
+          said:
+            ask.operation === "delete_dashboard"
+              ? `I've prepared deleting “${d.name}”.${run}`
+              : `I've prepared unpublishing “${d.name}”: its link will show nothing.${run}`,
+        };
+    }
+  };
+  return [...read, ...prepare(plan)];
+}
+
+/** A dashboard as the operations give it back (integration.FoundryDashboardOutput). */
+function dashboardOutput(ws: string, d: FoundryDashboard) {
+  return {
+    id: d.id,
+    workspace_id: ws,
+    name: d.name,
+    description: d.description,
+    revision: Number(d.revision),
+    pinned: !!d.pinned,
+    can_edit: !!d.canEdit,
+    can_pin: !!d.canPin,
+    can_publish: !!d.canPublish,
+    ...(d.share && {
+      share: {
+        spec_revision: Number(d.share.specRevision),
+        published_at: d.share.publishedAt,
+      },
+    }),
+  };
+}
+
 // ---------------------------------------------------------------- results
 
 /** How the agent goes on from an action its person ran. */
@@ -2037,6 +2317,30 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
             `${a.display.host.name || "The helper"} is revoked: it runs no more turns. Pair it again from Settings › AI models to run more.`,
         ),
       ];
+    case "create_dashboard":
+      return [
+        started,
+        said(
+          () =>
+            `Your dashboard “${out.name || a.display.name}” is made. Open it to see its tiles, then pin or publish it from there: /dashboards/${out.id}`,
+        ),
+      ];
+    case "update_dashboard":
+    case "delete_dashboard":
+    case "pin_dashboard":
+    case "publish_dashboard":
+    case "unpublish_dashboard": {
+      const name = String(out.name || a.display.dashboard.name || "the dashboard"),
+        link = `/dashboards/${a.display.dashboard.id}`;
+      const words: Record<typeof a.operation, string> = {
+        update_dashboard: `“${name}” is changed: ${link}`,
+        delete_dashboard: `“${name}” is deleted.`,
+        pin_dashboard: `“${name}” is ${out.pinned ? "pinned" : "unpinned"} for everyone: ${link}`,
+        publish_dashboard: `“${name}” is published. Anyone who has its link sees the snapshot; the link is on its page: ${link}`,
+        unpublish_dashboard: `“${name}” is unpublished: its link shows nothing now.`,
+      };
+      return [started, said(() => words[a.operation])];
+    }
   }
 }
 
@@ -2193,6 +2497,34 @@ function run(a: StoredAction, userId: string): MockReply {
         `${WS(ws)}/agent/hosts/${p.host_id}:revoke`,
         {},
       );
+    case "create_dashboard":
+      return wfe(userId, "POST", `${WS(ws)}/dashboards`, {
+        name: p.name,
+        description: p.description ?? "",
+        ...(p.spec !== undefined && { specJson: JSON.stringify(p.spec) }),
+        clientToken: a.id,
+      });
+  }
+  // The other dashboard operations act on the one their target names.
+  const board = `${WS(ws)}/dashboards/${a.display.dashboard.id}`;
+  switch (a.operation) {
+    case "update_dashboard":
+      return wfe(userId, "PATCH", board, {
+        expectedRevision: String(p.expected_revision),
+        ...(p.name !== undefined && { name: p.name }),
+        ...(p.description !== undefined && { description: p.description }),
+        ...(p.spec !== undefined && { specJson: JSON.stringify(p.spec) }),
+      });
+    case "delete_dashboard":
+      return wfe(userId, "DELETE", board);
+    case "pin_dashboard":
+      return wfe(userId, "POST", `${board}:pin`, { pinned: p.pinned });
+    case "publish_dashboard":
+      return wfe(userId, "POST", `${board}:publish`, {
+        expectedRevision: String(p.expected_revision),
+      });
+    case "unpublish_dashboard":
+      return wfe(userId, "POST", `${board}:unpublish`, {});
   }
 }
 
@@ -2209,6 +2541,14 @@ function output(a: StoredAction, body: any) {
     // As the backend's SetAssistantRuntimeOperation and assistantHost.
     case "set_assistant_runtime":
       return { runtime: body.runtime.runtime, online: body.runtime.online };
+    case "delete_dashboard":
+      return { deleted: true, dashboard_id: a.display.dashboard.id };
+    case "create_dashboard":
+    case "update_dashboard":
+    case "pin_dashboard":
+    case "publish_dashboard":
+    case "unpublish_dashboard":
+      return dashboardOutput(a.workspaceId, body.dashboard);
     case "revoke_assistant_helper":
       return {
         id: body.host.id,
@@ -2380,6 +2720,10 @@ function refreshRefusal(a: StoredAction, userId: string) {
  * now in place of the one current then.
  */
 function redraw(a: StoredAction) {
+  if ("dashboard" in a.display) {
+    const d = storedDashboard(a.workspaceId, a.display.dashboard.id);
+    if (d) a.display.dashboard = dref(d);
+  }
   const o = a.ontologyId ? ontologyById(a.ontologyId) : undefined;
   if (!o) return;
   if ("ontology" in a.display) a.display.ontology = ref(o);
@@ -2423,11 +2767,12 @@ export const agentRoutes: MockRoute[] = [
         return fail("INVALID_ARGUMENT", "thread_id is malformed");
       if (
         (page?.ontologyId && !ID.test(page.ontologyId)) ||
-        (page?.loadId && (!ID.test(page.loadId) || !page.ontologyId))
+        (page?.loadId && (!ID.test(page.loadId) || !page.ontologyId)) ||
+        (page?.dashboardId && !ID.test(page.dashboardId))
       )
         return fail(
           "INVALID_ARGUMENT",
-          "page_context names a load of an ontology, by their ids",
+          "page_context names a load of an ontology, or a dashboard, by their ids",
         );
       const again = state.turns.find(
         (t) =>
@@ -2495,12 +2840,14 @@ export const agentRoutes: MockRoute[] = [
         };
         state.threads.push(thread);
       }
-      const pageContext = page?.ontologyId
-        ? {
-            ontologyId: page.ontologyId,
-            ...(page.loadId && { loadId: page.loadId }),
-          }
-        : null;
+      const pageContext =
+        page?.ontologyId || page?.dashboardId
+          ? {
+              ...(page.ontologyId && { ontologyId: page.ontologyId }),
+              ...(page.loadId && { loadId: page.loadId }),
+              ...(page.dashboardId && { dashboardId: page.dashboardId }),
+            }
+          : null;
       const turn = queueTurn(thread, {
         kind: "message",
         text,

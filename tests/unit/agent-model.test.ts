@@ -62,6 +62,8 @@ describe("pageContext", () => {
     ["/ask/ont_1", "?load=load_4", { ontologyId: "ont_1", loadId: "load_4" }],
     // A malformed load is left out; the ontology stays.
     ["/ask/ont_1", "?load=a%20b", { ontologyId: "ont_1" }],
+    // A dashboard, which takes no load.
+    ["/dashboards/dash_1", "?load=load_1", { dashboardId: "dash_1" }],
   ])("%s%s names %j", (path, search, context) => {
     expect(pageContext(path, search)).toEqual(context);
   });
@@ -77,6 +79,9 @@ describe("pageContext", () => {
     ["/explore"],
     ["/ontology/has space"],
     ["/ontology/" + "x".repeat(129)],
+    ["/dashboards"],
+    ["/dashboards/dash_1/edit"],
+    ["/dashboards/has space"],
   ])("%s names nothing", (path) => {
     expect(pageContext(path, "?load=load_1")).toBeNull();
   });
@@ -106,6 +111,8 @@ describe("inAppPath", () => {
     ["/data/documents/d_1", "/data/documents/d_1"],
     ["/data/connections/c_1?add=postgres", "/data/connections/c_1"],
     ["/settings/ai", "/settings/ai"],
+    ["/dashboards", "/dashboards"],
+    ["/dashboards/dash_1?load=l_1", "/dashboards/dash_1"],
   ])("opens %s as %s", (path, to) => expect(at(path)).toBe(to));
 
   it.each([
@@ -116,6 +123,8 @@ describe("inAppPath", () => {
     "/explore/ont_1/records/x",
     "/papi/v1/whoami",
     "/settings/secrets",
+    "/dashboards/dash_1/x",
+    "/share/hxd_token",
   ])("opens nothing for %s", (path) => expect(at(path)).toBeUndefined());
 });
 

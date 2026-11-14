@@ -51,7 +51,8 @@ import { manages, queryReads } from "./workspaces";
 
 type Knobs = { dashboardsPublic?: boolean };
 const knobs = config as typeof config & Knobs;
-const publicLinks = () => knobs.dashboardsPublic ?? !LOCAL_TOKEN;
+/** Whether public links are offered now (the Assistant prepares publishing only then). */
+export const publicLinks = () => knobs.dashboardsPublic ?? !LOCAL_TOKEN;
 
 const MAX_DASHBOARDS = 200,
   MAX_PINNED = 20,
@@ -870,6 +871,38 @@ export const dashboardRoutes: MockRoute[] = [
     },
   },
 ];
+
+/**
+ * A dashboard of the workspace as the Assistant reads it before preparing
+ * an action on it (./agent.ts): its name, revision and state; undefined
+ * for one the workspace doesn't have.
+ */
+export function storedDashboard(workspaceId: string, id: string) {
+  const d = dashboards.get(id);
+  return d && d.workspaceId === workspaceId
+    ? {
+        id: d.id,
+        name: d.name,
+        revision: d.revision,
+        pinned: d.pinnedAt !== null,
+        published: !!d.share,
+      }
+    : undefined;
+}
+
+/**
+ * A dashboard route's handler by its method and its path after
+ * .../foundry/dashboards, for the Assistant's tools and cards, which call
+ * it as their person (./agent.ts), as the backend's integration calls its
+ * own API. Every dashboard route answers at once.
+ */
+export function dashboardRoute(method: MockRoute["method"], suffix: string) {
+  const route = dashboardRoutes.find(
+    (r) => r.method === method && r.path === BASE + suffix,
+  );
+  if (!route) throw new Error(`no dashboard route ${method} ${suffix}`);
+  return route.handle as (req: MockRequest) => MockReply;
+}
 
 /**
  * The foundry-events door's GET /v1/shared-dashboards/{token}

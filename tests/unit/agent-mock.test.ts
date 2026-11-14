@@ -1672,3 +1672,162 @@ describe("operations", () => {
     });
   });
 });
+
+describe("dashboards", () => {
+  const D = `${WS}/dashboards`;
+  const BUILD =
+    "Build a dashboard of invoices by status for Customer contracts";
+
+  it("says why it can't build a dashboard of an ontology with nothing loaded", async () => {
+    const c = await card(BUILD);
+    expect(
+      c.events.find(
+        (e) =>
+          e.type === "tool_result" &&
+          e.name === "helix_foundry_preview_dashboard_tile",
+      ),
+    ).toMatchObject({ is_error: true });
+    expect(c.events.some((e) => e.type === "action_card")).toBe(false);
+    expect(c.said).toContain(
+      "I couldn't read invoices by status from Customer contracts",
+    );
+  });
+
+  it("tries a tile, then prepares the dashboard, which its person creates", async () => {
+    await loaded("dash");
+    const c = await card(BUILD);
+    expect(
+      c.events.find(
+        (e) =>
+          e.type === "tool_result" &&
+          e.name === "helix_foundry_preview_dashboard_tile",
+      ),
+    ).toMatchObject({
+      is_error: false,
+      output: { outcome: { ok: { result: { kind: "group_count" } } } },
+    });
+    expect(c.action).toMatchObject({
+      operation: "create_dashboard",
+      target: "workspace:ws_acme",
+      // The person named its name: "invoices by status".
+      targetNamedByUser: true,
+    });
+    expect(c.display).toEqual({
+      name: "Invoices by status",
+      description: "Customer contracts: its invoices, counted by status.",
+      spec: {
+        tiles: [
+          {
+            title: "Invoices by status",
+            ontology: { id: "ont_acme_contracts", name: "Customer contracts" },
+            visual: "bar",
+          },
+        ],
+      },
+    });
+    const r = await runCard(c.action);
+    expect(r.ran.status).toBe("succeeded");
+    expect(r.result).toMatchObject({ name: "Invoices by status", revision: 1 });
+    expect(r.said).toContain(`/dashboards/${r.result.id}`);
+    // Made once, as its person, its spec as the card showed it.
+    expect((await call("GET", D)).body.dashboards).toHaveLength(1);
+    const got = await call("GET", `${D}/${r.result.id}`);
+    expect(JSON.parse(got.body.dashboard.specJson)).toEqual(
+      JSON.parse(c.action.payloadJson).spec,
+    );
+    expect(got.body.dashboard.createdByUserId).toBe("usr_ada");
+  });
+
+  it("pins, renames, publishes, unpublishes and deletes the dashboard on the page", async () => {
+    const made = (await call("POST", D, { name: "Revenue", clientToken: "c" }))
+      .body.dashboard;
+    const page = { pageContext: { dashboardId: made.id } };
+    const pin = await card("Pin this dashboard", page);
+    expect(pin.action).toMatchObject({
+      operation: "pin_dashboard",
+      target: `dashboard:ws_acme/${made.id}`,
+      targetNamedByUser: true,
+    });
+    expect(pin.display).toEqual({
+      dashboard: { id: made.id, name: "Revenue" },
+      pinned: true,
+    });
+    expect((await runCard(pin.action)).said).toContain(
+      "“Revenue” is pinned for everyone",
+    );
+    const renamed = await card("Rename it to Paid invoices", page);
+    expect(JSON.parse(renamed.action.payloadJson)).toEqual({
+      expected_revision: 1,
+      name: "Paid invoices",
+    });
+    expect(renamed.display).toEqual({
+      dashboard: { id: made.id, name: "Revenue", pinned: true },
+      name: "Paid invoices",
+    });
+    await runCard(renamed.action);
+    expect((await call("GET", `${D}/${made.id}`)).body).toMatchObject({
+      dashboard: { name: "Paid invoices", pinned: true },
+    });
+    // Publishing needs a tile: the run fails, and the agent says why.
+    const published = await runCard(
+      (await card("Publish it", page)).action,
+    );
+    expect(published.ran).toMatchObject({
+      status: "failed",
+      error: "the dashboard has no tiles to publish",
+    });
+    expect(published.said).toContain("That didn't run");
+    const unpublished = await runCard(
+      (await card("Unpublish it", page)).action,
+    );
+    expect(unpublished.ran.status).toBe("succeeded");
+    const deleted = await runCard(
+      (await card("Delete this dashboard", page)).action,
+    );
+    expect(deleted.result).toEqual({ deleted: true, dashboard_id: made.id });
+    expect(deleted.said).toBe("“Paid invoices” is deleted.");
+    expect((await call("GET", D)).body.dashboards).toEqual([]);
+  });
+
+  it("draws a dashboard's card again as it is now", async () => {
+    const made = (await call("POST", D, { name: "Revenue", clientToken: "c" }))
+      .body.dashboard;
+    const c = await card("Delete this dashboard", {
+      pageContext: { dashboardId: made.id },
+    });
+    await call("POST", `${D}/${made.id}:pin`, { pinned: true });
+    later(6 * 60_000);
+    const refreshed = await call(
+      "POST",
+      `${A}/actions/${c.action.id}:refresh`,
+      {},
+    );
+    expect(JSON.parse(refreshed.body.action.displayJson)).toEqual({
+      dashboard: { id: made.id, name: "Revenue", pinned: true },
+    });
+  });
+
+  it("prepares no publishing without public links", async () => {
+    Object.assign(config, { dashboardsPublic: false });
+    const made = await call("POST", D, { name: "Revenue", clientToken: "c" });
+    const c = await card("Publish this", {
+      pageContext: { dashboardId: made.body.dashboard.id },
+    });
+    expect(c.action).toBeUndefined();
+    expect(c.said).toContain("Public links aren't available here");
+  });
+
+  it("prepares nothing for a member", async () => {
+    await loaded("dash");
+    const c = await card(BUILD, {}, "usr_alan");
+    expect(c.action).toBeUndefined();
+    expect(c.said).toContain(
+      "Only an owner or admin of this workspace can make a dashboard",
+    );
+  });
+
+  it("refuses a page naming a dashboard by anything but an id", async () => {
+    const r = await send("Pin it", { pageContext: { dashboardId: "a/b" } });
+    expect(r.status).toBe(400);
+  });
+});
