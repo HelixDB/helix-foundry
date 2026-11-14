@@ -83,7 +83,7 @@ test("creates an ontology on an existing database and explores what it holds", a
   await orders.check();
   // Back keeps what was chosen; the browser's Back and Forward too. Back is
   // a history entry of its own, so the browser's Back returns from it.
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(page.getByLabel("Ontology name")).toHaveValue("Orders");
   await page.goBack();
@@ -298,7 +298,7 @@ test("gives a new workspace only the wizard until its first ontology", async ({
     /^1Connect your data or upload documents.*2Goal.*3Review and create/s,
   );
   await expect(page.getByLabel("Ontology name")).toHaveCount(0);
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(wizard).toBeVisible();
 
   // Its first ontology, named from what it drafts from, opens every page,
