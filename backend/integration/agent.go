@@ -243,6 +243,45 @@ func (s *Service) ExecuteForPerson(ctx context.Context, identity *Identity, inpu
 	}
 }
 
+// toolRunApproved is how the audit names an action an automation's action
+// step runs.
+const toolRunApproved = "helix_foundry_automation_action"
+
+// RunApproved runs an action its person approved beforehand, an
+// automation's action step, as identity (that person, now, confirming as the
+// caller): validated and authorized again, a confirmation prepared and
+// consumed at once, and the backend called once, under Run's audit. It ends
+// as ExecuteForPerson does; unknown is never run again.
+func (s *Service) RunApproved(ctx context.Context, identity *Identity, input FoundryOperationInput) Executed {
+	var out FoundryOperationOutput
+	var consumed bool
+	var raw error
+	_, _, _ = s.Run(ctx, toolRunApproved, func(ctx context.Context, call *Call) (any, int, error) {
+		prepared, _, err := s.PrepareFoundryOperation(ctx, identity, call, input)
+		if err != nil {
+			raw = err
+			return nil, 0, err
+		}
+		var count int
+		out, count, consumed, raw = s.executeFoundry(ctx, identity, call, ExecuteFoundryInput{
+			Operation: input.Operation, Target: input.Target, Payload: input.Payload,
+			ConfirmationID: prepared.ConfirmationID, ConfirmationToken: prepared.ConfirmationToken,
+		})
+		if raw != nil {
+			return nil, 0, raw
+		}
+		return out, count, nil
+	})
+	switch {
+	case raw == nil:
+		return ExecutedOK{Result: out}
+	case consumed && unsureOfOutcome(raw):
+		return ExecutedUnknown{Err: ToolError(raw)}
+	default:
+		return ExecutedFailed{Err: ToolError(raw)}
+	}
+}
+
 // unsureOfOutcome reports a failure that doesn't say the call made no
 // change: no answer, a timeout, or an internal error the backend may return
 // after its write committed.

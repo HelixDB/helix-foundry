@@ -43,6 +43,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/store"
 	foundryagentworker "github.com/helixdb/helix-foundry/backend/workers/foundry-agent-worker"
 	foundryaskworker "github.com/helixdb/helix-foundry/backend/workers/foundry-ask-worker"
+	foundryautomationworker "github.com/helixdb/helix-foundry/backend/workers/foundry-automation-worker"
 	foundrydocumentworker "github.com/helixdb/helix-foundry/backend/workers/foundry-document-worker"
 	foundrygraphworker "github.com/helixdb/helix-foundry/backend/workers/foundry-graph-worker"
 	foundryhealworker "github.com/helixdb/helix-foundry/backend/workers/foundry-heal-worker"
@@ -81,6 +82,10 @@ var healWorker = foundryhealworker.New
 // agentWorker runs the Assistant's turns, with foundry.agent.enabled (on in
 // the image's foundry.yaml).
 var agentWorker = foundryagentworker.New
+
+// automationWorker fires the owner's automations and walks their runs, with
+// foundry.automations.enabled (on in the image's foundry.yaml).
+var automationWorker = foundryautomationworker.New
 
 // run starts the install and blocks until ctx is cancelled, SIGINT or
 // SIGTERM arrives, or a part exits, returning the first error.
@@ -358,6 +363,9 @@ func buildWorkers(cfg *foundryconfig.Config, logger *slog.Logger, probes *probes
 	}
 	if cfg.Foundry.Agent.Enabled {
 		constructors = append(constructors, agentWorker)
+	}
+	if cfg.Foundry.Automations.Enabled {
+		constructors = append(constructors, automationWorker)
 	}
 	for _, constructor := range constructors {
 		if err := c.Provide(constructor, dig.Group("components"), dig.As(new(component))); err != nil {

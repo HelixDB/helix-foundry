@@ -223,3 +223,25 @@ func TestPreparedForPersonSaysHowAnApprovedActionRan(t *testing.T) {
 	assert.Equal(t, "2026-11-14T09:00:00Z", waiting.ExpiresAt)
 	assert.Empty(t, waiting.Outcome)
 }
+
+func TestRunApprovedPreparesAndRunsOnce(t *testing.T) {
+	actions := &loadActions{}
+	s := (&Service{Confirmations: &memConfirmations{}, Actions: actions}).ForAgent()
+	done := s.RunApproved(context.Background(), reader(), loadInput)
+	ok, isOK := done.(ExecutedOK)
+	require.True(t, isOK, "%#v", done)
+	assert.Equal(t, "create_load", ok.Result.Operation)
+	assert.Equal(t, 1, actions.calls)
+
+	refused := s.RunApproved(context.Background(), reader(), FoundryOperationInput{Operation: "create_load", Target: "ontology:ws1/ont1", Payload: map[string]any{}})
+	assert.IsType(t, ExecutedFailed{}, refused, "a payload prepare refuses runs nothing")
+	assert.Equal(t, 1, actions.calls)
+
+	assert.IsType(t, ExecutedFailed{}, s.RunApproved(context.Background(), personIdentity(&memSink{}), loadInput),
+		"an identity whose person confirms never runs it")
+
+	actions.err = status.Error(codes.Unavailable, "the backend went away")
+	assert.IsType(t, ExecutedUnknown{}, s.RunApproved(context.Background(), reader(), loadInput), "its answer lost after the confirmation was spent")
+	actions.err = status.Error(codes.FailedPrecondition, "the version can't be loaded")
+	assert.IsType(t, ExecutedFailed{}, s.RunApproved(context.Background(), reader(), loadInput))
+}

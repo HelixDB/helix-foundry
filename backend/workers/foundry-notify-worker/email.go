@@ -1,8 +1,10 @@
 package foundrynotifyworker
 
 import (
+	"fmt"
 	"html/template"
 	"net/url"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -46,6 +48,16 @@ func (s site) overview(workspaceID, ontologyID string) string {
 // (?via=email), which the page welcomes back.
 func (s site) home() string {
 	return string(s) + "/?via=email"
+}
+
+// automation is an automation's page.
+func (s site) automation(workspaceID, automationID string) string {
+	return string(s) + "/automations/" + url.PathEscape(automationID) + "?workspace=" + url.QueryEscape(workspaceID)
+}
+
+// automationRun is a run's page, its steps on the automation's canvas.
+func (s site) automationRun(workspaceID, automationID, runID string) string {
+	return string(s) + "/automations/" + url.PathEscape(automationID) + "/runs/" + url.PathEscape(runID) + "?workspace=" + url.QueryEscape(workspaceID)
 }
 
 // connect is where a new ontology starts from the workspace's own data.
@@ -229,4 +241,75 @@ func reminderEmail(n int, last bool, home string) message {
 	}
 	m.paragraphs = append(m.paragraphs, paragraph{Text: "If you get stuck, reply to this email and I'll help."})
 	return m
+}
+
+// links finds what reads as a link in text a model wrote: an automation's
+// Assistant step's summary, which may quote what it read.
+var links = regexp.MustCompile(`(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+`)
+
+// unlinked is a model's text for an email: on one line per paragraph, with
+// every link taken out, so an email never carries a link that text a
+// workspace's documents planted in an answer put there.
+func unlinked(text string) string {
+	return strings.TrimSpace(links.ReplaceAllString(text, "[link removed]"))
+}
+
+// automationNoticeName is how the emails call an automation: its name on one
+// line, or "your automation" without one.
+func automationNoticeName(name string) string {
+	mid, _ := ontologyName(name)
+	if mid == "your ontology" {
+		return "your automation"
+	}
+	return mid
+}
+
+// automationRunEmail is an automation's notify step's email: its message, what
+// each Assistant step before it said, and the actions they left for the
+// owner, then the run's page.
+func automationRunEmail(name, note string, said []string, pending int, run string) message {
+	m := message{subject: name + ": " + firstLine(note, "what it did")}
+	if note = strings.TrimSpace(note); note != "" {
+		m.paragraphs = append(m.paragraphs, paragraph{Text: note})
+	}
+	for _, s := range said {
+		if s = unlinked(s); s != "" {
+			m.paragraphs = append(m.paragraphs, paragraph{Text: "The Assistant: " + s})
+		}
+	}
+	switch {
+	case pending == 1:
+		m.paragraphs = append(m.paragraphs, paragraph{Text: "One action waits for you: open the run to see it and run it, or not."})
+	case pending > 1:
+		m.paragraphs = append(m.paragraphs, paragraph{Text: fmt.Sprintf("%d actions wait for you: open the run to see them and run them, or not.", pending)})
+	}
+	m.paragraphs = append(m.paragraphs, paragraph{Text: "See every step of the run:", Link: run})
+	return m
+}
+
+// automationPausedEmail tells an automation's owner it paused itself after
+// failures failed runs in a row, the last saying why.
+func automationPausedEmail(name string, failures int, why, page string) message {
+	first := fmt.Sprintf("Your automation %s failed %d times in a row, so Foundry paused it.", name, failures)
+	if why = sentence(why); why != "" {
+		first += " Its last run said: " + why
+	}
+	return message{subject: name + " paused after failing", paragraphs: []paragraph{
+		{Text: first},
+		{Text: "Fix what it needs, then resume it from its page:", Link: page},
+	}}
+}
+
+// firstLine is text's first line, cut to a subject's length, or fallback for
+// none.
+func firstLine(text, fallback string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return fallback
+	}
+	if utf8.RuneCountInString(line) > 80 {
+		return string([]rune(line)[:79]) + "…"
+	}
+	return line
 }

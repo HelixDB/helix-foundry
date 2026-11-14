@@ -16,6 +16,7 @@ package foundrynotifyworker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 
 	"go.uber.org/dig"
 
+	"github.com/helixdb/helix-foundry/backend/automation"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
@@ -80,6 +82,7 @@ type outbox interface {
 	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
 	GetFoundryGraphJobByClientToken(ctx context.Context, ontologyID, clientToken string) (*model.FoundryGraphJob, error)
 	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
+	GetFoundryAutomationNotice(ctx context.Context, n *model.FoundryNotification) (*model.FoundryAutomationNotice, error)
 	ClaimFoundryReminder(ctx context.Context, token string, lease time.Duration) (*model.FoundryReminder, error)
 	FinishFoundryReminder(ctx context.Context, id, token string, outcome model.FoundryReminderOutcome) error
 }
@@ -349,6 +352,8 @@ func (t *Task) compose(ctx context.Context, n *model.FoundryNotification) (_ mes
 		return t.ontologyReady(ctx, n)
 	case model.FoundryNotifySampleFollowUp:
 		return sampleFollowUp(t.site.connect(n.WorkspaceID)), "", nil
+	case model.FoundryNotifyAutomationRun, model.FoundryNotifyAutomationPaused:
+		return t.automationNotice(ctx, n)
 	}
 	return message{}, fmt.Sprintf("Foundry sends no email of kind %q", n.Kind), nil
 }
@@ -416,4 +421,56 @@ func (t *Task) ontologyReady(ctx context.Context, n *model.FoundryNotification) 
 		return loadFailed(name, start, failure, overview), "", nil
 	}
 	return message{}, fmt.Sprintf("the first draft's load is %s", load.Status), nil
+}
+
+// automationNotice is an automation's email: a notify step's, telling what
+// its run did, or the one that says it paused itself. An automation, run or
+// step gone has nothing left to tell; nor has one its owner no longer owns.
+func (t *Task) automationNotice(ctx context.Context, n *model.FoundryNotification) (_ message, skip string, _ error) {
+	notice, err := t.box.GetFoundryAutomationNotice(ctx, n)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return message{}, "the automation is gone", nil
+	case err != nil:
+		return message{}, "", fmt.Errorf("read the automation: %w", err)
+	case notice.Automation.OwnerUserID != n.UserID:
+		return message{}, "the automation's owner changed", nil
+	}
+	a := notice.Automation
+	name := automationNoticeName(a.Name)
+	if n.Kind == model.FoundryNotifyAutomationPaused {
+		why := ""
+		if a.LastRun != nil && a.LastRun.Error != nil {
+			why = *a.LastRun.Error
+		}
+		return automationPausedEmail(name, a.Failures, why, t.site.automation(a.WorkspaceID, a.ID)), "", nil
+	}
+	spec, err := automation.ParseSpec(notice.Run.Spec)
+	if err != nil {
+		return message{}, "the run's spec can't be read", nil
+	}
+	var note string
+	if node, ok := spec.Node(notice.Node.NodeID); ok {
+		if notify, ok := node.Config.(automation.NotifyNode); ok {
+			note = notify.Message
+		}
+	}
+	// What the Assistant steps before it said, in the order the spec runs them.
+	ancestors := spec.Ancestors(notice.Node.NodeID)
+	var said []string
+	pending := 0
+	for _, id := range ancestors {
+		for _, earlier := range notice.Earlier {
+			node, _ := spec.Node(id)
+			if earlier.NodeID != id || earlier.Status != model.FoundryAutomationNodeSucceeded || node.Kind() != automation.KindAssistant {
+				continue
+			}
+			var out automation.Output
+			if json.Unmarshal(earlier.Output, &out) == nil {
+				said = append(said, out.Summary)
+				pending += out.Pending
+			}
+		}
+	}
+	return automationRunEmail(name, note, said, pending, t.site.automationRun(a.WorkspaceID, a.ID, notice.Run.ID)), "", nil
 }
