@@ -6,6 +6,7 @@ import { aiRoutes } from "./ai";
 import { authRoutes } from "./auth";
 import { billingRoutes } from "./billing";
 import { dataRoutes } from "./data";
+import { dashboardRoutes } from "./dashboards";
 import { dataLayoutRoutes } from "./data-layout";
 import { databaseRoutes } from "./databases";
 import { documentRoutes } from "./documents";
@@ -46,6 +47,7 @@ export const routes: MockRoute[] = [
   ...aiRoutes,
   ...questionRoutes,
   ...whileOn([...agentRoutes, ...agentHostRoutes]),
+  ...dashboardRoutes,
   ...databaseRoutes,
   ...accessRoutes,
   ...directoryRoutes,

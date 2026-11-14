@@ -1365,6 +1365,24 @@ function question(
 const isQuestion = (x: StoredQuestion | MockReply): x is StoredQuestion =>
   "threadId" in x;
 
+/** A question of the workspace's ontology as it is now (./dashboards.ts). */
+export function storedQuestion(
+  workspaceId: string,
+  ontologyId: string,
+  id: string,
+) {
+  advanceAll(workspaceId);
+  const q = state.questions.find(
+    (x) =>
+      x.id === id &&
+      x.ontologyId === ontologyId &&
+      x.workspaceId === workspaceId,
+  );
+  return (
+    q && { question: q.question, loadId: q.loadId, resultJson: q.resultJson }
+  );
+}
+
 /**
  * The focus a question carries as canonical JSON, or undefined unless it is
  * exactly the engine's EntityRef with both set, as the WFE checks it.

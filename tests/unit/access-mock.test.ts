@@ -196,6 +196,9 @@ describe("mock source grants", () => {
       `GET ${F}/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}`,
       `POST ${F}/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}:finish`,
       `GET ${F}/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}/accesses`,
+      // The pinned dashboards, whose tiles it reads through its grants.
+      `GET ${F}/dashboards`,
+      `GET ${F}/dashboards/{id}`,
     ]);
     const foundry = routes.filter((r) =>
       /^\/v1\/(foundry|workspaces\/\{workspaceId\}\/foundry)/.test(r.path),

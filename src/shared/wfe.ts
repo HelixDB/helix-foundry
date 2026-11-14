@@ -2563,7 +2563,12 @@ export type AgentActionStatus =
   | "dismissed";
 
 /** v1FoundryAgentPageContext: what the person was looking at, ids only. */
-export type AgentPageContext = { ontologyId?: string; loadId?: string };
+export type AgentPageContext = {
+  ontologyId?: string;
+  loadId?: string;
+  // The dashboard open, if any.
+  dashboardId?: string;
+};
 
 /**
  * Who runs a thread's turns: Foundry's own worker on the workspace's model
@@ -3027,6 +3032,183 @@ export type AgentEvent =
       reason: AgentStopReason;
       error?: string;
     };
+
+// ---------------------------------------------------------------- Dashboards
+// Routes under /v1/workspaces/{workspaceId}/foundry/dashboards...
+// (backend/api/dashboards.go, backend/dashboard): tiles of typed queries over
+// ontologies' loads, shown as tables and charts. A dashboard holds queries,
+// never data: the viewer reads each tile through the tile's load's :read
+// (POST .../ontologies/{ontologyId}/loads/{loadId}:read, a tile's
+// `{"query": …}` as one read; the tiles of one load in one call), so it shows
+// no one more than they may read. Every member lists and reads every
+// dashboard; a grantee of source grants only the pinned ones. A member
+// creates dashboards and edits and deletes their own while unpinned; owners
+// and admins edit and delete any, pin them in every member's sidebar, and,
+// hosted only, publish a snapshot at a public link (canPublish). An edit and
+// a publish name the revision read (int64, as a string): another is
+// FAILED_PRECONDITION FOUNDRY_DASHBOARD_CHANGED. Refusals carry an ErrorInfo
+// reason (DASHBOARD_REFUSALS); a change the caller may not make is
+// PERMISSION_DENIED.
+
+/** The ErrorInfo reasons of the dashboards' FAILED_PRECONDITION refusals. */
+export const DASHBOARD_REFUSALS = [
+  // An edit or publish of a revision another write has passed: read it again.
+  "FOUNDRY_DASHBOARD_CHANGED",
+  // The workspace's 200 dashboards, or 20 pinned ones.
+  "FOUNDRY_DASHBOARD_LIMIT",
+  // A tile reads the current load of an ontology that has none.
+  "FOUNDRY_DASHBOARD_NOT_LOADED",
+  // Publishing: a tile that can't be read (the message names it and why),
+  // a dashboard with no tile, a snapshot past 512 KiB a tile or 2 MiB in all,
+  // and a stamp or build without public links.
+  "FOUNDRY_DASHBOARD_TILE_FAILED",
+  "FOUNDRY_DASHBOARD_EMPTY",
+  "FOUNDRY_DASHBOARD_TOO_LARGE",
+  "FOUNDRY_DASHBOARDS_PUBLIC_OFF",
+] as const;
+export type DashboardRefusal = (typeof DASHBOARD_REFUSALS)[number];
+
+/** A tile's load: whichever is current when it is read, or one pinned. */
+export type DashboardTileLoad =
+  | { kind: "current" }
+  | { kind: "pinned"; load_id: string };
+
+/**
+ * One tile of a spec (backend/dashboard): a typed query of one ontology's
+ * load and how to show it. The spec is the backend's JSON, in snake_case.
+ * id: 1 to 32 of a-z, 0-9, - and _, starting with a letter or digit, unique;
+ * title: 1 to 80 characters, no control characters; query: at most 3 KiB,
+ * the read contract's Query (at most 200 rows, 100 groups); visual.kind left
+ * out: as the output's shape suits, as an Analyst visual's.
+ */
+export type DashboardTile = {
+  id: string;
+  title: string;
+  ontology_id: string;
+  load: DashboardTileLoad;
+  query: OntologyQuery;
+  visual: { kind?: VisualKind };
+};
+
+/** A dashboard's spec: at most 20 tiles, each in exactly one row of 1 to 3. */
+export type DashboardSpec = {
+  v: 1;
+  tiles: DashboardTile[];
+  layout: { rows: string[][] };
+};
+
+/** v1FoundryDashboardShare: a dashboard's public snapshot. */
+export type FoundryDashboardShare = {
+  // The link's token, for owners and admins only: the page is /share/<token>.
+  token?: string;
+  // int64: the revision it shows, older than the dashboard's after an edit.
+  specRevision?: string;
+  publishedAt?: string | null;
+  firstPublishedAt?: string | null;
+  publishedByUserId?: string;
+};
+
+/** v1FoundryDashboard */
+export type FoundryDashboard = {
+  id: string;
+  name?: string;
+  description?: string;
+  // DashboardSpec as JSON; empty in a list.
+  specJson?: string;
+  // int64, from 1: what an edit or a publish names.
+  revision?: string;
+  createdByUserId?: string;
+  updatedByUserId?: string;
+  pinned?: boolean;
+  pinnedAt?: string | null;
+  pinnedByUserId?: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  share?: FoundryDashboardShare | null;
+  // What the caller may do: change its name, description and tiles and
+  // delete it; pin or unpin it; publish and unpublish it.
+  canEdit?: boolean;
+  canPin?: boolean;
+  canPublish?: boolean;
+};
+
+/** GET .../dashboards: every one (at most 200), pinned first, without specs. */
+export type ListDashboardsResponse = {
+  dashboards?: FoundryDashboard[];
+  canCreate?: boolean;
+};
+/** v1FoundryDashboardResponse: every dashboard route but list, delete and preview. */
+export type DashboardResponse = { dashboard: FoundryDashboard };
+/** POST .../dashboards: unpinned; the same clientToken returns the one made. */
+export type CreateDashboardRequest = {
+  // 1 to 120 characters.
+  name: string;
+  // At most 1,000 characters.
+  description?: string;
+  // DashboardSpec as JSON; empty for no tiles yet.
+  specJson?: string;
+  // 1 to 64 characters.
+  clientToken: string;
+};
+/** PATCH .../dashboards/{id}: each field set is changed, at least one. */
+export type UpdateDashboardRequest = {
+  expectedRevision: string;
+  name?: string;
+  description?: string;
+  specJson?: string;
+};
+/** POST .../dashboards/{id}:pin, owners and admins. */
+export type PinDashboardRequest = { pinned: boolean };
+/**
+ * POST .../dashboards/{id}:add-question-visual: an answered question's query
+ * result (evidenceId, such as e2) as a tile of its own row, last, with its
+ * visual's kind and title (else the question's words). pinLoad reads the
+ * question's load rather than the current one.
+ */
+export type AddDashboardQuestionVisualRequest = {
+  expectedRevision: string;
+  ontologyId: string;
+  questionId: string;
+  evidenceId: string;
+  pinLoad?: boolean;
+};
+/** POST .../dashboards:preview-tile: a tile checked and read once, as the caller. */
+export type PreviewDashboardTileRequest = { tileJson: string };
+export type PreviewDashboardTileResponse = {
+  // The tile as a spec keeps it.
+  tileJson?: string;
+  // The load it read: the current one, or the one it pins.
+  loadId?: string;
+  // {"ok": QueryOutput} or {"error": why it has none}, as :read gives it.
+  outcomeJson?: string;
+  asOf?: string;
+};
+/** POST .../dashboards/{id}:publish, owners and admins, hosted only. */
+export type PublishDashboardRequest = { expectedRevision: string };
+
+/**
+ * A published dashboard as its public link shows it, from the
+ * foundry-events door's GET /v1/shared-dashboards/{token} (NEXT_PUBLIC_HELIX_EVENTS_URL),
+ * with no session: no workspace's, ontology's, load's or person's id. Each
+ * tile's output is its query's answer as :read gave its publisher, strings
+ * cut to 1,000 characters, a row's entities as {type, name} only (no id),
+ * and each row's edges empty.
+ */
+export type DashboardSnapshot = {
+  v: 1;
+  name: string;
+  description: string;
+  published_at: string;
+  layout: { rows: string[][] };
+  tiles: {
+    id: string;
+    title: string;
+    visual: { kind?: VisualKind };
+    query: OntologyQuery;
+    as_of: string;
+    output: QueryOutput;
+  }[];
+};
 
 // ---------------------------------------------------------------- Helix databases
 // The Helix control plane's own routes, as helix-website calls them:

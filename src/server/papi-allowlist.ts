@@ -27,6 +27,7 @@ export type PapiArea =
   | "databases"
   | "explore"
   | "agent"
+  | "dashboards"
   | "access";
 export type PapiRoute = {
   area: PapiArea;
@@ -521,6 +522,62 @@ export const papiRoutes = [
     area: "agent",
     method: "POST",
     path: "/v1/workspaces/{workspaceId}/foundry/agent/hosts/{id}:revoke",
+  },
+
+  // Dashboards: tiles of typed queries over ontologies' loads, each read by
+  // the viewer through a load's :read. Listed and read by any member; made,
+  // edited, deleted, pinned, given an Analyst answer's visual and a tile
+  // tried; and, hosted only, published at a public link and unpublished. The
+  // public link's snapshot is served by the foundry-events door, never here.
+  {
+    area: "dashboards",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards",
+  },
+  {
+    area: "dashboards",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards",
+  },
+  {
+    area: "dashboards",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}",
+  },
+  {
+    area: "dashboards",
+    method: "PATCH",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}",
+  },
+  {
+    area: "dashboards",
+    method: "DELETE",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}",
+  },
+  {
+    area: "dashboards",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:pin",
+  },
+  {
+    area: "dashboards",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:add-question-visual",
+  },
+  {
+    area: "dashboards",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards:preview-tile",
+  },
+  {
+    area: "dashboards",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:publish",
+  },
+  {
+    area: "dashboards",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:unpublish",
   },
 
   // Ontology: decisions, applied from the next load.

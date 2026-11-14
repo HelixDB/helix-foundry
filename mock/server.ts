@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import { compileTemplate, matchTemplate } from "../src/shared/route-template";
 import { fail, type MockReply, type Principal } from "./http";
 import { handleReminders, mockReminders } from "./reminders";
+import { handleSharedDashboard } from "./routes/dashboards";
 import { routes } from "./routes";
 import { handleDirectoryPage } from "./routes/access";
 import { pairHelper, startHelper } from "./routes/agent-hosts";
@@ -204,6 +205,8 @@ const server = createServer(async (req, res) => {
     if (handleDirectoryPage(req, res, url)) return;
     // Foundry's door's reminder routes (ingest.helix-db.com), not the WFE's.
     if (handleReminders(req, res, url, raw)) return;
+    // And its dashboards' public snapshots.
+    if (handleSharedDashboard(req, res, url)) return;
     const reply = url.pathname.startsWith("/v1/")
       ? await wfe(req, url, raw)
       : fail("NOT_FOUND", "Not Found");
