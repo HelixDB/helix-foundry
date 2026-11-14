@@ -177,6 +177,39 @@
         ]
       }
     },
+    "/v1/feedback": {
+      "post": {
+        "operationId": "WfeService_SendFeedback",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SendFeedbackResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "Feedback the signed-in user sends Helix's team from a website, stored under\ntheir account with the feedback agents send through the MCP. The message is\nuntrusted text, stored and relayed as plain text only. Each user's feedback,\nfrom here and the MCP together, is capped per hour: past the cap it is\nRESOURCE_EXHAUSTED.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1SendFeedbackRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
     "/v1/projects": {
       "get": {
         "operationId": "WfeService_ListProjects",
@@ -1276,6 +1309,19 @@
         }
       }
     },
+    "v1FeedbackCategory": {
+      "type": "string",
+      "enum": [
+        "FEEDBACK_CATEGORY_UNSPECIFIED",
+        "FEEDBACK_CATEGORY_BUG",
+        "FEEDBACK_CATEGORY_MISSING_CAPABILITY",
+        "FEEDBACK_CATEGORY_CONFUSING_RESULT",
+        "FEEDBACK_CATEGORY_OTHER",
+        "FEEDBACK_CATEGORY_CONNECTOR_REQUEST"
+      ],
+      "default": "FEEDBACK_CATEGORY_UNSPECIFIED",
+      "description": "FeedbackCategory names what feedback is about.\n\n - FEEDBACK_CATEGORY_BUG: Something doesn't work as it should.\n - FEEDBACK_CATEGORY_MISSING_CAPABILITY: Something the person needed isn't there.\n - FEEDBACK_CATEGORY_CONFUSING_RESULT: A result, answer or page didn't make sense.\n - FEEDBACK_CATEGORY_CONNECTOR_REQUEST: A data source the person wants a connector for, which the message names."
+    },
     "v1LegacyReportServiceCredentialOwner": {
       "type": "object",
       "properties": {
@@ -1376,6 +1422,36 @@
         "RESOURCE_STATUS_FAILED"
       ],
       "default": "RESOURCE_STATUS_UNSPECIFIED"
+    },
+    "v1SendFeedbackRequest": {
+      "type": "object",
+      "properties": {
+        "category": {
+          "$ref": "#/definitions/v1FeedbackCategory"
+        },
+        "message": {
+          "type": "string",
+          "description": "1 to 4096 bytes of UTF-8, not blank."
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "The workspace it is about, which the caller must belong to (else\nNOT_FOUND); empty for none."
+        },
+        "page": {
+          "type": "string",
+          "description": "The website path the person was on, such as \"/ontology/abc\": at most 255\nbytes, starting with \"/\", without control characters; empty for none."
+        }
+      },
+      "description": "Feedback the signed-in user sends Helix's team from a website, stored under\ntheir account with the feedback agents send through the MCP. The message is\nuntrusted text, stored and relayed as plain text only. Each user's feedback,\nfrom here and the MCP together, is capped per hour: past the cap it is\nRESOURCE_EXHAUSTED."
+    },
+    "v1SendFeedbackResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The stored feedback's id."
+        }
+      }
     },
     "v1ServiceCredential": {
       "type": "object",

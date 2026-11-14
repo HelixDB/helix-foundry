@@ -48,28 +48,29 @@ export const feedbackRoutes: MockRoute[] = [
         page = typeof req.page === "string" ? req.page : "",
         workspaceId =
           typeof req.workspaceId === "string" ? req.workspaceId : "";
+      // In the WFE's order: the category and workspace, then the backend's
+      // message and page.
       if (!CATEGORIES.includes(req.category as FeedbackCategory))
         return fail(
           "INVALID_ARGUMENT",
           "category is bug, missing_capability, confusing_result, other or connector_request",
         );
+      if (workspaceId && isReply(membership(workspaceId, user.id)))
+        return fail("NOT_FOUND", "workspace not found");
       if (!message.trim() || Buffer.byteLength(message) > 4096)
         return fail("INVALID_ARGUMENT", "message is 1 to 4096 bytes of UTF-8");
       if (
         page &&
         (!page.startsWith("/") ||
           Buffer.byteLength(page) > 255 ||
+          // Go's unicode.IsControl: C0, DEL and C1.
           // eslint-disable-next-line no-control-regex
-          /[\u0000-\u001f\u007f]/.test(page))
+          /[\u0000-\u001f\u007f-\u009f]/.test(page))
       )
         return fail(
           "INVALID_ARGUMENT",
-          'page is a path of at most 255 bytes that starts with "/"',
+          "page is a path starting with / of at most 255 bytes, without control characters",
         );
-      if (workspaceId) {
-        const m = membership(workspaceId, user.id);
-        if (isReply(m)) return fail("NOT_FOUND", "workspace not found");
-      }
       const since = Date.now() - HOUR_MS;
       if (
         received.filter(

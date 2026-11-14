@@ -40,7 +40,7 @@ describe("feedback's payload", () => {
       "/data/connections/conn_1",
     );
     expect(feedbackPage("data")).toBe("/data");
-    expect(feedbackPage("/a\u0000b\nc\u007f")).toBe("/abc");
+    expect(feedbackPage("/a\u0000b\nc\u007f\u0085d")).toBe("/abcd");
     const long = feedbackPage("/" + "é".repeat(200));
     expect(feedbackBytes(long)).toBeLessThanOrEqual(255);
     expect(long).toBe("/" + "é".repeat(127));

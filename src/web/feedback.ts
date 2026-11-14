@@ -69,8 +69,9 @@ export const sendable = (text: string) =>
  * feedbackPage("data") // "/data"
  */
 export function feedbackPage(pathname: string): string {
+  // Control characters as the WFE counts them (C0, DEL and C1).
   // eslint-disable-next-line no-control-regex
-  let page = pathname.replace(/[\u0000-\u001f\u007f]/g, "");
+  let page = pathname.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
   if (!page.startsWith("/")) page = "/" + page;
   while (feedbackBytes(page) > MAX_PAGE_BYTES)
     page = Array.from(page).slice(0, -1).join("");
