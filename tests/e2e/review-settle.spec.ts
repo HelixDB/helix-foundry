@@ -160,7 +160,7 @@ test("carries a name's choice to other documents, and says what came of each", a
     const row = page.locator("li.dc-review").filter({ hasText: quote });
     await choose(row.getByLabel("Link this name to"), record);
     await expect(row).toContainText(
-      `Links this name to ${record} here and in every other document that names it, from the next load.`,
+      `Links this name to ${record} here and in other documents where nothing else links that name, from the next load.`,
     );
     await row.getByRole("button", { name: "Settle review" }).click();
     await expect(

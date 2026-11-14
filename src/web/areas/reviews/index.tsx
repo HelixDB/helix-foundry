@@ -804,8 +804,8 @@ function NameItem({
           `${plural(held, "held claim")} ${held > 1 ? "wait" : "waits"} on it, each approved below. `}
         {!card.blocked && !held && "No claim waits on it. "}A name’s decision
         applies from the next load, not this one: that load writes what it
-        unblocks. Linked to a record, the name is linked in every document that
-        names it; Not in data is for this document only.
+        unblocks. Linked to a record, the name is linked in other documents too,
+        where nothing else links it; Not in data is for this document only.
       </p>
       <SettleReview
         review={card.review}

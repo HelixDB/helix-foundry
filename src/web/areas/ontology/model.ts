@@ -1428,7 +1428,7 @@ export function routeItemWords(item: string): string {
  *
  * @example
  * leftOutBecauseText({ kind: "not_assessed" }, () => ""); // { label: "Not checked yet", detail: "The agent ran out of budget before it looked at this. Generating again can pick it up." }
- * leftOutBecauseText({ kind: "user_asked", said: "skip the memos" }, () => "").detail; // "You asked to leave it out: “skip the memos”."
+ * leftOutBecauseText({ kind: "user_asked", said: "skip the memos" }, () => "").detail; // "Someone asked to leave it out: “skip the memos”."
  * leftOutBecauseText({ kind: "documents_state", route: "notes", item: "Person.status" }, () => "Board minutes").detail; // "Its documents state Person’s status, which the route reading Board minutes already reads from other documents."
  */
 export function leftOutBecauseText(
@@ -1444,8 +1444,8 @@ export function leftOutBecauseText(
       };
     case "user_asked":
       return {
-        label: "You asked",
-        detail: `You asked to leave it out: “${because.said}”.`,
+        label: "Asked to leave out",
+        detail: `Someone asked to leave it out: “${because.said}”.`,
       };
     case "documents_state": {
       const reads = route(because.route);

@@ -1741,8 +1741,8 @@ describe("leftOutBecause", () => {
           "The agent ran out of budget before it looked at this. Generating again can pick it up.",
       },
       {
-        label: "You asked",
-        detail: "You asked to leave it out: “skip the memos”.",
+        label: "Asked to leave out",
+        detail: "Someone asked to leave it out: “skip the memos”.",
       },
       {
         label: "Already read elsewhere",

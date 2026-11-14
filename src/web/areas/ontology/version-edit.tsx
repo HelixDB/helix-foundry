@@ -350,6 +350,16 @@ export function AgentEdit({
                     value: id,
                     label: `Document route · found in sample documents${names.length ? ` of ${names.join(", ")}` : ""}`,
                   };
+                })
+                // A set probed again after its route was approved has a
+                // second route (`probe_<set>_2`): numbered, not said alike.
+                .map((o, i, all) => {
+                  const before = all
+                    .slice(0, i)
+                    .filter((x) => x.label === o.label).length;
+                  return before
+                    ? { ...o, label: `${o.label} (${before + 1})` }
+                    : o;
                 }),
               { value: "new:extraction", label: "Add document route" },
               { value: "new:rule", label: "Add rule" },

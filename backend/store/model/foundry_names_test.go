@@ -20,7 +20,8 @@ func ExampleMergeFoundryDocumentNames() {
 
 // A later event of a document the load holds adds to its names: an entry is
 // one decision of one name, and a later word on it replaces the earlier one,
-// except not_asked, which says only that nothing waited on it this time.
+// except not_asked, which says only that nothing waited on it this time, and
+// not_replayed, which says only that the send had no model work to settle it.
 func TestMergeFoundryDocumentNames(t *testing.T) {
 	a, b := "dec-a", "dec-b"
 	name := func(decision FoundryNameDecision, norm string, id *string, outcome FoundryNameOutcomeKind, reason FoundryNameRefusal) FoundryDocumentName {
@@ -37,6 +38,13 @@ func TestMergeFoundryDocumentNames(t *testing.T) {
 		"nothing held":        {nil, held, held},
 		"nothing said":        {held, nil, held},
 		"not_asked stays out": {held, []FoundryDocumentName{name(FoundryNameResolve, "acme", &a, FoundryNameNotAsked, "")}, held},
+		// A resend carries no model work: its not_replayed leaves the
+		// commit's word, a written name or a refusal, as it was.
+		"not_replayed stays out": {
+			[]FoundryDocumentName{held[0], name(FoundryNameAlias, "globex", &b, FoundryNameRefused, FoundryNameTwoRows)},
+			[]FoundryDocumentName{name(FoundryNameResolve, "acme", &a, FoundryNameRefused, FoundryNameNotReplayed),
+				name(FoundryNameAlias, "globex", &b, FoundryNameRefused, FoundryNameNotReplayed)},
+			[]FoundryDocumentName{held[0], name(FoundryNameAlias, "globex", &b, FoundryNameRefused, FoundryNameTwoRows)}},
 		"a later word replaces in place": {held,
 			[]FoundryDocumentName{name(FoundryNameAlias, "helio", &b, FoundryNameWritten, "")},
 			[]FoundryDocumentName{held[0], name(FoundryNameAlias, "helio", &b, FoundryNameWritten, ""), held[2]}},

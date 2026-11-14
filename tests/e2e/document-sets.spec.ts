@@ -706,7 +706,7 @@ test("says a route was found in sample documents, and why a draft left things ou
   const left = page.getByRole("list", { name: "Left out" });
   await expect(left.getByRole("listitem")).toHaveText([
     "Not checked yet General (document set): the turn’s budget ran out first.The agent ran out of budget before it looked at this. Generating again can pick it up.",
-    "You asked Contract.renewal_terms: The goal leaves renewals out.You asked to leave it out: “Contracts, without renewals”.",
+    "Asked to leave out Contract.renewal_terms: The goal leaves renewals out.Someone asked to leave it out: “Contracts, without renewals”.",
     "Already read elsewhere Contract.term_months: Stated again in later amendments.Its documents state Contract’s term months, which the route reading General already reads from other documents.",
   ]);
   await expect(left).not.toContainText(

@@ -747,11 +747,14 @@ type FoundryDocumentName struct {
 // MergeFoundryDocumentNames is a document's names once a later event of it
 // in a load that holds it already (a resend, already_ingested) says more:
 // each entry is one decision of one name, keyed by its kind, type, name and
-// id; a later entry replaces the earlier one, but a later not_asked never
-// does, as it says only that nothing waited on the decision this time
-// (one written before reads not_asked when sent again); a new key is added
-// after the earlier ones. An event that commits the document replaces the
-// list instead.
+// id; a later entry replaces the earlier one, but a later not_asked or
+// not_replayed never does: not_asked says only that nothing waited on the
+// decision this time (one written before reads not_asked when sent again),
+// and not_replayed only that this send carried no model work to settle it
+// with (a resend sends no artifact), so the word the document's commit gave
+// (written, or a refusal such as two_rows) stands. A new key is added after
+// the earlier ones. An event that commits the document replaces the list
+// instead.
 func MergeFoundryDocumentNames(earlier, later []FoundryDocumentName) []FoundryDocumentName {
 	type key struct {
 		decision      FoundryNameDecision
@@ -776,7 +779,7 @@ func MergeFoundryDocumentNames(earlier, later []FoundryDocumentName) []FoundryDo
 		case !held:
 			at[k] = len(out)
 			out = append(out, n)
-		case n.Outcome != FoundryNameNotAsked:
+		case n.Outcome != FoundryNameNotAsked && (n.Outcome != FoundryNameRefused || n.Reason != FoundryNameNotReplayed):
 			out[i] = n
 		}
 	}
