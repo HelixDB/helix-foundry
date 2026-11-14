@@ -23,11 +23,11 @@ type anthropicModel struct {
 	model  string
 }
 
-// newAnthropic is model under key. The client reads nothing of the process's
-// environment: the key is the workspace's, or Helix's default, never a stray
-// ANTHROPIC_API_KEY. opts follow, for tests.
-func newAnthropic(key, model string, timeout time.Duration, opts ...option.RequestOption) *anthropicModel {
-	base := []option.RequestOption{option.WithoutEnvironmentDefaults(), option.WithAPIKey(key), option.WithMaxRetries(2)}
+// newAnthropic is model under key, called through client. The client reads
+// nothing of the process's environment: the key is the workspace's, or
+// Helix's default, never a stray ANTHROPIC_API_KEY. opts follow, for tests.
+func newAnthropic(key, model string, timeout time.Duration, client *http.Client, opts ...option.RequestOption) *anthropicModel {
+	base := []option.RequestOption{option.WithoutEnvironmentDefaults(), option.WithAPIKey(key), option.WithMaxRetries(2), option.WithHTTPClient(client)}
 	if timeout > 0 {
 		base = append(base, option.WithRequestTimeout(timeout))
 	}
@@ -57,9 +57,15 @@ func (m *anthropicModel) Stream(ctx context.Context, r Request) iter.Seq2[Chunk,
 			yield(nil, err)
 		}
 		for stream.Next() {
-			if err := message.Accumulate(stream.Current()); err != nil {
+			event := stream.Current()
+			if err := message.Accumulate(event); err != nil {
 				fail(&Error{Kind: ErrUnavailable, Err: err})
 				return
+			}
+			if event.Type == "content_block_delta" && event.Delta.Type == "text_delta" && event.Delta.Text != "" {
+				if !yield(TextDelta{Text: event.Delta.Text}, nil) {
+					return
+				}
 			}
 		}
 		if err := stream.Err(); err != nil {
@@ -183,19 +189,9 @@ func anthropicStop(reason anthropic.StopReason) StopReason {
 func anthropicError(err error) error {
 	var apiErr *anthropic.Error
 	if !errors.As(err, &apiErr) {
-		return &Error{Kind: ErrUnavailable, Err: err}
+		return transportError(err)
 	}
-	switch code := apiErr.StatusCode; {
-	case code < http.StatusBadRequest:
-		// An error event in a stream the API had accepted: overloaded, say.
-		return &Error{Kind: ErrUnavailable, Err: err}
-	case code == http.StatusUnauthorized || code == http.StatusForbidden:
-		return &Error{Kind: ErrAuth, Err: err}
-	case code == http.StatusTooManyRequests:
-		return &Error{Kind: ErrRateLimited, Err: err}
-	case code >= 500:
-		return &Error{Kind: ErrUnavailable, Err: err}
-	default:
-		return &Error{Kind: ErrInvalid, Err: err}
-	}
+	// An error event in a stream the API had accepted (overloaded, say) has
+	// no status of its own: statusError reads it as unavailable.
+	return statusError(apiErr.StatusCode, err)
 }

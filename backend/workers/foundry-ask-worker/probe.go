@@ -42,6 +42,10 @@ type prober struct {
 	deployment *ai.Deployment
 	cfg        config.AIProbe
 	owner      string
+	// checkTools checks a setting the agent passed on the Assistant's own
+	// wire (llm.CheckTools); nil while the Assistant is off, which leaves
+	// every setting unchecked.
+	checkTools func(context.Context, ai.Resolved) (ai.AssistantCheck, error)
 }
 
 // errCantRun is a probe that couldn't run; another attempt may.
@@ -52,7 +56,11 @@ var errCantRun = errors.New("the probe could not run")
 //  2. Open its key: the zero key for a kind that takes none.
 //  3. Check the sidecar speaks the vendored contract and calls the setting's
 //     kind, then probe every role's model, the key in the call's metadata.
-//  4. Record what it found: passed, or the first failed check's failure and
+//  4. Once the agent passed it, and while the Assistant is on, check its ask
+//     model calls a tool on the Assistant's own wire: what it found joins
+//     the report (ai.AssistantCheck), which the Assistant's turns read, and
+//     never fails the setting, which the agent's work runs on regardless.
+//  5. Record what it found: passed, or the first failed check's failure and
 //     detail, with every check's report. A passed probe makes the setting
 //     active unless a newer save or setting came first; one whose report
 //     its runs couldn't send (an Ollama digest that isn't one) couldn't run.
@@ -166,6 +174,18 @@ func (p *prober) probe(ctx context.Context, c *model.FoundryAIConfig) (model.Fou
 	f := result.Failed()
 	if err := found.Usable(); f == nil && err != nil {
 		return cantRun("read the probe's result", err)
+	}
+	if f == nil && p.checkTools != nil {
+		resolved := ai.Resolved{
+			Source: ai.SourceWorkspace, Settings: settings, Key: key, ConfigID: c.ID, Report: found,
+			CallTimeout: p.deployment.CallTimeout, Rules: p.deployment.Rules,
+		}
+		check, err := p.checkTools(ctx, resolved)
+		if err != nil {
+			log.From(ctx).Warn("the Assistant's tool check couldn't run; the setting stays unchecked", "err", err)
+		}
+		found.Assistant = check
+		assistantChecks.WithLabelValues(string(check)).Inc()
 	}
 	report, err := json.Marshal(found)
 	if err != nil {

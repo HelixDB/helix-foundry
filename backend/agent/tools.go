@@ -28,6 +28,7 @@ var Tools = map[string]bool{
 	"helix_foundry_list_documents":        true,
 	"helix_foundry_list_connectors":       true,
 	"helix_foundry_list_connector_kinds":  true,
+	"helix_foundry_get_ai_settings":       true,
 	"helix_foundry_list_review_decisions": true,
 	"helix_foundry_list_reviews":          true,
 	"helix_foundry_read_graph":            true,

@@ -396,6 +396,29 @@ func (s *mysqlDB) AppendFoundryAgentEvents(ctx context.Context, id, workerID str
 	})
 }
 
+// FinishFoundryAgentText stores events, the text a model call of the turn
+// ended with, after the turn's newest, and deletes the call's text_delta
+// events, which they supersede: one transaction, while workerID holds the
+// lease, so a reader sees the deltas or the text, never neither. A poller
+// past some of the deltas reads on from the text. ErrNotFound means the
+// lease was lost, and nothing changed.
+func (s *mysqlDB) FinishFoundryAgentText(ctx context.Context, id, workerID string, step int, events []json.RawMessage) error {
+	return s.WithTx(ctx, func(txDB Store) error {
+		tx := txDB.(*mysqlDB)
+		if err := tx.ownFoundryAgentTurn(ctx, id, workerID); err != nil {
+			return err
+		}
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_agent_events
+WHERE turn_id=? AND JSON_UNQUOTE(JSON_EXTRACT(event, '$.type'))='text_delta' AND JSON_EXTRACT(event, '$.step')=?`, id, step); err != nil {
+			return err
+		}
+		if len(events) == 0 {
+			return nil
+		}
+		return tx.appendFoundryAgentEvents(ctx, id, events)
+	})
+}
+
 // ownFoundryAgentTurn locks the turn while workerID holds its lease.
 func (s *mysqlDB) ownFoundryAgentTurn(ctx context.Context, id, workerID string) error {
 	var held string

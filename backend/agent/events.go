@@ -16,8 +16,20 @@ type Started struct {
 	Attempt int    `json:"attempt"`
 }
 
-// Said is text the model wrote, as it is: the site renders it as plain text.
+// Said is text the model wrote, as it is, once its step's call ended: the
+// site renders it as plain text, in place of the step's TextDeltas.
 type Said struct {
+	Step int    `json:"step"`
+	Text string `json:"text"`
+}
+
+// TextDelta is text the model is writing in step (a turn's model calls
+// count from 1, across its attempts), shown as it comes: the site appends a
+// step's deltas in order. The step's Said events supersede them once its
+// call ends (the store then drops them), and the next Started or Finished
+// event, when it never does: the transcript, not the deltas, is what was said.
+type TextDelta struct {
+	Step int    `json:"step"`
 	Text string `json:"text"`
 }
 
@@ -112,6 +124,7 @@ const (
 
 func (Started) eventType() string      { return "started" }
 func (Said) eventType() string         { return "text" }
+func (TextDelta) eventType() string    { return "text_delta" }
 func (ToolCalled) eventType() string   { return "tool_call" }
 func (ToolReturned) eventType() string { return "tool_result" }
 func (ActionCard) eventType() string   { return "action_card" }

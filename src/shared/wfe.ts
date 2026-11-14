@@ -3834,7 +3834,24 @@ export type FoundryAiConfig = {
   createdByName?: string;
   // The provider as failure copy names it: "Claude", or a custom server's host.
   label?: string;
+  // Whether the Assistant can run on it (its ask model's tool check, run once
+  // the test passed while the Assistant is on). A failed check never fails
+  // the setting; the Assistant refuses its turns, saying why.
+  assistantCheck?: FoundryAiAssistantCheck;
 };
+
+/** v1FoundryAIAssistantCheck: what the Assistant's tool check of a setting found. */
+export type FoundryAiAssistantCheck =
+  // Not checked: the Assistant is off, the check couldn't run, or the test
+  // hasn't passed. The Assistant runs on it.
+  | "FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED"
+  | "FOUNDRY_AI_ASSISTANT_CHECK_PASSED"
+  // The provider refused the key on the Assistant's calls.
+  | "FOUNDRY_AI_ASSISTANT_CHECK_AUTH"
+  // The provider refused the request: a model it lacks there, or tools.
+  | "FOUNDRY_AI_ASSISTANT_CHECK_REFUSED"
+  // The model answered without calling the tool.
+  | "FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL";
 
 /** v1FoundryAIDefault: the deployment's provider. */
 export type FoundryAiDefault = {

@@ -6441,6 +6441,18 @@
       "type": "object",
       "description": "Claude at api.anthropic.com."
     },
+    "v1FoundryAIAssistantCheck": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED",
+        "FOUNDRY_AI_ASSISTANT_CHECK_PASSED",
+        "FOUNDRY_AI_ASSISTANT_CHECK_AUTH",
+        "FOUNDRY_AI_ASSISTANT_CHECK_REFUSED",
+        "FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL"
+      ],
+      "default": "FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED",
+      "description": "FoundryAIAssistantCheck is what the Assistant's tool check of a setting\nfound.\n\n - FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED: Not checked: the Assistant is off, the check couldn't run (the provider\nwas busy), or the probe hasn't passed. The Assistant runs on it.\n - FOUNDRY_AI_ASSISTANT_CHECK_PASSED: The ask model called a tool: the Assistant runs on it.\n - FOUNDRY_AI_ASSISTANT_CHECK_AUTH: The provider refused the key on the Assistant's calls.\n - FOUNDRY_AI_ASSISTANT_CHECK_REFUSED: The provider refused the Assistant's request: a model the endpoint\nlacks there, or tools it doesn't take.\n - FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL: The model answered without calling the tool: it can't run the Assistant."
+    },
     "v1FoundryAIAzureOpenAI": {
       "type": "object",
       "properties": {
@@ -6535,6 +6547,10 @@
         "label": {
           "type": "string",
           "description": "The provider as failure copy names it: \"Claude\", or a custom server's host."
+        },
+        "assistantCheck": {
+          "$ref": "#/definitions/v1FoundryAIAssistantCheck",
+          "description": "Whether the Assistant can run on it: its ask model's tool check on the\nAssistant's own wire, run once the probe passed while the Assistant is\non. A failed check never fails the setting: the rest of Foundry's model\nwork runs on it, and the Assistant refuses its turns, saying why."
         }
       },
       "description": "FoundryAIConfig is a provider an owner saved."

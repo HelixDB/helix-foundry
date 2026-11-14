@@ -438,6 +438,9 @@ type Store interface {
 	ClaimFoundryAgentTurn(ctx context.Context, workerID string, claim model.FoundryAgentClaim) (*model.FoundryAgentTurn, error)
 	RenewFoundryAgentTurnLease(ctx context.Context, id, workerID string, lease time.Duration) error
 	AppendFoundryAgentEvents(ctx context.Context, id, workerID string, events []json.RawMessage) error
+	// FinishFoundryAgentText stores a model call's final text events and
+	// drops the call's text_delta events they supersede, under the lease.
+	FinishFoundryAgentText(ctx context.Context, id, workerID string, step int, events []json.RawMessage) error
 	AppendFoundryAgentMessages(ctx context.Context, turnID, workerID string, messages []model.FoundryAgentMessage, keep int) error
 	SettleFoundryAgentTurn(ctx context.Context, id, workerID string, outcome model.FoundryAgentTurnOutcome) error
 	RecordFoundryAgentAction(ctx context.Context, workerID string, a *model.FoundryAgentAction, maxPending int,

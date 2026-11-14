@@ -62,6 +62,9 @@ const (
 	// the Workspace's plan includes.
 	toolFoundryConnect            = "helix_foundry_connect"
 	toolFoundryListConnectorKinds = "helix_foundry_list_connector_kinds"
+	// toolFoundryGetAISettings says which provider and models a workspace's model work runs
+	// on (foundry_ai.go); they are changed in Foundry, never through an agent.
+	toolFoundryGetAISettings = "helix_foundry_get_ai_settings"
 )
 
 // toolTitles are the tools' names for people, which clients and MCP directories show beside
@@ -86,6 +89,7 @@ var toolTitles = map[string]string{
 	toolFoundryGetSync:             "Get a connector sync",
 	toolFoundryConnect:             "Connect a source",
 	toolFoundryListConnectorKinds:  "List connector kinds",
+	toolFoundryGetAISettings:       "Get a workspace's AI settings",
 	toolFoundryGetSignIn:           "Get a connector sign-in",
 	toolFoundrySendPieces:          "Send pieces to an API source",
 	toolPrepareFoundry:             "Prepare a Foundry action",
@@ -133,6 +137,7 @@ type FoundryBackendAPI interface {
 	ListOntologyGenerations(context.Context, *foundryv1.ListOntologyGenerationsRequest, ...grpc.CallOption) (*foundryv1.ListOntologyGenerationsResponse, error)
 	ListFoundryDocumentSets(context.Context, *foundryv1.ListFoundryDocumentSetsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDocumentSetsResponse, error)
 	ListConnectors(context.Context, *foundryv1.ListConnectorsRequest, ...grpc.CallOption) (*foundryv1.ListConnectorsResponse, error)
+	GetFoundryAI(context.Context, *foundryv1.GetFoundryAIRequest, ...grpc.CallOption) (*foundryv1.FoundryAIResponse, error)
 	GetConnector(context.Context, *foundryv1.GetConnectorRequest, ...grpc.CallOption) (*foundryv1.ConnectorResponse, error)
 	StartConnectorSignIn(context.Context, *foundryv1.StartConnectorSignInRequest, ...grpc.CallOption) (*foundryv1.ConnectorSignInResponse, error)
 	GetConnectorSignIn(context.Context, *foundryv1.GetConnectorSignInRequest, ...grpc.CallOption) (*foundryv1.ConnectorSignInResponse, error)
@@ -891,6 +896,10 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 				apiSources(eventsKind)+"."), s.ListFoundryConnectorKinds)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetSync,
 			"Get one sync of a Foundry connector, with its status, rows and error. With wait, waits up to 25 s while it runs; call again until it ends."), s.GetFoundrySync)
+		addFoundryTool(s, server, identity, tool(toolFoundryGetAISettings,
+			"Get where a workspace's model calls go: the provider and models its generations, loads, questions and Foundry's Assistant run on (in_force), "+
+				"a saved provider waiting for its test (pending) or whose test failed (last_failed, with why), and whether the Assistant can run on each (assistant). "+
+				"Keys are never returned. Only an owner changes it, in Foundry's Settings › AI models (settings_url): never take a key or change it here."), s.GetFoundryAISettings)
 	}
 	if user && s.FoundryURL != "" && identity.HasPermission(PermissionWorkspaceConnectorsManage) {
 		s.addFoundryConnectTool(server, identity, signIns)

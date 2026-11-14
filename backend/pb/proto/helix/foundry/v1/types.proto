@@ -1899,6 +1899,28 @@ message FoundryAIConfig {
   string created_by_name = 11;
   // The provider as failure copy names it: "Claude", or a custom server's host.
   string label = 12;
+  // Whether the Assistant can run on it: its ask model's tool check on the
+  // Assistant's own wire, run once the probe passed while the Assistant is
+  // on. A failed check never fails the setting: the rest of Foundry's model
+  // work runs on it, and the Assistant refuses its turns, saying why.
+  FoundryAIAssistantCheck assistant_check = 13;
+}
+
+// FoundryAIAssistantCheck is what the Assistant's tool check of a setting
+// found.
+enum FoundryAIAssistantCheck {
+  // Not checked: the Assistant is off, the check couldn't run (the provider
+  // was busy), or the probe hasn't passed. The Assistant runs on it.
+  FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED = 0;
+  // The ask model called a tool: the Assistant runs on it.
+  FOUNDRY_AI_ASSISTANT_CHECK_PASSED = 1;
+  // The provider refused the key on the Assistant's calls.
+  FOUNDRY_AI_ASSISTANT_CHECK_AUTH = 2;
+  // The provider refused the Assistant's request: a model the endpoint
+  // lacks there, or tools it doesn't take.
+  FOUNDRY_AI_ASSISTANT_CHECK_REFUSED = 3;
+  // The model answered without calling the tool: it can't run the Assistant.
+  FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL = 4;
 }
 
 // FoundryAIDefault is the deployment's provider.

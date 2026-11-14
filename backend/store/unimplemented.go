@@ -1296,6 +1296,11 @@ func (u Unimplemented) AppendFoundryAgentEvents(context.Context, string, string,
 	return nil
 }
 
+func (u Unimplemented) FinishFoundryAgentText(context.Context, string, string, int, []json.RawMessage) error {
+	u.unimplemented("FinishFoundryAgentText")
+	return nil
+}
+
 func (u Unimplemented) AppendFoundryAgentMessages(context.Context, string, string, []model.FoundryAgentMessage, int) error {
 	u.unimplemented("AppendFoundryAgentMessages")
 	return nil

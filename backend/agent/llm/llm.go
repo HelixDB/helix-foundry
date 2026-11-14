@@ -1,28 +1,50 @@
 // Package llm is the Assistant's model calls: a provider-neutral request,
 // transcript and stream of chunks, one implementation per provider kind, and
 // the price of what a call used. The agent calls models here directly, never
-// through the ontology engine.
+// through the ontology engine, but on the wire the engine uses for each kind,
+// so a setting its probe passed answers here too:
 //
-// Layer 1 calls Claude (ai.Anthropic: the workspace's own key, or Helix's
-// default). Every other kind is ErrUnsupported until its implementation
-// lands; New's switch names each kind, so adding one is one case.
+//   - ai.Anthropic: the Messages API (anthropic-sdk-go), Helix's Claude or
+//     the workspace's key (anthropic.go);
+//   - ai.OpenAI and ai.AzureOpenAI: the Responses API (openai-go), Azure on
+//     its resource's v1 API with the api-key header (responses.go);
+//   - ai.Compatible: Chat Completions (chat.go) or Responses, as its owner
+//     chose, at most MaxCallsInFlight calls at once;
+//   - ai.Ollama: the native /api/chat (ollama.go), whose options set the
+//     context window: Ollama's OpenAI-compatible /v1 has no way to, and
+//     would load the model in the server's default window and cut the
+//     prompt past it without saying so;
+//   - ai.Bedrock: the Converse API with the Bedrock API key as a bearer
+//     token, no SigV4 (converse.go), for any model Bedrock serves.
+//
+// Every call dials through the deployment's guard (ai.Rules): hosted, only
+// public addresses, whatever an owner's host resolves to when it is called.
+// No client reads the process's environment (ANTHROPIC_*, OPENAI_*, AWS_*):
+// the key, endpoint and headers are the workspace's alone.
 package llm
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
+	"net/http"
+	"sync"
 
 	"github.com/helixdb/helix-foundry/backend/ai"
+	"github.com/helixdb/helix-foundry/backend/connector"
 )
 
 // Model streams one call's answer.
 type Model interface {
-	// Stream yields the answer's chunks in order: its blocks (Text, ToolUse,
-	// Reasoning), then its Usage, then its Stop. An error ends it, a *Error
-	// for a provider's refusal.
+	// Stream yields the answer's chunks in order: TextDeltas as the model
+	// writes, then its blocks (Text, ToolUse, Reasoning) whole, then its
+	// Usage, then its Stop. The deltas are for show: the blocks are the
+	// answer, and a Text block holds every delta before it. An error ends
+	// it, a *Error for a provider's refusal.
 	Stream(ctx context.Context, r Request) iter.Seq2[Chunk, error]
 }
 
@@ -59,12 +81,15 @@ type Message struct {
 // Block is one part of a message: Text, ToolUse, ToolResult or Reasoning.
 type Block interface{ block() }
 
-// Chunk is one part of a streamed answer: a Block the model wrote (Text,
-// ToolUse, Reasoning), then Usage and Stop.
+// Chunk is one part of a streamed answer: TextDeltas as they come, a Block
+// the model wrote (Text, ToolUse, Reasoning), then Usage and Stop.
 type Chunk interface{ chunk() }
 
 // Text is plain text.
 type Text struct{ Text string }
+
+// TextDelta is text the model has just written, before its block ends.
+type TextDelta struct{ Text string }
 
 // ToolUse is the model's call of a tool.
 type ToolUse struct {
@@ -113,6 +138,7 @@ func (ToolUse) block()    {}
 func (ToolResult) block() {}
 func (Reasoning) block()  {}
 func (Text) chunk()       {}
+func (TextDelta) chunk()  {}
 func (ToolUse) chunk()    {}
 func (Reasoning) chunk()  {}
 func (Usage) chunk()      {}
@@ -144,23 +170,171 @@ func (e *Error) Unwrap() error { return e.Err }
 // Retryable reports a refusal a later attempt may pass.
 func (e *Error) Retryable() bool { return e.Kind == ErrRateLimited || e.Kind == ErrUnavailable }
 
-// ErrUnsupported is a provider kind the Assistant doesn't call yet.
-var ErrUnsupported = errors.New("llm: the Assistant runs on Claude for now; this provider isn't supported yet")
+// Binding is the model a turn calls: how to call it, its price, and its
+// context window in tokens (0 where the provider says nothing of one, so
+// the Assistant's own cap applies).
+type Binding struct {
+	Model  Model
+	Pricer Pricer
+	Window int
+}
 
-// New is the model m of r's provider, and its price.
-func New(r ai.Resolved, m ai.Model, catalog *ai.Catalog) (Model, Pricer, error) {
+// New is r's ask model, the one the Assistant runs on, bound to r's
+// provider: an exhaustive switch over the kinds, so a kind added to ai
+// fails to build here until it is called.
+func New(r ai.Resolved, catalog *ai.Catalog) (Binding, error) {
+	m := r.Settings.Models.Ask
 	pricer, err := NewPricer(catalog, r.Settings.Provider.Kind(), m)
 	if err != nil {
-		return nil, Pricer{}, err
+		return Binding{}, err
 	}
-	switch r.Settings.Provider.(type) {
+	key, client := r.Key.Reveal(), guarded(r.Rules)
+	// Whether the model is sent its reasoning knob: on unless the setting's
+	// probe found the model refuses it.
+	reasoning := r.Report.Reasoning(ai.RoleAsk)
+	out := Binding{Pricer: pricer}
+	switch p := r.Settings.Provider.(type) {
 	case ai.Anthropic:
-		return newAnthropic(r.Key.Reveal(), m.Name, r.CallTimeout), pricer, nil
-	case ai.OpenAI, ai.AzureOpenAI, ai.Compatible, ai.Ollama, ai.Bedrock:
-		return nil, Pricer{}, fmt.Errorf("%w: %s", ErrUnsupported, r.Settings.Provider.Kind())
+		out.Model = newAnthropic(key, m.Name, r.CallTimeout, client)
+	case ai.OpenAI:
+		out.Model = newResponses(responsesOpenAI, openAIBaseURL, key, m.Name, reasoning, r.CallTimeout, client, nil)
+	case ai.AzureOpenAI:
+		endpoint, err := ai.AzureEndpoint(p.Endpoint)
+		if err != nil {
+			return Binding{}, err
+		}
+		out.Model = newResponses(responsesAzure, endpoint, key, m.Name, reasoning, r.CallTimeout, client, nil)
+	case ai.Compatible:
+		calls := gateOf(string(ai.KindCompatible)+"\x00"+p.BaseURL, int(p.MaxCallsInFlight))
+		switch p.API {
+		case ai.CompatChatCompletions:
+			out.Model = newChat(p.BaseURL, key, m.Name, reasoning, r.CallTimeout, client, calls)
+		case ai.CompatResponses:
+			out.Model = newResponses(responsesCompatible, p.BaseURL, key, m.Name, reasoning, r.CallTimeout, client, calls)
+		default:
+			return Binding{}, fmt.Errorf("llm: unknown API %q of an OpenAI-compatible server", p.API)
+		}
+	case ai.Ollama:
+		// The window the engine loads the model with: the owner's, at most
+		// what the probe read of the model.
+		out.Window = int(r.Ask().Ask.ContextTokens)
+		out.Model = newOllama(p.BaseURL, m.Name, out.Window, r.CallTimeout, client, gateOf(string(ai.KindOllama)+"\x00"+p.BaseURL, 1))
+	case ai.Bedrock:
+		out.Model = newConverse(converseURL(p.Region, p.FIPS), key, m.Name, r.CallTimeout, client)
 	default:
-		return nil, Pricer{}, fmt.Errorf("llm: unknown provider %T", r.Settings.Provider)
+		return Binding{}, fmt.Errorf("llm: unknown provider %T", r.Settings.Provider)
 	}
+	return out, nil
+}
+
+// guarded is an HTTP client that dials only the addresses rules allow and
+// follows no redirect, so neither a host's later DNS answer nor a provider's
+// answer can turn a call inward. It sets no timeout: a call's own bounds
+// its stream.
+func guarded(rules ai.Rules) *http.Client {
+	return &http.Client{
+		Transport:     connector.Guard{AllowPrivate: rules.AllowPrivate}.Transport(),
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// gate bounds the calls in flight to one endpoint from this process, as its
+// owner set (an OpenAI-compatible server's MaxCallsInFlight; Ollama's one):
+// a call holds a slot for its whole stream. nil bounds nothing.
+type gate chan struct{}
+
+// gates are the gates by endpoint and bound: one per endpoint a setting
+// names, kept while the process runs.
+var gates sync.Map
+
+func gateOf(endpoint string, n int) gate {
+	g, _ := gates.LoadOrStore(fmt.Sprintf("%s\x00%d", endpoint, n), make(gate, max(n, 1)))
+	return g.(gate)
+}
+
+// enter waits for a slot: the release, or ctx's end as an unavailable call.
+func (g gate) enter(ctx context.Context) (func(), error) {
+	if g == nil {
+		return func() {}, nil
+	}
+	select {
+	case g <- struct{}{}:
+		return func() { <-g }, nil
+	case <-ctx.Done():
+		return nil, &Error{Kind: ErrUnavailable, Err: fmt.Errorf("waiting for a free call to the server: %w", ctx.Err())}
+	}
+}
+
+// statusError is a provider's HTTP refusal as an *Error: whether a retry may
+// pass by its status. Under 300 is an error a stream carried after it was
+// accepted (overloaded, say), which may; a redirect, which no call follows,
+// is the endpoint's to fix.
+func statusError(code int, err error) *Error {
+	switch {
+	case code == http.StatusUnauthorized || code == http.StatusForbidden:
+		return &Error{Kind: ErrAuth, Err: err}
+	case code == http.StatusTooManyRequests:
+		return &Error{Kind: ErrRateLimited, Err: err}
+	case code >= 500 || code == http.StatusRequestTimeout || code < http.StatusMultipleChoices:
+		return &Error{Kind: ErrUnavailable, Err: err}
+	default:
+		return &Error{Kind: ErrInvalid, Err: err}
+	}
+}
+
+// transportError is a call that got no answer: an endpoint the guard
+// refuses is the setting's to fix, anything else may pass on a retry.
+func transportError(err error) *Error {
+	if errors.Is(err, connector.ErrPrivateAddress) {
+		return &Error{Kind: ErrInvalid, Err: err}
+	}
+	return &Error{Kind: ErrUnavailable, Err: err}
+}
+
+// callID is a tool call's id as the model gave it, or a new one where it gave
+// none (Ollama's older servers): ids key a turn's events and its asks'
+// client tokens, so each must be unique in its thread.
+func callID(id string) string {
+	if id != "" {
+		return id
+	}
+	b := make([]byte, 12)
+	_, _ = rand.Read(b) // never fails
+	return "call_" + hex.EncodeToString(b)
+}
+
+// schemaOf is a tool's input schema as an object, for the wires that take
+// one; an empty one is an object with no properties.
+func schemaOf(t Tool) (map[string]any, error) {
+	schema := map[string]any{}
+	if len(t.InputSchema) > 0 {
+		if err := json.Unmarshal(t.InputSchema, &schema); err != nil {
+			return nil, fmt.Errorf("llm: tool %s's schema: %w", t.Name, err)
+		}
+	}
+	if schema == nil {
+		schema = map[string]any{}
+	}
+	delete(schema, "$schema")
+	delete(schema, "$id")
+	if _, ok := schema["type"]; !ok {
+		schema["type"] = "object"
+	}
+	return schema, nil
+}
+
+// toolNames are the names of the calls in messages, by id: a wire that
+// answers a call by its tool's name reads them here.
+func toolNames(messages []Message) map[string]string {
+	out := map[string]string{}
+	for _, m := range messages {
+		for _, b := range m.Content {
+			if u, ok := b.(ToolUse); ok {
+				out[u.ID] = u.Name
+			}
+		}
+	}
+	return out
 }
 
 // blockJSON is a block as a transcript stores it.

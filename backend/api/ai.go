@@ -352,6 +352,13 @@ func (s *Service) foundryAIConfigProto(ctx context.Context, c *foundrymodel.Foun
 	if c.SecretHint != nil && hints {
 		out.KeyHint = *c.SecretHint
 	}
+	if len(c.ProbeReport) > 0 {
+		var report ai.ProbeReport
+		if err := json.Unmarshal(c.ProbeReport, &report); err != nil {
+			return nil, status.Errorf(codes.Internal, "read the AI config %s's probe report: %v", c.ID, err)
+		}
+		out.AssistantCheck = assistantCheckToProto[report.Assistant]
+	}
 	if c.ProbeFailure != nil {
 		out.ProbeFailure = *c.ProbeFailure
 	}
@@ -389,6 +396,14 @@ var probeStateToProto = map[foundrymodel.FoundryAIProbeState]foundryv1.FoundryAI
 	foundrymodel.FoundryAIProbePassed:     foundryv1.FoundryAIProbeState_FOUNDRY_AI_PROBE_STATE_PASSED,
 	foundrymodel.FoundryAIProbeFailed:     foundryv1.FoundryAIProbeState_FOUNDRY_AI_PROBE_STATE_FAILED,
 	foundrymodel.FoundryAIProbeSuperseded: foundryv1.FoundryAIProbeState_FOUNDRY_AI_PROBE_STATE_SUPERSEDED,
+}
+
+var assistantCheckToProto = map[ai.AssistantCheck]foundryv1.FoundryAIAssistantCheck{
+	ai.AssistantUnchecked:  foundryv1.FoundryAIAssistantCheck_FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED,
+	ai.AssistantPassed:     foundryv1.FoundryAIAssistantCheck_FOUNDRY_AI_ASSISTANT_CHECK_PASSED,
+	ai.AssistantAuth:       foundryv1.FoundryAIAssistantCheck_FOUNDRY_AI_ASSISTANT_CHECK_AUTH,
+	ai.AssistantRefused:    foundryv1.FoundryAIAssistantCheck_FOUNDRY_AI_ASSISTANT_CHECK_REFUSED,
+	ai.AssistantNoToolCall: foundryv1.FoundryAIAssistantCheck_FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL,
 }
 
 var compatAPIFromProto = map[foundryv1.FoundryAICompatAPI]ai.CompatAPI{

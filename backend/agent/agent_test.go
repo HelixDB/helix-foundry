@@ -55,6 +55,9 @@ type memStore struct {
 	lost    bool
 	// versionReads counts the versions and loads read.
 	versionReads int
+	// deltas are every text_delta event appended, though a step's final
+	// text dropped it since.
+	deltas []json.RawMessage
 }
 
 func (s *memStore) ListFoundryAgentMessages(context.Context, string) ([]model.FoundryAgentMessage, error) {
@@ -86,6 +89,31 @@ func (s *memStore) AppendFoundryAgentEvents(_ context.Context, _, _ string, even
 	if s.lost {
 		return foundrystore.ErrNotFound
 	}
+	s.events = append(s.events, events...)
+	for _, e := range events {
+		var head struct{ Type string }
+		_ = json.Unmarshal(e, &head)
+		if head.Type == "text_delta" {
+			s.deltas = append(s.deltas, e)
+		}
+	}
+	return nil
+}
+
+func (s *memStore) FinishFoundryAgentText(_ context.Context, _, _ string, step int, events []json.RawMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lost {
+		return foundrystore.ErrNotFound
+	}
+	s.events = slices.DeleteFunc(s.events, func(e json.RawMessage) bool {
+		var head struct {
+			Type string
+			Step int
+		}
+		_ = json.Unmarshal(e, &head)
+		return head.Type == "text_delta" && head.Step == step
+	})
 	s.events = append(s.events, events...)
 	return nil
 }
@@ -224,6 +252,10 @@ type scripted struct {
 	steps    [][]llm.Chunk
 	err      error
 	requests []llm.Request
+	// tick runs before each chunk; nil runs nothing.
+	tick func()
+	// failAfter fails a step after its chunks, as a stream that broke.
+	failAfter error
 }
 
 func (m *scripted) Stream(_ context.Context, r llm.Request) iter.Seq2[llm.Chunk, error] {
@@ -236,9 +268,15 @@ func (m *scripted) Stream(_ context.Context, r llm.Request) iter.Seq2[llm.Chunk,
 		step := m.steps[0]
 		m.steps = m.steps[1:]
 		for _, c := range step {
+			if m.tick != nil {
+				m.tick()
+			}
 			if !yield(c, nil) {
 				return
 			}
+		}
+		if m.failAfter != nil {
+			yield(nil, m.failAfter)
 		}
 	}
 }
@@ -402,10 +440,15 @@ func (h *sessions) Session(ctx context.Context, actor ports.Actor, confirm integ
 	}}, nil
 }
 
-type fixedAI struct{ err error }
+// fixedAI resolves every workspace to Claude, its probe having found check.
+type fixedAI struct {
+	err   error
+	check ai.AssistantCheck
+}
 
 func (f fixedAI) Resolve(context.Context, string) (ai.Resolved, error) {
-	return ai.Resolved{Settings: ai.Settings{Provider: ai.Anthropic{}, Models: ai.Roles{Ask: ai.Model{Name: "claude-sonnet-5-5", Price: ai.PriceTable{}}}}}, f.err
+	return ai.Resolved{Settings: ai.Settings{Provider: ai.Anthropic{}, Models: ai.Roles{Ask: ai.Model{Name: "claude-sonnet-5-5", Price: ai.PriceTable{}}}},
+		Report: ai.ProbeReport{Assistant: f.check}}, f.err
 }
 
 type harness struct {
@@ -432,8 +475,8 @@ func newHarness(t *testing.T, steps ...[]llm.Chunk) *harness {
 	require.NoError(t, err)
 	cfg := config.Defaults().Foundry.Agent
 	h.runner = &Runner{DB: h.db, Sessions: h.host, AI: fixedAI{}, Catalog: catalog, Keys: keys, Cfg: cfg, WorkerID: "w1", Now: time.Now, Databases: databases{},
-		Models: func(ai.Resolved, ai.Model, *ai.Catalog) (llm.Model, llm.Pricer, error) {
-			return h.model, llm.Pricer{Input: 2000, Output: 10000, CacheRead: 200, CacheWrite: 2500}, nil
+		Models: func(ai.Resolved, *ai.Catalog) (llm.Binding, error) {
+			return llm.Binding{Model: h.model, Pricer: llm.Pricer{Input: 2000, Output: 10000, CacheRead: 200, CacheWrite: 2500}}, nil
 		}}
 	return h
 }
@@ -614,8 +657,8 @@ func TestFailuresSayWhetherToRetry(t *testing.T) {
 	h.model.err = &llm.Error{Kind: llm.ErrRateLimited, Err: errors.New("429")}
 	assert.False(t, failure(t, h).Permanent)
 	h = newHarness(t)
-	h.runner.Models = func(ai.Resolved, ai.Model, *ai.Catalog) (llm.Model, llm.Pricer, error) {
-		return nil, llm.Pricer{}, llm.ErrUnsupported
+	h.runner.Models = func(ai.Resolved, *ai.Catalog) (llm.Binding, error) {
+		return llm.Binding{}, errors.New("llm: anthropic claude-unknown has no price in the catalog")
 	}
 	assert.True(t, failure(t, h).Permanent)
 	h = newHarness(t)
@@ -871,5 +914,136 @@ func TestTheEstimateCountsTheTools(t *testing.T) {
 	a, err := h.runner.Run(context.Background(), turn)
 	require.NoError(t, err)
 	assert.Equal(t, StopBudget, a.Stop)
+	assert.Empty(t, h.model.requests)
+}
+
+func TestTextShowsAsItStreams(t *testing.T) {
+	h := newHarness(t, []llm.Chunk{
+		llm.TextDelta{Text: "Hel"}, llm.TextDelta{Text: "lo "}, llm.TextDelta{Text: "the"}, llm.TextDelta{Text: "re."},
+		llm.Text{Text: "Hello there."}, llm.Usage{In: 100, Out: 10}, llm.Stop{Reason: llm.StopEnd},
+	})
+	clock := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+	h.runner.Now = func() time.Time { return clock }
+	h.model.tick = func() { clock = clock.Add(100 * time.Millisecond) }
+	turn := message("Hi")
+	turn.Steps = 2 // an earlier attempt called the model twice
+	a, err := h.runner.Run(context.Background(), turn)
+	require.NoError(t, err)
+	assert.Equal(t, StopAnswered, a.Stop)
+	// Shown every 250 ms of the stream: the first three deltas at 300 ms;
+	// the last waits for the next flush, which the call's end makes moot.
+	require.Len(t, h.db.deltas, 1)
+	assert.JSONEq(t, `{"type":"text_delta","step":3,"text":"Hello the"}`, string(h.db.deltas[0]))
+	// The step's text supersedes its deltas, which the store drops.
+	assert.Equal(t, []string{"started", "text", "finished"}, h.db.eventTypes())
+	for _, e := range h.db.events {
+		var said struct {
+			Type, Text string
+			Step       int
+		}
+		require.NoError(t, json.Unmarshal(e, &said))
+		if said.Type == "text" {
+			assert.Equal(t, "Hello there.", said.Text)
+			assert.Equal(t, 3, said.Step, "numbered across the turn's attempts")
+		}
+	}
+	// The transcript holds the answer, never the deltas.
+	require.Len(t, h.db.messages, 2)
+	blocks, err := llm.UnmarshalBlocks(h.db.messages[1].Content)
+	require.NoError(t, err)
+	assert.Equal(t, []llm.Block{llm.Text{Text: "Hello there."}}, blocks)
+}
+
+// A stream that breaks keeps the deltas it showed: the next attempt's
+// started event, or the turn's finished one, tells the site to drop them.
+func TestABrokenStreamKeepsItsDeltas(t *testing.T) {
+	h := newHarness(t, []llm.Chunk{llm.TextDelta{Text: "Half"}, llm.TextDelta{Text: " a"}, llm.TextDelta{Text: " word"}})
+	clock := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+	h.runner.Now = func() time.Time { return clock }
+	h.model.tick = func() { clock = clock.Add(200 * time.Millisecond) }
+	h.model.failAfter = &llm.Error{Kind: llm.ErrUnavailable, Err: errors.New("cut off")}
+	_, err := h.runner.Run(context.Background(), message("Hi"))
+	var f *Failure
+	require.ErrorAs(t, err, &f)
+	assert.False(t, f.Permanent)
+	assert.Equal(t, []string{"started", "text_delta"}, h.db.eventTypes())
+	assert.Len(t, h.db.messages, 1, "nothing of the broken answer is committed")
+}
+
+// A step that streamed no text writes nothing more: no text, no drop.
+func TestAStepWithoutTextShowsNothing(t *testing.T) {
+	h := newHarness(t, say(" "))
+	_, err := h.runner.Run(context.Background(), message("Hi"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"started", "finished"}, h.db.eventTypes())
+}
+
+func TestAFailedToolCheckRefusesTheTurn(t *testing.T) {
+	for check, words := range map[ai.AssistantCheck]string{
+		ai.AssistantNoToolCall: "claude-sonnet-5-5, doesn't call tools",
+		ai.AssistantAuth:       "Claude refused the workspace's key",
+		ai.AssistantRefused:    "Claude refused the Assistant's calls to claude-sonnet-5-5",
+	} {
+		h := newHarness(t, say("never"))
+		h.runner.AI = fixedAI{check: check}
+		_, err := h.runner.Run(context.Background(), message("Hi"))
+		var f *Failure
+		require.ErrorAs(t, err, &f, check)
+		assert.True(t, f.Permanent, check)
+		assert.Contains(t, f.Message, words)
+		assert.Contains(t, f.Message, "Settings › AI models")
+		assert.Empty(t, h.model.requests, "no call is made")
+	}
+	for _, check := range []ai.AssistantCheck{ai.AssistantUnchecked, ai.AssistantPassed} {
+		h := newHarness(t, say("ok"))
+		h.runner.AI = fixedAI{check: check}
+		_, err := h.runner.Run(context.Background(), message("Hi"))
+		assert.NoError(t, err, check)
+	}
+}
+
+func TestAModelsWindowBoundsTheTranscript(t *testing.T) {
+	stored := func(h *harness) {
+		block := func(text string) json.RawMessage {
+			raw, _ := llm.MarshalBlocks([]llm.Block{llm.Text{Text: text}})
+			return raw
+		}
+		// The thread's first message, then an earlier turn of about 60,000 tokens.
+		h.db.messages = []model.FoundryAgentMessage{
+			{Seq: 1, TurnID: "turn0", Role: model.FoundryAgentRoleUser, Content: block("First")},
+			{Seq: 2, TurnID: "turn0", Role: model.FoundryAgentRoleAssistant, Content: block("Hi")},
+			{Seq: 3, TurnID: "turnA", Role: model.FoundryAgentRoleUser, Content: block(strings.Repeat("long ", 48_000))},
+			{Seq: 4, TurnID: "turnA", Role: model.FoundryAgentRoleAssistant, Content: block("Noted")},
+		}
+	}
+	bind := func(h *harness, window int) {
+		h.runner.Models = func(ai.Resolved, *ai.Catalog) (llm.Binding, error) {
+			return llm.Binding{Model: h.model, Window: window}, nil
+		}
+	}
+	// No window: the Assistant's own cap, 100,000 tokens, holds the earlier turn.
+	h := newHarness(t, say("ok"))
+	stored(h)
+	_, err := h.runner.Run(context.Background(), message("Now"))
+	require.NoError(t, err)
+	assert.Len(t, h.model.requests[0].Messages, 5)
+	// A 65,536-token window leaves room for less: the earlier turns go, the first message stays.
+	h = newHarness(t, say("ok"))
+	stored(h)
+	bind(h, 65_536)
+	_, err = h.runner.Run(context.Background(), message("Now"))
+	require.NoError(t, err)
+	msgs := h.model.requests[0].Messages
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "First", msgs[0].Content[0].(llm.Text).Text)
+	assert.Equal(t, "Now", msgs[1].Content[0].(llm.Text).Text)
+	// A window too small for the tools and an answer refuses the turn.
+	h = newHarness(t, say("ok"))
+	bind(h, 16_384)
+	_, err = h.runner.Run(context.Background(), message("Now"))
+	var f *Failure
+	require.ErrorAs(t, err, &f)
+	assert.True(t, f.Permanent)
+	assert.Contains(t, f.Message, "16384 tokens, is too small")
 	assert.Empty(t, h.model.requests)
 }

@@ -10,14 +10,31 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/v2/option"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/helixdb/helix-foundry/backend/ai"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 )
+
+// local dials anything, as a local install's rules let it: the fake
+// providers listen on 127.0.0.1.
+var local = guarded(ai.Rules{AllowPrivate: true})
+
+// withoutDeltas is chunks without their TextDeltas: the answer.
+func withoutDeltas(chunks []Chunk) []Chunk {
+	var out []Chunk
+	for _, c := range chunks {
+		if _, ok := c.(TextDelta); !ok {
+			out = append(out, c)
+		}
+	}
+	return out
+}
 
 // sse writes a Messages stream: thinking, text and a tool call, ending for the tool.
 func sse(w http.ResponseWriter) {
@@ -68,7 +85,7 @@ func TestAnthropicStreamsBlocksUsageAndStop(t *testing.T) {
 		sse(w)
 	}))
 	defer server.Close()
-	m := newAnthropic("sk-ws", "claude-sonnet-5-5", 0, option.WithBaseURL(server.URL), option.WithMaxRetries(0))
+	m := newAnthropic("sk-ws", "claude-sonnet-5-5", 0, local, option.WithBaseURL(server.URL), option.WithMaxRetries(0))
 	chunks, err := collect(t, m, Request{
 		System: "You are the Assistant.", MaxOutput: 1000,
 		Tools: []Tool{{Name: "helix_foundry_list_ontologies", Description: "List them.",
@@ -83,6 +100,7 @@ func TestAnthropicStreamsBlocksUsageAndStop(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer sk-ws", key)
 	assert.Equal(t, []Chunk{
+		TextDelta{Text: "Let me "}, TextDelta{Text: "check."},
 		Reasoning{Provider: ai.KindAnthropic, Signature: "sig-1", Text: "Look it up."},
 		Text{Text: "Let me check."},
 		ToolUse{ID: "toolu_1", Name: "helix_foundry_list_ontologies", Input: json.RawMessage(`{"workspace_id":"ws1"}`)},
@@ -113,7 +131,7 @@ func TestAnthropicErrorsSayWhetherToRetry(t *testing.T) {
 			w.WriteHeader(status)
 			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"x","message":"no"}}`))
 		}))
-		m := newAnthropic("sk-SECRET-KEY", "claude-sonnet-5-5", 0, option.WithBaseURL(server.URL), option.WithMaxRetries(0))
+		m := newAnthropic("sk-SECRET-KEY", "claude-sonnet-5-5", 0, local, option.WithBaseURL(server.URL), option.WithMaxRetries(0))
 		_, err := collect(t, m, Request{System: "s", MaxOutput: 10, Messages: []Message{{Role: User, Content: []Block{Text{Text: "hi"}}}}})
 		var e *Error
 		require.True(t, errors.As(err, &e), "%d: %v", status, err)
@@ -149,9 +167,9 @@ func TestAnthropicBrokenStreamReportsItsUsage(t *testing.T) {
 				writeSSE(w, append([]string{started}, tail...)...)
 			}))
 			defer server.Close()
-			m := newAnthropic("sk", "claude-sonnet-5-5", 0, option.WithBaseURL(server.URL), option.WithMaxRetries(0))
+			m := newAnthropic("sk", "claude-sonnet-5-5", 0, local, option.WithBaseURL(server.URL), option.WithMaxRetries(0))
 			chunks, err := collect(t, m, Request{System: "s", MaxOutput: 10, Messages: []Message{{Role: User, Content: []Block{Text{Text: "hi"}}}}})
-			assert.Equal(t, []Chunk{Usage{In: 90000, Out: 1, CacheWrite: 5000}}, chunks, "nothing but what it used")
+			assert.Equal(t, []Chunk{Usage{In: 90000, Out: 1, CacheWrite: 5000}}, withoutDeltas(chunks), "nothing but what it used")
 			var e *Error
 			require.ErrorAs(t, err, &e)
 			assert.True(t, e.Retryable(), "%v", err)
@@ -171,7 +189,7 @@ func TestAnthropicToolCallCutAtMaxTokens(t *testing.T) {
 			`{"type":"message_stop"}`)
 	}))
 	defer server.Close()
-	m := newAnthropic("sk", "claude-sonnet-5-5", 0, option.WithBaseURL(server.URL), option.WithMaxRetries(0))
+	m := newAnthropic("sk", "claude-sonnet-5-5", 0, local, option.WithBaseURL(server.URL), option.WithMaxRetries(0))
 	chunks, err := collect(t, m, Request{System: "s", MaxOutput: 10, Messages: []Message{{Role: User, Content: []Block{Text{Text: "hi"}}}}})
 	require.NoError(t, err)
 	require.Len(t, chunks, 3)
@@ -193,18 +211,114 @@ func TestBlocksRoundTrip(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestNewCallsClaudeAlone(t *testing.T) {
+func TestNewBindsEveryKind(t *testing.T) {
 	catalog, err := ai.VendoredCatalog()
 	require.NoError(t, err)
-	ask := ai.Model{Name: "claude-sonnet-5-5", Price: ai.PriceTable{}}
-	m, pricer, err := New(ai.Resolved{Settings: ai.Settings{Provider: ai.Anthropic{}}, Key: ontologyagent.NewModelKey("sk")}, ask, catalog)
-	require.NoError(t, err)
-	assert.NotNil(t, m)
-	assert.NotZero(t, pricer.Output)
-	for _, p := range []ai.Provider{ai.OpenAI{}, ai.AzureOpenAI{}, ai.Bedrock{}, ai.Ollama{}, ai.Compatible{}} {
-		_, _, err := New(ai.Resolved{Settings: ai.Settings{Provider: p}}, ai.Model{Name: "x", Price: ai.PriceFree{}}, catalog)
-		assert.ErrorIs(t, err, ErrUnsupported, "%T", p)
+	free := ai.Roles{Ask: ai.Model{Name: "qwen3", Price: ai.PriceFree{}}}
+	for _, c := range []struct {
+		provider ai.Provider
+		models   ai.Roles
+		want     Model
+	}{
+		{ai.Anthropic{}, ai.Roles{Ask: ai.Model{Name: "claude-sonnet-5-5", Price: ai.PriceTable{}}}, &anthropicModel{}},
+		{ai.OpenAI{}, ai.Roles{Ask: ai.Model{Name: "gpt-6.1-sol", Price: ai.PriceTable{}}}, &responsesModel{}},
+		{ai.AzureOpenAI{Endpoint: "https://acme.openai.azure.com"}, ai.Roles{Ask: ai.Model{Name: "sol", Price: ai.PriceTableAs{Model: "gpt-6.1-sol"}}}, &responsesModel{}},
+		{ai.Compatible{BaseURL: "https://llm.example.com/v1", API: ai.CompatChatCompletions, MaxCallsInFlight: 4}, free, &chatModel{}},
+		{ai.Compatible{BaseURL: "https://llm.example.com/v1", API: ai.CompatResponses, MaxCallsInFlight: 4}, free, &responsesModel{}},
+		{ai.Ollama{BaseURL: "http://127.0.0.1:11434", ContextTokens: 65536}, free, &ollamaModel{}},
+		{ai.Bedrock{Region: "us-east-1"}, ai.Roles{Ask: ai.Model{Name: "global.anthropic.claude-sonnet-5-5", Price: ai.PriceTable{}}}, &converseModel{}},
+	} {
+		b, err := New(ai.Resolved{Settings: ai.Settings{Provider: c.provider, Models: c.models}, Key: ontologyagent.NewModelKey("k")}, catalog)
+		require.NoError(t, err, "%T", c.provider)
+		assert.IsType(t, c.want, b.Model, "%T", c.provider)
 	}
+	_, err = New(ai.Resolved{Settings: ai.Settings{Provider: ai.Anthropic{}, Models: ai.Roles{Ask: ai.Model{Name: "claude-unknown", Price: ai.PriceTable{}}}}}, catalog)
+	assert.Error(t, err, "an unpriced model is refused")
+	_, err = New(ai.Resolved{Settings: ai.Settings{Provider: ai.Compatible{BaseURL: "https://x/v1", API: "grpc", MaxCallsInFlight: 1}, Models: free}}, catalog)
+	assert.Error(t, err, "an API no wire speaks")
+	_, err = New(ai.Resolved{Settings: ai.Settings{Provider: ai.AzureOpenAI{Endpoint: "https://example.com"}, Models: free}}, catalog)
+	assert.Error(t, err, "an endpoint that isn't Azure's")
+}
+
+// Ollama runs in the owner's window, at most what the probe read of the
+// model, and says so, so the Assistant fits the transcript to it.
+func TestNewSetsOllamasWindow(t *testing.T) {
+	catalog, err := ai.VendoredCatalog()
+	require.NoError(t, err)
+	model := ai.Model{Name: "qwen3", Price: ai.PriceFree{}}
+	settings := ai.Settings{Provider: ai.Ollama{BaseURL: "http://127.0.0.1:11434", ContextTokens: 131072},
+		Models: ai.Roles{Draft: model, Ask: model, Extract: model, Verify: model}}
+	b, err := New(ai.Resolved{Settings: settings}, catalog)
+	require.NoError(t, err)
+	assert.Equal(t, 131072, b.Window)
+	assert.Equal(t, 131072, b.Model.(*ollamaModel).window)
+	b, err = New(ai.Resolved{Settings: settings, Report: ai.ProbeReport{Ollama: &ai.OllamaReport{ContextLength: 65536}}}, catalog)
+	require.NoError(t, err)
+	assert.Equal(t, 65536, b.Window, "the model's own window caps the owner's")
+	b, err = New(ai.Resolved{Settings: ai.Settings{Provider: ai.Anthropic{}, Models: ai.Roles{Ask: ai.Model{Name: "claude-sonnet-5-5", Price: ai.PriceTable{}}}}}, catalog)
+	require.NoError(t, err)
+	assert.Zero(t, b.Window, "a provider that says nothing of one")
+}
+
+// Hosted, a call dials only public addresses, whatever the host resolves
+// to when it's made: a server on a private one is refused before a byte is
+// sent, as the setting's to fix.
+func TestHostedCallsRefusePrivateAddresses(t *testing.T) {
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits++ }))
+	defer server.Close()
+	m := newChat(server.URL, "", "m", false, 0, guarded(ai.Rules{}), nil)
+	_, err := collect(t, m, Request{System: "s", MaxOutput: 10, Messages: []Message{{Role: User, Content: []Block{Text{Text: "hi"}}}}})
+	var e *Error
+	require.ErrorAs(t, err, &e)
+	assert.Equal(t, ErrInvalid, e.Kind)
+	assert.ErrorIs(t, err, connector.ErrPrivateAddress)
+	assert.Zero(t, hits)
+}
+
+func TestGateBoundsCallsInFlight(t *testing.T) {
+	g := gateOf("test\x00one", 1)
+	assert.Equal(t, g, gateOf("test\x00one", 1), "one gate per endpoint and bound")
+	release, err := g.enter(context.Background())
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err = g.enter(ctx)
+	var e *Error
+	require.ErrorAs(t, err, &e, "a second call waits, until its context ends")
+	assert.True(t, e.Retryable())
+	release()
+	again, err := g.enter(context.Background())
+	require.NoError(t, err)
+	again()
+	none, err := gate(nil).enter(context.Background())
+	require.NoError(t, err, "nil bounds nothing")
+	none()
+}
+
+func TestStatusErrors(t *testing.T) {
+	for code, kind := range map[int]ErrorKind{0: ErrUnavailable, 200: ErrUnavailable, 302: ErrInvalid, 400: ErrInvalid, 401: ErrAuth, 403: ErrAuth,
+		404: ErrInvalid, 408: ErrUnavailable, 429: ErrRateLimited, 500: ErrUnavailable, 503: ErrUnavailable} {
+		assert.Equal(t, kind, statusError(code, errors.New("x")).Kind, "%d", code)
+	}
+}
+
+func TestCallIDs(t *testing.T) {
+	assert.Equal(t, "call_7", callID("call_7"))
+	a, b := callID(""), callID("")
+	assert.True(t, strings.HasPrefix(a, "call_"))
+	assert.NotEqual(t, a, b, "every call a server leaves unnamed gets an id of its own")
+}
+
+func TestSchemaOf(t *testing.T) {
+	schema, err := schemaOf(Tool{Name: "t", InputSchema: json.RawMessage(`{"$schema":"x","$id":"y","properties":{}}`)})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"type": "object", "properties": map[string]any{}}, schema)
+	schema, err = schemaOf(Tool{Name: "t"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"type": "object"}, schema)
+	_, err = schemaOf(Tool{Name: "t", InputSchema: json.RawMessage(`[`)})
+	assert.Error(t, err)
 }
 
 func TestPricer(t *testing.T) {
@@ -230,5 +344,4 @@ func TestPricer(t *testing.T) {
 	free, err := NewPricer(catalog, ai.KindAnthropic, ai.Model{Name: "x", Price: ai.PriceFree{}})
 	require.NoError(t, err)
 	assert.Zero(t, free.Micros(Usage{In: 1 << 20, Out: 1 << 20}))
-	assert.True(t, strings.HasPrefix(ErrUnsupported.Error(), "llm:"))
 }

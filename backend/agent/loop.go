@@ -47,6 +47,12 @@ const (
 	// maxAsksPerTurn is how many Analyst questions a turn asks: each spends
 	// the workspace's questions budget.
 	maxAsksPerTurn = 3
+	// liveTextEvery is how often the text a model is writing is shown, as
+	// TextDelta events.
+	liveTextEvery = 250 * time.Millisecond
+	// minContextTokens is the least of a transcript a model's window must
+	// hold beside the system prompt, the tools and the answer.
+	minContextTokens = 4000
 )
 
 // Store is what a turn reads and records of Foundry's store.
@@ -56,6 +62,7 @@ type Store interface {
 	ListFoundryAgentTurns(ctx context.Context, threadID string, limit int) ([]*model.FoundryAgentTurn, error)
 	AppendFoundryAgentMessages(ctx context.Context, turnID, workerID string, messages []model.FoundryAgentMessage, keep int) error
 	AppendFoundryAgentEvents(ctx context.Context, id, workerID string, events []json.RawMessage) error
+	FinishFoundryAgentText(ctx context.Context, id, workerID string, step int, events []json.RawMessage) error
 	RecordFoundryAgentAction(ctx context.Context, workerID string, a *model.FoundryAgentAction, maxPending int,
 		card func(*model.FoundryAgentAction) (json.RawMessage, error)) (*model.FoundryAgentAction, error)
 	GetFoundryAgentAction(ctx context.Context, workspaceID, id string) (*model.FoundryAgentAction, error)
@@ -67,8 +74,9 @@ type Resolver interface {
 	Resolve(ctx context.Context, workspaceID string) (ai.Resolved, error)
 }
 
-// Models builds the model a turn calls and its price; llm.New, or a test's.
-type Models func(r ai.Resolved, m ai.Model, catalog *ai.Catalog) (llm.Model, llm.Pricer, error)
+// Models binds the model a turn calls (the workspace's ask model), its price
+// and its window; llm.New, or a test's.
+type Models func(r ai.Resolved, catalog *ai.Catalog) (llm.Binding, error)
 
 // Runner runs the attempts of turns.
 type Runner struct {
@@ -128,13 +136,17 @@ type turnRun struct {
 	// fixedTokens is about what every call sends besides the transcript: the
 	// system prompt and the tools' definitions.
 	fixedTokens int
-	all         []entry
-	started     time.Time
-	out         *Attempt
+	// budget is about how much of the transcript a call sends: the
+	// Assistant's cap, within the model's window where it has one.
+	budget  int
+	all     []entry
+	started time.Time
+	out     *Attempt
 }
 
 // Run runs an attempt of turn:
-//  1. resolve the workspace's provider and its ask model, which the turn runs on;
+//  1. resolve the workspace's provider and its ask model, which the turn runs
+//     on, unless the setting's tool check found the Assistant can't;
 //  2. open the person's session, confirming as the person, and serve its tools
 //     to the model through an in-memory MCP client, Tools alone;
 //  3. read the thread's transcript, adding the turn's own message once;
@@ -154,12 +166,12 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 		return out, &Failure{Message: c.Message, Permanent: c.Permanent, Err: err}
 	}
 	ask := resolved.Settings.Models.Ask
-	m, pricer, err := r.Models(resolved, ask, r.Catalog)
-	if errors.Is(err, llm.ErrUnsupported) {
-		return out, &Failure{Message: "The Assistant runs on Claude for now. An owner can choose Claude in Settings › AI models.", Permanent: true, Err: err}
+	if check := resolved.Report.Assistant; !check.Runs() {
+		return out, &Failure{Message: checkFailure(check, resolved.Label(), ask.Name), Permanent: true, Err: fmt.Errorf("the setting's tool check: %s", check)}
 	}
+	bound, err := r.Models(resolved, r.Catalog)
 	if err != nil {
-		return out, &Failure{Message: "The Assistant's model can't be priced; an owner can check Settings › AI models.", Permanent: true, Err: err}
+		return out, &Failure{Message: "The Assistant can't call the workspace's model; an owner can check Settings › AI models.", Permanent: true, Err: err}
 	}
 	sink := &actionSink{db: r.DB, keys: r.Keys, turn: turn, workerID: r.WorkerID, maxPending: r.Cfg.MaxPendingActions}
 	session, err := r.Sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: turn.UserID, WorkspaceID: turn.WorkspaceID},
@@ -186,7 +198,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	if err != nil {
 		return out, &Failure{Message: "The thread's transcript can't be read", Permanent: true, Err: err}
 	}
-	t := &turnRun{r: r, turn: turn, model: m, pricer: pricer, client: client, offered: offered, all: all, started: r.Now(), out: out}
+	t := &turnRun{r: r, turn: turn, model: bound.Model, pricer: bound.Pricer, client: client, offered: offered, all: all, started: r.Now(), out: out}
 	fixed := len(system(turn.WorkspaceID))
 	for _, tool := range offered {
 		schema, err := json.Marshal(tool.InputSchema)
@@ -197,6 +209,18 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 		fixed += len(tool.Name) + len(tool.Description) + len(schema)
 	}
 	t.fixedTokens = fixed / 4
+	t.budget = r.Cfg.ContextTokens
+	if bound.Window > 0 {
+		// Estimates count four bytes a token, which JSON beats: three
+		// quarters of the window's room holds a transcript of three. A
+		// server that loads the window cuts what passes it without a word.
+		room := (bound.Window-maxOutput)*3/4 - t.fixedTokens
+		if room < minContextTokens {
+			return out, &Failure{Message: fmt.Sprintf("The model's context window, %d tokens, is too small for the Assistant. An owner can choose a larger one in Settings › AI models.", bound.Window),
+				Permanent: true, Err: fmt.Errorf("window %d leaves %d tokens", bound.Window, room)}
+		}
+		t.budget = min(t.budget, room)
+	}
 	// One order every call, so the cached prefix holds.
 	slices.SortFunc(t.tools, func(a, b llm.Tool) int { return strings.Compare(a.Name, b.Name) })
 	if err := t.event(ctx, Started{Model: ask.Name, Attempt: turn.Attempts}); err != nil {
@@ -301,7 +325,7 @@ func (t *turnRun) loop(ctx context.Context) error {
 			}
 			continue
 		}
-		messages := prompt(t.all, t.turn.ID, t.r.Cfg.ContextTokens)
+		messages := prompt(t.all, t.turn.ID, t.budget)
 		in := t.fixedTokens
 		for _, m := range messages {
 			in += estTokens(m)
@@ -317,7 +341,7 @@ func (t *turnRun) loop(ctx context.Context) error {
 		case spent+t.pricer.Micros(llm.Usage{In: int64(in), Out: maxOutput}) > t.turn.MaxUSDMicros:
 			return t.finish(ctx, StopBudget)
 		}
-		answer, stop, dropped, err := t.call(ctx, messages)
+		answer, stop, dropped, streamed, err := t.call(ctx, messages)
 		if err != nil {
 			return err
 		}
@@ -326,12 +350,8 @@ func (t *turnRun) loop(ctx context.Context) error {
 				return err
 			}
 		}
-		for _, b := range answer.Content {
-			if said, ok := b.(llm.Text); ok && strings.TrimSpace(said.Text) != "" {
-				if err := t.event(ctx, Said{Text: said.Text}); err != nil {
-					return err
-				}
-			}
+		if err := t.said(ctx, answer, streamed); err != nil {
+			return err
 		}
 		for _, use := range dropped {
 			why := NotRunInput
@@ -357,14 +377,22 @@ func (t *turnRun) outOfTime() bool {
 	return t.r.Now().Sub(t.started) >= time.Duration(t.r.Cfg.MaxWallSecs)*time.Second
 }
 
+// step is the number of the turn's model call running, or last run.
+func (t *turnRun) step() int { return t.turn.Steps + t.out.Steps }
+
 // call makes one model call, adding what it used to the attempt. A tool call
 // that isn't JSON, or that a reply cut off at its output's limit was writing,
-// is left out of the answer, and returned as dropped: it never runs.
-func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message, StopReason, []llm.ToolUse, error) {
+// is left out of the answer, and returned as dropped: it never runs. The text
+// the model writes is shown as it comes, every liveTextEvery, as TextDelta
+// events of the call's step; streamed reports whether any were.
+func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message, StopReason, []llm.ToolUse, bool, error) {
 	answer := llm.Message{Role: llm.Assistant}
 	stop := StopAnswered
 	var dropped []llm.ToolUse
+	streamed := false
 	t.out.Steps++
+	var live strings.Builder
+	shown := t.r.Now()
 	for chunk, err := range t.model.Stream(ctx, llm.Request{System: system(t.turn.WorkspaceID), Messages: messages, Tools: t.tools, MaxOutput: maxOutput}) {
 		if err != nil {
 			var refused *llm.Error
@@ -373,11 +401,20 @@ func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message
 				if refused.Kind == llm.ErrAuth {
 					message = "The model provider refused the workspace's key. An owner can check it in Settings › AI models."
 				}
-				return answer, "", nil, &Failure{Message: message, Permanent: true, Err: err}
+				return answer, "", nil, streamed, &Failure{Message: message, Permanent: true, Err: err}
 			}
-			return answer, "", nil, &Failure{Message: "The model provider is unavailable; Helix will retry", Err: err}
+			return answer, "", nil, streamed, &Failure{Message: "The model provider is unavailable; Helix will retry", Err: err}
 		}
 		switch c := chunk.(type) {
+		case llm.TextDelta:
+			live.WriteString(c.Text)
+			if now := t.r.Now(); now.Sub(shown) >= liveTextEvery {
+				if err := t.event(ctx, TextDelta{Step: t.step(), Text: live.String()}); err != nil {
+					return answer, "", nil, streamed, err
+				}
+				live.Reset()
+				shown, streamed = now, true
+			}
 		case llm.Text:
 			answer.Content = append(answer.Content, c)
 		case llm.ToolUse:
@@ -413,7 +450,44 @@ func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message
 			return ok
 		})
 	}
-	return answer, stop, dropped, nil
+	return answer, stop, dropped, streamed, nil
+}
+
+// said shows the person the text of the step's answer, as it is final, and
+// drops the TextDelta events of the step it supersedes; the transcript holds
+// the answer either way.
+func (t *turnRun) said(ctx context.Context, answer llm.Message, streamed bool) error {
+	var events []json.RawMessage
+	for _, b := range answer.Content {
+		if said, ok := b.(llm.Text); ok && strings.TrimSpace(said.Text) != "" {
+			raw, err := MarshalEvent(Said{Step: t.step(), Text: said.Text})
+			if err != nil {
+				return err
+			}
+			events = append(events, raw)
+		}
+	}
+	if !streamed && len(events) == 0 {
+		return nil
+	}
+	err := t.r.DB.FinishFoundryAgentText(ctx, t.turn.ID, t.r.WorkerID, t.step(), events)
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		return ErrLost
+	}
+	return err
+}
+
+// checkFailure words a setting's failed tool check for the person: the
+// model, and what an owner can do.
+func checkFailure(check ai.AssistantCheck, provider, model string) string {
+	switch check {
+	case ai.AssistantAuth:
+		return provider + " refused the workspace's key for the Assistant. An owner can check it in Settings › AI models."
+	case ai.AssistantNoToolCall:
+		return "The workspace's model, " + model + ", doesn't call tools, which the Assistant needs. An owner can choose another in Settings › AI models."
+	default:
+		return provider + " refused the Assistant's calls to " + model + ". An owner can choose another model in Settings › AI models."
+	}
 }
 
 // runTools runs the model's calls, in order, and commits their results as one
