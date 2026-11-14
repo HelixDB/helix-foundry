@@ -660,7 +660,7 @@ function Composer({
     ? `${length - MAX_MESSAGE} characters too long.`
     : busy
       ? "You can send once the Assistant has finished."
-      : "Enter to send, Shift+Enter for a new line. It acts only when you click Run.";
+      : "Enter to send, Shift+Enter for a new line. Nothing runs until you click a card’s button.";
   return (
     <form
       className="ag-composer"
