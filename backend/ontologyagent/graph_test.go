@@ -3,6 +3,7 @@ package ontologyagent
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +69,10 @@ func testExtractRequest() ExtractRequest {
 			// An approval taken back (4.16.0): the release as it was sent.
 			{Kind: model.FoundryReviewWithdraw, DocID: "doc-1", ClaimKey: strings.Repeat("ef", 32), Section: 1, Start: 0, End: 12, StatementHash: strings.Repeat("01", 32),
 				DecisionID: "01JDDEC0000000000000000004", DecidedAt: decidedAt.Add(-time.Hour)},
+			// A name another document linked to an entity, carried to every
+			// document (4.22.0), under its resolve's id.
+			{Kind: AliasDecision, Type: "Customer", NormName: "helio", EntityKey: &testEntityKey,
+				DecisionID: "01JDDEC0000000000000000005", DecidedAt: decidedAt},
 		},
 	}
 }
@@ -77,7 +82,7 @@ var testEntityKey = "scus_1"
 // testCounts are a document's counts as the agent sends them.
 const testCounts = `{"entities":2,"mentions":3,"facts":1,"reviews":1,"unresolved":1,"rejected":0,"attributes":4,"attribute_reviews":1,` +
 	`"prop_conflicts":1,"created":1,"identifiers_unverified":2,"attributes_over_entries":3,"released":0,"release_refused":0,"release_missed":0,` +
-	`"resolved":{"user":0,"adjudicated":0,"identifier":1,"name":1,"alias":0,"legal_form":0,"part_name":2,"own_name":1,"created":1}}`
+	`"resolved":{"user":0,"adjudicated":0,"identifier":1,"name":1,"alias":0,"legal_form":0,"part_name":2,"own_name":1,"created":1,"carried":3}}`
 
 func TestGraphContract(t *testing.T) {
 	// The requests the worker builds are ones the agent takes.
@@ -146,14 +151,14 @@ func TestGraphContract(t *testing.T) {
 			}
 		}
 		// Neither is a decision as earlier contracts sent it, which the agent still takes,
-		// but for a release, which is always named.
+		// but for a release and an alias, which are always named.
 		var request map[string]any
 		raw, _ := json.Marshal(testExtractRequest())
 		_ = json.Unmarshal(raw, &request)
 		unnamed := []any{}
 		for _, d := range request["decisions"].([]any) {
 			decision := d.(map[string]any)
-			if decision["kind"] == string(model.FoundryReviewRelease) || decision["kind"] == string(model.FoundryReviewWithdraw) {
+			if decision["kind"] == string(model.FoundryReviewRelease) || decision["kind"] == string(model.FoundryReviewWithdraw) || decision["kind"] == string(AliasDecision) {
 				continue
 			}
 			delete(decision, "decision_id")
@@ -311,19 +316,23 @@ func TestGraphContract(t *testing.T) {
 		events := []string{
 			`{"event":"extract_started","contract_version":"4.22.0","extractor":"claude-haiku-5-5","verifier":"gpt-6.1-sol","prompt_version":"7"}`,
 			`{"event":"artifact","doc_id":"doc-1","key":"abc_DEF-1","json":"{\"sections\":[]}"}`,
-			`{"event":"document","doc_id":"doc-1","outcome":{"kind":"ingested"},"text_bytes":120,"sections":2,` + counts + `,` + usage + `,"releases":[]}`,
-			`{"event":"document","doc_id":"doc-2","outcome":{"kind":"duplicate","of":"doc-1"},"text_bytes":120,"sections":0,` + counts + `,` + usage + `,"releases":[]}`,
-			`{"event":"document","doc_id":"doc-3","outcome":{"kind":"failed","code":"too_large","retryable":false},"text_bytes":0,"sections":0,` + counts + `,` + usage + `,"releases":[]}`,
+			`{"event":"document","doc_id":"doc-1","outcome":{"kind":"ingested"},"text_bytes":120,"sections":2,` + counts + `,` + usage + `,"names":[],"releases":[]}`,
+			`{"event":"document","doc_id":"doc-2","outcome":{"kind":"duplicate","of":"doc-1"},"text_bytes":120,"sections":0,` + counts + `,` + usage + `,"names":[],"releases":[]}`,
+			`{"event":"document","doc_id":"doc-3","outcome":{"kind":"failed","code":"too_large","retryable":false},"text_bytes":0,"sections":0,` + counts + `,` + usage + `,"names":[],"releases":[]}`,
 			`{"event":"document","doc_id":"doc-4","outcome":{"kind":"already_ingested"},"text_bytes":10,"sections":1,` + counts + `,` + usage +
+				`,"names":[{"decision":"resolve","type":"Customer","norm_name":"acme corp","decision_id":"dec-9","outcome":{"kind":"written"}},` +
+				`{"decision":"resolve","type":"Customer","norm_name":"acme","decision_id":"dec-10","outcome":{"kind":"not_asked"}},` +
+				`{"decision":"alias","type":"Customer","norm_name":"helio","decision_id":"dec-11","outcome":{"kind":"refused","reason":"not_replayed"}},` +
+				`{"decision":"alias","type":"Customer","norm_name":"initech","decision_id":null,"outcome":{"kind":"not_named"}}]` +
 				`,"releases":[{"decision_id":"dec-1","outcome":{"kind":"written"}},{"decision_id":"dec-2","outcome":{"kind":"refused","reason":"unresolved"}},` +
 				`{"decision_id":"dec-3","outcome":{"kind":"missed"}},{"decision_id":"dec-4","outcome":{"kind":"not_held"}}]}`,
 			// Withdrawals come first (4.16.0).
 			`{"event":"document","doc_id":"doc-7","outcome":{"kind":"already_ingested"},"text_bytes":10,"sections":1,` + counts + `,` + usage +
-				`,"releases":[{"decision_id":"dec-5","outcome":{"kind":"withdrawn"}},{"decision_id":"dec-6","outcome":{"kind":"not_written"}},` +
+				`,"names":[],"releases":[{"decision_id":"dec-5","outcome":{"kind":"withdrawn"}},{"decision_id":"dec-6","outcome":{"kind":"not_written"}},` +
 				`{"decision_id":"dec-7","outcome":{"kind":"refused","reason":"differs"}},{"decision_id":"dec-8","outcome":{"kind":"written"}}]}`,
-			`{"event":"document","doc_id":"doc-5","outcome":{"kind":"out_of_scope"},"text_bytes":10,"sections":1,` + counts + `,` + usage + `,"releases":[]}`,
+			`{"event":"document","doc_id":"doc-5","outcome":{"kind":"out_of_scope"},"text_bytes":10,"sections":1,` + counts + `,` + usage + `,"names":[],"releases":[]}`,
 			`{"event":"document","doc_id":"doc-6","outcome":{"kind":"failed","code":"model","model_failure":"auth","retryable":true},"text_bytes":10,"sections":0,` +
-				counts + `,` + usage + `,"releases":[]}`,
+				counts + `,` + usage + `,"names":[],"releases":[]}`,
 			`{"event":"extract_finished"}`,
 		}
 		for _, raw := range events {
@@ -346,7 +355,7 @@ func TestGraphContract(t *testing.T) {
 		// Links by part of a row's name and by an own-name identifier are counts of their own (4.13.0).
 		if want := (DocumentCounts{Entities: 2, Mentions: 3, Facts: 1, Reviews: 1, Unresolved: 1, Attributes: 4, AttributeReviews: 1,
 			PropConflicts: 1, Created: 1, IdentifiersUnverified: 2, AttributesOverEntries: 3,
-			Resolved: ResolvedCounts{Identifier: 1, Name: 1, Alias: 0, PartName: 2, OwnName: 1, Created: 1}}); ingested.Counts != want {
+			Resolved: ResolvedCounts{Identifier: 1, Name: 1, Alias: 0, PartName: 2, OwnName: 1, Created: 1, Carried: 3}}); ingested.Counts != want {
 			t.Fatalf("counts = %+v, want %+v", ingested.Counts, want)
 		}
 		outOfScope, err := DecodeDocumentEvent([]byte(events[7]))
@@ -360,8 +369,23 @@ func TestGraphContract(t *testing.T) {
 			held.Releases[2].Outcome.Kind != model.FoundryReleaseOutcomeMissed || held.Releases[3].Outcome.Kind != model.FoundryReleaseOutcomeNotHeld {
 			t.Fatalf("held = (%+v, %v)", held, err)
 		}
-		if len(ingested.Releases) != 0 {
-			t.Fatalf("a document no release names lists %+v", ingested.Releases)
+		// And of each name decision (4.22.0): the document's own resolves, and
+		// the aliases that met a name the rung asked about.
+		dec9, dec11 := "dec-9", "dec-11"
+		if want := []NamedDecision{
+			{Decision: model.FoundryNameResolve, Type: "Customer", NormName: "acme corp", DecisionID: &dec9, Outcome: NameOutcome{Kind: model.FoundryNameWritten}},
+			{Decision: model.FoundryNameAlias, Type: "Customer", NormName: "helio", DecisionID: &dec11,
+				Outcome: NameOutcome{Kind: model.FoundryNameRefused, Reason: model.FoundryNameNotReplayed}},
+			{Decision: model.FoundryNameAlias, Type: "Customer", NormName: "initech", Outcome: NameOutcome{Kind: model.FoundryNameNotNamed}},
+		}; len(held.Names) != 4 || !reflect.DeepEqual([]NamedDecision{held.Names[0], held.Names[2], held.Names[3]}, want) ||
+			held.Names[1].Outcome.Kind != model.FoundryNameNotAsked {
+			t.Fatalf("names = %+v", held.Names)
+		}
+		if len(ingested.Releases) != 0 || len(ingested.Names) != 0 {
+			t.Fatalf("a document no decision names lists %+v and %+v", ingested.Releases, ingested.Names)
+		}
+		if ingested.Counts.Resolved.Carried != 3 {
+			t.Fatalf("carried = %d", ingested.Counts.Resolved.Carried)
 		}
 		// And of each withdraw, first.
 		withdrawn, err := DecodeDocumentEvent([]byte(events[6]))
@@ -392,10 +416,32 @@ func TestGraphContract(t *testing.T) {
 			`{"event":"document","doc_id":"d","outcome":{"kind":"failed"}}`,
 			`{"event":"document","doc_id":"d","outcome":{"kind":"vanished"}}`,
 			`{"event":"document","outcome":{"kind":"ingested"}}`,
+			`{"event":"document","doc_id":"d","outcome":{"kind":"ingested"},"names":[{"decision":"rename","type":"T","norm_name":"a","outcome":{"kind":"written"}}]}`,
+			`{"event":"document","doc_id":"d","outcome":{"kind":"ingested"},"names":[{"decision":"alias","type":"T","norm_name":"a","outcome":{"kind":"carried"}}]}`,
+			`{"event":"document","doc_id":"d","outcome":{"kind":"ingested"},"names":[{"decision":"alias","type":"T","norm_name":"a","outcome":{"kind":"refused"}}]}`,
+			`{"event":"document","doc_id":"d","outcome":{"kind":"ingested"},"names":[{"decision":"alias","type":"T","norm_name":"a","outcome":{"kind":"written","reason":"bound"}}]}`,
+			`{"event":"document","doc_id":"d","outcome":{"kind":"ingested"},"names":[{"decision":"resolve","type":"","norm_name":"a","outcome":{"kind":"written"}}]}`,
+			`{"event":"document","doc_id":"d","outcome":{"kind":"ingested"},"names":[{"decision":"resolve","type":"T","norm_name":"","outcome":{"kind":"written"}}]}`,
 		} {
 			if _, err := DecodeDocumentEvent([]byte(raw)); err == nil {
 				t.Fatalf("%s decoded", raw)
 			}
+		}
+		// A refusal this backend hasn't seen is kept as it came, as a
+		// release's is; an event without names reads as none, as one
+		// without releases does.
+		later, err := DecodeDocumentEvent([]byte(`{"event":"document","doc_id":"d","outcome":{"kind":"ingested"},` +
+			`"names":[{"decision":"alias","type":"T","norm_name":"a","outcome":{"kind":"refused","reason":"a_later_reason"}}]}`))
+		if err != nil || len(later.Names) != 1 || later.Names[0].Outcome != (NameOutcome{Kind: model.FoundryNameRefused, Reason: "a_later_reason"}) {
+			t.Fatalf("later = (%+v, %v)", later, err)
+		}
+		if none, err := DecodeDocumentEvent([]byte(`{"event":"document","doc_id":"d","outcome":{"kind":"ingested"}}`)); err != nil || none.Names != nil {
+			t.Fatalf("none = (%+v, %v)", none, err)
+		}
+		// The schema says names are always there, as releases are: an event
+		// without them is not one this contract's engine writes.
+		if err := contracttest.Validate(t, schema, []byte(strings.Replace(events[2], `"names":[],`, "", 1))); err == nil {
+			t.Fatal("extract_event.json took a document event without names")
 		}
 		if _, err := DecodeArtifact([]byte(`{"event":"artifact","doc_id":"d"}`)); err == nil {
 			t.Fatal("an artifact without its key decoded")
@@ -561,6 +607,10 @@ func TestExtractDecisionWire(t *testing.T) {
 		// A release carries nothing else: the engine refuses a field it doesn't name.
 		{ExtractDecision{Kind: model.FoundryReviewRelease, DocID: "doc", ClaimKey: "abc", End: 9, StatementHash: "def", DecisionID: "01JDDEC", DecidedAt: decidedAt},
 			`{"kind":"release","doc_id":"doc","claim_key":"abc","section":0,"start":0,"end":9,"statement_hash":"def",` + named + `}`},
+		// An alias names its type, name and entity, and nothing a resolve
+		// names of its document (4.22.0).
+		{ExtractDecision{Kind: AliasDecision, Type: "Customer", DocID: "ignored", NormName: "helio", EntityKey: &key, Prop: "ignored", DecisionID: "01JDDEC", DecidedAt: decidedAt},
+			`{"kind":"alias","type":"Customer","norm_name":"helio","entity_key":"customer-1",` + named + `}`},
 		// Nor does a withdraw, the release as it was sent (4.16.0).
 		{ExtractDecision{Kind: model.FoundryReviewWithdraw, Type: "ignored", DocID: "doc", ClaimKey: "abc", Section: 2, Start: 1, End: 9, StatementHash: "def",
 			DecisionID: "01JDDEC", DecidedAt: decidedAt},
@@ -569,6 +619,17 @@ func TestExtractDecisionWire(t *testing.T) {
 		got, err := json.Marshal(tc.decision)
 		if err != nil || string(got) != tc.want {
 			t.Fatalf("%s %v, want %s", got, err, tc.want)
+		}
+	}
+	// No store keeps an alias: the decision's own check refuses the kind,
+	// whatever it names, so none is ever saved or copied to a load's list.
+	name, doc := "helio", "doc"
+	for _, d := range []model.FoundryReviewDecision{
+		{ID: "1", OntologyID: "o", DecidedByUserID: "u", Kind: AliasDecision, Type: "Customer", NormName: &name, EntityKey: &key},
+		{ID: "1", OntologyID: "o", DecidedByUserID: "u", Kind: AliasDecision, Type: "Customer", DocID: &doc, NormName: &name, EntityKey: &key},
+	} {
+		if err := d.Validate(); err == nil {
+			t.Fatalf("an alias passed as a stored decision: %+v", d)
 		}
 	}
 	body, err := json.Marshal(ExtractRequest{Models: houseExtractModels()})

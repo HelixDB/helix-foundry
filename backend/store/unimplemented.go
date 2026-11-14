@@ -36,6 +36,11 @@ func (u Unimplemented) ListFoundryLoadDecisions(context.Context, string, string,
 	u.unimplemented("ListFoundryLoadDecisions")
 	return nil, nil
 }
+
+func (u Unimplemented) ListFoundryLoadAliases(context.Context, string, string, int) ([]*model.FoundryReviewDecision, error) {
+	u.unimplemented("ListFoundryLoadAliases")
+	return nil, nil
+}
 func (u Unimplemented) ListFoundryShownDecisions(context.Context, string, string, int) ([]*model.FoundryReviewDecision, error) {
 	u.unimplemented("ListFoundryShownDecisions")
 	return nil, nil
@@ -76,7 +81,7 @@ func (u Unimplemented) EndFoundryLoadResend(context.Context, string, string, mod
 	u.unimplemented("EndFoundryLoadResend")
 	return nil
 }
-func (u Unimplemented) RecordFoundryReleaseOutcomes(context.Context, string, string, string, []model.FoundryReleaseOutcome) error {
+func (u Unimplemented) RecordFoundryReleaseOutcomes(context.Context, string, string, string, []model.FoundryReleaseOutcome, []model.FoundryDocumentName) error {
 	u.unimplemented("RecordFoundryReleaseOutcomes")
 	return nil
 }

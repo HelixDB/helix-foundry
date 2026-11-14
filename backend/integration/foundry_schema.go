@@ -57,7 +57,9 @@ var foundryOperationDocs = []foundryOperationDoc{
 	{name: "move_document", doc: "{document_id, set_id}."},
 	{name: "settle_review",
 		doc: "{review_id, decision}: the review_key of a FoundryReview the current load holds, and a decision of {resolve: {entity_key}}, {resolve: {not_in_data: true}}, " +
-			"{prop: {text|integer|number|boolean: value}} (an integer as a string of digits), or {prop: {null: true}} to remove the property."},
+			"{prop: {text|integer|number|boolean: value}} (an integer as a string of digits), or {prop: {null: true}} to remove the property. " +
+			"A resolve applies from the next load: one that chooses an entity also links that name to it in every document of that load where the load would otherwise ask, " +
+			"and not_in_data applies to the review's document only."},
 }
 
 // generateReads is what a generation reads, on every host.

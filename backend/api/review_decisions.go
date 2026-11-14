@@ -343,8 +343,9 @@ func (s *Service) saveFoundryReviewDecision(ctx context.Context, o *foundrymodel
 
 // settleFoundryReviewError maps a settle the store refused to its status: the
 // current load changed since the review was read (or wrote the claim a
-// rejection names), its version no longer takes the decision, or the
-// ontology takes no value decision of another property.
+// rejection names), its version no longer takes the decision, the ontology
+// takes no value decision of another property, or no name linked to an
+// entity no decision of it links that name to yet.
 func settleFoundryReviewError(err error) error {
 	if errors.Is(err, foundrystore.ErrConflict) {
 		return status.Error(codes.FailedPrecondition, "the current load changed, or its version no longer has this review's type or property; reload the review and try again")
@@ -354,7 +355,11 @@ func settleFoundryReviewError(err error) error {
 	}
 	if errors.Is(err, foundrystore.FoundryValueDecisionsFull) {
 		return status.Errorf(codes.FailedPrecondition, "this ontology holds %d value decisions, the most a load can be sent; remove one before deciding another",
-			foundrymodel.FoundryExtractDecisionsMax)
+			foundrymodel.FoundryExtractKindDecisionsMax)
+	}
+	if errors.Is(err, foundrystore.FoundryAliasesFull) {
+		return status.Errorf(codes.FailedPrecondition, "this ontology links %d different names to records, the most a load can carry to every document; "+
+			"choose a record this name is already linked to, or not in data, or remove a name's decision first", foundrymodel.FoundryExtractKindDecisionsMax)
 	}
 	return status.Errorf(codes.Internal, "settle review: %v", err)
 }

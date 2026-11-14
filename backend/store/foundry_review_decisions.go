@@ -21,10 +21,17 @@ const foundryReviewDecisionDrawnColumns = foundryReviewDecisionColumns + ", draw
 
 // FoundryValueDecisionsFull refuses a value decision of a property the
 // ontology has decided no value of: it holds
-// model.FoundryExtractDecisionsMax value decisions already, and every one
+// model.FoundryExtractKindDecisionsMax value decisions already, and every one
 // goes with every Extract of a load, which takes no more. Choosing again for
 // a property already decided replaces that decision and is not refused.
 var FoundryValueDecisionsFull = errors.New("the ontology holds as many value decisions as one extract takes")
+
+// FoundryAliasesFull refuses a resolve decision that links a name to an
+// entity no resolve of the ontology has linked that name of that type to
+// yet, once it holds model.FoundryExtractKindDecisionsMax such links: each
+// is an alias every Extract of a load sends, and an Extract takes no more.
+// A link an earlier decision made already, of any document, is not refused.
+var FoundryAliasesFull = errors.New("the ontology links as many names to entities as one extract takes")
 
 // SettleFoundryReviewDecision replaces the choice for this identity atomically.
 // It preserves the id of an existing choice. Under the ontology's lock it
@@ -34,7 +41,9 @@ var FoundryValueDecisionsFull = errors.New("the ontology holds as many value dec
 // the review was read), or the ontology has no current load. It applies from
 // the next load, as a resolve does; a release is settled by
 // SettleFoundryReleases and a value by SettleFoundryValue, which apply them
-// to the current one.
+// to the current one. A resolve that chooses an entity is also an alias of
+// every later load (ListFoundryLoadAliases): FoundryAliasesFull refuses one
+// past what an Extract takes.
 func (s *mysqlDB) SettleFoundryReviewDecision(ctx context.Context, workspaceID string, d *model.FoundryReviewDecision) error {
 	if err := d.Validate(); err != nil {
 		return err
@@ -50,6 +59,23 @@ func (s *mysqlDB) SettleFoundryReviewDecision(ctx context.Context, workspaceID s
 		}
 		if takes, err := tx.foundryLoadTakes(ctx, *o.CurrentLoadID, d); err != nil || !takes {
 			return cmp.Or(err, ErrConflict)
+		}
+		if d.Kind == model.FoundryReviewResolve && d.EntityKey != nil {
+			// The distinct links the ontology's resolves make, but the one
+			// this decision replaces (its document's choice of the name): the
+			// ontology's resolves, by its (ontology_id, kind, doc_id) index.
+			var linked, others int
+			if err := tx.db.QueryRowContext(ctx, `SELECT
+  COALESCE(SUM(type=? AND norm_name=? AND entity_key=?), 0),
+  COUNT(DISTINCT type, norm_name, entity_key)
+FROM foundry_review_decisions WHERE ontology_id=? AND kind='resolve' AND entity_key IS NOT NULL
+  AND NOT (type=? AND doc_id=? AND norm_name=?)`,
+				d.Type, d.NormName, d.EntityKey, d.OntologyID, d.Type, d.DocID, d.NormName).Scan(&linked, &others); err != nil {
+				return err
+			}
+			if linked == 0 && others >= model.FoundryExtractKindDecisionsMax {
+				return FoundryAliasesFull
+			}
 		}
 		return tx.saveFoundryReviewDecision(ctx, d, false)
 	})
@@ -143,7 +169,7 @@ FROM foundry_review_decisions r WHERE r.ontology_id=? AND r.kind='prop' AND r.ty
 				d.OntologyID).Scan(&held); err != nil {
 				return err
 			}
-			if held >= model.FoundryExtractDecisionsMax {
+			if held >= model.FoundryExtractKindDecisionsMax {
 				return FoundryValueDecisionsFull
 			}
 		case err != nil:
@@ -538,6 +564,32 @@ WHERE load_id=(SELECT current_load_id FROM foundry_ontologies WHERE id=?) AND ki
 // replaced or removed, and schema pruning, affect only future loads.
 func (s *mysqlDB) ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error) {
 	return s.listFoundryDecisions(ctx, "foundry_load_decisions", "load_id", loadID, afterID, documentIDs, limit)
+}
+
+// ListFoundryLoadAliases reads the resolve decisions of a load's list that
+// chose an entity, one per type, name and entity, of every document the
+// list has a decision of, not only those an Extract sends: each is a name a
+// person linked to that entity, which the load carries to every document as
+// an alias (contract 4.22.0). Of one name, type and entity decided in
+// several documents it keeps the earliest decided, the smallest id among
+// those decided at once, so every Extract sends the same alias; a name
+// chosen as two entities gives both, and the engine links neither. "Not in
+// data" (a NULL entity_key) says something of one document and gives none.
+// Paged by id after afterID. Each page scans the load's rows of its primary
+// key's load_id prefix, as ListFoundryLoadDecisions does, and numbers the
+// resolves with an entity among them.
+func (s *mysqlDB) ListFoundryLoadAliases(ctx context.Context, loadID, afterID string, limit int) ([]*model.FoundryReviewDecision, error) {
+	if limit < 1 || limit > 10001 {
+		return nil, fmt.Errorf("alias limit must be 1..10001")
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT "+foundryReviewDecisionColumns+" FROM (SELECT "+foundryReviewDecisionColumns+`,
+  ROW_NUMBER() OVER (PARTITION BY type, norm_name, entity_key ORDER BY decided_at, id) AS earliest
+  FROM foundry_load_decisions WHERE load_id=? AND kind='resolve' AND entity_key IS NOT NULL) a
+WHERE earliest=1 AND id>? ORDER BY id LIMIT ?`, loadID, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanAll(rows, scanFoundryReviewDecision)
 }
 
 // table and key are internal SQL identifiers, never request values.

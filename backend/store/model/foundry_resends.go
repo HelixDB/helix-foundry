@@ -27,14 +27,20 @@ const FoundryResendApproval FoundryResendReason = "approval"
 // so any Extract that ends answers the request, one of no documents included.
 const FoundryResendDecisions FoundryResendReason = "decisions"
 
-// FoundryExtractDecisionsMax is the most decisions one Extract takes (the
-// engine's Decisions). Every value decision of a load goes with every one of
-// its Extracts, so an ontology takes no more value decisions than this
-// (store.FoundryValueDecisionsFull): one more and no Extract of a load that
-// holds them could be sent. At the limit itself an Extract still goes, but
-// only with documents that have no decision of their own: a name settled or
-// a claim approved in one makes it one too many.
-const FoundryExtractDecisionsMax = 10000
+// FoundryExtractKindDecisionsMax is the most decisions of one kind (resolve,
+// prop, release, withdraw, alias) one Extract takes, and
+// FoundryExtractAllDecisionsMax the most of all kinds (the engine's Decisions,
+// contract 4.22.0). Every value decision of a load goes with every one of its
+// Extracts, and so does every alias, so an ontology takes no more value
+// decisions than one kind's cap (store.FoundryValueDecisionsFull), nor more
+// names linked to an entity (store.FoundryAliasesFull): one more and no
+// Extract of a load that holds them could be sent. The resolves, releases
+// and withdraws are those of the Extract's documents, so a resend sends
+// documents whose decisions are past a cap in smaller Extracts.
+const (
+	FoundryExtractKindDecisionsMax = 10000
+	FoundryExtractAllDecisionsMax  = 50000
+)
 
 // FoundryLoadResend is a document a load owes a resend, for a reason, or the
 // load's own decisions (FoundryResendDecisions), which name no document.

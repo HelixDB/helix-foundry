@@ -10,16 +10,30 @@ import (
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
-const maxExtractDecisions = model.FoundryExtractDecisionsMax
+// maxKindDecisions is the most decisions of one kind an Extract takes, and
+// maxExtractDecisions the most in all.
+const (
+	maxKindDecisions    = model.FoundryExtractKindDecisionsMax
+	maxExtractDecisions = model.FoundryExtractAllDecisionsMax
+)
 
-// decisions are the load's decisions for docs: every prop decision and the
-// resolve and release decisions of docs. One the loaded version no longer takes
-// (model.FoundryReviewDecision.Extractable: its type or prop is gone, or a
-// prop decision's key or value no longer fits) is left out, before the cap.
-// A resolve whose chosen entity the type's changed key no longer reads goes:
-// the engine counts it stale and reviews its name again, where left out the
-// name would be matched another way. Past the cap the Extract fails, too
-// large to send, rather than drop a choice. The list is what the load holds
+// decisions are the load's decisions for docs: every prop decision, every
+// alias, and the resolve and release decisions of docs. One the loaded
+// version no longer takes (model.FoundryReviewDecision.Extractable: its type
+// or prop is gone, or a prop decision's key or value no longer fits) is left
+// out, before the caps. A resolve whose chosen entity the type's changed key
+// no longer reads goes: the engine counts it stale and reviews its name
+// again, where left out the name would be matched another way. Past a cap
+// (maxKindDecisions of one kind, maxExtractDecisions in all) the Extract
+// fails, too large to send, rather than drop a choice.
+//
+// An alias (contract 4.22.0) is a resolve of the load's list that chose an
+// entity, of any document, sent with every Extract so the name links in
+// every document where the names rung would ask a person: one per type, name
+// and entity, the earliest decided (store.ListFoundryLoadAliases), with its
+// id and time. One whose type is gone, or whose entity the type's key no
+// longer reads (model.FoundryReviewDecision.Fits), is left out: the engine
+// would only count it stale. No alias is stored. The list is what the load holds
 // now: the choices the ontology held when the load was created, and the
 // approvals and value decisions settled against it or carried to it since
 // (store.SettleFoundryReleases, store.SettleFoundryValue), and the withdraws
@@ -40,6 +54,18 @@ func (r *runner) decisions(ctx context.Context, job *model.FoundryGraphJob, onto
 		sent[d.DocID] = true
 	}
 	var out []ontologyagent.ExtractDecision
+	// kinds counts the decisions listed so far of each kind.
+	kinds := map[model.FoundryReviewDecisionKind]int{}
+	add := func(d ontologyagent.ExtractDecision) error {
+		out = append(out, d)
+		if kinds[d.Kind]++; kinds[d.Kind] > maxKindDecisions {
+			return tooLarge(fmt.Sprintf("this extract needs more than %d review decisions of one kind; reduce its documents or decisions", maxKindDecisions), nil)
+		}
+		if len(out) > maxExtractDecisions {
+			return tooLarge(fmt.Sprintf("this extract needs more than %d review decisions; reduce its documents or decisions", maxExtractDecisions), nil)
+		}
+		return nil
+	}
 	// claims are the releases and withdraws listed so far, by id.
 	claims := map[string]bool{}
 	after, stale := "", 0
@@ -93,16 +119,12 @@ func (r *runner) decisions(ctx context.Context, job *model.FoundryGraphJob, onto
 				// approvals rank alike whichever is written first.
 				decision.DecidedAt = decision.DecidedAt.Truncate(time.Millisecond)
 			}
-			out = append(out, decision)
-			if len(out) > maxExtractDecisions {
-				return nil, tooLarge(fmt.Sprintf("this extract needs more than %d review decisions; reduce its documents or decisions", maxExtractDecisions), nil)
+			if err := add(decision); err != nil {
+				return nil, err
 			}
 		}
 		if len(page) < 1000 {
-			if stale > 0 {
-				log.From(ctx).Info("graph job: left out review decisions the version no longer takes", "job", job.ID, "count", stale)
-			}
-			return out, nil
+			break
 		}
 		next := page[len(page)-1].ID
 		if next <= after {
@@ -110,4 +132,42 @@ func (r *runner) decisions(ctx context.Context, job *model.FoundryGraphJob, onto
 		}
 		after = next
 	}
+	aliases := 0
+	for after = ""; ; {
+		page, err := r.db.ListFoundryLoadAliases(ctx, job.LoadID, after, 1000)
+		if err != nil {
+			return nil, retry("could not read review decisions; Helix will retry", err)
+		}
+		for _, d := range page {
+			if d.Kind != model.FoundryReviewResolve || d.EntityKey == nil || !d.Fits(types) {
+				stale++
+				continue
+			}
+			if d.DecidedAt.IsZero() {
+				return nil, permanent(fmt.Sprintf("review decision %s has no decision time", d.ID), nil)
+			}
+			// An alias may take its resolve's id: the engine holds ids apart
+			// only among releases and withdraws.
+			if err := add(ontologyagent.ExtractDecision{Kind: ontologyagent.AliasDecision, Type: d.Type, NormName: *d.NormName, EntityKey: d.EntityKey,
+				DecisionID: d.ID, DecidedAt: d.DecidedAt.UTC()}); err != nil {
+				return nil, err
+			}
+			aliases++
+		}
+		if len(page) < 1000 {
+			break
+		}
+		next := page[len(page)-1].ID
+		if next <= after {
+			return nil, permanent("alias paging did not advance", nil)
+		}
+		after = next
+	}
+	if stale > 0 {
+		log.From(ctx).Info("graph job: left out review decisions the version no longer takes", "job", job.ID, "count", stale)
+	}
+	if aliases > 0 {
+		log.From(ctx).Info("graph job: sends aliases of settled names", "job", job.ID, "load", job.LoadID, "count", aliases)
+	}
+	return out, nil
 }
