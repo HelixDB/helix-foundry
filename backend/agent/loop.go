@@ -18,6 +18,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/ai"
@@ -151,7 +153,11 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	sink := &actionSink{db: r.DB, keys: r.Keys, turn: turn, workerID: r.WorkerID, maxPending: r.Cfg.MaxPendingActions}
 	session, err := r.Sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: turn.UserID, WorkspaceID: turn.WorkspaceID},
 		integration.ConfirmByPerson{Sink: sink})
-	if err != nil {
+	switch status.Code(err) {
+	case codes.OK:
+	case codes.PermissionDenied, codes.NotFound, codes.Unauthenticated:
+		return out, &Failure{Message: "You no longer have access to this workspace.", Permanent: true, Err: err}
+	default:
 		return out, &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
 	}
 	client, offered, err := serve(session)

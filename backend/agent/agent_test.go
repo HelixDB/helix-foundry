@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/ai"
@@ -461,6 +463,9 @@ func TestFailuresSayWhetherToRetry(t *testing.T) {
 	h = newHarness(t)
 	h.host.err = errors.New("hydrate failed")
 	assert.False(t, failure(t, h).Permanent, "a session that couldn't open is retried, never run with less")
+	h = newHarness(t)
+	h.host.err = status.Error(codes.PermissionDenied, "not a member")
+	assert.True(t, failure(t, h).Permanent, "a person who lost the workspace isn't retried")
 
 	h = newHarness(t, say("x"))
 	h.db.lost = true
