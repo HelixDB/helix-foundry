@@ -631,6 +631,36 @@ enum OntologyGenerationStatus {
   ONTOLOGY_GENERATION_STATUS_RUNNING = 2;
   ONTOLOGY_GENERATION_STATUS_SUCCEEDED = 3;
   ONTOLOGY_GENERATION_STATUS_FAILED = 4;
+  // The ontology agent asked questions only the user can answer: the
+  // generation waits, still the ontology's live one, until they are answered
+  // (AnswerOntologyGeneration), it is cancelled (CancelOntologyGeneration),
+  // or answers_due_at passes and Helix answers each with the agent's
+  // default. questions lists them.
+  ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT = 5;
+  // Cancelled (CancelOntologyGeneration) before it stored a draft.
+  ONTOLOGY_GENERATION_STATUS_CANCELLED = 6;
+}
+
+// A question the ontology agent asked about its draft. The text, options and
+// default are the model's words and may quote the data: show them as plain
+// text, never as markup.
+message OntologyGenerationQuestion {
+  string id = 1;
+  string text = 2;
+  // The draft items it is about, such as type.Customer; may be empty.
+  repeated string items = 3;
+  // The answers the agent suggests; empty for a free answer. An answer may be
+  // any text, one of these or not.
+  repeated string options = 4;
+  // The agent's default, one of options when it has any; unset when it
+  // offers none. use_defaults answers with it.
+  optional string default_answer = 5;
+  // The generation can't carry on until a blocking question is answered;
+  // another may be left for the agent to decide.
+  bool blocking = 6;
+  // The answer it was given, once answered; unset while it waits. A
+  // question answered with no default says the agent may decide.
+  optional string answer = 7;
 }
 
 // One edit of a version's draft: put an item, or remove one.
@@ -718,6 +748,17 @@ message OntologyGeneration {
   // requester emailed when that load ends
   // (GenerateOntologyRequest.load_when_ready).
   bool load_when_ready = 22;
+  // The questions the agent's last turn asked, in its order: the ones status
+  // needs_input waits on, then, once answered, with their answers. Empty for
+  // a generation the agent asked nothing of. A draft's own non-blocking
+  // questions are in its version's definition.
+  repeated OntologyGenerationQuestion questions = 23;
+  // When the questions were asked; unset without questions.
+  google.protobuf.Timestamp asked_at = 24;
+  // While status is needs_input: when Helix answers every question with the
+  // agent's default and carries on (foundry.ontology.answer_days after
+  // asked_at).
+  google.protobuf.Timestamp answers_due_at = 25;
 }
 
 message OntologyGenerationTable {

@@ -3227,6 +3227,154 @@ func local_request_FoundryService_ListOntologyGenerations_0(ctx context.Context,
 	return msg, metadata, err
 }
 
+func request_FoundryService_AnswerOntologyGeneration_0(ctx context.Context, marshaler runtime.Marshaler, client FoundryServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq AnswerOntologyGenerationRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	val, ok := pathParams["workspace_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "workspace_id")
+	}
+	protoReq.WorkspaceId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "workspace_id", err)
+	}
+	val, ok = pathParams["ontology_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "ontology_id")
+	}
+	protoReq.OntologyId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "ontology_id", err)
+	}
+	val, ok = pathParams["id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "id")
+	}
+	protoReq.Id, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "id", err)
+	}
+	msg, err := client.AnswerOntologyGeneration(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+}
+
+func local_request_FoundryService_AnswerOntologyGeneration_0(ctx context.Context, marshaler runtime.Marshaler, server FoundryServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq AnswerOntologyGenerationRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	val, ok := pathParams["workspace_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "workspace_id")
+	}
+	protoReq.WorkspaceId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "workspace_id", err)
+	}
+	val, ok = pathParams["ontology_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "ontology_id")
+	}
+	protoReq.OntologyId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "ontology_id", err)
+	}
+	val, ok = pathParams["id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "id")
+	}
+	protoReq.Id, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "id", err)
+	}
+	msg, err := server.AnswerOntologyGeneration(ctx, &protoReq)
+	return msg, metadata, err
+}
+
+func request_FoundryService_CancelOntologyGeneration_0(ctx context.Context, marshaler runtime.Marshaler, client FoundryServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq CancelOntologyGenerationRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	val, ok := pathParams["workspace_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "workspace_id")
+	}
+	protoReq.WorkspaceId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "workspace_id", err)
+	}
+	val, ok = pathParams["ontology_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "ontology_id")
+	}
+	protoReq.OntologyId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "ontology_id", err)
+	}
+	val, ok = pathParams["id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "id")
+	}
+	protoReq.Id, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "id", err)
+	}
+	msg, err := client.CancelOntologyGeneration(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+}
+
+func local_request_FoundryService_CancelOntologyGeneration_0(ctx context.Context, marshaler runtime.Marshaler, server FoundryServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq CancelOntologyGenerationRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	val, ok := pathParams["workspace_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "workspace_id")
+	}
+	protoReq.WorkspaceId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "workspace_id", err)
+	}
+	val, ok = pathParams["ontology_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "ontology_id")
+	}
+	protoReq.OntologyId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "ontology_id", err)
+	}
+	val, ok = pathParams["id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "id")
+	}
+	protoReq.Id, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "id", err)
+	}
+	msg, err := server.CancelOntologyGeneration(ctx, &protoReq)
+	return msg, metadata, err
+}
+
 func request_FoundryService_SettleFoundryReview_0(ctx context.Context, marshaler runtime.Marshaler, client FoundryServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var (
 		protoReq SettleFoundryReviewRequest
@@ -7335,6 +7483,46 @@ func RegisterFoundryServiceHandlerServer(ctx context.Context, mux *runtime.Serve
 		}
 		forward_FoundryService_ListOntologyGenerations_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
+	mux.Handle(http.MethodPost, pattern_FoundryService_AnswerOntologyGeneration_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/helix.foundry.v1.FoundryService/AnswerOntologyGeneration", runtime.WithHTTPPathPattern("/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/generations/{id}:answer"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_FoundryService_AnswerOntologyGeneration_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_FoundryService_AnswerOntologyGeneration_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodPost, pattern_FoundryService_CancelOntologyGeneration_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/helix.foundry.v1.FoundryService/CancelOntologyGeneration", runtime.WithHTTPPathPattern("/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/generations/{id}:cancel"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_FoundryService_CancelOntologyGeneration_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_FoundryService_CancelOntologyGeneration_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
 	mux.Handle(http.MethodPost, pattern_FoundryService_SettleFoundryReview_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -9335,6 +9523,40 @@ func RegisterFoundryServiceHandlerClient(ctx context.Context, mux *runtime.Serve
 		}
 		forward_FoundryService_ListOntologyGenerations_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
+	mux.Handle(http.MethodPost, pattern_FoundryService_AnswerOntologyGeneration_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/helix.foundry.v1.FoundryService/AnswerOntologyGeneration", runtime.WithHTTPPathPattern("/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/generations/{id}:answer"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_FoundryService_AnswerOntologyGeneration_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_FoundryService_AnswerOntologyGeneration_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodPost, pattern_FoundryService_CancelOntologyGeneration_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/helix.foundry.v1.FoundryService/CancelOntologyGeneration", runtime.WithHTTPPathPattern("/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/generations/{id}:cancel"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_FoundryService_CancelOntologyGeneration_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_FoundryService_CancelOntologyGeneration_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
 	mux.Handle(http.MethodPost, pattern_FoundryService_SettleFoundryReview_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -10198,6 +10420,8 @@ var (
 	pattern_FoundryService_GenerateOntology_0                      = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id"}, "generate"))
 	pattern_FoundryService_GetOntologyGeneration_0                 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6, 1, 0, 4, 1, 5, 7}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "generations", "id"}, ""))
 	pattern_FoundryService_ListOntologyGenerations_0               = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "generations"}, ""))
+	pattern_FoundryService_AnswerOntologyGeneration_0              = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6, 1, 0, 4, 1, 5, 7}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "generations", "id"}, "answer"))
+	pattern_FoundryService_CancelOntologyGeneration_0              = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6, 1, 0, 4, 1, 5, 7}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "generations", "id"}, "cancel"))
 	pattern_FoundryService_SettleFoundryReview_0                   = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6, 1, 0, 4, 1, 5, 7}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "reviews", "review_id"}, "settle"))
 	pattern_FoundryService_ListFoundryReviewDecisions_0            = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "review-decisions"}, ""))
 	pattern_FoundryService_DeleteFoundryReviewDecision_0           = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6, 1, 0, 4, 1, 5, 7}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "review-decisions", "id"}, ""))
@@ -10308,6 +10532,8 @@ var (
 	forward_FoundryService_GenerateOntology_0                      = runtime.ForwardResponseMessage
 	forward_FoundryService_GetOntologyGeneration_0                 = runtime.ForwardResponseMessage
 	forward_FoundryService_ListOntologyGenerations_0               = runtime.ForwardResponseMessage
+	forward_FoundryService_AnswerOntologyGeneration_0              = runtime.ForwardResponseMessage
+	forward_FoundryService_CancelOntologyGeneration_0              = runtime.ForwardResponseMessage
 	forward_FoundryService_SettleFoundryReview_0                   = runtime.ForwardResponseMessage
 	forward_FoundryService_ListFoundryReviewDecisions_0            = runtime.ForwardResponseMessage
 	forward_FoundryService_DeleteFoundryReviewDecision_0           = runtime.ForwardResponseMessage

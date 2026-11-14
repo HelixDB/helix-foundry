@@ -2565,6 +2565,106 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/generations/{id}:answer": {
+      "post": {
+        "operationId": "FoundryService_AnswerOntologyGeneration",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1OntologyGenerationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceAnswerOntologyGenerationBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/generations/{id}:cancel": {
+      "post": {
+        "operationId": "FoundryService_CancelOntologyGeneration",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1OntologyGenerationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCancelOntologyGenerationBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/heal-findings": {
       "get": {
         "summary": "Self-healing suggestions: what audits of the ontology's current load\nfound its ontology and mappings lack, the top open ones by support.",
@@ -4482,6 +4582,22 @@
         }
       }
     },
+    "FoundryServiceAnswerOntologyGenerationBody": {
+      "type": "object",
+      "properties": {
+        "answers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1OntologyGenerationAnswer"
+          }
+        },
+        "useDefaults": {
+          "type": "boolean"
+        }
+      },
+      "description": "AnswerOntologyGenerationRequest answers the questions a generation waits\non (status needs_input) and queues it to carry on from where the agent\nasked. Each answer names one of its questions, at most once, with 1 to 2000\ncharacters of text. With use_defaults, every question left out takes the\nagent's default (or, with none, is left for the agent to decide);\nwithout, every blocking question must be answered, and a non-blocking one\nleft out stays open in the draft. INVALID_ARGUMENT otherwise; a\ngeneration that isn't waiting is FAILED_PRECONDITION. It needs what\nGenerateOntology needs: managing the ontology, and an AI provider."
+    },
     "FoundryServiceAskFoundryQuestionBody": {
       "type": "object",
       "properties": {
@@ -4527,6 +4643,10 @@
     "FoundryServiceCancelFoundryQuestionBody": {
       "type": "object",
       "description": "CancelFoundryQuestionRequest ends a queued or running question; a running\none is charged what it reserved. One that ended otherwise is\nFAILED_PRECONDITION."
+    },
+    "FoundryServiceCancelOntologyGenerationBody": {
+      "type": "object",
+      "description": "CancelOntologyGenerationRequest ends a generation that is queued, running\nor waiting for answers, storing no draft, so the ontology may generate\nagain; a running one's turn stops at the worker's next lease renewal. One\nthat ended is FAILED_PRECONDITION. It needs what GenerateOntology needs."
     },
     "FoundryServiceCompleteFoundryDocumentUploadBody": {
       "type": "object",
@@ -9485,9 +9605,38 @@
         "loadWhenReady": {
           "type": "boolean",
           "description": "Whether its draft is made current and loaded once stored, and its\nrequester emailed when that load ends\n(GenerateOntologyRequest.load_when_ready)."
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1OntologyGenerationQuestion"
+          },
+          "description": "The questions the agent's last turn asked, in its order: the ones status\nneeds_input waits on, then, once answered, with their answers. Empty for\na generation the agent asked nothing of. A draft's own non-blocking\nquestions are in its version's definition."
+        },
+        "askedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the questions were asked; unset without questions."
+        },
+        "answersDueAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "While status is needs_input: when Helix answers every question with the\nagent's default and carries on (foundry.ontology.answer_days after\nasked_at)."
         }
       },
       "description": "OntologyGeneration is one request to draft a version of an ontology."
+    },
+    "v1OntologyGenerationAnswer": {
+      "type": "object",
+      "properties": {
+        "questionId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
     },
     "v1OntologyGenerationDocument": {
       "type": "object",
@@ -9500,6 +9649,44 @@
         }
       },
       "description": "OntologyGenerationDocument is a table file a generation drafts from, and\nthe set it was in then."
+    },
+    "v1OntologyGenerationQuestion": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The draft items it is about, such as type.Customer; may be empty."
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The answers the agent suggests; empty for a free answer. An answer may be\nany text, one of these or not."
+        },
+        "defaultAnswer": {
+          "type": "string",
+          "description": "The agent's default, one of options when it has any; unset when it\noffers none. use_defaults answers with it."
+        },
+        "blocking": {
+          "type": "boolean",
+          "description": "The generation can't carry on until a blocking question is answered;\nanother may be left for the agent to decide."
+        },
+        "answer": {
+          "type": "string",
+          "description": "The answer it was given, once answered; unset while it waits. A\nquestion answered with no default says the agent may decide."
+        }
+      },
+      "description": "A question the ontology agent asked about its draft. The text, options and\ndefault are the model's words and may quote the data: show them as plain\ntext, never as markup."
     },
     "v1OntologyGenerationResponse": {
       "type": "object",
@@ -9516,9 +9703,12 @@
         "ONTOLOGY_GENERATION_STATUS_QUEUED",
         "ONTOLOGY_GENERATION_STATUS_RUNNING",
         "ONTOLOGY_GENERATION_STATUS_SUCCEEDED",
-        "ONTOLOGY_GENERATION_STATUS_FAILED"
+        "ONTOLOGY_GENERATION_STATUS_FAILED",
+        "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT",
+        "ONTOLOGY_GENERATION_STATUS_CANCELLED"
       ],
-      "default": "ONTOLOGY_GENERATION_STATUS_UNSPECIFIED"
+      "default": "ONTOLOGY_GENERATION_STATUS_UNSPECIFIED",
+      "description": " - ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT: The ontology agent asked questions only the user can answer: the\ngeneration waits, still the ontology's live one, until they are answered\n(AnswerOntologyGeneration), it is cancelled (CancelOntologyGeneration),\nor answers_due_at passes and Helix answers each with the agent's\ndefault. questions lists them.\n - ONTOLOGY_GENERATION_STATUS_CANCELLED: Cancelled (CancelOntologyGeneration) before it stored a draft."
     },
     "v1OntologyGenerationTable": {
       "type": "object",
