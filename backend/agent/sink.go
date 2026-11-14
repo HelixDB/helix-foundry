@@ -31,8 +31,7 @@ type actionSink struct {
 	turn       *model.FoundryAgentTurn
 	workerID   string
 	maxPending int
-	// cards draws as the turn's person; its reviews are set once the
-	// person's session opens.
+	// cards draws as the turn's person, set once their session opens.
 	cards Cards
 }
 
