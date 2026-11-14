@@ -128,8 +128,11 @@ export function GeneratePage() {
       ...ontologyQueries.generation(id, o, draftedBy || ""),
       enabled: !!draftedBy,
     }),
+    // Read, or known not to be: a version or generation that can't be read
+    // gives nothing to start from.
     draftedRead =
       !ontology.currentVersionId ||
+      !!current.error ||
       (!!current.data && (!draftedBy || !!drafted.data || !!drafted.error));
   // The chosen API sources start as before a sign-in's round trip, else
   // the prefill's, else those the current version's generation read; null
