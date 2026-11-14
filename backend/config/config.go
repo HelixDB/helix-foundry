@@ -1682,7 +1682,7 @@ func (c *Config) validateRoles(roles Roles) error {
 	if roles.API && f.Ontology.PerHour < 1 {
 		return fmt.Errorf("foundry.ontology.per_hour must be positive")
 	}
-	if (roles.API || roles.OntologyWorker) && f.Ontology.AnswerDays < 1 {
+	if (roles.API || roles.OntologyWorker || roles.NotifyWorker) && f.Ontology.AnswerDays < 1 {
 		return fmt.Errorf("foundry.ontology.answer_days must be positive")
 	}
 	if roles.OntologyWorker && f.Ontology.MaxQuestionRounds < 1 {

@@ -943,6 +943,10 @@ func (u Unimplemented) DiscoverFoundryOntologyReady(context.Context, time.Time, 
 	u.unimplemented("DiscoverFoundryOntologyReady")
 	return 0, nil
 }
+func (u Unimplemented) DiscoverFoundryOntologyQuestions(context.Context, time.Time, int, func() string) (int, error) {
+	u.unimplemented("DiscoverFoundryOntologyQuestions")
+	return 0, nil
+}
 func (u Unimplemented) DiscoverFoundrySampleFollowUps(context.Context, time.Time, time.Time, int, func() string) (int, error) {
 	u.unimplemented("DiscoverFoundrySampleFollowUps")
 	return 0, nil

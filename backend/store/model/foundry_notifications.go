@@ -12,6 +12,11 @@ const (
 	// failed, not drafted, or drafted and waiting for review. Its subject is
 	// the generation.
 	FoundryNotifyOntologyReady FoundryNotificationKind = "ontology_ready"
+	// FoundryNotifyOntologyQuestions tells the requester of an ontology's
+	// first draft that its agent asked questions the draft waits on, and
+	// when Helix answers them with the agent's defaults. Its subject is the
+	// generation, so it goes once, at the first round.
+	FoundryNotifyOntologyQuestions FoundryNotificationKind = "ontology_questions"
 	// FoundryNotifySampleFollowUp asks a person who watched the sample
 	// draft an ontology, and a day later has no data of their own in its
 	// workspace, to try Foundry on theirs. Its subject is the person, so
@@ -44,7 +49,8 @@ type FoundryNotification struct {
 	SubjectID   string
 	WorkspaceID string
 	UserID      string
-	// OntologyID is set exactly for FoundryNotifyOntologyReady.
+	// OntologyID is set exactly for FoundryNotifyOntologyReady and
+	// FoundryNotifyOntologyQuestions.
 	OntologyID *string
 	Status     FoundryNotificationStatus
 	// Attempts counts the claims made of it, the one held included.

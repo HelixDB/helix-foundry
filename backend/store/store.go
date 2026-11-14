@@ -389,6 +389,7 @@ type Store interface {
 	// Foundry notifications: the emails the foundry-notify-worker finds,
 	// claims and sends (foundry_notifications.go)
 	DiscoverFoundryOntologyReady(ctx context.Context, since time.Time, limit int, newID func() string) (int, error)
+	DiscoverFoundryOntologyQuestions(ctx context.Context, since time.Time, limit int, newID func() string) (int, error)
 	DiscoverFoundrySampleFollowUps(ctx context.Context, from, to time.Time, limit int, newID func() string) (int, error)
 	ClaimFoundryNotification(ctx context.Context, token string, lease time.Duration) (*model.FoundryNotification, error)
 	FinishFoundryNotification(ctx context.Context, id, token string, outcome model.FoundryNotificationOutcome) error
