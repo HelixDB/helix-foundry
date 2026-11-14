@@ -39,7 +39,7 @@ func (f agentFixture) limits() model.FoundryAgentLimits {
 }
 
 func (f agentFixture) claim() model.FoundryAgentClaim {
-	return model.FoundryAgentClaim{Runtime: model.FoundryAgentRuntimeAPI, Lease: time.Minute, Defer: time.Hour, Limits: f.limits()}
+	return model.FoundryAgentClaim{Runtime: model.FoundryAgentRuntimeAPI, Lease: time.Minute, Defer: time.Hour, Limits: f.limits(), Automations: f.limits()}
 }
 
 func (f agentFixture) turnID(n int) string   { return id26(fmt.Sprintf("AT-%s-%03d-", f.tag, n)) }

@@ -70,7 +70,8 @@ func newTask(err error) (*Task, *queue) {
 	q := &queue{settled: map[string]model.FoundryAgentTurnOutcome{}, events: map[string][]json.RawMessage{}}
 	cfg := config.Defaults().Foundry.Agent
 	cfg.Enabled = true
-	return &Task{cfg: cfg, queue: q, runner: fakeRunner{err: err}, workerID: "w1", now: time.Now, slots: make(chan struct{}, 2)}, q
+	return &Task{cfg: cfg, automations: config.Defaults().Foundry.Automations, queue: q, runner: fakeRunner{err: err}, workerID: "w1", now: time.Now,
+		slots: make(chan struct{}, 2)}, q
 }
 
 func turn(attempts int) *model.FoundryAgentTurn {
@@ -155,4 +156,14 @@ func TestOffItClaimsNothing(t *testing.T) {
 	cfg.Foundry.Agent.Enabled = true
 	_, err = New(Deps{Cfg: &cfg})
 	assert.Error(t, err, "on, it needs a session host")
+}
+
+func TestClaimKeepsAutomationsApart(t *testing.T) {
+	task, _ := newTask(nil)
+	task.automations.MonthlyUSD, task.automations.MaxRunning = 7, 1
+	claim := task.claim()
+	require.Equal(t, task.cfg.MonthlyMicros(), claim.Limits.CapMicros)
+	require.Equal(t, int64(7_000_000), claim.Automations.CapMicros, "automations' turns spend a budget of their own")
+	require.Equal(t, 1, claim.Automations.Running)
+	require.Equal(t, claim.Limits.Since, claim.Automations.Since)
 }

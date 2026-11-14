@@ -183,6 +183,19 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_PublishFoundryDashboard_FullMethodName:           Deny,
 	foundryv1.FoundryService_UnpublishFoundryDashboard_FullMethodName:         Deny,
 	foundryv1.FoundryEventsService_GetSharedFoundryDashboard_FullMethodName:   Deny,
+	// Automations are people's, run as their owners: a grantee has none.
+	foundryv1.FoundryService_ListFoundryAutomations_FullMethodName:     Deny,
+	foundryv1.FoundryService_GetFoundryAutomation_FullMethodName:       Deny,
+	foundryv1.FoundryService_CreateFoundryAutomation_FullMethodName:    Deny,
+	foundryv1.FoundryService_UpdateFoundryAutomation_FullMethodName:    Deny,
+	foundryv1.FoundryService_DeleteFoundryAutomation_FullMethodName:    Deny,
+	foundryv1.FoundryService_ApproveFoundryAutomation_FullMethodName:   Deny,
+	foundryv1.FoundryService_PauseFoundryAutomation_FullMethodName:     Deny,
+	foundryv1.FoundryService_ResumeFoundryAutomation_FullMethodName:    Deny,
+	foundryv1.FoundryService_RunFoundryAutomation_FullMethodName:       Deny,
+	foundryv1.FoundryService_ListFoundryAutomationRuns_FullMethodName:  Deny,
+	foundryv1.FoundryService_GetFoundryAutomationRun_FullMethodName:    Deny,
+	foundryv1.FoundryService_CancelFoundryAutomationRun_FullMethodName: Deny,
 
 	// The workspace's settings, plan and spend.
 	foundryv1.FoundryService_GetFoundryAI_FullMethodName:             Deny,

@@ -245,6 +245,18 @@ type ReadStore interface {
 	GetFoundryDashboardByClientToken(ctx context.Context, workspaceID, userID, clientToken string) (*model.FoundryDashboard, error)
 	ListFoundryDashboards(ctx context.Context, workspaceID string, pinnedOnly bool) ([]*model.FoundryDashboard, error)
 	GetSharedFoundryDashboard(ctx context.Context, tokenSHA256 string) (*model.FoundryDashboardShare, error)
+
+	// Automations and their runs (foundry_automations.go)
+	GetFoundryAutomation(ctx context.Context, workspaceID, id string) (*model.FoundryAutomation, error)
+	GetFoundryAutomationByClientToken(ctx context.Context, workspaceID, ownerUserID, clientToken string) (*model.FoundryAutomation, error)
+	ListFoundryAutomations(ctx context.Context, workspaceID string) ([]*model.FoundryAutomation, error)
+	GetFoundryAutomationRun(ctx context.Context, workspaceID, id string) (*model.FoundryAutomationRun, error)
+	ListFoundryAutomationRuns(ctx context.Context, automationID, pageToken string, limit int) ([]*model.FoundryAutomationRun, string, error)
+	ListFoundryAutomationRunNodes(ctx context.Context, runID string) ([]*model.FoundryAutomationRunNode, error)
+	GetFoundryAutomationNotice(ctx context.Context, n *model.FoundryNotification) (*model.FoundryAutomationNotice, error)
+	DueFoundryAutomationSchedules(ctx context.Context, limit int) ([]*model.FoundryAutomation, error)
+	WatchedFoundryAutomations(ctx context.Context, every time.Duration, limit int) ([]*model.FoundryAutomation, error)
+	FindFoundryAutomationEnded(ctx context.Context, a *model.FoundryAutomation, settle time.Duration, limit int) ([]model.FoundryAutomationEnded, error)
 }
 
 // Store is ReadStore plus every write.
@@ -471,6 +483,32 @@ type Store interface {
 	DeleteFoundryDashboard(ctx context.Context, workspaceID, id string, editor model.FoundryDashboardEditor) error
 	PublishFoundryDashboard(ctx context.Context, share *model.FoundryDashboardShare) (*model.FoundryDashboardShare, error)
 	UnpublishFoundryDashboard(ctx context.Context, workspaceID, id string) error
+
+	// Automations: people's edits, approvals and runs by hand, and the
+	// foundry-automation-worker's fires and runs (foundry_automations.go)
+	CreateFoundryAutomation(ctx context.Context, a *model.FoundryAutomation, max int) error
+	UpdateFoundryAutomation(ctx context.Context, workspaceID, id, ownerUserID string, expected int64, u model.FoundryAutomationUpdate) (*model.FoundryAutomation, error)
+	ApproveFoundryAutomation(ctx context.Context, workspaceID, id, ownerUserID string, expected int64, next *time.Time) (*model.FoundryAutomation, error)
+	PauseFoundryAutomation(ctx context.Context, workspaceID, id string, by model.FoundryAutomationActor) (*model.FoundryAutomation, error)
+	ResumeFoundryAutomation(ctx context.Context, workspaceID, id, ownerUserID string, next *time.Time) (*model.FoundryAutomation, error)
+	DeleteFoundryAutomation(ctx context.Context, workspaceID, id string, by model.FoundryAutomationActor) error
+	RunFoundryAutomationNow(ctx context.Context, run *model.FoundryAutomationRun, triggerNodeID string, triggerOutput json.RawMessage,
+		limits model.FoundryAutomationLimits) (*model.FoundryAutomationRun, error)
+	CancelFoundryAutomationRun(ctx context.Context, workspaceID, id string, by model.FoundryAutomationActor) (*model.FoundryAutomationRun, error)
+	// PauseFoundryAutomationsOf pauses the member's automations as their
+	// owner's who lost access; its host calls it in the transaction that
+	// removes the member.
+	PauseFoundryAutomationsOf(ctx context.Context, workspaceID, userID string) error
+	TouchFoundryAutomation(ctx context.Context, id string) error
+	FireFoundryAutomation(ctx context.Context, f model.FoundryAutomationFire, limits model.FoundryAutomationLimits) (model.FoundryAutomationFired, error)
+	ClaimFoundryAutomationRun(ctx context.Context, workerID string, lease time.Duration) (*model.FoundryAutomationRun, error)
+	RenewFoundryAutomationRunLease(ctx context.Context, id, workerID string, lease time.Duration) error
+	StartFoundryAutomationNode(ctx context.Context, runID, workerID, nodeID string, status model.FoundryAutomationNodeStatus) error
+	StartFoundryAutomationAssistant(ctx context.Context, runID, workerID, nodeID string, thread *model.FoundryAgentThread, turn *model.FoundryAgentTurn) error
+	EndFoundryAutomationNode(ctx context.Context, runID, workerID, nodeID string, end model.FoundryAutomationNodeEnd) error
+	YieldFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time) error
+	RetryFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time, why string) error
+	FinishFoundryAutomationRun(ctx context.Context, id, workerID string, end model.FoundryAutomationRunEnd) error
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

@@ -3,11 +3,14 @@
 -- reads the workspace through Foundry's tools and prepares actions the person
 -- runs with a click. Every table is new: nothing existing changes.
 
--- A conversation, private to the user who started it.
+-- A conversation, private to the user who started it: a person's chat, or
+-- the thread an automation's run (foundry_automation_runs.thread_id) runs
+-- its Assistant steps in, as its owner, which the person's list leaves out.
 CREATE TABLE foundry_agent_threads (
   id                 CHAR(26)     NOT NULL PRIMARY KEY,
   workspace_id       CHAR(26)     NOT NULL,
   user_id            VARCHAR(64)  NOT NULL,
+  kind               VARCHAR(16)  NOT NULL DEFAULT 'chat',
   title              VARCHAR(200) NOT NULL,
   -- Who runs its turns: Foundry's own worker ('api'), or a helper on the
   -- owner's machine driving a CLI the person signed in to.
@@ -19,18 +22,22 @@ CREATE TABLE foundry_agent_threads (
   created_at         DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at         DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   deleted_at         DATETIME(6)  NULL,
-  INDEX foundry_agent_threads_list_idx (workspace_id, user_id, updated_at, id),
-  CONSTRAINT foundry_agent_threads_runtime_chk CHECK (runtime IN ('api', 'claude_code', 'codex'))
+  INDEX foundry_agent_threads_list_idx (workspace_id, user_id, kind, updated_at, id),
+  CONSTRAINT foundry_agent_threads_runtime_chk CHECK (runtime IN ('api', 'claude_code', 'codex')),
+  CONSTRAINT foundry_agent_threads_kind_chk CHECK (kind IN ('chat', 'automation'))
 );
 
--- One turn of a thread: a person's message, or the result of an action the
--- person ran, which the agent goes on from. The foundry-agent-worker claims a
--- queued turn, reserving its max_usd against the workspace's monthly budget
--- in the same transaction, as foundry_questions are claimed; a thread has at
+-- One turn of a thread: a person's message, the result of an action the
+-- person ran, which the agent goes on from, or an automation's Assistant step
+-- (automation_run_id, automation_node_id), whose input is its instruction.
+-- The foundry-agent-worker claims a queued turn, reserving its max_usd
+-- against the workspace's monthly budget in the same transaction, as foundry_questions are claimed; a thread has at
 -- most one live turn (live_thread). A turn has its thread's runtime, so each
 -- runtime's worker claims only its own. A helper's turn runs on its owner's
 -- subscription and spends nothing: its max_usd is 0, and only an 'api' turn's
--- is above it.
+-- is above it. An automation's turns are claimed under the workspace's
+-- automations budget and running cap, apart from people's: unattended work
+-- never spends the Assistant people use.
 CREATE TABLE foundry_agent_turns (
   id              CHAR(26)    NOT NULL PRIMARY KEY,
   workspace_id    CHAR(26)    NOT NULL,
@@ -38,8 +45,11 @@ CREATE TABLE foundry_agent_turns (
   user_id         VARCHAR(64) NOT NULL,
   runtime         VARCHAR(16) NOT NULL,
   kind            VARCHAR(16) NOT NULL,
-  -- The person's text, for a message; the action's id, for an action result.
+  -- The person's text, for a message; the action's id, for an action result;
+  -- the step's instruction, with what fired the run, for an automation's.
   input           TEXT        NOT NULL,
+  automation_run_id  CHAR(26)    NULL,
+  automation_node_id VARCHAR(32) NULL,
   -- What the person was looking at: ids only.
   page_context    JSON        NULL,
   status          VARCHAR(16) NOT NULL,
@@ -73,7 +83,8 @@ CREATE TABLE foundry_agent_turns (
   INDEX foundry_agent_turns_spend_idx (workspace_id, charged_at),
   INDEX foundry_agent_turns_running_idx (workspace_id, status),
   CONSTRAINT foundry_agent_turns_runtime_chk CHECK (runtime IN ('api', 'claude_code', 'codex')),
-  CONSTRAINT foundry_agent_turns_kind_chk CHECK (kind IN ('message', 'action_result')),
+  CONSTRAINT foundry_agent_turns_kind_chk CHECK (kind IN ('message', 'action_result', 'automation') AND
+    (kind = 'automation') = (automation_run_id IS NOT NULL) AND (automation_run_id IS NULL) = (automation_node_id IS NULL)),
   CONSTRAINT foundry_agent_turns_status_chk CHECK (status IN ('queued', 'running', 'done', 'failed', 'cancelled')),
   CONSTRAINT foundry_agent_turns_finished_chk CHECK ((status IN ('queued', 'running')) = (finished_at IS NULL)),
   CONSTRAINT foundry_agent_turns_reserved_chk CHECK (reserved_micros >= 0 AND (status = 'running' OR reserved_micros = 0)),

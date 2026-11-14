@@ -44,6 +44,17 @@ func (r FoundryAgentRuntime) Subscription() bool {
 func (r FoundryAgentRuntime) Offered() bool {
 	return r == FoundryAgentRuntimeAPI || r == FoundryAgentRuntimeClaudeCode
 }
+// FoundryAgentThreadKind is what a thread is: a closed set.
+type FoundryAgentThreadKind string
+
+const (
+	// FoundryAgentThreadChat is a person's conversation, in their list.
+	FoundryAgentThreadChat FoundryAgentThreadKind = "chat"
+	// FoundryAgentThreadAutomation is the thread an automation's run runs its
+	// Assistant steps in, as its owner: theirs to open from the run, and out
+	// of their list.
+	FoundryAgentThreadAutomation FoundryAgentThreadKind = "automation"
+)
 
 // FoundryAgentThread is one conversation with the Assistant, private to the
 // user who started it.
@@ -51,6 +62,7 @@ type FoundryAgentThread struct {
 	ID          string
 	WorkspaceID string
 	UserID      string
+	Kind        FoundryAgentThreadKind
 	Title       string
 	Runtime     FoundryAgentRuntime
 	// RuntimeSessionID is a helper's CLI session that the thread's next turn
@@ -69,6 +81,10 @@ const (
 	// FoundryAgentTurnActionResult is an action the person ran, which the
 	// agent goes on from; its Input is the action's id.
 	FoundryAgentTurnActionResult FoundryAgentTurnKind = "action_result"
+	// FoundryAgentTurnAutomation is an automation's Assistant step, run
+	// unattended as its owner; its Input is the step's instruction with what
+	// fired the run, and AutomationRunID and AutomationNodeID name the step.
+	FoundryAgentTurnAutomation FoundryAgentTurnKind = "automation"
 )
 
 // FoundryAgentTurnStatus is where a turn is in its life.
@@ -97,6 +113,10 @@ type FoundryAgentTurn struct {
 	Runtime FoundryAgentRuntime
 	Kind    FoundryAgentTurnKind
 	Input   string
+	// AutomationRunID and AutomationNodeID are set exactly on an automation's
+	// turn: the run and step it is.
+	AutomationRunID  *string
+	AutomationNodeID *string
 	// PageContext is what the person was looking at, ids only; nil for none.
 	PageContext    json.RawMessage
 	Status         FoundryAgentTurnStatus
@@ -163,8 +183,9 @@ const (
 	FoundryAgentActionDismissed FoundryAgentActionStatus = "dismissed"
 )
 
-// FoundryAgentExecutingFor is how long a click may run before the action
-// reads as unknown: its process died without saying how it ended.
+// FoundryAgentExecutingFor is how long a click, or an automation's approved
+// action, may run before the action reads as unknown: its process died
+// without saying how it ended.
 const FoundryAgentExecutingFor = 2 * time.Minute
 
 // FoundryAgentAction is an action the agent prepared for its person to run.
@@ -229,7 +250,11 @@ type FoundryAgentClaim struct {
 	Runtime FoundryAgentRuntime
 	Lease   time.Duration
 	Defer   time.Duration
-	Limits  FoundryAgentLimits
+	// Limits bound people's turns; Automations automations' turns, a budget
+	// and a running cap of their own (PerHour unused): unattended work never
+	// spends what people use.
+	Limits      FoundryAgentLimits
+	Automations FoundryAgentLimits
 }
 
 // FoundryAgentRefusalReason is why a write was refused: a closed set the API

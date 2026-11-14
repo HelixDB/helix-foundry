@@ -17,6 +17,14 @@ const (
 	// workspace, to try Foundry on theirs. Its subject is the person, so
 	// each gets one at most, ever.
 	FoundryNotifySampleFollowUp FoundryNotificationKind = "sample_follow_up"
+	// FoundryNotifyAutomationRun is an automation's notify step: it emails
+	// the automation's owner what its run did. Its subject is the step's
+	// foundry_automation_run_nodes.notification_id.
+	FoundryNotifyAutomationRun FoundryNotificationKind = "automation_run"
+	// FoundryNotifyAutomationPaused tells an automation's owner it paused
+	// itself after its runs failed in a row. Its subject is the automation's
+	// notice_id, new at each such pause.
+	FoundryNotifyAutomationPaused FoundryNotificationKind = "automation_paused"
 )
 
 // FoundryNotificationStatus is where an email is in its sending.

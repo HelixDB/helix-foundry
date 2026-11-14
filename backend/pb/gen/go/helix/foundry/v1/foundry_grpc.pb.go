@@ -136,6 +136,18 @@ const (
 	FoundryService_PreviewFoundryDashboardTile_FullMethodName           = "/helix.foundry.v1.FoundryService/PreviewFoundryDashboardTile"
 	FoundryService_PublishFoundryDashboard_FullMethodName               = "/helix.foundry.v1.FoundryService/PublishFoundryDashboard"
 	FoundryService_UnpublishFoundryDashboard_FullMethodName             = "/helix.foundry.v1.FoundryService/UnpublishFoundryDashboard"
+	FoundryService_ListFoundryAutomations_FullMethodName                = "/helix.foundry.v1.FoundryService/ListFoundryAutomations"
+	FoundryService_GetFoundryAutomation_FullMethodName                  = "/helix.foundry.v1.FoundryService/GetFoundryAutomation"
+	FoundryService_CreateFoundryAutomation_FullMethodName               = "/helix.foundry.v1.FoundryService/CreateFoundryAutomation"
+	FoundryService_UpdateFoundryAutomation_FullMethodName               = "/helix.foundry.v1.FoundryService/UpdateFoundryAutomation"
+	FoundryService_DeleteFoundryAutomation_FullMethodName               = "/helix.foundry.v1.FoundryService/DeleteFoundryAutomation"
+	FoundryService_ApproveFoundryAutomation_FullMethodName              = "/helix.foundry.v1.FoundryService/ApproveFoundryAutomation"
+	FoundryService_PauseFoundryAutomation_FullMethodName                = "/helix.foundry.v1.FoundryService/PauseFoundryAutomation"
+	FoundryService_ResumeFoundryAutomation_FullMethodName               = "/helix.foundry.v1.FoundryService/ResumeFoundryAutomation"
+	FoundryService_RunFoundryAutomation_FullMethodName                  = "/helix.foundry.v1.FoundryService/RunFoundryAutomation"
+	FoundryService_ListFoundryAutomationRuns_FullMethodName             = "/helix.foundry.v1.FoundryService/ListFoundryAutomationRuns"
+	FoundryService_GetFoundryAutomationRun_FullMethodName               = "/helix.foundry.v1.FoundryService/GetFoundryAutomationRun"
+	FoundryService_CancelFoundryAutomationRun_FullMethodName            = "/helix.foundry.v1.FoundryService/CancelFoundryAutomationRun"
 	FoundryService_GetFoundryUsage_FullMethodName                       = "/helix.foundry.v1.FoundryService/GetFoundryUsage"
 	FoundryService_GetFoundryEnrichment_FullMethodName                  = "/helix.foundry.v1.FoundryService/GetFoundryEnrichment"
 	FoundryService_UpdateFoundryEnrichment_FullMethodName               = "/helix.foundry.v1.FoundryService/UpdateFoundryEnrichment"
@@ -331,6 +343,30 @@ type FoundryServiceClient interface {
 	PreviewFoundryDashboardTile(ctx context.Context, in *PreviewFoundryDashboardTileRequest, opts ...grpc.CallOption) (*PreviewFoundryDashboardTileResponse, error)
 	PublishFoundryDashboard(ctx context.Context, in *PublishFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
 	UnpublishFoundryDashboard(ctx context.Context, in *UnpublishFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
+	// Automations (package automation): a person's graph of steps, WHEN its
+	// trigger fires (a schedule, or a sync, load, upload or draft that ended)
+	// THEN Assistant steps, approved actions, conditions and emails, run as
+	// that person, its owner. Every member sees every automation of the
+	// workspace and creates their own; only its owner edits, approves, resumes
+	// and runs one, as it runs as them; its owner or an owner or admin pauses,
+	// deletes and cancels a run. An automation runs only once its owner
+	// approved its spec in Foundry (ApproveFoundryAutomation, which the MCP
+	// never calls: an agent's create or edit waits for the person's click). A
+	// grantee of source grants, a service key and an agent see none. Off
+	// (foundry.automations.enabled false) every route is FAILED_PRECONDITION,
+	// reason FOUNDRY_AUTOMATIONS_DISABLED.
+	ListFoundryAutomations(ctx context.Context, in *ListFoundryAutomationsRequest, opts ...grpc.CallOption) (*ListFoundryAutomationsResponse, error)
+	GetFoundryAutomation(ctx context.Context, in *GetFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationResponse, error)
+	CreateFoundryAutomation(ctx context.Context, in *CreateFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationResponse, error)
+	UpdateFoundryAutomation(ctx context.Context, in *UpdateFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationResponse, error)
+	DeleteFoundryAutomation(ctx context.Context, in *DeleteFoundryAutomationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ApproveFoundryAutomation(ctx context.Context, in *ApproveFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationResponse, error)
+	PauseFoundryAutomation(ctx context.Context, in *PauseFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationResponse, error)
+	ResumeFoundryAutomation(ctx context.Context, in *ResumeFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationResponse, error)
+	RunFoundryAutomation(ctx context.Context, in *RunFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationRunResponse, error)
+	ListFoundryAutomationRuns(ctx context.Context, in *ListFoundryAutomationRunsRequest, opts ...grpc.CallOption) (*ListFoundryAutomationRunsResponse, error)
+	GetFoundryAutomationRun(ctx context.Context, in *GetFoundryAutomationRunRequest, opts ...grpc.CallOption) (*FoundryAutomationRunResponse, error)
+	CancelFoundryAutomationRun(ctx context.Context, in *CancelFoundryAutomationRunRequest, opts ...grpc.CallOption) (*FoundryAutomationRunResponse, error)
 	// Helix Foundry usage: the workspace's AI spend this month, by task
 	//
 	// The UTC calendar month's spend of loads, of API sources' extraction no
@@ -1561,6 +1597,126 @@ func (c *foundryServiceClient) UnpublishFoundryDashboard(ctx context.Context, in
 	return out, nil
 }
 
+func (c *foundryServiceClient) ListFoundryAutomations(ctx context.Context, in *ListFoundryAutomationsRequest, opts ...grpc.CallOption) (*ListFoundryAutomationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryAutomationsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryAutomations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) GetFoundryAutomation(ctx context.Context, in *GetFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAutomationResponse)
+	err := c.cc.Invoke(ctx, FoundryService_GetFoundryAutomation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) CreateFoundryAutomation(ctx context.Context, in *CreateFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAutomationResponse)
+	err := c.cc.Invoke(ctx, FoundryService_CreateFoundryAutomation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) UpdateFoundryAutomation(ctx context.Context, in *UpdateFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAutomationResponse)
+	err := c.cc.Invoke(ctx, FoundryService_UpdateFoundryAutomation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) DeleteFoundryAutomation(ctx context.Context, in *DeleteFoundryAutomationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, FoundryService_DeleteFoundryAutomation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ApproveFoundryAutomation(ctx context.Context, in *ApproveFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAutomationResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ApproveFoundryAutomation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) PauseFoundryAutomation(ctx context.Context, in *PauseFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAutomationResponse)
+	err := c.cc.Invoke(ctx, FoundryService_PauseFoundryAutomation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ResumeFoundryAutomation(ctx context.Context, in *ResumeFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAutomationResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ResumeFoundryAutomation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) RunFoundryAutomation(ctx context.Context, in *RunFoundryAutomationRequest, opts ...grpc.CallOption) (*FoundryAutomationRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAutomationRunResponse)
+	err := c.cc.Invoke(ctx, FoundryService_RunFoundryAutomation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ListFoundryAutomationRuns(ctx context.Context, in *ListFoundryAutomationRunsRequest, opts ...grpc.CallOption) (*ListFoundryAutomationRunsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryAutomationRunsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryAutomationRuns_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) GetFoundryAutomationRun(ctx context.Context, in *GetFoundryAutomationRunRequest, opts ...grpc.CallOption) (*FoundryAutomationRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAutomationRunResponse)
+	err := c.cc.Invoke(ctx, FoundryService_GetFoundryAutomationRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) CancelFoundryAutomationRun(ctx context.Context, in *CancelFoundryAutomationRunRequest, opts ...grpc.CallOption) (*FoundryAutomationRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAutomationRunResponse)
+	err := c.cc.Invoke(ctx, FoundryService_CancelFoundryAutomationRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) GetFoundryUsage(ctx context.Context, in *GetFoundryUsageRequest, opts ...grpc.CallOption) (*FoundryUsageResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FoundryUsageResponse)
@@ -1889,6 +2045,30 @@ type FoundryServiceServer interface {
 	PreviewFoundryDashboardTile(context.Context, *PreviewFoundryDashboardTileRequest) (*PreviewFoundryDashboardTileResponse, error)
 	PublishFoundryDashboard(context.Context, *PublishFoundryDashboardRequest) (*FoundryDashboardResponse, error)
 	UnpublishFoundryDashboard(context.Context, *UnpublishFoundryDashboardRequest) (*FoundryDashboardResponse, error)
+	// Automations (package automation): a person's graph of steps, WHEN its
+	// trigger fires (a schedule, or a sync, load, upload or draft that ended)
+	// THEN Assistant steps, approved actions, conditions and emails, run as
+	// that person, its owner. Every member sees every automation of the
+	// workspace and creates their own; only its owner edits, approves, resumes
+	// and runs one, as it runs as them; its owner or an owner or admin pauses,
+	// deletes and cancels a run. An automation runs only once its owner
+	// approved its spec in Foundry (ApproveFoundryAutomation, which the MCP
+	// never calls: an agent's create or edit waits for the person's click). A
+	// grantee of source grants, a service key and an agent see none. Off
+	// (foundry.automations.enabled false) every route is FAILED_PRECONDITION,
+	// reason FOUNDRY_AUTOMATIONS_DISABLED.
+	ListFoundryAutomations(context.Context, *ListFoundryAutomationsRequest) (*ListFoundryAutomationsResponse, error)
+	GetFoundryAutomation(context.Context, *GetFoundryAutomationRequest) (*FoundryAutomationResponse, error)
+	CreateFoundryAutomation(context.Context, *CreateFoundryAutomationRequest) (*FoundryAutomationResponse, error)
+	UpdateFoundryAutomation(context.Context, *UpdateFoundryAutomationRequest) (*FoundryAutomationResponse, error)
+	DeleteFoundryAutomation(context.Context, *DeleteFoundryAutomationRequest) (*emptypb.Empty, error)
+	ApproveFoundryAutomation(context.Context, *ApproveFoundryAutomationRequest) (*FoundryAutomationResponse, error)
+	PauseFoundryAutomation(context.Context, *PauseFoundryAutomationRequest) (*FoundryAutomationResponse, error)
+	ResumeFoundryAutomation(context.Context, *ResumeFoundryAutomationRequest) (*FoundryAutomationResponse, error)
+	RunFoundryAutomation(context.Context, *RunFoundryAutomationRequest) (*FoundryAutomationRunResponse, error)
+	ListFoundryAutomationRuns(context.Context, *ListFoundryAutomationRunsRequest) (*ListFoundryAutomationRunsResponse, error)
+	GetFoundryAutomationRun(context.Context, *GetFoundryAutomationRunRequest) (*FoundryAutomationRunResponse, error)
+	CancelFoundryAutomationRun(context.Context, *CancelFoundryAutomationRunRequest) (*FoundryAutomationRunResponse, error)
 	// Helix Foundry usage: the workspace's AI spend this month, by task
 	//
 	// The UTC calendar month's spend of loads, of API sources' extraction no
@@ -2305,6 +2485,42 @@ func (UnimplementedFoundryServiceServer) PublishFoundryDashboard(context.Context
 }
 func (UnimplementedFoundryServiceServer) UnpublishFoundryDashboard(context.Context, *UnpublishFoundryDashboardRequest) (*FoundryDashboardResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UnpublishFoundryDashboard not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryAutomations(context.Context, *ListFoundryAutomationsRequest) (*ListFoundryAutomationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryAutomations not implemented")
+}
+func (UnimplementedFoundryServiceServer) GetFoundryAutomation(context.Context, *GetFoundryAutomationRequest) (*FoundryAutomationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryAutomation not implemented")
+}
+func (UnimplementedFoundryServiceServer) CreateFoundryAutomation(context.Context, *CreateFoundryAutomationRequest) (*FoundryAutomationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateFoundryAutomation not implemented")
+}
+func (UnimplementedFoundryServiceServer) UpdateFoundryAutomation(context.Context, *UpdateFoundryAutomationRequest) (*FoundryAutomationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateFoundryAutomation not implemented")
+}
+func (UnimplementedFoundryServiceServer) DeleteFoundryAutomation(context.Context, *DeleteFoundryAutomationRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteFoundryAutomation not implemented")
+}
+func (UnimplementedFoundryServiceServer) ApproveFoundryAutomation(context.Context, *ApproveFoundryAutomationRequest) (*FoundryAutomationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ApproveFoundryAutomation not implemented")
+}
+func (UnimplementedFoundryServiceServer) PauseFoundryAutomation(context.Context, *PauseFoundryAutomationRequest) (*FoundryAutomationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PauseFoundryAutomation not implemented")
+}
+func (UnimplementedFoundryServiceServer) ResumeFoundryAutomation(context.Context, *ResumeFoundryAutomationRequest) (*FoundryAutomationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResumeFoundryAutomation not implemented")
+}
+func (UnimplementedFoundryServiceServer) RunFoundryAutomation(context.Context, *RunFoundryAutomationRequest) (*FoundryAutomationRunResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RunFoundryAutomation not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryAutomationRuns(context.Context, *ListFoundryAutomationRunsRequest) (*ListFoundryAutomationRunsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryAutomationRuns not implemented")
+}
+func (UnimplementedFoundryServiceServer) GetFoundryAutomationRun(context.Context, *GetFoundryAutomationRunRequest) (*FoundryAutomationRunResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryAutomationRun not implemented")
+}
+func (UnimplementedFoundryServiceServer) CancelFoundryAutomationRun(context.Context, *CancelFoundryAutomationRunRequest) (*FoundryAutomationRunResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelFoundryAutomationRun not implemented")
 }
 func (UnimplementedFoundryServiceServer) GetFoundryUsage(context.Context, *GetFoundryUsageRequest) (*FoundryUsageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryUsage not implemented")
@@ -4459,6 +4675,222 @@ func _FoundryService_UnpublishFoundryDashboard_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_ListFoundryAutomations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryAutomationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryAutomations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryAutomations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryAutomations(ctx, req.(*ListFoundryAutomationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_GetFoundryAutomation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetFoundryAutomationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).GetFoundryAutomation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_GetFoundryAutomation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).GetFoundryAutomation(ctx, req.(*GetFoundryAutomationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_CreateFoundryAutomation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateFoundryAutomationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).CreateFoundryAutomation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_CreateFoundryAutomation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).CreateFoundryAutomation(ctx, req.(*CreateFoundryAutomationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_UpdateFoundryAutomation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateFoundryAutomationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).UpdateFoundryAutomation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_UpdateFoundryAutomation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).UpdateFoundryAutomation(ctx, req.(*UpdateFoundryAutomationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_DeleteFoundryAutomation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteFoundryAutomationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).DeleteFoundryAutomation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_DeleteFoundryAutomation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).DeleteFoundryAutomation(ctx, req.(*DeleteFoundryAutomationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ApproveFoundryAutomation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApproveFoundryAutomationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ApproveFoundryAutomation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ApproveFoundryAutomation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ApproveFoundryAutomation(ctx, req.(*ApproveFoundryAutomationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_PauseFoundryAutomation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PauseFoundryAutomationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).PauseFoundryAutomation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_PauseFoundryAutomation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).PauseFoundryAutomation(ctx, req.(*PauseFoundryAutomationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ResumeFoundryAutomation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResumeFoundryAutomationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ResumeFoundryAutomation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ResumeFoundryAutomation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ResumeFoundryAutomation(ctx, req.(*ResumeFoundryAutomationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_RunFoundryAutomation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RunFoundryAutomationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).RunFoundryAutomation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_RunFoundryAutomation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).RunFoundryAutomation(ctx, req.(*RunFoundryAutomationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ListFoundryAutomationRuns_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryAutomationRunsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryAutomationRuns(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryAutomationRuns_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryAutomationRuns(ctx, req.(*ListFoundryAutomationRunsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_GetFoundryAutomationRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetFoundryAutomationRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).GetFoundryAutomationRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_GetFoundryAutomationRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).GetFoundryAutomationRun(ctx, req.(*GetFoundryAutomationRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_CancelFoundryAutomationRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelFoundryAutomationRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).CancelFoundryAutomationRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_CancelFoundryAutomationRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).CancelFoundryAutomationRun(ctx, req.(*CancelFoundryAutomationRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_GetFoundryUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetFoundryUsageRequest)
 	if err := dec(in); err != nil {
@@ -5199,6 +5631,54 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UnpublishFoundryDashboard",
 			Handler:    _FoundryService_UnpublishFoundryDashboard_Handler,
+		},
+		{
+			MethodName: "ListFoundryAutomations",
+			Handler:    _FoundryService_ListFoundryAutomations_Handler,
+		},
+		{
+			MethodName: "GetFoundryAutomation",
+			Handler:    _FoundryService_GetFoundryAutomation_Handler,
+		},
+		{
+			MethodName: "CreateFoundryAutomation",
+			Handler:    _FoundryService_CreateFoundryAutomation_Handler,
+		},
+		{
+			MethodName: "UpdateFoundryAutomation",
+			Handler:    _FoundryService_UpdateFoundryAutomation_Handler,
+		},
+		{
+			MethodName: "DeleteFoundryAutomation",
+			Handler:    _FoundryService_DeleteFoundryAutomation_Handler,
+		},
+		{
+			MethodName: "ApproveFoundryAutomation",
+			Handler:    _FoundryService_ApproveFoundryAutomation_Handler,
+		},
+		{
+			MethodName: "PauseFoundryAutomation",
+			Handler:    _FoundryService_PauseFoundryAutomation_Handler,
+		},
+		{
+			MethodName: "ResumeFoundryAutomation",
+			Handler:    _FoundryService_ResumeFoundryAutomation_Handler,
+		},
+		{
+			MethodName: "RunFoundryAutomation",
+			Handler:    _FoundryService_RunFoundryAutomation_Handler,
+		},
+		{
+			MethodName: "ListFoundryAutomationRuns",
+			Handler:    _FoundryService_ListFoundryAutomationRuns_Handler,
+		},
+		{
+			MethodName: "GetFoundryAutomationRun",
+			Handler:    _FoundryService_GetFoundryAutomationRun_Handler,
+		},
+		{
+			MethodName: "CancelFoundryAutomationRun",
+			Handler:    _FoundryService_CancelFoundryAutomationRun_Handler,
 		},
 		{
 			MethodName: "GetFoundryUsage",

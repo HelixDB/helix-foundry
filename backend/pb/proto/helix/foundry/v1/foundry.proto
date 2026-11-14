@@ -600,6 +600,76 @@ service FoundryService {
     };
   }
 
+  // Automations (package automation): a person's graph of steps, WHEN its
+  // trigger fires (a schedule, or a sync, load, upload or draft that ended)
+  // THEN Assistant steps, approved actions, conditions and emails, run as
+  // that person, its owner. Every member sees every automation of the
+  // workspace and creates their own; only its owner edits, approves, resumes
+  // and runs one, as it runs as them; its owner or an owner or admin pauses,
+  // deletes and cancels a run. An automation runs only once its owner
+  // approved its spec in Foundry (ApproveFoundryAutomation, which the MCP
+  // never calls: an agent's create or edit waits for the person's click). A
+  // grantee of source grants, a service key and an agent see none. Off
+  // (foundry.automations.enabled false) every route is FAILED_PRECONDITION,
+  // reason FOUNDRY_AUTOMATIONS_DISABLED.
+  rpc ListFoundryAutomations(ListFoundryAutomationsRequest) returns (ListFoundryAutomationsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/automations"};
+  }
+  rpc GetFoundryAutomation(GetFoundryAutomationRequest) returns (FoundryAutomationResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/automations/{id}"};
+  }
+  rpc CreateFoundryAutomation(CreateFoundryAutomationRequest) returns (FoundryAutomationResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/automations"
+      body: "*"
+    };
+  }
+  rpc UpdateFoundryAutomation(UpdateFoundryAutomationRequest) returns (FoundryAutomationResponse) {
+    option (google.api.http) = {
+      patch: "/v1/workspaces/{workspace_id}/foundry/automations/{id}"
+      body: "*"
+    };
+  }
+  rpc DeleteFoundryAutomation(DeleteFoundryAutomationRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/automations/{id}"};
+  }
+  rpc ApproveFoundryAutomation(ApproveFoundryAutomationRequest) returns (FoundryAutomationResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/automations/{id}:approve"
+      body: "*"
+    };
+  }
+  rpc PauseFoundryAutomation(PauseFoundryAutomationRequest) returns (FoundryAutomationResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/automations/{id}:pause"
+      body: "*"
+    };
+  }
+  rpc ResumeFoundryAutomation(ResumeFoundryAutomationRequest) returns (FoundryAutomationResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/automations/{id}:resume"
+      body: "*"
+    };
+  }
+  rpc RunFoundryAutomation(RunFoundryAutomationRequest) returns (FoundryAutomationRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/automations/{id}:run"
+      body: "*"
+    };
+  }
+  rpc ListFoundryAutomationRuns(ListFoundryAutomationRunsRequest) returns (ListFoundryAutomationRunsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/automations/{automation_id}/runs"};
+  }
+  rpc GetFoundryAutomationRun(GetFoundryAutomationRunRequest) returns (FoundryAutomationRunResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/automations/{automation_id}/runs/{id}"};
+  }
+  rpc CancelFoundryAutomationRun(CancelFoundryAutomationRunRequest) returns (FoundryAutomationRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/automations/{automation_id}/runs/{id}:cancel"
+      body: "*"
+    };
+  }
+
   // Helix Foundry usage: the workspace's AI spend this month, by task
   //
   // The UTC calendar month's spend of loads, of API sources' extraction no
@@ -2209,3 +2279,129 @@ message UnpublishFoundryDashboardRequest {
   string id = 2;
 }
 
+// ListFoundryAutomationsRequest lists the workspace's automations, most
+// recently changed first, each with its newest run, without their specs: at
+// most foundry.automations.max_per_workspace, so one answer holds all.
+message ListFoundryAutomationsRequest {
+  string workspace_id = 1;
+}
+message ListFoundryAutomationsResponse {
+  repeated FoundryAutomation automations = 1;
+  // Whether the caller may create one.
+  bool can_create = 2;
+  // Whether a notify step emails here: false on a standalone install, which
+  // sends no email and records the step as skipped.
+  bool email = 3;
+}
+message GetFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+message FoundryAutomationResponse {
+  FoundryAutomation automation = 1;
+}
+// CreateFoundryAutomationRequest makes the caller's automation, waiting for
+// their approval (needs_approval): it never runs until they approve it. The
+// same client_token returns the one it made. A spec that isn't one is
+// INVALID_ARGUMENT, saying what is wrong; a spec naming a connector,
+// ontology, document set or dashboard the workspace hasn't, INVALID_ARGUMENT
+// too; past the workspace's cap, FAILED_PRECONDITION, reason
+// FOUNDRY_AUTOMATION_LIMIT.
+message CreateFoundryAutomationRequest {
+  string workspace_id = 1;
+  // 1 to 120 characters.
+  string name = 2;
+  // At most 1,000 characters.
+  string description = 3;
+  // The spec: {"v": 1, "nodes": [...], "edges": [...]} (package automation).
+  string spec_json = 4;
+  // 1 to 64 characters.
+  string client_token = 5;
+}
+// UpdateFoundryAutomationRequest edits the caller's automation at
+// expected_revision: each field set changes, at least one. A spec that
+// changes waits for its owner's approval again, stopping the automation
+// until then; a name or description alone keeps it as it is. Another's
+// automation is PERMISSION_DENIED; another revision FAILED_PRECONDITION,
+// reason FOUNDRY_AUTOMATION_CHANGED.
+message UpdateFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+  int64 expected_revision = 3;
+  optional string name = 4;
+  optional string description = 5;
+  optional string spec_json = 6;
+}
+// DeleteFoundryAutomationRequest deletes the automation, its runs and their
+// steps, cancelling a live run: its owner, or an owner or admin.
+message DeleteFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// ApproveFoundryAutomationRequest is its owner's click on the spec they read
+// at expected_revision: it becomes active, its schedule firing next at its
+// first time after now, an event trigger counting only work that ends from
+// now. Only the owner, signed in to the site: an agent through the MCP, a
+// key or a grantee is PERMISSION_DENIED. Approving an approved spec again
+// changes nothing; another revision is FAILED_PRECONDITION, reason
+// FOUNDRY_AUTOMATION_CHANGED.
+message ApproveFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+  int64 expected_revision = 3;
+}
+// PauseFoundryAutomationRequest stops the active automation's runs (a live
+// one goes on): its owner, or an owner or admin. One waiting for approval
+// is FAILED_PRECONDITION, reason FOUNDRY_AUTOMATION_NOT_ACTIVE.
+message PauseFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// ResumeFoundryAutomationRequest makes the owner's paused automation active
+// again, from now. One waiting for approval is FAILED_PRECONDITION, reason
+// FOUNDRY_AUTOMATION_UNAPPROVED.
+message ResumeFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// RunFoundryAutomationRequest queues a run of the owner's automation now, of
+// its approved spec, active or paused. The same client_token returns the run
+// it queued. A live run is FAILED_PRECONDITION, reason
+// FOUNDRY_AUTOMATION_BUSY; one waiting for approval,
+// FOUNDRY_AUTOMATION_UNAPPROVED; the workspace's runs of the day spent,
+// RESOURCE_EXHAUSTED.
+message RunFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+  // 1 to 64 characters.
+  string client_token = 3;
+}
+// ListFoundryAutomationRunsRequest lists the automation's runs, newest first,
+// 50 a page, without their specs or steps.
+message ListFoundryAutomationRunsRequest {
+  string workspace_id = 1;
+  string automation_id = 2;
+  string page_token = 3;
+}
+message ListFoundryAutomationRunsResponse {
+  repeated FoundryAutomationRun runs = 1;
+  string next_page_token = 2;
+}
+// GetFoundryAutomationRunRequest returns a run with the spec it ran and its
+// steps.
+message GetFoundryAutomationRunRequest {
+  string workspace_id = 1;
+  string automation_id = 2;
+  string id = 3;
+}
+// CancelFoundryAutomationRunRequest ends a live run cancelled, with the step
+// it was running: the automation's owner, or an owner or admin. A run that
+// ended otherwise is FAILED_PRECONDITION, reason FOUNDRY_AUTOMATION_RUN_ENDED.
+message CancelFoundryAutomationRunRequest {
+  string workspace_id = 1;
+  string automation_id = 2;
+  string id = 3;
+}
+message FoundryAutomationRunResponse {
+  FoundryAutomationRun run = 1;
+}

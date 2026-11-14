@@ -19,9 +19,10 @@ import (
 // renewed and settled as a question is (foundry_questions.go); its events and
 // transcript are written only while its worker holds its lease.
 
-const foundryAgentThreadColumns = `id, workspace_id, user_id, title, runtime, runtime_session_id, created_at, updated_at`
+const foundryAgentThreadColumns = `id, workspace_id, user_id, kind, title, runtime, runtime_session_id, created_at, updated_at`
 
-const foundryAgentTurnColumns = `id, workspace_id, thread_id, user_id, runtime, kind, input, page_context, status, error, client_token,
+const foundryAgentTurnColumns = `id, workspace_id, thread_id, user_id, runtime, kind, input, automation_run_id, automation_node_id, page_context,
+       status, error, client_token,
        lease_owner, lease_until, attempts, next_attempt_at, max_usd_micros, reserved_micros, usd_micros, lost_micros, input_tokens,
        output_tokens, steps, last_seq, created_at, started_at, finished_at`
 
@@ -98,7 +99,7 @@ VALUES (?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread.Ti
 		var settled int64
 		if err := tx.db.QueryRowContext(ctx, `SELECT
   (SELECT COUNT(*) FROM foundry_agent_turns WHERE workspace_id=? AND user_id=? AND kind='message' AND created_at >= NOW(6) - INTERVAL 1 HOUR),
-  (SELECT COALESCE(SUM(usd_micros), 0) FROM foundry_agent_turns WHERE workspace_id=? AND charged_at >= ?)`,
+  (SELECT COALESCE(SUM(usd_micros), 0) FROM foundry_agent_turns WHERE workspace_id=? AND charged_at >= ? AND automation_run_id IS NULL)`,
 			t.WorkspaceID, t.UserID, t.WorkspaceID, limits.Since.UTC()).Scan(&lastHour, &settled); err != nil {
 			return err
 		}
@@ -194,10 +195,11 @@ func (s *mysqlDB) GetFoundryAgentThread(ctx context.Context, workspaceID, id str
 FROM foundry_agent_threads WHERE id=? AND workspace_id=? AND deleted_at IS NULL`, id, workspaceID))
 }
 
-// ListFoundryAgentThreads returns the user's live threads of the workspace,
-// most recently active first, a page of limit at a time.
+// ListFoundryAgentThreads returns the user's live chats of the workspace,
+// most recently active first, a page of limit at a time: never the threads
+// their automations' runs run in.
 func (s *mysqlDB) ListFoundryAgentThreads(ctx context.Context, workspaceID, userID, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error) {
-	conds := []string{"workspace_id=?", "user_id=?", "deleted_at IS NULL"}
+	conds := []string{"workspace_id=?", "user_id=?", "kind='chat'", "deleted_at IS NULL"}
 	args := []any{workspaceID, userID}
 	if pageToken != "" {
 		cursor, err := decodeTimeIDCursor(pageToken)
@@ -297,8 +299,8 @@ WHERE id=?`, id); err != nil {
 // none is due, or none of the first few could run. A reservation an attempt
 // left unsettled (its lease ran out) is charged, and counted lost.
 func (s *mysqlDB) ClaimFoundryAgentTurn(ctx context.Context, workerID string, claim model.FoundryAgentClaim) (*model.FoundryAgentTurn, error) {
-	l := claim.Limits
-	if workerID == "" || claim.Runtime == "" || claim.Lease <= 0 || claim.Defer <= 0 || l.CapMicros <= 0 || l.Running < 1 {
+	if workerID == "" || claim.Runtime == "" || claim.Lease <= 0 || claim.Defer <= 0 || claim.Limits.CapMicros <= 0 || claim.Limits.Running < 1 ||
+		claim.Automations.CapMicros <= 0 || claim.Automations.Running < 1 {
 		return nil, fmt.Errorf("invalid foundry agent turn claim")
 	}
 	for range claimFoundryAgentTurnTries {
@@ -337,21 +339,27 @@ FROM foundry_agent_turns WHERE id=? AND `+dueFoundryAgentTurn+` FOR UPDATE`, can
 			if deleted {
 				return tx.endFoundryAgentTurn(ctx, t.ID, model.FoundryAgentTurnCancelled, "the thread was deleted")
 			}
+			// A turn is reserved against its own pool: people's or automations'.
+			l, pool := claim.Limits, "the Assistant"
+			automation := t.AutomationRunID != nil
+			if automation {
+				l, pool = claim.Automations, "automations"
+			}
 			var running int
 			var settled, reserved int64
 			if err := tx.db.QueryRowContext(ctx, `SELECT
   COUNT(CASE WHEN status='running' AND lease_until >= NOW(6) THEN 1 END),
   COALESCE(SUM(CASE WHEN charged_at >= ? THEN usd_micros END), 0),
   COALESCE(SUM(CASE WHEN charged_at >= ? THEN reserved_micros END), 0)
-FROM foundry_agent_turns WHERE workspace_id=? AND id<>? AND (status='running' OR charged_at >= ?)`,
-				l.Since.UTC(), l.Since.UTC(), t.WorkspaceID, t.ID, l.Since.UTC()).Scan(&running, &settled, &reserved); err != nil {
+FROM foundry_agent_turns WHERE workspace_id=? AND id<>? AND (status='running' OR charged_at >= ?) AND (automation_run_id IS NOT NULL) = ?`,
+				l.Since.UTC(), l.Since.UTC(), t.WorkspaceID, t.ID, l.Since.UTC(), automation).Scan(&running, &settled, &reserved); err != nil {
 				return err
 			}
 			own := t.Spend.USDMicros + t.ReservedMicros + t.MaxUSDMicros
 			switch {
 			case settled+own > l.CapMicros:
 				return tx.endFoundryAgentTurn(ctx, t.ID, model.FoundryAgentTurnFailed,
-					fmt.Sprintf("the workspace has spent this month's $%.2f of the Assistant", float64(l.CapMicros)/1e6))
+					fmt.Sprintf("the workspace has spent this month's $%.2f of %s", float64(l.CapMicros)/1e6, pool))
 			case running >= l.Running || settled+reserved+own > l.CapMicros:
 				_, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_turns
 SET status='queued', lease_owner=NULL, lease_until=NULL, usd_micros=usd_micros+reserved_micros,
@@ -597,10 +605,15 @@ WHERE runtime=? AND ((status='queued' AND next_attempt_at < ?) OR (status='runni
 // the event card makes of it, together. The same payload prepared again in
 // the turn (a replayed attempt) returns the action already stored, and no
 // event. A thread waits on at most maxPending live cards
-// (FoundryAgentTooManyCards). ErrNotFound means the lease was lost.
+// (FoundryAgentTooManyCards). An automation's turn records an action its
+// owner approved for the step as executing, decided by them (DecidedBy):
+// it runs at once, waiting on no one, and FinishFoundryAgentAction ends it.
+// ErrNotFound means the lease was lost.
 func (s *mysqlDB) RecordFoundryAgentAction(ctx context.Context, workerID string, a *model.FoundryAgentAction, maxPending int,
 	card func(*model.FoundryAgentAction) (json.RawMessage, error)) (*model.FoundryAgentAction, error) {
-	if a.ID == "" || a.TurnID == "" || a.Status != model.FoundryAgentActionPrepared || len(a.PayloadHash) != 64 || len(a.TokenSealed) == 0 {
+	approved := a.Status == model.FoundryAgentActionExecuting
+	if a.ID == "" || a.TurnID == "" || !approved && a.Status != model.FoundryAgentActionPrepared || len(a.PayloadHash) != 64 || len(a.TokenSealed) == 0 ||
+		approved && a.DecidedBy == nil {
 		return nil, fmt.Errorf("foundry agent action is incomplete")
 	}
 	var out *model.FoundryAgentAction
@@ -623,16 +636,16 @@ FROM foundry_agent_actions WHERE turn_id=? AND payload_hash=?`, a.TurnID, a.Payl
 WHERE thread_id=? AND status='prepared' AND expires_at > NOW(6)`, a.ThreadID).Scan(&pending); err != nil {
 			return err
 		}
-		if pending >= maxPending {
+		if pending >= maxPending && !approved {
 			return model.FoundryAgentRefusal{Reason: model.FoundryAgentTooManyCards,
 				Detail: fmt.Sprintf("%d actions already wait for the person; let them run or dismiss those first", pending)}
 		}
 		if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_actions
   (id, turn_id, thread_id, workspace_id, user_id, operation, target, payload, payload_hash, display, target_named_by_user,
-   confirmation_id, confirmation_token_sealed, confirmation_key_id, status, expires_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?)`,
+   confirmation_id, confirmation_token_sealed, confirmation_key_id, status, expires_at, decided_by, decided_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, IF(?, NOW(6), NULL))`,
 			a.ID, a.TurnID, a.ThreadID, a.WorkspaceID, a.UserID, a.Operation, a.Target, string(a.Payload), a.PayloadHash, string(a.Display),
-			a.TargetNamedByUser, a.ConfirmationID, a.TokenSealed, a.KeyID, a.ExpiresAt.UTC()); err != nil {
+			a.TargetNamedByUser, a.ConfirmationID, a.TokenSealed, a.KeyID, string(a.Status), a.ExpiresAt.UTC(), a.DecidedBy, approved); err != nil {
 			return err
 		}
 		if out, err = scanFoundryAgentAction(tx.db.QueryRowContext(ctx, "SELECT "+foundryAgentActionColumns+`
@@ -871,24 +884,26 @@ WHERE id=?`, string(display), confirmationID, sealed, keyID, expiresAt.UTC(), id
 func scanFoundryAgentThread(scanner rowScanner) (*model.FoundryAgentThread, error) {
 	var t model.FoundryAgentThread
 	var runtime string
+	var kind string
 	var session sql.NullString
-	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.UserID, &t.Title, &runtime, &session, &t.CreatedAt, &t.UpdatedAt); err != nil {
+	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.UserID, &kind, &t.Title, &runtime, &session, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	t.Runtime, t.RuntimeSessionID = model.FoundryAgentRuntime(runtime), session.String
+	t.Runtime, t.RuntimeSessionID, t.Kind = model.FoundryAgentRuntime(runtime), session.String, model.FoundryAgentThreadKind(kind)
 	return &t, nil
 }
 
 func scanFoundryAgentTurn(scanner rowScanner) (*model.FoundryAgentTurn, error) {
 	var t model.FoundryAgentTurn
 	var runtime, kind, status string
-	var pageContext, errText, clientToken, leaseOwner sql.NullString
+	var pageContext, errText, clientToken, leaseOwner, automationRun, automationNode sql.NullString
 	var leaseUntil, startedAt, finishedAt sql.NullTime
 	spend := &t.Spend
-	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.ThreadID, &t.UserID, &runtime, &kind, &t.Input, &pageContext, &status, &errText, &clientToken,
+	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.ThreadID, &t.UserID, &runtime, &kind, &t.Input, &automationRun, &automationNode, &pageContext,
+		&status, &errText, &clientToken,
 		&leaseOwner, &leaseUntil, &t.Attempts, &t.NextAttemptAt, &t.MaxUSDMicros, &t.ReservedMicros, &spend.USDMicros, &t.LostMicros, &spend.InputTokens,
 		&spend.OutputTokens, &t.Steps, &t.LastSeq, &t.CreatedAt, &startedAt, &finishedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -903,7 +918,8 @@ func scanFoundryAgentTurn(scanner rowScanner) (*model.FoundryAgentTurn, error) {
 	for _, f := range []struct {
 		src sql.NullString
 		dst **string
-	}{{errText, &t.Error}, {clientToken, &t.ClientToken}, {leaseOwner, &t.LeaseOwner}} {
+	}{{errText, &t.Error}, {clientToken, &t.ClientToken}, {leaseOwner, &t.LeaseOwner}, {automationRun, &t.AutomationRunID},
+		{automationNode, &t.AutomationNodeID}} {
 		if f.src.Valid {
 			*f.dst = &f.src.String
 		}

@@ -71,20 +71,24 @@ type runner interface {
 
 // Task runs up to foundry.agent.concurrency turns at once.
 type Task struct {
-	deps     Deps
-	cfg      config.AssistantConfig
-	queue    turnQueue
-	runner   runner
-	workerID string
-	now      func() time.Time
-	worker   tasks.Worker
-	slots    chan struct{}
-	running  sync.WaitGroup
+	deps Deps
+	cfg  config.AssistantConfig
+	// automations is foundry.automations: its budget and running cap bound
+	// automations' turns.
+	automations config.AutomationsConfig
+	queue       turnQueue
+	runner      runner
+	workerID    string
+	now         func() time.Time
+	worker      tasks.Worker
+	slots       chan struct{}
+	running     sync.WaitGroup
 }
 
 func New(d Deps) (*Task, error) {
 	cfg := d.Cfg.Foundry.Agent
-	t := &Task{deps: d, cfg: cfg, workerID: id.NewWorkerID(), now: time.Now, slots: make(chan struct{}, max(cfg.Concurrency, 1))}
+	t := &Task{deps: d, cfg: cfg, automations: d.Cfg.Foundry.Automations, workerID: id.NewWorkerID(), now: time.Now,
+		slots: make(chan struct{}, max(cfg.Concurrency, 1))}
 	if !cfg.Enabled {
 		return t, nil
 	}
@@ -131,15 +135,16 @@ func (t *Task) Stop(ctx context.Context) error {
 	return t.worker.Stop(waitCtx)
 }
 
-// claim is how this worker claims, under foundry.agent's limits this month.
+// claim is how this worker claims, under foundry.agent's limits this month
+// for people's turns, and foundry.automations' for automations' turns.
 func (t *Task) claim() model.FoundryAgentClaim {
 	now := t.now().UTC()
+	since := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	automations := t.automations
 	return model.FoundryAgentClaim{
 		Runtime: model.FoundryAgentRuntimeAPI, Lease: t.cfg.Lease, Defer: t.cfg.Defer,
-		Limits: model.FoundryAgentLimits{
-			Since: time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC), CapMicros: t.cfg.MonthlyMicros(),
-			PerHour: t.cfg.PerHour, Running: t.cfg.MaxRunning,
-		},
+		Limits:      model.FoundryAgentLimits{Since: since, CapMicros: t.cfg.MonthlyMicros(), PerHour: t.cfg.PerHour, Running: t.cfg.MaxRunning},
+		Automations: model.FoundryAgentLimits{Since: since, CapMicros: automations.MonthlyMicros(), Running: automations.MaxRunning},
 	}
 }
 

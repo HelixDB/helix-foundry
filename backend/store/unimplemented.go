@@ -1395,3 +1395,148 @@ func (u Unimplemented) UnpublishFoundryDashboard(context.Context, string, string
 	u.unimplemented("UnpublishFoundryDashboard")
 	return nil
 }
+
+func (u Unimplemented) GetFoundryAutomation(context.Context, string, string) (*model.FoundryAutomation, error) {
+	u.unimplemented("GetFoundryAutomation")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryAutomationByClientToken(context.Context, string, string, string) (*model.FoundryAutomation, error) {
+	u.unimplemented("GetFoundryAutomationByClientToken")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAutomations(context.Context, string) ([]*model.FoundryAutomation, error) {
+	u.unimplemented("ListFoundryAutomations")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryAutomationRun(context.Context, string, string) (*model.FoundryAutomationRun, error) {
+	u.unimplemented("GetFoundryAutomationRun")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAutomationRuns(context.Context, string, string, int) ([]*model.FoundryAutomationRun, string, error) {
+	u.unimplemented("ListFoundryAutomationRuns")
+	return nil, "", nil
+}
+
+func (u Unimplemented) ListFoundryAutomationRunNodes(context.Context, string) ([]*model.FoundryAutomationRunNode, error) {
+	u.unimplemented("ListFoundryAutomationRunNodes")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryAutomationNotice(context.Context, *model.FoundryNotification) (*model.FoundryAutomationNotice, error) {
+	u.unimplemented("GetFoundryAutomationNotice")
+	return nil, nil
+}
+
+func (u Unimplemented) DueFoundryAutomationSchedules(context.Context, int) ([]*model.FoundryAutomation, error) {
+	u.unimplemented("DueFoundryAutomationSchedules")
+	return nil, nil
+}
+
+func (u Unimplemented) WatchedFoundryAutomations(context.Context, time.Duration, int) ([]*model.FoundryAutomation, error) {
+	u.unimplemented("WatchedFoundryAutomations")
+	return nil, nil
+}
+
+func (u Unimplemented) FindFoundryAutomationEnded(context.Context, *model.FoundryAutomation, time.Duration, int) ([]model.FoundryAutomationEnded, error) {
+	u.unimplemented("FindFoundryAutomationEnded")
+	return nil, nil
+}
+
+func (u Unimplemented) CreateFoundryAutomation(context.Context, *model.FoundryAutomation, int) error {
+	u.unimplemented("CreateFoundryAutomation")
+	return nil
+}
+
+func (u Unimplemented) UpdateFoundryAutomation(context.Context, string, string, string, int64, model.FoundryAutomationUpdate) (*model.FoundryAutomation, error) {
+	u.unimplemented("UpdateFoundryAutomation")
+	return nil, nil
+}
+
+func (u Unimplemented) ApproveFoundryAutomation(context.Context, string, string, string, int64, *time.Time) (*model.FoundryAutomation, error) {
+	u.unimplemented("ApproveFoundryAutomation")
+	return nil, nil
+}
+
+func (u Unimplemented) PauseFoundryAutomation(context.Context, string, string, model.FoundryAutomationActor) (*model.FoundryAutomation, error) {
+	u.unimplemented("PauseFoundryAutomation")
+	return nil, nil
+}
+
+func (u Unimplemented) ResumeFoundryAutomation(context.Context, string, string, string, *time.Time) (*model.FoundryAutomation, error) {
+	u.unimplemented("ResumeFoundryAutomation")
+	return nil, nil
+}
+
+func (u Unimplemented) DeleteFoundryAutomation(context.Context, string, string, model.FoundryAutomationActor) error {
+	u.unimplemented("DeleteFoundryAutomation")
+	return nil
+}
+
+func (u Unimplemented) RunFoundryAutomationNow(context.Context, *model.FoundryAutomationRun, string, json.RawMessage, model.FoundryAutomationLimits) (*model.FoundryAutomationRun, error) {
+	u.unimplemented("RunFoundryAutomationNow")
+	return nil, nil
+}
+
+func (u Unimplemented) CancelFoundryAutomationRun(context.Context, string, string, model.FoundryAutomationActor) (*model.FoundryAutomationRun, error) {
+	u.unimplemented("CancelFoundryAutomationRun")
+	return nil, nil
+}
+
+func (u Unimplemented) PauseFoundryAutomationsOf(context.Context, string, string) error {
+	u.unimplemented("PauseFoundryAutomationsOf")
+	return nil
+}
+
+func (u Unimplemented) TouchFoundryAutomation(context.Context, string) error {
+	u.unimplemented("TouchFoundryAutomation")
+	return nil
+}
+
+func (u Unimplemented) FireFoundryAutomation(context.Context, model.FoundryAutomationFire, model.FoundryAutomationLimits) (model.FoundryAutomationFired, error) {
+	u.unimplemented("FireFoundryAutomation")
+	return "", nil
+}
+
+func (u Unimplemented) ClaimFoundryAutomationRun(context.Context, string, time.Duration) (*model.FoundryAutomationRun, error) {
+	u.unimplemented("ClaimFoundryAutomationRun")
+	return nil, nil
+}
+
+func (u Unimplemented) RenewFoundryAutomationRunLease(context.Context, string, string, time.Duration) error {
+	u.unimplemented("RenewFoundryAutomationRunLease")
+	return nil
+}
+
+func (u Unimplemented) StartFoundryAutomationNode(context.Context, string, string, string, model.FoundryAutomationNodeStatus) error {
+	u.unimplemented("StartFoundryAutomationNode")
+	return nil
+}
+
+func (u Unimplemented) StartFoundryAutomationAssistant(context.Context, string, string, string, *model.FoundryAgentThread, *model.FoundryAgentTurn) error {
+	u.unimplemented("StartFoundryAutomationAssistant")
+	return nil
+}
+
+func (u Unimplemented) EndFoundryAutomationNode(context.Context, string, string, string, model.FoundryAutomationNodeEnd) error {
+	u.unimplemented("EndFoundryAutomationNode")
+	return nil
+}
+
+func (u Unimplemented) YieldFoundryAutomationRun(context.Context, string, string, time.Time) error {
+	u.unimplemented("YieldFoundryAutomationRun")
+	return nil
+}
+
+func (u Unimplemented) RetryFoundryAutomationRun(context.Context, string, string, time.Time, string) error {
+	u.unimplemented("RetryFoundryAutomationRun")
+	return nil
+}
+
+func (u Unimplemented) FinishFoundryAutomationRun(context.Context, string, string, model.FoundryAutomationRunEnd) error {
+	u.unimplemented("FinishFoundryAutomationRun")
+	return nil
+}

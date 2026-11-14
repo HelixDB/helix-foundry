@@ -164,6 +164,20 @@ var methods = map[string]check{
 	foundry("PinFoundryDashboard"):               checkWorkspace,
 	foundry("AddFoundryDashboardQuestionVisual"): checkWorkspace,
 	foundry("PreviewFoundryDashboardTile"):       checkWorkspace,
+	// Automations: each handler reads the workspace's own, and runs and
+	// changes only the owner's.
+	foundry("ListFoundryAutomations"):     checkWorkspace,
+	foundry("GetFoundryAutomation"):       checkWorkspace,
+	foundry("CreateFoundryAutomation"):    checkWorkspace,
+	foundry("UpdateFoundryAutomation"):    checkWorkspace,
+	foundry("DeleteFoundryAutomation"):    checkWorkspace,
+	foundry("ApproveFoundryAutomation"):   checkWorkspace,
+	foundry("PauseFoundryAutomation"):     checkWorkspace,
+	foundry("ResumeFoundryAutomation"):    checkWorkspace,
+	foundry("RunFoundryAutomation"):       checkWorkspace,
+	foundry("ListFoundryAutomationRuns"):  checkWorkspace,
+	foundry("GetFoundryAutomationRun"):    checkWorkspace,
+	foundry("CancelFoundryAutomationRun"): checkWorkspace,
 
 	foundry("CreateFoundryWorkflow"):          checkOntology,
 	foundry("ListFoundryWorkflows"):           checkOntology,

@@ -189,8 +189,9 @@ func (s *Service) GetFoundryDashboard(ctx context.Context, req *foundryv1.GetFou
 	return s.dashboardResponse(ctx, c, req.GetWorkspaceId(), req.GetId())
 }
 
-// dashboardName checks a dashboard's name and description, trimmed.
-func dashboardName(name, description string) (string, string, error) {
+// nameAndDescription checks a dashboard's or an automation's name and
+// description, trimmed.
+func nameAndDescription(name, description string) (string, string, error) {
 	name, description = strings.TrimSpace(name), strings.TrimSpace(description)
 	switch {
 	case name == "" || utf8.RuneCountInString(name) > maxDashboardNameChars || strings.ContainsFunc(name, unicode.IsControl):
@@ -262,7 +263,7 @@ func (s *Service) CreateFoundryDashboard(ctx context.Context, req *foundryv1.Cre
 	if token == "" || len(token) > maxClientTokenLength {
 		return nil, status.Errorf(codes.InvalidArgument, "client_token is required, at most %d characters", maxClientTokenLength)
 	}
-	name, description, err := dashboardName(req.GetName(), req.GetDescription())
+	name, description, err := nameAndDescription(req.GetName(), req.GetDescription())
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +319,7 @@ func (s *Service) UpdateFoundryDashboard(ctx context.Context, req *foundryv1.Upd
 		if req.Description != nil {
 			description = req.GetDescription()
 		}
-		name, description, err := dashboardName(name, description)
+		name, description, err := nameAndDescription(name, description)
 		if err != nil {
 			return nil, err
 		}

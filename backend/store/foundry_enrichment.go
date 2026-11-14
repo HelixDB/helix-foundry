@@ -141,7 +141,8 @@ ON DUPLICATE KEY UPDATE requested_at=NOW(6), attempts=0, last_load_id=NULL, done
 // cancelled, preparing and running ones are asked to cancel, and every step
 // is purged, so its files are swept; its pending purges end, as its
 // databases go with it; and its model providers drop their keys, a pending
-// one superseded; and its dashboards' public snapshots are deleted.
+// one superseded; its automations pause and their live runs are cancelled;
+// and its dashboards' public snapshots are deleted.
 func (s *mysqlDB) CancelWorkspaceFoundryWork(ctx context.Context, workspaceID string) error {
 	ontologies, err := s.lockWorkspaceFoundryOntologies(ctx, workspaceID)
 	if err != nil {
@@ -162,6 +163,22 @@ WHERE ontology_id=? AND status='writing'`, ontologyID); err != nil {
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_enrichment_purges SET done_at=NOW(6) WHERE workspace_id=? AND done_at IS NULL`,
 		workspaceID); err != nil {
 		return err
+	}
+	// Its automations stop, and their live runs end with the Assistant turns
+	// they wait on.
+	if err := s.cancelFoundryAutomationTurns(ctx, `SELECT id FROM foundry_automation_runs WHERE workspace_id=? AND status IN ('queued', 'running')`,
+		workspaceID, "the workspace was deleted"); err != nil {
+		return err
+	}
+	for _, q := range []string{
+		`UPDATE foundry_automation_runs SET status='cancelled', error='The workspace was deleted.', lease_owner=NULL, lease_until=NULL, finished_at=NOW(6)
+WHERE workspace_id=? AND status IN ('queued', 'running')`,
+		`UPDATE foundry_automations SET status='paused', paused_reason='owner_lost_access', paused_by_user_id=NULL, paused_at=NOW(6),
+    next_fire_at=NULL, cursor_at=NULL, cursor_id='' WHERE workspace_id=? AND status='active'`,
+	} {
+		if _, err := s.db.ExecContext(ctx, q, workspaceID); err != nil {
+			return err
+		}
 	}
 	// Its dashboards' public links stop at once.
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_dashboard_shares WHERE workspace_id=?`, workspaceID); err != nil {

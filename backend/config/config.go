@@ -90,22 +90,93 @@ func (l *LiveAIDefault) Store(d DetectedAIDefault) { l.v.Store(&d) }
 // People enrichment, event sources, the emails Foundry sends and the
 // reminders people ask for on its landing page.
 type Foundry struct {
-	Connectors ConnectorsConfig `koanf:"connectors"`
-	Sync       SyncConfig       `koanf:"sync"`
-	Ontology   OntologyConfig   `koanf:"ontology"`
-	AI         AIConfig         `koanf:"ai"`
-	Documents  DocumentsConfig  `koanf:"documents"`
-	Graph      GraphConfig      `koanf:"graph"`
-	Read       ReadConfig       `koanf:"read"`
-	Ask        AskConfig        `koanf:"ask"`
-	Enrichment EnrichmentConfig `koanf:"enrichment"`
-	Events     EventsConfig     `koanf:"events"`
-	Notify     NotifyConfig     `koanf:"notify"`
-	Reminders  RemindersConfig  `koanf:"reminders"`
-	Heal       HealConfig       `koanf:"heal"`
-	Workflows  WorkflowsConfig  `koanf:"workflows"`
-	Agent      AssistantConfig  `koanf:"agent"`
-	Dashboards DashboardsConfig `koanf:"dashboards"`
+	Connectors  ConnectorsConfig  `koanf:"connectors"`
+	Sync        SyncConfig        `koanf:"sync"`
+	Ontology    OntologyConfig    `koanf:"ontology"`
+	AI          AIConfig          `koanf:"ai"`
+	Documents   DocumentsConfig   `koanf:"documents"`
+	Graph       GraphConfig       `koanf:"graph"`
+	Read        ReadConfig        `koanf:"read"`
+	Ask         AskConfig         `koanf:"ask"`
+	Enrichment  EnrichmentConfig  `koanf:"enrichment"`
+	Events      EventsConfig      `koanf:"events"`
+	Notify      NotifyConfig      `koanf:"notify"`
+	Reminders   RemindersConfig   `koanf:"reminders"`
+	Heal        HealConfig        `koanf:"heal"`
+	Workflows   WorkflowsConfig   `koanf:"workflows"`
+	Agent       AssistantConfig   `koanf:"agent"`
+	Dashboards  DashboardsConfig  `koanf:"dashboards"`
+	Automations AutomationsConfig `koanf:"automations"`
+}
+
+// AutomationsConfig drives automations (package automation,
+// api/automations.go, the foundry-automation-worker): a person's graph of
+// steps Foundry runs as them when its trigger fires. Its Assistant steps are
+// the Assistant's turns, run by the foundry-agent-worker (foundry.agent must
+// be enabled for them), under a monthly budget and a running cap of
+// automations' own, apart from what people's turns spend: an hourly
+// automation would otherwise spend the month's Assistant in days, and lock
+// people out of it. Off unless enabled: the API refuses automations and the
+// worker idles; a standalone install turns it on.
+type AutomationsConfig struct {
+	Enabled bool `koanf:"enabled"`
+	// HTTP is the worker's health listener.
+	HTTP ServiceHTTPConfig `koanf:"http"`
+	// PollInterval is how often the worker fires schedules due, looks for
+	// ended work, and walks runs.
+	PollInterval time.Duration `koanf:"poll_interval"`
+	// Lease is how long a claimed run stays owned without a renewal; it
+	// outlasts the longest action a step runs.
+	Lease time.Duration `koanf:"lease"`
+	// MaxAttempts caps the attempts that failed of one run; RetryBackoff is
+	// the wait before the next, doubling.
+	MaxAttempts  int           `koanf:"max_attempts"`
+	RetryBackoff time.Duration `koanf:"retry_backoff"`
+	// Settle is how long after work ended an event trigger counts it: every
+	// transaction that ended work before it has committed by then.
+	Settle time.Duration `koanf:"settle"`
+	// WatchEvery is how often one event trigger looks for ended work;
+	// WatchBatch how many look in one tick.
+	WatchEvery time.Duration `koanf:"watch_every"`
+	WatchBatch int           `koanf:"watch_batch"`
+	// MaxPerWorkspace is how many automations a workspace keeps.
+	MaxPerWorkspace int `koanf:"max_per_workspace"`
+	// RunsPerDay is how many runs a workspace's automations start in any 24
+	// hours; past it a trigger's run is recorded skipped, and Run now refused.
+	RunsPerDay int `koanf:"runs_per_day"`
+	// MonthlyUSD is a workspace's monthly budget for its automations'
+	// Assistant steps, reserved as each turn is claimed; MaxUSD caps one
+	// step's turn; MaxRunning is how many of those turns run at once.
+	MonthlyUSD float64 `koanf:"monthly_usd"`
+	MaxUSD     float64 `koanf:"max_usd"`
+	MaxRunning int     `koanf:"max_running"`
+	// PauseAfterFailures pauses an automation whose runs failed that many
+	// times in a row, and emails its owner; FailureBackoff is how long a
+	// failed run holds back its automation's next, doubling with each
+	// failure in a row, up to a day.
+	PauseAfterFailures int           `koanf:"pause_after_failures"`
+	FailureBackoff     time.Duration `koanf:"failure_backoff"`
+	// StepWait is how long a run waits for an Assistant step's turn before
+	// it reads it again.
+	StepWait time.Duration `koanf:"step_wait"`
+}
+
+// MaxMicros is one Assistant step's cap, in millionths of a US dollar.
+func (a AutomationsConfig) MaxMicros() int64 { return int64(math.Round(a.MaxUSD * 1e6)) }
+
+// MonthlyMicros is a workspace's monthly automations budget, in millionths
+// of a US dollar.
+func (a AutomationsConfig) MonthlyMicros() int64 { return int64(math.Round(a.MonthlyUSD * 1e6)) }
+
+// validate checks what the API and both workers read: the caps.
+func (a AutomationsConfig) validate() error {
+	switch {
+	case a.MaxPerWorkspace < 1 || a.RunsPerDay < 1 || a.MaxRunning < 1 || a.PauseAfterFailures < 1:
+		return fmt.Errorf("foundry.automations max_per_workspace, runs_per_day, max_running and pause_after_failures must be positive")
+	case a.MaxUSD <= 0 || a.MonthlyUSD < a.MaxUSD:
+		return fmt.Errorf("foundry.automations.max_usd must be positive, and monthly_usd at least it")
+	}
+	return nil
 }
 
 // DashboardsConfig drives dashboards (package dashboard, api/dashboards.go).
@@ -1519,6 +1590,10 @@ type Roles struct {
 	SyncWorker, DocumentWorker, OntologyWorker, GraphWorker, AskWorker, EnrichmentWorker, NotifyWorker, HealWorker bool
 	// AgentWorker is the foundry-agent-worker, the Assistant's turns.
 	AgentWorker bool
+	// AutomationWorker is the foundry-automation-worker: it fires
+	// automations and walks their runs, its Assistant steps queued as the
+	// Assistant's turns, so it calls no model itself.
+	AutomationWorker bool
 }
 
 // modelCalls reports whether the roles call models: the workers that draft,
@@ -1766,6 +1841,24 @@ func (c *Config) validateRoles(roles Roles) error {
 			return err
 		}
 	}
+	// The API and the automation worker check automations' caps, and the
+	// agent worker claims their turns under them, whether or not automations
+	// are on here: another process may queue them.
+	if (roles.API || roles.AutomationWorker) && f.Automations.Enabled || roles.AgentWorker && f.Agent.Enabled {
+		if err := f.Automations.validate(); err != nil {
+			return err
+		}
+	}
+	if roles.AutomationWorker && f.Automations.Enabled {
+		a := f.Automations
+		switch {
+		case a.HTTP.Listen == "":
+			return fmt.Errorf("foundry.automations.http.listen must be set when 'foundry-automation-worker' is in tasks")
+		case a.PollInterval <= 0 || a.Lease < time.Minute || a.MaxAttempts < 1 || a.RetryBackoff <= 0 || a.Settle <= 0 || a.WatchEvery <= 0 ||
+			a.WatchBatch < 1 || a.FailureBackoff <= 0 || a.StepWait <= 0:
+			return fmt.Errorf("foundry.automations poll_interval, max_attempts, retry_backoff, settle, watch_every, watch_batch, failure_backoff and step_wait must be positive, and lease at least 1m")
+		}
+	}
 	// The API reads and saves the setting; the workers and foundry-read
 	// make the model calls.
 	if roles.modelCalls() || roles.API {
@@ -1986,6 +2079,23 @@ func Defaults() Config {
 		MaxRunning:        2,
 		ContextTokens:     100_000,
 		MaxPendingActions: 3,
+	}, Automations: AutomationsConfig{
+		HTTP:               ServiceHTTPConfig{Listen: ":8103"},
+		PollInterval:       5 * time.Second,
+		Lease:              5 * time.Minute,
+		MaxAttempts:        3,
+		RetryBackoff:       30 * time.Second,
+		Settle:             2 * time.Minute,
+		WatchEvery:         30 * time.Second,
+		WatchBatch:         200,
+		MaxPerWorkspace:    50,
+		RunsPerDay:         200,
+		MonthlyUSD:         20,
+		MaxUSD:             0.5,
+		MaxRunning:         2,
+		PauseAfterFailures: 3,
+		FailureBackoff:     5 * time.Minute,
+		StepWait:           5 * time.Second,
 	}, Workflows: WorkflowsConfig{Assess: WorkflowAssessConfig{
 		Enabled:      true,
 		MonthlyUSD:   20,

@@ -125,3 +125,12 @@ foundry:
     max_steps: 20
     max_wall_secs: 240
     monthly_usd: 30
+  # Automations: the owner's graphs of steps the install runs as them when a
+  # schedule fires or a sync, load, upload or draft ends. Their Assistant
+  # steps run as the Assistant's turns, under a monthly budget of their own.
+  # An install sends no email, so a notify step is recorded as skipped.
+  automations:
+    enabled: true
+    http: { listen: "127.0.0.1:8103" }
+    monthly_usd: 20
+    max_usd: 0.5
