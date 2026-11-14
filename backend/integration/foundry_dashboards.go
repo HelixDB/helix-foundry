@@ -304,7 +304,7 @@ func (s *Service) validateDashboardOperation(ctx context.Context, identity *Iden
 			specJSON := string(spec)
 			payload.Spec, parsed, req.SpecJson = spec, p, &specJSON
 		}
-		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "GetFoundryDashboard", "UpdateFoundryDashboard"); err != nil {
+		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "UpdateFoundryDashboard"); err != nil {
 			return nil, err
 		}
 		if err := s.dashboardOntologies(ctx, identity, workspaceID, parsed); err != nil {

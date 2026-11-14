@@ -282,6 +282,10 @@ func TestDashboardCallers(t *testing.T) {
 	assert.False(t, got.GetCanEdit() || got.GetCanPin() || got.GetCanPublish())
 	_, err = f.s.GetFoundryDashboard(grantee, &foundryv1.GetFoundryDashboardRequest{WorkspaceId: "ws-1", Id: mine.GetId()})
 	assert.Equal(t, codes.NotFound, status.Code(err), "an unpinned dashboard is no grantee's to see")
+	key := access.WithCaller(asActor(ports.Actor{Source: ports.SourceGrantee, ServiceCredentialID: "key-1", WorkspaceID: "ws-1"}),
+		access.Grantee{WorkspaceID: "ws-1", Principal: access.Principal{Kind: access.PrincipalServiceCredential, ID: "key-1"}})
+	_, err = f.s.ListFoundryDashboards(key, req)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "a key, even one granted sources, has no dashboards")
 	for _, method := range []string{foundryv1.FoundryService_CreateFoundryDashboard_FullMethodName, foundryv1.FoundryService_PublishFoundryDashboard_FullMethodName} {
 		assert.Equal(t, access.Deny, access.RuleOf(method))
 	}

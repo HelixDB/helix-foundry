@@ -76,13 +76,17 @@ type dashboardCaller struct {
 }
 
 // dashboardCallerOf is the person calling for workspaceID: a user signed in
-// to the site or calling through the MCP, or a grantee; never a service key,
-// an event source or the host. A role that can't be read is no manager's.
+// to the site or calling through the MCP, or a user source grants admit;
+// never a service key, an event source or the host. A role that can't be
+// read is refused, and no People port makes no one a manager.
 func (s *Service) dashboardCallerOf(ctx context.Context, workspaceID string) (dashboardCaller, error) {
 	if workspaceID == "" {
 		return dashboardCaller{}, status.Error(codes.InvalidArgument, "workspace_id is required")
 	}
 	if g, ok := access.GranteeFrom(ctx); ok {
+		if g.Principal.Kind != access.PrincipalUser {
+			return dashboardCaller{}, status.Error(codes.PermissionDenied, "dashboards are people's: sign in to Foundry")
+		}
 		return dashboardCaller{userID: g.Principal.ID, grantee: true}, nil
 	}
 	a := actor(ctx)
