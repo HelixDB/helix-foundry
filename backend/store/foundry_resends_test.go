@@ -587,13 +587,21 @@ func TestFoundryResendRefusals(t *testing.T) {
 		}))
 		want := map[string]string{da.ID: "written", db.ID: "refused/document_changed"}
 		assert.Equal(t, want, f.applied(t, da, db))
-		applied, err := f.db.ListFoundryDecisionsApplied(ctx, f.ontology.ID, []string{da.ID, db.ID})
-		require.NoError(t, err)
-		assert.True(t, applied[da.ID].TakesBack, "what the load wrote is still taken back on removal")
-		assert.False(t, applied[db.ID].TakesBack)
+		takesBack := func(ds ...*model.FoundryReviewDecision) map[string]bool {
+			applied, err := f.db.ListFoundryDecisionsApplied(ctx, f.ontology.ID, []string{da.ID, db.ID, dc.ID})
+			require.NoError(t, err)
+			out := map[string]bool{}
+			for _, d := range ds {
+				out[d.ID] = applied[d.ID].TakesBack
+			}
+			return out
+		}
+		// While the job is in flight any copy may be written (foundryInFlight).
+		assert.Equal(t, map[string]bool{da.ID: true, db.ID: true}, takesBack(da, db))
 		assert.Empty(t, f.owed(t))
 		assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "changed", model.FoundryGraphJobSucceeded))
 		assert.Nil(t, f.liveJob(t), "a refused approval is never sent again unasked")
+		assert.Equal(t, map[string]bool{da.ID: true, db.ID: false}, takesBack(da, db), "what the load wrote is still taken back on removal")
 		assert.Empty(t, f.owed(t))
 		row, err := f.db.GetFoundryDocumentExtraction(ctx, f.load, f.a)
 		require.NoError(t, err)
@@ -613,6 +621,15 @@ func TestFoundryResendRefusals(t *testing.T) {
 		assert.Equal(t, want, f.applied(t, da, db, dc))
 		assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "changed-2", model.FoundryGraphJobSucceeded))
 		assert.Nil(t, f.liveJob(t))
+		assert.Equal(t, map[string]bool{da.ID: true, db.ID: false, dc.ID: false}, takesBack(da, db, dc))
+
+		// Removed, the written approval is taken back; the refused ones only
+		// leave the load's list.
+		for i, d := range []*model.FoundryReviewDecision{da, db, dc} {
+			require.NoError(t, f.db.DeleteFoundryReviewDecision(ctx, f.ontology.WorkspaceID, f.ontology.ID, d.ID,
+				&model.FoundryGraphJob{ID: id26("RS-RCHANGED-x" + string(rune('0'+i)))}))
+		}
+		assert.Equal(t, map[string]string{da.ID: "withdraw"}, kinds(t, f.load))
 	})
 
 	t.Run("the job fails", func(t *testing.T) {
