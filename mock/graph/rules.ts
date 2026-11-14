@@ -1079,9 +1079,9 @@ const words = (s: string) =>
  * A typed query's answer over the model, as the engine gives it: the start
  * type's entities (by ids, the best 100 of a text search of their names, or
  * all), each step along a link, relation or two-place derived predicate
- * from or to each, the filters, then rows or a count. The mock answers rows
- * and counts; a prop the type doesn't have, or a limit out of range, is
- * `invalid` with a pointer to it.
+ * from or to each, the filters, then rows, a count, counts by value or an
+ * aggregate (groupCount, aggregateOf); a prop the type doesn't have, or a
+ * limit out of range, is `invalid` with a pointer to it.
  */
 function typedQuery(m: Model, q: Query, view?: View): Answer {
   const steps = q.steps || [],
@@ -1128,9 +1128,27 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
       "a text search needs a word and a type with names",
     );
   const ret = q.return;
-  if (!("rows" in ret) && !("count" in ret))
-    return invalid("the mock answers rows and counts only");
   const last = steps.length;
+  const groupLimit = (pointer: string, limit: number) =>
+    limit < 1 || limit > 100
+      ? bad(pointer, "groups come 1 to 100 at a time")
+      : undefined;
+  if ("group_count" in ret) {
+    const { at, prop, limit = 50 } = ret.group_count;
+    const refused = groupLimit("/return/group_count/limit", limit);
+    if (refused) return refused;
+    if (at > last || !known(at, prop))
+      return bad("/return/group_count/prop", `\`${prop}\` is no property`);
+  }
+  if ("aggregate" in ret) {
+    const { at, prop, group_by = null, limit = 50 } = ret.aggregate;
+    const refused = groupLimit("/return/aggregate/limit", limit);
+    if (refused) return refused;
+    if (at > last || prop === "name" || !known(at, prop))
+      return bad("/return/aggregate/prop", `\`${prop}\` is no number`);
+    if (group_by && (group_by.at > last || !known(group_by.at, group_by.prop)))
+      return bad("/return/aggregate/group_by", "no such group");
+  }
   if ("rows" in ret) {
     const { columns, order_by = null, limit = 50, offset = 0 } = ret.rows;
     if (limit < 1 || limit > 200)
@@ -1208,6 +1226,29 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
       return stored.has(`${f.violates}\u001f${n}`);
     }),
   );
+  const echoReturn = () => {
+    if ("rows" in ret)
+      return {
+        rows: {
+          columns: ret.rows.columns.map((c) => ({
+            at: c.at,
+            prop: c.prop ?? null,
+          })),
+          order_by: ret.rows.order_by
+            ? { desc: false, ...ret.rows.order_by }
+            : null,
+          limit: ret.rows.limit ?? 50,
+          ...(ret.rows.offset ? { offset: ret.rows.offset } : {}),
+        },
+      };
+    if ("count" in ret)
+      return { count: { distinct_at: ret.count.distinct_at ?? null } };
+    if ("group_count" in ret)
+      return { group_count: { limit: 50, ...ret.group_count } };
+    return {
+      aggregate: { group_by: null, limit: 50, ...ret.aggregate },
+    };
+  };
   const echo = {
     start: {
       type: q.start.type,
@@ -1220,22 +1261,7 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
       where: (s.where || []).map((c) => ({ value: null, ...c })),
     })),
     filters,
-    return:
-      "rows" in ret
-        ? {
-            rows: {
-              columns: ret.rows.columns.map((c) => ({
-                at: c.at,
-                prop: c.prop ?? null,
-              })),
-              order_by: ret.rows.order_by
-                ? { desc: false, ...ret.rows.order_by }
-                : null,
-              limit: ret.rows.limit ?? 50,
-              ...(ret.rows.offset ? { offset: ret.rows.offset } : {}),
-            },
-          }
-        : { count: { distinct_at: ret.count.distinct_at ?? null } },
+    return: echoReturn(),
   };
   // What a narrowed read matched would say how much it can't see.
   const narrowed = !!view && narrows(view, q);
@@ -1257,6 +1283,22 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
         stats,
       },
     };
+  }
+  if ("group_count" in ret || "aggregate" in ret) {
+    // A group's entities may be ones the reader sees only some of.
+    if (narrowed)
+      return {
+        error: {
+          code: "not_visible",
+          message:
+            "only part of this is in the sources shared with you, so it can't be counted",
+        },
+      };
+    const result =
+      "group_count" in ret
+        ? groupCount(m, paths, ret.group_count)
+        : aggregateOf(m, paths, ret.aggregate);
+    return { ok: { kind: "query", query_echo: echo, result, stats } };
   }
   const { columns, order_by = null, limit = 50, offset = 0 } = ret.rows;
   const named = [...new Set(columns.map((c) => c.at))];
@@ -1363,6 +1405,131 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
       },
       stats,
     },
+  };
+}
+
+type Paths = { nodes: number[] }[];
+type GroupValue = string | number | boolean | null;
+
+/** A prop's value at a node, as the engine groups by it (`name` its name). */
+const propOf = (m: Model, id: number, prop: string): GroupValue => {
+  const v = m.g.node(id)!.props[prop] ?? null;
+  return typeof v === "object" && v !== null ? JSON.stringify(v) : v;
+};
+
+/**
+ * A group's value as the engine gives it: `{"untrusted": text}`, a
+ * number's as JSON writes it, whatever gave it (a group is many entities'),
+ * and null for the entities without one.
+ */
+const groupValue = (v: GroupValue) =>
+  v === null ? null : { untrusted: typeof v === "string" ? v : String(v) };
+
+/** Groups in the engine's order: by `measure`, greatest first, then by value, the absent last. */
+function ranked<G extends { value: GroupValue }>(
+  groups: G[],
+  measure: (g: G) => number | null,
+): G[] {
+  return groups.sort((a, b) => {
+    const x = measure(a),
+      y = measure(b);
+    if (x !== y) return x === null ? 1 : y === null ? -1 : y - x;
+    if (a.value === b.value) return 0;
+    if (a.value === null) return 1;
+    if (b.value === null) return -1;
+    return String(a.value).localeCompare(String(b.value));
+  });
+}
+
+/** How many distinct entities at `at` have each value of `prop`, most first. */
+function groupCount(
+  m: Model,
+  paths: Paths,
+  { at, prop, limit = 50 }: { at: number; prop: string; limit?: number },
+) {
+  const counts = new Map<GroupValue, number>();
+  for (const id of new Set(paths.map((p) => p.nodes[at]!))) {
+    const v = propOf(m, id, prop);
+    counts.set(v, (counts.get(v) || 0) + 1);
+  }
+  const groups = ranked(
+    [...counts].map(([value, count]) => ({ value, count })),
+    (g) => g.count,
+  );
+  return {
+    kind: "group_count",
+    groups: groups
+      .slice(0, limit)
+      .map((g) => ({ value: groupValue(g.value), count: g.count })),
+    total_groups: groups.length,
+  };
+}
+
+/**
+ * A function of a numeric prop over the distinct entities at `at`, or by
+ * the groups of `group_by`'s values (each entity once in each group it is
+ * in), greatest first. A mean, least or greatest of no values is null.
+ */
+function aggregateOf(
+  m: Model,
+  paths: Paths,
+  {
+    fn,
+    at,
+    prop,
+    group_by = null,
+    limit = 50,
+  }: {
+    fn: "sum" | "avg" | "min" | "max";
+    at: number;
+    prop: string;
+    group_by?: { at: number; prop: string } | null;
+    limit?: number;
+  },
+) {
+  const of = (ids: Iterable<number>) => {
+    const values = [...ids].flatMap((id) => {
+      const v = m.g.node(id)!.props[prop];
+      return typeof v === "number" && Number.isFinite(v) ? [v] : [];
+    });
+    const sum = values.reduce((a, b) => a + b, 0);
+    const value = !values.length
+      ? fn === "sum"
+        ? 0
+        : null
+      : fn === "sum"
+        ? sum
+        : fn === "avg"
+          ? sum / values.length
+          : fn === "min"
+            ? Math.min(...values)
+            : Math.max(...values);
+    return { aggregate: value, values: values.length };
+  };
+  if (!group_by)
+    return {
+      kind: "aggregate",
+      ...(({ aggregate, values }) => ({ value: aggregate, values }))(
+        of(new Set(paths.map((p) => p.nodes[at]!))),
+      ),
+    };
+  const members = new Map<GroupValue, Set<number>>();
+  for (const p of paths) {
+    const v = propOf(m, p.nodes[group_by.at]!, group_by.prop);
+    members.set(v, (members.get(v) || new Set()).add(p.nodes[at]!));
+  }
+  const groups = ranked(
+    [...members].map(([value, ids]) => ({ value, ...of(ids) })),
+    (g) => g.aggregate,
+  );
+  return {
+    kind: "grouped_aggregate",
+    groups: groups.slice(0, limit).map((g) => ({
+      value: groupValue(g.value),
+      aggregate: g.aggregate,
+      values: g.values,
+    })),
+    total_groups: groups.length,
   };
 }
 

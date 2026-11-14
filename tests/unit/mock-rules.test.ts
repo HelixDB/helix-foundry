@@ -345,14 +345,181 @@ describe("mock rules", () => {
     expect(
       read(model, { evidence: { entity: acme, limit: 101 } }),
     ).toMatchObject({ error: { code: "invalid" } });
+    // Groups come 1 to 100 at a time, of a prop the type has; an aggregate
+    // is of a number.
+    for (const ret of [
+      { group_count: { at: 0, prop: "code", limit: 101 } },
+      { group_count: { at: 0, prop: "colour" } },
+      { group_count: { at: 1, prop: "code" } },
+      { aggregate: { fn: "sum", at: 0, prop: "name" } },
+      { aggregate: { fn: "sum", at: 0, prop: "colour" } },
+      { aggregate: { fn: "sum", at: 0, prop: "code", limit: 0 } },
+      {
+        aggregate: {
+          fn: "sum",
+          at: 0,
+          prop: "code",
+          group_by: { at: 0, prop: "colour" },
+        },
+      },
+    ])
+      expect(
+        read(model, {
+          query: { start: { type: "Org" }, return: ret } as never,
+        }),
+      ).toMatchObject({ error: { code: "invalid" } });
+  });
+
+  it("counts by value and aggregates numbers, as the engine orders them", () => {
+    const g = new MockGraph().view("load_1");
+    const customer = (k: string) =>
+      g.addNode("Customer", { entity_key: k, customer_id: k, name: k });
+    const [globex, initech] = ["globex", "initech"].map(customer);
+    const invoice = (
+      k: string,
+      status: string | null,
+      amount: number | string | undefined,
+    ) =>
+      g.addNode("Invoice", {
+        entity_key: k,
+        invoice_id: k,
+        ...(status === null ? {} : { status }),
+        ...(amount === undefined ? {} : { amount_due: amount }),
+      });
+    const bills: [
+      string,
+      string | null,
+      number | string | undefined,
+      number,
+    ][] = [
+      ["in_1", "paid", 100, 0],
+      ["in_2", "paid", 50, 1],
+      ["in_3", "open", 300, 0],
+      ["in_4", null, 7, 1],
+      ["in_5", "void", "n/a", 1],
+      ["in_6", "open", undefined, 1],
+    ];
+    for (const [k, status, amount, to] of bills)
+      g.addEdge(
+        "billed_to",
+        invoice(k, status, amount)!,
+        [globex, initech][to]!,
+        {
+          fact_key: `f_${k}`,
+        },
+      );
+    const model = evaluate(
+      g,
+      compile(`version = "draft"
+[types.Customer]
+description = "A customer."
+props = { customer_id = "string" }
+key = ["customer_id"]
+[types.Invoice]
+description = "An invoice."
+props = { invoice_id = "string", status = "string", amount_due = "integer" }
+key = ["invoice_id"]
+[links.billed_to]
+from = "Invoice"
+to = "Customer"
+description = "Bills."
+`),
+    );
+    const result = (ret: object, steps: object[] = []) => {
+      const a = read(model, {
+        query: { start: { type: "Invoice" }, steps, return: ret } as never,
+      });
+      if (!("ok" in a)) throw new Error(JSON.stringify(a));
+      return (a.ok as { query_echo: unknown; result: unknown }).result;
+    };
+    // Most first, then by value, the invoices without one last; every
+    // value a document's text, a number's as JSON writes it.
+    expect(result({ group_count: { at: 0, prop: "status" } })).toEqual({
+      kind: "group_count",
+      groups: [
+        { value: { untrusted: "open" }, count: 2 },
+        { value: { untrusted: "paid" }, count: 2 },
+        { value: { untrusted: "void" }, count: 1 },
+        { value: null, count: 1 },
+      ],
+      total_groups: 4,
+    });
+    // Ties by value as text; a number's group is its JSON.
     expect(
-      read(model, {
-        query: {
-          start: { type: "Org" },
-          return: { group_count: { at: 0, prop: "code" } },
+      result({ group_count: { at: 0, prop: "amount_due", limit: 1 } }),
+    ).toEqual({
+      kind: "group_count",
+      groups: [{ value: { untrusted: "100" }, count: 1 }],
+      total_groups: 6,
+    });
+    // Over every invoice's number: text and absent values aren't any.
+    expect(
+      result({ aggregate: { fn: "sum", at: 0, prop: "amount_due" } }),
+    ).toEqual({ kind: "aggregate", value: 457, values: 4 });
+    expect(
+      result({ aggregate: { fn: "avg", at: 0, prop: "amount_due" } }),
+    ).toEqual({ kind: "aggregate", value: 457 / 4, values: 4 });
+    expect(
+      result({ aggregate: { fn: "min", at: 0, prop: "amount_due" } }),
+    ).toEqual({ kind: "aggregate", value: 7, values: 4 });
+    expect(
+      result({ aggregate: { fn: "max", at: 0, prop: "amount_due" } }),
+    ).toEqual({ kind: "aggregate", value: 300, values: 4 });
+    // By the customer they bill, greatest first; a group of no numbers
+    // sums to 0, and has no mean.
+    expect(
+      result(
+        {
+          aggregate: {
+            fn: "sum",
+            at: 0,
+            prop: "amount_due",
+            group_by: { at: 1, prop: "customer_id" },
+          },
+        },
+        [{ via: "billed_to", dir: "out", to: "Customer" }],
+      ),
+    ).toEqual({
+      kind: "grouped_aggregate",
+      groups: [
+        { value: { untrusted: "globex" }, aggregate: 400, values: 2 },
+        { value: { untrusted: "initech" }, aggregate: 57, values: 2 },
+      ],
+      total_groups: 2,
+    });
+    expect(
+      result({
+        aggregate: {
+          fn: "avg",
+          at: 0,
+          prop: "amount_due",
+          group_by: { at: 0, prop: "status" },
         },
       }),
-    ).toMatchObject({ error: { code: "invalid" } });
+    ).toEqual({
+      kind: "grouped_aggregate",
+      groups: [
+        { value: { untrusted: "open" }, aggregate: 300, values: 1 },
+        { value: { untrusted: "paid" }, aggregate: 75, values: 2 },
+        { value: null, aggregate: 7, values: 1 },
+        { value: { untrusted: "void" }, aggregate: null, values: 0 },
+      ],
+      total_groups: 4,
+    });
+    expect(
+      result({
+        aggregate: {
+          fn: "sum",
+          at: 0,
+          prop: "amount_due",
+          group_by: { at: 0, prop: "status" },
+          limit: 1,
+        },
+      }),
+    ).toMatchObject({
+      groups: [{ value: { untrusted: "open" }, aggregate: 300 }],
+      total_groups: 4,
+    });
   });
 
   it("answers typed queries: rows along steps, counts, text and ids", () => {
