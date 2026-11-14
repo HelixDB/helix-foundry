@@ -13,10 +13,21 @@ import { expect, mock, signIn, test } from "./support/mock";
 const dockOf = (page: Page) =>
   page.getByRole("complementary", { name: "Assistant" });
 
+// ⌘J, once the shell (whose Assistant button it presses) is on screen.
+async function shortcut(page: Page) {
+  await expect(
+    page
+      .getByRole("button", { name: "Assistant", exact: true })
+      .filter({ visible: true })
+      .first(),
+  ).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+j");
+}
+
 async function say(page: Page, text: string) {
   const dock = dockOf(page);
   await dock.getByRole("textbox", { name: "Message" }).fill(text);
-  await dock.getByRole("button", { name: "Send" }).click();
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
   await expect(
     dock
       .getByRole("log", { name: "Conversation" })
@@ -29,7 +40,7 @@ test("answers a question about the page it is opened on", async ({ page }) => {
   await signIn(page);
   await page.goto("/ontology/ont_acme_sales");
   await expect(dockOf(page)).toHaveCount(0);
-  await page.keyboard.press("ControlOrMeta+j");
+  await shortcut(page);
   const dock = dockOf(page);
   await expect(dock.getByText("Looking at: Sales graph")).toBeVisible();
   await say(page, "What is this?");
@@ -104,7 +115,7 @@ test("dismisses a card it chose itself, and refreshes an expired one", async ({
   await signIn(page);
   // Off an ontology's pages, nothing names one for it.
   await page.goto("/data");
-  await page.keyboard.press("ControlOrMeta+j");
+  await shortcut(page);
   await say(page, "Load something for me");
   const dock = dockOf(page);
   const card = dock.getByRole("region", { name: /^Action: Load v3/ });
@@ -127,7 +138,7 @@ test("dismisses a card it chose itself, and refreshes an expired one", async ({
 test("a member gets no card to run", async ({ page }) => {
   await mock.configure({ agentStepMs: 100 });
   await signIn(page, "alan@example.com");
-  await page.keyboard.press("ControlOrMeta+j");
+  await shortcut(page);
   await say(page, "Load Customer contracts");
   const dock = dockOf(page);
   await expect(
@@ -142,7 +153,7 @@ test("a member gets no card to run", async ({ page }) => {
 test("says when a turn fails", async ({ page }) => {
   await mock.configure({ agentStepMs: 100, agentOutcome: "fail" });
   await signIn(page);
-  await page.keyboard.press("ControlOrMeta+j");
+  await shortcut(page);
   await say(page, "What ontologies do I have?");
   await expect(
     dockOf(page).getByText("The model failed: overloaded."),
@@ -194,7 +205,7 @@ test("is a drawer beside a section's panel on a laptop, and on a phone", async (
   ]) {
     await page.setViewportSize(size);
     await page.goto("/data");
-    await page.keyboard.press("ControlOrMeta+j");
+    await shortcut(page);
     const drawer = page.getByRole("dialog", { name: "Assistant" });
     await expect(drawer).toBeVisible();
     await expect(dockOf(page)).toHaveCount(0);
@@ -215,7 +226,7 @@ test("deletes a thread, and says when the month's budget ended a turn", async ({
 }) => {
   await mock.configure({ agentStepMs: 100, agentOutcome: "budget_exhausted" });
   await signIn(page);
-  await page.keyboard.press("ControlOrMeta+j");
+  await shortcut(page);
   await say(page, "What ontologies do I have?");
   const dock = dockOf(page);
   await expect(
