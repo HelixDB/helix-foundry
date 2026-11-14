@@ -203,10 +203,10 @@ export function Shell({
     setPalette(null);
     setDockDrawerOpen(false);
   }, [pathname, current.id]);
-  const closeDock = useCallback(() => {
-    setDockDrawerOpen(false);
-    setDockStored("");
-  }, [setDockStored]);
+  const closeDock = useCallback(
+    () => (dockDrawer ? setDockDrawerOpen(false) : setDockStored("")),
+    [dockDrawer, setDockStored],
+  );
   const toggleDock = useCallback(
     (from: AssistantFrom) => {
       if (!dockOpen) trackEvent("agent_dock_opened", { from });

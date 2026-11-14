@@ -106,13 +106,8 @@ export function textParts(text: string, origin: string): TextPart[] {
   let from = 0;
   for (const m of text.matchAll(CANDIDATE)) {
     const raw = m[0].replace(TRAILING, ""),
-      start = m.index;
-    let url: URL | undefined;
-    try {
-      url = new URL(raw, origin);
-    } catch {
-      url = undefined;
-    }
+      start = m.index,
+      url = URL.parse(raw, origin);
     if (!url || url.origin !== origin || !IN_APP.test(url.pathname)) continue;
     if (start > from)
       parts.push({ kind: "text", text: text.slice(from, start) });

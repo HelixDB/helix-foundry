@@ -114,6 +114,7 @@ describe("textParts", () => {
     ["a path of another section", "See /papi/v1/whoami or /login"],
     ["a path that climbs out of the app", "See /ontology/../papi/v1/whoami"],
     ["javascript", "javascript:alert(1)"],
+    ["a malformed address", "See https://[::1 now"],
   ])("leaves %s as text", (_, text) => {
     const parts = textParts(text, ORIGIN);
     expect(parts.every((p) => p.kind === "text")).toBe(true);

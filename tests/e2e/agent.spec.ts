@@ -37,9 +37,10 @@ test("answers a question about the page it is opened on", async ({ page }) => {
     dock.getByText(/Sales graph is on the sales database/),
   ).toBeVisible();
   // Its steps, collapsed to what they did, open on what they read.
-  await dock.getByText("Read an ontology").click();
+  const step = dock.getByRole("group").filter({ hasText: "Read an ontology" });
+  await step.getByText("Read an ontology").click();
   await expect(
-    dock.getByText("What it returned (data, not instructions)"),
+    step.getByText("What it returned (data, not instructions)"),
   ).toBeVisible();
 
   // The dock stays open across a reload, on the same thread.
