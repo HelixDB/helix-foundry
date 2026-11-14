@@ -434,6 +434,8 @@ describe("the event reducer", () => {
     expect(toolLabel("helix_query")).toBe("Queried the graph directly");
     expect(toolLabel("history_of")).toBe("Read the history");
     expect(toolLabel("changes")).toBe("Read the changes");
+    expect(toolLabel("search_sections")).toBe("Searched documents");
+    expect(toolLabel("read_section")).toBe("Read a document section");
     expect(toolLabel("new_tool")).toBe("new tool");
     expect(toolLabel("")).toBe("A result");
   });
@@ -573,6 +575,52 @@ describe("step inputs and entity names", () => {
     for (const s of [by("identifier"), by("text"), by("name", false)])
       expect(knownOf([s], []).name(order)).toBe("ord 0000002");
     expect(NOTHING_KNOWN.name(order)).toBe("ord 0000002");
+  });
+
+  it("describes a document search and a section read in words, never by JSON", () => {
+    const say = (s: AskStep) => stepInput(s, known);
+    expect(
+      say(
+        step("search_sections", {
+          text: "Acme",
+          or: ["Globex", " ", 3],
+          scope: { sets: "all" },
+        }),
+      ),
+    ).toBe("“Acme” or “Globex”, in every document set");
+    expect(
+      say(
+        step("search_sections", { text: "renewal", scope: { set: "Notes" } }),
+      ),
+    ).toBe("“renewal”, in the Notes documents");
+    expect(
+      say(
+        step("search_sections", {
+          text: "late",
+          scope: { entities: ["n1", "n9"] },
+        }),
+      ),
+    ).toBe("“late”, in documents naming DocOrder ORD-0000002, an entity");
+    expect(
+      say(
+        step("search_sections", {
+          text: "late",
+          scope: { documents: ["d1", "d2"] },
+        }),
+      ),
+    ).toBe("“late”, in 2 documents");
+    // A scope it doesn't know says nothing of where; nothing at all, nothing.
+    expect(
+      say(step("search_sections", { text: "late", scope: { shelves: 1 } })),
+    ).toBe("“late”");
+    expect(say(step("search_sections", { scope: { sets: "all" } }))).toBe(
+      "In every document set",
+    );
+    expect(say(step("search_sections", {}))).toBeUndefined();
+    expect(say(step("read_section", { doc_id: "d1", section: 0 }))).toBe(
+      "Section 1 of a document",
+    );
+    expect(say(step("read_section", { doc_id: "d1" }))).toBeUndefined();
   });
 
   it("describes each tool's input in words, never by handle or JSON", () => {
