@@ -192,3 +192,71 @@ test("shows members the questions without the form", async ({ page }) => {
   await expect(asked.getByRole("button")).toHaveCount(0);
   await expect(asked).toContainText("Agent’s default");
 });
+
+test("starts Generate from a link's goal, even an empty one", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto(`${O}/generate?goal=Track%20renewals`);
+  await expect(page.getByLabel("Goal")).toHaveValue("Track renewals");
+  // Try again on a generation without a goal links an empty one: never
+  // the current version's.
+  await page.goto(`${O}/generate?goal=`);
+  await expect(page.getByLabel("Goal")).toBeEnabled();
+  await expect(page.getByLabel("Goal")).toHaveValue("");
+  // Without the current version, there is no goal to carry on: it starts
+  // empty, and Generate still goes.
+  await page.route(
+    "**/papi/v1/workspaces/*/foundry/ontologies/ont_acme_contracts/versions/*",
+    (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({
+            status: 500,
+            json: { code: 13, message: "the version couldn't be read" },
+          })
+        : route.fallback(),
+  );
+  await page.goto(`${O}/generate`);
+  await expect(page.getByLabel("Goal")).toBeEnabled({ timeout: 15_000 });
+  await expect(page.getByLabel("Goal")).toHaveValue("");
+});
+
+test("says why a cancel failed, in its dialog", async ({ page }) => {
+  await mock.configure({ ontologyStepMs: 300, ontologyQuestions: true });
+  await signIn(page);
+  await page.goto(`${O}/generate`);
+  await page.getByRole("button", { name: "Generate", exact: true }).click();
+  const asked = questions(page);
+  await expect(asked).toBeVisible({ timeout: 15_000 });
+  await page.route(
+    "**/papi/v1/workspaces/*/foundry/ontologies/*/generations/*:cancel",
+    (route) =>
+      route.fulfill({
+        status: 400,
+        json: { code: 9, message: "this generation already ended" },
+      }),
+  );
+  await asked.getByRole("button", { name: "Cancel generation" }).click();
+  const dialog = page.getByRole("dialog", { name: "Cancel this generation?" });
+  await dialog.getByRole("button", { name: "Cancel generation" }).click();
+  await expect(dialog.getByRole("alert")).toHaveText(
+    "This generation already ended.",
+  );
+  // The answers are still the page's to send.
+  await expect(
+    asked.getByRole("button", { name: "Use the agent’s defaults" }),
+  ).toBeEnabled();
+});
+
+test("asks the questions on a set-up ontology's overview", async ({ page }) => {
+  await mock.configure({ ontologyStepMs: 300, ontologyQuestions: true });
+  await signIn(page);
+  await page.goto(`${O}/generate`);
+  await page.getByRole("button", { name: "Generate", exact: true }).click();
+  await expect(questions(page)).toBeVisible({ timeout: 15_000 });
+  await page.goto(O);
+  await expect(questions(page)).toBeVisible();
+  await expect(
+    questions(page).getByRole("button", { name: "Send answers" }),
+  ).toBeEnabled();
+});

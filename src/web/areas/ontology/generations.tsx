@@ -53,7 +53,7 @@ import { useSources } from "./sources";
 
 // /ontology/:ontologyId/generations/:generationId: one request to draft a
 // version, polled while it is queued or running, shown as helix-foundry's
-// data feed. One waiting for answers to the agent's questions isn't polled:
+// data feed. One waiting for answers to the agent's questions is polled slowly:
 // it shows them to answer (./questions.tsx), and once answered, carries on
 // polled again, showing what was answered. Generations are listed among the versions (versions.tsx), named
 // by their one-line title (generationTitle); the goal shows whole only on a
@@ -204,10 +204,13 @@ export function GenerationPage({ generationId }: { generationId: string }) {
       !retrying &&
       !answered;
   // A running draft reads its tables for its first few seconds, then
-  // drafts; one carried on from answers drafts at once.
-  const drafting =
-    (answered && isLive(g)) ||
-    (running && now - Date.parse(g.startedAt || g.createdAt || "") >= 4000);
+  // drafts; one carried on from answers drafts at once, once a worker has
+  // picked it up again (until then, it waits for the agent).
+  const resuming =
+      answered && g.status === "ONTOLOGY_GENERATION_STATUS_QUEUED" && !retrying,
+    drafting =
+      (answered && running) ||
+      (running && now - Date.parse(g.startedAt || g.createdAt || "") >= 4000);
   const steps: FeedStep[] = [
     step(
       waiting ? "Waiting for the agent" : "Picked up by the agent",
@@ -236,7 +239,11 @@ export function GenerationPage({ generationId }: { generationId: string }) {
           ),
         ]
       : []),
-    step("Drafting types, links and mappings", succeeded, drafting),
+    step(
+      resuming ? "Waiting for the agent" : "Drafting types, links and mappings",
+      succeeded,
+      drafting || resuming,
+    ),
     step(
       succeeded && result.data?.version
         ? `Stored as version ${result.data.version.version}`
@@ -291,7 +298,8 @@ export function GenerationPage({ generationId }: { generationId: string }) {
             <ButtonLink
               icon={RotateCcw}
               to={paths.generate(o, {
-                goal: g.goal,
+                // Its own goal, none included: never the current version's.
+                goal: g.goal ?? "",
                 // Its connectors, its API sources apart, each in the mode
                 // it read, and the other sets it read; none read none.
                 ...generationPicks(

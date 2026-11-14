@@ -12,7 +12,15 @@ import {
   startingAnswer,
   startingGoal,
 } from "@/web/areas/ontology/model";
-import { isLive, isUnderWay, isWaiting } from "@/web/areas/ontology/queries";
+import { ontologyPaths } from "@/web/areas/ontology/paths";
+import {
+  POLL_MS,
+  WAITING_POLL_MS,
+  isLive,
+  isUnderWay,
+  isWaiting,
+  ontologyQueries,
+} from "@/web/areas/ontology/queries";
 import type { MockReply } from "../../mock/http";
 import { routes } from "../../mock/routes";
 import { config, db, resetState } from "../../mock/state";
@@ -43,6 +51,21 @@ describe("startingGoal", () => {
     expect(startingGoal("", "Linked", drafted)).toBe("");
   });
 
+  // Try again on a generation without a goal links "goal=", so Generate
+  // starts empty, as that generation did, not from the current version's.
+  it("links an empty goal, and leaves the goal out only when unset", () => {
+    expect(ontologyPaths.generate("o1", { goal: "" })).toBe(
+      "/ontology/o1/generate?goal=",
+    );
+    expect(ontologyPaths.generate("o1", {})).toBe("/ontology/o1/generate");
+    const link = new URL(
+      "http://x" + ontologyPaths.generate("o1", { goal: "" }),
+    );
+    expect(
+      startingGoal(undefined, link.searchParams.get("goal"), drafted),
+    ).toBe("");
+  });
+
   it("starts empty from a generation without a goal", () => {
     expect(
       startingGoal(undefined, null, generation(undefined, { goal: "" })),
@@ -64,12 +87,62 @@ describe("answering the agent's questions", () => {
       defaultAnswer: "Monthly",
       blocking: true,
     },
-    open: OntologyGenerationQuestion = { id: "q3" };
+    open: OntologyGenerationQuestion = { id: "q3" },
+    must: OntologyGenerationQuestion = {
+      id: "q4",
+      options: ["A"],
+      blocking: true,
+    };
 
   it("follows startingAnswer's @example", () => {
-    expect(startingAnswer(pick)).toEqual({ kind: "option", option: "B" });
+    expect(startingAnswer(pick)).toEqual({ kind: "option", index: 1 });
     expect(startingAnswer(free)).toEqual({ kind: "agent" });
+    expect(startingAnswer(must)).toEqual({ kind: "unset" });
     expect(startingAnswer(open)).toEqual({ kind: "agent" });
+  });
+
+  // Only a person can answer it, so nothing is chosen for them, and the
+  // answers can't go until they choose.
+  it("leaves a blocking question without a default unanswered", () => {
+    expect(answersRequest([pick, must], {})).toEqual({
+      ok: false,
+      questionId: "q4",
+      reason: "Choose an answer.",
+    });
+    expect(
+      answersRequest([pick, must], { q4: { kind: "option", index: 0 } }),
+    ).toEqual({
+      ok: true,
+      request: {
+        answers: [
+          { questionId: "q1", text: "B" },
+          { questionId: "q4", text: "A" },
+        ],
+      },
+    });
+    expect(answersRequest([must], { q4: { kind: "agent" } })).toEqual({
+      ok: true,
+      request: { answers: [], useDefaults: true },
+    });
+  });
+
+  // Options are the model's words: two may read the same, so a choice is
+  // its index, and one past the options sends nothing.
+  it("answers with the option at the index chosen", () => {
+    const twice: OntologyGenerationQuestion = {
+      id: "q5",
+      options: ["Same", "Same"],
+      blocking: true,
+    };
+    expect(
+      answersRequest([twice], { q5: { kind: "option", index: 1 } }),
+    ).toMatchObject({
+      ok: true,
+      request: { answers: [{ questionId: "q5", text: "Same" }] },
+    });
+    expect(
+      answersRequest([twice], { q5: { kind: "option", index: 2 } }),
+    ).toMatchObject({ ok: false, questionId: "q5" });
   });
 
   it("leaves a default that isn't one of the options to the agent", () => {
@@ -80,8 +153,8 @@ describe("answering the agent's questions", () => {
 
   it("follows answersRequest's @example", () => {
     expect(
-      answersRequest([{ id: "q1" }, { id: "q2" }], {
-        q1: { kind: "option", option: "A" },
+      answersRequest([{ id: "q1", options: ["A"] }, { id: "q2" }], {
+        q1: { kind: "option", index: 0 },
         q2: { kind: "agent" },
       }),
     ).toEqual({
@@ -98,6 +171,11 @@ describe("answering the agent's questions", () => {
       questionId: "q1",
       reason: "Write an answer, or choose another.",
     });
+    expect(answersRequest([{ id: "q1", blocking: true }], {})).toEqual({
+      ok: false,
+      questionId: "q1",
+      reason: "Choose an answer.",
+    });
   });
 
   it("starts each question where startingAnswer does", () => {
@@ -113,7 +191,7 @@ describe("answering the agent's questions", () => {
   it("answers every question, without defaults, when none is left to the agent", () => {
     expect(
       answersRequest([pick, free], {
-        q1: { kind: "option", option: "A" },
+        q1: { kind: "option", index: 0 },
         q2: { kind: "own", text: "  Weekly, on Mondays " },
       }),
     ).toEqual({
@@ -151,7 +229,50 @@ describe("answering the agent's questions", () => {
 describe("a generation waiting for answers", () => {
   const waiting = generation("ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT");
 
-  it("holds the ontology's one live generation without being polled", () => {
+  // Nothing runs while it waits, so it is read again slowly: for answers
+  // given in another tab, or the defaults Helix takes once they are due.
+  it("is polled slowly while it waits, and not once it ended", () => {
+    const one = ontologyQueries.generation("ws", "o", "g").refetchInterval,
+      list = ontologyQueries.generations("ws", "o").refetchInterval;
+    expect(one({ state: { data: { generation: waiting } } })).toBe(
+      WAITING_POLL_MS,
+    );
+    expect(
+      one({
+        state: {
+          data: {
+            generation: generation("ONTOLOGY_GENERATION_STATUS_RUNNING"),
+          },
+        },
+      }),
+    ).toBe(POLL_MS);
+    expect(
+      one({
+        state: {
+          data: {
+            generation: generation("ONTOLOGY_GENERATION_STATUS_CANCELLED"),
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(list({ state: { data: { generations: [waiting] } } })).toBe(
+      WAITING_POLL_MS,
+    );
+    expect(
+      list({
+        state: {
+          data: {
+            generations: [
+              waiting,
+              generation("ONTOLOGY_GENERATION_STATUS_QUEUED"),
+            ],
+          },
+        },
+      }),
+    ).toBe(POLL_MS);
+  });
+
+  it("holds the ontology's one live generation", () => {
     expect(isWaiting(waiting)).toBe(true);
     expect(isUnderWay(waiting)).toBe(true);
     expect(isLive(waiting)).toBe(false);

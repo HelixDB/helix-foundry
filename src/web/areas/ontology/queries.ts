@@ -35,14 +35,18 @@ const base = (ws: string) => `/v1/workspaces/${enc(ws)}/foundry/ontologies`;
 const at = (ws: string, o: string) => `${base(ws)}/${enc(o)}`;
 // A generation or a load is polled this often while it is live.
 export const POLL_MS = 1500;
+/** How often a generation waiting for answers is read again. */
+export const WAITING_POLL_MS = 30_000;
 
 export const isLive = (g?: OntologyGeneration | null) =>
   g?.status === "ONTOLOGY_GENERATION_STATUS_QUEUED" ||
   g?.status === "ONTOLOGY_GENERATION_STATUS_RUNNING";
 
 /**
- * Waiting for answers to the agent's questions: nothing runs, so nothing
- * polls, but it is still the ontology's one live generation.
+ * Waiting for answers to the agent's questions: nothing runs, so it is
+ * polled slowly (WAITING_POLL_MS), for answers given in another tab or the
+ * defaults Helix takes once they are due; it is still the ontology's one
+ * live generation.
  */
 export const isWaiting = (g?: OntologyGeneration | null) =>
   g?.status === "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT";
@@ -154,7 +158,12 @@ export const ontologyQueries = {
     },
     refetchInterval: (q: {
       state: { data?: ListOntologyGenerationsResponse };
-    }) => (q.state.data?.generations?.some(isLive) ? POLL_MS : false),
+    }) =>
+      q.state.data?.generations?.some(isLive)
+        ? POLL_MS
+        : q.state.data?.generations?.some(isWaiting)
+          ? WAITING_POLL_MS
+          : false,
   }),
   generation: (ws: string, o: string, id: string) => ({
     queryKey: [ws, "ontology", o, "generation", id],
@@ -166,9 +175,14 @@ export const ontologyQueries = {
       jobSeen("revision", [r.generation]);
       return r;
     },
-    // Only while it is live: a refused read (gone, or no access) stops.
+    // Only while it is live, slowly while it waits for answers: a refused
+    // read (gone, or no access) stops.
     refetchInterval: (q: { state: { data?: OntologyGenerationResponse } }) =>
-      isLive(q.state.data?.generation) ? POLL_MS : false,
+      isLive(q.state.data?.generation)
+        ? POLL_MS
+        : isWaiting(q.state.data?.generation)
+          ? WAITING_POLL_MS
+          : false,
   }),
   // Every load not deleted yet, newest first, with its jobs: retention keeps
   // a handful, so there is one page. Polled while one is written or deleted.

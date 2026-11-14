@@ -33,8 +33,9 @@ import { useOntology } from "./scope";
 
 // The questions a generation waits on (status needs_input): the agent asked
 // what only a person can answer, and drafts on once they are answered. Each
-// is answered with one of its options (the agent's default chosen to start),
-// in the person's own words, or left to the agent (answersRequest); Use the
+// is answered with one of its options (the agent's default chosen to start;
+// a blocking question without one starts unanswered), in the person's own
+// words, or left to the agent (answersRequest); Use the
 // agent's defaults answers them all that way, and Cancel ends the
 // generation without a draft. Questions and options are the model's words
 // and may quote the data: React renders them as text, never markup.
@@ -60,10 +61,18 @@ export function GenerationQuestions({
       "",
     ),
     [cancelling, setCancelling] = useState(false),
-    [error, setError] = useState<unknown>(null);
+    // What the last answer or cancel failed with; a cancel's shows in its
+    // dialog, which stays open.
+    [error, setError] = useState<{
+      kind: "answer" | "cancel";
+      error: unknown;
+    } | null>(null);
   const aiReady = useAiConfigured(),
     manage = canManage(role);
   const checked = answersRequest(questions, answers);
+  // The buttons stay pending until the generation is read again: answered,
+  // it is queued and polled (and these questions go); cancelled, it ended.
+  // Re-enabled before, a second click would be refused.
   const run = async (
     kind: "answers" | "defaults" | "cancel",
     call: () => Promise<unknown>,
@@ -74,13 +83,13 @@ export function GenerationQuestions({
       await call();
       setCancelling(false);
     } catch (e) {
-      setError(e);
-    } finally {
-      setPending("");
-      // Answered, it is queued again and polled; cancelled, it ended.
-      await qc.invalidateQueries({ queryKey: [id, "ontology", o] });
+      setError({ kind: kind === "cancel" ? "cancel" : "answer", error: e });
     }
+    await qc.invalidateQueries({ queryKey: [id, "ontology", o] });
+    setPending("");
   };
+  const answerError = error?.kind === "answer" ? error.error : null,
+    cancelError = error?.kind === "cancel" ? error.error : null;
   const send = (
     kind: "answers" | "defaults",
     body: AnswerOntologyGenerationRequest,
@@ -123,13 +132,25 @@ export function GenerationQuestions({
       </ol>
       {manage ? (
         <div className="on-generate-foot">
-          <AiRefusal action="Answering the agent" error={error} ready={aiReady}>
-            {!!error && (
+          <AiRefusal
+            action="Answering the agent"
+            error={answerError}
+            ready={aiReady}
+          >
+            {!!answerError && (
               <p className="hf-form-error" role="alert">
-                <SettingsLinked text={sentence((error as Error).message)} />
+                <SettingsLinked
+                  text={sentence((answerError as Error).message)}
+                />
               </p>
             )}
           </AiRefusal>
+          {!checked.ok && checked.reason === "Choose an answer." && (
+            <p className="on-muted">
+              Choose an answer to each question that needs one, or use the
+              agent’s defaults.
+            </p>
+          )}
           <div className="hf-form-actions">
             <Button
               variant="ghost"
@@ -175,8 +196,17 @@ export function GenerationQuestions({
           tone="danger"
           pending={pending === "cancel"}
           onConfirm={() => run("cancel", () => cancelGeneration(id, o, g.id))}
-          onCancel={() => setCancelling(false)}
-        />
+          onCancel={() => {
+            setCancelling(false);
+            setError(null);
+          }}
+        >
+          {!!cancelError && (
+            <p className="hf-form-error" role="alert">
+              {sentence((cancelError as Error).message)}
+            </p>
+          )}
+        </ConfirmDialog>
       )}
     </Panel>
   );
@@ -209,7 +239,9 @@ function AskedQuestion({
   const head = (
     <div className="on-question-head">
       {q.blocking ? (
-        <Tag tone="warning">Needs an answer</Tag>
+        <span id={`${name}-need`}>
+          <Tag tone="warning">Needs an answer</Tag>
+        </span>
       ) : (
         <Tag>Optional</Tag>
       )}
@@ -227,9 +259,9 @@ function AskedQuestion({
         <p>{q.text}</p>
         {options.length > 0 && (
           <ul className="on-options" aria-label="Options">
-            {options.map((o) => (
+            {options.map((o, i) => (
               <li
-                key={o}
+                key={i}
                 className={o === q.defaultAnswer ? "is-default" : undefined}
               >
                 {o}
@@ -254,14 +286,16 @@ function AskedQuestion({
         className="on-answer"
         role="radiogroup"
         aria-labelledby={`${name}-text`}
+        aria-required={q.blocking || undefined}
+        aria-describedby={q.blocking ? `${name}-need` : undefined}
       >
-        {options.map((o) => (
-          <label key={o} className="on-check on-answer-choice">
+        {options.map((o, i) => (
+          <label key={i} className="on-check on-answer-choice">
             <input
               type="radio"
               name={name}
-              checked={answer.kind === "option" && answer.option === o}
-              onChange={() => setAnswer({ kind: "option", option: o })}
+              checked={answer.kind === "option" && answer.index === i}
+              onChange={() => setAnswer({ kind: "option", index: i })}
             />
             <span>{o}</span>
             {o === q.defaultAnswer && <Tag tone="accent">Agent’s default</Tag>}

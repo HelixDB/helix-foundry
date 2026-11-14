@@ -3363,46 +3363,58 @@ export function draftWizard(
 export const MAX_ANSWER = 2000;
 
 /**
- * How one of the agent's questions is answered: with one of its options,
- * in the person's own words, or left to the agent, which takes its default
- * (or, with none, decides from the data and the goal).
+ * How one of the agent's questions is answered: not yet (a question that
+ * blocks the draft, with no default, starts so), with one of its options
+ * (by index: the options are the model's words, and two may read the
+ * same), in the person's own words, or left to the agent, which takes its
+ * default (or, with none, decides from the data and the goal).
  */
 export type QuestionAnswer =
-  | { kind: "option"; option: string }
+  | { kind: "unset" }
+  | { kind: "option"; index: number }
   | { kind: "own"; text: string }
   | { kind: "agent" };
 
 /**
  * Where a question's answer starts: on the agent's default when it is one
- * of its options, else left to the agent (its default, or its own choice).
+ * of its options; unanswered when it blocks the draft and the agent offered
+ * no default, since only a person can answer it; else left to the agent
+ * (its default, or its own choice).
  *
  * @example
- * startingAnswer({ id: "q1", options: ["A", "B"], defaultAnswer: "B" }); // { kind: "option", option: "B" }
+ * startingAnswer({ id: "q1", options: ["A", "B"], defaultAnswer: "B" }); // { kind: "option", index: 1 }
  * startingAnswer({ id: "q2", options: [], defaultAnswer: "Monthly" }); // { kind: "agent" }
- * startingAnswer({ id: "q3" }); // { kind: "agent" }
+ * startingAnswer({ id: "q3", options: ["A"], blocking: true }); // { kind: "unset" }
+ * startingAnswer({ id: "q4" }); // { kind: "agent" }
  */
 export const startingAnswer = (
   q: OntologyGenerationQuestion,
-): QuestionAnswer =>
-  q.defaultAnswer && q.options?.includes(q.defaultAnswer)
-    ? { kind: "option", option: q.defaultAnswer }
-    : { kind: "agent" };
+): QuestionAnswer => {
+  const index = q.defaultAnswer
+    ? (q.options || []).indexOf(q.defaultAnswer)
+    : -1;
+  if (index >= 0) return { kind: "option", index };
+  return q.blocking && !q.defaultAnswer ? { kind: "unset" } : { kind: "agent" };
+};
 
 /**
  * The request answering a generation's questions, or why it can't be sent:
- * an answer in the person's own words must be 1 to MAX_ANSWER characters
- * once trimmed. A question left to the agent is left out, with
- * `useDefaults`, so the WFE takes its default for it; every other question
- * is answered, so a blocking one is never left unanswered.
+ * every question needs a choice, and an answer in the person's own words
+ * must be 1 to MAX_ANSWER characters once trimmed. A question left to the
+ * agent is left out, with `useDefaults`, so the WFE takes its default for
+ * it; every other question is answered, so a blocking one is never left
+ * unanswered.
  *
  * @example
- * answersRequest([{ id: "q1" }, { id: "q2" }], {
- *   q1: { kind: "option", option: "A" },
+ * answersRequest([{ id: "q1", options: ["A"] }, { id: "q2" }], {
+ *   q1: { kind: "option", index: 0 },
  *   q2: { kind: "agent" },
  * });
  * // { ok: true, request: { answers: [{ questionId: "q1", text: "A" }], useDefaults: true } }
  * answersRequest([{ id: "q1" }], { q1: { kind: "own", text: "  " } });
  * // { ok: false, questionId: "q1", reason: "Write an answer, or choose another." }
+ * answersRequest([{ id: "q1", blocking: true }], {});
+ * // { ok: false, questionId: "q1", reason: "Choose an answer." }
  */
 export function answersRequest(
   questions: readonly OntologyGenerationQuestion[],
@@ -3417,7 +3429,10 @@ export function answersRequest(
       request.useDefaults = true;
       continue;
     }
-    const text = a.kind === "option" ? a.option : a.text.trim();
+    if (a.kind === "unset")
+      return { ok: false, questionId: q.id, reason: "Choose an answer." };
+    const text =
+      a.kind === "option" ? (q.options?.[a.index] ?? "") : a.text.trim();
     const chars = [...text].length;
     if (!chars)
       return {

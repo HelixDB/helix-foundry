@@ -157,8 +157,8 @@ export function GeneratePage() {
   // null until the goal it starts from is known.
   const goalLink = params.get("goal");
   const [goalText, setGoal] = useState<string | null>(() =>
-    back?.goal !== undefined || goalLink !== null
-      ? startingGoal(back?.goal, goalLink, undefined)
+    typeof back?.goal === "string" || goalLink !== null
+      ? startingGoal(back?.goal ?? undefined, goalLink, undefined)
       : null,
   );
   useEffect(() => {
@@ -243,7 +243,8 @@ export function GeneratePage() {
       value={{
         path: paths.generate(o),
         picks: {
-          goal,
+          // Unknown yet, it is read again on the way back.
+          goal: goalText,
           connectorIds: chosen && [...chosen],
           eventSources: chosenEvents && [...chosenEvents],
           setIds: chosenSets && [...chosenSets],
@@ -258,7 +259,7 @@ export function GeneratePage() {
         />
         <div className="on-stack">
           <GoalPanel
-            goal={goal}
+            goal={goalText}
             setGoal={setGoal}
             ontology={ontology.name || ""}
             chosen={chosen}
