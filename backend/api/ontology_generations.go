@@ -323,8 +323,10 @@ func (s *Service) ListOntologyGenerations(ctx context.Context, req *foundryv1.Li
 // AnswerOntologyGeneration answers the questions a generation waits on
 // (needs_input), checked by ontologygen.Answers, and queues it to carry on
 // from the agent's session where it asked. It is authorized as
-// GenerateOntology is, and, as it runs the model, needs an AI provider
-// (FOUNDRY_AI_NOT_CONFIGURED). One that isn't waiting, or stopped waiting
+// GenerateOntology is: a first draft that loads once ready
+// (load_when_ready) writes the ontology's database, so answering it needs
+// the actor's query_write scope too. As it runs the model, it needs an AI
+// provider (FOUNDRY_AI_NOT_CONFIGURED). One that isn't waiting, or stopped waiting
 // as it was answered (answered, cancelled or answered with defaults
 // meanwhile), is FAILED_PRECONDITION.
 func (s *Service) AnswerOntologyGeneration(ctx context.Context, req *foundryv1.AnswerOntologyGenerationRequest) (*foundryv1.OntologyGenerationResponse, error) {
@@ -344,6 +346,10 @@ func (s *Service) AnswerOntologyGeneration(ctx context.Context, req *foundryv1.A
 	}
 	if gen.Status != foundrymodel.OntologyGenerationNeedsInput {
 		return nil, status.Error(codes.FailedPrecondition, "this generation isn't waiting for answers")
+	}
+	if _, write := actor(ctx).Scope(o.WorkspaceID); gen.Input.LoadWhenReady && !write.Allows(o.ProjectID) {
+		return nil, status.Error(codes.PermissionDenied,
+			"this first draft is loaded into the ontology's database once drafted, which you can't write: ask someone who can to answer, or cancel it")
 	}
 	given := make([]foundrymodel.OntologyAnswer, 0, len(req.GetAnswers()))
 	for _, a := range req.GetAnswers() {

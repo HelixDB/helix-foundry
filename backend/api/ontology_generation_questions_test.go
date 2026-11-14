@@ -162,6 +162,24 @@ func TestOntologyGenerationQuestionRPCs(t *testing.T) {
 		}
 	})
 
+	// A first draft that loads once drafted writes the ontology's database,
+	// so only a caller who may write it answers, as only one may ask for it.
+	t.Run("needs the database's write to answer a first draft that loads", func(t *testing.T) {
+		writer := ports.Actor{Source: ports.SourceUser, UserID: "user-1", WorkspaceID: "ws-1",
+			QueryRead: ports.AllProjects(), QueryWrite: ports.SelectedProjects([]string{"proj-1"})}
+		otherProject := writer
+		otherProject.QueryWrite = ports.SelectedProjects([]string{"proj-2"})
+		for as, want := range map[*ports.Actor]codes.Code{&person: codes.PermissionDenied, &otherProject: codes.PermissionDenied, &writer: codes.OK} {
+			s, store := waiting(t)
+			store.generations[0].Input.LoadWhenReady = true
+			_, err := s.AnswerOntologyGeneration(ports.WithActor(context.Background(), *as), &foundryv1.AnswerOntologyGenerationRequest{
+				WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "gen-1", UseDefaults: true})
+			if status.Code(err) != want || (want == codes.OK) != (store.generations[0].Status == foundrymodel.OntologyGenerationQueued) {
+				t.Errorf("as %+v: err = %v, status %s", *as, err, store.generations[0].Status)
+			}
+		}
+	})
+
 	// Answering runs the model, so it needs a provider as generating does.
 	t.Run("needs an AI provider", func(t *testing.T) {
 		s, store := waiting(t)

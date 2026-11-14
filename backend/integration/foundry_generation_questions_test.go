@@ -43,7 +43,7 @@ func TestAnswerGenerationQuestionsOperation(t *testing.T) {
 		identity := reader()
 		identity.Authorize = func(_ context.Context, _ any, g Grant, m ...string) error { grant, methods = g, m; return nil }
 		op, err := prepare(identity, map[string]any{"generation_id": "generation-1", "use_defaults": true,
-			"answers": []any{map[string]any{"question_id": "q1", "text": "Yes, one account each"}}})
+			"answers": []any{map[string]any{"question_id": "q1", "text": "  Yes, one account each\n"}}})
 		require.NoError(t, err)
 		req := op.(AnswerGenerationQuestionsOperation).req
 		want := &foundryv1.AnswerOntologyGenerationRequest{WorkspaceId: "workspace-1", OntologyId: "ontology-1", Id: "generation-1", UseDefaults: true,
@@ -73,6 +73,7 @@ func TestAnswerGenerationQuestionsOperation(t *testing.T) {
 			"a question twice":   {"generation_id": "generation-1", "answers": []any{answer("q1", "a"), answer("q1", "b")}},
 			"a blank answer":     {"generation_id": "generation-1", "answers": []any{answer("q1", "  ")}},
 			"a long answer":      {"generation_id": "generation-1", "answers": []any{answer("q1", strings.Repeat("é", maxFoundryAnswerChars+1))}},
+			"a padded answer":    {"generation_id": "generation-1", "answers": []any{answer("q1", "a"+strings.Repeat(" ", 4*maxFoundryAnswerChars))}},
 			"no question":        {"generation_id": "generation-1", "answers": []any{answer("", "a")}},
 			"a control id":       {"generation_id": "generation-1", "answers": []any{answer("q\n1", "a")}},
 			"a long question id": {"generation_id": "generation-1", "answers": []any{answer(strings.Repeat("q", maxFoundryQuestionIDBytes+1), "a")}},
@@ -104,8 +105,15 @@ func TestAnswerGenerationQuestionsOperation(t *testing.T) {
 			Payload: map[string]any{"generation_id": "generation-1", "use_defaults": true},
 		})
 		require.NoError(t, err)
-		result, err := op.Execute(context.Background(), s, reader(), "confirmation-1")
+		var scoped []any
+		identity := reader()
+		identity.WithScope = func(ctx context.Context, ws string, write bool) context.Context {
+			scoped = []any{ws, write}
+			return ctx
+		}
+		result, err := op.Execute(context.Background(), s, identity, "confirmation-1")
 		require.NoError(t, err)
+		assert.Equal(t, []any{"workspace-1", true}, scoped, "a first draft's answer is checked against the caller's write scope")
 		out := result.(FoundryGenerationOutput)
 		assert.Equal(t, "generation-1", actions.got.GetId())
 		assert.Equal(t, "queued", out.Status)

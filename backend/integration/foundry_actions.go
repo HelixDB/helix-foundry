@@ -465,14 +465,15 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 			return nil, malformed
 		}
 		req := &foundryv1.AnswerOntologyGenerationRequest{WorkspaceId: workspaceID, OntologyId: ontologyID, Id: payload.GenerationID, UseDefaults: payload.UseDefaults}
-		for _, a := range payload.Answers {
+		for i, a := range payload.Answers {
 			text := strings.TrimSpace(a.Text)
 			if a.QuestionID == "" || len(a.QuestionID) > maxFoundryQuestionIDBytes || strings.ContainsFunc(a.QuestionID, unicode.IsControl) ||
-				text == "" || utf8.RuneCountInString(text) > maxFoundryAnswerChars ||
+				len(a.Text) > 4*maxFoundryAnswerChars || text == "" || utf8.RuneCountInString(text) > maxFoundryAnswerChars ||
 				slices.ContainsFunc(req.Answers, func(given *foundryv1.OntologyGenerationAnswer) bool { return given.GetQuestionId() == a.QuestionID }) {
 				return nil, malformed
 			}
-			req.Answers = append(req.Answers, &foundryv1.OntologyGenerationAnswer{QuestionId: a.QuestionID, Text: a.Text})
+			payload.Answers[i].Text = text
+			req.Answers = append(req.Answers, &foundryv1.OntologyGenerationAnswer{QuestionId: a.QuestionID, Text: text})
 		}
 		// The answers are a person's, as the goal they carry on is.
 		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "AnswerOntologyGeneration"); err != nil {
@@ -1011,8 +1012,11 @@ type AnswerGenerationQuestionsOperation struct {
 func (o AnswerGenerationQuestionsOperation) CanonicalPayload() []byte {
 	return mustCanonical(o.payload)
 }
-func (o AnswerGenerationQuestionsOperation) Execute(ctx context.Context, s *Service, _ *Identity, _ string) (any, error) {
-	response, err := s.Actions.AnswerOntologyGeneration(ctx, o.req)
+
+// Execute answers with the caller's write scope (Identity.WithScope): answering a first draft
+// that loads once ready writes the ontology's database, which the backend checks.
+func (o AnswerGenerationQuestionsOperation) Execute(ctx context.Context, s *Service, identity *Identity, _ string) (any, error) {
+	response, err := s.Actions.AnswerOntologyGeneration(identity.WithScope(ctx, o.req.GetWorkspaceId(), true), o.req)
 	if err != nil {
 		return nil, err
 	}

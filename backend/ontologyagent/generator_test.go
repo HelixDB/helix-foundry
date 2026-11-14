@@ -721,7 +721,7 @@ func TestGenerator(t *testing.T) {
 		if _, err := h.generator.Run(ctx, gen); err != nil {
 			t.Fatal(err)
 		}
-		workflow := "customer billing health" + fmt.Sprintf(newSourcesBrief, "Stripe / customers; Renewals")
+		workflow := "customer billing health" + NewSourcesBrief([]Source{{ID: TableSourceID("conn-1", "customers")}, {ID: "set-new"}})
 		want, _ := json.Marshal(Start{Workflow: workflow, Goals: []string{"customer billing health"}})
 		if !strings.Contains(h.agent.calls()[0], `"input":`+string(want)) {
 			t.Fatalf("request = %s, want input %s", h.agent.calls()[0], want)

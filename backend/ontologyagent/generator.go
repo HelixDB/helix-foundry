@@ -43,11 +43,9 @@ const (
 	// maxStateBytes bounds the session state a generation waiting for
 	// answers keeps: the agent bounds it at about 1 MB.
 	maxStateBytes = 4 << 20
-	// newSourcesBrief follows the workflow of a start drafting a new version
-	// of an ontology whose current version was drafted without some of the
-	// sources, which it names, so the agent asks what it must about those.
-	newSourcesBrief = "\n\nThe ontology's current version was drafted without these sources, which are new: %s. " +
-		"Fit them into the ontology; if how they relate to the rest is unclear from the data and this brief, ask about them first."
+	// maxNamedSources is how many new sources a start's brief names
+	// (NewSourcesBrief); it says how many more there are.
+	maxNamedSources = 20
 	// MaxSetDocuments is how many of a document set's newest uploaded
 	// documents that read as text (Markdown, MDX, plain text, and PDFs whose
 	// text was read) a generation shows the agent: enough to see what the set
@@ -288,13 +286,8 @@ func (g *Generator) Run(ctx context.Context, gen *model.OntologyGeneration) (ont
 		if gen.Goal != nil && *gen.Goal != "" {
 			start = Start{Workflow: *gen.Goal, Goals: []string{*gen.Goal}}
 		}
-		drafted, ok := g.draftedFrom(ctx, gen)
-		if fresh := NewSources(sources, drafted); ok && len(fresh) > 0 {
-			names := make([]string, 0, len(fresh))
-			for _, s := range fresh {
-				names = append(names, s.DisplayName)
-			}
-			start.Workflow += fmt.Sprintf(newSourcesBrief, strings.Join(names, "; "))
+		if drafted, ok := g.draftedFrom(ctx, gen); ok {
+			start.Workflow += NewSourcesBrief(NewSources(sources, drafted))
 		}
 		request.Input = start
 	}
@@ -411,6 +404,31 @@ func NewSources(sources []Source, drafted model.OntologyGenerationInput) []Sourc
 		known[id] = true
 	}
 	return slices.DeleteFunc(slices.Clone(sources), func(s Source) bool { return known[s.ID] })
+}
+
+// NewSourcesBrief follows the workflow of a start drafting a new version of
+// an ontology whose current version was drafted without fresh, so the agent
+// asks what it must about those: "" for none. It names them by their source
+// ids alone, at most maxNamedSources: their names are the connections',
+// sets' and files', which members and synced sources choose, and the
+// workflow is the user's own words to the agent, so a name there could
+// pass for an instruction. The agent reads each name beside its id among
+// the sources, as data.
+func NewSourcesBrief(fresh []Source) string {
+	if len(fresh) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, min(len(fresh), maxNamedSources))
+	for _, s := range fresh[:min(len(fresh), maxNamedSources)] {
+		ids = append(ids, s.ID)
+	}
+	more := ""
+	if n := len(fresh) - len(ids); n > 0 {
+		more = fmt.Sprintf(" and %d more", n)
+	}
+	return fmt.Sprintf("\n\nThe ontology's current version was drafted without these sources, which are new (by source id): %s%s. "+
+		"Fit them into the ontology; if how they relate to the rest is unclear from the data and this brief, ask about them first.",
+		strings.Join(ids, ", "), more)
 }
 
 // draftedFrom is the input of the generation that drafted gen's base
