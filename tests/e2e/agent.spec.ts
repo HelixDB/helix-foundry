@@ -408,3 +408,97 @@ test("shows a call a limit kept from running as not run", async ({ page }) => {
     ),
   ).toBeVisible();
 });
+
+test("shows its answer as the model writes it, once, after a reload mid-answer too", async ({
+  page,
+}) => {
+  // A text streams about four words a delta, 1.2 s apart.
+  await mock.configure({ agentStepMs: 200, agentDeltaMs: 1200 });
+  await signIn(page);
+  await shortcut(page);
+  await say(page, "What ontologies do I have?");
+  const writing = () =>
+    dockOf(page).getByRole("log", { name: "Conversation" }).locator(".ag-live");
+  await expect(writing()).toHaveText(/^This workspace has/);
+  await expect(writing()).not.toContainText("or to load one.");
+  // Reloaded mid-answer, it shows what was written so far and goes on.
+  await page.reload();
+  await expect(writing()).toBeVisible();
+  await expect(writing()).toHaveCount(0, { timeout: 15_000 });
+  // The text replaces what was written: shown once.
+  await expect(
+    dockOf(page).getByText(
+      /^This workspace has \d+ ontologies: .*Ask me about one of them, or to load one\.$/,
+    ),
+  ).toHaveCount(1);
+  await expect(dockOf(page).getByText("Working…")).toHaveCount(0);
+});
+
+test("answers on another provider once it is the setting", async ({ page }) => {
+  await mock.configure({ agentStepMs: 100, aiProbeMs: 600 });
+  await signIn(page);
+  await page.goto("/settings/ai");
+  await page.getByRole("radio", { name: "OpenAI", exact: true }).check();
+  await page.getByLabel("API key").fill("sk-proj-e2e-0123456789abcdefwxyz");
+  await page.getByRole("button", { name: "Test and save" }).click();
+  await page
+    .getByRole("dialog", { name: "Change where AI runs?" })
+    .getByRole("button", { name: "Test and save" })
+    .click();
+  await expect(page.getByText("AI models now run on OpenAI.")).toBeVisible();
+  // Its tool check passed: nothing to say.
+  await expect(page.getByText(/The Assistant can’t run/)).toHaveCount(0);
+  await shortcut(page);
+  await expect(
+    dockOf(page).getByText(
+      "Enter to send, Shift+Enter for a new line. Nothing runs until you click a card’s button.",
+    ),
+  ).toBeVisible();
+  await say(page, "What ontologies do I have?");
+  await expect(
+    dockOf(page).getByText(/^This workspace has \d+ ontologies: /),
+  ).toBeVisible();
+});
+
+test("says why it can't run on a model that doesn't call tools, with a link to the setting", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 100, aiProbeMs: 600 });
+  await signIn(page);
+  await page.goto("/settings/ai");
+  await page
+    .getByRole("radio", { name: "Custom (OpenAI-compatible)", exact: true })
+    .check();
+  await page.getByLabel("Base URL").fill("https://llm.example.com/v1");
+  await page.getByLabel("Model name").fill("qwen-notoolcall");
+  await page.getByRole("button", { name: "Test and save" }).click();
+  await page
+    .getByRole("dialog", { name: "Change where AI runs?" })
+    .getByRole("button", { name: "Test and save" })
+    .click();
+  await expect(
+    page.getByText("AI models now run on llm.example.com."),
+  ).toBeVisible();
+  // The setting runs everything else; its owner is told the Assistant can't.
+  await expect(
+    page.getByRole("note").filter({ hasText: "The Assistant can’t run" }),
+  ).toHaveText(
+    "The Assistant can’t run on qwen-notoolcall: it answered the Assistant’s test without calling a tool. Drafts, loads and the Analyst still run on it. Choose a model for questions that calls tools to use the Assistant.",
+  );
+  await page.goto("/data");
+  await shortcut(page);
+  await say(page, "What ontologies do I have?");
+  const failure = dockOf(page).locator(".ag-card-error");
+  await expect(failure).toHaveText(
+    "The workspace's model, qwen-notoolcall, doesn't call tools, which the Assistant needs. An owner can choose another in Settings › AI models.",
+  );
+  await failure.getByRole("link", { name: "Settings › AI models" }).click();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+
+  // A member reads where AI runs, without the owner's notice.
+  await page.context().clearCookies();
+  await signIn(page, "alan@example.com");
+  await page.goto("/settings/ai");
+  await expect(page.getByText(/^AI runs on llm\.example\.com/)).toBeVisible();
+  await expect(page.getByText(/The Assistant can’t run/)).toHaveCount(0);
+});

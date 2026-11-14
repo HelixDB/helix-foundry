@@ -2877,7 +2877,13 @@ export type AgentNotRunReason = "calls" | "asks" | "time" | "length" | "input";
  */
 export type AgentEvent =
   | { type: "started"; model: string; attempt: number }
-  | { type: "text"; text: string }
+  // `step` counts a turn's model calls across its attempts, from 1. A
+  // step's text, final once its call ended: one or more, which supersede
+  // its deltas (the server drops them as it writes the text).
+  | { type: "text"; step: number; text: string }
+  // Text the step's call is writing, every 250 ms: appended in seq order.
+  // Deltas no text follows (the stream broke) end at the next other event.
+  | { type: "text_delta"; step: number; text: string }
   | {
       type: "tool_call";
       tool_use_id: string;

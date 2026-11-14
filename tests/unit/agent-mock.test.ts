@@ -10,7 +10,6 @@ import {
   parseAgentEvent,
   reduceTurnEvents,
 } from "@/web/areas/agent/model";
-import { NOT_CLAUDE } from "../../mock/routes/agent";
 import type { MockReply } from "../../mock/http";
 import { routes } from "../../mock/routes";
 import { handleDocumentUpload } from "../../mock/routes/documents";
@@ -297,26 +296,201 @@ describe("messages", () => {
     ]);
   });
 
-  it("fails a turn at once on a provider other than Claude, in the worker's words", async () => {
-    const saved = await call("PUT", "/v1/workspaces/ws_acme/foundry/ai", {
-      provider: { openai: {} },
-      apiKey: "sk-proj-sentinel-0123456789abcdefwxyz",
-    });
+  it.each([
+    [
+      "OpenAI",
+      {
+        provider: { openai: {} },
+        apiKey: "sk-proj-sentinel-0123456789abcdefwxyz",
+      },
+      "gpt-6.1-sol",
+    ],
+    [
+      "Amazon Bedrock",
+      {
+        provider: { bedrock: { region: "us-east-1" } },
+        apiKey: "ABSKsentinelQmVkcm9ja0FQSUtleS0wMTIz",
+      },
+      "global.anthropic.claude-sonnet-5-5",
+    ],
+    [
+      "a custom server",
+      {
+        provider: {
+          openaiCompatible: {
+            baseUrl: "https://llm.example.com/v1",
+            api: "FOUNDRY_AI_COMPAT_API_RESPONSES",
+          },
+        },
+        models: Object.fromEntries(
+          ["draft", "ask", "extract", "verify"].map((r) => [
+            r,
+            { name: "qwen-big", free: {} },
+          ]),
+        ),
+      },
+      "qwen-big",
+    ],
+  ])("answers on %s, on its Questions model", async (_, save, model) => {
+    const saved = await call("PUT", "/v1/workspaces/ws_acme/foundry/ai", save);
     expect(saved.status).toBe(200);
     // Past the save's test, it is the setting in force.
     later(5_000);
     const sent = await send("What ontologies do I have?");
-    expect(sent.status).toBe(200);
     const { page, events: evs } = await events(sent.body.turn.id);
-    expect(page.status).toBe("failed");
-    expect(evs).toEqual([
-      {
-        type: "finished",
-        status: "failed",
-        reason: "failed",
-        error: NOT_CLAUDE,
-      },
+    expect(page.status).toBe("done");
+    expect(evs[0]).toEqual({ type: "started", model, attempt: 1 });
+    expect(evs.map((e) => e.type)).toEqual([
+      "started",
+      "tool_call",
+      "tool_result",
+      "text",
+      "finished",
     ]);
+  });
+
+  it.each([
+    [
+      "qwen-notoolcall",
+      "The workspace's model, qwen-notoolcall, doesn't call tools, which the Assistant needs. An owner can choose another in Settings › AI models.",
+    ],
+    [
+      "qwen-toolrefused",
+      "llm.example.com refused the Assistant's calls to qwen-toolrefused. An owner can choose another model in Settings › AI models.",
+    ],
+  ])(
+    "fails a turn at once while the setting's tool check failed on %s, in the worker's words",
+    async (ask, error) => {
+      const saved = await call("PUT", "/v1/workspaces/ws_acme/foundry/ai", {
+        provider: {
+          openaiCompatible: {
+            baseUrl: "https://llm.example.com/v1",
+            api: "FOUNDRY_AI_COMPAT_API_CHAT_COMPLETIONS",
+          },
+        },
+        models: {
+          ...Object.fromEntries(
+            ["draft", "extract", "verify"].map((r) => [
+              r,
+              { name: "qwen-big", free: {} },
+            ]),
+          ),
+          ask: { name: ask, free: {} },
+        },
+      });
+      expect(saved.status).toBe(200);
+      later(5_000);
+      const sent = await send("What ontologies do I have?");
+      expect(sent.status).toBe(200);
+      const { page, events: evs } = await events(sent.body.turn.id);
+      expect(page.status).toBe("failed");
+      expect(evs).toEqual([
+        { type: "finished", status: "failed", reason: "failed", error },
+      ]);
+    },
+  );
+
+  it("streams a step's text as deltas, which its text replaces in one write", async () => {
+    Object.assign(config, { agentStepMs: 1000 });
+    const sent = await send("What ontologies do I have?");
+    const turn = sent.body.turn.id;
+    const read = async (after: number) =>
+      (await call("GET", `${A}/turns/${turn}/events?afterSeq=${after}`))
+        .body as ListAgentTurnEventsResponse;
+    // Queued a step, then started, its call and result a step apart: its
+    // text starts streaming at 5 s.
+    later(5_100);
+    const first = await read(0);
+    const types = (p: ListAgentTurnEventsResponse) =>
+      (p.events || []).map((e) => parseAgentEvent(e.eventJson)!.type);
+    expect(types(first)).toEqual([
+      "started",
+      "tool_call",
+      "tool_result",
+      "text_delta",
+    ]);
+    // The dock's polls, every 250 ms until the text lands.
+    let stream = reduceTurnEvents(EMPTY_STREAM, first);
+    const deltas: string[] = [];
+    const take = (p: ListAgentTurnEventsResponse) => {
+      for (const e of p.events || []) {
+        const ev = parseAgentEvent(e.eventJson);
+        if (ev?.type === "text_delta") {
+          // The call that wrote the text is the turn's second.
+          expect(ev.step).toBe(2);
+          deltas.push(ev.text);
+        }
+      }
+    };
+    take(first);
+    expect(stream.live?.step).toBe(2);
+    while (!stream.blocks.some((b) => b.kind === "text")) {
+      later(250);
+      const page = await read(stream.lastSeq);
+      take(page);
+      stream = reduceTurnEvents(stream, page);
+    }
+    expect(deltas.length).toBeGreaterThan(1);
+    const text = stream.blocks.find((b) => b.kind === "text");
+    // The deltas put together are the text, shown once, in their place.
+    expect(text).toEqual({ kind: "text", text: deltas.join("") });
+    expect(stream.live).toBeUndefined();
+    // Read afresh, the deltas are gone: seqs skip them, and the turn's
+    // last seq is its last event's.
+    later(60_000);
+    const all = await read(0);
+    expect(types(all)).toEqual([
+      "started",
+      "tool_call",
+      "tool_result",
+      "text",
+      "finished",
+    ]);
+    const seqs = (all.events || []).map((e) => e.seq);
+    expect(seqs.slice(0, 3)).toEqual([1, 2, 3]);
+    expect(seqs[3]).toBe(4 + deltas.length);
+    expect(all.lastSeq).toBe(seqs.at(-1));
+    expect(parseAgentEvent(all.events![3]!.eventJson)).toEqual({
+      type: "text",
+      step: 2,
+      text: deltas.join(""),
+    });
+    const fresh = reduceTurnEvents(EMPTY_STREAM, all);
+    expect(fresh.blocks).toEqual(
+      reduceTurnEvents(stream, await read(stream.lastSeq)).blocks,
+    );
+    expect(fresh.complete).toBe(true);
+    // The turn counts its two model calls.
+    const thread = await call("GET", `${A}/threads/${sent.body.thread.id}`);
+    expect(thread.body.turns[0]).toMatchObject({
+      steps: 2,
+      lastSeq: seqs.at(-1),
+    });
+  });
+
+  it("leaves a stopped turn's deltas, which the dock shows nothing of", async () => {
+    Object.assign(config, { agentStepMs: 1000 });
+    const sent = await send("What ontologies do I have?");
+    later(5_100);
+    const stop = await call(
+      "POST",
+      `${A}/turns/${sent.body.turn.id}:cancel`,
+      {},
+    );
+    expect(stop.body.turn.status).toBe("cancelled");
+    later(60_000);
+    const r = await call(
+      "GET",
+      `${A}/turns/${sent.body.turn.id}/events?afterSeq=0`,
+    );
+    const page = r.body as ListAgentTurnEventsResponse;
+    expect(page.status).toBe("cancelled");
+    expect(
+      (page.events || []).map((e) => parseAgentEvent(e.eventJson)!.type).at(-1),
+    ).toBe("text_delta");
+    const stream = reduceTurnEvents(EMPTY_STREAM, page);
+    expect(stream.complete).toBe(true);
+    expect(stream.live).toBeUndefined();
   });
 
   it("deletes a thread, stopping its live turn", async () => {

@@ -53,8 +53,8 @@ import {
 } from "../http";
 import { config, db, isReply, membership, onReset } from "../state";
 import {
+  aiAssistantFailure,
   aiModel,
-  aiProvider,
   aiRefusal,
   foundryPrecondition as refused,
 } from "./ai";
@@ -118,14 +118,22 @@ import { manages } from "./workspaces";
 // from the result: a created ontology's draft is prepared next, a draft that
 // finished is offered to make current, and a version made current to load.
 // add_sample_data adds the sample's connection and set; the mock uploads
-// none of its documents. A thread holds at most 3 waiting cards. Every
-// event takes `agentStepMs`; `agentOutcome` "fail" fails a turn after its
+// none of its documents. A thread holds at most 3 waiting cards. It runs on
+// any provider kind, as the worker does, but fails a turn at once, in the
+// worker's words, while the setting's Assistant tool check failed (./ai.ts:
+// a Questions model containing "notoolcall" or "toolrefused", a key
+// containing "agentauth"). Every event takes `agentStepMs`, and its text
+// streams first, as `text_delta` events of its step (a model call)
+// `agentDeltaMs` apart (a quarter of a step), which the text drops as the
+// worker's does;
+// `agentOutcome` "fail" fails a turn after its
 // first call, "budget_exhausted" stops it at its cap, "not_run" shows a
 // second call a limit kept from running; `agentActionTtlMs` is how long a
 // card's confirmation lives (5 minutes).
 
 type Knobs = {
   agentStepMs?: number;
+  agentDeltaMs?: number;
   agentOutcome?: "fail" | "budget_exhausted" | "not_run";
   agentActionTtlMs?: number;
 };
@@ -164,7 +172,14 @@ type Context = {
  * undefined holds the script until it is asked again (a draft still being
  * written).
  */
-type Step = (c: Context) => AgentEvent | null | undefined;
+type Step = (c: Context) => Scripted | null | undefined;
+/**
+ * An event as a script writes it: text without its step, which `advance`
+ * numbers and streams as the worker does (its deltas, then the text).
+ */
+type Scripted =
+  | Exclude<AgentEvent, { type: "text" | "text_delta" }>
+  | { type: "text"; text: string };
 
 type StoredThread = {
   id: string;
@@ -190,13 +205,21 @@ type StoredTurn = {
   attempts: number;
   steps: number;
   usdMicros: number;
-  // When its next step is timed from, in ms, and each event's time.
+  // When it was sent, in ms; when its next event is due.
   at: number;
+  next: number;
   // When a step first held it.
   heldSince: number | null;
   stepMs: number;
+  deltaMs: number;
   script: Step[];
   shown: number;
+  // The text a step is streaming: what is left to send as deltas, and the
+  // seqs of those sent, which its text drops.
+  saying: { step: number; text: string; left: string[]; sent: number[] } | null;
+  // The last seq written (deltas dropped leave gaps), and its event's type.
+  seq: number;
+  last: AgentEvent["type"] | "";
   events: FoundryAgentEvent[];
   createdAt: string;
   startedAt: string | null;
@@ -244,6 +267,7 @@ onReset(() => {
   state.turns = [];
   state.actions = [];
   delete knobs.agentStepMs;
+  delete knobs.agentDeltaMs;
   delete knobs.agentOutcome;
   delete knobs.agentActionTtlMs;
 });
@@ -269,7 +293,23 @@ function shown(a: StoredAction, at = Date.now()): AgentActionStatus {
   return a.status;
 }
 
-/** Shows the events whose time has come, and ends the turn at its finished. */
+/** Writes an event at the turn's next seq. */
+function write(t: StoredTurn, e: AgentEvent) {
+  t.seq += 1;
+  t.last = e.type;
+  t.events.push({ seq: t.seq, eventJson: JSON.stringify(e), createdAt: now() });
+}
+
+// A text's deltas: about four words each, which put together are the text.
+const DELTAS = /(?:\s*\S+){1,4}\s*|\s+/g;
+
+/**
+ * Shows the events whose time has come, and ends the turn at its finished.
+ * A model call starts at its reply's text, or its first call when it wrote
+ * none: `steps` counts them, numbering its text. A step's text streams as
+ * the worker writes it: deltas `deltaMs` apart, then the text, which drops
+ * them in the same write (FinishFoundryAgentText).
+ */
 function advance(t: StoredTurn) {
   const at = Date.now();
   if (t.status === "queued" && at >= t.at + t.stepMs) {
@@ -278,30 +318,51 @@ function advance(t: StoredTurn) {
     t.startedAt = iso(t.at + t.stepMs);
   }
   const c: Context = { workspaceId: t.workspaceId, userId: t.userId, turn: t };
-  while (
-    t.status === "running" &&
-    t.shown < t.script.length &&
-    at >= t.at + (t.shown + 2) * t.stepMs
-  ) {
+  while (t.status === "running" && at >= t.next) {
+    const saying = t.saying;
+    if (saying) {
+      const delta = saying.left.shift();
+      if (delta !== undefined) {
+        write(t, { type: "text_delta", step: saying.step, text: delta });
+        saying.sent.push(t.seq);
+        t.next += t.deltaMs;
+        continue;
+      }
+      t.events = t.events.filter((e) => !saying.sent.includes(e.seq));
+      t.saying = null;
+      write(t, { type: "text", step: saying.step, text: saying.text });
+      t.next += t.stepMs;
+      continue;
+    }
+    if (t.shown >= t.script.length) return;
     const event = t.script[t.shown]!(c);
     if (event === undefined) {
       // Held: asked again a step from now.
       t.heldSince ??= at;
-      t.at = at - (t.shown + 1) * t.stepMs;
+      t.next = at + t.stepMs;
       return;
     }
     t.heldSince = null;
     t.shown += 1;
     if (!event) continue;
-    t.events.push({
-      seq: t.events.length + 1,
-      eventJson: JSON.stringify(event),
-      createdAt: now(),
-    });
-    if (event.type === "tool_call") {
+    if (
+      (event.type === "text" || event.type === "tool_call") &&
+      t.last !== "text"
+    ) {
       t.steps += 1;
       t.usdMicros += 1_200;
     }
+    if (event.type === "text") {
+      t.saying = {
+        step: t.steps,
+        text: event.text,
+        left: event.text.match(DELTAS) ?? [],
+        sent: [],
+      };
+      continue;
+    }
+    write(t, event);
+    t.next += t.stepMs;
     if (event.type === "finished") {
       t.status = event.status;
       t.error = event.error || "";
@@ -330,7 +391,7 @@ const toTurn = (t: StoredTurn): FoundryAgentTurn => ({
   error: t.error,
   usdMicros: String(t.usdMicros),
   steps: t.steps,
-  lastSeq: t.events.length,
+  lastSeq: t.seq,
   attempts: t.attempts,
   createdAt: t.createdAt,
   startedAt: t.startedAt,
@@ -778,10 +839,6 @@ function ending(steps: Step[]): Step[] {
       return [...steps, answered];
   }
 }
-
-/** The worker's words for a provider it doesn't run (agent.Runner.Run). */
-export const NOT_CLAUDE =
-  "The Assistant runs on Claude for now. An owner can choose Claude in Settings › AI models.";
 
 const LIST = "helix_foundry_list_ontologies",
   GET = "helix_foundry_get_ontology",
@@ -1992,7 +2049,8 @@ function queueTurn(
   >,
   first?: AgentEvent,
 ) {
-  const at = Date.now();
+  const at = Date.now(),
+    stepMs = knobs.agentStepMs ?? STEP_MS;
   const t: StoredTurn = {
     ...turn,
     id: id("turn"),
@@ -2006,8 +2064,13 @@ function queueTurn(
     usdMicros: 0,
     at,
     heldSince: null,
-    stepMs: knobs.agentStepMs ?? STEP_MS,
+    stepMs,
+    deltaMs: knobs.agentDeltaMs ?? stepMs / 4,
+    next: at + 2 * stepMs,
     shown: 0,
+    saying: null,
+    seq: first ? 1 : 0,
+    last: first?.type ?? "",
     events: first
       ? [{ seq: 1, eventJson: JSON.stringify(first), createdAt: iso(at) }]
       : [],
@@ -2253,30 +2316,31 @@ export const agentRoutes: MockRoute[] = [
         clientToken: token,
         script: [],
       });
-      // The worker runs Claude alone for now (agent/llm): any other
-      // provider fails the turn for good, before it starts, in its words.
-      turn.script =
-        aiProvider(ws) === "anthropic"
-          ? ending(
-              messageScript(
-                {
-                  ws,
-                  userId: p.userId,
-                  threadId: thread.id,
-                  text,
-                  page: pageContext,
-                },
-                manages(p.m),
-              ),
-            )
-          : [
-              () => ({
-                type: "finished",
-                status: "failed",
-                reason: "failed",
-                error: NOT_CLAUDE,
-              }),
-            ];
+      // The worker runs on every provider kind, but not on a setting whose
+      // tool check failed: it fails the turn for good, before it starts,
+      // in its words (agent.checkFailure).
+      const unusable = aiAssistantFailure(ws);
+      turn.script = unusable
+        ? [
+            () => ({
+              type: "finished",
+              status: "failed",
+              reason: "failed",
+              error: unusable,
+            }),
+          ]
+        : ending(
+            messageScript(
+              {
+                ws,
+                userId: p.userId,
+                threadId: thread.id,
+                text,
+                page: pageContext,
+              },
+              manages(p.m),
+            ),
+          );
       return ok({
         turn: toTurn(turn),
         thread: toThread(thread),
@@ -2365,7 +2429,7 @@ export const agentRoutes: MockRoute[] = [
       return ok({
         events: t.events.filter((e) => e.seq > after).slice(0, EVENTS),
         status: t.status,
-        lastSeq: t.events.length,
+        lastSeq: t.seq,
       } satisfies ListAgentTurnEventsResponse);
     },
   },

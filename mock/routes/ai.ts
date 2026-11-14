@@ -3,6 +3,7 @@ import type {
   AgentProbeDetail,
   AgentProviderKind,
   FoundryAi,
+  FoundryAiAssistantCheck,
   FoundryAiConfig,
   FoundryAiKey,
   FoundryAiModel,
@@ -91,6 +92,13 @@ import { isFoundryPro, proRequired } from "./billing";
 //   model_changed (it was pulled again during the test);
 // - anything else passes, and becomes the setting if it is still the
 //   workspace's newest save and nothing was chosen since.
+// A test that passed runs the Assistant's tool check of its Questions model
+// too (`assistantCheck`), which never fails the setting: the Assistant
+// refuses its turns in the worker's words (aiAssistantFailure). A Questions
+// model containing "notoolcall" answers without calling the tool
+// (NO_TOOL_CALL), one containing "toolrefused" is refused (REFUSED), and a
+// key containing "agentauth" is refused on the Assistant's calls (AUTH);
+// anything else passes. ("notools" fails the test itself, before.)
 // A config holds its key (the WFE's sealed column) only while it is the
 // setting or the pending save; answers never carry it, and only an owner's
 // carry its hint, which shows at most its kind and last four characters.
@@ -140,6 +148,8 @@ type Config = {
   key: string | null;
   hint: string;
   probe: Probe;
+  // The Assistant's tool check, run as the test passes.
+  check: Check;
   failure?: AgentModelFailure;
   detail?: AgentProbeDetail;
   createdBy: string;
@@ -426,6 +436,7 @@ function advance(ws: string) {
     const before = since?.configId && find(since.configId);
     if (before) before.key = null;
     c.probe = "passed";
+    c.check = assistantCheck(c);
     state.activations.push({
       workspaceId: ws,
       configId: c.id,
@@ -468,7 +479,29 @@ function configView(c: Config, owner = true): FoundryAiConfig {
     createdAt: new Date(c.createdAt).toISOString(),
     createdByName: user ? displayName(user) : "",
     label: label(c.kind, c.provider),
+    assistantCheck: CHECK[c.check],
   };
+}
+
+type Check = "unchecked" | "passed" | "auth" | "refused" | "no_tool_call";
+const CHECK: Record<Check, FoundryAiAssistantCheck> = {
+  unchecked: "FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED",
+  passed: "FOUNDRY_AI_ASSISTANT_CHECK_PASSED",
+  auth: "FOUNDRY_AI_ASSISTANT_CHECK_AUTH",
+  refused: "FOUNDRY_AI_ASSISTANT_CHECK_REFUSED",
+  no_tool_call: "FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL",
+};
+
+/** The Assistant's tool check of a config whose test passed. */
+function assistantCheck(c: Config): Check {
+  const ask = c.models.ask.name;
+  return c.key?.includes("agentauth")
+    ? "auth"
+    : ask.includes("notoolcall")
+      ? "no_tool_call"
+      : ask.includes("toolrefused")
+        ? "refused"
+        : "passed";
 }
 
 const offered = (): FoundryAiProviderKind[] =>
@@ -561,6 +594,28 @@ export function aiLabel(ws: string): string {
   return c
     ? label(c.kind, c.provider)
     : PROVIDERS[deploymentDefault()?.kind ?? "FOUNDRY_AI_KIND_ANTHROPIC"].label;
+}
+
+/**
+ * Why the Assistant can't run on the setting in force, in the worker's
+ * words (agent.checkFailure): its tool check failed; undefined when it can
+ * (passed, unchecked, or the deployment's default).
+ */
+export function aiAssistantFailure(ws: string): string | undefined {
+  const c = active(ws);
+  if (!c) return undefined;
+  const p = label(c.kind, c.provider),
+    model = c.models.ask.name;
+  switch (c.check) {
+    case "auth":
+      return `${p} refused the workspace's key for the Assistant. An owner can check it in Settings › AI models.`;
+    case "no_tool_call":
+      return `The workspace's model, ${model}, doesn't call tools, which the Assistant needs. An owner can choose another in Settings › AI models.`;
+    case "refused":
+      return `${p} refused the Assistant's calls to ${model}. An owner can choose another model in Settings › AI models.`;
+    default:
+      return undefined;
+  }
 }
 
 /** The agent's name for the kind in force, as Ask's started event says it. */
@@ -838,6 +893,7 @@ function save(
     key,
     hint: kept ? kept.hint : key ? keyHint(key) : "",
     probe: "queued",
+    check: "unchecked",
     createdBy: userId,
     createdAt: Date.now(),
   });

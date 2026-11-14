@@ -15,9 +15,9 @@ import {
   reduceTurnEvents,
   resultLink,
   inAppPath,
-  onClaude,
   textParts,
   threadKey,
+  type TurnStream,
 } from "@/web/areas/agent/model";
 
 // The Assistant dock's pure logic (src/web/areas/agent/model.ts): what page
@@ -112,30 +112,6 @@ describe("inAppPath", () => {
   ])("opens nothing for %s", (path) => expect(at(path)).toBeUndefined());
 });
 
-describe("onClaude", () => {
-  it("runs on Claude alone, the workspace's own or the default", () => {
-    expect(onClaude({ default: { kind: "FOUNDRY_AI_KIND_ANTHROPIC" } })).toBe(
-      true,
-    );
-    expect(
-      onClaude({
-        active: { id: "c", kind: "FOUNDRY_AI_KIND_ANTHROPIC" },
-        default: { kind: "FOUNDRY_AI_KIND_OLLAMA" },
-      }),
-    ).toBe(true);
-    expect(
-      onClaude({
-        active: { id: "c", kind: "FOUNDRY_AI_KIND_BEDROCK" },
-        default: { kind: "FOUNDRY_AI_KIND_ANTHROPIC" },
-      }),
-    ).toBe(false);
-    expect(onClaude({ default: { kind: "FOUNDRY_AI_KIND_OLLAMA" } })).toBe(
-      false,
-    );
-    expect(onClaude({})).toBeUndefined();
-  });
-});
-
 describe("textParts", () => {
   it("links paths into the app's sections, keeping the punctuation after them", () => {
     expect(
@@ -202,8 +178,12 @@ describe("parseAgentEvent", () => {
     ],
     [{ type: "started" }, { type: "started", model: "", attempt: 1 }],
     [
-      { type: "text", text: "Hi" },
-      { type: "text", text: "Hi" },
+      { type: "text", step: 1, text: "Hi" },
+      { type: "text", step: 1, text: "Hi" },
+    ],
+    [
+      { type: "text_delta", step: 3, text: " wor" },
+      { type: "text_delta", step: 3, text: " wor" },
     ],
     [
       { type: "tool_call", tool_use_id: "t", name: "n", input: { a: 1 } },
@@ -299,8 +279,13 @@ describe("parseAgentEvent", () => {
   it.each([
     ["not JSON", "{"],
     ["an array", "[]"],
-    ["an unknown type", '{"type":"text_delta","text":"x"}'],
-    ["text that isn't a string", '{"type":"text","text":3}'],
+    ["an unknown type", '{"type":"text_chunk","step":1,"text":"x"}'],
+    ["text that isn't a string", '{"type":"text","step":1,"text":3}'],
+    ["text without its step", '{"type":"text","text":"x"}'],
+    ["a delta without its step", '{"type":"text_delta","text":"x"}'],
+    ["a step that isn't a count", '{"type":"text_delta","step":0,"text":"x"}'],
+    ["a fractional step", '{"type":"text","step":1.5,"text":"x"}'],
+    ["a step as a string", '{"type":"text_delta","step":"1","text":"x"}'],
     ["a call without its id", '{"type":"tool_call","name":"n"}'],
     ["a result without its id", '{"type":"tool_result","is_error":false}'],
     [
@@ -355,8 +340,8 @@ describe("reduceTurnEvents", () => {
           action_id: "a1",
           operation: "create_load",
         }),
-        event(6, { type: "text", text: "Done." }),
-        event(7, { type: "text", text: "  " }),
+        event(6, { type: "text", step: 1, text: "Done." }),
+        event(7, { type: "text", step: 1, text: "  " }),
         event(8, { type: "finished", status: "done", reason: "max_steps" }),
       ],
       status: "done",
@@ -383,15 +368,15 @@ describe("reduceTurnEvents", () => {
 
   it("skips events folded already, and stays incomplete while the turn is live or short of its last seq", () => {
     const first = reduceTurnEvents(EMPTY_STREAM, {
-      events: [event(1, { type: "text", text: "a" })],
+      events: [event(1, { type: "text", step: 1, text: "a" })],
       status: "running",
       lastSeq: 1,
     });
     expect(first.complete).toBe(false);
     const again = reduceTurnEvents(first, {
       events: [
-        event(1, { type: "text", text: "a" }),
-        event(2, { type: "text", text: "b" }),
+        event(1, { type: "text", step: 1, text: "a" }),
+        event(2, { type: "text", step: 2, text: "b" }),
       ],
       status: "done",
       lastSeq: 3,
@@ -417,7 +402,7 @@ describe("reduceTurnEvents", () => {
     const s = reduceTurnEvents(EMPTY_STREAM, {
       events: [
         event(1, { type: "started", model: "m", attempt: 1 }),
-        event(2, { type: "text", text: "a" }),
+        event(2, { type: "text", step: 1, text: "a" }),
         event(3, { type: "started", model: "m", attempt: 2 }),
         event(4, { type: "mystery" }),
         event(5, {
@@ -489,6 +474,147 @@ describe("reduceTurnEvents", () => {
     });
     expect(s.blocks).toHaveLength(2);
     expect(s.complete).toBe(false);
+  });
+});
+
+describe("live text", () => {
+  const delta = (seq: number, step: number, text: string) =>
+    event(seq, { type: "text_delta", step, text });
+  const text = (seq: number, step: number, t: string) =>
+    event(seq, { type: "text", step, text: t });
+  const shown = (s: TurnStream) => [
+    ...s.blocks.map((b) => (b.kind === "text" ? b.text : b.kind)),
+    ...(s.live ? [`live:${s.live.text}`] : []),
+  ];
+
+  it("appends a step's deltas across polls, then shows its text once in their place", () => {
+    const one = reduceTurnEvents(EMPTY_STREAM, {
+      events: [
+        event(1, { type: "started", model: "m", attempt: 1 }),
+        delta(2, 1, "Customer "),
+        delta(3, 1, "contracts "),
+      ],
+      status: "running",
+      lastSeq: 3,
+    });
+    expect(one.live).toEqual({ step: 1, text: "Customer contracts " });
+    expect(one.blocks).toEqual([]);
+    // A poll that overlaps the last folds nothing twice.
+    const two = reduceTurnEvents(one, {
+      events: [delta(3, 1, "contracts "), delta(4, 1, "holds")],
+      status: "running",
+      lastSeq: 4,
+    });
+    expect(two.live).toEqual({ step: 1, text: "Customer contracts holds" });
+    // The server drops the deltas as it writes the text: the next poll reads
+    // only the text, which replaces them.
+    const three = reduceTurnEvents(two, {
+      events: [
+        text(5, 1, "Customer contracts holds 3 types."),
+        event(6, { type: "finished", status: "done", reason: "answered" }),
+      ],
+      status: "done",
+      lastSeq: 6,
+    });
+    expect(shown(three)).toEqual(["Customer contracts holds 3 types."]);
+    expect(three.complete).toBe(true);
+  });
+
+  it("reads a turn reloaded mid-stream from its deltas, and one reloaded after its text without them", () => {
+    // Read afresh while step 2 streams: step 1's deltas are gone already.
+    const mid = reduceTurnEvents(EMPTY_STREAM, {
+      events: [
+        event(1, { type: "started", model: "m", attempt: 1 }),
+        text(2, 1, "Reading."),
+        event(3, {
+          type: "tool_call",
+          tool_use_id: "t",
+          name: "helix_foundry_get_load",
+        }),
+        event(4, { type: "tool_result", tool_use_id: "t", is_error: false }),
+        delta(6, 2, "It has "),
+        delta(7, 2, "two."),
+      ],
+      status: "running",
+      lastSeq: 7,
+    });
+    expect(shown(mid)).toEqual(["Reading.", "step", "live:It has two."]);
+    const after = reduceTurnEvents(EMPTY_STREAM, {
+      events: [
+        event(1, { type: "started", model: "m", attempt: 1 }),
+        text(8, 2, "It has two."),
+      ],
+      status: "running",
+      lastSeq: 8,
+    });
+    expect(shown(after)).toEqual(["It has two."]);
+  });
+
+  it("keeps every text of a step, and ends deltas no text followed at the next event", () => {
+    const s = reduceTurnEvents(EMPTY_STREAM, {
+      events: [
+        delta(1, 1, "Half a"),
+        // The stream broke: a later attempt starts, and its call streams.
+        event(2, { type: "started", model: "m", attempt: 2 }),
+        delta(3, 2, "Again"),
+        text(4, 2, "First."),
+        text(5, 2, "Second."),
+        delta(6, 3, "Never "),
+        // A delta of another step replaces what is live.
+        delta(7, 4, "Last"),
+      ],
+      status: "running",
+      lastSeq: 7,
+    });
+    expect(shown(s)).toEqual(["retry", "First.", "Second.", "live:Last"]);
+    const ended = reduceTurnEvents(s, {
+      events: [
+        event(8, {
+          type: "finished",
+          status: "failed",
+          reason: "failed",
+          error: "x",
+        }),
+      ],
+      status: "failed",
+      lastSeq: 8,
+    });
+    expect(ended.live).toBeUndefined();
+  });
+
+  it("drops what a stopped turn left live once it is complete", () => {
+    const live = reduceTurnEvents(EMPTY_STREAM, {
+      events: [delta(1, 1, "Wri")],
+      status: "running",
+      lastSeq: 1,
+    });
+    expect(live.live?.text).toBe("Wri");
+    // Stopped: no finished event and no text; the turn just ends.
+    const stopped = reduceTurnEvents(live, {
+      events: [],
+      status: "cancelled",
+      lastSeq: 1,
+    });
+    expect(stopped.complete).toBe(true);
+    expect(stopped.live).toBeUndefined();
+    // Read afresh once stopped, its deltas show nothing either.
+    expect(
+      reduceTurnEvents(EMPTY_STREAM, {
+        events: [delta(1, 1, "Wri")],
+        status: "cancelled",
+        lastSeq: 1,
+      }).live,
+    ).toBeUndefined();
+  });
+
+  it("counts a delta it can't read, and keeps what is live", () => {
+    const s = reduceTurnEvents(EMPTY_STREAM, {
+      events: [delta(1, 1, "a"), event(2, { type: "text_delta", text: "b" })],
+      status: "running",
+      lastSeq: 2,
+    });
+    expect(s.live).toEqual({ step: 1, text: "a" });
+    expect(s.unreadable).toBe(1);
   });
 });
 

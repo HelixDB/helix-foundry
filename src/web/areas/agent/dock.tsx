@@ -50,9 +50,11 @@ import { activeSection } from "../../shell/nav";
 import { useWorkspace } from "../../ui";
 import { loadVersion } from "../ontology/model";
 import { ontologyQueries } from "../ontology/queries";
-import { AiRefusal, useAiConfigured } from "../workspace/ai-gate";
-import { aiQuery } from "../workspace/ai-api";
-import { paths } from "../../paths";
+import {
+  AiRefusal,
+  SettingsLinked,
+  useAiConfigured,
+} from "../workspace/ai-gate";
 import { ActionCard } from "./cards";
 import {
   EMPTY_STREAM,
@@ -64,7 +66,6 @@ import {
   analystLink,
   connectLink,
   isLiveTurn,
-  onClaude,
   pageContext,
   pretty,
   textParts,
@@ -447,7 +448,10 @@ function TurnView({
             onNavigate={onNavigate}
           />
         ))}
-        {live && !read.failed && (
+        {stream.live && (
+          <LiveText key={stream.live.step} text={stream.live.text} />
+        )}
+        {live && !read.failed && !stream.live && (
           <p className="ag-working">
             <LoaderCircle size={14} className="hf-spin" aria-hidden />
             {turn.status === "queued" && (turn.attempts || 0) > 0
@@ -460,7 +464,10 @@ function TurnView({
         {turn.status === "cancelled" && <p className="ag-note">Stopped.</p>}
         {failed && (
           <p className="ag-card-error">
-            <CircleAlert size={14} aria-hidden /> {sentence(failed)}
+            <CircleAlert size={14} aria-hidden />
+            <span>
+              <SettingsLinked text={sentence(failed)} />
+            </span>
           </p>
         )}
         {stop && <p className="ag-note">{stop}</p>}
@@ -581,6 +588,40 @@ function Block({
   }
 }
 
+/**
+ * Text the model is writing: each poll's deltas flow in over the next
+ * poll's time, a few characters a frame, rather than in jumps (at once for
+ * reduced motion). Plain, with no links until the step's text replaces it.
+ */
+function LiveText({ text }: { text: string }) {
+  const [shown, setShown] = useState(0),
+    at = useRef(0);
+  useEffect(() => {
+    const from = at.current,
+      left = text.length - from;
+    if (left <= 0) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      at.current = text.length;
+      setShown(text.length);
+      return;
+    }
+    const start = performance.now();
+    let frame = requestAnimationFrame(function reveal(now) {
+      let n = Math.min(
+        text.length,
+        from + Math.ceil((left * (now - start)) / EVENTS_POLL_MS),
+      );
+      // Never between a surrogate pair's halves.
+      if (/[\uD800-\uDBFF]/.test(text[n - 1] || "")) n += 1;
+      at.current = n;
+      setShown(n);
+      if (n < text.length) frame = requestAnimationFrame(reveal);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [text]);
+  return <p className="ag-text ag-live">{text.slice(0, shown)}</p>;
+}
+
 /** The model's words as plain text, with only paths into this app as links. */
 function PlainText({
   text,
@@ -620,7 +661,7 @@ function Composer({
   thread?: AgentThreadResponse;
   onSent: (threadId: string) => void;
 }) {
-  const { id: ws, role } = useWorkspace(),
+  const { id: ws } = useWorkspace(),
     location = useLocation(),
     qc = useQueryClient();
   const page = pageContext(location.pathname, location.search),
@@ -631,9 +672,7 @@ function Composer({
     [token, setToken] = useState(() => crypto.randomUUID()),
     [pending, setPending] = useState(false),
     [error, setError] = useState<unknown>(null);
-  const aiReady = useAiConfigured(),
-    ai = useQuery(aiQuery(ws)),
-    claude = ai.data ? onClaude(ai.data) : undefined;
+  const aiReady = useAiConfigured();
   const hint = useId(),
     input = useRef<HTMLTextAreaElement>(null),
     sending = useRef(false);
@@ -644,12 +683,7 @@ function Composer({
   const length = [...text.trim()].length,
     tooLong = length > MAX_MESSAGE;
   const blocked =
-    busy ||
-    !!live ||
-    !text.trim() ||
-    tooLong ||
-    aiReady === false ||
-    claude === false;
+    busy || !!live || !text.trim() || tooLong || aiReady === false;
   const submit = async () => {
     // Enter submits past a disabled Send, and twice before a render: the
     // same checks, and one send at a time.
@@ -742,24 +776,9 @@ function Composer({
           />
         )}
       </div>
-      {claude === false ? (
-        <p id={hint} className="ag-card-error" role="note">
-          <CircleAlert size={14} aria-hidden /> The Assistant runs on Claude for
-          now.{" "}
-          {role === "owner" ? (
-            <>
-              Choose Claude in{" "}
-              <Link to={paths.settings("ai")}>Settings › AI models</Link>.
-            </>
-          ) : (
-            "An owner can choose Claude in Settings › AI models."
-          )}
-        </p>
-      ) : (
-        <p id={hint} className={cx("ag-hint", tooLong && "is-error")}>
-          {caption}
-        </p>
-      )}
+      <p id={hint} className={cx("ag-hint", tooLong && "is-error")}>
+        {caption}
+      </p>
       <AiRefusal action="The Assistant" error={error} ready={aiReady}>
         {!!error && (
           <p className="ag-card-error" role="alert">

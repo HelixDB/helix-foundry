@@ -205,7 +205,8 @@ function Status({ ai }: { ai: FoundryAi }) {
 
 /**
  * For owners, above their choice: no provider yet, a pause, a save under
- * test, the last save's failed test.
+ * test, the last save's failed test, and the Assistant's failed tool check
+ * of the setting in force.
  */
 function Notices({ ai }: { ai: FoundryAi }) {
   return (
@@ -229,6 +230,11 @@ function Notices({ ai }: { ai: FoundryAi }) {
       {ai.lastFailed && (
         <p role="alert" className="hf-form-error">
           {AI.testFailureText(ai.lastFailed)} Your current settings stay active.
+        </p>
+      )}
+      {ai.active && AI.assistantCheckText(ai.active) && (
+        <p role="note" className="hf-form-error">
+          {AI.assistantCheckText(ai.active)}
         </p>
       )}
     </>

@@ -118,6 +118,8 @@ export const mock = {
     // ends otherwise (or a call a limit kept from running), and how long a
     // card's confirmation lives (5 minutes).
     agentStepMs?: number;
+    // How far apart a text's deltas stream (a quarter of agentStepMs).
+    agentDeltaMs?: number;
     agentOutcome?: "fail" | "budget_exhausted" | "not_run";
     agentActionTtlMs?: number;
     // false: the WFE has no foundry-connector role, so S3 offers keys only.

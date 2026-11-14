@@ -120,6 +120,22 @@
   flex: none;
   margin-top: 2px;
 }
+.ag-card-error a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* The text the model is writing, ending in a caret while it writes. */
+.ag-live::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  border-radius: 1px;
+  background: var(--hf-muted);
+  animation: hf-pulse 1s ease-in-out infinite;
+}
 
 /* A tool call, collapsed to its name. */
 .ag-step {

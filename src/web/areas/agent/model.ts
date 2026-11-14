@@ -18,7 +18,6 @@ import type {
   AgentStopReason,
   FoundryAgentTurnStatus,
   FoundryAgentAction,
-  FoundryAi,
   ListAgentTurnEventsResponse,
 } from "../../../shared/wfe";
 import { AGENT_REFUSALS } from "../../../shared/wfe";
@@ -33,7 +32,6 @@ import { LOAD_LIMITS } from "../ontology/model";
 import { ontologyPaths } from "../ontology/paths";
 
 export type { AgentOperation };
-import { inForce } from "../workspace/ai-api";
 
 // The Assistant's dock, as pure functions: what a turn's polled events show,
 // what an action's card offers, what page the person is on, and which links
@@ -59,24 +57,6 @@ const parse = (text: string): unknown => {
 
 export const isLiveTurn = (t?: { status?: FoundryAgentTurnStatus } | null) =>
   t?.status === "queued" || t?.status === "running";
-
-/**
- * Whether the Assistant runs on the workspace's AI setting in force: on
- * Claude alone for now (the backend's agent/llm fails a turn on any other
- * kind, Bedrock's Claude too); undefined with no provider, which AiGate
- * says.
- *
- * @example
- * onClaude({ default: { kind: "FOUNDRY_AI_KIND_ANTHROPIC" } }); // true
- * onClaude({ active: { id: "c", kind: "FOUNDRY_AI_KIND_OLLAMA" } }); // false
- * onClaude({}); // undefined
- */
-export function onClaude(ai: FoundryAi): boolean | undefined {
-  const f = inForce(ai);
-  if (f.source === "none") return undefined;
-  const kind = f.source === "workspace" ? f.config.kind : f.default.kind;
-  return kind === "FOUNDRY_AI_KIND_ANTHROPIC";
-}
 
 // ---------------------------------------------------------------- page
 
@@ -202,8 +182,9 @@ export function textParts(text: string, origin: string): TextPart[] {
  * every field checked, nothing taken on trust.
  *
  * @example
- * parseAgentEvent('{"type":"text","text":"Hi"}'); // { type: "text", text: "Hi" }
- * parseAgentEvent('{"type":"text","text":3}'); // undefined
+ * parseAgentEvent('{"type":"text","step":1,"text":"Hi"}'); // { type: "text", step: 1, text: "Hi" }
+ * parseAgentEvent('{"type":"text","step":1,"text":3}'); // undefined
+ * parseAgentEvent('{"type":"text_delta","step":0,"text":"Hi"}'); // undefined
  */
 export function parseAgentEvent(eventJson: string): AgentEvent | undefined {
   const x = parse(eventJson);
@@ -216,8 +197,11 @@ export function parseAgentEvent(eventJson: string): AgentEvent | undefined {
         attempt: typeof x.attempt === "number" ? x.attempt : 1,
       };
     case "text":
-      return typeof x.text === "string"
-        ? { type: "text", text: x.text }
+    case "text_delta":
+      return typeof x.text === "string" &&
+        Number.isSafeInteger(x.step) &&
+        (x.step as number) > 0
+        ? { type: x.type, step: x.step as number, text: x.text }
         : undefined;
     case "tool_call":
       return str(x.tool_use_id) && str(x.name)
@@ -356,6 +340,10 @@ export type TurnStream = {
   // The last seq folded in: the next poll reads after it.
   lastSeq: number;
   blocks: AgentBlock[];
+  // The text the model is writing in its step's call, after the blocks:
+  // its deltas so far, until the step's text supersedes them. One at most,
+  // and none once the turn is complete (what a stopped turn left).
+  live?: { step: number; text: string };
   ended?: {
     status: "done" | "failed";
     reason: AgentStopReason;
@@ -377,8 +365,11 @@ export const EMPTY_STREAM: TurnStream = {
  * Folds a page of polled events into the stream, in seq order. An event at
  * or before `lastSeq` was folded already (a poll that overlapped) and is
  * skipped. A later attempt resumes what the earlier committed, so its
- * blocks stay; a result without its call is a step of its own. Complete
- * once the page says the turn ended and its events reach its `lastSeq`.
+ * blocks stay; a result without its call is a step of its own. A step's
+ * deltas add to `live`; any other event ends it, since deltas are written
+ * only while a call streams: its text supersedes them (never shown twice),
+ * or the stream broke. Complete once the page says the turn ended and its
+ * events reach its `lastSeq`, with no live text left.
  *
  * @example
  * const s = reduceTurnEvents(EMPTY_STREAM, {
@@ -401,9 +392,18 @@ export function reduceTurnEvents(
     .filter((e) => e.seq > stream.lastSeq)
     .sort((a, b) => a.seq - b.seq)
     .reduce<TurnStream>((s, e) => {
-      const at = { ...s, lastSeq: e.seq };
       const ev = parseAgentEvent(e.eventJson);
-      if (!ev) return { ...at, unreadable: s.unreadable + 1 };
+      if (!ev) return { ...s, lastSeq: e.seq, unreadable: s.unreadable + 1 };
+      if (ev.type === "text_delta")
+        return {
+          ...s,
+          lastSeq: e.seq,
+          live: {
+            step: ev.step,
+            text: (s.live?.step === ev.step ? s.live.text : "") + ev.text,
+          },
+        };
+      const at = { ...s, lastSeq: e.seq, live: undefined };
       const add = (block: AgentBlock) => ({
         ...at,
         blocks: [...s.blocks, block],
@@ -482,7 +482,9 @@ export function reduceTurnEvents(
     }, stream);
   const complete =
     !!page.status && !isLiveTurn(page) && next.lastSeq >= (page.lastSeq || 0);
-  return complete === next.complete ? next : { ...next, complete };
+  return complete === next.complete && !(complete && next.live)
+    ? next
+    : { ...next, complete, live: complete ? undefined : next.live };
 }
 
 /** A tool's step, as the dock names it; the tool's own name for another. */
