@@ -15,7 +15,7 @@ import (
 )
 
 // The Assistant's threads, turns, transcript and actions
-// (migrations/20261129000000_foundry_agent.sql). A turn is claimed, leased,
+// (migrations/20261130000000_foundry_agent.sql). A turn is claimed, leased,
 // renewed and settled as a question is (foundry_questions.go); its events and
 // transcript are written only while its worker holds its lease.
 
