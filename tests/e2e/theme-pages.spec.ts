@@ -216,9 +216,11 @@ test("every main page in both themes", async ({ page }, info) => {
   await shoot("assistant");
   await page.keyboard.press("ControlOrMeta+j");
 
-  // Automations: the list and its templates, the builder, one with a run.
+  // Automations: the overview and its templates, a new one's conversation,
+  // a template's draft on the canvas, one with a run, its settings.
   await mock.configure({ automationStepMs: 100, agentStepMs: 60 });
   await visit("automations-empty", "/automations");
+  await visit("automation-new-chat", "/automations/new");
   await visit("automation-new", "/automations/new?template=check-documents");
   const A = "/v1/workspaces/ws_acme/foundry/automations";
   const made = (
@@ -268,6 +270,7 @@ test("every main page in both themes", async ({ page }, info) => {
   await settle(page);
   await shoot("automation-run");
   await visit("automation", `/automations/${made.id}`);
+  await visit("automation-settings", `/automations/${made.id}?tab=settings`);
   await visit("automations", "/automations");
 
   await visit("settings", "/settings");

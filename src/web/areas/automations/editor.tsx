@@ -350,7 +350,13 @@ function Editor({
   const [selected, setSelected] = useState<string | undefined>(
     () => start?.spec.nodes.find((n) => incomplete(n))?.id,
   );
-  useEffect(() => setSelected(undefined), [tab, runId]);
+  // Another tab or run shows other steps: nothing is selected there.
+  const shownAt = useRef(`${tab}/${runId}`);
+  useEffect(() => {
+    if (shownAt.current === `${tab}/${runId}`) return;
+    shownAt.current = `${tab}/${runId}`;
+    setSelected(undefined);
+  }, [tab, runId]);
   const [shown, setShown] = useStoredState(INSPECTOR, "shown"),
     [sheet, setSheet] = useState(false),
     [outline, setOutline] = useState(false);
@@ -597,7 +603,8 @@ function Editor({
             Run now
           </Button>
         )}
-        <button
+        {tab !== "settings" && (
+<button
           type="button"
           className={cx(
             "hf-btn hf-btn--ghost hf-btn--sm",
@@ -610,6 +617,7 @@ function Editor({
           <ListTree size={15} aria-hidden />
           Outline
         </button>
+)}
         <label className="checkbox au-live" title={liveWhy}>
           <input
             type="checkbox"
