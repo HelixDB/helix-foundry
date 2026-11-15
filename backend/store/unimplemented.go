@@ -88,6 +88,14 @@ func (u Unimplemented) ListFoundryLoadResends(context.Context, string) ([]*model
 	u.unimplemented("ListFoundryLoadResends")
 	return nil, nil
 }
+func (u Unimplemented) ListFoundryCarriedAliases(context.Context, string) ([]*model.FoundryReviewDecision, error) {
+	u.unimplemented("ListFoundryCarriedAliases")
+	return nil, nil
+}
+func (u Unimplemented) OweFoundryAskingResends(context.Context, *model.FoundryGraphJob, string, []string) (bool, error) {
+	u.unimplemented("OweFoundryAskingResends")
+	return false, nil
+}
 func (u Unimplemented) FoundryLoadDecisionsOwed(context.Context, string) (*model.FoundryLoadResend, error) {
 	u.unimplemented("FoundryLoadDecisionsOwed")
 	return nil, nil

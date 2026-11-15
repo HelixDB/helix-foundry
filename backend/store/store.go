@@ -312,6 +312,8 @@ type Store interface {
 	SettleFoundryReject(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision) error
 	ListFoundryDecisionsApplied(ctx context.Context, ontologyID string, ids []string) (map[string]model.FoundryDecisionApplied, error)
 	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
+	ListFoundryCarriedAliases(ctx context.Context, loadID string) ([]*model.FoundryReviewDecision, error)
+	OweFoundryAskingResends(ctx context.Context, job *model.FoundryGraphJob, workerID string, documentIDs []string) (bool, error)
 	FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error)
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
 	RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome, names []model.FoundryDocumentName) error

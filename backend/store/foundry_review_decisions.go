@@ -73,9 +73,19 @@ func (s *mysqlDB) SettleFoundryReviewDecision(ctx context.Context, workspaceID s
 // replaying each document's saved model work, and its word on the decision's
 // own document is recorded on the copy (recordFoundryNameOutcomes). queued
 // reports a job queued here. d comes back as stored, with what the load holds
-// of it (Applied). ErrConflict means loadID is no longer the ontology's
-// current load, or its version doesn't take d; ErrNotFound that the ontology
-// is not live.
+// of it (Applied).
+//
+// Another load may have become current since the review was read (a load
+// job ended, or a person made one current), as both take the ontology's
+// lock. The decision is still saved, checked against the version of the
+// load that is current, and applied to that one as one saved before it
+// became current is (carryFoundryResolves): carried, its document owed if
+// that load holds it extracted, and the documents of that load whose reviews
+// ask about the name owed by the resend job (OweFoundryAskingResends), as
+// documentIDs, read from loadID, are another load's. Applied says carried,
+// or is nil where the load holds no copy of it that waits. ErrConflict means
+// the ontology has no current load, or the version of the one it has doesn't
+// take d; ErrNotFound that the ontology is not live.
 func (s *mysqlDB) SettleFoundryResolve(ctx context.Context, workspaceID, loadID string, d *model.FoundryReviewDecision, documentIDs []string,
 	resend *model.FoundryGraphJob) (queued bool, err error) {
 	if err := d.Validate(); err != nil {
@@ -90,10 +100,11 @@ func (s *mysqlDB) SettleFoundryResolve(ctx context.Context, workspaceID, loadID 
 		if err != nil {
 			return err
 		}
-		if o.CurrentLoadID == nil || *o.CurrentLoadID != loadID {
+		if o.CurrentLoadID == nil {
 			return ErrConflict
 		}
-		if takes, err := tx.foundryLoadTakes(ctx, loadID, d); err != nil || !takes {
+		current := *o.CurrentLoadID
+		if takes, err := tx.foundryLoadTakes(ctx, current, d); err != nil || !takes {
 			return cmp.Or(err, ErrConflict)
 		}
 		// The live job's row before any decision's, as SettleFoundryReleases
@@ -110,6 +121,24 @@ func (s *mysqlDB) SettleFoundryResolve(ctx context.Context, workspaceID, loadID 
 			return err
 		}
 		if err := tx.saveFoundryReviewDecision(ctx, d, false); err != nil {
+			return err
+		}
+		if current != loadID {
+			if err := tx.carryFoundryResolves(ctx, o); err != nil {
+				return err
+			}
+			// Carried now, or held from another time (the same choice, copied
+			// with the load), which this settle doesn't send again.
+			var carried bool
+			if err := tx.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_decisions l
+  JOIN foundry_review_decisions r ON r.ontology_id=? AND r.id=l.id AND r.decided_at=l.decided_at
+  WHERE l.load_id=? AND l.id=? AND l.applied_status='carried')`, d.OntologyID, current, d.ID).Scan(&carried); err != nil {
+				return err
+			}
+			if carried {
+				d.Applied = &model.FoundryDecisionApplied{Status: model.FoundryReleaseCarried}
+			}
+			queued, err = tx.queueFoundryResendBehind(ctx, o, live, resend)
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
@@ -780,7 +809,10 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 
 // DeleteFoundryReviewDecision removes a decision from those later loads
 // copy, and takes it back from the loads that hold it as far as each kind
-// can be. A resolve stays in the loads that copied it, with what it wrote. A
+// can be. A resolve stays in the loads that copied it, with what it wrote;
+// its copy in the current load that waits, or was refused, goes, and so does
+// one in another load when that load is current again (carryFoundryResolves),
+// so no resend sends a choice a person took back. A
 // reject is in no load: with it gone, its claim's card is listed again.
 //
 // A release is taken back from the current load at once (contract 4.16.0).

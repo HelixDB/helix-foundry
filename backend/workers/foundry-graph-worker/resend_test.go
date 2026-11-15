@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1061,6 +1062,99 @@ func TestResendSettlesNames(t *testing.T) {
 		}
 		if !reflect.DeepEqual(h.store.ended, want) {
 			t.Fatalf("ended %+v", h.store.ended)
+		}
+	})
+}
+
+// An alias carried to the load from another time owes, before the job reads
+// what is owed, the documents of the job's load whose reviews ask about its
+// name: one read a type and name, of the job's load and of no other, and
+// those documents go with their saved work, each request ended. Two copies
+// of one name read once. A load no longer current owes none, and its own
+// document still goes. A read that fails retries the attempt, sending
+// nothing.
+func TestResendOwesWhatACarriedAliasAsks(t *testing.T) {
+	setup := func(t *testing.T) *harness {
+		h := newHarness(t)
+		h.store.held = map[string]*model.FoundryDocument{}
+		for _, d := range h.store.pending {
+			h.store.held[d.ID] = d
+			h.bucket.put(document.ArtifactPrefix("ws-1", d.ID)+"key.json.gz", []byte(`{"calls":[]}`))
+		}
+		owes(h, "doc-a")
+		h.store.resends[0].Reason = model.FoundryResendName
+		acme := "acme"
+		h.store.carried = []*model.FoundryReviewDecision{
+			linked("r1", "doc-a", "acme corp", &acme, settledAt), linked("r2", "doc-d", "acme corp", &acme, settledAt),
+		}
+		h.gateway.reviews = map[string]string{
+			"load-0/Customer/acme corp": `{"doc_id":"doc-b","reason":"unresolved"},{"doc_id":"doc-c","reason":"ambiguous"},` +
+				`{"doc_id":"doc-d","reason":"unresolved","entity_key":"acme"}`,
+			"load-old/Customer/acme corp": `{"doc_id":"doc-d","reason":"unresolved"}`,
+		}
+		h.agent.extract = writesAll(t)
+		return h
+	}
+	sent := func(t *testing.T, h *harness) []string {
+		t.Helper()
+		_, calls := h.agent.calls()
+		if len(calls) != 1 {
+			t.Fatalf("%d extracts", len(calls))
+		}
+		var docs []string
+		for _, d := range decodeExtract(t, calls[0]).Documents {
+			if len(d.Artifacts) != 1 {
+				t.Fatalf("%s goes without its saved work", d.DocID)
+			}
+			docs = append(docs, d.DocID)
+		}
+		return docs
+	}
+	t.Run("the current load's", func(t *testing.T) {
+		h := setup(t)
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		if !slices.Equal(h.gateway.asks, []string{"load-0/Customer/acme corp"}) {
+			t.Fatalf("read %v", h.gateway.asks)
+		}
+		if !slices.Equal(h.store.asked, []string{"doc-b", "doc-c"}) {
+			t.Fatalf("owed %v", h.store.asked)
+		}
+		if docs := sent(t, h); !slices.Equal(docs, []string{"doc-a", "doc-b", "doc-c"}) {
+			t.Fatalf("sent %v", docs)
+		}
+		want := []model.FoundryResendEnd{
+			{DocumentID: "doc-a", Reason: model.FoundryResendName, Requests: 1},
+			{DocumentID: "doc-b", Reason: model.FoundryResendName, Requests: 1},
+			{DocumentID: "doc-c", Reason: model.FoundryResendName, Requests: 1},
+		}
+		if !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+	})
+	t.Run("a load no longer current", func(t *testing.T) {
+		h := setup(t)
+		h.store.notCurrent = true
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		if len(h.store.asked) != 0 {
+			t.Fatalf("owed %v", h.store.asked)
+		}
+		if docs := sent(t, h); !slices.Equal(docs, []string{"doc-a"}) {
+			t.Fatalf("sent %v", docs)
+		}
+	})
+	t.Run("a read that fails", func(t *testing.T) {
+		h := setup(t)
+		h.gateway.askStatus = 503
+		outcome := h.run(t, resendJob())
+		if outcome.RetryAt == nil || len(h.store.asked) != 0 || len(h.store.ended) != 0 {
+			t.Fatalf("%+v, owed %v, ended %v", outcome, h.store.asked, h.store.ended)
+		}
+		if _, calls := h.agent.calls(); len(calls) != 0 {
+			t.Fatalf("%d extracts", len(calls))
 		}
 	})
 }

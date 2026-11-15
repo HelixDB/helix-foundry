@@ -28,7 +28,11 @@ import (
 // same name where it chose an entity (an alias of every document), with their
 // saved model work, which the engine replays to write what the name held
 // back (SettleFoundryResolve); a load read before prompt 9 has no saved work
-// to replay, and the next load applies it. A
+// to replay, and the next load applies it. Another load made current after
+// the review was read (both take the ontology's lock) gets the decision as
+// one saved before it became current does: carried, and its asking
+// documents read from that load by the resend job, as those read here are
+// the earlier load's; applied says pending where it waits there. A
 // release, a person's approval of a held claim, applies to the current load
 // at once: it joins that load's decisions and a resend job sends the claim's
 // document again, and the engine writes it from the review the load keeps
@@ -241,7 +245,7 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	// A name the load already links, by a rung a person can overturn, isn't
 	// settled in place: the engine says bound. Its decision is saved for the
 	// next load, which reads the document again with it.
-	if !foundryAsks(text("reason")) {
+	if !ontologyagent.AsksAboutName(text("reason")) {
 		if err := s.deps.DB.SettleFoundryReviewDecision(ctx, o.WorkspaceID, d); err != nil {
 			return nil, settleFoundryReviewError(err)
 		}
@@ -259,39 +263,16 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil
 }
 
-// foundryAsks is a review reason that asks about a name the load links to
-// nothing, or to nothing a person could stand by: one the engine settles in
-// place when the name's decision is sent with the document (contract 4.22.0).
-func foundryAsks(reason string) bool {
-	switch reason {
-	case "unresolved", "ambiguous", "collision", "identifier_conflict":
-		return true
-	}
-	return false
-}
-
-// foundryAskingDocumentsMax is the most documents a resolve that chose an
-// entity sends again at once for its alias. Past it the rest wait for the
-// next load, which carries the alias to every document that writes its name.
-const foundryAskingDocumentsMax = 10000
-
 // documentsAsking are the documents of load whose reviews still ask about
-// name ty/name (unresolved, ambiguous, collision, identifier_conflict, with
-// no entity linked), which an alias of that name settles in place when they
-// are sent again (contract 4.22.0): one bounded read of the load's reviews
-// of that type and name, each document once, at most
-// foundryAskingDocumentsMax. The engine keeps no index of reviews by name,
-// so the read filters the load's reviews; a person's settle makes it, not an
-// Extract. A document sent that no longer asks costs nothing: the engine
-// says not_asked and writes nothing.
+// name ty/name, which an alias of that name settles in place when they are
+// sent again (contract 4.22.0): one read of the load's reviews of that type
+// and name (ontologyagent.AskingQuery), each document once, at most
+// ontologyagent.AskingDocumentsMax. The engine keeps no index of reviews by
+// name, so the read filters the load's reviews; a person's settle makes it,
+// not an Extract. A document sent that no longer asks costs nothing: the
+// engine says not_asked and writes nothing.
 func (s *Service) documentsAsking(ctx context.Context, o *foundrymodel.FoundryOntology, load, ty, name string) ([]string, error) {
-	predicates := []any{}
-	for key, value := range map[string]string{"foundry_load": load, "$label": "FoundryReview", "type": ty, "norm_name": name} {
-		predicates = append(predicates, map[string]any{"eq": map[string]any{"left": map[string]string{"property": key}, "right": map[string]any{"constant": map[string]string{"string": value}}}})
-	}
-	root := map[string]any{"value_map": map[string]any{"input": map[string]any{"limit": map[string]any{"input": map[string]any{"nodes_where": map[string]any{"predicate": map[string]any{"and": map[string]any{"predicates": predicates}}}},
-		"count": map[string]int{"literal": 4 * foundryAskingDocumentsMax}}}, "properties": []string{"doc_id", "reason", "entity_key"}}}
-	body, err := json.Marshal(map[string]any{"request_type": "read", "query": map[string]any{"read": map[string]any{"entries": []any{map[string]any{"query": map[string]any{"name": "items", "root": root}}}, "returns": []string{"items"}}}})
+	body, err := ontologyagent.AskingQuery(load, ty, name)
 	if err != nil {
 		return nil, err
 	}
@@ -305,30 +286,13 @@ func (s *Service) documentsAsking(ctx context.Context, o *foundrymodel.FoundryOn
 	if code != 200 {
 		return nil, status.Error(codes.Unavailable, "the review graph could not be read; try again")
 	}
-	var response struct {
-		Items []struct {
-			DocID     string          `json:"doc_id"`
-			Reason    string          `json:"reason"`
-			EntityKey json.RawMessage `json:"entity_key"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(out, &response); err != nil {
+	docs, past, err := ontologyagent.AskingDocuments(out)
+	if err != nil {
 		return nil, status.Error(codes.Internal, "read review graph response")
 	}
-	if len(response.Items) >= 4*foundryAskingDocumentsMax {
-		log.From(ctx).Warn("settle: a name's reviews fill the read; documents past it wait for the next load", "ontology", o.ID)
-	}
-	var docs []string
-	for _, r := range response.Items {
-		linked := len(r.EntityKey) > 0 && string(r.EntityKey) != "null"
-		if !linked && r.DocID != "" && foundryAsks(r.Reason) && !slices.Contains(docs, r.DocID) {
-			docs = append(docs, r.DocID)
-		}
-	}
-	if len(docs) > foundryAskingDocumentsMax {
-		log.From(ctx).Warn("settle: an alias asks more documents than a settle sends again; the rest wait for the next load",
+	if past {
+		log.From(ctx).Warn("settle: a name asks more documents than a settle sends again; the rest wait for the next load",
 			"ontology", o.ID, "documents", len(docs))
-		docs = docs[:foundryAskingDocumentsMax]
 	}
 	return docs, nil
 }
