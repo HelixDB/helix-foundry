@@ -163,7 +163,10 @@ test("carries the goal on, then answers the agent's questions one by one and dra
   const words = asked.getByRole("textbox", { name: "Your own words" });
   await elsewise.click();
   await expect(words).toBeVisible();
-  await expect(asked.getByRole("button", { name: "Next" })).toBeDisabled();
+  // Its last question: Review waits for words or no answer.
+  await expect(
+    asked.locator(".qf-nav").getByRole("button", { name: "Review" }),
+  ).toBeDisabled();
   await elsewise.click();
   await expect(words).toHaveCount(0);
   await expect(

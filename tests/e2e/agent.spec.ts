@@ -470,28 +470,7 @@ test("closes a draft's relayed questions once its page answered them", async ({
   const dock = dockOf(page);
   const asked = dock.getByRole("region", { name: "Questions for you" });
   await expect(asked).toBeVisible({ timeout: 20_000 });
-  // Another tab answers them on the draft's page meanwhile.
-  const href = await cardOf(page, "Draft a new version of “Orders graph”")
-    .getByRole("link", { name: "Open the draft" })
-    .getAttribute("href");
-  const other = await context.newPage();
-  await other.goto(href!);
-  await expect(other.getByText("Question 1 of 4", { exact: true })).toBeVisible(
-    { timeout: 15_000 },
-  );
-  await other.getByRole("radio", { name: /^The company that pays/ }).click();
-  await other.getByRole("checkbox", { name: /^Unpaid invoices/ }).click();
-  await other.getByRole("button", { name: "Next", exact: true }).click();
-  await other.getByRole("button", { name: "Use “90 days”" }).click();
-  await other.getByRole("button", { name: "Next", exact: true }).click();
-  await other.getByRole("button", { name: "Skip", exact: true }).click();
-  await other.getByRole("button", { name: "Send answers" }).click();
-  await expect(other.getByText("Question 1 of 4")).toHaveCount(0, {
-    timeout: 15_000,
-  });
-  await other.close();
-  // The dock's send is refused, nothing is sent twice, and it says where
-  // the draft is.
+  // Answered in the dock up to Review.
   await asked
     .getByRole("radiogroup", { name: /^Is a customer/ })
     .getByRole("radio", { name: /^Each person who signs in/ })
@@ -506,6 +485,30 @@ test("closes a draft's relayed questions once its page answered them", async ({
   await asked.getByRole("textbox").fill("60 days");
   await asked.getByRole("button", { name: "Next", exact: true }).click();
   await asked.getByRole("button", { name: "Skip", exact: true }).click();
+  // Another tab answers them on the draft's page meanwhile.
+  const href = await cardOf(page, "Draft a new version of “Orders graph”")
+    .getByRole("link", { name: "Open the draft" })
+    .getAttribute("href");
+  const other = await context.newPage();
+  await other.goto(href!);
+  // The draft's page, not its own dock.
+  const main = other.locator("#main");
+  await expect(main.getByText("Question 1 of 4", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+  await main.getByRole("radio", { name: /^The company that pays/ }).click();
+  await main.getByRole("checkbox", { name: /^Unpaid invoices/ }).click();
+  await main.getByRole("button", { name: "Next", exact: true }).click();
+  await main.getByRole("button", { name: "Use “90 days”" }).click();
+  await main.getByRole("button", { name: "Next", exact: true }).click();
+  await main.getByRole("button", { name: "Skip", exact: true }).click();
+  await main.getByRole("button", { name: "Send answers" }).click();
+  await expect(main.getByText("Question 1 of 4")).toHaveCount(0, {
+    timeout: 15_000,
+  });
+  await other.close();
+  // The dock's send is refused, nothing is sent twice, and it says where
+  // the draft is.
   await asked
     .getByRole("button", { name: "Send answers to the draft" })
     .click();
