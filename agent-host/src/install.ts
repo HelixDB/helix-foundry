@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
-import { VERSION } from "./version.ts";
+import { PACKAGE, invoke } from "./version.ts";
 
 export const LABEL = "com.helix-db.foundry-agent-host";
 export const UNIT = "foundry-agent-host.service";
@@ -24,14 +24,7 @@ export type Service = {
 
 /** The command a unit runs. */
 export function command(s: Service): string[] {
-  return [
-    s.npx,
-    "-y",
-    `@helixdb/foundry-agent-host@${VERSION}`,
-    "run",
-    "--claude",
-    s.claude,
-  ];
+  return [s.npx, "-y", PACKAGE, "run", "--claude", s.claude];
 }
 
 const xml = (s: string) =>
@@ -128,7 +121,7 @@ export function plan(
     };
   }
   throw new Error(
-    `install keeps the helper running on macOS and Linux; on ${platform}, run it yourself: foundry-agent-host run`,
+    `install keeps the helper running on macOS and Linux; on ${platform}, run it yourself: ${invoke("run")}`,
   );
 }
 

@@ -4,6 +4,7 @@
 // login exists on the test machine. It logs what it was started with and
 // sent (FAKE_CLAUDE_LOG), and plays FAKE_CLAUDE_SCENARIO:
 //   answer        calls Foundry's tool at the MCP server it was given, then answers
+//   two_steps     says a sentence, calls Foundry's tool, then answers in a second step
 //   signed_out    fails as a CLI that isn't signed in
 //   rate_limited  fails as a subscription past its usage limit
 //   max_turns     stops at its turns
@@ -48,6 +49,67 @@ const ask = (request) =>
     out({ type: "control_request", request_id, request });
   });
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+// A stream event, as the CLI forwards the model's (includePartialMessages).
+const event = (e) =>
+  out({
+    type: "stream_event",
+    event: e,
+    parent_tool_use_id: null,
+    session_id: session,
+    uuid: "u-e",
+  });
+// One model call writing text, streamed as the API streams it: its
+// message's start, the text's block, then the whole message (as the CLI
+// sends it once a block ends) and its stop.
+async function say(id, chunks, more = async () => {}) {
+  event({ type: "message_start", message: { id, role: "assistant" } });
+  event({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "text", text: "" },
+  });
+  for (const text of chunks) {
+    event({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text },
+    });
+    await delay(30);
+  }
+  event({ type: "content_block_stop", index: 0 });
+  out({
+    type: "assistant",
+    message: {
+      id,
+      role: "assistant",
+      content: [{ type: "text", text: chunks.join("") }],
+    },
+    parent_tool_use_id: null,
+    session_id: session,
+    uuid: "u-a",
+  });
+  await more();
+  event({ type: "message_delta", delta: { stop_reason: "end_turn" } });
+  event({ type: "message_stop" });
+}
+// Foundry's tool, called at the MCP server the helper registered.
+async function callFoundry() {
+  const res = await globalThis.fetch(server.url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...server.headers,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "helix_foundry_list_ontologies", arguments: {} },
+    }),
+  });
+  log({ mcp: { status: res.status, body: await res.json() } });
+}
 
 async function turn(message) {
   log({ prompt: message.message.content });
@@ -101,6 +163,60 @@ async function turn(message) {
           errors: [`No conversation found with session ID: ${session}`],
         });
       break;
+    case "two_steps":
+      // Step 1 writes a sentence, then goes on to a tool call: its input
+      // streams a while before the CLI calls it.
+      await say("msg_1", ["Let me ", "look."], async () => {
+        event({
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "tool_use",
+            id: "t1",
+            name: "mcp__foundry__helix_foundry_list_ontologies",
+          },
+        });
+        await delay(150);
+        event({ type: "content_block_stop", index: 1 });
+        out({
+          type: "assistant",
+          message: {
+            id: "msg_1",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "t1",
+                name: "mcp__foundry__helix_foundry_list_ontologies",
+                input: {},
+              },
+            ],
+          },
+          parent_tool_use_id: null,
+          session_id: session,
+          uuid: "u-a2",
+        });
+      });
+      await callFoundry();
+      out({
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "t1", content: "Sales graph" },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: session,
+        uuid: "u-u",
+      });
+      await say("msg_2", ["You have ", "Sales graph."]);
+      return result({
+        subtype: "success",
+        is_error: false,
+        result: "You have Sales graph.",
+        num_turns: 2,
+      });
     case "slow":
       for (;;) {
         out({
@@ -131,46 +247,8 @@ async function turn(message) {
     tool_use_id: "t2",
   });
   log({ canUseTool: { bash, foundry } });
-  const res = await globalThis.fetch(server.url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      ...server.headers,
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: { name: "helix_foundry_list_ontologies", arguments: {} },
-    }),
-  });
-  log({ mcp: { status: res.status, body: await res.json() } });
-  for (const text of ["You have ", "Sales graph."]) {
-    out({
-      type: "stream_event",
-      event: {
-        type: "content_block_delta",
-        index: 0,
-        delta: { type: "text_delta", text },
-      },
-      parent_tool_use_id: null,
-      session_id: session,
-      uuid: "u-d",
-    });
-    await delay(30);
-  }
-  out({
-    type: "assistant",
-    message: {
-      id: "msg_1",
-      role: "assistant",
-      content: [{ type: "text", text: "You have Sales graph." }],
-    },
-    parent_tool_use_id: null,
-    session_id: session,
-    uuid: "u-a",
-  });
+  await callFoundry();
+  await say("msg_1", ["You have ", "Sales graph."]);
   if (scenario === "max_turns")
     return result({ subtype: "error_max_turns", is_error: true, errors: [] });
   result({

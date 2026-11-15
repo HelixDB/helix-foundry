@@ -18,6 +18,8 @@ export type Account =
 /** A turn Foundry leased to this helper, and what its CLI is told. */
 export type Turn = {
   id: string;
+  /** This claim of it: renew, text and finish name it, so a run whose lease lapsed can't write to the turn once another claim took it. */
+  claim_id: string;
   workspace_id: string;
   thread_id: string;
   runtime: Runtime;
@@ -180,10 +182,10 @@ export class Foundry {
     )?.turn;
   }
 
-  /** Extends the turn's lease: when it lapses next. */
-  async renew(turnId: string): Promise<string> {
+  /** Extends the claim's lease: when it lapses next. Past the turn's wall time, Foundry ends it (wall_time). */
+  async renew(claimId: string): Promise<string> {
     const out = await this.call<{ lease_expires_at: string }>(
-      `/agent-host/turns/${encodeURIComponent(turnId)}/renew`,
+      `/agent-host/claims/${encodeURIComponent(claimId)}/renew`,
       {},
     );
     return out?.lease_expires_at ?? "";
@@ -191,29 +193,52 @@ export class Foundry {
 
   /** Shows the person what the model writes in step: final once it ends. */
   async text(
-    turnId: string,
+    claimId: string,
     step: number,
     text: string,
     final: boolean,
   ): Promise<void> {
-    await this.call(`/agent-host/turns/${encodeURIComponent(turnId)}/text`, {
+    await this.call(`/agent-host/claims/${encodeURIComponent(claimId)}/text`, {
       step,
       text,
       final,
     });
   }
 
-  /** Ends the turn, keeping the CLI's session for the thread's next. */
+  /** Ends the claim's turn, keeping the CLI's session for the thread's next. */
   async finish(
-    turnId: string,
+    claimId: string,
     end: End,
     steps: number,
     sessionId: string,
   ): Promise<void> {
-    await this.call(`/agent-host/turns/${encodeURIComponent(turnId)}/finish`, {
-      ...end,
-      steps,
-      ...(sessionId && { session_id: sessionId }),
-    });
+    await this.call(
+      `/agent-host/claims/${encodeURIComponent(claimId)}/finish`,
+      {
+        ...end,
+        steps,
+        ...(sessionId && { session_id: sessionId }),
+      },
+    );
+  }
+
+  /** Which of these threads (at most GONE_BATCH) are no one's now: deleted, or never were. */
+  async gone(threads: ThreadRef[]): Promise<string[]> {
+    const out = await this.call<{ gone?: string[] }>(
+      "/agent-host/threads/gone",
+      {
+        threads: threads.map((t) => ({
+          workspace_id: t.workspaceId,
+          thread_id: t.threadId,
+        })),
+      },
+    );
+    return out?.gone ?? [];
   }
 }
+
+/** A thread the helper keeps a CLI session of. */
+export type ThreadRef = { workspaceId: string; threadId: string };
+
+/** How many threads one gone() asks after. */
+export const GONE_BATCH = 100;

@@ -14,8 +14,12 @@ export class FakeFoundry {
   calls: Recorded[] = [];
   /** Turns the next claims take, in order. */
   queue: Turn[] = [];
-  /** Turns whose lease Foundry took back: renew answers turn_lost. */
+  /** Claims whose lease Foundry took back: renew answers turn_lost. */
   lost = new Set<string>();
+  /** Threads deleted in Foundry: threads/gone names them. */
+  deleted = new Set<string>();
+  /** Claims whose turn's wall time ran out: renew answers wall_time. */
+  overtime = new Set<string>();
   /** A revoked helper's token is refused everywhere. */
   revoked = false;
 
@@ -54,11 +58,20 @@ export class FakeFoundry {
         await new Promise((r) => setTimeout(r, 30));
         return send(204);
       }
-      const m = /^\/agent-host\/turns\/([^/]+)\/(renew|text|finish)$/.exec(
-        path,
-      );
+      if (path === "/agent-host/threads/gone")
+        return send(200, {
+          gone: (body.threads as { thread_id: string }[])
+            .map((t) => t.thread_id)
+            .filter((id) => this.deleted.has(id)),
+        });
+      const m =
+        /^\/agent-host\/claims\/([0-9a-f]{16})\/(renew|text|finish)$/.exec(
+          path,
+        );
       if (!m) return refuse(404, "not_found");
       if (this.lost.has(m[1]!)) return refuse(410, "turn_lost");
+      if (m[2] === "renew" && this.overtime.has(m[1]!))
+        return refuse(410, "wall_time");
       if (m[2] === "renew")
         return send(200, {
           lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
@@ -91,10 +104,16 @@ async function read(req: IncomingMessage): Promise<any> {
   return text ? JSON.parse(text) : undefined;
 }
 
+/** The claim turn() comes with, and the path of one of its routes. */
+export const CLAIM = "0123456789abcdef";
+export const claimPath = (route: "renew" | "text" | "finish") =>
+  `/agent-host/claims/${CLAIM}/${route}`;
+
 /** A turn as Foundry hands it to a helper. */
 export function turn(over: Partial<Turn> = {}): Turn {
   return {
     id: "turn-1",
+    claim_id: CLAIM,
     workspace_id: "ws-1",
     thread_id: "thread-1",
     runtime: "claude_code",

@@ -16,7 +16,7 @@ import { findClaude } from "./find.ts";
 import { Foundry } from "./foundry.ts";
 import { install, service } from "./install.ts";
 import { serve } from "./run.ts";
-import { VERSION } from "./version.ts";
+import { VERSION, invoke } from "./version.ts";
 
 const USAGE = `foundry-agent-host ${VERSION}: Helix Foundry's Assistant on your Claude Code subscription
 
@@ -68,7 +68,7 @@ async function main(argv: string[]): Promise<number> {
         token: paired.token,
       });
       console.log(
-        `Paired with Foundry at ${base} as ${name}. Run foundry-agent-host install to keep it running, or foundry-agent-host run.`,
+        `Paired with Foundry at ${base} as ${name}. Now start it: ${invoke("install")} keeps it running at every login, or ${invoke("run")} runs it here.`,
       );
       return 0;
     }
@@ -76,7 +76,7 @@ async function main(argv: string[]): Promise<number> {
       const paired = await loadPaired();
       if (!paired) {
         console.error(
-          `Not paired (${configPath()}): run foundry-agent-host pair <code> first.`,
+          `Not paired (${configPath()}): make a code in Foundry, Settings › AI models, and run the pair command it shows first.`,
         );
         return 1;
       }
@@ -113,7 +113,9 @@ async function main(argv: string[]): Promise<number> {
         return 1;
       }
       if (!values["dry-run"] && !(await loadPaired())) {
-        console.error("Pair first: foundry-agent-host pair <code>.");
+        console.error(
+          "Pair first: make a code in Foundry, Settings › AI models, and run the pair command it shows.",
+        );
         return 1;
       }
       const done = await install(service(claude), {

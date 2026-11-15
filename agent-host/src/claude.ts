@@ -21,19 +21,38 @@
 //     calls, and the thread's session resumed.
 
 import {
+  deleteSession,
+  listSessions,
   query,
   type Options,
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
+import type { Sessions } from "./config.ts";
 import type { End, Turn } from "./foundry.ts";
 
-/** What a turn reports as it runs: the model's text, by step. */
+/** Claude Code's own sessions on this computer, as the Agent SDK reads and deletes them. */
+export const CLAUDE_SESSIONS: Sessions = {
+  async list(dir) {
+    return (await listSessions({ dir, includeWorktrees: false })).map(
+      (s) => s.sessionId,
+    );
+  },
+  delete: (id, dir) => deleteSession(id, { dir }),
+};
+
+/**
+ * What a turn reports as it runs: the model's text, by step (its model
+ * calls, from 1). A step's text is said once it is final: when the step
+ * goes on to a tool call (so it shows before the call, as the model wrote
+ * it), when its call ends, or when the next starts. Text after a tool call
+ * in the same step is said again, after it.
+ */
 export type Reporter = {
   /** Text the model is writing in step, as it comes. */
   delta(step: number, text: string): void;
-  /** The step's text once its call ended: it replaces the step's deltas. */
+  /** The step's text so far, final: it replaces the step's deltas. */
   said(step: number, text: string): Promise<void>;
 };
 
@@ -174,11 +193,19 @@ async function attempt(
   }
   let steps = 0;
   let sessionId = turn.resume && opts.resume ? turn.resume : "";
-  let step = { id: "", text: "" };
-  // The step's final text, once the next starts or the turn ends.
+  // The step's model call (its message id), whether its text comes as it
+  // is written (stream events) or only whole (assistant messages, when the
+  // CLI streams nothing), and its text not yet said.
+  let step = { id: "", streamed: false, text: "" };
   const close = async () => {
-    if (step.id && step.text.trim()) await report.said(steps, step.text);
-    step = { id: "", text: "" };
+    const text = step.text;
+    step.text = "";
+    if (steps > 0 && text.trim()) await report.said(steps, text);
+  };
+  const begin = async (id: string, streamed: boolean) => {
+    await close();
+    steps++;
+    step = { id, streamed, text: "" };
   };
   try {
     const q = run({
@@ -215,14 +242,29 @@ async function attempt(
         case "stream_event": {
           const e = m.event as {
             type?: string;
+            message?: { id?: string };
+            content_block?: { type?: string };
             delta?: { type?: string; text?: string };
           };
-          if (
-            e.type === "content_block_delta" &&
-            e.delta?.type === "text_delta" &&
-            e.delta.text
-          )
-            report.delta(Math.max(steps, 1), e.delta.text);
+          switch (e.type) {
+            case "message_start":
+              await begin(e.message?.id || `step-${steps + 1}`, true);
+              break;
+            case "content_block_start":
+              // Text before a tool call is final: said before the call runs.
+              if (e.content_block?.type !== "text") await close();
+              break;
+            case "content_block_delta":
+              if (e.delta?.type === "text_delta" && e.delta.text) {
+                if (steps === 0) await begin("", true);
+                step.text += e.delta.text;
+                report.delta(steps, e.delta.text);
+              }
+              break;
+            case "message_stop":
+              await close();
+              break;
+          }
           break;
         }
         case "assistant": {
@@ -231,13 +273,15 @@ async function attempt(
             content?: { type: string; text?: string }[];
           };
           const id = message.id ?? "";
-          if (id !== step.id) {
-            await close();
-            steps++;
-            step = { id: id || `step-${steps}`, text: "" };
+          // A streamed step's text came with its deltas.
+          if (step.streamed && (!step.id || !id || id === step.id)) {
+            step.id ||= id;
+            break;
           }
+          if (!id || id !== step.id) await begin(id, false);
           for (const block of message.content ?? [])
             if (block.type === "text" && block.text) step.text += block.text;
+            else if (block.type === "tool_use") await close();
           break;
         }
         case "result": {
