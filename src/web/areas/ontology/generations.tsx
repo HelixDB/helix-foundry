@@ -32,6 +32,7 @@ import { documentSetQueries } from "../documents/documents-api";
 import { SettingsLinked } from "../workspace/ai-gate";
 import { generationPicks, generationTitle } from "./model";
 import { RevisionEvidence } from "./version-edit";
+import { ProgressBar, useGenerationProgress } from "./job-progress";
 import { DataFeed, type FeedItem, type FeedStep } from "./ontology-scene";
 import {
   ArrivalNotes,
@@ -81,7 +82,8 @@ export function GenerationPage({ generationId }: { generationId: string }) {
     qc = useQueryClient();
   const query = useQuery(ontologyQueries.generation(id, o, generationId));
   const g = query.data?.generation;
-  const now = useNow(tick(isLive(g)));
+  const now = useNow(tick(isLive(g))),
+    progress = useGenerationProgress(id, o, isLive(g) ? g : undefined);
   const sources = useSources(g?.tables),
     // Try again tells API sources from connectors by their kind, and their
     // own sets from other sets.
@@ -371,6 +373,13 @@ export function GenerationPage({ generationId }: { generationId: string }) {
               text="It isn’t current yet. Review it, then make it current to use it in this workspace."
             />
           )
+        )}
+        {progress && (
+          <ProgressBar
+            className="on-progress--page"
+            progress={progress}
+            label={`Progress of ${title}`}
+          />
         )}
         <DataFeed items={items} steps={steps} />
         {g.goal?.trim() && <Goal goal={g.goal.trim()} />}

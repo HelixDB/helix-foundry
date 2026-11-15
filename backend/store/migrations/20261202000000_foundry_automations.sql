@@ -147,7 +147,7 @@ CREATE TABLE foundry_automation_run_nodes (
 -- foundry_automation_run_nodes.notification_id), and automation_paused, the
 -- owner's word that their automation paused itself after failing (subject_id
 -- its foundry_automations.notice_id). ontology_questions stays, which
--- 20261129130000 adds. A Vitess-based MySQL host may rename CHECK
+-- 20261130100000 adds. A Vitess-based MySQL host may rename CHECK
 -- constraints, so the old one is dropped by prefix.
 --
 -- Rollback. A deploy request carries schema only and a rollback restores the

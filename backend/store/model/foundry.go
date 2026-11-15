@@ -615,6 +615,10 @@ type FoundryExtractionCounts struct {
 	ResolvedName          int
 	ResolvedAlias         int
 	ResolvedCreated       int
+	// ResolvedCarried are entities linked by an alias: a name a person linked
+	// to the entity in another document, which the load carries to every
+	// document (contract 4.22.0).
+	ResolvedCarried int
 
 	Sections   int
 	Entities   int
@@ -655,6 +659,162 @@ type FoundryDocumentExtraction struct {
 	// the facts they became are in Counts.Facts, one a decision written,
 	// which several reviews of one claim share. Nothing reads it back.
 	Released int
+	// Names are what the load's runs did with each name decision that met
+	// the document (contract 4.22.0): its own resolve decisions, and the
+	// aliases the load carries where the names rung asked. An event of a
+	// document the load held already adds to them (MergeFoundryDocumentNames).
+	Names []FoundryDocumentName
+	// SettlesNames is that the run read the document with its saved model
+	// work, so its word on a resolve of the document is the decision's, which
+	// the load's copy that waits to be settled records
+	// (FoundryNameApplied). A send without it can't settle a name, and says
+	// not_replayed whatever the load. Nothing stores it.
+	SettlesNames bool
+}
+
+// FoundryNameDecision is which kind of decision a document's name outcome is
+// of: the document's own resolve decision, or an alias, a name a resolve
+// decision of another document linked to an entity, which the load carries
+// to every document. An alias is sent, never stored as a decision.
+type FoundryNameDecision string
+
+const (
+	FoundryNameResolve FoundryNameDecision = "resolve"
+	FoundryNameAlias   FoundryNameDecision = "alias"
+)
+
+// FoundryNameOutcomeKind is what a run did with a name decision of a document.
+type FoundryNameOutcomeKind string
+
+const (
+	// FoundryNameWritten: what it settles is written, by the document's
+	// commit or, of a document the load held, in place.
+	FoundryNameWritten FoundryNameOutcomeKind = "written"
+	// FoundryNameNotAsked: of a document the load held, whose reviews ask
+	// about no such name: nothing waited on it and nothing is written. It
+	// applies when the document is read again.
+	FoundryNameNotAsked FoundryNameOutcomeKind = "not_asked"
+	// FoundryNameNotNamed: the document names no entity so.
+	FoundryNameNotNamed FoundryNameOutcomeKind = "not_named"
+	// FoundryNameRefused: the name isn't settled, for a FoundryNameRefusal.
+	FoundryNameRefused FoundryNameOutcomeKind = "refused"
+)
+
+// FoundryNameRefusal is the engine's reason a name decision didn't settle its
+// name (extract_event.json $defs/NameRefusal). It is kept as it came: a later
+// engine may give one this backend hasn't seen, which a reader words as not
+// applied.
+type FoundryNameRefusal string
+
+const (
+	// FoundryNameAbsent: the entity chosen isn't in the load.
+	FoundryNameAbsent FoundryNameRefusal = "absent"
+	// FoundryNameBound: the load links the name already another way; it
+	// changes when the document is read again.
+	FoundryNameBound FoundryNameRefusal = "bound"
+	// FoundryNameCollides: another of the document's names is that entity.
+	FoundryNameCollides FoundryNameRefusal = "collides"
+	// FoundryNameDiffers: what the load holds of the document's names isn't
+	// what reading it again gives.
+	FoundryNameDiffers FoundryNameRefusal = "differs"
+	// FoundryNameTooLarge: too large to write in place.
+	FoundryNameTooLarge FoundryNameRefusal = "too_large"
+	// FoundryNameTwoRows: another entity goes by the name, or two aliases of
+	// it choose different entities.
+	FoundryNameTwoRows FoundryNameRefusal = "two_rows"
+	// FoundryNameRoleTerm: a role or defined term, such as "the Customer".
+	FoundryNameRoleTerm FoundryNameRefusal = "role_term"
+	// FoundryNameShared: another of the document's entities goes by it.
+	FoundryNameShared FoundryNameRefusal = "shared"
+	// FoundryNameIdentifier: an identifier the document gives the entity
+	// found no row.
+	FoundryNameIdentifier FoundryNameRefusal = "identifier"
+	// FoundryNameOtherIdentity: the entity's names state another legal person.
+	FoundryNameOtherIdentity FoundryNameRefusal = "other_identity"
+	// FoundryNameNotReplayed: the document's saved model work lacks what
+	// settling the name in place needs (a load read under an earlier prompt,
+	// or a resend, which sends no artifact); the next load applies it.
+	FoundryNameNotReplayed FoundryNameRefusal = "not_replayed"
+)
+
+// FoundryNameApplied is what the load's copy of resolve decision records of
+// the engine's word on its own document (foundry_load_decisions
+// applied_status and applied_reason): written is written; not_asked is
+// written with not_asked as its reason, as the copy waited on a review that
+// asked about the name and none asks now: the name is settled in the load,
+// by this decision in a run whose word was lost, or by another since (an
+// alias of it); anything else is refused, with the refusal, or not_named,
+// as its reason.
+func FoundryNameApplied(n FoundryDocumentName) (FoundryReleaseStatus, string) {
+	switch n.Outcome {
+	case FoundryNameWritten:
+		return FoundryReleaseWritten, ""
+	case FoundryNameNotAsked:
+		return FoundryReleaseWritten, string(FoundryNameNotAsked)
+	case FoundryNameRefused:
+		return FoundryReleaseRefused, string(n.Reason)
+	}
+	return FoundryReleaseRefused, string(n.Outcome)
+}
+
+// FoundryNameNoWord is the backend's reason a resolve waiting in the
+// current load is refused when the job that sent its document ended with no
+// event of the document: no word came, and the next load applies it.
+const FoundryNameNoWord = "no_word"
+
+// FoundryDocumentName is what a run did with one name decision of a
+// document: Reason is set exactly for refused. DecisionID is the decision's
+// id, nil when the engine named none. Stored as JSON on the load's
+// extraction row (foundry_load_extractions.names), in these field names.
+type FoundryDocumentName struct {
+	Decision   FoundryNameDecision    `json:"decision"`
+	Type       string                 `json:"type"`
+	NormName   string                 `json:"norm_name"`
+	DecisionID *string                `json:"decision_id,omitempty"`
+	Outcome    FoundryNameOutcomeKind `json:"outcome"`
+	Reason     FoundryNameRefusal     `json:"reason,omitempty"`
+}
+
+// MergeFoundryDocumentNames is a document's names once a later event of it
+// in a load that holds it already (a resend, already_ingested) says more:
+// each entry is one decision of one name, keyed by its kind, type, name and
+// id; a later entry replaces the earlier one, but a later not_asked or
+// not_replayed never does: not_asked says only that nothing waited on the
+// decision this time (one written before reads not_asked when sent again),
+// and not_replayed only that this send carried no model work to settle it
+// with (a resend sends no artifact), so the word the document's commit gave
+// (written, or a refusal such as two_rows) stands. A new key is added after
+// the earlier ones. An event that commits the document replaces the list
+// instead.
+func MergeFoundryDocumentNames(earlier, later []FoundryDocumentName) []FoundryDocumentName {
+	type key struct {
+		decision      FoundryNameDecision
+		typ, name, id string
+	}
+	keyOf := func(n FoundryDocumentName) key {
+		k := key{decision: n.Decision, typ: n.Type, name: n.NormName}
+		if n.DecisionID != nil {
+			k.id = *n.DecisionID
+		}
+		return k
+	}
+	out := slices.Clone(earlier)
+	at := map[key]int{}
+	for i, n := range out {
+		at[keyOf(n)] = i
+	}
+	for _, n := range later {
+		k := keyOf(n)
+		i, held := at[k]
+		switch {
+		case !held:
+			at[k] = len(out)
+			out = append(out, n)
+		case n.Outcome != FoundryNameNotAsked && (n.Outcome != FoundryNameRefused || n.Reason != FoundryNameNotReplayed):
+			out[i] = n
+		}
+	}
+	return out
 }
 
 // FoundryGraphJobKind is what a graph job does.

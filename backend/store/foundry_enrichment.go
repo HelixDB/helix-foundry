@@ -1112,10 +1112,10 @@ FROM foundry_loads l LEFT JOIN foundry_load_enrichments e ON e.load_id = l.id WH
 				return err
 			}
 			if servable {
-				if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontologies SET current_load_id=? WHERE id=?`, last.String, ontologyID); err != nil {
+				if err := tx.makeFoundryLoadCurrent(ctx, o, last.String); err != nil {
 					return err
 				}
-				o.CurrentLoadID, clean = &last.String, true
+				clean = true
 			}
 		}
 		switch {
@@ -1139,7 +1139,7 @@ WHERE l.ontology_id=? AND l.status IN ('ready', 'partial', 'failed', 'delete_fai
 			// current above copied its decisions when it was created, and
 			// would otherwise show those saved since as unread until some
 			// job happened to end.
-			if queued, err := tx.queueFoundryResend(ctx, o, &model.FoundryGraphJob{ID: nextJobID}, 0); err != nil || queued {
+			if queued, err := tx.queueFoundryResend(ctx, o, &model.FoundryGraphJob{ID: nextJobID}, 0, true); err != nil || queued {
 				return err
 			}
 			return tx.queueNextFoundryDelete(ctx, o, nextJobID)

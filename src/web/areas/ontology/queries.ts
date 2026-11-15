@@ -24,6 +24,7 @@ import type {
 } from "../../../shared/wfe";
 import { jobSeen, jobStarted, trackEvent } from "../../analytics";
 import { api, ApiError, refusalOf } from "../../api";
+import { watchJob } from "./watched-jobs";
 
 // The Ontology area's WFE calls, as TanStack Query options keyed by
 // workspace, then ontology: [ws, "ontology", ontologyId, ...]. Every route
@@ -239,6 +240,8 @@ export const generateOntology = async (
     { job: "generation", source: body.sample ? "sample" : "ai" },
     r.generation?.id,
   );
+  if (r.generation?.id)
+    watchJob(ws, { kind: "generation", ontologyId: o, id: r.generation.id });
   return r;
 };
 
@@ -307,6 +310,7 @@ export const createLoad = async (
     },
   );
   jobStarted({ job: "load" }, r.load.id);
+  watchJob(ws, { kind: "load", ontologyId: o, id: r.load.id });
   return r;
 };
 
@@ -359,6 +363,9 @@ export const reviseOntologyVersion = async (
     { job: "revision", mode: body.dryRun ? "preview" : "save" },
     r.generation?.id,
   );
+  // A preview is waited for where it was asked; a save may be left.
+  if (!body.dryRun && r.generation?.id)
+    watchJob(ws, { kind: "generation", ontologyId: o, id: r.generation.id });
   return r;
 };
 

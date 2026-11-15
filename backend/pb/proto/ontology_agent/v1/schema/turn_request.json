@@ -186,16 +186,15 @@
           ]
         },
         {
-          "description": "Answers an open question.",
+          "description": "Answers an open question: the labels of the options chosen, the user's own words, or\nboth where the question takes several options (`Question::check_answer`).",
           "type": "object",
           "properties": {
             "answer": {
               "type": "object",
               "properties": {
                 "options": {
-                  "description": "The labels of the options the user chose.",
+                  "description": "The labels of the options chosen, each once: one at most for a question that takes\none, none for a question without options.",
                   "type": "array",
-                  "default": [],
                   "items": {
                     "type": "string"
                   }
@@ -205,7 +204,7 @@
                   "type": "string"
                 },
                 "text": {
-                  "description": "The user's own words, if any.",
+                  "description": "The user's own words: not blank, at most 2,000 characters; required without options.",
                   "type": [
                     "string",
                     "null"
@@ -1232,7 +1231,7 @@
           "type": "string"
         },
         "observed": {
-          "description": "When its data was observed, if the backend knows: the connector sync its snapshot was\ntaken at, or the upload of its file. An Ingest records it on the transaction of each\nchunk of the source's rows; a turn reads nothing of it.",
+          "description": "When its data was observed, if the backend knows: the connector sync its snapshot was\ntaken at, or the upload of its file. An Ingest records it on the transaction of each\nchunk of the source's rows, whose statements hold from then; a turn's dry runs read their\nrows so too, so a preview weighs a document against them as a load would.",
           "anyOf": [
             {
               "$ref": "#/$defs/Observed"

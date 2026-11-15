@@ -46,8 +46,12 @@ import {
   MAX_SET_NAME,
   setLabel,
   setNameProblem,
+  evidenceShapeText,
   failureText,
   fileProblem,
+  heldUnnamed,
+  nameDecisionText,
+  nameOutcomeText,
   formatBytes,
   formatUsd,
   hex,
@@ -1831,5 +1835,115 @@ describe("file reads", () => {
         read: { kind: "FOUNDRY_READ_KIND_PDF" },
       }),
     ).toBe("pdf");
+  });
+});
+
+// Contract 4.18.0: a held claim's shape, and one held for an end its part of
+// the document doesn't name.
+describe("held claims", () => {
+  it("words each evidence shape, and none it doesn't know", () => {
+    expect(
+      [
+        "prose_sentence",
+        "list_item",
+        "table_row_or_cell",
+        "header_title_or_form_field",
+        "spread_across_sentences",
+        "spread_across_sections",
+        "implied",
+      ].map(evidenceShapeText),
+    ).toEqual([
+      "A sentence",
+      "A list item",
+      "A table row",
+      "A heading or form field",
+      "Across several sentences",
+      "Across sections",
+      "Implied, not stated",
+    ]);
+    expect(evidenceShapeText("sung")).toBeUndefined();
+    expect(evidenceShapeText("")).toBeUndefined();
+    expect(evidenceShapeText(undefined)).toBeUndefined();
+  });
+
+  it("tells a claim held for an unnamed end from an unsure one by its score", () => {
+    expect(heldUnnamed("low_confidence", 0.9)).toBe(true);
+    expect(heldUnnamed("attribute_low_confidence", 0.97)).toBe(true);
+    expect(heldUnnamed("low_confidence", 0.89)).toBe(false);
+    expect(heldUnnamed("low_confidence", undefined)).toBe(false);
+    expect(heldUnnamed("unverified", 0.95)).toBe(false);
+    expect(heldUnnamed(undefined, 0.95)).toBe(false);
+    expect(reviewCopy("low_confidence", 0, 0.95)).toEqual({
+      title: "Not sure who it’s about",
+      text: "The checker scored it high, but this part of the document doesn’t name who or what it’s about, so it was held for a person. Check the quote names the right one.",
+    });
+    expect(reviewCopy("attribute_low_confidence", 0, 0.93).title).toBe(
+      "Not sure whose value it is",
+    );
+    // Under the bar, or unscored, it is the unsure one it always was.
+    expect(reviewCopy("low_confidence", 0, 0.72)).toEqual(
+      reviewCopy("low_confidence"),
+    );
+    expect(reviewCopy("attribute_low_confidence", 0, 0.5).title).toBe(
+      "The model wasn’t sure of a value",
+    );
+    expect(reviewCopy("unverified", 0, 0.95)).toEqual(reviewCopy("unverified"));
+  });
+});
+
+// Contract 4.22.0: what a load made of each name choice it met.
+describe("name outcomes", () => {
+  it("words each outcome and refusal, and only that it wasn't applied for one it doesn't know", () => {
+    const refused = (reason?: string) =>
+      nameOutcomeText({ outcome: "refused", reason });
+    expect(nameOutcomeText({ outcome: "written" })).toBe(
+      "Written to this load",
+    );
+    expect(nameOutcomeText({ outcome: "not_asked" })).toBe(
+      "Nothing in this load waited on it",
+    );
+    expect(nameOutcomeText({ outcome: "not_named" })).toBe(
+      "This document doesn’t name it",
+    );
+    expect(
+      [
+        "absent",
+        "bound",
+        "collides",
+        "differs",
+        "too_large",
+        "two_rows",
+        "role_term",
+        "shared",
+        "identifier",
+        "other_identity",
+        "not_replayed",
+      ].map(refused),
+    ).toEqual([
+      "The record chosen isn’t in this load",
+      "This document already links the name another way; that changes when the document is read again",
+      "Another name in this document is already that record",
+      "The load no longer matches what the document gave; it applies when the document is read again",
+      "Too large to write in place; it applies when the document is read again",
+      "Another record goes by this name too, or people chose different records for it",
+      "A role, like “the Customer”, not a name",
+      "Another party in this document goes by it too",
+      "The document gives an ID that doesn’t match the record chosen",
+      "The names show a different legal company",
+      "Built before names could be applied at once; the next load applies it",
+    ]);
+    expect(refused("a_new_reason")).toBe("Not applied in this load");
+    expect(refused(undefined)).toBe("Not applied in this load");
+    expect(nameOutcomeText({ outcome: "queued" })).toBe(
+      "Not applied in this load",
+    );
+    expect(nameOutcomeText({})).toBe("Not applied in this load");
+  });
+
+  it("says whose choice it is, and nothing for a kind it doesn't know", () => {
+    expect(nameDecisionText("resolve")).toBe("Your choice for this document");
+    expect(nameDecisionText("alias")).toBe("A choice made in another document");
+    expect(nameDecisionText("override")).toBeUndefined();
+    expect(nameDecisionText(undefined)).toBeUndefined();
   });
 });

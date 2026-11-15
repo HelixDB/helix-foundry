@@ -37,6 +37,7 @@ import {
   type DocumentsNode,
   type RootKey,
 } from "./layout";
+import { PICKER_OPENED } from "./paths";
 import { DataTree, NewFolderDialog } from "./tree";
 import { useDataUpload } from "./upload";
 import { useDataTree } from "./use-tree";
@@ -254,6 +255,7 @@ export function DataExplorer({ onNavigate }: { onNavigate?: () => void }) {
           <span className="dx-actions">
             <ButtonLink
               to={paths.connections(true)}
+              state={PICKER_OPENED}
               variant="ghost"
               size="sm"
               icon={Plus}

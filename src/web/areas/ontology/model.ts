@@ -1353,8 +1353,131 @@ export type AgentBundle = {
   items: Record<string, AgentDraftItem>;
   competency: CompetencyQuestion[];
   gaps: Gap[];
-  leftOut: { what: string; reason: string }[];
+  leftOut: LeftOut[];
 };
+
+/**
+ * The kind of reason a draft gives for leaving a source out, when it is one
+ * the agent checks at its finish (contract 4.19.0, a `left_out` entry's
+ * `because`): the turn ran out of budget before it looked (`not_assessed`),
+ * the user asked for it (`said` quotes their words), or the set's documents
+ * state what a route of the draft already reads from other sets.
+ */
+export type LeftOutBecause =
+  | { kind: "not_assessed" }
+  | { kind: "user_asked"; said: string }
+  | { kind: "documents_state"; route: string; item: string };
+
+/**
+ * Whether a draft's item is a document route the agent added from reading
+ * sample documents of its sets (contract 4.20.0: it serves "probe"). Its
+ * rationale says what the sample held. Any other serves value is no probe.
+ *
+ * @example
+ * isProbeRoute({ toml: "", status: "proposed", rationale: "", serves: ["probe"] }); // true
+ * isProbeRoute({ toml: "", status: "proposed", rationale: "", serves: ["cq.CQ1"] }); // false
+ * isProbeRoute(undefined); // false
+ */
+export const isProbeRoute = (item?: AgentDraftItem) =>
+  !!item?.serves?.includes("probe");
+
+/** A source, field or object the draft left out, and why. */
+export type LeftOut = {
+  what: string;
+  reason: string;
+  because?: LeftOutBecause;
+};
+
+/**
+ * A `left_out` entry's `because`. An entry with none whose reason starts
+ * "Not assessed" counts as not assessed, as the agent reads entries stored
+ * before 4.19.0. A kind this site doesn't know is none, so only the reason
+ * shows, never a code.
+ *
+ * @example
+ * leftOutBecause("not_assessed", "Out of budget."); // { kind: "not_assessed" }
+ * leftOutBecause(undefined, "Not assessed: out of budget."); // { kind: "not_assessed" }
+ * leftOutBecause({ user_asked: { said: "skip the memos" } }, "Asked."); // { kind: "user_asked", said: "skip the memos" }
+ * leftOutBecause({ documents_state: { route: "notes", item: "Person.status" } }, "Read."); // { kind: "documents_state", route: "notes", item: "Person.status" }
+ * leftOutBecause({ guessed: {} }, "Not assessed"); // undefined
+ */
+export function leftOutBecause(
+  because: unknown,
+  reason: string,
+): LeftOutBecause | undefined {
+  if (because === "not_assessed") return { kind: "not_assessed" };
+  if (because == null)
+    return /^not assessed\b/i.test(reason.trim())
+      ? { kind: "not_assessed" }
+      : undefined;
+  if (!isRecord(because)) return undefined;
+  const asked = because.user_asked,
+    stated = because.documents_state;
+  if (isRecord(asked) && text(asked.said))
+    return { kind: "user_asked", said: text(asked.said) };
+  if (isRecord(stated) && text(stated.route) && text(stated.item))
+    return {
+      kind: "documents_state",
+      route: text(stated.route),
+      item: text(stated.item),
+    };
+  return undefined;
+}
+
+/**
+ * A route's item as words: a property "Type.prop" reads "Type’s prop", a
+ * link's name as linkWords reads it.
+ *
+ * @example
+ * routeItemWords("Person.status"); // "Person’s status"
+ * routeItemWords("works_at"); // "works at"
+ */
+export function routeItemWords(item: string): string {
+  const dot = item.indexOf(".");
+  return dot > 0
+    ? `${item.slice(0, dot)}’s ${linkWords(item.slice(dot + 1))}`
+    : linkWords(item);
+}
+
+/**
+ * Why a left-out entry is left out, in plain words, from its `because`:
+ * `route` names the route's documents (the sets it reads). Undefined when
+ * the entry has no kind this site knows, so only its reason shows.
+ *
+ * @example
+ * leftOutBecauseText({ kind: "not_assessed" }, () => ""); // { label: "Not checked yet", detail: "The agent ran out of budget before it looked at this. Generating again can pick it up." }
+ * leftOutBecauseText({ kind: "user_asked", said: "skip the memos" }, () => "").detail; // "Someone asked to leave it out: “skip the memos”."
+ * leftOutBecauseText({ kind: "documents_state", route: "notes", item: "Person.status" }, () => "Board minutes").detail; // "Its documents state Person’s status, which the route reading Board minutes already reads from other documents."
+ */
+export function leftOutBecauseText(
+  because: LeftOutBecause,
+  route: (name: string) => string,
+): { label: string; detail: string } {
+  switch (because.kind) {
+    case "not_assessed":
+      return {
+        label: "Not checked yet",
+        detail:
+          "The agent ran out of budget before it looked at this. Generating again can pick it up.",
+      };
+    case "user_asked":
+      return {
+        label: "Asked to leave out",
+        detail: `Someone asked to leave it out: “${because.said}”.`,
+      };
+    case "documents_state": {
+      const reads = route(because.route);
+      return {
+        label: "Already read elsewhere",
+        detail: `Its documents state ${routeItemWords(because.item)}, which ${
+          reads
+            ? `the route reading ${reads}`
+            : `the ${linkWords(because.route)} route`
+        } already reads from other documents.`,
+      };
+    }
+  }
+}
 
 const STATUSES: AgentTurnStatus[] = ["done", "needs_input", "budget_exhausted"];
 
@@ -1443,7 +1566,15 @@ export function readAgentBundle(
     })),
     gaps: review("gap", (id, t) => ({ id, description: text(t.description) })),
     leftOut: tables(draft.left_out)
-      .map((l) => ({ what: text(l.what), reason: text(l.reason) }))
+      .map((l): LeftOut => {
+        const reason = text(l.reason),
+          because = leftOutBecause(l.because, reason);
+        return {
+          what: text(l.what),
+          reason,
+          ...(because ? { because } : {}),
+        };
+      })
       .filter((l) => l.what),
   };
 }

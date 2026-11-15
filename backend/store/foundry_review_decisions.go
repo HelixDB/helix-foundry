@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helixdb/helix-foundry/backend/pkg/namewords"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 	"slices"
 	"strings"
@@ -21,7 +22,7 @@ const foundryReviewDecisionDrawnColumns = foundryReviewDecisionColumns + ", draw
 
 // FoundryValueDecisionsFull refuses a value decision of a property the
 // ontology has decided no value of: it holds
-// model.FoundryExtractDecisionsMax value decisions already, and every one
+// model.FoundryExtractKindDecisionsMax value decisions already, and every one
 // goes with every Extract of a load, which takes no more. Choosing again for
 // a property already decided replaces that decision and is not refused.
 var FoundryValueDecisionsFull = errors.New("the ontology holds as many value decisions as one extract takes")
@@ -32,9 +33,15 @@ var FoundryValueDecisionsFull = errors.New("the ontology holds as many value dec
 // review it settles: ErrConflict means that version doesn't take d (its type,
 // prop or key changed, as a new load of another version may have done since
 // the review was read), or the ontology has no current load. It applies from
-// the next load, as a resolve does; a release is settled by
+// the next load; a resolve is settled by SettleFoundryResolve, a release by
 // SettleFoundryReleases and a value by SettleFoundryValue, which apply them
-// to the current one.
+// to the current one. A resolve that chooses an entity is also an alias of
+// every later load (ListFoundryLoadAliasesNamed), sent only with the
+// Extracts whose documents write its name, so an ontology takes any number.
+// A resolve saved here is not the current load's: it reaches a load created
+// before it as that load becomes current (carryFoundryResolves). A person's
+// resolve of a name the current load links already is settled by
+// SettleFoundryBoundResolve, which knows the load its review was read from.
 func (s *mysqlDB) SettleFoundryReviewDecision(ctx context.Context, workspaceID string, d *model.FoundryReviewDecision) error {
 	if err := d.Validate(); err != nil {
 		return err
@@ -53,6 +60,159 @@ func (s *mysqlDB) SettleFoundryReviewDecision(ctx context.Context, workspaceID s
 		}
 		return tx.saveFoundryReviewDecision(ctx, d, false)
 	})
+}
+
+// SettleFoundryResolve settles a resolve decision, read from a review of load
+// loadID, and applies it to that load at once: under the ontology's lock it
+// is checked and saved as SettleFoundryReviewDecision saves one, joins the
+// load's own list as pending in place of any copy the list holds of its
+// identity (its type, document and name: the engine refuses an Extract that
+// decides a name of a document twice), with its name key, and the load owes
+// the engine a resend of documents (model.FoundryResendName): a changed
+// choice is a new decision under d's id, and the same choice again keeps
+// its decision; the decision's
+// own, and those the caller found whose reviews ask about the name, as an
+// alias reaches them. Then resend is queued as SettleFoundryReleases queues
+// one (queueFoundryResendBehind). The engine settles the name in place by
+// replaying each document's saved model work, and its word on the decision's
+// own document is recorded on the copy (recordFoundryNameOutcomes). queued
+// reports a job queued here. d comes back as stored, with what the load holds
+// of it (Applied).
+//
+// Another load may have become current since the review was read (a load
+// job ended, or a person made one current), as both take the ontology's
+// lock. The decision is still saved, checked against the version of the
+// load that is current, and applied to that one, not to loadID, as one saved
+// before it became current is (carryFoundryResolves): documentIDs, read from
+// loadID, are another load's, so an alias joins carried, its document owed,
+// and the resend job owes the documents of that load whose reviews ask about
+// its name (OweFoundryAskingResends); "not in data" joins pending, its
+// document owed, where that load holds it extracted, else with no status and
+// nothing owed. Applied says carried or pending, or is nil for the last. The
+// entity chosen was checked against loadID's records: one the current load
+// doesn't hold the engine refuses there (absent), linking nothing, and the
+// copy says so. ErrConflict means the ontology has no current load, or the
+// version of the one it has doesn't take d; ErrNotFound that the ontology is
+// not live.
+func (s *mysqlDB) SettleFoundryResolve(ctx context.Context, workspaceID, loadID string, d *model.FoundryReviewDecision, documentIDs []string,
+	resend *model.FoundryGraphJob) (queued bool, err error) {
+	return s.settleFoundryResolve(ctx, workspaceID, loadID, d, documentIDs, false, resend)
+}
+
+// SettleFoundryBoundResolve settles a resolve decision of a name load loadID
+// links already (review reasons adjudicated, legal_form, part_name,
+// own_name, or a link a person undid), read from a review of that load. It
+// is saved as SettleFoundryReviewDecision saves one, its id kept when the
+// name was chosen before, and is the next load's while loadID is current:
+// the engine would say bound. Another load made current since the review was
+// read (both take the ontology's lock) gets it as SettleFoundryResolve gives
+// it one, and as the carry would have, had the switch come after the settle
+// (carryFoundryResolves): that load read no review for it, so in it the
+// decision is one saved while another load was current. queued, d's
+// Applied, ErrConflict and ErrNotFound are as SettleFoundryResolve says;
+// Applied is nil while loadID is current.
+func (s *mysqlDB) SettleFoundryBoundResolve(ctx context.Context, workspaceID, loadID string, d *model.FoundryReviewDecision,
+	resend *model.FoundryGraphJob) (queued bool, err error) {
+	return s.settleFoundryResolve(ctx, workspaceID, loadID, d, nil, true, resend)
+}
+
+// settleFoundryResolve is SettleFoundryResolve, or with bound
+// SettleFoundryBoundResolve, which reads no asking documents.
+func (s *mysqlDB) settleFoundryResolve(ctx context.Context, workspaceID, loadID string, d *model.FoundryReviewDecision, documentIDs []string,
+	bound bool, resend *model.FoundryGraphJob) (queued bool, err error) {
+	if err := d.Validate(); err != nil {
+		return false, err
+	}
+	if d.Kind != model.FoundryReviewResolve {
+		return false, fmt.Errorf("decision %s is not a resolve decision", d.ID)
+	}
+	err = s.WithTx(ctx, func(db Store) error {
+		tx := db.(*mysqlDB)
+		o, err := tx.lockLiveFoundryOntology(ctx, workspaceID, d.OntologyID)
+		if err != nil {
+			return err
+		}
+		if o.CurrentLoadID == nil {
+			return ErrConflict
+		}
+		current := *o.CurrentLoadID
+		if takes, err := tx.foundryLoadTakes(ctx, current, d); err != nil || !takes {
+			return cmp.Or(err, ErrConflict)
+		}
+		if bound && current == loadID {
+			return tx.saveFoundryReviewDecision(ctx, d, false)
+		}
+		// The live job's row before any decision's, as SettleFoundryReleases
+		// takes them.
+		live, err := tx.liveFoundryGraphJob(ctx, d.OntologyID)
+		if err != nil {
+			return err
+		}
+		// A changed choice is a new decision, under d's id: the engine's word
+		// on the earlier one, from a job already sent, then finds no copy to
+		// land on. The same choice again keeps its decision, sent again. A
+		// bound name chosen again keeps its id, as SettleFoundryReviewDecision
+		// keeps it.
+		if !bound {
+			if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_review_decisions WHERE ontology_id=? AND kind='resolve' AND type=? AND doc_id=?
+  AND norm_name=? AND NOT (entity_key <=> ?)`, d.OntologyID, d.Type, *d.DocID, *d.NormName, d.EntityKey); err != nil {
+				return err
+			}
+		}
+		if err := tx.saveFoundryReviewDecision(ctx, d, false); err != nil {
+			return err
+		}
+		// Read against the current load, the decision waits there, its own
+		// document and those the caller found owed. Read against another, it
+		// joins the current load as one saved before that load became current
+		// does (carryFoundryResolves): an alias carried, its document owed,
+		// and the documents of this load that ask about its name owed by the
+		// resend job; "not in data" pending with its document owed where the
+		// load holds it extracted, else with no status, nothing owed.
+		var status any = string(model.FoundryReleasePending)
+		docs := []string{*d.DocID}
+		if current == loadID {
+			seen := map[string]bool{*d.DocID: true}
+			for _, doc := range documentIDs {
+				if !seen[doc] {
+					seen[doc] = true
+					docs = append(docs, doc)
+				}
+			}
+		} else {
+			var extracted bool
+			if err := tx.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_extractions
+  WHERE load_id=? AND document_id=? AND status='extracted')`, current, *d.DocID).Scan(&extracted); err != nil {
+				return err
+			}
+			switch {
+			case d.EntityKey != nil:
+				status = string(model.FoundryReleaseCarried)
+			case !extracted:
+				status, docs = nil, nil
+			}
+		}
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
+WHERE load_id=? AND kind='resolve' AND type=? AND doc_id=? AND norm_name=? AND id<>?`, current, d.Type, *d.DocID, *d.NormName, d.ID); err != nil {
+			return err
+		}
+		if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, name_key, applied_status)
+SELECT ?, `+foundryReviewDecisionColumns+`, name_key, ? FROM foundry_review_decisions WHERE ontology_id=? AND id=?
+ON DUPLICATE KEY UPDATE entity_key=VALUES(entity_key), decided_by_user_id=VALUES(decided_by_user_id), decided_at=VALUES(decided_at),
+  name_key=VALUES(name_key), applied_status=VALUES(applied_status), applied_reason=NULL, applied_at=NULL`,
+			current, status, d.OntologyID, d.ID); err != nil {
+			return err
+		}
+		if st, ok := status.(string); ok {
+			d.Applied = &model.FoundryDecisionApplied{Status: model.FoundryReleaseStatus(st)}
+		}
+		if err := tx.oweFoundryResends(ctx, current, model.FoundryResendName, docs); err != nil {
+			return err
+		}
+		queued, err = tx.queueFoundryResendBehind(ctx, o, live, resend)
+		return err
+	})
+	return queued, err
 }
 
 // foundryLoadTakes reports whether the version load loadID was made from
@@ -143,7 +303,7 @@ FROM foundry_review_decisions r WHERE r.ontology_id=? AND r.kind='prop' AND r.ty
 				d.OntologyID).Scan(&held); err != nil {
 				return err
 			}
-			if held >= model.FoundryExtractDecisionsMax {
+			if held >= model.FoundryExtractKindDecisionsMax {
 				return FoundryValueDecisionsFull
 			}
 		case err != nil:
@@ -210,14 +370,15 @@ func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.Foundr
 		// it approved keeps all three, as it is the decision first made; any
 		// other settle is a decision made now, from the queue or not.
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_review_decisions
- (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id, drawn)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, ?)
+ (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id, drawn, name_key)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, ?, ?)
  ON DUPLICATE KEY UPDATE
  drawn=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), drawn, VALUES(drawn)),
  decided_by_user_id=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), decided_by_user_id, VALUES(decided_by_user_id)),
  decided_at=IF(kind='release' AND statement_hash <=> VALUES(statement_hash), decided_at, NOW(6)),
- entity_key=VALUES(entity_key), value=VALUES(value), statement_hash=VALUES(statement_hash)`,
-			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID, d.Drawn); err != nil {
+ entity_key=VALUES(entity_key), value=VALUES(value), statement_hash=VALUES(statement_hash), name_key=VALUES(name_key)`,
+			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID, d.Drawn,
+			foundryNameKey(d)); err != nil {
 			return err
 		}
 	}
@@ -540,6 +701,123 @@ func (s *mysqlDB) ListFoundryLoadDecisions(ctx context.Context, loadID, afterID 
 	return s.listFoundryDecisions(ctx, "foundry_load_decisions", "load_id", loadID, afterID, documentIDs, limit)
 }
 
+// foundryNameKey is the name_key of a resolve decision that chose an entity,
+// an alias (namewords.Key of its norm_name); NULL for "not in data", which
+// carries nothing, for any other kind, and for a name with no word.
+func foundryNameKey(d *model.FoundryReviewDecision) any {
+	if d.Kind != model.FoundryReviewResolve || d.NormName == nil || d.EntityKey == nil {
+		return nil
+	}
+	key, ok := namewords.Key(*d.NormName)
+	if !ok {
+		return nil
+	}
+	return key
+}
+
+// FoundryAliasKeysPerRead is the most name keys one ListFoundryLoadAliasesNamed
+// reads: an IN list MySQL's range optimizer takes whole, so the read stays
+// on foundry_load_decisions_names_idx.
+const FoundryAliasKeysPerRead = 2000
+
+// ListFoundryLoadAliasesNamed reads the aliases of a load's list whose
+// name_key is one of keys (at most FoundryAliasKeysPerRead): the names a
+// person linked to an entity that a document whose words have those keys may
+// write (namewords.Text.Keys), which the load carries to it (contract
+// 4.23.0). One a type, name and entity, of any document: the earliest
+// decided, the smallest id among those decided at once, so every Extract
+// sends the same alias; a name chosen as two entities gives both. The caller
+// checks that the document writes each name. Point reads on
+// foundry_load_decisions_names_idx (load_id, kind, name_key), numbered over
+// the rows they find alone: what it costs is bounded by the keys and their
+// rows, not by the load.
+func (s *mysqlDB) ListFoundryLoadAliasesNamed(ctx context.Context, loadID string, keys []int64) ([]*model.FoundryReviewDecision, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	if len(keys) > FoundryAliasKeysPerRead {
+		return nil, fmt.Errorf("at most %d name keys a read", FoundryAliasKeysPerRead)
+	}
+	args := make([]any, 0, len(keys)+1)
+	args = append(args, loadID)
+	for _, k := range keys {
+		args = append(args, k)
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT "+foundryReviewDecisionColumns+" FROM (SELECT "+foundryReviewDecisionColumns+`,
+  ROW_NUMBER() OVER (PARTITION BY type, norm_name, entity_key ORDER BY decided_at, id) AS earliest
+  FROM foundry_load_decisions WHERE load_id=? AND kind='resolve' AND name_key IN (`+strings.TrimSuffix(strings.Repeat("?,", len(keys)), ",")+`)
+  AND entity_key IS NOT NULL) a
+WHERE earliest=1`, args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanAll(rows, scanFoundryReviewDecision)
+}
+
+// FoundryLoadHasAliases reports whether the load's list holds an alias with
+// its name key: with none, no document needs an alias read. One index probe.
+func (s *mysqlDB) FoundryLoadHasAliases(ctx context.Context, loadID string) (bool, error) {
+	var has bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_decisions
+WHERE load_id=? AND kind='resolve' AND name_key IS NOT NULL)`, loadID).Scan(&has)
+	return has, err
+}
+
+// FillFoundryLoadNameKeys gives the load's aliases (resolves that chose an
+// entity) that have no name_key theirs, and the ontology's saved decisions
+// they were copied from (foundry_review_decisions, by id), so the next load
+// copies them keyed: those settled before name keys, and copies an older
+// binary made. A thousand at a time, through foundry_load_decisions_names_idx,
+// so with none left it reads one empty range. It returns how many it filled.
+func (s *mysqlDB) FillFoundryLoadNameKeys(ctx context.Context, loadID string) (int, error) {
+	type unkeyed struct{ id, ontology, name string }
+	filled := 0
+	for {
+		rows, err := s.db.QueryContext(ctx, `SELECT id, ontology_id, norm_name FROM foundry_load_decisions
+WHERE load_id=? AND kind='resolve' AND name_key IS NULL AND norm_name IS NOT NULL AND entity_key IS NOT NULL ORDER BY id LIMIT 1000`, loadID)
+		if err != nil {
+			return filled, err
+		}
+		page, err := scanAll(rows, func(row rowScanner) (unkeyed, error) {
+			var u unkeyed
+			return u, row.Scan(&u.id, &u.ontology, &u.name)
+		})
+		if err != nil {
+			return filled, err
+		}
+		if len(page) == 0 {
+			return filled, nil
+		}
+		// A name with no word is keyed 0, which no text's words hash to in
+		// practice, so it is keyed once and never read.
+		var cases strings.Builder
+		keys := make([]any, 0, 2*len(page))
+		ids := make([]any, 0, len(page))
+		for _, u := range page {
+			key, _ := namewords.Key(u.name)
+			cases.WriteString(" WHEN ? THEN ?")
+			keys = append(keys, u.id, key)
+			ids = append(ids, u.id)
+		}
+		in := strings.TrimSuffix(strings.Repeat("?,", len(page)), ",")
+		if err := s.WithTx(ctx, func(db Store) error {
+			tx := db.(*mysqlDB)
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET name_key = CASE id`+cases.String()+` END
+WHERE load_id=? AND id IN (`+in+`)`, append(append(append([]any{}, keys...), loadID), ids...)...); err != nil {
+				return err
+			}
+			// The saved decision it copies, if it is still the same name.
+			_, err := tx.db.ExecContext(ctx, `UPDATE foundry_review_decisions SET name_key = CASE id`+cases.String()+` END
+WHERE ontology_id=? AND id IN (`+in+`) AND kind='resolve' AND name_key IS NULL AND entity_key IS NOT NULL`,
+				append(append(append([]any{}, keys...), page[0].ontology), ids...)...)
+			return err
+		}); err != nil {
+			return filled, err
+		}
+		filled += len(page)
+	}
+}
+
 // table and key are internal SQL identifiers, never request values.
 func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontologyID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error) {
 	if limit < 1 || limit > 10001 {
@@ -579,7 +857,10 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 
 // DeleteFoundryReviewDecision removes a decision from those later loads
 // copy, and takes it back from the loads that hold it as far as each kind
-// can be. A resolve stays in the loads that copied it, with what it wrote. A
+// can be. A resolve stays in the loads that copied it, with what it wrote;
+// its copy in the current load that waits, or was refused, goes, and so does
+// one in another load when that load is current again (carryFoundryResolves),
+// so no resend sends a choice a person took back. A
 // reject is in no load: with it gone, its claim's card is listed again.
 //
 // A release is taken back from the current load at once (contract 4.16.0).
@@ -642,6 +923,16 @@ func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, workspaceID, 
 			return err
 		}
 		switch model.FoundryReviewDecisionKind(kind) {
+		case model.FoundryReviewResolve:
+			// A copy the current load waits to settle, or one it refused, has
+			// written nothing, and is not sent again; one it wrote stays, as
+			// what it wrote stays, and so does one the load was created with.
+			if o.CurrentLoadID == nil {
+				return nil
+			}
+			_, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions WHERE load_id=? AND id=? AND kind='resolve'
+  AND applied_status IN ('pending', 'carried', 'refused')`, *o.CurrentLoadID, id)
+			return err
 		case model.FoundryReviewRelease:
 			if o.CurrentLoadID == nil {
 				return nil

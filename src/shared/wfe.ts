@@ -450,6 +450,36 @@ export type FoundryUsage = {
 /** helixwfev1FoundryUsageResponse */
 export type FoundryUsageResponse = { usage?: FoundryUsage };
 
+// ---------------------------------------------------------------- Feedback
+
+/**
+ * v1FeedbackCategory: what feedback is about. The site sends bug, missing
+ * capability (an idea), confusing result and other from its Feedback
+ * button, and connector request from Request a connector.
+ */
+export type FeedbackCategory =
+  | "FEEDBACK_CATEGORY_BUG"
+  | "FEEDBACK_CATEGORY_MISSING_CAPABILITY"
+  | "FEEDBACK_CATEGORY_CONFUSING_RESULT"
+  | "FEEDBACK_CATEGORY_OTHER"
+  | "FEEDBACK_CATEGORY_CONNECTOR_REQUEST";
+
+/**
+ * v1SendFeedbackRequest (POST /v1/feedback): a person's feedback, which the
+ * WFE stores and tells Helix's team of. `message` is 1 to 4096 bytes of
+ * UTF-8; `workspaceId`, when set, is one the caller belongs to; `page` is
+ * the path they were on (at most 255 bytes, starting "/").
+ */
+export type SendFeedbackRequest = {
+  category: FeedbackCategory;
+  message: string;
+  workspaceId?: string;
+  page?: string;
+};
+
+/** v1SendFeedbackResponse */
+export type SendFeedbackResponse = { id?: string };
+
 // ---------------------------------------------------------------- Data: connectors and syncs
 // Routes under /v1/workspaces/{workspaceId}/foundry/connectors....
 // Credentials are
@@ -1495,7 +1525,9 @@ export type AgentDraftView = {
     rev?: number;
     base_version?: string | null;
     items?: Record<string, AgentDraftItem>;
-    left_out?: { what: string; reason: string }[];
+    // `because` (contract 4.19.0): "not_assessed", {user_asked: {said}} or
+    // {documents_state: {route, item}}; readAgentBundle reads it.
+    left_out?: { what: string; reason: string; because?: unknown }[];
     questions?: AgentDraftQuestion[];
   };
 };
@@ -1693,6 +1725,29 @@ export type DocumentExtraction = {
   // int64: what reading it cost, in millionths of a dollar.
   usdMicros?: string;
   finishedAt?: string | null;
+  // Names linked by a person's choice for them in another document
+  // (contract 4.22.0: an alias carried from a settled resolve).
+  resolvedCarried?: number;
+  // What the load made of each name decision it met here: the document's
+  // own resolves, and the choices carried from other documents.
+  names?: DocumentNameOutcome[];
+};
+
+/**
+ * v1FoundryDocumentNameOutcome (contract 4.22.0): a name decision the load
+ * met in a document. `decision` "resolve" is the document's own choice,
+ * "alias" one carried from another document; `outcome` "written",
+ * "not_asked" (nothing in the load waited on it), "not_named" (the document
+ * doesn't name it) or "refused", with `reason` saying why. Each is an open
+ * set: a newer engine may send others.
+ */
+export type DocumentNameOutcome = {
+  decision?: string;
+  type?: string;
+  normName?: string;
+  decisionId?: string;
+  outcome?: string;
+  reason?: string;
 };
 
 /**
@@ -3987,7 +4042,10 @@ export type ReviewDecision =
       statementHash: string;
     };
 /**
- * What became of a release or a prop decision in the ontology's current load:
+ * What became of a release, a resolve (contract 4.22.0: its word on its own
+ * document; `refused` with `not_replayed` for a load read before names could
+ * be settled in place, which the next load applies) or a prop decision in
+ * the ontology's current load:
  * `pending` while a job has yet to apply it, `written` once a release's claim
  * is a fact, `refused` when it stays held (`reason` says why, in the engine's
  * word or the backend's, and may be one this site doesn't know), `missed`

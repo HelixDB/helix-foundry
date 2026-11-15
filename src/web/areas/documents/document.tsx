@@ -82,8 +82,11 @@ import {
 import {
   documentBadge,
   documentViewer,
+  evidenceShapeText,
   failureText,
   fileRead,
+  nameDecisionText,
+  nameOutcomeText,
   formatBytes,
   formatUsd,
   segments,
@@ -768,6 +771,18 @@ export function DocumentPage({ documentId }: { documentId: string }) {
   const shownLoad =
     selection.choice.kind === "load" ? selection.choice.load : undefined;
   const run = x?.sections.find((s) => s.model);
+  // The load's name outcomes here, each said once: two aliases of one name
+  // refused alike read the same.
+  const names = (d.extraction?.names || []).filter(
+    (n, i, all) =>
+      all.findIndex(
+        (o) =>
+          o.decision === n.decision &&
+          o.type === n.type &&
+          o.normName === n.normName &&
+          nameOutcomeText(o) === nameOutcomeText(n),
+      ) === i,
+  );
   return (
     <Page width="wide">
       <PageHeader
@@ -1107,8 +1122,12 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                           )}
                           <small>
                             Section {r.section + 1}
+                            {evidenceShapeText(r.evidenceShape) &&
+                              ` · ${evidenceShapeText(r.evidenceShape)}`}
                             {r.suggestedLink &&
                               ` · suggested link: ${r.suggestedLink}`}
+                            {r.endTypes &&
+                              ` · between a ${r.endTypes.subject} and a ${r.endTypes.object}`}
                             {r.confidence !== undefined &&
                               ` · ${Math.round(r.confidence * 100)}% confident`}
                           </small>
@@ -1164,6 +1183,17 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                       d.extraction &&
                       formatNumber(d.extraction.attributes || 0),
                   },
+                  // Names an alias from another document's choice linked
+                  // (contract 4.22.0), when any did.
+                  ...((d.extraction?.resolvedCarried || 0) > 0
+                    ? [
+                        {
+                          label:
+                            "Names linked by a choice made in another document",
+                          value: formatNumber(d.extraction!.resolvedCarried!),
+                        },
+                      ]
+                    : []),
                   {
                     label: "Cost to read",
                     value: d.extraction && formatUsd(d.extraction.usdMicros),
@@ -1180,6 +1210,25 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                   { label: "Document ID", value: d.id, mono: true },
                 ]}
               />
+              {names.length > 0 && (
+                <section className="dc-names">
+                  <h3>Name choices this load met</h3>
+                  <ul className="dc-doc-list" aria-label="Name choices">
+                    {names.map((n, i) => (
+                      <li key={i}>
+                        <span>
+                          <strong>{n.normName || "A name"}</strong>
+                          {n.type && <> · {n.type}</>}
+                          {nameDecisionText(n.decision) && (
+                            <> · {nameDecisionText(n.decision)}</>
+                          )}
+                        </span>
+                        <small>{nameOutcomeText(n)}</small>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
             </TabPanel>
           </div>
         </div>

@@ -581,7 +581,7 @@ func TestFoundryResendRefusals(t *testing.T) {
 		owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
 		require.NoError(t, err)
 		require.Len(t, owed, 1)
-		require.NoError(t, f.db.RecordFoundryReleaseOutcomes(ctx, job.ID, f.worker, f.a, changed(da, db)))
+		require.NoError(t, f.db.RecordFoundryReleaseOutcomes(ctx, job.ID, f.worker, f.a, changed(da, db), nil))
 		require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
 			DocumentID: f.a, Reason: owed[0].Reason, Requests: owed[0].Requests, Refused: model.FoundryReleaseDocumentFailed, Unsaid: true,
 		}))
@@ -613,7 +613,7 @@ func TestFoundryResendRefusals(t *testing.T) {
 		job = f.claim(t)
 		owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
 		require.NoError(t, err)
-		require.NoError(t, f.db.RecordFoundryReleaseOutcomes(ctx, job.ID, f.worker, f.a, changed(da, db, dc)))
+		require.NoError(t, f.db.RecordFoundryReleaseOutcomes(ctx, job.ID, f.worker, f.a, changed(da, db, dc), nil))
 		require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{
 			DocumentID: f.a, Reason: owed[0].Reason, Requests: owed[0].Requests, Refused: model.FoundryReleaseDocumentFailed, Unsaid: true,
 		}))

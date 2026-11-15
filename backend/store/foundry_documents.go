@@ -633,7 +633,7 @@ func (s *mysqlDB) countUnrecordedFoundryDocuments(ctx context.Context, loadID st
 
 const foundryExtractionColumns = `load_id, document_id, ontology_id, workspace_id, job_id, status, duplicate_of, error_code, error_retryable,
        sections, entities, mentions, facts, reviews, unresolved, rejected, usd_micros, input_tokens, output_tokens,
-       artifact_key, finished_at, attributes, attribute_reviews, prop_conflicts, created, identifiers_unverified, attributes_over_entries, resolved_user, resolved_adjudicated, resolved_identifier, resolved_name, resolved_alias, resolved_created`
+       artifact_key, finished_at, attributes, attribute_reviews, prop_conflicts, created, identifiers_unverified, attributes_over_entries, resolved_user, resolved_adjudicated, resolved_identifier, resolved_name, resolved_alias, resolved_created, resolved_carried, names`
 
 // GetFoundryDocumentExtraction returns what extracting a document into a
 // load made of it.
@@ -722,10 +722,11 @@ func scanFoundryExtraction(scanner rowScanner) (*model.FoundryDocumentExtraction
 	var status string
 	var duplicateOf, errorCode, artifactKey sql.NullString
 	var retryable sql.NullBool
+	var names []byte
 	c := &e.Counts
 	if err := scanner.Scan(&e.LoadID, &e.DocumentID, &e.OntologyID, &e.WorkspaceID, &e.JobID, &status, &duplicateOf, &errorCode, &retryable,
 		&c.Sections, &c.Entities, &c.Mentions, &c.Facts, &c.Reviews, &c.Unresolved, &c.Rejected,
-		&e.USDMicros, &e.InputTokens, &e.OutputTokens, &artifactKey, &e.FinishedAt, &c.Attributes, &c.AttributeReviews, &c.PropConflicts, &c.Created, &c.IdentifiersUnverified, &c.AttributesOverEntries, &c.ResolvedUser, &c.ResolvedAdjudicated, &c.ResolvedIdentifier, &c.ResolvedName, &c.ResolvedAlias, &c.ResolvedCreated); err != nil {
+		&e.USDMicros, &e.InputTokens, &e.OutputTokens, &artifactKey, &e.FinishedAt, &c.Attributes, &c.AttributeReviews, &c.PropConflicts, &c.Created, &c.IdentifiersUnverified, &c.AttributesOverEntries, &c.ResolvedUser, &c.ResolvedAdjudicated, &c.ResolvedIdentifier, &c.ResolvedName, &c.ResolvedAlias, &c.ResolvedCreated, &c.ResolvedCarried, &names); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
 		}
@@ -741,5 +742,6 @@ func scanFoundryExtraction(scanner rowScanner) (*model.FoundryDocumentExtraction
 	if artifactKey.Valid {
 		e.ArtifactKey = &artifactKey.String
 	}
+	e.Names = scanFoundryDocumentNames(names)
 	return &e, nil
 }

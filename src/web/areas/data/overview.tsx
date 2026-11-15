@@ -1,6 +1,12 @@
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useRef, useState } from "react";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Cable, Folder, Plus, Upload } from "lucide-react";
+import { Cable, Folder, MessageSquarePlus, Plus, Upload } from "lucide-react";
 import type { Connector } from "../../../shared/wfe";
 import { number } from "../../api";
 import { paths } from "../../paths";
@@ -31,6 +37,8 @@ import { useOntologyNames } from "../documents/sets";
 import { ConnectData } from "./connect-data";
 import { connectorsQuery } from "./data-api";
 import { connectorBadge, lastSyncedAt, rowTotal } from "./model";
+import { PICKER_OPENED, pickerOpened } from "./paths";
+import { RequestConnectorDialog } from "./request-connector";
 import { useDataUpload } from "./upload";
 
 // The Connectors page (/data): what the workspace holds at a glance. Its totals, its
@@ -42,7 +50,8 @@ import { useDataUpload } from "./upload";
 // ?add=<kind> that kind's form, as the Helix MCP's links do, bound to the
 // sign-in an agent started with &sign_in=<id>) and upload
 // documents, with Upload documents or by dropping files on a set people
-// made or anywhere else on the page (./upload.tsx). One list each, so it
+// made or anywhere else on the page (./upload.tsx). Anyone may request a
+// connector Foundry lacks (./request-connector.tsx). One list each, so it
 // stays light.
 
 type ConnectionRow = Connector & {
@@ -62,22 +71,38 @@ export function DataOverview() {
   const connectors = useQuery(connectorsQuery(id)),
     documents = useQuery(documentQueries.workspace(id)),
     sets = useQuery(documentSetQueries.list(id));
-  const files = useDataUpload();
-  const [params, setParams] = useSearchParams();
+  const files = useDataUpload(),
+    [requesting, setRequesting] = useState(false);
+  const [params, setParams] = useSearchParams(),
+    location = useLocation(),
+    closing = useRef("");
+  // Opening the picker pushes an entry (Back closes it); closing goes back
+  // to where a link opened it from, else drops the parameters in place.
   const picker = params.has("add") && manage,
-    setPicker = (open: boolean) =>
+    openPicker = () =>
       setParams(
         (p) => {
           const next = new URLSearchParams(p);
-          if (open) next.set("add", "1");
-          else {
-            next.delete("add");
-            next.delete("sign_in");
-          }
+          next.set("add", "1");
+          return next;
+        },
+        { state: PICKER_OPENED },
+      ),
+    closePicker = () => {
+      // Once per entry: a second Escape before the page moves goes nowhere.
+      if (closing.current === location.key) return;
+      closing.current = location.key;
+      if (pickerOpened(location.state)) return void navigate(-1);
+      setParams(
+        (p) => {
+          const next = new URLSearchParams(p);
+          next.delete("add");
+          next.delete("sign_in");
           return next;
         },
         { replace: true },
       );
+    };
   const rows = (connectors.data?.connectors || []).map(
     (c): ConnectionRow => ({
       ...c,
@@ -104,7 +129,7 @@ export function DataOverview() {
   const empty = !!connectors.data && !rows.length,
     failed = !connectors.data && !!connectors.error;
   const addData = manage && (
-    <Button variant="primary" icon={Plus} onClick={() => setPicker(true)}>
+    <Button variant="primary" icon={Plus} onClick={openPicker}>
       Add data
     </Button>
   );
@@ -152,7 +177,20 @@ export function DataOverview() {
         {files.chooser}
         {connectors.data && <RefreshFailed query={connectors} />}
         {files.list}
-        <Section title="Connections" id="dt-connections">
+        <Section
+          title="Connections"
+          id="dt-connections"
+          actions={
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={MessageSquarePlus}
+              onClick={() => setRequesting(true)}
+            >
+              Request a connector
+            </Button>
+          }
+        >
           {failed ? (
             <EmptyState
               icon={Cable}
@@ -326,11 +364,16 @@ export function DataOverview() {
             </ul>
           )}
         </Section>
+        {requesting && (
+          <RequestConnectorDialog onClose={() => setRequesting(false)} />
+        )}
         {picker && (
           <ConnectData
+            // Another link's kind or sign-in opens afresh.
+            key={`${params.get("add")} ${params.get("sign_in")}`}
             initialKind={params.get("add")}
             signIn={params.get("sign_in")}
-            onClose={() => setPicker(false)}
+            onClose={closePicker}
           />
         )}
       </div>

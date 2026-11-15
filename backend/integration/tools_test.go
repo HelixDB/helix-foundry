@@ -873,10 +873,13 @@ func TestGetVersionNamesTheTablesItsDraftLeftOut(t *testing.T) {
 	orders, notes := ontologyagent.TableSourceID("connector-1", "orders"), ontologyagent.TableSourceID("connector-2", "public.notes")
 	draft := map[string]any{
 		"rev": 1.0,
+		// Each with its kind of reason, when the agent gave one (4.19.0), passed through.
 		"left_out": []any{
-			map[string]any{"what": notes, "reason": "No question needs the notes."},
-			map[string]any{"what": orders + " file.internal_memo", "reason": "Free text no question needs."},
-			map[string]any{"what": "src_0123456789abcdef", "reason": "A table its generation didn't read."},
+			map[string]any{"what": notes, "reason": "No question needs the notes.", "because": "not_assessed"},
+			map[string]any{"what": orders + " file.internal_memo", "reason": "Free text no question needs.",
+				"because": map[string]any{"user_asked": map[string]any{"said": "leave the memos out"}}},
+			map[string]any{"what": "src_0123456789abcdef", "reason": "A table its generation didn't read.",
+				"because": map[string]any{"documents_state": map[string]any{"route": "notes", "item": "Customer.tier"}}},
 			map[string]any{"what": "set-minutes", "reason": "No question needs the minutes."},
 			map[string]any{"what": "the " + orders + " audit columns", "reason": "An entry that doesn't start with an id."},
 		},
@@ -897,9 +900,11 @@ func TestGetVersionNamesTheTablesItsDraftLeftOut(t *testing.T) {
 	}}
 	arguments := map[string]any{"workspace_id": "workspace-1", "ontology_id": "ontology-1", "version_id": "version-1"}
 	unnamed := []any{
-		map[string]any{"what": notes, "reason": "No question needs the notes."},
-		map[string]any{"what": orders + " file.internal_memo", "reason": "Free text no question needs."},
-		map[string]any{"what": "src_0123456789abcdef", "reason": "A table its generation didn't read."},
+		map[string]any{"what": notes, "reason": "No question needs the notes.", "because": "not_assessed"},
+		map[string]any{"what": orders + " file.internal_memo", "reason": "Free text no question needs.",
+			"because": map[string]any{"user_asked": map[string]any{"said": "leave the memos out"}}},
+		map[string]any{"what": "src_0123456789abcdef", "reason": "A table its generation didn't read.",
+			"because": map[string]any{"documents_state": map[string]any{"route": "notes", "item": "Customer.tier"}}},
 		map[string]any{"what": "set-minutes", "reason": "No question needs the minutes."},
 		map[string]any{"what": "the " + orders + " audit columns", "reason": "An entry that doesn't start with an id."},
 	}
@@ -911,8 +916,9 @@ func TestGetVersionNamesTheTablesItsDraftLeftOut(t *testing.T) {
 		map[string]any{"source_id": notes, "connector_id": "connector-2", "table": "public.notes"},
 	}, out["tables"])
 	assert.Equal(t, []any{
-		map[string]any{"what": notes, "reason": "No question needs the notes.", "connector_id": "connector-2", "table": "public.notes"},
-		map[string]any{"what": orders + " file.internal_memo", "reason": "Free text no question needs.", "connector_id": "connector-1", "table": "orders"},
+		map[string]any{"what": notes, "reason": "No question needs the notes.", "because": "not_assessed", "connector_id": "connector-2", "table": "public.notes"},
+		map[string]any{"what": orders + " file.internal_memo", "reason": "Free text no question needs.",
+			"because": map[string]any{"user_asked": map[string]any{"said": "leave the memos out"}}, "connector_id": "connector-1", "table": "orders"},
 		unnamed[2], unnamed[3], unnamed[4],
 	}, out["definition"].(map[string]any)["left_out"])
 

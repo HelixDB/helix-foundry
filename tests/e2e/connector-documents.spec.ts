@@ -30,6 +30,10 @@ async function connectGranola(page: Page, transcripts = false) {
     await form.getByRole("checkbox", { name: /^Transcripts/ }).check();
   await form.getByRole("button", { name: "Test connection" }).click();
   await form.getByRole("button", { name: "Connect and sync" }).click();
+  await page
+    .getByRole("dialog", { name: "Connected" })
+    .getByRole("button", { name: /^Open / })
+    .click();
   await expect(page).toHaveURL(/\/data\/connections\/[^/?]+$/);
   await expect(set(page, "Notes")).toContainText("418 documents", {
     timeout: 15_000,

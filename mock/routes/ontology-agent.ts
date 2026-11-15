@@ -175,7 +175,7 @@ export function draftFromTables(
     enrichments: Record<string, Record<string, unknown>> = {},
     items: Record<string, AgentDraftItem> = {},
     questions: AgentDraftQuestion[] = [],
-    leftOut: { what: string; reason: string }[] = [],
+    leftOut: { what: string; reason: string; because?: unknown }[] = [],
     linkNames = new Set<string>();
 
   for (const p of plan) {
@@ -356,12 +356,19 @@ export function draftFromTables(
   }
 
   // From text alone: Contracts its documents create, with when each was
-  // signed and how long it runs.
+  // signed and how long it runs. As the agent probes a set its route reads
+  // (contract 4.20.0), sample documents of the first set state a notice
+  // period too, which a route of its own reads; and it says why it left
+  // out what it didn't route, one entry of each kind (contract 4.19.0).
   const extractions: Record<string, Record<string, unknown>> = {};
   if (!picked.length && texts.length) {
     const contract = {
       description: "An agreement its documents describe, known by its title.",
-      props: { signed_on: "date", term_months: "integer" },
+      props: {
+        signed_on: "date",
+        term_months: "integer",
+        notice_days: "integer",
+      },
     };
     types.Contract = contract;
     items["type.Contract"] = {
@@ -383,6 +390,43 @@ export function draftFromTables(
       rationale: `Reads a Contract from each document of ${texts.map((t) => t.name).join(" and ")}.`,
       serves: [],
     };
+    const sample = texts[0]!,
+      probe = `probe_${sample.id.replace(/[^A-Za-z0-9]/g, "_")}`;
+    const found = {
+      documents: [sample.id],
+      types: { Contract: { create: false, props: ["notice_days"] } },
+    };
+    extractions[probe] = found;
+    items[`extraction.${probe}`] = {
+      toml: toml({ extractions: { [probe]: found } }),
+      status: "proposed",
+      rationale: `3 of 4 sample documents of ${sample.name} state a Contract’s notice period, which no route asked for.`,
+      serves: ["probe"],
+    };
+    leftOut.push(
+      {
+        what: texts[texts.length - 1]!.id,
+        reason: "Not assessed: the turn’s budget ran out first.",
+        because: "not_assessed",
+      },
+      // Quoting the user's own words: only with a goal.
+      ...(goal
+        ? [
+            {
+              what: "Contract.renewal_terms",
+              reason: "The goal leaves renewals out.",
+              because: { user_asked: { said: goal } },
+            },
+          ]
+        : []),
+      {
+        what: "Contract.term_months",
+        reason: "Stated again in later amendments.",
+        because: {
+          documents_state: { route: "contracts", item: "Contract.term_months" },
+        },
+      },
+    );
   }
   const ontologyToml = toml({ version: "draft", types, links }),
     mappingsToml = toml({

@@ -29,6 +29,7 @@ import type { AgentOperation } from "./areas/agent/model";
 import type { TemplateId } from "./areas/automations/model";
 import type { SectionId } from "./shell/types";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
+import type { FeedbackKind } from "./feedback";
 import type { SignInError } from "./sign-in";
 import type { ShellWorkspace, WorkspaceRole } from "./ui";
 import type { SignInFailureCode } from "./areas/data/sign-ins";
@@ -313,6 +314,11 @@ export type AnalyticsEvents = {
   star_prompt_shown: { via: "in_place" | "on_github" };
   star_prompt_clicked: { outcome: "starred" | "opened_github" };
   star_prompt_dismissed: undefined;
+
+  // Feedback (src/web/feedback.ts): sent from the Feedback button, by its
+  // kind, and a connector requested from the Data area. Never its words.
+  feedback_sent: { kind: FeedbackKind };
+  connector_requested: undefined;
 
   // Where the app stood in the way: a Pro-only feature (its gate's label,
   // which names the feature, never data), or a page that crashed.

@@ -351,7 +351,7 @@ type FoundryVersionOutput struct {
 	LoadRefusal string `json:"load_refusal,omitempty"`
 	// The description keeps this schema an object: an any's schema without one marshals as true,
 	// which some clients refuse.
-	Definition any `json:"definition,omitempty" jsonschema:"Untrusted ontology definition, in the shape format names. An agent bundle's questions are the draft's open questions: a question's default is the agent's suggestion, not a decision, so read what the draft does from its files and document_reads. Its left_out lists what the draft left out of the sources it was given, each {what, reason}: what starts with a source's id, then names the field when it is one. A synced table's id is src_ and 16 hex digits, and its entry also has connector_id and table (the version's tables lists every one); a table file's is its document id, which helix_foundry_list_documents names; a document set's is the set's id, which helix_foundry_get_ontology names."`
+	Definition any `json:"definition,omitempty" jsonschema:"Untrusted ontology definition, in the shape format names. An agent bundle's questions are the draft's open questions: a question's default is the agent's suggestion, not a decision, so read what the draft does from its files and document_reads. Its left_out lists what the draft left out of the sources it was given, each {what, reason} and, when the agent said, because (helix_foundry_get_version gives its three shapes): what starts with a source's id, then names the field when it is one. A synced table's id is src_ and 16 hex digits, and its entry also has connector_id and table (the version's tables lists every one); a table file's is its document id, which helix_foundry_list_documents names; a document set's is the set's id, which helix_foundry_get_ontology names."`
 	// definitionBytes is the size of Definition encoded, for get_version's cap.
 	definitionBytes int
 }
@@ -557,15 +557,27 @@ type FoundryExtractionOutput struct {
 	Status      string `json:"status"`
 	DuplicateOf string `json:"duplicate_of,omitempty"`
 	// ErrorCode is too_large, unsupported, model or store, for failed.
-	ErrorCode  string `json:"error_code,omitempty"`
-	Retryable  bool   `json:"retryable,omitempty"`
-	Sections   int32  `json:"sections"`
-	Entities   int32  `json:"entities"`
-	Facts      int32  `json:"facts"`
-	Values     int32  `json:"values" jsonschema:"Values written: property values it stated that were written as evidence."`
-	Reviews    int32  `json:"reviews"`
-	USDMicros  int64  `json:"usd_micros"`
-	FinishedAt string `json:"finished_at,omitempty"`
+	ErrorCode  string                        `json:"error_code,omitempty"`
+	Retryable  bool                          `json:"retryable,omitempty"`
+	Sections   int32                         `json:"sections"`
+	Entities   int32                         `json:"entities"`
+	Facts      int32                         `json:"facts"`
+	Values     int32                         `json:"values" jsonschema:"Values written: property values it stated that were written as evidence."`
+	Reviews    int32                         `json:"reviews"`
+	USDMicros  int64                         `json:"usd_micros"`
+	FinishedAt string                        `json:"finished_at,omitempty"`
+	Carried    int32                         `json:"carried,omitempty" jsonschema:"Entities linked by a name a person linked to that entity in another document, which the load carries to every document."`
+	Names      []FoundryExtractionNameOutput `json:"names,omitempty" jsonschema:"What the load did with each decision on a name that met the document: its own resolve decisions, and the names carried from other documents where the load would otherwise have asked a person."`
+}
+
+// FoundryExtractionNameOutput is what a load did with one decision on a name of a document.
+type FoundryExtractionNameOutput struct {
+	Decision   string `json:"decision" jsonschema:"resolve (the document's own decision on the name) or alias (a name a person linked to an entity in another document, carried to this one)."`
+	Type       string `json:"type"`
+	NormName   string `json:"norm_name"`
+	DecisionID string `json:"decision_id,omitempty" jsonschema:"The decision's id: of an alias, the resolve decision that linked the name."`
+	Outcome    string `json:"outcome" jsonschema:"written (applied in this load), not_asked (nothing in this load waited on it; it applies when the document is read again), not_named (the document doesn't name it) or refused (not applied; reason says why)."`
+	Reason     string `json:"reason,omitempty" jsonschema:"Why it was refused: absent (the entity chosen isn't in the load), bound (the document's name is already linked another way; it changes when the document is read again), collides (another name in the document is already that entity), differs (the load no longer matches what the document gave; it applies when the document is read again), too_large (too large to write in place; the next load applies it), two_rows (another entity goes by the name too, or people linked it to different entities), role_term (a role, like the Customer, not a name), shared (another party in the document goes by it too), identifier (the document gives an identifier that doesn't match the entity), other_identity (the names show a different legal company), not_replayed (the document was read by an older version, or sent again without its reading; the next load applies it). Another reason means not applied in this load."`
 }
 
 // FoundryFileReadOutput is how ontologies read a document and what reading
@@ -654,7 +666,7 @@ type FoundryReviewDecisionOutput struct {
 	// which measures precision). Absent for a decision made elsewhere.
 	Drawn string `json:"drawn,omitempty" jsonschema:"ranked or random: how the review queue showed the card it was decided on; absent for a decision made elsewhere"`
 	// Applied is what became of a release, a value or a withdraw in the current load.
-	Applied *FoundryDecisionAppliedOutput `json:"applied,omitempty" jsonschema:"What became of a release, a chosen value or a withdraw in the ontology's current load; absent for a resolve or a reject, and for one that load's list doesn't hold yet."`
+	Applied *FoundryDecisionAppliedOutput `json:"applied,omitempty" jsonschema:"What became of a release, a chosen value or a withdraw in the ontology's current load; absent for one that load's list doesn't hold yet, and for a reject and a resolve. A resolve applies from the next load: one that chose an entity also links that name to it in every document of that load where the load would otherwise ask (an alias; a document's extraction names says what became of it there), and not in data applies to its own document only."`
 }
 
 // FoundryReviewOutput is one review a load holds, with what settles it.
@@ -898,6 +910,9 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			"Get one version of a Foundry ontology with its definition (such as a generation's draft before it is made current) and load_refusal: why create_load would refuse it, absent when it would load it. "+
 				"document_set_ids are the sets it was given; document_reads says which of them its routes read (read_set_ids) and which it only stores (unread_set_ids: searchable, nothing extracted into the graph). "+
 				"An agent bundle comes with its open questions (definition.questions; a default is the agent's suggestion, not a decision) and what the draft left out of its sources (definition.left_out, each with its reason; tables lists every synced table by the id the definition uses), "+
+				"each with, when the agent said, because: \"not_assessed\" (it ran out of budget before it looked; a new generation can pick it up), "+
+				"{\"user_asked\": {\"said\": the user's own words}} (the user asked to leave it out) or "+
+				"{\"documents_state\": {\"route\", \"item\"}} (documents already state it through the route extraction.<route>; item is a link or Type.prop), "+
 				"but not the agent's working draft: to act on an answer, or to read what it left out, generate again with that in the goal. A definition past 256 KiB is refused, with its load_refusal."), s.GetFoundryVersion)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetContext,
 			"Learn what a business's Foundry ontology holds before you ask or read it: its schema (each type's properties, key, names and identifiers, and its links, rules and constraints) "+
@@ -2160,7 +2175,12 @@ func FoundryDocument(doc *foundryv1.FoundryDocument) FoundryDocumentOutput {
 		out.Extraction = &FoundryExtractionOutput{
 			Status: x.GetStatus(), DuplicateOf: x.GetDuplicateOf(), ErrorCode: x.GetError().GetCode(), Retryable: x.GetError().GetRetryable(),
 			Sections: x.GetSections(), Entities: x.GetEntities(), Facts: x.GetFacts(), Values: x.GetAttributes(), Reviews: x.GetReviews(),
-			USDMicros: x.GetUsdMicros(), FinishedAt: protoTimestamp(x.GetFinishedAt()),
+			USDMicros: x.GetUsdMicros(), FinishedAt: protoTimestamp(x.GetFinishedAt()), Carried: x.GetResolvedCarried(),
+		}
+		for _, n := range x.GetNames() {
+			out.Extraction.Names = append(out.Extraction.Names, FoundryExtractionNameOutput{
+				Decision: n.GetDecision(), Type: n.GetType(), NormName: n.GetNormName(), DecisionID: n.GetDecisionId(), Outcome: n.GetOutcome(), Reason: n.GetReason(),
+			})
 		}
 	}
 	return out

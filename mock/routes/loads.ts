@@ -211,6 +211,13 @@ type Knobs = {
   // one a resend sends (contract 4.17.0): the engine refuses an approval in
   // place as `document_changed`. A new load reads the text afresh.
   documentChanged?: boolean;
+  // What the engine says, in place, of a person's resolve of a name of a
+  // document the load holds (contract 4.22.0): `not_replayed`, the default,
+  // as for every load read before names could be settled in place (prompt
+  // 9), so the next load applies it; `written`, which takes away the
+  // document's reviews asking about the name, and, for a chosen record, the
+  // other documents' too; or another refusal.
+  nameInPlace?: "written" | "not_replayed" | "bound" | "collides" | "not_asked";
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // The next n reads find every read slot taken.
   readsBusy?: number;
@@ -396,6 +403,7 @@ onReset(() => {
   delete knobs.indexesPending;
   delete knobs.readsPaused;
   delete knobs.invoiceOnlyCustomers;
+  delete knobs.nameInPlace;
 });
 
 const live = (j: StoredJob) => j.status === "queued" || j.status === "running";
@@ -463,6 +471,88 @@ export const currentLoadId = (ontologyId: string) =>
 // says otherwise.
 
 type Release = Extract<FoundryReviewDecision, { kind: "release" }>;
+type Resolve = Extract<FoundryReviewDecision, { kind: "resolve" }>;
+
+/**
+ * Joins a resolve decision just settled to the ontology's current load, in
+ * place of any the load holds of its name in its document, to be settled in
+ * place a job's step from now (contract 4.22.0).
+ */
+export function owePendingResolve(ontologyId: string, d: Resolve) {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  if (!l) return;
+  l.decisions = [
+    ...l.decisions.filter(
+      (x) =>
+        !(
+          x.kind === "resolve" &&
+          x.type === d.type &&
+          x.docId === d.docId &&
+          x.normName === d.normName
+        ),
+    ),
+    d,
+  ];
+  state.applied.set(appliedKey(l.id, d.id), { status: "pending" });
+  state.resends.push({
+    loadId: l.id,
+    decisionId: d.id,
+    due: Date.now() + (knobs.loadStepMs ?? STEP_MS),
+  });
+}
+
+/**
+ * Drops a removed resolve's copy from the current load while it waits, as
+ * the backend does: it is never settled.
+ */
+export function forgetResolve(ontologyId: string, decisionId: string) {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  if (
+    !l ||
+    !l.decisions.some((x) => x.kind === "resolve" && x.id === decisionId) ||
+    state.applied.get(appliedKey(l.id, decisionId))?.status !== "pending"
+  )
+    return;
+  l.decisions = l.decisions.filter(
+    (x) => !(x.kind === "resolve" && x.id === decisionId),
+  );
+  state.applied.delete(appliedKey(l.id, decisionId));
+}
+
+/**
+ * Settles a resolve in place, as the engine does by replaying the document's
+ * saved model work (`nameInPlace`): written takes away the reviews asking
+ * about the name, in its document and, for a chosen record (an alias), in
+ * every other document of the load. The facts the name held back are the
+ * next load's here: the mock reads no document again in place.
+ */
+function settleName(l: StoredLoad, d: Resolve, at: number) {
+  const said = knobs.nameInPlace ?? "not_replayed";
+  if (said !== "written") {
+    state.applied.set(appliedKey(l.id, d.id), {
+      status: "refused",
+      reason: said,
+      at: iso(at),
+    });
+    return;
+  }
+  const g = tenantGraph(l.tenantId).view(l.id);
+  for (const n of [...g.nodes()].filter(
+    (n) =>
+      n.label === N.Review &&
+      n.props.type === d.type &&
+      n.props.norm_name === d.normName &&
+      ["unresolved", "ambiguous", "collision", "identifier_conflict"].includes(
+        String(n.props.reason),
+      ) &&
+      (n.props.doc_id === d.docId || d.entityKey !== undefined),
+  ))
+    g.graph.removeNode(n.id);
+  state.applied.set(appliedKey(l.id, d.id), {
+    status: "written",
+    at: iso(at),
+  });
+}
 type Withdraw = Extract<FoundryReviewDecision, { kind: "withdraw" }>;
 /** A release decision's review in a load's graph, if the load holds it. */
 function heldReview(l: StoredLoad, d: Release) {
@@ -558,12 +648,16 @@ function applyReleases(ontologyId: string, now = Date.now()) {
   for (const r of due) {
     const l = loadById(r.loadId);
     const d = l?.decisions.find(
-      (x): x is Release | Withdraw =>
+      (x): x is Release | Withdraw | Resolve =>
         x.id === r.decisionId &&
-        (x.kind === "release" || x.kind === "withdraw"),
+        (x.kind === "release" || x.kind === "withdraw" || x.kind === "resolve"),
     );
     // Taken back, or its load deleted, before it was applied.
     if (!l || !d) continue;
+    if (d.kind === "resolve") {
+      settleName(l, d, r.due);
+      continue;
+    }
     if (d.kind === "withdraw") {
       takeBack(l, d, r.due);
       continue;
@@ -609,15 +703,12 @@ function takeBack(l: StoredLoad, d: Withdraw, at: number) {
 
 /**
  * What became of a decision in the ontology's current load: unset for one
- * that load's list doesn't hold, and for a resolve or a reject.
+ * that load's list doesn't hold, and for a reject; a resolve the load read
+ * when it was made has the empty status.
  */
 export function appliedOf(ontologyId: string, d: FoundryReviewDecision) {
   const l = loadById(currentLoadId(ontologyId) || "");
-  if (
-    d.kind === "resolve" ||
-    d.kind === "reject" ||
-    !l?.decisions.some((x) => x.id === d.id)
-  )
+  if (d.kind === "reject" || !l?.decisions.some((x) => x.id === d.id))
     return undefined;
   const applied = state.applied.get(appliedKey(l.id, d.id)) ?? {
     status: "" as const,
@@ -1583,6 +1674,14 @@ function read(j: StoredJob, documentId: string, at: string) {
     {
       status: "extracted",
       ...counts,
+      // What it made of the name decisions it met (contract 4.22.0), as
+      // the backend keeps them on the document's row: none, left out.
+      ...(outcome.kind === "ingested" && outcome.carried
+        ? { resolvedCarried: outcome.carried }
+        : {}),
+      ...(outcome.kind === "ingested" && outcome.names.length
+        ? { names: outcome.names }
+        : {}),
       usdMicros: String(DOCUMENT_USD_MICROS),
       finishedAt: at,
     },

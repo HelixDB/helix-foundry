@@ -16,6 +16,9 @@ import {
   fieldText,
   foundryGraph,
   generationTitle,
+  isProbeRoute,
+  leftOutBecause,
+  leftOutBecauseText,
   loadDocumentPlan,
   loadDocumentsText,
   loadSources,
@@ -27,6 +30,7 @@ import {
   pickerSets,
   readAgentBundle,
   readFoundry,
+  routeItemWords,
   routesReading,
   scopeNames,
   sourceMatrix,
@@ -1668,5 +1672,197 @@ describe("versionRows", () => {
 
   it("is empty for an ontology with neither", () => {
     expect(versionRows([], [])).toEqual([]);
+  });
+});
+
+// Contract 4.19.0: a left-out entry's kind of reason, read defensively.
+describe("leftOutBecause", () => {
+  it("reads each kind", () => {
+    expect(leftOutBecause("not_assessed", "Out of budget.")).toEqual({
+      kind: "not_assessed",
+    });
+    expect(
+      leftOutBecause({ user_asked: { said: "skip the memos" } }, "Asked."),
+    ).toEqual({ kind: "user_asked", said: "skip the memos" });
+    expect(
+      leftOutBecause(
+        { documents_state: { route: "notes", item: "Person.status" } },
+        "Read.",
+      ),
+    ).toEqual({
+      kind: "documents_state",
+      route: "notes",
+      item: "Person.status",
+    });
+  });
+
+  it("reads an entry with none whose reason says not assessed as one", () => {
+    expect(leftOutBecause(undefined, "Not assessed: out of budget.")).toEqual({
+      kind: "not_assessed",
+    });
+    expect(leftOutBecause(null, "  not assessed")).toEqual({
+      kind: "not_assessed",
+    });
+    expect(leftOutBecause(undefined, "No question reads it.")).toBeUndefined();
+    // Only at the start, as a whole word.
+    expect(leftOutBecause(undefined, "It was not assessed.")).toBeUndefined();
+    expect(leftOutBecause(undefined, "Not assessedly")).toBeUndefined();
+  });
+
+  it("is none for a kind it doesn't know, or one missing its words", () => {
+    expect(leftOutBecause("guessed", "Not assessed")).toBeUndefined();
+    expect(leftOutBecause({ guessed: {} }, "Not assessed")).toBeUndefined();
+    expect(leftOutBecause({ user_asked: { said: "" } }, "x")).toBeUndefined();
+    expect(leftOutBecause({ user_asked: "skip" }, "x")).toBeUndefined();
+    expect(
+      leftOutBecause({ documents_state: { route: "notes" } }, "x"),
+    ).toBeUndefined();
+    expect(leftOutBecause(7, "x")).toBeUndefined();
+  });
+
+  it("says each kind in words, never its code", () => {
+    const route = (name: string) => (name === "notes" ? "Board minutes" : "");
+    const texts = [
+      leftOutBecauseText({ kind: "not_assessed" }, route),
+      leftOutBecauseText({ kind: "user_asked", said: "skip the memos" }, route),
+      leftOutBecauseText(
+        { kind: "documents_state", route: "notes", item: "Person.status" },
+        route,
+      ),
+      leftOutBecauseText(
+        { kind: "documents_state", route: "board_notes", item: "works_at" },
+        route,
+      ),
+    ];
+    expect(texts).toEqual([
+      {
+        label: "Not checked yet",
+        detail:
+          "The agent ran out of budget before it looked at this. Generating again can pick it up.",
+      },
+      {
+        label: "Asked to leave out",
+        detail: "Someone asked to leave it out: “skip the memos”.",
+      },
+      {
+        label: "Already read elsewhere",
+        detail:
+          "Its documents state Person’s status, which the route reading Board minutes already reads from other documents.",
+      },
+      {
+        label: "Already read elsewhere",
+        detail:
+          "Its documents state works at, which the board notes route already reads from other documents.",
+      },
+    ]);
+    for (const t of texts)
+      expect(JSON.stringify(t)).not.toMatch(
+        /not_assessed|user_asked|documents_state|Person\.status/,
+      );
+  });
+
+  it("words a route's item", () => {
+    expect(routeItemWords("Person.status")).toBe("Person’s status");
+    expect(routeItemWords("Contract.term_months")).toBe(
+      "Contract’s term months",
+    );
+    expect(routeItemWords("works_at")).toBe("works at");
+  });
+
+  it("is read on each entry, and left off one without a kind", () => {
+    const bundle = readAgentBundle({
+      ...contractsBundle,
+      draft: {
+        ...contractsBundle.draft,
+        draft: {
+          ...contractsBundle.draft.draft,
+          left_out: [
+            {
+              what: "a",
+              reason: "Not assessed: budget.",
+              because: "not_assessed",
+            },
+            { what: "b", reason: "Not assessed: budget." },
+            {
+              what: "c",
+              reason: "Asked.",
+              because: { user_asked: { said: "leave c out" } },
+            },
+            { what: "d", reason: "Newer.", because: { later_kind: {} } },
+            { what: "", reason: "No subject.", because: "not_assessed" },
+          ],
+        },
+      },
+    });
+    expect(bundle.leftOut).toEqual([
+      {
+        what: "a",
+        reason: "Not assessed: budget.",
+        because: { kind: "not_assessed" },
+      },
+      {
+        what: "b",
+        reason: "Not assessed: budget.",
+        because: { kind: "not_assessed" },
+      },
+      {
+        what: "c",
+        reason: "Asked.",
+        because: { kind: "user_asked", said: "leave c out" },
+      },
+      { what: "d", reason: "Newer." },
+    ]);
+    expect("because" in bundle.leftOut[3]!).toBe(false);
+  });
+});
+
+// Contract 4.20.0: a route the agent found reading sample documents.
+describe("isProbeRoute", () => {
+  const item = (serves?: string[]) => ({
+    toml: "",
+    status: "proposed" as const,
+    rationale: "",
+    serves,
+  });
+  it("is a route that serves probe, among any others", () => {
+    expect(isProbeRoute(item(["probe"]))).toBe(true);
+    expect(isProbeRoute(item(["cq.CQ1", "probe"]))).toBe(true);
+    expect(isProbeRoute(item(["cq.CQ1", "key", "join"]))).toBe(false);
+    expect(isProbeRoute(item(["probes"]))).toBe(false);
+    expect(isProbeRoute(item([]))).toBe(false);
+    expect(isProbeRoute(item())).toBe(false);
+    expect(isProbeRoute(undefined)).toBe(false);
+  });
+
+  it("is what the mock's draft from documents adds, with a kind for each left-out entry", () => {
+    const bundle = readAgentBundle(
+      draftFromTables([], "Contracts, without renewals", [
+        { id: "set_acme_general", name: "General" },
+        { id: "set-notes", name: "Notes" },
+      ]),
+    );
+    expect(
+      isProbeRoute(bundle.items["extraction.probe_set_acme_general"]),
+    ).toBe(true);
+    expect(isProbeRoute(bundle.items["extraction.contracts"])).toBe(false);
+    expect(bundle.items["extraction.probe_set_acme_general"]?.rationale).toBe(
+      "3 of 4 sample documents of General state a Contract’s notice period, which no route asked for.",
+    );
+    expect(bundle.routes.ok && bundle.routes.value.map((r) => r.name)).toEqual([
+      "contracts",
+      "probe_set_acme_general",
+    ]);
+    expect(bundle.leftOut.map((l) => l.because?.kind)).toEqual([
+      "not_assessed",
+      "user_asked",
+      "documents_state",
+    ]);
+    expect(bundle.leftOut[0]!.what).toBe("set-notes");
+    // No goal: nothing of the user's to quote.
+    expect(
+      readAgentBundle(
+        draftFromTables([], "", [{ id: "s", name: "S" }]),
+      ).leftOut.map((l) => l.because?.kind),
+    ).toEqual(["not_assessed", "documents_state"]);
   });
 });

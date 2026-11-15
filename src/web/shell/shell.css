@@ -557,6 +557,22 @@ html {
   flex: none;
   color: var(--hf-muted);
 }
+/* Feedback (./feedback.tsx), above the account at the sidebar's foot, and
+   an icon in the rail's. */
+.hf-feedback-button {
+  flex: none;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--hf-text-2);
+}
+.hf-sidebar-inner > .hf-feedback-button {
+  align-self: stretch;
+}
+.hf-rail-foot .hf-feedback-button {
+  margin-top: 0;
+  color: var(--hf-muted);
+}
 .hf-settings-link.is-active {
   background: var(--hf-sunken);
   color: var(--hf-text);

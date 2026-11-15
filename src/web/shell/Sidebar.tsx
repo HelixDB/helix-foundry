@@ -1,5 +1,6 @@
 import {
   Suspense,
+  lazy,
   useLayoutEffect,
   useRef,
   useState,
@@ -11,6 +12,8 @@ import { SkeletonText, cx, useStoredState } from "../kit";
 import { paths } from "../paths";
 import { useWorkspace, type ShellUser, type ShellWorkspace } from "../ui";
 import { AccountMenu } from "../areas/workspace/account-menu";
+import { useWatchedJobs } from "../areas/ontology/use-watched-jobs";
+import { FeedbackButton } from "./feedback";
 import { WorkspaceSwitcher } from "../areas/workspace/switcher";
 import {
   activeSection,
@@ -36,6 +39,12 @@ import {
   assistantShortcut,
   shortcut,
 } from "./shortcut";
+
+// The generations and loads this browser started, followed from any page
+// (the Ontology area's), above Feedback: its code loads once there is one.
+const JobDock = lazy(() =>
+  import("../areas/ontology/job-dock").then((m) => ({ default: m.JobDock })),
+);
 
 // Settings sits beside the user in the footer rather than in the section list.
 export function SettingsLink() {
@@ -215,7 +224,8 @@ function SectionSplit({
 // The sidebar, on every page beside the page (and in a phone's drawer where
 // the open section has no panel: Rail.tsx): the mark and search, the
 // workspace, the sections with their names, what the open section shows
-// under them (Ask's threads), then the account and settings. While the
+// under them (Ask's threads), then the jobs this browser follows, Feedback,
+// the account and settings. While the
 // workspace is onboarding it holds only the mark, the workspace, the way
 // back to the onboarding and the account; for a grantee, no search or
 // settings, and only Analyst, Dashboards, Ontologies and the Explorer.
@@ -234,7 +244,8 @@ export function Sidebar({
   onSwitch: (id: string) => void;
 }) {
   const shell = useShell(),
-    { onboarding, grantee } = useWorkspace(),
+    { id, onboarding, grantee } = useWorkspace(),
+    watching = useWatchedJobs(id).length > 0,
     section = activeSection(useLocation().pathname),
     extra = onboarding ? undefined : section && sectionSidebars[section];
   return (
@@ -308,6 +319,14 @@ export function Sidebar({
           </ChromeBoundary>
         </SectionSplit>
       )}
+      {watching && (
+        <ChromeBoundary name="Jobs in progress" fallback={null}>
+          <Suspense fallback={null}>
+            <JobDock />
+          </Suspense>
+        </ChromeBoundary>
+      )}
+      <FeedbackButton />
       <div className="hf-sidebar-foot">
         <AccountMenu user={user} current={current} collapsed={false} />
         {shell.assistant.available && (

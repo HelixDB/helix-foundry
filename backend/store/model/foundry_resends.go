@@ -27,14 +27,31 @@ const FoundryResendApproval FoundryResendReason = "approval"
 // so any Extract that ends answers the request, one of no documents included.
 const FoundryResendDecisions FoundryResendReason = "decisions"
 
-// FoundryExtractDecisionsMax is the most decisions one Extract takes (the
-// engine's Decisions). Every value decision of a load goes with every one of
-// its Extracts, so an ontology takes no more value decisions than this
+// FoundryResendName is a person's choice of what a name of a document is (a
+// resolve decision) that the load's list gained after the document was
+// committed: the resolve's own document, and, for a choice of an entity,
+// which is an alias of every document, each document whose reviews ask about
+// that name. The engine settles the name in place by replaying the
+// document's saved model work (contract 4.22.0), so the document goes with
+// its artifacts, still with nothing to spend: a call no artifact holds, as
+// under a load read before prompt 9, leaves the name not_replayed, and the
+// next load applies it.
+const FoundryResendName FoundryResendReason = "name"
+
+// FoundryExtractKindDecisionsMax is the most decisions of one kind (resolve,
+// prop, release, withdraw, alias) one Extract takes, and
+// FoundryExtractAllDecisionsMax the most of all kinds (the engine's Decisions,
+// contract 4.22.0). Every value decision of a load goes with every one of its
+// Extracts, so an ontology takes no more value decisions than one kind's cap
 // (store.FoundryValueDecisionsFull): one more and no Extract of a load that
-// holds them could be sent. At the limit itself an Extract still goes, but
-// only with documents that have no decision of their own: a name settled or
-// a claim approved in one makes it one too many.
-const FoundryExtractDecisionsMax = 10000
+// holds them could be sent. The resolves, releases and withdraws are those of
+// the Extract's documents, and from contract 4.23.0 the aliases are those its
+// documents write, so an ontology links any number of names, and documents
+// whose decisions are past a cap go in smaller Extracts.
+const (
+	FoundryExtractKindDecisionsMax = 10000
+	FoundryExtractAllDecisionsMax  = 50000
+)
 
 // FoundryLoadResend is a document a load owes a resend, for a reason, or the
 // load's own decisions (FoundryResendDecisions), which name no document.
@@ -94,7 +111,9 @@ const (
 	// FoundryReleaseCarried was saved while another load was current, and
 	// joined this load's list when it became current: no review of this load
 	// was read for it, and the engine has yet to say what became of it, as
-	// with a pending one.
+	// with a pending one. A resolve is carried only while it is an alias
+	// whose asking documents in this load are yet to be owed (store
+	// OweFoundryAskingResends); then it waits as pending.
 	FoundryReleaseCarried FoundryReleaseStatus = "carried"
 	// FoundryReleaseWritten is a claim the engine wrote as a fact. From
 	// contract 4.14.0, on a link that holds one value, a statement dated

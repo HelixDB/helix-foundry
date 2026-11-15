@@ -89,7 +89,9 @@ var foundryOperationDocs = []foundryOperationDoc{
 		doc: "{review_id, decision}: the review_key of a review the current load holds (" + toolFoundryListReviews + "), and the decision its settle names: " +
 			"resolve {resolve: {entity_key}} with one of its candidates or {resolve: {not_in_data: true}}; " +
 			"prop {prop: {text|integer|number|boolean: value}} (an integer as a string of digits) or {prop: {null: true}} to remove the property; " +
-			"release {release: {statement_hash}} to approve the statement it holds back or {reject: {statement_hash}} to say it is wrong, with its statement_hash."},
+			"release {release: {statement_hash}} to approve the statement it holds back or {reject: {statement_hash}} to say it is wrong, with its statement_hash. " +
+			"A resolve applies from the next load: one that chooses an entity also links that name to it in every document of that load where the load would otherwise ask, " +
+			"and not_in_data applies to the review's document only."},
 	{name: "create_dashboard",
 		doc: "{name, description, spec}: a dashboard of the workspace, unpinned, which every member sees and reads as themselves; " +
 			"a name of 1 to 120 characters, a description of at most 1000, and a spec (none for no tiles yet). Preview each tile with " + toolFoundryPreviewDashboardTile + " first. " +

@@ -146,6 +146,17 @@ const int = (v: unknown) => {
   const n = num(v);
   return n !== undefined && Number.isInteger(n) ? n : undefined;
 };
+// A review's evidence shape and end types (contract 4.18.0), each only when
+// stored: older reviews and other reasons have none.
+const reviewShape = (r: Row): Pick<DocReview, "evidenceShape" | "endTypes"> => {
+  const shape = str(r.evidence_shape),
+    subject = str(r.subject_type)?.trim(),
+    object = str(r.object_type)?.trim();
+  return {
+    ...(shape ? { evidenceShape: shape } : {}),
+    ...(subject && object ? { endTypes: { subject, object } } : {}),
+  };
+};
 
 /** An entity node's row (`$id`, `$label`, entity_key or norm_name, name), or undefined. */
 export function entityRow(r: Row): EntityRow | undefined {
@@ -236,6 +247,11 @@ const REVIEW_FIELDS = [
   "candidates",
   "suggested_link",
   "confidence",
+  // A held claim's evidence shape; an unmatched link's end types, as the
+  // model wrote them (contract 4.18.0).
+  "evidence_shape",
+  "subject_type",
+  "object_type",
 ];
 
 // The entities `review_nodes` concern, every property each (a property
@@ -285,6 +301,12 @@ export type DocReview = Span &
     prop?: string;
     suggestedLink?: string;
     confidence?: number;
+    // How a held claim's quote states it, as the engine names the shape
+    // (contract 4.18.0): an open set, so evidenceShapeText words it.
+    evidenceShape?: string;
+    // An unmatched link's end types, as the model wrote them: free text,
+    // never an ontology type to look up. Only when it named both.
+    endTypes?: { subject: string; object: string };
   };
 export type DocumentGraph = {
   // Whether a load has stored the document at all.
@@ -522,6 +544,7 @@ export function parseDocument(body: unknown): DocumentGraph {
               prop: str(r.prop),
               suggestedLink: str(r.suggested_link),
               confidence: num(r.confidence),
+              ...reviewShape(r),
             },
           ]
         : [];
@@ -805,6 +828,9 @@ export function entityRequest(
           "candidates",
           "suggested_link",
           "confidence",
+          "evidence_shape",
+          "subject_type",
+          "object_type",
         ]),
       },
       ...concernedEntries,
@@ -1082,6 +1108,7 @@ export function parseEntity(body: unknown): EntityGraph {
             prop: str(r.prop),
             suggestedLink: str(r.suggested_link),
             confidence: num(r.confidence),
+            ...reviewShape(r),
           },
         ]
       : [];
@@ -1309,6 +1336,10 @@ export function resolvedByText(r?: string): string | undefined {
       return "Created from the text";
     case "user":
       return "Linked by a person";
+    // A person's choice for the name in another document, carried to every
+    // document of the load that names it (contract 4.22.0).
+    case "carried":
+      return "Linked by a person’s choice in another document";
     case "adjudicated":
       return "Matched by the model";
     case "legal_form":
@@ -1695,6 +1726,7 @@ export function parseLoadReviews(body: unknown): EntityReview[] {
             prop: str(r.prop),
             suggestedLink: str(r.suggested_link),
             confidence: num(r.confidence),
+            ...reviewShape(r),
           },
         ]
       : [];

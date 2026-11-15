@@ -96,6 +96,7 @@ import {
   withLoad,
 } from "./model";
 import { DataFeed, type FeedItem } from "./ontology-scene";
+import { ProgressBar, useLoadJobProgress } from "./job-progress";
 import { Callout } from "./parts";
 import {
   createLoad,
@@ -426,7 +427,8 @@ export function LiveLoad() {
     qc = useQueryClient();
   const loads = useQuery(ontologyQueries.loads(id, o));
   const live = liveRead(loads.data?.loads);
-  const now = useNow();
+  const now = useNow(),
+    progress = useLoadJobProgress(live?.job);
   // When it ends, the ontology, its documents and the database's reads change.
   const seen = useRef("");
   useEffect(() => {
@@ -438,8 +440,7 @@ export function LiveLoad() {
   }, [live?.job.id, live?.job.status]);
   if (!live) return null;
   const { job } = live;
-  const p = job.progress || {},
-    retry = loadRetry(job, ontology.createdAt, now)?.kind,
+  const retry = loadRetry(job, ontology.createdAt, now)?.kind,
     starting = retry === "starting",
     indexing = retry === "indexing";
   // Parked while its people are looked up: the tables load next.
@@ -499,16 +500,21 @@ export function LiveLoad() {
             ? `Helix builds the database’s indexes before it writes. ${work} carries on by itself once they’re ready.`
             : job.kind === "resend"
               ? "Approved claims are written from their documents’ saved readings, and chosen values are sent, at no model cost."
-              : p.documentsTotal
-                ? `${p.documentsDone || 0} of ${plural(p.documentsTotal, "document")} read so far.`
-                : "What it writes shows in the Explorer as it goes."
+              : "What it writes shows in the Explorer as it goes."
       }
       action={
         <ButtonLink size="sm" to={paths.load(o, live.load.id)}>
           View progress
         </ButtonLink>
       }
-    />
+    >
+      {progress && !starting && !indexing && (
+        <ProgressBar
+          progress={progress}
+          label={`Progress of ${ontologyName(ontology)}’s load`}
+        />
+      )}
+    </Callout>
   );
 }
 
@@ -1016,7 +1022,8 @@ export function LoadPage({ loadId }: { loadId: string }) {
     ...documentSetQueries.list(id),
     enabled: !!l?.documentSets?.some((s) => (s.notRead || 0) > 0),
   });
-  const now = useNow(tick(isLiveJob(j)));
+  const now = useNow(tick(isLiveJob(j))),
+    progress = useLoadJobProgress(isLiveJob(j) ? j : undefined);
   const version = useQuery({
     ...ontologyQueries.version(id, o, l?.versionId || ""),
     enabled: !!l?.versionId,
@@ -1308,6 +1315,13 @@ export function LoadPage({ loadId }: { loadId: string }) {
                 </ButtonLink>
               )
             }
+          />
+        )}
+        {progress && !looking && (
+          <ProgressBar
+            className="on-progress--page"
+            progress={progress}
+            label={`Progress of ${loadVersion(l)}`}
           />
         )}
         <DataFeed

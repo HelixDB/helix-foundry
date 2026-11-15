@@ -428,11 +428,10 @@ func TestFoundryValueNeverDecidesAPropertyTwice(t *testing.T) {
 }
 
 // Every value decision goes with every Extract, which takes
-// model.FoundryExtractDecisionsMax decisions: the ontology takes no more
-// value decisions than that, so the value decisions alone never make an
-// Extract too large. A document's own decisions on top of them still can
-// (model.FoundryExtractDecisionsMax). A property already decided can still be
-// decided again.
+// model.FoundryExtractKindDecisionsMax decisions of a kind: the ontology
+// takes no more value decisions than that, so the value decisions alone never
+// make an Extract too large. A property already decided can still be decided
+// again.
 func TestFoundryValueDecisionsFull(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "VFULL")
@@ -446,7 +445,7 @@ FROM (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION 
   (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) b,
   (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) c,
   (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) e
-WHERE a.n + 10*b.n + 100*c.n + 1000*e.n < ?`, f.ontology.ID, id26("user"), model.FoundryExtractDecisionsMax-2)
+WHERE a.n + 10*b.n + 100*c.n + 1000*e.n < ?`, f.ontology.ID, id26("user"), model.FoundryExtractKindDecisionsMax-2)
 	require.NoError(t, err)
 	last := f.value("2", "globex", "silver")
 	_, err = f.db.SettleFoundryValue(ctx, f.ontology.WorkspaceID, f.load, last, resendJob("VFULL-a"))

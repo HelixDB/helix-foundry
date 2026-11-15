@@ -2,6 +2,7 @@ package foundrygraphworker
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -37,6 +39,7 @@ import (
 	agentv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/ontology_agent/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/helixgateway"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
+	"github.com/helixdb/helix-foundry/backend/pkg/namewords"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/snapshot"
@@ -174,7 +177,7 @@ func deleteDone(req string, stream agentv1.Agent_DeleteLoadServer) error {
 		return status.Error(codes.Internal, err.Error())
 	}
 	return deleteEvents(stream, []string{
-		`{"event":"delete_started","contract_version":"4.17.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
+		`{"event":"delete_started","contract_version":"4.23.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
 		`{"event":"deleted","label":"Customer","element":"node","count":1}`, `{"event":"delete_finished"}`,
 	}, `{"status":"done","nodes":1,"edges":2}`)
 }
@@ -220,7 +223,7 @@ func writeThroughProxy(request string) error {
 const (
 	// documentCounts are what each document of the fixtures put in the graph.
 	documentCounts = `{"entities":2,"mentions":3,"facts":1,"reviews":1,"unresolved":1,"rejected":0,"attributes":4,"attribute_reviews":3,` +
-		`"prop_conflicts":2,"created":1,"identifiers_unverified":5,"attributes_over_entries":6,"released":0,"release_refused":0,"release_missed":0,"resolved":{"user":7,"adjudicated":8,"identifier":9,"name":2,"alias":10,"legal_form":3,"part_name":0,"own_name":0,"created":1}}`
+		`"prop_conflicts":2,"created":1,"identifiers_unverified":5,"attributes_over_entries":6,"released":0,"release_refused":0,"release_missed":0,"resolved":{"user":7,"adjudicated":8,"identifier":9,"name":2,"alias":10,"legal_form":3,"part_name":0,"own_name":0,"created":1,"carried":4}}`
 	totals   = `{"ingested":1,"out_of_scope":0,"already_ingested":1,"duplicate":1,"failed":1,"counts":` + documentCounts + `,"swept":0,"unchecked":0,"stale_decisions":0,"usd_micros":1500,"input_tokens":900,"output_tokens":80}`
 	counts   = `"counts":` + documentCounts
 	usage    = `"usage":{"usd_micros":1500,"input_tokens":900,"output_tokens":80,"replayed":false,"phases":{"entity":{"calls":1,"replayed":0,"usd_micros":1500,"input_tokens":900,"output_tokens":80},"link":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"verify":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"adjudicate":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0}}}`
@@ -229,7 +232,7 @@ const (
 )
 
 func documentEvent(doc, outcome, use string) string {
-	return `{"event":"document","doc_id":"` + doc + `","outcome":` + outcome + `,"text_bytes":120,"sections":2,` + counts + `,` + use + `,"releases":[]}`
+	return `{"event":"document","doc_id":"` + doc + `","outcome":` + outcome + `,"text_bytes":120,"sections":2,` + counts + `,` + use + `,"names":[],"releases":[]}`
 }
 
 // ingestReport is the ingest crate's report of the customers mapping: its
@@ -254,7 +257,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 			return status.Error(codes.Internal, err.Error())
 		}
 		return ingestEvents(stream, []string{
-			`{"event":"ingest_started","contract_version":"4.17.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.23.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":2}}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"resolve","rows":2}}`,
 			`{"event":"sweep_page","entities":2}`, `{"event":"ingest_finished"}`,
@@ -265,7 +268,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 // extracted ends doc-a ingested with an artifact, doc-b a duplicate of it,
 // doc-c failed retryably and doc-d already held.
 var extracted = []string{
-	`{"event":"extract_started","contract_version":"4.17.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
+	`{"event":"extract_started","contract_version":"4.23.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
 	`{"event":"artifact","doc_id":"doc-a","key":"key_a","json":"{\"sections\":[1]}"}`,
 	documentEvent("doc-a", `{"kind":"ingested"}`, usage),
 	documentEvent("doc-b", `{"kind":"duplicate","of":"doc-a"}`, noUsage),
@@ -312,10 +315,13 @@ type memStore struct {
 	decisions     []*model.FoundryReviewDecision
 	decisionErr   error
 	decisionLoads []string
-	version       *model.OntologyVersion
-	generation    *model.OntologyGeneration
-	tables        []*model.ConnectorTable
-	pending       []*model.FoundryDocument
+	// aliasReads counts the alias reads by name key, aliasKeysMax is the
+	// most keys one took, and keysFilled counts the fills of name keys.
+	aliasReads, aliasKeysMax, keysFilled int
+	version                              *model.OntologyVersion
+	generation                           *model.OntologyGeneration
+	tables                               []*model.ConnectorTable
+	pending                              []*model.FoundryDocument
 	// pendingFor are the loads the attempt asked for the documents of.
 	pendingFor  []string
 	spent       int64
@@ -388,7 +394,19 @@ type memStore struct {
 	// outcomes are the engine's words a job recorded apart from a document's
 	// row (RecordFoundryReleaseOutcomes), by document.
 	outcomes map[string][]model.FoundryReleaseOutcome
-	endErr   error
+	// namesSaid are the names a failed resend's event said, by document.
+	namesSaid map[string][]model.FoundryDocumentName
+	endErr    error
+	// carried are the aliases carried to the job's load whose asking
+	// documents are yet to be owed (ListFoundryCarriedAliases), each holding
+	// back its document's name; asked the documents OweFoundryAskingResends
+	// owed, each joining resends as owed for a name, as the load holds it
+	// (held); notCurrent is that the job's load is no longer current, so it
+	// owes none and the aliases stay carried.
+	carried    []*model.FoundryReviewDecision
+	asked      []string
+	held       map[string]*model.FoundryDocument
+	notCurrent bool
 }
 
 func (s *memStore) FoundryLoadDecisionsOwed(context.Context, string) (*model.FoundryLoadResend, error) {
@@ -397,10 +415,47 @@ func (s *memStore) FoundryLoadDecisionsOwed(context.Context, string) (*model.Fou
 	return s.owedDecisions, nil
 }
 
+// ListFoundryLoadResends is the store's: a document's name waits while it
+// holds an alias carried whose asking documents are yet to be owed.
 func (s *memStore) ListFoundryLoadResends(context.Context, string) ([]*model.FoundryLoadResend, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.resends, nil
+	return slices.DeleteFunc(slices.Clone(s.resends), func(r *model.FoundryLoadResend) bool {
+		return r.Reason == model.FoundryResendName && slices.ContainsFunc(s.carried, func(d *model.FoundryReviewDecision) bool {
+			return *d.DocID == r.DocumentID
+		})
+	}), nil
+}
+
+func (s *memStore) ListFoundryCarriedAliases(_ context.Context, _ string, limit int) ([]*model.FoundryReviewDecision, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.carried[:min(len(s.carried), limit)]), nil
+}
+
+// OweFoundryAskingResends is the store's: with the job's load current, each
+// document is owed for a name, once more where it already is, and the
+// aliases are carried no more.
+func (s *memStore) OweFoundryAskingResends(_ context.Context, job *model.FoundryGraphJob, _ string, aliases, docs []string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.notCurrent {
+		return false, nil
+	}
+	s.carried = slices.DeleteFunc(s.carried, func(d *model.FoundryReviewDecision) bool { return slices.Contains(aliases, d.ID) })
+	for _, doc := range docs {
+		s.asked = append(s.asked, doc)
+		i := slices.IndexFunc(s.resends, func(r *model.FoundryLoadResend) bool {
+			return r.DocumentID == doc && r.Reason == model.FoundryResendName
+		})
+		if i >= 0 {
+			s.resends[i].Requests++
+			continue
+		}
+		s.resends = append(s.resends, &model.FoundryLoadResend{LoadID: job.LoadID, DocumentID: doc, Reason: model.FoundryResendName, Requests: 1,
+			Document: s.held[doc]})
+	}
+	return true, nil
 }
 
 func (s *memStore) EndFoundryLoadResend(_ context.Context, _, _ string, end model.FoundryResendEnd) error {
@@ -413,13 +468,15 @@ func (s *memStore) EndFoundryLoadResend(_ context.Context, _, _ string, end mode
 	return nil
 }
 
-func (s *memStore) RecordFoundryReleaseOutcomes(_ context.Context, _, _, docID string, outcomes []model.FoundryReleaseOutcome) error {
+func (s *memStore) RecordFoundryReleaseOutcomes(_ context.Context, _, _, docID string, outcomes []model.FoundryReleaseOutcome,
+	names []model.FoundryDocumentName) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.outcomes == nil {
-		s.outcomes = map[string][]model.FoundryReleaseOutcome{}
+		s.outcomes, s.namesSaid = map[string][]model.FoundryReleaseOutcome{}, map[string][]model.FoundryDocumentName{}
 	}
 	s.outcomes[docID] = append(s.outcomes[docID], outcomes...)
+	s.namesSaid[docID] = append(s.namesSaid[docID], names...)
 	return nil
 }
 
@@ -587,6 +644,53 @@ func (s *memStore) ListFoundryLoadDecisions(_ context.Context, loadID, after str
 		}
 	}
 	return out, nil
+}
+
+// ListFoundryLoadAliasesNamed is the store's: the resolves that chose an
+// entity whose name's key is one of keys, the earliest decided of each type,
+// name and entity. aliasReads counts the reads, and aliasKeysMax is the most
+// keys one took.
+func (s *memStore) ListFoundryLoadAliasesNamed(_ context.Context, _ string, keys []int64) ([]*model.FoundryReviewDecision, error) {
+	if s.decisionErr != nil {
+		return nil, s.decisionErr
+	}
+	if len(keys) > foundrystore.FoundryAliasKeysPerRead {
+		return nil, fmt.Errorf("at most %d name keys a read", foundrystore.FoundryAliasKeysPerRead)
+	}
+	s.aliasReads++
+	s.aliasKeysMax = max(s.aliasKeysMax, len(keys))
+	wanted := map[int64]bool{}
+	for _, k := range keys {
+		wanted[k] = true
+	}
+	earliest := map[[3]string]*model.FoundryReviewDecision{}
+	for _, d := range s.decisions {
+		if d.OntologyID != "ont-1" || d.Kind != model.FoundryReviewResolve || d.EntityKey == nil {
+			continue
+		}
+		if k, ok := namewords.Key(*d.NormName); !ok || !wanted[k] {
+			continue
+		}
+		k := [3]string{d.Type, *d.NormName, *d.EntityKey}
+		if e := earliest[k]; e == nil || d.DecidedAt.Before(e.DecidedAt) || d.DecidedAt.Equal(e.DecidedAt) && d.ID < e.ID {
+			earliest[k] = d
+		}
+	}
+	return slices.Collect(maps.Values(earliest)), nil
+}
+
+func (s *memStore) FillFoundryLoadNameKeys(context.Context, string) (int, error) {
+	s.keysFilled++
+	return 0, nil
+}
+
+func (s *memStore) FoundryLoadHasAliases(context.Context, string) (bool, error) {
+	if s.decisionErr != nil {
+		return false, s.decisionErr
+	}
+	return slices.ContainsFunc(s.decisions, func(d *model.FoundryReviewDecision) bool {
+		return d.OntologyID == "ont-1" && d.Kind == model.FoundryReviewResolve && d.EntityKey != nil
+	}), nil
 }
 
 func (s *memStore) ListPendingFoundryDocuments(_ context.Context, loadID string) ([]*model.FoundryDocument, error) {
@@ -788,9 +892,23 @@ type gateway struct {
 	writer  []string
 	answers []helixgateway.Response
 	store   *memStore
+	// reviews answers a read of a load's reviews of a type and name
+	// (ontologyagent.AskingQuery), keyed "load/type/name", with its items;
+	// one it has no answer for has none. asks are the keys read, in order.
+	reviews map[string]string
+	asks    []string
+	// askStatus, when set, is the status every such read answers.
+	askStatus int
 }
 
-func (g *gateway) Query(_ context.Context, _, tenantID string, _ []byte, extra http.Header) (helixgateway.Response, error) {
+func (g *gateway) Query(_ context.Context, _, tenantID string, body []byte, extra http.Header) (helixgateway.Response, error) {
+	if key, ok := askingKey(body); ok {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		g.asks = append(g.asks, key)
+		return helixgateway.Response{StatusCode: cmp.Or(g.askStatus, 200), ContentType: "application/json",
+			Body: []byte(`{"items":[` + g.reviews[key] + `]}`)}, nil
+	}
 	g.store.record("write")
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -802,6 +920,30 @@ func (g *gateway) Query(_ context.Context, _, tenantID string, _ []byte, extra h
 		return answer, nil
 	}
 	return helixgateway.Response{StatusCode: 200, ContentType: "application/json", Body: []byte(`{}`)}, nil
+}
+
+// askingKey is "load/type/name" of a read of a load's reviews of a name, as
+// ontologyagent.AskingQuery writes one.
+func askingKey(body []byte) (string, bool) {
+	var q struct {
+		RequestType string `json:"request_type"`
+	}
+	if json.Unmarshal(body, &q) != nil || q.RequestType != "read" {
+		return "", false
+	}
+	var where []string
+	for _, p := range []string{"foundry_load", "type", "norm_name"} {
+		_, rest, ok := strings.Cut(string(body), `{"property":"`+p+`"},"right":{"constant":{"string":`)
+		if !ok {
+			return "", false
+		}
+		var value string
+		if err := json.NewDecoder(strings.NewReader(rest)).Decode(&value); err != nil {
+			return "", false
+		}
+		where = append(where, value)
+	}
+	return strings.Join(where, "/"), true
 }
 
 type harness struct {
@@ -1308,13 +1450,33 @@ func TestLoad(t *testing.T) {
 
 	// gRPC would refuse a request past the agent's message limit as it
 	// refuses a full agent, which is retried; no retry sends less.
+	// Past it even with no document (what every Extract carries: the
+	// version, its value decisions), as no smaller Extract sends less.
 	t.Run("fails for good a request past the agent's message limit", func(t *testing.T) {
 		h := newHarness(t)
-		h.task.runner.maxRequestBytes = 1000
+		h.task.runner.maxRequestBytes = 10
 		outcome := h.run(t, loadJob())
 		if _, extracts := h.agent.calls(); outcome.Status != model.FoundryGraphJobFailed || outcome.RetryAt != nil ||
 			outcome.Error != "this version reads more documents than one load can send" || len(extracts) != 0 || !outcome.IngestDone {
 			t.Fatalf("outcome = %+v after %d extracts", outcome, len(extracts))
+		}
+	})
+
+	// Past it with all the documents, within it with fewer: they go in halves.
+	t.Run("splits a request past the agent's message limit", func(t *testing.T) {
+		h := newHarness(t)
+		h.task.runner.maxRequestBytes = 1000
+		outcome := h.run(t, loadJob())
+		_, extracts := h.agent.calls()
+		sent := 0
+		for _, c := range extracts {
+			if len(c) > 1000 {
+				t.Fatalf("a request of %d bytes", len(c))
+			}
+			sent += len(decodeExtract(t, c).Documents)
+		}
+		if outcome.Status != model.FoundryGraphJobSucceeded || len(extracts) < 2 || sent != 4 {
+			t.Fatalf("outcome = %+v after %d extracts of %d documents", outcome, len(extracts), sent)
 		}
 	})
 
@@ -3207,12 +3369,14 @@ func TestExtractReviewDecisions(t *testing.T) {
 	rejected := approval("9", "doc-a", hashA)
 	rejected.Kind = model.FoundryReviewReject
 	h.store.decisions = append(h.store.decisions, rejected)
+	// doc-a writes the name its alias carries (contract 4.23.0).
+	h.bucket.objects[document.Key("ws-1", "doc-a")] = []byte("# doc-a\nVariant signed.")
 	outcome := h.run(t, extractJob())
 	if outcome.Status != model.FoundryGraphJobSucceeded {
 		t.Fatalf("%+v", outcome)
 	}
 	c := h.store.extractions["doc-a"].Counts
-	if c.ResolvedUser != 7 || c.ResolvedAdjudicated != 8 || c.ResolvedIdentifier != 9 || c.Attributes != 4 || c.AttributeReviews != 3 || c.PropConflicts != 2 || c.IdentifiersUnverified != 5 || c.AttributesOverEntries != 6 {
+	if c.ResolvedUser != 7 || c.ResolvedAdjudicated != 8 || c.ResolvedIdentifier != 9 || c.ResolvedCarried != 4 || c.Attributes != 4 || c.AttributeReviews != 3 || c.PropConflicts != 2 || c.IdentifiersUnverified != 5 || c.AttributesOverEntries != 6 {
 		t.Fatalf("counts lost: %+v", c)
 	}
 
@@ -3224,18 +3388,25 @@ func TestExtractReviewDecisions(t *testing.T) {
 		t.Fatalf("%d calls", len(calls))
 	}
 	req := decodeExtract(t, calls[0])
-	if len(req.Decisions) != 4 {
+	if len(req.Decisions) != 5 {
 		t.Fatalf("%+v", req.Decisions)
 	}
 	if req.Decisions[0].DocID != "doc-a" || req.Decisions[1].Kind != model.FoundryReviewProp || req.Decisions[2].EntityKey != nil || req.Decisions[2].DocID != "doc-b" ||
 		*req.Decisions[3].EntityKey != "s42|i7" {
 		t.Fatalf("%+v", req.Decisions)
 	}
+	// The name doc-a and other-doc linked to customer 1 is one alias, under
+	// the first decided's id (4.22.0); the stale key and the removed type
+	// carry none, and nor does "not in data".
+	if alias := req.Decisions[4]; alias.Kind != ontologyagent.AliasDecision || alias.Type != "Customer" || alias.NormName != "variant" ||
+		*alias.EntityKey != "customer 1" || alias.DecisionID != "1" || alias.DocID != "" {
+		t.Fatalf("alias %+v", alias)
+	}
 	// Each names itself by its id and when it was settled, in UTC, so the
 	// load tells when a value it overwrites was decided.
 	for i, want := range []struct{ id, at string }{
 		{"1", `"2026-10-17T08:02:03.456789Z"`}, {"3", `"2026-10-17T08:03:03.456789Z"`},
-		{"4", `"2026-10-17T08:02:03.456789Z"`}, {"8", `"2026-10-17T08:02:03.456789Z"`},
+		{"4", `"2026-10-17T08:02:03.456789Z"`}, {"8", `"2026-10-17T08:02:03.456789Z"`}, {"1", `"2026-10-17T08:02:03.456789Z"`},
 	} {
 		at, _ := json.Marshal(req.Decisions[i].DecidedAt)
 		if req.Decisions[i].DecisionID != want.id || string(at) != want.at || !strings.Contains(calls[0], `"decided_at":`+want.at) {
@@ -3332,7 +3503,7 @@ func TestExtractReviewDecisionsLeftOutOnceStale(t *testing.T) {
 		prop("3", "sacme", "tier", `3`), &notInData,
 	}
 	toml := "[types.Customer]\nprops = { account = \"string\", tier = \"integer\" }\nkey = [\"account\"]"
-	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}})
+	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}}, writing("doc-a", h.store.decisions))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3362,7 +3533,7 @@ func TestExtractReleaseDecisionsGoWithTheirDocument(t *testing.T) {
 			DocID: ptr(doc), ClaimKey: &key, ClaimSpan: &model.FoundryClaimSpan{Section: 1, Start: 2, End: 9}, StatementHash: &read, DecidedByUserID: "user", DecidedAt: settled}
 	}
 	h.store.decisions = []*model.FoundryReviewDecision{release("1", "doc-a"), release("2", "doc-b")}
-	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), "", []ontologyagent.ExtractDocument{{DocID: "doc-a"}})
+	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), "", []ontologyagent.ExtractDocument{{DocID: "doc-a"}}, &attempt{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3397,38 +3568,91 @@ func TestExtractReviewDecisionsSendStaleResolvesOfAChangedKey(t *testing.T) {
 		resolve("3", "Supplier", "helio inc", "i42"), resolve("4", "Customer", "Helio Inc", "i42"), blankDoc,
 	}
 	toml := "[types.Customer]\nprops = { account = \"string\" }\nkey = [\"account\"]"
-	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}, {DocID: " "}})
+	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}, {DocID: " "}}, writing("doc-a", h.store.decisions))
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, _ := json.Marshal(decisions)
 	const at = `"decided_at":"2026-10-17T08:02:03Z"`
 	want := `[{"kind":"resolve","type":"Customer","doc_id":"doc-a","norm_name":"helio inc","entity_key":"i42","decision_id":"1",` + at + `},` +
-		`{"kind":"resolve","type":"Customer","doc_id":"doc-a","norm_name":"acme","entity_key":"s42","decision_id":"2",` + at + `}]`
+		`{"kind":"resolve","type":"Customer","doc_id":"doc-a","norm_name":"acme","entity_key":"s42","decision_id":"2",` + at + `},` +
+		// Only the entity the key still reads is carried: the engine would
+		// only count the stale one.
+		`{"kind":"alias","type":"Customer","norm_name":"acme","entity_key":"s42","decision_id":"2",` + at + `}]`
 	if string(got) != want {
 		t.Fatalf("decisions = %s, want %s", got, want)
 	}
 }
 
-func TestExtractReviewDecisionCap(t *testing.T) {
-	for _, n := range []int{10000, 10001} {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
-			h := newHarness(t)
-			ptr := func(s string) *string { return &s }
-			for i := 0; i < n; i++ {
-				h.store.decisions = append(h.store.decisions, &model.FoundryReviewDecision{ID: fmt.Sprintf("%026d", i+1), OntologyID: "ont-1", Kind: model.FoundryReviewProp, Type: "Customer", EntityKey: ptr(fmt.Sprint(i)), Prop: ptr("name"), Value: json.RawMessage(`null`), DecidedByUserID: "user",
-					DecidedAt: time.Date(2026, 10, 17, 8, 2, 3, 0, time.UTC)})
+// The engine takes at most 10,000 decisions of each kind in one Extract, and
+// 50,000 in all (4.22.0): five kinds at their cap go together, and one more
+// of any kind is past what an Extract takes, too large to send rather than
+// drop a choice (sendSplit then sends fewer documents). The release and
+// withdraw kinds share no cap, nor do a document's resolves and the aliases
+// it writes.
+func TestExtractReviewDecisionCaps(t *testing.T) {
+	const toml = "[types.Customer]\nprops = { name = \"string\" }"
+	settled := time.Date(2026, 10, 17, 8, 2, 3, 0, time.UTC)
+	ptr := func(s string) *string { return &s }
+	key, read := strings.Repeat("ab", 32), strings.Repeat("cd", 32)
+	// full holds n decisions of each kind: values, doc-a's own names (not in
+	// data, so none carries), names other documents linked to an entity
+	// (aliases), and doc-a's approvals and take-backs.
+	full := func(n map[model.FoundryReviewDecisionKind]int) []*model.FoundryReviewDecision {
+		var out []*model.FoundryReviewDecision
+		id := 0
+		next := func() string { id++; return fmt.Sprintf("%026d", id) }
+		for i := range n[model.FoundryReviewProp] {
+			out = append(out, &model.FoundryReviewDecision{ID: next(), OntologyID: "ont-1", Kind: model.FoundryReviewProp, Type: "Customer",
+				EntityKey: ptr(fmt.Sprint("customer ", i)), Prop: ptr("name"), Value: json.RawMessage(`null`), DecidedByUserID: "user", DecidedAt: settled})
+		}
+		for i := range n[model.FoundryReviewResolve] {
+			out = append(out, &model.FoundryReviewDecision{ID: next(), OntologyID: "ont-1", Kind: model.FoundryReviewResolve, Type: "Customer",
+				DocID: ptr("doc-a"), NormName: ptr(fmt.Sprint("own ", i)), DecidedByUserID: "user", DecidedAt: settled})
+		}
+		for i := range n[ontologyagent.AliasDecision] {
+			out = append(out, &model.FoundryReviewDecision{ID: next(), OntologyID: "ont-1", Kind: model.FoundryReviewResolve, Type: "Customer",
+				DocID: ptr("doc-z"), NormName: ptr(fmt.Sprint("carried ", i)), EntityKey: ptr("acme"), DecidedByUserID: "user", DecidedAt: settled})
+		}
+		for _, kind := range []model.FoundryReviewDecisionKind{model.FoundryReviewRelease, model.FoundryReviewWithdraw} {
+			for i := range n[kind] {
+				out = append(out, &model.FoundryReviewDecision{ID: next(), OntologyID: "ont-1", Kind: kind, DocID: ptr("doc-a"), ClaimKey: &key,
+					ClaimSpan: &model.FoundryClaimSpan{Section: uint32(i), Start: 2, End: 9}, StatementHash: &read, DecidedByUserID: "user", DecidedAt: settled})
 			}
-			decisions, err := h.task.runner.decisions(context.Background(), loadJob(), "[types.Customer]\nprops = { name = \"string\" }", []ontologyagent.ExtractDocument{{DocID: "doc-a"}})
-			if n == 10000 {
-				if err != nil || len(decisions) != n {
-					t.Fatalf("%d %v", len(decisions), err)
-				}
-			} else {
-				var f *failure
-				if !errors.As(err, &f) || !f.Permanent || decisions != nil {
-					t.Fatalf("%v", err)
-				}
+		}
+		return out
+	}
+	kinds := []model.FoundryReviewDecisionKind{model.FoundryReviewProp, model.FoundryReviewResolve, ontologyagent.AliasDecision,
+		model.FoundryReviewRelease, model.FoundryReviewWithdraw}
+	atCap := map[model.FoundryReviewDecisionKind]int{}
+	for _, kind := range kinds {
+		atCap[kind] = maxKindDecisions
+	}
+	h := newHarness(t)
+	h.store.decisions = full(atCap)
+	decisions, err := h.task.runner.decisions(context.Background(), loadJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}}, writing("doc-a", h.store.decisions))
+	if err != nil || len(decisions) != maxExtractDecisions {
+		t.Fatalf("%d decisions, %v", len(decisions), err)
+	}
+	sent := map[model.FoundryReviewDecisionKind]int{}
+	for _, d := range decisions {
+		sent[d.Kind]++
+	}
+	if !maps.Equal(sent, atCap) {
+		t.Fatalf("sent %v", sent)
+	}
+	for _, kind := range kinds {
+		t.Run("one "+string(kind)+" too many", func(t *testing.T) {
+			n := map[model.FoundryReviewDecisionKind]int{kind: maxKindDecisions + 1}
+			if kind != model.FoundryReviewProp {
+				n[model.FoundryReviewProp] = 1
+			}
+			h := newHarness(t)
+			h.store.decisions = full(n)
+			decisions, err := h.task.runner.decisions(context.Background(), loadJob(), toml, []ontologyagent.ExtractDocument{{DocID: "doc-a"}}, writing("doc-a", h.store.decisions))
+			var f *failure
+			if !errors.As(err, &f) || !f.Permanent || !f.TooLarge || decisions != nil || !strings.Contains(f.Message, "of one kind") {
+				t.Fatalf("%v", err)
 			}
 		})
 	}
@@ -3437,13 +3661,13 @@ func TestExtractReviewDecisionCap(t *testing.T) {
 func TestExtractReviewDecisionFailures(t *testing.T) {
 	h := newHarness(t)
 	h.store.decisionErr = errors.New("db unavailable")
-	_, err := h.task.runner.decisions(context.Background(), loadJob(), "[types.Customer]", nil)
+	_, err := h.task.runner.decisions(context.Background(), loadJob(), "[types.Customer]", nil, &attempt{})
 	var f *failure
 	if !errors.As(err, &f) || f.Permanent {
 		t.Fatalf("%v", err)
 	}
 	h.store.decisionErr = nil
-	_, err = h.task.runner.decisions(context.Background(), loadJob(), "[invalid", nil)
+	_, err = h.task.runner.decisions(context.Background(), loadJob(), "[invalid", nil, &attempt{})
 	if !errors.As(err, &f) || !f.Permanent {
 		t.Fatalf("%v", err)
 	}
@@ -3452,7 +3676,7 @@ func TestExtractReviewDecisionFailures(t *testing.T) {
 	ptr := func(s string) *string { return &s }
 	h.store.decisions = []*model.FoundryReviewDecision{{ID: "1", OntologyID: "ont-1", Kind: model.FoundryReviewProp, Type: "Customer",
 		EntityKey: ptr("c1"), Prop: ptr("name"), Value: json.RawMessage(`"Chosen"`), DecidedByUserID: "user"}}
-	decisions, err := h.task.runner.decisions(context.Background(), loadJob(), "[types.Customer]\nprops = { name = \"string\" }", []ontologyagent.ExtractDocument{{DocID: "doc-a"}})
+	decisions, err := h.task.runner.decisions(context.Background(), loadJob(), "[types.Customer]\nprops = { name = \"string\" }", []ontologyagent.ExtractDocument{{DocID: "doc-a"}}, &attempt{})
 	if !errors.As(err, &f) || !f.Permanent || decisions != nil {
 		t.Fatalf("%+v, %v", decisions, err)
 	}

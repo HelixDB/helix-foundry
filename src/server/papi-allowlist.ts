@@ -40,6 +40,9 @@ export const papiRoutes = [
   // Auth and identity
   { area: "auth", method: "GET", path: "/v1/whoami" },
 
+  // Feedback: the Feedback button's and Request a connector's.
+  { area: "workspace", method: "POST", path: "/v1/feedback" },
+
   // Workspace: the caller's workspaces, and creating one.
   { area: "workspace", method: "GET", path: "/v1/workspaces" },
   { area: "workspace", method: "POST", path: "/v1/workspaces" },

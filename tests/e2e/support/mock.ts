@@ -38,6 +38,15 @@ export const mock = {
       stopReason: "signed_in" | null;
     }[]
   > => (await (await fetch(`${MOCK}/__mock/reminders`)).json()).reminders,
+  /** The feedback POST /v1/feedback took (mock/routes/feedback.ts). */
+  feedback: async (): Promise<
+    {
+      category: string;
+      message: string;
+      page: string;
+      workspaceId: string | null;
+    }[]
+  > => (await (await fetch(`${MOCK}/__mock/feedback`)).json()).feedback,
   configure: (config: {
     // Seeds Customer contracts' demo workflows and 45 days of their runs.
     workflowDemo?: boolean;
@@ -60,6 +69,13 @@ export const mock = {
     reviseOutcome?: "budget";
     // A load's step, how it ends, and whether reading a document fails.
     loadStepMs?: number;
+    // What the engine says in place of a person's resolve (contract 4.22.0).
+    nameInPlace?:
+      | "written"
+      | "not_replayed"
+      | "bound"
+      | "collides"
+      | "not_asked";
     loadOutcome?: "succeed" | "fail" | "sources_changed" | "budget_exhausted";
     documentOutcome?: "succeed" | "fail";
     // Seeds a variant of a customer's name linked to that customer this way,

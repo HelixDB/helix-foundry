@@ -428,8 +428,13 @@ test("manages an API source in the Data area: fields, refusals, tokens and delet
   await form.getByRole("button", { name: "Create API source" }).click();
   const source: string = (await (await created).json()).connector.id;
   await form.getByRole("button", { name: "Done" }).click();
+  // The picker says it's made and offers another source or its page.
+  const connected = page.getByRole("dialog", { name: "Connected" });
+  await expect(connected.getByRole("status")).toContainText(
+    "API source created.",
+  );
+  await connected.getByRole("button", { name: "Open Order lines" }).click();
   await expect(page).toHaveURL(new RegExp(`/data/connections/${source}$`));
-  await expect(page.getByText("API source created")).toBeVisible();
   await expect(
     page.getByRole("heading", { level: 1, name: "Order lines" }),
   ).toBeVisible();

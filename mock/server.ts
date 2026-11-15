@@ -3,6 +3,7 @@ import { compileTemplate, matchTemplate } from "../src/shared/route-template";
 import { fail, type MockReply, type Principal } from "./http";
 import { handleReminders, mockReminders } from "./reminders";
 import { handleSharedDashboard } from "./routes/dashboards";
+import { mockFeedback } from "./routes/feedback";
 import { routes } from "./routes";
 import { handleDirectoryPage } from "./routes/access";
 import { pairHelper, startHelper } from "./routes/agent-hosts";
@@ -50,6 +51,9 @@ import { handleWorkos } from "./workos";
 // POST /v1/reminders and /v1/reminders/stop are Foundry's door's, not the
 // WFE's: the landing page's reminders (./reminders.ts), which the site's
 // server calls with the mock's secret. GET /__mock/reminders lists them.
+//
+// GET /__mock/feedback lists the feedback POST /v1/feedback took
+// (./routes/feedback.ts), which the WFE would tell Helix's team of.
 //
 // /mock/directory-portal is WorkOS's Admin Portal for directory sync
 // (./routes/access.ts).
@@ -175,6 +179,11 @@ const server = createServer(async (req, res) => {
             : startHelper(body);
         res.writeHead(reply.status, { "Content-Type": "application/json" });
         res.end(JSON.stringify(reply.body));
+        return;
+      }
+      if (url.pathname === "/__mock/feedback" && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ feedback: mockFeedback() }));
         return;
       }
       if (url.pathname === "/__mock/reminders" && req.method === "GET") {
