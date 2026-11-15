@@ -36,6 +36,7 @@ import type {
   FoundryWorkflowRun,
 } from "../../../shared/wfe";
 import { trackEvent } from "../../analytics";
+import { ApiError } from "../../api";
 import {
   Button,
   ConfirmDialog,
@@ -61,6 +62,7 @@ import {
 } from "../../kit";
 import { paths } from "../../paths";
 import { RefreshFailed, canManage, useWorkspace } from "../../ui";
+import { automationQueries } from "../automations/queries";
 import { MCP_URL } from "../ontology/agent-setup";
 import { MAX_GOAL } from "../ontology/model";
 import { ontologyName, useOntology } from "../ontology/scope";
@@ -129,7 +131,8 @@ function useCopy() {
 
 /**
  * Where a workflow Foundry made for an automation comes from, linking back:
- * the automation (a run's page, its run), or a deleted one's history.
+ * the automation (a run's page, its run, while the automation keeps it), or
+ * a deleted one's history.
  */
 function MadeBy({
   automation: a,
@@ -138,6 +141,15 @@ function MadeBy({
   automation: FoundryWorkflowAutomation;
   runId?: string;
 }) {
+  const { id: ws } = useWorkspace();
+  // An automation keeps its runs for a while; its workflow keeps their
+  // records longer.
+  const run = useQuery({
+    ...automationQueries.run(ws, a.automationId, runId || ""),
+    enabled: !!runId && !a.deleted,
+    refetchInterval: false,
+  });
+  const pruned = run.error instanceof ApiError && run.error.status === 404;
   return (
     <p className="wf-origin" role="note">
       <Zap size={14} aria-hidden />
@@ -154,7 +166,9 @@ function MadeBy({
           <Link to={paths.automation(a.automationId)}>
             {a.name || "unnamed"}
           </Link>
-          {runId ? (
+          {runId && pruned ? (
+            ": this run records one of its runs, which the automation no longer keeps."
+          ) : runId ? (
             <>
               : this run records{" "}
               <Link to={paths.automationRun(a.automationId, runId)}>

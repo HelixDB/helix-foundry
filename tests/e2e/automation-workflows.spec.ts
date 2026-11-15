@@ -137,6 +137,24 @@ test("an automation that reads an ontology records each run in one workflow, whi
       { exact: false },
     ),
   ).toBeVisible();
+  // Its id, shown here, records nothing for anyone but the automation: not
+  // even its owner's own calls.
+  const workflowRun = page.url();
+  const forged = await page.request.post(
+    `/papi/v1/workspaces/ws_acme/foundry/ontologies/ont_acme_contracts/questions`,
+    {
+      headers: {
+        origin: new URL(page.url()).origin,
+        "x-helix-csrf": await csrfToken(page),
+      },
+      data: {
+        question: "Who renews?",
+        clientToken: "forged-1",
+        workflowRunId: workflowRun.split("/runs/")[1],
+      },
+    },
+  );
+  expect(forged.status()).toBe(404);
   await origin.getByRole("link", { name: "one of its runs" }).click();
   await expect(page).toHaveURL(new RegExp(`/automations/${id}/runs/${first}$`));
 
@@ -206,6 +224,18 @@ test("an automation that reads an ontology records each run in one workflow, whi
       name: /^Runs/,
     }),
   ).toContainText("2");
+
+  // Its workflow keeps a run's record after the automation lets the run go.
+  await mock.pruneRun(id, first);
+  await page.goto(workflowRun);
+  await expect(
+    page.getByRole("note").filter({ hasText: "Made by the automation" }),
+  ).toContainText(
+    "this run records one of its runs, which the automation no longer keeps.",
+  );
+  await expect(page.getByRole("link", { name: "one of its runs" })).toHaveCount(
+    0,
+  );
 
   // Deleting the automation keeps its workflow and runs, as history.
   const res = await page.request.delete(`/papi${A}/${id}`, {

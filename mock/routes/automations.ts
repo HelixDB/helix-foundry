@@ -66,6 +66,7 @@ import {
   record,
   renameAutomationWorkflows,
   useOntology,
+  WORKFLOW_CAPS,
   type AutomationRef,
 } from "./workflows";
 import { manages } from "./workspaces";
@@ -952,7 +953,15 @@ function advance(r: StoredRun) {
           allow: node.config.allow || [],
           use: (ontologyId) => {
             const run = uses(r, [ontologyId])[0];
-            return run && ((call) => record(run, call));
+            // A run that holds all it may records nothing more; the call
+            // goes on (the backend's trackedRun).
+            return (
+              run &&
+              ((call) => {
+                if (run.accesses.length < WORKFLOW_CAPS.accesses)
+                  record(run, call);
+              })
+            );
           },
         });
         r.threadId = queued.threadId;
@@ -1269,6 +1278,25 @@ export function pastRuns(
     (x, y) =>
       y.createdAt.localeCompare(x.createdAt) || y.id.localeCompare(x.id),
   );
+  return { status: 200, body: {} };
+}
+
+/**
+ * Drops an ended run of an automation as the backend's retention prunes it
+ * (POST /__mock/automations/{id}/runs/{runId}/prune): the workflow runs it
+ * started stay, as they outlive it.
+ */
+export function pruneRun(
+  automationId: string,
+  runId: string,
+): { status: number; body: unknown } {
+  const r = state.runs.find(
+    (x) => x.id === runId && x.automationId === automationId,
+  );
+  if (!r) return { status: 404, body: { message: "automation run not found" } };
+  if (live(r))
+    return { status: 400, body: { message: "the run hasn't ended" } };
+  state.runs = state.runs.filter((x) => x !== r);
   return { status: 200, body: {} };
 }
 

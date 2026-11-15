@@ -262,6 +262,14 @@ export const mock = {
     );
     if (!res.ok) throw new Error(`past runs: ${res.status}`);
   },
+  /** Drops an ended run of an automation, as the backend's retention does. */
+  pruneRun: async (automationId: string, runId: string) => {
+    const res = await fetch(
+      `${MOCK}/__mock/automations/${encodeURIComponent(automationId)}/runs/${encodeURIComponent(runId)}/prune`,
+      { method: "POST" },
+    );
+    if (!res.ok) throw new Error(`prune run: ${res.status}`);
+  },
   /**
    * Sends pieces to an API source as an agent does through the Helix MCP
    * (the site never sends any): stored whole, or refused whole with the

@@ -436,23 +436,34 @@ function toRun(r: StoredRun): FoundryWorkflowRun {
 
 // A workflow's page, or a run's, may be the first thing opened: each lookup
 // seeds the demo, as the list and insights do.
+/**
+ * Whether the caller sees the workflows Foundry made for automations, and
+ * their runs: a grantee doesn't, as it sees no automation (an automation
+ * runs with its owner's access).
+ */
+const seesAutomations = (req: MockRequest) => !req.grantee;
+
 function workflowOf(
+  req: MockRequest,
   ontologyId: string,
   workflowId: string | undefined,
 ): StoredWorkflow | MockReply {
   ensureDemo();
   return (
     state.workflows.find(
-      (w) => w.id === workflowId && w.ontologyId === ontologyId,
+      (w) =>
+        w.id === workflowId &&
+        w.ontologyId === ontologyId &&
+        (!w.automationId || seesAutomations(req)),
     ) || fail("NOT_FOUND", "workflow not found")
   );
 }
 
 function runOf(
+  req: MockRequest,
   ontologyId: string,
   workflowId: string | undefined,
   runId: string | undefined,
-  by?: string,
 ): StoredRun | MockReply {
   ensureDemo();
   return (
@@ -461,7 +472,8 @@ function runOf(
         r.id === runId &&
         r.ontologyId === ontologyId &&
         r.workflowId === workflowId &&
-        startedBy(r, by),
+        startedBy(r, own(req)) &&
+        (!r.automationRunId || seesAutomations(req)),
     ) || fail("NOT_FOUND", "workflow run not found")
   );
 }
@@ -501,18 +513,13 @@ export function openRun(
   ontologyId: string | undefined,
   runId: string,
   grantee?: MockGrantee,
-  userId?: string,
 ): StoredRun | MockReply {
-  // Foundry's record of an automation's run takes its owner's calls alone
-  // (its Assistant steps'), whatever their Workflows permission.
-  const automated = state.runs.find((x) => x.id === runId && x.automationRunId);
-  if (automated && automated.startedByUserId !== userId)
+  // Foundry's record of an automation's run takes only its own calls,
+  // which name it with a key no answer shows (the mock's record directly,
+  // useOntology): its id alone records nothing, whoever passes it.
+  if (state.runs.some((x) => x.id === runId && x.automationRunId))
     return fail("NOT_FOUND", "workflow run not found");
-  if (
-    !automated &&
-    grantee &&
-    !workflowsOn(workspaceId, grantee.principal.split(":")[1]!)
-  )
+  if (grantee && !workflowsOn(workspaceId, grantee.principal.split(":")[1]!))
     return fail("PERMISSION_DENIED", WORKFLOWS_OFF);
   const by =
     grantee && (!grantee.load || grantee.load.partial)
@@ -589,13 +596,7 @@ export async function tracked(
   const runId = (req.body as { workflowRunId?: unknown } | undefined)
     ?.workflowRunId;
   if (typeof runId !== "string" || !runId) return handle();
-  const run = openRun(
-    req.params.workspaceId!,
-    ontologyId,
-    runId,
-    req.grantee,
-    req.principal.user.id,
-  );
+  const run = openRun(req.params.workspaceId!, ontologyId, runId, req.grantee);
   if (isReplyOf(run)) return run;
   const reply = await handle();
   if (reply.status === 200) record(run, call(reply.body));
@@ -661,7 +662,8 @@ export function automationWorkflow(
     name: automationWorkflowName(a.name),
     description:
       "Foundry records here each run of its automation that uses this ontology: what the run read of it and what the run found, so each run's assessment says how much the ontology helped.",
-    clientToken: `automation:${a.automationId}`,
+    // Its own token: a person's workflow's never stands in its way.
+    clientToken: id("wft"),
     createdByUserId: a.ownerUserId,
     createdAt: now(),
     automationId: a.automationId,
@@ -897,7 +899,7 @@ export const workflowRoutes: MockRoute[] = [
       if (!isScope(s)) return s;
       const workflowId = req.query.get("workflowId") || undefined;
       if (workflowId) {
-        const w = workflowOf(s.o.id, workflowId);
+        const w = workflowOf(req, s.o.id, workflowId);
         if (isReplyOf(w)) return w;
       }
       const days = Number(req.query.get("days") || 0);
@@ -915,7 +917,8 @@ export const workflowRoutes: MockRoute[] = [
             r.ontologyId === s.o.id &&
             (!workflowId || r.workflowId === workflowId) &&
             startedBy(r, by) &&
-            !(asked && !own(req) && r.automationRunId),
+            !(asked && !own(req) && r.automationRunId) &&
+            !(r.automationRunId && !seesAutomations(req)),
         )
         .map((r) => {
           const w = state.workflows.find((x) => x.id === r.workflowId);
@@ -939,7 +942,11 @@ export const workflowRoutes: MockRoute[] = [
       if (!isScope(s)) return s;
       return ok({
         workflows: state.workflows
-          .filter((w) => w.ontologyId === s.o.id)
+          .filter(
+            (w) =>
+              w.ontologyId === s.o.id &&
+              (!w.automationId || seesAutomations(req)),
+          )
           .toReversed()
           .map((w) => toWorkflow(w, own(req))),
       } satisfies ListFoundryWorkflowsResponse);
@@ -951,7 +958,7 @@ export const workflowRoutes: MockRoute[] = [
     handle: (req) => {
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
-      const w = workflowOf(s.o.id, req.params.id);
+      const w = workflowOf(req, s.o.id, req.params.id);
       if (isReplyOf(w)) return w;
       return ok({
         workflow: toWorkflow(w, own(req)),
@@ -964,7 +971,7 @@ export const workflowRoutes: MockRoute[] = [
     handle: (req) => {
       const s = ontologyOf(req, true);
       if (!isScope(s)) return s;
-      const w = workflowOf(s.o.id, req.params.id);
+      const w = workflowOf(req, s.o.id, req.params.id);
       if (isReplyOf(w)) return w;
       if (w.automationId && !w.automationDeleted)
         return foundryPrecondition(
@@ -986,7 +993,7 @@ export const workflowRoutes: MockRoute[] = [
       const body = (req.body || {}) as Partial<StartFoundryWorkflowRunRequest>;
       const input = inputOf(body.input);
       if (typeof input === "object") return input;
-      const w = workflowOf(s.o.id, req.params.workflowId);
+      const w = workflowOf(req, s.o.id, req.params.workflowId);
       if (isReplyOf(w)) return w;
       if (w.automationId)
         return foundryPrecondition(
@@ -1032,7 +1039,7 @@ export const workflowRoutes: MockRoute[] = [
     handle: (req) => {
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
-      const w = workflowOf(s.o.id, req.params.workflowId);
+      const w = workflowOf(req, s.o.id, req.params.workflowId);
       if (isReplyOf(w)) return w;
       // Newest first by when they started, RUNS_PAGE a page, as the backend
       // pages them (runs started in the same instant newest made first); the
@@ -1061,7 +1068,7 @@ export const workflowRoutes: MockRoute[] = [
     handle: (req) => {
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
-      const r = runOf(s.o.id, req.params.workflowId, req.params.id, own(req));
+      const r = runOf(req, s.o.id, req.params.workflowId, req.params.id);
       if (isReplyOf(r)) return r;
       return ok({ run: toRun(r) } satisfies FoundryWorkflowRunResponse);
     },
@@ -1081,7 +1088,7 @@ export const workflowRoutes: MockRoute[] = [
           "INVALID_ARGUMENT",
           `output is required, at most ${WORKFLOW_CAPS.output} bytes of UTF-8`,
         );
-      const r = runOf(s.o.id, req.params.workflowId, req.params.id, own(req));
+      const r = runOf(req, s.o.id, req.params.workflowId, req.params.id);
       if (isReplyOf(r)) return r;
       if (r.automationRunId)
         return foundryPrecondition(
@@ -1125,7 +1132,7 @@ export const workflowRoutes: MockRoute[] = [
         return fail("FAILED_PRECONDITION", "run assessments are off here");
       const s = ontologyOf(req, true);
       if (!isScope(s)) return s;
-      const r = runOf(s.o.id, req.params.workflowId, req.params.id, own(req));
+      const r = runOf(req, s.o.id, req.params.workflowId, req.params.id);
       if (isReplyOf(r)) return r;
       settle(r);
       if (r.status !== "finished")
@@ -1148,7 +1155,7 @@ export const workflowRoutes: MockRoute[] = [
     handle: (req) => {
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
-      const r = runOf(s.o.id, req.params.workflowId, req.params.id, own(req));
+      const r = runOf(req, s.o.id, req.params.workflowId, req.params.id);
       if (isReplyOf(r)) return r;
       const after = Math.max(Number(req.query.get("afterSeq") || 0), 0);
       const page = r.accesses.filter((a) => a.seq > after);
