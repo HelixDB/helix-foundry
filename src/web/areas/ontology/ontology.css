@@ -671,6 +671,19 @@
   align-items: center;
   gap: 8px;
 }
+/* Narrow (a phone, or beside the Assistant), Cancel generation goes under
+   the title rather than squeezing it into a column. */
+.on-asked {
+  container-type: inline-size;
+}
+@container (max-width: 560px) {
+  .on-asked > .hf-panel-head {
+    flex-wrap: wrap;
+  }
+  .on-asked > .hf-panel-head > :first-child {
+    flex: 1 1 100%;
+  }
+}
 .on-answer {
   display: grid;
   gap: 6px;

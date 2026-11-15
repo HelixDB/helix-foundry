@@ -373,19 +373,37 @@ export function Transcript({
 }) {
   const log = useRef<HTMLDivElement>(null),
     body = useRef<HTMLDivElement>(null),
-    stick = useRef(true);
+    stick = useRef(true),
+    turnsSeen = useRef(0);
+  const threadId = data?.thread.id,
+    turns = data?.turns?.length ?? 0;
   useLayoutEffect(() => {
     const el = log.current,
       inner = body.current;
     if (!el || !inner || typeof ResizeObserver === "undefined") return;
+    // Another thread opens at its end, wherever the last one was read.
+    stick.current = true;
     const follow = () => {
       if (stick.current) el.scrollTop = el.scrollHeight;
     };
     follow();
+    // The turns growing, and the log itself shrinking (the composer above
+    // the keyboard, or the page it sends coming and going).
     const observer = new ResizeObserver(follow);
     observer.observe(inner);
+    observer.observe(el);
     return () => observer.disconnect();
-  }, [data?.thread.id]);
+  }, [threadId]);
+  // A turn starts with what the person did (a message, a card run, answers),
+  // so a new one follows the end again, however far up they had read.
+  useLayoutEffect(() => {
+    const el = log.current;
+    if (turns > turnsSeen.current && turnsSeen.current > 0 && el) {
+      stick.current = true;
+      el.scrollTop = el.scrollHeight;
+    }
+    turnsSeen.current = turns;
+  }, [threadId, turns]);
   const busy = threadBusy(data);
   const actions = useMemo(
     () => new Map((data?.actions || []).map((a) => [a.id, a])),

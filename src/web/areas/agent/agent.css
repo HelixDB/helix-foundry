@@ -80,6 +80,7 @@
   white-space: pre-wrap;
 }
 .ag-text a,
+.ag-ran a,
 .ag-link {
   color: var(--hf-accent-text);
   text-decoration: underline;
@@ -105,6 +106,14 @@
   color: var(--hf-muted);
   font-size: var(--hf-text-sm);
   line-height: 1.45;
+}
+/* An icon and a sentence: the sentence wraps beside the icon, not under it. */
+.ag-ran > svg {
+  flex: none;
+}
+.ag-ran > svg + span {
+  flex: 1 1 0;
+  min-width: 0;
 }
 .ag-hint.is-error,
 .ag-card-error {

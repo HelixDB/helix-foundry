@@ -164,6 +164,10 @@ test("edits a document route, identifiers and a constraint, previews, then creat
   // Its page: the overview it leaves offers Make current twice, in the
   // ready-to-review callout and the versions list.
   await expect(page).toHaveURL(/\/versions\/ver_/);
+  // The URL moves before the overview leaves: wait for the version's page.
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Version 4" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Make current", exact: true }),
   ).toBeVisible();
