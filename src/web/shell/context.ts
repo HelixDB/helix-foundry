@@ -1,15 +1,26 @@
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+/** Where the person opened the Assistant from, for analytics. */
+export type AssistantFrom = "shortcut" | "button" | "palette";
+
 export type ShellApi = {
   openPalette: (query?: string) => void;
   // Shows or hides the open section's panel; on a phone, opens or closes
   // the drawer that holds it.
   togglePanel: () => void;
+  // The Assistant's dock: whether this build and user have it, whether it
+  // is open, and opening or closing it.
+  assistant: {
+    available: boolean;
+    open: boolean;
+    toggle: (from: AssistantFrom) => void;
+  };
 };
 export const ShellContext = createContext<ShellApi>({
   openPalette: () => {},
   togglePanel: () => {},
+  assistant: { available: false, open: false, toggle: () => {} },
 });
 // Lets any page open the command palette.
 export const useShell = () => useContext(ShellContext);

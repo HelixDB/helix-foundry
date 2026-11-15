@@ -76,6 +76,7 @@ export type VisualPlan = { title: string; note: string } & (
  *
  * @example
  * cellOf({ type: "Customer", id: "cus_1", name: "Globex" }, true); // { kind: "entity", ref: { type: "Customer", id: "cus_1" }, name: "Globex" }
+ * cellOf({ type: "Customer", name: "Globex" }, true); // { kind: "text", text: "Globex", untrusted: false }
  * cellOf({ untrusted: "<b>Net 30</b>" }); // { kind: "text", text: "<b>Net 30</b>", untrusted: true }
  * cellOf(1200); // { kind: "number", value: 1200 }
  * cellOf(null); // { kind: "none" }
@@ -97,6 +98,16 @@ export function cellOf(v: unknown, entity = false): VisualCell {
     typeof v.name === "string"
   )
     return { kind: "entity", ref: { type: v.type, id: v.id }, name: v.name };
+  // A public snapshot's entity names no id (dashboard.Public): its name,
+  // with nothing to open.
+  if (
+    entity &&
+    isRecord(v) &&
+    Object.keys(v).length === 2 &&
+    typeof v.type === "string" &&
+    typeof v.name === "string"
+  )
+    return { kind: "text", text: v.name, untrusted: false };
   if (isRecord(v) && Object.keys(v).length === 1 && "untrusted" in v)
     return {
       kind: "text",

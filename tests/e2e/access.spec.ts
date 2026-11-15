@@ -155,6 +155,7 @@ test("a restricted member sees only what their sources cover", async ({
   const nav = as.getByRole("list", { name: "Workspace" });
   await expect(nav.getByRole("link")).toHaveText([
     "Analyst",
+    "Dashboards",
     "Ontologies",
     "Explorer",
   ]);
@@ -325,7 +326,7 @@ test("a member who can't query reads only what their sources cover", async ({
   // ontology he reads, and offers no other.
   await expect(
     as.getByRole("list", { name: "Workspace" }).getByRole("link"),
-  ).toHaveText(["Analyst", "Ontologies", "Explorer"]);
+  ).toHaveText(["Analyst", "Dashboards", "Ontologies", "Explorer"]);
   await as.goto("/ask");
   await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
   await as.getByRole("combobox", { name: "Ontology" }).click();
@@ -965,7 +966,7 @@ test("giving a member sources restricts them, and taking them away widens nothin
   await signIn(as, "alan@example.com");
   await expect(
     as.getByRole("list", { name: "Workspace" }).getByRole("link"),
-  ).toHaveText(["Analyst", "Ontologies", "Explorer"]);
+  ).toHaveText(["Analyst", "Dashboards", "Ontologies", "Explorer"]);
 
   // His last source taken away, he reads nothing, not everything.
   const again = await openSources(page, "people", "Alan Turing");
@@ -988,7 +989,14 @@ test("giving a member sources restricts them, and taking them away widens nothin
   await as.goto("/data");
   await expect(
     as.getByRole("list", { name: "Workspace" }).getByRole("link"),
-  ).toHaveText(["Analyst", "Ontologies", "Explorer", "Connectors"]);
+  ).toHaveText([
+    "Analyst",
+    "Dashboards",
+    "Automations",
+    "Ontologies",
+    "Explorer",
+    "Connectors",
+  ]);
 });
 
 test("a member who reads databases is given no sources, on their own or by a team", async ({

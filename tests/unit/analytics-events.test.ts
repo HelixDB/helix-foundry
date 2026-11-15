@@ -7,7 +7,9 @@ import {
   moveDocument,
 } from "@/web/areas/documents/documents-api";
 import {
+  answerGeneration,
   askQuestion,
+  cancelGeneration,
   cancelQuestion,
   createLoad,
   generateOntology,
@@ -16,7 +18,27 @@ import {
   setCurrentVersion,
 } from "@/web/areas/ontology/queries";
 import { deleteReviewDecision, settleReview } from "@/web/areas/reviews/api";
+import { EMPTY_STREAM } from "@/web/areas/agent/model";
+import {
+  agentQueries,
+  dismissAgentAction,
+  executeAgentAction,
+  pairAgentHelper,
+  revokeAgentHelper,
+  sendAgentMessage,
+  setAgentRuntime,
+  turnEvents,
+} from "@/web/areas/agent/queries";
 import { cancelPlan, resumePlan } from "@/web/areas/workspace/plan";
+import {
+  addQuestionVisual,
+  createDashboard,
+  deleteDashboard,
+  pinDashboard,
+  publishDashboard,
+  unpublishDashboard,
+  updateDashboard,
+} from "@/web/areas/dashboards/queries";
 
 // The API calls that report a custom event (src/web/analytics.ts): once the
 // WFE accepts them, and never when it refuses; those that start a job start
@@ -57,6 +79,11 @@ const cases: [string, () => Promise<unknown>, unknown[]][] = [
     "a load made current",
     () => setCurrentLoad("ws", "o", "l1"),
     ["load_made_current"],
+  ],
+  [
+    "a cancelled generation",
+    () => cancelGeneration("ws", "o", "g1"),
+    ["generation_cancelled"],
   ],
   [
     "a cancelled question",
@@ -186,11 +213,160 @@ describe("custom events of API calls", () => {
     },
   );
 
+  it("reports how a generation's questions were answered, and carries its end on", async () => {
+    await answerGeneration("ws", "o", "g1", {
+      answers: [{ questionId: "q1", text: "x" }],
+      round: 1,
+    });
+    await answerGeneration("ws", "o", "g1", {
+      answers: [{ questionId: "q1", options: ["A"] }],
+      useDefaults: true,
+      round: 1,
+    });
+    await answerGeneration("ws", "o", "g1", {
+      answers: [],
+      useDefaults: true,
+      round: 1,
+    });
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["generation_answered", { with: "answers" }],
+      ["generation_answered", { with: "some_defaults" }],
+      ["generation_answered", { with: "defaults" }],
+    ]);
+    // Remembered for its end, without reporting a second start.
+    expect(vi.mocked(jobStarted).mock.calls[0]).toEqual([
+      { job: "generation", source: "ai" },
+      "gen_1",
+      false,
+    ]);
+  });
+
+  it("reports why answers were refused, and carries nothing on", async () => {
+    call.mockRejectedValueOnce(new ApiError("not waiting", 400));
+    await expect(
+      answerGeneration("ws", "o", "g1", {
+        answers: [],
+        useDefaults: true,
+        round: 1,
+      }),
+    ).rejects.toThrow("not waiting");
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["generation_answer_refused", { reason: "refused" }],
+    ]);
+    expect(jobStarted).not.toHaveBeenCalled();
+  });
+
   it("leaves a generation already live unreported: callers follow it", async () => {
     call.mockRejectedValueOnce(new ApiError("already live", 409));
     await expect(generateOntology("ws", "o", {})).rejects.toThrow();
     expect(trackEvent).not.toHaveBeenCalled();
   });
+});
+
+describe("dashboards' events", () => {
+  const visual = {
+    expectedRevision: "1",
+    ontologyId: "o",
+    questionId: "q",
+    evidenceId: "e2",
+  };
+  const calls: [string, () => Promise<unknown>, unknown[], string][] = [
+    [
+      "one made from its page",
+      () => createDashboard("ws", { name: "n", clientToken: "t" }, "page"),
+      ["dashboard_created", { from: "page" }],
+      "create",
+    ],
+    [
+      "one made from an Analyst answer",
+      () => createDashboard("ws", { name: "n", clientToken: "t" }, "analyst"),
+      ["dashboard_created", { from: "analyst" }],
+      "create",
+    ],
+    [
+      "its name changed",
+      () => updateDashboard("ws", "d", { expectedRevision: "1", name: "n" }),
+      ["dashboard_edited", { tiles: false }],
+      "edit",
+    ],
+    [
+      "its tiles changed",
+      () =>
+        updateDashboard("ws", "d", {
+          expectedRevision: "1",
+          spec: { v: 1, tiles: [], layout: { rows: [] } },
+        }),
+      ["dashboard_edited", { tiles: true }],
+      "edit",
+    ],
+    [
+      "its delete",
+      () => deleteDashboard("ws", "d"),
+      ["dashboard_deleted"],
+      "delete",
+    ],
+    [
+      "its pin",
+      () => pinDashboard("ws", "d", true, "1"),
+      ["dashboard_pinned"],
+      "pin",
+    ],
+    [
+      "its unpin",
+      () => pinDashboard("ws", "d", false, "1"),
+      ["dashboard_unpinned"],
+      "pin",
+    ],
+    [
+      "an answer's visual, reading the current load",
+      () => addQuestionVisual("ws", "d", visual),
+      ["dashboard_visual_added", { load: "current" }],
+      "add_visual",
+    ],
+    [
+      "an answer's visual, reading its own load",
+      () => addQuestionVisual("ws", "d", { ...visual, pinLoad: true }),
+      ["dashboard_visual_added", { load: "pinned" }],
+      "add_visual",
+    ],
+    [
+      "its first publish",
+      () => publishDashboard("ws", "d", "1", true),
+      ["dashboard_published", { first: true }],
+      "publish",
+    ],
+    [
+      "a new snapshot",
+      () => publishDashboard("ws", "d", "2", false),
+      ["dashboard_published", { first: false }],
+      "publish",
+    ],
+    [
+      "its unpublish",
+      () => unpublishDashboard("ws", "d"),
+      ["dashboard_unpublished"],
+      "unpublish",
+    ],
+  ];
+
+  it.each(calls)("reports %s once it is accepted", async (_, run, event) => {
+    await run();
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([event]);
+  });
+
+  it.each(calls)(
+    "reports why %s was refused, and nothing else",
+    async (_, run, __, action) => {
+      call.mockRejectedValueOnce(new ApiError("changed", 400));
+      await expect(run()).rejects.toThrow("changed");
+      call.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      await expect(run()).rejects.toThrow("Failed to fetch");
+      expect(vi.mocked(trackEvent).mock.calls).toEqual([
+        ["dashboard_refused", { action, reason: "refused" }],
+        ["dashboard_refused", { action, reason: "error" }],
+      ]);
+    },
+  );
 });
 
 describe("reads that see jobs end", () => {
@@ -241,6 +417,126 @@ describe("reads that see jobs end", () => {
     expect(vi.mocked(jobSeen).mock.calls).toEqual([
       ["read", [read, { id: "d2" }]],
       ["read", [read]],
+    ]);
+  });
+});
+
+describe("the Assistant's events", () => {
+  const action = {
+    id: "act_1",
+    operation: "create_load",
+    payloadHash: "h",
+    targetNamedByUser: false,
+  };
+
+  it("starts a message's turn from its section, or says why it was refused", async () => {
+    call.mockResolvedValueOnce({ turn: { id: "turn_1" }, thread: { id: "t" } });
+    await sendAgentMessage("ws", { text: "Hi", clientToken: "c" }, "ask");
+    call.mockResolvedValueOnce({
+      turn: { id: "turn_2" },
+      thread: { id: "t2", runtime: "claude_code" },
+    });
+    await sendAgentMessage("ws", { text: "Hi", clientToken: "e" }, "data");
+    expect(vi.mocked(jobStarted).mock.calls).toEqual([
+      [{ job: "agent_turn", section: "ask", runtime: "api" }, "turn_1"],
+      [
+        { job: "agent_turn", section: "data", runtime: "claude_code" },
+        "turn_2",
+      ],
+    ]);
+    call.mockRejectedValueOnce(new ApiError("slow down", 429));
+    await expect(
+      sendAgentMessage("ws", { text: "Hi", clientToken: "d" }, "none"),
+    ).rejects.toThrow();
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["agent_turn_refused", { reason: "rate_limit" }],
+    ]);
+  });
+
+  it("hands a thread's turns to jobSeen", async () => {
+    const turns = [{ id: "turn_1", status: "done", steps: 3 }];
+    call.mockResolvedValueOnce({ thread: { id: "t" }, turns });
+    await agentQueries.thread("ws", "t").queryFn();
+    expect(vi.mocked(jobSeen).mock.calls).toEqual([["agent_turn", turns]]);
+  });
+
+  it.each([
+    ["succeeded", "succeeded"],
+    ["failed", "failed"],
+    ["unknown", "unknown"],
+  ])("reports a run that %s, with its operation", async (status, outcome) => {
+    call.mockResolvedValueOnce({ action: { ...action, status } });
+    await executeAgentAction("ws", action);
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      [
+        "agent_action_executed",
+        { operation: "create_load", outcome, target_named_by_user: false },
+      ],
+    ]);
+  });
+
+  it("reports where the Assistant runs once chosen, and its helpers paired and revoked, never when refused", async () => {
+    call.mockResolvedValueOnce({ runtime: { runtime: "claude_code" } });
+    expect(await setAgentRuntime("ws", "claude_code")).toEqual({
+      runtime: "claude_code",
+    });
+    expect(call.mock.calls.at(-1)).toEqual([
+      "/v1/workspaces/ws/foundry/agent/runtime",
+      { runtime: "claude_code" },
+      "PATCH",
+    ]);
+    await pairAgentHelper("ws");
+    await revokeAgentHelper("ws", "01HOST");
+    expect(call.mock.calls.at(-1)?.[0]).toBe(
+      "/v1/workspaces/ws/foundry/agent/hosts/01HOST:revoke",
+    );
+    call.mockRejectedValueOnce(new ApiError("no", 400));
+    await expect(setAgentRuntime("ws", "codex")).rejects.toThrow();
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["agent_runtime_set", { runtime: "claude_code" }],
+      ["agent_helper_pairing_made"],
+      ["agent_helper_revoked"],
+    ]);
+  });
+
+  it("reports a refused run, and an unknown operation as other", async () => {
+    call.mockRejectedValueOnce(new ApiError("expired", 400));
+    await expect(executeAgentAction("ws", action)).rejects.toThrow();
+    call.mockResolvedValueOnce({ action: { ...action, status: "dismissed" } });
+    await dismissAgentAction("ws", { ...action, operation: "drop_all" });
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["agent_action_refused", { reason: "refused" }],
+      [
+        "agent_action_dismissed",
+        { operation: "other", target_named_by_user: false },
+      ],
+    ]);
+  });
+
+  it("reports a card shown while its turn runs, never one read after", async () => {
+    const card = {
+      seq: 1,
+      eventJson: JSON.stringify({
+        type: "action_card",
+        action_id: "a",
+        operation: "create_load",
+        target_named_by_user: true,
+      }),
+    };
+    call.mockResolvedValueOnce({ events: [card], status: "done", lastSeq: 1 });
+    await turnEvents("ws", "turn_1", EMPTY_STREAM);
+    expect(trackEvent).not.toHaveBeenCalled();
+    call.mockResolvedValueOnce({
+      events: [card],
+      status: "running",
+      lastSeq: 1,
+    });
+    await turnEvents("ws", "turn_2", EMPTY_STREAM);
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      [
+        "agent_action_prepared",
+        { operation: "create_load", target_named_by_user: true },
+      ],
     ]);
   });
 });

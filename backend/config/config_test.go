@@ -25,7 +25,7 @@ func helixClaude() AIDefault {
 // every runs each of Foundry's roles but foundry-notify-worker, which needs
 // the site's origin (TestFoundryNotifyValidate).
 var every = Roles{API: true, Read: true, Events: true, SyncWorker: true, DocumentWorker: true, OntologyWorker: true, GraphWorker: true,
-	AskWorker: true, EnrichmentWorker: true, HealWorker: true}
+	AskWorker: true, EnrichmentWorker: true, HealWorker: true, AgentWorker: true}
 
 // The defaults, with a model provider and the connectors' key, serve every
 // role; each role's own settings are checked only where it runs.
@@ -59,10 +59,14 @@ func TestValidateRoles(t *testing.T) {
 		roles  Roles
 		want   string
 	}{
-		"the sync worker's bucket":    {func(c *Config) { c.Foundry.Sync.DataBucket = "" }, Roles{SyncWorker: true}, "foundry.sync.data_bucket"},
-		"foundry-read's sidecar":      {func(c *Config) { c.Foundry.Read.AgentAddr = "agent:50051" }, Roles{Read: true}, "loopback"},
-		"the door's backend":          {func(c *Config) { c.Foundry.Events.Endpoint.Backend.Address = "" }, Roles{Events: true}, "backend.address"},
-		"the API's generation cap":    {func(c *Config) { c.Foundry.Ontology.PerHour = 0 }, Roles{API: true}, "foundry.ontology.per_hour"},
+		"the sync worker's bucket": {func(c *Config) { c.Foundry.Sync.DataBucket = "" }, Roles{SyncWorker: true}, "foundry.sync.data_bucket"},
+		"foundry-read's sidecar":   {func(c *Config) { c.Foundry.Read.AgentAddr = "agent:50051" }, Roles{Read: true}, "loopback"},
+		"the door's backend":       {func(c *Config) { c.Foundry.Events.Endpoint.Backend.Address = "" }, Roles{Events: true}, "backend.address"},
+		"the API's generation cap": {func(c *Config) { c.Foundry.Ontology.PerHour = 0 }, Roles{API: true}, "foundry.ontology.per_hour"},
+		"the API's answer wait":    {func(c *Config) { c.Foundry.Ontology.AnswerDays = 0 }, Roles{API: true}, "foundry.ontology.answer_days"},
+		"the worker's answer wait": {func(c *Config) { c.Foundry.Ontology.AnswerDays = 0 }, Roles{OntologyWorker: true}, "foundry.ontology.answer_days"},
+		"the worker's question rounds": {func(c *Config) { c.Foundry.Ontology.MaxQuestionRounds = 0 }, Roles{OntologyWorker: true},
+			"foundry.ontology.max_question_rounds"},
 		"the hosted default's key":    {func(c *Config) { c.Foundry.AI.Default.APIKey = "" }, Roles{GraphWorker: true}, "api_key must be set"},
 		"the graph worker's rate":     {func(c *Config) { c.Foundry.Graph.LoadRateLimit.Burst = 5 }, Roles{GraphWorker: true}, "load_rate_limit"},
 		"the ask worker's read caps":  {func(c *Config) { c.Foundry.Ask.ReadScanEntities = 0 }, Roles{AskWorker: true}, "read_scan_entities"},
@@ -70,7 +74,16 @@ func TestValidateRoles(t *testing.T) {
 		"the shared plan catalog":     {func(c *Config) { c.Billing.Plans = nil }, Roles{}, "at least the Free plan"},
 		"a stream's extracts":         {func(c *Config) { c.Foundry.Events.MaxExtracted = c.Foundry.Documents.MaxPerStream + 1 }, Roles{}, "max_extracted"},
 		"the heal worker's lease":     {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Lease = true, time.Second }, Roles{HealWorker: true}, "foundry.heal.lease"},
-		"the heal worker's every":     {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Every = true, 0 }, Roles{HealWorker: true}, "foundry.heal"},
+		"the agent worker's lease":    {func(c *Config) { c.Foundry.Agent.Enabled, c.Foundry.Agent.Lease = true, time.Second }, Roles{AgentWorker: true}, "foundry.agent"},
+		"the Assistant's month":       {func(c *Config) { c.Foundry.Agent.Enabled, c.Foundry.Agent.MonthlyUSD = true, 0.1 }, Roles{API: true}, "monthly_usd"},
+		"the agent worker's key":      {func(c *Config) { c.Foundry.AI.Default.APIKey = "" }, Roles{AgentWorker: true}, "api_key must be set"},
+		"the probe's tool check": {func(c *Config) {
+			c.Foundry.Agent.Enabled, c.Foundry.AI.Probe.Lease = true, c.Foundry.AI.Probe.Timeout+AIProbeOverhead+AIToolCheckTimeout-time.Second
+		}, Roles{AskWorker: true}, "tool check"},
+		"an automation run's lease": {func(c *Config) {
+			c.Foundry.Automations.Enabled, c.Foundry.Automations.Lease = true, MinAutomationLease-time.Second
+		}, Roles{AutomationWorker: true}, "lease at least 4m0s"},
+		"the heal worker's every": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Every = true, 0 }, Roles{HealWorker: true}, "foundry.heal"},
 		"the heal worker's sidecar": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Graph.Agent.Addr = true, "agent:50051" }, Roles{HealWorker: true},
 			"foundry.graph.agent.addr"},
 		"the heal worker's timeout": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Graph.HelixTimeoutSecs = true, 0 }, Roles{HealWorker: true},

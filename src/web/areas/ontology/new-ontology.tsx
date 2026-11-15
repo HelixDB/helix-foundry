@@ -58,7 +58,7 @@ import { TrySample } from "./try-sample";
 import {
   createOntology,
   generateOntology,
-  isLive,
+  isUnderWay,
   ontologyQueries,
 } from "./queries";
 
@@ -451,7 +451,7 @@ export function NewOntologyPage() {
                       staleTime: 0,
                     })
                     .catch(() => undefined)
-                )?.generations?.find(isLive)
+                )?.generations?.find(isUnderWay)
               : undefined;
           return live
             ? [paths.generation(o, live.id), arrival]

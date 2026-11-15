@@ -1,0 +1,1528 @@
+/* Automations (prefix au-): the section's list in the sidebar, laid out as
+   the dashboards' is; the overview (its runs' figures and chart, then the
+   automations); a new one's conversation, its composer over the canvas's
+   dots; an automation on its full-page canvas (the slim bar, the canvas,
+   @xyflow/react restyled with the kit's tokens, its floating toolbar, the
+   inspector beside it, the runs list, Settings, the outline); and the steps
+   as they run unattended (the review, the approval, the Assistant's card). */
+
+/* The sidebar's list. */
+.au-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.au-panel-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 14px 12px 8px;
+}
+.au-new {
+  justify-content: flex-start;
+  width: 100%;
+}
+.au-list {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  min-height: 0;
+  padding: 6px 12px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.au-list ul {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.au-item {
+  position: relative;
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: var(--hf-radius);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-base);
+  line-height: 1.4;
+  text-decoration: none;
+}
+.au-item:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.au-item.is-active {
+  background: var(--hf-selected);
+  color: var(--hf-text);
+}
+.au-item-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.au-item-title > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-item.is-active .au-item-title {
+  font-weight: 550;
+}
+.au-item small {
+  padding-left: 15px;
+  overflow: hidden;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.au-note {
+  margin: 0;
+  padding: 5px 10px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.au-retry,
+.au-link {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--hf-accent-text);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* The list page. */
+.au-grid {
+  margin-top: var(--hf-space-2);
+}
+.au-list-name {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.au-list-link {
+  overflow: hidden;
+  color: var(--hf-text);
+  font-weight: 550;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-list-link:hover {
+  text-decoration: underline;
+}
+.au-muted {
+  overflow: hidden;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-list-run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.au-templates-section {
+  margin-top: var(--hf-space-4);
+}
+.au-templates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--hf-space-15);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.au-template {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  height: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+  color: var(--hf-text);
+  text-decoration: none;
+  transition: border-color var(--hf-duration) var(--hf-ease);
+}
+.au-template:hover {
+  border-color: var(--hf-accent-border);
+}
+.au-template strong {
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+}
+.au-template span {
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.45;
+}
+.au-template small {
+  color: var(--hf-warning-text);
+  font-size: var(--hf-text-sm);
+  line-height: 1.4;
+}
+
+/* The steps as they run unattended. */
+.au-preview {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: au-step;
+}
+.au-preview-step {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--hf-border);
+}
+.au-preview-step:last-child {
+  border-bottom: 0;
+}
+.au-preview-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--hf-radius-sm);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.au-preview-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.au-preview-title {
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.au-preview-note {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+
+/* The canvas. */
+.au-flow {
+  --xy-background-color: var(--hf-sunken);
+  --xy-background-pattern-color: var(--hf-border-strong);
+  --xy-edge-stroke: var(--hf-border-strong);
+  --xy-edge-stroke-selected: var(--hf-accent);
+  --xy-edge-stroke-width: 1.5;
+  --xy-connectionline-stroke: var(--hf-accent);
+  --xy-connectionline-stroke-width: 1.5;
+  --xy-handle-background-color: var(--hf-surface);
+  --xy-attribution-background-color: transparent;
+  --xy-selection-background-color: var(--hf-accent-soft);
+  --xy-selection-border: 1px dashed var(--hf-accent);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--hf-sunken);
+}
+.au-flow .react-flow__node {
+  /* Our cards draw themselves. */
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.au-flow .react-flow__node:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+  border-radius: var(--hf-radius-lg);
+}
+.au-flow .react-flow__edge.is-taken path {
+  stroke: var(--hf-success);
+}
+.au-flow .react-flow__edge-textbg {
+  fill: var(--hf-surface);
+}
+.au-flow .react-flow__edge-text {
+  fill: var(--hf-text-2);
+  font-family: var(--hf-font-sans);
+  font-size: 11px;
+  font-weight: 550;
+}
+.au-flow .react-flow__arrowhead polyline {
+  stroke: var(--hf-border-strong);
+  fill: var(--hf-border-strong);
+}
+.au-flow .react-flow__attribution a {
+  color: var(--hf-muted);
+  font-size: 10px;
+}
+.au-flow .react-flow__handle {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--hf-border-strong);
+  background: var(--hf-surface);
+}
+.au-flow.is-editable .react-flow__handle {
+  width: 12px;
+  height: 12px;
+  border-color: var(--hf-accent);
+}
+.au-flow:not(.is-editable) .react-flow__handle {
+  opacity: 0;
+}
+.au-node {
+  display: grid;
+  gap: 4px;
+  width: 248px;
+  padding: 9px 12px 10px;
+  border: 1px solid var(--hf-border-strong);
+  border-top: 3px solid var(--au-kind, var(--hf-accent));
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+  color: var(--hf-text);
+  box-shadow: var(--hf-shadow-1);
+  font-family: var(--hf-font-sans);
+  text-align: left;
+}
+.au-node--trigger {
+  --au-kind: var(--hf-accent);
+}
+.au-node--assistant {
+  --au-kind: var(--hf-chart-2);
+}
+.au-node--action {
+  --au-kind: var(--hf-chart-3);
+}
+.au-node--condition {
+  --au-kind: var(--hf-chart-4);
+}
+.au-node--notify {
+  --au-kind: var(--hf-chart-5);
+}
+.au-node.is-selected {
+  border-color: var(--hf-accent);
+  box-shadow:
+    0 0 0 2px var(--hf-accent-soft),
+    var(--hf-shadow-1);
+}
+.au-node--succeeded {
+  border-color: var(--hf-success);
+}
+.au-node--failed {
+  border-color: var(--hf-danger);
+  background: var(--hf-danger-soft);
+}
+.au-node--running {
+  border-color: var(--hf-info);
+}
+.au-node--skipped,
+.au-node--blocked,
+.au-node--waiting {
+  opacity: 0.6;
+}
+.au-node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--hf-muted);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.au-node-kind {
+  flex: 1;
+}
+.au-node-text {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--hf-text);
+  font-size: var(--hf-text-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+.au-node-problem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: var(--hf-warning-text);
+  font-size: var(--hf-text-xs);
+}
+
+/* The review and the approval. */
+.au-sentence {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-md);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.au-problems {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--hf-warning);
+  border-radius: var(--hf-radius);
+  background: var(--hf-warning-soft);
+  color: var(--hf-warning-text);
+  font-size: var(--hf-text-sm);
+  list-style: none;
+}
+.au-problems li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.45;
+}
+.au-problems svg {
+  flex: none;
+  margin-top: 3px;
+}
+.au-problems .au-link {
+  color: inherit;
+}
+.au-review {
+  display: grid;
+  gap: var(--hf-space-15);
+}
+.au-review-note {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.au-hint {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+
+/* The inspector. */
+.au-inspector {
+  display: grid;
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+}
+.au-inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--hf-text-2);
+}
+.au-inspector-head h2 {
+  margin: 0;
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+}
+.au-inspector-sum {
+  margin: 6px 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.au-inspector .au-hint {
+  margin-top: 6px;
+}
+.au-inspector .hf-select {
+  width: 100%;
+}
+.au-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: var(--hf-space-1);
+}
+.au-allow {
+  display: grid;
+  gap: 4px;
+  margin: var(--hf-space-2) 0 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.au-allow legend {
+  margin-bottom: 4px;
+  padding: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+}
+.au-check {
+  display: flex;
+  /* The app's global label is a column. */
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.4;
+}
+.au-check input {
+  flex: none;
+  width: auto;
+  margin-top: 3px;
+  accent-color: var(--hf-accent);
+}
+.au-branches {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: var(--hf-space-15) 0;
+  font-size: var(--hf-text-sm);
+}
+.au-branches dt {
+  color: var(--hf-muted);
+  font-weight: 550;
+}
+.au-branches dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The outline. */
+.au-outline {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.au-outline-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+}
+.au-outline-step.is-selected {
+  border-color: var(--hf-accent);
+}
+.au-outline-main {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px;
+  border: 0;
+  border-radius: var(--hf-radius);
+  background: none;
+  color: var(--hf-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.au-outline-main:hover {
+  background: var(--hf-hover);
+}
+.au-outline-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--hf-radius-sm);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.au-outline-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--hf-text-base);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.au-outline-kind {
+  color: var(--hf-muted);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.au-outline-problem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--hf-warning-text);
+  font-size: var(--hf-text-sm);
+}
+.au-outline-links {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+
+/* What stops it, and what a run says. */
+.au-callout {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-warning);
+  border-radius: var(--hf-radius);
+  background: var(--hf-warning-soft);
+  color: var(--hf-warning-text);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.au-callout p {
+  margin: 0;
+}
+.au-callout .au-preview {
+  justify-self: stretch;
+  padding: 2px 12px;
+  border-radius: var(--hf-radius);
+  background: var(--hf-surface);
+}
+.au-callout.is-muted {
+  border-color: var(--hf-border);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+}
+.au-callout.is-danger {
+  border-color: var(--hf-danger);
+  background: var(--hf-danger-soft);
+  color: var(--hf-danger-text);
+}
+.au-more {
+  margin: var(--hf-space-1) 12px;
+}
+
+/* A run's steps, in the inspector. */
+.au-run-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.au-run-step {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+}
+.au-run-step.is-failed {
+  border-color: var(--hf-danger);
+}
+.au-run-step.is-waiting,
+.au-run-step.is-skipped,
+.au-run-step.is-blocked {
+  background: var(--hf-sunken);
+}
+.au-run-step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--hf-text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.au-run-step-head:hover .au-run-step-title {
+  text-decoration: underline;
+}
+.au-run-step-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.au-run-step-body {
+  display: grid;
+  gap: 6px;
+}
+.au-found {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--hf-border-strong);
+  border-radius: 0 var(--hf-radius) var(--hf-radius) 0;
+  background: var(--hf-sunken);
+}
+.au-found-label {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.au-found-text {
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.au-run-step-fact {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.au-run-step-error {
+  margin: 0;
+  color: var(--hf-danger-text);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.au-waiting {
+  display: grid;
+  gap: 8px;
+}
+
+/* A step's kind, as a tinted square on its card. */
+.au-node-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--hf-radius-sm);
+  background: var(--hf-sunken);
+  color: var(--au-kind, var(--hf-accent));
+}
+
+/* The overview. */
+.au-overview {
+  display: grid;
+  gap: var(--hf-space-15);
+  margin-bottom: var(--hf-space-3);
+}
+.au-overview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hf-space-1);
+}
+.au-overview-head h2 {
+  margin: 0;
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+}
+.au-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--hf-space-1);
+  margin: 0;
+}
+.au-stat dd {
+  margin: 0;
+}
+.au-stat {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+}
+.au-stat-label {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.au-stat-value {
+  color: var(--hf-text);
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+.au-stat-note {
+  overflow: hidden;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-stat.is-failed .au-stat-value {
+  color: var(--hf-danger-text);
+}
+.au-stat.is-waiting .au-stat-value {
+  color: var(--hf-warning-text);
+}
+.au-chart {
+  min-height: 168px;
+  padding: 12px 12px 4px 4px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+}
+.au-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px var(--hf-space-2);
+  margin: 0 0 6px 8px;
+  padding: 0;
+  list-style: none;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.au-chart-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.au-chart-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.au-chart-swatch.is-succeeded {
+  background: var(--hf-chart-1);
+}
+.au-chart-swatch.is-failed {
+  background: var(--hf-chart-5);
+}
+.au-chart-swatch.is-other {
+  background: var(--hf-border-strong);
+}
+.au-chart .recharts-cartesian-grid line {
+  stroke: var(--hf-border);
+}
+.au-chart .recharts-cartesian-axis-line {
+  stroke: var(--hf-border-strong);
+}
+.au-chart .recharts-cartesian-axis-tick-value {
+  fill: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.au-chart .au-chart-succeeded .recharts-rectangle {
+  fill: var(--hf-chart-1);
+}
+.au-chart .au-chart-failed .recharts-rectangle {
+  fill: var(--hf-chart-5);
+}
+.au-chart .au-chart-other .recharts-rectangle {
+  fill: var(--hf-border-strong);
+}
+.au-chart .au-chart-cursor,
+.au-chart .recharts-tooltip-cursor {
+  fill: var(--hf-hover);
+}
+.au-chart-tip {
+  display: grid;
+  gap: 1px;
+  padding: 6px 9px;
+  border-radius: var(--hf-radius-sm);
+  background: var(--hf-tooltip);
+  box-shadow: var(--hf-shadow-2);
+  color: var(--hf-on-tooltip-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.4;
+}
+.au-chart-tip-value {
+  color: var(--hf-on-tooltip);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* An automation's page, as the Explorer's: the slim bar, then what fills
+   the viewport under it (the canvas, the runs list, the inspector). */
+.au-page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: calc(100dvh - var(--hf-shell-top));
+  min-height: 480px;
+}
+.au-top {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px var(--hf-space-2);
+  min-height: 52px;
+  padding: 8px var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-border);
+  background: var(--hf-bg);
+}
+.au-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--hf-text-base);
+}
+.au-crumb {
+  flex: none;
+  color: var(--hf-muted);
+  text-decoration: none;
+}
+.au-crumb:hover {
+  color: var(--hf-text);
+  text-decoration: underline;
+}
+.au-crumb-sep {
+  flex: none;
+  color: var(--hf-faint);
+}
+.au-crumb-title {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.au-crumb-name {
+  margin: 0;
+  overflow: hidden;
+  color: var(--hf-text);
+  font-family: inherit;
+  font-size: var(--hf-text-base);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-name-input {
+  width: min(320px, 50vw);
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius);
+  background: var(--hf-field);
+  color: var(--hf-text);
+  font: inherit;
+  font-weight: 600;
+}
+.au-name-input:focus {
+  border-color: var(--hf-focus);
+  outline: none;
+}
+/* The tabs sit in the bar, their line its own border. */
+.au-top .au-tabs {
+  align-self: stretch;
+  margin: -8px 0;
+  border-bottom: 0;
+}
+.au-top .au-tabs .hf-tab {
+  height: 51px;
+}
+/* The Runs tab's count, in its label (a + while more runs are unread). */
+.au-tab-count {
+  margin-left: 7px;
+}
+.au-top-tools {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+.au-top-tools .hf-btn.is-active {
+  background: var(--hf-selected);
+  color: var(--hf-text);
+}
+.au-unsaved {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* The Live switch: a checkbox drawn as a switch. */
+.au-live.checkbox {
+  margin: 0 4px;
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  font-weight: 550;
+  cursor: pointer;
+}
+.au-live input {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 18px;
+  margin: 0;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-sunken);
+  cursor: pointer;
+  transition: background var(--hf-duration) var(--hf-ease);
+  appearance: none;
+}
+.au-live input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-muted);
+  transition: transform var(--hf-duration) var(--hf-ease);
+}
+.au-live input:checked {
+  border-color: var(--hf-success);
+  background: var(--hf-success);
+}
+.au-live input:checked::after {
+  background: var(--hf-surface);
+  transform: translateX(12px);
+}
+.au-live input:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+}
+.au-live input:disabled,
+.au-live input[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.au-live:has(input:disabled, input[aria-disabled="true"]) {
+  color: var(--hf-muted);
+  cursor: not-allowed;
+}
+/* A line under the bar: why a save or a switch failed. */
+.au-strip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hf-space-1);
+  margin: 0;
+  padding: 6px var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-border);
+  font-size: var(--hf-text-sm);
+}
+.au-strip.is-danger {
+  background: var(--hf-danger-soft);
+  color: var(--hf-danger-text);
+}
+.au-strip.is-muted {
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+}
+.au-frame {
+  padding: var(--hf-space-3) var(--hf-space-5);
+  overflow-y: auto;
+}
+.au-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.au-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: var(--hf-sunken);
+}
+.au-stage.is-page {
+  overflow-y: auto;
+  background: var(--hf-bg);
+}
+/* The inspector: the page's right-hand sidebar, scrolling on its own. */
+.au-side {
+  flex: none;
+  width: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-left: 1px solid var(--hf-border);
+  background: var(--hf-sidebar);
+  scrollbar-width: thin;
+}
+.au-side-body {
+  display: grid;
+  gap: var(--hf-space-15);
+  align-content: start;
+  justify-items: stretch;
+  padding: var(--hf-space-2);
+}
+.au-side-body > .hf-btn,
+.au-side-body > .hf-status {
+  justify-self: start;
+}
+.au-side-back {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--hf-muted);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  cursor: pointer;
+}
+.au-side-back:hover {
+  color: var(--hf-text);
+}
+.au-flip {
+  transform: scaleX(-1);
+}
+.au-summary-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.au-summary-head h2 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.au-summary-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--hf-radius);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.au-summary-text {
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.au-summary-note {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.au-side-section {
+  display: grid;
+  gap: 4px;
+  padding-top: var(--hf-space-15);
+  border-top: 1px solid var(--hf-border);
+}
+.au-side-section h3 {
+  margin: 0;
+  color: var(--hf-muted);
+  font-family: inherit;
+  font-size: var(--hf-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.au-side-section .au-link {
+  justify-self: start;
+  padding: 0;
+  font-size: var(--hf-text-sm);
+}
+.au-side-facts {
+  padding-top: var(--hf-space-15);
+  border-top: 1px solid var(--hf-border);
+}
+.au-last-runs {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.au-last-runs a {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: var(--hf-radius);
+  color: var(--hf-text);
+  font-size: var(--hf-text-sm);
+  text-decoration: none;
+}
+.au-last-runs a:hover {
+  background: var(--hf-hover);
+}
+.au-last-runs span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-last-runs small {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+/* A read-only step's fields show what it does, as text does. */
+.au-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.au-fieldset:disabled input,
+.au-fieldset:disabled textarea,
+.au-fieldset:disabled .hf-select {
+  opacity: 0.85;
+}
+/* The runs list beside the canvas. */
+.au-runs {
+  flex: none;
+  width: 300px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid var(--hf-border);
+  background: var(--hf-sidebar);
+  scrollbar-width: thin;
+}
+.au-runs .hf-empty {
+  margin: var(--hf-space-2);
+}
+.au-runs-note {
+  margin: 0;
+  padding: var(--hf-space-2);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.au-runs-list {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+}
+.au-run-row {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: var(--hf-radius);
+  color: var(--hf-text);
+  text-decoration: none;
+}
+.au-run-row:hover {
+  background: var(--hf-hover);
+}
+.au-run-row.is-active {
+  background: var(--hf-selected);
+}
+.au-run-row-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: var(--hf-text-base);
+}
+.au-run-row-what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-run-row small {
+  padding-left: 15px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+/* The outline, in place of the canvas. */
+.au-outline-stage {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: var(--hf-space-3) var(--hf-space-2);
+}
+.au-outline-stage .au-outline {
+  max-width: 720px;
+  margin: 0 auto;
+}
+/* The toolbar floating at the canvas's foot. */
+.au-toolbar {
+  position: absolute;
+  bottom: var(--hf-space-2);
+  left: 50%;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 2 * var(--hf-space-2));
+  padding: 4px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-2);
+  transform: translateX(-50%);
+}
+.au-toolbar .hf-btn.is-active {
+  background: var(--hf-selected);
+  color: var(--hf-text);
+}
+.au-toolbar-sep {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--hf-border);
+}
+.au-zoom {
+  gap: 4px;
+  min-width: 64px;
+  font-variant-numeric: tabular-nums;
+}
+.au-add-step {
+  gap: 6px;
+}
+.au-kbd {
+  padding: 0 5px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-sm);
+  color: var(--hf-muted);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  line-height: 16px;
+}
+/* Settings, in place of the canvas. */
+.au-settings {
+  display: grid;
+  gap: var(--hf-space-3);
+  max-width: 680px;
+  margin: 0 auto;
+  padding: var(--hf-space-4) var(--hf-space-2);
+}
+.au-settings-section {
+  display: grid;
+  gap: var(--hf-space-1);
+  justify-items: stretch;
+  padding-bottom: var(--hf-space-3);
+  border-bottom: 1px solid var(--hf-border);
+}
+.au-settings-section:last-child {
+  border-bottom: 0;
+}
+.au-settings-section > .hf-btn {
+  justify-self: start;
+}
+.au-settings-section h2 {
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.au-settings-section .hf-field {
+  margin-top: 0;
+}
+.au-settings textarea {
+  resize: vertical;
+}
+.au-approval {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* A phone's inspector, in a sheet. */
+.au-sheet .au-side-body {
+  padding: 0;
+}
+
+/* A new automation: the Assistant's composer over the canvas's dots. */
+.au-new-page {
+  flex: 1;
+  min-height: 0;
+  padding: var(--hf-space-4) var(--hf-space-2);
+  overflow-y: auto;
+  background-color: var(--hf-sunken);
+  background-image: radial-gradient(
+    var(--hf-border-strong) 1.2px,
+    transparent 1.2px
+  );
+  background-size: 20px 20px;
+}
+.au-new-inner {
+  display: grid;
+  justify-items: center;
+  gap: var(--hf-space-15);
+  max-width: 720px;
+  min-height: 100%;
+  margin: 0 auto;
+  align-content: center;
+  text-align: center;
+}
+.au-new-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.au-new-title {
+  margin: 0;
+  font-family: inherit;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.au-new-text {
+  max-width: 520px;
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.au-new-composer {
+  justify-self: stretch;
+  text-align: left;
+}
+.au-new-composer .ag-composer {
+  padding: 12px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+  box-shadow: var(--hf-shadow-2);
+}
+.au-new-composer .ag-input {
+  min-height: 72px;
+}
+.au-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.au-chip {
+  padding: 7px 12px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+  color: var(--hf-text);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  cursor: pointer;
+  transition: border-color var(--hf-duration) var(--hf-ease);
+}
+.au-chip:hover {
+  border-color: var(--hf-accent-border);
+}
+.au-or {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+/* The conversation, whole, in one column, its composer pinned under it. */
+.au-chat {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--hf-surface);
+}
+.au-chat .ag-log-body {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: var(--hf-space-3) var(--hf-space-2);
+}
+.au-chat-composer {
+  flex: none;
+  border-top: 1px solid var(--hf-border);
+}
+.au-chat-composer .ag-composer {
+  max-width: 760px;
+  margin: 0 auto;
+  border-top: 0;
+}
+.au-chat .ag-runtime {
+  max-width: 760px;
+  margin: var(--hf-space-15) auto 0;
+}
+
+@media (max-width: 1100px) {
+  .au-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .au-side {
+    width: 320px;
+  }
+  .au-runs {
+    width: 260px;
+  }
+}
+@media (max-width: 800px) {
+  .au-page {
+    /* Under the mobile bar. */
+    height: calc(100dvh - var(--hf-shell-top) - 52px);
+  }
+  .au-top {
+    padding: 6px var(--hf-space-2);
+  }
+  .au-top .au-tabs {
+    order: 3;
+    flex-basis: 100%;
+    margin: 0 calc(-1 * var(--hf-space-2)) -6px;
+    padding: 0 var(--hf-space-1);
+    border-top: 1px solid var(--hf-border);
+  }
+  .au-top .au-tabs .hf-tab {
+    height: 40px;
+  }
+  .au-frame {
+    padding: var(--hf-space-2);
+  }
+  .au-body {
+    flex-direction: column;
+  }
+  .au-runs {
+    width: auto;
+    max-height: 38%;
+    border-right: 0;
+    border-bottom: 1px solid var(--hf-border);
+  }
+  .au-stage {
+    min-height: 0;
+  }
+}
+@media (max-width: 640px) {
+  .au-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .au-new-page {
+    padding: var(--hf-space-3) var(--hf-space-2);
+  }
+  .au-new-title {
+    font-size: 19px;
+  }
+  .au-toolbar {
+    bottom: var(--hf-space-1);
+  }
+}

@@ -414,6 +414,23 @@ function advance(s: StoredSync) {
   );
 }
 
+/**
+ * A connector's syncs that ended, oldest first, with how and the rows they
+ * wrote: what an automation's sync_finished trigger looks for
+ * (./automations.ts, the backend's FindFoundryAutomationEnded).
+ */
+export const syncsEnded = (connectorId: string) =>
+  syncsOf(connectorId)
+    .filter((s) => !live(s) && s.finishedAt)
+    .reverse()
+    .map((s) => ({
+      id: s.id,
+      at: Date.parse(s.finishedAt!),
+      outcome:
+        s.status === "CONNECTOR_SYNC_STATUS_SUCCEEDED" ? "succeeded" : "failed",
+      rows: s.rowsSynced,
+    }));
+
 function syncsOf(connectorId: string) {
   return syncs
     .filter((s) => s.connectorId === connectorId)

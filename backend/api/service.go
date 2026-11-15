@@ -10,10 +10,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	foundryagent "github.com/helixdb/helix-foundry/backend/agent"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/ai/detect"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/connector"
+	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/ontologygen"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	foundryreadv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundryread/v1"
@@ -77,6 +79,13 @@ type runtimeDeps struct {
 	Accounts ports.ProviderAccounts
 	// LocalAI is nil hosted.
 	LocalAI *detect.Detector
+	// AgentSessions is nil where the host opens no sessions for the Assistant.
+	AgentSessions integration.SessionHost
+	// AgentHosts is nil where no helper runs the Assistant's threads.
+	AgentHosts foundryagent.HostRegistry
+	// AgentHostURL is the pair command's --foundry; empty for the helper's
+	// default.
+	AgentHostURL string
 }
 
 // New builds the API: its connector keyring and catalog, AI deployment,
@@ -109,7 +118,7 @@ func New(d Deps) (*Service, error) {
 	s := &Service{deps: &runtimeDeps{
 		Cfg: cfg, DB: d.DB, Plans: d.Plans, Catalog: catalog, ConnectorCatalog: connectorCatalog, ConnectorKeys: connectorKeys,
 		AI: aiDeployment, AIPlans: ai.NewPlans(d.Plans), Databases: d.Databases, Graph: d.Graph, People: d.People, Accounts: d.Accounts,
-		LocalAI: d.LocalAI,
+		LocalAI: d.LocalAI, AgentSessions: d.AgentSessions, AgentHosts: d.AgentHosts, AgentHostURL: d.AgentHostURL,
 	}}
 	if d.Documents != nil {
 		s.deps.Documents = d.Documents

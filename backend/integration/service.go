@@ -54,6 +54,9 @@ type Identity struct {
 	// admitted ctx as one. Nil on a host without grants.
 	AsGrantee func(context.Context) context.Context
 	IsGrantee func(context.Context) bool
+	// Confirm is who confirms the actions it prepares (agent.go); nil is the
+	// caller, as the MCP's clients do.
+	Confirm ConfirmMode
 }
 
 type EventSourceIdentity struct{ WorkspaceID, ConnectorID string }
@@ -112,10 +115,18 @@ type Service struct {
 	// SampleDatabase is where the host serves the sample company's tables, for add_sample_data;
 	// nil where it serves none.
 	SampleDatabase *SampleDatabase
+	// AgentHosts is whether the host has helpers that run the Assistant on its owner's Claude or
+	// ChatGPT subscription (a standalone install): only then is toolFoundryGetAssistantRuntime
+	// registered and its operations offered.
+	AgentHosts bool
 	// SignIn is whether the host offers connecting a connector by signing in at its provider
 	// (hosted: pipes.enabled). Only then are the sign-in tools registered; a local install
 	// has no provider accounts and leaves it false.
 	SignIn bool
+	// PublicDashboards is whether the host offers dashboards' public links
+	// (config.PublicDashboards: hosted, with foundry.dashboards.public_enabled).
+	// Only then are publish_dashboard and unpublish_dashboard offered.
+	PublicDashboards bool
 }
 
 func (s *Service) AddTools(server *mcp.Server, identity *Identity) {

@@ -2,7 +2,7 @@ import { parse } from "smol-toml";
 import type {
   AgentBundleDefinition,
   AgentDraftItem,
-  AgentQuestion,
+  AgentDraftQuestion,
   AgentRuleCounts,
   AgentTurnStatus,
   Connector,
@@ -45,7 +45,7 @@ import {
 import { mayBeStarting } from "../explore/database-query";
 import { versionFormat } from "./format";
 import { EVENT_SOURCE_MODE_WORDS } from "./paths";
-import { isLive } from "./queries";
+import { isLive, isWaiting } from "./queries";
 import { isRecord } from "../../../shared/json";
 
 // Reads an ontology version's definition, in either stored format, into what
@@ -763,6 +763,24 @@ export function startingSets(
     .map((s) => s.id);
 }
 
+/**
+ * The goal Generate starts with: the one written before a sign-in's round
+ * trip, else a link's (`?goal=`, "" for none), else the goal of the
+ * generation that drafted the current version (a revision's is its
+ * parent's), so a new draft carries on from it; "" without one.
+ *
+ * @example
+ * startingGoal(undefined, null, { id: "g", goal: "Trace orders" }); // "Trace orders"
+ * startingGoal(undefined, "", { id: "g", goal: "Trace orders" }); // ""
+ * startingGoal("Mine", "Linked", { id: "g", goal: "Trace orders" }); // "Mine"
+ * startingGoal(undefined, null, undefined); // ""
+ */
+export const startingGoal = (
+  back: string | undefined,
+  link: string | null,
+  drafted: OntologyGeneration | null | undefined,
+) => back ?? link ?? drafted?.goal?.trim() ?? "";
+
 /** A connection's own document sets, as Generate's picker groups them. */
 export type OwnedSets = {
   connectorId: string;
@@ -1321,7 +1339,7 @@ export type Gap = { id: string; description: string };
 export type AgentBundle = {
   status?: AgentTurnStatus;
   summary: string;
-  questions: AgentQuestion[];
+  questions: AgentDraftQuestion[];
   usage: NonNullable<AgentBundleDefinition["usage"]>;
   ontologyToml: string;
   mappingsToml: string;
@@ -1485,7 +1503,22 @@ export function readAgentBundle(
       id: text(q.id),
       items: texts(q.items),
       text: text(q.text),
-      options: texts(q.options),
+      header: text(q.header) || null,
+      // Options are {label, description}; a version from before 4.25.0
+      // has bare labels.
+      options: (Array.isArray(q.options) ? q.options : [])
+        .map((o) =>
+          typeof o === "string"
+            ? { label: o, description: null }
+            : isRecord(o)
+              ? {
+                  label: text(o.label),
+                  description: text(o.description) || null,
+                }
+              : { label: "", description: null },
+        )
+        .filter((o) => o.label),
+      multiple: q.multiple === true,
       default: text(q.default) || null,
       blocking: q.blocking === true,
     }));
@@ -3495,7 +3528,8 @@ export type SetupFacts = {
  * done and how it stands, or done once every one is.
  *
  * - draft: nothing drafted. To do; running while a generation is queued or
- *   running; failed when the newest generation failed (`error` says why).
+ *   running; waiting while it waits for answers to the agent's questions;
+ *   failed when the newest generation failed (`error` says why).
  * - current: drafted, no version current; `versionId` is the newest draft.
  * - load: a version is current, but no load is current and the last one
  *   didn't succeed; running while a load job runs.
@@ -3505,7 +3539,7 @@ export type OntologySetup =
   | { step: "draft"; state: "todo" }
   | {
       step: "draft";
-      state: "running" | "failed";
+      state: "running" | "waiting" | "failed";
       generation: OntologyGeneration;
     }
   | { step: "current"; state: "todo"; versionId: string }
@@ -3523,6 +3557,8 @@ export type OntologySetup =
  * ontologySetup({ ontology: o, ...none }); // { step: "draft", state: "todo" }
  * ontologySetup({ ontology: o, ...none, generations: [{ id: "g", status: "ONTOLOGY_GENERATION_STATUS_RUNNING" }] });
  * // { step: "draft", state: "running", generation: { id: "g", ... } }
+ * ontologySetup({ ontology: o, ...none, generations: [{ id: "g", status: "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT" }] });
+ * // { step: "draft", state: "waiting", generation: { id: "g", ... } }
  * ontologySetup({ ontology: o, ...none, generations: [{ id: "g", status: "ONTOLOGY_GENERATION_STATUS_FAILED" }] });
  * // { step: "draft", state: "failed", generation: { id: "g", ... } }
  * ontologySetup({ ontology: o, ...none, versions: [{ id: "v1" }] });
@@ -3544,6 +3580,9 @@ export function ontologySetup({
     if (draft) return { step: "current", state: "todo", versionId: draft };
     const live = generations.find(isLive);
     if (live) return { step: "draft", state: "running", generation: live };
+    const waiting = generations.find(isWaiting);
+    if (waiting)
+      return { step: "draft", state: "waiting", generation: waiting };
     const last = generations[0];
     return last?.status === "ONTOLOGY_GENERATION_STATUS_FAILED"
       ? { step: "draft", state: "failed", generation: last }

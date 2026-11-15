@@ -63,6 +63,8 @@ export const mock = {
     // provider refused the workspace's key).
     ontologyStepMs?: number;
     ontologyOutcome?: "succeed" | "fail" | "retry" | "auth";
+    // A new generation's agent asks three questions before it drafts.
+    ontologyQuestions?: boolean;
     // A revision measuring rules on a comparable load is over its budget.
     reviseOutcome?: "budget";
     // A load's step, how it ends, and whether reading a document fails.
@@ -130,6 +132,26 @@ export const mock = {
     // false: answers as a 3.10.0 engine did, without outputs or visuals.
     askVisuals?: boolean;
     askSpentUsdMicros?: number;
+    // The Assistant (mock/routes/agent.ts): each event's time, how a turn
+    // ends otherwise (or a call a limit kept from running), and how long a
+    // card's confirmation lives (5 minutes).
+    agentStepMs?: number;
+    // How far apart a text's deltas stream (a quarter of agentStepMs).
+    agentDeltaMs?: number;
+    agentOutcome?: "fail" | "budget_exhausted" | "not_run";
+    agentActionTtlMs?: number;
+    // Automations (mock/routes/automations.ts): the worker's clock moved
+    // this far ahead (a schedule fires without waiting), each step's time,
+    // the runs a workspace starts a day, automations off on this stamp,
+    // and what the mock Assistant answers a yes-or-no or how-many step.
+    automationClockMs?: number;
+    automationStepMs?: number;
+    automationRunsPerDay?: number;
+    automationsDisabled?: boolean;
+    automationAnswer?: "yes" | "no";
+    automationCount?: number;
+    // false: no public dashboard links, as a stamp with them turned off.
+    dashboardsPublic?: boolean;
     // false: the WFE has no foundry-connector role, so S3 offers keys only.
     s3RoleAccess?: boolean;
     // Another writer comes first on each of the next n data-layout PUTs.
@@ -224,6 +246,21 @@ export const mock = {
       ...(body && { body: JSON.stringify(body) }),
     });
     return { status: res.status, body: await res.json() };
+  },
+  /** Records ended runs of an automation, each `ago` ms before now: its history. */
+  pastRuns: async (
+    automationId: string,
+    runs: {
+      status: "succeeded" | "failed" | "cancelled" | "skipped";
+      ago: number;
+      usdMicros?: number;
+    }[],
+  ) => {
+    const res = await fetch(
+      `${MOCK}/__mock/automations/${encodeURIComponent(automationId)}/past-runs`,
+      { method: "POST", body: JSON.stringify({ runs }) },
+    );
+    if (!res.ok) throw new Error(`past runs: ${res.status}`);
   },
   /**
    * Sends pieces to an API source as an agent does through the Helix MCP

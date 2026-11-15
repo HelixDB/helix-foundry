@@ -18,3 +18,5 @@ tests/unit/__fixtures__/reminder-schedule.json
 backend
 # The landing page's figures' data, as exported
 src/landing/data
+# The helper's build
+agent-host/dist

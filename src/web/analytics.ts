@@ -9,6 +9,8 @@ import {
   trackError,
 } from "@databuddy/sdk";
 import type {
+  AgentRuntime,
+  FoundryAgentTurnStatus,
   CannotAnswerKind,
   ConnectorKindName,
   ConnectorSyncStatus,
@@ -23,6 +25,9 @@ import type {
 import { cannotAnswerKind } from "../shared/foundry-ask";
 import { LOCAL } from "../shared/deployment";
 import type { WizardStepId } from "./areas/ontology/model";
+import type { AgentOperation } from "./areas/agent/model";
+import type { TemplateId } from "./areas/automations/model";
+import type { SectionId } from "./shell/types";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
 import type { FeedbackKind } from "./feedback";
 import type { SignInError } from "./sign-in";
@@ -71,6 +76,35 @@ export type SyncFrom =
   | "created"
   | "sample"
   | "install";
+
+/**
+ * The section open when the person used the Assistant (shell/nav.ts), none
+ * outside them; an action's operation, "other" for one this page doesn't
+ * know.
+ */
+export type AgentSection = SectionId | "none";
+export type AgentOperationName = AgentOperation | "other";
+
+/** A dashboard call that may be refused (src/web/areas/dashboards/queries.ts). */
+export type DashboardAction =
+  | "create"
+  | "edit"
+  | "delete"
+  | "pin"
+  | "add_visual"
+  | "publish"
+  | "unpublish";
+
+/** An automation call that may be refused (src/web/areas/automations/queries.ts). */
+export type AutomationCall =
+  | "create"
+  | "edit"
+  | "approve"
+  | "pause"
+  | "resume"
+  | "run"
+  | "delete"
+  | "cancel";
 
 /**
  * How the WFE refused a call (src/web/api.ts refusalOf): too many at once,
@@ -161,6 +195,13 @@ export type AnalyticsEvents = {
   generation_succeeded: { source: GenerationSource };
   generation_failed: { source: GenerationSource };
   generation_refused: { reason: Refusal };
+  // The agent asked questions only a person answers: the generation waits
+  // (seen like an end), then is answered (`with` its answers, some or all
+  // of the agent's defaults) or cancelled.
+  generation_needs_input: { source: GenerationSource };
+  generation_answered: { with: "answers" | "some_defaults" | "defaults" };
+  generation_answer_refused: { reason: Refusal };
+  generation_cancelled: undefined;
   load_started: undefined;
   load_ready: { status: "ready" | "partial" };
   load_failed: { reason: "budget" | "sources_changed" | "error" };
@@ -177,6 +218,74 @@ export type AnalyticsEvents = {
   revision_succeeded: { mode: RevisionMode };
   revision_failed: { mode: RevisionMode };
   revision_refused: { reason: Refusal };
+
+  // The Assistant (src/web/areas/agent): the dock opened, a message's turn
+  // started and ended (its runtime, the section it was sent from, how it
+  // ended and its tool calls), or why it was refused; an action the agent
+  // prepared, then run (how it ended), dismissed or refused, with whether
+  // the person named its target. Never the text, a name or a payload.
+  agent_dock_opened: { from: "shortcut" | "button" | "palette" };
+  agent_turn_started: { section: AgentSection };
+  agent_turn_ended: {
+    runtime: AgentRuntime;
+    section: AgentSection;
+    status: Exclude<FoundryAgentTurnStatus, "queued" | "running">;
+    steps: number;
+  };
+  agent_turn_refused: { reason: Refusal };
+  agent_action_prepared: {
+    operation: AgentOperationName;
+    target_named_by_user: boolean;
+  };
+  agent_action_executed: {
+    operation: AgentOperationName;
+    outcome: "succeeded" | "failed" | "unknown";
+    target_named_by_user: boolean;
+  };
+  agent_action_dismissed: {
+    operation: AgentOperationName;
+    target_named_by_user: boolean;
+  };
+  agent_action_refused: { reason: Refusal };
+  // Where a local install's Assistant runs (Settings › AI models): the
+  // runtime chosen, a pairing code made, a helper seen paired after one, a
+  // helper revoked.
+  agent_runtime_set: { runtime: AgentRuntime };
+  agent_helper_pairing_made: undefined;
+  agent_helper_paired: undefined;
+  agent_helper_revoked: undefined;
+
+  // Dashboards (src/web/areas/dashboards): made (from the Dashboards page or
+  // an Analyst answer), edited (its tiles, or only its name or
+  // description), deleted, pinned and unpinned, given an Analyst answer's
+  // visual (reading the current load or the question's), published (the
+  // first time, or again for a new snapshot), unpublished, its public link
+  // copied, or why a call was refused. Never a name, a title or a query.
+  dashboard_created: { from: "page" | "analyst" };
+  dashboard_edited: { tiles: boolean };
+  dashboard_deleted: undefined;
+  dashboard_pinned: undefined;
+  dashboard_unpinned: undefined;
+  dashboard_visual_added: { load: "current" | "pinned" };
+  dashboard_published: { first: boolean };
+  dashboard_unpublished: undefined;
+  dashboard_link_copied: undefined;
+  dashboard_refused: { action: DashboardAction; reason: Refusal };
+
+  // Automations (src/web/areas/automations): made (from which template, or
+  // the Assistant's card, which agent_action_executed reports), edited (its
+  // steps, or only its name or description), approved by its owner,
+  // paused, resumed, run by hand, deleted, a run cancelled, or why a call
+  // was refused. Never a name, an instruction or a target.
+  automation_created: { template: TemplateId };
+  automation_edited: { steps: boolean };
+  automation_approved: undefined;
+  automation_paused: undefined;
+  automation_resumed: undefined;
+  automation_run_started: undefined;
+  automation_deleted: undefined;
+  automation_run_cancelled: undefined;
+  automation_refused: { action: AutomationCall; reason: Refusal };
 
   // An ontology's versions, loads and reviews.
   version_made_current: undefined;
@@ -523,7 +632,10 @@ export type Started =
   // An uploaded table file or PDF that Foundry reads.
   | { job: "read" }
   | { job: "load" }
-  | { job: "question" };
+  | { job: "question" }
+  // A message to the Assistant, from the section it was sent in, and where
+  // its thread runs.
+  | { job: "agent_turn"; section: AgentSection; runtime: AgentRuntime };
 type Job = Started["job"];
 
 /** What a read of each job gives: its status, and what its end reports. */
@@ -549,6 +661,7 @@ type Seen = {
     jobs?: readonly { status?: JobStatus; error?: string }[];
   };
   question: { id?: string; status?: QuestionStatus; resultJson?: string };
+  agent_turn: { id?: string; status?: FoundryAgentTurnStatus; steps?: number };
 };
 type Status = { [J in Job]: NonNullable<Seen[J]["status"]> };
 
@@ -560,6 +673,19 @@ const sourceOf = (p: Pending): GenerationSource =>
   "source" in p && p.source === "sample" ? "sample" : "ai";
 const modeOf = (p: Pending): RevisionMode =>
   "mode" in p && p.mode === "preview" ? "preview" : "save";
+const SECTIONS: readonly AgentSection[] = [
+  "data",
+  "ontology",
+  "explore",
+  "ask",
+  "settings",
+  "none",
+];
+const sectionOf = (p: Pending): AgentSection =>
+  SECTIONS.find((s) => "section" in p && p.section === s) ?? "none";
+const RUNTIMES: readonly AgentRuntime[] = ["api", "claude_code", "codex"];
+const runtimeOf = (p: Pending): AgentRuntime =>
+  RUNTIMES.find((r) => "runtime" in p && p.runtime === r) ?? "api";
 
 /** What a job reports when it starts; a read's upload reports itself. */
 function reportStart(s: Started) {
@@ -576,8 +702,22 @@ function reportStart(s: Started) {
       return trackEvent("load_started");
     case "question":
       return trackEvent("question_asked");
+    case "agent_turn":
+      return trackEvent("agent_turn_started", { section: s.section });
   }
 }
+
+const agentTurnEnded = (
+  p: Pending,
+  t: Seen["agent_turn"],
+  status: AnalyticsEvents["agent_turn_ended"]["status"],
+) =>
+  trackEvent("agent_turn_ended", {
+    runtime: runtimeOf(p),
+    section: sectionOf(p),
+    status,
+    steps: t.steps || 0,
+  });
 
 /**
  * What each job's statuses report once it has ended: an event, or nothing
@@ -593,12 +733,17 @@ const ENDS: {
       trackEvent("generation_succeeded", { source: sourceOf(p) }),
     ONTOLOGY_GENERATION_STATUS_FAILED: (p) =>
       trackEvent("generation_failed", { source: sourceOf(p) }),
+    // Answering it starts reporting it again (answerGeneration).
+    ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT: (p) =>
+      trackEvent("generation_needs_input", { source: sourceOf(p) }),
+    ONTOLOGY_GENERATION_STATUS_CANCELLED: null,
   },
   revision: {
     ONTOLOGY_GENERATION_STATUS_SUCCEEDED: (p) =>
       trackEvent("revision_succeeded", { mode: modeOf(p) }),
     ONTOLOGY_GENERATION_STATUS_FAILED: (p) =>
       trackEvent("revision_failed", { mode: modeOf(p) }),
+    ONTOLOGY_GENERATION_STATUS_CANCELLED: null,
   },
   sync: {
     CONNECTOR_SYNC_STATUS_SUCCEEDED: (_, s) =>
@@ -657,6 +802,11 @@ const ENDS: {
     failed: () => trackEvent("question_unanswered", { status: "failed" }),
     cancelled: null,
   },
+  agent_turn: {
+    done: (p, t) => agentTurnEnded(p, t, "done"),
+    failed: (p, t) => agentTurnEnded(p, t, "failed"),
+    cancelled: (p, t) => agentTurnEnded(p, t, "cancelled"),
+  },
 };
 
 // localStorage, so a job that ends after a reload, or in another tab, is
@@ -694,15 +844,20 @@ function writePending(pending: Record<string, Pending>) {
 
 /**
  * A job started here: reports its start once per job (a retry with the same
- * client token returns the same one) and remembers it for jobSeen. Nothing
- * is kept without a client id.
+ * client token returns the same one) and remembers it for jobSeen. A job
+ * carried on (`report` false: a generation answered) is only remembered.
+ * Nothing is kept without a client id.
  */
-export function jobStarted(started: Started, id: string | undefined) {
+export function jobStarted(
+  started: Started,
+  id: string | undefined,
+  report = true,
+) {
   if (!sending() || !id) return;
   const pending = readPending();
   if (pending[id]) return;
   writePending({ ...pending, [id]: { ...started, at: Date.now() } });
-  reportStart(started);
+  if (report) reportStart(started);
 }
 
 /**

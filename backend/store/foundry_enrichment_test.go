@@ -148,7 +148,33 @@ func TestFoundryEnrichmentConsent(t *testing.T) {
 		_, err = f.db.ApplyFoundryLoadEnrichment(ctx, writingJob.LoadID, "graph", model.FoundryEnrichmentApplied{Key: "profiles-4", SHA256: "dd"})
 		require.NoError(t, err)
 
+		// Public snapshots of dashboards: one of each ontology.
+		enriched, unenriched, chosen := newDashboard(ws, 1, dashAda), newDashboard(ws, 2, dashAda), newDashboard(ws, 3, dashAda)
+		for _, d := range []*model.FoundryDashboard{enriched, unenriched, chosen} {
+			require.NoError(t, f.db.CreateFoundryDashboard(ctx, d, 10))
+		}
+		for _, share := range []*model.FoundryDashboardShare{
+			dashboardShare(enriched, 1, "a", f.ontology.ID), dashboardShare(unenriched, 1, "b", other.ontology.ID),
+			dashboardShare(chosen, 1, "c", writing.ontology.ID, other.ontology.ID),
+		} {
+			_, err := f.db.PublishFoundryDashboard(ctx, share)
+			require.NoError(t, err)
+		}
+
 		require.NoError(t, f.db.SetFoundryEnrichmentConsent(ctx, consent(ws, "off", false, 50_000)))
+
+		for _, token := range []string{"a", "c"} {
+			_, err := f.db.GetSharedFoundryDashboard(ctx, strings.Repeat(token, 64))
+			assert.ErrorIs(t, err, store.ErrNotFound, "a snapshot of an ontology whose loads applied profiles goes at once")
+		}
+		_, err = f.db.GetSharedFoundryDashboard(ctx, strings.Repeat("b", 64))
+		require.NoError(t, err, "one of an ontology no load enriched stays")
+		// Until its purge's clean load is current, the ontology isn't published
+		// again: its current load still holds the profiles.
+		assert.Equal(t, model.FoundryDashboardUnreadable, dashboardRefusal(t, func() error {
+			_, err := f.db.PublishFoundryDashboard(ctx, dashboardShare(enriched, 1, "d", f.ontology.ID))
+			return err
+		}()))
 
 		queued := f.step(t, second.LoadID)
 		assert.Equal(t, model.FoundryEnrichmentCancelled, queued.Status)

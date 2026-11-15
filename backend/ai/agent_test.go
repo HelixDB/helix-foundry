@@ -113,7 +113,7 @@ func TestAgentModels(t *testing.T) {
 			r := Resolved{Source: SourceWorkspace, Settings: s, CallTimeout: 30 * time.Minute}
 			for schema, request := range map[string]any{
 				"turn_request.json": ontologyagent.TurnRequest{SessionID: "s", RequestID: "r", Sources: []ontologyagent.Source{},
-					Input:  ontologyagent.Input{Start: ontologyagent.Start{Workflow: "w", Goals: []string{}}},
+					Input:  ontologyagent.Start{Workflow: "w", Goals: []string{}},
 					Limits: ontologyagent.Limits{MaxUSD: 1, MaxSteps: 1, MaxWallSecs: 1}, Models: r.Turn()},
 				"title_request.json": ontologyagent.TitleRequest{RequestID: "gen-1", Goal: "track churn", Models: r.Title()},
 				"probe_request.json": hosted.ProbeRequest("cfg-1", s, 2*time.Minute),

@@ -22,6 +22,22 @@ service FoundryEventsService {
   // foundry.reminders.secret_sha256. The foundry-notify-worker sends them.
   rpc CreateFoundryReminder(CreateFoundryReminderRequest) returns (CreateFoundryReminderResponse);
   rpc StopFoundryReminders(StopFoundryRemindersRequest) returns (StopFoundryRemindersResponse);
+
+  // A dashboard's public snapshot, for anyone holding its link: the door
+  // passes the link token's SHA-256, never the token. NotFound for a token of
+  // no snapshot, an unpublished one, a deleted workspace's, or wherever
+  // public links are off.
+  rpc GetSharedFoundryDashboard(GetSharedFoundryDashboardRequest) returns (GetSharedFoundryDashboardResponse);
+}
+
+message GetSharedFoundryDashboardRequest {
+  // Lowercase hex SHA-256 of the link's token.
+  string token_sha256 = 1;
+}
+message GetSharedFoundryDashboardResponse {
+  // The snapshot as package dashboard writes it (dashboard.Snapshot): no
+  // workspace's, ontology's, load's or person's id.
+  string snapshot_json = 1;
 }
 
 // CreateFoundryReminderRequest starts an address's reminders, or answers

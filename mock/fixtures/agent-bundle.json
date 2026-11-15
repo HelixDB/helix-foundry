@@ -535,31 +535,52 @@
         {
           "id": "Q1",
           "items": ["type.Product", "mapping.products"],
+          "header": "SKU case",
           "text": "The catalogue has two different products whose SKUs differ only in upper and lower case, but order lines use lowercase spellings of many SKUs that only exist in uppercase. Are SKUs case-insensitive (one of those two catalogue rows is an error), or truly case-sensitive?",
           "options": [
-            "case-insensitive: keep upper-casing; fix the catalogue row",
-            "case-sensitive: key SKUs exactly as written"
+            {
+              "label": "case-insensitive: keep upper-casing; fix the catalogue row",
+              "description": null
+            },
+            {
+              "label": "case-sensitive: key SKUs exactly as written",
+              "description": null
+            }
           ],
+          "multiple": false,
           "default": "case-insensitive: keep upper-casing; fix the catalogue row",
           "blocking": false
         },
         {
           "id": "Q2",
           "items": ["type.SalesChannel", "mapping.orders"],
+          "header": "Channel codes",
           "text": "Orders carry a numeric channel code with three values. What channel does each code stand for (web, app, marketplace…)? The names would be added to the sales channels.",
           "options": [],
+          "multiple": false,
           "default": "keep the numeric codes only",
           "blocking": false
         },
         {
           "id": "Q3",
           "items": ["mapping.shipments", "mapping.returns"],
+          "header": "Dates and times",
           "text": "Ship dates are read as month/day/year, and return times are read as UTC. Is that right, and if not, which date order and time zone do the warehouse and customer service use?",
           "options": [
-            "month/day/year, UTC",
-            "day/month/year, UTC",
-            "month/day/year, another zone (tell me which)"
+            {
+              "label": "month/day/year, UTC",
+              "description": null
+            },
+            {
+              "label": "day/month/year, UTC",
+              "description": null
+            },
+            {
+              "label": "month/day/year, another zone (tell me which)",
+              "description": null
+            }
           ],
+          "multiple": false,
           "default": "month/day/year, UTC",
           "blocking": false
         }
@@ -572,31 +593,52 @@
     {
       "id": "Q1",
       "items": ["type.Product", "mapping.products"],
+      "header": "SKU case",
       "text": "The catalogue has two different products whose SKUs differ only in upper and lower case, but order lines use lowercase spellings of many SKUs that only exist in uppercase. Are SKUs case-insensitive (one of those two catalogue rows is an error), or truly case-sensitive?",
       "options": [
-        "case-insensitive: keep upper-casing; fix the catalogue row",
-        "case-sensitive: key SKUs exactly as written"
+        {
+          "label": "case-insensitive: keep upper-casing; fix the catalogue row",
+          "description": null
+        },
+        {
+          "label": "case-sensitive: key SKUs exactly as written",
+          "description": null
+        }
       ],
+      "multiple": false,
       "default": "case-insensitive: keep upper-casing; fix the catalogue row",
       "blocking": false
     },
     {
       "id": "Q2",
       "items": ["type.SalesChannel", "mapping.orders"],
+      "header": "Channel codes",
       "text": "Orders carry a numeric channel code with three values. What channel does each code stand for (web, app, marketplace…)? The names would be added to the sales channels.",
       "options": [],
+      "multiple": false,
       "default": "keep the numeric codes only",
       "blocking": false
     },
     {
       "id": "Q3",
       "items": ["mapping.shipments", "mapping.returns"],
+      "header": "Dates and times",
       "text": "Ship dates are read as month/day/year, and return times are read as UTC. Is that right, and if not, which date order and time zone do the warehouse and customer service use?",
       "options": [
-        "month/day/year, UTC",
-        "day/month/year, UTC",
-        "month/day/year, another zone (tell me which)"
+        {
+          "label": "month/day/year, UTC",
+          "description": null
+        },
+        {
+          "label": "day/month/year, UTC",
+          "description": null
+        },
+        {
+          "label": "month/day/year, another zone (tell me which)",
+          "description": null
+        }
       ],
+      "multiple": false,
       "default": "month/day/year, UTC",
       "blocking": false
     }

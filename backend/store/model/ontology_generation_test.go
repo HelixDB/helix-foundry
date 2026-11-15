@@ -51,3 +51,38 @@ func TestOntologyEdits(t *testing.T) {
 		}
 	}
 }
+
+// A question reads and writes as the ontology agent does: its recommended
+// answer named default, and header and default null for none.
+func TestOntologyQuestionJSON(t *testing.T) {
+	for _, raw := range []string{
+		`{"id":"Q1","items":["type.Customer"],"header":"Customers","text":"Is a customer an account?",` +
+			`"options":[{"label":"An account","description":"One per billing account"},{"label":"A person"}],"multiple":false,"default":"An account","blocking":true}`,
+		`{"id":"Q2","items":[],"header":null,"text":"Which sources?","options":[{"label":"Stripe"},{"label":"Documents"}],"multiple":true,"default":null,"blocking":false}`,
+		`{"id":"Q3","items":[],"header":null,"text":"Which currency?","options":[],"multiple":false,"default":"GBP","blocking":false}`,
+	} {
+		var q OntologyQuestion
+		if err := json.Unmarshal([]byte(raw), &q); err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		back, err := json.Marshal(q)
+		if err != nil || string(back) != raw {
+			t.Errorf("%s wrote back as %s (%v)", raw, back, err)
+		}
+	}
+	var q OntologyQuestion
+	_ = json.Unmarshal([]byte(`{"id":"Q3","items":[],"text":"Which currency?","default":"GBP","blocking":false}`), &q)
+	if q.Choice != nil || q.Recommended != "GBP" || q.Items == nil {
+		t.Errorf("a free answer with suggested words: %+v", q)
+	}
+	for _, bad := range []string{
+		`{"id":"Q1","items":[],"text":"Which?","options":[],"multiple":true,"blocking":true}`,
+		`{"id":"Q1","items":[],"text":"Which?","options":[{"label":"A"},{"label":"B"}],"default":"C","blocking":true}`,
+		`{"id":"Q1","items":[],"text":"Which?","options":[{"label":"A"}],"blocking":true}`,
+		`{"id":"","items":[],"text":"Which?","blocking":true}`,
+	} {
+		if err := json.Unmarshal([]byte(bad), &q); err == nil {
+			t.Errorf("%s read as %+v", bad, q)
+		}
+	}
+}

@@ -1112,7 +1112,76 @@ export type OntologyGenerationStatus =
   | "ONTOLOGY_GENERATION_STATUS_QUEUED"
   | "ONTOLOGY_GENERATION_STATUS_RUNNING"
   | "ONTOLOGY_GENERATION_STATUS_SUCCEEDED"
-  | "ONTOLOGY_GENERATION_STATUS_FAILED";
+  | "ONTOLOGY_GENERATION_STATUS_FAILED"
+  // The agent asked questions only a person can answer: the generation
+  // waits, still the ontology's one live generation, until they are
+  // answered (:answer), it is cancelled (:cancel), or answersDueAt passes
+  // and Helix answers each with the agent's default.
+  | "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT"
+  // Cancelled (:cancel) before it stored a draft.
+  | "ONTOLOGY_GENERATION_STATUS_CANCELLED";
+
+/** v1AgentQuestionOption: one answer a question offers. */
+export type AgentQuestionOption = {
+  label: string;
+  // One line on what choosing it means; may be empty.
+  description?: string;
+};
+
+/**
+ * v1AgentQuestion: a question an agent asks the person: the ontology agent
+ * of a generation that needs input, or the Assistant (FoundryAgentAsked).
+ * With no options it takes an answer in words; with options (2 to 20,
+ * labels unique) the person picks one, or one or more when `multiple`, and
+ * may always answer in their own words instead (one) or as well (multiple).
+ * Its header, text, options and recommended answer are the agent's words
+ * and may quote the data: plain text only, never markup.
+ */
+export type AgentQuestion = {
+  id: string;
+  // A few words naming it, for a progress strip; may be empty.
+  header?: string;
+  text?: string;
+  // Empty for an answer in words.
+  options?: AgentQuestionOption[];
+  // The person may pick several options; false without options.
+  multiple?: boolean;
+  // The answer the agent recommends, which a question left to it takes: an
+  // option's label (shown first, marked), or, without options, its words;
+  // empty for none.
+  recommended?: string;
+  // A blocking question needs an answer; another may be left to the agent.
+  blocking?: boolean;
+};
+
+/**
+ * v1AgentQuestionAnswer: the person's answer to an AgentQuestion: the
+ * labels of the options chosen and their own words, at least one of the
+ * two. To a question without options, text alone; to one of one option,
+ * one option or text, not both; to one of several, one or more options
+ * with text or without, or text alone. Text is 1 to 2000 characters once
+ * trimmed. Anything else is INVALID_ARGUMENT.
+ */
+export type AgentQuestionAnswer = {
+  questionId: string;
+  options?: string[];
+  text?: string;
+};
+
+/**
+ * v1OntologyGenerationQuestion: a question the ontology agent asked about
+ * its draft, the draft items it is about, and its answer once given, or
+ * that it was left to the agent.
+ */
+export type OntologyGenerationQuestion = AgentQuestion & {
+  // The draft items it is about ("type.Customer"); may be empty.
+  items?: string[];
+  // Unset while it waits, or when it was left to the agent.
+  answer?: AgentQuestionAnswer | null;
+  // Left to the agent (by the person, or the automatic answers once due),
+  // which took its recommended answer, or decided, as its own choice.
+  leftToAgent?: boolean;
+};
 
 /** v1OntologyGenerationTable: one synced table a generation drafts from. */
 export type OntologyGenerationTable = { connectorId?: string; table?: string };
@@ -1162,6 +1231,20 @@ export type OntologyGeneration = {
   // Asked for with GenerateOntologyRequest's loadWhenReady: its draft is
   // made current and loaded once stored, if no version is current by then.
   loadWhenReady?: boolean;
+  // The questions the agent's last turn asked, in its order: those a
+  // needs_input generation waits on, then, once answered, with their
+  // answers. Empty when it asked nothing. A draft's own non-blocking
+  // questions are in its version's definition.
+  questions?: OntologyGenerationQuestion[];
+  // Which round of questions they are, from 1: an answer names it, since
+  // the agent may ask again (reusing ids) once answered.
+  questionRound?: number;
+  // When they were asked; unset without questions.
+  askedAt?: string | null;
+  // While needs_input: when Helix answers each with the agent's default
+  // and carries on (foundry.ontology.answer_days after askedAt, 7 days by
+  // default).
+  answersDueAt?: string | null;
 };
 
 /**
@@ -1253,6 +1336,27 @@ export type GenerateOntologyRequest = {
 };
 
 /**
+ * FoundryServiceAnswerOntologyGenerationBody: POST
+ * .../generations/{id}:answer answers the round of questions a needs_input
+ * generation waits on and queues it to carry on. Each answer names a
+ * question asked, at most once, as AgentQuestionAnswer says. With
+ * useDefaults, every question left out is left to the agent (leftToAgent),
+ * which takes its recommended answer, or decides, as its own choice;
+ * without, every blocking question must be answered, and one that isn't may
+ * be left open (INVALID_ARGUMENT otherwise, and for a round below 1). A
+ * generation not waiting, or waiting on another round than `round`, is
+ * FAILED_PRECONDITION. It needs what :generate needs (managing
+ * the ontology, an AI provider). POST .../generations/{id}:cancel (body
+ * `{}`) ends a queued, running or waiting generation as cancelled; one that
+ * ended is FAILED_PRECONDITION. Both answer OntologyGenerationResponse.
+ */
+export type AnswerOntologyGenerationRequest = {
+  answers: AgentQuestionAnswer[];
+  useDefaults?: boolean;
+  round: number;
+};
+
+/**
  * v1OntologyEdit: one edit of a version's draft, put an item or remove one.
  * `put` (v1OntologyPut) is the item's whole TOML snippet, replacing the item
  * if the draft has it; an item id is at most 256 bytes, and a revision's
@@ -1340,15 +1444,22 @@ export type FoundryDefinition = {
 /** How an agent turn ended (ontology-agent TurnResult status). */
 export type AgentTurnStatus = "done" | "needs_input" | "budget_exhausted";
 
-/** A question the agent asked about its draft. */
-export type AgentQuestion = {
+/**
+ * A question the agent asked about its draft (turn_result's Question): no
+ * options for an answer in words, else 2 or more, one or (`multiple`)
+ * several chosen; `default` is the answer it recommends, an option's label
+ * or, without options, its words.
+ */
+export type AgentDraftQuestion = {
   id: string;
   // Draft items it is about: "type.Order", "mapping.orders"...
-  items?: string[];
+  items: string[];
   text: string;
-  options?: string[];
+  header?: string | null;
+  options?: { label: string; description?: string | null }[];
+  multiple?: boolean;
   default?: string | null;
-  blocking?: boolean;
+  blocking: boolean;
 };
 
 /** The engine's EvidenceCard (ontology-agent turn_result schema); source text is untrusted. */
@@ -1421,7 +1532,7 @@ export type AgentDraftView = {
     // `because` (contract 4.19.0): "not_assessed", {user_asked: {said}} or
     // {documents_state: {route, item}}; readAgentBundle reads it.
     left_out?: { what: string; reason: string; because?: unknown }[];
-    questions?: AgentQuestion[];
+    questions?: AgentDraftQuestion[];
   };
 };
 
@@ -1437,7 +1548,7 @@ export type AgentBundleDefinition = {
   ontology_toml?: string;
   mappings_toml?: string;
   draft?: AgentDraftView;
-  questions?: AgentQuestion[];
+  questions?: AgentDraftQuestion[];
   summary?: string | null;
   usage?: {
     input?: number;
@@ -2585,6 +2696,1180 @@ export type AskResult = (
 };
 export type AskResultStatus = AskResult["status"];
 
+// ---------------------------------------------------------------- Agent
+// Routes under /v1/workspaces/{workspaceId}/foundry/agent/...: the
+// Assistant, a conversation with a model over Foundry's own tools that acts
+// as its person (backend/agent). Threads are private to their user: another
+// user's thread, turn or action answers NOT_FOUND. A person's message queues
+// a turn the foundry-agent-worker runs; its events are polled by `afterSeq`,
+// as a question's are. What would change the workspace the model only
+// prepares: an action its person runs (Execute, with the payload's hash they
+// were shown), dismisses, or refreshes once its confirmation expired. A run
+// action queues a continuation turn (kind action_result) the agent goes on
+// from. Grantees are denied every route; a caller that isn't a person signed
+// in is PERMISSION_DENIED. Refusals carry an ErrorInfo reason
+// (AGENT_REFUSALS); the user's hourly messages are RESOURCE_EXHAUSTED.
+
+/** v1FoundryAgentTurn.status. */
+export type FoundryAgentTurnStatus =
+  | "queued"
+  | "running"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+/** v1FoundryAgentAction.status, as read: a prepared action past its expiry reads expired, one executing for over 2 minutes unknown. */
+export type AgentActionStatus =
+  | "prepared"
+  | "executing"
+  | "succeeded"
+  | "failed"
+  | "unknown"
+  | "expired"
+  | "dismissed";
+
+/** v1FoundryAgentPageContext: what the person was looking at, ids only. */
+export type AgentPageContext = {
+  ontologyId?: string;
+  loadId?: string;
+  // The dashboard open, if any.
+  dashboardId?: string;
+  // The person is on the page that starts a new automation.
+  newAutomation?: boolean;
+};
+
+/**
+ * Who runs a thread's turns: Foundry's own worker on the workspace's model
+ * (api), or a helper on a local install's owner's computer driving the
+ * Claude Code or Codex CLI they signed in to, on their subscription, at no
+ * cost to the workspace. A thread keeps the runtime it started with.
+ */
+export type AgentRuntime = "api" | "claude_code" | "codex";
+
+/** v1FoundryAgentThread */
+export type FoundryAgentThread = {
+  id: string;
+  // The first message's start.
+  title?: string;
+  runtime?: AgentRuntime;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+/** v1FoundryAgentTurn */
+export type FoundryAgentTurn = {
+  id: string;
+  threadId?: string;
+  // automation: an automation's Assistant step, in its run's thread (a
+  // thread of the run's owner's, out of their list of threads); answers:
+  // the person's answers to the questions the turn before asked.
+  kind?: "message" | "action_result" | "answers" | "automation";
+  // The person's text; empty for any turn but a message.
+  text?: string;
+  // The action an action_result turn goes on from.
+  actionId?: string;
+  pageContext?: AgentPageContext | null;
+  status?: FoundryAgentTurnStatus;
+  error?: string;
+  // int64 millionths of a dollar.
+  usdMicros?: string;
+  steps?: number;
+  lastSeq?: number;
+  // A queued turn with attempts above 0 is retrying.
+  attempts?: number;
+  createdAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  // What the turn asked its person (helix_foundry_ask_person), which it
+  // ended waiting on; unset when it asked nothing. Answerable (send with
+  // answers) while it is the thread's newest turn and done.
+  asked?: FoundryAgentAsked | null;
+  // An answers turn's: the turn it answers, and the person's answers.
+  answers?: FoundryAgentAnswers | null;
+};
+
+/**
+ * v1FoundryAgentAsked: what a turn asked its person: 1 to 4 questions of
+ * the Assistant's own (ids q1, q2, ...), or a generation's waiting round,
+ * relayed as its agent wrote it, under its own ids (`generation` set).
+ */
+export type FoundryAgentAsked = {
+  questions?: AgentQuestion[];
+  generation?: FoundryAgentAskedGeneration | null;
+};
+/**
+ * v1FoundryAgentAskedGeneration: the generation whose round of questions a
+ * turn relayed: sending the answers sends them to it, as the person, while
+ * it still waits on that round (else FOUNDRY_AGENT_QUESTIONS_CLOSED).
+ */
+export type FoundryAgentAskedGeneration = {
+  ontologyId?: string;
+  generationId?: string;
+  round?: number;
+};
+/**
+ * v1FoundryAgentAnswers: the person's answers to the questions `turnId`
+ * asked, one per question at most; a question left out (only one that isn't
+ * blocking) is left to the Assistant.
+ */
+export type FoundryAgentAnswers = {
+  turnId: string;
+  answers: AgentQuestionAnswer[];
+};
+
+/** v1FoundryAgentAction: what the agent prepared, which only its person runs. */
+export type FoundryAgentAction = {
+  id: string;
+  turnId?: string;
+  threadId?: string;
+  // As the MCP's prepare names them: create_load, ontology:<workspace>/<ontology>.
+  operation?: string;
+  target?: string;
+  // The canonical payload, and the hash Execute sends back.
+  payloadJson?: string;
+  payloadHash?: string;
+  // The names Foundry resolved: AgentActionDisplay as JSON.
+  displayJson?: string;
+  // False when the target's ids never appeared in the person's messages or page.
+  targetNamedByUser?: boolean;
+  status?: AgentActionStatus;
+  // The operation's output once it ran (FoundryOperationOutput, untrusted).
+  resultJson?: string;
+  error?: string;
+  expiresAt?: string | null;
+  decidedByUserId?: string;
+  decidedAt?: string | null;
+  createdAt?: string | null;
+};
+
+// What a card names (backend/agent display.go), resolved by Foundry from
+// the workspace when the action is prepared, never the model's words: one
+// shape per operation, read by the action's operation, snake_case. A name
+// that couldn't be read (gone since, or never there) is missing, its id kept.
+
+/** One thing of the workspace: its id and its name. */
+export type AgentRef = { id: string; name?: string };
+/**
+ * A connector, with its kind (postgres, stripe, ...); `sample` when it reads
+ * the made-up sample company's database.
+ */
+export type AgentConnectorRef = AgentRef & { kind?: string; sample?: true };
+/** An ontology version by its number (v3). */
+export type AgentVersionRef = { id: string; number?: number };
+/** A load: the version it wrote, its status and when it started. */
+export type AgentLoadRef = {
+  id: string;
+  version: AgentVersionRef;
+  status?: string;
+  created_at?: string;
+};
+/** How settle_review settles a review (the MCP's `settle`). */
+export type AgentReviewSettle =
+  | "resolve"
+  | "prop"
+  | "release"
+  | "stale"
+  | "none";
+/**
+ * A review the current load holds, as helix_foundry_list_reviews gives it
+ * (integration.FoundryReviewOutput): its quote, values and statement are a
+ * document's words, untrusted.
+ */
+export type AgentReview = {
+  review_key: string;
+  reason: string;
+  settle: AgentReviewSettle;
+  type?: string;
+  doc_id?: string;
+  quote?: string;
+  section?: number;
+  start?: number;
+  end?: number;
+  norm_name?: string;
+  candidates?: string[];
+  entity_key?: string;
+  prop?: string;
+  values?: { value: unknown; doc_id?: string; quote?: string }[];
+  link?: string;
+  // JSON text {subject: {type, name}, object: {type, name}, props}.
+  statement?: string;
+  statement_hash?: string;
+  confidence?: number;
+  // The entities it concerns as the load holds them: its candidates, its
+  // property's entity.
+  entities?: AgentReviewEntity[];
+};
+/**
+ * An entity a review concerns, by the stored identity its candidates and
+ * entity_key name it by (a type without a key's normalized name), with its
+ * stored name: untrusted.
+ */
+export type AgentReviewEntity = { type: string; name?: string } & (
+  | { entity_key: string }
+  | { norm_name: string }
+);
+/** A value settle_review sets: exactly one arm. */
+export type AgentDecisionValue =
+  | { text: string }
+  | { integer: string }
+  | { number: number }
+  | { boolean: boolean };
+/** What a settle_review decides (DecisionDisplay): a closed set. */
+export type AgentDecision =
+  // The name is entity_key; `candidate` false when the review didn't offer it.
+  | { kind: "link"; entity_key: string; candidate: boolean }
+  | { kind: "not_in_data" }
+  | { kind: "set_value"; value: AgentDecisionValue }
+  | { kind: "remove_value" }
+  | { kind: "approve" }
+  | { kind: "reject" };
+
+/** Each operation's display, by operation. */
+export type AgentActionDisplays = {
+  // Exactly one of database (an existing one) and new_database.
+  create_ontology: { name: string } & (
+    | { database: AgentRef }
+    | {
+        new_database: {
+          name: string;
+          slug: string;
+        } & ({ project_id: string } | { new_project: string });
+      }
+  );
+  generate_ontology: {
+    ontology: AgentRef;
+    goal?: string;
+    // every: connectors lists the workspace's, as they are now (API
+    // sources only when named in event_sources); none: documents alone.
+    connectors_read: "every" | "none" | "chosen";
+    connectors: AgentConnectorRef[];
+    document_sets: AgentRef[];
+    event_sources?: { connector: AgentConnectorRef; mode: string }[];
+    // "acme": the sample company's ready-made draft.
+    sample?: string;
+  };
+  // current: the version current now; missing when none is.
+  set_current_version: {
+    ontology: AgentRef;
+    version: AgentVersionRef;
+    current?: AgentVersionRef;
+  };
+  create_load: { ontology: AgentRef; version: AgentVersionRef };
+  set_current_load: {
+    ontology: AgentRef;
+    load: AgentLoadRef;
+    current?: AgentLoadRef;
+  };
+  revise_version: {
+    ontology: AgentRef;
+    version: AgentVersionRef;
+    edits: { kind: "put" | "remove"; item_id: string }[];
+    dry_run: boolean;
+  };
+  sync_connector: { connector: AgentConnectorRef };
+  add_sample_data: { ontology: AgentRef };
+  create_document_set: {
+    ontology: AgentRef;
+    name: string;
+    description?: string;
+  };
+  // set: as it is named now; a field left out stays, "" clears the description.
+  update_document_set: {
+    ontology: AgentRef;
+    set: AgentRef;
+    name?: string;
+    description?: string;
+  };
+  move_document: {
+    ontology: AgentRef;
+    document: AgentRef;
+    from: AgentRef;
+    to: AgentRef;
+  };
+  settle_review: {
+    ontology: AgentRef;
+    load_id: string;
+    review: AgentReview;
+    document?: AgentRef;
+    decision: AgentDecision;
+  };
+  // A local install's only. Where the workspace's new threads run after it
+  // (runtime) and before (current), and whether a helper that runs runtime
+  // is online (always, for api).
+  set_assistant_runtime: {
+    runtime: AgentRuntime;
+    current: AgentRuntime;
+    online: boolean;
+  };
+  // A local install's only: the helper, what it runs, whether it is online.
+  revoke_assistant_helper: {
+    host: AgentRef;
+    runtimes: AgentHelperRuntime[];
+    online: boolean;
+  };
+  // A dashboard's name and description as the Assistant wrote them.
+  create_dashboard: {
+    name: string;
+    description?: string;
+    spec: AgentSpecDisplay;
+  };
+  // What changes; a field missing stays as it is, "" clears the description.
+  update_dashboard: {
+    dashboard: AgentDashboardRef;
+    name?: string;
+    description?: string;
+    spec?: AgentSpecDisplay;
+  };
+  delete_dashboard: { dashboard: AgentDashboardRef };
+  // pinned: whether it pins the dashboard (else unpins it).
+  pin_dashboard: { dashboard: AgentDashboardRef; pinned: boolean };
+  publish_dashboard: { dashboard: AgentDashboardRef };
+  unpublish_dashboard: { dashboard: AgentDashboardRef };
+  // Its name as the Assistant wrote it; its steps are the payload's spec.
+  create_automation: { name: string };
+  // steps: whether the edit carries steps (the payload's spec), which the
+  // person's click approves; without, it approves nothing.
+  update_automation: {
+    automation: AgentAutomationRef;
+    name?: string;
+    steps: boolean;
+  };
+  pause_automation: { automation: AgentAutomationRef };
+  resume_automation: { automation: AgentAutomationRef };
+  delete_automation: { automation: AgentAutomationRef };
+  run_automation: { automation: AgentAutomationRef };
+};
+/** An automation as it was when the action was prepared, with its status. */
+export type AgentAutomationRef = AgentRef & { status?: AutomationStatus };
+/** A dashboard as it was when the action was prepared. */
+export type AgentDashboardRef = AgentRef & { pinned?: true; published?: true };
+/**
+ * A spec's tiles as a card names them: each tile's title, the ontology
+ * whose load it reads, and its visual's kind (missing: as the result suits).
+ */
+export type AgentSpecDisplay = {
+  tiles: { title: string; ontology: AgentRef; visual?: string }[];
+};
+/** The operations the Assistant may prepare (backend agent.Operations). */
+export type AgentOperation = keyof AgentActionDisplays;
+
+// Where a local install's Assistant runs, and its helpers: GET and PATCH
+// .../agent/runtime, POST .../agent/host-pairings and
+// .../agent/hosts/{id}:revoke. The owner's only (PERMISSION_DENIED
+// otherwise); hosted Helix answers FAILED_PRECONDITION, reason
+// FOUNDRY_AGENT_HOSTS_LOCAL_ONLY.
+
+/** A runtime a helper runs: a CLI on its owner's subscription. */
+export type AgentHelperRuntime = Exclude<AgentRuntime, "api">;
+
+/**
+ * v1FoundryAgentHostAccount: what one of a helper's CLIs is signed in to,
+ * as the helper last found it.
+ */
+export type FoundryAgentHostAccount = {
+  runtime?: AgentHelperRuntime;
+  // signed_in; signed_out (its turns fail until the person signs in); or
+  // unknown (the CLI didn't start).
+  state?: "signed_in" | "signed_out" | "unknown";
+  // The plan as the CLI names it (pro, max, team, plus, ...), only when
+  // signed in on a subscription; missing for a CLI signed in some other way,
+  // whose turns don't bill a subscription.
+  subscription?: string;
+  // The CLI's version as it says it (Codex's).
+  version?: string;
+  // A Codex older than FoundryAgentRuntime.codexMinVersion (or of no version
+  // the helper could read): it runs no turn until updated.
+  outdated?: boolean;
+};
+
+/** v1FoundryAgentHost: a helper paired with the install (install-wide, not per workspace). */
+export type FoundryAgentHost = {
+  id: string;
+  // The machine's name, as the helper gave it.
+  name?: string;
+  // What it runs, as of its last call: an outdated Codex isn't listed (its
+  // account says outdated).
+  runtimes?: AgentHelperRuntime[];
+  // What their CLIs are signed in to, as of its last call; empty until its
+  // first call after pairing.
+  accounts?: FoundryAgentHostAccount[];
+  version?: string;
+  // darwin-arm64, linux-x64, ...
+  platform?: string;
+  createdAt?: string | null;
+  // Its last call; missing until its first after pairing, which starts
+  // nothing (it runs once its run or install does).
+  lastSeenAt?: string | null;
+  // Seen within 30 seconds.
+  online?: boolean;
+  revokedAt?: string | null;
+};
+/** v1FoundryAgentRuntime */
+export type FoundryAgentRuntime = {
+  // Where the workspace's new threads run.
+  runtime?: AgentRuntime;
+  // Not revoked, newest first.
+  hosts?: FoundryAgentHost[];
+  // The helper runtimes an online helper runs now, sorted.
+  online?: AgentHelperRuntime[];
+  // When the owner confirmed, once, what codex runs with: their own Codex
+  // setup (its MCP servers and plugins), its shell off and every command or
+  // file change declined, on their ChatGPT plan. Missing until then.
+  codexConfirmedAt?: string | null;
+  // The oldest Codex a helper runs it on (x.y.z).
+  codexMinVersion?: string;
+};
+/** GET and PATCH .../agent/runtime */
+export type FoundryAgentRuntimeResponse = { runtime?: FoundryAgentRuntime };
+/**
+ * PATCH .../agent/runtime: a helper need not be online to be chosen. codex
+ * needs confirmCodex once (it is kept), else FAILED_PRECONDITION, reason
+ * FOUNDRY_AGENT_CODEX_UNCONFIRMED.
+ */
+export type UpdateFoundryAgentRuntimeRequest = {
+  runtime: AgentRuntime;
+  confirmCodex?: boolean;
+};
+/** POST .../agent/host-pairings: a one-time code, ten minutes, shown once. */
+export type FoundryAgentHostPairingResponse = {
+  // hxp_ and 43 characters.
+  code?: string;
+  expiresAt?: string | null;
+  // npx -y @helixdb/foundry-agent-host@<version> pair <code>
+  command?: string;
+};
+/** POST .../agent/hosts/{id}:revoke */
+export type FoundryAgentHostResponse = { host?: FoundryAgentHost };
+
+/**
+ * POST .../agent/turns: a message (in a new thread when `threadId` is
+ * empty), or the person's answers to the questions their thread's newest
+ * turn asked: that turn must be done, having asked, with nothing after it
+ * (FAILED_PRECONDITION, FOUNDRY_AGENT_QUESTIONS_CLOSED, otherwise); the
+ * answers are checked as AgentQuestionAnswer says, every blocking question
+ * answered (INVALID_ARGUMENT otherwise).
+ */
+export type SendAgentMessageRequest = {
+  pageContext?: AgentPageContext;
+  // At most 64 characters: the same token returns the turn it queued.
+  clientToken: string;
+} & (
+  | {
+      // Empty: a new thread.
+      threadId?: string;
+      // At most 4,000 characters.
+      text: string;
+      answers?: never;
+    }
+  | { threadId: string; answers: FoundryAgentAnswers; text?: never }
+);
+/** v1FoundryAgentTurnResponse: POST turns and turns/{id}:cancel. */
+export type AgentTurnResponse = {
+  turn: FoundryAgentTurn;
+  thread: FoundryAgentThread;
+};
+/** GET .../agent/threads: the caller's, newest first, 50 a page. */
+export type ListAgentThreadsResponse = {
+  threads?: FoundryAgentThread[];
+  nextPageToken?: string;
+};
+/** GET .../agent/threads/{id}: its newest 100 turns, oldest first, and every action prepared in it. */
+export type AgentThreadResponse = {
+  thread: FoundryAgentThread;
+  turns?: FoundryAgentTurn[];
+  actions?: FoundryAgentAction[];
+};
+/** v1FoundryAgentEvent: one event a turn shows, as JSON (AgentEvent). */
+export type FoundryAgentEvent = {
+  seq: number;
+  eventJson: string;
+  createdAt?: string | null;
+};
+/**
+ * GET .../agent/turns/{id}/events?afterSeq=: once `status` is not queued or
+ * running and the events reach `lastSeq`, none follows.
+ */
+export type ListAgentTurnEventsResponse = {
+  events?: FoundryAgentEvent[];
+  status?: FoundryAgentTurnStatus;
+  lastSeq?: number;
+};
+/** POST .../agent/actions/{id}:execute */
+export type ExecuteAgentActionRequest = { payloadHash: string };
+/** v1FoundryAgentActionResponse: execute, refresh and dismiss. */
+export type AgentActionResponse = {
+  action: FoundryAgentAction;
+  // The turn the agent goes on from the action's result in; unset unless it ran.
+  continuation?: FoundryAgentTurn | null;
+};
+
+/** ErrorInfo reasons of the Assistant's FAILED_PRECONDITION refusals. */
+export const AGENT_REFUSALS = [
+  // foundry.agent.enabled is off.
+  "FOUNDRY_AGENT_DISABLED",
+  // The thread has a live turn, or an action of it is running.
+  "FOUNDRY_AGENT_THREAD_BUSY",
+  // The month's Assistant budget is spent.
+  "FOUNDRY_AGENT_BUDGET",
+  // 3 actions already wait in the thread.
+  "FOUNDRY_AGENT_TOO_MANY_ACTIONS",
+  // Execute or refresh of an action that isn't waiting.
+  "FOUNDRY_AGENT_ACTION_NOT_PREPARED",
+  // The payload shown isn't the one prepared.
+  "FOUNDRY_AGENT_ACTION_CHANGED",
+  // The confirmation expired: refresh it.
+  "FOUNDRY_AGENT_ACTION_EXPIRED",
+  // A thread a helper runs (claude_code, codex) while no helper that runs
+  // it has called in the last 30 seconds: nothing is queued.
+  "FOUNDRY_AGENT_HOST_OFFLINE",
+  // The runtime routes on a host without helpers (hosted Helix).
+  "FOUNDRY_AGENT_HOSTS_LOCAL_ONLY",
+  // codex, chosen before the owner confirmed what it runs with.
+  "FOUNDRY_AGENT_CODEX_UNCONFIRMED",
+  // Answers to questions no longer open: answered already, or the
+  // conversation went on.
+  "FOUNDRY_AGENT_QUESTIONS_CLOSED",
+] as const;
+export type AgentRefusalReason = (typeof AGENT_REFUSALS)[number];
+
+/**
+ * Why a turn ended (backend/agent StopReason): the model finished, it asked
+ * its person (their answers come as the next turn), a cap (steps, wall
+ * time, budget, its answer's length, its window), it declined, or it failed.
+ */
+export type AgentStopReason =
+  | "answered"
+  | "asked"
+  | "max_steps"
+  | "wall_time"
+  | "budget"
+  | "max_tokens"
+  | "refusal"
+  | "context"
+  | "failed";
+
+/**
+ * Why a call the model wrote never ran (agent.NotRunReason): a reply's
+ * calls past its first 8, a turn's asks past its 3, a call after the turn's
+ * time ran out, one the reply was writing at its length limit, one whose
+ * input isn't JSON, or one after the turn asked its person.
+ */
+export type AgentNotRunReason =
+  | "calls"
+  | "asks"
+  | "time"
+  | "length"
+  | "input"
+  | "asked";
+/**
+ * A turn's events (FoundryAgentEvent.eventJson), each with its `type`: a
+ * closed set the page parses without trust. Text is the model's, shown as
+ * plain text; a tool's output is untrusted data, at most 16 KiB.
+ */
+export type AgentEvent =
+  | { type: "started"; model: string; attempt: number }
+  // `step` counts a turn's model calls across its attempts, from 1. A
+  // step's text, final once its call ended: one or more, which supersede
+  // its deltas (the server drops them as it writes the text).
+  | { type: "text"; step: number; text: string }
+  // Text the step's call is writing, every 250 ms: appended in seq order.
+  // Deltas no text follows (the stream broke) end at the next other event.
+  | { type: "text_delta"; step: number; text: string }
+  | {
+      type: "tool_call";
+      tool_use_id: string;
+      name: string;
+      title: string;
+      input: unknown;
+    }
+  | {
+      type: "tool_result";
+      tool_use_id: string;
+      name: string;
+      is_error: boolean;
+      error?: string;
+      output?: unknown;
+      truncated?: boolean;
+      // Why the call never ran, which the page words (no `error`).
+      not_run?: AgentNotRunReason;
+    }
+  | {
+      type: "action_card";
+      action_id: string;
+      operation: string;
+      target: string;
+      payload: unknown;
+      payload_hash: string;
+      // AgentActionDisplays[operation], parsed by the page.
+      display: unknown;
+      target_named_by_user: boolean;
+      expires_at: string;
+    }
+  | {
+      // The first event of an action_result turn: how the person's click ended.
+      type: "action_result";
+      action_id: string;
+      operation: string;
+      status: AgentActionStatus;
+      result?: unknown;
+      error?: string;
+    }
+  | {
+      // The questions the turn asks its person (helix_foundry_ask_person),
+      // which it ends waiting on: the Assistant's own, or a generation's
+      // round, relayed as its agent wrote it (`generation` set).
+      type: "questions";
+      questions: AgentQuestion[];
+      generation?: {
+        ontology_id: string;
+        ontology_name: string;
+        generation_id: string;
+        generation_title?: string;
+        round: number;
+      };
+    }
+  | {
+      // The first event of an answers turn: the person's answers, as checked.
+      type: "answers";
+      turn_id: string;
+      answers: { question_id: string; options: string[]; text?: string }[];
+    }
+  | {
+      // An automation's step's report (its newest is the step's output):
+      // untrusted, the model's words; answer true for yes.
+      type: "automation_report";
+      summary: string;
+      answer?: boolean;
+      count?: number;
+    }
+  | {
+      type: "finished";
+      status: "done" | "failed";
+      reason: AgentStopReason;
+      error?: string;
+    };
+
+// ---------------------------------------------------------------- Dashboards
+// Routes under /v1/workspaces/{workspaceId}/foundry/dashboards...
+// (backend/api/dashboards.go, backend/dashboard): tiles of typed queries over
+// ontologies' loads, shown as tables and charts. A dashboard holds queries,
+// never data: the viewer reads each tile through the tile's load's :read
+// (POST .../ontologies/{ontologyId}/loads/{loadId}:read, a tile's
+// `{"query": …}` as one read; the tiles of one load in one call), so it shows
+// no one more than they may read. Every member lists and reads every
+// dashboard; a grantee of source grants only the pinned ones. A member
+// creates dashboards and edits and deletes their own while unpinned; owners
+// and admins edit and delete any, pin them in every member's sidebar, and,
+// hosted only, publish a snapshot at a public link (canPublish). An edit and
+// a publish name the revision read (int64, as a string): another is
+// FAILED_PRECONDITION FOUNDRY_DASHBOARD_CHANGED. Refusals carry an ErrorInfo
+// reason (DASHBOARD_REFUSALS); a change the caller may not make is
+// PERMISSION_DENIED.
+
+/** The ErrorInfo reasons of the dashboards' FAILED_PRECONDITION refusals. */
+export const DASHBOARD_REFUSALS = [
+  // An edit or publish of a revision another write has passed: read it again.
+  "FOUNDRY_DASHBOARD_CHANGED",
+  // The workspace's 200 dashboards, or 20 pinned ones.
+  "FOUNDRY_DASHBOARD_LIMIT",
+  // A tile reads the current load of an ontology that has none.
+  "FOUNDRY_DASHBOARD_NOT_LOADED",
+  // Publishing: a tile that can't be read (the message names it and why),
+  // a dashboard with no tile, a snapshot past 512 KiB a tile or 2 MiB in all,
+  // and a stamp or build without public links.
+  "FOUNDRY_DASHBOARD_TILE_FAILED",
+  "FOUNDRY_DASHBOARD_EMPTY",
+  "FOUNDRY_DASHBOARD_TOO_LARGE",
+  "FOUNDRY_DASHBOARDS_PUBLIC_OFF",
+] as const;
+export type DashboardRefusal = (typeof DASHBOARD_REFUSALS)[number];
+
+/** A tile's load: whichever is current when it is read, or one pinned. */
+export type DashboardTileLoad =
+  | { kind: "current" }
+  | { kind: "pinned"; load_id: string };
+
+/**
+ * One tile of a spec (backend/dashboard): a typed query of one ontology's
+ * load and how to show it. The spec is the backend's JSON, in snake_case.
+ * id: 1 to 32 of a-z, 0-9, - and _, starting with a letter or digit, unique;
+ * title: 1 to 80 characters, no control characters; query: at most 3 KiB,
+ * the read contract's Query (at most 200 rows, 100 groups); visual.kind left
+ * out: as the output's shape suits, as an Analyst visual's.
+ */
+export type DashboardTile = {
+  id: string;
+  title: string;
+  ontology_id: string;
+  load: DashboardTileLoad;
+  query: OntologyQuery;
+  visual: { kind?: VisualKind };
+};
+
+/** A dashboard's spec: at most 20 tiles, each in exactly one row of 1 to 3. */
+export type DashboardSpec = {
+  v: 1;
+  tiles: DashboardTile[];
+  layout: { rows: string[][] };
+};
+
+/** v1FoundryDashboardShare: a dashboard's public snapshot. */
+export type FoundryDashboardShare = {
+  // The link's token, for owners and admins only: the page is /share/<token>.
+  token?: string;
+  // int64: the revision it shows, older than the dashboard's after an edit.
+  specRevision?: string;
+  publishedAt?: string | null;
+  firstPublishedAt?: string | null;
+  publishedByUserId?: string;
+};
+
+/** v1FoundryDashboard */
+export type FoundryDashboard = {
+  id: string;
+  name?: string;
+  description?: string;
+  // DashboardSpec as JSON; empty in a list.
+  specJson?: string;
+  // int64, from 1: what an edit or a publish names.
+  revision?: string;
+  createdByUserId?: string;
+  updatedByUserId?: string;
+  pinned?: boolean;
+  pinnedAt?: string | null;
+  pinnedByUserId?: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  share?: FoundryDashboardShare | null;
+  // What the caller may do: change its name, description and tiles; pin or
+  // unpin it; publish and republish it (false wherever public links are off);
+  // delete it (an owner or admin only while it is published); unpublish it
+  // (an owner or admin while it is published, links on or off).
+  canEdit?: boolean;
+  canPin?: boolean;
+  canPublish?: boolean;
+  canDelete?: boolean;
+  canUnpublish?: boolean;
+};
+
+/** GET .../dashboards: every one (at most 200), pinned first, without specs. */
+export type ListDashboardsResponse = {
+  dashboards?: FoundryDashboard[];
+  canCreate?: boolean;
+};
+/** v1FoundryDashboardResponse: every dashboard route but list, delete and preview. */
+export type DashboardResponse = { dashboard: FoundryDashboard };
+/** POST .../dashboards: unpinned; the same clientToken returns the one made. */
+export type CreateDashboardRequest = {
+  // 1 to 120 characters.
+  name: string;
+  // At most 1,000 characters.
+  description?: string;
+  // DashboardSpec as JSON; empty for no tiles yet.
+  specJson?: string;
+  // 1 to 64 characters.
+  clientToken: string;
+};
+/** PATCH .../dashboards/{id}: each field set is changed, at least one. */
+export type UpdateDashboardRequest = {
+  expectedRevision: string;
+  name?: string;
+  description?: string;
+  specJson?: string;
+};
+/**
+ * POST .../dashboards/{id}:pin, owners and admins: at the revision read
+ * (another is FOUNDRY_DASHBOARD_CHANGED), so what is pinned is what was seen.
+ */
+export type PinDashboardRequest = { pinned: boolean; expectedRevision: string };
+/**
+ * POST .../dashboards/{id}:add-question-visual: an answered question's query
+ * result (evidenceId, such as e2) as a tile of its own row, last, with its
+ * visual's kind and title (else the question's words). pinLoad reads the
+ * question's load rather than the current one.
+ */
+export type AddDashboardQuestionVisualRequest = {
+  expectedRevision: string;
+  ontologyId: string;
+  questionId: string;
+  evidenceId: string;
+  pinLoad?: boolean;
+};
+/** POST .../dashboards:preview-tile: a tile checked and read once, as the caller. */
+export type PreviewDashboardTileRequest = { tileJson: string };
+export type PreviewDashboardTileResponse = {
+  // The tile as a spec keeps it.
+  tileJson?: string;
+  // The load it read: the current one, or the one it pins.
+  loadId?: string;
+  // {"ok": QueryOutput} or {"error": why it has none}, as :read gives it.
+  outcomeJson?: string;
+  asOf?: string;
+};
+/** POST .../dashboards/{id}:publish, owners and admins, hosted only. */
+export type PublishDashboardRequest = { expectedRevision: string };
+
+/**
+ * A published dashboard as its public link shows it, from the
+ * foundry-events door's GET /v1/shared-dashboards/{token} (NEXT_PUBLIC_HELIX_EVENTS_URL),
+ * with no session: no workspace's, ontology's, load's or person's id. Each
+ * tile's output is its query's answer as :read gave its publisher, strings
+ * cut to 1,000 characters, a row's entities as {type, name} only (no id),
+ * and each row's edges empty; its query only its shape (the type at each
+ * position, each step's link and what it returns), never a value it tested
+ * (start.ids, start.text, where, filters).
+ */
+export type DashboardSnapshot = {
+  v: 1;
+  name: string;
+  description: string;
+  published_at: string;
+  layout: { rows: string[][] };
+  tiles: {
+    id: string;
+    title: string;
+    visual: { kind?: VisualKind };
+    query: {
+      start: { type: string };
+      steps: { via: string; dir: "out" | "in"; to: string }[];
+      return: OntologyQuery["return"];
+    };
+    as_of: string;
+    output: QueryOutput;
+  }[];
+};
+
+// ---------------------------------------------------------------- Automations
+// Routes under /v1/workspaces/{workspaceId}/foundry/automations...
+// (backend/api/automations.go, backend/automation): a person's graph of
+// steps Foundry runs as them, its owner, when its trigger fires. Every member
+// lists and reads every automation and creates their own; only its owner
+// edits, approves, resumes and runs one; its owner or an owner or admin
+// pauses, deletes and cancels a run. It runs only once its owner approved its
+// spec here (:approve, never through an agent): new, and after every spec
+// edit, it is needs_approval. An edit or an approval names the revision read
+// (int64, as a string): another is FAILED_PRECONDITION
+// FOUNDRY_AUTOMATION_CHANGED. Refusals carry an ErrorInfo reason
+// (AUTOMATION_REFUSALS); one the caller may not make is PERMISSION_DENIED,
+// and past the workspace's runs of the day RESOURCE_EXHAUSTED. "Workflows"
+// are another thing: an outside agent's recorded runs.
+
+/** The ErrorInfo reasons of the automations' FAILED_PRECONDITION refusals. */
+export const AUTOMATION_REFUSALS = [
+  // Automations are off on this stamp or build.
+  "FOUNDRY_AUTOMATIONS_DISABLED",
+  // An edit or approval of a revision another write has passed: read it again.
+  "FOUNDRY_AUTOMATION_CHANGED",
+  // The workspace's 50 automations.
+  "FOUNDRY_AUTOMATION_LIMIT",
+  // Resume or Run now while its spec waits for its owner's approval.
+  "FOUNDRY_AUTOMATION_UNAPPROVED",
+  // Run now while a run of it is live.
+  "FOUNDRY_AUTOMATION_BUSY",
+  // Pause while it waits for approval: it isn't running.
+  "FOUNDRY_AUTOMATION_NOT_ACTIVE",
+  // Cancel of a run that already ended.
+  "FOUNDRY_AUTOMATION_RUN_ENDED",
+] as const;
+export type AutomationRefusal = (typeof AUTOMATION_REFUSALS)[number];
+
+/**
+ * An automation's trigger (backend/automation, snake_case): a schedule in an
+ * IANA zone (every hour at minute 0 to 59, every day at "HH:MM", every week
+ * on a day at "HH:MM"), work that ended on one target, or by hand only.
+ */
+export type AutomationTrigger =
+  | { kind: "schedule"; every: "hour"; minute: number; time_zone: string }
+  | { kind: "schedule"; every: "day"; at: string; time_zone: string }
+  | {
+      kind: "schedule";
+      every: "week";
+      weekday:
+        | "monday"
+        | "tuesday"
+        | "wednesday"
+        | "thursday"
+        | "friday"
+        | "saturday"
+        | "sunday";
+      at: string;
+      time_zone: string;
+    }
+  | {
+      kind: "sync_finished";
+      connector_id: string;
+      outcome: "succeeded" | "failed" | "any";
+    }
+  | { kind: "load_ready"; ontology_id: string }
+  | { kind: "document_arrived"; set_id: string }
+  | {
+      kind: "generation_finished";
+      ontology_id: string;
+      outcome: "succeeded" | "failed" | "any";
+    }
+  | { kind: "manual" };
+
+/**
+ * An action, as an action step runs it and an Assistant step's allow
+ * approves it: one operation on one fixed target. create_load loads the
+ * ontology's current version; publish_dashboard refreshes its snapshot.
+ */
+export type AutomationAction =
+  | { operation: "sync_connector"; connector_id: string }
+  | { operation: "create_load"; ontology_id: string }
+  | { operation: "publish_dashboard"; dashboard_id: string };
+
+/** A node's kind and config. */
+export type AutomationNodeConfig =
+  | { kind: "trigger"; config: AutomationTrigger }
+  // instruction: 1 to 2,000 characters; allow: at most 10, each once.
+  | {
+      kind: "assistant";
+      config: { instruction: string; allow?: AutomationAction[] };
+    }
+  | { kind: "action"; config: AutomationAction }
+  // answer: the Assistant step before it said yes or no; count: its count,
+  // or a document_arrived or sync_finished trigger's.
+  | {
+      kind: "condition";
+      config:
+        | { check: "answer"; equals: "yes" | "no" }
+        | {
+            check: "count";
+            op: "at_least" | "at_most" | "equals";
+            value: number;
+          };
+    }
+  // message: at most 500 characters.
+  | { kind: "notify"; config: { message: string } };
+
+/** One node of a spec: id 1 to 32 of a-z, 0-9, - and _, unique; position is the canvas's only. */
+export type AutomationNode = AutomationNodeConfig & {
+  id: string;
+  position: { x: number; y: number };
+};
+
+/** An edge; branch exactly on an edge out of a condition, each at most once. */
+export type AutomationEdge = {
+  from: string;
+  to: string;
+  branch?: "true" | "false";
+};
+
+/**
+ * An automation's spec: exactly one trigger with no edge in, every node
+ * reached from it with no cycle, at most 50 nodes and 100 edges; a condition
+ * has exactly one edge in.
+ */
+export type AutomationSpec = {
+  v: 1;
+  nodes: AutomationNode[];
+  edges: AutomationEdge[];
+};
+
+export type AutomationStatus = "needs_approval" | "active" | "paused";
+export type AutomationPausedReason =
+  | "person"
+  | "failures"
+  | "owner_lost_access";
+export type AutomationRunStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "skipped";
+export type AutomationNodeStatus =
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "skipped"
+  | "blocked";
+
+/** What a step gave (outputJson): untrusted text from the workspace. */
+export type AutomationNodeOutput = {
+  summary?: string;
+  // An Assistant step's yes (true) or no.
+  answer?: boolean;
+  count?: number;
+  // The branch a condition took.
+  branch?: boolean;
+  // An action's result, as the MCP's tools return it.
+  result?: unknown;
+  // Actions an Assistant step left for the owner, as cards in the run's thread.
+  pending?: number;
+};
+
+/** What fired a run (triggerEventJson). */
+export type AutomationTriggerEvent = {
+  kind: AutomationTrigger["kind"];
+  at: string;
+  sync_id?: string;
+  load_id?: string;
+  generation_id?: string;
+  document_ids?: string[];
+  outcome?: string;
+  count?: number;
+  rows?: number;
+  by_user_id?: string;
+};
+
+/** v1FoundryAutomationRunNode: a step that started. */
+export type FoundryAutomationRunNode = {
+  nodeId: string;
+  status?: AutomationNodeStatus;
+  // outputJson and error: for its automation's owner, and owners and admins,
+  // alone; another member sees how far the run went.
+  outputJson?: string;
+  error?: string;
+  // An Assistant step's turn, in the run's thread (threadId): its owner's alone.
+  turnId?: string;
+  // int64.
+  usdMicros?: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+};
+
+/** v1FoundryAutomationRun */
+export type FoundryAutomationRun = {
+  id: string;
+  automationId?: string;
+  status?: AutomationRunStatus;
+  // Why it failed, was cancelled or skipped, or why a queued one retries:
+  // for its owner, and owners and admins, alone.
+  error?: string;
+  triggerEventJson?: string;
+  // int64.
+  specRevision?: string;
+  // AutomationSpec as JSON, on a run got alone; none on a skipped run.
+  specJson?: string;
+  // The owner's Assistant thread its Assistant steps ran in: theirs alone.
+  threadId?: string;
+  // int64.
+  usdMicros?: string;
+  attempts?: number;
+  createdAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  // Its steps that started, on a run got alone.
+  nodes?: FoundryAutomationRunNode[];
+  canCancel?: boolean;
+};
+
+/** v1FoundryAutomation */
+export type FoundryAutomation = {
+  id: string;
+  name?: string;
+  description?: string;
+  // AutomationSpec as JSON; empty in a list.
+  specJson?: string;
+  // int64, from 1: what an edit or an approval names.
+  revision?: string;
+  // int64.
+  specRevision?: string;
+  ownerUserId?: string;
+  status?: AutomationStatus;
+  pausedReason?: AutomationPausedReason;
+  pausedByUserId?: string;
+  pausedAt?: string | null;
+  // int64; missing or "0": never approved.
+  approvedSpecRevision?: string;
+  approvedAt?: string | null;
+  triggerKind?: AutomationTrigger["kind"];
+  triggerTarget?: string;
+  // An active schedule's next time.
+  nextRunAt?: string | null;
+  failures?: number;
+  backoffUntil?: string | null;
+  lastRun?: FoundryAutomationRun | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  canEdit?: boolean;
+  canApprove?: boolean;
+  canPause?: boolean;
+  canResume?: boolean;
+  canRun?: boolean;
+  canDelete?: boolean;
+  // When its newest failed run started: a list's only.
+  lastFailedAt?: string | null;
+  // Its runs of the days a list asked for (statsDays).
+  stats?: AutomationRunCounts | null;
+};
+
+/**
+ * v1FoundryAutomationRunCounts: runs started within some days, every one
+ * (live, cancelled and skipped too), those that succeeded and failed, what
+ * they spent (int64), and the actions their Assistant steps prepared that
+ * still wait for the owner (counted for its owner, and owners and admins,
+ * only; 0 for another member).
+ */
+export type AutomationRunCounts = {
+  runs?: number;
+  succeeded?: number;
+  failed?: number;
+  usdMicros?: string;
+  waiting?: number;
+};
+/** v1FoundryAutomationRunDay: a day's runs in the list's time zone; other neither succeeded nor failed. */
+export type AutomationRunDay = {
+  // YYYY-MM-DD.
+  date?: string;
+  succeeded?: number;
+  failed?: number;
+  other?: number;
+};
+/** v1FoundryAutomationRunSummary: the workspace's runs of the last days, each day listed, oldest first. */
+export type AutomationRunSummary = {
+  days?: number;
+  totals?: AutomationRunCounts;
+  byDay?: AutomationRunDay[];
+};
+
+/**
+ * GET .../automations[?statsDays=&timeZone=]: every one (at most 50), each
+ * with its newest run and newest failure, without specs. statsDays (1 to
+ * 30) counts each one's runs of that many days, today the last, by the days
+ * of timeZone (IANA; UTC when empty), and sums them in summary.
+ */
+export type ListAutomationsResponse = {
+  automations?: FoundryAutomation[];
+  canCreate?: boolean;
+  // Whether a notify step emails here (false on a local build).
+  email?: boolean;
+  summary?: AutomationRunSummary | null;
+};
+/** v1FoundryAutomationResponse: get, create, update, approve, pause and resume. */
+export type AutomationResponse = { automation: FoundryAutomation };
+/** POST .../automations: needs_approval; the same clientToken returns the one made. */
+export type CreateAutomationRequest = {
+  // 1 to 120 characters.
+  name: string;
+  // At most 1,000 characters.
+  description?: string;
+  // AutomationSpec as JSON.
+  specJson: string;
+  // 1 to 64 characters.
+  clientToken: string;
+};
+/** PATCH .../automations/{id}: each field set is changed, at least one. */
+export type UpdateAutomationRequest = {
+  expectedRevision: string;
+  name?: string;
+  description?: string;
+  specJson?: string;
+};
+/** POST .../automations/{id}:approve: its owner's click on the revision read. */
+export type ApproveAutomationRequest = { expectedRevision: string };
+/** POST .../automations/{id}:run: the same clientToken returns the run it queued. */
+export type RunAutomationRequest = { clientToken: string };
+/** GET .../automations/{automationId}/runs: newest first, 50 a page. */
+export type ListAutomationRunsResponse = {
+  runs?: FoundryAutomationRun[];
+  nextPageToken?: string;
+};
+/** v1FoundryAutomationRunResponse: run, get run and cancel. */
+export type AutomationRunResponse = { run: FoundryAutomationRun };
+
 // ---------------------------------------------------------------- Helix databases
 // The Helix control plane's own routes, as helix-website calls them:
 // projects and their databases (tenants) to bind an ontology to, and reads
@@ -3498,7 +4783,24 @@ export type FoundryAiConfig = {
   createdByName?: string;
   // The provider as failure copy names it: "Claude", or a custom server's host.
   label?: string;
+  // Whether the Assistant can run on it (its ask model's tool check, run once
+  // the test passed while the Assistant is on). A failed check never fails
+  // the setting; the Assistant refuses its turns, saying why.
+  assistantCheck?: FoundryAiAssistantCheck;
 };
+
+/** v1FoundryAIAssistantCheck: what the Assistant's tool check of a setting found. */
+export type FoundryAiAssistantCheck =
+  // Not checked: the Assistant is off, the check couldn't run, or the test
+  // hasn't passed. The Assistant runs on it.
+  | "FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED"
+  | "FOUNDRY_AI_ASSISTANT_CHECK_PASSED"
+  // The provider refused the key on the Assistant's calls.
+  | "FOUNDRY_AI_ASSISTANT_CHECK_AUTH"
+  // The provider refused the request: a model it lacks there, or tools.
+  | "FOUNDRY_AI_ASSISTANT_CHECK_REFUSED"
+  // The model answered without calling the tool.
+  | "FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL";
 
 /** v1FoundryAIDefault: the deployment's provider. */
 export type FoundryAiDefault = {

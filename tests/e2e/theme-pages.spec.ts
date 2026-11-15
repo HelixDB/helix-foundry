@@ -8,6 +8,7 @@ import {
   loadVersion3,
   makeContractsCurrent,
   mock,
+  postToWfe,
   signIn,
   test,
   uploadInData,
@@ -95,7 +96,7 @@ test("every main page in both themes", async ({ page }, info) => {
   test.setTimeout(240_000);
   // Animations off: what is checked is where they end.
   await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "light" });
-  await mock.configure({ loadStepMs: 100, askStepMs: 100 });
+  await mock.configure({ loadStepMs: 100, askStepMs: 100, agentStepMs: 100 });
   const failures: string[] = [];
   const shoot = async (name: string) => {
     for (const theme of THEMES) {
@@ -199,6 +200,78 @@ test("every main page in both themes", async ({ page }, info) => {
   });
   await settle(page);
   await shoot("ask-thread");
+
+  // The Assistant's dock, with an answer and its step opened.
+  await page.keyboard.press("ControlOrMeta+j");
+  const dock = page.getByRole("complementary", { name: "Assistant" });
+  await dock
+    .getByRole("textbox", { name: "Message" })
+    .fill("What ontologies do I have?");
+  await dock.getByRole("textbox", { name: "Message" }).press("Enter");
+  await expect(dock.getByText(/^This workspace has \d+ ontolog/)).toBeVisible({
+    timeout: 20_000,
+  });
+  await dock.getByText("Listed the ontologies").click();
+  await settle(page);
+  await shoot("assistant");
+  await page.keyboard.press("ControlOrMeta+j");
+
+  // Automations: the overview and its templates, a new one's conversation,
+  // a template's draft on the canvas, one with a run, its settings.
+  await mock.configure({ automationStepMs: 100, agentStepMs: 60 });
+  await visit("automations-empty", "/automations");
+  await visit("automation-new-chat", "/automations/new");
+  await visit("automation-new", "/automations/new?template=check-documents");
+  const A = "/v1/workspaces/ws_acme/foundry/automations";
+  const made = (
+    await postToWfe(page, A, {
+      name: "Morning summary",
+      clientToken: "theme",
+      specJson: JSON.stringify({
+        v: 1,
+        nodes: [
+          {
+            id: "start",
+            kind: "trigger",
+            config: { kind: "manual" },
+            position: { x: 0, y: 0 },
+          },
+          {
+            id: "ask",
+            kind: "assistant",
+            config: { instruction: "Summarise overdue invoices." },
+            position: { x: 0, y: 150 },
+          },
+          {
+            id: "tell",
+            kind: "notify",
+            config: { message: "Summary" },
+            position: { x: 0, y: 300 },
+          },
+        ],
+        edges: [
+          { from: "start", to: "ask" },
+          { from: "ask", to: "tell" },
+        ],
+      }),
+    })
+  ).automation;
+  await visit("automation-unapproved", `/automations/${made.id}`);
+  await postToWfe(page, `${A}/${made.id}:approve`, {
+    expectedRevision: made.revision,
+  });
+  const ran = (
+    await postToWfe(page, `${A}/${made.id}:run`, { clientToken: "theme" })
+  ).run;
+  await page.goto(`/automations/${made.id}/runs/${ran.id}`);
+  await expect(
+    page.getByRole("main").getByText("Succeeded", { exact: true }).first(),
+  ).toBeVisible({ timeout: 20_000 });
+  await settle(page);
+  await shoot("automation-run");
+  await visit("automation", `/automations/${made.id}`);
+  await visit("automation-settings", `/automations/${made.id}?tab=settings`);
+  await visit("automations", "/automations");
 
   await visit("settings", "/settings");
   await visit("members", "/settings/members");

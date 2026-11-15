@@ -830,6 +830,9 @@ const RULES: Record<string, Rule> = {
   [`GET ${O}/workflows/{workflowId}/runs/{id}`]: "workflows",
   [`POST ${O}/workflows/{workflowId}/runs/{id}:finish`]: "workflows",
   [`GET ${O}/workflows/{workflowId}/runs/{id}/accesses`]: "workflows",
+  // Dashboards: a grantee sees the pinned ones (./dashboards.ts).
+  [`GET ${W}/dashboards`]: "workspace",
+  [`GET ${W}/dashboards/{id}`]: "workspace",
 };
 /**
  * The Foundry routes the WFE gates on reading the ontology's database: a

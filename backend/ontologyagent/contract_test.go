@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent/contracttest"
 )
 
@@ -24,14 +25,16 @@ func testResult(status string, rev uint64) string {
 	return fmt.Sprintf(`{"status":%s,"state":{"draft_rev":%d,"opaque":[1,2,3]},
 		"draft":{"ontology_toml":"version = \"draft\"\n","mappings_toml":"ontology = \"draft\"\n","draft":{"rev":%d,
 			"base_version":null,"items":{},"left_out":[],"acknowledged":[],"lint":[],
-			"questions":[{"id":"q1","items":["type.Customer"],"text":"Is a customer an account?","options":[],"default":null,"blocking":false}]}},
+			"questions":[{"id":"q1","items":["type.Customer"],"header":"Customers","text":"Is a customer an account?",
+				"options":[{"label":"An account","description":"One customer per billing account"},{"label":"A person"}],"multiple":false,
+				"default":"An account","blocking":false}]}},
 		"bundle":%s,"summary":"built a draft","usage":{"input":1000,"cache_read":200,"cache_write":300,"output":400,"usd":1.25}}`,
 		status, rev, rev, bundle)
 }
 
 // testEvents are a turn's events from start to finish.
 var testEvents = []string{
-	`{"event":"turn_started","contract_version":"4.24.0","model":{"provider":"anthropic","name":"claude-opus-5-5"}}`,
+	`{"event":"turn_started","contract_version":"4.25.0","model":{"provider":"anthropic","name":"claude-opus-5-5"}}`,
 	`{"event":"progress","text":"reading the sources"}`,
 	`{"event":"tool_call","name":"profile","args_summary":"src_1"}`,
 	`{"event":"usage","usage":{"input":10,"cache_read":0,"cache_write":0,"output":5,"usd":0.5}}`,
@@ -66,12 +69,19 @@ func TestContract(t *testing.T) {
 				Documents:   []DocumentFile{{DocID: "doc-2", Path: "generations/g/doc-2.txt", MediaType: MediaPlainText, Title: "notes.txt"}},
 				Fingerprint: "cd34"},
 		}
-		for name, start := range map[string]Start{
-			"with goals":    {Workflow: "We bill customers monthly.", Goals: []string{"Which customers churn?"}},
-			"without goals": {Workflow: "We bill customers monthly.", Goals: []string{}},
+		state := json.RawMessage(`{"draft":{"rev":3}}`)
+		for name, turn := range map[string]struct {
+			input Input
+			state json.RawMessage
+		}{
+			"a start with goals":    {Start{Workflow: "We bill customers monthly.", Goals: []string{"Which customers churn?"}}, nil},
+			"a start without goals": {Start{Workflow: "We bill customers monthly.", Goals: []string{}}, nil},
+			"answers": {Feedback{DraftRev: 3, Answers: []agentquestion.Answer{{QuestionID: "q1", Text: "Yes"}, {QuestionID: "q2", Options: []string{"Monthly", "Yearly"}, Text: "and weekly"},
+				{QuestionID: "q3", Left: true}}}, state},
+			"no answers": {Feedback{DraftRev: 3}, state},
 		} {
 			body, err := json.Marshal(TurnRequest{
-				SessionID: "01GEN", RequestID: "01GEN", Sources: sources, Input: Input{Start: start},
+				SessionID: "01GEN", RequestID: "01GEN", State: turn.state, Sources: sources, Input: turn.input,
 				Limits: Limits{MaxUSD: 10, MaxSteps: 200, MaxWallSecs: 1200}, Models: houseTurn(),
 			})
 			if err != nil {
@@ -131,7 +141,7 @@ func TestContract(t *testing.T) {
 			if got.Status != want || string(got.State) != `{"draft_rev":7,"opaque":[1,2,3]}` ||
 				got.OntologyTOML != "version = \"draft\"\n" || got.MappingsTOML != "ontology = \"draft\"\n" ||
 				!strings.Contains(string(got.Questions), `"id":"q1"`) || !strings.Contains(string(got.Draft), `"rev":7`) ||
-				got.Summary == nil || *got.Summary != "built a draft" {
+				got.Summary == nil || *got.Summary != "built a draft" || got.DraftRev != 7 {
 				t.Fatalf("%s: got %+v", status, got)
 			}
 			if got.Usage != (Usage{Input: 1000, CacheRead: 200, CacheWrite: 300, Output: 400, USD: 1.25}) {
@@ -197,6 +207,17 @@ func ExampleSource_MarshalJSON() {
 	// {"id":"01JDSET","display_name":"Contracts","description":"Signed contracts","route":"extraction","access":{"documents":{"files":[{"doc_id":"doc-1","path":"generations/g/doc-1.md","media_type":"markdown","title":"msa.md"}]}},"fingerprint":"ab12"}
 	// {"id":"src_1","display_name":"Stripe / customers","route":{"mapping":{"trust":1}},"access":{"file":{"path":"cache/ab.jsonl","format":"jsonl"}},"fingerprint":"ab","observed":{"sync":{"at":"2026-10-20T06:00:00Z","sync_id":"01JDSYNC","change_seq":42}}}
 	// {"id":"01JDDOC","display_name":"Exports / orders.csv","route":{"mapping":{"trust":1}},"access":{"file":{"path":"cache/cd.jsonl","format":"jsonl"}},"fingerprint":"cd","observed":{"upload":{"document_id":"01JDDOC","uploaded_at":"2026-10-19T12:30:00.0005Z"}}}
+}
+
+func ExampleFeedback_MarshalJSON() {
+	start, _ := json.Marshal(Start{Workflow: "We bill customers monthly.", Goals: []string{}})
+	fmt.Println(string(start))
+	answers, _ := json.Marshal(Feedback{DraftRev: 3, Answers: []agentquestion.Answer{{QuestionID: "q1", Text: "Yes"}, {QuestionID: "q2", Options: []string{"Monthly"}},
+		{QuestionID: "q3", Left: true}}})
+	fmt.Println(string(answers))
+	// Output:
+	// {"start":{"workflow":"We bill customers monthly.","goals":[]}}
+	// {"feedback":{"draft_rev":3,"actions":[{"answer":{"question_id":"q1","options":[],"text":"Yes"}},{"answer":{"question_id":"q2","options":["Monthly"]}},{"leave":{"question_id":"q3"}}]}}
 }
 
 func TestTurnRuleCounts(t *testing.T) {

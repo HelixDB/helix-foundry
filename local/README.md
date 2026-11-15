@@ -163,17 +163,13 @@ The site must stay on `http://localhost:3000` and the store on `http://localhost
 - **The site:** the host side of its port, `FOUNDRY_ORIGIN`, `HELIX_LOCAL__SITE_ORIGIN` under foundry's `environment` (the links agents are given start there), and the store's `-s3.allowedOrigins`, which lets the site's page upload.
 - **The store:** the `pod`'s port, the store's `-s3.port` and its health check's `nc -z 127.0.0.1 <port>`, and `HELIX_LOCAL__S3__ENDPOINT: http://localhost:<port>` under foundry's `environment` (its config is in the image; `HELIX_*` variables override it).
 
+Foundry's MCP, HTTP Ask and the Assistant's helper reach it on `127.0.0.1:8081`, published by default. If `docker compose up` fails because 8081 is taken here (`port is already allocated`, `address already in use`), set `FOUNDRY_MCP_PORT` in `local/.env` to a free port and run it again: the helper's pair command then names that port, and an agent's setup takes it in place of 8081.
+
 ## Connect your agent
 
-These need `foundry` 0.1.2 and `foundry-site` 0.1.3 or newer, the images `docker compose up` pulls: older ones have no MCP and no **Set up with your agent**. `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 where the MCP is served, and 404 where it isn't: don't publish the port for an image that prints 404, which serves its probes and metrics there without a token.
+These need `foundry` 0.1.2 and `foundry-site` 0.1.3 or newer, the images `docker compose up` pulls: older ones have no MCP and no **Set up with your agent**. `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 where the MCP is served, and 404 where it isn't: don't run an image that prints 404 with this compose file, which publishes that port, where such an image serves its probes and metrics without a token.
 
-The MCP and HTTP Ask aren't published until you ask, so a port taken here never stops the app. From `local/`:
-
-```sh
-docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait
-```
-
-This restarts the containers and keeps the data. To keep it on, set `COMPOSE_FILE=compose.yaml:compose.mcp.yaml` in `local/.env` and run Compose from `local/`. If `127.0.0.1:8081` is taken, set `FOUNDRY_MCP_PORT` in `local/.env` to a free port, and use that port wherever an agent's setup or this page says 8081: the site's prompt names 8081, fixed when its image is built, and says this too.
+Foundry's MCP and HTTP Ask are published on this computer's loopback, `127.0.0.1:8081`, and nowhere else. If 8081 is taken here, set `FOUNDRY_MCP_PORT` in `local/.env` to a free port before `docker compose up -d --wait`, and use that port wherever an agent's setup or this page says 8081: the site's prompt names 8081, fixed when its image is built, and says this too.
 
 The local MCP is `http://localhost:8081/mcp`. It and HTTP Ask answer only for `localhost`, `127.0.0.1`, `::1`, `host.docker.internal` and the host of `HELIX_LOCAL__SITE_ORIGIN`. It supports the Foundry workflow: discovery, connectors, documents, ontology generation and revision, loading, graph reads and Ask. API sources and cloud administration are unavailable locally. The site’s **Set up with your agent** prompt carries your workspace and current setup into the agent.
 
@@ -186,6 +182,27 @@ export FOUNDRY_LOCAL_TOKEN="$(docker compose exec -T foundry cat /secrets/site-t
 Configure the MCP client to read `FOUNDRY_LOCAL_TOKEN` and send `Authorization: Bearer <token>`. The token acts as the owner of every local workspace. Keep it in the client’s environment, out of prompts and browser code. No OAuth sign-in is required. The API port is published only on loopback; tools run on this computer.
 
 Changes use `helix_foundry_prepare_operation` followed by `helix_foundry_execute_operation` after confirmation. The confirmation lasts five minutes, binds the exact operation and payload, and can be consumed once: one that has expired or doesn't match fails with `failed_precondition`, so prepare it again. After a lost response or an already-consumed confirmation, read the current state before retrying: token consumption does not prove the operation finished.
+
+## The Assistant on your Claude or ChatGPT subscription
+
+Foundry's Assistant runs on the install's AI provider. It can instead run on the Claude Code or Codex you're signed in to on this computer, on your Claude or ChatGPT subscription, at no cost to the install: a small helper, outside Docker (your CLIs' logins are this computer's), takes each turn and drives your own `claude` or `codex app-server`, with a token for that turn alone.
+
+1. In Foundry, Settings › AI models, choose your Claude subscription or your ChatGPT subscription (Codex). Codex runs with your own Codex setup (its MCP servers and plugins), so choosing it the first time says what it runs with, and you confirm that once. Then Pair a helper shows a one-time code, good for ten minutes, and the command that pairs a helper with it:
+
+   ```sh
+   npx -y @helixdb/foundry-agent-host@0.1.0 pair hxp_…
+   ```
+
+   Run it here, with Node 24 and Claude Code (`claude`, then `/login`) or Codex 0.169.0 or later (`codex login`, with ChatGPT) installed and signed in. The helper keeps its token in `~/.config/helix-foundry/agent-host.json`, readable by you alone; Foundry keeps only its hash.
+
+2. `npx -y @helixdb/foundry-agent-host@0.1.0 install` keeps it running, now and at every login (a launchd agent on macOS, a systemd user unit on Linux), or `… run` runs it in a terminal. `… doctor` says what stands in the way.
+3. New threads of that workspace run on that CLI from then on; a thread keeps where it started. While no helper has called Foundry for 30 seconds, or its Codex is older than 0.169.0, the Assistant says so instead of sending.
+
+Claude Code can call nothing but Foundry's tools. Codex runs with your own setup, its shell, sub-agents, web search and image viewer off, read-only, and the helper declines every command or file change it asks for, and any tool call of your servers that asks for approval; one that doesn't ask can run. A managed Codex configuration that turns any of that back on stops its turns. [The helper's README](../agent-host/README.md#codex) says exactly what holds, and how it was tested.
+
+The helper reaches Foundry at `http://127.0.0.1:8081`, or the port `FOUNDRY_MCP_PORT` sets, which the pair command Foundry shows names (`--foundry`). Revoke it in Settings › AI models: its token, and those of the turns it runs, stop at once, and it deletes the sessions it kept.
+
+Each CLI keeps a thread's session on this computer (Claude Code under `~/.claude/projects/`, Codex in its `CODEX_HOME`), and it holds what Foundry's tools answered in that thread: graph reads, document text, reviews. The helper deletes a thread's sessions once the thread is deleted in Foundry (it asks as it starts, then hourly), and every one when it is revoked. Your plan's terms decide whether you may use your subscription this way.
 
 ## Ask over HTTP
 

@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Search, Settings, X } from "lucide-react";
+import { Bot, Search, Settings, X } from "lucide-react";
 import { SkeletonText, cx, useStoredState } from "../kit";
 import { paths } from "../paths";
 import { useWorkspace, type ShellUser, type ShellWorkspace } from "../ui";
@@ -33,7 +33,12 @@ import {
   maxSectionOffset,
   storedSectionOffset,
 } from "./section-offset";
-import { ariaShortcut, shortcut } from "./shortcut";
+import {
+  ariaAssistantShortcut,
+  ariaShortcut,
+  assistantShortcut,
+  shortcut,
+} from "./shortcut";
 
 // The generations and loads this browser started, followed from any page
 // (the Ontology area's), above Feedback: its code loads once there is one.
@@ -223,7 +228,7 @@ function SectionSplit({
 // the account and settings. While the
 // workspace is onboarding it holds only the mark, the workspace, the way
 // back to the onboarding and the account; for a grantee, no search or
-// settings, and only Analyst, Ontologies and the Explorer.
+// settings, and only Analyst, Dashboards, Ontologies and the Explorer.
 export function Sidebar({
   workspaces,
   current,
@@ -241,8 +246,10 @@ export function Sidebar({
   const shell = useShell(),
     { id, onboarding, grantee } = useWorkspace(),
     watching = useWatchedJobs(id).length > 0,
-    section = activeSection(useLocation().pathname),
-    extra = onboarding ? undefined : section && sectionSidebars[section];
+    { pathname } = useLocation(),
+    section = activeSection(pathname),
+    open = onboarding ? undefined : section && sectionSidebars[section],
+    extra = open && (!open.shows || open.shows(pathname)) ? open : undefined;
   return (
     <div className="hf-sidebar-inner">
       <div className="hf-brand-row">
@@ -324,6 +331,25 @@ export function Sidebar({
       <FeedbackButton />
       <div className="hf-sidebar-foot">
         <AccountMenu user={user} current={current} collapsed={false} />
+        {shell.assistant.available && (
+          <button
+            type="button"
+            className={cx(
+              "hf-btn hf-btn--ghost hf-btn--md hf-btn--icon hf-settings-link",
+              shell.assistant.open && "is-active",
+            )}
+            aria-label="Assistant"
+            aria-pressed={shell.assistant.open}
+            aria-keyshortcuts={ariaAssistantShortcut}
+            title={`Assistant (${assistantShortcut})`}
+            onClick={() => {
+              onClose?.();
+              shell.assistant.toggle("button");
+            }}
+          >
+            <Bot size={17} aria-hidden />
+          </button>
+        )}
         {!onboarding && !grantee && <SettingsLink />}
       </div>
     </div>

@@ -250,6 +250,70 @@ describe("hosted", () => {
     expect((await read()).lastFailed?.probeFailure).toBe("not_found");
   });
 
+  it("checks the Assistant's tool calls once a save passes, without failing the setting", async () => {
+    const { call, read, config, ai } = await load();
+    config({
+      aiKinds: [
+        "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE",
+        "FOUNDRY_AI_KIND_ANTHROPIC",
+      ],
+    });
+    // The default runs the Assistant: nothing checked, nothing refused.
+    expect(ai.aiAssistantFailure("ws_acme")).toBeUndefined();
+    const compat = (ask: string) => ({
+      provider: server("https://llm.example.com/v1"),
+      models: {
+        ...each({ name: "qwen-big", free: {} }),
+        ask: { name: ask, free: {} },
+      },
+    });
+    const saved = (await call("PUT", AI_PATH, compat("qwen-notoolcall"))).body
+      .ai as wfe.FoundryAi;
+    // Not checked while it is being tested.
+    expect(saved.pending?.assistantCheck).toBe(
+      "FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED",
+    );
+    tested();
+    expect((await read()).active).toMatchObject({
+      probeState: "FOUNDRY_AI_PROBE_STATE_PASSED",
+      assistantCheck: "FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL",
+    });
+    expect(ai.aiAssistantFailure("ws_acme")).toBe(
+      "The workspace's model, qwen-notoolcall, doesn't call tools, which the Assistant needs. An owner can choose another in Settings › AI models.",
+    );
+    await call("PUT", AI_PATH, compat("qwen-toolrefused"));
+    tested();
+    expect((await read()).active?.assistantCheck).toBe(
+      "FOUNDRY_AI_ASSISTANT_CHECK_REFUSED",
+    );
+    expect(ai.aiAssistantFailure("ws_acme")).toBe(
+      "llm.example.com refused the Assistant's calls to qwen-toolrefused. An owner can choose another model in Settings › AI models.",
+    );
+    await call("PUT", AI_PATH, {
+      ...CLAUDE,
+      apiKey: "sk-ant-agentauth-0123456789",
+    });
+    tested();
+    expect((await read()).active?.assistantCheck).toBe(
+      "FOUNDRY_AI_ASSISTANT_CHECK_AUTH",
+    );
+    expect(ai.aiAssistantFailure("ws_acme")).toBe(
+      "Claude refused the workspace's key for the Assistant. An owner can check it in Settings › AI models.",
+    );
+    await call("PUT", AI_PATH, CLAUDE);
+    tested();
+    expect((await read()).active?.assistantCheck).toBe(
+      "FOUNDRY_AI_ASSISTANT_CHECK_PASSED",
+    );
+    expect(ai.aiAssistantFailure("ws_acme")).toBeUndefined();
+    // "notools" fails the test itself: never checked.
+    await call("PUT", AI_PATH, compat("qwen-notools"));
+    tested();
+    expect((await read()).lastFailed?.assistantCheck).toBe(
+      "FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED",
+    );
+  });
+
   it("supersedes an older save that is still being tested", async () => {
     const { call, read } = await load();
     const first = (await call("PUT", AI_PATH, CLAUDE)).body.ai.pending.id;
