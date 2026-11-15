@@ -13,6 +13,9 @@
 //   crash         exits after initialize
 //   slow          writes forever, until stopped
 //   many_steps    calls a tool forever, until interrupted
+//   managed       a managed configuration turns the shell back on, over -c (config/read says so)
+//   managed_approval  a managed configuration sets approval_policy never, over the thread's
+//   broken_config exits at start, saying why on stderr
 // account/read answers FAKE_CODEX_ACCOUNT (JSON), --version FAKE_CODEX_VERSION.
 import {
   appendFileSync,
@@ -34,7 +37,32 @@ if (argv[0] === "--version") {
   process.stdout.write(`codex-cli ${version}\n`);
   process.exit(0);
 }
+if (scenario === "broken_config") {
+  process.stderr.write(
+    "WARNING: noise\nError loading config.toml: duplicate key `mcp_servers.x`\n",
+  );
+  process.exit(1);
+}
 const config = argv.filter((_, i) => argv[i - 1] === "-c");
+/** The effective configuration, as config/read says it: the -c overrides, under a managed layer when one's played. */
+const effective = () => {
+  const out = {};
+  for (const c of config) {
+    const k = c.indexOf("=");
+    const path = c.slice(0, k).split(".");
+    let v;
+    try {
+      v = JSON.parse(c.slice(k + 1));
+    } catch {
+      continue;
+    }
+    let o = out;
+    for (const p of path.slice(0, -1)) o = o[p] ??= {};
+    o[path.at(-1)] = v;
+  }
+  if (scenario === "managed") (out.features ??= {}).shell_tool = true;
+  return out;
+};
 const server = config.find((c) => c.startsWith("mcp_servers."));
 const url = server && /url="([^"]+)"/.exec(server)?.[1];
 const tokenEnv = server && /bearer_token_env_var="([^"]+)"/.exec(server)?.[1];
@@ -234,6 +262,8 @@ rl.on("line", async (line) => {
       });
     case "initialized":
       return;
+    case "config/read":
+      return reply({ config: effective(), origins: {} });
     case "account/read":
       return reply(
         JSON.parse(
@@ -250,7 +280,14 @@ rl.on("line", async (line) => {
       const t = threads();
       t[m.params.cwd] = [...new Set([...(t[m.params.cwd] ?? []), id])];
       keep(t);
-      reply({ thread: { id, cwd: m.params.cwd } });
+      reply({
+        thread: { id, cwd: m.params.cwd },
+        cwd: m.params.cwd,
+        approvalPolicy:
+          scenario === "managed_approval" ? "never" : m.params.approvalPolicy,
+        sandbox: { type: "readOnly", networkAccess: false },
+        approvalsReviewer: m.params.approvalsReviewer,
+      });
       await delay(10);
       note("mcpServer/startupStatus/updated", {
         threadId: id,
@@ -274,8 +311,11 @@ rl.on("line", async (line) => {
       interrupted = true;
       return reply({});
     case "thread/list":
+      // Its threads are interactive and live: none archived.
       return reply({
-        data: (threads()[m.params.cwd] ?? []).map((id) => ({ id })),
+        data: m.params.archived
+          ? []
+          : (threads()[m.params.cwd] ?? []).map((id) => ({ id })),
         nextCursor: null,
       });
     case "thread/delete": {

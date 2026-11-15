@@ -12,6 +12,7 @@
 // helper is revoked.
 
 import { CHECK_MS } from "./account.ts";
+import { MIN_CODEX, atLeast } from "./codex.ts";
 import {
   forgetThread,
   listThreads,
@@ -34,6 +35,8 @@ export const RENEW_MS = 15_000;
 export const DELTA_MS = 250;
 /** How long after a failed claim the helper tries again. */
 const RETRY_MS = 5_000;
+/** How often a Codex Foundry runs nothing on is asked its version again. */
+export const RECHECK_MS = 30_000;
 /** How often the helper asks which threads it keeps sessions of are gone. */
 export const SWEEP_MS = 60 * 60_000;
 
@@ -51,6 +54,8 @@ export type RunOptions = {
   deltaMs?: number;
   /** How often the CLIs are asked what they are signed in to (CHECK_MS). */
   checkMs?: number;
+  /** How often a Codex too old to run, or of no version, is asked again (RECHECK_MS). */
+  recheckMs?: number;
   /** Told how each turn it ran ended, and on which CLI. */
   ended?: (end: End, cli: Cli) => void;
   /** How often gone threads are looked for (SWEEP_MS). */
@@ -71,10 +76,22 @@ export async function serve(opts: RunOptions): Promise<void> {
     await serving(opts, log);
   } catch (e) {
     if (e instanceof FoundryError && e.code === "unauthenticated") {
-      const threads = await listThreads(opts.env);
-      for (const t of threads) await forgetThread(t, sessions, opts.env);
+      // Every thread is tried, whatever one CLI's failure: the revoke is what's thrown.
+      const threads = await listThreads(opts.env).catch(() => []);
+      let kept = 0;
+      for (const t of threads) {
+        try {
+          await forgetThread(t, sessions, opts.env);
+        } catch (f) {
+          kept++;
+          log(
+            `Deleting what was kept of thread ${t.threadId} failed: ${(f as Error).message}.`,
+          );
+        }
+      }
+      const n = threads.length - kept;
       log(
-        `Foundry no longer knows this helper (revoked): deleted what ${names(opts.clis)} kept of ${threads.length} thread${threads.length === 1 ? "" : "s"}. Pair it again to run more.`,
+        `Foundry no longer knows this helper (revoked): deleted what ${names(opts.clis)} kept of ${n} thread${n === 1 ? "" : "s"}${kept ? `; ${kept} couldn't be deleted (above)` : ""}. Pair it again to run more.`,
       );
     }
     throw e;
@@ -102,8 +119,16 @@ export async function sweep(
     for (let i = 0; i < threads.length; i += GONE_BATCH) {
       const batch = threads.slice(i, i + GONE_BATCH);
       const gone = new Set(await foundry.gone(batch));
-      for (const t of batch.filter((t) => gone.has(t.threadId)))
-        await forgetThread(t, sessions, env);
+      for (const t of batch.filter((t) => gone.has(t.threadId))) {
+        try {
+          await forgetThread(t, sessions, env);
+        } catch (e) {
+          // Kept for the next sweep; the other threads go on.
+          log(
+            `Deleting what was kept of thread ${t.threadId} failed: ${(e as Error).message}; trying again later.`,
+          );
+        }
+      }
     }
   } catch (e) {
     if (e instanceof FoundryError && e.code === "unauthenticated") throw e;
@@ -140,6 +165,16 @@ async function serving(
     () => opts.clis.forEach((_, i) => ask(i)),
     opts.checkMs ?? CHECK_MS,
   );
+  // A Codex Foundry runs nothing on (too old, or it didn't say its version)
+  // is asked again sooner: updated, its next claim says so.
+  const rechecking = setInterval(
+    () =>
+      opts.clis.forEach((c, i) => {
+        const v = accounts[i]!.version;
+        if (c.runtime === "codex" && !(v && atLeast(v, MIN_CODEX))) ask(i);
+      }),
+    opts.recheckMs ?? RECHECK_MS,
+  );
   await sweep(opts.foundry, sessions, opts.env, log);
   const sweeping = setInterval(
     () => void sweep(opts.foundry, sessions, opts.env, log).catch(() => {}),
@@ -167,6 +202,7 @@ async function serving(
     );
   } finally {
     clearInterval(checking);
+    clearInterval(rechecking);
     clearInterval(sweeping);
   }
 }

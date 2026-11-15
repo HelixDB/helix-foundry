@@ -212,6 +212,28 @@ describe("pairing", () => {
     assert.deepEqual(await listThreads(env), [b]);
     await forgetThread(a, [sessions], env);
   });
+
+  it("forgets a thread with every CLI one failing or not, and keeps it for the next sweep", async () => {
+    const a = { workspaceId: "ws-1", threadId: "thread-a" };
+    const dirA = await threadDir(a, env);
+    kept.set(dirA, ["s1"]);
+    const broken: Sessions = {
+      list: () => Promise.reject(new Error("Codex exited (1)")),
+      delete: () => Promise.resolve(),
+    };
+    await assert.rejects(
+      forgetThread(a, [broken, sessions], env),
+      /Codex exited/,
+    );
+    assert.deepEqual(kept.get(dirA), [], "the other CLI's sessions go");
+    assert.deepEqual(
+      await listThreads(env),
+      [a],
+      "the directory stays, so the thread is tried again",
+    );
+    await forgetThread(a, [sessions], env);
+    assert.deepEqual(await listThreads(env), []);
+  });
 });
 
 describe("a turn on Claude Code", () => {
@@ -506,6 +528,52 @@ describe("the helper", () => {
     await assert.rejects(
       sweep(new Foundry(foundry.url, "hxh_token"), [sessions], env, () => {}),
       (e: unknown) => e instanceof FoundryError && e.code === "unauthenticated",
+    );
+  });
+
+  it("goes on past a thread one CLI can't delete, at a sweep and when revoked", async () => {
+    const bad = { workspaceId: "ws-1", threadId: "thread-bad" };
+    const good = { workspaceId: "ws-1", threadId: "thread-good" };
+    const badDir = await threadDir(bad, env);
+    kept.set(await threadDir(good, env), ["s-good"]);
+    // One CLI's list fails for one thread (its app-server didn't start).
+    const flaky: Sessions = {
+      list: (d) =>
+        d === badDir
+          ? Promise.reject(new Error("Codex exited (1)"))
+          : sessions.list(d),
+      delete: (id, d) => sessions.delete(id, d),
+    };
+    foundry.deleted.add("thread-bad");
+    foundry.deleted.add("thread-good");
+    const lines: string[] = [];
+    await sweep(new Foundry(foundry.url, "hxh_token"), [flaky], env, (l) =>
+      lines.push(l),
+    );
+    assert.deepEqual(await listThreads(env), [bad], "the good one went");
+    assert.deepEqual(kept.get(join(dir, "state", "threads", "ws-1", "thread-good")), []);
+    assert.ok(
+      lines.some((l) => l.includes("thread-bad") && l.includes("trying again later")),
+    );
+
+    kept.set(await threadDir(good, env), ["s-good"]);
+    foundry.revoked = true;
+    const told: string[] = [];
+    const cli = { ...claudeCli(FAKE_CLAUDE, env, { sessions }), sessions: flaky };
+    await assert.rejects(
+      serve({ ...options(), clis: [cli], log: (l) => told.push(l) }),
+      (e: unknown) => e instanceof FoundryError && e.code === "unauthenticated",
+      "the revoke is what's thrown, not the CLI's failure",
+    );
+    assert.deepEqual(await listThreads(env), [bad]);
+    assert.ok(
+      told.some(
+        (l) =>
+          l.includes("revoked") &&
+          l.includes("of 1 thread;") &&
+          l.includes("1 couldn't be deleted"),
+      ),
+      told.join("\n"),
     );
   });
 

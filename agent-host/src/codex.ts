@@ -9,8 +9,9 @@
 // helper sets, over that, for each turn's app-server (one per turn, ended
 // with it):
 //   - its shell and exec tools, image viewer, web search, image generation,
-//     browser and computer use, goals, memories, hooks, tool suggestions and
-//     sleep off (CODEX_CONFIG: configuration overrides, none of them secret);
+//     browser and computer use, goals, memories, hooks, tool suggestions,
+//     sleep and sub-agents off (LOCKED: configuration overrides, none of
+//     them secret);
 //   - a read-only sandbox, every action asking first (approvalPolicy
 //     untrusted) and asking this client, not a reviewer of the person's
 //     (approvalsReviewer user); the helper declines every command, file
@@ -23,9 +24,16 @@
 //     changes as cards the person runs);
 //   - Foundry's system prompt in place of Codex's, an empty working
 //     directory of the thread's, and the thread's Codex thread resumed.
+// A managed configuration (managed_config.toml, MDM) outranks all of that,
+// so before the model is called the helper reads back what Codex will run
+// with (config/read, and the thread's settings as Codex answers them), and
+// runs nothing unless every one holds (unheld); nor on a Codex older than
+// MIN_CODEX, whatever Foundry was last told.
 
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { homedir } from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import type { Sessions } from "./config.ts";
@@ -44,35 +52,96 @@ export const TOKEN_ENV = "HELIX_FOUNDRY_TURN_TOKEN";
 /** How long Codex has to start, answer a request, and start Foundry's tools. */
 const START_MS = 60_000;
 
-/** The configuration every app-server of the helper's runs with: overrides of the person's, none secret. */
+/** How much of Codex's stderr an app-server keeps: its last words. */
+const STDERR_KEPT = 4096;
+
+/**
+ * What the helper turns off in every app-server of its, each a key and the
+ * value it sets: overrides of the person's configuration, none secret. Sub-
+ * agents are off as Codex 0.169.0 says to turn them off (agents.enabled,
+ * which multi_agent_v2 would override, and multi_agent's V1 fallback).
+ */
+export const LOCKED: readonly (readonly [string, boolean | string])[] = [
+  ["features.shell_tool", false],
+  ["features.unified_exec", false],
+  ["features.view_image", false],
+  ["web_search", "disabled"],
+  ["features.image_generation", false],
+  ["features.browser_use", false],
+  ["features.computer_use", false],
+  ["features.in_app_browser", false],
+  ["features.goals", false],
+  ["features.memories", false],
+  ["features.hooks", false],
+  ["features.tool_suggest", false],
+  ["features.sleep_tool", false],
+  ["agents.enabled", false],
+  ["features.multi_agent", false],
+  ["features.multi_agent_v2", false],
+];
+
+/** The configuration every app-server of the helper's runs with: LOCKED, then Foundry's MCP server. */
 export function codexConfig(mcpURL: string): string[] {
   const server = `{url=${JSON.stringify(mcpURL)}, bearer_token_env_var="${TOKEN_ENV}", default_tools_approval_mode="approve", startup_timeout_sec=30, tool_timeout_sec=300}`;
   return [
-    "features.shell_tool=false",
-    "features.unified_exec=false",
-    "features.view_image=false",
-    'web_search="disabled"',
-    "features.image_generation=false",
-    "features.browser_use=false",
-    "features.computer_use=false",
-    "features.in_app_browser=false",
-    "features.goals=false",
-    "features.memories=false",
-    "features.hooks=false",
-    "features.tool_suggest=false",
-    "features.sleep_tool=false",
+    ...LOCKED.map(([k, v]) => `${k}=${JSON.stringify(v)}`),
     `mcp_servers.${CODEX_SERVER}=${server}`,
   ];
 }
 
-/** A thread's settings, started or resumed: read-only, every action asking this client. */
-const threadSettings = (turn: Turn, cwd: string) => ({
-  cwd,
+/** Every thread's settings: read-only, every action asking this client. */
+const THREAD = {
   approvalPolicy: "untrusted",
   sandbox: "read-only",
   approvalsReviewer: "user",
+} as const;
+
+/** A turn's thread's settings, started or resumed: THREAD, in cwd, on Foundry's system prompt. */
+const threadSettings = (turn: Turn, cwd: string) => ({
+  cwd,
+  ...THREAD,
   baseInstructions: turn.system,
 });
+
+/**
+ * What of the helper's settings Codex doesn't hold: the LOCKED keys its
+ * effective configuration (config/read's config) has otherwise, and those
+ * of a thread (thread/start's or thread/resume's answer) that aren't
+ * threadSettings'. A managed configuration (managed_config.toml, MDM)
+ * outranks the helper's overrides and a thread's settings alike, so the
+ * helper reads back what Codex will run with and runs no turn unless it is
+ * all as set. Pure: read without trust.
+ *
+ * @example
+ * unheld({ features: { shell_tool: true } }); // every LOCKED key: shell_tool on, the rest unset
+ * unheld(undefined, { approvalPolicy: "never", sandbox: { type: "readOnly" }, approvalsReviewer: "user" }); // ["approval_policy"]
+ */
+export function unheld(config?: unknown, thread?: unknown): string[] {
+  const at = (o: unknown, path: string) =>
+    path
+      .split(".")
+      .reduce<unknown>(
+        (x, k) =>
+          x && typeof x === "object" ? (x as Record<string, unknown>)[k] : undefined,
+        o,
+      );
+  const keys =
+    config === undefined
+      ? []
+      : LOCKED.filter(([k, v]) => at(config, k) !== v).map(([k]) => k);
+  if (thread === undefined) return keys;
+  return [
+    ...keys,
+    ...(at(thread, "approvalPolicy") === "untrusted" ? [] : ["approval_policy"]),
+    ...(at(thread, "sandbox.type") === "readOnly" ? [] : ["sandbox_mode"]),
+    ...(at(thread, "approvalsReviewer") === "user" ? [] : ["approvals_reviewer"]),
+  ];
+}
+
+/** Why a turn doesn't run when Codex holds not all the helper sets (unheld), in the person's words. */
+export function unheldDetail(keys: string[]): string {
+  return `your Codex configuration turns back on what Foundry's Assistant runs without (${keys.join(", ")}), most likely a managed configuration (managed_config.toml or MDM): Foundry ran nothing on it`;
+}
 
 /** Environment the app-server never gets: a key would bill an API account, not the ChatGPT plan. */
 const DROPPED_ENV = ["OPENAI_API_KEY", "CODEX_API_KEY", TOKEN_ENV];
@@ -160,6 +229,8 @@ export class AppServer {
   exited?: Error;
   /** What Codex asked and was told, for the helper's tests. */
   asked: { method: string; answered: unknown }[] = [];
+  /** The end of what Codex wrote to stderr: its words when it fails to start. */
+  stderr = "";
 
   constructor(
     codex: string,
@@ -170,7 +241,11 @@ export class AppServer {
     this.child = spawn(codex, ["app-server", ...args], {
       cwd,
       env,
-      stdio: ["pipe", "pipe", "ignore"],
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    this.child.stderr!.setEncoding("utf8");
+    this.child.stderr!.on("data", (d: string) => {
+      this.stderr = (this.stderr + d).slice(-STDERR_KEPT);
     });
     let buf = "";
     this.child.stdout!.setEncoding("utf8");
@@ -382,6 +457,40 @@ async function plainServer(
   }
 }
 
+/**
+ * What of the helper's settings this Codex doesn't hold (unheld), as a turn
+ * would find it: its effective configuration under LOCKED, and an ephemeral
+ * thread's settings, in an empty directory. For doctor; a turn checks its own.
+ */
+export async function checkLocked(
+  codex: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string[]> {
+  const dir = await mkdtemp(join(tmpdir(), "foundry-codex-"));
+  const server = new AppServer(
+    codex,
+    LOCKED.flatMap(([k, v]) => ["-c", `${k}=${JSON.stringify(v)}`]),
+    dir,
+    codexEnv(env),
+  );
+  try {
+    await server.initialize();
+    const read = await server.request<{ config?: unknown }>("config/read", {
+      cwd: dir,
+      includeLayers: false,
+    });
+    const thread = await server.request("thread/start", {
+      cwd: dir,
+      ...THREAD,
+      ephemeral: true,
+    });
+    return unheld(read?.config ?? {}, thread);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 /** Codex's account as it says it, and its version: unknown when it didn't start. */
 export async function checkCodex(
   codex: string,
@@ -412,6 +521,20 @@ export async function checkCodex(
   }
 }
 
+/** Every source a Codex thread can have (0.169.0's ThreadSourceKind): thread/list lists interactive ones alone unless told. */
+export const THREAD_SOURCES = [
+  "cli",
+  "vscode",
+  "exec",
+  "appServer",
+  "subAgent",
+  "subAgentReview",
+  "subAgentCompact",
+  "subAgentThreadSpawn",
+  "subAgentOther",
+  "unknown",
+];
+
 /** Codex's threads on this computer, as its app-server lists and deletes them: those started in a thread's directory. */
 export function codexSessions(codex: string, env: NodeJS.ProcessEnv): Sessions {
   return {
@@ -419,16 +542,26 @@ export function codexSessions(codex: string, env: NodeJS.ProcessEnv): Sessions {
       const { server } = await plainServer(codex, env);
       try {
         const ids: string[] = [];
-        let cursor: string | null | undefined;
-        do {
-          const page = await server.request<{
-            data?: { id: string }[];
-            nextCursor?: string | null;
-          }>("thread/list", { cwd: dir, cursor, limit: 100 });
-          ids.push(...(page.data ?? []).map((t) => t.id));
-          cursor = page.nextCursor;
-        } while (cursor);
-        return ids;
+        // Archived or not, and of every source: a sub-agent's thread holds
+        // its parent's history, Foundry's tool answers included.
+        for (const archived of [false, true]) {
+          let cursor: string | null | undefined;
+          do {
+            const page = await server.request<{
+              data?: { id: string }[];
+              nextCursor?: string | null;
+            }>("thread/list", {
+              cwd: dir,
+              cursor,
+              limit: 100,
+              archived,
+              sourceKinds: THREAD_SOURCES,
+            });
+            ids.push(...(page.data ?? []).map((t) => t.id));
+            cursor = page.nextCursor;
+          } while (cursor);
+        }
+        return [...new Set(ids)];
       } finally {
         await server.close();
       }
@@ -534,23 +667,60 @@ export async function runCodex(
   });
   const abort = () => void server.close();
   opts.abort.signal.addEventListener("abort", abort, { once: true });
+  // Codex's own words, never the turn's token, should it have written it.
+  const said = (message: string) => {
+    const tail = (
+      turn.mcp_token
+        ? server.stderr.split(turn.mcp_token).join("hxr_…")
+        : server.stderr
+    )
+      .trim()
+      .slice(-800);
+    return tail ? `${message}: ${tail}` : message;
+  };
   try {
+    let version: string | undefined;
     try {
-      await server.initialize();
+      version = await server.initialize();
     } catch (e) {
       const err = e as NodeJS.ErrnoException;
       if (err.code === "ENOENT" || /ENOENT/.test(err.message))
         return ran({ end: "failed", failure: "not_installed" });
-      return ran(codexFailure({ message: err.message }));
+      // Its last words, not just its exit code: a broken config.toml says why.
+      await new Promise((r) => setTimeout(r, 100));
+      return ran(codexFailure({ message: said(err.message) }));
+    }
+    // Foundry checks the version it was last told; this one is the version that runs.
+    if (!atLeast(version ?? "", MIN_CODEX))
+      return ran({
+        end: "failed",
+        failure: "cli_error",
+        detail: `Codex ${version ?? "of an unknown version"} is older than ${MIN_CODEX}, the oldest Foundry runs: update it`,
+      });
+    try {
+      const read = await server.request<{ config?: unknown }>("config/read", {
+        cwd: opts.cwd,
+        includeLayers: false,
+      });
+      const off = unheld(read?.config ?? {});
+      if (off.length)
+        return ran({
+          end: "failed",
+          failure: "cli_error",
+          detail: unheldDetail(off),
+        });
+    } catch (e) {
+      return ran(codexFailure({ message: said((e as Error).message) }));
     }
     let resumed = false;
+    let thread: unknown;
     if (turn.resume) {
       try {
-        const r = await server.request<{ thread: { id: string } }>(
+        thread = await server.request<{ thread: { id: string } }>(
           "thread/resume",
           { threadId: turn.resume, ...threadSettings(turn, opts.cwd) },
         );
-        at.threadId = r.thread.id;
+        at.threadId = (thread as { thread: { id: string } }).thread.id;
         resumed = true;
       } catch {
         // Lost (deleted, or another computer's): start afresh, told the thread.
@@ -558,15 +728,18 @@ export async function runCodex(
     }
     if (!at.threadId) {
       try {
-        const r = await server.request<{ thread: { id: string } }>(
+        thread = await server.request<{ thread: { id: string } }>(
           "thread/start",
           threadSettings(turn, opts.cwd),
         );
-        at.threadId = r.thread.id;
+        at.threadId = (thread as { thread: { id: string } }).thread.id;
       } catch (e) {
-        return ran(codexFailure({ message: (e as Error).message }));
+        return ran(codexFailure({ message: said((e as Error).message) }));
       }
     }
+    const off = unheld(undefined, thread);
+    if (off.length)
+      return ran({ end: "failed", failure: "cli_error", detail: unheldDetail(off) });
     // The model's first call never runs without Foundry's tools.
     const status = await new Promise<string>((resolve) => {
       const timer = setTimeout(() => resolve("timeout"), START_MS);

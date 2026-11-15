@@ -10,7 +10,7 @@ import type { AccountInfo } from "@anthropic-ai/claude-agent-sdk";
 
 import { claudeAccount, signedIn } from "./account.ts";
 import { cliEnv, type Query } from "./claude.ts";
-import { MIN_CODEX, atLeast, checkCodex } from "./codex.ts";
+import { MIN_CODEX, atLeast, checkCodex, checkLocked } from "./codex.ts";
 import { configPath, loadPaired } from "./config.ts";
 import { findCli } from "./find.ts";
 import { Foundry, type Account } from "./foundry.ts";
@@ -199,6 +199,27 @@ async function codexChecks(
           fix: "Update it: npm i -g @openai/codex@latest, or as you installed it.",
         },
   );
+  if (atLeast(account.version, MIN_CODEX))
+    checks.push(
+      await checkLocked(codex, env).then(
+        (off): Check =>
+          off.length === 0
+            ? {
+                ok: true,
+                what: "Codex runs as Foundry sets it: no shell, read-only, every action asking",
+              }
+            : {
+                ok: false,
+                what: `Codex runs as Foundry sets it: your configuration turns back on ${off.join(", ")}`,
+                fix: "Most likely a managed configuration (/etc/codex/managed_config.toml, or MDM on macOS) sets it, and it outranks Foundry's: Foundry runs no turn on this Codex while it does. Ask whoever manages this computer, or use Claude Code.",
+              },
+        (e: Error): Check => ({
+          ok: false,
+          what: "Codex runs as Foundry sets it",
+          fix: `Its app-server didn't say: ${e.message}`,
+        }),
+      ),
+    );
   checks.push(
     account.state === "signed_in" && account.subscription
       ? {

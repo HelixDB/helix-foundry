@@ -46,7 +46,9 @@ jobs:
       - run: node --test test/real-claude.test.ts
         env:
           REAL_CLAUDE: ${{ github.workspace }}/agent-host/node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-linux-x64@0.3.321/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude
-      # The isolation, against the Codex pinned as a dev dependency (MIN_CODEX).
+      # The isolation, against the Codex pinned as a dev dependency (MIN_CODEX),
+      # with /etc/codex writable for its managed-configuration case.
+      - run: sudo mkdir -p /etc/codex && sudo chown "$USER" /etc/codex
       - run: node --test test/real-codex.test.ts
         env:
           REAL_CODEX: ${{ github.workspace }}/agent-host/node_modules/.bin/codex

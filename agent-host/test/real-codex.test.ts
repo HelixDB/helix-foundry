@@ -9,11 +9,12 @@
 //
 // The person's own configuration is planted in CODEX_HOME: approval_policy
 // never, a full-access sandbox, an auto reviewer, the shell and exec tools
-// on, an exec rule that allows `touch`, an MCP server of their own with a
-// tool that writes (and one that reads), and a server named `foundry`.
-// What the helper's overrides and answers hold, turn by turn:
+// (and, for the sub-agent case, sub-agents) on, an exec rule that allows
+// `touch`, an MCP server of their own with a tool that writes (and one that
+// reads), and a server named `foundry`. What the helper's overrides and
+// answers hold, turn by turn:
 //   - no shell or exec tool is offered (so nothing, "known safe" or not,
-//     runs unasked), nor an image viewer or web search;
+//     runs unasked), nor an image viewer, web search or sub-agent tool;
 //   - Foundry's tools, whatever Foundry's MCP server lists, are called with
 //     the turn's token, unasked, and their results reach the model;
 //   - apply_patch asks, is declined, and writes nothing, in the thread's
@@ -23,17 +24,22 @@
 //   - the turn's token is in no argument Codex is started with, nor in
 //     anything Codex writes under CODEX_HOME;
 //   - a thread's next turn resumes its Codex thread, and the helper deletes
-//     the thread's Codex threads.
+//     the thread's Codex threads;
+//   - a managed configuration that outranks the helper's (where /etc/codex
+//     is writable) makes the turn fail before the model is called.
 // It runs with REAL_CODEX set, and skips otherwise.
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { constants } from "node:fs";
 import {
+  access,
   chmod,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
+  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -47,6 +53,7 @@ import { zstdDecompressSync } from "node:zlib";
 import {
   CODEX_SERVER,
   checkCodex,
+  checkLocked,
   codexCli,
   codexSessions,
 } from "../src/codex.ts";
@@ -515,6 +522,11 @@ text(JSON.stringify(out));`,
       version: account.version,
     });
     assert.match(account.version ?? "", /^\d+\.\d+\.\d+/);
+    assert.deepEqual(
+      await checkLocked(pc.wrapper, pc.env),
+      [],
+      "over the person's own config.toml, everything the helper sets holds",
+    );
     const sessions = codexSessions(pc.wrapper, pc.env);
     const kept = await sessions.list(threadDirPath);
     assert.equal(kept.length, 1);
@@ -603,93 +615,147 @@ describe("the helper on the real Codex (direct tools)", { skip: !REAL }, () => {
   });
 });
 
-describe("the helper on the real Codex (a sub-agent)", { skip: !REAL }, () => {
-  let world: World;
-  let pc: Awaited<ReturnType<typeof computer>>;
-  let outcome = "";
-  let subTools: string[] = [];
-  let subTried = "";
-  before(async () => {
-    world = await new World().start();
-    pc = await computer(world);
-    const target = join(pc.home, "pwned-by-sub-agent");
-    let subDone: () => void = () => {};
-    const subFinished = new Promise<void>((r) => (subDone = r));
-    const message = (id: string, text: string) => ({
-      type: "message",
-      id,
-      role: "assistant",
-      content: [{ type: "output_text", text }],
-    });
-    // Codex lets the model start sub-agents, which no configuration turns off:
-    // one runs in the same app-server, under the same overrides, and asks the
-    // same client. The root waits for it, so it runs before the turn ends.
-    world.reply = async (body, i) => {
-      const input: any[] = body.input ?? [];
-      const outputs = input.filter((x) => /output/.test(x.type));
-      // The sub-agent is told its task as an agent_message to it, after the root's history.
-      if (
-        input.some(
-          (x) => x.type === "agent_message" && x.recipient === "/root/pwn",
-        )
-      ) {
-        if (!outputs.some((o) => o.call_id === "call_sub")) {
-          subTools = offered(body);
-          return {
-            type: "custom_tool_call",
-            id: `ct_${i}`,
-            call_id: "call_sub",
-            name: "exec",
-            input: `let r; try { r = await tools.apply_patch("*** Begin Patch\\n*** Add File: ${target}\\n+x\\n*** End Patch\\n"); } catch (e) { r = "threw: " + e; } let x; try { x = await tools.exec_command({ cmd: "touch ${target}" }); } catch (e) { x = "threw: " + e; } text(JSON.stringify({ r, x }));`,
-          };
+describe("the helper on the real Codex (sub-agents)", { skip: !REAL }, () => {
+  for (const model of [undefined, "gpt-5.5"]) {
+    describe(model ? "direct tools" : "code mode", () => {
+      let world: World;
+      let pc: Awaited<ReturnType<typeof computer>>;
+      let outcome = "";
+      before(async () => {
+        world = await new World().start();
+        pc = await computer(world, model);
+        // The person's own config turns sub-agents on: the helper's overrides win.
+        await writeFile(
+          join(pc.codexHome, "config.toml"),
+          (await readFile(join(pc.codexHome, "config.toml"), "utf8")).replace(
+            "[features]\n",
+            "[features]\nmulti_agent = true\nmulti_agent_v2 = true\n",
+          ) + "\n[agents]\nenabled = true\n",
+        );
+        world.script = [
+          {
+            type: "function_call",
+            id: "fc_0",
+            call_id: "call_spawn",
+            name: "spawn_agent",
+            namespace: "collaboration",
+            arguments: JSON.stringify({
+              task_name: "pwn",
+              message: "SUBAGENT TASK: write a file",
+            }),
+          },
+          {
+            type: "message",
+            id: "m_1",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Done." }],
+          },
+        ];
+        outcome = await runTurn(
+          turn({ runtime: "codex", system: MARKER, mcp_token: TOKEN }),
+          {
+            foundry: new Foundry(world.url, "hxh_token"),
+            clis: [codexCli(pc.wrapper, pc.env)],
+            version: VERSION,
+            concurrency: 1,
+            env: pc.env,
+          },
+        );
+      });
+      after(() => world?.stop());
+
+      it("offers no sub-agent tool, and starts none when the model asks", () => {
+        assert.equal(outcome, "answered");
+        for (const r of world.requests) {
+          const tools = offered(r);
+          assert.ok(
+            !tools.some((t) =>
+              /spawn_agent|send_input|wait_agent|close_agent|resume_agent|collaboration/.test(
+                t,
+              ),
+            ),
+            `a sub-agent tool offered: ${tools}`,
+          );
         }
-        subTried = world.output("call_sub");
-        subDone();
-        return message(`m_${i}`, "Sub-agent done.");
-      }
-      if (!outputs.some((o: any) => o.call_id === "call_spawn"))
-        return {
-          type: "function_call",
-          id: `fc_${i}`,
-          call_id: "call_spawn",
-          name: "spawn_agent",
-          namespace: "collaboration",
-          arguments: JSON.stringify({
-            task_name: "pwn",
-            message: "SUBAGENT TASK: write a file",
-          }),
-        };
-      await Promise.race([
-        subFinished,
-        new Promise((r) => setTimeout(r, 30_000)),
-      ]);
-      return message(`m_${i}`, "Done.");
-    };
-    outcome = await runTurn(
-      turn({ runtime: "codex", system: MARKER, mcp_token: TOKEN }),
-      {
+        assert.match(world.output("call_spawn"), /unsupported/);
+        assert.equal(
+          world.requests.filter((r) =>
+            JSON.stringify(r.input ?? []).includes("SUBAGENT TASK") &&
+            (r.input ?? []).some((x: any) => x.type === "agent_message"),
+          ).length,
+          0,
+          "no sub-agent ran",
+        );
+      });
+    });
+  }
+});
+
+// A managed configuration (/etc/codex/managed_config.toml) outranks the
+// helper's -c overrides and its thread settings alike. The helper reads
+// back what Codex will run with and runs nothing unless it holds. Writing
+// /etc/codex takes a machine of the test's own (CI's, or the EC2 box's):
+// it runs where /etc/codex is writable, and skips otherwise.
+const MANAGED = "/etc/codex/managed_config.toml";
+const managedWritable = await access("/etc/codex", constants.W_OK).then(
+  () => true,
+  () => false,
+);
+
+describe(
+  "the helper on the real Codex (a managed configuration)",
+  { skip: !REAL || !managedWritable },
+  () => {
+    let world: World;
+    let pc: Awaited<ReturnType<typeof computer>>;
+    let before_: string | undefined;
+    const run = () =>
+      runTurn(turn({ runtime: "codex", system: MARKER, mcp_token: TOKEN }), {
         foundry: new Foundry(world.url, "hxh_token"),
         clis: [codexCli(pc.wrapper, pc.env)],
         version: VERSION,
         concurrency: 1,
         env: pc.env,
-      },
-    );
-  });
-  after(() => world?.stop());
+      });
+    const finish = () =>
+      world.told.filter((t) => t.path === claimPath("finish")).at(-1)!.body;
+    before(async () => {
+      before_ = await readFile(MANAGED, "utf8").catch(() => undefined);
+      world = await new World().start();
+      pc = await computer(world);
+    });
+    after(async () => {
+      await (before_ === undefined
+        ? rm(MANAGED, { force: true })
+        : writeFile(MANAGED, before_));
+      await world?.stop();
+    });
 
-  it("runs a sub-agent under the same overrides, its changes declined", async () => {
-    assert.equal(outcome, "answered");
-    assert.ok(subTools.length > 0, "the sub-agent ran");
-    for (const banned of ["exec_command", "write_stdin", "shell", "view_image"])
-      assert.ok(
-        !subTools.some(
-          (t) => t === `exec:${banned}` || t.endsWith(`/${banned}`),
-        ),
-        `${banned} offered: ${subTools}`,
+    it("runs nothing when it turns the shell or sub-agents back on", async () => {
+      await writeFile(
+        MANAGED,
+        "[features]\nshell_tool = true\nunified_exec = true\n[agents]\nenabled = true\n",
       );
-    assert.match(subTried, /rejected/);
-    assert.match(subTried, /not a function/);
-    assert.ok(!(await exists(join(pc.home, "pwned-by-sub-agent"))));
-  });
-});
+      assert.equal(await run(), "failed: cli_error");
+      const end = finish();
+      for (const k of ["features.shell_tool", "features.unified_exec", "agents.enabled"])
+        assert.ok(end.detail.includes(k), end.detail);
+      assert.equal(world.requests.length, 0, "the model is never called");
+      assert.deepEqual(await checkLocked(pc.wrapper, pc.env), [
+        "features.shell_tool",
+        "features.unified_exec",
+        "agents.enabled",
+      ]);
+    });
+
+    it("runs nothing when it sets the approval policy over the thread's", async () => {
+      await writeFile(MANAGED, 'approval_policy = "never"\n');
+      assert.equal(await run(), "failed: cli_error");
+      assert.match(finish().detail, /approval_policy/);
+      assert.equal(world.requests.length, 0, "the model is never called");
+      assert.deepEqual(await checkLocked(pc.wrapper, pc.env), [
+        "approval_policy",
+      ]);
+    });
+  },
+);

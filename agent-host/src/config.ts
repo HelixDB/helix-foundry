@@ -101,6 +101,9 @@ export type Sessions = {
 /**
  * Deletes what the helper keeps of a thread: each CLI's sessions under its
  * directory (each with what Foundry's tools answered), then the directory.
+ * Every CLI is tried, one failing or not; the directory goes only once each
+ * deleted its sessions, so a later sweep finds the thread and tries again,
+ * and the first failure is thrown after.
  */
 export async function forgetThread(
   t: ThreadRef,
@@ -108,8 +111,15 @@ export async function forgetThread(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   const dir = threadPath(t, env);
-  for (const s of sessions)
-    for (const id of await s.list(dir)) await s.delete(id, dir);
+  const failed: unknown[] = [];
+  for (const s of sessions) {
+    try {
+      for (const id of await s.list(dir)) await s.delete(id, dir);
+    } catch (e) {
+      failed.push(e);
+    }
+  }
+  if (failed.length) throw failed[0];
   await rm(dir, { recursive: true, force: true });
 }
 

@@ -22,6 +22,9 @@ import {
   codexConfig,
   codexFailure,
   codexSessions,
+  LOCKED,
+  unheld,
+  unheldDetail,
 } from "../src/codex.ts";
 import {
   configPath,
@@ -127,6 +130,16 @@ describe("a turn on Codex", () => {
     assert.equal(start.cwd, join(dir, "state", "threads", "ws-1", "thread-1"));
     assert.deepEqual(start.cwdEntries, [], "it runs in an empty directory");
 
+    const received = entries.filter((e) => e.received).map((e) => e.received);
+    assert.ok(
+      received.indexOf("config/read") >= 0 &&
+        received.indexOf("config/read") < received.indexOf("thread/start"),
+      "what Codex will run with is read back before any thread starts",
+    );
+    assert.deepEqual(
+      entries.find((e) => e.received === "config/read").params,
+      { cwd: start.cwd, includeLayers: false },
+    );
     const thread = entries.find((e) => e.received === "thread/start");
     assert.deepEqual(thread.params, {
       cwd: start.cwd,
@@ -259,6 +272,44 @@ describe("a turn on Codex", () => {
     });
   }
 
+  for (const [scenario, keys] of [
+    ["managed", "features.shell_tool"],
+    ["managed_approval", "approval_policy"],
+  ] as const)
+    it(`runs nothing when a managed configuration overrides what the helper sets (${scenario})`, async () => {
+      env.FAKE_CODEX_SCENARIO = scenario;
+      assert.equal(await runTurn(codexTurn(), options()), "failed: cli_error");
+      const [finished] = foundry.sent(claimPath("finish"));
+      assert.equal(finished.detail, unheldDetail([keys]));
+      const received = (await logged()).map((e) => e.received);
+      assert.ok(!received.includes("turn/start"), "the model is never called");
+      assert.equal(
+        received.includes("thread/start"),
+        scenario === "managed_approval",
+        "a configuration that doesn't hold starts no thread",
+      );
+    });
+
+  it("runs nothing on a Codex older than the floor, whatever Foundry was last told", async () => {
+    env.FAKE_CODEX_VERSION = "0.168.9";
+    assert.equal(await runTurn(codexTurn(), options()), "failed: cli_error");
+    const [finished] = foundry.sent(claimPath("finish"));
+    assert.equal(
+      finished.detail,
+      `Codex 0.168.9 is older than ${MIN_CODEX}, the oldest Foundry runs: update it`,
+    );
+    assert.ok(!(await logged()).some((e) => e.received === "thread/start"));
+  });
+
+  it("says why Codex didn't start, in its own words", async () => {
+    env.FAKE_CODEX_SCENARIO = "broken_config";
+    await runTurn(codexTurn(), options());
+    const [finished] = foundry.sent(claimPath("finish"));
+    assert.equal(finished.failure, "cli_error");
+    assert.match(finished.detail, /^Codex exited \(1\): /);
+    assert.match(finished.detail, /duplicate key `mcp_servers.x`/);
+  });
+
   it("stops at its steps, and says so", async () => {
     env.FAKE_CODEX_SCENARIO = "many_steps";
     const outcome = await runTurn(codexTurn({ max_steps: 3 }), options());
@@ -381,11 +432,43 @@ describe("Codex's account and sessions", () => {
     const sessions = codexSessions(FAKE_CODEX, env);
     const kept = await sessions.list(await threadDir(t, env));
     assert.equal(kept.length, 1);
+    const lists = (await logged()).filter((e) => e.received === "thread/list");
+    assert.deepEqual(
+      lists.map((e) => e.params.archived),
+      [false, true],
+      "archived threads are listed too",
+    );
+    assert.ok(
+      lists.every((e) =>
+        ["subAgent", "subAgentThreadSpawn", "exec", "appServer"].every((k) =>
+          e.params.sourceKinds.includes(k),
+        ),
+      ),
+      "a sub-agent's threads are listed with the rest",
+    );
     await forgetThread(t, [sessions], env);
     assert.deepEqual(
       await sessions.list(join(dir, "state", "threads", "ws-1", "thread-1")),
       [],
     );
+  });
+
+  it("asks a Codex too old to run again soon, so an update shows within a minute", async () => {
+    env.FAKE_CODEX_VERSION = "0.150.0";
+    const stop = new AbortController();
+    const serving = serve({ ...options(), signal: stop.signal, recheckMs: 50 });
+    await new Promise((r) => setTimeout(r, 300));
+    env.FAKE_CODEX_VERSION = "0.169.0";
+    const claimed = () =>
+      foundry
+        .sent("/agent-host/claim")
+        .some((c) => c.accounts?.[0]?.version === "0.169.0");
+    for (let i = 0; i < 200 && !claimed(); i++)
+      await new Promise((r) => setTimeout(r, 25));
+    stop.abort();
+    await serving;
+    assert.equal(foundry.sent("/agent-host/hello")[0].accounts[0].version, "0.150.0");
+    assert.ok(claimed(), "a later claim says the updated version");
   });
 
   it("offers Codex with its account when it runs", async () => {
@@ -459,6 +542,20 @@ describe("Codex's account and sessions", () => {
     assert.ok(
       checks.some((c) => !c.ok && c.what === "Claude Code or Codex installed"),
     );
+
+    delete env.FAKE_CODEX_VERSION;
+    delete env.FAKE_CODEX_ACCOUNT;
+    for (const [scenario, key] of [
+      ["managed", "features.shell_tool"],
+      ["managed_approval", "approval_policy"],
+    ]) {
+      env.FAKE_CODEX_SCENARIO = scenario;
+      checks = await doctor({ codex: FAKE_CODEX, env });
+      assert.deepEqual(
+        checks.filter((c) => !c.ok).map((c) => c.what),
+        [`Codex runs as Foundry sets it: your configuration turns back on ${key}`],
+      );
+    }
   });
 });
 
@@ -510,6 +607,46 @@ describe("Codex's rules", () => {
       "attestation/generate",
     ])
       assert.equal((answer(m, {}) as any).error.code, -32601, m);
+  });
+
+  it("reads back every setting the helper makes, and nothing held is unheld", () => {
+    const held = {} as Record<string, any>;
+    for (const [k, v] of LOCKED) {
+      const path = k.split(".");
+      let o = held;
+      for (const p of path.slice(0, -1)) o = o[p] ??= {};
+      o[path.at(-1)!] = v;
+    }
+    const thread = {
+      approvalPolicy: "untrusted",
+      sandbox: { type: "readOnly", networkAccess: false },
+      approvalsReviewer: "user",
+    };
+    assert.deepEqual(unheld(held, thread), []);
+    for (const k of ["agents.enabled", "features.multi_agent", "features.multi_agent_v2", "features.shell_tool", "features.unified_exec"])
+      assert.ok(LOCKED.some(([l]) => l === k), `${k} is turned off`);
+    assert.deepEqual(
+      unheld({ ...held, agents: { enabled: true }, web_search: "live" }),
+      ["web_search", "agents.enabled"],
+    );
+    assert.deepEqual(unheld({ ...held, features: null }).length, LOCKED.filter(([k]) => k.startsWith("features.")).length);
+    assert.deepEqual(
+      unheld(undefined, {
+        approvalPolicy: { granular: {} },
+        sandbox: { type: "dangerFullAccess" },
+        approvalsReviewer: "auto_review",
+      }),
+      ["approval_policy", "sandbox_mode", "approvals_reviewer"],
+    );
+    assert.deepEqual(unheld(undefined, null), [
+      "approval_policy",
+      "sandbox_mode",
+      "approvals_reviewer",
+    ]);
+    assert.ok(
+      codexConfig("http://x/mcp").includes("agents.enabled=false") &&
+        codexConfig("http://x/mcp").includes('web_search="disabled"'),
+    );
   });
 
   it("compares versions, a prerelease below its release", () => {
