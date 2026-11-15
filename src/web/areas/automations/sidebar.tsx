@@ -12,23 +12,24 @@ import {
   useNow,
 } from "../../kit";
 import { useWorkspace } from "../../ui";
-import { automationPaths as paths } from "./paths";
+import { automationPaths as paths, openAutomation } from "./paths";
 import { automationsUnavailable } from "./model";
 import { automationQueries } from "./queries";
 import { automationStatus } from "./parts";
 
 // The Automations section's list, in the shell's sidebar under the
-// sections while the section is open: New automation, then the
-// workspace's automations by recency, each with its status as a dot. The
-// shell renders it outside the page's routes: it reads the open automation
-// from the path and the list from the query the pages share.
+// sections while an automation or one of its runs is open (shell.ts): New
+// automation, then the workspace's automations by recency, each with its
+// status as a dot, to go between them. The shell renders it outside the
+// page's routes: it reads the open automation from the path and the list
+// from the query the pages share.
 
 export function AutomationList({ onNavigate }: { onNavigate?: () => void }) {
   const { id: ws } = useWorkspace(),
     { pathname } = useLocation(),
     now = useNow(60_000);
   const list = useQuery(automationQueries.list(ws));
-  const open = /^\/automations\/([^/]+)/.exec(pathname)?.[1];
+  const open = openAutomation(pathname);
   const all = list.data?.automations || [];
   const row = (a: FoundryAutomation) => {
     const on = a.id === open,

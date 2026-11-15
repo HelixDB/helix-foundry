@@ -102,9 +102,11 @@ FROM foundry_automations WHERE workspace_id=? AND owner_user_id=? AND client_tok
 }
 
 // ListFoundryAutomations returns the workspace's automations, most recently
-// changed first, each with its newest run: all of them, as a workspace keeps
-// at most foundry.automations.max_per_workspace, which also bounds the reads
-// of their newest runs (one indexed read each).
+// changed first, each with its newest run and when it last failed: all of
+// them, as a workspace keeps at most foundry.automations.max_per_workspace.
+// Their runs are read in three statements, whatever their number: the
+// newest run's time and the newest failure's, each one index dive per
+// automation (the history and outcome indexes), then those runs.
 func (s *mysqlDB) ListFoundryAutomations(ctx context.Context, workspaceID string) ([]*model.FoundryAutomation, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT "+foundryAutomationColumns+`
 FROM foundry_automations WHERE workspace_id=? ORDER BY updated_at DESC, id DESC`, workspaceID)
@@ -112,15 +114,156 @@ FROM foundry_automations WHERE workspace_id=? ORDER BY updated_at DESC, id DESC`
 		return nil, err
 	}
 	out, err := scanAll(rows, scanFoundryAutomation)
+	if err != nil || len(out) == 0 {
+		return out, err
+	}
+	byID := make(map[string]*model.FoundryAutomation, len(out))
+	ids := make([]any, len(out))
+	for i, a := range out {
+		byID[a.ID], ids[i] = a, a.ID
+	}
+	in := idPlaceholders(len(ids))
+	newest := func(failed bool) (map[string]time.Time, error) {
+		where := ""
+		if failed {
+			where = " AND status='failed'"
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT automation_id, MAX(created_at) FROM foundry_automation_runs
+WHERE automation_id IN (`+in+`)`+where+` GROUP BY automation_id`, ids...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		at := map[string]time.Time{}
+		for rows.Next() {
+			var id string
+			var t time.Time
+			if err := rows.Scan(&id, &t); err != nil {
+				return nil, err
+			}
+			at[id] = t
+		}
+		return at, rows.Err()
+	}
+	failed, err := newest(true)
 	if err != nil {
 		return nil, err
 	}
-	for _, a := range out {
-		if err := s.withLastRun(ctx, a); err != nil {
-			return nil, err
+	for id, t := range failed {
+		byID[id].LastFailedAt = &t
+	}
+	last, err := newest(false)
+	if err != nil || len(last) == 0 {
+		return out, err
+	}
+	conds, args := make([]string, 0, len(last)), make([]any, 0, 2*len(last))
+	for id, t := range last {
+		conds, args = append(conds, "(automation_id=? AND created_at=?)"), append(args, id, t)
+	}
+	runs, err := s.db.QueryContext(ctx, "SELECT "+foundryAutomationRunColumns+`
+FROM foundry_automation_runs WHERE `+strings.Join(conds, " OR "), args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanAll(runs, func(r rowScanner) (*model.FoundryAutomationRun, error) { return scanFoundryAutomationRun(r, false) })
+	if err != nil {
+		return nil, err
+	}
+	// Two runs made in the same microsecond: the newest is the greater id,
+	// as withLastRun orders them.
+	for _, r := range found {
+		a := byID[r.AutomationID]
+		if a.LastRun == nil || r.ID > a.LastRun.ID {
+			a.LastRun = r
 		}
 	}
 	return out, nil
+}
+
+// FoundryAutomationRunStats counts the workspace's runs created since
+// since: by automation and status, with what they spent; by quarter hour
+// and status; and the actions their Assistant steps prepared that still
+// wait. Each statement reads the runs of that time by the day index, which
+// the workspace's runs a day (foundry.automations.runs_per_day) bound, each
+// joined to its automation by primary key, so runs a deletion has yet to
+// reach (DeleteFoundryAutomation takes them a batch at a time after the
+// automation) count nowhere; and a waiting action by its turn
+// (foundry_agent_actions' payload key).
+func (s *mysqlDB) FoundryAutomationRunStats(ctx context.Context, workspaceID string, since time.Time) (*model.FoundryAutomationRunStats, error) {
+	out := &model.FoundryAutomationRunStats{ByAutomation: map[string]model.FoundryAutomationRunCounts{}}
+	since = since.UTC()
+	rows, err := s.db.QueryContext(ctx, `SELECT r.automation_id, r.status, COUNT(*), SUM(r.usd_micros) FROM foundry_automation_runs r
+JOIN foundry_automations a ON a.id=r.automation_id
+WHERE r.workspace_id=? AND r.created_at>=? GROUP BY r.automation_id, r.status`, workspaceID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, status string
+		var n int
+		var usd int64
+		if err := rows.Scan(&id, &status, &n, &usd); err != nil {
+			return nil, err
+		}
+		c := out.ByAutomation[id]
+		c.Runs, c.USDMicros = c.Runs+n, c.USDMicros+usd
+		switch model.FoundryAutomationRunStatus(status) {
+		case model.FoundryAutomationRunSucceeded:
+			c.Succeeded += n
+		case model.FoundryAutomationRunFailed:
+			c.Failed += n
+		}
+		out.ByAutomation[id] = c
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	slots, err := s.db.QueryContext(ctx, `SELECT DATE_FORMAT(r.created_at, '%Y-%m-%d %H') AS hour, FLOOR(MINUTE(r.created_at) / 15) AS quarter,
+       r.status, COUNT(*)
+FROM foundry_automation_runs r JOIN foundry_automations a ON a.id=r.automation_id
+WHERE r.workspace_id=? AND r.created_at>=? GROUP BY hour, quarter, r.status`, workspaceID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer slots.Close()
+	for slots.Next() {
+		var hour, status string
+		var quarter, n int
+		if err := slots.Scan(&hour, &quarter, &status, &n); err != nil {
+			return nil, err
+		}
+		at, err := time.ParseInLocation("2006-01-02 15", hour, time.UTC)
+		if err != nil {
+			return nil, fmt.Errorf("read a run's hour %q: %w", hour, err)
+		}
+		out.Slots = append(out.Slots, model.FoundryAutomationRunSlot{At: at.Add(time.Duration(quarter) * 15 * time.Minute),
+			Status: model.FoundryAutomationRunStatus(status), Runs: n})
+	}
+	if err := slots.Err(); err != nil {
+		return nil, err
+	}
+	waiting, err := s.db.QueryContext(ctx, `SELECT r.automation_id, COUNT(*) FROM foundry_automation_runs r
+JOIN foundry_automations a ON a.id=r.automation_id
+JOIN foundry_automation_run_nodes n ON n.run_id=r.id
+JOIN foundry_agent_actions x ON x.turn_id=n.turn_id AND x.workspace_id=r.workspace_id
+WHERE r.workspace_id=? AND r.created_at>=? AND n.turn_id IS NOT NULL AND x.status='prepared'
+GROUP BY r.automation_id`, workspaceID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer waiting.Close()
+	for waiting.Next() {
+		var id string
+		var n int
+		if err := waiting.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		c := out.ByAutomation[id]
+		c.Waiting = n
+		out.ByAutomation[id] = c
+	}
+	return out, waiting.Err()
 }
 
 // withLastRun reads a's newest run, without its spec.

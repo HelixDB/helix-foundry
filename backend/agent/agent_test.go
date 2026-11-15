@@ -752,6 +752,18 @@ func TestTheAssistantPreparesDashboards(t *testing.T) {
 	}
 }
 
+// On the page that starts a new automation, the model is told the person
+// is making one; the flag is no id, so nothing is looked up for it.
+func TestTheNewAutomationPageIsSaid(t *testing.T) {
+	h := newHarness(t, say("What should it do?"))
+	turn := message("Every Monday, summarise the overdue invoices")
+	turn.PageContext = json.RawMessage(`{"new_automation":true}`)
+	_, err := h.runner.Run(context.Background(), turn)
+	require.NoError(t, err)
+	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, `<page_context>{"creating_automation":true}</page_context>`)
+	assert.Contains(t, h.model.requests[0].System, "creating_automation")
+}
+
 // A page context naming nothing of the workspace tells the model nothing.
 func TestAPageOfNothingIsNoPage(t *testing.T) {
 	h := newHarness(t, say("Hello."))

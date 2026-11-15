@@ -65,6 +65,9 @@ describe("pageContext", () => {
     ["/ask/ont_1", "?load=a%20b", { ontologyId: "ont_1" }],
     // A dashboard, which takes no load.
     ["/dashboards/dash_1", "?load=load_1", { dashboardId: "dash_1" }],
+    // The page that starts a new automation, its conversation or a draft.
+    ["/automations/new", "", { newAutomation: true }],
+    ["/automations/new", "?template=blank", { newAutomation: true }],
   ])("%s%s names %j", (path, search, context) => {
     expect(pageContext(path, search)).toEqual(context);
   });
@@ -83,6 +86,9 @@ describe("pageContext", () => {
     ["/dashboards"],
     ["/dashboards/dash_1/edit"],
     ["/dashboards/has space"],
+    ["/automations"],
+    ["/automations/aut_1"],
+    ["/automations/new/x"],
   ])("%s names nothing", (path) => {
     expect(pageContext(path, "?load=load_1")).toBeNull();
   });

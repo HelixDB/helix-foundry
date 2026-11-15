@@ -1,9 +1,10 @@
 /* Automations (prefix au-): the section's list in the sidebar, laid out as
-   the dashboards' is; the list page and its templates; the builder (the
-   canvas, @xyflow/react restyled with the kit's tokens, the outline and the
-   inspector); an automation's page; a run's page, its steps coloured by how
-   each went; and the steps as they run unattended (the review, an
-   unapproved automation's page, the Assistant's card). */
+   the dashboards' is; the overview (its runs' figures and chart, then the
+   automations); a new one's conversation, its composer over the canvas's
+   dots; an automation on its full-page canvas (the slim bar, the canvas,
+   @xyflow/react restyled with the kit's tokens, its floating toolbar, the
+   inspector beside it, the runs list, Settings, the outline); and the steps
+   as they run unattended (the review, the approval, the Assistant's card). */
 
 /* The sidebar's list. */
 .au-panel {
@@ -235,11 +236,9 @@
   --xy-attribution-background-color: transparent;
   --xy-selection-background-color: var(--hf-accent-soft);
   --xy-selection-border: 1px dashed var(--hf-accent);
-  height: min(560px, 68dvh);
-  min-height: 320px;
+  position: absolute;
+  inset: 0;
   overflow: hidden;
-  border: 1px solid var(--hf-border);
-  border-radius: var(--hf-radius-lg);
   background: var(--hf-sunken);
 }
 .au-flow .react-flow__node {
@@ -268,30 +267,6 @@
 .au-flow .react-flow__arrowhead polyline {
   stroke: var(--hf-border-strong);
   fill: var(--hf-border-strong);
-}
-.au-flow .react-flow__controls {
-  overflow: hidden;
-  border: 1px solid var(--hf-border);
-  border-radius: var(--hf-radius);
-  box-shadow: var(--hf-shadow-1);
-}
-.au-flow .react-flow__controls-button {
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-bottom: 1px solid var(--hf-border);
-  background: var(--hf-surface);
-  color: var(--hf-text-2);
-}
-.au-flow .react-flow__controls-button:last-child {
-  border-bottom: 0;
-}
-.au-flow .react-flow__controls-button:hover {
-  background: var(--hf-hover);
-  color: var(--hf-text);
-}
-.au-flow .react-flow__controls-button svg {
-  fill: currentColor;
 }
 .au-flow .react-flow__attribution a {
   color: var(--hf-muted);
@@ -371,7 +346,7 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.au-node-head span:first-of-type {
+.au-node-kind {
   flex: 1;
 }
 .au-node-text {
@@ -394,63 +369,13 @@
   font-size: var(--hf-text-xs);
 }
 
-/* The builder. */
-.au-builder-fields {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-  gap: 0 var(--hf-space-2);
-}
-.au-builder-fields .hf-field {
-  margin-top: 0;
-}
+/* The review and the approval. */
 .au-sentence {
-  margin: var(--hf-space-2) 0 0;
+  margin: 0;
   color: var(--hf-text-2);
   font-size: var(--hf-text-md);
   line-height: 1.55;
   overflow-wrap: anywhere;
-}
-.au-builder {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: var(--hf-space-2);
-  align-items: start;
-  margin-top: var(--hf-space-2);
-}
-.au-builder-main {
-  display: grid;
-  gap: var(--hf-space-1);
-  min-width: 0;
-}
-.au-builder-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--hf-space-1);
-}
-.au-add {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.au-builder-side {
-  position: sticky;
-  top: calc(var(--hf-shell-top, 0px) + var(--hf-space-2));
-  display: grid;
-  gap: var(--hf-space-15);
-  justify-items: start;
-  max-height: calc(100dvh - var(--hf-shell-top, 0px) - 2 * var(--hf-space-2));
-  padding: var(--hf-space-2);
-  overflow-y: auto;
-  border: 1px solid var(--hf-border);
-  border-radius: var(--hf-radius-lg);
-  background: var(--hf-surface);
-}
-.au-builder-foot {
-  display: grid;
-  gap: var(--hf-space-15);
-  margin-top: var(--hf-space-2);
 }
 .au-problems {
   display: grid;
@@ -461,7 +386,7 @@
   border-radius: var(--hf-radius);
   background: var(--hf-warning-soft);
   color: var(--hf-warning-text);
-  font-size: var(--hf-text-base);
+  font-size: var(--hf-text-sm);
   list-style: none;
 }
 .au-problems li {
@@ -477,18 +402,9 @@
 .au-problems .au-link {
   color: inherit;
 }
-.au-builder-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--hf-space-1);
-}
 .au-review {
   display: grid;
   gap: var(--hf-space-15);
-}
-.au-review .au-sentence {
-  margin: 0;
 }
 .au-review-note {
   margin: 0;
@@ -660,12 +576,11 @@
   font-size: var(--hf-text-sm);
 }
 
-/* An automation's page. */
+/* What stops it, and what a run says. */
 .au-callout {
   display: grid;
   justify-items: start;
   gap: 8px;
-  margin-top: var(--hf-space-2);
   padding: 12px 14px;
   border: 1px solid var(--hf-warning);
   border-radius: var(--hf-radius);
@@ -693,34 +608,11 @@
   background: var(--hf-danger-soft);
   color: var(--hf-danger-text);
 }
-.au-summary {
-  margin: var(--hf-space-2) 0;
-}
-.au-summary .au-sentence {
-  margin: 0 0 var(--hf-space-15);
-}
 .au-more {
-  margin-top: var(--hf-space-15);
-}
-.au-steps {
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: var(--hf-space-2);
-  align-items: start;
-  margin-top: var(--hf-space-2);
+  margin: var(--hf-space-1) 12px;
 }
 
-/* A run's page. */
-.au-run-facts {
-  margin-top: var(--hf-space-2);
-}
-.au-run {
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: var(--hf-space-2);
-  align-items: start;
-  margin-top: var(--hf-space-2);
-}
+/* A run's steps, in the inspector. */
 .au-run-steps {
   display: grid;
   gap: 8px;
@@ -749,7 +641,16 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--hf-text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.au-run-step-head:hover .au-run-step-title {
+  text-decoration: underline;
 }
 .au-run-step-title {
   flex: 1;
@@ -799,26 +700,829 @@
   gap: 8px;
 }
 
-@media (max-width: 1000px) {
-  .au-builder,
-  .au-steps,
-  .au-run {
-    grid-template-columns: minmax(0, 1fr);
+/* A step's kind, as a tinted square on its card. */
+.au-node-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--hf-radius-sm);
+  background: var(--hf-sunken);
+  color: var(--au-kind, var(--hf-accent));
+}
+
+/* The overview. */
+.au-overview {
+  display: grid;
+  gap: var(--hf-space-15);
+  margin-bottom: var(--hf-space-3);
+}
+.au-overview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hf-space-1);
+}
+.au-overview-head h2 {
+  margin: 0;
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+}
+.au-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--hf-space-1);
+  margin: 0;
+}
+.au-stat dd {
+  margin: 0;
+}
+.au-stat {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+}
+.au-stat-label {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.au-stat-value {
+  color: var(--hf-text);
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+.au-stat-note {
+  overflow: hidden;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-stat.is-failed .au-stat-value {
+  color: var(--hf-danger-text);
+}
+.au-stat.is-waiting .au-stat-value {
+  color: var(--hf-warning-text);
+}
+.au-chart {
+  min-height: 168px;
+  padding: 12px 12px 4px 4px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+}
+.au-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px var(--hf-space-2);
+  margin: 0 0 6px 8px;
+  padding: 0;
+  list-style: none;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.au-chart-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.au-chart-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.au-chart-swatch.is-succeeded {
+  background: var(--hf-chart-1);
+}
+.au-chart-swatch.is-failed {
+  background: var(--hf-chart-5);
+}
+.au-chart-swatch.is-other {
+  background: var(--hf-border-strong);
+}
+.au-chart .recharts-cartesian-grid line {
+  stroke: var(--hf-border);
+}
+.au-chart .recharts-cartesian-axis-line {
+  stroke: var(--hf-border-strong);
+}
+.au-chart .recharts-cartesian-axis-tick-value {
+  fill: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.au-chart .au-chart-succeeded .recharts-rectangle {
+  fill: var(--hf-chart-1);
+}
+.au-chart .au-chart-failed .recharts-rectangle {
+  fill: var(--hf-chart-5);
+}
+.au-chart .au-chart-other .recharts-rectangle {
+  fill: var(--hf-border-strong);
+}
+.au-chart .au-chart-cursor,
+.au-chart .recharts-tooltip-cursor {
+  fill: var(--hf-hover);
+}
+.au-chart-tip {
+  display: grid;
+  gap: 1px;
+  padding: 6px 9px;
+  border-radius: var(--hf-radius-sm);
+  background: var(--hf-tooltip);
+  box-shadow: var(--hf-shadow-2);
+  color: var(--hf-on-tooltip-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.4;
+}
+.au-chart-tip-value {
+  color: var(--hf-on-tooltip);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* An automation's page, as the Explorer's: the slim bar, then what fills
+   the viewport under it (the canvas, the runs list, the inspector). */
+.au-page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: calc(100dvh - var(--hf-shell-top));
+  min-height: 480px;
+}
+.au-top {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px var(--hf-space-2);
+  min-height: 52px;
+  padding: 8px var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-border);
+  background: var(--hf-bg);
+}
+.au-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--hf-text-base);
+}
+.au-crumb {
+  flex: none;
+  color: var(--hf-muted);
+  text-decoration: none;
+}
+.au-crumb:hover {
+  color: var(--hf-text);
+  text-decoration: underline;
+}
+.au-crumb-sep {
+  flex: none;
+  color: var(--hf-faint);
+}
+.au-crumb-title {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.au-crumb-name {
+  margin: 0;
+  overflow: hidden;
+  color: var(--hf-text);
+  font-family: inherit;
+  font-size: var(--hf-text-base);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-name-input {
+  width: min(320px, 50vw);
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius);
+  background: var(--hf-field);
+  color: var(--hf-text);
+  font: inherit;
+  font-weight: 600;
+}
+.au-name-input:focus {
+  border-color: var(--hf-focus);
+  outline: none;
+}
+/* The tabs sit in the bar, their line its own border. */
+.au-top .au-tabs {
+  align-self: stretch;
+  margin: -8px 0;
+  border-bottom: 0;
+}
+.au-top .au-tabs .hf-tab {
+  height: 51px;
+}
+/* The Runs tab's count, in its label (a + while more runs are unread). */
+.au-tab-count {
+  margin-left: 7px;
+}
+.au-top-tools {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+.au-top-tools .hf-btn.is-active {
+  background: var(--hf-selected);
+  color: var(--hf-text);
+}
+.au-unsaved {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* The Live switch: a checkbox drawn as a switch. */
+.au-live.checkbox {
+  margin: 0 4px;
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  font-weight: 550;
+  cursor: pointer;
+}
+.au-live input {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 18px;
+  margin: 0;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-sunken);
+  cursor: pointer;
+  transition: background var(--hf-duration) var(--hf-ease);
+  appearance: none;
+}
+.au-live input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-muted);
+  transition: transform var(--hf-duration) var(--hf-ease);
+}
+.au-live input:checked {
+  border-color: var(--hf-success);
+  background: var(--hf-success);
+}
+.au-live input:checked::after {
+  background: var(--hf-surface);
+  transform: translateX(12px);
+}
+.au-live input:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+}
+.au-live input:disabled,
+.au-live input[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.au-live:has(input:disabled, input[aria-disabled="true"]) {
+  color: var(--hf-muted);
+  cursor: not-allowed;
+}
+/* A line under the bar: why a save or a switch failed. */
+.au-strip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hf-space-1);
+  margin: 0;
+  padding: 6px var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-border);
+  font-size: var(--hf-text-sm);
+}
+.au-strip.is-danger {
+  background: var(--hf-danger-soft);
+  color: var(--hf-danger-text);
+}
+.au-strip.is-muted {
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+}
+.au-frame {
+  padding: var(--hf-space-3) var(--hf-space-5);
+  overflow-y: auto;
+}
+.au-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.au-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: var(--hf-sunken);
+}
+.au-stage.is-page {
+  overflow-y: auto;
+  background: var(--hf-bg);
+}
+/* The inspector: the page's right-hand sidebar, scrolling on its own. */
+.au-side {
+  flex: none;
+  width: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-left: 1px solid var(--hf-border);
+  background: var(--hf-sidebar);
+  scrollbar-width: thin;
+}
+.au-side-body {
+  display: grid;
+  gap: var(--hf-space-15);
+  align-content: start;
+  justify-items: stretch;
+  padding: var(--hf-space-2);
+}
+.au-side-body > .hf-btn,
+.au-side-body > .hf-status {
+  justify-self: start;
+}
+.au-side-back {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--hf-muted);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  cursor: pointer;
+}
+.au-side-back:hover {
+  color: var(--hf-text);
+}
+.au-flip {
+  transform: scaleX(-1);
+}
+.au-summary-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.au-summary-head h2 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.au-summary-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--hf-radius);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.au-summary-text {
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.au-summary-note {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.au-side-section {
+  display: grid;
+  gap: 4px;
+  padding-top: var(--hf-space-15);
+  border-top: 1px solid var(--hf-border);
+}
+.au-side-section h3 {
+  margin: 0;
+  color: var(--hf-muted);
+  font-family: inherit;
+  font-size: var(--hf-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.au-side-section .au-link {
+  justify-self: start;
+  padding: 0;
+  font-size: var(--hf-text-sm);
+}
+.au-side-facts {
+  padding-top: var(--hf-space-15);
+  border-top: 1px solid var(--hf-border);
+}
+.au-last-runs {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.au-last-runs a {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: var(--hf-radius);
+  color: var(--hf-text);
+  font-size: var(--hf-text-sm);
+  text-decoration: none;
+}
+.au-last-runs a:hover {
+  background: var(--hf-hover);
+}
+.au-last-runs span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-last-runs small {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+/* A read-only step's fields show what it does, as text does. */
+.au-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.au-fieldset:disabled input,
+.au-fieldset:disabled textarea,
+.au-fieldset:disabled .hf-select {
+  opacity: 0.85;
+}
+/* The runs list beside the canvas. */
+.au-runs {
+  flex: none;
+  width: 300px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid var(--hf-border);
+  background: var(--hf-sidebar);
+  scrollbar-width: thin;
+}
+.au-runs .hf-empty {
+  margin: var(--hf-space-2);
+}
+.au-runs-note {
+  margin: 0;
+  padding: var(--hf-space-2);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.au-runs-list {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+}
+.au-run-row {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: var(--hf-radius);
+  color: var(--hf-text);
+  text-decoration: none;
+}
+.au-run-row:hover {
+  background: var(--hf-hover);
+}
+.au-run-row.is-active {
+  background: var(--hf-selected);
+}
+.au-run-row-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: var(--hf-text-base);
+}
+.au-run-row-what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-run-row small {
+  padding-left: 15px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+/* The outline, in place of the canvas. */
+.au-outline-stage {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: var(--hf-space-3) var(--hf-space-2);
+}
+.au-outline-stage .au-outline {
+  max-width: 720px;
+  margin: 0 auto;
+}
+/* The toolbar floating at the canvas's foot. */
+.au-toolbar {
+  position: absolute;
+  bottom: var(--hf-space-2);
+  left: 50%;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 2 * var(--hf-space-2));
+  padding: 4px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-2);
+  transform: translateX(-50%);
+}
+.au-toolbar .hf-btn.is-active {
+  background: var(--hf-selected);
+  color: var(--hf-text);
+}
+.au-toolbar-sep {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--hf-border);
+}
+.au-zoom {
+  gap: 4px;
+  min-width: 64px;
+  font-variant-numeric: tabular-nums;
+}
+.au-add-step {
+  gap: 6px;
+}
+.au-kbd {
+  padding: 0 5px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-sm);
+  color: var(--hf-muted);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  line-height: 16px;
+}
+/* Settings, in place of the canvas. */
+.au-settings {
+  display: grid;
+  gap: var(--hf-space-3);
+  max-width: 680px;
+  margin: 0 auto;
+  padding: var(--hf-space-4) var(--hf-space-2);
+}
+.au-settings-section {
+  display: grid;
+  gap: var(--hf-space-1);
+  justify-items: stretch;
+  padding-bottom: var(--hf-space-3);
+  border-bottom: 1px solid var(--hf-border);
+}
+.au-settings-section:last-child {
+  border-bottom: 0;
+}
+.au-settings-section > .hf-btn {
+  justify-self: start;
+}
+.au-settings-section h2 {
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.au-settings-section .hf-field {
+  margin-top: 0;
+}
+.au-settings textarea {
+  resize: vertical;
+}
+.au-approval {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* A phone's inspector, in a sheet. */
+.au-sheet .au-side-body {
+  padding: 0;
+}
+
+/* A new automation: the Assistant's composer over the canvas's dots. */
+.au-new-page {
+  flex: 1;
+  min-height: 0;
+  padding: var(--hf-space-4) var(--hf-space-2);
+  overflow-y: auto;
+  background-color: var(--hf-sunken);
+  background-image: radial-gradient(
+    var(--hf-border-strong) 1.2px,
+    transparent 1.2px
+  );
+  background-size: 20px 20px;
+}
+.au-new-inner {
+  display: grid;
+  justify-items: center;
+  gap: var(--hf-space-15);
+  max-width: 720px;
+  min-height: 100%;
+  margin: 0 auto;
+  align-content: center;
+  text-align: center;
+}
+.au-new-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.au-new-title {
+  margin: 0;
+  font-family: inherit;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.au-new-text {
+  max-width: 520px;
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.au-new-composer {
+  justify-self: stretch;
+  text-align: left;
+}
+.au-new-composer .ag-composer {
+  padding: 12px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+  box-shadow: var(--hf-shadow-2);
+}
+.au-new-composer .ag-input {
+  min-height: 72px;
+}
+.au-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.au-chip {
+  padding: 7px 12px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-surface);
+  color: var(--hf-text);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  cursor: pointer;
+  transition: border-color var(--hf-duration) var(--hf-ease);
+}
+.au-chip:hover {
+  border-color: var(--hf-accent-border);
+}
+.au-or {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+/* The conversation, whole, in one column, its composer pinned under it. */
+.au-chat {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--hf-surface);
+}
+.au-chat .ag-log-body {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: var(--hf-space-3) var(--hf-space-2);
+}
+.au-chat-composer {
+  flex: none;
+  border-top: 1px solid var(--hf-border);
+}
+.au-chat-composer .ag-composer {
+  max-width: 760px;
+  margin: 0 auto;
+  border-top: 0;
+}
+.au-chat .ag-runtime {
+  max-width: 760px;
+  margin: var(--hf-space-15) auto 0;
+}
+
+@media (max-width: 1100px) {
+  .au-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-  .au-builder-side {
-    position: static;
-    max-height: none;
+  .au-side {
+    width: 320px;
+  }
+  .au-runs {
+    width: 260px;
+  }
+}
+@media (max-width: 800px) {
+  .au-page {
+    /* Under the mobile bar. */
+    height: calc(100dvh - var(--hf-shell-top) - 52px);
+  }
+  .au-top {
+    padding: 6px var(--hf-space-2);
+  }
+  .au-top .au-tabs {
+    order: 3;
+    flex-basis: 100%;
+    margin: 0 calc(-1 * var(--hf-space-2)) -6px;
+    padding: 0 var(--hf-space-1);
+    border-top: 1px solid var(--hf-border);
+  }
+  .au-top .au-tabs .hf-tab {
+    height: 40px;
+  }
+  .au-frame {
+    padding: var(--hf-space-2);
+  }
+  .au-body {
+    flex-direction: column;
+  }
+  .au-runs {
+    width: auto;
+    max-height: 38%;
+    border-right: 0;
+    border-bottom: 1px solid var(--hf-border);
+  }
+  .au-stage {
+    min-height: 0;
   }
 }
 @media (max-width: 640px) {
-  .au-builder-fields {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--hf-space-1);
+  .au-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .au-flow {
-    height: 380px;
+  .au-new-page {
+    padding: var(--hf-space-3) var(--hf-space-2);
   }
-  .au-builder-actions > * {
-    flex: 1;
+  .au-new-title {
+    font-size: 19px;
+  }
+  .au-toolbar {
+    bottom: var(--hf-space-1);
   }
 }

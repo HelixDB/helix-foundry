@@ -1465,6 +1465,11 @@ func (u Unimplemented) ListFoundryAutomations(context.Context, string) ([]*model
 	return nil, nil
 }
 
+func (u Unimplemented) FoundryAutomationRunStats(context.Context, string, time.Time) (*model.FoundryAutomationRunStats, error) {
+	u.unimplemented("FoundryAutomationRunStats")
+	return nil, nil
+}
+
 func (u Unimplemented) GetFoundryAutomationRun(context.Context, string, string) (*model.FoundryAutomationRun, error) {
 	u.unimplemented("GetFoundryAutomationRun")
 	return nil, nil

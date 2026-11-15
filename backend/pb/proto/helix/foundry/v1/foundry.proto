@@ -2340,10 +2340,15 @@ message UnpublishFoundryDashboardRequest {
 }
 
 // ListFoundryAutomationsRequest lists the workspace's automations, most
-// recently changed first, each with its newest run, without their specs: at
-// most foundry.automations.max_per_workspace, so one answer holds all.
+// recently changed first, each with its newest run and when it last failed,
+// without their specs: at most foundry.automations.max_per_workspace, so one
+// answer holds all. With stats_days (1 to 30), each also counts its runs of
+// that many days, today included, by the days of time_zone (an IANA zone;
+// UTC when empty), and the answer sums them in summary.
 message ListFoundryAutomationsRequest {
   string workspace_id = 1;
+  int32 stats_days = 2;
+  string time_zone = 3;
 }
 message ListFoundryAutomationsResponse {
   repeated FoundryAutomation automations = 1;
@@ -2352,6 +2357,8 @@ message ListFoundryAutomationsResponse {
   // Whether a notify step emails here: false on a standalone install, which
   // sends no email and records the step as skipped.
   bool email = 3;
+  // The workspace's runs of the days asked for; unset without stats_days.
+  FoundryAutomationRunSummary summary = 4;
 }
 message GetFoundryAutomationRequest {
   string workspace_id = 1;

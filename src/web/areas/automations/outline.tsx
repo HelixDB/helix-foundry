@@ -30,12 +30,12 @@ import {
 } from "./model";
 import { nodeIcon, stepTitle } from "./parts";
 
-// The builder's graph as an outline: every step in the order a run takes
+// An automation's graph as an outline: every step in the order a run takes
 // them, what comes before and after each (a condition's by when met and
-// otherwise), and a menu to add a step after it, join it to another, cut a
-// join or remove it. The same graph as the canvas, for keyboards and screen
-// readers, and the place to edit it on a phone, where the canvas only shows
-// it.
+// otherwise), and, to whoever edits it, a menu to add a step after it, join
+// it to another, cut a join or remove it. The same graph as the canvas, for
+// keyboards and screen readers, and the place to edit it on a phone, where
+// the canvas only shows it.
 
 const ADDABLE: Exclude<Kind, "trigger">[] = [
   "assistant",
@@ -57,7 +57,8 @@ export function Outline({
   email: boolean;
   selected?: string;
   onSelect: (id: string) => void;
-  onChange: (spec: AutomationSpec) => void;
+  // Unset, it only shows the graph.
+  onChange?: (spec: AutomationSpec) => void;
 }) {
   const read = parseSpec(spec);
   // A graph that doesn't read yet keeps the order it was drawn in.
@@ -126,72 +127,74 @@ export function Outline({
                 )}
               </span>
             </button>
-            <DropdownMenu
-              label={`Change the step: ${title(id)}`}
-              align="end"
-              triggerClassName="hf-btn hf-btn--ghost hf-btn--sm hf-btn--icon"
-              trigger={<MoreHorizontal size={16} aria-hidden />}
-            >
-              <MenuLabel>Add a step after it</MenuLabel>
-              {ADDABLE.map((kind) => (
-                <MenuItem
-                  key={kind}
-                  icon={Plus}
-                  disabled={
-                    spec.nodes.length >= 50 ||
-                    (n.kind === "condition" && outOf.length >= 2)
-                  }
-                  onSelect={() => {
-                    const added = addStep(spec, kind, id);
-                    onChange(added.spec);
-                    onSelect(added.id);
-                  }}
-                >
-                  {KIND_LABELS[kind]}
-                </MenuItem>
-              ))}
-              {!!joinable.length && (
-                <>
-                  <MenuSeparator />
-                  <MenuLabel>Go on to</MenuLabel>
-                  {joinable.map((x) => (
-                    <MenuItem
-                      key={x.id}
-                      onSelect={() => onChange(connect(spec, id, x.id))}
-                    >
-                      {title(x.id)}
-                    </MenuItem>
-                  ))}
-                </>
-              )}
-              {!!outOf.length && (
-                <>
-                  <MenuSeparator />
-                  <MenuLabel>Stop going on to</MenuLabel>
-                  {outOf.map((e) => (
-                    <MenuItem
-                      key={e.to}
-                      icon={Unlink}
-                      onSelect={() => onChange(disconnect(spec, id, e.to))}
-                    >
-                      {title(e.to) + via(e.branch)}
-                    </MenuItem>
-                  ))}
-                </>
-              )}
-              {n.kind !== "trigger" && (
-                <>
-                  <MenuSeparator />
+            {onChange && (
+              <DropdownMenu
+                label={`Change the step: ${title(id)}`}
+                align="end"
+                triggerClassName="hf-btn hf-btn--ghost hf-btn--sm hf-btn--icon"
+                trigger={<MoreHorizontal size={16} aria-hidden />}
+              >
+                <MenuLabel>Add a step after it</MenuLabel>
+                {ADDABLE.map((kind) => (
                   <MenuItem
-                    icon={Trash2}
-                    danger
-                    onSelect={() => onChange(removeStep(spec, id))}
+                    key={kind}
+                    icon={Plus}
+                    disabled={
+                      spec.nodes.length >= 50 ||
+                      (n.kind === "condition" && outOf.length >= 2)
+                    }
+                    onSelect={() => {
+                      const added = addStep(spec, kind, id);
+                      onChange(added.spec);
+                      onSelect(added.id);
+                    }}
                   >
-                    Remove this step
+                    {KIND_LABELS[kind]}
                   </MenuItem>
-                </>
-              )}
-            </DropdownMenu>
+                ))}
+                {!!joinable.length && (
+                  <>
+                    <MenuSeparator />
+                    <MenuLabel>Go on to</MenuLabel>
+                    {joinable.map((x) => (
+                      <MenuItem
+                        key={x.id}
+                        onSelect={() => onChange(connect(spec, id, x.id))}
+                      >
+                        {title(x.id)}
+                      </MenuItem>
+                    ))}
+                  </>
+                )}
+                {!!outOf.length && (
+                  <>
+                    <MenuSeparator />
+                    <MenuLabel>Stop going on to</MenuLabel>
+                    {outOf.map((e) => (
+                      <MenuItem
+                        key={e.to}
+                        icon={Unlink}
+                        onSelect={() => onChange(disconnect(spec, id, e.to))}
+                      >
+                        {title(e.to) + via(e.branch)}
+                      </MenuItem>
+                    ))}
+                  </>
+                )}
+                {n.kind !== "trigger" && (
+                  <>
+                    <MenuSeparator />
+                    <MenuItem
+                      icon={Trash2}
+                      danger
+                      onSelect={() => onChange(removeStep(spec, id))}
+                    >
+                      Remove this step
+                    </MenuItem>
+                  </>
+                )}
+              </DropdownMenu>
+            )}
           </li>
         );
       })}

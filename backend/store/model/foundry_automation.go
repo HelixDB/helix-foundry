@@ -77,6 +77,43 @@ type FoundryAutomation struct {
 	// LastRun is its newest run, without its spec; nil before its first. Set
 	// by the reads that list and get automations.
 	LastRun *FoundryAutomationRun
+	// LastFailedAt is when its newest failed run was created; nil when none
+	// failed. Set by the read that lists automations.
+	LastFailedAt *time.Time
+}
+
+// FoundryAutomationRunCounts counts runs created within some time: every
+// one, those that succeeded and failed, what they spent, and the actions
+// their Assistant steps prepared that still wait for the owner.
+type FoundryAutomationRunCounts struct {
+	Runs      int
+	Succeeded int
+	Failed    int
+	USDMicros int64
+	Waiting   int
+}
+
+// Add adds o's counts to c's.
+func (c FoundryAutomationRunCounts) Add(o FoundryAutomationRunCounts) FoundryAutomationRunCounts {
+	return FoundryAutomationRunCounts{Runs: c.Runs + o.Runs, Succeeded: c.Succeeded + o.Succeeded, Failed: c.Failed + o.Failed,
+		USDMicros: c.USDMicros + o.USDMicros, Waiting: c.Waiting + o.Waiting}
+}
+
+// FoundryAutomationRunSlot is the runs of one status created within a
+// quarter of an hour (UTC) starting At.
+type FoundryAutomationRunSlot struct {
+	At     time.Time
+	Status FoundryAutomationRunStatus
+	Runs   int
+}
+
+// FoundryAutomationRunStats is a workspace's runs created since some time:
+// each automation's counts (an automation with none is missing), and the
+// runs by quarter hour and status, so a reader can count them by the days
+// of any time zone.
+type FoundryAutomationRunStats struct {
+	ByAutomation map[string]FoundryAutomationRunCounts
+	Slots        []FoundryAutomationRunSlot
 }
 
 // FoundryAutomationCursor is the newest ended work an event trigger has seen:

@@ -247,6 +247,21 @@ export const mock = {
     });
     return { status: res.status, body: await res.json() };
   },
+  /** Records ended runs of an automation, each `ago` ms before now: its history. */
+  pastRuns: async (
+    automationId: string,
+    runs: {
+      status: "succeeded" | "failed" | "cancelled" | "skipped";
+      ago: number;
+      usdMicros?: number;
+    }[],
+  ) => {
+    const res = await fetch(
+      `${MOCK}/__mock/automations/${encodeURIComponent(automationId)}/past-runs`,
+      { method: "POST", body: JSON.stringify({ runs }) },
+    );
+    if (!res.ok) throw new Error(`past runs: ${res.status}`);
+  },
   /**
    * Sends pieces to an API source as an agent does through the Helix MCP
    * (the site never sends any): stored whole, or refused whole with the

@@ -100,7 +100,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	}
 	token := req.GetClientToken()
 	page := foundryagent.PageContext{OntologyID: req.GetPageContext().GetOntologyId(), LoadID: req.GetPageContext().GetLoadId(),
-		DashboardID: req.GetPageContext().GetDashboardId()}
+		DashboardID: req.GetPageContext().GetDashboardId(), NewAutomation: req.GetPageContext().GetNewAutomation()}
 	switch {
 	case token == "" || len(token) > maxClientTokenLength:
 		return nil, status.Errorf(codes.InvalidArgument, "client_token is required, at most %d characters", maxClientTokenLength)
@@ -688,7 +688,8 @@ func agentTurnToProto(t *foundrymodel.FoundryAgentTurn) *foundryv1.FoundryAgentT
 	}
 	var page foundryagent.PageContext
 	if len(t.PageContext) > 0 && json.Unmarshal(t.PageContext, &page) == nil {
-		out.PageContext = &foundryv1.FoundryAgentPageContext{OntologyId: page.OntologyID, LoadId: page.LoadID, DashboardId: page.DashboardID}
+		out.PageContext = &foundryv1.FoundryAgentPageContext{OntologyId: page.OntologyID, LoadId: page.LoadID, DashboardId: page.DashboardID,
+			NewAutomation: page.NewAutomation}
 	}
 	if t.Error != nil {
 		out.Error = *t.Error

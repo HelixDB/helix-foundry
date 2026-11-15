@@ -1,25 +1,30 @@
 import { lazy } from "react";
 import { Zap } from "lucide-react";
 import type { AreaShell } from "../../shell/types";
-import { automationPaths as paths } from "./paths";
+import { automationPaths as paths, openAutomation } from "./paths";
 import { automationQueries } from "./queries";
 
-// The Automations section's list in the sidebar, under the sections (by
-// recency, each with its status), and the command palette's group.
+// The Automations section's list in the sidebar, under the sections, while
+// an automation (or one of its runs) is open: the way between them. The
+// overview and the new page have their own; the command palette's group.
 
 const AutomationList = lazy(() =>
   import("./sidebar").then((m) => ({ default: m.AutomationList })),
 );
 
 const STATUS: Record<string, string> = {
-  active: "On",
+  active: "Live",
   paused: "Paused",
-  needs_approval: "Waits for approval",
+  needs_approval: "Needs approval",
 };
 
 export const automationsShell: AreaShell = {
   sidebar: {
-    automations: { label: "Automations", component: AutomationList },
+    automations: {
+      label: "Automations",
+      component: AutomationList,
+      shows: (pathname) => !!openAutomation(pathname),
+    },
   },
   palette: [
     {

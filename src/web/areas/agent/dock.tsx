@@ -116,7 +116,7 @@ export function AgentDock({
   onClose: () => void;
   onNavigate?: () => void;
 }) {
-  const { id: ws, role } = useWorkspace(),
+  const { id: ws } = useWorkspace(),
     qc = useQueryClient();
   const [threadId, setThreadId] = useState(() => readStorage(threadKey(ws)));
   useEffect(() => setThreadId(readStorage(threadKey(ws))), [ws]);
@@ -140,25 +140,7 @@ export function AgentDock({
     (threadId && thread.data?.thread.title) ||
     (threadId ? "Thread" : "New thread");
   const disabled = agentRefusal(threads.error) === "FOUNDRY_AGENT_DISABLED";
-  // Where the open thread runs (a new one: the workspace's setting, which
-  // only a local install's owner reads), read often while its helper isn't
-  // running. Unknown until the open thread is read.
-  const runtimeNow: AgentRuntime | undefined = threadId
-    ? thread.data?.thread.runtime
-    : undefined;
-  const setting = useQuery({
-    ...agentQueries.runtime(ws),
-    enabled: LOCAL && role === "owner",
-    retry: false,
-    refetchInterval: (q) =>
-      q.state.data && threadRuntime(runtimeNow, q.state.data).state !== "ready"
-        ? RUNTIME_POLL_MS
-        : false,
-  });
-  const where =
-    !threadId || thread.data
-      ? threadRuntime(runtimeNow, setting.data)
-      : undefined;
+  const where = useThreadRuntime(threadId, thread.data);
   return (
     <div className="ag-dock" data-replay-block>
       <header className="ag-head">
@@ -272,12 +254,39 @@ export function AgentDock({
 }
 
 /**
+ * Where a thread runs (a new one, `threadId` empty: the workspace's setting,
+ * which only a local install's owner reads), read often while its helper
+ * isn't running; undefined until the thread is read.
+ */
+export function useThreadRuntime(
+  threadId: string,
+  thread?: AgentThreadResponse,
+) {
+  const { id: ws, role } = useWorkspace();
+  const runtimeNow: AgentRuntime | undefined = threadId
+    ? thread?.thread.runtime
+    : undefined;
+  const setting = useQuery({
+    ...agentQueries.runtime(ws),
+    enabled: LOCAL && role === "owner",
+    retry: false,
+    refetchInterval: (q) =>
+      q.state.data && threadRuntime(runtimeNow, q.state.data).state !== "ready"
+        ? RUNTIME_POLL_MS
+        : false,
+  });
+  return !threadId || thread
+    ? threadRuntime(runtimeNow, setting.data)
+    : undefined;
+}
+
+/**
  * Where the open thread (or a new one) runs, when it is a helper's: on the
  * person's subscription; while none runs it, how to start the helper paired
  * for it, or, with none paired, to pair one in Settings (the WFE refuses to
  * send until one runs).
  */
-function RuntimeLine({
+export function RuntimeLine({
   runtime,
   state,
   thread,
@@ -329,8 +338,11 @@ function RuntimeLine({
   );
 }
 
-/** The open thread's turns, following its end until the reader scrolls up. */
-function Transcript({
+/**
+ * The open thread's turns, following its end until the reader scrolls up:
+ * the dock's, and a page's that holds one conversation (a new automation's).
+ */
+export function Transcript({
   data,
   loading,
   failed,
@@ -1005,15 +1017,18 @@ function PlainText({
  * take off. Send waits while a turn of the thread is live or an action of
  * it runs, and while the setting's tool check failed (its turns would fail
  * at once, each a message of the hour's), saying why; Stop ends the live
- * turn.
+ * turn. A page that holds a conversation gives its own `placeholder` and
+ * may start it with `initialText` (a template's words).
  */
-function Composer({
+export function Composer({
   threadId,
   thread,
   runtime,
   hostState,
   onSent,
   onNavigate,
+  placeholder = "Ask about your workspace, or ask it to do something…",
+  initialText = "",
 }: {
   // The open thread; empty for a new one. `thread` once it is read.
   threadId: string;
@@ -1025,17 +1040,19 @@ function Composer({
   hostState: RuntimeState;
   onSent: (threadId: string) => void;
   onNavigate?: () => void;
+  placeholder?: string;
+  initialText?: string;
 }) {
   const { id: ws, role } = useWorkspace(),
     location = useLocation(),
     qc = useQueryClient();
   const page = pageContext(location.pathname, location.search),
     pageKey = page
-      ? `${page.ontologyId || ""}/${page.loadId || ""}/${page.dashboardId || ""}`
+      ? `${page.ontologyId || ""}/${page.loadId || ""}/${page.dashboardId || ""}/${page.newAutomation ? "new" : ""}`
       : "";
   const [dropped, setDropped] = useState("");
   const context = page && dropped !== pageKey ? page : null;
-  const [text, setText] = useState(""),
+  const [text, setText] = useState(initialText),
     [token, setToken] = useState(() => crypto.randomUUID()),
     [pending, setPending] = useState(false),
     [error, setError] = useState<unknown>(null);
@@ -1134,7 +1151,7 @@ function Composer({
           aria-describedby={hint}
           rows={2}
           value={text}
-          placeholder="Ask about your workspace, or ask it to do something…"
+          placeholder={placeholder}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (
@@ -1208,6 +1225,39 @@ function PageChip({
   onDrop: () => void;
 }): ReactNode {
   const { id: ws } = useWorkspace();
+  if (context.newAutomation)
+    return (
+      <span className="ag-chip">
+        <Tag>Making a new automation</Tag>
+        <DropChip onDrop={onDrop} />
+      </span>
+    );
+  return <NamedChip context={context} onDrop={onDrop} ws={ws} />;
+}
+
+/** The chip's way to leave the page out of the message. */
+const DropChip = ({ onDrop }: { onDrop: () => void }) => (
+  <button
+    type="button"
+    className="hf-btn hf-btn--ghost hf-btn--sm hf-btn--icon"
+    aria-label="Don’t send this page"
+    title="Don’t send this page"
+    onClick={onDrop}
+  >
+    <X size={13} aria-hidden />
+  </button>
+);
+
+/** An ontology's or a dashboard's chip, named from what the app has read. */
+function NamedChip({
+  context,
+  onDrop,
+  ws,
+}: {
+  context: AgentPageContext;
+  onDrop: () => void;
+  ws: string;
+}): ReactNode {
   const ontologies = useQuery({
     ...ontologyQueries.list(ws),
     enabled: !!context.ontologyId,
@@ -1234,15 +1284,7 @@ function PageChip({
           ? ` / ${load ? `${loadVersion(load)} load` : "a load"}`
           : ""}
       </Tag>
-      <button
-        type="button"
-        className="hf-btn hf-btn--ghost hf-btn--sm hf-btn--icon"
-        aria-label="Don’t send this page"
-        title="Don’t send this page"
-        onClick={onDrop}
-      >
-        <X size={13} aria-hidden />
-      </button>
+      <DropChip onDrop={onDrop} />
     </span>
   );
 }

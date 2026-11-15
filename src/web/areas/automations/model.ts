@@ -61,14 +61,21 @@ const CLOCK = /^([01][0-9]|2[0-3]):([0-5][0-9])$/;
 
 /**
  * Whether `name` is an IANA time zone the backend reads (automation.Zone):
- * not empty, not Local, no spaces, and known.
+ * not empty, not Local, no spaces, and known; not ICU's Etc/Unknown, which
+ * a browser that can't tell its zone reports and the zone database lacks.
  *
  * @example
  * validZone("Europe/London"); // true
  * validZone("Local"); // false
  */
-export function validZone(name: string): boolean {
-  if (!name || name === "Local" || name.length > 64 || /\s/.test(name))
+export function validZone(name: string | undefined): boolean {
+  if (
+    !name ||
+    name === "Local" ||
+    name === "Etc/Unknown" ||
+    name.length > 64 ||
+    /\s/.test(name)
+  )
     return false;
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: name });
@@ -76,6 +83,17 @@ export function validZone(name: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * The browser's time zone, else UTC (a browser that can't tell reports
+ * none, or one the backend refuses): a schedule's default, left out of its
+ * words, and the days the overview counts by.
+ */
+export function here(): string {
+  const zone: string | undefined =
+    Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return validZone(zone) ? zone! : "UTC";
 }
 
 // ---------------------------------------------------------------- reading
@@ -1240,7 +1258,7 @@ export const TEMPLATES: readonly Template[] = [
   {
     id: "blank",
     title: "Start from scratch",
-    description: "A step you run yourself; add a trigger and steps as you go.",
+    description: "Only what starts it: choose a trigger, then add steps.",
     needs: [],
     build: () => ({
       name: "New automation",
@@ -1254,14 +1272,8 @@ export const TEMPLATES: readonly Template[] = [
             config: { kind: "manual" },
             position: at(0, 0),
           },
-          {
-            id: "ask",
-            kind: "assistant",
-            config: { instruction: "" },
-            position: at(0, ROW),
-          },
         ],
-        edges: [{ from: "start", to: "ask" }],
+        edges: [],
       },
     }),
   },
@@ -1473,6 +1485,83 @@ export const setConfig = (
       : n,
   ),
 });
+
+/** How far apart tidy() sets the steps of a row. */
+const COLUMN = 280;
+
+/**
+ * The spec laid out anew, top to bottom: each step a row below the
+ * furthest step before it (the longest way from the trigger), the steps of
+ * a row side by side in the order they stood, centred under the trigger;
+ * steps no way from the trigger reaches go in a row of their own last.
+ * Only positions change, so it runs the same steps (sameSteps).
+ *
+ * @example
+ * tidy({ v: 1, nodes: [
+ *   { id: "start", kind: "trigger", config: { kind: "manual" }, position: { x: 90, y: 7 } },
+ *   { id: "tell", kind: "notify", config: { message: "" }, position: { x: -40, y: 400 } },
+ * ], edges: [{ from: "start", to: "tell" }] }).nodes.map((n) => n.position);
+ * // [{ x: 0, y: 0 }, { x: 0, y: 150 }]
+ */
+export function tidy(spec: AutomationSpec): AutomationSpec {
+  const trigger = spec.nodes.find((n) => n.kind === "trigger");
+  const reached = new Set(
+    trigger
+      ? spec.nodes
+          .filter((n) => reaches(spec, trigger.id, n.id))
+          .map((n) => n.id)
+      : [],
+  );
+  if (trigger) reached.add(trigger.id);
+  // Longest way from the trigger, in an order where every step comes
+  // after the steps before it (Kahn's): a cycle, which the canvas never
+  // makes, leaves its steps unplaced, and they go last.
+  const row = new Map<string, number>();
+  const into = new Map(
+    [...reached].map((id) => [
+      id,
+      spec.edges.filter((e) => e.to === id && reached.has(e.from)).length,
+    ]),
+  );
+  const ready = [...reached].filter((id) => !into.get(id));
+  for (const id of ready) row.set(id, 0);
+  while (ready.length) {
+    const id = ready.shift()!;
+    for (const e of spec.edges.filter(
+      (x) => x.from === id && reached.has(x.to),
+    )) {
+      row.set(e.to, Math.max(row.get(e.to) ?? 0, row.get(id)! + 1));
+      into.set(e.to, into.get(e.to)! - 1);
+      if (!into.get(e.to)) ready.push(e.to);
+    }
+  }
+  const last =
+    Math.max(
+      -1,
+      ...[...row].filter(([id]) => !into.get(id)).map(([, r]) => r),
+    ) + 1;
+  const rows = new Map<number, AutomationNode[]>();
+  for (const n of spec.nodes) {
+    const r = into.get(n.id) ? last : (row.get(n.id) ?? last);
+    rows.set(r, [...(rows.get(r) ?? []), n]);
+  }
+  const placed = new Map<string, { x: number; y: number }>();
+  for (const [r, nodes] of rows) {
+    const sorted = [...nodes].sort(
+      (a, b) => a.position.x - b.position.x || a.id.localeCompare(b.id),
+    );
+    sorted.forEach((n, i) =>
+      placed.set(n.id, {
+        x: Math.round((i - (sorted.length - 1) / 2) * COLUMN),
+        y: r * ROW,
+      }),
+    );
+  }
+  return {
+    ...spec,
+    nodes: spec.nodes.map((n) => ({ ...n, position: placed.get(n.id)! })),
+  };
+}
 
 /** The spec with a node moved on the canvas. */
 export const moveNode = (

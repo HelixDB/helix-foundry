@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   AutomationNode,
   AutomationSpec,
@@ -41,12 +41,18 @@ import {
   setConfig,
   stepStates,
   stoppedText,
+  tidy,
   triggerOfKind,
   triggerText,
   usdText,
   validZone,
+  here,
   type Names,
 } from "@/web/areas/automations/model";
+import {
+  ACTIVE_POLL_MS,
+  automationQueries,
+} from "@/web/areas/automations/queries";
 
 // An automation's spec as the site reads it (src/web/areas/automations/
 // model.ts), a port of the backend's package automation: what ParseSpec
@@ -501,7 +507,7 @@ describe("parseSpec", () => {
           "load-after-sync": 2,
           "check-documents": 1,
           "load-ready-report": 1,
-          blank: 1,
+          blank: 0,
         }[t.id],
       );
     }
@@ -686,8 +692,31 @@ describe("schedules", () => {
       "Mars/Base",
       "Europe/ London",
       "x".repeat(65),
+      "Etc/Unknown",
+      undefined,
     ])
       expect(validZone(z), z).toBe(false);
+  });
+  it("reads the browser's time zone, else UTC", () => {
+    const real = Intl.DateTimeFormat;
+    const as = (timeZone: string | undefined) =>
+      vi.spyOn(Intl, "DateTimeFormat").mockImplementation(function () {
+        return {
+          resolvedOptions: () => ({ timeZone }),
+        } as unknown as Intl.DateTimeFormat;
+      });
+    try {
+      as("Asia/Tokyo");
+      expect(here()).toBe("Asia/Tokyo");
+      for (const z of ["Etc/Unknown", undefined, ""]) {
+        vi.restoreAllMocks();
+        as(z);
+        expect(here(), String(z)).toBe("UTC");
+      }
+    } finally {
+      vi.restoreAllMocks();
+      expect(Intl.DateTimeFormat).toBe(real);
+    }
   });
 });
 
@@ -1061,6 +1090,89 @@ describe("edits", () => {
   });
 });
 
+describe("tidy", () => {
+  const places = (s: AutomationSpec) =>
+    Object.fromEntries(s.nodes.map((n) => [n.id, n.position]));
+
+  it("lays each step a row below the furthest step before it, a row's steps side by side and centred", () => {
+    const check = node(
+      "check",
+      "condition",
+      { check: "answer", equals: "yes" },
+      { x: 50, y: 900 },
+    );
+    const yes = node("yes", "notify", { message: "Yes" }, { x: -500, y: 3 });
+    const no = node("no", "notify", { message: "No" }, { x: 500, y: 3 });
+    // "late" comes after "yes" and after "ask": the longer way places it.
+    const late = node("late", "notify", { message: "" }, { x: 0, y: 0 });
+    const s = spec(
+      [manual, ask(), check, yes, no, late],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "check" },
+        { from: "check", to: "yes", branch: "true" },
+        { from: "check", to: "no", branch: "false" },
+        { from: "yes", to: "late" },
+        { from: "ask", to: "late" },
+      ],
+    );
+    const laid = tidy(s);
+    expect(places(laid)).toEqual({
+      start: { x: 0, y: 0 },
+      ask: { x: 0, y: 150 },
+      check: { x: 0, y: 300 },
+      yes: { x: -140, y: 450 },
+      no: { x: 140, y: 450 },
+      late: { x: 0, y: 600 },
+    });
+    // Only places change: it runs the same steps, in the same order.
+    expect(sameSteps(s, laid)).toBe(true);
+    expect(laid.edges).toEqual(s.edges);
+    expect(tidy(laid)).toEqual(laid);
+  });
+
+  it("puts steps no way from the trigger reaches in a row of their own, last", () => {
+    const loose = node("loose", "notify", { message: "" }, { x: 30, y: -20 });
+    const other = node(
+      "other",
+      "assistant",
+      { instruction: "" },
+      { x: 10, y: 0 },
+    );
+    const laid = tidy(
+      spec([loose, manual, tell, other], [{ from: "start", to: "tell" }]),
+    );
+    expect(places(laid)).toEqual({
+      start: { x: 0, y: 0 },
+      tell: { x: 0, y: 150 },
+      other: { x: -140, y: 300 },
+      loose: { x: 140, y: 300 },
+    });
+  });
+
+  it("places a trigger alone, and what a cycle holds last", () => {
+    expect(places(tidy(spec([manual])))).toEqual({ start: { x: 0, y: 0 } });
+    const a = node("a", "notify", { message: "" }),
+      b = node("b", "notify", { message: "" });
+    const laid = tidy(
+      spec(
+        [manual, a, b],
+        [
+          { from: "start", to: "a" },
+          { from: "a", to: "b" },
+          { from: "b", to: "a" },
+        ],
+      ),
+    );
+    expect(places(laid).start).toEqual({ x: 0, y: 0 });
+    // The cycle's steps, which no run could order, go in the last row.
+    expect(places(laid).a!.y).toBe(150);
+    expect(places(laid).b!.y).toBe(150);
+    // With no trigger at all, everything is unreached.
+    expect(places(tidy(spec([a])))).toEqual({ a: { x: 0, y: 0 } });
+  });
+});
+
 describe("runs", () => {
   it("reads a step's output and a run's event without trust", () => {
     expect(
@@ -1229,5 +1341,29 @@ describe("automations", () => {
     );
     expect(automationsUnavailable(refused)).toBe(false);
     expect(automationsUnavailable(new Error("x"))).toBe(false);
+  });
+});
+
+describe("the overview's reads", () => {
+  const poll = (automations: object[]) =>
+    automationQueries
+      .overview("ws", 7, "UTC")
+      .refetchInterval({ state: { data: { automations } as never } });
+  it("reads again while one is live or runs, at an active automation's pace", () => {
+    expect(poll([{ status: "paused" }, { status: "needs_approval" }])).toBe(
+      false,
+    );
+    expect(poll([])).toBe(false);
+    // A trigger may fire any time: its run shows without a reload.
+    expect(poll([{ status: "paused" }, { status: "active" }])).toBe(
+      ACTIVE_POLL_MS,
+    );
+    // A live run's counts are read no faster: each read counts every run.
+    expect(poll([{ status: "paused", lastRun: { status: "running" } }])).toBe(
+      ACTIVE_POLL_MS,
+    );
+    expect(
+      automationQueries.overview("ws", 7, "UTC").refetchInterval({ state: {} }),
+    ).toBe(false);
   });
 });

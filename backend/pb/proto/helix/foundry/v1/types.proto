@@ -2572,6 +2572,8 @@ message FoundryAgentPageContext {
   string load_id = 2;
   // The dashboard open, if any.
   string dashboard_id = 3;
+  // The person is on the page that starts a new automation.
+  bool new_automation = 4;
 }
 
 // FoundryAgentThread is a conversation with the Assistant, private to its user.
@@ -2831,6 +2833,41 @@ message FoundryAutomation {
   bool can_resume = 25;
   bool can_run = 26;
   bool can_delete = 27;
+  // When its newest failed run started, in a list; unset when none failed,
+  // and outside a list.
+  google.protobuf.Timestamp last_failed_at = 28;
+  // Its runs of the days a list asked for (stats_days); unset otherwise.
+  FoundryAutomationRunCounts stats = 29;
+}
+
+// FoundryAutomationRunCounts counts runs started within some days: every
+// one (queued, running, cancelled and skipped too), those that succeeded and
+// failed, what their Assistant steps spent, and the actions those steps
+// prepared that still wait for the automation's owner (counted for its
+// owner, and owners and admins, only; 0 for another member).
+message FoundryAutomationRunCounts {
+  int32 runs = 1;
+  int32 succeeded = 2;
+  int32 failed = 3;
+  int64 usd_micros = 4;
+  int32 waiting = 5;
+}
+
+// FoundryAutomationRunDay is one day's runs, by the list's time zone: date
+// is YYYY-MM-DD; other counts every run that neither succeeded nor failed.
+message FoundryAutomationRunDay {
+  string date = 1;
+  int32 succeeded = 2;
+  int32 failed = 3;
+  int32 other = 4;
+}
+
+// FoundryAutomationRunSummary is a workspace's runs of the last days: their
+// counts, and each day's, oldest first, every day of them listed.
+message FoundryAutomationRunSummary {
+  int32 days = 1;
+  FoundryAutomationRunCounts totals = 2;
+  repeated FoundryAutomationRunDay by_day = 3;
 }
 
 // FoundryAutomationRun is one run of an automation.
