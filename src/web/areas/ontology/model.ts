@@ -1504,7 +1504,7 @@ export function readAgentBundle(
       items: texts(q.items),
       text: text(q.text),
       header: text(q.header) || null,
-      // Options are {label, description}; a version from before 4.24.0
+      // Options are {label, description}; a version from before 4.25.0
       // has bare labels.
       options: (Array.isArray(q.options) ? q.options : [])
         .map((o) =>

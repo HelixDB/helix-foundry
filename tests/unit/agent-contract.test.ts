@@ -18,8 +18,8 @@ import { draftFromTables } from "../../mock/routes/ontology-agent";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("the vendored agent contract", () => {
-  it("is 4.24.0, the engine that indexes reviews by name", () => {
-    expect(AGENT_CONTRACT_VERSION).toBe("4.24.0 sha256:6fda806e8d04d494");
+  it("is 4.25.0, the engine whose questions offer options", () => {
+    expect(AGENT_CONTRACT_VERSION).toBe("4.25.0 sha256:a8e6050876ecd579");
   });
 
   it("checks a value against a schema or one of its definitions", () => {
