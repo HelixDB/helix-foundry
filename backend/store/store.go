@@ -443,6 +443,9 @@ type Store interface {
 	FinishFoundryAgentText(ctx context.Context, id, workerID string, step int, events []json.RawMessage) error
 	AppendFoundryAgentMessages(ctx context.Context, turnID, workerID string, messages []model.FoundryAgentMessage, keep int) error
 	SettleFoundryAgentTurn(ctx context.Context, id, workerID string, outcome model.FoundryAgentTurnOutcome) error
+	// SetFoundryAgentThreadSession keeps the helper's CLI session that the
+	// turn's thread's next turn resumes, under the turn's lease.
+	SetFoundryAgentThreadSession(ctx context.Context, turnID, workerID, sessionID string) error
 	RecordFoundryAgentAction(ctx context.Context, workerID string, a *model.FoundryAgentAction, maxPending int,
 		card func(*model.FoundryAgentAction) (json.RawMessage, error)) (*model.FoundryAgentAction, error)
 	ClaimFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string) (*model.FoundryAgentAction, error)

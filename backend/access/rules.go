@@ -39,6 +39,11 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_ExecuteFoundryAgentAction_FullMethodName:  Deny,
 	foundryv1.FoundryService_RefreshFoundryAgentAction_FullMethodName:  Deny,
 	foundryv1.FoundryService_DismissFoundryAgentAction_FullMethodName:  Deny,
+	// Where a local install's Assistant runs: its owner's.
+	foundryv1.FoundryService_GetFoundryAgentRuntime_FullMethodName:        Deny,
+	foundryv1.FoundryService_UpdateFoundryAgentRuntime_FullMethodName:     Deny,
+	foundryv1.FoundryService_CreateFoundryAgentHostPairing_FullMethodName: Deny,
+	foundryv1.FoundryService_RevokeFoundryAgentHost_FullMethodName:        Deny,
 
 	// Source grants, restricted members and teams: managed by owners and
 	// admins; a grantee reads its own.

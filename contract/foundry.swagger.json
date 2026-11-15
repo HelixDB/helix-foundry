@@ -611,6 +611,155 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/agent/host-pairings": {
+      "post": {
+        "operationId": "FoundryService_CreateFoundryAgentHostPairing",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentHostPairingResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCreateFoundryAgentHostPairingBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/hosts/{id}:revoke": {
+      "post": {
+        "operationId": "FoundryService_RevokeFoundryAgentHost",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentHostResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceRevokeFoundryAgentHostBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/runtime": {
+      "get": {
+        "summary": "Where a local install's Assistant runs its new threads' turns: Foundry's\nown worker on the workspace's model provider (api), or a helper on the\nowner's machine driving the Claude Code or Codex CLI they signed in to\n(claude_code, codex), and the helpers paired with the install. A local\ninstall's owner's only: hosted Helix serves none of these\n(FAILED_PRECONDITION, reason FOUNDRY_AGENT_HOSTS_LOCAL_ONLY).",
+        "operationId": "FoundryService_GetFoundryAgentRuntime",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentRuntimeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "patch": {
+        "operationId": "FoundryService_UpdateFoundryAgentRuntime",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentRuntimeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUpdateFoundryAgentRuntimeBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/agent/threads": {
       "get": {
         "operationId": "FoundryService_ListFoundryAgentThreads",
@@ -4976,6 +5125,10 @@
         }
       }
     },
+    "FoundryServiceCreateFoundryAgentHostPairingBody": {
+      "type": "object",
+      "description": "CreateFoundryAgentHostPairingRequest makes a one-time code, valid for 10\nminutes, that pairs a helper with the install: `npx\n@helixdb/foundry-agent-host pair \u003ccode\u003e` on the owner's machine."
+    },
     "FoundryServiceCreateFoundryDocumentBody": {
       "type": "object",
       "properties": {
@@ -5288,6 +5441,10 @@
         }
       }
     },
+    "FoundryServiceRevokeFoundryAgentHostBody": {
+      "type": "object",
+      "description": "RevokeFoundryAgentHostRequest unpairs a helper: its token and the tokens of\nthe turns it runs stop working at once. Revoking one already revoked\nreturns it."
+    },
     "FoundryServiceRevokeFoundryEventSourceTokenBody": {
       "type": "object"
     },
@@ -5489,6 +5646,15 @@
         }
       },
       "description": "UpdateFoundryAIRequest is an owner's change: back to the default at once,\nor a provider saved and tested before it is used (FoundryAI.pending);\nthe setting in force stays until the test passes. Bringing a key needs\nFoundry Pro or Max when hosted (FAILED_PRECONDITION, reason\nFOUNDRY_PRO_REQUIRED); a model Helix can't price needs rates\n(FAILED_PRECONDITION, reason FOUNDRY_AI_PRICE_REQUIRED); saves are capped\nper hour (RESOURCE_EXHAUSTED)."
+    },
+    "FoundryServiceUpdateFoundryAgentRuntimeBody": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "type": "string"
+        }
+      },
+      "description": "UpdateFoundryAgentRuntimeRequest sets the runtime the workspace's new\nthreads take (a thread keeps its own): api, claude_code or codex. A helper\nneed not be online to choose one; sending in its thread then is\nFAILED_PRECONDITION (reason FOUNDRY_AGENT_HOST_OFFLINE) until it is."
     },
     "FoundryServiceUpdateFoundryDocumentBody": {
       "type": "object",
@@ -6923,6 +7089,75 @@
       },
       "description": "FoundryAgentEvent is one event a turn shows, as JSON: started, text,\ntool_call, tool_result, action_card, action_result and finished."
     },
+    "v1FoundryAgentHost": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "The machine's name, as the helper gave it when it paired."
+        },
+        "runtimes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What it offers, as of its last call: claude_code, codex."
+        },
+        "version": {
+          "type": "string",
+          "description": "The helper's version and platform (darwin-arm64, linux-x64, ...)."
+        },
+        "platform": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastSeenAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "online": {
+          "type": "boolean",
+          "description": "Seen within 30 seconds."
+        },
+        "revokedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Set once revoked; a revoked host is listed by nothing else."
+        }
+      },
+      "description": "FoundryAgentHost is a helper on the owner's machine, paired with the\ninstall: a process outside Docker that drives the Claude Code or Codex CLI\nthe owner signed in to, and calls back only to the install's loopback."
+    },
+    "v1FoundryAgentHostPairingResponse": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "hxp_ and 32 characters; shown once, never stored (only its SHA-256)."
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "command": {
+          "type": "string",
+          "description": "The command that pairs a helper with it, ready to paste."
+        }
+      }
+    },
+    "v1FoundryAgentHostResponse": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "$ref": "#/definitions/v1FoundryAgentHost"
+        }
+      }
+    },
     "v1FoundryAgentPageContext": {
       "type": "object",
       "properties": {
@@ -6934,6 +7169,39 @@
         }
       },
       "description": "FoundryAgentPageContext is what the person was looking at as they sent a\nmessage: ids only, each checked to be the workspace's before the agent is\ntold of it."
+    },
+    "v1FoundryAgentRuntime": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "description": "api (Foundry's own worker, on the workspace's model provider),\nclaude_code or codex (a helper, on its owner's subscription)."
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAgentHost"
+          },
+          "description": "The helpers paired with the install and not revoked, newest first."
+        },
+        "online": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The helper runtimes a host online offers now (seen within 30 seconds):\na thread of one not listed can't be sent to."
+        }
+      },
+      "description": "FoundryAgentRuntime is where a local install's Assistant runs a\nworkspace's new threads, and the helpers that can run them."
+    },
+    "v1FoundryAgentRuntimeResponse": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "$ref": "#/definitions/v1FoundryAgentRuntime"
+        }
+      }
     },
     "v1FoundryAgentThread": {
       "type": "object",

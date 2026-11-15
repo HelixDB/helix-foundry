@@ -2438,6 +2438,39 @@ message FoundryAgentThread {
   google.protobuf.Timestamp updated_at = 5;
 }
 
+// FoundryAgentRuntime is where a local install's Assistant runs a
+// workspace's new threads, and the helpers that can run them.
+message FoundryAgentRuntime {
+  // api (Foundry's own worker, on the workspace's model provider),
+  // claude_code or codex (a helper, on its owner's subscription).
+  string runtime = 1;
+  // The helpers paired with the install and not revoked, newest first.
+  repeated FoundryAgentHost hosts = 2;
+  // The helper runtimes a host online offers now (seen within 30 seconds):
+  // a thread of one not listed can't be sent to.
+  repeated string online = 3;
+}
+
+// FoundryAgentHost is a helper on the owner's machine, paired with the
+// install: a process outside Docker that drives the Claude Code or Codex CLI
+// the owner signed in to, and calls back only to the install's loopback.
+message FoundryAgentHost {
+  string id = 1;
+  // The machine's name, as the helper gave it when it paired.
+  string name = 2;
+  // What it offers, as of its last call: claude_code, codex.
+  repeated string runtimes = 3;
+  // The helper's version and platform (darwin-arm64, linux-x64, ...).
+  string version = 4;
+  string platform = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp last_seen_at = 7;
+  // Seen within 30 seconds.
+  bool online = 8;
+  // Set once revoked; a revoked host is listed by nothing else.
+  google.protobuf.Timestamp revoked_at = 9;
+}
+
 // FoundryAgentTurn is one turn of a thread: a person's message, or the result
 // of an action they ran.
 message FoundryAgentTurn {

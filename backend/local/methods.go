@@ -147,6 +147,12 @@ var methods = map[string]check{
 	foundry("ExecuteFoundryAgentAction"):  checkWorkspace,
 	foundry("RefreshFoundryAgentAction"):  checkWorkspace,
 	foundry("DismissFoundryAgentAction"):  checkWorkspace,
+	// Where the Assistant runs, and the helpers that run it on the owner's
+	// subscription (agent_host.go).
+	foundry("GetFoundryAgentRuntime"):        checkWorkspace,
+	foundry("UpdateFoundryAgentRuntime"):     checkWorkspace,
+	foundry("CreateFoundryAgentHostPairing"): checkWorkspace,
+	foundry("RevokeFoundryAgentHost"):        checkWorkspace,
 
 	foundry("CreateFoundryWorkflow"):          checkOntology,
 	foundry("ListFoundryWorkflows"):           checkOntology,

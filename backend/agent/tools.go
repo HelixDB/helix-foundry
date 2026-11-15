@@ -17,18 +17,20 @@ import (
 // tools (an outside agent's records), get_sign_in, and helix_list_workspaces
 // (a turn is of one workspace).
 var Tools = map[string]bool{
-	"helix_foundry_list_ontologies":       true,
-	"helix_foundry_get_ontology":          true,
-	"helix_foundry_get_version":           true,
-	"helix_foundry_get_context":           true,
-	"helix_foundry_read_guide":            true,
-	"helix_foundry_get_generation":        true,
-	"helix_foundry_get_load":              true,
-	"helix_foundry_get_sync":              true,
-	"helix_foundry_list_documents":        true,
-	"helix_foundry_list_connectors":       true,
-	"helix_foundry_list_connector_kinds":  true,
-	"helix_foundry_get_ai_settings":       true,
+	"helix_foundry_list_ontologies":      true,
+	"helix_foundry_get_ontology":         true,
+	"helix_foundry_get_version":          true,
+	"helix_foundry_get_context":          true,
+	"helix_foundry_read_guide":           true,
+	"helix_foundry_get_generation":       true,
+	"helix_foundry_get_load":             true,
+	"helix_foundry_get_sync":             true,
+	"helix_foundry_list_documents":       true,
+	"helix_foundry_list_connectors":      true,
+	"helix_foundry_list_connector_kinds": true,
+	"helix_foundry_get_ai_settings":      true,
+	// A local install's only: where the Assistant runs, and its helpers.
+	"helix_foundry_get_assistant_runtime": true,
 	"helix_foundry_list_review_decisions": true,
 	"helix_foundry_list_reviews":          true,
 	"helix_foundry_read_graph":            true,
@@ -52,9 +54,10 @@ const (
 
 // Operations are the actions the Assistant may prepare, each drawn as a card
 // (describe). The sink refuses every other before it is checked or
-// confirmed: upload_document (the person's browser holds the file) and
+// confirmed: upload_document (the person's browser holds the file),
 // create_event_source (an API source is set up with its send tokens, in
-// Foundry).
+// Foundry) and pair_assistant_helper (its result is a credential, which
+// would pass through the model's provider).
 var Operations = map[string]bool{
 	"create_ontology":     true,
 	"generate_ontology":   true,
@@ -68,6 +71,9 @@ var Operations = map[string]bool{
 	"update_document_set": true,
 	"move_document":       true,
 	"settle_review":       true,
+	// A local install's only (Service.AgentHosts).
+	"set_assistant_runtime":   true,
+	"revoke_assistant_helper": true,
 }
 
 // askClientToken is the client token every ask of a turn's tool call sends,

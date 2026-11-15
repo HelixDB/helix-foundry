@@ -5,6 +5,7 @@ package helix.foundry.v1;
 import "google/api/annotations.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 import "helix/foundry/v1/types.proto";
 
 option go_package = "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1;foundryv1";
@@ -508,6 +509,34 @@ service FoundryService {
   rpc DismissFoundryAgentAction(DismissFoundryAgentActionRequest) returns (FoundryAgentActionResponse) {
     option (google.api.http) = {
       post: "/v1/workspaces/{workspace_id}/foundry/agent/actions/{id}:dismiss"
+      body: "*"
+    };
+  }
+
+  // Where a local install's Assistant runs its new threads' turns: Foundry's
+  // own worker on the workspace's model provider (api), or a helper on the
+  // owner's machine driving the Claude Code or Codex CLI they signed in to
+  // (claude_code, codex), and the helpers paired with the install. A local
+  // install's owner's only: hosted Helix serves none of these
+  // (FAILED_PRECONDITION, reason FOUNDRY_AGENT_HOSTS_LOCAL_ONLY).
+  rpc GetFoundryAgentRuntime(GetFoundryAgentRuntimeRequest) returns (FoundryAgentRuntimeResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/agent/runtime"};
+  }
+  rpc UpdateFoundryAgentRuntime(UpdateFoundryAgentRuntimeRequest) returns (FoundryAgentRuntimeResponse) {
+    option (google.api.http) = {
+      patch: "/v1/workspaces/{workspace_id}/foundry/agent/runtime"
+      body: "*"
+    };
+  }
+  rpc CreateFoundryAgentHostPairing(CreateFoundryAgentHostPairingRequest) returns (FoundryAgentHostPairingResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/host-pairings"
+      body: "*"
+    };
+  }
+  rpc RevokeFoundryAgentHost(RevokeFoundryAgentHostRequest) returns (FoundryAgentHostResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/hosts/{id}:revoke"
       body: "*"
     };
   }
@@ -1965,4 +1994,41 @@ message FoundryAgentActionResponse {
   FoundryAgentAction action = 1;
   // The turn the agent goes on from the action's result in; unset unless it ran.
   FoundryAgentTurn continuation = 2;
+}
+message GetFoundryAgentRuntimeRequest {
+  string workspace_id = 1;
+}
+// UpdateFoundryAgentRuntimeRequest sets the runtime the workspace's new
+// threads take (a thread keeps its own): api, claude_code or codex. A helper
+// need not be online to choose one; sending in its thread then is
+// FAILED_PRECONDITION (reason FOUNDRY_AGENT_HOST_OFFLINE) until it is.
+message UpdateFoundryAgentRuntimeRequest {
+  string workspace_id = 1;
+  string runtime = 2;
+}
+message FoundryAgentRuntimeResponse {
+  FoundryAgentRuntime runtime = 1;
+}
+// CreateFoundryAgentHostPairingRequest makes a one-time code, valid for 10
+// minutes, that pairs a helper with the install: `npx
+// @helixdb/foundry-agent-host pair <code>` on the owner's machine.
+message CreateFoundryAgentHostPairingRequest {
+  string workspace_id = 1;
+}
+message FoundryAgentHostPairingResponse {
+  // hxp_ and 32 characters; shown once, never stored (only its SHA-256).
+  string code = 1;
+  google.protobuf.Timestamp expires_at = 2;
+  // The command that pairs a helper with it, ready to paste.
+  string command = 3;
+}
+// RevokeFoundryAgentHostRequest unpairs a helper: its token and the tokens of
+// the turns it runs stop working at once. Revoking one already revoked
+// returns it.
+message RevokeFoundryAgentHostRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+message FoundryAgentHostResponse {
+  FoundryAgentHost host = 1;
 }

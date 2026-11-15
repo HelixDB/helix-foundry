@@ -235,13 +235,13 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	return out, t.loop(ctx)
 }
 
-// serve puts the session's tools on a server of their own, Tools alone, and
-// connects a client to it in memory. offered is what the client lists.
+// serve puts the session's tools on a server of their own, Tools alone
+// (toolServer), and connects a client to it in memory. offered is what the
+// client lists.
 func serve(session integration.Session) (*mcp.ClientSession, map[string]*mcp.Tool, error) {
-	server := mcp.NewServer(&mcp.Implementation{Name: "helix-foundry-assistant", Version: PromptVersion}, nil)
-	session.Service.AddTools(server, session.Identity)
-	if session.HostTools != nil {
-		session.HostTools(server)
+	server, offered, err := toolServer(session)
+	if err != nil {
+		return nil, nil, err
 	}
 	serverSide, clientSide := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(session.Ctx, serverSide, nil); err != nil {
@@ -251,61 +251,90 @@ func serve(session integration.Session) (*mcp.ClientSession, map[string]*mcp.Too
 	if err != nil {
 		return nil, nil, err
 	}
+	return client, offered, nil
+}
+
+// toolServer is a server of the session's tools, Tools alone, and those
+// tools by name: every other tool the session registers is removed before
+// anyone lists them.
+func toolServer(session integration.Session) (*mcp.Server, map[string]*mcp.Tool, error) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "helix-foundry-assistant", Version: PromptVersion}, nil)
+	session.Service.AddTools(server, session.Identity)
+	if session.HostTools != nil {
+		session.HostTools(server)
+	}
+	// The SDK lists a server's tools only to a client: list them to one of
+	// its own, in memory.
+	serverSide, clientSide := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(session.Ctx, serverSide, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = serverSession.Close() }()
+	client, err := mcp.NewClient(&mcp.Implementation{Name: "helix-foundry-assistant", Version: PromptVersion}, nil).Connect(session.Ctx, clientSide, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = client.Close() }()
 	listed, err := client.ListTools(session.Ctx, nil)
 	if err != nil {
-		_ = client.Close()
 		return nil, nil, err
 	}
 	var outside []string
-	for _, tool := range listed.Tools {
-		if !Tools[tool.Name] {
-			outside = append(outside, tool.Name)
-		}
-	}
-	server.RemoveTools(outside...)
 	offered := map[string]*mcp.Tool{}
 	for _, tool := range listed.Tools {
 		if Tools[tool.Name] {
 			offered[tool.Name] = tool
+		} else {
+			outside = append(outside, tool.Name)
 		}
 	}
-	return client, offered, nil
+	server.RemoveTools(outside...)
+	return server, offered, nil
 }
 
 // open adds the turn's own message to the transcript: the person's text with
 // the page they were on, checked against the workspace, or how their click
 // on an action ended.
 func (t *turnRun) open(ctx context.Context) error {
-	var text string
-	switch t.turn.Kind {
-	case model.FoundryAgentTurnMessage:
-		text = messageText(t.turn.Input, t.page(ctx))
-	case model.FoundryAgentTurnActionResult:
-		a, err := t.r.DB.GetFoundryAgentAction(ctx, t.turn.WorkspaceID, t.turn.Input)
-		if err != nil {
-			return &Failure{Message: "The action this turn goes on from can't be read", Permanent: true, Err: err}
-		}
-		text = actionResultText(ActionResult{ActionID: a.ID, Operation: a.Operation, Status: string(a.Status), Result: a.Result, Error: deref(a.Error)})
-	default:
-		return &Failure{Message: "The turn is of no kind the Assistant runs", Permanent: true, Err: fmt.Errorf("kind %q", t.turn.Kind)}
+	text, err := openingText(ctx, t.r.DB, t.turn)
+	if err != nil {
+		return err
 	}
 	return t.commit(ctx, llm.Message{Role: llm.User, Content: []llm.Block{llm.Text{Text: text}}})
 }
 
+// openingText is what a turn opens its model's part of the transcript with:
+// the person's text with the page they were on, checked against the
+// workspace, or how their click on an action ended.
+func openingText(ctx context.Context, db Store, turn *model.FoundryAgentTurn) (string, error) {
+	switch turn.Kind {
+	case model.FoundryAgentTurnMessage:
+		return messageText(turn.Input, page(ctx, db, turn)), nil
+	case model.FoundryAgentTurnActionResult:
+		a, err := db.GetFoundryAgentAction(ctx, turn.WorkspaceID, turn.Input)
+		if err != nil {
+			return "", &Failure{Message: "The action this turn goes on from can't be read", Permanent: true, Err: err}
+		}
+		return actionResultText(ActionResult{ActionID: a.ID, Operation: a.Operation, Status: string(a.Status), Result: a.Result, Error: deref(a.Error)}), nil
+	}
+	return "", &Failure{Message: "The turn is of no kind the Assistant runs", Permanent: true, Err: fmt.Errorf("kind %q", turn.Kind)}
+}
+
 // page is the turn's page context as the model is told it: each id the
 // workspace's, with the ontology's name; nil when it names nothing that is.
-func (t *turnRun) page(ctx context.Context) *shownPage {
+func page(ctx context.Context, db Reads, turn *model.FoundryAgentTurn) *shownPage {
 	var p PageContext
-	if len(t.turn.PageContext) == 0 || json.Unmarshal(t.turn.PageContext, &p) != nil || p.OntologyID == "" {
+	if len(turn.PageContext) == 0 || json.Unmarshal(turn.PageContext, &p) != nil || p.OntologyID == "" {
 		return nil
 	}
-	o, err := t.r.DB.GetFoundryOntology(ctx, t.turn.WorkspaceID, p.OntologyID)
+	o, err := db.GetFoundryOntology(ctx, turn.WorkspaceID, p.OntologyID)
 	if err != nil || o.DeletedAt != nil {
 		return nil
 	}
 	out := &shownPage{OntologyID: o.ID, OntologyName: o.Name}
 	if p.LoadID != "" {
-		if l, err := t.r.DB.GetFoundryLoad(ctx, o.ID, p.LoadID); err == nil && l.Status != model.FoundryLoadDeleted {
+		if l, err := db.GetFoundryLoad(ctx, o.ID, p.LoadID); err == nil && l.Status != model.FoundryLoadDeleted {
 			out.LoadID = l.ID
 		}
 	}

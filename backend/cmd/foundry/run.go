@@ -23,10 +23,12 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 
+	foundryagent "github.com/helixdb/helix-foundry/backend/agent"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/ai/detect"
 	"github.com/helixdb/helix-foundry/backend/api"
 	foundryconfig "github.com/helixdb/helix-foundry/backend/config"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/document"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/local"
@@ -245,12 +247,13 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 	// MCP's do; its clicks run them from the API, its turns from the worker.
 	sessions := local.NewAgentSessions(auth, local.LocalService(dir, ep.GatewayConn, fcfg.Foundry.Documents, cfg.Local.SiteOrigin,
 		logger.With("component", "agent")), directoryv1.NewDirectoryServiceClient(ep.GatewayConn), cfg.Local.SiteToken)
+	dbs := local.Databases{Directory: dir, HelixURL: cfg.Local.HelixURL}
 	foundrySvc, err := api.New(api.Deps{
 		Cfg: fcfg, Logger: logger.With("service", "foundry"), DB: st, AWS: awsCfg,
 		Documents: document.New(s3.NewFromConfig(awsCfg), fcfg.Foundry.Sync.DataBucket),
-		Databases: local.Databases{Directory: dir, HelixURL: cfg.Local.HelixURL},
+		Databases: dbs,
 		Graph:     local.GraphReader{Directory: directorySvc}, People: local.People{Directory: dir},
-		LocalAI: detector, AgentSessions: sessions,
+		LocalAI: detector, AgentSessions: sessions, AgentHosts: dir,
 	})
 	if err != nil {
 		_ = ep.GracefulStop(ctx)
@@ -267,9 +270,21 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 			return nil, err
 		}
 	}
-	integrations := local.IntegrationHandler(auth, dir, ep.GatewayConn, fcfg.Foundry.Documents, cfg.Local.SiteOrigin, logger.With("component", "integration"))
+	// The helpers on the owner's machine run the Assistant's threads on their
+	// CLIs' subscriptions, and call back to this listener (local/agent_host.go).
+	var turns *foundryagent.Hosts
+	if fcfg.Foundry.Agent.Enabled {
+		keys, err := connector.NewKeyring(fcfg.Foundry.Connectors)
+		if err != nil {
+			_ = f.Stop(ctx)
+			return nil, err
+		}
+		turns = &foundryagent.Hosts{DB: st, Sessions: sessions, Keys: keys, Databases: dbs, Cfg: fcfg.Foundry.Agent, Now: time.Now}
+	}
+	integrations := local.IntegrationHandler(auth, dir, ep.GatewayConn, fcfg.Foundry.Documents, cfg.Local.SiteOrigin, turns, logger.With("component", "integration"))
 	ep.RegisterHTTPHandler("/mcp", integrations)
 	ep.RegisterHTTPHandler("/v1/ontologies/", integrations)
+	ep.RegisterHTTPHandler("/agent-host/", integrations)
 	return f, nil
 }
 

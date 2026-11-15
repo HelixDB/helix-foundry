@@ -106,6 +106,11 @@ type target struct {
 	// ontology is an ontology target's; connectorKind a connector's kind.
 	ontology      *model.FoundryOntology
 	connectorKind string
+	// runtime is where the Assistant runs, for set_assistant_runtime (whose
+	// id is the runtime chosen) and revoke_assistant_helper (whose host is
+	// the helper revoked).
+	runtime *integration.GetAssistantRuntimeOutput
+	host    integration.AssistantHostOutput
 }
 
 // target reads what a acts on, refusing one of another workspace (a card
@@ -132,6 +137,10 @@ func (c Cards) target(ctx context.Context, a integration.PreparedAction) (target
 	case "workspace":
 		if rest != ws {
 			return target{}, elsewhere
+		}
+		switch a.Operation {
+		case "set_assistant_runtime", "revoke_assistant_helper":
+			return c.runtimeTarget(ctx, a)
 		}
 		// A new ontology on a new database: what a person names is its name.
 		var p integration.CreateOntologyPayload
@@ -184,6 +193,49 @@ func (c Cards) target(ctx context.Context, a integration.PreparedAction) (target
 		return target{id: thingID, name: o.Name, ontology: o, others: others}, err
 	}
 	return target{}, status.Error(codes.InvalidArgument, "the Assistant acts on no target of kind "+kind)
+}
+
+// runtimeTarget is what set_assistant_runtime and revoke_assistant_helper
+// act on, read as the person: the runtime chosen, named as people name it,
+// or the helper revoked, which must be paired.
+func (c Cards) runtimeTarget(ctx context.Context, a integration.PreparedAction) (target, error) {
+	if c.Runtime == nil {
+		return target{}, status.Error(codes.FailedPrecondition, "the Assistant runs on a subscription only on a local install")
+	}
+	runtime, err := c.Runtime(ctx)
+	if err != nil {
+		return target{}, err
+	}
+	if a.Operation == "set_assistant_runtime" {
+		var p integration.SetAssistantRuntimePayload
+		if err := json.Unmarshal(a.Payload, &p); err != nil {
+			return target{}, err
+		}
+		var others []string
+		for r, label := range runtimeLabels {
+			if r != p.Runtime {
+				others = append(others, label)
+			}
+		}
+		return target{id: p.Runtime, name: runtimeLabels[p.Runtime], others: others, runtime: runtime}, nil
+	}
+	var p integration.RevokeAssistantHelperPayload
+	if err := json.Unmarshal(a.Payload, &p); err != nil {
+		return target{}, err
+	}
+	t := target{id: p.HostID, runtime: runtime}
+	found := false
+	for _, h := range runtime.Hosts {
+		if h.ID == p.HostID {
+			t.name, t.host, found = h.Name, h, true
+		} else {
+			t.others = append(t.others, h.Name)
+		}
+	}
+	if !found {
+		return target{}, status.Error(codes.FailedPrecondition, "no helper "+p.HostID+" is paired: read the helpers again with helix_foundry_get_assistant_runtime")
+	}
+	return t, nil
 }
 
 // minNameRunes is the shortest name a message names by its words: a

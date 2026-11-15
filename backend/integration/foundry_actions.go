@@ -119,6 +119,11 @@ type FoundryActionAPI interface {
 	MoveFoundryOntologyDocument(context.Context, *foundryv1.MoveFoundryOntologyDocumentRequest, ...grpc.CallOption) (
 		*foundryv1.FoundryDocumentReadsResponse, error)
 	SettleFoundryReview(context.Context, *foundryv1.SettleFoundryReviewRequest, ...grpc.CallOption) (*foundryv1.FoundryReviewDecisionResponse, error)
+	// Where a local install's Assistant runs, and its helpers (Service.AgentHosts).
+	UpdateFoundryAgentRuntime(context.Context, *foundryv1.UpdateFoundryAgentRuntimeRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentRuntimeResponse, error)
+	CreateFoundryAgentHostPairing(context.Context, *foundryv1.CreateFoundryAgentHostPairingRequest, ...grpc.CallOption) (
+		*foundryv1.FoundryAgentHostPairingResponse, error)
+	RevokeFoundryAgentHost(context.Context, *foundryv1.RevokeFoundryAgentHostRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentHostResponse, error)
 	CancelFoundryQuestion(context.Context, *foundryv1.CancelFoundryQuestionRequest, ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error)
 	// An event source, made by create_event_source, and the pieces helix_foundry_send_pieces sends it.
 	CreateConnector(context.Context, *foundryv1.CreateConnectorRequest, ...grpc.CallOption) (*foundryv1.ConnectorResponse, error)
@@ -201,7 +206,7 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
 			Description: "Check a Foundry action and put it before the person you work for as a card, which they run, or not, with a click. " +
 				"Preparing changes nothing, and you can't run it: you are told its result if they do.",
-			InputSchema: foundryOperationSchema(s.Events, person.Sink.Allows),
+			InputSchema: foundryOperationSchema(s, person.Sink.Allows),
 			Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
 		}, func(ctx context.Context, identity *Identity, call *Call, input FoundryOperationInput) (AwaitingPersonOutput, int, error) {
 			awaiting, err := s.prepareForPerson(ctx, identity, call, input, person.Sink)
@@ -217,12 +222,12 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
 		Description: "Check a Foundry action and return a one-time confirmation for exactly that action, valid for five minutes; " +
 			toolExecuteFoundry + " runs it. Preparing changes nothing. A create_ontology on workspace:<id> makes the ontology's database first, and its project when new.",
-		InputSchema: foundryOperationSchema(s.Events, everyOperation),
+		InputSchema: foundryOperationSchema(s, everyOperation),
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.PrepareFoundryOperation)
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolExecuteFoundry,
 		Description: "Run the Foundry action " + toolPrepareFoundry + " prepared: the same operation, target and payload, with its confirmation. A confirmation runs once, and the action is never retried.",
-		InputSchema: executeOperationSchema(s.Events),
+		InputSchema: executeOperationSchema(s),
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &yes, OpenWorldHint: &no},
 	}, s.ExecuteFoundryOperation)
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryCompleteUpload,
@@ -337,6 +342,12 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 	raw, err := json.Marshal(input.Payload)
 	if input.Payload == nil || err != nil {
 		return nil, invalid("operation, target and a payload object are required")
+	}
+	if operation, ok, err := s.validateAssistantOperation(ctx, identity, input, raw); ok {
+		if err != nil {
+			return nil, err
+		}
+		return operation, nil
 	}
 	writeGrant := QueryWrite
 	switch input.Operation {

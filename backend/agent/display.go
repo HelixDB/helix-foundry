@@ -208,6 +208,30 @@ type DecisionDisplay struct {
 	Value     map[string]any `json:"value,omitempty"`
 }
 
+// AssistantRuntimeDisplay is set_assistant_runtime's: where the
+// workspace's new threads run after it (Runtime) and before (Current), and
+// whether a helper that runs Runtime is online (always, for api).
+type AssistantRuntimeDisplay struct {
+	Runtime string `json:"runtime"`
+	Current string `json:"current"`
+	Online  bool   `json:"online"`
+}
+
+// AssistantHelperDisplay is revoke_assistant_helper's: the helper, what it
+// runs, and whether it is online.
+type AssistantHelperDisplay struct {
+	Host     Ref      `json:"host"`
+	Runtimes []string `json:"runtimes"`
+	Online   bool     `json:"online"`
+}
+
+// RuntimeReader reads where the workspace's Assistant runs, and its helpers,
+// as one person; nil on a host without helpers.
+type RuntimeReader func(ctx context.Context) (*integration.GetAssistantRuntimeOutput, error)
+
+// runtimeLabels are the runtimes as people name them.
+var runtimeLabels = map[string]string{"api": "Foundry", "claude_code": "Claude Code", "codex": "Codex"}
+
 // ReviewReader reads one review of an ontology's current load as one
 // person, and the load it is of; nil when the load doesn't hold it.
 type ReviewReader func(ctx context.Context, ontologyID, reviewKey string) (*integration.FoundryReviewOutput, string, error)
@@ -237,6 +261,9 @@ type Cards struct {
 	Databases ports.Databases
 	// Reviews reads a review as the person, for settle_review; nil refuses it.
 	Reviews ReviewReader
+	// Runtime reads the Assistant's runtime and helpers as the person, for
+	// set_assistant_runtime and revoke_assistant_helper; nil refuses them.
+	Runtime RuntimeReader
 	// Sample is the host's sample company database; nil on a host without.
 	Sample *integration.SampleDatabase
 }
@@ -257,6 +284,10 @@ func SessionCards(db Reads, databases ports.Databases, session integration.Sessi
 				}
 			}
 			return nil, listed.LoadID, nil
+		},
+		Runtime: func(ctx context.Context) (*integration.GetAssistantRuntimeOutput, error) {
+			out, _, err := session.Service.GetAssistantRuntime(ctx, session.Identity, &integration.Call{}, integration.FoundryWorkspaceInput{WorkspaceID: workspaceID})
+			return &out, err
 		}}
 }
 
@@ -452,6 +483,10 @@ func (c Cards) describe(ctx context.Context, a integration.PreparedAction, t tar
 			return nil, err
 		}
 		return c.describeSettle(ctx, ontology, p)
+	case "set_assistant_runtime":
+		return AssistantRuntimeDisplay{Runtime: t.id, Current: t.runtime.Runtime, Online: t.id == "api" || slices.Contains(t.runtime.Online, t.id)}, nil
+	case "revoke_assistant_helper":
+		return AssistantHelperDisplay{Host: Ref{ID: t.id, Name: t.name}, Runtimes: t.host.Runtimes, Online: t.host.Online}, nil
 	}
 	return nil, fmt.Errorf("no card for %s", a.Operation)
 }

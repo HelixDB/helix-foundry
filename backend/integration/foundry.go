@@ -90,6 +90,7 @@ var toolTitles = map[string]string{
 	toolFoundryConnect:             "Connect a source",
 	toolFoundryListConnectorKinds:  "List connector kinds",
 	toolFoundryGetAISettings:       "Get a workspace's AI settings",
+	toolFoundryGetAssistantRuntime: "Get where the Assistant runs",
 	toolFoundryGetSignIn:           "Get a connector sign-in",
 	toolFoundrySendPieces:          "Send pieces to an API source",
 	toolPrepareFoundry:             "Prepare a Foundry action",
@@ -138,6 +139,7 @@ type FoundryBackendAPI interface {
 	ListFoundryDocumentSets(context.Context, *foundryv1.ListFoundryDocumentSetsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDocumentSetsResponse, error)
 	ListConnectors(context.Context, *foundryv1.ListConnectorsRequest, ...grpc.CallOption) (*foundryv1.ListConnectorsResponse, error)
 	GetFoundryAI(context.Context, *foundryv1.GetFoundryAIRequest, ...grpc.CallOption) (*foundryv1.FoundryAIResponse, error)
+	GetFoundryAgentRuntime(context.Context, *foundryv1.GetFoundryAgentRuntimeRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentRuntimeResponse, error)
 	GetConnector(context.Context, *foundryv1.GetConnectorRequest, ...grpc.CallOption) (*foundryv1.ConnectorResponse, error)
 	StartConnectorSignIn(context.Context, *foundryv1.StartConnectorSignInRequest, ...grpc.CallOption) (*foundryv1.ConnectorSignInResponse, error)
 	GetConnectorSignIn(context.Context, *foundryv1.GetConnectorSignInRequest, ...grpc.CallOption) (*foundryv1.ConnectorSignInResponse, error)
@@ -900,6 +902,12 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			"Get where a workspace's model calls go: the provider and models its generations, loads, questions and Foundry's Assistant run on (in_force), "+
 				"a saved provider waiting for its test (pending) or whose test failed (last_failed, with why), and whether the Assistant can run on each (assistant). "+
 				"Keys are never returned. Only an owner changes it, in Foundry's Settings › AI models (settings_url): never take a key or change it here."), s.GetFoundryAISettings)
+	}
+	if browse && user && s.AgentHosts {
+		addFoundryTool(s, server, identity, tool(toolFoundryGetAssistantRuntime,
+			"Get where this install's Assistant runs a workspace's new threads: api (Foundry's own worker, on the workspace's model) or claude_code or codex "+
+				"(a helper on the owner's computer, on the Claude or ChatGPT subscription its CLI is signed in to), and the helpers paired with the install: "+
+				"what each offers and whether it is online. set_assistant_runtime, pair_assistant_helper and revoke_assistant_helper change them."), s.GetAssistantRuntime)
 	}
 	if user && s.FoundryURL != "" && identity.HasPermission(PermissionWorkspaceConnectorsManage) {
 		s.addFoundryConnectTool(server, identity, signIns)

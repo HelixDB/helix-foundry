@@ -594,3 +594,69 @@ func TestFoundryAgentTextSupersedesItsDeltas(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 6, done.LastSeq, "seq never goes back")
 }
+
+// A helper's thread runs on its owner's subscription: its turns are stored
+// with a cap of 0, spend nothing of the month's budget (even one spent), are
+// claimed by their runtime alone, and keep the CLI's session under the lease.
+func TestFoundryAgentSubscriptionTurns(t *testing.T) {
+	ctx := context.Background()
+	f := newAgentFixture(t, "subs")
+	limits := f.limits()
+	limits.CapMicros = 1
+	token := "sub-1"
+	turn := &model.FoundryAgentTurn{ID: f.turnID(1), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), UserID: agentUser,
+		Kind: model.FoundryAgentTurnMessage, Input: "load it", ClientToken: &token, MaxUSDMicros: 500_000}
+	thread := &model.FoundryAgentThread{ID: f.threadID(1), WorkspaceID: f.workspaceID, UserID: agentUser, Title: "Load it",
+		Runtime: model.FoundryAgentRuntimeClaudeCode}
+	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, turn, thread, limits), "a $0 turn fits any budget")
+	stored, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, turn.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryAgentRuntimeClaudeCode, stored.Runtime)
+	assert.Zero(t, stored.MaxUSDMicros)
+
+	// An 'api' claim never takes it; its own runtime's does.
+	none, err := f.db.ClaimFoundryAgentTurn(ctx, "w1", f.claim())
+	require.NoError(t, err)
+	assert.Nil(t, none)
+	claim := f.claim()
+	claim.Runtime = model.FoundryAgentRuntimeCodex
+	none, err = f.db.ClaimFoundryAgentTurn(ctx, "w1", claim)
+	require.NoError(t, err)
+	assert.Nil(t, none)
+	claim.Runtime = model.FoundryAgentRuntimeClaudeCode
+	claimed, err := f.db.ClaimFoundryAgentTurn(ctx, "host-1", claim)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assert.Zero(t, claimed.ReservedMicros)
+
+	// The session is kept only under the lease.
+	assert.ErrorIs(t, f.db.SetFoundryAgentThreadSession(ctx, claimed.ID, "host-2", "s-1"), store.ErrNotFound)
+	require.NoError(t, f.db.SetFoundryAgentThreadSession(ctx, claimed.ID, "host-1", "s-1"))
+	got, err := f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(1))
+	require.NoError(t, err)
+	assert.Equal(t, "s-1", got.RuntimeSessionID)
+	assert.Error(t, f.db.SetFoundryAgentThreadSession(ctx, claimed.ID, "host-1", strings.Repeat("s", 129)))
+
+	// Its action's continuation is a $0 turn too.
+	a, err := f.prepare(claimed, 1, time.Now().Add(time.Minute))
+	require.NoError(t, err)
+	require.NoError(t, f.db.SettleFoundryAgentTurn(ctx, claimed.ID, "host-1", model.FoundryAgentTurnOutcome{Status: model.FoundryAgentTurnDone, Steps: 1}))
+	_, err = f.db.ClaimFoundryAgentAction(ctx, f.workspaceID, agentUser, a.ID, a.PayloadHash)
+	require.NoError(t, err)
+	next := &model.FoundryAgentTurn{ID: f.turnID(2), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), UserID: agentUser,
+		Kind: model.FoundryAgentTurnActionResult, Input: a.ID, MaxUSDMicros: 500_000}
+	require.NoError(t, f.db.FinishFoundryAgentAction(ctx, a.ID, model.FoundryAgentActionEnd{Status: model.FoundryAgentActionSucceeded,
+		Result: json.RawMessage(`{}`)}, next, json.RawMessage(`{"type":"action_result"}`)))
+	queued, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, next.ID)
+	require.NoError(t, err)
+	assert.Zero(t, queued.MaxUSDMicros)
+	assert.Equal(t, model.FoundryAgentRuntimeClaudeCode, queued.Runtime)
+
+	// The table refuses an 'api' turn without a cap, and a helper's with one.
+	_, err = testDB.Exec(`INSERT INTO foundry_agent_turns (id, workspace_id, thread_id, user_id, runtime, kind, input, status, max_usd_micros)
+VALUES (?, ?, ?, ?, 'api', 'message', 'x', 'queued', 0)`, f.turnID(3), f.workspaceID, f.threadID(7), agentUser)
+	assert.Error(t, err)
+	_, err = testDB.Exec(`INSERT INTO foundry_agent_turns (id, workspace_id, thread_id, user_id, runtime, kind, input, status, max_usd_micros)
+VALUES (?, ?, ?, ?, 'codex', 'message', 'x', 'queued', 5)`, f.turnID(4), f.workspaceID, f.threadID(8), agentUser)
+	assert.Error(t, err)
+}

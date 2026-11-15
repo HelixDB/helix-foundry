@@ -20,6 +20,21 @@ const (
 	FoundryAgentRuntimeCodex      FoundryAgentRuntime = "codex"
 )
 
+// Valid reports a runtime of the closed set.
+func (r FoundryAgentRuntime) Valid() bool {
+	switch r {
+	case FoundryAgentRuntimeAPI, FoundryAgentRuntimeClaudeCode, FoundryAgentRuntimeCodex:
+		return true
+	}
+	return false
+}
+
+// Subscription reports a helper's runtime: its turns run on a CLI its
+// owner signed in to, and spend nothing of the workspace's budget.
+func (r FoundryAgentRuntime) Subscription() bool {
+	return r == FoundryAgentRuntimeClaudeCode || r == FoundryAgentRuntimeCodex
+}
+
 // FoundryAgentThread is one conversation with the Assistant, private to the
 // user who started it.
 type FoundryAgentThread struct {
@@ -28,8 +43,11 @@ type FoundryAgentThread struct {
 	UserID      string
 	Title       string
 	Runtime     FoundryAgentRuntime
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// RuntimeSessionID is a helper's CLI session that the thread's next turn
+	// resumes; empty for 'api', and until its first turn ends.
+	RuntimeSessionID string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // FoundryAgentTurnKind is what started a turn.

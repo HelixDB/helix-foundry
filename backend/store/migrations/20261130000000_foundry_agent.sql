@@ -12,6 +12,9 @@ CREATE TABLE foundry_agent_threads (
   -- Who runs its turns: Foundry's own worker ('api'), or a helper on the
   -- owner's machine driving a CLI the person signed in to.
   runtime            VARCHAR(16)  NOT NULL DEFAULT 'api',
+  -- The helper's session of that CLI (Claude Code's session, Codex's
+  -- thread), which its next turn resumes; NULL for 'api' and until the
+  -- helper's first turn ends.
   runtime_session_id VARCHAR(128) NULL,
   created_at         DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at         DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -25,7 +28,9 @@ CREATE TABLE foundry_agent_threads (
 -- queued turn, reserving its max_usd against the workspace's monthly budget
 -- in the same transaction, as foundry_questions are claimed; a thread has at
 -- most one live turn (live_thread). A turn has its thread's runtime, so each
--- runtime's worker claims only its own.
+-- runtime's worker claims only its own. A helper's turn runs on its owner's
+-- subscription and spends nothing: its max_usd is 0, and only an 'api' turn's
+-- is above it.
 CREATE TABLE foundry_agent_turns (
   id              CHAR(26)    NOT NULL PRIMARY KEY,
   workspace_id    CHAR(26)    NOT NULL,
@@ -72,7 +77,7 @@ CREATE TABLE foundry_agent_turns (
   CONSTRAINT foundry_agent_turns_status_chk CHECK (status IN ('queued', 'running', 'done', 'failed', 'cancelled')),
   CONSTRAINT foundry_agent_turns_finished_chk CHECK ((status IN ('queued', 'running')) = (finished_at IS NULL)),
   CONSTRAINT foundry_agent_turns_reserved_chk CHECK (reserved_micros >= 0 AND (status = 'running' OR reserved_micros = 0)),
-  CONSTRAINT foundry_agent_turns_spend_chk CHECK (max_usd_micros > 0 AND usd_micros >= lost_micros AND lost_micros >= 0),
+  CONSTRAINT foundry_agent_turns_spend_chk CHECK (max_usd_micros >= 0 AND (runtime = 'api') = (max_usd_micros > 0) AND usd_micros >= lost_micros AND lost_micros >= 0),
   CONSTRAINT foundry_agent_turns_charged_chk CHECK (charged_at IS NOT NULL OR (status <> 'running' AND usd_micros = 0))
 );
 

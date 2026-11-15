@@ -122,6 +122,10 @@ const (
 	FoundryService_ExecuteFoundryAgentAction_FullMethodName             = "/helix.foundry.v1.FoundryService/ExecuteFoundryAgentAction"
 	FoundryService_RefreshFoundryAgentAction_FullMethodName             = "/helix.foundry.v1.FoundryService/RefreshFoundryAgentAction"
 	FoundryService_DismissFoundryAgentAction_FullMethodName             = "/helix.foundry.v1.FoundryService/DismissFoundryAgentAction"
+	FoundryService_GetFoundryAgentRuntime_FullMethodName                = "/helix.foundry.v1.FoundryService/GetFoundryAgentRuntime"
+	FoundryService_UpdateFoundryAgentRuntime_FullMethodName             = "/helix.foundry.v1.FoundryService/UpdateFoundryAgentRuntime"
+	FoundryService_CreateFoundryAgentHostPairing_FullMethodName         = "/helix.foundry.v1.FoundryService/CreateFoundryAgentHostPairing"
+	FoundryService_RevokeFoundryAgentHost_FullMethodName                = "/helix.foundry.v1.FoundryService/RevokeFoundryAgentHost"
 	FoundryService_GetFoundryUsage_FullMethodName                       = "/helix.foundry.v1.FoundryService/GetFoundryUsage"
 	FoundryService_GetFoundryEnrichment_FullMethodName                  = "/helix.foundry.v1.FoundryService/GetFoundryEnrichment"
 	FoundryService_UpdateFoundryEnrichment_FullMethodName               = "/helix.foundry.v1.FoundryService/UpdateFoundryEnrichment"
@@ -290,6 +294,16 @@ type FoundryServiceClient interface {
 	ExecuteFoundryAgentAction(ctx context.Context, in *ExecuteFoundryAgentActionRequest, opts ...grpc.CallOption) (*FoundryAgentActionResponse, error)
 	RefreshFoundryAgentAction(ctx context.Context, in *RefreshFoundryAgentActionRequest, opts ...grpc.CallOption) (*FoundryAgentActionResponse, error)
 	DismissFoundryAgentAction(ctx context.Context, in *DismissFoundryAgentActionRequest, opts ...grpc.CallOption) (*FoundryAgentActionResponse, error)
+	// Where a local install's Assistant runs its new threads' turns: Foundry's
+	// own worker on the workspace's model provider (api), or a helper on the
+	// owner's machine driving the Claude Code or Codex CLI they signed in to
+	// (claude_code, codex), and the helpers paired with the install. A local
+	// install's owner's only: hosted Helix serves none of these
+	// (FAILED_PRECONDITION, reason FOUNDRY_AGENT_HOSTS_LOCAL_ONLY).
+	GetFoundryAgentRuntime(ctx context.Context, in *GetFoundryAgentRuntimeRequest, opts ...grpc.CallOption) (*FoundryAgentRuntimeResponse, error)
+	UpdateFoundryAgentRuntime(ctx context.Context, in *UpdateFoundryAgentRuntimeRequest, opts ...grpc.CallOption) (*FoundryAgentRuntimeResponse, error)
+	CreateFoundryAgentHostPairing(ctx context.Context, in *CreateFoundryAgentHostPairingRequest, opts ...grpc.CallOption) (*FoundryAgentHostPairingResponse, error)
+	RevokeFoundryAgentHost(ctx context.Context, in *RevokeFoundryAgentHostRequest, opts ...grpc.CallOption) (*FoundryAgentHostResponse, error)
 	// Helix Foundry usage: the workspace's AI spend this month, by task
 	//
 	// The UTC calendar month's spend of loads, of API sources' extraction no
@@ -1380,6 +1394,46 @@ func (c *foundryServiceClient) DismissFoundryAgentAction(ctx context.Context, in
 	return out, nil
 }
 
+func (c *foundryServiceClient) GetFoundryAgentRuntime(ctx context.Context, in *GetFoundryAgentRuntimeRequest, opts ...grpc.CallOption) (*FoundryAgentRuntimeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAgentRuntimeResponse)
+	err := c.cc.Invoke(ctx, FoundryService_GetFoundryAgentRuntime_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) UpdateFoundryAgentRuntime(ctx context.Context, in *UpdateFoundryAgentRuntimeRequest, opts ...grpc.CallOption) (*FoundryAgentRuntimeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAgentRuntimeResponse)
+	err := c.cc.Invoke(ctx, FoundryService_UpdateFoundryAgentRuntime_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) CreateFoundryAgentHostPairing(ctx context.Context, in *CreateFoundryAgentHostPairingRequest, opts ...grpc.CallOption) (*FoundryAgentHostPairingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAgentHostPairingResponse)
+	err := c.cc.Invoke(ctx, FoundryService_CreateFoundryAgentHostPairing_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) RevokeFoundryAgentHost(ctx context.Context, in *RevokeFoundryAgentHostRequest, opts ...grpc.CallOption) (*FoundryAgentHostResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAgentHostResponse)
+	err := c.cc.Invoke(ctx, FoundryService_RevokeFoundryAgentHost_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) GetFoundryUsage(ctx context.Context, in *GetFoundryUsageRequest, opts ...grpc.CallOption) (*FoundryUsageResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FoundryUsageResponse)
@@ -1681,6 +1735,16 @@ type FoundryServiceServer interface {
 	ExecuteFoundryAgentAction(context.Context, *ExecuteFoundryAgentActionRequest) (*FoundryAgentActionResponse, error)
 	RefreshFoundryAgentAction(context.Context, *RefreshFoundryAgentActionRequest) (*FoundryAgentActionResponse, error)
 	DismissFoundryAgentAction(context.Context, *DismissFoundryAgentActionRequest) (*FoundryAgentActionResponse, error)
+	// Where a local install's Assistant runs its new threads' turns: Foundry's
+	// own worker on the workspace's model provider (api), or a helper on the
+	// owner's machine driving the Claude Code or Codex CLI they signed in to
+	// (claude_code, codex), and the helpers paired with the install. A local
+	// install's owner's only: hosted Helix serves none of these
+	// (FAILED_PRECONDITION, reason FOUNDRY_AGENT_HOSTS_LOCAL_ONLY).
+	GetFoundryAgentRuntime(context.Context, *GetFoundryAgentRuntimeRequest) (*FoundryAgentRuntimeResponse, error)
+	UpdateFoundryAgentRuntime(context.Context, *UpdateFoundryAgentRuntimeRequest) (*FoundryAgentRuntimeResponse, error)
+	CreateFoundryAgentHostPairing(context.Context, *CreateFoundryAgentHostPairingRequest) (*FoundryAgentHostPairingResponse, error)
+	RevokeFoundryAgentHost(context.Context, *RevokeFoundryAgentHostRequest) (*FoundryAgentHostResponse, error)
 	// Helix Foundry usage: the workspace's AI spend this month, by task
 	//
 	// The UTC calendar month's spend of loads, of API sources' extraction no
@@ -2055,6 +2119,18 @@ func (UnimplementedFoundryServiceServer) RefreshFoundryAgentAction(context.Conte
 }
 func (UnimplementedFoundryServiceServer) DismissFoundryAgentAction(context.Context, *DismissFoundryAgentActionRequest) (*FoundryAgentActionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DismissFoundryAgentAction not implemented")
+}
+func (UnimplementedFoundryServiceServer) GetFoundryAgentRuntime(context.Context, *GetFoundryAgentRuntimeRequest) (*FoundryAgentRuntimeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryAgentRuntime not implemented")
+}
+func (UnimplementedFoundryServiceServer) UpdateFoundryAgentRuntime(context.Context, *UpdateFoundryAgentRuntimeRequest) (*FoundryAgentRuntimeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateFoundryAgentRuntime not implemented")
+}
+func (UnimplementedFoundryServiceServer) CreateFoundryAgentHostPairing(context.Context, *CreateFoundryAgentHostPairingRequest) (*FoundryAgentHostPairingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateFoundryAgentHostPairing not implemented")
+}
+func (UnimplementedFoundryServiceServer) RevokeFoundryAgentHost(context.Context, *RevokeFoundryAgentHostRequest) (*FoundryAgentHostResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RevokeFoundryAgentHost not implemented")
 }
 func (UnimplementedFoundryServiceServer) GetFoundryUsage(context.Context, *GetFoundryUsageRequest) (*FoundryUsageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryUsage not implemented")
@@ -3957,6 +4033,78 @@ func _FoundryService_DismissFoundryAgentAction_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_GetFoundryAgentRuntime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetFoundryAgentRuntimeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).GetFoundryAgentRuntime(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_GetFoundryAgentRuntime_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).GetFoundryAgentRuntime(ctx, req.(*GetFoundryAgentRuntimeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_UpdateFoundryAgentRuntime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateFoundryAgentRuntimeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).UpdateFoundryAgentRuntime(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_UpdateFoundryAgentRuntime_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).UpdateFoundryAgentRuntime(ctx, req.(*UpdateFoundryAgentRuntimeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_CreateFoundryAgentHostPairing_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateFoundryAgentHostPairingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).CreateFoundryAgentHostPairing(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_CreateFoundryAgentHostPairing_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).CreateFoundryAgentHostPairing(ctx, req.(*CreateFoundryAgentHostPairingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_RevokeFoundryAgentHost_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeFoundryAgentHostRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).RevokeFoundryAgentHost(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_RevokeFoundryAgentHost_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).RevokeFoundryAgentHost(ctx, req.(*RevokeFoundryAgentHostRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_GetFoundryUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetFoundryUsageRequest)
 	if err := dec(in); err != nil {
@@ -4641,6 +4789,22 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DismissFoundryAgentAction",
 			Handler:    _FoundryService_DismissFoundryAgentAction_Handler,
+		},
+		{
+			MethodName: "GetFoundryAgentRuntime",
+			Handler:    _FoundryService_GetFoundryAgentRuntime_Handler,
+		},
+		{
+			MethodName: "UpdateFoundryAgentRuntime",
+			Handler:    _FoundryService_UpdateFoundryAgentRuntime_Handler,
+		},
+		{
+			MethodName: "CreateFoundryAgentHostPairing",
+			Handler:    _FoundryService_CreateFoundryAgentHostPairing_Handler,
+		},
+		{
+			MethodName: "RevokeFoundryAgentHost",
+			Handler:    _FoundryService_RevokeFoundryAgentHost_Handler,
 		},
 		{
 			MethodName: "GetFoundryUsage",

@@ -15,7 +15,9 @@ type foundryOperationDoc struct {
 	name string
 	// eventsOnly is an operation only a host with API sources offers; events replaces doc on
 	// such a host when set.
-	eventsOnly  bool
+	eventsOnly bool
+	// hostsOnly is an operation only a host with the Assistant's helpers offers (Service.AgentHosts).
+	hostsOnly   bool
 	doc, events string
 }
 
@@ -55,6 +57,13 @@ var foundryOperationDocs = []foundryOperationDoc{
 	{name: "create_document_set", doc: "{name, description}."},
 	{name: "update_document_set", doc: "{set_id, name, description}, name and description each optional."},
 	{name: "move_document", doc: "{document_id, set_id}."},
+	{name: "set_assistant_runtime", hostsOnly: true,
+		doc: "{runtime}: where the workspace's new Assistant threads run: api (Foundry's own worker, on the workspace's model), " +
+			"claude_code or codex (a helper on the owner's computer, on the Claude or ChatGPT subscription its CLI is signed in to; " + toolFoundryGetAssistantRuntime + " says which helpers run). A thread keeps the runtime it started with."},
+	{name: "pair_assistant_helper", hostsOnly: true,
+		doc: "{}: a one-time code, valid for ten minutes, that pairs a helper on the owner's computer with this install, and the command that pairs it. Its result holds the code: say it only to the person."},
+	{name: "revoke_assistant_helper", hostsOnly: true,
+		doc: "{host_id}: unpairs a helper (" + toolFoundryGetAssistantRuntime + "'s hosts): it and the turns it runs stop at once."},
 	{name: "settle_review",
 		doc: "{review_id, decision}: the review_key of a review the current load holds (" + toolFoundryListReviews + "), and the decision its settle names: " +
 			"resolve {resolve: {entity_key}} with one of its candidates or {resolve: {not_in_data: true}}; " +
@@ -71,14 +80,14 @@ const generateReads = "No connector_ids reads every connector unless no_connecto
 
 // foundryOperations is each operation the host offers and allows lets the caller prepare, in
 // order, and what its payload is.
-func foundryOperations(events bool, allows func(string) bool) (names []any, payloads string) {
+func foundryOperations(s *Service, allows func(string) bool) (names []any, payloads string) {
 	lines := []string{"Each operation's payload:"}
 	for _, op := range foundryOperationDocs {
-		if op.eventsOnly && !events || !allows(op.name) {
+		if op.eventsOnly && !s.Events || op.hostsOnly && !s.AgentHosts || !allows(op.name) {
 			continue
 		}
 		doc := op.doc
-		if events && op.events != "" {
+		if s.Events && op.events != "" {
 			doc = op.events
 		}
 		names = append(names, op.name)
@@ -89,12 +98,23 @@ func foundryOperations(events bool, allows func(string) bool) (names []any, payl
 
 // foundryOperationSchema is the input schema of helix_foundry_prepare_operation, naming the
 // operations allows lets the caller prepare.
-func foundryOperationSchema(events bool, allows func(string) bool) *jsonschema.Schema {
+func foundryOperationSchema(s *Service, allows func(string) bool) *jsonschema.Schema {
 	schema := schemaFor[FoundryOperationInput]()
-	names, payloads := foundryOperations(events, allows)
+	names, payloads := foundryOperations(s, allows)
 	target := "create_ontology: tenant:<database id> for an existing database, or workspace:<workspace_id> for a new one."
-	if events && allows("create_event_source") {
+	if s.Events && allows("create_event_source") {
 		target += " create_event_source: workspace:<workspace_id>."
+	}
+	if s.AgentHosts {
+		var ops []string
+		for _, op := range []string{"set_assistant_runtime", "pair_assistant_helper", "revoke_assistant_helper"} {
+			if allows(op) {
+				ops = append(ops, op)
+			}
+		}
+		if len(ops) > 0 {
+			target += " " + strings.Join(ops, ", ") + ": workspace:<workspace_id>."
+		}
 	}
 	target += " sync_connector: connector:<workspace_id>/<connector_id>. Every other operation: ontology:<workspace_id>/<ontology_id>."
 	schema.Properties["operation"].Description = "The action to prepare; payload says what each takes."
@@ -108,9 +128,9 @@ func foundryOperationSchema(events bool, allows func(string) bool) *jsonschema.S
 func everyOperation(string) bool { return true }
 
 // executeOperationSchema is the input schema of helix_foundry_execute_operation.
-func executeOperationSchema(events bool) *jsonschema.Schema {
+func executeOperationSchema(s *Service) *jsonschema.Schema {
 	schema := schemaFor[ExecuteFoundryInput]()
-	schema.Properties["operation"].Enum, _ = foundryOperations(events, everyOperation)
+	schema.Properties["operation"].Enum, _ = foundryOperations(s, everyOperation)
 	return schema
 }
 

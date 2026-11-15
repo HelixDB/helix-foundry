@@ -78,7 +78,10 @@ func agentRefusal(workspaceID string, err error) (error, bool) {
 }
 
 // SendFoundryAgentMessage queues a person's message in their thread, or a new
-// one. The same client token returns the turn it queued.
+// one, which takes the workspace's runtime (agentThreadRuntime). The same
+// client token returns the turn it queued. A thread a helper runs is refused
+// while no helper that runs it is online; one Foundry's worker runs, while
+// the workspace's model can't run.
 func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.SendFoundryAgentMessageRequest) (*foundryv1.FoundryAgentTurnResponse, error) {
 	ws := req.GetWorkspaceId()
 	userID, err := s.agentUser(ctx, ws)
@@ -98,9 +101,6 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		page.LoadID != "" && page.OntologyID == "":
 		return nil, status.Error(codes.InvalidArgument, "page_context names a load of an ontology, by their ids")
 	}
-	if err := s.requireAI(ctx, ws); err != nil {
-		return nil, err
-	}
 	existing, err := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, userID, token)
 	switch {
 	case err == nil && existing.Input != text:
@@ -109,6 +109,16 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		return s.agentTurnResponse(ctx, existing)
 	case !errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Errorf(codes.Internal, "look up the message: %v", err)
+	}
+	runtime, err := s.agentThreadRuntime(ctx, ws, userID, req.GetThreadId())
+	if err != nil {
+		return nil, err
+	}
+	// A helper's thread runs on its owner's subscription, not the workspace's model.
+	if !runtime.Subscription() {
+		if err := s.requireAI(ctx, ws); err != nil {
+			return nil, err
+		}
 	}
 	t := &foundrymodel.FoundryAgentTurn{
 		ID: id.New(), WorkspaceID: ws, UserID: userID, Kind: foundrymodel.FoundryAgentTurnMessage, Input: text, ClientToken: &token,
@@ -121,7 +131,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	if t.ThreadID = req.GetThreadId(); t.ThreadID == "" {
 		t.ThreadID = id.New()
 		thread = &foundrymodel.FoundryAgentThread{ID: t.ThreadID, WorkspaceID: ws, UserID: userID, Title: foundryagent.Title(text),
-			Runtime: foundrymodel.FoundryAgentRuntimeAPI}
+			Runtime: runtime}
 	}
 	err = s.deps.DB.CreateFoundryAgentTurn(ctx, t, thread, s.agentLimits())
 	if refused, ok := agentRefusal(ws, err); ok {
