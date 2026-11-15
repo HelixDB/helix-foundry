@@ -673,12 +673,31 @@ func TestAGranteeGetsTheOntologyItsGrantsCover(t *testing.T) {
 	require.Error(t, err)
 }
 
+// testScope is what reader's WithScope puts on a context: the workspace and
+// whether it is the write scope, so a backend can tell the caller's scope
+// reached it.
+type testScope struct {
+	workspace string
+	write     bool
+}
+
+type testScopeKey struct{}
+
+// scopeOf is the scope reader's WithScope put on ctx, if any.
+func scopeOf(ctx context.Context) (testScope, bool) {
+	scope, ok := ctx.Value(testScopeKey{}).(testScope)
+	return scope, ok
+}
+
 // reader is a user's identity on a host that grants every read.
 func reader() *Identity {
 	return &Identity{
 		User: true, HasPermission: func(Permission) bool { return true },
 		Authorize: func(context.Context, any, Grant, ...string) error { return nil },
 		Allows:    func(string, string, Grant) bool { return true },
+		WithScope: func(ctx context.Context, workspace string, write bool) context.Context {
+			return context.WithValue(ctx, testScopeKey{}, testScope{workspace, write})
+		},
 	}
 }
 

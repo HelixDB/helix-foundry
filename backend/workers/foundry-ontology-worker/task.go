@@ -199,6 +199,21 @@ func (t *Task) answerOverdue(ctx context.Context) {
 // process runs one attempt while renewing its lease, then records the outcome.
 // Losing the lease cancels the attempt: another worker owns the generation now.
 func (t *Task) process(ctx context.Context, gen *model.OntologyGeneration) {
+	// Past max_attempts, its attempts ended without recording an outcome (a
+	// worker stopped, or the store refused it), and a claim took it back when
+	// the lease ran out: another turn would spend the model again for the
+	// same end, so it fails now.
+	if gen.Attempts > t.cfg.MaxAttempts {
+		log.From(ctx).Error("ontology generation gave up: its attempts ended without an outcome", "generation", gen.ID, "attempts", gen.Attempts-1)
+		failed := model.OntologyGenerationOutcome{Status: model.OntologyGenerationFailed,
+			Error: fmt.Sprintf("the generation failed; Helix gave up after %d attempts", gen.Attempts-1)}
+		if err := t.queue.FinishOntologyGeneration(ctx, gen.ID, t.workerID, failed); err != nil {
+			log.From(ctx).Warn("finish ontology generation failed", "generation", gen.ID, "err", err)
+			return
+		}
+		generations.WithLabelValues("failed").Inc()
+		return
+	}
 	runCtx, cancel := context.WithTimeout(ctx, t.cfg.Timeout)
 	defer cancel()
 	stopRenewing := t.renewLease(runCtx, cancel, gen.ID)
