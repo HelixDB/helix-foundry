@@ -600,6 +600,87 @@ describe("a local install", () => {
   });
 });
 
+describe("where the Assistant runs", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("is the worker's alone hosted", async () => {
+    const got = await call("GET", `${A}/runtime`);
+    expect(got.status).toBe(400);
+    expect(reason(got)).toBe("FOUNDRY_AGENT_HOSTS_LOCAL_ONLY");
+    const sent = await send("What ontologies do I have?");
+    expect(sent.body.thread.runtime).toBe("api");
+  });
+
+  it("is the owner's choice on a local install, sent only while a helper runs it", async () => {
+    vi.resetModules();
+    vi.stubEnv("MOCK_LOCAL_TOKEN", "local-token");
+    vi.stubEnv("MOCK_AI_DEFAULT", "anthropic");
+    const local = await import("../../mock/state");
+    const at = harness(
+      (await import("../../mock/routes")).routes,
+      local.db.users,
+    );
+    local.resetState();
+    const before = await at("GET", `${A}/runtime`);
+    expect(before.body).toEqual({
+      runtime: { runtime: "api", hosts: [], online: [] },
+    });
+    expect((await at("PATCH", `${A}/runtime`, { runtime: "x" })).status).toBe(
+      400,
+    );
+    expect(
+      reason(await at("PATCH", `${A}/runtime`, { runtime: "codex" })),
+    ).toBe("FOUNDRY_AGENT_RUNTIME_UNAVAILABLE");
+    const chosen = await at("PATCH", `${A}/runtime`, {
+      runtime: "claude_code",
+    });
+    expect(chosen.body.runtime.runtime).toBe("claude_code");
+
+    // No helper runs it: nothing is queued.
+    const offline = await at("POST", `${A}/turns`, {
+      text: "What ontologies do I have?",
+      clientToken: "sub-1",
+    });
+    expect(reason(offline)).toBe("FOUNDRY_AGENT_HOST_OFFLINE");
+
+    const pairing = await at("POST", `${A}/host-pairings`, {});
+    expect(pairing.body.code).toMatch(/^hxp_/);
+    expect(pairing.body.command).toBe(
+      `npx -y @helixdb/foundry-agent-host@0.1.0 pair ${pairing.body.code}`,
+    );
+    Object.assign(local.config, {
+      agentHosts: [{ name: "Ada's Mac", runtimes: ["claude_code"] }],
+    });
+    const listed = (await at("GET", `${A}/runtime`)).body.runtime;
+    expect(listed.online).toEqual(["claude_code"]);
+    expect(listed.hosts[0]).toMatchObject({ name: "Ada's Mac", online: true });
+    const sent = await at("POST", `${A}/turns`, {
+      text: "What ontologies do I have?",
+      clientToken: "sub-2",
+    });
+    expect(sent.status).toBe(200);
+    expect(sent.body.thread.runtime).toBe("claude_code");
+
+    const revoked = await at(
+      "POST",
+      `${A}/hosts/${listed.hosts[0].id}:revoke`,
+      {},
+    );
+    expect(revoked.body.host.revokedAt).toBeTruthy();
+    expect((await at("GET", `${A}/runtime`)).body.runtime.hosts).toEqual([]);
+    later(60_000);
+    const again = await at("POST", `${A}/turns`, {
+      text: "And now?",
+      clientToken: "sub-3",
+      threadId: sent.body.thread.id,
+    });
+    expect(reason(again)).toBe("FOUNDRY_AGENT_HOST_OFFLINE");
+  });
+});
+
 describe("actions", () => {
   it("prepares a load of the ontology named, on its newest finished draft, without a token", async () => {
     const { events: evs, action } = await prepareLoad();
