@@ -606,6 +606,22 @@ describe("where the Assistant runs", () => {
     vi.resetModules();
   });
 
+  it("refuses every Assistant route while the Assistant is off", async () => {
+    Object.assign(config, { agentEnabled: false });
+    for (const [method, path] of [
+      ["GET", `${A}/threads`],
+      ["POST", `${A}/turns`],
+      ["GET", `${A}/runtime`],
+      ["POST", `${A}/host-pairings`],
+    ] as const) {
+      const got = await call(method, path, method === "POST" ? {} : undefined);
+      expect(got.status, path).toBe(400);
+      expect(reason(got), path).toBe("FOUNDRY_AGENT_DISABLED");
+    }
+    resetState();
+    expect((await call("GET", `${A}/threads`)).status).toBe(200);
+  });
+
   it("is the worker's alone hosted", async () => {
     const got = await call("GET", `${A}/runtime`);
     expect(got.status).toBe(400);

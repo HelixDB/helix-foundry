@@ -50,6 +50,8 @@ const configure = (config: {
   loadStepMs?: number;
   askStepMs?: number;
   agentStepMs?: number;
+  // false: the Assistant is off (foundry.agent.enabled).
+  agentEnabled?: boolean;
   // The Assistant's helpers (mock/routes/agent-hosts.ts).
   agentHosts?: {
     name: string;
@@ -1332,6 +1334,27 @@ test("pairs a helper and runs new Assistant threads on the owner's Claude subscr
   await expect(dock.getByRole("alert")).toHaveText(
     "No helper is paired to run it: pair one in Settings › AI models, start it, then send again.",
   );
+});
+
+test("shows nothing of where the Assistant runs while it is off", async ({
+  page,
+}) => {
+  await configure({ agentEnabled: false });
+  const refused = page.waitForResponse(
+    (r) => r.url().includes("/foundry/agent/runtime") && r.status() === 400,
+  );
+  await page.goto("/settings/ai");
+  await refused;
+  await expect(
+    page.getByRole("heading", { name: "Choose where AI runs" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "The Assistant", exact: true }),
+  ).toHaveCount(0);
+  await expect(assistantPanel(page)).toHaveCount(0);
+  await expect(
+    page.getByText("Couldn’t read where the Assistant runs"),
+  ).toHaveCount(0);
 });
 
 test("says how to start a helper that isn't running, and when its Claude Code is signed out", async ({

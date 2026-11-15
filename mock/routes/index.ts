@@ -1,6 +1,6 @@
 import type { MockRoute } from "../http";
 import { accessRoutes, directoryRoutes, guarded } from "./access";
-import { agentRoutes } from "./agent";
+import { agentRoutes, whileOn } from "./agent";
 import { agentHostRoutes } from "./agent-hosts";
 import { aiRoutes } from "./ai";
 import { authRoutes } from "./auth";
@@ -45,8 +45,7 @@ export const routes: MockRoute[] = [
   ...enrichmentRoutes,
   ...aiRoutes,
   ...questionRoutes,
-  ...agentRoutes,
-  ...agentHostRoutes,
+  ...whileOn([...agentRoutes, ...agentHostRoutes]),
   ...databaseRoutes,
   ...accessRoutes,
   ...directoryRoutes,

@@ -150,13 +150,16 @@ import { manages } from "./workspaces";
 // `agentOutcome` "fail" fails a turn after its
 // first call, "budget_exhausted" stops it at its cap, "not_run" shows a
 // second call a limit kept from running; `agentActionTtlMs` is how long a
-// card's confirmation lives (5 minutes).
+// card's confirmation lives (5 minutes). `{"agentEnabled": false}` is a
+// Foundry with foundry.agent.enabled off: every Assistant route (whileOn)
+// is FAILED_PRECONDITION, FOUNDRY_AGENT_DISABLED.
 
 type Knobs = {
   agentStepMs?: number;
   agentDeltaMs?: number;
   agentOutcome?: "fail" | "budget_exhausted" | "not_run";
   agentActionTtlMs?: number;
+  agentEnabled?: boolean;
 };
 const knobs = config as typeof config & Knobs;
 
@@ -292,7 +295,22 @@ onReset(() => {
   delete knobs.agentDeltaMs;
   delete knobs.agentOutcome;
   delete knobs.agentActionTtlMs;
+  delete knobs.agentEnabled;
 });
+
+/** The Assistant's routes, as a Foundry with it off refuses every one (agentEnabled false). */
+export const whileOn = (routes: MockRoute[]): MockRoute[] =>
+  routes.map((r) => ({
+    ...r,
+    handle: (req) =>
+      knobs.agentEnabled === false
+        ? refused(
+            req.params.workspaceId!,
+            "FOUNDRY_AGENT_DISABLED",
+            "the Assistant is off for this Foundry",
+          )
+        : r.handle(req),
+  }));
 
 const live = (t: { status: FoundryAgentTurnStatus }) =>
   t.status === "queued" || t.status === "running";
