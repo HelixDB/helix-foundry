@@ -430,6 +430,22 @@ export const ontologyLoad = (ontologyId: string, loadId: string) => {
     : undefined;
 };
 
+/**
+ * An ontology's loads that ended, oldest first, with their status: what an
+ * automation's load_ready trigger looks for (./automations.ts).
+ */
+export function loadsEnded(ontologyId: string) {
+  advanceLoads(ontologyId);
+  return state.loads
+    .filter((l) => l.ontologyId === ontologyId && l.finishedAt)
+    .map((l) => ({
+      id: l.id,
+      at: Date.parse(l.finishedAt!),
+      outcome: l.status,
+    }))
+    .sort((a, b) => a.at - b.at);
+}
+
 /** An ontology's current load's id, if it has one. */
 export const currentLoadId = (ontologyId: string) =>
   state.current.get(ontologyId);

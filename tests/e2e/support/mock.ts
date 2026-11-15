@@ -122,6 +122,16 @@ export const mock = {
     agentDeltaMs?: number;
     agentOutcome?: "fail" | "budget_exhausted" | "not_run";
     agentActionTtlMs?: number;
+    // Automations (mock/routes/automations.ts): the worker's clock moved
+    // this far ahead (a schedule fires without waiting), each step's time,
+    // the runs a workspace starts a day, automations off on this stamp,
+    // and what the mock Assistant answers a yes-or-no or how-many step.
+    automationClockMs?: number;
+    automationStepMs?: number;
+    automationRunsPerDay?: number;
+    automationsDisabled?: boolean;
+    automationAnswer?: "yes" | "no";
+    automationCount?: number;
     // false: no public dashboard links, as a stamp with them turned off.
     dashboardsPublic?: boolean;
     // false: the WFE has no foundry-connector role, so S3 offers keys only.

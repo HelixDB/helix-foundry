@@ -2821,7 +2821,22 @@ export type AgentActionDisplays = {
   pin_dashboard: { dashboard: AgentDashboardRef; pinned: boolean };
   publish_dashboard: { dashboard: AgentDashboardRef };
   unpublish_dashboard: { dashboard: AgentDashboardRef };
+  // Its name as the Assistant wrote it; its steps are the payload's spec.
+  create_automation: { name: string };
+  // steps: whether the edit carries steps (the payload's spec), which the
+  // person's click approves; without, it approves nothing.
+  update_automation: {
+    automation: AgentAutomationRef;
+    name?: string;
+    steps: boolean;
+  };
+  pause_automation: { automation: AgentAutomationRef };
+  resume_automation: { automation: AgentAutomationRef };
+  delete_automation: { automation: AgentAutomationRef };
+  run_automation: { automation: AgentAutomationRef };
 };
+/** An automation as it was when the action was prepared, with its status. */
+export type AgentAutomationRef = AgentRef & { status?: AutomationStatus };
 /** A dashboard as it was when the action was prepared. */
 export type AgentDashboardRef = AgentRef & { pinned?: true; published?: true };
 /**

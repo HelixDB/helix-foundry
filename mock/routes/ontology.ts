@@ -485,6 +485,27 @@ const live = (g: OntologyGeneration) =>
   g.status === "ONTOLOGY_GENERATION_STATUS_QUEUED" ||
   g.status === "ONTOLOGY_GENERATION_STATUS_RUNNING";
 
+/**
+ * An ontology's drafts (not revisions) that ended, oldest first, with how:
+ * what an automation's generation_finished trigger looks for
+ * (./automations.ts).
+ */
+export function draftsEnded(ontologyId: string) {
+  return state.generations
+    .filter((g) => g.ontologyId === ontologyId && !g.revision)
+    .map((g) => (advance(g), g))
+    .filter((g) => !live(g) && g.finishedAt)
+    .map((g) => ({
+      id: g.id,
+      at: Date.parse(g.finishedAt!),
+      outcome:
+        g.status === "ONTOLOGY_GENERATION_STATUS_SUCCEEDED"
+          ? "succeeded"
+          : "failed",
+    }))
+    .sort((a, b) => a.at - b.at);
+}
+
 /** An ontology is deleted: its live generation fails, as the backend ends it. */
 export function generationsEnded(ontologyId: string) {
   for (const g of state.generations)

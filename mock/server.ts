@@ -43,7 +43,9 @@ import { handleWorkos } from "./workos";
 // healRowsMeasured, freshInstall, signIn, signInsRunOut, accountBroken,
 // githubInstalled, directoryTeams, directoryEntitled, directoryIssues,
 // directorySyncMs, remindersPerHour, remindersPerClientPerHour, assessEnabled,
-// assessMs, assessOutcome }.
+// assessMs, assessOutcome, automationClockMs, automationStepMs,
+// automationRunsPerDay, automationsDisabled, automationAnswer,
+// automationCount }.
 //
 // POST /v1/reminders and /v1/reminders/stop are Foundry's door's, not the
 // WFE's: the landing page's reminders (./reminders.ts), which the site's

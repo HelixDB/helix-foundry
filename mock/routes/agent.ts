@@ -26,6 +26,8 @@ import type {
   AgentReviewEntity,
   AgentThreadResponse,
   AgentTurnResponse,
+  AutomationAction,
+  AutomationSpec,
   Connector,
   ConnectorKind,
   FoundryAgentTurnStatus,
@@ -33,6 +35,8 @@ import type {
   FoundryAgentEvent,
   FoundryAgentThread,
   FoundryAgentTurn,
+  FoundryAutomation,
+  FoundryAutomationRun,
   FoundryDashboard,
   FoundryDocument,
   FoundryDocumentSet,
@@ -75,8 +79,14 @@ import {
   runtimeOf,
   workspaceRuntime,
 } from "./agent-hosts";
+import {
+  WEEKDAYS,
+  sentence as automationSentence,
+  type Weekday,
+} from "../../src/web/areas/automations/model";
+import { automationRoutes, workspaceAutomations } from "./automations";
 import { dashboardRoutes, publicLinks, storedDashboard } from "./dashboards";
-import { dataRoutes, workspaceConnectors } from "./data";
+import { connectionName, dataRoutes, workspaceConnectors } from "./data";
 import { databaseRoutes, tenantGraph } from "./databases";
 import { documentRoutes } from "./documents";
 import { currentLoadId, loadRoutes, ontologyLoad } from "./loads";
@@ -113,6 +123,14 @@ import { manages } from "./workspaces";
 //   published), "delete" it or "rename it to X" (pin_dashboard,
 //   publish_dashboard, unpublish_dashboard, delete_dashboard,
 //   update_dashboard, after helix_foundry_get_dashboard);
+// - "every Monday at 9, sync Stripe and email me a summary of …" (or any
+//   "automate …", "every day …"): create_automation of a schedule (UTC)
+//   that syncs the connection named (else the first, when asked to sync),
+//   asks the Assistant for the summary asked for and emails it, after
+//   helix_foundry_list_connectors; "run", "pause", "resume" or "delete" an
+//   automation it names (run_automation, pause_automation,
+//   resume_automation, delete_automation, after
+//   helix_foundry_get_automation);
 // - "create an ontology called X on database Y" (create_ontology; "on a new
 //   database Y" makes it in the workspace's first project);
 // - "generate" or "draft" (generate_ontology: the connections and sets the
@@ -143,8 +161,17 @@ import { manages } from "./workspaces";
 // The ontology an action acts on is the one named, else the page's, else
 // the one this thread last acted on, else the newest (a card that warns it
 // was not named). A member gets the read tools, and prepares only their own
-// dashboards (MEMBER_OPERATIONS), as the backend gives them: anything else,
-// connect included, the agent says an owner or admin does. Running a card calls the mock's own WFE routes as the person who
+// dashboards and automations (MEMBER_OPERATIONS: the backend decides at the
+// click whose automation it is), as the backend gives them: anything else,
+// connect included, the agent says an owner or admin does. An automation's
+// Assistant step (queueAutomationTurn, for ./automations.ts) is a turn of
+// kind automation in its run's thread, out of the person's list: it reads
+// the ontologies and, asked to load one, prepares its load, which runs at
+// once when the step's allow approves it and waits as a card otherwise;
+// then it reports, answering a yes-or-no instruction with
+// `automationAnswer` ("yes") and a how-many one with `automationCount` (the
+// ontologies'); `agentOutcome` fails it as any turn. A create or an edit of
+// an automation that carries steps is approved by the click that ran it. Running a card calls the mock's own WFE routes as the person who
 // clicked (each operation's REST call, as the backend's execute does), after
 // the backend's checks: the person's own action, its hash, still waiting,
 // its confirmation alive, the thread idle; then a continuation turn goes on
@@ -172,6 +199,8 @@ type Knobs = {
   agentOutcome?: "fail" | "budget_exhausted" | "not_run";
   agentActionTtlMs?: number;
   agentEnabled?: boolean;
+  automationAnswer?: "yes" | "no";
+  automationCount?: number;
 };
 const knobs = config as typeof config & Knobs;
 
@@ -221,6 +250,8 @@ type StoredThread = {
   id: string;
   workspaceId: string;
   userId: string;
+  // An automation's run's thread is out of its person's list.
+  kind: "chat" | "automation";
   title: string;
   runtime: AgentRuntime;
   createdAt: string;
@@ -232,7 +263,7 @@ type StoredTurn = {
   threadId: string;
   workspaceId: string;
   userId: string;
-  kind: "message" | "action_result";
+  kind: "message" | "action_result" | "automation";
   text: string;
   actionId: string;
   pageContext: AgentPageContext | null;
@@ -308,6 +339,8 @@ onReset(() => {
   delete knobs.agentOutcome;
   delete knobs.agentActionTtlMs;
   delete knobs.agentEnabled;
+  delete knobs.automationAnswer;
+  delete knobs.automationCount;
 });
 
 /** The Assistant's routes, as a Foundry with it off refuses every one (agentEnabled false). */
@@ -534,6 +567,7 @@ function wfe(
     ...databaseRoutes,
     ...agentHostRoutes,
     ...dashboardRoutes,
+    ...automationRoutes,
   ].map((r) => ({ ...r, c: compileTemplate(r.path) }));
   const url = new URL(path, "http://mock");
   for (const r of compiled) {
@@ -912,13 +946,20 @@ const LIST = "helix_foundry_list_ontologies",
   RUNTIME = "helix_foundry_get_assistant_runtime",
   PREVIEW = "helix_foundry_preview_dashboard_tile",
   GET_DASHBOARD = "helix_foundry_get_dashboard",
+  GET_AUTOMATION = "helix_foundry_get_automation",
   PREPARE = "helix_foundry_prepare_operation";
 
-/** What a member, who manages nothing, prepares: their own dashboards (integration.memberOperations). */
+/** What a member, who manages nothing, prepares: their own dashboards and automations (integration.memberOperations). */
 const MEMBER_OPERATIONS: readonly (AgentOperation | "connect")[] = [
   "create_dashboard",
   "update_dashboard",
   "delete_dashboard",
+  "create_automation",
+  "update_automation",
+  "pause_automation",
+  "resume_automation",
+  "delete_automation",
+  "run_automation",
 ];
 
 /** What an owner or admin does that a member asked for, in the agent's words. */
@@ -943,6 +984,12 @@ const VERBS: Record<AgentOperation, string> = {
   pin_dashboard: "pin a dashboard",
   publish_dashboard: "publish a dashboard",
   unpublish_dashboard: "unpublish a dashboard",
+  create_automation: "set up an automation",
+  update_automation: "change an automation",
+  pause_automation: "pause an automation",
+  resume_automation: "resume an automation",
+  delete_automation: "delete an automation",
+  run_automation: "run an automation",
 };
 
 /**
@@ -1304,8 +1351,10 @@ function messageScript(a: Ask, manager: boolean): Step[] {
       ? storedDashboard(a.ws, a.page.dashboardId)
       : undefined,
     asked = board && dashboardAsk(t);
-  const intent: AgentOperation | "connect" | undefined =
-    /\bdashboard\b/i.test(t) && /\b(build|make|create)\b/i.test(t)
+  const automated = automationAsk(a.ws, t);
+  const intent: AgentOperation | "connect" | undefined = automated
+    ? automated.kind
+    : /\bdashboard\b/i.test(t) && /\b(build|make|create)\b/i.test(t)
       ? "create_dashboard"
       : asked
         ? asked.operation
@@ -1370,12 +1419,29 @@ function messageScript(a: Ask, manager: boolean): Step[] {
       return [started, ...list, ...createOntology(a)];
     case "create_dashboard":
       return [started, ...list, ...buildDashboard(a)];
+    case "create_automation":
+      return [started, ...automationCreate(a)];
+    case "pause_automation":
+    case "resume_automation":
+    case "delete_automation":
+    case "run_automation":
+      return [
+        started,
+        ...automationOperation(
+          a,
+          intent,
+          (automated as Extract<AutomationAsk, { automation: unknown }>)
+            .automation,
+        ),
+      ];
     case "update_dashboard":
     case "delete_dashboard":
     case "pin_dashboard":
     case "publish_dashboard":
     case "unpublish_dashboard":
       return [started, ...onDashboard(a, board!, asked!)];
+    // An edit of an automation is the builder's or a card's, never a message's.
+    case "update_automation":
     case undefined:
       return [started, ...list, ...describe(a)];
   }
@@ -1488,6 +1554,7 @@ function operationOf(
     | "set_assistant_runtime"
     | "revoke_assistant_helper"
     | `${string}_dashboard`
+    | `${string}_automation`
   >,
   a: Ask,
   o: StoredOntology,
@@ -2152,6 +2219,503 @@ function dashboardOutput(ws: string, d: FoundryDashboard) {
   };
 }
 
+// ---------------------------------------------------------------- automations
+
+type AutomationAsk =
+  | { kind: "create_automation" }
+  | {
+      kind:
+        | "pause_automation"
+        | "resume_automation"
+        | "delete_automation"
+        | "run_automation";
+      automation: ReturnType<typeof workspaceAutomations>[number];
+    };
+
+/** What the person asks about automations, if anything: a new one, or an action on one they name. */
+function automationAsk(ws: string, text: string): AutomationAsk | undefined {
+  const named = workspaceAutomations(ws).find((x) => says(text, x.name));
+  const op = /\b(pause|resume|delete|run)\b/i.exec(text)?.[1]?.toLowerCase();
+  if (named && op)
+    return {
+      kind: `${op as "pause" | "resume" | "delete" | "run"}_automation`,
+      automation: named,
+    };
+  return /\bautomat(e|ion)\b/i.test(text) ||
+    /\bevery\s+(hour|day|morning|weekday|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(
+      text,
+    )
+    ? { kind: "create_automation" }
+    : undefined;
+}
+
+/** An automation as a card names it. */
+const aref = (x: ReturnType<typeof workspaceAutomations>[number]) => ({
+  id: x.id,
+  name: x.name,
+  status: x.status,
+});
+
+/**
+ * Sets up what the person asked for as an automation's spec: a schedule
+ * (UTC: the mock doesn't know the person's zone), a sync of the connection
+ * named (else the first, when asked to sync), the Assistant's summary of
+ * what they asked about, and an email, then prepares create_automation.
+ */
+function automationCreate(a: Ask): Step[] {
+  const text = a.text,
+    connectors = workspaceConnectors(a.ws).filter((c) => c.kind !== "events"),
+    connector =
+      connectors.find((c) => says(text, c.name || c.kind)) ??
+      (/\bsync\b/i.test(text) ? connectors[0] : undefined);
+  const clock = /\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(text);
+  const hour =
+    ((Number(clock?.[1] ?? 9) % 12) +
+      (clock?.[3]?.toLowerCase() === "pm" ||
+      (!clock?.[3] && Number(clock?.[1] ?? 9) === 12)
+        ? 12
+        : 0)) %
+    24;
+  const at = `${String(hour).padStart(2, "0")}:${clock?.[2] ?? "00"}`,
+    weekday = WEEKDAYS.find((d) => new RegExp(`\\b${d}\\b`, "i").test(text));
+  const trigger = /\bevery\s+hour\b/i.test(text)
+    ? ({
+        kind: "schedule",
+        every: "hour",
+        minute: 0,
+        time_zone: "UTC",
+      } as const)
+    : weekday || /\bevery\s+week\b/i.test(text)
+      ? ({
+          kind: "schedule",
+          every: "week",
+          weekday: (weekday ?? "monday") as Weekday,
+          at,
+          time_zone: "UTC",
+        } as const)
+      : ({ kind: "schedule", every: "day", at, time_zone: "UTC" } as const);
+  const about = /\b(?:summary|report)\s+of\s+(.+?)(?:[.!?]|$)/i.exec(text)?.[1];
+  const nodes: AutomationSpec["nodes"] = [
+    { id: "start", kind: "trigger", config: trigger, position: { x: 0, y: 0 } },
+  ];
+  const add = (node: Omit<AutomationSpec["nodes"][number], "position">) =>
+    nodes.push({
+      ...node,
+      position: { x: 0, y: nodes.length * 150 },
+    } as AutomationSpec["nodes"][number]);
+  if (connector && /\bsync\b/i.test(text))
+    add({
+      id: "sync",
+      kind: "action",
+      config: { operation: "sync_connector", connector_id: connector.id },
+    });
+  add({
+    id: "summarise",
+    kind: "assistant",
+    config: {
+      instruction: about
+        ? `Summarise ${about.trim()}, in a few plain sentences.`
+        : `Do what was asked: ${text.trim()}`,
+    },
+  });
+  if (/\b(e-?mail|mail)\b/i.test(text))
+    add({ id: "email", kind: "notify", config: { message: "" } });
+  const spec: AutomationSpec = {
+    v: 1,
+    nodes,
+    edges: nodes.slice(1).map((n, i) => ({ from: nodes[i]!.id, to: n.id })),
+  };
+  const name =
+    /\bcalled\s+["“]?([^"”]+?)["”]?(?:[.,]|$)/i.exec(text)?.[1] ||
+    `${trigger.every === "week" ? "Weekly" : trigger.every === "day" ? "Daily" : "Hourly"} ${about ? "summary" : "check"}`;
+  const payload = { name, description: "", spec };
+  const words = automationSentence(
+    spec,
+    {
+      connector: (id) => connectionName(id),
+      ontology: () => undefined,
+      set: () => undefined,
+      dashboard: () => undefined,
+    },
+    !LOCAL_TOKEN,
+    "UTC",
+  );
+  return [
+    call("tu_connectors", CONNECTORS, { workspace_id: a.ws }),
+    result("tu_connectors", CONNECTORS, () => ({
+      connectors: connectors.map((c) => ({
+        id: c.id,
+        name: c.name,
+        kind: c.kind,
+      })),
+    })),
+    ...prepare(() => ({
+      operation: "create_automation",
+      target: `workspace:${a.ws}`,
+      payload,
+      display: { name },
+      named: namedByPerson(a.threadId, [name]),
+      ontologyId: "",
+      said: `I've prepared “${name}”: ${words} Its times are in UTC. Nothing runs until you click Create and turn on, which approves these steps to run as you.`,
+    })),
+  ];
+}
+
+/** Reads the automation the person named, then prepares what they asked of it. */
+function automationOperation(
+  a: Ask,
+  operation:
+    | "pause_automation"
+    | "resume_automation"
+    | "delete_automation"
+    | "run_automation",
+  x: ReturnType<typeof workspaceAutomations>[number],
+): Step[] {
+  const words = {
+    run_automation: `I've prepared running “${x.name}” now, once, as you.`,
+    pause_automation: `I've prepared pausing “${x.name}”: it won't run when it fires until it is resumed.`,
+    resume_automation: `I've prepared resuming “${x.name}”: it will run whenever it fires again.`,
+    delete_automation: `I've prepared deleting “${x.name}” and its runs.`,
+  };
+  return [
+    call("tu_automation", GET_AUTOMATION, { automation_id: x.id }),
+    result("tu_automation", GET_AUTOMATION, () => ({
+      automation: {
+        id: x.id,
+        name: x.name,
+        status: x.status,
+        revision: x.revision,
+      },
+    })),
+    ...prepare(
+      () =>
+        ({
+          operation,
+          target: `automation:${a.ws}/${x.id}`,
+          payload: {},
+          display: { automation: aref(x) },
+          named: namedByPerson(a.threadId, [x.name, x.id]),
+          ontologyId: "",
+          said: `${words[operation]} Run it from the card when you're ready.`,
+        }) as Plan,
+    ),
+  ];
+}
+
+/**
+ * An automation's Assistant step, as its turn runs: it reads the
+ * ontologies; asked to load one (the one named, else the first that can),
+ * it prepares the load, which runs at once as the owner when the step's
+ * `allow` approves it (stored executing, decided by its owner), and waits
+ * as a card otherwise; then it reports.
+ */
+function automationScript(
+  ws: string,
+  threadId: string,
+  instruction: string,
+  allow: AutomationAction[],
+): Step[] {
+  const ontologies = workspaceOntologies(ws);
+  const list = [
+    call("tu_list", LIST, {}),
+    result("tu_list", LIST, () => ({
+      ontologies: ontologies.map(ontologyOutput),
+    })),
+  ];
+  const o = /\b(re)?load\b/i.test(instruction)
+    ? (named(ws, instruction) ?? ontologies.find((x) => loadable(x.id)))
+    : undefined;
+  const v = o && loadable(o.id);
+  const steps: Step[] = [started, ...list];
+  const did = new Map<string, string>();
+  if (o && v) {
+    const plan = onOntology(
+      ws,
+      o,
+      false,
+      "create_load",
+      { version_id: v.id },
+      { ontology: ref(o), version: vref(o.id, v.id) },
+      "",
+    );
+    if (
+      allow.some((x) => x.operation === "create_load" && x.ontology_id === o.id)
+    ) {
+      // Approved: stored executing, decided by its owner, run at once.
+      let ran: StoredAction | undefined;
+      steps.push(
+        call("tu_prepare", PREPARE, {
+          operation: plan.operation,
+          target: plan.target,
+          payload: plan.payload,
+        }),
+        (c) => {
+          const x: StoredAction = {
+            ...plan,
+            id: id("act"),
+            turnId: c.turn.id,
+            threadId,
+            workspaceId: ws,
+            userId: c.userId,
+            payloadHash: hash(plan),
+            status: "executing",
+            result: null,
+            error: "",
+            expiresAt: Date.now() + ACTION_TTL_MS,
+            decidedByUserId: c.userId,
+            decidedAt: now(),
+            createdAt: now(),
+          };
+          state.actions.push(x);
+          ran = x;
+          const reply = run(x, c.userId);
+          if (reply.status === 200)
+            Object.assign(x, {
+              status: "succeeded",
+              result: {
+                content_trust: "untrusted",
+                operation: x.operation,
+                target: x.target,
+                result: output(x, reply.body),
+              },
+            });
+          else Object.assign(x, { status: "failed", error: why(reply) });
+          did.set(
+            c.turn.id,
+            x.status === "succeeded"
+              ? `Started a load of v${v.version} of ${o.name}.`
+              : `The load of ${o.name} didn't start: ${x.error}.`,
+          );
+          return {
+            type: "action_result",
+            action_id: x.id,
+            operation: x.operation,
+            status: x.status,
+            ...(x.result && { result: x.result }),
+            ...(x.error && { error: x.error }),
+          };
+        },
+        () => ({
+          type: "tool_result",
+          tool_use_id: "tu_prepare",
+          name: PREPARE,
+          is_error: false,
+          output: {
+            action_id: ran!.id,
+            status: "ran",
+            outcome: ran!.status,
+            ...(ran!.error && { error: ran!.error }),
+          },
+        }),
+      );
+    } else
+      steps.push(
+        // The prepare, its card and its result, without the agent's words.
+        ...prepare(() => plan).slice(0, 3),
+        (c) => {
+          did.set(
+            c.turn.id,
+            state.actions.some((x) => x.turnId === c.turn.id)
+              ? `A load of v${v.version} of ${o.name} waits for you to run it.`
+              : `I couldn't prepare a load of ${o.name}.`,
+          );
+          return null;
+        },
+      );
+  }
+  steps.push((c) => {
+    const answer = /\byes or no\b|\?/i.test(instruction)
+      ? (knobs.automationAnswer ?? "yes") === "yes"
+      : undefined;
+    const count = /\bhow many\b/i.test(instruction)
+      ? (knobs.automationCount ?? ontologies.length)
+      : undefined;
+    const summary = [
+      ontologies.length
+        ? `The workspace has ${ontologies.length} ontolog${ontologies.length === 1 ? "y" : "ies"}: ${ontologies.map((x) => x.name).join(", ")}.`
+        : "The workspace has no ontology yet.",
+      did.get(c.turn.id) ?? "",
+      answer === undefined
+        ? ""
+        : answer
+          ? "The answer is yes."
+          : "The answer is no.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return {
+      type: "automation_report",
+      summary,
+      ...(answer !== undefined && { answer }),
+      ...(count !== undefined && { count }),
+    };
+  });
+  return steps;
+}
+
+/**
+ * Queues an automation's Assistant step as a turn of kind automation in its
+ * run's thread (a new one, out of the person's list, for its first step),
+ * as its owner, on Foundry's worker: the backend's
+ * StartFoundryAutomationAssistant. A setting whose tool check failed fails
+ * it at once, as it fails any turn.
+ */
+export function queueAutomationTurn(p: {
+  workspaceId: string;
+  userId: string;
+  threadId: string;
+  title: string;
+  instruction: string;
+  allow: AutomationAction[];
+}): { threadId: string; turnId: string } {
+  let thread = state.threads.find((t) => t.id === p.threadId);
+  if (!thread) {
+    thread = {
+      id: id("thr"),
+      workspaceId: p.workspaceId,
+      userId: p.userId,
+      kind: "automation",
+      title: [...p.title].slice(0, TITLE_CHARS).join(""),
+      runtime: "api",
+      createdAt: now(),
+      updatedAt: now(),
+      deletedAt: null,
+    };
+    state.threads.push(thread);
+  }
+  const turn = queueTurn(thread, {
+    kind: "automation",
+    text: "",
+    actionId: "",
+    pageContext: null,
+    clientToken: "",
+    script: [],
+  });
+  const unusable = aiAssistantFailure(p.workspaceId);
+  turn.script = unusable
+    ? [
+        () => ({
+          type: "finished",
+          status: "failed",
+          reason: "failed",
+          error: unusable,
+        }),
+      ]
+    : ending(
+        automationScript(p.workspaceId, thread.id, p.instruction, p.allow),
+      );
+  return { threadId: thread.id, turnId: turn.id };
+}
+
+/**
+ * An automation's step's turn as the worker reads it: still live, or how it
+ * ended, with its newest report, its last words, its spend and the actions
+ * it left waiting for the owner; undefined once gone.
+ */
+export function automationTurn(turnId: string):
+  | { live: true }
+  | {
+      live: false;
+      status: FoundryAgentTurnStatus;
+      error: string;
+      usdMicros: number;
+      report?: { summary: string; answer?: boolean; count?: number };
+      said: string;
+      pending: number;
+    }
+  | undefined {
+  const t = state.turns.find((x) => x.id === turnId);
+  if (!t) return undefined;
+  advance(t);
+  if (live(t)) return { live: true };
+  const events = t.events.map((e) => JSON.parse(e.eventJson) as AgentEvent);
+  const report = events.findLast((e) => e.type === "automation_report"),
+    text = events.findLast((e) => e.type === "text");
+  return {
+    live: false,
+    status: t.status,
+    error: t.error,
+    usdMicros: t.usdMicros,
+    ...(report?.type === "automation_report" && {
+      report: {
+        summary: report.summary,
+        ...(report.answer !== undefined && { answer: report.answer }),
+        ...(report.count !== undefined && { count: report.count }),
+      },
+    }),
+    said: text?.type === "text" ? text.text.trim() : "",
+    pending: state.actions.filter(
+      (a) => a.turnId === t.id && shown(a) === "prepared",
+    ).length,
+  };
+}
+
+/** Cancels an automation's steps' live turns: its run was cancelled or deleted. */
+export function cancelAutomationTurns(turnIds: string[]) {
+  for (const t of state.turns)
+    if (turnIds.includes(t.id)) {
+      advance(t);
+      if (live(t))
+        Object.assign(t, {
+          status: "cancelled",
+          error: "the run was cancelled",
+          finishedAt: now(),
+        });
+    }
+}
+
+/** An automation as the operations give it back (integration.FoundryAutomationOutput). */
+const automationOutput = (ws: string, x: FoundryAutomation) => ({
+  id: x.id,
+  workspace_id: ws,
+  name: x.name,
+  description: x.description,
+  revision: Number(x.revision),
+  owner_user_id: x.ownerUserId,
+  status: x.status,
+  ...(x.pausedReason && { paused_reason: x.pausedReason }),
+  trigger_kind: x.triggerKind,
+  ...(x.nextRunAt && { next_run_at: x.nextRunAt }),
+  failures: x.failures ?? 0,
+  can_edit: !!x.canEdit,
+  can_pause: !!x.canPause,
+  can_resume: !!x.canResume,
+  can_run: !!x.canRun,
+  can_delete: !!x.canDelete,
+});
+
+/**
+ * Approves the automation a create or an edit the person just ran saved,
+ * as the backend's approveOnClick: their click on a card that showed steps
+ * approves exactly those. An edit without steps approves nothing. Saved but
+ * not approved, the action still succeeded, and says why.
+ */
+function approveOnClick(
+  a: StoredAction,
+  userId: string,
+  body: { automation: FoundryAutomation },
+): { body: { automation: FoundryAutomation }; error: string } {
+  if (
+    (a.operation !== "create_automation" &&
+      a.operation !== "update_automation") ||
+    a.payload.spec === undefined
+  )
+    return { body, error: "" };
+  const made = body.automation;
+  const approved = wfe(
+    userId,
+    "POST",
+    `${WS(a.workspaceId)}/automations/${made.id}:approve`,
+    { expectedRevision: made.revision },
+  );
+  return approved.status === 200
+    ? { body: approved.body, error: "" }
+    : {
+        body,
+        error: `it was saved, but not approved (${why(approved)}): approve it on its page in Foundry`,
+      };
+}
+
 // ---------------------------------------------------------------- results
 
 /** How the agent goes on from an action its person ran. */
@@ -2329,6 +2893,43 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
             `${a.display.host.name || "The helper"} is revoked: it runs no more turns. Pair it again from Settings › AI models to run more.`,
         ),
       ];
+    case "create_automation":
+    case "update_automation": {
+      const name = String(
+          out.name ||
+            ("name" in a.display && a.display.name) ||
+            "the automation",
+        ),
+        link = `/automations/${String(out.id)}`,
+        on = out.status === "active";
+      const made = a.operation === "create_automation";
+      return [
+        started,
+        said(() =>
+          a.error
+            ? `“${name}” is ${made ? "saved" : "changed"}, but ${a.error}: ${link}`
+            : made
+              ? `“${name}” is set up${on ? " and on" : ""}. Open it to see its runs, or run it now: ${link}`
+              : `“${name}” is changed${on ? " and on" : ""}: ${link}`,
+        ),
+      ];
+    }
+    case "pause_automation":
+    case "resume_automation":
+    case "delete_automation":
+    case "run_automation": {
+      const name = String(
+          out.name || a.display.automation.name || "the automation",
+        ),
+        link = `/automations/${a.display.automation.id}`;
+      const words = {
+        pause_automation: `“${name}” is paused: it runs only when it is run by hand. ${link}`,
+        resume_automation: `“${name}” is on again: ${link}`,
+        delete_automation: `“${name}” is deleted, with its runs.`,
+        run_automation: `“${name}” is running now. Follow it: ${link}/runs/${String(out.id)}`,
+      };
+      return [started, said(() => words[a.operation])];
+    }
     case "create_dashboard":
       return [
         started,
@@ -2511,6 +3112,41 @@ function run(a: StoredAction, userId: string): MockReply {
         `${WS(ws)}/agent/hosts/${p.host_id}:revoke`,
         {},
       );
+    case "create_automation":
+      return wfe(userId, "POST", `${WS(ws)}/automations`, {
+        name: p.name,
+        description: p.description ?? "",
+        ...(p.spec !== undefined && { specJson: JSON.stringify(p.spec) }),
+        clientToken: a.id,
+      });
+    case "update_automation":
+      return wfe(
+        userId,
+        "PATCH",
+        `${WS(ws)}/automations/${a.display.automation.id}`,
+        {
+          expectedRevision: String(p.expected_revision),
+          ...(p.name !== undefined && { name: p.name }),
+          ...(p.description !== undefined && { description: p.description }),
+          ...(p.spec !== undefined && { specJson: JSON.stringify(p.spec) }),
+        },
+      );
+    case "pause_automation":
+    case "resume_automation":
+    case "delete_automation":
+    case "run_automation": {
+      const at = `${WS(ws)}/automations/${a.display.automation.id}`;
+      return a.operation === "delete_automation"
+        ? wfe(userId, "DELETE", at)
+        : a.operation === "run_automation"
+          ? wfe(userId, "POST", `${at}:run`, { clientToken: a.id })
+          : wfe(
+              userId,
+              "POST",
+              `${at}:${a.operation === "pause_automation" ? "pause" : "resume"}`,
+              {},
+            );
+    }
     case "create_dashboard":
       return wfe(userId, "POST", `${WS(ws)}/dashboards`, {
         name: p.name,
@@ -2560,6 +3196,23 @@ function output(a: StoredAction, body: any) {
       return { runtime: body.runtime.runtime, online: body.runtime.online };
     case "delete_dashboard":
       return { deleted: true, dashboard_id: a.display.dashboard.id };
+    case "create_automation":
+    case "update_automation":
+    case "pause_automation":
+    case "resume_automation":
+      return automationOutput(a.workspaceId, body.automation);
+    case "delete_automation":
+      return { deleted: true, automation_id: a.display.automation.id };
+    case "run_automation": {
+      const r = body.run as FoundryAutomationRun;
+      return {
+        id: r.id,
+        automation_id: r.automationId,
+        status: r.status,
+        usd_micros: 0,
+        created_at: r.createdAt,
+      };
+    }
     case "create_dashboard":
     case "update_dashboard":
     case "pin_dashboard":
@@ -2672,13 +3325,15 @@ function execute(req: MockRequest, userId: string) {
   // operation's own routes check them.
   const reply = run(a, userId);
   if (reply.status === 200) {
+    const approval = approveOnClick(a, userId, reply.body);
     a.status = "succeeded";
     a.result = {
       content_trust: "untrusted",
       operation: a.operation,
       target: a.target,
-      result: output(a, reply.body),
+      result: output(a, approval.body),
     };
+    a.error = approval.error;
   } else {
     a.status = "failed";
     a.error = why(reply);
@@ -2738,6 +3393,11 @@ function refreshRefusal(a: StoredAction, userId: string) {
  * now in place of the one current then.
  */
 function redraw(a: StoredAction) {
+  if ("automation" in a.display) {
+    const id = a.display.automation.id,
+      x = workspaceAutomations(a.workspaceId).find((y) => y.id === id);
+    if (x) a.display.automation = aref(x);
+  }
   if ("dashboard" in a.display) {
     const d = storedDashboard(a.workspaceId, a.display.dashboard.id);
     if (d) a.display.dashboard = dref(d);
@@ -2844,6 +3504,7 @@ export const agentRoutes: MockRoute[] = [
           id: id("thr"),
           workspaceId: ws,
           userId: p.userId,
+          kind: "chat",
           title:
             [...line].length <= TITLE_CHARS
               ? line
@@ -2917,6 +3578,7 @@ export const agentRoutes: MockRoute[] = [
           (t) =>
             t.workspaceId === req.params.workspaceId &&
             t.userId === p.userId &&
+            t.kind === "chat" &&
             !t.deletedAt,
         )
         .sort(
