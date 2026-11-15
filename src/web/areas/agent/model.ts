@@ -73,12 +73,14 @@ export const isLiveTurn = (t?: { status?: FoundryAgentTurnStatus } | null) =>
 /**
  * What the person is looking at, from the URL: an ontology's pages, its
  * Explorer or Analyst, and the load they read (a load's page, or `?load=`),
- * or a dashboard. Ids only, never names; null anywhere else.
+ * a dashboard, or the page that starts a new automation. Ids only, never
+ * names; null anywhere else.
  *
  * @example
  * pageContext("/ontology/ont_1/loads/load_2", ""); // { ontologyId: "ont_1", loadId: "load_2" }
  * pageContext("/explore/ont_1/records", "?load=load_3"); // { ontologyId: "ont_1", loadId: "load_3" }
  * pageContext("/dashboards/dash_1", ""); // { dashboardId: "dash_1" }
+ * pageContext("/automations/new", "?thread=thr_1"); // { newAutomation: true }
  * pageContext("/ontology/new", ""); // null
  * pageContext("/data", ""); // null
  */
@@ -87,6 +89,10 @@ export function pageContext(
   search: string,
 ): AgentPageContext | null {
   const [, section, ontologyId = "", sub, loadId = ""] = pathname.split("/");
+  if (section === "automations")
+    return ontologyId === "new" && sub === undefined
+      ? { newAutomation: true }
+      : null;
   if (section === "dashboards")
     return ID.test(ontologyId) && sub === undefined
       ? { dashboardId: ontologyId }

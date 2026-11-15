@@ -235,8 +235,10 @@ export function Sidebar({
 }) {
   const shell = useShell(),
     { onboarding, grantee } = useWorkspace(),
-    section = activeSection(useLocation().pathname),
-    extra = onboarding ? undefined : section && sectionSidebars[section];
+    { pathname } = useLocation(),
+    section = activeSection(pathname),
+    open = onboarding ? undefined : section && sectionSidebars[section],
+    extra = open && (!open.shows || open.shows(pathname)) ? open : undefined;
   return (
     <div className="hf-sidebar-inner">
       <div className="hf-brand-row">

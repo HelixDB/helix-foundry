@@ -5,6 +5,7 @@ import type { AutomationNode, AutomationSpec } from "@/shared/wfe";
 import { canonicalJson, moveNode } from "@/web/areas/automations/model";
 import type { MockReply } from "../../mock/http";
 import { routes } from "../../mock/routes";
+import { pastRuns } from "../../mock/routes/automations";
 import { config, db, resetState } from "../../mock/state";
 
 // The mock's automations behave as the backend's (backend/api/automations.go,
@@ -609,5 +610,116 @@ describe("triggers", () => {
   it("is off where automations are", async () => {
     Object.assign(config, { automationsDisabled: true });
     expect(reason(await call("GET", A))).toBe("FOUNDRY_AUTOMATIONS_DISABLED");
+  });
+});
+
+describe("the list's counts", () => {
+  const DAY = 24 * 3_600_000;
+
+  it("counts each one's runs of the days asked, by the zone's days, and when it last failed", async () => {
+    const a = await active(chain(manual, tell)),
+      b = await active(chain(manual, tell));
+    // 08:00 UTC on Nov 16: in Los Angeles it is still Nov 16 (00:00), so a
+    // run 9 hours ago (Nov 15, 23:00 UTC) is Nov 15 there.
+    pastRuns(a.id, {
+      runs: [
+        { status: "succeeded", ago: 3_600_000, usdMicros: 1500 },
+        { status: "failed", ago: 2 * DAY },
+        { status: "succeeded", ago: 40 * DAY },
+      ],
+    });
+    pastRuns(b.id, {
+      runs: [
+        { status: "cancelled", ago: 9 * 3_600_000 },
+        { status: "failed", ago: 10 * DAY },
+      ],
+    });
+    // Its newest failure however old, and none without stats.
+    const plain = await call("GET", A);
+    expect(plain.body.summary).toBeUndefined();
+    const byId = (r: { body: any }) =>
+      Object.fromEntries(r.body.automations.map((x: any) => [x.id, x]));
+    expect(byId(plain)[a.id].lastFailedAt).toBe(
+      new Date(Date.now() - 2 * DAY).toISOString(),
+    );
+    expect(byId(plain)[a.id].stats).toBeUndefined();
+    expect(byId(plain)[b.id].lastRun.status).toBe("cancelled");
+
+    const week = await call(
+      "GET",
+      `${A}?statsDays=7&timeZone=America/Los_Angeles`,
+    );
+    expect(week.status).toBe(200);
+    expect(byId(week)[a.id].stats).toEqual({
+      runs: 2,
+      succeeded: 1,
+      failed: 1,
+      usdMicros: "1500",
+      waiting: 0,
+    });
+    expect(byId(week)[b.id].stats).toMatchObject({ runs: 1, failed: 0 });
+    expect(week.body.summary.days).toBe(7);
+    expect(week.body.summary.totals).toMatchObject({
+      runs: 3,
+      succeeded: 1,
+      failed: 1,
+    });
+    const days = week.body.summary.byDay;
+    expect(days.map((d: any) => d.date)).toEqual([
+      "2026-11-10",
+      "2026-11-11",
+      "2026-11-12",
+      "2026-11-13",
+      "2026-11-14",
+      "2026-11-15",
+      "2026-11-16",
+    ]);
+    expect(days[6]).toEqual({
+      date: "2026-11-16",
+      succeeded: 0,
+      failed: 0,
+      other: 0,
+    });
+    // Nov 16 07:00 UTC is Nov 15 23:00 in Los Angeles, as is the cancelled run.
+    expect(days[5]).toEqual({
+      date: "2026-11-15",
+      succeeded: 1,
+      failed: 0,
+      other: 1,
+    });
+    expect(days[4]).toMatchObject({ date: "2026-11-14", failed: 1 });
+
+    const month = await call("GET", `${A}?statsDays=30`);
+    expect(month.body.summary.totals).toMatchObject({
+      runs: 4,
+      succeeded: 1,
+      failed: 2,
+    });
+    expect(month.body.summary.byDay).toHaveLength(30);
+  });
+
+  it("counts the actions its Assistant steps left waiting", async () => {
+    const asked = await active(
+      chain(
+        manual,
+        node("ask", "assistant", { instruction: "Load Customer contracts." }),
+      ),
+    );
+    await ran(asked.id, (await runNow(asked.id)).body.run.id);
+    const r = await call("GET", `${A}?statsDays=7`);
+    expect(r.body.summary.totals.waiting).toBe(1);
+    expect(r.body.automations[0].stats.waiting).toBe(1);
+  });
+
+  it("refuses days and zones the backend refuses", async () => {
+    for (const q of [
+      "statsDays=31",
+      "statsDays=-1",
+      "statsDays=2.5",
+      "timeZone=UTC",
+      "statsDays=7&timeZone=Mars/Olympus",
+      "statsDays=7&timeZone=Local",
+    ])
+      expect((await call("GET", `${A}?${q}`)).status, q).toBe(400);
   });
 });

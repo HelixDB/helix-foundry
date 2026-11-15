@@ -43,6 +43,20 @@ export const automationQueries = {
         ? RUN_POLL_MS
         : false,
   }),
+  // The overview's: every automation with its runs of the last `days` days
+  // (by the days of `zone`) and their sum by day; read again while a run is
+  // live.
+  overview: (ws: string, days: number, zone: string) => ({
+    queryKey: [ws, "automations", { days, zone }],
+    queryFn: () =>
+      api<ListAutomationsResponse>(
+        `${at(ws)}?${new URLSearchParams({ statsDays: String(days), timeZone: zone })}`,
+      ),
+    refetchInterval: (q: { state: { data?: ListAutomationsResponse } }) =>
+      q.state.data?.automations?.some((a) => isLiveRun(a.lastRun))
+        ? RUN_POLL_MS
+        : false,
+  }),
   // One automation with its spec and revision; read again while a run of
   // it is live, and while it is active (a trigger may fire).
   automation: (ws: string, id: string) => ({

@@ -1464,24 +1464,34 @@ test("runs an automation, which notes what it found where it can't email", async
 }) => {
   await configure({ agentStepMs: 60, automationStepMs: 100 });
   await page.goto("/automations");
-  await page.getByRole("link", { name: /^Start from scratch/ }).click();
-  await page.getByLabel("Name").fill("Count the ontologies");
+  // A new one starts with the Assistant here too, or from scratch.
+  await page.getByRole("link", { name: "New automation" }).first().click();
+  await expect(
+    page.getByRole("heading", { name: "What should happen?" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Start from scratch" }).click();
+  await page
+    .getByRole("textbox", { name: "Name" })
+    .fill("Count the ontologies");
+  await page.getByRole("button", { name: "Add step" }).click();
+  await page.getByRole("menuitem", { name: "Ask the Assistant" }).click();
   await page
     .getByLabel("What should it do?")
     .fill("How many ontologies are there?");
-  await page
-    .getByRole("group", { name: "Add a step" })
-    .getByRole("button", { name: "Email me" })
-    .click();
-  await expect(page.locator(".au-sentence")).toHaveText(
+  await page.getByRole("button", { name: "Add step" }).click();
+  await page.getByRole("menuitem", { name: "Email me" }).click();
+  const inspector = page.getByRole("complementary", { name: "Inspector" });
+  await inspector.getByRole("button", { name: "Back to the summary" }).click();
+  await expect(inspector.locator(".au-summary-text")).toHaveText(
     "When you run it, ask the Assistant: “How many ontologies are there?”, then note what it found in the run (this Foundry sends no email).",
   );
   await page.getByRole("button", { name: "Review and save" }).click();
   await page.getByRole("button", { name: "Save and turn on" }).click();
-  const main = page.getByRole("main");
-  await main.getByRole("button", { name: "Run now" }).click();
+  await page.getByRole("button", { name: "Run now" }).click();
   await expect(
-    main.locator(".hf-page-header").getByText("Succeeded", { exact: true }),
+    inspector
+      .locator(".au-summary-head")
+      .getByText("Succeeded", { exact: true }),
   ).toBeVisible({ timeout: 20_000 });
   const steps = page.getByRole("list", { name: "What each step did" });
   await expect(steps.getByRole("listitem").nth(1)).toContainText("Count: 3");

@@ -41,6 +41,7 @@ import {
   setConfig,
   stepStates,
   stoppedText,
+  tidy,
   triggerOfKind,
   triggerText,
   usdText,
@@ -501,7 +502,7 @@ describe("parseSpec", () => {
           "load-after-sync": 2,
           "check-documents": 1,
           "load-ready-report": 1,
-          blank: 1,
+          blank: 0,
         }[t.id],
       );
     }
@@ -1058,6 +1059,89 @@ describe("edits", () => {
     ] as const)
       expect(triggerOfKind(k, sched, "UTC").kind).toBe(k);
     expect(newNodeId(simple, "notify")).toBe("notify-1");
+  });
+});
+
+describe("tidy", () => {
+  const places = (s: AutomationSpec) =>
+    Object.fromEntries(s.nodes.map((n) => [n.id, n.position]));
+
+  it("lays each step a row below the furthest step before it, a row's steps side by side and centred", () => {
+    const check = node(
+      "check",
+      "condition",
+      { check: "answer", equals: "yes" },
+      { x: 50, y: 900 },
+    );
+    const yes = node("yes", "notify", { message: "Yes" }, { x: -500, y: 3 });
+    const no = node("no", "notify", { message: "No" }, { x: 500, y: 3 });
+    // "late" comes after "yes" and after "ask": the longer way places it.
+    const late = node("late", "notify", { message: "" }, { x: 0, y: 0 });
+    const s = spec(
+      [manual, ask(), check, yes, no, late],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "check" },
+        { from: "check", to: "yes", branch: "true" },
+        { from: "check", to: "no", branch: "false" },
+        { from: "yes", to: "late" },
+        { from: "ask", to: "late" },
+      ],
+    );
+    const laid = tidy(s);
+    expect(places(laid)).toEqual({
+      start: { x: 0, y: 0 },
+      ask: { x: 0, y: 150 },
+      check: { x: 0, y: 300 },
+      yes: { x: -140, y: 450 },
+      no: { x: 140, y: 450 },
+      late: { x: 0, y: 600 },
+    });
+    // Only places change: it runs the same steps, in the same order.
+    expect(sameSteps(s, laid)).toBe(true);
+    expect(laid.edges).toEqual(s.edges);
+    expect(tidy(laid)).toEqual(laid);
+  });
+
+  it("puts steps no way from the trigger reaches in a row of their own, last", () => {
+    const loose = node("loose", "notify", { message: "" }, { x: 30, y: -20 });
+    const other = node(
+      "other",
+      "assistant",
+      { instruction: "" },
+      { x: 10, y: 0 },
+    );
+    const laid = tidy(
+      spec([loose, manual, tell, other], [{ from: "start", to: "tell" }]),
+    );
+    expect(places(laid)).toEqual({
+      start: { x: 0, y: 0 },
+      tell: { x: 0, y: 150 },
+      other: { x: -140, y: 300 },
+      loose: { x: 140, y: 300 },
+    });
+  });
+
+  it("places a trigger alone, and what a cycle holds last", () => {
+    expect(places(tidy(spec([manual])))).toEqual({ start: { x: 0, y: 0 } });
+    const a = node("a", "notify", { message: "" }),
+      b = node("b", "notify", { message: "" });
+    const laid = tidy(
+      spec(
+        [manual, a, b],
+        [
+          { from: "start", to: "a" },
+          { from: "a", to: "b" },
+          { from: "b", to: "a" },
+        ],
+      ),
+    );
+    expect(places(laid).start).toEqual({ x: 0, y: 0 });
+    // The cycle's steps, which no run could order, go in the last row.
+    expect(places(laid).a!.y).toBe(150);
+    expect(places(laid).b!.y).toBe(150);
+    // With no trigger at all, everything is unreached.
+    expect(places(tidy(spec([a])))).toEqual({ a: { x: 0, y: 0 } });
   });
 });
 

@@ -2568,6 +2568,8 @@ export type AgentPageContext = {
   loadId?: string;
   // The dashboard open, if any.
   dashboardId?: string;
+  // The person is on the page that starts a new automation.
+  newAutomation?: boolean;
 };
 
 /**
@@ -3526,14 +3528,52 @@ export type FoundryAutomation = {
   canResume?: boolean;
   canRun?: boolean;
   canDelete?: boolean;
+  // When its newest failed run started.
+  lastFailedAt?: string | null;
+  // Its runs of the days a list asked for (statsDays).
+  stats?: AutomationRunCounts | null;
 };
 
-/** GET .../automations: every one (at most 50), each with its newest run, without specs. */
+/**
+ * v1FoundryAutomationRunCounts: runs started within some days, every one
+ * (live, cancelled and skipped too), those that succeeded and failed, what
+ * they spent (int64), and the actions their Assistant steps prepared that
+ * still wait for the owner.
+ */
+export type AutomationRunCounts = {
+  runs?: number;
+  succeeded?: number;
+  failed?: number;
+  usdMicros?: string;
+  waiting?: number;
+};
+/** v1FoundryAutomationRunDay: a day's runs in the list's time zone; other neither succeeded nor failed. */
+export type AutomationRunDay = {
+  // YYYY-MM-DD.
+  date?: string;
+  succeeded?: number;
+  failed?: number;
+  other?: number;
+};
+/** v1FoundryAutomationRunSummary: the workspace's runs of the last days, each day listed, oldest first. */
+export type AutomationRunSummary = {
+  days?: number;
+  totals?: AutomationRunCounts;
+  byDay?: AutomationRunDay[];
+};
+
+/**
+ * GET .../automations[?statsDays=&timeZone=]: every one (at most 50), each
+ * with its newest run and newest failure, without specs. statsDays (1 to
+ * 30) counts each one's runs of that many days, today the last, by the days
+ * of timeZone (IANA; UTC when empty), and sums them in summary.
+ */
 export type ListAutomationsResponse = {
   automations?: FoundryAutomation[];
   canCreate?: boolean;
   // Whether a notify step emails here (false on a local build).
   email?: boolean;
+  summary?: AutomationRunSummary | null;
 };
 /** v1FoundryAutomationResponse: get, create, update, approve, pause and resume. */
 export type AutomationResponse = { automation: FoundryAutomation };

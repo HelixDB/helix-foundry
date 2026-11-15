@@ -57,7 +57,7 @@ const DAYS: SelectOption<Weekday>[] = WEEKDAYS.map((d) => ({
   value: d,
   label: d.charAt(0).toUpperCase() + d.slice(1),
 }));
-const ZONES: string[] = (() => {
+export const ZONES: string[] = (() => {
   const all = (
     Intl as { supportedValuesOf?: (key: "timeZone") => string[] }
   ).supportedValuesOf?.("timeZone");

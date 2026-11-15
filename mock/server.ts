@@ -6,6 +6,7 @@ import { handleSharedDashboard } from "./routes/dashboards";
 import { routes } from "./routes";
 import { handleDirectoryPage } from "./routes/access";
 import { pairHelper, startHelper } from "./routes/agent-hosts";
+import { pastRuns } from "./routes/automations";
 import { handleBillingPage } from "./routes/billing";
 import { handleDocumentUpload } from "./routes/documents";
 import { sendPieces } from "./routes/event-sources";
@@ -61,6 +62,10 @@ import { handleWorkos } from "./workos";
 // [{ id, occurredAt?, data }], workflowRunId? }, answered as
 // SendFoundryEvents answers. The WFE has no route that sends pieces, so
 // neither has the app.
+//
+// POST /__mock/automations/{id}/past-runs { runs: [{ status, ago,
+// usdMicros? }] } records ended runs of an automation that long ago (ms),
+// for the history the automations' overview counts (./routes/automations.ts).
 //
 // POST /__mock/agent-host/pair { code, name?, account? } spends a pairing
 // code as the Assistant's helper's pair command does
@@ -157,6 +162,18 @@ const server = createServer(async (req, res) => {
       if (send && req.method === "POST") {
         const reply = sendPieces(
           decodeURIComponent(send[1]!),
+          JSON.parse(raw || "{}"),
+        );
+        res.writeHead(reply.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(reply.body));
+        return;
+      }
+      const past = /^\/__mock\/automations\/([^/]+)\/past-runs$/.exec(
+        url.pathname,
+      );
+      if (past && req.method === "POST") {
+        const reply = pastRuns(
+          decodeURIComponent(past[1]!),
           JSON.parse(raw || "{}"),
         );
         res.writeHead(reply.status, { "Content-Type": "application/json" });

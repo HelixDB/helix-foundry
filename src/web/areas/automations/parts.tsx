@@ -1,4 +1,5 @@
 import "./automations.css";
+import { Link } from "react-router-dom";
 import {
   CalendarClock,
   GitBranch,
@@ -23,7 +24,11 @@ import {
   type Kind,
   type Names,
   type StepState,
+  type Template,
+  TEMPLATES,
 } from "./model";
+import { automationPaths as paths } from "./paths";
+import type { useNames } from "./queries";
 
 // What the automations' pages share: how an automation, a run and a step
 // show their state, each kind's icon, and the steps as they will run
@@ -40,14 +45,15 @@ export function automationStatus(a: FoundryAutomation): {
 } {
   switch (a.status) {
     case "active":
-      return { dot: "healthy", label: "On" };
+      return { dot: "healthy", label: "Live" };
     case "paused":
-      return a.pausedReason === "failures" ||
-        a.pausedReason === "owner_lost_access"
-        ? { dot: "failed", label: "Paused" }
-        : { dot: "paused", label: "Paused" };
+      return a.pausedReason === "failures"
+        ? { dot: "failed", label: "Paused after failures" }
+        : a.pausedReason === "owner_lost_access"
+          ? { dot: "failed", label: "Paused" }
+          : { dot: "paused", label: "Paused" };
     default:
-      return { dot: "review", label: "Waits for approval" };
+      return { dot: "review", label: "Needs approval" };
   }
 }
 
@@ -165,5 +171,41 @@ export function StepsPreview({
         );
       })}
     </ol>
+  );
+}
+
+const NEEDS: Record<Template["needs"][number], string> = {
+  connector: "a connection",
+  ontology: "an ontology",
+  set: "a document set",
+};
+
+/** The templates a new automation starts from on the canvas, each saying what it needs that the workspace lacks. */
+export function Templates({ lists }: { lists: ReturnType<typeof useNames> }) {
+  const has = {
+    connector: !!lists.connectors.length,
+    ontology: !!lists.ontologies.length,
+    set: !!lists.sets.length,
+  };
+  return (
+    <ul className="au-templates" aria-label="Templates">
+      {TEMPLATES.map((t) => {
+        const lacks = t.needs.filter((n) => !has[n]);
+        return (
+          <li key={t.id}>
+            <Link className="au-template" to={paths.newAutomation(t.id)}>
+              <strong>{t.title}</strong>
+              <span>{t.description}</span>
+              {lists.ready && !!lacks.length && (
+                <small>
+                  Needs {lacks.map((n) => NEEDS[n]).join(" and ")}, which this
+                  workspace hasn’t yet.
+                </small>
+              )}
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

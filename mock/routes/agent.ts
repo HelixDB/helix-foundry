@@ -124,7 +124,9 @@ import { manages } from "./workspaces";
 //   publish_dashboard, unpublish_dashboard, delete_dashboard,
 //   update_dashboard, after helix_foundry_get_dashboard);
 // - "every Monday at 9, sync Stripe and email me a summary of …" (or any
-//   "automate …", "every day …"): create_automation of a schedule (UTC)
+//   "automate …", "every day …", or anything written on the page that
+//   starts a new automation, its page context's newAutomation):
+//   create_automation of a schedule (UTC)
 //   that syncs the connection named (else the first, when asked to sync),
 //   asks the Assistant for the summary asked for and emails it, after
 //   helix_foundry_list_connectors; "run", "pause", "resume" or "delete" an
@@ -1351,7 +1353,7 @@ function messageScript(a: Ask, manager: boolean): Step[] {
       ? storedDashboard(a.ws, a.page.dashboardId)
       : undefined,
     asked = board && dashboardAsk(t);
-  const automated = automationAsk(a.ws, t);
+  const automated = automationAsk(a.ws, t, !!a.page?.newAutomation);
   const intent: AgentOperation | "connect" | undefined = automated
     ? automated.kind
     : /\bdashboard\b/i.test(t) && /\b(build|make|create)\b/i.test(t)
@@ -2231,7 +2233,11 @@ type AutomationAsk =
     };
 
 /** What the person asks about automations, if anything: a new one, or an action on one they name. */
-function automationAsk(ws: string, text: string): AutomationAsk | undefined {
+function automationAsk(
+  ws: string,
+  text: string,
+  creating: boolean,
+): AutomationAsk | undefined {
   const named = workspaceAutomations(ws).find((x) => says(text, x.name));
   const op = /\b(pause|resume|delete|run)\b/i.exec(text)?.[1]?.toLowerCase();
   if (named && op)
@@ -2239,7 +2245,9 @@ function automationAsk(ws: string, text: string): AutomationAsk | undefined {
       kind: `${op as "pause" | "resume" | "delete" | "run"}_automation`,
       automation: named,
     };
-  return /\bautomat(e|ion)\b/i.test(text) ||
+  // On the page that starts one, whatever the person writes describes it.
+  return creating ||
+    /\bautomat(e|ion)\b/i.test(text) ||
     /\bevery\s+(hour|day|morning|weekday|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(
       text,
     )
@@ -2316,7 +2324,7 @@ function automationCreate(a: Ask): Step[] {
         : `Do what was asked: ${text.trim()}`,
     },
   });
-  if (/\b(e-?mail|mail)\b/i.test(text))
+  if (/\b(e-?mails?|mail)\b/i.test(text))
     add({ id: "email", kind: "notify", config: { message: "" } });
   const spec: AutomationSpec = {
     v: 1,
@@ -2647,6 +2655,16 @@ export function automationTurn(turnId: string):
     ).length,
   };
 }
+
+/**
+ * The actions these turns prepared that still wait for their person, as the
+ * backend counts them for the automations' list: stored as prepared (one
+ * whose confirmation ran out still waits for a Refresh).
+ */
+export const waitingActions = (turnIds: string[]) =>
+  state.actions.filter(
+    (a) => turnIds.includes(a.turnId) && a.status === "prepared",
+  ).length;
 
 /** Cancels an automation's steps' live turns: its run was cancelled or deleted. */
 export function cancelAutomationTurns(turnIds: string[]) {
@@ -3522,11 +3540,12 @@ export const agentRoutes: MockRoute[] = [
         state.threads.push(thread);
       }
       const pageContext =
-        page?.ontologyId || page?.dashboardId
+        page?.ontologyId || page?.dashboardId || page?.newAutomation
           ? {
               ...(page.ontologyId && { ontologyId: page.ontologyId }),
               ...(page.loadId && { loadId: page.loadId }),
               ...(page.dashboardId && { dashboardId: page.dashboardId }),
+              ...(page.newAutomation && { newAutomation: true }),
             }
           : null;
       const turn = queueTurn(thread, {

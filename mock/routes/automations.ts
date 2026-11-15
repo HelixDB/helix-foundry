@@ -4,8 +4,10 @@ import type {
   AutomationNodeStatus,
   AutomationPausedReason,
   AutomationResponse,
+  AutomationRunCounts,
   AutomationRunResponse,
   AutomationRunStatus,
+  AutomationRunSummary,
   AutomationSpec,
   AutomationStatus,
   AutomationTrigger,
@@ -22,6 +24,7 @@ import {
   parseSpec,
   sameSteps,
   triggerOf,
+  validZone,
 } from "../../src/web/areas/automations/model";
 import {
   fail,
@@ -46,6 +49,7 @@ import {
   automationTurn,
   cancelAutomationTurns,
   queueAutomationTurn,
+  waitingActions,
 } from "./agent";
 import { dashboardRoute, storedDashboard } from "./dashboards";
 import { dataRoutes, syncsEnded, storedConnector } from "./data";
@@ -288,6 +292,9 @@ const firstFire = (spec: AutomationSpec, at: number) => {
 };
 const lastRun = (a: StoredAutomation) =>
   state.runs.find((r) => r.automationId === a.id);
+// Runs are kept newest first; a past run (pastRuns) goes where its time is.
+const lastFailed = (a: StoredAutomation) =>
+  state.runs.find((r) => r.automationId === a.id && r.status === "failed");
 
 function automationOut(
   a: StoredAutomation,
@@ -327,6 +334,7 @@ function automationOut(
     failures: a.failures,
     backoffUntil: a.backoffUntil === null ? null : iso(a.backoffUntil),
     lastRun: last ? runOut(last, a, c, false) : null,
+    lastFailedAt: lastFailed(a)?.createdAt ?? null,
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
     canEdit: owner,
@@ -989,6 +997,142 @@ function owned(
 const reply = (a: StoredAutomation, c: Caller) =>
   ok({ automation: automationOut(a, c, true) } satisfies AutomationResponse);
 
+// ---------------------------------------------------------------- run stats
+
+const MAX_STATS_DAYS = 30;
+
+/** The day `at` falls on in `zone`, as YYYY-MM-DD. */
+const dayIn = (at: number, zone: string) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(at);
+
+/** The last `days` days of `zone`, today the last, as YYYY-MM-DD. */
+function lastDays(days: number, zone: string): string[] {
+  const [y, m, d] = dayIn(Date.now(), zone).split("-").map(Number);
+  return Array.from({ length: days }, (_, i) =>
+    new Date(Date.UTC(y!, m! - 1, d! - (days - 1 - i)))
+      .toISOString()
+      .slice(0, 10),
+  );
+}
+
+/**
+ * The runs' counts as the backend counts them (store
+ * FoundryAutomationRunStats): every run, those that succeeded and failed,
+ * what they spent, and the actions their Assistant steps left waiting.
+ */
+function counts(runs: StoredRun[]): AutomationRunCounts {
+  return {
+    runs: runs.length,
+    succeeded: runs.filter((r) => r.status === "succeeded").length,
+    failed: runs.filter((r) => r.status === "failed").length,
+    usdMicros: String(runs.reduce((sum, r) => sum + r.usdMicros, 0)),
+    waiting: waitingActions(
+      runs.flatMap((r) => r.nodes.map((n) => n.turnId).filter(Boolean)),
+    ),
+  };
+}
+
+/**
+ * The list's statsDays and timeZone, checked as the backend checks them:
+ * the days' dates, oldest first, and the zone; null without statsDays; a
+ * reply for a refusal.
+ */
+function statsDays(
+  req: MockRequest,
+): { dates: string[]; zone: string } | null | MockReply {
+  const raw = req.query.get("statsDays") ?? req.query.get("stats_days"),
+    zone = req.query.get("timeZone") ?? req.query.get("time_zone") ?? "";
+  const days = raw === null ? 0 : Number(raw);
+  if (!days && zone)
+    return fail("INVALID_ARGUMENT", "time_zone goes with stats_days");
+  if (!Number.isInteger(days) || days < 0 || days > MAX_STATS_DAYS)
+    return fail("INVALID_ARGUMENT", `stats_days is 1 to ${MAX_STATS_DAYS}`);
+  if (zone && !validZone(zone))
+    return fail(
+      "INVALID_ARGUMENT",
+      `time_zone "${zone}" is not an IANA time zone, such as Europe/London`,
+    );
+  return days
+    ? { dates: lastDays(days, zone || "UTC"), zone: zone || "UTC" }
+    : null;
+}
+
+/** The workspace's runs of `dates` in `zone`: their counts, and each day's. */
+function summary(
+  runs: StoredRun[],
+  dates: string[],
+  zone: string,
+): AutomationRunSummary {
+  const days = new Map(
+    dates.map((date) => [date, { date, succeeded: 0, failed: 0, other: 0 }]),
+  );
+  for (const r of runs) {
+    const day = days.get(dayIn(Date.parse(r.createdAt), zone))!;
+    if (r.status === "succeeded") day.succeeded++;
+    else if (r.status === "failed") day.failed++;
+    else day.other++;
+  }
+  return {
+    days: dates.length,
+    totals: counts(runs),
+    byDay: [...days.values()],
+  };
+}
+
+/**
+ * Records ended runs of an automation as though they had run `ago` ms
+ * before now (POST /__mock/automations/{id}/past-runs, `{runs: [{status,
+ * ago, usdMicros?}]}`): its history, for the overview's days. Each runs
+ * nothing; a failed one says why.
+ */
+export function pastRuns(
+  automationId: string,
+  body: {
+    runs?: {
+      status: Exclude<AutomationRunStatus, "queued" | "running">;
+      ago: number;
+      usdMicros?: number;
+    }[];
+  },
+): { status: number; body: unknown } {
+  const a = state.automations.find((x) => x.id === automationId);
+  if (!a) return { status: 404, body: { message: "automation not found" } };
+  for (const p of body.runs || []) {
+    const at = iso(Date.now() - p.ago);
+    state.runs.push({
+      id: id("arun"),
+      automationId: a.id,
+      workspaceId: a.workspaceId,
+      ownerUserId: a.ownerUserId,
+      status: p.status,
+      error:
+        p.status === "succeeded" ? "" : `It ${p.status} long ago (a past run).`,
+      event: { kind: "manual", at },
+      triggerKey: `past:${state.runs.length}`,
+      spec: structuredClone(a.spec),
+      specRevision: a.specRevision,
+      threadId: "",
+      usdMicros: p.usdMicros ?? 0,
+      attempts: 1,
+      createdAt: at,
+      startedAt: at,
+      finishedAt: at,
+      nodes: [],
+      next: 0,
+    });
+  }
+  state.runs.sort(
+    (x, y) =>
+      y.createdAt.localeCompare(x.createdAt) || y.id.localeCompare(x.id),
+  );
+  return { status: 200, body: {} };
+}
+
 export const automationRoutes: MockRoute[] = [
   {
     method: "GET",
@@ -996,14 +1140,29 @@ export const automationRoutes: MockRoute[] = [
     handle: (req) => {
       const c = caller(req);
       if (!isCaller(c)) return c;
-      const ws = req.params.workspaceId!;
+      const ws = req.params.workspaceId!,
+        stats = statsDays(req);
+      if (stats && "status" in stats) return stats;
+      const within = stats
+        ? state.runs.filter(
+            (r) =>
+              r.workspaceId === ws &&
+              dayIn(Date.parse(r.createdAt), stats.zone) >= stats.dates[0]!,
+          )
+        : [];
       return ok({
         automations: state.automations
           .filter((a) => a.workspaceId === ws)
           .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt))
-          .map((a) => automationOut(a, c, false)),
+          .map((a) => ({
+            ...automationOut(a, c, false),
+            ...(stats && {
+              stats: counts(within.filter((r) => r.automationId === a.id)),
+            }),
+          })),
         canCreate: true,
         email: !LOCAL_TOKEN,
+        ...(stats && { summary: summary(within, stats.dates, stats.zone) }),
       } satisfies ListAutomationsResponse);
     },
   },
