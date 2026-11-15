@@ -19,9 +19,10 @@ import (
 
 // Where a local install's Assistant runs its threads (foundry.agent's
 // helpers): Foundry's own worker, or a helper on the owner's machine that
-// drives the Claude Code or Codex CLI they signed in to. A host without
-// helpers (Deps.AgentHosts nil: hosted Helix) refuses every route here, and
-// runs every thread on its worker.
+// drives the Claude Code or Codex CLI they signed in to. Codex runs with the
+// owner's own Codex setup, so they confirm that once before choosing it. A
+// host without helpers (Deps.AgentHosts nil: hosted Helix) refuses every
+// route here, and runs every thread on its worker.
 
 // agentHostIDPattern is a helper's id.
 var agentHostIDPattern = regexp.MustCompile(`^[0-9A-Z]{26}$`)
@@ -58,21 +59,22 @@ func (s *Service) UpdateFoundryAgentRuntime(ctx context.Context, req *foundryv1.
 		return nil, err
 	}
 	runtime := foundrymodel.FoundryAgentRuntime(req.GetRuntime())
-	switch {
-	case !runtime.Valid():
+	if !runtime.Valid() {
 		return nil, status.Error(codes.InvalidArgument, "runtime is api, claude_code or codex")
-	case !runtime.Offered():
-		return nil, foundryPrecondition(req.GetWorkspaceId(), "FOUNDRY_AGENT_RUNTIME_UNAVAILABLE",
-			"the Assistant can't run on "+string(runtime)+" yet: choose api or claude_code")
 	}
-	if err := hosts.SetAgentRuntime(ctx, req.GetWorkspaceId(), runtime); err != nil {
+	_, err = hosts.SetAgentRuntime(ctx, req.GetWorkspaceId(), runtime, req.GetConfirmCodex())
+	switch {
+	case errors.Is(err, foundryagent.ErrCodexUnconfirmed):
+		return nil, foundryPrecondition(req.GetWorkspaceId(), "FOUNDRY_AGENT_CODEX_UNCONFIRMED",
+			"Codex runs with your own Codex setup, its MCP servers and plugins included, on your ChatGPT plan: choose it in Settings › AI models, where you confirm that once")
+	case err != nil:
 		return nil, status.Errorf(codes.Internal, "set the runtime: %v", err)
 	}
 	return s.agentRuntimeResponse(ctx, hosts, req.GetWorkspaceId())
 }
 
 func (s *Service) agentRuntimeResponse(ctx context.Context, hosts foundryagent.HostRegistry, workspaceID string) (*foundryv1.FoundryAgentRuntimeResponse, error) {
-	runtime, err := hosts.AgentRuntime(ctx, workspaceID)
+	setting, err := hosts.AgentRuntime(ctx, workspaceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read the runtime: %v", err)
 	}
@@ -81,7 +83,10 @@ func (s *Service) agentRuntimeResponse(ctx context.Context, hosts foundryagent.H
 		return nil, status.Errorf(codes.Internal, "list the helpers: %v", err)
 	}
 	now := time.Now()
-	out := &foundryv1.FoundryAgentRuntime{Runtime: string(runtime), Online: []string{}}
+	out := &foundryv1.FoundryAgentRuntime{Runtime: string(setting.Runtime), Online: []string{}, CodexMinVersion: foundryagent.MinCodexVersion}
+	if setting.CodexConfirmedAt != nil {
+		out.CodexConfirmedAt = timestamppb.New(*setting.CodexConfirmedAt)
+	}
 	for _, h := range listed {
 		out.Hosts = append(out.Hosts, agentHostToProto(h, now))
 		if !h.Online(now) {
@@ -148,7 +153,7 @@ func (s *Service) agentThreadRuntime(ctx context.Context, workspaceID, userID, t
 		if err != nil {
 			return "", status.Errorf(codes.Internal, "read the runtime: %v", err)
 		}
-		runtime = r
+		runtime = r.Runtime
 	}
 	if !runtime.Subscription() {
 		return runtime, nil
@@ -162,10 +167,29 @@ func (s *Service) agentThreadRuntime(ctx context.Context, workspaceID, userID, t
 	case err != nil:
 		return "", status.Errorf(codes.Internal, "look for a helper: %v", err)
 	case !online:
-		return "", foundryPrecondition(workspaceID, "FOUNDRY_AGENT_HOST_OFFLINE",
-			"no helper running "+string(runtime)+" has been seen in the last 30 seconds: start it on your computer, then send again")
+		return "", foundryPrecondition(workspaceID, "FOUNDRY_AGENT_HOST_OFFLINE", s.offlineWhy(ctx, runtime))
 	}
 	return runtime, nil
+}
+
+// offlineWhy says why no helper runs runtime: one online whose Codex is
+// outdated, or didn't say its version, says so; any other none ran.
+func (s *Service) offlineWhy(ctx context.Context, runtime foundrymodel.FoundryAgentRuntime) string {
+	if hosts, err := s.deps.AgentHosts.ListAgentHosts(ctx); err == nil {
+		now := time.Now()
+		for _, h := range hosts {
+			i := slices.IndexFunc(h.Accounts, func(a foundryagent.HostAccount) bool { return a.Runtime == runtime })
+			switch {
+			case !h.Online(now) || i < 0 || runtime != foundrymodel.FoundryAgentRuntimeCodex:
+			case h.Accounts[i].Outdated():
+				return "the Codex on " + h.Name + " is older than " + foundryagent.MinCodexVersion +
+					", the oldest Foundry runs the Assistant on: update it there, then send again in a minute"
+			case h.Accounts[i].Version == "":
+				return "the Codex on " + h.Name + " didn't start: run codex --version there to see why, then send again in a minute"
+			}
+		}
+	}
+	return "no helper running " + string(runtime) + " has been seen in the last 30 seconds: start it on your computer, then send again"
 }
 
 func agentHostToProto(h foundryagent.Host, now time.Time) *foundryv1.FoundryAgentHost {
@@ -178,7 +202,8 @@ func agentHostToProto(h foundryagent.Host, now time.Time) *foundryv1.FoundryAgen
 		out.Runtimes = append(out.Runtimes, string(r))
 	}
 	for _, a := range h.Accounts {
-		out.Accounts = append(out.Accounts, &foundryv1.FoundryAgentHostAccount{Runtime: string(a.Runtime), State: string(a.State), Subscription: a.Subscription})
+		out.Accounts = append(out.Accounts, &foundryv1.FoundryAgentHostAccount{Runtime: string(a.Runtime), State: string(a.State),
+			Subscription: a.Subscription, Version: a.Version, Outdated: a.Outdated()})
 	}
 	if h.RevokedAt != nil {
 		out.RevokedAt = timestamppb.New(*h.RevokedAt)

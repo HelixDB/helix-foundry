@@ -2595,9 +2595,16 @@ message FoundryAgentRuntime {
   string runtime = 1;
   // The helpers paired with the install and not revoked, newest first.
   repeated FoundryAgentHost hosts = 2;
-  // The helper runtimes a host online offers now (seen within 30 seconds):
-  // a thread of one not listed can't be sent to.
+  // The helper runtimes a host online runs now (seen within 30 seconds): a
+  // thread of one not listed can't be sent to.
   repeated string online = 3;
+  // When the owner confirmed, once, that the Assistant runs on their own
+  // Codex setup (its MCP servers and plugins included), with its shell off
+  // and every command or file change it asks for declined, on their ChatGPT
+  // plan; unset until then. codex can't be chosen before it.
+  google.protobuf.Timestamp codex_confirmed_at = 4;
+  // The oldest Codex a helper runs it on (x.y.z): one older is outdated.
+  string codex_min_version = 5;
 }
 
 // FoundryAgentHost is a helper on the owner's machine, paired with the
@@ -2607,7 +2614,9 @@ message FoundryAgentHost {
   string id = 1;
   // The machine's name, as the helper gave it when it paired.
   string name = 2;
-  // What it offers, as of its last call: claude_code, codex.
+  // What it runs, as of its last call: claude_code, codex. A Codex older
+  // than FoundryAgentRuntime.codex_min_version isn't run (its account says
+  // outdated).
   repeated string runtimes = 3;
   // The helper's version and platform (darwin-arm64, linux-x64, ...).
   string version = 4;
@@ -2633,10 +2642,16 @@ message FoundryAgentHostAccount {
   // signed_in, signed_out (its turns fail until the person signs in) or
   // unknown (the CLI didn't start).
   string state = 2;
-  // The subscription's plan as the CLI names it (pro, max, team, ...), only
-  // when signed in on one; empty for a CLI signed in some other way, whose
-  // turns don't bill a subscription.
+  // The subscription's plan as the CLI names it (pro, max, team, plus, ...),
+  // only when signed in on one; empty for a CLI signed in some other way,
+  // whose turns don't bill a subscription.
   string subscription = 3;
+  // The CLI's version as it says it (Codex's), when the helper read it.
+  string version = 4;
+  // A Codex older than Foundry runs (FoundryAgentRuntime.codex_min_version),
+  // or of no version the helper could read: no turn runs on it until it is
+  // updated.
+  bool outdated = 5;
 }
 
 // FoundryAgentTurn is one turn of a thread: a person's message, or the result

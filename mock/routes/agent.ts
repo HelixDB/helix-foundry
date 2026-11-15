@@ -170,7 +170,8 @@ import { manages } from "./workspaces";
 // - "connect Slack" (helix_foundry_connect: a link to the kind's form, which
 //   the dock opens in the app);
 // - on a local install, "run new threads on my Claude subscription" (or
-//   "on Foundry's model") and "revoke the helper" (set_assistant_runtime,
+//   "on Codex", once its owner confirmed it in Settings, or "on Foundry's
+//   model") and "revoke the helper" (set_assistant_runtime,
 //   revoke_assistant_helper on the newest helper, after
 //   helix_foundry_get_assistant_runtime); hosted, it says they are a local
 //   install's;
@@ -888,14 +889,22 @@ function lref(ontologyId: string, loadId: string): AgentLoadRef {
 
 // ---------------------------------------------------------------- steps
 
+/** A helper's runtime in a sentence. */
+const RUNTIME_ON = {
+  claude_code: "your Claude subscription",
+  codex: "your ChatGPT subscription (Codex)",
+} as const;
+
 // A helper's turn runs on its CLI, as the backend names it.
 const started: Step = (c) => ({
   type: "started",
   model:
-    state.threads.find((t) => t.id === c.turn.threadId)?.runtime ===
-    "claude_code"
-      ? "Claude Code"
-      : aiModel(c.workspaceId, "ask") || MODEL,
+    {
+      claude_code: "Claude Code",
+      codex: "Codex",
+      api: undefined,
+    }[state.threads.find((t) => t.id === c.turn.threadId)?.runtime ?? "api"] ??
+    (aiModel(c.workspaceId, "ask") || MODEL),
   attempt: 1,
 });
 const call =
@@ -1406,7 +1415,7 @@ function messageScript(a: Ask, manager: boolean): Step[] {
             ? "relay_questions"
             : /\brevoke\b.*\bhelper\b/i.test(t)
               ? "revoke_assistant_helper"
-              : /\b(run|switch|move)\b.*\b(subscription|claude code|foundry['’]s model)\b/i.test(
+              : /\b(run|switch|move)\b.*\b(subscription|claude code|codex|foundry['’]s model)\b/i.test(
                     t,
                   )
                 ? "set_assistant_runtime"
@@ -1544,6 +1553,9 @@ function runtimeOperation(
         last_seen_at: h.lastSeenAt,
         online: h.online,
       })),
+      // As the backend's GetAssistantRuntimeOutput.
+      codex_confirmed: !!r.codexConfirmedAt,
+      codex_min_version: r.codexMinVersion,
       settings_url: "/settings/ai",
     };
   };
@@ -1554,12 +1566,19 @@ function runtimeOperation(
     ...prepare(() => {
       const now = runtimeOf(a.ws).runtime!;
       if (intent === "set_assistant_runtime") {
-        const to = /\bclaude\b/i.test(a.text) ? "claude_code" : "api";
+        const to = /\bclaude\b/i.test(a.text)
+          ? "claude_code"
+          : /\b(codex|chatgpt)\b/i.test(a.text)
+            ? "codex"
+            : "api";
         const online = to === "api" || (now.online || []).includes(to);
         if (to === now.runtime)
           return to === "api"
             ? "New threads already run on the workspace’s AI model."
-            : "New threads already run on your Claude subscription.";
+            : `New threads already run on ${RUNTIME_ON[to]}.`;
+        // As the backend's validation: what codex runs with is confirmed in Settings, never through a card.
+        if (to === "codex" && !now.codexConfirmedAt)
+          return "Codex runs with your own Codex setup, on your ChatGPT plan: choose it first in Settings › AI models, where you confirm that once.";
         return {
           operation: "set_assistant_runtime",
           target,
@@ -1570,7 +1589,7 @@ function runtimeOperation(
           said:
             to === "api"
               ? "I’ve prepared switching new threads back to the workspace’s AI model. Switch from the card when you’re ready."
-              : `I’ve prepared running new threads on your Claude subscription.${online ? "" : " No helper is running yet: start it on your computer first."} Switch from the card when you’re ready.`,
+              : `I’ve prepared running new threads on ${RUNTIME_ON[to]}.${online ? "" : " No helper is running yet: start it on your computer first."} Switch from the card when you’re ready.`,
         };
       }
       const host = (now.hosts || [])[0];
@@ -3179,7 +3198,7 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
         said(() =>
           a.display.runtime === "api"
             ? "New threads run on the workspace’s AI model now. This thread keeps running where it started."
-            : `New threads run on your Claude subscription now${(out.online as string[] | undefined)?.includes(a.display.runtime) ? "" : ", once its helper runs on your computer"}. This thread keeps running where it started.`,
+            : `New threads run on ${RUNTIME_ON[a.display.runtime as "claude_code" | "codex"]} now${(out.online as string[] | undefined)?.includes(a.display.runtime) ? "" : ", once its helper runs on your computer"}. This thread keeps running where it started.`,
         ),
       ];
     case "revoke_assistant_helper":

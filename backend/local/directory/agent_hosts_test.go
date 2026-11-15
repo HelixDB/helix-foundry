@@ -123,14 +123,17 @@ func TestAHelpersRuntimesAndPresence(t *testing.T) {
 	assert.Empty(t, paired.Accounts, "a helper says what its CLIs are signed in to once it calls")
 
 	codex := []model.FoundryAgentRuntime{model.FoundryAgentRuntimeCodex}
-	require.NoError(t, st.SeeAgentHost(ctx, host.ID, codex, "0.2.0", []agent.HostAccount{
-		{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "plus"}}))
+	plus := agent.HostAccount{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "plus", Version: agent.MinCodexVersion}
+	runs, err := st.SeeAgentHost(ctx, host.ID, codex, "0.2.0", []agent.HostAccount{plus})
+	require.NoError(t, err)
+	assert.Equal(t, codex, runs)
 	seen, err := st.AgentHost(ctx, host.ID)
 	require.NoError(t, err)
 	assert.Equal(t, codex, seen.Runtimes)
 	assert.Equal(t, "0.2.0", seen.Version)
-	assert.Equal(t, []agent.HostAccount{{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "plus"}}, seen.Accounts)
-	assert.ErrorIs(t, st.SeeAgentHost(ctx, host.ID, []model.FoundryAgentRuntime{"gemini"}, "1", nil), directory.ErrInvalidAgentHost)
+	assert.Equal(t, []agent.HostAccount{plus}, seen.Accounts)
+	_, err = st.SeeAgentHost(ctx, host.ID, []model.FoundryAgentRuntime{"gemini"}, "1", nil)
+	assert.ErrorIs(t, err, directory.ErrInvalidAgentHost)
 	// What its CLIs are signed in to is checked as it is said, and nothing
 	// of a refused call is kept.
 	for name, accounts := range map[string][]agent.HostAccount{
@@ -144,24 +147,45 @@ func TestAHelpersRuntimesAndPresence(t *testing.T) {
 		"a subscription with a control byte":  {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "pro\n"}},
 		"a subscription with a bidi override": {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "max\u202e"}},
 		"a subscription past ASCII":           {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "plüs"}},
+		"a version past 64 bytes":             {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Version: strings.Repeat("1", 65)}},
+		"a version with a control byte":       {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Version: "0.169.0\n"}},
 	} {
-		assert.ErrorIs(t, st.SeeAgentHost(ctx, host.ID, codex, "0.2.1", accounts), directory.ErrInvalidAgentHost, name)
+		_, err := st.SeeAgentHost(ctx, host.ID, codex, "0.2.1", accounts)
+		assert.ErrorIs(t, err, directory.ErrInvalidAgentHost, name)
 	}
 	kept, err := st.AgentHost(ctx, host.ID)
 	require.NoError(t, err)
 	assert.Equal(t, seen.Accounts, kept.Accounts)
 	assert.Equal(t, "0.2.0", kept.Version)
-	// A call that says nothing of its CLIs leaves none known.
-	require.NoError(t, st.SeeAgentHost(ctx, host.ID, codex, "0.2.0", nil))
+	// A call that says nothing of its CLIs leaves none known, and a Codex of
+	// no known version isn't run.
+	runs, err = st.SeeAgentHost(ctx, host.ID, codex, "0.2.0", nil)
+	require.NoError(t, err)
+	assert.Empty(t, runs)
 	kept, err = st.AgentHost(ctx, host.ID)
 	require.NoError(t, err)
 	assert.Empty(t, kept.Accounts)
-	require.NoError(t, st.SeeAgentHost(ctx, host.ID, codex, "0.2.0", []agent.HostAccount{
-		{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedOut}}))
+	assert.Empty(t, kept.Runtimes)
+	// An outdated Codex is offered, and said, but not run: it isn't online.
+	old := agent.HostAccount{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "plus", Version: "0.150.0"}
+	both := []model.FoundryAgentRuntime{model.FoundryAgentRuntimeClaudeCode, model.FoundryAgentRuntimeCodex}
+	runs, err = st.SeeAgentHost(ctx, host.ID, both, "0.2.0", []agent.HostAccount{old})
+	require.NoError(t, err)
+	assert.Equal(t, []model.FoundryAgentRuntime{model.FoundryAgentRuntimeClaudeCode}, runs)
+	online, err = st.AgentRuntimeOnline(ctx, model.FoundryAgentRuntimeCodex)
+	require.NoError(t, err)
+	assert.False(t, online, "an outdated Codex runs nothing")
+	kept, err = st.AgentHost(ctx, host.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []agent.HostAccount{old}, kept.Accounts, "what it said of the outdated Codex is shown")
+
+	signedOut := agent.HostAccount{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedOut, Version: "0.170.0"}
+	_, err = st.SeeAgentHost(ctx, host.ID, codex, "0.2.0", []agent.HostAccount{signedOut})
+	require.NoError(t, err)
 	listed, err := st.ListAgentHosts(ctx)
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
-	assert.Equal(t, []agent.HostAccount{{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedOut}}, listed[0].Accounts)
+	assert.Equal(t, []agent.HostAccount{signedOut}, listed[0].Accounts)
 
 	_, err = testDB.Exec(`UPDATE foundry_local_agent_hosts SET last_seen_at = ?`, time.Now().UTC().Add(-agent.HostOnlineFor-time.Second))
 	require.NoError(t, err)
@@ -172,16 +196,46 @@ func TestAHelpersRuntimesAndPresence(t *testing.T) {
 	online, err = st.AgentRuntimeOnline(ctx, model.FoundryAgentRuntimeCodex)
 	require.NoError(t, err)
 	assert.True(t, online)
+}
 
-	runtime, err := st.AgentRuntime(ctx, "ws-1")
+func TestAWorkspacesRuntimeAndItsCodexConfirmation(t *testing.T) {
+	st := needHosts(t)
+	ctx := context.Background()
+	setting, err := st.AgentRuntime(ctx, "ws-1")
 	require.NoError(t, err)
-	assert.Equal(t, model.FoundryAgentRuntimeAPI, runtime, "the worker runs a workspace's threads unless the owner chose a helper")
-	require.NoError(t, st.SetAgentRuntime(ctx, "ws-1", model.FoundryAgentRuntimeCodex))
-	require.NoError(t, st.SetAgentRuntime(ctx, "ws-1", model.FoundryAgentRuntimeClaudeCode))
-	runtime, err = st.AgentRuntime(ctx, "ws-1")
+	assert.Equal(t, agent.RuntimeSetting{Runtime: model.FoundryAgentRuntimeAPI}, setting, "the worker runs a workspace's threads unless the owner chose a helper")
+
+	_, err = st.SetAgentRuntime(ctx, "ws-1", model.FoundryAgentRuntimeCodex, false)
+	assert.ErrorIs(t, err, agent.ErrCodexUnconfirmed, "codex needs the owner's confirmation")
+	setting, err = st.AgentRuntime(ctx, "ws-1")
 	require.NoError(t, err)
-	assert.Equal(t, model.FoundryAgentRuntimeClaudeCode, runtime)
-	assert.Error(t, st.SetAgentRuntime(ctx, "ws-1", "gemini"))
+	assert.Equal(t, model.FoundryAgentRuntimeAPI, setting.Runtime, "a refused choice changes nothing")
+
+	before := time.Now().UTC().Add(-time.Second)
+	set, err := st.SetAgentRuntime(ctx, "ws-1", model.FoundryAgentRuntimeCodex, true)
+	require.NoError(t, err)
+	require.NotNil(t, set.CodexConfirmedAt)
+	assert.True(t, set.CodexConfirmedAt.After(before))
+	setting, err = st.AgentRuntime(ctx, "ws-1")
+	require.NoError(t, err)
+	assert.Equal(t, set, setting)
+
+	// Kept when another is chosen, so codex is confirmed once.
+	set, err = st.SetAgentRuntime(ctx, "ws-1", model.FoundryAgentRuntimeClaudeCode, false)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryAgentRuntimeClaudeCode, set.Runtime)
+	assert.Equal(t, setting.CodexConfirmedAt, set.CodexConfirmedAt)
+	again, err := st.SetAgentRuntime(ctx, "ws-1", model.FoundryAgentRuntimeCodex, true)
+	require.NoError(t, err)
+	assert.Equal(t, setting.CodexConfirmedAt, again.CodexConfirmedAt, "the first confirmation is kept")
+	_, err = st.SetAgentRuntime(ctx, "ws-1", "gemini", false)
+	assert.Error(t, err)
+
+	// Each workspace confirms its own.
+	_, err = st.SetAgentRuntime(ctx, "ws-2", model.FoundryAgentRuntimeCodex, false)
+	assert.ErrorIs(t, err, agent.ErrCodexUnconfirmed)
+	_, err = testDB.Exec(`INSERT INTO foundry_local_agent_settings (workspace_id, runtime) VALUES ('ws-3', 'codex')`)
+	assert.Error(t, err, "the table holds no unconfirmed codex")
 }
 
 func TestATurnsTokenWorksForItsClaimAlone(t *testing.T) {
@@ -294,7 +348,8 @@ func TestRevokingAHelperStopsItAndItsTurns(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
 	assert.Equal(t, other.ID, listed[0].ID)
-	require.NoError(t, st.SeeAgentHost(ctx, host.ID, claude, "0.1.0", nil))
+	_, err = st.SeeAgentHost(ctx, host.ID, claude, "0.1.0", nil)
+	require.NoError(t, err)
 	still, err := st.AgentHost(ctx, host.ID)
 	require.NoError(t, err)
 	assert.NotNil(t, still.RevokedAt, "a revoked helper's calls see nothing")

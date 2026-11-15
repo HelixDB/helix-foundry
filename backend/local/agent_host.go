@@ -49,8 +49,9 @@ import (
 // were), so it deletes those sessions: at most 100 a call.
 //
 // accounts says what each runtime's CLI is signed in to, as the helper last
-// found it ([{runtime, state, subscription}], agent.HostAccount): the owner
-// sees it in Settings › AI models.
+// found it ([{runtime, state, subscription, version}], agent.HostAccount):
+// the owner sees it in Settings › AI models. A Codex older than
+// agent.MinCodexVersion is offered but not run: no claim leases it a turn.
 //
 // Refusals are {"error": {code, message}}: unauthenticated (401: the token
 // is unknown or its helper revoked: pair again), pairing_invalid (404),
@@ -265,8 +266,9 @@ type claimRequest struct {
 	Accounts []agent.HostAccount `json:"accounts"`
 }
 
-// seen records what a live helper says it offers now, and returns it; false
-// once it was refused.
+// seen records what a live helper says it offers now, and returns what of
+// it it runs (not an outdated Codex: agent.Runnable); false once it was
+// refused.
 func (h *agentHostHandler) seen(w http.ResponseWriter, r *http.Request, host agent.Host) ([]model.FoundryAgentRuntime, bool) {
 	var req claimRequest
 	if err := decode(r, &req); err != nil {
@@ -278,7 +280,8 @@ func (h *agentHostHandler) seen(w http.ResponseWriter, r *http.Request, host age
 		h.refuse(w, invalid("runtimes are claude_code and codex, at least one"))
 		return nil, false
 	}
-	switch err := h.dir.SeeAgentHost(r.Context(), host.ID, runtimes, req.Version, req.Accounts); {
+	runs, err := h.dir.SeeAgentHost(r.Context(), host.ID, runtimes, req.Version, req.Accounts)
+	switch {
 	case errors.Is(err, directory.ErrInvalidAgentHost):
 		h.refuse(w, invalid(err.Error()))
 		return nil, false
@@ -286,7 +289,7 @@ func (h *agentHostHandler) seen(w http.ResponseWriter, r *http.Request, host age
 		h.failed(w, r, err)
 		return nil, false
 	}
-	return runtimes, true
+	return runs, true
 }
 
 // hello is a helper starting, or its doctor: it is seen, and told who it is.
@@ -316,7 +319,7 @@ type claimedTurn struct {
 	History  string `json:"history,omitempty"`
 }
 
-// claim waits up to claimWait for a due turn of a runtime the helper offers,
+// claim waits up to claimWait for a due turn of a runtime the helper runs,
 // leases it to a claim of its own, and mints the claim's hxr_ token. The
 // helper is looked up again before each look, so one revoked while it
 // waits is refused, never handed a turn. The wait bounds only the waiting:

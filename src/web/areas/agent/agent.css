@@ -442,6 +442,29 @@
   justify-content: space-between;
   gap: var(--hf-space-1);
 }
+/* What Codex runs with: confirmed once, then said while it is chosen. */
+.ag-codex-note {
+  display: grid;
+  gap: var(--hf-space-1);
+  min-width: 0;
+  padding: var(--hf-space-15);
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-surface);
+}
+.ag-codex-note .wk-note {
+  margin: 0;
+}
+.ag-codex-terms {
+  display: grid;
+  gap: var(--hf-space-1);
+  margin: 0;
+  padding-left: 1.1em;
+  list-style: disc;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
 .ag-mark-openai {
   display: block;
   width: 36px;

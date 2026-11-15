@@ -20,7 +20,7 @@ import (
 // agentHosts is a local install's helpers in memory: Ada's Mac runs Claude
 // Code and is online; an old laptop ran Codex an hour ago.
 type agentHosts struct {
-	runtimes map[string]foundrymodel.FoundryAgentRuntime
+	runtimes map[string]foundryagent.RuntimeSetting
 	hosts    []foundryagent.Host
 	revoked  []string
 }
@@ -28,7 +28,7 @@ type agentHosts struct {
 const macID = "01JAAAAAAAAAAAAAAAAAAAAAAA"
 
 func newAgentHosts() *agentHosts {
-	return &agentHosts{runtimes: map[string]foundrymodel.FoundryAgentRuntime{}, hosts: []foundryagent.Host{
+	return &agentHosts{runtimes: map[string]foundryagent.RuntimeSetting{}, hosts: []foundryagent.Host{
 		{ID: macID, Name: "Ada's Mac", Runtimes: []foundrymodel.FoundryAgentRuntime{foundrymodel.FoundryAgentRuntimeClaudeCode}, LastSeenAt: ago(0)},
 		{ID: "01JBBBBBBBBBBBBBBBBBBBBBBB", Name: "Old laptop", Runtimes: []foundrymodel.FoundryAgentRuntime{foundrymodel.FoundryAgentRuntimeCodex},
 			LastSeenAt: ago(time.Hour)},
@@ -43,16 +43,30 @@ func ago(d time.Duration) *time.Time {
 	return &t
 }
 
-func (h *agentHosts) AgentRuntime(_ context.Context, ws string) (foundrymodel.FoundryAgentRuntime, error) {
+func (h *agentHosts) AgentRuntime(_ context.Context, ws string) (foundryagent.RuntimeSetting, error) {
 	if r, ok := h.runtimes[ws]; ok {
 		return r, nil
 	}
-	return foundrymodel.FoundryAgentRuntimeAPI, nil
+	return foundryagent.RuntimeSetting{Runtime: foundrymodel.FoundryAgentRuntimeAPI}, nil
 }
 
-func (h *agentHosts) SetAgentRuntime(_ context.Context, ws string, r foundrymodel.FoundryAgentRuntime) error {
-	h.runtimes[ws] = r
-	return nil
+// SetAgentRuntime keeps codex's confirmation as the directory does.
+func (h *agentHosts) SetAgentRuntime(_ context.Context, ws string, r foundrymodel.FoundryAgentRuntime, confirm bool) (foundryagent.RuntimeSetting, error) {
+	set := h.runtimes[ws]
+	if set.CodexConfirmedAt == nil && confirm {
+		set.CodexConfirmedAt = ago(0)
+	}
+	if r == foundrymodel.FoundryAgentRuntimeCodex && set.CodexConfirmedAt == nil {
+		return foundryagent.RuntimeSetting{}, foundryagent.ErrCodexUnconfirmed
+	}
+	set.Runtime = r
+	h.runtimes[ws] = set
+	return set, nil
+}
+
+// set makes r a workspace's runtime, codex confirmed.
+func (h *agentHosts) set(ws string, r foundrymodel.FoundryAgentRuntime) {
+	h.runtimes[ws] = foundryagent.RuntimeSetting{Runtime: r, CodexConfirmedAt: ago(time.Hour)}
 }
 
 func (h *agentHosts) AgentRuntimeOnline(_ context.Context, r foundrymodel.FoundryAgentRuntime) (bool, error) {
@@ -134,13 +148,61 @@ func TestGetAndUpdateTheRuntime(t *testing.T) {
 
 	_, err = f.s.UpdateFoundryAgentRuntime(personCtx, &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: "ws-1", Runtime: "gemini"})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Equal(t, foundryagent.MinCodexVersion, r.GetCodexMinVersion())
+	assert.Nil(t, r.GetCodexConfirmedAt())
 	_, err = f.s.UpdateFoundryAgentRuntime(personCtx, &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: "ws-1", Runtime: "codex"})
-	assert.Equal(t, "FOUNDRY_AGENT_RUNTIME_UNAVAILABLE", reasonOf(err), "no configuration closes Codex to its computer yet")
+	assert.Equal(t, "FOUNDRY_AGENT_CODEX_UNCONFIRMED", reasonOf(err), "codex runs with the owner's own setup: they confirm it first")
 	hosts.hosts = nil
 	updated, err := f.s.UpdateFoundryAgentRuntime(personCtx, &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: "ws-1", Runtime: "claude_code"})
 	require.NoError(t, err)
 	assert.Equal(t, "claude_code", updated.GetRuntime().GetRuntime(), "a helper need not be online to be chosen")
-	assert.Equal(t, foundrymodel.FoundryAgentRuntimeClaudeCode, hosts.runtimes["ws-1"])
+	assert.Equal(t, foundrymodel.FoundryAgentRuntimeClaudeCode, hosts.runtimes["ws-1"].Runtime)
+
+	confirmed, err := f.s.UpdateFoundryAgentRuntime(personCtx, &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: "ws-1", Runtime: "codex", ConfirmCodex: true})
+	require.NoError(t, err)
+	assert.Equal(t, "codex", confirmed.GetRuntime().GetRuntime())
+	require.NotNil(t, confirmed.GetRuntime().GetCodexConfirmedAt())
+	// Confirmed once: codex is chosen again without asking.
+	_, err = f.s.UpdateFoundryAgentRuntime(personCtx, &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: "ws-1", Runtime: "api"})
+	require.NoError(t, err)
+	again, err := f.s.UpdateFoundryAgentRuntime(personCtx, &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: "ws-1", Runtime: "codex"})
+	require.NoError(t, err)
+	assert.Equal(t, confirmed.GetRuntime().GetCodexConfirmedAt().AsTime(), again.GetRuntime().GetCodexConfirmedAt().AsTime())
+}
+
+func TestAHelpersCodexAccountSaysItsVersion(t *testing.T) {
+	f, hosts := withHosts(t)
+	hosts.hosts = []foundryagent.Host{{ID: macID, Name: "Ada's Mac", LastSeenAt: ago(0),
+		Runtimes: []foundrymodel.FoundryAgentRuntime{foundrymodel.FoundryAgentRuntimeClaudeCode},
+		Accounts: []foundryagent.HostAccount{
+			{Runtime: foundrymodel.FoundryAgentRuntimeClaudeCode, State: foundryagent.AccountSignedIn, Subscription: "max"},
+			{Runtime: foundrymodel.FoundryAgentRuntimeCodex, State: foundryagent.AccountSignedIn, Subscription: "plus", Version: "0.150.0"},
+		}}}
+	got, err := f.s.GetFoundryAgentRuntime(personCtx, &foundryv1.GetFoundryAgentRuntimeRequest{WorkspaceId: "ws-1"})
+	require.NoError(t, err)
+	accounts := got.GetRuntime().GetHosts()[0].GetAccounts()
+	require.Len(t, accounts, 2)
+	assert.False(t, accounts[0].GetOutdated(), "Claude Code is never outdated")
+	assert.Equal(t, "0.150.0", accounts[1].GetVersion())
+	assert.True(t, accounts[1].GetOutdated())
+	assert.Equal(t, []string{"claude_code"}, got.GetRuntime().GetOnline(), "an outdated Codex runs nothing")
+
+	// Sending in a Codex thread then says why.
+	hosts.set("ws-1", foundrymodel.FoundryAgentRuntimeCodex)
+	_, err = f.s.SendFoundryAgentMessage(personCtx, &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws-1", Text: "Hi", ClientToken: "c1"})
+	assert.Equal(t, "FOUNDRY_AGENT_HOST_OFFLINE", reasonOf(err))
+	assert.Contains(t, status.Convert(err).Message(), "the Codex on Ada's Mac is older than "+foundryagent.MinCodexVersion)
+
+	// A Codex that didn't start says so, not that it is too old.
+	hosts.hosts[0].Accounts[1] = foundryagent.HostAccount{Runtime: foundrymodel.FoundryAgentRuntimeCodex, State: foundryagent.AccountUnknown}
+	got, err = f.s.GetFoundryAgentRuntime(personCtx, &foundryv1.GetFoundryAgentRuntimeRequest{WorkspaceId: "ws-1"})
+	require.NoError(t, err)
+	assert.False(t, got.GetRuntime().GetHosts()[0].GetAccounts()[1].GetOutdated())
+	assert.Equal(t, []string{"claude_code"}, got.GetRuntime().GetOnline(), "a Codex of no version runs nothing")
+	_, err = f.s.SendFoundryAgentMessage(personCtx, &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws-1", Text: "Hi", ClientToken: "c2"})
+	assert.Equal(t, "FOUNDRY_AGENT_HOST_OFFLINE", reasonOf(err))
+	assert.Contains(t, status.Convert(err).Message(), "the Codex on Ada's Mac didn't start")
+	assert.NotContains(t, status.Convert(err).Message(), "older than")
 }
 
 func TestPairAndRevokeAHelper(t *testing.T) {
@@ -177,7 +239,7 @@ func TestASendRunsOnItsThreadsRuntime(t *testing.T) {
 	}
 	t.Run("a new thread takes the workspace's, on a helper's subscription", func(t *testing.T) {
 		f, hosts := withHosts(t)
-		hosts.runtimes["ws-1"] = foundrymodel.FoundryAgentRuntimeClaudeCode
+		hosts.set("ws-1", foundrymodel.FoundryAgentRuntimeClaudeCode)
 		// The workspace's own model needn't run: the helper's CLI does.
 		f.s.deps.AI = deployment(t, aiConfig(modeLocal, true))
 		resp, err := send(f, "c1", "")
@@ -193,14 +255,14 @@ func TestASendRunsOnItsThreadsRuntime(t *testing.T) {
 	})
 	t.Run("a helper's thread waits for its helper", func(t *testing.T) {
 		f, hosts := withHosts(t)
-		hosts.runtimes["ws-1"] = foundrymodel.FoundryAgentRuntimeCodex
+		hosts.set("ws-1", foundrymodel.FoundryAgentRuntimeCodex)
 		_, err := send(f, "c1", "")
 		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 		assert.Equal(t, "FOUNDRY_AGENT_HOST_OFFLINE", reasonOf(err))
 		assert.Empty(t, f.store.turns, "nothing is queued")
 
 		// An existing thread keeps its runtime, whatever the workspace's is now.
-		hosts.runtimes["ws-1"] = foundrymodel.FoundryAgentRuntimeAPI
+		hosts.set("ws-1", foundrymodel.FoundryAgentRuntimeAPI)
 		f.store.threads["th-codex"] = &foundrymodel.FoundryAgentThread{ID: "th-codex", WorkspaceID: "ws-1", UserID: person.UserID,
 			Runtime: foundrymodel.FoundryAgentRuntimeCodex}
 		_, err = send(f, "c2", "th-codex")

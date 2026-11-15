@@ -14,23 +14,30 @@ import (
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 )
 
-// runtimeBackend is a local install's runtime: Claude Code online on one helper.
+// runtimeBackend is a local install's runtime: Claude Code online on one
+// helper, beside an outdated Codex; codex confirmed when confirmed is.
 type runtimeBackend struct {
 	foundryv1.FoundryServiceClient
-	methods []string
-	updated *foundryv1.UpdateFoundryAgentRuntimeRequest
+	methods   []string
+	updated   *foundryv1.UpdateFoundryAgentRuntimeRequest
+	confirmed bool
 }
 
 var seen = time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC)
 
 func (b *runtimeBackend) GetFoundryAgentRuntime(context.Context, *foundryv1.GetFoundryAgentRuntimeRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentRuntimeResponse, error) {
 	b.methods = append(b.methods, "GetFoundryAgentRuntime")
-	return &foundryv1.FoundryAgentRuntimeResponse{Runtime: &foundryv1.FoundryAgentRuntime{Runtime: "api", Online: []string{"claude_code"},
+	out := &foundryv1.FoundryAgentRuntime{Runtime: "api", Online: []string{"claude_code"}, CodexMinVersion: "0.169.0",
 		Hosts: []*foundryv1.FoundryAgentHost{{Id: "host-1", Name: "Ada's Mac", Runtimes: []string{"claude_code"}, Version: "0.1.0", Platform: "darwin-arm64",
 			LastSeenAt: timestamppb.New(seen), Online: true,
-			Accounts: []*foundryv1.FoundryAgentHostAccount{{Runtime: "claude_code", State: "signed_in", Subscription: "max"}}},
+			Accounts: []*foundryv1.FoundryAgentHostAccount{{Runtime: "claude_code", State: "signed_in", Subscription: "max"},
+				{Runtime: "codex", State: "signed_in", Subscription: "plus", Version: "0.150.0", Outdated: true}}},
 			// Paired, and not started yet.
-			{Id: "host-2", Name: "New laptop", Runtimes: []string{"claude_code"}}}}}, nil
+			{Id: "host-2", Name: "New laptop", Runtimes: []string{"claude_code"}}}}
+	if b.confirmed {
+		out.CodexConfirmedAt = timestamppb.New(seen)
+	}
+	return &foundryv1.FoundryAgentRuntimeResponse{Runtime: out}, nil
 }
 
 func (b *runtimeBackend) UpdateFoundryAgentRuntime(_ context.Context, r *foundryv1.UpdateFoundryAgentRuntimeRequest, _ ...grpc.CallOption) (*foundryv1.FoundryAgentRuntimeResponse, error) {
@@ -84,6 +91,8 @@ func TestTheAssistantsRuntimeIsALocalInstallsOnly(t *testing.T) {
 		}
 		return ""
 	}
+	assert.Contains(t, schema(runtimeService(b, true)), "or codex (a helper's Codex, on the owner's ChatGPT plan",
+		"an external agent is told codex is a runtime")
 	for _, op := range []string{"set_assistant_runtime", "pair_assistant_helper", "revoke_assistant_helper"} {
 		assert.NotContains(t, schema(runtimeService(b, false)), op)
 		assert.Contains(t, schema(runtimeService(b, true)), op)
@@ -100,11 +109,14 @@ func TestGetAssistantRuntime(t *testing.T) {
 	assert.Equal(t, "api", out["runtime"])
 	assert.Equal(t, []any{"claude_code"}, out["online"])
 	assert.Equal(t, "http://localhost:3000/settings/ai?workspace=workspace-1", out["settings_url"])
+	assert.Equal(t, false, out["codex_confirmed"])
+	assert.Equal(t, "0.169.0", out["codex_min_version"])
 	hosts := out["hosts"].([]any)
 	require.Len(t, hosts, 2)
 	assert.Equal(t, map[string]any{"id": "host-1", "name": "Ada's Mac", "runtimes": []any{"claude_code"}, "version": "0.1.0", "platform": "darwin-arm64",
 		"last_seen_at": "2026-11-15T09:00:00Z", "online": true,
-		"accounts": []any{map[string]any{"runtime": "claude_code", "state": "signed_in", "subscription": "max"}}}, hosts[0])
+		"accounts": []any{map[string]any{"runtime": "claude_code", "state": "signed_in", "subscription": "max"},
+			map[string]any{"runtime": "codex", "state": "signed_in", "subscription": "plus", "version": "0.150.0", "outdated": true}}}, hosts[0])
 	assert.Equal(t, map[string]any{"id": "host-2", "name": "New laptop", "runtimes": []any{"claude_code"}, "online": false, "accounts": []any{}}, hosts[1],
 		"a helper never seen has no last_seen_at")
 }
@@ -134,7 +146,7 @@ func TestTheRuntimesOperationsAreConfirmed(t *testing.T) {
 
 	for name, input := range map[string]FoundryOperationInput{
 		"another runtime":       {Operation: "set_assistant_runtime", Target: "workspace:workspace-1", Payload: map[string]any{"runtime": "gemini"}},
-		"codex, not offered":    {Operation: "set_assistant_runtime", Target: "workspace:workspace-1", Payload: map[string]any{"runtime": "codex"}},
+		"codex, unconfirmed":    {Operation: "set_assistant_runtime", Target: "workspace:workspace-1", Payload: map[string]any{"runtime": "codex"}},
 		"an extra field":        {Operation: "set_assistant_runtime", Target: "workspace:workspace-1", Payload: map[string]any{"runtime": "api", "x": 1}},
 		"an ontology target":    {Operation: "set_assistant_runtime", Target: "ontology:workspace-1/ontology-1", Payload: map[string]any{"runtime": "api"}},
 		"a pairing with fields": {Operation: "pair_assistant_helper", Target: "workspace:workspace-1", Payload: map[string]any{"name": "x"}},
@@ -148,4 +160,13 @@ func TestTheRuntimesOperationsAreConfirmed(t *testing.T) {
 	key.ServiceKey = true
 	_, err := s.ValidateFoundryOperation(ctx, key, FoundryOperationInput{Operation: "pair_assistant_helper", Target: "workspace:workspace-1", Payload: map[string]any{}})
 	assert.ErrorIs(t, err, errCodeNotFound, "a key never pairs a helper")
+
+	// Codex is confirmed in Settings, never through a card: once it is, a card may choose it.
+	_, err = s.ValidateFoundryOperation(ctx, reader(), FoundryOperationInput{Operation: "set_assistant_runtime", Target: "workspace:workspace-1",
+		Payload: map[string]any{"runtime": "codex"}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Settings › AI models")
+	b.confirmed = true
+	assert.Equal(t, map[string]any{"runtime": "codex", "online": []string{"claude_code"}}, run("set_assistant_runtime", map[string]any{"runtime": "codex"}))
+	assert.False(t, b.updated.GetConfirmCodex(), "a card never confirms codex")
 }

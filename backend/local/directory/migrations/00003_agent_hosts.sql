@@ -8,8 +8,9 @@ CREATE TABLE foundry_local_agent_hosts (
   id           CHAR(26)                    NOT NULL PRIMARY KEY,
   name         VARCHAR(128)                NOT NULL,
   token_hash   CHAR(64)                    NOT NULL,
-  -- What it offers, and what their CLIs are signed in to, as of its last
-  -- call: [{runtime, state, subscription}] (agent.HostAccount).
+  -- What it runs, and what their CLIs are signed in to, as of its last
+  -- call: [{runtime, state, subscription, version}] (agent.HostAccount). A
+  -- Codex older than Foundry runs isn't among its runtimes (agent.Runnable).
   runtimes     SET('claude_code', 'codex') NOT NULL DEFAULT '',
   accounts     JSON                        NULL,
   version      VARCHAR(64)                 NOT NULL DEFAULT '',
@@ -53,12 +54,16 @@ CREATE TABLE foundry_local_agent_turn_tokens (
 );
 
 -- Where a workspace's new Assistant threads run; a workspace without a row
--- runs them on Foundry's own worker.
+-- runs them on Foundry's own worker. codex runs with the owner's own Codex
+-- setup, so it is chosen only once they confirmed that (codex_confirmed_at,
+-- kept when they choose another).
 CREATE TABLE foundry_local_agent_settings (
-  workspace_id CHAR(26)    NOT NULL PRIMARY KEY,
-  runtime      VARCHAR(16) NOT NULL,
-  updated_at   DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  CONSTRAINT foundry_local_agent_settings_runtime_chk CHECK (runtime IN ('api', 'claude_code', 'codex'))
+  workspace_id       CHAR(26)    NOT NULL PRIMARY KEY,
+  runtime            VARCHAR(16) NOT NULL,
+  codex_confirmed_at DATETIME(6) NULL,
+  updated_at         DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  CONSTRAINT foundry_local_agent_settings_runtime_chk CHECK (runtime IN ('api', 'claude_code', 'codex')),
+  CONSTRAINT foundry_local_agent_settings_codex_chk CHECK (runtime <> 'codex' OR codex_confirmed_at IS NOT NULL)
 );
 
 -- +goose Down

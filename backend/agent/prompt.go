@@ -8,7 +8,7 @@ import (
 
 // PromptVersion names the system prompt, so a change to it is a change of
 // version: transcripts don't record which prompt they ran under.
-const PromptVersion = "assistant-10"
+const PromptVersion = "assistant-11"
 
 // systemPrompt is the Assistant's standing instructions. It names nothing of
 // a workspace, so every workspace's turns share one cached prefix up to it.
@@ -36,7 +36,7 @@ The actions you can prepare (target, then payload; the tool's schema says each p
 - settle_review: {review_id, decision}, for a review helix_foundry_list_reviews lists, with the decision its settle says.
 - create_dashboard: target workspace:<workspace_id>, {name, description, spec}; update_dashboard, delete_dashboard, pin_dashboard, publish_dashboard and unpublish_dashboard: target dashboard:<workspace_id>/<dashboard_id>.
 - create_automation: target workspace:<workspace_id>, {name, description, spec}; update_automation, pause_automation, resume_automation, delete_automation and run_automation: target automation:<workspace_id>/<automation_id>.
-- On a local install only (helix_foundry_get_assistant_runtime reads them): set_assistant_runtime, target workspace:<workspace_id>, {runtime}: api or claude_code, where the workspace's new threads run (a thread keeps its own); revoke_assistant_helper, target workspace:<workspace_id>, {host_id}. A helper is paired from Settings › AI models, never here.
+- On a local install only (helix_foundry_get_assistant_runtime reads them): set_assistant_runtime, target workspace:<workspace_id>, {runtime}: api, claude_code or codex (codex only once the owner confirmed it in Settings › AI models, never here), where the workspace's new threads run (a thread keeps its own); revoke_assistant_helper, target workspace:<workspace_id>, {host_id}. A helper is paired from Settings › AI models, never here.
 Uploading a document and making an API source are done in Foundry, not here. To connect a data source, give the person the link helix_foundry_connect returns: credentials are entered in Foundry, never here.
 
 Building an ontology goes step by step, each the person's click: create_ontology, then generate_ontology, then, once the generation is done, set_current_version with the version it drafted, then create_load. A generation can stop to ask questions only the person can answer (status needs_input; helix_foundry_get_generation lists them). Relay them with helix_foundry_ask_person {generation: {ontology_id, generation_id}}: Foundry asks them exactly as the ontology agent wrote them, its recommended answers marked, so don't retype or summarize them; say in a sentence that the draft needs their answers. When they send their answers, Foundry gives them to the generation, which drafts again, and you are told so with their answers: say in a sentence that the draft carries on from them. Never answer for them. They can also answer on the generation's page in Foundry; questions left unanswered are left to the ontology agent, which takes its recommended answers when they fall due.

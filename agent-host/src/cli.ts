@@ -1,30 +1,56 @@
 #!/usr/bin/env node
 // foundry-agent-host: runs a local Helix Foundry install's Assistant on the
-// Claude Code you are signed in to on this computer.
+// Claude Code or Codex you are signed in to on this computer.
 //
 //   pair <code> [--foundry URL] [--name NAME]   pair with the code Foundry showed
-//   run [--claude PATH] [--concurrency N]       run the Assistant's turns
-//   install [--claude PATH] [--dry-run]         keep it running (launchd, systemd)
-//   doctor [--claude PATH]                      say what stands in the way
+//   run [--claude PATH] [--codex PATH] [--concurrency N]
+//                                               run the Assistant's turns
+//   install [--claude PATH] [--codex PATH] [--dry-run]
+//                                               keep it running (launchd, systemd)
+//   doctor [--claude PATH] [--codex PATH]       say what stands in the way
 
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
 
+import { claudeCli } from "./claude.ts";
+import { codexCli } from "./codex.ts";
 import { configPath, loadPaired, savePaired } from "./config.ts";
 import { doctor } from "./doctor.ts";
-import { findClaude } from "./find.ts";
-import { Foundry } from "./foundry.ts";
+import { findCli } from "./find.ts";
+import { Foundry, type Runtime } from "./foundry.ts";
 import { install, service } from "./install.ts";
 import { serve } from "./run.ts";
+import type { Cli } from "./runtime.ts";
 import { VERSION, invoke } from "./version.ts";
 
-const USAGE = `foundry-agent-host ${VERSION}: Helix Foundry's Assistant on your Claude Code subscription
+const USAGE = `foundry-agent-host ${VERSION}: Helix Foundry's Assistant on your Claude or ChatGPT subscription
 
   pair <code> [--foundry URL] [--name NAME]   pair with the code Foundry showed (default http://127.0.0.1:8081)
-  run [--claude PATH] [--concurrency N]       run the Assistant's turns until stopped
-  install [--claude PATH] [--dry-run]         keep it running at login (launchd on macOS, systemd on Linux)
-  doctor [--claude PATH]                      say what stands in the way
+  run [--claude PATH] [--codex PATH] [--concurrency N]
+                                              run the Assistant's turns until stopped
+  install [--claude PATH] [--codex PATH] [--dry-run]
+                                              keep it running at login (launchd on macOS, systemd on Linux)
+  doctor [--claude PATH] [--codex PATH]       say what stands in the way
 `;
+
+const NONE =
+  "Neither Claude Code nor Codex is installed here, or on PATH: install one, or name it with --claude <path> or --codex <path>.";
+
+/** The CLIs found here (each named one, else looked for): at least one, or undefined. */
+async function found(values: {
+  claude?: string;
+  codex?: string;
+}): Promise<{ claude?: string; codex?: string } | undefined> {
+  const claude = await findCli("claude", values.claude);
+  const codex = await findCli("codex", values.codex);
+  return claude || codex ? { claude, codex } : undefined;
+}
+
+/** The runtimes of the CLIs found. */
+const runtimes = (f: { claude?: string; codex?: string }): Runtime[] => [
+  ...(f.claude ? (["claude_code"] as const) : []),
+  ...(f.codex ? (["codex"] as const) : []),
+];
 
 async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -34,6 +60,7 @@ async function main(argv: string[]): Promise<number> {
       foundry: { type: "string" },
       name: { type: "string" },
       claude: { type: "string" },
+      codex: { type: "string" },
       concurrency: { type: "string" },
       "dry-run": { type: "boolean" },
       version: { type: "boolean" },
@@ -52,12 +79,17 @@ async function main(argv: string[]): Promise<number> {
         console.error("pair takes the code Foundry showed: hxp_…");
         return 2;
       }
+      const clis = await found(values);
+      if (!clis) {
+        console.error(NONE);
+        return 1;
+      }
       const base = values.foundry ?? "http://127.0.0.1:8081";
       const name = values.name ?? hostname();
       const paired = await new Foundry(base).pair({
         code,
         name,
-        runtimes: ["claude_code"],
+        runtimes: runtimes(clis),
         version: VERSION,
         platform: `${process.platform}-${process.arch}`,
       });
@@ -80,11 +112,9 @@ async function main(argv: string[]): Promise<number> {
         );
         return 1;
       }
-      const claude = await findClaude(values.claude);
-      if (!claude) {
-        console.error(
-          "Claude Code isn't installed here, or isn't on PATH: install it, or name it with --claude <path>.",
-        );
+      const clis = await found(values);
+      if (!clis) {
+        console.error(NONE);
         return 1;
       }
       const concurrency = Math.min(
@@ -94,9 +124,13 @@ async function main(argv: string[]): Promise<number> {
       const stop = new AbortController();
       for (const signal of ["SIGINT", "SIGTERM"] as const)
         process.once(signal, () => stop.abort());
+      const env = process.env;
       await serve({
         foundry: new Foundry(paired.foundry, paired.token),
-        claude,
+        clis: [
+          ...(clis.claude ? [claudeCli(clis.claude, env)] : []),
+          ...(clis.codex ? [codexCli(clis.codex, env)] : []),
+        ] satisfies Cli[],
         version: VERSION,
         concurrency,
         signal: stop.signal,
@@ -105,11 +139,9 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "install": {
-      const claude = await findClaude(values.claude);
-      if (!claude) {
-        console.error(
-          "Claude Code isn't installed here, or isn't on PATH: install it, or name it with --claude <path>.",
-        );
+      const clis = await found(values);
+      if (!clis) {
+        console.error(NONE);
         return 1;
       }
       if (!values["dry-run"] && !(await loadPaired())) {
@@ -118,7 +150,7 @@ async function main(argv: string[]): Promise<number> {
         );
         return 1;
       }
-      const done = await install(service(claude), {
+      const done = await install(service(clis), {
         dryRun: values["dry-run"],
       });
       console.log(
@@ -129,7 +161,10 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "doctor": {
-      const checks = await doctor({ claude: values.claude });
+      const checks = await doctor({
+        claude: values.claude,
+        codex: values.codex,
+      });
       for (const c of checks)
         console.log(
           `${c.ok ? "ok     " : "problem"}  ${c.what}${!c.ok && c.fix ? `\n         ${c.fix}` : ""}`,

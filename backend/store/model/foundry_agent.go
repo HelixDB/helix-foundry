@@ -38,16 +38,6 @@ func (r FoundryAgentRuntime) Subscription() bool {
 	return r == FoundryAgentRuntimeClaudeCode || r == FoundryAgentRuntimeCodex
 }
 
-// Offered reports a runtime a workspace may choose for its new threads.
-// Codex isn't, yet: its app-server (0.169.0) merges the person's own Codex
-// configuration (their MCP servers, plugins, hooks and managed layers) into
-// every thread and offers its file-editing tool whatever the configuration,
-// so no configuration gives it Foundry's tools alone (the helper's README,
-// Codex).
-func (r FoundryAgentRuntime) Offered() bool {
-	return r == FoundryAgentRuntimeAPI || r == FoundryAgentRuntimeClaudeCode
-}
-
 // FoundryAgentThreadKind is what a thread is: a closed set.
 type FoundryAgentThreadKind string
 

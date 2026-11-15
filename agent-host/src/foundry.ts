@@ -3,17 +3,23 @@
 // the helper's hxh_ token. Nothing else reaches Foundry from here: the CLI
 // calls Foundry's tools itself, at /mcp, with the turn's hxr_ token.
 
-/** A runtime a helper runs. Codex isn't offered yet (README, Codex). */
-export type Runtime = "claude_code";
+/** A runtime a helper runs: the CLI it drives. */
+export type Runtime = "claude_code" | "codex";
 
 /**
  * What a runtime's CLI is signed in to, as the helper last found it
  * (backend agent.HostAccount): on a subscription when it names one, or
- * some other way; signed out; or unknown, when its CLI didn't start.
+ * some other way; signed out; or unknown, when its CLI didn't start. Codex
+ * says its version too: Foundry runs none older than its floor.
  */
 export type Account =
-  | { runtime: Runtime; state: "signed_in"; subscription?: string }
-  | { runtime: Runtime; state: "signed_out" | "unknown" };
+  | {
+      runtime: Runtime;
+      state: "signed_in";
+      subscription?: string;
+      version?: string;
+    }
+  | { runtime: Runtime; state: "signed_out" | "unknown"; version?: string };
 
 /** A turn Foundry leased to this helper, and what its CLI is told. */
 export type Turn = {

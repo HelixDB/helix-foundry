@@ -1,18 +1,18 @@
-// The helper's loop: claim a turn, run it on Claude Code while renewing its
-// lease, show the person what the model writes, and say how it ended.
+// The helper's loop: claim a turn of a runtime it runs, run it on that
+// runtime's CLI (Claude Code, Codex) while renewing its lease, show the person what the model writes, and say how it ended.
 // Foundry decides everything else: which turn, its caps, the tools and the
 // cards. A turn whose lease Foundry took back (a cancel, a deleted thread,
 // its wall time) is stopped at once and reported no further. A turn that
 // reaches its wall time here is stopped, and Foundry told (one last
 // renew), so it ends the turn then rather than once its lease lapses.
 //
-// What Claude Code keeps of each thread (its session, with what Foundry's
+// What each CLI keeps of each thread (its sessions, with what Foundry's
 // tools answered) is deleted once Foundry says the thread is gone: asked
 // as the helper starts and every SWEEP_MS, and of every thread once the
 // helper is revoked.
 
-import { CHECK_MS, checkAccount } from "./account.ts";
-import { CLAUDE_SESSIONS, runClaude, type Query, type Ran } from "./claude.ts";
+import { CHECK_MS } from "./account.ts";
+import { MIN_CODEX, atLeast } from "./codex.ts";
 import {
   forgetThread,
   listThreads,
@@ -25,9 +25,9 @@ import {
   GONE_BATCH,
   type Account,
   type End,
-  type Runtime,
   type Turn,
 } from "./foundry.ts";
+import type { Cli, Ran } from "./runtime.ts";
 
 /** How often the lease is renewed: well inside its minute. */
 export const RENEW_MS = 15_000;
@@ -35,33 +35,32 @@ export const RENEW_MS = 15_000;
 export const DELTA_MS = 250;
 /** How long after a failed claim the helper tries again. */
 const RETRY_MS = 5_000;
+/** How often a Codex Foundry runs nothing on is asked its version again. */
+export const RECHECK_MS = 30_000;
 /** How often the helper asks which threads it keeps sessions of are gone. */
 export const SWEEP_MS = 60 * 60_000;
 
 export type RunOptions = {
   foundry: Foundry;
-  /** The `claude` executable. */
-  claude: string;
+  /** The CLIs it runs, one per runtime: at least one. */
+  clis: Cli[];
   version: string;
   /** Turns run at once: one claim each. */
   concurrency: number;
   env?: NodeJS.ProcessEnv;
-  query?: Query;
   log?: (line: string) => void;
   signal?: AbortSignal;
   renewMs?: number;
   deltaMs?: number;
-  /** How often the CLI is asked what it is signed in to (CHECK_MS). */
+  /** How often the CLIs are asked what they are signed in to (CHECK_MS). */
   checkMs?: number;
-  /** Told how each turn it ran ended. */
-  ended?: (end: End) => void;
-  /** Claude Code's sessions (CLAUDE_SESSIONS), deleted with their threads. */
-  sessions?: Sessions;
+  /** How often a Codex too old to run, or of no version, is asked again (RECHECK_MS). */
+  recheckMs?: number;
+  /** Told how each turn it ran ended, and on which CLI. */
+  ended?: (end: End, cli: Cli) => void;
   /** How often gone threads are looked for (SWEEP_MS). */
   sweepMs?: number;
 };
-
-const RUNTIMES: Runtime[] = ["claude_code"];
 
 /**
  * Runs turns until signal aborts. A token Foundry no longer knows (the
@@ -72,28 +71,46 @@ const RUNTIMES: Runtime[] = ["claude_code"];
  */
 export async function serve(opts: RunOptions): Promise<void> {
   const log = opts.log ?? (() => {});
-  const sessions = opts.sessions ?? CLAUDE_SESSIONS;
+  const sessions = opts.clis.map((c) => c.sessions);
   try {
-    await serving(opts, log, sessions);
+    await serving(opts, log);
   } catch (e) {
     if (e instanceof FoundryError && e.code === "unauthenticated") {
-      const threads = await listThreads(opts.env);
-      for (const t of threads) await forgetThread(t, sessions, opts.env);
+      // Every thread is tried, whatever one CLI's failure: the revoke is what's thrown.
+      const threads = await listThreads(opts.env).catch(() => []);
+      let kept = 0;
+      for (const t of threads) {
+        try {
+          await forgetThread(t, sessions, opts.env);
+        } catch (f) {
+          kept++;
+          log(
+            `Deleting what was kept of thread ${t.threadId} failed: ${(f as Error).message}.`,
+          );
+        }
+      }
+      const n = threads.length - kept;
       log(
-        `Foundry no longer knows this helper (revoked): deleted what Claude Code kept of ${threads.length} thread${threads.length === 1 ? "" : "s"}. Pair it again to run more.`,
+        `Foundry no longer knows this helper (revoked): deleted what ${names(opts.clis)} kept of ${n} thread${n === 1 ? "" : "s"}${kept ? `; ${kept} couldn't be deleted (above)` : ""}. Pair it again to run more.`,
       );
     }
     throw e;
   }
 }
 
+/** The CLIs' names, as the log says them. */
+const names = (clis: Cli[]) =>
+  clis
+    .map((c) => (c.runtime === "codex" ? "Codex" : "Claude Code"))
+    .join(" and ");
+
 /**
- * Deletes what Claude Code keeps of the threads Foundry says are gone; a
- * sweep that fails is logged, and tried again at the next.
+ * Deletes what the CLIs keep of the threads Foundry says are gone; a sweep
+ * that fails is logged, and tried again at the next.
  */
 export async function sweep(
   foundry: Foundry,
-  sessions: Sessions,
+  sessions: Sessions[],
   env: NodeJS.ProcessEnv | undefined,
   log: (line: string) => void,
 ): Promise<void> {
@@ -102,8 +119,16 @@ export async function sweep(
     for (let i = 0; i < threads.length; i += GONE_BATCH) {
       const batch = threads.slice(i, i + GONE_BATCH);
       const gone = new Set(await foundry.gone(batch));
-      for (const t of batch.filter((t) => gone.has(t.threadId)))
-        await forgetThread(t, sessions, env);
+      for (const t of batch.filter((t) => gone.has(t.threadId))) {
+        try {
+          await forgetThread(t, sessions, env);
+        } catch (e) {
+          // Kept for the next sweep; the other threads go on.
+          log(
+            `Deleting what was kept of thread ${t.threadId} failed: ${(e as Error).message}; trying again later.`,
+          );
+        }
+      }
     }
   } catch (e) {
     if (e instanceof FoundryError && e.code === "unauthenticated") throw e;
@@ -116,20 +141,39 @@ export async function sweep(
 async function serving(
   opts: RunOptions,
   log: (line: string) => void,
-  sessions: Sessions,
 ): Promise<void> {
-  const ask = () =>
-    checkAccount(opts.claude, opts.env ?? process.env, opts.query);
-  const accounts: Account[] = [await ask()];
-  const me = await opts.foundry.hello(RUNTIMES, opts.version, accounts);
-  log(
-    `Paired as ${me.name}: running Foundry's Assistant on Claude Code, ${opts.concurrency} turn${opts.concurrency === 1 ? "" : "s"} at a time.`,
+  const sessions = opts.clis.map((c) => c.sessions);
+  // Each CLI's account, by its index in opts.clis.
+  const accounts: Account[] = await Promise.all(
+    opts.clis.map((c) => c.account()),
   );
-  if (accounts[0]!.state === "signed_out")
-    log("Claude Code isn't signed in: run claude, then /login.");
+  const ask = (i: number) =>
+    void opts.clis[i]!.account().then((a) => (accounts[i] = a));
+  const runtimes = opts.clis.map((c) => c.runtime);
+  const me = await opts.foundry.hello(runtimes, opts.version, accounts);
+  log(
+    `Paired as ${me.name}: running Foundry's Assistant on ${names(opts.clis)}, ${opts.concurrency} turn${opts.concurrency === 1 ? "" : "s"} at a time.`,
+  );
+  for (const a of accounts)
+    if (a.state === "signed_out")
+      log(
+        a.runtime === "codex"
+          ? "Codex isn't signed in: run codex login."
+          : "Claude Code isn't signed in: run claude, then /login.",
+      );
   const checking = setInterval(
-    () => void ask().then((a) => (accounts[0] = a)),
+    () => opts.clis.forEach((_, i) => ask(i)),
     opts.checkMs ?? CHECK_MS,
+  );
+  // A Codex Foundry runs nothing on (too old, or it didn't say its version)
+  // is asked again sooner: updated, its next claim says so.
+  const rechecking = setInterval(
+    () =>
+      opts.clis.forEach((c, i) => {
+        const v = accounts[i]!.version;
+        if (c.runtime === "codex" && !(v && atLeast(v, MIN_CODEX))) ask(i);
+      }),
+    opts.recheckMs ?? RECHECK_MS,
   );
   await sweep(opts.foundry, sessions, opts.env, log);
   const sweeping = setInterval(
@@ -138,13 +182,18 @@ async function serving(
   );
   const ran: RunOptions = {
     ...opts,
-    ended(end) {
+    ended(end, cli) {
+      const i = opts.clis.indexOf(cli);
       if (end.end === "failed" && end.failure === "signed_out")
-        accounts[0] = { runtime: "claude_code", state: "signed_out" };
+        accounts[i] = {
+          runtime: cli.runtime,
+          state: "signed_out",
+          ...(accounts[i]?.version && { version: accounts[i]!.version }),
+        };
       // A turn that ran says the person signed in since: ask again.
-      else if (end.end === "answered" && accounts[0]!.state !== "signed_in")
-        void ask().then((a) => (accounts[0] = a));
-      opts.ended?.(end);
+      else if (end.end === "answered" && accounts[i]!.state !== "signed_in")
+        ask(i);
+      opts.ended?.(end, cli);
     },
   };
   try {
@@ -153,6 +202,7 @@ async function serving(
     );
   } finally {
     clearInterval(checking);
+    clearInterval(rechecking);
     clearInterval(sweeping);
   }
 }
@@ -166,7 +216,7 @@ async function slot(
     let turn: Turn | undefined;
     try {
       turn = await opts.foundry.claim(
-        RUNTIMES,
+        opts.clis.map((c) => c.runtime),
         opts.version,
         accounts,
         opts.signal,
@@ -241,35 +291,40 @@ export async function runTurn(turn: Turn, opts: RunOptions): Promise<string> {
     return post(step, text, false);
   };
   const flushing = setInterval(() => void flush(), opts.deltaMs ?? DELTA_MS);
+  const cli = opts.clis.find((c) => c.runtime === turn.runtime);
   let ran: Ran;
   try {
-    ran = await runClaude(
-      turn,
-      {
-        claude: opts.claude,
-        cwd: await threadDir(
-          { workspaceId: turn.workspace_id, threadId: turn.thread_id },
-          opts.env,
-        ),
-        mcpURL: opts.foundry.mcpURL,
-        abort,
-        env: opts.env,
-        query: opts.query,
-      },
-      {
-        delta(step, text) {
-          if (step !== pending.step) void flush();
-          pending = {
-            step,
-            text: (step === pending.step ? pending.text : "") + text,
-          };
-        },
-        async said(step, text) {
-          pending = { step: 0, text: "" };
-          await post(step, text, true);
-        },
-      },
-    );
+    ran = cli
+      ? await cli.run(
+          turn,
+          {
+            cwd: await threadDir(
+              { workspaceId: turn.workspace_id, threadId: turn.thread_id },
+              opts.env,
+            ),
+            mcpURL: opts.foundry.mcpURL,
+            abort,
+          },
+          {
+            delta(step, text) {
+              if (step !== pending.step) void flush();
+              pending = {
+                step,
+                text: (step === pending.step ? pending.text : "") + text,
+              };
+            },
+            async said(step, text) {
+              pending = { step: 0, text: "" };
+              await post(step, text, true);
+            },
+          },
+        )
+      : // Foundry leased a runtime this helper doesn't run: say so.
+        {
+          end: { end: "failed", failure: "not_installed" },
+          steps: 0,
+          sessionId: "",
+        };
   } finally {
     clearInterval(renewing);
     clearInterval(flushing);
@@ -282,7 +337,7 @@ export async function runTurn(turn: Turn, opts: RunOptions): Promise<string> {
   }
   if (taken) return `stopped: ${taken}`;
   await opts.foundry.finish(turn.claim_id, ran.end, ran.steps, ran.sessionId);
-  opts.ended?.(ran.end);
+  if (cli) opts.ended?.(ran.end, cli);
   return ran.end.end === "failed" ? `failed: ${ran.end.failure}` : ran.end.end;
 }
 

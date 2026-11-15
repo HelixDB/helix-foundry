@@ -1,9 +1,10 @@
 // The helper's state on this computer: the Foundry it is paired with and its
 // token, in a file only this user reads, and an empty directory per thread
-// that Claude Code runs in (threads/<workspace>/<thread>), under which
-// Claude Code keeps the thread's session (~/.claude/projects/...). A
-// thread's session holds what Foundry's tools answered in it, so the
-// helper deletes it once the thread is gone (forgetThread).
+// that its CLI runs in (threads/<workspace>/<thread>), under which the CLI
+// keeps the thread's session (Claude Code in ~/.claude/projects/..., Codex
+// in its CODEX_HOME's sessions, by working directory). A thread's session
+// holds what Foundry's tools answered in it, so the helper deletes it once
+// the thread is gone (forgetThread).
 
 import {
   mkdir,
@@ -55,9 +56,9 @@ export function threadPath(
 }
 
 /**
- * The thread's working directory: empty (Claude Code runs with no tool
- * that writes), and the same for every turn of the thread, since Claude
- * Code keeps a session under its working directory and resumes it there.
+ * The thread's working directory: empty (its CLI runs with no tool that
+ * writes, or one that asks and is declined), and the same for every turn of
+ * the thread, since each CLI finds its sessions by working directory.
  */
 export async function threadDir(
   t: ThreadRef,
@@ -91,24 +92,34 @@ export async function listThreads(
   return out;
 }
 
-/** Claude Code's sessions kept under a working directory: the Agent SDK's, or a test's. */
+/** A CLI's sessions kept under a working directory: the Agent SDK's, Codex's app-server's, or a test's. */
 export type Sessions = {
   list(dir: string): Promise<string[]>;
   delete(id: string, dir: string): Promise<void>;
 };
 
 /**
- * Deletes what the helper keeps of a thread: Claude Code's sessions under
- * its directory (each with what Foundry's tools answered), then the
- * directory.
+ * Deletes what the helper keeps of a thread: each CLI's sessions under its
+ * directory (each with what Foundry's tools answered), then the directory.
+ * Every CLI is tried, one failing or not; the directory goes only once each
+ * deleted its sessions, so a later sweep finds the thread and tries again,
+ * and the first failure is thrown after.
  */
 export async function forgetThread(
   t: ThreadRef,
-  sessions: Sessions,
+  sessions: Sessions[],
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   const dir = threadPath(t, env);
-  for (const id of await sessions.list(dir)) await sessions.delete(id, dir);
+  const failed: unknown[] = [];
+  for (const s of sessions) {
+    try {
+      for (const id of await s.list(dir)) await s.delete(id, dir);
+    } catch (e) {
+      failed.push(e);
+    }
+  }
+  if (failed.length) throw failed[0];
   await rm(dir, { recursive: true, force: true });
 }
 

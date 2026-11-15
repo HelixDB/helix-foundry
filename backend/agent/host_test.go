@@ -186,6 +186,9 @@ func TestAHelperClaimEndsTheTurnsItCantRun(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	assert.Equal(t, "turn-fresh", claimed.Turn.ID)
+	assert.Contains(t, claimed.System, "MCP server named "+CodexMCPServer, "Codex's model is told which server is Foundry's")
+	assert.Contains(t, claimed.System, "never use them", "and to leave the person's own tools alone")
+	assert.Equal(t, "Codex", db.lastEvent(t)["model"])
 	require.Len(t, db.settled, 2)
 	assert.Contains(t, db.settled[1].Error, "stopped before it finished")
 	assert.Zero(t, db.settled[1].Spend.USDMicros, "a helper's turn spends nothing")
@@ -565,6 +568,29 @@ func TestAHelpersSubscriptionIsPrintableASCII(t *testing.T) {
 	}
 	assert.True(t, PrintableASCII("darwin-arm64 0.1.0 ~"))
 	assert.False(t, PrintableASCII("darwin\u2066"))
+}
+
+func TestACodexOlderThanTheFloorIsntRun(t *testing.T) {
+	codex, claude := model.FoundryAgentRuntimeCodex, model.FoundryAgentRuntimeClaudeCode
+	at := func(v string) HostAccount { return HostAccount{Runtime: codex, State: AccountSignedIn, Version: v} }
+	for v, outdated := range map[string]bool{
+		MinCodexVersion: false, "0.170.0": false, "1.0.0": false, "0.170.0-alpha.5": false,
+		"0.168.9": true, MinCodexVersion + "-alpha.2": true, "garbage": true, "0.169": true,
+		// No version read: it didn't start, which updating won't fix.
+		"": false,
+	} {
+		assert.Equal(t, outdated, at(v).Outdated(), "%q", v)
+	}
+	assert.False(t, HostAccount{Runtime: claude, State: AccountSignedIn}.Outdated(), "Claude Code has no floor")
+	both := []model.FoundryAgentRuntime{claude, codex}
+	assert.Equal(t, both, Runnable(both, []HostAccount{at("0.170.0")}))
+	assert.Equal(t, []model.FoundryAgentRuntime{claude}, Runnable(both, []HostAccount{at("0.150.0")}))
+	assert.Equal(t, []model.FoundryAgentRuntime{claude}, Runnable(both, nil), "a Codex it says nothing of")
+	assert.Equal(t, []model.FoundryAgentRuntime{claude}, Runnable(both, []HostAccount{{Runtime: codex, State: AccountUnknown}}),
+		"a Codex of no version, outdated or not")
+	assert.Error(t, ValidHostAccounts([]HostAccount{at(strings.Repeat("1", 65))}, both))
+	assert.Error(t, ValidHostAccounts([]HostAccount{at("0.169.0\u202e")}, both))
+	assert.NoError(t, ValidHostAccounts([]HostAccount{at("0.170.0-alpha.5")}, both))
 }
 
 func TestAPairCommandNamesAMovedPort(t *testing.T) {

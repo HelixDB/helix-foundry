@@ -23,38 +23,53 @@ import { foundryPrecondition as refused } from "./ai";
 // The mock runs no helper: its scripted agent answers a helper's thread as
 // it answers any (./agent.ts), once a helper of its runtime is online, and
 // fails it in the backend's words while that helper's CLI is signed out.
-// Helpers come from two places, until the next reset:
+// Codex is chosen once the owner confirmed what it runs with (confirmCodex,
+// kept), and a helper whose Codex is older than CODEX_MIN runs no Codex turn
+// (its account says outdated), as the backend's agent.Runnable. Helpers come
+// from two places, until the next reset:
 // - `{"agentHosts": [{"name": "Ada's Mac", "runtimes": ["claude_code"],
 //   "online": true, "account": {"state": "signed_in", "subscription":
-//   "max"}}]}` pairs some (account defaults to a Max subscription; null is
-//   a helper that hasn't said yet; online false was last seen an hour ago);
-// - POST /__mock/agent-host/pair {code, name?, account?} spends a pairing
-//   code as a helper's pair command does (once, within ten minutes): the
-//   helper it pairs offers Claude Code, and isn't running, never seen, until
+//   "max"}, "codexVersion": "0.169.0"}]}` pairs some (account defaults to a
+//   Max subscription for Claude Code and a Plus plan for Codex; null is a
+//   helper that hasn't said yet; online false was last seen an hour ago;
+//   codexVersion, CODEX_MIN by default, is its Codex's, "" a Codex that
+//   didn't start and said no version, which runs nothing either);
+// - POST /__mock/agent-host/pair {code, name?, runtimes?, account?,
+//   codexVersion?} spends a pairing code as a helper's pair command does
+//   (once, within ten minutes): the helper it pairs offers runtimes (Claude
+//   Code by default), and isn't running, never seen, until
 //   POST /__mock/agent-host/hello {host_id} starts it (its run or install).
 
-type Account = Omit<FoundryAgentHostAccount, "runtime">;
+type Account = Omit<FoundryAgentHostAccount, "runtime" | "outdated">;
 type Knobs = {
   agentHosts?: {
     name: string;
     runtimes: AgentHelperRuntime[];
     online?: boolean;
     account?: Account | null;
+    codexVersion?: string;
   }[];
 };
 const knobs = config as typeof config & Knobs;
+
+/** The oldest Codex a helper runs the Assistant on (backend agent.MinCodexVersion). */
+export const CODEX_MIN = "0.169.0";
 
 /** A helper the mock's pair stand-in paired: running once started. */
 type Paired = {
   id: string;
   name: string;
-  account: Account | null;
+  runtimes: AgentHelperRuntime[];
+  account: Account | null | undefined;
+  codexVersion?: string;
   createdAt: string;
   running: boolean;
 };
 
 const state = {
   runtimes: new Map<string, AgentRuntime>(),
+  // When each workspace's owner confirmed what codex runs with.
+  codexConfirmed: new Map<string, string>(),
   revoked: new Set<string>(),
   // Pairing codes made and not yet spent, with when each stops pairing.
   codes: new Map<string, number>(),
@@ -62,6 +77,7 @@ const state = {
 };
 onReset(() => {
   state.runtimes.clear();
+  state.codexConfirmed.clear();
   state.revoked.clear();
   state.codes.clear();
   state.paired = [];
@@ -72,45 +88,97 @@ const RUNTIMES: AgentRuntime[] = ["api", "claude_code", "codex"];
 const PAIRING_MS = 10 * 60_000;
 const ONLINE_MS = 30_000;
 const MAX_SUBSCRIPTION = { state: "signed_in", subscription: "max" } as const;
+const PLUS_PLAN = { state: "signed_in", subscription: "plus" } as const;
 // When the mock's helpers paired: they have been paired a day.
 const PAIRED_AT = () => new Date(Date.now() - 86_400_000).toISOString();
 
-const accountsOf = (runtimes: AgentHelperRuntime[], a: Account | null) =>
-  a ? runtimes.map((runtime) => ({ runtime, ...a })) : [];
+/**
+ * Whether version (x.y.z, maybe a prerelease) is at least min, as the
+ * backend's agent.VersionAtLeast.
+ */
+export function versionAtLeast(version: string, min: string): boolean {
+  const parse = (v: string) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)(-.*)?$/.exec(v);
+    return m ? { n: [+m[1]!, +m[2]!, +m[3]!], pre: !!m[4] } : undefined;
+  };
+  const a = parse(version),
+    b = parse(min);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i++) if (a.n[i] !== b.n[i]) return a.n[i]! > b.n[i]!;
+  return !a.pre || b.pre;
+}
+
+/**
+ * What a helper's CLIs say they are signed in to (account, else each
+ * runtime's default; null for none yet), Codex with its version.
+ */
+function accountsOf(
+  runtimes: AgentHelperRuntime[],
+  a: Account | null | undefined,
+  codexVersion = CODEX_MIN,
+): FoundryAgentHostAccount[] {
+  if (a === null) return [];
+  return runtimes.map((runtime) =>
+    runtime === "codex"
+      ? {
+          runtime,
+          ...(a ?? PLUS_PLAN),
+          ...(codexVersion && {
+            version: codexVersion,
+            outdated: !versionAtLeast(codexVersion, CODEX_MIN),
+          }),
+        }
+      : { runtime, ...(a ?? MAX_SUBSCRIPTION) },
+  );
+}
+
+/** What a helper runs of what it offers: not an outdated Codex, nor one of no version or it said nothing of. */
+const runnable = (
+  runtimes: AgentHelperRuntime[],
+  accounts: FoundryAgentHostAccount[],
+) =>
+  runtimes.filter(
+    (r) =>
+      r !== "codex" ||
+      accounts.some((a) => a.runtime === r && a.version && !a.outdated),
+  );
 
 /** The helpers paired and not revoked, newest first, with stable ids. */
 function hosts(): FoundryAgentHost[] {
   const seen = (online: boolean) =>
     new Date(Date.now() - (online ? 1_000 : 3_600_000)).toISOString();
   return [
-    ...state.paired.map((p) => ({
-      id: p.id,
-      name: p.name,
-      runtimes: ["claude_code" as const],
-      accounts: accountsOf(["claude_code"], p.account),
-      version: "0.1.0",
-      platform: "darwin-arm64",
-      createdAt: p.createdAt,
-      // Pairing starts nothing: seen once it runs.
-      ...(p.running && { lastSeenAt: seen(true) }),
-      online: p.running,
-      revokedAt: null,
-    })),
-    ...(knobs.agentHosts ?? []).map((h, i) => ({
-      id: `01JHOST${String(i).padStart(19, "0")}`,
-      name: h.name,
-      runtimes: h.runtimes,
-      accounts: accountsOf(
-        h.runtimes,
-        h.account === undefined ? MAX_SUBSCRIPTION : h.account,
-      ),
-      version: "0.1.0",
-      platform: "darwin-arm64",
-      createdAt: PAIRED_AT(),
-      lastSeenAt: seen(h.online !== false),
-      online: h.online !== false,
-      revokedAt: null,
-    })),
+    ...state.paired.map((p) => {
+      const accounts = accountsOf(p.runtimes, p.account, p.codexVersion);
+      return {
+        id: p.id,
+        name: p.name,
+        runtimes: runnable(p.runtimes, accounts),
+        accounts,
+        version: "0.1.0",
+        platform: "darwin-arm64",
+        createdAt: p.createdAt,
+        // Pairing starts nothing: seen once it runs.
+        ...(p.running && { lastSeenAt: seen(true) }),
+        online: p.running,
+        revokedAt: null,
+      };
+    }),
+    ...(knobs.agentHosts ?? []).map((h, i) => {
+      const accounts = accountsOf(h.runtimes, h.account, h.codexVersion);
+      return {
+        id: `01JHOST${String(i).padStart(19, "0")}`,
+        name: h.name,
+        runtimes: runnable(h.runtimes, accounts),
+        accounts,
+        version: "0.1.0",
+        platform: "darwin-arm64",
+        createdAt: PAIRED_AT(),
+        lastSeenAt: seen(h.online !== false),
+        online: h.online !== false,
+        revokedAt: null,
+      };
+    }),
   ].filter((h) => !state.revoked.has(h.id));
 }
 
@@ -142,12 +210,23 @@ export function hostOffline(
 ): MockReply | undefined {
   if (runtime === "api") return undefined;
   if (LOCAL_TOKEN && helperOnline(runtime)) return undefined;
+  const online = hosts().filter((h) => h.online);
+  const codex = (h: FoundryAgentHost) =>
+    runtime === "codex"
+      ? h.accounts!.find((a) => a.runtime === runtime)
+      : undefined;
+  const old = online.find((h) => codex(h)?.outdated);
+  const unstarted = online.find((h) => codex(h) && !codex(h)!.version);
   return refused(
     ws,
     "FOUNDRY_AGENT_HOST_OFFLINE",
-    LOCAL_TOKEN
-      ? `no helper running ${runtime} has been seen in the last 30 seconds: start it on your computer, then send again`
-      : "no helper runs this thread here",
+    !LOCAL_TOKEN
+      ? "no helper runs this thread here"
+      : old
+        ? `the Codex on ${old.name} is older than ${CODEX_MIN}, the oldest Foundry runs the Assistant on: update it there, then send again in a minute`
+        : unstarted
+          ? `the Codex on ${unstarted.name} didn't start: run codex --version there to see why, then send again in a minute`
+          : `no helper running ${runtime} has been seen in the last 30 seconds: start it on your computer, then send again`,
   );
 }
 
@@ -180,7 +259,13 @@ export function runtimeOf(ws: string): FoundryAgentRuntimeResponse {
     ...new Set(listed.filter((h) => h.online).flatMap((h) => h.runtimes!)),
   ].sort();
   return {
-    runtime: { runtime: workspaceRuntime(ws), hosts: listed, online },
+    runtime: {
+      runtime: workspaceRuntime(ws),
+      hosts: listed,
+      online,
+      codexConfirmedAt: state.codexConfirmed.get(ws) ?? null,
+      codexMinVersion: CODEX_MIN,
+    },
   };
 }
 
@@ -189,14 +274,16 @@ export const helperById = (id: string) => hosts().find((h) => h.id === id);
 
 /**
  * A helper's pair command, standing in for /agent-host/pair: spends a code
- * the owner made (once, within ten minutes) on a new helper of Claude Code,
- * not running until started (startHelper). Refused as the backend's
+ * the owner made (once, within ten minutes) on a new helper of runtimes
+ * (Claude Code by default), not running until started (startHelper). Refused as the backend's
  * errPairingInvalid otherwise.
  */
 export function pairHelper(body: {
   code?: string;
   name?: string;
+  runtimes?: AgentHelperRuntime[];
   account?: Account | null;
+  codexVersion?: string;
 }): MockReply {
   const expires = state.codes.get(body.code || "");
   if (!expires || expires <= Date.now())
@@ -215,7 +302,9 @@ export function pairHelper(body: {
   state.paired.unshift({
     id,
     name: body.name || "Ada's Mac",
-    account: body.account === undefined ? MAX_SUBSCRIPTION : body.account,
+    runtimes: body.runtimes?.length ? body.runtimes : ["claude_code"],
+    account: body.account,
+    codexVersion: body.codexVersion,
     createdAt: now(),
     running: false,
   });
@@ -279,15 +368,17 @@ export const agentHostRoutes: MockRoute[] = [
       const ws = params.workspaceId!;
       const refusal = owner(ws, user.id);
       if (refusal) return refusal;
-      const runtime = (body as Partial<UpdateFoundryAgentRuntimeRequest>)
-        ?.runtime;
+      const req = body as Partial<UpdateFoundryAgentRuntimeRequest>;
+      const runtime = req?.runtime;
       if (!runtime || !RUNTIMES.includes(runtime))
         return fail("INVALID_ARGUMENT", "runtime is api, claude_code or codex");
-      if (runtime === "codex")
+      if (req.confirmCodex && !state.codexConfirmed.has(ws))
+        state.codexConfirmed.set(ws, now());
+      if (runtime === "codex" && !state.codexConfirmed.has(ws))
         return refused(
           ws,
-          "FOUNDRY_AGENT_RUNTIME_UNAVAILABLE",
-          "the Assistant can't run on codex yet: choose api or claude_code",
+          "FOUNDRY_AGENT_CODEX_UNCONFIRMED",
+          "Codex runs with your own Codex setup, its MCP servers and plugins included, on your ChatGPT plan: choose it in Settings › AI models, where you confirm that once",
         );
       state.runtimes.set(ws, runtime);
       return ok(runtimeOf(ws));

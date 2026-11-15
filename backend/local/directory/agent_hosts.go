@@ -231,19 +231,25 @@ func (s *Store) AgentHostByToken(ctx context.Context, token string) (agent.Host,
 FROM foundry_local_agent_hosts WHERE token_hash=? AND revoked_at IS NULL`, tokenHash(token)))
 }
 
-// SeeAgentHost records a live helper's call, what it offers now and what
-// their CLIs are signed in to (agent.ValidHostAccounts), which replace what
-// its last call said.
-func (s *Store) SeeAgentHost(ctx context.Context, id string, runtimes []model.FoundryAgentRuntime, version string, accounts []agent.HostAccount) error {
-	set, err := runtimeSet(runtimes)
-	if err != nil {
-		return err
+// SeeAgentHost records a live helper's call: what it runs now of what it
+// offers (agent.Runnable: not an outdated Codex), and what their CLIs are
+// signed in to (agent.ValidHostAccounts), which replace what its last call
+// said. It returns what it runs.
+func (s *Store) SeeAgentHost(ctx context.Context, id string, offered []model.FoundryAgentRuntime, version string,
+	accounts []agent.HostAccount) ([]model.FoundryAgentRuntime, error) {
+	if _, err := runtimeSet(offered); err != nil {
+		return nil, err
 	}
 	if !validLabel(version) {
-		return fmt.Errorf("%w: its version is at most %d bytes of printable ASCII", ErrInvalidAgentHost, maxHostLabel)
+		return nil, fmt.Errorf("%w: its version is at most %d bytes of printable ASCII", ErrInvalidAgentHost, maxHostLabel)
 	}
-	if err := agent.ValidHostAccounts(accounts, runtimes); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidAgentHost, err)
+	if err := agent.ValidHostAccounts(accounts, offered); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidAgentHost, err)
+	}
+	runs := agent.Runnable(offered, accounts)
+	set, err := runtimeSet(runs)
+	if err != nil {
+		return nil, err
 	}
 	if accounts == nil {
 		accounts = []agent.HostAccount{}
@@ -251,11 +257,11 @@ func (s *Store) SeeAgentHost(ctx context.Context, id string, runtimes []model.Fo
 	// A string, not bytes: MySQL takes no JSON from a binary string.
 	encoded, err := json.Marshal(accounts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE foundry_local_agent_hosts SET last_seen_at=?, runtimes=?, version=?, accounts=? WHERE id=? AND revoked_at IS NULL`,
 		time.Now().UTC(), set, version, string(encoded), id)
-	return err
+	return runs, err
 }
 
 // TouchAgentHost records a live helper's call that says nothing of what it
@@ -301,7 +307,7 @@ func (s *Store) RevokeAgentHost(ctx context.Context, id string) (agent.Host, err
 	return s.AgentHost(ctx, id)
 }
 
-// AgentRuntimeOnline reports whether a live helper offering runtime called
+// AgentRuntimeOnline reports whether a live helper running runtime called
 // within HostOnlineFor.
 func (s *Store) AgentRuntimeOnline(ctx context.Context, runtime model.FoundryAgentRuntime) (bool, error) {
 	if !runtime.Subscription() {
@@ -315,25 +321,59 @@ WHERE revoked_at IS NULL AND last_seen_at > ? AND FIND_IN_SET(?, runtimes) > 0`,
 
 // AgentRuntime is where the workspace's new threads run: api unless the
 // owner chose a helper's.
-func (s *Store) AgentRuntime(ctx context.Context, workspaceID string) (model.FoundryAgentRuntime, error) {
+func (s *Store) AgentRuntime(ctx context.Context, workspaceID string) (agent.RuntimeSetting, error) {
+	return agentRuntime(ctx, s.db, workspaceID, "")
+}
+
+// agentRuntime reads a workspace's setting, with suffix (FOR UPDATE, in a
+// transaction).
+func agentRuntime(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, workspaceID, suffix string) (agent.RuntimeSetting, error) {
 	var runtime string
-	err := s.db.QueryRowContext(ctx, `SELECT runtime FROM foundry_local_agent_settings WHERE workspace_id=?`, workspaceID).Scan(&runtime)
+	var confirmed sql.NullTime
+	err := q.QueryRowContext(ctx, `SELECT runtime, codex_confirmed_at FROM foundry_local_agent_settings WHERE workspace_id=?`+suffix,
+		workspaceID).Scan(&runtime, &confirmed)
 	if errors.Is(err, sql.ErrNoRows) {
-		return model.FoundryAgentRuntimeAPI, nil
+		return agent.RuntimeSetting{Runtime: model.FoundryAgentRuntimeAPI}, nil
 	}
-	return model.FoundryAgentRuntime(runtime), err
+	out := agent.RuntimeSetting{Runtime: model.FoundryAgentRuntime(runtime)}
+	if confirmed.Valid {
+		out.CodexConfirmedAt = &confirmed.Time
+	}
+	return out, err
 }
 
 var _ agent.HostRegistry = (*Store)(nil)
 
-// SetAgentRuntime sets where the workspace's new threads run.
-func (s *Store) SetAgentRuntime(ctx context.Context, workspaceID string, runtime model.FoundryAgentRuntime) error {
+// SetAgentRuntime sets where the workspace's new threads run, recording the
+// owner's confirmation of codex when confirmCodex (kept once made): codex
+// without one is agent.ErrCodexUnconfirmed, and changes nothing.
+func (s *Store) SetAgentRuntime(ctx context.Context, workspaceID string, runtime model.FoundryAgentRuntime,
+	confirmCodex bool) (agent.RuntimeSetting, error) {
 	if !runtime.Valid() {
-		return fmt.Errorf("no runtime %q", runtime)
+		return agent.RuntimeSetting{}, fmt.Errorf("no runtime %q", runtime)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO foundry_local_agent_settings (workspace_id, runtime) VALUES (?, ?)
-ON DUPLICATE KEY UPDATE runtime=VALUES(runtime)`, workspaceID, string(runtime))
-	return err
+	var out agent.RuntimeSetting
+	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+		was, err := agentRuntime(ctx, tx, workspaceID, " FOR UPDATE")
+		if err != nil {
+			return err
+		}
+		confirmed := was.CodexConfirmedAt
+		if confirmed == nil && confirmCodex {
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			confirmed = &now
+		}
+		if runtime == model.FoundryAgentRuntimeCodex && confirmed == nil {
+			return agent.ErrCodexUnconfirmed
+		}
+		out = agent.RuntimeSetting{Runtime: runtime, CodexConfirmedAt: confirmed}
+		_, err = tx.ExecContext(ctx, `INSERT INTO foundry_local_agent_settings (workspace_id, runtime, codex_confirmed_at) VALUES (?, ?, ?)
+ON DUPLICATE KEY UPDATE runtime=VALUES(runtime), codex_confirmed_at=VALUES(codex_confirmed_at)`, workspaceID, string(runtime), confirmed)
+		return err
+	})
+	return out, err
 }
 
 // CreateAgentTurnToken mints the hxr_ token of a turn a live helper claimed,

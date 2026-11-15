@@ -4,6 +4,7 @@ import type {
   FoundryAgentHostPairingResponse,
   FoundryAgentHostResponse,
   FoundryAgentRuntimeResponse,
+  UpdateFoundryAgentRuntimeRequest,
   AgentThreadResponse,
   AgentTurnResponse,
   FoundryAgentAction,
@@ -151,10 +152,22 @@ export async function executeAgentAction(ws: string, a: FoundryAgentAction) {
 }
 
 /** Sets where the workspace's new threads run: a helper need not be online. */
-export async function setAgentRuntime(ws: string, runtime: AgentRuntime) {
+/**
+ * Sets where the workspace's new threads run: codex with confirmCodex the
+ * first time (the owner confirmed what it runs with).
+ */
+export async function setAgentRuntime(
+  ws: string,
+  runtime: AgentRuntime,
+  confirmCodex = false,
+) {
+  const body: UpdateFoundryAgentRuntimeRequest = {
+    runtime,
+    ...(confirmCodex && { confirmCodex }),
+  };
   const r = await api<FoundryAgentRuntimeResponse>(
     `${at(ws)}/runtime`,
-    { runtime },
+    body,
     "PATCH",
   );
   trackEvent("agent_runtime_set", { runtime });

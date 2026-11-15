@@ -29,8 +29,10 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
+import { checkAccount } from "./account.ts";
 import type { Sessions } from "./config.ts";
 import type { End, Turn } from "./foundry.ts";
+import { promptText, type Cli, type Ran, type Reporter } from "./runtime.ts";
 
 /** Claude Code's own sessions on this computer, as the Agent SDK reads and deletes them. */
 export const CLAUDE_SESSIONS: Sessions = {
@@ -41,23 +43,6 @@ export const CLAUDE_SESSIONS: Sessions = {
   },
   delete: (id, dir) => deleteSession(id, { dir }),
 };
-
-/**
- * What a turn reports as it runs: the model's text, by step (its model
- * calls, from 1). A step's text is said once it is final: when the step
- * goes on to a tool call (so it shows before the call, as the model wrote
- * it), when its call ends, or when the next starts. Text after a tool call
- * in the same step is said again, after it.
- */
-export type Reporter = {
-  /** Text the model is writing in step, as it comes. */
-  delta(step: number, text: string): void;
-  /** The step's text so far, final: it replaces the step's deltas. */
-  said(step: number, text: string): Promise<void>;
-};
-
-/** How a turn ran: how it ended, its model calls, and its session. */
-export type Ran = { end: End; steps: number; sessionId: string };
 
 /** The tools a turn's CLI may call: Foundry's, by its MCP server's name. */
 export const FOUNDRY_TOOLS = "mcp__foundry__";
@@ -115,13 +100,6 @@ export function claudeOptions(
   };
 }
 
-/** What the person said, as the CLI's first message: with the thread in words when it starts afresh. */
-export function promptText(turn: Turn, resumed: boolean): string {
-  return !resumed && turn.history
-    ? `${turn.history}\n\n---\n\n${turn.prompt}`
-    : turn.prompt;
-}
-
 /** A CLI's failure in its own words, as Foundry words it. */
 export function failureOf(text: string): End {
   const t = text.toLowerCase();
@@ -141,6 +119,21 @@ const LOST_SESSION = /no conversation found/i;
 
 /** The query function: the SDK's, or a test's. */
 export type Query = typeof query;
+
+/** Claude Code at claude, as the loop drives it: query and sessions are a test's when given. */
+export function claudeCli(
+  claude: string,
+  env: NodeJS.ProcessEnv,
+  opts: { query?: Query; sessions?: Sessions } = {},
+): Cli {
+  return {
+    runtime: "claude_code",
+    account: () => checkAccount(claude, env, opts.query),
+    run: (turn, ctx, report) =>
+      runClaude(turn, { claude, env, query: opts.query, ...ctx }, report),
+    sessions: opts.sessions ?? CLAUDE_SESSIONS,
+  };
+}
 
 /**
  * Runs a turn on Claude Code: once on the thread's session, and once

@@ -1571,7 +1571,9 @@ const VIEWS: {
       "caution",
       d.runtime !== "api" && !d.online
         ? `No helper running ${RUNTIMES[d.runtime].cli} is online: start it on your computer before you send.`
-        : undefined,
+        : d.runtime === "codex"
+          ? "Codex runs with your own Codex setup, its shell off, on your ChatGPT plan, as you confirmed in Settings › AI models."
+          : undefined,
     ),
     run: "Switch",
     target: "this workspace",
@@ -1977,36 +1979,50 @@ export const HELPER_COMMANDS = {
 
 /**
  * What a helper's CLI is signed in to, as the settings say it: a closed
- * set read without trust from its accounts (the runtime's, if any).
+ * set read without trust from its accounts (the runtime's, if any), with
+ * the CLI's version when it said one. An outdated Codex runs nothing,
+ * whatever it is signed in to.
  */
-export type HelperAccount =
+export type HelperAccount = (
   | { kind: "subscription"; plan: string }
   | { kind: "other" }
   | { kind: "signed_out" }
   | { kind: "unknown" }
   // Not said yet: it hasn't called since it paired.
-  | { kind: "unchecked" };
+  | { kind: "unchecked" }
+  // A Codex older than Foundry runs: it runs no turn until updated.
+  | { kind: "outdated" }
+) & { version?: string };
+
+/** A version as the settings show it: printable, short. */
+const versionOf = (v: unknown) =>
+  typeof v === "string" && /^[\x20-\x7e]{1,64}$/.test(v) ? v : undefined;
 
 /**
  * @example
  * const h = { id: "h", accounts: [{ runtime: "claude_code" as const, state: "signed_in" as const, subscription: "max" }] };
  * helperAccount(h, "claude_code"); // { kind: "subscription", plan: "max" }
  * helperAccount({ id: "h" }, "claude_code"); // { kind: "unchecked" }
+ * helperAccount({ id: "h", accounts: [{ runtime: "codex", state: "signed_in", version: "0.150.0", outdated: true }] }, "codex");
+ * // { kind: "outdated", version: "0.150.0" }
  */
 export function helperAccount(
   host: FoundryAgentHost,
   runtime: AgentHelperRuntime,
 ): HelperAccount {
   const a = (host.accounts || []).find((x) => x.runtime === runtime);
+  const version = versionOf(a?.version);
+  const v = version ? { version } : {};
+  if (a?.outdated) return { kind: "outdated", ...v };
   switch (a?.state) {
     case "signed_in":
       return a.subscription
-        ? { kind: "subscription", plan: a.subscription }
-        : { kind: "other" };
+        ? { kind: "subscription", plan: a.subscription, ...v }
+        : { kind: "other", ...v };
     case "signed_out":
-      return { kind: "signed_out" };
+      return { kind: "signed_out", ...v };
     case "unknown":
-      return { kind: "unknown" };
+      return { kind: "unknown", ...v };
     default:
       return { kind: "unchecked" };
   }
@@ -2024,38 +2040,57 @@ export const planName = (plan: string) => {
   return words.charAt(0).toUpperCase() + words.slice(1);
 };
 
+/** How to update Codex, as the settings and the dock say it. */
+export const CODEX_UPDATE = "npm i -g @openai/codex@latest";
+
 /**
  * A helper's account in words, and whether its turns would bill the
- * subscription: its plan, or why not.
+ * subscription: its plan, or why not. Codex says its version and its plan
+ * as ChatGPT names it; min is the oldest Codex Foundry runs.
  *
  * @example
  * accountText({ kind: "subscription", plan: "max" }, "claude_code");
  * // { text: "Claude Code is signed in on a Max subscription", ok: true }
+ * accountText({ kind: "subscription", plan: "plus", version: "0.169.0" }, "codex");
+ * // { text: "Codex 0.169.0 is signed in on a ChatGPT Plus plan", ok: true }
  */
 export function accountText(
   a: HelperAccount,
   runtime: AgentHelperRuntime,
+  min = "",
 ): { text: string; ok: boolean } {
   const { cli, login } = RUNTIMES[runtime];
+  const named = a.version ? `${cli} ${a.version}` : cli;
   switch (a.kind) {
     case "subscription":
       return {
-        text: `${cli} is signed in on a ${planName(a.plan)} subscription`,
+        text:
+          runtime === "codex"
+            ? `${named} is signed in on a ChatGPT ${planName(a.plan)} plan`
+            : `${named} is signed in on a ${planName(a.plan)} subscription`,
         ok: true,
       };
     case "other":
       return {
-        text: `${cli} is signed in, but not on a subscription: its turns bill that account`,
+        text:
+          runtime === "codex"
+            ? `${named} is signed in, but not with a ChatGPT plan: its turns bill that account`
+            : `${named} is signed in, but not on a subscription: its turns bill that account`,
         ok: false,
       };
     case "signed_out":
       return {
-        text: `${cli} isn’t signed in: on that computer, ${login}`,
+        text: `${named} isn’t signed in: on that computer, ${login}`,
         ok: false,
       };
     case "unknown":
       return {
-        text: `${cli} didn’t start, so its sign-in is unknown`,
+        text: `${named} didn’t start, so its sign-in is unknown`,
+        ok: false,
+      };
+    case "outdated":
+      return {
+        text: `${named} is older than ${min || "Foundry runs"}${min ? ", the oldest Foundry runs" : ""}: on that computer, update it (${CODEX_UPDATE})`,
         ok: false,
       };
     case "unchecked":
@@ -2067,10 +2102,25 @@ export function accountText(
  * Whether a thread can be sent to where it runs: a closed set. `ready` is
  * Foundry's worker, or a helper's runtime with a helper running it;
  * `stopped` a helper's with one paired that runs it but none running (start
- * it); `unpaired` a helper's that no paired helper runs (pair one first:
- * starting one would fail).
+ * it); `outdated` a helper's whose helper runs but with a Codex too old
+ * (update it); `unstarted` a helper's whose helper runs but whose Codex
+ * didn't start, so said no version (see why on that computer); `unpaired` a
+ * helper's that no paired helper runs (pair one first: starting one would
+ * fail).
  */
-export type RuntimeState = "ready" | "stopped" | "unpaired";
+export type RuntimeState =
+  | "ready"
+  | "stopped"
+  | "outdated"
+  | "unstarted"
+  | "unpaired";
+
+/** Where a thread runs, whether it can be sent to, and, when its CLI is too old or didn't start, which helper's (and how old). */
+export type ThreadRuntime = {
+  runtime: AgentRuntime;
+  state: RuntimeState;
+  helper?: { host: string; version?: string; min: string };
+};
 
 /**
  * Where a thread runs, and whether it can be sent to now: api always; a
@@ -2090,16 +2140,36 @@ export type RuntimeState = "ready" | "stopped" | "unpaired";
 export function threadRuntime(
   thread: AgentRuntime | undefined,
   setting: FoundryAgentRuntime | undefined,
-): { runtime: AgentRuntime; state: RuntimeState } {
+): ThreadRuntime {
   const runtime = thread ?? setting?.runtime ?? "api";
   // Unread: not known to be offline, so the dock doesn't say it is.
   if (runtime === "api" || !setting || (setting.online || []).includes(runtime))
     return { runtime, state: "ready" };
+  const hosts = setting.hosts || [];
+  // A helper running whose Codex is too old (updating it is what's
+  // wanted), or didn't start and said no version (Foundry runs neither).
+  const blocked = (h: FoundryAgentHost) => {
+    const a = helperAccount(h, runtime);
+    return a.kind === "outdated"
+      ? "outdated"
+      : runtime === "codex" && a.kind === "unknown" && !a.version
+        ? "unstarted"
+        : undefined;
+  };
+  const stuck = hosts.find((h) => h.online && blocked(h));
+  if (stuck)
+    return {
+      runtime,
+      state: blocked(stuck)!,
+      helper: {
+        host: stuck.name || "your computer",
+        version: helperAccount(stuck, runtime).version,
+        min: setting.codexMinVersion || "",
+      },
+    };
   return {
     runtime,
-    state: (setting.hosts || []).some((h) =>
-      (h.runtimes || []).includes(runtime),
-    )
+    state: hosts.some((h) => (h.runtimes || []).includes(runtime) || blocked(h))
       ? "stopped"
       : "unpaired",
   };

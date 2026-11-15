@@ -68,6 +68,7 @@ import { answerText, questionName, readQuestions } from "../../questions/model";
 import { Command } from "./runtime-settings";
 import {
   ASK_PERSON,
+  CODEX_UPDATE,
   EMPTY_STREAM,
   HELPER_COMMANDS,
   RUNTIMES,
@@ -86,6 +87,7 @@ import {
   threadKey,
   threadRuntime,
   type RuntimeState,
+  type ThreadRuntime,
   type AgentBlock,
   type TurnStream,
 } from "./model";
@@ -207,6 +209,7 @@ export function AgentDock({
             <RuntimeLine
               runtime={where.runtime}
               state={where.state}
+              helper={where.helper}
               thread={!!threadId}
               onNavigate={onNavigate}
             />
@@ -289,11 +292,13 @@ export function useThreadRuntime(
 export function RuntimeLine({
   runtime,
   state,
+  helper,
   thread,
   onNavigate,
 }: {
   runtime: Exclude<AgentRuntime, "api">;
   state: RuntimeState;
+  helper?: ThreadRuntime["helper"];
   // An open thread's, not the workspace's for a new one.
   thread: boolean;
   onNavigate?: () => void;
@@ -318,6 +323,10 @@ export function RuntimeLine({
             `${thread ? "This thread runs" : "New threads run"} on ${r.on}, through ${r.cli} on your computer.`
           ) : state === "stopped" ? (
             `${r.cli}’s helper isn’t running, so ${which} can’t be sent. Start it on your computer:`
+          ) : state === "outdated" ? (
+            `The ${r.cli} on ${helper?.host ?? "your computer"}${helper?.version ? ` is ${helper.version},` : " is"} older than ${helper?.min || "Foundry runs"}, so ${which} can’t be sent. Update it there, then send again in a minute:`
+          ) : state === "unstarted" ? (
+            `The ${r.cli} on ${helper?.host ?? "your computer"} didn’t start, so ${which} can’t be sent. To see why, run this there:`
           ) : (
             <SettingsLinked
               text={`No helper running ${r.cli} is paired, so ${which} can’t be sent. Pair one in Settings › AI models, then start it.`}
@@ -326,6 +335,12 @@ export function RuntimeLine({
           )}
         </span>
       </p>
+      {state === "outdated" && (
+        <Command text={CODEX_UPDATE} label="update command" />
+      )}
+      {state === "unstarted" && (
+        <Command text="codex --version" label="check command" />
+      )}
       {state === "stopped" && (
         <>
           <Command text={HELPER_COMMANDS.run} label="run command" />
@@ -1206,6 +1221,10 @@ export function Composer({
                 text="No helper is paired to run it: pair one in Settings › AI models, start it, then send again."
                 onNavigate={onNavigate}
               />
+            ) : hostState === "outdated" ? (
+              `Its helper’s Codex is too old: update it with ${CODEX_UPDATE}, then send again in a minute.`
+            ) : hostState === "unstarted" ? (
+              "Its helper’s Codex didn’t start: run codex --version on that computer to see why, then send again in a minute."
             ) : (
               `Its helper isn’t running on your computer: start it with ${HELPER_COMMANDS.run}, then send again.`
             )}

@@ -1066,6 +1066,133 @@ describe("where the Assistant runs", () => {
     expect(planName("team-plan")).toBe("Team plan");
   });
 
+  it("says Codex's plan and version, and when it is too old to run", () => {
+    expect(
+      accountText(
+        { kind: "subscription", plan: "plus", version: "0.169.0" },
+        "codex",
+      ),
+    ).toEqual({
+      text: "Codex 0.169.0 is signed in on a ChatGPT Plus plan",
+      ok: true,
+    });
+    expect(accountText({ kind: "other", version: "0.170.0" }, "codex")).toEqual(
+      {
+        text: "Codex 0.170.0 is signed in, but not with a ChatGPT plan: its turns bill that account",
+        ok: false,
+      },
+    );
+    expect(
+      accountText({ kind: "outdated", version: "0.150.0" }, "codex", "0.169.0"),
+    ).toEqual({
+      text: "Codex 0.150.0 is older than 0.169.0, the oldest Foundry runs: on that computer, update it (npm i -g @openai/codex@latest)",
+      ok: false,
+    });
+    expect(accountText({ kind: "outdated" }, "codex").text).toBe(
+      "Codex is older than Foundry runs: on that computer, update it (npm i -g @openai/codex@latest)",
+    );
+    const h = (a: object) => ({
+      id: "h",
+      accounts: [{ runtime: "codex" as const, ...a }],
+    });
+    expect(
+      helperAccount(
+        h({ state: "signed_in", subscription: "pro", version: "0.170.0" }),
+        "codex",
+      ),
+    ).toEqual({ kind: "subscription", plan: "pro", version: "0.170.0" });
+    expect(
+      helperAccount(
+        h({
+          state: "signed_in",
+          subscription: "pro",
+          version: "0.150.0",
+          outdated: true,
+        }),
+        "codex",
+      ),
+    ).toEqual({ kind: "outdated", version: "0.150.0" });
+    expect(
+      helperAccount(h({ state: "signed_out", version: "0.1\n" }), "codex"),
+    ).toEqual({ kind: "signed_out" });
+  });
+
+  it("says a thread can't be sent while its helper's Codex is too old", () => {
+    const setting = {
+      runtime: "codex" as const,
+      online: ["claude_code" as const],
+      codexMinVersion: "0.169.0",
+      hosts: [
+        {
+          id: "h1",
+          name: "Ada's Mac",
+          online: true,
+          runtimes: ["claude_code" as const],
+          accounts: [
+            {
+              runtime: "codex" as const,
+              state: "signed_in" as const,
+              version: "0.150.0",
+              outdated: true,
+            },
+          ],
+        },
+      ],
+    };
+    expect(threadRuntime(undefined, setting)).toEqual({
+      runtime: "codex",
+      state: "outdated",
+      helper: { host: "Ada's Mac", version: "0.150.0", min: "0.169.0" },
+    });
+    // A Codex that didn't start says no version: it isn't old, it didn't run.
+    const unstarted = {
+      ...setting,
+      hosts: [
+        {
+          ...setting.hosts[0]!,
+          accounts: [{ runtime: "codex" as const, state: "unknown" as const }],
+        },
+      ],
+    };
+    expect(threadRuntime(undefined, unstarted)).toEqual({
+      runtime: "codex",
+      state: "unstarted",
+      helper: { host: "Ada's Mac", version: undefined, min: "0.169.0" },
+    });
+    expect(
+      threadRuntime("codex", {
+        ...unstarted,
+        hosts: [{ ...unstarted.hosts[0]!, online: false }],
+      }).state,
+    ).toBe("stopped");
+    // Claude Code that didn't start still runs: no floor, nothing to block.
+    expect(
+      threadRuntime("claude_code", {
+        ...unstarted,
+        runtime: "claude_code" as const,
+        online: [],
+        hosts: [
+          {
+            ...unstarted.hosts[0]!,
+            runtimes: [],
+            accounts: [
+              { runtime: "claude_code" as const, state: "unknown" as const },
+            ],
+          },
+        ],
+      }).state,
+    ).toBe("unpaired");
+    // Not running, it is to be started (it may run an updated Codex then).
+    const stopped = {
+      ...setting,
+      hosts: [{ ...setting.hosts[0]!, online: false }],
+    };
+    expect(threadRuntime("codex", stopped)).toEqual({
+      runtime: "codex",
+      state: "stopped",
+    });
+  });
+
   it("knows whether a thread can be sent to now, and what stands in the way", () => {
     const setting = { runtime: "claude_code" as const, online: [] };
     // A thread keeps its runtime, whatever the workspace's is now.

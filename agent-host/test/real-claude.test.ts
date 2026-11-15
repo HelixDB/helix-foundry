@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 
+import { claudeCli } from "../src/claude.ts";
 import { Foundry } from "../src/foundry.ts";
 import { runTurn } from "../src/run.ts";
 import { VERSION } from "../src/version.ts";
@@ -258,20 +259,21 @@ describe("the real Claude Code", { skip: !REAL && "set REAL_CLAUDE" }, () => {
       `#!/bin/sh\nANTHROPIC_API_KEY=sk-ant-test exec "${REAL}" "$@"\n`,
     );
     await chmod(wrapper, 0o755);
+    const env = {
+      PATH: process.env.PATH,
+      HOME: dir,
+      FOUNDRY_AGENT_HOST_STATE: join(dir, "state"),
+      ANTHROPIC_BASE_URL: world.url,
+      DISABLE_TELEMETRY: "1",
+      DISABLE_ERROR_REPORTING: "1",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    };
     outcome = await runTurn(turn({ system: MARKER }), {
       foundry: new Foundry(world.url, "hxh_token"),
-      claude: wrapper,
+      clis: [claudeCli(wrapper, env)],
       version: VERSION,
       concurrency: 1,
-      env: {
-        PATH: process.env.PATH,
-        HOME: dir,
-        FOUNDRY_AGENT_HOST_STATE: join(dir, "state"),
-        ANTHROPIC_BASE_URL: world.url,
-        DISABLE_TELEMETRY: "1",
-        DISABLE_ERROR_REPORTING: "1",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-      },
+      env,
     });
   });
   after(() => world?.stop());

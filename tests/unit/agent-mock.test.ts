@@ -642,14 +642,20 @@ describe("where the Assistant runs", () => {
     local.resetState();
     const before = await at("GET", `${A}/runtime`);
     expect(before.body).toEqual({
-      runtime: { runtime: "api", hosts: [], online: [] },
+      runtime: {
+        runtime: "api",
+        hosts: [],
+        online: [],
+        codexConfirmedAt: null,
+        codexMinVersion: "0.169.0",
+      },
     });
     expect((await at("PATCH", `${A}/runtime`, { runtime: "x" })).status).toBe(
       400,
     );
     expect(
       reason(await at("PATCH", `${A}/runtime`, { runtime: "codex" })),
-    ).toBe("FOUNDRY_AGENT_RUNTIME_UNAVAILABLE");
+    ).toBe("FOUNDRY_AGENT_CODEX_UNCONFIRMED");
     const chosen = await at("PATCH", `${A}/runtime`, {
       runtime: "claude_code",
     });
@@ -694,6 +700,99 @@ describe("where the Assistant runs", () => {
       threadId: sent.body.thread.id,
     });
     expect(reason(again)).toBe("FOUNDRY_AGENT_HOST_OFFLINE");
+  });
+
+  it("runs Codex once its owner confirmed it, and not on a Codex too old", async () => {
+    vi.resetModules();
+    vi.stubEnv("MOCK_LOCAL_TOKEN", "local-token");
+    vi.stubEnv("MOCK_AI_DEFAULT", "anthropic");
+    const local = await import("../../mock/state");
+    const at = harness(
+      (await import("../../mock/routes")).routes,
+      local.db.users,
+    );
+    local.resetState();
+    const confirmed = await at("PATCH", `${A}/runtime`, {
+      runtime: "codex",
+      confirmCodex: true,
+    });
+    expect(confirmed.body.runtime.runtime).toBe("codex");
+    const at1 = confirmed.body.runtime.codexConfirmedAt;
+    expect(at1).toBeTruthy();
+    // Kept: chosen again without asking, its first confirmation kept.
+    await at("PATCH", `${A}/runtime`, { runtime: "api" });
+    const again = await at("PATCH", `${A}/runtime`, { runtime: "codex" });
+    expect(again.body.runtime.codexConfirmedAt).toBe(at1);
+
+    Object.assign(local.config, {
+      agentHosts: [
+        { name: "Ada's Mac", runtimes: ["claude_code", "codex"] },
+        { name: "Old laptop", runtimes: ["codex"], codexVersion: "0.150.0" },
+      ],
+    });
+    const listed = (await at("GET", `${A}/runtime`)).body.runtime;
+    expect(listed.online).toEqual(["claude_code", "codex"]);
+    expect(listed.hosts[0].accounts).toEqual([
+      { runtime: "claude_code", state: "signed_in", subscription: "max" },
+      {
+        runtime: "codex",
+        state: "signed_in",
+        subscription: "plus",
+        version: "0.169.0",
+        outdated: false,
+      },
+    ]);
+    expect(listed.hosts[1].runtimes).toEqual([]);
+    expect(listed.hosts[1].accounts[0]).toMatchObject({
+      version: "0.150.0",
+      outdated: true,
+    });
+    const sent = await at("POST", `${A}/turns`, {
+      text: "What ontologies do I have?",
+      clientToken: "cx-1",
+    });
+    expect(sent.status).toBe(200);
+    expect(sent.body.thread.runtime).toBe("codex");
+
+    // Only the old laptop: its Codex runs nothing, and sending says why.
+    Object.assign(local.config, {
+      agentHosts: [
+        { name: "Old laptop", runtimes: ["codex"], codexVersion: "0.150.0" },
+      ],
+    });
+    const old = await at("POST", `${A}/turns`, {
+      text: "And now?",
+      clientToken: "cx-2",
+    });
+    expect(reason(old)).toBe("FOUNDRY_AGENT_HOST_OFFLINE");
+    expect(old.body.message).toContain(
+      "the Codex on Old laptop is older than 0.169.0",
+    );
+
+    // A Codex that didn't start (no version) runs nothing either, and isn't called old.
+    Object.assign(local.config, {
+      agentHosts: [
+        {
+          name: "Old laptop",
+          runtimes: ["codex"],
+          account: { state: "unknown" },
+          codexVersion: "",
+        },
+      ],
+    });
+    const none = (await at("GET", `${A}/runtime`)).body.runtime;
+    expect(none.online).toEqual([]);
+    expect(none.hosts[0].accounts).toEqual([
+      { runtime: "codex", state: "unknown" },
+    ]);
+    const unstarted = await at("POST", `${A}/turns`, {
+      text: "And now?",
+      clientToken: "cx-3",
+    });
+    expect(reason(unstarted)).toBe("FOUNDRY_AGENT_HOST_OFFLINE");
+    expect(unstarted.body.message).toContain(
+      "the Codex on Old laptop didn't start",
+    );
   });
 
   /** The mock as a local install's API, with its helper's pair stand-in. */

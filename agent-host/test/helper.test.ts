@@ -6,7 +6,7 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { claudeAccount } from "../src/account.ts";
-import { failureOf, promptText } from "../src/claude.ts";
+import { claudeCli, failureOf } from "../src/claude.ts";
 import {
   configPath,
   forgetThread,
@@ -17,7 +17,7 @@ import {
   type Sessions,
 } from "../src/config.ts";
 import { doctor } from "../src/doctor.ts";
-import { findClaude } from "../src/find.ts";
+import { findCli } from "../src/find.ts";
 import { Foundry, FoundryError } from "../src/foundry.ts";
 import {
   command,
@@ -26,13 +26,15 @@ import {
   plan,
   systemdUnit,
 } from "../src/install.ts";
-import { runTurn, serve, sweep } from "../src/run.ts";
+import { runTurn, serve, sweep, type RunOptions } from "../src/run.ts";
+import { promptText } from "../src/runtime.ts";
 import { VERSION, invoke } from "../src/version.ts";
 import { CLAIM, FakeFoundry, claimPath, turn } from "./fake-foundry.ts";
 
 const FAKE_CLAUDE = fileURLToPath(
   new URL("./fake-claude.mjs", import.meta.url),
 );
+const FAKE_CODEX = fileURLToPath(new URL("./fake-codex.mjs", import.meta.url));
 
 // The SDK warns that allowedTools shadows canUseTool, kept on purpose (as the CLI does).
 process.removeAllListeners("warning");
@@ -76,6 +78,8 @@ beforeEach(async () => {
     FOUNDRY_AGENT_HOST_STATE: join(dir, "state"),
     FAKE_CLAUDE_LOG: log,
     FAKE_CLAUDE_SCENARIO: "answer",
+    // No Codex is found here unless a test names one.
+    FOUNDRY_CODEX_PATH: join(dir, "no-codex"),
     // A key in the person's shell never reaches the CLI: it would bill an API account.
     ANTHROPIC_API_KEY: "sk-ant-should-not-pass",
   };
@@ -93,16 +97,19 @@ async function logged(): Promise<any[]> {
   }
 }
 
-function options(over: Partial<Parameters<typeof runTurn>[1]> = {}) {
+/** The loop's options: on the fake Claude Code, or the CLI named. */
+function options(
+  over: Partial<RunOptions> & { claude?: string } = {},
+): RunOptions {
+  const { claude = FAKE_CLAUDE, ...rest } = over;
   return {
     foundry: new Foundry(foundry.url, "hxh_token"),
-    claude: FAKE_CLAUDE,
+    clis: [claudeCli(claude, env, { sessions })],
     version: VERSION,
     concurrency: 1,
     env,
     deltaMs: 10,
-    sessions,
-    ...over,
+    ...rest,
   };
 }
 
@@ -199,11 +206,33 @@ describe("pairing", () => {
     const dirB = await threadDir(b, env);
     kept.set(dirA, ["s1", "s2"]);
     kept.set(dirB, ["s3"]);
-    await forgetThread(a, sessions, env);
+    await forgetThread(a, [sessions], env);
     assert.deepEqual(kept.get(dirA), []);
     assert.deepEqual(kept.get(dirB), ["s3"], "another thread's stays");
     assert.deepEqual(await listThreads(env), [b]);
-    await forgetThread(a, sessions, env);
+    await forgetThread(a, [sessions], env);
+  });
+
+  it("forgets a thread with every CLI one failing or not, and keeps it for the next sweep", async () => {
+    const a = { workspaceId: "ws-1", threadId: "thread-a" };
+    const dirA = await threadDir(a, env);
+    kept.set(dirA, ["s1"]);
+    const broken: Sessions = {
+      list: () => Promise.reject(new Error("Codex exited (1)")),
+      delete: () => Promise.resolve(),
+    };
+    await assert.rejects(
+      forgetThread(a, [broken, sessions], env),
+      /Codex exited/,
+    );
+    assert.deepEqual(kept.get(dirA), [], "the other CLI's sessions go");
+    assert.deepEqual(
+      await listThreads(env),
+      [a],
+      "the directory stays, so the thread is tried again",
+    );
+    await forgetThread(a, [sessions], env);
+    assert.deepEqual(await listThreads(env), []);
   });
 });
 
@@ -471,7 +500,7 @@ describe("the helper", () => {
       kept.set(await threadDir(t, env), ["s-" + t.threadId]);
     foundry.deleted.add("thread-gone");
     const lines: string[] = [];
-    await sweep(new Foundry(foundry.url, "hxh_token"), sessions, env, (l) =>
+    await sweep(new Foundry(foundry.url, "hxh_token"), [sessions], env, (l) =>
       lines.push(l),
     );
     assert.deepEqual(await listThreads(env), [live]);
@@ -488,7 +517,7 @@ describe("the helper", () => {
     // Foundry unreachable: nothing is deleted, and the next sweep tries again.
     await sweep(
       new Foundry("http://127.0.0.1:1", "hxh_token"),
-      sessions,
+      [sessions],
       env,
       (l) => lines.push(l),
     );
@@ -497,8 +526,62 @@ describe("the helper", () => {
     // Revoked: the sweep says so, for serve to forget every thread.
     foundry.revoked = true;
     await assert.rejects(
-      sweep(new Foundry(foundry.url, "hxh_token"), sessions, env, () => {}),
+      sweep(new Foundry(foundry.url, "hxh_token"), [sessions], env, () => {}),
       (e: unknown) => e instanceof FoundryError && e.code === "unauthenticated",
+    );
+  });
+
+  it("goes on past a thread one CLI can't delete, at a sweep and when revoked", async () => {
+    const bad = { workspaceId: "ws-1", threadId: "thread-bad" };
+    const good = { workspaceId: "ws-1", threadId: "thread-good" };
+    const badDir = await threadDir(bad, env);
+    kept.set(await threadDir(good, env), ["s-good"]);
+    // One CLI's list fails for one thread (its app-server didn't start).
+    const flaky: Sessions = {
+      list: (d) =>
+        d === badDir
+          ? Promise.reject(new Error("Codex exited (1)"))
+          : sessions.list(d),
+      delete: (id, d) => sessions.delete(id, d),
+    };
+    foundry.deleted.add("thread-bad");
+    foundry.deleted.add("thread-good");
+    const lines: string[] = [];
+    await sweep(new Foundry(foundry.url, "hxh_token"), [flaky], env, (l) =>
+      lines.push(l),
+    );
+    assert.deepEqual(await listThreads(env), [bad], "the good one went");
+    assert.deepEqual(
+      kept.get(join(dir, "state", "threads", "ws-1", "thread-good")),
+      [],
+    );
+    assert.ok(
+      lines.some(
+        (l) => l.includes("thread-bad") && l.includes("trying again later"),
+      ),
+    );
+
+    kept.set(await threadDir(good, env), ["s-good"]);
+    foundry.revoked = true;
+    const told: string[] = [];
+    const cli = {
+      ...claudeCli(FAKE_CLAUDE, env, { sessions }),
+      sessions: flaky,
+    };
+    await assert.rejects(
+      serve({ ...options(), clis: [cli], log: (l) => told.push(l) }),
+      (e: unknown) => e instanceof FoundryError && e.code === "unauthenticated",
+      "the revoke is what's thrown, not the CLI's failure",
+    );
+    assert.deepEqual(await listThreads(env), [bad]);
+    assert.ok(
+      told.some(
+        (l) =>
+          l.includes("revoked") &&
+          l.includes("of 1 thread;") &&
+          l.includes("1 couldn't be deleted"),
+      ),
+      told.join("\n"),
     );
   });
 
@@ -509,7 +592,12 @@ describe("the helper", () => {
         env,
       );
     foundry.deleted.add("t-149");
-    await sweep(new Foundry(foundry.url, "hxh_token"), sessions, env, () => {});
+    await sweep(
+      new Foundry(foundry.url, "hxh_token"),
+      [sessions],
+      env,
+      () => {},
+    );
     assert.deepEqual(
       foundry.sent("/agent-host/threads/gone").map((b) => b.threads.length),
       [100, 50],
@@ -644,15 +732,29 @@ describe("the helper", () => {
     );
   });
 
-  it("finds the person's claude", async () => {
-    assert.equal(await findClaude(FAKE_CLAUDE, env), FAKE_CLAUDE);
-    assert.equal(await findClaude(join(dir, "nope"), env), undefined);
+  it("finds the person's claude and codex", async () => {
+    assert.equal(await findCli("claude", FAKE_CLAUDE, env), FAKE_CLAUDE);
+    assert.equal(await findCli("claude", join(dir, "nope"), env), undefined);
     assert.equal(
-      await findClaude(undefined, { ...env, FOUNDRY_CLAUDE_PATH: FAKE_CLAUDE }),
+      await findCli("claude", undefined, {
+        ...env,
+        FOUNDRY_CLAUDE_PATH: FAKE_CLAUDE,
+      }),
       FAKE_CLAUDE,
     );
     assert.equal(
-      await findClaude(undefined, { PATH: dir, HOME: dir }),
+      await findCli("claude", undefined, { PATH: dir, HOME: dir }),
+      undefined,
+    );
+    assert.equal(
+      await findCli("codex", undefined, {
+        ...env,
+        FOUNDRY_CODEX_PATH: FAKE_CODEX,
+      }),
+      FAKE_CODEX,
+    );
+    assert.equal(
+      await findCli("codex", undefined, { PATH: dir, HOME: dir }),
       undefined,
     );
   });
@@ -690,6 +792,35 @@ describe("install", () => {
       /^ExecStart="\/usr\/local\/bin\/npx" "-y" "@helixdb\/foundry-agent-host@0\.1\.0" "run" "--claude" "\/Users\/ada\/\.local\/bin\/claude"$/m,
     );
     assert.match(unit, /^Restart=always$/m);
+    assert.match(
+      unit,
+      /^Environment="PATH=\/usr\/local\/bin:\/usr\/bin:\/bin"$/m,
+    );
+    // With Codex too: both named, and the person's CODEX_HOME kept.
+    const both = {
+      ...s,
+      codex: "/Users/ada/.npm-global/bin/codex",
+      codexHome: "/Users/ada/.codex-work",
+    };
+    assert.deepEqual(command(both).slice(4), [
+      "--claude",
+      "/Users/ada/.local/bin/claude",
+      "--codex",
+      "/Users/ada/.npm-global/bin/codex",
+    ]);
+    assert.match(
+      systemdUnit(both),
+      /^Environment="CODEX_HOME=\/Users\/ada\/\.codex-work"$/m,
+    );
+    assert.match(
+      launchdPlist(both),
+      /<key>CODEX_HOME<\/key>\s*<string>\/Users\/ada\/\.codex-work<\/string>/,
+    );
+    const codexOnly = { ...both, claude: undefined };
+    assert.deepEqual(command(codexOnly).slice(4), [
+      "--codex",
+      "/Users/ada/.npm-global/bin/codex",
+    ]);
     assert.deepEqual(plan("darwin", s, 501).commands, [
       ["launchctl", "bootout", "gui/501/com.helix-db.foundry-agent-host"],
       [
