@@ -20,9 +20,9 @@ import (
 // Where a local install's Assistant runs its threads (foundry.agent's
 // helpers): Foundry's own worker, or a helper on the owner's machine that
 // drives the Claude Code or Codex CLI they signed in to. Codex runs with the
-// owner's own Codex setup, so they confirm that once before choosing it. A host without
-// helpers (Deps.AgentHosts nil: hosted Helix) refuses every route here, and
-// runs every thread on its worker.
+// owner's own Codex setup, so they confirm that once before choosing it. A
+// host without helpers (Deps.AgentHosts nil: hosted Helix) refuses every
+// route here, and runs every thread on its worker.
 
 // agentHostIDPattern is a helper's id.
 var agentHostIDPattern = regexp.MustCompile(`^[0-9A-Z]{26}$`)
