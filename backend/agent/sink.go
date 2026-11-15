@@ -57,7 +57,8 @@ func (s *actionSink) Allows(operation string) bool {
 //
 // In an automation's turn, an action that fits one its owner approved for
 // the step (automation.Fits: the same operation and target, its payload in
-// bounds) is stored as executing, decided by them, and runs at once as them
+// bounds; a publish, of the revision already at the dashboard's link) is
+// stored as executing, decided by them, and runs at once as them
 // (RunAction): authorized again, its confirmation consumed once. A replay
 // finds how it ran, and never runs it again.
 func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (integration.Recorded, error) {
@@ -67,6 +68,19 @@ func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (
 	approved := slices.ContainsFunc(s.approved, func(x automation.Action) bool {
 		return automation.Fits(x, s.turn.WorkspaceID, a.Operation, a.Target, a.Payload)
 	})
+	if approved && a.Operation == (automation.PublishDashboard{}).Operation() {
+		// It refreshes what a person published: only the revision already at
+		// the link. An edit made since, which no one who may publish has seen,
+		// waits for the owner as a card; the publish names the revision, so
+		// one made after this check is refused.
+		var payload struct {
+			ExpectedRevision int64 `json:"expected_revision"`
+		}
+		_, dashboardID, _ := strings.Cut(a.Target, "/")
+		d, err := s.db.GetFoundryDashboard(ctx, s.turn.WorkspaceID, dashboardID)
+		approved = err == nil && json.Unmarshal(a.Payload, &payload) == nil && d.Share != nil && d.Share.SpecRevision == payload.ExpectedRevision &&
+			d.Revision == payload.ExpectedRevision
+	}
 	// actionID is the action this attempt stores; empty when one is stored already.
 	var actionID string
 	stored, err := s.db.GetFoundryAgentActionByPayload(ctx, s.turn.ID, a.PayloadHash)

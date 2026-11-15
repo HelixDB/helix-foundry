@@ -90,7 +90,8 @@ var Operations = map[string]bool{
 	"publish_dashboard":   true,
 	"unpublish_dashboard": true,
 	// Automations: the person's click on a create or an edit approves the
-	// spec its card showed (the API's ExecuteFoundryAgentAction).
+	// spec its card showed, and nothing when it showed none (the API's
+	// ExecuteFoundryAgentAction).
 	"create_automation": true,
 	"update_automation": true,
 	"pause_automation":  true,

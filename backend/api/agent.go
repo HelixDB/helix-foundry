@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	foundryagent "github.com/helixdb/helix-foundry/backend/agent"
+	"github.com/helixdb/helix-foundry/backend/automation"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
@@ -352,7 +353,7 @@ func (s *Service) ExecuteFoundryAgentAction(ctx context.Context, req *foundryv1.
 	end := foundryagent.RunAction(runCtx, sessions, s.deps.ConnectorKeys, a)
 	cancel()
 	if end.Status == foundrymodel.FoundryAgentActionSucceeded && (a.Operation == "create_automation" || a.Operation == "update_automation") {
-		end = s.approveOnClick(ctx, ws, userID, end)
+		end = s.approveOnClick(ctx, ws, userID, a.Payload, end)
 	}
 	continuation := &foundrymodel.FoundryAgentTurn{
 		ID: id.New(), WorkspaceID: ws, ThreadID: a.ThreadID, UserID: userID, Kind: foundrymodel.FoundryAgentTurnActionResult, Input: a.ID,
@@ -406,11 +407,29 @@ func (s *Service) agentContinues(ctx context.Context, workspaceID, threadID stri
 }
 
 // approveOnClick approves the automation a create or an edit the person just
-// ran made: their click on the card, which showed the spec, is their
-// approval, as their click on Approve in the site is. Saved but not
-// approved (what it names is gone, say), the action still succeeded, and
-// says why.
-func (s *Service) approveOnClick(ctx context.Context, workspaceID, userID string, end foundrymodel.FoundryAgentActionEnd) foundrymodel.FoundryAgentActionEnd {
+// ran made: their click on the card, which showed the steps in payload, is
+// their approval of exactly those steps, as their click on Approve in the
+// site is. An edit whose payload carries no spec (a new name or description)
+// showed no steps, so it approves nothing: the automation's approval stays as
+// it was. Saved but not approved (what it names is gone, its steps no longer
+// the card's), the action still succeeded, and says why.
+func (s *Service) approveOnClick(ctx context.Context, workspaceID, userID string, payload json.RawMessage,
+	end foundrymodel.FoundryAgentActionEnd) foundrymodel.FoundryAgentActionEnd {
+	var card struct {
+		Spec json.RawMessage `json:"spec"`
+	}
+	if err := json.Unmarshal(payload, &card); err != nil {
+		end.Error = "it was saved, but the steps its card showed can't be read: approve it on its page in Foundry"
+		return end
+	}
+	if len(card.Spec) == 0 {
+		return end
+	}
+	shown, err := automation.ParseSpec(card.Spec)
+	if err != nil {
+		end.Error = "it was saved, but the steps its card showed can't be read: approve it on its page in Foundry"
+		return end
+	}
 	var ran struct {
 		Result struct {
 			ID       string `json:"id"`
@@ -421,7 +440,7 @@ func (s *Service) approveOnClick(ctx context.Context, workspaceID, userID string
 		end.Error = "it was saved, but its approval can't be read: approve it on its page in Foundry"
 		return end
 	}
-	if _, err := s.approveAutomation(ctx, workspaceID, userID, ran.Result.ID, ran.Result.Revision); err != nil {
+	if _, err := s.approveAutomation(ctx, workspaceID, userID, ran.Result.ID, ran.Result.Revision, &shown); err != nil {
 		end.Error = "it was saved, but not approved (" + status.Convert(err).Message() + "): approve it on its page in Foundry"
 	}
 	return end

@@ -517,22 +517,46 @@ func TestRunAutomationNowAndItsRuns(t *testing.T) {
 	require.False(t, list.GetEmail(), "an install sends no email")
 }
 
-// The person's Run on an Assistant's card approves the automation it saved.
+// The person's Run on an Assistant's card approves the automation it saved:
+// exactly the steps the card showed, and nothing when it showed none.
 func TestRunningAnAutomationCardApprovesIt(t *testing.T) {
 	s, store := automationService(t)
 	a := createAutomation(t, s, site("user-ada"), weeklyAutomation)
 	succeeded := func(result string) foundrymodel.FoundryAgentActionEnd {
 		return foundrymodel.FoundryAgentActionEnd{Status: foundrymodel.FoundryAgentActionSucceeded, Result: json.RawMessage(result)}
 	}
-	end := s.approveOnClick(context.Background(), "ws-1", "user-ada", succeeded(fmt.Sprintf(`{"result":{"id":%q,"revision":1}}`, a.GetId())))
+	ran := succeeded(fmt.Sprintf(`{"result":{"id":%q,"revision":1}}`, a.GetId()))
+	shown := json.RawMessage(`{"name":"Weekly","spec":` + weeklyAutomation + `}`)
+
+	// A rename's card showed no steps: the automation still waits for its owner.
+	end := s.approveOnClick(context.Background(), "ws-1", "user-ada", json.RawMessage(`{"expected_revision":1,"name":"Renamed"}`), ran)
 	require.Empty(t, end.Error)
+	require.Equal(t, foundrymodel.FoundryAutomationNeedsApproval, store.automations[a.GetId()].Status, "a card without steps approves none")
+	require.Nil(t, store.approvedNext)
+
+	// A card whose steps aren't the automation's approves nothing either.
+	other := strings.Replace(weeklyAutomation, "Summarise the overdue invoices", "Something else", 1)
+	end = s.approveOnClick(context.Background(), "ws-1", "user-ada", json.RawMessage(`{"spec":`+other+`}`), ran)
+	require.Equal(t, foundrymodel.FoundryAgentActionSucceeded, end.Status, "the save stands")
+	require.Contains(t, end.Error, "aren't the ones the card showed")
+	require.Equal(t, foundrymodel.FoundryAutomationNeedsApproval, store.automations[a.GetId()].Status)
+	end = s.approveOnClick(context.Background(), "ws-1", "user-ada", shown, succeeded(fmt.Sprintf(`{"result":{"id":%q,"revision":2}}`, a.GetId())))
+	require.Contains(t, end.Error, "aren't the ones the card showed", "nor one at another revision than the save's")
+	for _, unreadable := range []string{`[]`, `{"spec":{"v":9}}`} {
+		end = s.approveOnClick(context.Background(), "ws-1", "user-ada", json.RawMessage(unreadable), ran)
+		require.Contains(t, end.Error, "can't be read")
+	}
+
+	moved := strings.Replace(weeklyAutomation, `"x":200`, `"x":260`, 1)
+	end = s.approveOnClick(context.Background(), "ws-1", "user-ada", json.RawMessage(`{"spec":`+moved+`}`), ran)
+	require.Empty(t, end.Error, "the steps the card showed, wherever it drew them")
 	require.Equal(t, foundrymodel.FoundryAutomationActive, store.automations[a.GetId()].Status)
 	require.NotNil(t, store.approvedNext)
 
-	end = s.approveOnClick(context.Background(), "ws-1", "user-ada", succeeded(`{"result":{}}`))
+	end = s.approveOnClick(context.Background(), "ws-1", "user-ada", shown, succeeded(`{"result":{}}`))
 	require.Equal(t, foundrymodel.FoundryAgentActionSucceeded, end.Status, "the save stands")
 	require.Contains(t, end.Error, "approve it on its page")
 	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationChanged, Detail: "it changed"}
-	end = s.approveOnClick(context.Background(), "ws-1", "user-ada", succeeded(fmt.Sprintf(`{"result":{"id":%q,"revision":1}}`, a.GetId())))
+	end = s.approveOnClick(context.Background(), "ws-1", "user-ada", shown, ran)
 	require.Contains(t, end.Error, "not approved (it changed)")
 }

@@ -125,8 +125,9 @@ type AutomationsConfig struct {
 	// PollInterval is how often the worker fires schedules due, looks for
 	// ended work, and walks runs.
 	PollInterval time.Duration `koanf:"poll_interval"`
-	// Lease is how long a claimed run stays owned without a renewal; it
-	// outlasts the longest action a step runs.
+	// Lease is how long a claimed run stays owned without a renewal, renewed
+	// before each step: at least MinAutomationLease, so it outlasts the
+	// longest action a step runs.
 	Lease time.Duration `koanf:"lease"`
 	// MaxAttempts caps the attempts that failed of one run; RetryBackoff is
 	// the wait before the next, doubling.
@@ -160,6 +161,15 @@ type AutomationsConfig struct {
 	// it reads it again.
 	StepWait time.Duration `koanf:"step_wait"`
 }
+
+// AutomationActionTimeout bounds one action step's call in the
+// foundry-automation-worker; MinAutomationLease, the least
+// foundry.automations.lease, outlasts it and the writes around it, as the
+// worker renews a run's lease before each step.
+const (
+	AutomationActionTimeout = 2 * time.Minute
+	MinAutomationLease      = 2 * AutomationActionTimeout
+)
 
 // MaxMicros is one Assistant step's cap, in millionths of a US dollar.
 func (a AutomationsConfig) MaxMicros() int64 { return int64(math.Round(a.MaxUSD * 1e6)) }
@@ -1854,9 +1864,9 @@ func (c *Config) validateRoles(roles Roles) error {
 		switch {
 		case a.HTTP.Listen == "":
 			return fmt.Errorf("foundry.automations.http.listen must be set when 'foundry-automation-worker' is in tasks")
-		case a.PollInterval <= 0 || a.Lease < time.Minute || a.MaxAttempts < 1 || a.RetryBackoff <= 0 || a.Settle <= 0 || a.WatchEvery <= 0 ||
+		case a.PollInterval <= 0 || a.Lease < MinAutomationLease || a.MaxAttempts < 1 || a.RetryBackoff <= 0 || a.Settle <= 0 || a.WatchEvery <= 0 ||
 			a.WatchBatch < 1 || a.FailureBackoff <= 0 || a.StepWait <= 0:
-			return fmt.Errorf("foundry.automations poll_interval, max_attempts, retry_backoff, settle, watch_every, watch_batch, failure_backoff and step_wait must be positive, and lease at least 1m")
+			return fmt.Errorf("foundry.automations poll_interval, max_attempts, retry_backoff, settle, watch_every, watch_batch, failure_backoff and step_wait must be positive, and lease at least %s (twice an action step's timeout)", MinAutomationLease)
 		}
 	}
 	// The API reads and saves the setting; the workers and foundry-read

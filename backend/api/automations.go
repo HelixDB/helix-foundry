@@ -342,7 +342,7 @@ func (s *Service) ApproveFoundryAutomation(ctx context.Context, req *foundryv1.A
 	if req.GetExpectedRevision() < 1 {
 		return nil, status.Error(codes.InvalidArgument, "expected_revision is required")
 	}
-	a, err := s.approveAutomation(ctx, ws, c.userID, req.GetId(), req.GetExpectedRevision())
+	a, err := s.approveAutomation(ctx, ws, c.userID, req.GetId(), req.GetExpectedRevision(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -352,8 +352,11 @@ func (s *Service) ApproveFoundryAutomation(ctx context.Context, req *foundryv1.A
 // approveAutomation is userID's approval of the automation's spec at
 // revision: its targets checked again, as what it names may be gone since it
 // was saved, then made active. Only a person's own click reaches it: the
-// Approve route from the site, or their Run on an Assistant's card.
-func (s *Service) approveAutomation(ctx context.Context, workspaceID, userID, id string, revision int64) (*foundrymodel.FoundryAutomation, error) {
+// Approve route from the site, whose page showed the spec at revision, or
+// their Run on an Assistant's card, which showed shown: approved only while
+// the automation, at revision, runs exactly those steps.
+func (s *Service) approveAutomation(ctx context.Context, workspaceID, userID, id string, revision int64, shown *automation.Spec) (
+	*foundrymodel.FoundryAutomation, error) {
 	current, err := s.automationOf(ctx, workspaceID, id)
 	if err != nil {
 		return nil, err
@@ -361,6 +364,9 @@ func (s *Service) approveAutomation(ctx context.Context, workspaceID, userID, id
 	spec, _, err := s.automationSpec(ctx, workspaceID, string(current.Spec))
 	if err != nil {
 		return nil, err
+	}
+	if shown != nil && (current.Revision != revision || !automation.SameSteps(*shown, spec)) {
+		return nil, foundryPrecondition(workspaceID, "FOUNDRY_AUTOMATION_CHANGED", "its steps aren't the ones the card showed")
 	}
 	a, err := s.deps.DB.ApproveFoundryAutomation(ctx, workspaceID, id, userID, revision, firstFire(spec, time.Now()))
 	if err != nil {
@@ -424,7 +430,8 @@ func (s *Service) RunFoundryAutomation(ctx context.Context, req *foundryv1.RunFo
 	event, _ := json.Marshal(foundrymodel.FoundryAutomationEvent{Kind: "manual", At: now, ByUserID: c.userID}) // plain fields: it can't fail
 	output, _ := json.Marshal(automation.Output{Summary: "Run by hand."})
 	run, err := s.deps.DB.RunFoundryAutomationNow(ctx, &foundrymodel.FoundryAutomationRun{
-		ID: id.New(), AutomationID: a.ID, WorkspaceID: ws, OwnerUserID: c.userID, TriggerKey: "manual:" + token, TriggerEvent: event,
+		ID: id.New(), AutomationID: a.ID, WorkspaceID: ws, OwnerUserID: c.userID, SpecRevision: a.SpecRevision, TriggerKey: "manual:" + token,
+		TriggerEvent: event,
 	}, spec.TriggerID(), output, foundrymodel.FoundryAutomationLimits{RunsPerDay: s.deps.Cfg.Foundry.Automations.RunsPerDay})
 	if err != nil {
 		return nil, automationWrite(ws, "run the automation", err)

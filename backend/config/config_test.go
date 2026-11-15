@@ -76,6 +76,9 @@ func TestValidateRoles(t *testing.T) {
 		"the probe's tool check": {func(c *Config) {
 			c.Foundry.Agent.Enabled, c.Foundry.AI.Probe.Lease = true, c.Foundry.AI.Probe.Timeout+AIProbeOverhead+AIToolCheckTimeout-time.Second
 		}, Roles{AskWorker: true}, "tool check"},
+		"an automation run's lease": {func(c *Config) {
+			c.Foundry.Automations.Enabled, c.Foundry.Automations.Lease = true, MinAutomationLease-time.Second
+		}, Roles{AutomationWorker: true}, "lease at least 4m0s"},
 		"the heal worker's every": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Every = true, 0 }, Roles{HealWorker: true}, "foundry.heal"},
 		"the heal worker's sidecar": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Graph.Agent.Addr = true, "agent:50051" }, Roles{HealWorker: true},
 			"foundry.graph.agent.addr"},

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,7 +70,7 @@ func (f automationFixture) active(t *testing.T, n int, kind string, target *stri
 
 func (f automationFixture) run(n, automation int, key string) *model.FoundryAutomationRun {
 	return &model.FoundryAutomationRun{ID: f.runID(n), AutomationID: f.id(automation), WorkspaceID: f.workspaceID, OwnerUserID: automationOwner,
-		TriggerKey: key, TriggerEvent: json.RawMessage(`{"kind": "manual"}`)}
+		SpecRevision: 1, TriggerKey: key, TriggerEvent: json.RawMessage(`{"kind": "manual"}`)}
 }
 
 func automationRefused(t *testing.T, err error, reason model.FoundryAutomationRefusalReason) {
@@ -249,6 +250,10 @@ func TestFoundryAutomationRunNow(t *testing.T) {
 	require.Equal(t, run.ID, same.ID, "the same click queues one run")
 	_, err = f.db.RunFoundryAutomationNow(ctx, f.run(3, 1, "manual:b"), "start", nil, automationLimits)
 	automationRefused(t, err, model.FoundryAutomationBusy)
+	stale := f.run(4, 1, "manual:stale")
+	stale.SpecRevision = 2
+	_, err = f.db.RunFoundryAutomationNow(ctx, stale, "start", nil, automationLimits)
+	automationRefused(t, err, model.FoundryAutomationChanged)
 
 	full, err := f.db.GetFoundryAutomationRun(ctx, f.workspaceID, run.ID)
 	require.NoError(t, err)
@@ -323,6 +328,7 @@ func TestFoundryAutomationFireSchedule(t *testing.T) {
 	require.Equal(t, model.FoundryAutomationRunSkipped, skipped.Status)
 	require.Equal(t, "Skipped: the run before it was still going.", *skipped.Error)
 	require.NotNil(t, skipped.FinishedAt)
+	require.Nil(t, skipped.Spec, "a skipped run runs nothing, so it keeps no spec")
 
 	// A paused schedule fires nothing.
 	_, err = f.db.PauseFoundryAutomation(ctx, f.workspaceID, a.ID, model.FoundryAutomationActor{UserID: automationOwner})
@@ -532,6 +538,17 @@ func TestFoundryAutomationRunSteps(t *testing.T) {
 		Kind: model.FoundryAgentTurnAutomation, Input: "Count the invoices", MaxUSDMicros: 500_000, AutomationRunID: &run.ID, AutomationNodeID: ptr("ask")}
 	require.Error(t, f.db.StartFoundryAutomationAssistant(ctx, run.ID, "w1", "other", thread, turn), "the turn is the step's")
 	require.NoError(t, f.db.StartFoundryAutomationAssistant(ctx, run.ID, "w1", "ask", thread, turn))
+	// While its turn is live, the thread takes no other: the next step waits.
+	next := *turn
+	next.ID, next.AutomationNodeID = id26("UTURN2"), ptr("ask2")
+	require.ErrorIs(t, f.db.StartFoundryAutomationAssistant(ctx, run.ID, "w1", "ask2", nil, &next), store.ErrThreadBusy)
+	_, err = f.db.GetFoundryAgentTurn(ctx, f.workspaceID, next.ID)
+	require.ErrorIs(t, err, store.ErrNotFound, "nothing is written")
+	steps, err := f.db.ListFoundryAutomationRunNodes(ctx, run.ID)
+	require.NoError(t, err)
+	for _, n := range steps {
+		require.NotEqual(t, "ask2", n.NodeID, "the step hasn't started")
+	}
 	queued, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, turn.ID)
 	require.NoError(t, err)
 	require.Equal(t, model.FoundryAgentTurnAutomation, queued.Kind)
@@ -673,6 +690,102 @@ func TestFoundryAutomationCancelAndDeleteEndTurns(t *testing.T) {
 	require.Equal(t, model.FoundryAgentTurnCancelled, ended.Status)
 	_, err = f.db.GetFoundryAutomationRun(ctx, f.workspaceID, run.ID)
 	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+// endedRuns stores n runs of automation that ended at finished, with a step
+// each, in one write.
+func (f automationFixture) endedRuns(t *testing.T, automation string, n int, finished time.Time, prefix string) []string {
+	t.Helper()
+	var ids []string
+	var runs, nodes []string
+	var runArgs, nodeArgs []any
+	for i := range n {
+		id := id26(fmt.Sprintf("%s%s%05d", prefix, f.tag, i))
+		ids = append(ids, id)
+		runs = append(runs, `(?, ?, ?, ?, '{}', 1, ?, '{}', 'succeeded', ?, ?)`)
+		runArgs = append(runArgs, id, automation, f.workspaceID, automationOwner, "manual:"+id, finished, finished)
+		nodes = append(nodes, `(?, 'start', 'succeeded', ?)`)
+		nodeArgs = append(nodeArgs, id, finished)
+	}
+	_, err := testDB.Exec(`INSERT INTO foundry_automation_runs (id, automation_id, workspace_id, owner_user_id, spec, spec_revision, trigger_key,
+  trigger_event, status, created_at, finished_at) VALUES `+strings.Join(runs, ", "), runArgs...)
+	require.NoError(t, err)
+	_, err = testDB.Exec(`INSERT INTO foundry_automation_run_nodes (run_id, node_id, status, finished_at) VALUES `+strings.Join(nodes, ", "), nodeArgs...)
+	require.NoError(t, err)
+	return ids
+}
+
+// Runs that ended before the retention go a batch at a time, with their
+// steps and threads; newer ones and live ones stay.
+func TestFoundryAutomationRunsArePruned(t *testing.T) {
+	f := newAutomationFixture(t, "prune")
+	ctx := context.Background()
+	a := f.active(t, 1, "manual", nil)
+	old := time.Now().UTC().Add(-100 * 24 * time.Hour)
+	ids := f.endedRuns(t, a.ID, 501, old, "PO")
+	f.endedRuns(t, a.ID, 2, time.Now().UTC().Add(-time.Hour), "PN")
+	thread := id26("PTHREAD")
+	_, err := testDB.Exec(`INSERT INTO foundry_agent_threads (id, workspace_id, user_id, kind, title, runtime) VALUES (?, ?, ?, 'automation', 'x', 'api')`,
+		thread, f.workspaceID, automationOwner)
+	require.NoError(t, err)
+	_, err = testDB.Exec(`UPDATE foundry_automation_runs SET thread_id=? WHERE id=?`, thread, ids[0])
+	require.NoError(t, err)
+	_, err = f.db.RunFoundryAutomationNow(ctx, f.run(1, 1, "manual:live"), "start", nil, model.FoundryAutomationLimits{RunsPerDay: 10})
+	require.NoError(t, err)
+
+	before := time.Now().UTC().Add(-90 * 24 * time.Hour)
+	deleted, err := f.db.PruneFoundryAutomationRuns(ctx, before)
+	require.NoError(t, err)
+	require.Equal(t, 500, deleted, "a batch at a time")
+	deleted, err = f.db.PruneFoundryAutomationRuns(ctx, before)
+	require.NoError(t, err)
+	require.Equal(t, 1, deleted)
+	deleted, err = f.db.PruneFoundryAutomationRuns(ctx, before)
+	require.NoError(t, err)
+	require.Zero(t, deleted)
+	require.Equal(t, 3, countRows(t, "foundry_automation_runs", `automation_id=?`, a.ID), "the recent and the live")
+	require.Zero(t, countRows(t, "foundry_automation_run_nodes", `run_id=?`, ids[500]), "their steps go too")
+	require.Equal(t, 1, countRows(t, "foundry_agent_threads", `id=? AND deleted_at IS NOT NULL`, thread), "and their threads")
+}
+
+// Deleting an automation deletes its whole history, however long, a batch
+// at a time, and ends its live run.
+func TestFoundryAutomationDeleteTakesItsHistory(t *testing.T) {
+	f := newAutomationFixture(t, "history")
+	ctx := context.Background()
+	a := f.active(t, 1, "manual", nil)
+	f.endedRuns(t, a.ID, 1001, time.Now().UTC().Add(-time.Hour), "H")
+	live, err := f.db.RunFoundryAutomationNow(ctx, f.run(1, 1, "manual:live"), "start", nil, model.FoundryAutomationLimits{RunsPerDay: 2000})
+	require.NoError(t, err)
+	require.NoError(t, f.db.DeleteFoundryAutomation(ctx, f.workspaceID, a.ID, model.FoundryAutomationActor{UserID: automationOwner}))
+	require.Zero(t, countRows(t, "foundry_automation_runs", `automation_id=?`, a.ID))
+	require.Zero(t, countRows(t, "foundry_automation_run_nodes", `run_id=?`, live.ID), "its live run went too")
+}
+
+// The workspace's runs of the day are counted one at a time: two of its
+// automations started together never both take its last run.
+func TestFoundryAutomationRunsPerDayHoldsUnderRaces(t *testing.T) {
+	for round := range 3 {
+		f := newAutomationFixture(t, fmt.Sprintf("race%d", round))
+		ctx := context.Background()
+		f.active(t, 1, "manual", nil)
+		f.active(t, 2, "manual", nil)
+		errs := make(chan error, 2)
+		for n := 1; n <= 2; n++ {
+			go func() {
+				_, err := f.db.RunFoundryAutomationNow(ctx, f.run(n, n, "manual:race"), "start", nil, model.FoundryAutomationLimits{RunsPerDay: 1})
+				errs <- err
+			}()
+		}
+		var refused int
+		for range 2 {
+			if err := <-errs; err != nil {
+				automationRefused(t, err, model.FoundryAutomationRunsPerDay)
+				refused++
+			}
+		}
+		require.Equal(t, 1, refused, "round %d: one run of the day, one refusal", round)
+	}
 }
 
 func TestFoundryAutomationTurnsHaveTheirOwnBudget(t *testing.T) {

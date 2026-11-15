@@ -295,7 +295,9 @@ type wireEdge struct {
 // along edges that make no cycle; a branch exactly on each edge out of a
 // condition, each branch at most once; a condition with exactly one edge in,
 // from a step whose output it can check; at least one step after the
-// trigger. Its errors say what is wrong for whoever drew the graph: a person
+// trigger; no action, run or allowed, on the work its trigger waits for (a
+// sync of its connector, a load of its ontology), which would start it again
+// each time it ran. Its errors say what is wrong for whoever drew the graph: a person
 // or an agent.
 //
 //	spec, err := automation.ParseSpec([]byte(raw))
@@ -380,6 +382,34 @@ func (s *Spec) check() error {
 		from, _ := s.Node(in[0].From)
 		if !n.Config.(ConditionNode).Check.checks(from.Config) {
 			return fmt.Errorf("condition %s can't check %s: %s", n.ID, from.ID, n.Config.(ConditionNode).Check.needs())
+		}
+	}
+	// An action on the work its trigger waits for would start another run
+	// each time it ran: the automation would never stop.
+	trigger := triggers[0].Config.(TriggerNode).Trigger
+	for _, n := range s.nodes {
+		var actions []Action
+		switch c := n.Config.(type) {
+		case ActionNode:
+			actions = []Action{c.Action}
+		case AssistantNode:
+			actions = c.Allow
+		}
+		for _, a := range actions {
+			what := ""
+			switch tr := trigger.(type) {
+			case SyncFinished:
+				if sync, ok := a.(SyncConnector); ok && sync.ConnectorID == tr.ConnectorID {
+					what = "syncs the connector"
+				}
+			case LoadReady:
+				if load, ok := a.(CreateLoad); ok && load.OntologyID == tr.OntologyID {
+					what = "loads the ontology"
+				}
+			}
+			if what != "" {
+				return fmt.Errorf("node %s %s its trigger waits on, so each run would start another: start it on a schedule instead", n.ID, what)
+			}
 		}
 	}
 	order, err := s.topological(triggers[0].ID)

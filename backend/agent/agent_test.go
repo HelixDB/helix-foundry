@@ -363,6 +363,8 @@ type backend struct {
 	asked  []*foundryv1.AskFoundryQuestionRequest
 	loads  int
 	listed int
+	// published are the revisions publishes named.
+	published []int64
 	// onCall runs on every read the tools make.
 	onCall func()
 	// reviews are the current load's, by key; reviewErr refuses reading them.
@@ -433,6 +435,12 @@ func (b *backend) ListFoundryOntologies(context.Context, *foundryv1.ListFoundryO
 func (b *backend) AskFoundryQuestion(_ context.Context, r *foundryv1.AskFoundryQuestionRequest, _ ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error) {
 	b.asked = append(b.asked, r)
 	return &foundryv1.FoundryQuestionResponse{Question: &foundryv1.FoundryQuestion{Id: "q1", Status: "answered"}}, nil
+}
+
+func (b *backend) PublishFoundryDashboard(_ context.Context, r *foundryv1.PublishFoundryDashboardRequest, _ ...grpc.CallOption) (
+	*foundryv1.FoundryDashboardResponse, error) {
+	b.published = append(b.published, r.GetExpectedRevision())
+	return &foundryv1.FoundryDashboardResponse{Dashboard: &foundryv1.FoundryDashboard{Id: r.GetId(), Revision: r.GetExpectedRevision()}}, nil
 }
 
 func (b *backend) CreateFoundryLoad(context.Context, *foundryv1.CreateFoundryLoadRequest, ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error) {

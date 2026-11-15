@@ -509,6 +509,7 @@ type Store interface {
 	YieldFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time) error
 	RetryFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time, why string) error
 	FinishFoundryAutomationRun(ctx context.Context, id, workerID string, end model.FoundryAutomationRunEnd) error
+	PruneFoundryAutomationRuns(ctx context.Context, before time.Time) (int, error)
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

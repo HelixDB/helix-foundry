@@ -8555,7 +8555,7 @@
         "specRevision": {
           "type": "string",
           "format": "int64",
-          "description": "The spec revision it runs, and that spec; spec_json only when got alone."
+          "description": "The spec revision it runs, and that spec; spec_json only when got alone,\nand never for a skipped run, which ran nothing."
         },
         "specJson": {
           "type": "string"

@@ -243,9 +243,20 @@ func reminderEmail(n int, last bool, home string) message {
 	return m
 }
 
-// links finds what reads as a link in text a model wrote: an automation's
-// Assistant step's summary, which may quote what it read.
-var links = regexp.MustCompile(`(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+`)
+// links finds what reads as a link in text a model wrote, or what a mail
+// client would make one of: an automation's Assistant step's summary, which
+// may quote what it read. It takes a URL with a scheme (or one of the schemes
+// written without slashes, such as mailto:), www., an email address, an IPv4
+// address, and a bare domain: labels, a dot and a top-level domain of
+// letters, with any port or path after it. A file name such as report.pdf
+// reads as a domain too, and goes with them: Gmail and Outlook link names
+// under top-level domains like .zip and .mov.
+var links = regexp.MustCompile(`(?i)` +
+	`(?:\b[a-z][a-z0-9+.-]*://|\bwww\.)\S*` +
+	`|\b(?:mailto|tel|sms|callto|javascript|data|file|news|xmpp):\S+` +
+	`|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+` +
+	`|\b\d{1,3}(?:\.\d{1,3}){3}(?:[:/?#]\S*)?` +
+	`|(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+(?:xn--[a-z0-9-]+|\p{L}{2,63})(?:[:/?#]\S*)?`)
 
 // unlinked is a model's text for an email: on one line per paragraph, with
 // every link taken out, so an email never carries a link that text a
@@ -291,7 +302,7 @@ func automationRunEmail(name, note string, said []string, pending int, run strin
 // failures failed runs in a row, the last saying why.
 func automationPausedEmail(name string, failures int, why, page string) message {
 	first := fmt.Sprintf("Your automation %s failed %d times in a row, so Foundry paused it.", name, failures)
-	if why = sentence(why); why != "" {
+	if why = sentence(unlinked(why)); why != "" {
 		first += " Its last run said: " + why
 	}
 	return message{subject: name + " paused after failing", paragraphs: []paragraph{

@@ -15181,7 +15181,8 @@ type FoundryAutomationRun struct {
 	// ids of the work it found (sync_id, load_id, generation_id,
 	// document_ids), "outcome", "count", "rows", "by_user_id"}.
 	TriggerEventJson string `protobuf:"bytes,5,opt,name=trigger_event_json,json=triggerEventJson,proto3" json:"trigger_event_json,omitempty"`
-	// The spec revision it runs, and that spec; spec_json only when got alone.
+	// The spec revision it runs, and that spec; spec_json only when got alone,
+	// and never for a skipped run, which ran nothing.
 	SpecRevision int64  `protobuf:"varint,6,opt,name=spec_revision,json=specRevision,proto3" json:"spec_revision,omitempty"`
 	SpecJson     string `protobuf:"bytes,7,opt,name=spec_json,json=specJson,proto3" json:"spec_json,omitempty"`
 	// The owner's Assistant thread its Assistant steps ran in, which its owner

@@ -53,6 +53,14 @@ type memStore struct {
 	finished    map[string]model.FoundryAutomationRunEnd
 	notices     []*model.FoundryNotification
 	lost        bool
+	// renews counts the lease's renewals; busy is a run's thread with a
+	// live turn already.
+	renews int
+	busy   bool
+	// pruned are the times prunes deleted before; full is how many more
+	// prunes find a batch.
+	pruned []time.Time
+	full   int
 }
 
 func newStore() *memStore {
@@ -92,7 +100,20 @@ func (s *memStore) ClaimFoundryAutomationRun(context.Context, string, time.Durat
 }
 
 func (s *memStore) RenewFoundryAutomationRunLease(context.Context, string, string, time.Duration) error {
+	s.renews++
+	if s.lost {
+		return foundrystore.ErrNotFound
+	}
 	return nil
+}
+
+func (s *memStore) PruneFoundryAutomationRuns(_ context.Context, before time.Time) (int, error) {
+	s.pruned = append(s.pruned, before)
+	if s.full == 0 {
+		return 0, nil
+	}
+	s.full--
+	return 500, nil
 }
 
 func (s *memStore) ListFoundryAutomationRunNodes(_ context.Context, runID string) ([]*model.FoundryAutomationRunNode, error) {
@@ -132,6 +153,9 @@ func (s *memStore) StartFoundryAutomationNode(_ context.Context, runID, _, nodeI
 func (s *memStore) StartFoundryAutomationAssistant(_ context.Context, runID, _, nodeID string, thread *model.FoundryAgentThread, turn *model.FoundryAgentTurn) error {
 	if s.node(runID, nodeID) != nil {
 		return foundrystore.ErrConflict
+	}
+	if s.busy {
+		return foundrystore.ErrThreadBusy
 	}
 	if thread != nil {
 		s.threads = append(s.threads, thread)
@@ -249,7 +273,14 @@ type actions struct {
 	integration.FoundryActionAPI
 	syncs, loads int
 	loaded       string
+	published    []int64
 	err          error
+}
+
+func (a *actions) PublishFoundryDashboard(_ context.Context, r *foundryv1.PublishFoundryDashboardRequest, _ ...grpc.CallOption) (
+	*foundryv1.FoundryDashboardResponse, error) {
+	a.published = append(a.published, r.GetExpectedRevision())
+	return &foundryv1.FoundryDashboardResponse{Dashboard: &foundryv1.FoundryDashboard{Id: r.GetId(), Revision: r.GetExpectedRevision()}}, nil
 }
 
 func (a *actions) SyncConnector(context.Context, *foundryv1.SyncConnectorRequest, ...grpc.CallOption) (*foundryv1.ConnectorSyncResponse, error) {
@@ -490,6 +521,72 @@ func TestActionsResolveTheirPayloadWhenTheyRun(t *testing.T) {
 	run = f.queue(publish)
 	f.task.advance(context.Background(), run)
 	assert.Equal(t, "Its dashboard is gone.", *f.db.nodes[run.ID]["pub"].Error)
+
+	// A publish refreshes the snapshot a person published: never an edit made
+	// since, which no one with the right to publish has seen.
+	for share, want := range map[*model.FoundryDashboardShare]string{
+		nil:               "isn't published",
+		{SpecRevision: 3}: "was changed since it was published",
+		{SpecRevision: 4}: "",
+	} {
+		f = newFixture(t)
+		f.host.service = (&integration.Service{Actions: f.actions, Confirmations: &confirmations{}, PublicDashboards: true}).ForAgent()
+		f.db.dashboards["dash1"] = &model.FoundryDashboard{ID: "dash1", WorkspaceID: ws, Revision: 4, Share: share}
+		run = f.queue(publish)
+		f.task.advance(context.Background(), run)
+		if want != "" {
+			assert.Contains(t, *f.db.nodes[run.ID]["pub"].Error, want)
+			assert.Empty(t, f.actions.published, "nothing is published")
+			continue
+		}
+		assert.Equal(t, []int64{4}, f.actions.published, "the revision at its link")
+		assert.Equal(t, model.FoundryAutomationRunSucceeded, f.db.finished[run.ID].Status)
+	}
+}
+
+// Every step starts with its lease renewed, so an attempt of many slow
+// steps keeps its run; a lease lost to another worker stops it.
+func TestEachStepRenewsTheLease(t *testing.T) {
+	f := newFixture(t)
+	run := f.queue(weekly)
+	f.task.advance(context.Background(), run)
+	assert.Equal(t, 2, f.db.renews, "before the sync, and before the Assistant step")
+	assert.Equal(t, 1, f.actions.syncs)
+}
+
+// A card the run left waiting that its owner ran holds the thread: the
+// next Assistant step waits for that turn, its attempt uncounted.
+func TestAnAssistantStepWaitsForABusyThread(t *testing.T) {
+	f := newFixture(t)
+	run := f.queue(weekly)
+	f.db.busy = true
+	f.task.advance(context.Background(), run)
+	require.Contains(t, f.db.yielded, run.ID, "it waits")
+	assert.Empty(t, f.db.retried, "no failure")
+	assert.NotContains(t, f.db.finished, run.ID)
+	assert.Equal(t, model.FoundryAutomationNodeStatus(""), f.status(run.ID, "ask"), "not started")
+
+	f.db.busy = false
+	delete(f.db.yielded, run.ID)
+	f.task.advance(context.Background(), run)
+	assert.Equal(t, model.FoundryAutomationNodeRunning, f.status(run.ID, "ask"), "the thread idle, it starts")
+	assert.Equal(t, 1, f.actions.syncs, "nothing ran twice")
+}
+
+// Runs that ended long ago are deleted a batch at a time; with none left,
+// the worker waits before it looks again.
+func TestRunsArePrunedByAge(t *testing.T) {
+	f := newFixture(t)
+	f.db.full = 2
+	for range 4 {
+		f.task.tick(context.Background())
+	}
+	now := f.task.now()
+	require.Len(t, f.db.pruned, 3, "two full batches, then one that found none")
+	assert.Equal(t, now.Add(-runRetention), f.db.pruned[0])
+	f.task.now = func() time.Time { return now.Add(pruneWait) }
+	f.task.tick(context.Background())
+	assert.Len(t, f.db.pruned, 4, "it looks again after its wait")
 }
 
 func TestAnActionRunsAtMostOnce(t *testing.T) {

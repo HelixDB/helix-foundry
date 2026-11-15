@@ -11,8 +11,10 @@ import (
 // bounded by its kind: sync_connector's is empty; create_load's names a
 // version of the target ontology (any: an Assistant step's is the one it
 // chose, an action step's the ontology's current version when it runs);
-// publish_dashboard's names the dashboard's revision (an action step's is
-// the one it has when it runs), which refreshes its public snapshot.
+// publish_dashboard's names the dashboard's revision, which refreshes its
+// public snapshot: only ever the revision a person already published, which
+// the step's runner checks against the dashboard (Fits can't), so an edit
+// made since is never published unattended.
 type Action interface {
 	// Operation is its operation's name, as the prepare tool takes it.
 	Operation() string

@@ -23,6 +23,11 @@ import (
 // automation (no run twice for one fire) and a live run is unique per
 // automation (no two at once).
 
+// ErrThreadBusy means an automation's Assistant step can't queue its turn
+// yet: its run's thread has a live turn, one its owner's click on a card the
+// run left waiting started. The step waits for it.
+var ErrThreadBusy = errors.New("store: the thread has a live turn")
+
 const foundryAutomationColumns = `id, workspace_id, owner_user_id, name, description, spec, revision, spec_revision, approved_spec_revision,
        approved_at, trigger_kind, trigger_target, status, paused_reason, paused_by_user_id, paused_at, failures, backoff_until,
        next_fire_at, cursor_at, cursor_id, checked_at, notice_id, client_token, created_at, updated_at`
@@ -303,11 +308,13 @@ func (s *mysqlDB) ResumeFoundryAutomation(ctx context.Context, workspaceID, id, 
 	return s.GetFoundryAutomation(ctx, workspaceID, id)
 }
 
-// DeleteFoundryAutomation deletes the automation, its runs and their steps,
-// as by (its owner, or an owner or admin), cancelling the Assistant turn a
-// live run waits on.
+// DeleteFoundryAutomation deletes the automation, as by (its owner, or an
+// owner or admin), ending its live run and the Assistant turn that run waits
+// on in the same write; then its runs and their steps, a batch at a time, so
+// no one transaction holds a long history. Runs a crash leaves behind ended,
+// and PruneFoundryAutomationRuns deletes them in time.
 func (s *mysqlDB) DeleteFoundryAutomation(ctx context.Context, workspaceID, id string, by model.FoundryAutomationActor) error {
-	return s.WithTx(ctx, func(txDB Store) error {
+	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		a, err := tx.lockFoundryAutomation(ctx, workspaceID, id)
 		switch {
@@ -316,20 +323,75 @@ func (s *mysqlDB) DeleteFoundryAutomation(ctx context.Context, workspaceID, id s
 		case a.OwnerUserID != by.UserID && !by.Manager:
 			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, deletes an automation"}
 		}
-		if err := tx.cancelFoundryAutomationTurns(ctx, `SELECT id FROM foundry_automation_runs WHERE automation_id=?`, id, "the automation was deleted"); err != nil {
+		if err := tx.cancelFoundryAutomationTurns(ctx, `SELECT id FROM foundry_automation_runs WHERE live_automation=?`, id, "the automation was deleted"); err != nil {
 			return err
 		}
+		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_automation_runs
+SET status='cancelled', error='The automation was deleted.', lease_owner=NULL, lease_until=NULL, finished_at=NOW(6) WHERE live_automation=?`, id); err != nil {
+			return err
+		}
+		_, err = tx.db.ExecContext(ctx, `DELETE FROM foundry_automations WHERE id=?`, id)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	for {
+		deleted, err := s.deleteFoundryAutomationRuns(ctx, `SELECT id FROM foundry_automation_runs WHERE automation_id=? AND finished_at IS NOT NULL LIMIT ?`, id)
+		if err != nil || deleted < foundryAutomationRunsBatch {
+			return err
+		}
+	}
+}
+
+// foundryAutomationRunsBatch is how many runs one write deletes.
+const foundryAutomationRunsBatch = 500
+
+// deleteFoundryAutomationRuns deletes up to foundryAutomationRunsBatch of the
+// runs pick selects (with arg, then the batch's size: ended ones only), their
+// steps, and their Assistant threads, in one write, skipping a run another
+// write holds; it returns how many it deleted.
+func (s *mysqlDB) deleteFoundryAutomationRuns(ctx context.Context, pick string, arg any) (int, error) {
+	var deleted int
+	err := s.WithTx(ctx, func(txDB Store) error {
+		tx := txDB.(*mysqlDB)
+		rows, err := tx.db.QueryContext(ctx, pick+` FOR UPDATE SKIP LOCKED`, arg, foundryAutomationRunsBatch)
+		if err != nil {
+			return err
+		}
+		ids, err := scanAll(rows, func(r rowScanner) (any, error) {
+			var id string
+			if err := r.Scan(&id); err != nil {
+				return nil, err
+			}
+			return id, nil
+		})
+		if err != nil || len(ids) == 0 {
+			return err
+		}
+		in := "(" + strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", ") + ")"
 		for _, q := range []string{
-			`DELETE n FROM foundry_automation_run_nodes n JOIN foundry_automation_runs r ON r.id = n.run_id WHERE r.automation_id=?`,
-			`DELETE FROM foundry_automation_runs WHERE automation_id=?`,
-			`DELETE FROM foundry_automations WHERE id=?`,
+			`UPDATE foundry_agent_threads SET deleted_at=COALESCE(deleted_at, NOW(6))
+WHERE id IN (SELECT thread_id FROM foundry_automation_runs WHERE id IN ` + in + `)`,
+			`DELETE FROM foundry_automation_run_nodes WHERE run_id IN ` + in,
+			`DELETE FROM foundry_automation_runs WHERE id IN ` + in,
 		} {
-			if _, err := tx.db.ExecContext(ctx, q, id); err != nil {
+			if _, err := tx.db.ExecContext(ctx, q, ids...); err != nil {
 				return err
 			}
 		}
+		deleted = len(ids)
 		return nil
 	})
+	return deleted, err
+}
+
+// PruneFoundryAutomationRuns deletes up to a batch of the runs that ended
+// before before, with their steps and Assistant threads, oldest first, and
+// returns how many it deleted: a workspace's run history is what ended within
+// the worker's retention.
+func (s *mysqlDB) PruneFoundryAutomationRuns(ctx context.Context, before time.Time) (int, error) {
+	return s.deleteFoundryAutomationRuns(ctx, `SELECT id FROM foundry_automation_runs WHERE finished_at < ? ORDER BY finished_at LIMIT ?`, before.UTC())
 }
 
 // cancelFoundryAutomationTurns cancels the live Assistant turns of the runs
@@ -342,12 +404,14 @@ WHERE automation_run_id IN (`+runs+`) AND status IN ('queued', 'running')`, why,
 }
 
 // RunFoundryAutomationNow queues run, its owner's run by hand of the
-// automation's approved spec (active or paused), with its trigger's output;
-// the same trigger key (the owner's client token) returns the run it
-// queued. Refusals are a FoundryAutomationRefusal: another's
+// automation's approved spec (active or paused), with its trigger's output
+// (triggerNodeID's, the trigger of the spec at run.SpecRevision, which the
+// caller read); the same trigger key (the owner's client token) returns the
+// run it queued. Refusals are a FoundryAutomationRefusal: another's
 // (FoundryAutomationNotOwner), one waiting for approval
-// (FoundryAutomationUnapproved), a live run (FoundryAutomationBusy), the
-// day's runs spent (FoundryAutomationRunsPerDay).
+// (FoundryAutomationUnapproved), a spec changed since the caller read it
+// (FoundryAutomationChanged), a live run (FoundryAutomationBusy), the day's
+// runs spent (FoundryAutomationRunsPerDay).
 func (s *mysqlDB) RunFoundryAutomationNow(ctx context.Context, run *model.FoundryAutomationRun, triggerNodeID string, triggerOutput json.RawMessage,
 	limits model.FoundryAutomationLimits) (*model.FoundryAutomationRun, error) {
 	if run.ID == "" || run.TriggerKey == "" || len(run.TriggerEvent) == 0 || triggerNodeID == "" {
@@ -356,6 +420,11 @@ func (s *mysqlDB) RunFoundryAutomationNow(ctx context.Context, run *model.Foundr
 	var out *model.FoundryAutomationRun
 	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
+		// The workspace's lock first, so its runs of the day are counted one
+		// fire at a time.
+		if err := tx.workspaces.Lock(ctx, tx.db, run.WorkspaceID); err != nil {
+			return err
+		}
 		a, err := tx.lockFoundryAutomation(ctx, run.WorkspaceID, run.AutomationID)
 		if err != nil {
 			return err
@@ -372,6 +441,8 @@ FROM foundry_automation_runs WHERE automation_id=? AND trigger_key=?`, a.ID, run
 			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner runs an automation: it runs as them"}
 		case a.Status == model.FoundryAutomationNeedsApproval:
 			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationUnapproved, Detail: "the automation's changes wait for its owner's approval"}
+		case a.SpecRevision != run.SpecRevision:
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationChanged, Detail: "the automation's steps changed meanwhile: run it again"}
 		}
 		refusal, err := tx.foundryAutomationRoom(ctx, a, limits)
 		switch {
@@ -391,7 +462,9 @@ FROM foundry_automation_runs WHERE automation_id=? AND trigger_key=?`, a.ID, run
 
 // foundryAutomationRoom is why the locked automation can't start a run now:
 // one is live, or its workspace's runs of the last 24 hours reached the
-// cap; nil when it can.
+// cap; nil when it can. Its caller holds the workspace's lock, taken before
+// the automation's, so two automations of one workspace never both take the
+// last run of the day.
 func (s *mysqlDB) foundryAutomationRoom(ctx context.Context, a *model.FoundryAutomation, limits model.FoundryAutomationLimits) (*model.FoundryAutomationRefusal, error) {
 	var live, today int
 	if err := s.db.QueryRowContext(ctx, `SELECT
@@ -412,7 +485,7 @@ func (s *mysqlDB) foundryAutomationRoom(ctx context.Context, a *model.FoundryAut
 
 // insertFoundryAutomationRun stores run, of the locked automation's spec as
 // it is, with status (and why, for a skipped one), and its trigger's step,
-// succeeded with its output.
+// succeeded with its output. A skipped run runs nothing, so it keeps no spec.
 func (s *mysqlDB) insertFoundryAutomationRun(ctx context.Context, run *model.FoundryAutomationRun, status, why, triggerNodeID string,
 	triggerOutput json.RawMessage) error {
 	finished := "NULL"
@@ -421,8 +494,8 @@ func (s *mysqlDB) insertFoundryAutomationRun(ctx context.Context, run *model.Fou
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_automation_runs
   (id, automation_id, workspace_id, owner_user_id, spec, spec_revision, trigger_key, trigger_event, status, error, finished_at)
-SELECT ?, id, workspace_id, owner_user_id, spec, spec_revision, ?, CAST(? AS JSON), ?, NULLIF(?, ''), `+finished+`
-FROM foundry_automations WHERE id=?`, run.ID, run.TriggerKey, string(run.TriggerEvent), status, why, run.AutomationID); err != nil {
+SELECT ?, id, workspace_id, owner_user_id, IF(? = 'skipped', NULL, spec), spec_revision, ?, CAST(? AS JSON), ?, NULLIF(?, ''), `+finished+`
+FROM foundry_automations WHERE id=?`, run.ID, status, run.TriggerKey, string(run.TriggerEvent), status, why, run.AutomationID); err != nil {
 		return err
 	}
 	if status == string(model.FoundryAutomationRunSkipped) {
@@ -640,6 +713,13 @@ func (s *mysqlDB) FireFoundryAutomation(ctx context.Context, f model.FoundryAuto
 	var fired model.FoundryAutomationFired
 	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
+		// A fire that may queue a run takes the workspace's lock first, as
+		// foundryAutomationRoom's count needs.
+		if f.Run != nil {
+			if err := tx.workspaces.Lock(ctx, tx.db, f.WorkspaceID); err != nil {
+				return err
+			}
+		}
 		a, err := tx.lockFoundryAutomation(ctx, f.WorkspaceID, f.AutomationID)
 		if errors.Is(err, ErrNotFound) {
 			fired = model.FoundryAutomationFiredLost
@@ -776,7 +856,8 @@ func (s *mysqlDB) StartFoundryAutomationNode(ctx context.Context, runID, workerI
 // StartFoundryAutomationAssistant starts an Assistant step of the run
 // workerID holds: turn, queued in the run's thread (thread, new, when the run
 // has none yet), and the step running, waiting on it. A step that started
-// before is ErrConflict.
+// before is ErrConflict; a thread with a live turn already (its owner ran a
+// card the run left waiting) is ErrThreadBusy, and nothing is written.
 func (s *mysqlDB) StartFoundryAutomationAssistant(ctx context.Context, runID, workerID, nodeID string, thread *model.FoundryAgentThread,
 	turn *model.FoundryAgentTurn) error {
 	switch {
@@ -808,10 +889,15 @@ VALUES (?, ?, ?, 'automation', ?, 'api')`, thread.ID, thread.WorkspaceID, thread
 		if err != nil {
 			return err
 		}
-		if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
+		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
   (id, workspace_id, thread_id, user_id, runtime, kind, input, status, max_usd_micros, automation_run_id, automation_node_id)
 VALUES (?, ?, ?, ?, 'api', 'automation', ?, 'queued', ?, ?, ?)`, turn.ID, turn.WorkspaceID, turn.ThreadID, turn.UserID, turn.Input, turn.MaxUSDMicros,
-			runID, nodeID); err != nil {
+			runID, nodeID)
+		if isDuplicateKey(err) {
+			// The turn's id is new: only the thread's one live turn clashes.
+			return ErrThreadBusy
+		}
+		if err != nil {
 			return err
 		}
 		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_agent_threads SET updated_at=NOW(6) WHERE id=?`, turn.ThreadID)
@@ -1043,8 +1129,8 @@ func scanFoundryAutomation(scanner rowScanner) (*model.FoundryAutomation, error)
 // withSpec.
 func scanFoundryAutomationRun(scanner rowScanner, withSpec bool) (*model.FoundryAutomationRun, error) {
 	var r model.FoundryAutomationRun
-	var spec, event, status string
-	var errText, thread, leaseOwner sql.NullString
+	var event, status string
+	var spec, errText, thread, leaseOwner sql.NullString
 	var leaseUntil, startedAt, finishedAt sql.NullTime
 	dest := []any{&r.ID, &r.AutomationID, &r.WorkspaceID, &r.OwnerUserID, &r.SpecRevision, &r.TriggerKey, &event, &status, &errText,
 		&thread, &leaseOwner, &leaseUntil, &r.Attempts, &r.NextAttemptAt, &r.USDMicros, &r.CreatedAt, &startedAt, &finishedAt}
@@ -1058,8 +1144,8 @@ func scanFoundryAutomationRun(scanner rowScanner, withSpec bool) (*model.Foundry
 		return nil, err
 	}
 	r.TriggerEvent, r.Status = json.RawMessage(event), model.FoundryAutomationRunStatus(status)
-	if withSpec {
-		r.Spec = json.RawMessage(spec)
+	if spec.Valid {
+		r.Spec = json.RawMessage(spec.String)
 	}
 	for _, f := range []struct {
 		src sql.NullString

@@ -2669,7 +2669,8 @@ message FoundryAutomationRun {
   // ids of the work it found (sync_id, load_id, generation_id,
   // document_ids), "outcome", "count", "rows", "by_user_id"}.
   string trigger_event_json = 5;
-  // The spec revision it runs, and that spec; spec_json only when got alone.
+  // The spec revision it runs, and that spec; spec_json only when got alone,
+  // and never for a skipped run, which ran nothing.
   int64 spec_revision = 6;
   string spec_json = 7;
   // The owner's Assistant thread its Assistant steps ran in, which its owner

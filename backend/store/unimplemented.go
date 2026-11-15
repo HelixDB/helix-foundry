@@ -1540,3 +1540,8 @@ func (u Unimplemented) FinishFoundryAutomationRun(context.Context, string, strin
 	u.unimplemented("FinishFoundryAutomationRun")
 	return nil
 }
+
+func (u Unimplemented) PruneFoundryAutomationRuns(context.Context, time.Time) (int, error) {
+	u.unimplemented("PruneFoundryAutomationRuns")
+	return 0, nil
+}

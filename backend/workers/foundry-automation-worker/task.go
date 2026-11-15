@@ -62,8 +62,13 @@ const (
 	// stepsPerAttempt bounds one attempt's steps: a spec has at most
 	// automation.MaxNodes, each ended once.
 	stepsPerAttempt = automation.MaxNodes + 1
-	// actionTimeout bounds one action step's call.
-	actionTimeout = 2 * time.Minute
+	// actionTimeout bounds one action step's call; a run's lease, renewed
+	// before each step, outlasts it (config.MinAutomationLease).
+	actionTimeout = config.AutomationActionTimeout
+	// runRetention is how long a run is kept after it ended; pruneWait how
+	// long the worker waits to prune again once nothing is left to.
+	runRetention = 90 * 24 * time.Hour
+	pruneWait    = time.Minute
 	// writeTimeout bounds recording a step's or a run's end, even while the
 	// worker stops.
 	writeTimeout = 15 * time.Second
@@ -99,6 +104,7 @@ type Store interface {
 	YieldFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time) error
 	RetryFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time, why string) error
 	FinishFoundryAutomationRun(ctx context.Context, id, workerID string, end model.FoundryAutomationRunEnd) error
+	PruneFoundryAutomationRuns(ctx context.Context, before time.Time) (int, error)
 	GetFoundryAgentTurn(ctx context.Context, workspaceID, id string) (*model.FoundryAgentTurn, error)
 	ListFoundryAgentEvents(ctx context.Context, turnID string, afterSeq, limit int) ([]model.FoundryAgentEvent, error)
 	ListFoundryAgentActions(ctx context.Context, threadID string) ([]*model.FoundryAgentAction, error)
@@ -120,6 +126,8 @@ type Task struct {
 	workerID string
 	now      func() time.Time
 	worker   tasks.Worker
+	// pruneAt is when the worker next deletes runs past runRetention.
+	pruneAt time.Time
 }
 
 func New(d Deps) (*Task, error) {
@@ -156,6 +164,7 @@ func (t *Task) Stop(ctx context.Context) error { return t.worker.Stop(ctx) }
 func (t *Task) tick(ctx context.Context) {
 	t.fireSchedules(ctx)
 	t.watch(ctx)
+	t.prune(ctx)
 	for range runsPerTick {
 		if ctx.Err() != nil {
 			return
@@ -169,6 +178,22 @@ func (t *Task) tick(ctx context.Context) {
 			return
 		}
 		t.advance(ctx, run)
+	}
+}
+
+// prune deletes a batch of the runs that ended more than runRetention ago,
+// then waits pruneWait once none is left: run history is bounded by time,
+// whatever fires.
+func (t *Task) prune(ctx context.Context) {
+	if t.now().Before(t.pruneAt) {
+		return
+	}
+	n, err := t.db.PruneFoundryAutomationRuns(ctx, t.now().Add(-runRetention))
+	if err != nil {
+		log.From(ctx).Warn("prune automation runs failed", "err", err)
+	}
+	if err != nil || n == 0 {
+		t.pruneAt = t.now().Add(pruneWait)
 	}
 }
 
@@ -368,8 +393,19 @@ func (t *Task) advance(ctx context.Context, run *model.FoundryAutomationRun) {
 		return
 	}
 	for range stepsPerAttempt {
+		// Each step starts with a lease that outlasts it: an attempt walks
+		// many steps, and an action may take actionTimeout.
+		err := t.db.RenewFoundryAutomationRunLease(ctx, run.ID, t.workerID, t.cfg.Lease)
+		if errors.Is(err, foundrystore.ErrNotFound) {
+			runs.WithLabelValues("lost").Inc()
+			logger.Info("automation run: the lease was lost; nothing more is recorded")
+			return
+		}
+		if err != nil {
+			t.retry(ctx, run, err)
+			return
+		}
 		next := st.spec.Next(st.states)
-		var err error
 		switch step := next.(type) {
 		case automation.Done:
 			end := model.FoundryAutomationRunEnd{Status: model.FoundryAutomationRunSucceeded}
@@ -569,7 +605,12 @@ func (t *Task) startAssistant(ctx context.Context, st *runState, nodeID string, 
 		Kind: model.FoundryAgentTurnAutomation, Input: instruction(step.Instruction, run), AutomationRunID: &runID, AutomationNodeID: &node,
 		MaxUSDMicros: t.cfg.MaxMicros()}
 	err := t.db.StartFoundryAutomationAssistant(ctx, run.ID, t.workerID, nodeID, thread, turn)
-	if errors.Is(err, foundrystore.ErrConflict) {
+	switch {
+	case errors.Is(err, foundrystore.ErrThreadBusy):
+		// Its owner ran a card an earlier step left: the step starts once
+		// that turn ends.
+		return true, nil
+	case errors.Is(err, foundrystore.ErrConflict):
 		return false, errors.New("the step had started already")
 	}
 	if err != nil {
@@ -698,12 +739,18 @@ func (t *Task) runAction(ctx context.Context, st *runState, nodeID string, a aut
 		}
 		payload["version_id"] = *o.CurrentVersionID
 	case automation.PublishDashboard:
+		// It refreshes what a person published: the snapshot of the revision
+		// already at the link, never an edit no one published since.
 		d, err := t.db.GetFoundryDashboard(ctx, ws, a.DashboardID)
 		switch {
 		case errors.Is(err, foundrystore.ErrNotFound):
 			return t.fail(ctx, st, nodeID, "Its dashboard is gone.")
 		case err != nil:
 			return err
+		case d.Share == nil:
+			return t.fail(ctx, st, nodeID, "Its dashboard isn't published: publish it on its page, and the automation refreshes its snapshot from then on.")
+		case d.Share.SpecRevision != d.Revision:
+			return t.fail(ctx, st, nodeID, "Its dashboard was changed since it was published: publish it again on its page to put the change at its link.")
 		}
 		payload["expected_revision"] = d.Revision
 	}

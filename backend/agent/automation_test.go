@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -97,6 +98,40 @@ func TestAnAutomationLeavesWhatItsOwnerDidntApproveAsACard(t *testing.T) {
 	assert.Equal(t, model.FoundryAgentActionPrepared, h.db.actions[0].Status)
 	afterPrepare := h.model.requests[1].Messages
 	assert.Contains(t, afterPrepare[len(afterPrepare)-1].Content[0].(llm.ToolResult).Content, "awaiting_person")
+}
+
+// An approved publish refreshes only the revision already at the
+// dashboard's link: an edit made since, by anyone, waits for the owner as a
+// card, as does a dashboard that was never published.
+func TestAnApprovedPublishRefreshesOnlyWhatWasPublished(t *testing.T) {
+	for name, tc := range map[string]struct {
+		share   *model.FoundryDashboardShare
+		prepare int64
+		ran     bool
+	}{
+		"the revision at its link": {&model.FoundryDashboardShare{SpecRevision: 4}, 4, true},
+		"an edit made since":       {&model.FoundryDashboardShare{SpecRevision: 3}, 4, false},
+		"never published":          {nil, 4, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t,
+				call("toolu_1", toolPrepare, fmt.Sprintf(`{"operation":"publish_dashboard","target":"dashboard:ws1/dash1","payload":{"expected_revision":%d}}`, tc.prepare)),
+				say("Done."))
+			h.host.service.PublicDashboards = true
+			h.db.dashboards = []*model.FoundryDashboard{{ID: "dash1", WorkspaceID: ws, Name: "Revenue", Revision: 4, Share: tc.share}}
+			turn := automationTurn(h, `{"operation":"publish_dashboard","dashboard_id":"dash1"}`)
+			_, err := h.runner.Run(context.Background(), turn)
+			require.NoError(t, err)
+			require.Len(t, h.db.actions, 1)
+			if tc.ran {
+				assert.Equal(t, []int64{4}, h.backend.published)
+				assert.Equal(t, model.FoundryAgentActionSucceeded, h.db.actions[0].Status)
+				return
+			}
+			assert.Empty(t, h.backend.published, "nothing is published unasked")
+			assert.Equal(t, model.FoundryAgentActionPrepared, h.db.actions[0].Status, "it waits for its owner")
+		})
+	}
 }
 
 func TestAnAutomationWithNothingApprovedSaysSo(t *testing.T) {

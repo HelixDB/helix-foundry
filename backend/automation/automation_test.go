@@ -157,6 +157,11 @@ func TestParseSpecRefuses(t *testing.T) {
 		{"config not object", spec([]string{node("start", "trigger", `[]`), act}, `[{"from":"start","to":"act"}]`), "config is a JSON object"},
 		{"trigger kind", spec([]string{node("start", "trigger", `{"kind":"cron","expr":"* * * * *"}`), act}, `[{"from":"start","to":"act"}]`), `kind is "cron"`},
 		{"trigger missing config", spec([]string{`{"id":"start","kind":"trigger","position":{"x":0,"y":0}}`, act}, `[]`), "config is a JSON object"},
+		{"sync on its own sync", spec([]string{node("start", "trigger", `{"kind":"sync_finished","connector_id":"01C","outcome":"any"}`), act},
+			`[{"from":"start","to":"act"}]`), "act syncs the connector its trigger waits on"},
+		{"load on its own load", spec([]string{node("start", "trigger", `{"kind":"load_ready","ontology_id":"O"}`),
+			node("ai", "assistant", `{"instruction":"x","allow":[{"operation":"create_load","ontology_id":"O"}]}`)}, `[{"from":"start","to":"ai"}]`),
+			"ai loads the ontology its trigger waits on"},
 	} {
 		_, err := automation.ParseSpec([]byte(c.raw))
 		require.ErrorContains(t, err, c.want, c.name)

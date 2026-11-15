@@ -871,9 +871,15 @@ func TestFoundryNotifyWorkerSkipsAutomationsGone(t *testing.T) {
 
 func TestUnlinked(t *testing.T) {
 	for in, want := range map[string]string{
-		"See https://evil.example/pay now":     "See [link removed] now",
-		"visit www.evil.example or ftp://x/y.": "visit [link removed] or [link removed]",
-		"No links, 3.5 invoices.":              "No links, 3.5 invoices.",
+		"See https://evil.example/pay now":                                   "See [link removed] now",
+		"visit www.evil.example or ftp://x/y.":                               "visit [link removed] or [link removed]",
+		"No links, 3.5 invoices.":                                            "No links, 3.5 invoices.",
+		"Reset your password at acme-billing.example/login now":              "Reset your password at [link removed] now",
+		"Write to mailto:attacker@evil.example today":                        "Write to [link removed] today",
+		"Write to ceo@acme-billing.example today":                            "Write to [link removed] today",
+		"Open 10.0.0.1:8080/admin, then ACME.COM.":                           "Open [link removed] then [link removed].",
+		"Пример.рф and xn--e1afmkfd.xn--p1ai":                                "[link removed] and [link removed]",
+		"e.g. 3.5 invoices, i.e. most: $3.50 at 10:30, 3:1. The data: done.": "e.g. 3.5 invoices, i.e. most: $3.50 at 10:30, 3:1. The data: done.",
 	} {
 		if got := unlinked(in); got != want {
 			t.Errorf("unlinked(%q) = %q, want %q", in, got, want)
