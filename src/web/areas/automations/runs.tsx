@@ -66,11 +66,15 @@ export function useRuns(a?: FoundryAutomation) {
     initialPageParam: "",
     getNextPageParam: (last) => last.nextPageToken || undefined,
     enabled: !!a,
-    refetchInterval: isLiveRun(a?.lastRun)
-      ? RUN_POLL_MS
-      : a?.status === "active"
-        ? ACTIVE_POLL_MS
-        : false,
+    // A live run in the list is read again as often as its own page, so
+    // the list says it ended when the page does, not up to a poll later.
+    refetchInterval: (q) =>
+      isLiveRun(a?.lastRun) ||
+      q.state.data?.pages.some((p) => p.runs?.some(isLiveRun))
+        ? RUN_POLL_MS
+        : a?.status === "active"
+          ? ACTIVE_POLL_MS
+          : false,
   });
   return {
     query: runs,
