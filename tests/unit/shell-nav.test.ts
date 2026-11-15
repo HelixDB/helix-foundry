@@ -12,10 +12,11 @@ import {
 // other sections' panels beside it.
 
 describe("the sections", () => {
-  it("lists Ask first, then Dashboards, Ontologies, the Explorer and Connectors", () => {
+  it("lists Ask first, then Dashboards, Automations, Ontologies, the Explorer and Connectors", () => {
     expect(primaryNav.map((n) => [n.label, n.to])).toEqual([
       ["Analyst", "/ask"],
       ["Dashboards", "/dashboards"],
+      ["Automations", "/automations"],
       ["Ontologies", "/ontology"],
       ["Explorer", "/explore"],
       ["Connectors", "/data"],
@@ -36,16 +37,22 @@ describe("activeSection", () => {
     expect(activeSection("/explore/ont_1/records")).toBe("explore");
     expect(activeSection("/data/connections/conn_1")).toBe("data");
     expect(activeSection("/settings/ai")).toBe("settings");
+    expect(activeSection("/automations/a/runs/r")).toBe("automations");
     expect(activeSection("/asks")).toBeUndefined();
     expect(activeSection("/nowhere")).toBeUndefined();
   });
 });
 
 describe("what a section shows beside the page", () => {
-  it("puts Ask's threads and the dashboards in the sidebar, under the sections", () => {
-    expect(Object.keys(sectionSidebars).sort()).toEqual(["ask", "dashboards"]);
+  it("puts Ask's threads, the dashboards and the automations in the sidebar, under the sections", () => {
+    expect(Object.keys(sectionSidebars).sort()).toEqual([
+      "ask",
+      "automations",
+      "dashboards",
+    ]);
     expect(sectionSidebars.ask?.label).toBe("Analyst threads");
     expect(sectionSidebars.dashboards?.label).toBe("Dashboards");
+    expect(sectionSidebars.automations?.label).toBe("Automations");
   });
 
   it("gives Connectors, Ontologies and the Explorer a panel beside the sidebar, and Ask none", () => {

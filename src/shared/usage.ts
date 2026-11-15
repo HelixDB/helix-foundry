@@ -30,6 +30,9 @@ export const MASK_PATTERNS = [
   "/explore/*",
   "/ask/*",
   "/dashboards/*",
+  "/automations/new/**",
+  "/automations/*/runs/*",
+  "/automations/*",
   // A dashboard's public link: its token is its only key.
   "/share/**",
 ];

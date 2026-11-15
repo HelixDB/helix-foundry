@@ -26,6 +26,7 @@ import { cannotAnswerKind } from "../shared/foundry-ask";
 import { LOCAL } from "../shared/deployment";
 import type { WizardStepId } from "./areas/ontology/model";
 import type { AgentOperation } from "./areas/agent/model";
+import type { TemplateId } from "./areas/automations/model";
 import type { SectionId } from "./shell/types";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
 import type { SignInError } from "./sign-in";
@@ -92,6 +93,17 @@ export type DashboardAction =
   | "add_visual"
   | "publish"
   | "unpublish";
+
+/** An automation call that may be refused (src/web/areas/automations/queries.ts). */
+export type AutomationCall =
+  | "create"
+  | "edit"
+  | "approve"
+  | "pause"
+  | "resume"
+  | "run"
+  | "delete"
+  | "cancel";
 
 /**
  * How the WFE refused a call (src/web/api.ts refusalOf): too many at once,
@@ -251,6 +263,21 @@ export type AnalyticsEvents = {
   dashboard_unpublished: undefined;
   dashboard_link_copied: undefined;
   dashboard_refused: { action: DashboardAction; reason: Refusal };
+
+  // Automations (src/web/areas/automations): made (from which template, or
+  // the Assistant's card, which agent_action_executed reports), edited (its
+  // steps, or only its name or description), approved by its owner,
+  // paused, resumed, run by hand, deleted, a run cancelled, or why a call
+  // was refused. Never a name, an instruction or a target.
+  automation_created: { template: TemplateId };
+  automation_edited: { steps: boolean };
+  automation_approved: undefined;
+  automation_paused: undefined;
+  automation_resumed: undefined;
+  automation_run_started: undefined;
+  automation_deleted: undefined;
+  automation_run_cancelled: undefined;
+  automation_refused: { action: AutomationCall; reason: Refusal };
 
   // An ontology's versions, loads and reviews.
   version_made_current: undefined;

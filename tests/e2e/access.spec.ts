@@ -992,6 +992,7 @@ test("giving a member sources restricts them, and taking them away widens nothin
   ).toHaveText([
     "Analyst",
     "Dashboards",
+    "Automations",
     "Ontologies",
     "Explorer",
     "Connectors",

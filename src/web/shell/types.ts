@@ -8,6 +8,7 @@ export type SectionId =
   | "explore"
   | "ask"
   | "dashboards"
+  | "automations"
   | "settings";
 
 // A sub-page shown under its section in the sidebar while the section is active.

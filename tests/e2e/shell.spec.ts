@@ -194,7 +194,14 @@ test("opens the Explorer and Ask as sections of their own, on the ontology last 
     picker = page.getByRole("combobox", { name: "Ontology" });
   await expect
     .poll(() => sectionNames(nav))
-    .toEqual(["Analyst", "Dashboards", "Ontologies", "Explorer", "Connectors"]);
+    .toEqual([
+      "Analyst",
+      "Dashboards",
+      "Automations",
+      "Ontologies",
+      "Explorer",
+      "Connectors",
+    ]);
   // None opened yet: the list's first, now Orders.
   await expect(page).toHaveURL(new RegExp(`/ask/${orders}$`));
 
@@ -356,6 +363,7 @@ test("shows the labelled sidebar on every page, Ask's threads under its sections
   const sections = [
     "Analyst",
     "Dashboards",
+    "Automations",
     "Ontologies",
     "Explorer",
     "Connectors",

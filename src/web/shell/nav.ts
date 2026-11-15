@@ -6,6 +6,7 @@ import {
   Shapes,
   Sparkles,
   Waypoints,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import type {
@@ -16,6 +17,7 @@ import type {
   SectionPanel,
   SidebarSection,
 } from "./types";
+import { automationsShell } from "../areas/automations/shell";
 import { dashboardsShell } from "../areas/dashboards/shell";
 import { dataShell } from "../areas/data/shell";
 import { ontologyShell } from "../areas/ontology/shell";
@@ -35,6 +37,7 @@ const areas: AreaShell[] = [
   dataShell,
   ontologyShell,
   dashboardsShell,
+  automationsShell,
   workspaceShell,
 ];
 const childrenOf = (id: SectionId) => (pathname: string) =>
@@ -59,6 +62,8 @@ export const primaryNav: NavItem[] = [
   item("dashboards", "/dashboards", "Dashboards", LayoutDashboard, [
     "/dashboards",
   ]),
+  // Steps Foundry runs for a person when a schedule or an event fires.
+  item("automations", "/automations", "Automations", Zap, ["/automations"]),
   item("ontology", "/ontology", "Ontologies", Shapes, ["/ontology"]),
   item("explore", "/explore", "Explorer", Waypoints, ["/explore"]),
   item("data", "/data", "Connectors", Cable, ["/data"]),
@@ -66,6 +71,7 @@ export const primaryNav: NavItem[] = [
 // A grantee's sections (a member restricted to what source grants give):
 // Analyst, the pinned dashboards, the ontologies its grants cover, and the
 // Explorer, whose Records read their shared loads (there is no graph for it).
+// Automations are people's: a grantee has none.
 export const granteeNav: NavItem[] = primaryNav.filter(
   (n) =>
     n.id === "ask" ||

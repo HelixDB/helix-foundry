@@ -152,6 +152,7 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
   await expect(nav.locator(".hf-nav-link")).toHaveText([
     "Analyst",
     "Dashboards",
+    "Automations",
     "Ontologies",
     "Explorer",
     "Connectors",
