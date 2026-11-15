@@ -1366,7 +1366,7 @@ test("runs new Assistant threads on the owner's Codex once they confirm what it 
     "Foundry turns off Codex’s shell, sub-agents, web search and image viewer, and declines any command or file change it asks for.",
   );
   await expect(confirm).toContainText(
-    "A tool of your own setup that doesn’t ask can still be called if a document tells the model to, and can read or send whatever it reaches.",
+    "one that doesn’t ask can run in the Assistant’s turns, even when a document tells the model to call it, and can read or send whatever it reaches.",
   );
   await expect(confirm).toContainText(
     "The Assistant’s turns count against your ChatGPT plan’s Codex limits.",

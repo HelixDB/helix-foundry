@@ -73,8 +73,8 @@ const DESCRIPTIONS: Record<AgentRuntime, string> = {
 
 /** What Codex runs with, as the owner confirms it and the settings say it after. */
 const CODEX_TERMS = [
-  "Codex runs with your own Codex setup, including your MCP servers, plugins and apps. A tool of theirs that asks for approval is declined; one that doesn’t ask can run in the Assistant’s turns.",
-  "Foundry turns off Codex’s shell, sub-agents, web search and image viewer, and declines any command or file change it asks for. The Assistant reads your documents and synced rows, which could carry instructions meant to mislead it: this keeps them from running commands or changing files on your computer. A tool of your own setup that doesn’t ask can still be called if a document tells the model to, and can read or send whatever it reaches.",
+  "Codex runs with your own Codex setup, including your MCP servers, plugins and apps. A tool of theirs that asks for approval is declined; one that doesn’t ask can run in the Assistant’s turns, even when a document tells the model to call it, and can read or send whatever it reaches.",
+  "Foundry turns off Codex’s shell, sub-agents, web search and image viewer, and declines any command or file change it asks for. The Assistant reads your documents and synced rows, which could carry instructions meant to mislead it: this keeps them from running commands or changing files on your computer.",
   "The Assistant’s turns count against your ChatGPT plan’s Codex limits. Check that your plan’s terms allow it.",
 ] as const;
 
