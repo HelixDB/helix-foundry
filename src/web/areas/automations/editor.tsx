@@ -604,20 +604,20 @@ function Editor({
           </Button>
         )}
         {tab !== "settings" && (
-<button
-          type="button"
-          className={cx(
-            "hf-btn hf-btn--ghost hf-btn--sm",
-            outline && "is-active",
-          )}
-          aria-pressed={outline}
-          title="The steps as a list, for keyboards and screen readers"
-          onClick={() => setOutline((v) => !v)}
-        >
-          <ListTree size={15} aria-hidden />
-          Outline
-        </button>
-)}
+          <button
+            type="button"
+            className={cx(
+              "hf-btn hf-btn--ghost hf-btn--sm",
+              outline && "is-active",
+            )}
+            aria-pressed={outline}
+            title="The steps as a list, for keyboards and screen readers"
+            onClick={() => setOutline((v) => !v)}
+          >
+            <ListTree size={15} aria-hidden />
+            Outline
+          </button>
+        )}
         <label className="checkbox au-live" title={liveWhy}>
           <input
             type="checkbox"
