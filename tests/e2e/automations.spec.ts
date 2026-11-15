@@ -874,7 +874,7 @@ test("shows another member its steps and how far a run went, never what it found
     }),
   ).toBeVisible();
   // The tap asked nothing of the WFE: nothing was refused.
-  await expect(alan.getByRole("alert")).toHaveCount(0);
+  await expect(alan.locator(".au-strip.is-danger")).toHaveCount(0);
   await expect(inspector(alan).getByText("Another member")).toBeVisible();
   await canvas(alan)
     .locator(".react-flow__node")
