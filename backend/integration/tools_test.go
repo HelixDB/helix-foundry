@@ -83,7 +83,8 @@ func TestEveryToolHasATitle(t *testing.T) {
 	workflows := struct{ FoundryWorkflowBackendAPI }{}
 	for _, s := range []*Service{
 		{FoundryURL: "http://localhost:3000", Workflows: workflows},
-		{FoundryURL: "https://foundry.example", Events: true, SignIn: true, Workflows: workflows},
+		// No host has both API sources and the Assistant's helpers; one with every tool would.
+		{FoundryURL: "https://foundry.example", Events: true, SignIn: true, Workflows: workflows, AgentHosts: true},
 	} {
 		listed, err := connect(t, s, everyTool()).ListTools(context.Background(), nil)
 		require.NoError(t, err)
