@@ -1113,7 +1113,7 @@ WHERE l.ontology_id=? AND l.status IN ('ready', 'partial', 'failed', 'delete_fai
 			// current above copied its decisions when it was created, and
 			// would otherwise show those saved since as unread until some
 			// job happened to end.
-			if queued, err := tx.queueFoundryResend(ctx, o, &model.FoundryGraphJob{ID: nextJobID}, 0); err != nil || queued {
+			if queued, err := tx.queueFoundryResend(ctx, o, &model.FoundryGraphJob{ID: nextJobID}, 0, true); err != nil || queued {
 				return err
 			}
 			return tx.queueNextFoundryDelete(ctx, o, nextJobID)

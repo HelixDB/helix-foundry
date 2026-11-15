@@ -35,7 +35,8 @@ type decisionStore struct {
 	saveErr  error
 	deleted  string
 	// releasedTo is the load SettleFoundryReleases or SettleFoundryValue
-	// applied its decisions to, and resends the resend jobs they and
+	// applied its decisions to, or SettleFoundryBoundResolve read its review
+	// from, and resends the resend jobs they and
 	// DeleteFoundryReviewDecision were handed; rejectedOn is the load
 	// SettleFoundryReject read its review from; applied is what
 	// ListFoundryDecisionsApplied answers.
@@ -74,16 +75,20 @@ func (s *decisionStore) GetOntologyVersion(_ context.Context, o, id string) (*fo
 	}
 	return s.version, nil
 }
-func (s *decisionStore) SettleFoundryReviewDecision(_ context.Context, ws string, d *foundrymodel.FoundryReviewDecision) error {
+
+// SettleFoundryBoundResolve saves d for the next load: the load it was read
+// from is current here.
+func (s *decisionStore) SettleFoundryBoundResolve(_ context.Context, ws, load string, d *foundrymodel.FoundryReviewDecision,
+	_ *foundrymodel.FoundryGraphJob) (bool, error) {
 	if ws != s.ontology.WorkspaceID {
-		return foundrystore.ErrNotFound
+		return false, foundrystore.ErrNotFound
 	}
 	if s.saveErr != nil {
-		return s.saveErr
+		return false, s.saveErr
 	}
 	d.DecidedAt = time.Now()
-	s.saved = append(s.saved, d)
-	return nil
+	s.saved, s.releasedTo = append(s.saved, d), load
+	return false, nil
 }
 func (s *decisionStore) SettleFoundryResolve(_ context.Context, ws, load string, d *foundrymodel.FoundryReviewDecision, docs []string,
 	resend *foundrymodel.FoundryGraphJob) (bool, error) {
@@ -304,7 +309,7 @@ func TestSettleFoundryReview(t *testing.T) {
 					out.Decision.GetApplied().GetStatus() != "pending") {
 					t.Fatalf("applied to %q by %+v: %+v", db.releasedTo, db.resends, out.Decision.GetApplied())
 				}
-				if !asks && (len(db.resends) != 0 || out.Decision.Applied != nil) {
+				if !asks && (db.releasedTo != "load-1" || len(db.resends) != 0 || out.Decision.Applied != nil) {
 					t.Fatalf("%s applied at once: %+v %+v", reason, db.resends, out.Decision.GetApplied())
 				}
 			})

@@ -355,6 +355,12 @@ FROM foundry_load_enrichments WHERE load_id=?`, loadID).Scan(&purged); {
 		case purged:
 			return FoundryLoadPurged
 		}
+		// The live job's row before any decision's (the carry writes them), as
+		// a worker recording a decision's outcome locks them.
+		live, err := tx.liveFoundryGraphJob(ctx, ontologyID)
+		if err != nil {
+			return err
+		}
 		if err := tx.makeFoundryLoadCurrent(ctx, o, loadID); err != nil {
 			return err
 		}
@@ -363,16 +369,12 @@ FROM foundry_load_enrichments WHERE load_id=?`, loadID).Scan(&purged); {
 		if err := tx.snapshotFoundryLoadDocuments(ctx, loadID); err != nil {
 			return err
 		}
-		live, err := tx.liveFoundryGraphJob(ctx, ontologyID)
-		if err != nil {
-			return err
-		}
 		if live == nil {
 			queued, err = tx.queueFoundryExtract(ctx, o, extract, budget)
 			if err != nil || queued {
 				return err
 			}
-			_, err = tx.queueFoundryResend(ctx, o, resend, 0)
+			_, err = tx.queueFoundryResend(ctx, o, resend, 0, true)
 			return err
 		}
 		waiting, err := tx.countWaitingFoundryDocuments(ctx, loadID)

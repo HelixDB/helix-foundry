@@ -244,9 +244,10 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	}
 	// A name the load already links, by a rung a person can overturn, isn't
 	// settled in place: the engine says bound. Its decision is saved for the
-	// next load, which reads the document again with it.
+	// next load, which reads the document again with it; a load made current
+	// since the review was read gets it as one saved before it became current.
 	if !ontologyagent.AsksAboutName(text("reason")) {
-		if err := s.deps.DB.SettleFoundryReviewDecision(ctx, o.WorkspaceID, d); err != nil {
+		if _, err := s.deps.DB.SettleFoundryBoundResolve(ctx, o.WorkspaceID, load.ID, d, resend); err != nil {
 			return nil, settleFoundryReviewError(err)
 		}
 		return &foundryv1.FoundryReviewDecisionResponse{Decision: foundryReviewDecisionProto(d)}, nil

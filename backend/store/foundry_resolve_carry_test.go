@@ -4,8 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sync"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/pkg/namewords"
 	"github.com/helixdb/helix-foundry/backend/store"
@@ -57,11 +58,13 @@ func entityIn(t *testing.T, load, id string) string {
 	return entity.String
 }
 
-// settleBound saves d as a resolve of a name the load links already, as the
-// API does: for the next load (SettleFoundryReviewDecision).
+// settleBound settles d as a resolve of a name the fixture's load links
+// already, as the API does (SettleFoundryBoundResolve): for the next load
+// while that load is current.
 func (f resendFixture) settleBound(t *testing.T, d *model.FoundryReviewDecision) {
 	t.Helper()
-	require.NoError(t, f.db.SettleFoundryReviewDecision(context.Background(), f.ontology.WorkspaceID, d))
+	_, err := f.db.SettleFoundryBoundResolve(context.Background(), f.ontology.WorkspaceID, f.load, d, &model.FoundryGraphJob{ID: id26("RB-" + d.ID)})
+	require.NoError(t, err)
 }
 
 // newLoad starts a load of a version of customerTOML, FJ-<tag>, as its
@@ -438,47 +441,113 @@ WHERE load_id=? AND document_id=?`, second, f.b)
 	})
 }
 
-// A settle and the end of the load job that makes another load current run
-// at once, in either order under the ontology's lock: the new current load
-// holds one copy of the decision, carried, and owes its document alone.
+// A settle and the end of the load job that makes another load current, in
+// either order under the ontology's lock, leave the new current load the
+// same: one copy of the decision, carried, its document alone owed, and a
+// resend of it queued. A resolve that asks, settled first, waits in the load
+// its review came from as well, with the documents read there owed; a bound
+// one is the next load's there. Settled after, it leaves that load as it is.
 func TestFoundryResolveSettledAsTheLoadChanges(t *testing.T) {
 	ctx := context.Background()
 	acme := "acme"
-	for i := range 4 {
-		t.Run(fmt.Sprint(i), func(t *testing.T) {
-			tag := fmt.Sprintf("RVRACE%d", i)
-			f := newResendFixture(t, tag)
-			first := f.load
-			second := f.newLoad(t, tag+"B")
-			job := f.claim(t)
-			require.Equal(t, second, job.ID)
-			for _, doc := range []string{f.a, f.b} {
-				require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, extracted(doc), false))
-			}
-			d := f.resolveOf("1", f.a, "acme corp", &acme)
-			var wg sync.WaitGroup
-			var settleErr, endErr error
-			wg.Add(2)
-			go func() {
-				defer wg.Done()
-				_, settleErr = f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, first, d, []string{f.b}, &model.FoundryGraphJob{ID: id26("RN-" + tag)})
-			}()
-			go func() {
-				defer wg.Done()
-				_, endErr = f.db.FinishFoundryGraphJob(ctx, job.ID, f.worker, model.FoundryGraphJobOutcome{
-					Status: model.FoundryGraphJobSucceeded, IngestDone: true, Next: next(tag)})
-			}()
-			wg.Wait()
-			require.NoError(t, settleErr)
-			require.NoError(t, endErr)
-			require.Equal(t, second, *f.ontologyNow(t).CurrentLoadID)
-			assert.Equal(t, map[string]string{d.ID: "carried"}, resolvesIn(t, second))
-			assert.Equal(t, map[string]int{f.a + "/name": 1}, owedRaw(t, second))
-			resend := f.liveJob(t)
-			require.NotNil(t, resend)
-			assert.Equal(t, second, resend.LoadID)
-		})
+	for _, bound := range []bool{false, true} {
+		for _, settleFirst := range []bool{true, false} {
+			t.Run(fmt.Sprintf("bound %t, settled first %t", bound, settleFirst), func(t *testing.T) {
+				tag := "RVORD" + map[bool]string{false: "A", true: "B"}[bound] + map[bool]string{false: "S", true: "F"}[settleFirst]
+				f := newResendFixture(t, tag)
+				first := f.load
+				second := f.newLoad(t, tag+"B")
+				job := f.claim(t)
+				require.Equal(t, second, job.ID)
+				for _, doc := range []string{f.a, f.b} {
+					require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, extracted(doc), false))
+				}
+				d := f.resolveOf("1", f.a, "acme corp", &acme)
+				settle := func() {
+					var err error
+					if bound {
+						_, err = f.db.SettleFoundryBoundResolve(ctx, f.ontology.WorkspaceID, first, d, &model.FoundryGraphJob{ID: id26("RN-" + tag)})
+					} else {
+						_, err = f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, first, d, []string{f.b}, &model.FoundryGraphJob{ID: id26("RN-" + tag)})
+					}
+					require.NoError(t, err)
+				}
+				if settleFirst {
+					settle()
+				}
+				f.end(t, job, tag, model.FoundryGraphJobSucceeded)
+				require.Equal(t, second, *f.ontologyNow(t).CurrentLoadID)
+				if !settleFirst {
+					settle()
+				}
+				assert.Equal(t, map[string]string{d.ID: "carried"}, resolvesIn(t, second))
+				assert.Equal(t, map[string]int{f.a + "/name": 1}, owedRaw(t, second))
+				resend := f.liveJob(t)
+				require.NotNil(t, resend)
+				assert.Equal(t, second, resend.LoadID)
+				if settleFirst && !bound {
+					assert.Equal(t, map[string]string{d.ID: "pending"}, resolvesIn(t, first))
+					assert.Equal(t, map[string]int{f.a + "/name": 1, f.b + "/name": 1}, owedRaw(t, first))
+					return
+				}
+				assert.Empty(t, resolvesIn(t, first))
+				assert.Empty(t, owedRaw(t, first))
+			})
+		}
 	}
+}
+
+// A load made current takes the live job's row before it writes any
+// decision's, as a worker recording what became of a decision holds its
+// job's row first: the two wait on each other in that order, and never
+// deadlock.
+func TestFoundryLoadMadeCurrentLocksTheJobFirst(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "RVLOCK")
+	first := f.load
+	second := f.newLoad(t, "RVLOCK2")
+	f.loaded(t, f.worker, f.a, f.b)
+	_, err := f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, first, extractJob("RVLOCK"), resendJob("RVLOCK"), noBudget)
+	require.NoError(t, err)
+	acme := "acme"
+	d := f.resolveOf("1", f.a, "acme corp", &acme)
+	require.True(t, f.settleName(t, "1", d))
+	live := f.claim(t)
+
+	rootDSN := os.Getenv("HELIX_TEST_ROOT_DSN")
+	if rootDSN == "" {
+		rootDSN = "root:helix@tcp(127.0.0.1:3307)/"
+	}
+	root, err := sql.Open("mysql", rootDSN)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = root.Close() })
+	require.NoError(t, root.PingContext(ctx), "reading lock waits needs HELIX_TEST_ROOT_DSN")
+	// The worker: its job's row, then a decision's.
+	worker, err := testDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = worker.Rollback() })
+	_, err = worker.ExecContext(ctx, `UPDATE foundry_load_jobs SET lease_until=lease_until WHERE id=?`, live.ID)
+	require.NoError(t, err)
+	var conn, trx uint64
+	require.NoError(t, worker.QueryRowContext(ctx, `SELECT CONNECTION_ID()`).Scan(&conn))
+	require.NoError(t, root.QueryRowContext(ctx, `SELECT trx_id FROM information_schema.innodb_trx WHERE trx_mysql_thread_id=?`, conn).Scan(&trx))
+
+	made := make(chan error, 1)
+	go func() {
+		_, err := f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, second, extractJob("RVLOCK2"), resendJob("RVLOCK2"), noBudget)
+		made <- err
+	}()
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		var waiting int
+		require.NoError(collect, root.QueryRowContext(ctx, `SELECT COUNT(*) FROM performance_schema.data_lock_waits
+WHERE BLOCKING_ENGINE_TRANSACTION_ID=?`, trx).Scan(&waiting))
+		assert.Positive(collect, waiting)
+	}, 10*time.Second, 10*time.Millisecond, "making the load current waits on the job's row")
+	_, err = worker.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_at=applied_at WHERE load_id=? AND id=?`, second, d.ID)
+	require.NoError(t, err, "the worker records what became of the decision")
+	require.NoError(t, worker.Commit())
+	require.NoError(t, <-made)
+	assert.Equal(t, map[string]string{d.ID: "carried"}, resolvesIn(t, second))
 }
 
 // The resend job owes the documents of its load whose reviews ask about a
@@ -519,24 +588,39 @@ func TestFoundryAskingDocumentsOwed(t *testing.T) {
 	assert.Equal(t, map[string]int{f.a + "/name": 1, f.b + "/name": 1}, f.owedFor(t))
 }
 
-// A resend job that fails leaves a carried alias unconfirmed, as a pending
-// one, and its documents' requests end: no job is queued for it again.
+// A resend job that fails leaves an alias it read unconfirmed, as a pending
+// one, and that document's request ends. One it never read (its asking
+// documents yet to be owed: past carriedAliasesPerJob, or with the load no
+// longer current) stays carried, its document owed and held back, and no job
+// follows the failure for it alone: the next resend of the load reads it.
 func TestFoundryCarriedAliasJobFailed(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "RVFAIL")
 	second := f.newLoad(t, "RVFAIL2")
 	acme := "acme"
-	d := f.resolveOf("1", f.a, "acme corp", &acme)
-	f.settleName(t, "1", d)
+	read, unread := f.resolveOf("1", f.a, "acme corp", &acme), f.resolveOf("2", f.b, "helio", &acme)
+	f.settleName(t, "1", read)
+	f.settleName(t, "2", unread)
 	f.loaded(t, f.worker, f.a, f.b)
 	f.load = second
 	job := f.claim(t)
 	require.Equal(t, second, job.LoadID)
+	owed, err := f.db.OweFoundryAskingResends(ctx, job, f.worker, []string{read.ID}, nil)
+	require.NoError(t, err)
+	require.True(t, owed)
 	f.end(t, job, "rvfail", model.FoundryGraphJobFailed)
-	assert.Equal(t, map[string]string{d.ID: "carried/" + model.FoundryReleaseJobFailed}, f.applied(t, d))
-	assert.Empty(t, owedRaw(t, second))
-	assert.Nil(t, f.liveJob(t))
+	assert.Equal(t, map[string]string{read.ID: "pending/" + model.FoundryReleaseJobFailed, unread.ID: "carried"}, f.applied(t, read, unread))
+	assert.Equal(t, map[string]int{f.b + "/name": 1}, owedRaw(t, second), "the unread alias's document stays owed")
+	assert.Empty(t, f.owedFor(t), "held back")
+	assert.Nil(t, f.liveJob(t), "no job follows the failure for it alone")
 	carried, err := f.db.ListFoundryCarriedAliases(ctx, second, 10)
 	require.NoError(t, err)
-	assert.Empty(t, carried)
+	require.Len(t, carried, 1)
+	assert.Equal(t, unread.ID, carried[0].ID)
+
+	_, err = f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, second, extractJob("RVFAIL"), resendJob("RVFAIL"), noBudget)
+	require.NoError(t, err)
+	resend := f.liveJob(t)
+	require.NotNil(t, resend, "the next resend of the load reads it")
+	assert.Equal(t, second, resend.LoadID)
 }
