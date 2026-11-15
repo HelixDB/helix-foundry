@@ -173,15 +173,19 @@ func (s *Service) agentThreadRuntime(ctx context.Context, workspaceID, userID, t
 }
 
 // offlineWhy says why no helper runs runtime: one online whose Codex is
-// outdated says so, any other none ran.
+// outdated, or didn't say its version, says so; any other none ran.
 func (s *Service) offlineWhy(ctx context.Context, runtime foundrymodel.FoundryAgentRuntime) string {
 	if hosts, err := s.deps.AgentHosts.ListAgentHosts(ctx); err == nil {
 		now := time.Now()
 		for _, h := range hosts {
 			i := slices.IndexFunc(h.Accounts, func(a foundryagent.HostAccount) bool { return a.Runtime == runtime })
-			if h.Online(now) && i >= 0 && h.Accounts[i].Outdated() {
+			switch {
+			case !h.Online(now) || i < 0 || runtime != foundrymodel.FoundryAgentRuntimeCodex:
+			case h.Accounts[i].Outdated():
 				return "the Codex on " + h.Name + " is older than " + foundryagent.MinCodexVersion +
-					", the oldest Foundry runs the Assistant on: update it there, then send again"
+					", the oldest Foundry runs the Assistant on: update it there, then send again in a minute"
+			case h.Accounts[i].Version == "":
+				return "the Codex on " + h.Name + " didn't start: run codex --version there to see why, then send again in a minute"
 			}
 		}
 	}

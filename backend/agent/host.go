@@ -125,14 +125,16 @@ type HostAccount struct {
 	Version      string                    `json:"version,omitempty"`
 }
 
-// Outdated reports a Codex account older than MinCodexVersion, or of no
-// version the helper could read: no turn runs on it. Other runtimes are
-// never outdated.
+// Outdated reports a Codex account whose version the helper read and is
+// older than MinCodexVersion: no turn runs on it, and updating it is what's
+// wanted. A Codex of no version (it didn't start) isn't outdated, though no
+// turn runs on it either (Runnable). Other runtimes are never outdated.
 //
 //	HostAccount{Runtime: "codex", Version: "0.168.2"}.Outdated() // true
 //	HostAccount{Runtime: "codex", Version: "0.170.0"}.Outdated() // false
+//	HostAccount{Runtime: "codex"}.Outdated()                     // false
 func (a HostAccount) Outdated() bool {
-	return a.Runtime == model.FoundryAgentRuntimeCodex && !VersionAtLeast(a.Version, MinCodexVersion)
+	return a.Runtime == model.FoundryAgentRuntimeCodex && a.Version != "" && !VersionAtLeast(a.Version, MinCodexVersion)
 }
 
 // VersionAtLeast reports version (x.y.z, maybe with a prerelease) at least
@@ -169,14 +171,14 @@ func VersionAtLeast(version, min string) bool {
 }
 
 // Runnable is what a helper that offers runtimes, with accounts, runs: a
-// Codex it says nothing of, or an outdated one, isn't.
+// Codex it says nothing of, of no version, or outdated, isn't.
 func Runnable(runtimes []model.FoundryAgentRuntime, accounts []HostAccount) []model.FoundryAgentRuntime {
 	return slices.DeleteFunc(slices.Clone(runtimes), func(r model.FoundryAgentRuntime) bool {
 		if r != model.FoundryAgentRuntimeCodex {
 			return false
 		}
 		i := slices.IndexFunc(accounts, func(a HostAccount) bool { return a.Runtime == r })
-		return i < 0 || accounts[i].Outdated()
+		return i < 0 || accounts[i].Version == "" || accounts[i].Outdated()
 	})
 }
 

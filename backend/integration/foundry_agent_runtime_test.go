@@ -91,6 +91,8 @@ func TestTheAssistantsRuntimeIsALocalInstallsOnly(t *testing.T) {
 		}
 		return ""
 	}
+	assert.Contains(t, schema(runtimeService(b, true)), "or codex (a helper's Codex, on the owner's ChatGPT plan",
+		"an external agent is told codex is a runtime")
 	for _, op := range []string{"set_assistant_runtime", "pair_assistant_helper", "revoke_assistant_helper"} {
 		assert.NotContains(t, schema(runtimeService(b, false)), op)
 		assert.Contains(t, schema(runtimeService(b, true)), op)

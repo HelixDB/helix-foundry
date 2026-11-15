@@ -76,7 +76,9 @@ var foundryOperationDocs = []foundryOperationDoc{
 	{name: "move_document", doc: "{document_id, set_id}."},
 	{name: "set_assistant_runtime", hostsOnly: true,
 		doc: "{runtime}: where the workspace's new Assistant threads run: api (Foundry's own worker, on the workspace's model) " +
-			"or claude_code (a helper on the owner's computer, on the Claude subscription its Claude Code is signed in to; " + toolFoundryGetAssistantRuntime + " says which helpers run). A thread keeps the runtime it started with."},
+			"claude_code (a helper on the owner's computer, on the Claude subscription its Claude Code is signed in to) " +
+			"or codex (a helper's Codex, on the owner's ChatGPT plan, with their own Codex setup: only once the owner confirmed it in Settings › AI models, never here); " +
+			toolFoundryGetAssistantRuntime + " says which helpers run. A thread keeps the runtime it started with."},
 	{name: "pair_assistant_helper", hostsOnly: true,
 		doc: "{}: a one-time code, valid for ten minutes, that pairs a helper on the owner's computer with this install, and the command that pairs it. Its result holds the code: say it only to the person."},
 	{name: "revoke_assistant_helper", hostsOnly: true,

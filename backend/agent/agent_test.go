@@ -852,6 +852,12 @@ func TestPromptKeepsWhatAModelNeeds(t *testing.T) {
 	assert.Len(t, trimmed, 2, "the oldest turns go, whole")
 }
 
+func TestPromptOffersEveryRuntimeAnOwnerMayChoose(t *testing.T) {
+	// An owner who confirmed Codex asks for it: the Assistant must know it is a runtime.
+	assert.Contains(t, systemPrompt, "{runtime}: api, claude_code or codex (codex only once the owner confirmed it in Settings › AI models")
+	assert.Equal(t, "assistant-9", PromptVersion)
+}
+
 func TestTitle(t *testing.T) {
 	assert.Equal(t, "Load the sales graph", Title("  Load the sales graph\nplease"))
 	long := Title(strings.Repeat("é", 200))
