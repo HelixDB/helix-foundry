@@ -158,7 +158,8 @@ func (s *Service) PreviewFoundryDashboardTile(ctx context.Context, identity *Ide
 		QueryRead, "PreviewFoundryDashboardTile", "ReadFoundryGraph"); err != nil {
 		return PreviewFoundryDashboardTileOutput{}, 0, err
 	}
-	resp, err := s.Foundry.PreviewFoundryDashboardTile(ctx, req)
+	// The backend reads the tile with the caller's read scope, as a graph read does.
+	resp, err := s.Foundry.PreviewFoundryDashboardTile(identity.WithScope(ctx, input.WorkspaceID, false), req)
 	if err != nil {
 		return PreviewFoundryDashboardTileOutput{}, 0, FoundryError(err)
 	}
@@ -399,8 +400,11 @@ type dashboardOperation[R any] struct {
 }
 
 func (o dashboardOperation[R]) CanonicalPayload() []byte { return mustCanonical(o.payload) }
-func (o dashboardOperation[R]) Execute(ctx context.Context, s *Service, _ *Identity, confirmationID string) (any, error) {
-	resp, err := o.call(ctx, s, o.req, confirmationID)
+
+// Execute runs with the caller's read scope (Identity.WithScope): publishing reads the tiles
+// for its snapshot, which the backend checks against it.
+func (o dashboardOperation[R]) Execute(ctx context.Context, s *Service, identity *Identity, confirmationID string) (any, error) {
+	resp, err := o.call(identity.WithScope(ctx, o.workspaceID, false), s, o.req, confirmationID)
 	if err != nil {
 		return nil, err
 	}
