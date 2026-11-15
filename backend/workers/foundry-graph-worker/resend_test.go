@@ -1170,26 +1170,28 @@ func TestResendOwesWhatACarriedAliasAsks(t *testing.T) {
 	})
 	// A name is owed whole, every document that asks (the engine indexes
 	// reviews by name), and no name is read after it once the job owes
-	// askingDocumentsPerJob.
-	t.Run("documents past what a job owes", func(t *testing.T) {
-		h := setup(t)
-		globex := "globex"
-		h.store.carried = append(h.store.carried, linked("r3", "doc-a", "globex", &globex, settledAt))
-		items := make([]string, 2*askingDocumentsPerJob+5)
-		for i := range items {
-			items[i] = fmt.Sprintf(`{"doc_id":"doc-%05d","reason":"unresolved"}`, i)
-		}
-		h.gateway.reviews["load-0/Customer/acme corp"] = strings.Join(items, ",")
-		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
-			t.Fatalf("%+v", outcome)
-		}
-		if !slices.Equal(h.gateway.asks, []string{"load-0/Customer/acme corp"}) {
-			t.Fatalf("read %v", h.gateway.asks)
-		}
-		if len(h.store.asked) != 2*askingDocumentsPerJob+5 || len(h.store.carried) != 1 || h.store.carried[0].ID != "r3" {
-			t.Fatalf("owed %d, carried %v", len(h.store.asked), h.store.carried)
-		}
-	})
+	// askingDocumentsPerJob: exactly that many, or more.
+	for _, n := range []int{askingDocumentsPerJob, 2*askingDocumentsPerJob + 5} {
+		t.Run(fmt.Sprintf("documents past what a job owes, %d", n), func(t *testing.T) {
+			h := setup(t)
+			globex := "globex"
+			h.store.carried = append(h.store.carried, linked("r3", "doc-a", "globex", &globex, settledAt))
+			items := make([]string, n)
+			for i := range items {
+				items[i] = fmt.Sprintf(`{"doc_id":"doc-%05d","reason":"unresolved"}`, i)
+			}
+			h.gateway.reviews["load-0/Customer/acme corp"] = strings.Join(items, ",")
+			if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+				t.Fatalf("%+v", outcome)
+			}
+			if !slices.Equal(h.gateway.asks, []string{"load-0/Customer/acme corp"}) {
+				t.Fatalf("read %v", h.gateway.asks)
+			}
+			if len(h.store.asked) != n || len(h.store.carried) != 1 || h.store.carried[0].ID != "r3" {
+				t.Fatalf("owed %d, carried %v", len(h.store.asked), h.store.carried)
+			}
+		})
+	}
 	// A name whose read fails waits, its document held back, and no other
 	// name is read: what else is owed goes, and then the attempt is retried.
 	t.Run("a read that fails", func(t *testing.T) {

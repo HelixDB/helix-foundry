@@ -40,7 +40,7 @@ func TestAskingQuery(t *testing.T) {
 	want := `{"request_type":"read","query":{"read":{"entries":[{"query":{"name":"items","root":{"value_map":{"input":{"limit":{
 	  "input":{"nodes_where":{"predicate":{"and":{"predicates":[` + eq("foundry_load", "load-1") + `,` + eq("$label", "FoundryReview") + `,` +
 		eq("type", "Customer") + `,` + eq("norm_name", `acme "corp"`) + `]}}}},
-	  "count":{"literal":300000}}},"properties":["doc_id","reason","entity_key"]}}}}],"returns":["items"]}}}`
+	  "count":{"literal":100000}}},"properties":["doc_id","reason","entity_key"]}}}}],"returns":["items"]}}}`
 	var got, wanted any
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatal(err)

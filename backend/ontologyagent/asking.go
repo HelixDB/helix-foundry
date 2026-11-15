@@ -21,12 +21,16 @@ import (
 // reads the same reviews by that pass.
 
 // AskingReviewsMax is the most reviews one name's read returns, a bound on
-// the answer's size rather than on what the read costs: about 75 bytes a
-// review, so 23 MB at most, under graphproxy.MaxResponseBytes (32 MiB). A name with
-// more reviews than that in one load keeps the documents of those read, and
-// the rest wait for the next load, which carries the alias to every document
-// that writes its name.
-const AskingReviewsMax = 300000
+// the answer's size and on what one settle owes, rather than on what the
+// read costs: about 75 bytes a review, so 7.5 MB, and under
+// graphproxy.MaxResponseBytes (32 MiB) even were every review linked to an
+// entity with a 200-byte key; and at most 100,000 documents owed at once,
+// which one resend job stages and sends well within its timeout. A load of
+// 1M reviews held 45,000 of its hottest name. A name with more reviews than
+// this in one load keeps the documents of those read, and the rest wait for
+// the next load, which carries the alias to every document that writes its
+// name.
+const AskingReviewsMax = 100000
 
 // AsksAboutName is a review reason that asks about a name the load links to
 // nothing, or to nothing a person could stand by: one the engine settles in
