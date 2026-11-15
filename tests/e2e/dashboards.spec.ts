@@ -88,7 +88,7 @@ test("builds a dashboard from the Assistant's card, which its person runs", asyn
   await card.getByRole("button", { name: "Create", exact: true }).click();
   await expect(card.getByText("Ran", { exact: true })).toBeVisible();
   await expect(
-    dock.getByText(/You ran this action: it succeeded/),
+    dock.getByText("You ran this action: it started."),
   ).toBeVisible();
   await card.getByRole("link", { name: "Open the dashboard" }).click();
   await expect(page).toHaveURL(/\/dashboards\/dash_/);
@@ -438,7 +438,7 @@ test("on a dashboard's page, the Assistant's renames, pins and deletes show at o
   await run(
     "Pin this dashboard",
     "Pin the dashboard “Quarterly revenue” for everyone",
-    "Apply",
+    "Pin",
   );
   await expect(page.getByRole("main").getByText("Pinned")).toBeVisible();
   await run(
