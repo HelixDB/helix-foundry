@@ -679,6 +679,218 @@ describe("where the Assistant runs", () => {
     });
     expect(reason(again)).toBe("FOUNDRY_AGENT_HOST_OFFLINE");
   });
+
+  /** The mock as a local install's API, with its helper's pair stand-in. */
+  async function localInstall() {
+    vi.resetModules();
+    vi.stubEnv("MOCK_LOCAL_TOKEN", "local-token");
+    vi.stubEnv("MOCK_AI_DEFAULT", "anthropic");
+    const local = await import("../../mock/state");
+    const hosts = await import("../../mock/routes/agent-hosts");
+    const at = harness(
+      (await import("../../mock/routes")).routes,
+      local.db.users,
+    );
+    local.resetState();
+    let n = 0;
+    /** A message's turn, every event of it once it ended, and the thread's newest action. */
+    const turn = async (text: string, threadId?: string) => {
+      const sent = await at("POST", `${A}/turns`, {
+        text,
+        clientToken: `local-${++n}`,
+        ...(threadId && { threadId }),
+      });
+      expect(sent.status).toBe(200);
+      later(60_000);
+      const page = (
+        await at("GET", `${A}/turns/${sent.body.turn.id}/events?afterSeq=0`)
+      ).body as ListAgentTurnEventsResponse;
+      const evs = (page.events || []).map((e) => parseAgentEvent(e.eventJson)!);
+      const thread = await at("GET", `${A}/threads/${sent.body.thread.id}`);
+      return {
+        sent,
+        page,
+        events: evs,
+        said: evs
+          .filter((e) => e.type === "text")
+          .map((e) => (e as { text: string }).text)
+          .join(" "),
+        action: (thread.body.actions || []).at(-1),
+      };
+    };
+    return { at, local, hosts, turn };
+  }
+
+  it("pairs a helper with a code its pair command spends once, within ten minutes", async () => {
+    const { at, hosts } = await localInstall();
+    const pairing = (await at("POST", `${A}/host-pairings`, {})).body;
+    expect(hosts.pairHelper({ code: "hxp_unknown" }).status).toBe(404);
+    const paired = hosts.pairHelper({ code: pairing.code, name: "Ada's Mac" });
+    expect(paired.status).toBe(200);
+    expect(hosts.pairHelper({ code: pairing.code }).body).toEqual({
+      error: {
+        code: "pairing_invalid",
+        message:
+          "the pairing code is unknown, used or expired: make another in Foundry",
+      },
+    });
+    const listed = (await at("GET", `${A}/runtime`)).body.runtime;
+    expect(listed.online).toEqual(["claude_code"]);
+    expect(listed.hosts).toEqual([
+      expect.objectContaining({
+        id: (paired.body as { host_id: string }).host_id,
+        name: "Ada's Mac",
+        runtimes: ["claude_code"],
+        accounts: [
+          { runtime: "claude_code", state: "signed_in", subscription: "max" },
+        ],
+        online: true,
+      }),
+    ]);
+    // A code past its ten minutes pairs nothing.
+    const late = (await at("POST", `${A}/host-pairings`, {})).body;
+    later(10 * 60_000 + 1);
+    expect(hosts.pairHelper({ code: late.code }).status).toBe(404);
+    // A helper that hasn't said what its CLI is signed in to yet.
+    const fresh = (await at("POST", `${A}/host-pairings`, {})).body;
+    hosts.pairHelper({ code: fresh.code, name: "Lab", account: null });
+    expect(
+      (await at("GET", `${A}/runtime`)).body.runtime.hosts[0],
+    ).toMatchObject({ name: "Lab", accounts: [] });
+  });
+
+  it("runs a helper's thread on Claude Code, and fails it in the backend's words while it is signed out", async () => {
+    const { at, local, turn } = await localInstall();
+    await at("PATCH", `${A}/runtime`, { runtime: "claude_code" });
+    Object.assign(local.config, {
+      agentHosts: [{ name: "Ada's Mac", runtimes: ["claude_code"] }],
+    });
+    const ran = await turn("What ontologies do I have?");
+    expect(ran.events[0]).toEqual({
+      type: "started",
+      model: "Claude Code",
+      attempt: 1,
+    });
+    expect(ran.page.status).toBe("done");
+
+    Object.assign(local.config, {
+      agentHosts: [
+        {
+          name: "Ada's Mac",
+          runtimes: ["claude_code"],
+          account: { state: "signed_out" },
+        },
+      ],
+    });
+    const listed = (await at("GET", `${A}/runtime`)).body.runtime;
+    expect(listed.hosts[0].accounts).toEqual([
+      { runtime: "claude_code", state: "signed_out" },
+    ]);
+    const out = await turn("And now?", ran.sent.body.thread.id);
+    expect(out.page.status).toBe("failed");
+    expect(out.events.at(-1)).toEqual({
+      type: "finished",
+      status: "failed",
+      reason: "failed",
+      error:
+        "Claude Code isn't signed in on the computer running the helper. Run claude, then /login there, then send your message again.",
+    });
+  });
+
+  it("prepares where new threads run, and a helper's revoke, as cards its owner runs", async () => {
+    const { at, local, turn } = await localInstall();
+    const chose = await turn("Run new threads on my Claude subscription");
+    expect(
+      chose.events.some(
+        (e) =>
+          e.type === "tool_call" &&
+          e.name === "helix_foundry_get_assistant_runtime",
+      ),
+    ).toBe(true);
+    expect(chose.action).toMatchObject({
+      operation: "set_assistant_runtime",
+      target: "workspace:ws_acme",
+      status: "prepared",
+    });
+    expect(JSON.parse(chose.action.displayJson)).toEqual({
+      runtime: "claude_code",
+      current: "api",
+      online: false,
+    });
+    expect(JSON.parse(chose.action.payloadJson)).toEqual({
+      runtime: "claude_code",
+    });
+    expect(chose.said).toMatch(/No helper is running yet/);
+    const ran = await at("POST", `${A}/actions/${chose.action.id}:execute`, {
+      payloadHash: chose.action.payloadHash,
+    });
+    expect(ran.body.action.status).toBe("succeeded");
+    expect(JSON.parse(ran.body.action.resultJson).result).toEqual({
+      runtime: "claude_code",
+      online: [],
+    });
+    expect((await at("GET", `${A}/runtime`)).body.runtime.runtime).toBe(
+      "claude_code",
+    );
+    later(60_000);
+    const went = (
+      await at(
+        "GET",
+        `${A}/turns/${ran.body.continuation.id}/events?afterSeq=0`,
+      )
+    ).body as ListAgentTurnEventsResponse;
+    expect(
+      went.events!.map((e) => parseAgentEvent(e.eventJson)),
+    ).toContainEqual(
+      expect.objectContaining({
+        type: "text",
+        text: "New threads run on your Claude subscription now, once its helper runs on your computer. This thread keeps running where it started.",
+      }),
+    );
+    // New threads now run on the helper: once one runs, the agent finds
+    // there is nothing to switch.
+    Object.assign(local.config, {
+      agentHosts: [{ name: "Ada's Mac", runtimes: ["claude_code"] }],
+    });
+    expect(
+      (await turn("Switch the Assistant to Claude Code")).action,
+    ).toBeUndefined();
+    const revoke = await turn("Revoke the helper");
+    expect(JSON.parse(revoke.action.displayJson)).toEqual({
+      host: { id: "01JHOST0000000000000000000", name: "Ada's Mac" },
+      runtimes: ["claude_code"],
+      online: true,
+    });
+    const revoked = await at(
+      "POST",
+      `${A}/actions/${revoke.action.id}:execute`,
+      { payloadHash: revoke.action.payloadHash },
+    );
+    expect(revoked.body.action.status).toBe("succeeded");
+    expect((await at("GET", `${A}/runtime`)).body.runtime.hosts).toEqual([]);
+    // No helper runs new threads now: back on the workspace's model, the
+    // agent finds none to revoke.
+    expect(
+      reason(await at("POST", `${A}/turns`, { text: "Hi", clientToken: "x" })),
+    ).toBe("FOUNDRY_AGENT_HOST_OFFLINE");
+    await at("PATCH", `${A}/runtime`, { runtime: "api" });
+    expect((await turn("Revoke the helper")).said).toMatch(
+      /^No helper is paired with this install/,
+    );
+  });
+
+  it("prepares neither hosted, where the worker runs every thread", async () => {
+    const c = await card("Run new threads on my Claude subscription");
+    expect(c.action).toBeUndefined();
+    expect(c.said).toMatch(/chosen on a local install of Foundry only/);
+    expect(
+      c.events.some(
+        (e) =>
+          e.type === "tool_call" &&
+          e.name === "helix_foundry_get_assistant_runtime",
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("actions", () => {

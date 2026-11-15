@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
 import type {
+  AgentHelperRuntime,
   AgentRuntime,
   FoundryAgentHost,
+  FoundryAgentHostAccount,
   FoundryAgentHostPairingResponse,
   FoundryAgentHostResponse,
   FoundryAgentRuntimeResponse,
@@ -19,59 +21,108 @@ import { foundryPrecondition as refused } from "./ai";
 // on the worker.
 //
 // The mock runs no helper: its scripted agent answers a helper's thread as
-// it answers any (./agent.ts), once a helper of its runtime is online.
-// `{"agentHosts": [{"name": "Ada's Mac", "runtimes": ["claude_code"],
-// "online": true}]}` pairs helpers until the next reset; a pairing code
-// pairs nothing by itself.
+// it answers any (./agent.ts), once a helper of its runtime is online, and
+// fails it in the backend's words while that helper's CLI is signed out.
+// Helpers come from two places, until the next reset:
+// - `{"agentHosts": [{"name": "Ada's Mac", "runtimes": ["claude_code"],
+//   "online": true, "account": {"state": "signed_in", "subscription":
+//   "max"}}]}` pairs some (account defaults to a Max subscription; null is
+//   a helper that hasn't said yet; online false was last seen an hour ago);
+// - POST /__mock/agent-host/pair {code, name?, account?} spends a pairing
+//   code as a helper's pair command does (once, within ten minutes), and
+//   the helper it pairs runs: online, on Claude Code.
 
-type Helper = Exclude<AgentRuntime, "api">;
+type Account = Omit<FoundryAgentHostAccount, "runtime">;
 type Knobs = {
-  agentHosts?: { name: string; runtimes: Helper[]; online?: boolean }[];
+  agentHosts?: {
+    name: string;
+    runtimes: AgentHelperRuntime[];
+    online?: boolean;
+    account?: Account | null;
+  }[];
 };
 const knobs = config as typeof config & Knobs;
+
+/** A helper the mock's pair stand-in paired. */
+type Paired = {
+  id: string;
+  name: string;
+  account: Account | null;
+  createdAt: string;
+};
 
 const state = {
   runtimes: new Map<string, AgentRuntime>(),
   revoked: new Set<string>(),
+  // Pairing codes made and not yet spent, with when each stops pairing.
+  codes: new Map<string, number>(),
+  paired: [] as Paired[],
 };
 onReset(() => {
   state.runtimes.clear();
   state.revoked.clear();
+  state.codes.clear();
+  state.paired = [];
   delete knobs.agentHosts;
 });
 
 const RUNTIMES: AgentRuntime[] = ["api", "claude_code", "codex"];
 const PAIRING_MS = 10 * 60_000;
 const ONLINE_MS = 30_000;
+const MAX_SUBSCRIPTION = { state: "signed_in", subscription: "max" } as const;
+// When the mock's helpers paired: they have been paired a day.
+const PAIRED_AT = () => new Date(Date.now() - 86_400_000).toISOString();
 
-/** The helpers paired by agentHosts and not revoked, with stable ids. */
+const accountsOf = (runtimes: AgentHelperRuntime[], a: Account | null) =>
+  a ? runtimes.map((runtime) => ({ runtime, ...a })) : [];
+
+/** The helpers paired and not revoked, newest first, with stable ids. */
 function hosts(): FoundryAgentHost[] {
-  return (knobs.agentHosts ?? [])
-    .map((h, i) => ({
+  const seen = (online: boolean) =>
+    new Date(Date.now() - (online ? 1_000 : 3_600_000)).toISOString();
+  return [
+    ...state.paired.map((p) => ({
+      id: p.id,
+      name: p.name,
+      runtimes: ["claude_code" as const],
+      accounts: accountsOf(["claude_code"], p.account),
+      version: "0.1.0",
+      platform: "darwin-arm64",
+      createdAt: p.createdAt,
+      lastSeenAt: seen(true),
+      online: true,
+      revokedAt: null,
+    })),
+    ...(knobs.agentHosts ?? []).map((h, i) => ({
       id: `01JHOST${String(i).padStart(19, "0")}`,
       name: h.name,
       runtimes: h.runtimes,
+      accounts: accountsOf(
+        h.runtimes,
+        h.account === undefined ? MAX_SUBSCRIPTION : h.account,
+      ),
       version: "0.1.0",
       platform: "darwin-arm64",
-      createdAt: now(),
-      lastSeenAt: new Date(
-        Date.now() - (h.online === false ? 3_600_000 : 1_000),
-      ).toISOString(),
+      createdAt: PAIRED_AT(),
+      lastSeenAt: seen(h.online !== false),
       online: h.online !== false,
       revokedAt: null,
-    }))
-    .filter((h) => !state.revoked.has(h.id));
+    })),
+  ].filter((h) => !state.revoked.has(h.id));
 }
 
-/** Whether a helper that runs runtime is online. */
-export function helperOnline(runtime: Helper): boolean {
-  return hosts().some(
+/** The helpers online now that run runtime. */
+const running = (runtime: AgentHelperRuntime) =>
+  hosts().filter(
     (h) =>
       h.online &&
       Date.now() - Date.parse(h.lastSeenAt!) < ONLINE_MS &&
       h.runtimes!.includes(runtime),
   );
-}
+
+/** Whether a helper that runs runtime is online. */
+export const helperOnline = (runtime: AgentHelperRuntime) =>
+  running(runtime).length > 0;
 
 /** Where a workspace's new threads run: always api hosted. */
 export function workspaceRuntime(ws: string): AgentRuntime {
@@ -97,6 +148,75 @@ export function hostOffline(
   );
 }
 
+/**
+ * Why a helper's turn fails as it starts, in the backend's words
+ * (hostFailureText): its CLI is signed out on every helper online that
+ * runs it. Undefined for a turn that runs.
+ */
+export function helperFailure(runtime: AgentRuntime): string | undefined {
+  if (runtime === "api") return undefined;
+  const online = running(runtime);
+  if (
+    !online.length ||
+    !online.every((h) =>
+      h.accounts!.some(
+        (a) => a.runtime === runtime && a.state === "signed_out",
+      ),
+    )
+  )
+    return undefined;
+  return runtime === "codex"
+    ? "Codex isn't signed in on the computer running the helper. Run codex login there, then send your message again."
+    : "Claude Code isn't signed in on the computer running the helper. Run claude, then /login there, then send your message again.";
+}
+
+/** Where the workspace's Assistant runs, as GET runtime answers it. */
+export function runtimeOf(ws: string): FoundryAgentRuntimeResponse {
+  const listed = hosts();
+  const online = [
+    ...new Set(listed.filter((h) => h.online).flatMap((h) => h.runtimes!)),
+  ].sort();
+  return {
+    runtime: { runtime: workspaceRuntime(ws), hosts: listed, online },
+  };
+}
+
+/** One helper paired and not revoked, by id. */
+export const helperById = (id: string) => hosts().find((h) => h.id === id);
+
+/**
+ * A helper's pair command, standing in for /agent-host/pair: spends a code
+ * the owner made (once, within ten minutes) on a new helper, online on
+ * Claude Code. Refused as the backend's errPairingInvalid otherwise.
+ */
+export function pairHelper(body: {
+  code?: string;
+  name?: string;
+  account?: Account | null;
+}): MockReply {
+  const expires = state.codes.get(body.code || "");
+  if (!expires || expires <= Date.now())
+    return {
+      status: 404,
+      body: {
+        error: {
+          code: "pairing_invalid",
+          message:
+            "the pairing code is unknown, used or expired: make another in Foundry",
+        },
+      },
+    };
+  state.codes.delete(body.code!);
+  const id = `01JPAIR${String(state.paired.length).padStart(19, "0")}`;
+  state.paired.unshift({
+    id,
+    name: body.name || "Ada's Mac",
+    account: body.account === undefined ? MAX_SUBSCRIPTION : body.account,
+    createdAt: now(),
+  });
+  return ok({ host_id: id });
+}
+
 /** The owner of a local install's workspace, or why not. */
 function owner(ws: string, userId: string): MockReply | undefined {
   const m = membership(ws, userId);
@@ -113,16 +233,6 @@ function owner(ws: string, userId: string): MockReply | undefined {
       "only the workspace's owner chooses where the Assistant runs",
     );
   return undefined;
-}
-
-function runtimeOf(ws: string): FoundryAgentRuntimeResponse {
-  const listed = hosts();
-  const online = [
-    ...new Set(listed.filter((h) => h.online).flatMap((h) => h.runtimes!)),
-  ].sort();
-  return {
-    runtime: { runtime: workspaceRuntime(ws), hosts: listed, online },
-  };
 }
 
 const BASE = "/v1/workspaces/{workspaceId}/foundry/agent" as const;
@@ -164,9 +274,11 @@ export const agentHostRoutes: MockRoute[] = [
       const refusal = owner(params.workspaceId!, user.id);
       if (refusal) return refusal;
       const code = "hxp_" + randomBytes(32).toString("base64url");
+      const expires = Date.now() + PAIRING_MS;
+      state.codes.set(code, expires);
       return ok({
         code,
-        expiresAt: new Date(Date.now() + PAIRING_MS).toISOString(),
+        expiresAt: new Date(expires).toISOString(),
         command: `npx -y @helixdb/foundry-agent-host@0.1.0 pair ${code}`,
       } satisfies FoundryAgentHostPairingResponse);
     },
@@ -179,7 +291,7 @@ export const agentHostRoutes: MockRoute[] = [
       if (refusal) return refusal;
       if (!/^[0-9A-Z]{26}$/.test(params.id!))
         return fail("INVALID_ARGUMENT", "id is a helper's");
-      const host = hosts().find((h) => h.id === params.id);
+      const host = helperById(params.id!);
       if (!host) return fail("NOT_FOUND", "helper not found");
       state.revoked.add(host.id);
       return ok({

@@ -2782,6 +2782,20 @@ export type AgentActionDisplays = {
     document?: AgentRef;
     decision: AgentDecision;
   };
+  // A local install's only. Where the workspace's new threads run after it
+  // (runtime) and before (current), and whether a helper that runs runtime
+  // is online (always, for api).
+  set_assistant_runtime: {
+    runtime: AgentRuntime;
+    current: AgentRuntime;
+    online: boolean;
+  };
+  // A local install's only: the helper, what it runs, whether it is online.
+  revoke_assistant_helper: {
+    host: AgentRef;
+    runtimes: AgentHelperRuntime[];
+    online: boolean;
+  };
 };
 /** The operations the Assistant may prepare (backend agent.Operations). */
 export type AgentOperation = keyof AgentActionDisplays;
@@ -2792,13 +2806,34 @@ export type AgentOperation = keyof AgentActionDisplays;
 // otherwise); hosted Helix answers FAILED_PRECONDITION, reason
 // FOUNDRY_AGENT_HOSTS_LOCAL_ONLY.
 
+/** A runtime a helper runs: a CLI on its owner's subscription. */
+export type AgentHelperRuntime = Exclude<AgentRuntime, "api">;
+
+/**
+ * v1FoundryAgentHostAccount: what one of a helper's CLIs is signed in to,
+ * as the helper last found it.
+ */
+export type FoundryAgentHostAccount = {
+  runtime?: AgentHelperRuntime;
+  // signed_in; signed_out (its turns fail until the person signs in); or
+  // unknown (the CLI didn't start).
+  state?: "signed_in" | "signed_out" | "unknown";
+  // The plan as the CLI names it (pro, max, team, ...), only when signed in
+  // on a subscription; missing for a CLI signed in some other way, whose
+  // turns don't bill a subscription.
+  subscription?: string;
+};
+
 /** v1FoundryAgentHost: a helper paired with the install (install-wide, not per workspace). */
 export type FoundryAgentHost = {
   id: string;
   // The machine's name, as the helper gave it.
   name?: string;
   // What it offers, as of its last call.
-  runtimes?: Exclude<AgentRuntime, "api">[];
+  runtimes?: AgentHelperRuntime[];
+  // What their CLIs are signed in to, as of its last call; empty until its
+  // first call after pairing.
+  accounts?: FoundryAgentHostAccount[];
   version?: string;
   // darwin-arm64, linux-x64, ...
   platform?: string;
@@ -2815,7 +2850,7 @@ export type FoundryAgentRuntime = {
   // Not revoked, newest first.
   hosts?: FoundryAgentHost[];
   // The helper runtimes an online helper offers now, sorted.
-  online?: Exclude<AgentRuntime, "api">[];
+  online?: AgentHelperRuntime[];
 };
 /** GET and PATCH .../agent/runtime */
 export type FoundryAgentRuntimeResponse = { runtime?: FoundryAgentRuntime };

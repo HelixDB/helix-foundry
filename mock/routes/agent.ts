@@ -52,14 +52,28 @@ import {
   type MockRequest,
   type MockRoute,
 } from "../http";
-import { config, db, isReply, membership, onReset } from "../state";
+import {
+  config,
+  db,
+  isReply,
+  LOCAL_TOKEN,
+  membership,
+  onReset,
+} from "../state";
 import {
   aiAssistantFailure,
   aiModel,
   aiRefusal,
   foundryPrecondition as refused,
 } from "./ai";
-import { hostOffline, workspaceRuntime } from "./agent-hosts";
+import {
+  agentHostRoutes,
+  helperById,
+  helperFailure,
+  hostOffline,
+  runtimeOf,
+  workspaceRuntime,
+} from "./agent-hosts";
 import { dataRoutes, workspaceConnectors } from "./data";
 import { databaseRoutes, tenantGraph } from "./databases";
 import { documentRoutes } from "./documents";
@@ -85,7 +99,7 @@ import { manages } from "./workspaces";
 // by afterSeq, in the backend's shapes (src/shared/wfe.ts "Agent"). The
 // mock's agent is scripted, with the read tools' outputs in their shapes.
 // It reads what a message asks for by its words and prepares one action of
-// the 12 the backend allows (agent.Operations), its display as the
+// the 14 the backend allows (agent.Operations), its display as the
 // backend's display.go names it:
 // - "create an ontology called X on database Y" (create_ontology; "on a new
 //   database Y" makes it in the workspace's first project);
@@ -107,6 +121,11 @@ import { manages } from "./workspaces";
 //   "remove", "set it to X");
 // - "connect Slack" (helix_foundry_connect: a link to the kind's form, which
 //   the dock opens in the app);
+// - on a local install, "run new threads on my Claude subscription" (or
+//   "on Foundry's model") and "revoke the helper" (set_assistant_runtime,
+//   revoke_assistant_helper on the newest helper, after
+//   helix_foundry_get_assistant_runtime); hosted, it says they are a local
+//   install's;
 // - anything else, it reads the ontologies, and the one named or on the
 //   page, and says what they hold.
 // The ontology an action acts on is the one named, else the page's, else
@@ -483,6 +502,7 @@ function wfe(
     ...documentRoutes,
     ...reviewRoutes,
     ...databaseRoutes,
+    ...agentHostRoutes,
   ].map((r) => ({ ...r, c: compileTemplate(r.path) }));
   const url = new URL(path, "http://mock");
   for (const r of compiled) {
@@ -769,9 +789,14 @@ function lref(ontologyId: string, loadId: string): AgentLoadRef {
 
 // ---------------------------------------------------------------- steps
 
+// A helper's turn runs on its CLI, as the backend names it.
 const started: Step = (c) => ({
   type: "started",
-  model: aiModel(c.workspaceId, "ask") || MODEL,
+  model:
+    state.threads.find((t) => t.id === c.turn.threadId)?.runtime ===
+    "claude_code"
+      ? "Claude Code"
+      : aiModel(c.workspaceId, "ask") || MODEL,
   attempt: 1,
 });
 const call =
@@ -853,6 +878,7 @@ const LIST = "helix_foundry_list_ontologies",
   REVIEWS = "helix_foundry_list_reviews",
   DATABASES = "helix_list_databases",
   CONNECT = "helix_foundry_connect",
+  RUNTIME = "helix_foundry_get_assistant_runtime",
   PREPARE = "helix_foundry_prepare_operation";
 
 /** What an owner or admin does that a member asked for, in the agent's words. */
@@ -869,6 +895,8 @@ const VERBS: Record<AgentOperation, string> = {
   update_document_set: "change a document set",
   move_document: "move a document",
   settle_review: "settle a review",
+  set_assistant_runtime: "choose where the Assistant runs",
+  revoke_assistant_helper: "revoke a helper",
 };
 
 /**
@@ -1226,34 +1254,43 @@ function messageScript(a: Ask, manager: boolean): Step[] {
     })),
   ];
   const t = a.text;
-  const intent: AgentOperation | "connect" | undefined = /\bconnect\b/i.test(t)
-    ? "connect"
-    : /\bcreate\b.*\bontology\b/i.test(t)
-      ? "create_ontology"
-      : /\b(settle|resolve)\b.*\breview\b|\breview about\b/i.test(t)
-        ? "settle_review"
-        : /\bsync\b/i.test(t)
-          ? "sync_connector"
-          : /\bsample\b/i.test(t)
-            ? "add_sample_data"
-            : /\bmove\b/i.test(t)
-              ? "move_document"
-              : /\b(rename|describe)\b.*\bset\b/i.test(t)
-                ? "update_document_set"
-                : /\b(create|make|add)\b.*\bset\b/i.test(t)
-                  ? "create_document_set"
-                  : /\b(revise|preview)\b/i.test(t)
-                    ? "revise_version"
-                    : /\b(generate|draft)\b/i.test(t)
-                      ? "generate_ontology"
-                      : /\bload\b.*\bcurrent\b/i.test(t)
-                        ? "set_current_load"
-                        : /\bcurrent\b/i.test(t)
-                          ? "set_current_version"
-                          : /\b(re)?load\b/i.test(t) &&
-                              !/\b(how many|which|what|when|why)\b/i.test(t)
-                            ? "create_load"
-                            : undefined;
+  const intent: AgentOperation | "connect" | undefined =
+    /\brevoke\b.*\bhelper\b/i.test(t)
+      ? "revoke_assistant_helper"
+      : /\b(run|switch|move)\b.*\b(subscription|claude code|foundry['’]s model)\b/i.test(
+            t,
+          )
+        ? "set_assistant_runtime"
+        : /\bconnect\b/i.test(t)
+          ? "connect"
+          : /\bcreate\b.*\bontology\b/i.test(t)
+            ? "create_ontology"
+            : /\b(settle|resolve)\b.*\breview\b|\breview about\b/i.test(t)
+              ? "settle_review"
+              : /\bsync\b/i.test(t)
+                ? "sync_connector"
+                : /\bsample\b/i.test(t)
+                  ? "add_sample_data"
+                  : /\bmove\b/i.test(t)
+                    ? "move_document"
+                    : /\b(rename|describe)\b.*\bset\b/i.test(t)
+                      ? "update_document_set"
+                      : /\b(create|make|add)\b.*\bset\b/i.test(t)
+                        ? "create_document_set"
+                        : /\b(revise|preview)\b/i.test(t)
+                          ? "revise_version"
+                          : /\b(generate|draft)\b/i.test(t)
+                            ? "generate_ontology"
+                            : /\bload\b.*\bcurrent\b/i.test(t)
+                              ? "set_current_load"
+                              : /\bcurrent\b/i.test(t)
+                                ? "set_current_version"
+                                : /\b(re)?load\b/i.test(t) &&
+                                    !/\b(how many|which|what|when|why)\b/i.test(
+                                      t,
+                                    )
+                                  ? "create_load"
+                                  : undefined;
   if (intent && !manager)
     return [
       started,
@@ -1270,6 +1307,9 @@ function messageScript(a: Ask, manager: boolean): Step[] {
       ),
     ];
   switch (intent) {
+    case "set_assistant_runtime":
+    case "revoke_assistant_helper":
+      return [started, ...list, ...runtimeOperation(intent, a)];
     case "connect":
       return [started, ...list, ...connect(a)];
     case "create_ontology":
@@ -1298,9 +1338,92 @@ function messageScript(a: Ask, manager: boolean): Step[] {
   return [started, ...list, ...read, ...operationOf(intent, a, o, found.named)];
 }
 
+/**
+ * Where the Assistant runs, on the workspace's target: read with
+ * helix_foundry_get_assistant_runtime, then a card. A local install's
+ * only: hosted registers neither the tool nor the operations.
+ */
+function runtimeOperation(
+  intent: "set_assistant_runtime" | "revoke_assistant_helper",
+  a: Ask,
+): Step[] {
+  if (!LOCAL_TOKEN)
+    return [
+      said(
+        () =>
+          "Where the Assistant runs is chosen on a local install of Foundry only: here it runs on the workspace’s AI model.",
+      ),
+    ];
+  const read = () => {
+    const r = runtimeOf(a.ws).runtime!;
+    return {
+      content_trust: "untrusted",
+      runtime: r.runtime,
+      online: r.online,
+      hosts: (r.hosts || []).map((h) => ({
+        id: h.id,
+        name: h.name,
+        runtimes: h.runtimes,
+        accounts: h.accounts,
+        last_seen_at: h.lastSeenAt,
+        online: h.online,
+      })),
+      settings_url: "/settings/ai",
+    };
+  };
+  const target = `workspace:${a.ws}`;
+  return [
+    call("tu_runtime", RUNTIME, { workspace_id: a.ws }),
+    result("tu_runtime", RUNTIME, read),
+    ...prepare(() => {
+      const now = runtimeOf(a.ws).runtime!;
+      if (intent === "set_assistant_runtime") {
+        const to = /\bclaude\b/i.test(a.text) ? "claude_code" : "api";
+        const online = to === "api" || (now.online || []).includes(to);
+        if (to === now.runtime)
+          return to === "api"
+            ? "New threads already run on the workspace’s AI model."
+            : "New threads already run on your Claude subscription.";
+        return {
+          operation: "set_assistant_runtime",
+          target,
+          payload: { runtime: to },
+          display: { runtime: to, current: now.runtime!, online },
+          named: true,
+          ontologyId: "",
+          said:
+            to === "api"
+              ? "I’ve prepared switching new threads back to the workspace’s AI model. Switch from the card when you’re ready."
+              : `I’ve prepared running new threads on your Claude subscription.${online ? "" : " No helper is running yet: start it on your computer first."} Switch from the card when you’re ready.`,
+        };
+      }
+      const host = (now.hosts || [])[0];
+      if (!host)
+        return "No helper is paired with this install. Pair one in Settings › AI models.";
+      const h = helperById(host.id)!;
+      return {
+        operation: "revoke_assistant_helper",
+        target,
+        payload: { host_id: h.id },
+        display: {
+          host: { id: h.id, name: h.name },
+          runtimes: h.runtimes || [],
+          online: !!h.online,
+        },
+        named: /\bhelper\b/i.test(a.text),
+        ontologyId: "",
+        said: `I’ve prepared revoking ${h.name || "the helper"}. Revoke it from the card if that’s the one.`,
+      };
+    }),
+  ];
+}
+
 /** The reads and the prepare of an operation on `o`. */
 function operationOf(
-  intent: Exclude<AgentOperation, "create_ontology">,
+  intent: Exclude<
+    AgentOperation,
+    "create_ontology" | "set_assistant_runtime" | "revoke_assistant_helper"
+  >,
   a: Ask,
   o: StoredOntology,
   named: boolean,
@@ -1879,6 +2002,23 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
             : "The decision is saved. It applies from the next load: ask me to load again when you're ready.",
         ),
       ];
+    case "set_assistant_runtime":
+      return [
+        started,
+        said(() =>
+          a.display.runtime === "api"
+            ? "New threads run on the workspace’s AI model now. This thread keeps running where it started."
+            : `New threads run on your Claude subscription now${(out.online as string[] | undefined)?.includes(a.display.runtime) ? "" : ", once its helper runs on your computer"}. This thread keeps running where it started.`,
+        ),
+      ];
+    case "revoke_assistant_helper":
+      return [
+        started,
+        said(
+          () =>
+            `${a.display.host.name || "The helper"} is revoked: it runs no more turns. Pair it again from Settings › AI models to run more.`,
+        ),
+      ];
   }
 }
 
@@ -2024,6 +2164,17 @@ function run(a: StoredAction, userId: string): MockReply {
               : { reject: { statementHash: d.reject.statement_hash } },
       });
     }
+    case "set_assistant_runtime":
+      return wfe(userId, "PATCH", `${WS(ws)}/agent/runtime`, {
+        runtime: p.runtime,
+      });
+    case "revoke_assistant_helper":
+      return wfe(
+        userId,
+        "POST",
+        `${WS(ws)}/agent/hosts/${p.host_id}:revoke`,
+        {},
+      );
   }
 }
 
@@ -2037,6 +2188,17 @@ function output(a: StoredAction, body: any) {
       return snake(body);
     case "add_sample_data":
       return snake(body);
+    // As the backend's SetAssistantRuntimeOperation and assistantHost.
+    case "set_assistant_runtime":
+      return { runtime: body.runtime.runtime, online: body.runtime.online };
+    case "revoke_assistant_helper":
+      return {
+        id: body.host.id,
+        name: body.host.name,
+        runtimes: body.host.runtimes,
+        last_seen_at: body.host.lastSeenAt,
+        online: false,
+      };
     default: {
       const [only] = Object.values(body as object);
       return snake(only);
@@ -2328,7 +2490,8 @@ export const agentRoutes: MockRoute[] = [
       // The worker runs on every provider kind, but not on a setting whose
       // tool check failed: it fails the turn for good, before it starts,
       // in its words (agent.checkFailure).
-      const unusable = aiAssistantFailure(ws);
+      const unusable =
+        runtime === "api" ? aiAssistantFailure(ws) : helperFailure(runtime);
       turn.script = unusable
         ? [
             () => ({

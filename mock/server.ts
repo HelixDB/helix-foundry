@@ -4,6 +4,7 @@ import { fail, type MockReply, type Principal } from "./http";
 import { handleReminders, mockReminders } from "./reminders";
 import { routes } from "./routes";
 import { handleDirectoryPage } from "./routes/access";
+import { pairHelper } from "./routes/agent-hosts";
 import { handleBillingPage } from "./routes/billing";
 import { handleDocumentUpload } from "./routes/documents";
 import { sendPieces } from "./routes/event-sources";
@@ -30,7 +31,7 @@ import { handleWorkos } from "./workos";
 // Test hooks: POST /__mock/reset, GET /__mock/stats, and POST /__mock/config
 // with { refuseLocalToken, accessTokenTtlSeconds, allowedRegions, checkoutCardOnFile,
 // allowedEmails, ontologyStepMs, ontologyOutcome, agentStepMs, agentOutcome,
-// agentActionTtlMs, documentUploadFailures,
+// agentActionTtlMs, agentHosts, documentUploadFailures,
 // loadStepMs, loadOutcome, documentOutcome, helixSubscription,
 // ontologyDatabaseHidden, startingQueries, indexesPending, readErrors,
 // s3RoleAccess, legacyDocumentSets, dataLayoutConflicts, enrichmentStepMs,
@@ -57,6 +58,10 @@ import { handleWorkos } from "./workos";
 // [{ id, occurredAt?, data }], workflowRunId? }, answered as
 // SendFoundryEvents answers. The WFE has no route that sends pieces, so
 // neither has the app.
+//
+// POST /__mock/agent-host/pair { code, name?, account? } spends a pairing
+// code as the Assistant's helper's pair command does
+// (./routes/agent-hosts.ts): the helper it pairs runs on Claude Code.
 //
 // /__mock/agent/v1/... calls the WFE route /v1/... as Ada's agent does
 // through the Helix MCP, with no token: starting and finishing a workflow's
@@ -150,6 +155,12 @@ const server = createServer(async (req, res) => {
           decodeURIComponent(send[1]!),
           JSON.parse(raw || "{}"),
         );
+        res.writeHead(reply.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(reply.body));
+        return;
+      }
+      if (url.pathname === "/__mock/agent-host/pair" && req.method === "POST") {
+        const reply = pairHelper(JSON.parse(raw || "{}"));
         res.writeHead(reply.status, { "Content-Type": "application/json" });
         res.end(JSON.stringify(reply.body));
         return;
