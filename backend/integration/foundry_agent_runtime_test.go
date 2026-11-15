@@ -117,8 +117,8 @@ func TestTheRuntimesOperationsAreConfirmed(t *testing.T) {
 		require.NoError(t, err)
 		return out.Result
 	}
-	assert.Equal(t, map[string]any{"runtime": "codex", "online": []string{"claude_code"}}, run("set_assistant_runtime", map[string]any{"runtime": "codex"}))
-	assert.Equal(t, "codex", b.updated.GetRuntime())
+	assert.Equal(t, map[string]any{"runtime": "claude_code", "online": []string{"claude_code"}}, run("set_assistant_runtime", map[string]any{"runtime": "claude_code"}))
+	assert.Equal(t, "claude_code", b.updated.GetRuntime())
 	paired := run("pair_assistant_helper", map[string]any{}).(map[string]string)
 	assert.Equal(t, "hxp_code", paired["code"])
 	assert.Contains(t, paired["command"], "pair hxp_code")
@@ -128,6 +128,7 @@ func TestTheRuntimesOperationsAreConfirmed(t *testing.T) {
 
 	for name, input := range map[string]FoundryOperationInput{
 		"another runtime":       {Operation: "set_assistant_runtime", Target: "workspace:workspace-1", Payload: map[string]any{"runtime": "gemini"}},
+		"codex, not offered":    {Operation: "set_assistant_runtime", Target: "workspace:workspace-1", Payload: map[string]any{"runtime": "codex"}},
 		"an extra field":        {Operation: "set_assistant_runtime", Target: "workspace:workspace-1", Payload: map[string]any{"runtime": "api", "x": 1}},
 		"an ontology target":    {Operation: "set_assistant_runtime", Target: "ontology:workspace-1/ontology-1", Payload: map[string]any{"runtime": "api"}},
 		"a pairing with fields": {Operation: "pair_assistant_helper", Target: "workspace:workspace-1", Payload: map[string]any{"name": "x"}},

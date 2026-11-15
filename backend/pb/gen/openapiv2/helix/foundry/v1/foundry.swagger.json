@@ -5654,7 +5654,7 @@
           "type": "string"
         }
       },
-      "description": "UpdateFoundryAgentRuntimeRequest sets the runtime the workspace's new\nthreads take (a thread keeps its own): api, claude_code or codex. A helper\nneed not be online to choose one; sending in its thread then is\nFAILED_PRECONDITION (reason FOUNDRY_AGENT_HOST_OFFLINE) until it is."
+      "description": "UpdateFoundryAgentRuntimeRequest sets the runtime the workspace's new\nthreads take (a thread keeps its own): api or claude_code. codex is\nFAILED_PRECONDITION (reason FOUNDRY_AGENT_RUNTIME_UNAVAILABLE): no\nconfiguration of its app-server gives it Foundry's tools alone yet. A\nhelper need not be online to choose one; sending in its thread then is\nFAILED_PRECONDITION (reason FOUNDRY_AGENT_HOST_OFFLINE) until it is."
     },
     "FoundryServiceUpdateFoundryDocumentBody": {
       "type": "object",

@@ -124,10 +124,13 @@ func TestGetAndUpdateTheRuntime(t *testing.T) {
 
 	_, err = f.s.UpdateFoundryAgentRuntime(personCtx, &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: "ws-1", Runtime: "gemini"})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-	updated, err := f.s.UpdateFoundryAgentRuntime(personCtx, &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: "ws-1", Runtime: "codex"})
+	_, err = f.s.UpdateFoundryAgentRuntime(personCtx, &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: "ws-1", Runtime: "codex"})
+	assert.Equal(t, "FOUNDRY_AGENT_RUNTIME_UNAVAILABLE", reasonOf(err), "no configuration closes Codex to its computer yet")
+	hosts.hosts = nil
+	updated, err := f.s.UpdateFoundryAgentRuntime(personCtx, &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: "ws-1", Runtime: "claude_code"})
 	require.NoError(t, err)
-	assert.Equal(t, "codex", updated.GetRuntime().GetRuntime(), "a helper need not be online to be chosen")
-	assert.Equal(t, foundrymodel.FoundryAgentRuntimeCodex, hosts.runtimes["ws-1"])
+	assert.Equal(t, "claude_code", updated.GetRuntime().GetRuntime(), "a helper need not be online to be chosen")
+	assert.Equal(t, foundrymodel.FoundryAgentRuntimeClaudeCode, hosts.runtimes["ws-1"])
 }
 
 func TestPairAndRevokeAHelper(t *testing.T) {

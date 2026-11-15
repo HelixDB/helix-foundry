@@ -58,8 +58,12 @@ func (s *Service) UpdateFoundryAgentRuntime(ctx context.Context, req *foundryv1.
 		return nil, err
 	}
 	runtime := foundrymodel.FoundryAgentRuntime(req.GetRuntime())
-	if !runtime.Valid() {
+	switch {
+	case !runtime.Valid():
 		return nil, status.Error(codes.InvalidArgument, "runtime is api, claude_code or codex")
+	case !runtime.Offered():
+		return nil, foundryPrecondition(req.GetWorkspaceId(), "FOUNDRY_AGENT_RUNTIME_UNAVAILABLE",
+			"the Assistant can't run on "+string(runtime)+" yet: choose api or claude_code")
 	}
 	if err := hosts.SetAgentRuntime(ctx, req.GetWorkspaceId(), runtime); err != nil {
 		return nil, status.Errorf(codes.Internal, "set the runtime: %v", err)

@@ -11300,8 +11300,10 @@ func (x *GetFoundryAgentRuntimeRequest) GetWorkspaceId() string {
 }
 
 // UpdateFoundryAgentRuntimeRequest sets the runtime the workspace's new
-// threads take (a thread keeps its own): api, claude_code or codex. A helper
-// need not be online to choose one; sending in its thread then is
+// threads take (a thread keeps its own): api or claude_code. codex is
+// FAILED_PRECONDITION (reason FOUNDRY_AGENT_RUNTIME_UNAVAILABLE): no
+// configuration of its app-server gives it Foundry's tools alone yet. A
+// helper need not be online to choose one; sending in its thread then is
 // FAILED_PRECONDITION (reason FOUNDRY_AGENT_HOST_OFFLINE) until it is.
 type UpdateFoundryAgentRuntimeRequest struct {
 	state         protoimpl.MessageState

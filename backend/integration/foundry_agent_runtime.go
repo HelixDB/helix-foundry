@@ -6,6 +6,7 @@ import (
 	"time"
 
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
+	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
 // Where a local install's Assistant runs (Service.AgentHosts): Foundry's own
@@ -168,8 +169,8 @@ func (s *Service) validateAssistantOperation(ctx context.Context, identity *Iden
 	switch input.Operation {
 	case "set_assistant_runtime":
 		var payload SetAssistantRuntimePayload
-		if decodeStrict(raw, &payload) != nil || (payload.Runtime != "api" && payload.Runtime != "claude_code" && payload.Runtime != "codex") {
-			return nil, true, invalid("set_assistant_runtime takes payload {runtime}: api, claude_code or codex")
+		if decodeStrict(raw, &payload) != nil || !model.FoundryAgentRuntime(payload.Runtime).Offered() {
+			return nil, true, invalid("set_assistant_runtime takes payload {runtime}: api or claude_code")
 		}
 		req := &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: workspaceID, Runtime: payload.Runtime}
 		return SetAssistantRuntimeOperation{payload: payload, req: req}, true, s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "UpdateFoundryAgentRuntime")

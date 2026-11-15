@@ -58,8 +58,8 @@ var foundryOperationDocs = []foundryOperationDoc{
 	{name: "update_document_set", doc: "{set_id, name, description}, name and description each optional."},
 	{name: "move_document", doc: "{document_id, set_id}."},
 	{name: "set_assistant_runtime", hostsOnly: true,
-		doc: "{runtime}: where the workspace's new Assistant threads run: api (Foundry's own worker, on the workspace's model), " +
-			"claude_code or codex (a helper on the owner's computer, on the Claude or ChatGPT subscription its CLI is signed in to; " + toolFoundryGetAssistantRuntime + " says which helpers run). A thread keeps the runtime it started with."},
+		doc: "{runtime}: where the workspace's new Assistant threads run: api (Foundry's own worker, on the workspace's model) " +
+			"or claude_code (a helper on the owner's computer, on the Claude subscription its Claude Code is signed in to; " + toolFoundryGetAssistantRuntime + " says which helpers run). A thread keeps the runtime it started with."},
 	{name: "pair_assistant_helper", hostsOnly: true,
 		doc: "{}: a one-time code, valid for ten minutes, that pairs a helper on the owner's computer with this install, and the command that pairs it. Its result holds the code: say it only to the person."},
 	{name: "revoke_assistant_helper", hostsOnly: true,

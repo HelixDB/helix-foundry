@@ -147,6 +147,12 @@ export const agentHostRoutes: MockRoute[] = [
         ?.runtime;
       if (!runtime || !RUNTIMES.includes(runtime))
         return fail("INVALID_ARGUMENT", "runtime is api, claude_code or codex");
+      if (runtime === "codex")
+        return refused(
+          ws,
+          "FOUNDRY_AGENT_RUNTIME_UNAVAILABLE",
+          "the Assistant can't run on codex yet: choose api or claude_code",
+        );
       state.runtimes.set(ws, runtime);
       return ok(runtimeOf(ws));
     },

@@ -2903,6 +2903,9 @@ export const AGENT_REFUSALS = [
   "FOUNDRY_AGENT_HOST_OFFLINE",
   // The runtime routes on a host without helpers (hosted Helix).
   "FOUNDRY_AGENT_HOSTS_LOCAL_ONLY",
+  // A runtime no workspace may choose yet: codex (no configuration of its
+  // app-server gives it Foundry's tools alone).
+  "FOUNDRY_AGENT_RUNTIME_UNAVAILABLE",
 ] as const;
 export type AgentRefusalReason = (typeof AGENT_REFUSALS)[number];
 
