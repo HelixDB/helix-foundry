@@ -63,6 +63,11 @@ const steps = (page: Page) =>
   page.getByRole("list", { name: "What each step did" });
 const canvas = (page: Page) =>
   page.getByRole("region", { name: "Steps on a canvas" });
+/** The name in the page's bar. */
+const title = (page: Page, name: string) =>
+  page
+    .getByRole("navigation", { name: "Breadcrumbs" })
+    .getByRole("heading", { name });
 /** The run open has ended as `outcome`, said in the inspector's head. */
 const ended = (page: Page, outcome: string) =>
   expect(
@@ -117,9 +122,7 @@ test("the overview counts the runs of the last days and lists the automations, w
   await expect(list).toContainText("Evening check");
   await list.getByRole("link", { name: /Evening check/ }).click();
   await expect(page).toHaveURL(new RegExp(`/automations/${evening}$`));
-  await expect(
-    page.getByRole("heading", { name: "Evening check" }),
-  ).toBeVisible();
+  await expect(title(page, "Evening check")).toBeVisible();
   await page
     .getByRole("region", { name: "Automations" })
     .getByRole("link", { name: "New automation" })
@@ -201,7 +204,9 @@ test("starts from scratch on the full canvas: adds, joins, tidies and inspects i
     .getByLabel("What should it do?")
     .fill("How many ontologies are there?");
   // A, outside a field, opens Add step: after the last step.
-  await canvas(page).locator(".react-flow__pane").click();
+  await canvas(page)
+    .locator(".react-flow__pane")
+    .click({ position: { x: 24, y: 24 } });
   await expect(inspector(page).locator(".au-summary-text")).toBeVisible();
   await page.keyboard.press("a");
   await page.getByRole("menuitem", { name: "Email me" }).click();
@@ -266,9 +271,7 @@ test("starts from scratch on the full canvas: adds, joins, tidies and inspects i
   await review.getByRole("button", { name: "Save and turn on" }).click();
   await expect(page).toHaveURL(/\/automations\/aut_[^/?]+$/);
   await expect(live(page)).toBeChecked();
-  await expect(
-    page.getByRole("heading", { name: "Count the ontologies" }),
-  ).toBeVisible();
+  await expect(title(page, "Count the ontologies")).toBeVisible();
 });
 
 test("starts from a template, runs only once approved, runs now, and colours the run on the canvas", async ({
@@ -491,9 +494,7 @@ test("the Live switch approves a waiting automation and pauses it; spaces are no
   await page.getByRole("button", { name: "Rename Waiting chain" }).click();
   await page.getByRole("textbox", { name: "Name" }).fill("Invoice count");
   await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("heading", { name: "Invoice count" }),
-  ).toBeVisible();
+  await expect(title(page, "Invoice count")).toBeVisible();
   await expect(live(page)).toBeChecked();
 
   await page.getByRole("tab", { name: "Settings" }).click();
@@ -672,7 +673,7 @@ test("leaves an action the owner didn't approve on the run, for them to run", as
     inspector(page).getByText("One action it prepared waits for you:"),
   ).toBeVisible();
   const card = inspector(page).getByRole("region", {
-    name: /^Action: Load v3 of Customer contracts/,
+    name: /^Action: Load v3 of “Customer contracts”/,
   });
   await card.getByRole("button", { name: "Load", exact: true }).click();
   await expect(card.getByText("Ran", { exact: true })).toBeVisible();
@@ -703,9 +704,7 @@ test("shows another member its steps and how far a run went, never what it found
   const alan = await context.newPage();
   await signIn(alan, "alan@example.com");
   await alan.goto(`/automations/${id}`);
-  await expect(
-    alan.getByRole("heading", { name: "Ada's summary" }),
-  ).toBeVisible();
+  await expect(title(alan, "Ada's summary")).toBeVisible();
   for (const name of ["Run now", "Rename Ada's summary", "Add step"])
     await expect(alan.getByRole("button", { name })).toHaveCount(0);
   await expect(live(alan)).toBeDisabled();

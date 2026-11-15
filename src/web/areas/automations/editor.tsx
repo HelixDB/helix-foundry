@@ -342,8 +342,6 @@ function Editor({
     setDraft({ ...current, ...next });
   };
   const setSpec = (spec: AutomationSpec) => change({ spec });
-  const dirty =
-    !!draft && (!a || !!changesOf(base ?? a, { ...draft, spec: draft.spec }));
   const discard = () => {
     setDraft(null);
     setBase(undefined);
@@ -439,6 +437,14 @@ function Editor({
     return n ? `“${stepTitle(n, lists.names, email)}”` : id;
   };
   const read = parseSpec(current.spec, named);
+  // Compared as a save sends it: trimmed, and written as the WFE writes it.
+  const dirty =
+    !!draft &&
+    (!a ||
+      !!changesOf(base ?? a, {
+        ...draft,
+        spec: read.ok ? read.spec : draft.spec,
+      }));
   const missing = current.spec.nodes.flatMap((n) => {
     const why = incomplete(n);
     return why ? [{ id: n.id, text: `${named(n.id)}: ${why}.` }] : [];
