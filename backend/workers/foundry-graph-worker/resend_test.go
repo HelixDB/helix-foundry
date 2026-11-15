@@ -1072,9 +1072,9 @@ func TestResendSettlesNames(t *testing.T) {
 // those documents go with their saved work, each request ended. Two copies
 // of one name read once. A load no longer current owes none, and the
 // alias's own document waits with it, so the alias is read when the load is
-// current again. One job reads at most carriedAliasesPerJob aliases; the
-// documents of the rest wait for the next. A read that fails retries the
-// attempt, sending nothing.
+// current again. One job reads at most carriedAliasesPerJob aliases, and no
+// more names once it owes askingDocumentsPerJob documents; the documents of
+// the rest wait for the next.
 func TestResendOwesWhatACarriedAliasAsks(t *testing.T) {
 	setup := func(t *testing.T) *harness {
 		h := newHarness(t)
@@ -1168,15 +1168,48 @@ func TestResendOwesWhatACarriedAliasAsks(t *testing.T) {
 			t.Fatalf("%d extracts, ended %+v: the document went before its last alias was read", len(calls), h.store.ended)
 		}
 	})
+	t.Run("documents past what a job owes", func(t *testing.T) {
+		h := setup(t)
+		globex := "globex"
+		h.store.carried = append(h.store.carried, linked("r3", "doc-a", "globex", &globex, settledAt))
+		items := make([]string, askingDocumentsPerJob)
+		for i := range items {
+			items[i] = fmt.Sprintf(`{"doc_id":"doc-%05d","reason":"unresolved"}`, i)
+		}
+		h.gateway.reviews["load-0/Customer/acme corp"] = strings.Join(items, ",")
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		if !slices.Equal(h.gateway.asks, []string{"load-0/Customer/acme corp"}) {
+			t.Fatalf("read %v", h.gateway.asks)
+		}
+		if len(h.store.asked) != askingDocumentsPerJob || len(h.store.carried) != 1 || h.store.carried[0].ID != "r3" {
+			t.Fatalf("owed %d, carried %v", len(h.store.asked), h.store.carried)
+		}
+	})
+	// A name whose read fails waits, its document held back, and no other
+	// name is read: what else is owed goes, and then the attempt is retried.
 	t.Run("a read that fails", func(t *testing.T) {
 		h := setup(t)
-		h.gateway.askStatus = 503
+		globex := "globex"
+		h.store.carried = append(h.store.carried, linked("r3", "doc-c", "globex", &globex, settledAt))
+		h.store.resends = append(h.store.resends, &model.FoundryLoadResend{LoadID: "load-0", DocumentID: "doc-b",
+			Reason: model.FoundryResendApproval, Requests: 1, Document: h.store.held["doc-b"]})
+		h.gateway.askStatus = 504
 		outcome := h.run(t, resendJob())
-		if outcome.RetryAt == nil || len(h.store.asked) != 0 || len(h.store.ended) != 0 {
-			t.Fatalf("%+v, owed %v, ended %v", outcome, h.store.asked, h.store.ended)
+		if outcome.RetryAt == nil || outcome.Status != "" {
+			t.Fatalf("%+v", outcome)
 		}
-		if _, calls := h.agent.calls(); len(calls) != 0 {
-			t.Fatalf("%d extracts", len(calls))
+		if len(h.gateway.asks) != 1 || len(h.store.asked) != 0 || len(h.store.carried) != 3 {
+			t.Fatalf("read %v, owed %v, carried %d", h.gateway.asks, h.store.asked, len(h.store.carried))
+		}
+		_, calls := h.agent.calls()
+		if len(calls) != 1 || len(decodeExtract(t, calls[0]).Documents) != 1 || decodeExtract(t, calls[0]).Documents[0].DocID != "doc-b" {
+			t.Fatalf("%d extracts: the approval went not alone", len(calls))
+		}
+		want := []model.FoundryResendEnd{{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 1}}
+		if !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
 		}
 	})
 }
