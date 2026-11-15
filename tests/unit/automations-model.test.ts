@@ -804,6 +804,10 @@ describe("words", () => {
   it("says a notify step as this Foundry sends it", () => {
     const quiet = node("tell", "notify", { message: "" });
     expect(nodeText(tell, NO_NAMES, true)).toBe("email you “Done”");
+    expect(nodeText(ask("  "), NO_NAMES, true)).toBe("ask the Assistant");
+    expect(nodeText(ask("Sum up."), NO_NAMES, true)).toBe(
+      "ask the Assistant: “Sum up.”",
+    );
     expect(nodeText(quiet, NO_NAMES, true)).toBe("email you what it found");
     expect(nodeText(quiet, NO_NAMES, false)).toBe(
       "note what it found in the run (this Foundry sends no email)",
@@ -919,6 +923,94 @@ describe("edits", () => {
       kind: "action",
       config: { operation: "sync_connector", connector_id: "" },
     });
+  });
+
+  it("slots a step in between a step and the steps it led to", () => {
+    const row = (id: string, y: number) => ({
+      ...node(id, "notify", { message: "" }),
+      position: { x: 0, y },
+    });
+    const chain = spec(
+      [
+        { ...manual, position: { x: 0, y: 0 } },
+        { ...ask(), position: { x: 0, y: 150 } },
+        row("tell", 300),
+        row("last", 450),
+      ],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "tell" },
+        { from: "tell", to: "last" },
+      ],
+    );
+    const added = addStep(chain, "assistant", "ask");
+    expect(added.spec.edges).toEqual([
+      { from: "start", to: "ask" },
+      { from: "tell", to: "last" },
+      { from: "ask", to: "assistant-1" },
+      { from: "assistant-1", to: "tell" },
+    ]);
+    const y = (id: string) =>
+      added.spec.nodes.find((n) => n.id === id)!.position;
+    expect(y("assistant-1")).toEqual({ x: 0, y: 300 });
+    // What came after moves down a row; what came before stays.
+    expect(y("tell").y).toBe(450);
+    expect(y("last").y).toBe(600);
+    expect(y("ask").y).toBe(150);
+    // Blank, it can't be read yet: its sentence goes top down.
+    expect(sentence(added.spec, NO_NAMES, false)).toBe(
+      "When you run it, ask the Assistant: “Summarise.”, then ask the Assistant, then note what it found in the run (this Foundry sends no email), then note what it found in the run (this Foundry sends no email).",
+    );
+    // After the last step, nothing to take over: joined after it.
+    const end = addStep(chain, "notify", "last");
+    expect(end.spec.edges).toContainEqual({ from: "last", to: "notify-1" });
+    expect(end.spec.nodes.filter((n) => n.id !== "notify-1")).toEqual(
+      chain.nodes,
+    );
+    // A new condition takes the single join as its true branch.
+    const cond = addStep(chain, "condition", "ask");
+    expect(cond.spec.edges).toContainEqual({
+      from: "condition-1",
+      to: "tell",
+      branch: "true",
+    });
+    expect(read(cond.spec).ok).toBe(true);
+    // A join into a condition stays: the condition checks the step before it.
+    const yes = node("if", "condition", { check: "answer", equals: "yes" });
+    const checked = spec(
+      [manual, ask(), yes, tell],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "if" },
+        { from: "if", to: "tell", branch: "true" },
+      ],
+    );
+    const beside = addStep(checked, "notify", "ask");
+    expect(beside.spec.edges).toContainEqual({ from: "ask", to: "if" });
+    expect(beside.spec.edges).toContainEqual({ from: "ask", to: "notify-1" });
+    expect(beside.spec.nodes.find((n) => n.id === "if")).toEqual(
+      checked.nodes[2],
+    );
+    // Fanning out: the new step takes over every join, and leads to each.
+    const fan = spec(
+      [manual, ask(), tell, node("two", "notify", { message: "" })],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "tell" },
+        { from: "ask", to: "two" },
+      ],
+    );
+    const mid = addStep(fan, "action", "ask");
+    expect(mid.spec.edges).toEqual([
+      { from: "start", to: "ask" },
+      { from: "ask", to: "action-1" },
+      { from: "action-1", to: "tell" },
+      { from: "action-1", to: "two" },
+    ]);
+    // A new condition doesn't split a fan into true and false.
+    const split = addStep(fan, "condition", "ask");
+    expect(split.spec.edges).toHaveLength(fan.edges.length + 1);
+    expect(split.spec.edges).toContainEqual({ from: "ask", to: "tell" });
   });
 
   it("removes a step, joining what came before it to what came after", () => {
