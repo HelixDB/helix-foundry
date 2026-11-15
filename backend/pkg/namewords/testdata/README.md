@@ -1,6 +1,6 @@
 word_corpus.json is the engine's crates/extraction/tests/data/word_corpus.json,
-copied byte for byte, at the contract CONTRACT names (engine branch
-word-corpus-for-foundry on ontology-v2-dev-3 until it merges). Each line is a
+copied byte for byte, at the contract CONTRACT names (first written by
+HelixDB/ontology#103, merged into ontology-v2-dev-3 as 7ecdb11fe). Each line is a
 text with what the engine reads in it: `norm` (norm_name of the text), `words`
 (the words text::WordIndex reads) and `written` (names, as norm_name gives
 them, it writes there), and for texts picked by hand `unwritten` (names it
