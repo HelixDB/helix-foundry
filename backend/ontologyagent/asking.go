@@ -13,9 +13,10 @@ import (
 // time; both send the same read of the load's reviews and keep the same
 // documents, every one of them. From contract 4.24.0 the engine indexes
 // reviews by the name they ask about (its IndexLevel::NAMES), so the read is
-// one lookup of the name intersected with the load: 1-3 ms for a name of a
-// few reviews, about 0.1 s for one of 4,500, where it was a pass over the
-// load's reviews (1.2 s at 100,000, 27-51 s at 1M). A graph whose index is
+// one lookup of the name intersected with the load: 1-4 ms for a name of up
+// to 100 reviews, about 0.1 s for one of 4,500 and 1.2 s for one of 45,000,
+// where it was a pass over the load's reviews (1.2 s at 100,000, 27-30 s at
+// 1M). A graph whose index is
 // still building (the first Extract after the engine rolls out builds it)
 // reads the same reviews by that pass.
 
