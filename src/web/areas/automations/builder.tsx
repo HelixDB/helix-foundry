@@ -76,10 +76,13 @@ export function BuilderPage() {
     { id: ws } = useWorkspace(),
     lists = useNames(ws);
   const editing = !!automationId;
+  // Read once: the builder edits from what it opened (Builder's base).
   const existing = useQuery({
     ...automationQueries.automation(ws, automationId),
     enabled: editing,
     refetchInterval: false,
+    refetchOnWindowFocus: false,
+    staleTime: Infinity,
   });
   const template =
     TEMPLATES.find((t) => t.id === params.get("template")) ??
@@ -123,7 +126,7 @@ export function BuilderPage() {
       ]}
     />
   );
-  if (editing && existing.isError)
+  if (editing && existing.isError && !existing.data)
     return (
       <Page>
         {header}
@@ -183,6 +186,14 @@ function Builder({
     qc = useQueryClient();
   const list = useQuery(automationQueries.list(ws)),
     email = list.data?.email ?? true;
+  // What the edit is made from: the automation as the builder opened it,
+  // whatever its query reads meanwhile, so a save names that revision and
+  // never writes over a change made elsewhere (the WFE refuses it). A new
+  // one, once its create succeeded, is that automation: saving again edits
+  // it rather than making a second, and its one token makes a retried
+  // create the same automation.
+  const [base, setBase] = useState(existing),
+    [token] = useState(() => crypto.randomUUID());
   const phone = useMedia("(max-width: 760px)");
   const [draft, setDraft] = useState(start),
     [selected, setSelected] = useState<string | undefined>(
@@ -208,11 +219,9 @@ function Builder({
     return why ? [{ id: n.id, why }] : [];
   });
   const read = parseSpec(spec, name);
+  // Compared as the save sends it: trimmed, and written as the WFE writes it.
   const unchanged =
-    !!existing &&
-    draft.name.trim() === existing.name &&
-    draft.description.trim() === (existing.description || "") &&
-    canonicalJson(spec) === existing.specJson;
+    !!base && read.ok && !changesOf(base, { ...draft, spec: read.spec });
   const problems = [
     ...missing.map((m) => ({ id: m.id, text: `${name(m.id)}: ${m.why}.` })),
     ...(!missing.length && !read.ok
@@ -362,16 +371,17 @@ function Builder({
         <div className="au-builder-actions">
           <Button
             onClick={() =>
-              navigate(
-                existing ? paths.automation(existing.id) : paths.automations(),
-              )
+              navigate(base ? paths.automation(base.id) : paths.automations())
             }
           >
             Cancel
           </Button>
           <Button
             variant="primary"
-            disabled={!!problems.length || unchanged}
+            disabled={
+              !!problems.length ||
+              (unchanged && base?.status !== "needs_approval")
+            }
             onClick={() => setReviewing(true)}
           >
             Review and save
@@ -381,7 +391,9 @@ function Builder({
       {reviewing && read.ok && (
         <ReviewDialog
           draft={{ ...draft, spec: read.spec }}
-          existing={existing}
+          base={base}
+          token={token}
+          onBase={setBase}
           template={template}
           lists={lists}
           email={email}
@@ -397,14 +409,40 @@ function Builder({
 }
 
 /**
+ * What a save sends to change `base` into `draft`: its name, description and
+ * spec where they differ, the spec compared as the WFE writes it; undefined
+ * when nothing differs, which sends nothing (the WFE refuses an edit that
+ * changes nothing).
+ */
+function changesOf(
+  base: FoundryAutomation,
+  draft: Draft,
+): { name?: string; description?: string; specJson?: string } | undefined {
+  const before = parseSpec(base.specJson || ""),
+    specJson = canonicalJson(draft.spec),
+    name = draft.name.trim(),
+    description = draft.description.trim();
+  const changes = {
+    ...(name !== base.name && { name }),
+    ...(description !== (base.description || "") && { description }),
+    ...((!before.ok || canonicalJson(before.spec) !== specJson) && {
+      specJson,
+    }),
+  };
+  return Object.keys(changes).length ? changes : undefined;
+}
+
+/**
  * What the owner approves: the automation in a sentence and every step as
  * it will run unattended, as them. Save and turn on approves it; Save only
  * keeps it waiting for approval. An edit that only moved steps keeps the
- * approval it had.
+ * approval it had; one that changes nothing only approves.
  */
 function ReviewDialog({
   draft,
-  existing,
+  base,
+  token,
+  onBase,
   template,
   lists,
   email,
@@ -412,7 +450,9 @@ function ReviewDialog({
   onSaved,
 }: {
   draft: Draft;
-  existing?: FoundryAutomation;
+  base?: FoundryAutomation;
+  token: string;
+  onBase: (a: FoundryAutomation) => void;
   template: TemplateId;
   lists: ReturnType<typeof useNames>;
   email: boolean;
@@ -421,34 +461,30 @@ function ReviewDialog({
 }) {
   const { id: ws } = useWorkspace();
   const [pending, setPending] = useState<"on" | "save" | null>(null),
-    [error, setError] = useState(""),
-    [token] = useState(() => crypto.randomUUID());
+    [error, setError] = useState("");
   const save = async (turnOn: boolean) => {
     setPending(turnOn ? "on" : "save");
     setError("");
     try {
-      const specJson = canonicalJson(draft.spec);
-      let a = existing
-        ? await updateAutomation(ws, existing.id, {
-            expectedRevision: existing.revision || "",
-            ...(draft.name.trim() !== existing.name && {
-              name: draft.name.trim(),
-            }),
-            ...(draft.description.trim() !== (existing.description || "") && {
-              description: draft.description.trim(),
-            }),
-            ...(specJson !== existing.specJson && { specJson }),
-          })
-        : await createAutomation(
+      const changes = base && changesOf(base, draft);
+      let a = !base
+        ? await createAutomation(
             ws,
             {
               name: draft.name.trim(),
               description: draft.description.trim(),
-              specJson,
+              specJson: canonicalJson(draft.spec),
               clientToken: token,
             },
             template,
-          );
+          )
+        : changes
+          ? await updateAutomation(ws, base.id, {
+              expectedRevision: base.revision || "",
+              ...changes,
+            })
+          : base;
+      onBase(a);
       if (turnOn && a.status === "needs_approval")
         a = await approveAutomation(ws, a.id, a.revision || "");
       onSaved(a);
@@ -465,11 +501,11 @@ function ReviewDialog({
     }
   };
   // Only moved, renamed or described again, it keeps the approval it had.
-  const before = existing && parseSpec(existing.specJson || "");
+  const before = base && parseSpec(base.specJson || "");
   const approved =
     !!before?.ok &&
     sameSteps(before.spec, draft.spec) &&
-    existing?.status !== "needs_approval";
+    base?.status !== "needs_approval";
   return (
     <Dialog
       title="Review what runs unattended"

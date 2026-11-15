@@ -31,10 +31,11 @@ import {
 import { nodeIcon, stepTitle } from "./parts";
 
 // The builder's graph as an outline: every step in the order a run takes
-// them, what comes before and after each (a condition's by Yes and No), and
-// a menu to add a step after it, join it to another, cut a join or remove
-// it. The same graph as the canvas, for keyboards and screen readers, and
-// the place to edit it on a phone, where the canvas only shows it.
+// them, what comes before and after each (a condition's by when met and
+// otherwise), and a menu to add a step after it, join it to another, cut a
+// join or remove it. The same graph as the canvas, for keyboards and screen
+// readers, and the place to edit it on a phone, where the canvas only shows
+// it.
 
 const ADDABLE: Exclude<Kind, "trigger">[] = [
   "assistant",
@@ -72,7 +73,11 @@ export function Outline({
     return t.length > 60 ? t.slice(0, 59).join("").trimEnd() + "…" : t.join("");
   };
   const via = (branch?: string) =>
-    branch === "true" ? " (yes)" : branch === "false" ? " (no)" : "";
+    branch === "true"
+      ? " (when met)"
+      : branch === "false"
+        ? " (otherwise)"
+        : "";
   return (
     <ol className="au-outline" aria-label="Steps">
       {order.map((id) => {

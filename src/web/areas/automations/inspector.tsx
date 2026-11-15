@@ -654,13 +654,13 @@ function ConditionFields({
           : "It reads the count of the step before it: the Assistant’s, the documents that arrived, or the rows a sync wrote."}
       </p>
       <dl className="au-branches">
-        <dt>Yes</dt>
+        <dt>When met</dt>
         <dd>{leads("true")}</dd>
-        <dt>No</dt>
+        <dt>Otherwise</dt>
         <dd>{leads("false")}</dd>
       </dl>
       <Button size="sm" icon={ArrowDownUp} onClick={onSwap}>
-        Swap yes and no
+        Swap the two ways
       </Button>
     </>
   );

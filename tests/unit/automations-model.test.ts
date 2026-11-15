@@ -12,6 +12,7 @@ import {
   actionText,
   addStep,
   automationRefusal,
+  automationsUnavailable,
   blankConfig,
   canonicalJson,
   cannotConnect,
@@ -31,6 +32,7 @@ import {
   parseOutput,
   parseSpec,
   reaches,
+  removeSelection,
   removeStep,
   runUsd,
   sameSteps,
@@ -437,6 +439,43 @@ describe("parseSpec", () => {
     ).toBe("node ask is in a cycle: an automation's edges go one way");
     expect(error(spec([manual, tell]))).toBe(
       "node tell isn't reached from the trigger: connect it",
+    );
+    // Nothing waits on the work its own steps start: it would never stop.
+    const synced = node("start", "trigger", {
+      kind: "sync_finished",
+      connector_id: "c1",
+      outcome: "any",
+    });
+    const sync = node("sync", "action", {
+      operation: "sync_connector",
+      connector_id: "c1",
+    });
+    expect(error(spec([synced, sync], [{ from: "start", to: "sync" }]))).toBe(
+      "node sync syncs the connector its trigger waits on, so each run would start another: start it on a schedule instead",
+    );
+    const other = node("sync", "action", {
+      operation: "sync_connector",
+      connector_id: "c2",
+    });
+    expect(error(spec([synced, other], [{ from: "start", to: "sync" }]))).toBe(
+      "",
+    );
+    const loaded = node("start", "trigger", {
+      kind: "load_ready",
+      ontology_id: "o1",
+    });
+    expect(
+      error(
+        spec(
+          [
+            loaded,
+            ask("Load it", [{ operation: "create_load", ontology_id: "o1" }]),
+          ],
+          [{ from: "start", to: "ask" }],
+        ),
+      ),
+    ).toBe(
+      "node ask loads the ontology its trigger waits on, so each run would start another: start it on a schedule instead",
     );
   });
 
@@ -884,6 +923,43 @@ describe("edits", () => {
     });
   });
 
+  it("removes what a canvas deleted at once, keeping the steps after joined", () => {
+    const chain = spec(
+      [manual, ask(), tell],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "tell" },
+      ],
+    );
+    // A deleted step comes with its joins: they are bridged, not cut.
+    expect(
+      removeSelection(
+        chain,
+        ["ask"],
+        [
+          { from: "start", to: "ask" },
+          { from: "ask", to: "tell" },
+        ],
+      ),
+    ).toEqual(spec([manual, tell], [{ from: "start", to: "tell" }]));
+    // A join deleted alone is cut.
+    expect(
+      removeSelection(chain, [], [{ from: "ask", to: "tell" }]).edges,
+    ).toEqual([{ from: "start", to: "ask" }]);
+    // Two steps in a row: the trigger joins what came after both.
+    const two = spec(
+      [manual, ask(), tell, node("two", "notify", { message: "" })],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "tell" },
+        { from: "tell", to: "two" },
+      ],
+    );
+    expect(removeSelection(two, ["ask", "tell"], two.edges).edges).toEqual([
+      { from: "start", to: "two" },
+    ]);
+  });
+
   it("joins steps only forward, once, and a condition to one step before it", () => {
     const yes = node("if", "condition", { check: "answer", equals: "yes" });
     const s = spec(
@@ -1139,5 +1215,19 @@ describe("automations", () => {
     ).toBeUndefined();
     expect(automationRefusal(new ApiError("x", 400))).toBeUndefined();
     expect(automationRefusal(new Error("x"))).toBeUndefined();
+    // Off, or not served by this WFE yet, the section says so calmly.
+    expect(
+      automationsUnavailable(
+        new ApiError("off", 400, 9, [
+          { reason: "FOUNDRY_AUTOMATIONS_DISABLED" },
+        ]),
+      ),
+    ).toBe(true);
+    expect(automationsUnavailable(new ApiError("Not Found", 404))).toBe(true);
+    expect(automationsUnavailable(new ApiError("unimplemented", 501))).toBe(
+      true,
+    );
+    expect(automationsUnavailable(refused)).toBe(false);
+    expect(automationsUnavailable(new Error("x"))).toBe(false);
   });
 });

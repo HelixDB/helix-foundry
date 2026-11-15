@@ -487,6 +487,36 @@ function checkGraph(
         nodeId: n.id,
       };
   }
+  // An action on the work its trigger waits for would start another run
+  // each time it ran: the automation would never stop.
+  const waitsOn = triggers[0]!.kind === "trigger" && triggers[0]!.config;
+  for (const n of spec.nodes) {
+    const actions =
+      n.kind === "action"
+        ? [n.config]
+        : n.kind === "assistant"
+          ? (n.config.allow ?? [])
+          : [];
+    for (const a of actions) {
+      const what =
+        waitsOn &&
+        waitsOn.kind === "sync_finished" &&
+        a.operation === "sync_connector" &&
+        a.connector_id === waitsOn.connector_id
+          ? "syncs the connector"
+          : waitsOn &&
+              waitsOn.kind === "load_ready" &&
+              a.operation === "create_load" &&
+              a.ontology_id === waitsOn.ontology_id
+            ? "loads the ontology"
+            : "";
+      if (what)
+        return {
+          error: `${name(n.id)} ${what} its trigger waits on, so each run would start another: start it on a schedule instead`,
+          nodeId: n.id,
+        };
+    }
+  }
   // Kahn's, ties in the order the nodes were given.
   const trigger = triggers[0]!.id;
   const waiting = new Map<string, number>();
@@ -1405,6 +1435,31 @@ export const disconnect = (
   edges: spec.edges.filter((e) => !(e.from === from && e.to === to)),
 });
 
+/**
+ * The spec without what a canvas deleted at once: its steps, each removed as
+ * `removeStep` does (so the steps after them stay joined), then the joins
+ * cut between steps that remain. A canvas hands a deleted step's joins over
+ * with it; cut first, the step would leave nothing to join.
+ *
+ * @example
+ * // trigger → ask → mail, the ask step deleted with its two joins:
+ * removeSelection(spec, ["ask"], [{ from: "start", to: "ask" }, { from: "ask", to: "mail" }]);
+ * // trigger → mail
+ */
+export function removeSelection(
+  spec: AutomationSpec,
+  steps: string[],
+  joins: { from: string; to: string }[],
+): AutomationSpec {
+  const gone = new Set(steps);
+  return joins
+    .filter((j) => !gone.has(j.from) && !gone.has(j.to))
+    .reduce(
+      (s, j) => disconnect(s, j.from, j.to),
+      steps.reduce((s, id) => removeStep(s, id), spec),
+    );
+}
+
 /** The spec with a node's config replaced (its kind kept). */
 export const setConfig = (
   spec: AutomationSpec,
@@ -1617,3 +1672,17 @@ export function automationRefusal(
   }
   return undefined;
 }
+
+/**
+ * Whether automations aren't available here: off for this Foundry
+ * (FOUNDRY_AUTOMATIONS_DISABLED), or a WFE that serves no automations'
+ * routes yet (404, or 501 for an RPC it doesn't implement). The section
+ * then says so calmly, as no error.
+ *
+ * @example
+ * automationsUnavailable(new ApiError("Not Found", 404)); // true
+ * automationsUnavailable(new ApiError("boom", 500)); // false
+ */
+export const automationsUnavailable = (error: unknown) =>
+  automationRefusal(error) === "FOUNDRY_AUTOMATIONS_DISABLED" ||
+  (error instanceof ApiError && (error.status === 404 || error.status === 501));

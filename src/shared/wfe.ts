@@ -3477,7 +3477,7 @@ export type FoundryAutomationRun = {
   triggerEventJson?: string;
   // int64.
   specRevision?: string;
-  // AutomationSpec as JSON, on a run got alone.
+  // AutomationSpec as JSON, on a run got alone; none on a skipped run.
   specJson?: string;
   // The owner's Assistant thread its Assistant steps ran in: theirs alone.
   threadId?: string;

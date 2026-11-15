@@ -978,6 +978,8 @@ export function storedDashboard(workspaceId: string, id: string) {
         revision: d.revision,
         pinned: d.pinnedAt !== null,
         published: !!d.share,
+        // The revision at its public link, while published.
+        publishedRevision: d.share?.specRevision,
       }
     : undefined;
 }

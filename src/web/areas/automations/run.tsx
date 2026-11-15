@@ -179,6 +179,8 @@ export function RunPage() {
             email={email}
           />
         </div>
+      ) : run.status === "skipped" ? (
+        <p className="au-hint">It was skipped, so none of its steps ran.</p>
       ) : (
         <p className="au-hint">Its steps can’t be read.</p>
       )}
@@ -300,8 +302,8 @@ function StepOutcome({
       {out.branch !== undefined && node.kind === "condition" && (
         <p className="au-run-step-fact">
           {out.branch
-            ? "It was true: it went the Yes way."
-            : "It was false: it went the No way."}
+            ? "It was met: it went the “When met” way."
+            : "It wasn’t met: it went the “Otherwise” way."}
         </p>
       )}
       {step.error && (

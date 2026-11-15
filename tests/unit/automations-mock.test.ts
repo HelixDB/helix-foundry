@@ -288,6 +288,63 @@ describe("runs", () => {
     });
   });
 
+  it("republishes only the snapshot a person published", async () => {
+    const D = "/v1/workspaces/ws_acme/foundry/dashboards";
+    // Customer contracts loaded, for its tile to read.
+    Object.assign(config, { loadStepMs: 50 });
+    const load = await call(
+      "POST",
+      "/v1/workspaces/ws_acme/foundry/ontologies/ont_acme_contracts/loads",
+      { versionId: "ver_seed_3", clientToken: "l" },
+    );
+    expect(load.status, JSON.stringify(load.body)).toBe(200);
+    later(10_000);
+    const made = (
+      await call("POST", D, {
+        name: "Board",
+        specJson: JSON.stringify({
+          v: 1,
+          tiles: [
+            {
+              id: "t1",
+              title: "Customers",
+              ontology_id: "ont_acme_contracts",
+              load: { kind: "current" },
+              query: { start: { type: "Customer" }, return: { count: {} } },
+              visual: { kind: "bar" },
+            },
+          ],
+          layout: { rows: [["t1"]] },
+        }),
+        clientToken: "board",
+      })
+    ).body.dashboard;
+    const a = await active(
+      chain(
+        manual,
+        node("pub", "action", {
+          operation: "publish_dashboard",
+          dashboard_id: made.id,
+        }),
+      ),
+    );
+    const run = async () => ran(a.id, (await runNow(a.id)).body.run.id);
+    const pub = (r: any) => r.nodes.find((n: any) => n.nodeId === "pub");
+    expect(pub(await run()).error).toMatch(/isn’t published|isn't published/);
+    const published = await call("POST", `${D}/${made.id}:publish`, {
+      expectedRevision: made.revision,
+    });
+    expect(published.status, JSON.stringify(published.body)).toBe(200);
+    expect((await run()).status).toBe("succeeded");
+    // An edit no one published since stays off its link.
+    const edited = await call("PATCH", `${D}/${made.id}`, {
+      expectedRevision: made.revision,
+      name: "Board, renamed",
+    });
+    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+    expect(pub(await run()).error).toMatch(/changed since it was published/);
+  });
+
   it("takes a condition's branch, and skips the other", async () => {
     Object.assign(config, { automationAnswer: "no" });
     const spec: AutomationSpec = {

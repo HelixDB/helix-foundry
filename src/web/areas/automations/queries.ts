@@ -1,4 +1,5 @@
 import { useQuery, type QueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
 import type {
   ApproveAutomationRequest,
   AutomationResponse,
@@ -207,36 +208,42 @@ export function useNames(ws: string): {
     ontologies = useQuery(ontologyQueries.list(ws)),
     sets = useQuery(documentSetQueries.list(ws)),
     dashboards = useQuery(dashboardQueries.list(ws));
-  const lists = {
-    connectors: (connectors.data?.connectors || []).map((c) => ({
-      id: c.id,
-      name: c.name || c.kind || c.id,
-    })),
-    ontologies: (ontologies.data?.ontologies || []).map((o) => ({
-      id: o.id,
-      name: o.name || o.id,
-    })),
-    sets: (sets.data || []).map((s) => ({ id: s.id, name: setLabel(s) })),
-    dashboards: (dashboards.data?.dashboards || []).map((d) => ({
-      id: d.id,
-      name: d.name || d.id,
-      published: !!d.share,
-    })),
-  };
-  const of = (list: { id: string; name: string }[]) => (id: string) =>
-    list.find((x) => x.id === id)?.name;
-  return {
-    ...lists,
-    names: {
-      connector: of(lists.connectors),
-      ontology: of(lists.ontologies),
-      set: of(lists.sets),
-      dashboard: of(lists.dashboards),
-    },
-    ready:
-      !connectors.isPending &&
-      !ontologies.isPending &&
-      !sets.isPending &&
-      !dashboards.isPending,
-  };
+  const ready =
+    !connectors.isPending &&
+    !ontologies.isPending &&
+    !sets.isPending &&
+    !dashboards.isPending;
+  // Kept while the lists' data are the same (a poll that read nothing new
+  // keeps its data), so a canvas the names feed isn't laid out again on
+  // every render: it would drop the step being dragged.
+  return useMemo(() => {
+    const lists = {
+      connectors: (connectors.data?.connectors || []).map((c) => ({
+        id: c.id,
+        name: c.name || c.kind || c.id,
+      })),
+      ontologies: (ontologies.data?.ontologies || []).map((o) => ({
+        id: o.id,
+        name: o.name || o.id,
+      })),
+      sets: (sets.data || []).map((s) => ({ id: s.id, name: setLabel(s) })),
+      dashboards: (dashboards.data?.dashboards || []).map((d) => ({
+        id: d.id,
+        name: d.name || d.id,
+        published: !!d.share,
+      })),
+    };
+    const of = (list: { id: string; name: string }[]) => (id: string) =>
+      list.find((x) => x.id === id)?.name;
+    return {
+      ...lists,
+      names: {
+        connector: of(lists.connectors),
+        ontology: of(lists.ontologies),
+        set: of(lists.sets),
+        dashboard: of(lists.dashboards),
+      },
+      ready,
+    };
+  }, [connectors.data, ontologies.data, sets.data, dashboards.data, ready]);
 }

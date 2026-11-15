@@ -13,6 +13,7 @@ import {
 } from "../../kit";
 import { useWorkspace } from "../../ui";
 import { automationPaths as paths } from "./paths";
+import { automationsUnavailable } from "./model";
 import { automationQueries } from "./queries";
 import { automationStatus } from "./parts";
 
@@ -73,6 +74,8 @@ export function AutomationList({ onNavigate }: { onNavigate?: () => void }) {
           <div className="au-note" aria-busy="true">
             <SkeletonText lines={3} />
           </div>
+        ) : list.isError && automationsUnavailable(list.error) ? (
+          <p className="au-note">Automations aren’t available here.</p>
         ) : list.isError ? (
           <p className="au-note" role="alert">
             Couldn’t read the automations: {list.error.message}{" "}

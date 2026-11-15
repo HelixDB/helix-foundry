@@ -173,6 +173,62 @@ test("edits its steps in the outline, and waits for approval until approved", as
   ).toBeVisible();
 });
 
+test("the builder approves an unchanged waiting automation, ignores spaces, and keeps a chain joined when a step is deleted on the canvas", async ({
+  page,
+}) => {
+  await signIn(page);
+  const made = (
+    await postToWfe(page, A, {
+      name: "Waiting chain",
+      clientToken: "e2e-waiting-chain",
+      specJson: JSON.stringify({
+        v: 1,
+        nodes: [
+          manual,
+          step("ask", "assistant", { instruction: "Count the invoices." }, 150),
+          step("tell", "notify", { message: "Counted" }, 300),
+        ],
+        edges: [
+          { from: "start", to: "ask" },
+          { from: "ask", to: "tell" },
+        ],
+      }),
+    })
+  ).automation;
+  // Waiting, with nothing to change: Save and turn on only approves.
+  await page.goto(`/automations/${made.id}/edit`);
+  await page.getByRole("button", { name: "Review and save" }).click();
+  await page.getByRole("button", { name: "Save and turn on" }).click();
+  await expect(main(page).getByText("On", { exact: true })).toBeVisible();
+
+  // On, a space at the end of an instruction is no change to save.
+  await main(page).getByRole("link", { name: "Edit" }).click();
+  const canvas = page.getByRole("region", { name: "Steps on a canvas" });
+  await canvas
+    .locator(".react-flow__node")
+    .filter({ hasText: "Count the invoices." })
+    .click();
+  await page.getByLabel("What should it do?").fill("Count the invoices. ");
+  await expect(
+    page.getByRole("button", { name: "Review and save" }),
+  ).toBeDisabled();
+
+  // Deleted on the canvas, the step's neighbours join: nothing is cut off.
+  await canvas
+    .locator(".react-flow__node")
+    .filter({ hasText: "Count the invoices." })
+    .click();
+  await page.keyboard.press("Delete");
+  await expect(canvas.locator(".react-flow__node")).toHaveCount(2);
+  await expect(canvas.locator(".react-flow__edge")).toHaveCount(1);
+  await expect(page.getByRole("list", { name: "Before you save" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "Review and save" }),
+  ).toBeEnabled();
+});
+
 test("fires on its schedule when the time comes", async ({ page }) => {
   await mock.configure({ automationStepMs: 100 });
   await signIn(page);
@@ -252,7 +308,7 @@ test("starts after a sync of its connection", async ({ page }) => {
   await ended(page, "Succeeded");
   const steps = page.getByRole("list", { name: "What each step did" });
   await expect(steps.getByRole("listitem").nth(1)).toContainText(
-    "It was true: it went the Yes way.",
+    "It was met: it went the “When met” way.",
   );
 });
 

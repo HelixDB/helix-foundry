@@ -23,10 +23,9 @@ import {
   KIND_HEADS,
   cannotConnect,
   connect,
-  disconnect,
   incomplete,
   moveNode,
-  removeStep,
+  removeSelection,
   type Names,
   type StepState,
 } from "./model";
@@ -34,7 +33,8 @@ import { STEP_STATUS, nodeIcon, stepTitle } from "./parts";
 
 // An automation's graph on a canvas (React Flow, @xyflow/react), lazy-loaded
 // so the rest of the app never carries it: its steps as cards, top to
-// bottom, joined by their edges (a condition's labelled Yes and No). In the
+// bottom, joined by their edges (a condition's labelled When met and
+// Otherwise). In the
 // builder its person drags steps, joins them from a step's lower handle to
 // another's upper one, and selects one to change it in the inspector; read
 // only (an automation's page, a run's, a phone) it pans, zooms and selects.
@@ -155,7 +155,7 @@ function Canvas({
             "is-taken",
         ),
         ...(e.branch && {
-          label: e.branch === "true" ? "Yes" : "No",
+          label: e.branch === "true" ? "When met" : "Otherwise",
           labelBgPadding: [6, 3] as [number, number],
           labelBgBorderRadius: 4,
         }),
@@ -191,9 +191,10 @@ function Canvas({
         }
         onDelete={({ nodes: gone, edges: cut }) =>
           onChange?.(
-            gone.reduce(
-              (s, n) => removeStep(s, n.id),
-              cut.reduce((s, e) => disconnect(s, e.source, e.target), spec),
+            removeSelection(
+              spec,
+              gone.map((n) => n.id),
+              cut.map((e) => ({ from: e.source, to: e.target })),
             ),
           )
         }

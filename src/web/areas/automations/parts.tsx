@@ -157,7 +157,7 @@ export function StepsPreview({
               )}
               {n.kind === "condition" && (
                 <span className="au-preview-note">
-                  Yes: {leads("true")}. No: {leads("false")}.
+                  When met: {leads("true")}. Otherwise: {leads("false")}.
                 </span>
               )}
             </div>

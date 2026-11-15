@@ -354,7 +354,9 @@ function runOut(
     ...(detail && r.error && { error: r.error }),
     triggerEventJson: JSON.stringify(r.event),
     specRevision: String(r.specRevision),
-    ...(withSteps && { specJson: canonicalJson(r.spec) }),
+    // A skipped run runs nothing, so it keeps no spec.
+    ...(withSteps &&
+      r.status !== "skipped" && { specJson: canonicalJson(r.spec) }),
     ...(owner && r.threadId && { threadId: r.threadId }),
     usdMicros: String(r.usdMicros),
     attempts: r.attempts,
@@ -701,6 +703,15 @@ function runAction(r: StoredRun, nodeId: string, a: AutomationAction) {
     case "publish_dashboard": {
       const d = storedDashboard(r.workspaceId, a.dashboard_id);
       if (!d) return failed("Its dashboard is gone.");
+      // It refreshes what a person published: never an edit made since.
+      if (d.publishedRevision === undefined)
+        return failed(
+          "Its dashboard isn't published: publish it on its page, and the automation refreshes its snapshot from then on.",
+        );
+      if (d.publishedRevision !== d.revision)
+        return failed(
+          "Its dashboard was changed since it was published: publish it again on its page to put the change at its link.",
+        );
       const reply = dashboardRoute(
         "POST",
         "/{id}:publish",

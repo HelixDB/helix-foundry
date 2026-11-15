@@ -28,7 +28,7 @@ import { AutomationPage } from "./automation";
 import { BuilderPage } from "./builder";
 import {
   TEMPLATES,
-  automationRefusal,
+  automationsUnavailable,
   listTriggerText,
   type Template,
 } from "./model";
@@ -116,7 +116,7 @@ function AutomationsPage() {
     return (
       <Page>
         {header}
-        {automationRefusal(list.error) === "FOUNDRY_AUTOMATIONS_DISABLED" ? (
+        {automationsUnavailable(list.error) ? (
           <EmptyState
             icon={Zap}
             title="Automations aren’t available here"
