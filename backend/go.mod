@@ -31,6 +31,7 @@ require (
 	github.com/oklog/ulid/v2 v2.1.0
 	github.com/pressly/goose/v3 v3.23.1
 	github.com/prometheus/client_golang v1.22.0
+	github.com/rivo/uniseg v0.4.7
 	github.com/stretchr/testify v1.12.1
 	github.com/tetratelabs/wazero v1.12.0
 	go.uber.org/dig v1.19.0

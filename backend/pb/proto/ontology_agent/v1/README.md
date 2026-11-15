@@ -27,6 +27,7 @@ Do not edit them here. To move to a new agent build:
 1. Copy `agent.proto` and every file in `schema/` from the agent's commit and update the commit above.
 2. Set `ontologyagent.ContractVersion` (`ontologyagent/contract.go`) to the first field of `schema/VERSION`.
 3. From the module's root, run `buf generate && buf generate --template buf.internal.gen.yaml`, then `go test ./ontologyagent/`. The tests check every request the workers and foundry-read build against the request schemas, the fixtures the decoders are tested on against the result and event schemas, and the version against `VERSION`.
-4. Build the agent image from that commit and deploy it with this backend.
+4. Copy the engine's `crates/extraction/tests/data/word_corpus.json` from that commit to `pkg/namewords/testdata/` and set `pkg/namewords/testdata/CONTRACT` to the new version (`pkg/namewords/testdata/README.md`), then run `go test ./pkg/namewords/`: Foundry finds the aliases a document writes by the engine's words, and the corpus is what the engine reads.
+5. Build the agent image from that commit and deploy it with this backend.
 
 Each generation, graph job, read, question, title, probe and assessment checks the sidecar's `GetInfo.contract_version` first, and that `GetInfo.providers` holds the workspace's provider kind. While it differs from `ContractVersion`, every generation, graph job and question the workers claim fails for good and every read is refused, so deploy the image and the backend together.
