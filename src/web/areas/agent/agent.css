@@ -433,6 +433,7 @@
   gap: var(--hf-space-1);
   margin: 0;
   padding-left: 1.1em;
+  list-style: disc;
   color: var(--hf-text-2);
   font-size: var(--hf-text-sm);
   line-height: 1.45;
