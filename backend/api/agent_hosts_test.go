@@ -189,7 +189,7 @@ func TestAHelpersCodexAccountSaysItsVersion(t *testing.T) {
 
 	// Sending in a Codex thread then says why.
 	hosts.set("ws-1", foundrymodel.FoundryAgentRuntimeCodex)
-	_, err = f.s.SendFoundryAgentMessage(personCtx, &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws-1", Text: "Hi", ClientToken: "c1"})
+	_, err = f.s.SendFoundryAgentMessage(personCtx, &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws-1", Input: textInput("Hi"), ClientToken: "c1"})
 	assert.Equal(t, "FOUNDRY_AGENT_HOST_OFFLINE", reasonOf(err))
 	assert.Contains(t, status.Convert(err).Message(), "the Codex on Ada's Mac is older than "+foundryagent.MinCodexVersion)
 
@@ -199,7 +199,7 @@ func TestAHelpersCodexAccountSaysItsVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, got.GetRuntime().GetHosts()[0].GetAccounts()[1].GetOutdated())
 	assert.Equal(t, []string{"claude_code"}, got.GetRuntime().GetOnline(), "a Codex of no version runs nothing")
-	_, err = f.s.SendFoundryAgentMessage(personCtx, &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws-1", Text: "Hi", ClientToken: "c2"})
+	_, err = f.s.SendFoundryAgentMessage(personCtx, &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws-1", Input: textInput("Hi"), ClientToken: "c2"})
 	assert.Equal(t, "FOUNDRY_AGENT_HOST_OFFLINE", reasonOf(err))
 	assert.Contains(t, status.Convert(err).Message(), "the Codex on Ada's Mac didn't start")
 	assert.NotContains(t, status.Convert(err).Message(), "older than")
