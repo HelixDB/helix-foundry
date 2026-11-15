@@ -16,6 +16,10 @@ import type {
   AgentPageContext,
   AgentRefusalReason,
   AgentStopReason,
+  AgentHelperRuntime,
+  AgentRuntime,
+  FoundryAgentHost,
+  FoundryAgentRuntime,
   FoundryAgentTurnStatus,
   FoundryAgentAction,
   ListAgentTurnEventsResponse,
@@ -30,6 +34,7 @@ import { reviewCopy } from "../documents/model";
 import { entityId } from "../explore/model";
 import { LOAD_LIMITS } from "../ontology/model";
 import { ontologyPaths } from "../ontology/paths";
+import { workspacePaths } from "../workspace/paths";
 
 export type { AgentOperation };
 
@@ -512,6 +517,7 @@ export const TOOL_LABELS: Record<string, string> = {
   helix_foundry_get_question: "Read a question",
   helix_foundry_list_questions: "Listed questions",
   helix_foundry_connect: "Made a link to connect data",
+  helix_foundry_get_assistant_runtime: "Read where the Assistant runs",
   helix_list_projects: "Listed projects",
   helix_list_databases: "Listed databases",
   helix_foundry_prepare_operation: "Prepared an action",
@@ -852,6 +858,20 @@ const DISPLAYS: {
       ...opt("document", document ?? undefined),
       decision: decided,
     };
+  },
+  set_assistant_runtime: (d) => {
+    const runtime = runtimeOf(d.runtime),
+      current = runtimeOf(d.current);
+    return runtime && current && typeof d.online === "boolean"
+      ? { runtime, current, online: d.online }
+      : undefined;
+  },
+  revoke_assistant_helper: (d) => {
+    const host = ref(d.host),
+      runtimes = list(d.runtimes, (r) => helperRuntimeOf(r));
+    return host && runtimes && typeof d.online === "boolean"
+      ? { host, runtimes, online: d.online }
+      : undefined;
   },
 };
 
@@ -1290,6 +1310,49 @@ const VIEWS: {
       target: nameOf(d.ontology),
     };
   },
+  set_assistant_runtime: (d) => ({
+    title: `Run new Assistant threads on ${RUNTIMES[d.runtime].on}`,
+    facts: [
+      { label: "Now", value: RUNTIMES[d.current].title },
+      { label: "From then on", value: RUNTIMES[d.runtime].title },
+      ...(d.runtime === "api"
+        ? []
+        : [
+            {
+              label: "Helper",
+              value: d.online ? "Running" : "Not running",
+            },
+          ]),
+    ],
+    does:
+      d.runtime === "api"
+        ? "New threads run on the workspace’s AI model and count toward its Assistant budget. Threads already started keep where they run."
+        : `New threads run on ${RUNTIMES[d.runtime].on} through the helper on your computer, at no cost to the workspace. Threads already started keep where they run.`,
+    ...opt(
+      "caution",
+      d.runtime !== "api" && !d.online
+        ? `No helper running ${RUNTIMES[d.runtime].cli} is online: start it on your computer before you send.`
+        : undefined,
+    ),
+    run: "Switch",
+    target: "this workspace",
+  }),
+  revoke_assistant_helper: (d) => ({
+    title: `Revoke the helper ${quoted(d.host)}`,
+    facts: [
+      { label: "Helper", value: nameOf(d.host) },
+      {
+        label: "Runs",
+        value: d.runtimes.length
+          ? d.runtimes.map((r) => RUNTIMES[r].cli).join(", ")
+          : "Nothing yet",
+      },
+      { label: "Status", value: d.online ? "Running" : "Not running" },
+    ],
+    does: "It stops running the Assistant’s turns at once, and a turn it is running ends. To run more, pair it again from Settings › AI models.",
+    run: "Revoke",
+    target: nameOf(d.host),
+  }),
 };
 
 /**
@@ -1410,6 +1473,9 @@ export function resultLink(
         "Open the document",
       );
     }
+    case "set_assistant_runtime":
+    case "revoke_assistant_helper":
+      return on(workspacePaths.settings("ai"), "Open Settings › AI models");
   }
 }
 
@@ -1443,6 +1509,167 @@ export function connectLink(
   return {
     to,
     name: (isRecord(out) && str(out.display_name)) || connectorLabel(kind),
+  };
+}
+
+// ---------------------------------------------------------------- runtime
+
+/**
+ * Where the Assistant runs a thread, as people name it: its title (a
+ * setting's), what it runs "on" in a sentence, and the CLI a helper drives.
+ */
+export const RUNTIMES: Record<
+  AgentRuntime,
+  { title: string; on: string; cli: string; login: string }
+> = {
+  api: {
+    title: "Foundry’s AI model",
+    on: "the workspace’s AI model",
+    cli: "",
+    login: "",
+  },
+  claude_code: {
+    title: "My Claude subscription",
+    on: "your Claude subscription",
+    cli: "Claude Code",
+    login: "run claude, then /login",
+  },
+  codex: {
+    title: "My ChatGPT subscription (Codex)",
+    on: "your ChatGPT subscription",
+    cli: "Codex",
+    login: "run codex login",
+  },
+};
+
+const runtimeOf = (x: unknown): AgentRuntime | undefined =>
+  x === "api" || x === "claude_code" || x === "codex" ? x : undefined;
+const helperRuntimeOf = (x: unknown): AgentHelperRuntime | undefined =>
+  x === "claude_code" || x === "codex" ? x : undefined;
+
+/**
+ * The helper's package, as the backend's agent.PairCommand pins it: the
+ * command that runs it, and the one that keeps it running at every login.
+ */
+export const HELPER_PACKAGE = "@helixdb/foundry-agent-host@0.1.0";
+export const HELPER_COMMANDS = {
+  run: `npx -y ${HELPER_PACKAGE} run`,
+  install: `npx -y ${HELPER_PACKAGE} install`,
+} as const;
+
+/**
+ * What a helper's CLI is signed in to, as the settings say it: a closed
+ * set read without trust from its accounts (the runtime's, if any).
+ */
+export type HelperAccount =
+  | { kind: "subscription"; plan: string }
+  | { kind: "other" }
+  | { kind: "signed_out" }
+  | { kind: "unknown" }
+  // Not said yet: it hasn't called since it paired.
+  | { kind: "unchecked" };
+
+/**
+ * @example
+ * const h = { id: "h", accounts: [{ runtime: "claude_code" as const, state: "signed_in" as const, subscription: "max" }] };
+ * helperAccount(h, "claude_code"); // { kind: "subscription", plan: "max" }
+ * helperAccount({ id: "h" }, "claude_code"); // { kind: "unchecked" }
+ */
+export function helperAccount(
+  host: FoundryAgentHost,
+  runtime: AgentHelperRuntime,
+): HelperAccount {
+  const a = (host.accounts || []).find((x) => x.runtime === runtime);
+  switch (a?.state) {
+    case "signed_in":
+      return a.subscription
+        ? { kind: "subscription", plan: a.subscription }
+        : { kind: "other" };
+    case "signed_out":
+      return { kind: "signed_out" };
+    case "unknown":
+      return { kind: "unknown" };
+    default:
+      return { kind: "unchecked" };
+  }
+}
+
+/**
+ * A subscription's plan as people name it: "max" is "Max", "team" "Team".
+ *
+ * @example
+ * planName("max"); // "Max"
+ * planName("claude_max_20x"); // "Claude max 20x"
+ */
+export const planName = (plan: string) => {
+  const words = plan.replace(/[_-]+/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
+/**
+ * A helper's account in words, and whether its turns would bill the
+ * subscription: its plan, or why not.
+ *
+ * @example
+ * accountText({ kind: "subscription", plan: "max" }, "claude_code");
+ * // { text: "Claude Code is signed in on a Max subscription", ok: true }
+ */
+export function accountText(
+  a: HelperAccount,
+  runtime: AgentHelperRuntime,
+): { text: string; ok: boolean } {
+  const { cli, login } = RUNTIMES[runtime];
+  switch (a.kind) {
+    case "subscription":
+      return {
+        text: `${cli} is signed in on a ${planName(a.plan)} subscription`,
+        ok: true,
+      };
+    case "other":
+      return {
+        text: `${cli} is signed in, but not on a subscription: its turns bill that account`,
+        ok: false,
+      };
+    case "signed_out":
+      return {
+        text: `${cli} isn’t signed in: on that computer, ${login}`,
+        ok: false,
+      };
+    case "unknown":
+      return {
+        text: `${cli} didn’t start, so its sign-in is unknown`,
+        ok: false,
+      };
+    case "unchecked":
+      return { text: `${cli}’s sign-in isn’t known yet`, ok: true };
+  }
+}
+
+/**
+ * Where a thread runs, and whether it can be sent to now: api always; a
+ * helper's while a helper that runs it is online (the WFE refuses it
+ * otherwise, FOUNDRY_AGENT_HOST_OFFLINE). `setting` is the workspace's,
+ * read on a local install only; unknown (undefined) when it can't be read.
+ *
+ * @example
+ * threadRuntime("claude_code", { runtime: "api", online: [] });
+ * // { runtime: "claude_code", online: false }
+ * threadRuntime(undefined, { runtime: "claude_code", online: ["claude_code"] });
+ * // { runtime: "claude_code", online: true }
+ * threadRuntime(undefined, undefined); // { runtime: "api", online: true }
+ */
+export function threadRuntime(
+  thread: AgentRuntime | undefined,
+  setting: FoundryAgentRuntime | undefined,
+): { runtime: AgentRuntime; online: boolean } {
+  const runtime = thread ?? setting?.runtime ?? "api";
+  return {
+    runtime,
+    online:
+      runtime === "api" ||
+      // Unread: not known to be offline, so the dock doesn't say it is.
+      !setting ||
+      (setting.online || []).includes(runtime),
   };
 }
 

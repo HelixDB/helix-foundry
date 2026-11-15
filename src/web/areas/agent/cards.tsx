@@ -66,8 +66,15 @@ export function ActionCard({
     setPending(which);
     setError("");
     try {
-      if (which === "run") await executeAgentAction(ws, action);
-      else if (which === "refresh") await refreshAgentAction(ws, action.id);
+      if (which === "run") {
+        await executeAgentAction(ws, action);
+        // Where the Assistant runs, as the dock and the settings show it.
+        if (
+          action.operation === "set_assistant_runtime" ||
+          action.operation === "revoke_assistant_helper"
+        )
+          void qc.invalidateQueries({ queryKey: [ws, "agent", "runtime"] });
+      } else if (which === "refresh") await refreshAgentAction(ws, action.id);
       else await dismissAgentAction(ws, action);
     } catch (e) {
       setError(sentence((e as Error).message));

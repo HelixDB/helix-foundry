@@ -15,6 +15,7 @@ import {
   ArrowUp,
   ChevronDown,
   CircleAlert,
+  TriangleAlert,
   ExternalLink,
   LoaderCircle,
   Plug,
@@ -25,8 +26,10 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { LOCAL } from "../../../shared/deployment";
 import type {
   AgentPageContext,
+  AgentRuntime,
   AgentThreadResponse,
   FoundryAgentAction,
   FoundryAgentTurn,
@@ -57,8 +60,11 @@ import {
 } from "../workspace/ai-gate";
 import { aiQuery, assistantCheckText, inForce } from "../workspace/ai-api";
 import { ActionCard } from "./cards";
+import { Command } from "./runtime-settings";
 import {
   EMPTY_STREAM,
+  HELPER_COMMANDS,
+  RUNTIMES,
   MAX_MESSAGE,
   NOT_RUN_TEXT,
   STOP_TEXT,
@@ -71,11 +77,13 @@ import {
   pretty,
   textParts,
   threadKey,
+  threadRuntime,
   type AgentBlock,
   type TurnStream,
 } from "./model";
 import {
   EVENTS_POLL_MS,
+  RUNTIME_POLL_MS,
   agentQueries,
   cancelAgentTurn,
   deleteAgentThread,
@@ -100,7 +108,7 @@ export function AgentDock({
   onClose: () => void;
   onNavigate?: () => void;
 }) {
-  const { id: ws } = useWorkspace(),
+  const { id: ws, role } = useWorkspace(),
     qc = useQueryClient();
   const [threadId, setThreadId] = useState(() => readStorage(threadKey(ws)));
   useEffect(() => setThreadId(readStorage(threadKey(ws))), [ws]);
@@ -124,6 +132,25 @@ export function AgentDock({
     (threadId && thread.data?.thread.title) ||
     (threadId ? "Thread" : "New thread");
   const disabled = agentRefusal(threads.error) === "FOUNDRY_AGENT_DISABLED";
+  // Where the open thread runs (a new one: the workspace's setting, which
+  // only a local install's owner reads), read often while its helper isn't
+  // running. Unknown until the open thread is read.
+  const runtimeNow: AgentRuntime | undefined = threadId
+    ? thread.data?.thread.runtime
+    : undefined;
+  const setting = useQuery({
+    ...agentQueries.runtime(ws),
+    enabled: LOCAL && role === "owner",
+    retry: false,
+    refetchInterval: (q) =>
+      q.state.data && !threadRuntime(runtimeNow, q.state.data).online
+        ? RUNTIME_POLL_MS
+        : false,
+  });
+  const where =
+    !threadId || thread.data
+      ? threadRuntime(runtimeNow, setting.data)
+      : undefined;
   return (
     <div className="ag-dock" data-replay-block>
       <header className="ag-head">
@@ -186,6 +213,13 @@ export function AgentDock({
         />
       ) : (
         <>
+          {where && where.runtime !== "api" && (
+            <RuntimeLine
+              runtime={where.runtime}
+              online={where.online}
+              thread={!!threadId}
+            />
+          )}
           <Transcript
             data={threadId ? thread.data : undefined}
             loading={!!threadId && thread.isPending}
@@ -196,6 +230,7 @@ export function AgentDock({
           <Composer
             threadId={threadId}
             thread={threadId ? thread.data : undefined}
+            runtime={where?.runtime ?? "api"}
             onNavigate={onNavigate}
             onSent={(id) => {
               if (id !== threadId) open(id);
@@ -221,6 +256,56 @@ export function AgentDock({
             await qc.invalidateQueries({ queryKey: [ws, "agent", "threads"] });
           }}
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Where the open thread (or a new one) runs, when it is a helper's: on the
+ * person's subscription, and, while no helper that runs it is online, how
+ * to start one (the WFE refuses to send until then).
+ */
+function RuntimeLine({
+  runtime,
+  online,
+  thread,
+}: {
+  runtime: Exclude<AgentRuntime, "api">;
+  online: boolean;
+  // An open thread's, not the workspace's for a new one.
+  thread: boolean;
+}) {
+  const r = RUNTIMES[runtime];
+  return (
+    <div
+      className={cx("ag-runtime", !online && "is-offline")}
+      role={online ? undefined : "status"}
+    >
+      <p className="ag-runtime-line">
+        {online ? (
+          <img
+            src={
+              runtime === "codex"
+                ? "/providers/openai.svg"
+                : "/providers/claude.svg"
+            }
+            alt=""
+          />
+        ) : (
+          <TriangleAlert size={14} aria-hidden />
+        )}
+        {online
+          ? `${thread ? "This thread runs" : "New threads run"} on ${r.on}, through ${r.cli} on your computer.`
+          : `${r.cli}’s helper isn’t running, so ${thread ? "this thread" : "new threads"} can’t be sent. Start it on your computer:`}
+      </p>
+      {!online && (
+        <>
+          <Command text={HELPER_COMMANDS.run} label="run command" />
+          <p className="ag-runtime-line">
+            To keep it running at every login, use install in place of run.
+          </p>
+        </>
       )}
     </div>
   );
@@ -658,12 +743,16 @@ function PlainText({
 function Composer({
   threadId,
   thread,
+  runtime,
   onSent,
   onNavigate,
 }: {
   // The open thread; empty for a new one. `thread` once it is read.
   threadId: string;
   thread?: AgentThreadResponse;
+  // Where its turns run: a helper's run on its owner's subscription, so
+  // the workspace's AI setting doesn't hold them back.
+  runtime: AgentRuntime;
   onSent: (threadId: string) => void;
   onNavigate?: () => void;
 }) {
@@ -678,10 +767,13 @@ function Composer({
     [token, setToken] = useState(() => crypto.randomUUID()),
     [pending, setPending] = useState(false),
     [error, setError] = useState<unknown>(null);
-  const aiReady = useAiConfigured();
+  const onModel = runtime === "api",
+    aiReady = useAiConfigured(),
+    modelReady = onModel ? aiReady : true;
   const setting = useQuery(aiQuery(ws)).data,
     now = setting && inForce(setting),
-    checkFailed = now?.source === "workspace" && assistantCheckText(now.config);
+    checkFailed =
+      onModel && now?.source === "workspace" && assistantCheckText(now.config);
   const hint = useId(),
     input = useRef<HTMLTextAreaElement>(null),
     sending = useRef(false);
@@ -696,7 +788,7 @@ function Composer({
     !!live ||
     !text.trim() ||
     tooLong ||
-    aiReady === false ||
+    modelReady === false ||
     !!checkFailed;
   const submit = async () => {
     // Enter submits past a disabled Send, and twice before a render: the
@@ -721,6 +813,11 @@ function Composer({
       onSent(r.thread.id);
     } catch (e) {
       setError(e);
+      // Nothing was queued: read whether its helper runs again.
+      if (agentRefusal(e) === "FOUNDRY_AGENT_HOST_OFFLINE")
+        void qc.invalidateQueries({
+          queryKey: agentQueries.runtime(ws).queryKey,
+        });
     } finally {
       sending.current = false;
       setPending(false);
@@ -810,10 +907,12 @@ function Composer({
       >
         {caption}
       </p>
-      <AiRefusal action="The Assistant" error={error} ready={aiReady}>
+      <AiRefusal action="The Assistant" error={error} ready={modelReady}>
         {!!error && (
           <p className="ag-card-error" role="alert">
-            {sentence((error as Error).message)}
+            {agentRefusal(error) === "FOUNDRY_AGENT_HOST_OFFLINE"
+              ? `Its helper isn’t running on your computer: start it with ${HELPER_COMMANDS.run}, then send again.`
+              : sentence((error as Error).message)}
           </p>
         )}
       </AiRefusal>

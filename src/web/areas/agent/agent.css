@@ -346,3 +346,111 @@
     font-size: 16px;
   }
 }
+
+/* Settings › AI models on a local install (runtime-settings.tsx): the
+   Assistant's helpers, a pairing code's commands, and what to run when the
+   chosen runtime's helper isn't running. Its rows are the members list's
+   (workspace.css .wk-member). */
+.ag-helpers {
+  display: grid;
+  gap: var(--hf-space-1);
+  width: 100%;
+  min-width: 0;
+}
+.ag-helpers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hf-space-1);
+}
+.ag-helpers-head h4 {
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+}
+.ag-helpers .wk-members {
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+}
+.ag-helper .wk-member-text small.ag-helper-problem {
+  color: var(--hf-warning-text);
+  white-space: normal;
+}
+.ag-pairing {
+  display: grid;
+  gap: var(--hf-space-1);
+  min-width: 0;
+  padding: var(--hf-space-15);
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-surface);
+}
+.ag-pairing-step {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.ag-pairing-step code {
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+}
+.ag-pairing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hf-space-1);
+}
+/* A command to copy, its button over the code's corner. */
+.ag-command {
+  position: relative;
+  min-width: 0;
+  margin: 0;
+}
+.ag-command pre {
+  margin: 0;
+  padding: 10px 76px 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ag-command > button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+
+/* The dock's line under its head: where the open thread runs, and how to
+   start its helper while none is running. */
+.ag-runtime {
+  display: grid;
+  flex: none;
+  gap: 6px;
+  padding: var(--hf-space-1) var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-border);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.ag-runtime-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.ag-runtime-line img {
+  width: 14px;
+  height: 14px;
+}
+.ag-runtime.is-offline .ag-runtime-line {
+  color: var(--hf-warning-text);
+}

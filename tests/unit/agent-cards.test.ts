@@ -16,7 +16,7 @@ import {
   type AgentStep,
 } from "@/web/areas/agent/model";
 
-// The Assistant's cards (src/web/areas/agent/model.ts): each of the 12
+// The Assistant's cards (src/web/areas/agent/model.ts): each of the 14
 // operations' displays as the backend's display.go writes them (its
 // display_test.go's), read without trust, worded by its card, and where a
 // ran one opens; a connect step's form; a call a limit kept from running.
@@ -343,6 +343,35 @@ const DISPLAYS: [string, string, unknown][] = [
       review: { review_key: "r3", reason: "conflict", settle: "release" },
       decision: { kind: "reject" },
     },
+  ],
+  [
+    "a runtime with its helper running",
+    "set_assistant_runtime",
+    { runtime: "claude_code", current: "api", online: true },
+  ],
+  [
+    "a runtime whose helper isn't running",
+    "set_assistant_runtime",
+    { runtime: "claude_code", current: "api", online: false },
+  ],
+  [
+    "back to the workspace's model",
+    "set_assistant_runtime",
+    { runtime: "api", current: "claude_code", online: true },
+  ],
+  [
+    "a helper revoked",
+    "revoke_assistant_helper",
+    {
+      host: { id: "01HOSTAAAAAAAAAAAAAAAAAAAA", name: "Ada's Mac" },
+      runtimes: ["claude_code"],
+      online: true,
+    },
+  ],
+  [
+    "a helper that runs nothing yet",
+    "revoke_assistant_helper",
+    { host: { id: "01HOSTAAAAAAAAAAAAAAAAAAAA" }, runtimes: [], online: false },
   ],
 ];
 
@@ -779,7 +808,85 @@ describe("cardView", () => {
       ["no value", "Remove Customer’s currency", "Remove value", "Sales graph"],
       ["an approval", "Approve the held statement", "Approve", "Sales graph"],
       ["a reject", "Reject the held statement", "Reject", "Sales graph"],
+      [
+        "a runtime with its helper running",
+        "Run new Assistant threads on your Claude subscription",
+        "Switch",
+        "this workspace",
+      ],
+      [
+        "a runtime whose helper isn't running",
+        "Run new Assistant threads on your Claude subscription",
+        "Switch",
+        "this workspace",
+      ],
+      [
+        "back to the workspace's model",
+        "Run new Assistant threads on the workspace’s AI model",
+        "Switch",
+        "this workspace",
+      ],
+      [
+        "a helper revoked",
+        "Revoke the helper “Ada's Mac”",
+        "Revoke",
+        "Ada's Mac",
+      ],
+      [
+        "a helper that runs nothing yet",
+        "Revoke the helper 01HOSTAAAAAAAAAAAAAAAAAAAA",
+        "Revoke",
+        "01HOSTAAAAAAAAAAAAAAAAAAAA",
+      ],
     ]);
+  });
+
+  it("says where new threads run, and that a helper must run first", () => {
+    const facts = (name: string) =>
+      Object.fromEntries(
+        of(name).facts.map((f) => [f.label, "value" in f ? f.value : ""]),
+      );
+    expect(facts("a runtime with its helper running")).toEqual({
+      Now: "Foundry’s AI model",
+      "From then on": "My Claude subscription",
+      Helper: "Running",
+    });
+    expect(of("a runtime with its helper running").caution).toBeUndefined();
+    expect(of("a runtime whose helper isn't running").caution).toBe(
+      "No helper running Claude Code is online: start it on your computer before you send.",
+    );
+    expect(facts("back to the workspace's model")).toEqual({
+      Now: "My Claude subscription",
+      "From then on": "Foundry’s AI model",
+    });
+    expect(of("back to the workspace's model").does).toMatch(
+      /count toward its Assistant budget/,
+    );
+    expect(facts("a helper revoked")).toEqual({
+      Helper: "Ada's Mac",
+      Runs: "Claude Code",
+      Status: "Running",
+    });
+    expect(facts("a helper that runs nothing yet")).toMatchObject({
+      Runs: "Nothing yet",
+      Status: "Not running",
+    });
+  });
+
+  it("refuses a runtime or helper it doesn't know", () => {
+    for (const display of [
+      { runtime: "gemini", current: "api", online: true },
+      { runtime: "claude_code", current: "api" },
+      { runtime: "claude_code", current: "", online: true },
+    ])
+      expect(parseCard("set_assistant_runtime", display)).toBeUndefined();
+    for (const display of [
+      { host: { id: "../x" }, runtimes: [], online: true },
+      { host: { id: "h" }, runtimes: ["api"], online: true },
+      { host: { id: "h" }, online: true },
+      { host: { id: "h" }, runtimes: [], online: "yes" },
+    ])
+      expect(parseCard("revoke_assistant_helper", display)).toBeUndefined();
   });
 
   it("lists what it acts on", () => {
@@ -1094,6 +1201,26 @@ describe("resultLink", () => {
         "tenant:t1",
       ),
       undefined,
+    ],
+    [
+      "a runtime chosen",
+      ran(
+        "set_assistant_runtime",
+        d("a runtime with its helper running"),
+        { runtime: "claude_code", online: ["claude_code"] },
+        "workspace:ws1",
+      ),
+      { to: "/settings/ai", label: "Open Settings › AI models" },
+    ],
+    [
+      "a helper revoked",
+      ran(
+        "revoke_assistant_helper",
+        d("a helper revoked"),
+        { id: "01HOSTAAAAAAAAAAAAAAAAAAAA" },
+        "workspace:ws1",
+      ),
+      { to: "/settings/ai", label: "Open Settings › AI models" },
     ],
     [
       "a card it can't read",

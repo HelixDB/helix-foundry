@@ -1,5 +1,5 @@
 import "./workspace.css";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -18,20 +18,15 @@ import type {
   FoundryAiRole,
   FoundryOllamaServer,
 } from "../../../shared/wfe";
-import {
-  Button,
-  ConfirmDialog,
-  Panel,
-  Select,
-  SkeletonText,
-  cx,
-} from "../../kit";
+import { Button, ConfirmDialog, Panel, Select, SkeletonText } from "../../kit";
 import { trackEvent } from "../../analytics";
 import { sentence } from "../../api";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
+import { AssistantRuntimePanel } from "../agent/runtime-settings";
 import * as AI from "./ai-api";
 import { OwnKeyGate } from "./ai-gate";
+import { ChoiceCard } from "./choice-card";
 import { isProRequired } from "./pro-gate";
 
 // Settings › AI models: where the workspace's drafts,
@@ -44,7 +39,8 @@ import { isProRequired } from "./pro-gate";
 // key typed stays in the field, as the form starts from the new setting too,
 // until another page. A workspace still onboarding goes back to its wizard
 // once its AI runs. Owners see what runs as the form's choice; everyone
-// else reads one line.
+// else reads one line. A local install's owner also chooses where the
+// Assistant runs, below it (../agent/runtime-settings.tsx).
 
 // The kinds this site has a form for, and the provider message each sends
 // given the Azure endpoint typed (normalized, or empty until it is one) and
@@ -172,15 +168,20 @@ export function AiTab() {
       </Panel>
     );
   return role === "owner" ? (
-    // Keyed by the setting and the default's kind: once a save becomes the
-    // setting, or the install finds another default, the form starts
-    // afresh from it.
-    <OwnerForm
-      key={`${ai.active?.id ?? "default"} ${ai.default?.kind ?? "none"}`}
-      ai={ai}
-      typed={saved && saved.id === ai.active?.id ? saved.key : ""}
-      onSaved={setSaved}
-    />
+    <>
+      {/* Keyed by the setting and the default's kind: once a save becomes
+          the setting, or the install finds another default, the form
+          starts afresh from it. */}
+      <OwnerForm
+        key={`${ai.active?.id ?? "default"} ${ai.default?.kind ?? "none"}`}
+        ai={ai}
+        typed={saved && saved.id === ai.active?.id ? saved.key : ""}
+        onSaved={setSaved}
+      />
+      {/* Where the Assistant runs: a local install's owner may run it on
+          their own subscription. */}
+      {LOCAL && <AssistantRuntimePanel />}
+    </>
   ) : (
     <Status ai={ai} />
   );
@@ -607,6 +608,7 @@ function OwnerForm({
           <div className="choice-options provider-options">
             {ai.default && (
               <ChoiceCard
+                name="provider"
                 title={LOCAL ? AI.INSTALL_DEFAULT : AI.HOUSE.title}
                 description={
                   LOCAL
@@ -627,6 +629,7 @@ function OwnerForm({
             {offers.map((o) => (
               <ChoiceCard
                 key={o.kind}
+                name="provider"
                 title={AI.PROVIDERS[o.kind].title}
                 description={AI.disclosure(
                   o.kind,
@@ -1739,41 +1742,3 @@ const pick = (m: Record<FoundryAiRole, string>) => ({
   extract: m.extract,
   verify: m.verify,
 });
-
-/** helix-foundry's ChoiceCard (apps/web/src/choice-card.tsx): one radio. */
-function ChoiceCard({
-  title,
-  description,
-  icon,
-  checked,
-  onChange,
-}: {
-  title: string;
-  description: string;
-  icon: ReactNode;
-  checked: boolean;
-  onChange: () => void;
-}) {
-  const descriptionId = useId();
-  return (
-    <label className={cx("choice-card", checked && "selected")}>
-      <span className="choice-card-icon" aria-hidden="true">
-        {icon}
-      </span>
-      <span className="choice-card-heading">
-        <input
-          type="radio"
-          name="provider"
-          checked={checked}
-          onChange={onChange}
-          aria-label={title}
-          aria-describedby={descriptionId}
-        />
-        <strong>{title}</strong>
-      </span>
-      <span id={descriptionId} className="choice-card-description">
-        {description}
-      </span>
-    </label>
-  );
-}

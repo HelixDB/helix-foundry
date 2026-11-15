@@ -9,6 +9,7 @@ import {
   trackError,
 } from "@databuddy/sdk";
 import type {
+  AgentRuntime,
   FoundryAgentTurnStatus,
   CannotAnswerKind,
   ConnectorKindName,
@@ -196,7 +197,7 @@ export type AnalyticsEvents = {
   agent_dock_opened: { from: "shortcut" | "button" | "palette" };
   agent_turn_started: { section: AgentSection };
   agent_turn_ended: {
-    runtime: "api";
+    runtime: AgentRuntime;
     section: AgentSection;
     status: Exclude<FoundryAgentTurnStatus, "queued" | "running">;
     steps: number;
@@ -216,6 +217,13 @@ export type AnalyticsEvents = {
     target_named_by_user: boolean;
   };
   agent_action_refused: { reason: Refusal };
+  // Where a local install's Assistant runs (Settings › AI models): the
+  // runtime chosen, a pairing code made, a helper seen paired after one, a
+  // helper revoked.
+  agent_runtime_set: { runtime: AgentRuntime };
+  agent_helper_pairing_made: undefined;
+  agent_helper_paired: undefined;
+  agent_helper_revoked: undefined;
 
   // An ontology's versions, loads and reviews.
   version_made_current: undefined;
@@ -558,8 +566,9 @@ export type Started =
   | { job: "read" }
   | { job: "load" }
   | { job: "question" }
-  // A message to the Assistant, from the section it was sent in.
-  | { job: "agent_turn"; section: AgentSection };
+  // A message to the Assistant, from the section it was sent in, and where
+  // its thread runs.
+  | { job: "agent_turn"; section: AgentSection; runtime: AgentRuntime };
 type Job = Started["job"];
 
 /** What a read of each job gives: its status, and what its end reports. */
@@ -607,6 +616,9 @@ const SECTIONS: readonly AgentSection[] = [
 ];
 const sectionOf = (p: Pending): AgentSection =>
   SECTIONS.find((s) => "section" in p && p.section === s) ?? "none";
+const RUNTIMES: readonly AgentRuntime[] = ["api", "claude_code", "codex"];
+const runtimeOf = (p: Pending): AgentRuntime =>
+  RUNTIMES.find((r) => "runtime" in p && p.runtime === r) ?? "api";
 
 /** What a job reports when it starts; a read's upload reports itself. */
 function reportStart(s: Started) {
@@ -634,7 +646,7 @@ const agentTurnEnded = (
   status: AnalyticsEvents["agent_turn_ended"]["status"],
 ) =>
   trackEvent("agent_turn_ended", {
-    runtime: "api",
+    runtime: runtimeOf(p),
     section: sectionOf(p),
     status,
     steps: t.steps || 0,

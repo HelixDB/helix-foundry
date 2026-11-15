@@ -1,5 +1,9 @@
 import type {
   AgentActionResponse,
+  AgentRuntime,
+  FoundryAgentHostPairingResponse,
+  FoundryAgentHostResponse,
+  FoundryAgentRuntimeResponse,
   AgentThreadResponse,
   AgentTurnResponse,
   FoundryAgentAction,
@@ -45,7 +49,18 @@ export const threadBusy = (t?: AgentThreadResponse) =>
   ((t.turns || []).some(isLiveTurn) ||
     (t.actions || []).some((a) => a.status === "executing"));
 
+/** The runtime and its helpers, while a helper is awaited or offline. */
+export const RUNTIME_POLL_MS = 3000;
+
 export const agentQueries = {
+  // Where the workspace's new threads run, and the install's helpers: a
+  // local install's owner's only (hosted refuses it).
+  runtime: (ws: string) => ({
+    queryKey: [ws, "agent", "runtime"],
+    queryFn: async () =>
+      (await api<FoundryAgentRuntimeResponse>(`${at(ws)}/runtime`)).runtime ??
+      {},
+  }),
   // The caller's threads, newest first: the first page (50).
   threads: (ws: string) => ({
     queryKey: [ws, "agent", "threads"],
@@ -101,7 +116,10 @@ export async function sendAgentMessage(
       throw e;
     },
   );
-  jobStarted({ job: "agent_turn", section }, r.turn.id);
+  jobStarted(
+    { job: "agent_turn", section, runtime: r.thread.runtime ?? "api" },
+    r.turn.id,
+  );
   return r;
 }
 
@@ -129,6 +147,37 @@ export async function executeAgentAction(ws: string, a: FoundryAgentAction) {
       outcome: status,
       target_named_by_user: !!a.targetNamedByUser,
     });
+  return r;
+}
+
+/** Sets where the workspace's new threads run: a helper need not be online. */
+export async function setAgentRuntime(ws: string, runtime: AgentRuntime) {
+  const r = await api<FoundryAgentRuntimeResponse>(
+    `${at(ws)}/runtime`,
+    { runtime },
+    "PATCH",
+  );
+  trackEvent("agent_runtime_set", { runtime });
+  return r.runtime ?? {};
+}
+
+/** A one-time code, ten minutes, and the command that pairs a helper with it. */
+export async function pairAgentHelper(ws: string) {
+  const r = await api<FoundryAgentHostPairingResponse>(
+    `${at(ws)}/host-pairings`,
+    {},
+  );
+  trackEvent("agent_helper_pairing_made");
+  return r;
+}
+
+/** Unpairs a helper: its token and its turns' stop working at once. */
+export async function revokeAgentHelper(ws: string, id: string) {
+  const r = await api<FoundryAgentHostResponse>(
+    `${at(ws)}/hosts/${enc(id)}:revoke`,
+    {},
+  );
+  trackEvent("agent_helper_revoked");
   return r;
 }
 

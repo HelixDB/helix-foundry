@@ -1,15 +1,21 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import type { FoundryAgentAction } from "@/shared/wfe";
+import type { FoundryAgentAction, FoundryAgentHost } from "@/shared/wfe";
 import { ApiError } from "@/web/api";
 import {
   EMPTY_STREAM,
+  HELPER_COMMANDS,
+  HELPER_PACKAGE,
   STOP_TEXT,
+  accountText,
   agentRefusal,
   analystLink,
   cardState,
+  helperAccount,
   isAgentOperation,
   pageContext,
   parseAgentEvent,
+  planName,
   payloadText,
   pretty,
   reduceTurnEvents,
@@ -17,6 +23,7 @@ import {
   inAppPath,
   textParts,
   threadKey,
+  threadRuntime,
   type TurnStream,
 } from "@/web/areas/agent/model";
 
@@ -807,4 +814,126 @@ describe("agentRefusal", () => {
 
 it("keeps the open thread per workspace", () => {
   expect(threadKey("ws_1")).toBe("foundry.agent.thread:ws_1");
+});
+
+describe("where the Assistant runs", () => {
+  const host = (accounts: FoundryAgentHost["accounts"]): FoundryAgentHost => ({
+    id: "h",
+    runtimes: ["claude_code"],
+    accounts,
+  });
+
+  it("reads what a helper's CLI is signed in to, without trust", () => {
+    expect(
+      helperAccount(
+        host([
+          { runtime: "claude_code", state: "signed_in", subscription: "max" },
+        ]),
+        "claude_code",
+      ),
+    ).toEqual({ kind: "subscription", plan: "max" });
+    expect(
+      helperAccount(
+        host([{ runtime: "claude_code", state: "signed_in" }]),
+        "claude_code",
+      ),
+    ).toEqual({ kind: "other" });
+    expect(
+      helperAccount(
+        host([{ runtime: "claude_code", state: "signed_out" }]),
+        "claude_code",
+      ),
+    ).toEqual({ kind: "signed_out" });
+    expect(
+      helperAccount(
+        host([{ runtime: "claude_code", state: "unknown" }]),
+        "claude_code",
+      ),
+    ).toEqual({ kind: "unknown" });
+    // Not said yet, said of another runtime, or a state it doesn't know.
+    expect(helperAccount(host(undefined), "claude_code")).toEqual({
+      kind: "unchecked",
+    });
+    expect(
+      helperAccount(
+        host([{ runtime: "codex", state: "signed_out" }]),
+        "claude_code",
+      ),
+    ).toEqual({ kind: "unchecked" });
+    expect(
+      helperAccount(
+        host([{ runtime: "claude_code", state: "maybe" as "unknown" }]),
+        "claude_code",
+      ),
+    ).toEqual({ kind: "unchecked" });
+  });
+
+  it("says it in words, and whether its turns bill the subscription", () => {
+    expect(
+      accountText({ kind: "subscription", plan: "max" }, "claude_code"),
+    ).toEqual({
+      text: "Claude Code is signed in on a Max subscription",
+      ok: true,
+    });
+    expect(accountText({ kind: "other" }, "claude_code")).toEqual({
+      text: "Claude Code is signed in, but not on a subscription: its turns bill that account",
+      ok: false,
+    });
+    expect(accountText({ kind: "signed_out" }, "claude_code")).toEqual({
+      text: "Claude Code isn’t signed in: on that computer, run claude, then /login",
+      ok: false,
+    });
+    expect(accountText({ kind: "signed_out" }, "codex").text).toBe(
+      "Codex isn’t signed in: on that computer, run codex login",
+    );
+    expect(accountText({ kind: "unknown" }, "claude_code").ok).toBe(false);
+    expect(accountText({ kind: "unchecked" }, "claude_code")).toEqual({
+      text: "Claude Code’s sign-in isn’t known yet",
+      ok: true,
+    });
+    expect(planName("max")).toBe("Max");
+    expect(planName("claude_max_20x")).toBe("Claude max 20x");
+    expect(planName("team-plan")).toBe("Team plan");
+  });
+
+  it("knows whether a thread can be sent to now", () => {
+    const setting = { runtime: "claude_code" as const, online: [] };
+    // A thread keeps its runtime, whatever the workspace's is now.
+    expect(threadRuntime("api", setting)).toEqual({
+      runtime: "api",
+      online: true,
+    });
+    expect(threadRuntime("claude_code", setting)).toEqual({
+      runtime: "claude_code",
+      online: false,
+    });
+    expect(
+      threadRuntime("claude_code", { runtime: "api", online: ["claude_code"] }),
+    ).toEqual({ runtime: "claude_code", online: true });
+    // A new thread takes the workspace's.
+    expect(threadRuntime(undefined, setting)).toEqual({
+      runtime: "claude_code",
+      online: false,
+    });
+    // Unread (hosted, or not the owner): never said to be offline.
+    expect(threadRuntime("claude_code", undefined)).toEqual({
+      runtime: "claude_code",
+      online: true,
+    });
+    expect(threadRuntime(undefined, undefined)).toEqual({
+      runtime: "api",
+      online: true,
+    });
+  });
+
+  it("names the helper's package as the backend and the helper pin it", () => {
+    const go = readFileSync("backend/agent/host.go", "utf8");
+    expect(go).toContain(`const HelperPackage = "${HELPER_PACKAGE}"`);
+    const pkg = JSON.parse(readFileSync("agent-host/package.json", "utf8"));
+    expect(HELPER_PACKAGE).toBe(`${pkg.name}@${pkg.version}`);
+    expect(HELPER_COMMANDS).toEqual({
+      run: `npx -y ${HELPER_PACKAGE} run`,
+      install: `npx -y ${HELPER_PACKAGE} install`,
+    });
+  });
 });

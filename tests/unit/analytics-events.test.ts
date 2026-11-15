@@ -21,7 +21,10 @@ import {
   agentQueries,
   dismissAgentAction,
   executeAgentAction,
+  pairAgentHelper,
+  revokeAgentHelper,
   sendAgentMessage,
+  setAgentRuntime,
   turnEvents,
 } from "@/web/areas/agent/queries";
 import { cancelPlan, resumePlan } from "@/web/areas/workspace/plan";
@@ -264,8 +267,17 @@ describe("the Assistant's events", () => {
   it("starts a message's turn from its section, or says why it was refused", async () => {
     call.mockResolvedValueOnce({ turn: { id: "turn_1" }, thread: { id: "t" } });
     await sendAgentMessage("ws", { text: "Hi", clientToken: "c" }, "ask");
+    call.mockResolvedValueOnce({
+      turn: { id: "turn_2" },
+      thread: { id: "t2", runtime: "claude_code" },
+    });
+    await sendAgentMessage("ws", { text: "Hi", clientToken: "e" }, "data");
     expect(vi.mocked(jobStarted).mock.calls).toEqual([
-      [{ job: "agent_turn", section: "ask" }, "turn_1"],
+      [{ job: "agent_turn", section: "ask", runtime: "api" }, "turn_1"],
+      [
+        { job: "agent_turn", section: "data", runtime: "claude_code" },
+        "turn_2",
+      ],
     ]);
     call.mockRejectedValueOnce(new ApiError("slow down", 429));
     await expect(
@@ -295,6 +307,30 @@ describe("the Assistant's events", () => {
         "agent_action_executed",
         { operation: "create_load", outcome, target_named_by_user: false },
       ],
+    ]);
+  });
+
+  it("reports where the Assistant runs once chosen, and its helpers paired and revoked, never when refused", async () => {
+    call.mockResolvedValueOnce({ runtime: { runtime: "claude_code" } });
+    expect(await setAgentRuntime("ws", "claude_code")).toEqual({
+      runtime: "claude_code",
+    });
+    expect(call.mock.calls.at(-1)).toEqual([
+      "/v1/workspaces/ws/foundry/agent/runtime",
+      { runtime: "claude_code" },
+      "PATCH",
+    ]);
+    await pairAgentHelper("ws");
+    await revokeAgentHelper("ws", "01HOST");
+    expect(call.mock.calls.at(-1)?.[0]).toBe(
+      "/v1/workspaces/ws/foundry/agent/hosts/01HOST:revoke",
+    );
+    call.mockRejectedValueOnce(new ApiError("no", 400));
+    await expect(setAgentRuntime("ws", "codex")).rejects.toThrow();
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["agent_runtime_set", { runtime: "claude_code" }],
+      ["agent_helper_pairing_made"],
+      ["agent_helper_revoked"],
     ]);
   });
 

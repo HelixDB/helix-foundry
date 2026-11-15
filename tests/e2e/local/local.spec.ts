@@ -49,6 +49,14 @@ const configure = (config: {
   ontologyStepMs?: number;
   loadStepMs?: number;
   askStepMs?: number;
+  agentStepMs?: number;
+  // The Assistant's helpers (mock/routes/agent-hosts.ts).
+  agentHosts?: {
+    name: string;
+    runtimes: ["claude_code"];
+    online?: boolean;
+    account?: { state: string; subscription?: string } | null;
+  }[];
 }) =>
   fetch(`${MOCK}/__mock/config`, {
     method: "POST",
@@ -1188,4 +1196,177 @@ test("stars on GitHub in place with the install's token, else opens it", async (
   await expect(await opened).toHaveURL(REPOSITORY);
   await expect(prompt).toBeHidden();
   expect(await done()).toBe("1");
+});
+
+// The Assistant on the owner's own subscription (Settings › AI models): new
+// threads run on Claude Code through a helper paired with a one-time code,
+// whose command the page shows; the dock says where its thread runs, and,
+// while no helper runs it, how to start one.
+
+const dockOf = (page: Page) =>
+  page.getByRole("complementary", { name: "Assistant" });
+const assistantPanel = (page: Page) =>
+  page
+    .locator(".hf-panel")
+    .filter({ hasText: "Where new Assistant threads run" });
+
+async function openDock(page: Page) {
+  await page
+    .getByRole("button", { name: "Assistant", exact: true })
+    .filter({ visible: true })
+    .first()
+    .click();
+  await expect(dockOf(page)).toBeVisible();
+}
+
+test("pairs a helper and runs new Assistant threads on the owner's Claude subscription", async ({
+  page,
+}) => {
+  await configure({ agentStepMs: 100 });
+  await page.goto("/settings/ai");
+  const panel = assistantPanel(page);
+  await expect(
+    panel.getByRole("radio", { name: "Foundry’s AI model" }),
+  ).toBeChecked();
+  await expect(
+    panel.getByRole("radio", { name: "My ChatGPT subscription (Codex)" }),
+  ).toBeDisabled();
+  await panel.getByRole("radio", { name: "My Claude subscription" }).check();
+  await expect(
+    page.getByText("New Assistant threads run on your Claude subscription."),
+  ).toBeVisible();
+  await expect(panel.getByText("No helper is paired yet.")).toBeVisible();
+
+  // A one-time code, shown as the command that spends it.
+  await panel.getByRole("button", { name: "Pair a helper" }).click();
+  const command = panel.getByRole("figure", { name: "pair command" });
+  await expect(command).toContainText(
+    "npx -y @helixdb/foundry-agent-host@0.1.0 pair hxp_",
+  );
+  await expect(
+    panel.getByRole("figure", { name: "install command" }),
+  ).toHaveText(/npx -y @helixdb\/foundry-agent-host@0\.1\.0 install/);
+  await expect(panel.getByText(/in the next 10 minutes/)).toBeVisible();
+  await expect(
+    panel.getByText("Waiting for the helper to pair…"),
+  ).toBeVisible();
+  const code = /pair (hxp_\S+)/.exec(await command.innerText())![1];
+  // The helper spends it on the owner's computer; the page sees it paired.
+  const paired = await fetch(`${MOCK}/__mock/agent-host/pair`, {
+    method: "POST",
+    body: JSON.stringify({ code, name: "Ada's Mac" }),
+  });
+  expect(paired.status).toBe(200);
+  await expect(page.getByText("Paired Ada's Mac.")).toBeVisible();
+  await expect(command).toHaveCount(0);
+  const row = panel.getByRole("listitem", { name: "Ada's Mac" });
+  await expect(row).toContainText("Running");
+  await expect(row).toContainText(
+    "Claude Code is signed in on a Max subscription",
+  );
+  // Never a helper's token.
+  await expect(page.getByText(/hxh_|hxr_/)).toHaveCount(0);
+
+  // The dock says where a new thread runs, and runs it there.
+  await openDock(page);
+  const dock = dockOf(page);
+  await expect(dock).toContainText(
+    "New threads run on your Claude subscription, through Claude Code on your computer.",
+  );
+  await dock
+    .getByRole("textbox", { name: "Message" })
+    .fill("What ontologies do I have?");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(dock.getByText(/^This workspace has \d+ ontolog/)).toBeVisible();
+  await expect(dock).toContainText(
+    "This thread runs on your Claude subscription, through Claude Code on your computer.",
+  );
+
+  // Revoked, it runs nothing: the thread says how to start a helper.
+  await row.getByRole("button", { name: "Revoke Ada's Mac" }).click();
+  await page
+    .getByRole("dialog", { name: "Revoke Ada's Mac?" })
+    .getByRole("button", { name: "Revoke" })
+    .click();
+  await expect(page.getByText("Revoked Ada's Mac.")).toBeVisible();
+  await expect(row).toHaveCount(0);
+  await expect(dock).toContainText(
+    "Claude Code’s helper isn’t running, so this thread can’t be sent. Start it on your computer:",
+  );
+  await expect(dock.getByRole("figure", { name: "run command" })).toHaveText(
+    /npx -y @helixdb\/foundry-agent-host@0\.1\.0 run/,
+  );
+});
+
+test("says how to start a helper that isn't running, and when its Claude Code is signed out", async ({
+  page,
+}) => {
+  await configure({
+    agentStepMs: 100,
+    agentHosts: [
+      { name: "Ada's Mac", runtimes: ["claude_code"], online: false },
+      {
+        name: "Build box",
+        runtimes: ["claude_code"],
+        online: false,
+        account: { state: "signed_out" },
+      },
+    ],
+  });
+  await page.goto("/settings/ai");
+  const panel = assistantPanel(page);
+  // Helpers show while the workspace's model runs its threads, once paired.
+  await expect(
+    panel.getByRole("listitem", { name: "Ada's Mac" }),
+  ).toContainText("Not running");
+  await panel.getByRole("radio", { name: "My Claude subscription" }).check();
+  await expect(
+    panel.getByText(
+      "No helper running Claude Code is online, so new threads can’t be sent. Start it on its computer:",
+    ),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("figure", { name: "run command" }),
+  ).toBeVisible();
+  const mac = panel.getByRole("listitem", { name: "Ada's Mac" });
+  await expect(mac).toContainText("last seen 1h ago");
+  await expect(
+    panel.getByRole("listitem", { name: "Build box" }),
+  ).toContainText(
+    "Claude Code isn’t signed in: on that computer, run claude, then /login.",
+  );
+
+  // The dock says so too, and a send is refused with what to run.
+  await openDock(page);
+  const dock = dockOf(page);
+  await expect(dock).toContainText(
+    "Claude Code’s helper isn’t running, so new threads can’t be sent.",
+  );
+  await dock.getByRole("textbox", { name: "Message" }).fill("Hello");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(dock.getByRole("alert")).toHaveText(
+    "Its helper isn’t running on your computer: start it with npx -y @helixdb/foundry-agent-host@0.1.0 run, then send again.",
+  );
+  await expect(dock.getByRole("textbox", { name: "Message" })).toHaveValue(
+    "Hello",
+  );
+
+  // Started: the dock sees it within a few seconds, and the message sends;
+  // a helper whose Claude Code is signed out fails the turn in Foundry's words.
+  await configure({
+    agentHosts: [
+      {
+        name: "Build box",
+        runtimes: ["claude_code"],
+        account: { state: "signed_out" },
+      },
+    ],
+  });
+  await expect(dock).toContainText(
+    "New threads run on your Claude subscription, through Claude Code on your computer.",
+  );
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(dock).toContainText(
+    "Claude Code isn't signed in on the computer running the helper. Run claude, then /login there, then send your message again.",
+  );
 });
