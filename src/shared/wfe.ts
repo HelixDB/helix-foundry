@@ -3428,9 +3428,11 @@ export type AutomationTriggerEvent = {
 export type FoundryAutomationRunNode = {
   nodeId: string;
   status?: AutomationNodeStatus;
+  // outputJson and error: for its automation's owner, and owners and admins,
+  // alone; another member sees how far the run went.
   outputJson?: string;
   error?: string;
-  // An Assistant step's turn, in the run's thread (threadId).
+  // An Assistant step's turn, in the run's thread (threadId): its owner's alone.
   turnId?: string;
   // int64.
   usdMicros?: string;
@@ -3443,14 +3445,15 @@ export type FoundryAutomationRun = {
   id: string;
   automationId?: string;
   status?: AutomationRunStatus;
-  // Why it failed, was cancelled or skipped, or why a queued one retries.
+  // Why it failed, was cancelled or skipped, or why a queued one retries:
+  // for its owner, and owners and admins, alone.
   error?: string;
   triggerEventJson?: string;
   // int64.
   specRevision?: string;
   // AutomationSpec as JSON, on a run got alone.
   specJson?: string;
-  // The owner's Assistant thread its Assistant steps ran in.
+  // The owner's Assistant thread its Assistant steps ran in: theirs alone.
   threadId?: string;
   // int64.
   usdMicros?: string;

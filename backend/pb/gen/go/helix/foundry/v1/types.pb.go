@@ -15174,7 +15174,8 @@ type FoundryAutomationRun struct {
 	// started: error says why).
 	Status string `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
 	// Why it failed, was cancelled or skipped, or why its last attempt failed
-	// while it is queued to try again.
+	// while it is queued to try again. Only its automation's owner, and owners
+	// and admins, see it; another member, how far it went and what it cost.
 	Error string `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
 	// What fired it: {"kind": the trigger's kind or "manual", "at", and the
 	// ids of the work it found (sync_id, load_id, generation_id,
@@ -15184,7 +15185,8 @@ type FoundryAutomationRun struct {
 	SpecRevision int64  `protobuf:"varint,6,opt,name=spec_revision,json=specRevision,proto3" json:"spec_revision,omitempty"`
 	SpecJson     string `protobuf:"bytes,7,opt,name=spec_json,json=specJson,proto3" json:"spec_json,omitempty"`
 	// The owner's Assistant thread its Assistant steps ran in, which its owner
-	// opens in the Assistant to see them, and act on the actions they left.
+	// opens in the Assistant to see them, and act on the actions they left;
+	// set for its owner alone.
 	ThreadId string `protobuf:"bytes,8,opt,name=thread_id,json=threadId,proto3" json:"thread_id,omitempty"`
 	// What its Assistant steps spent, in millionths of a US dollar.
 	UsdMicros  int64                  `protobuf:"varint,9,opt,name=usd_micros,json=usdMicros,proto3" json:"usd_micros,omitempty"`
@@ -15347,10 +15349,11 @@ type FoundryAutomationRunNode struct {
 	Status string `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
 	// {"summary", "answer" (true for yes), "count", "branch" (the branch a
 	// condition took), "result" (an action's result, untrusted), "pending"
-	// (actions an Assistant step left for the owner)}: what it gave.
+	// (actions an Assistant step left for the owner)}: what it gave. It and
+	// error are its automation's owner's, and owners' and admins', alone.
 	OutputJson string `protobuf:"bytes,3,opt,name=output_json,json=outputJson,proto3" json:"output_json,omitempty"`
 	Error      string `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
-	// An Assistant step's turn, in the run's thread.
+	// An Assistant step's turn, in the run's thread; set for its owner alone.
 	TurnId     string                 `protobuf:"bytes,5,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
 	UsdMicros  int64                  `protobuf:"varint,6,opt,name=usd_micros,json=usdMicros,proto3" json:"usd_micros,omitempty"`
 	StartedAt  *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`

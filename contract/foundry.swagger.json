@@ -8546,7 +8546,7 @@
         },
         "error": {
           "type": "string",
-          "description": "Why it failed, was cancelled or skipped, or why its last attempt failed\nwhile it is queued to try again."
+          "description": "Why it failed, was cancelled or skipped, or why its last attempt failed\nwhile it is queued to try again. Only its automation's owner, and owners\nand admins, see it; another member, how far it went and what it cost."
         },
         "triggerEventJson": {
           "type": "string",
@@ -8562,7 +8562,7 @@
         },
         "threadId": {
           "type": "string",
-          "description": "The owner's Assistant thread its Assistant steps ran in, which its owner\nopens in the Assistant to see them, and act on the actions they left."
+          "description": "The owner's Assistant thread its Assistant steps ran in, which its owner\nopens in the Assistant to see them, and act on the actions they left;\nset for its owner alone."
         },
         "usdMicros": {
           "type": "string",
@@ -8612,14 +8612,14 @@
         },
         "outputJson": {
           "type": "string",
-          "description": "{\"summary\", \"answer\" (true for yes), \"count\", \"branch\" (the branch a\ncondition took), \"result\" (an action's result, untrusted), \"pending\"\n(actions an Assistant step left for the owner)}: what it gave."
+          "description": "{\"summary\", \"answer\" (true for yes), \"count\", \"branch\" (the branch a\ncondition took), \"result\" (an action's result, untrusted), \"pending\"\n(actions an Assistant step left for the owner)}: what it gave. It and\nerror are its automation's owner's, and owners' and admins', alone."
         },
         "error": {
           "type": "string"
         },
         "turnId": {
           "type": "string",
-          "description": "An Assistant step's turn, in the run's thread."
+          "description": "An Assistant step's turn, in the run's thread; set for its owner alone."
         },
         "usdMicros": {
           "type": "string",

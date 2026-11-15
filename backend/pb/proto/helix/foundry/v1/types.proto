@@ -2662,7 +2662,8 @@ message FoundryAutomationRun {
   // started: error says why).
   string status = 3;
   // Why it failed, was cancelled or skipped, or why its last attempt failed
-  // while it is queued to try again.
+  // while it is queued to try again. Only its automation's owner, and owners
+  // and admins, see it; another member, how far it went and what it cost.
   string error = 4;
   // What fired it: {"kind": the trigger's kind or "manual", "at", and the
   // ids of the work it found (sync_id, load_id, generation_id,
@@ -2672,7 +2673,8 @@ message FoundryAutomationRun {
   int64 spec_revision = 6;
   string spec_json = 7;
   // The owner's Assistant thread its Assistant steps ran in, which its owner
-  // opens in the Assistant to see them, and act on the actions they left.
+  // opens in the Assistant to see them, and act on the actions they left;
+  // set for its owner alone.
   string thread_id = 8;
   // What its Assistant steps spent, in millionths of a US dollar.
   int64 usd_micros = 9;
@@ -2696,10 +2698,11 @@ message FoundryAutomationRunNode {
   string status = 2;
   // {"summary", "answer" (true for yes), "count", "branch" (the branch a
   // condition took), "result" (an action's result, untrusted), "pending"
-  // (actions an Assistant step left for the owner)}: what it gave.
+  // (actions an Assistant step left for the owner)}: what it gave. It and
+  // error are its automation's owner's, and owners' and admins', alone.
   string output_json = 3;
   string error = 4;
-  // An Assistant step's turn, in the run's thread.
+  // An Assistant step's turn, in the run's thread; set for its owner alone.
   string turn_id = 5;
   int64 usd_micros = 6;
   google.protobuf.Timestamp started_at = 7;

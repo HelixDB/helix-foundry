@@ -469,6 +469,29 @@ func TestRunAutomationNowAndItsRuns(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got.GetRun().GetNodes(), 2)
 	require.Equal(t, "running", got.GetRun().GetNodes()[1].GetStatus(), "an action in flight reads running")
+	require.Equal(t, `{"summary":"Run by hand."}`, got.GetRun().GetNodes()[0].GetOutputJson())
+	thread, turn, why := "thread-1", "turn-1", "Its ontology is gone."
+	store.runs[run.GetId()].ThreadID, store.runs[run.GetId()].Error = &thread, &why
+	store.nodes[1].TurnID, store.nodes[1].Error = &turn, &why
+	owner, err := s.GetFoundryAutomationRun(site("user-ada"), &foundryv1.GetFoundryAutomationRunRequest{WorkspaceId: "ws-1", AutomationId: a.GetId(), Id: run.GetId()})
+	require.NoError(t, err)
+	require.Equal(t, "thread-1", owner.GetRun().GetThreadId())
+	require.Equal(t, "turn-1", owner.GetRun().GetNodes()[1].GetTurnId())
+	admin, err := s.GetFoundryAutomationRun(site("user-admin"), &foundryv1.GetFoundryAutomationRunRequest{WorkspaceId: "ws-1", AutomationId: a.GetId(), Id: run.GetId()})
+	require.NoError(t, err)
+	require.Equal(t, why, admin.GetRun().GetError(), "an admin sees why it failed")
+	require.Empty(t, admin.GetRun().GetThreadId(), "the thread is its owner's")
+	member, err := s.GetFoundryAutomationRun(site("user-alan"), &foundryv1.GetFoundryAutomationRunRequest{WorkspaceId: "ws-1", AutomationId: a.GetId(), Id: run.GetId()})
+	require.NoError(t, err)
+	require.Equal(t, "running", member.GetRun().GetNodes()[1].GetStatus(), "another member sees how far it went")
+	for _, n := range member.GetRun().GetNodes() {
+		require.Empty(t, n.GetOutputJson(), "and not what its owner's steps read")
+		require.Empty(t, n.GetError())
+		require.Empty(t, n.GetTurnId())
+	}
+	require.Empty(t, member.GetRun().GetError())
+	require.Empty(t, member.GetRun().GetThreadId())
+	require.False(t, member.GetRun().GetCanCancel())
 	_, err = s.GetFoundryAutomationRun(site("user-ada"), &foundryv1.GetFoundryAutomationRunRequest{WorkspaceId: "ws-1", AutomationId: a.GetId(), Id: "missing"})
 	require.Equal(t, codes.NotFound, status.Code(err))
 	store.runs["other"] = &foundrymodel.FoundryAutomationRun{ID: "other", AutomationID: "elsewhere", WorkspaceID: "ws-1"}

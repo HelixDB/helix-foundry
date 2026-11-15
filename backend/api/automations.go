@@ -550,17 +550,21 @@ func automationToProto(a *foundrymodel.FoundryAutomation, c automationCaller, wi
 }
 
 // automationRunToProto is r, of a, as c sees it, with its steps when given.
+// What its steps found and why they failed is what its owner could read, so
+// only its owner, and owners and admins, see it: another member sees how far
+// it went and what it cost.
 func automationRunToProto(r *foundrymodel.FoundryAutomationRun, a *foundrymodel.FoundryAutomation, c automationCaller,
 	nodes []*foundrymodel.FoundryAutomationRunNode) *foundryv1.FoundryAutomationRun {
+	detail := a.OwnerUserID == c.userID || c.manager
 	out := &foundryv1.FoundryAutomationRun{
 		Id: r.ID, AutomationId: r.AutomationID, Status: string(r.Status), TriggerEventJson: string(r.TriggerEvent), SpecRevision: r.SpecRevision,
 		SpecJson: string(r.Spec), UsdMicros: r.USDMicros, Attempts: int32(r.Attempts), CreatedAt: timestamppb.New(r.CreatedAt),
-		CanCancel: r.Status.Live() && (a.OwnerUserID == c.userID || c.manager),
+		CanCancel: r.Status.Live() && detail,
 	}
-	if r.Error != nil {
+	if r.Error != nil && detail {
 		out.Error = *r.Error
 	}
-	if r.ThreadID != nil {
+	if r.ThreadID != nil && a.OwnerUserID == c.userID {
 		out.ThreadId = *r.ThreadID
 	}
 	if r.StartedAt != nil {
@@ -570,15 +574,17 @@ func automationRunToProto(r *foundrymodel.FoundryAutomationRun, a *foundrymodel.
 		out.FinishedAt = timestamppb.New(*r.FinishedAt)
 	}
 	for _, n := range nodes {
-		node := &foundryv1.FoundryAutomationRunNode{NodeId: n.NodeID, Status: string(n.Status), OutputJson: string(n.Output), UsdMicros: n.USDMicros,
-			StartedAt: timestamppb.New(n.StartedAt)}
+		node := &foundryv1.FoundryAutomationRunNode{NodeId: n.NodeID, Status: string(n.Status), UsdMicros: n.USDMicros, StartedAt: timestamppb.New(n.StartedAt)}
 		if n.Status == foundrymodel.FoundryAutomationNodeExecuting {
 			node.Status = string(foundrymodel.FoundryAutomationNodeRunning)
 		}
-		if n.Error != nil {
-			node.Error = *n.Error
+		if detail {
+			node.OutputJson = string(n.Output)
+			if n.Error != nil {
+				node.Error = *n.Error
+			}
 		}
-		if n.TurnID != nil {
+		if n.TurnID != nil && a.OwnerUserID == c.userID {
 			node.TurnId = *n.TurnID
 		}
 		if n.FinishedAt != nil {
