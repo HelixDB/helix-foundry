@@ -688,6 +688,15 @@ function Block({
           .
         </p>
       );
+    case "report":
+      return (
+        <p className="ag-ran">
+          Reported to its automation: {block.summary}
+          {block.answer !== undefined &&
+            ` (answer: ${block.answer ? "yes" : "no"})`}
+          {block.count !== undefined && ` (count: ${block.count})`}
+        </p>
+      );
     case "retry":
       return <p className="ag-note">Trying again (attempt {block.attempt}).</p>;
   }

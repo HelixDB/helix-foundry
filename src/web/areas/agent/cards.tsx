@@ -3,9 +3,15 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, Play, RefreshCw, X, Zap } from "lucide-react";
 import type { FoundryAgentAction } from "../../../shared/wfe";
+import { LOCAL } from "../../../shared/deployment";
+import { isRecord } from "../../../shared/json";
 import { sentence } from "../../api";
 import { Button, StatusBadge, formatDate, useNow } from "../../kit";
 import { useWorkspace } from "../../ui";
+import { automationPaths } from "../automations/paths";
+import { parseSpec } from "../automations/model";
+import { StepsPreview } from "../automations/parts";
+import { useNames } from "../automations/queries";
 import { dashboardPaths } from "../dashboards/paths";
 import { dashboardQueries } from "../dashboards/queries";
 import {
@@ -86,6 +92,20 @@ export function ActionCard({
         queryKey: dashboardQueries.dashboard(ws, id).queryKey,
       });
   };
+  // An automation action ran: its lists and pages read again, and a
+  // deleted one's page, if open, gives way to the list.
+  const ranOnAutomations = (ran: FoundryAgentAction) => {
+    const id =
+      card && "automation" in card.display ? card.display.automation.id : "";
+    if (
+      ran.status === "succeeded" &&
+      action.operation === "delete_automation" &&
+      id &&
+      pathname.startsWith(automationPaths.automation(id))
+    )
+      navigate(automationPaths.automations(), { replace: true });
+    void qc.invalidateQueries({ queryKey: [ws, "automations"] });
+  };
   const act = async (which: "run" | "refresh" | "dismiss") => {
     setPending(which);
     setError("");
@@ -94,6 +114,8 @@ export function ActionCard({
         const ran = await executeAgentAction(ws, action);
         if (action.operation?.endsWith("_dashboard"))
           ranOnDashboards(ran.action);
+        if (action.operation?.endsWith("_automation"))
+          ranOnAutomations(ran.action);
         // Where the Assistant runs, as the dock and the settings show it.
         if (
           action.operation === "set_assistant_runtime" ||
@@ -189,6 +211,10 @@ export function ActionCard({
           <CircleAlert size={14} aria-hidden />
           <span>{view.caution}</span>
         </p>
+      )}
+      {(action.operation === "create_automation" ||
+        action.operation === "update_automation") && (
+        <AutomationProposal payloadJson={action.payloadJson || ""} />
       )}
       <details className="ag-disclosure">
         <summary>Full request</summary>
@@ -292,5 +318,54 @@ export function ActionCard({
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * What a create or an edit of an automation saves: its steps in words, each
+ * Assistant step with what it may do without asking, which the person's
+ * click approves. An edit without steps (a new name or description)
+ * approves nothing, and says so: the WFE leaves its approval as it was. A
+ * spec that doesn't read says so: the WFE refuses it.
+ */
+function AutomationProposal({ payloadJson }: { payloadJson: string }) {
+  const { id: ws } = useWorkspace(),
+    { names } = useNames(ws);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(payloadJson);
+  } catch {
+    payload = undefined;
+  }
+  const spec = isRecord(payload) ? payload.spec : undefined;
+  const read = spec === undefined ? undefined : parseSpec(spec);
+  return (
+    <div className="ag-card-proposal">
+      {read?.ok && (
+        <>
+          <p className="ag-card-text">
+            Your click approves these steps, which then run as you, unattended,
+            each time it starts.
+          </p>
+          <StepsPreview
+            spec={read.spec}
+            names={names}
+            email={!LOCAL}
+            label="Steps it approves"
+          />
+        </>
+      )}
+      {!read && (
+        <p className="ag-card-text">
+          Its steps don’t change, so this approves nothing: it stays on, paused
+          or waiting for your approval, as it is.
+        </p>
+      )}
+      {read && !read.ok && (
+        <p className="ag-card-error">
+          Its steps don’t read: {sentence(read.error)}
+        </p>
+      )}
+    </div>
   );
 }

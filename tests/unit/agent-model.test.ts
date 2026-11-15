@@ -113,6 +113,9 @@ describe("inAppPath", () => {
     ["/settings/ai", "/settings/ai"],
     ["/dashboards", "/dashboards"],
     ["/dashboards/dash_1?load=l_1", "/dashboards/dash_1"],
+    ["/automations", "/automations"],
+    ["/automations/aut_1", "/automations/aut_1"],
+    ["/automations/aut_1/runs/run_2?x=1", "/automations/aut_1/runs/run_2"],
   ])("opens %s as %s", (path, to) => expect(at(path)).toBe(to));
 
   it.each([
@@ -124,6 +127,8 @@ describe("inAppPath", () => {
     "/papi/v1/whoami",
     "/settings/secrets",
     "/dashboards/dash_1/x",
+    "/automations/new",
+    "/automations/aut_1/edit",
     "/share/hxd_token",
   ])("opens nothing for %s", (path) => expect(at(path)).toBeUndefined());
 });
@@ -281,6 +286,14 @@ describe("parseAgentEvent", () => {
       },
     ],
     [
+      { type: "automation_report", summary: "Two", answer: false, count: 2 },
+      { type: "automation_report", summary: "Two", answer: false, count: 2 },
+    ],
+    [
+      { type: "automation_report", summary: "S", answer: "yes", count: 1.5 },
+      { type: "automation_report", summary: "S" },
+    ],
+    [
       { type: "finished", status: "done", reason: "answered" },
       { type: "finished", status: "done", reason: "answered" },
     ],
@@ -312,6 +325,7 @@ describe("parseAgentEvent", () => {
       "a result of no known status",
       '{"type":"action_result","action_id":"a","status":"maybe"}',
     ],
+    ["a report without its summary", '{"type":"automation_report"}'],
     [
       "an end of no known reason",
       '{"type":"finished","status":"done","reason":"bored"}',
@@ -662,6 +676,19 @@ describe("live text", () => {
     });
     expect(s.live).toEqual({ step: 1, text: "a" });
     expect(s.unreadable).toBe(1);
+  });
+
+  it("shows an automation step's report", () => {
+    const s = reduceTurnEvents(EMPTY_STREAM, {
+      events: [
+        event(1, { type: "automation_report", summary: "Done.", answer: true }),
+        event(2, { type: "automation_report", summary: "Again.", count: 3 }),
+      ],
+    });
+    expect(s.blocks).toEqual([
+      { kind: "report", summary: "Done.", answer: true },
+      { kind: "report", summary: "Again.", count: 3 },
+    ]);
   });
 });
 

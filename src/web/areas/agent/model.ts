@@ -1,6 +1,7 @@
 import type {
   AgentActionDisplays,
   AgentActionStatus,
+  AgentAutomationRef,
   AgentConnectorRef,
   AgentDashboardRef,
   AgentDecision,
@@ -31,6 +32,7 @@ import { isRecord } from "../../../shared/json";
 import { ApiError } from "../../api";
 import { connectorLabel } from "../../kit/SourceLogo";
 import { formatDate, plural } from "../../kit/util";
+import { automationPaths } from "../automations/paths";
 import { dashboardPaths } from "../dashboards/paths";
 import { dataPaths } from "../data/paths";
 import { reviewCopy } from "../documents/model";
@@ -123,6 +125,7 @@ const LINKABLE = new RegExp(
       `/explore(?:/${SEG}(?:/records|/entities/${SEG})?)?`,
       `/ask(?:/${SEG})?`,
       `/dashboards(?:/${SEG})?`,
+      `/automations(?:/${SEG}(?:/runs/${SEG})?)?`,
       `/data(?:/documents/${SEG}|/connections/${SEG})?`,
       "/settings(?:/(?:ai|members|access|billing|enrichment))?",
     ].join("|") +
@@ -131,7 +134,7 @@ const LINKABLE = new RegExp(
 // A connector kind, in the link helix_foundry_connect gives (/data?add=<kind>).
 const KIND = /^[a-z][a-z0-9_]{0,31}$/;
 const CANDIDATE =
-  /https?:\/\/[^\s<>"'`]+|(?<![\w/])\/(?:ontology|explore|ask|dashboards|data|settings)(?:[/?#][^\s<>"'`]*)?/g;
+  /https?:\/\/[^\s<>"'`]+|(?<![\w/])\/(?:ontology|explore|ask|dashboards|automations|data|settings)(?:[/?#][^\s<>"'`]*)?/g;
 const TRAILING = /[.,;:!?)\]'"]+$/;
 
 /**
@@ -270,6 +273,15 @@ export function parseAgentEvent(eventJson: string): AgentEvent | undefined {
           }
         : undefined;
     }
+    case "automation_report":
+      return typeof x.summary === "string"
+        ? {
+            type: "automation_report",
+            summary: x.summary,
+            ...(typeof x.answer === "boolean" && { answer: x.answer }),
+            ...(Number.isSafeInteger(x.count) && { count: x.count as number }),
+          }
+        : undefined;
     case "finished": {
       const reason = STOP_REASONS.find((r) => r === x.reason);
       return (x.status === "done" || x.status === "failed") && reason
@@ -347,6 +359,8 @@ export type AgentBlock =
       status: AgentActionStatus;
       error?: string;
     }
+  // An automation's step reported what it found (untrusted, the model's).
+  | { kind: "report"; summary: string; answer?: boolean; count?: number }
   // A later attempt went on from what the first committed.
   | { kind: "retry"; attempt: number };
 
@@ -485,6 +499,13 @@ export function reduceTurnEvents(
             status: ev.status,
             ...(ev.error && { error: ev.error }),
           });
+        case "automation_report":
+          return add({
+            kind: "report",
+            summary: ev.summary,
+            ...(ev.answer !== undefined && { answer: ev.answer }),
+            ...(ev.count !== undefined && { count: ev.count }),
+          });
         case "finished":
           return {
             ...at,
@@ -533,6 +554,11 @@ export const TOOL_LABELS: Record<string, string> = {
   helix_foundry_list_dashboards: "Listed the dashboards",
   helix_foundry_get_dashboard: "Read a dashboard",
   helix_foundry_preview_dashboard_tile: "Tried a dashboard tile",
+  helix_foundry_list_automations: "Listed the automations",
+  helix_foundry_get_automation: "Read an automation",
+  helix_foundry_list_automation_runs: "Listed an automation’s runs",
+  helix_foundry_get_automation_run: "Read an automation’s run",
+  helix_foundry_automation_report: "Reported to its automation",
 };
 
 /** The Analyst page an ask step's question is on, when its input names an ontology. */
@@ -616,6 +642,19 @@ function dashboardRef(x: unknown): AgentDashboardRef | undefined {
         ...r,
         ...opt("pinned", x.pinned === true ? (true as const) : undefined),
         ...opt("published", x.published === true ? (true as const) : undefined),
+      }
+    : r;
+}
+const AUTOMATION_STATUSES = ["needs_approval", "active", "paused"] as const;
+function automationRef(x: unknown): AgentAutomationRef | undefined {
+  const r = ref(x);
+  return r && isRecord(x)
+    ? {
+        ...r,
+        ...opt(
+          "status",
+          AUTOMATION_STATUSES.find((s) => s === x.status),
+        ),
       }
     : r;
 }
@@ -964,6 +1003,33 @@ const DISPLAYS: {
   unpublish_dashboard: (d) => {
     const dashboard = dashboardRef(d.dashboard);
     return dashboard ? { dashboard } : undefined;
+  },
+  create_automation: (d) => {
+    const name = str(d.name);
+    return name ? { name } : undefined;
+  },
+  update_automation: (d) => {
+    const automation = automationRef(d.automation),
+      name = d.name === undefined ? null : str(d.name) || undefined;
+    if (!automation || name === undefined || typeof d.steps !== "boolean")
+      return undefined;
+    return { automation, ...opt("name", name ?? undefined), steps: d.steps };
+  },
+  pause_automation: (d) => {
+    const automation = automationRef(d.automation);
+    return automation ? { automation } : undefined;
+  },
+  resume_automation: (d) => {
+    const automation = automationRef(d.automation);
+    return automation ? { automation } : undefined;
+  },
+  delete_automation: (d) => {
+    const automation = automationRef(d.automation);
+    return automation ? { automation } : undefined;
+  },
+  run_automation: (d) => {
+    const automation = automationRef(d.automation);
+    return automation ? { automation } : undefined;
   },
 };
 
@@ -1507,7 +1573,70 @@ const VIEWS: {
     run: "Unpublish",
     target: nameOf(d.dashboard),
   }),
+  create_automation: (d) => ({
+    title: `Set up the automation “${d.name}”`,
+    facts: [{ label: "Name", value: `“${d.name}” (as the Assistant wrote it)` }],
+    does: "Saves this automation and turns it on. You can pause or change it on its page.",
+    cost: "Its Assistant steps spend the workspace’s automations budget.",
+    run: "Create and turn on",
+    target: d.name,
+  }),
+  update_automation: (d) => ({
+    title: `Change the automation ${quoted(d.automation)}`,
+    facts: [
+      { label: "Automation", value: automationText(d.automation) },
+      ...(d.name !== undefined
+        ? [{ label: "New name", value: `“${d.name}”` }]
+        : []),
+    ],
+    does: d.steps
+      ? "Saves these changes to the automation, and your click approves its steps."
+      : "Saves these changes to the automation. Its steps don’t change, so this approves nothing.",
+    run: "Save",
+    target: nameOf(d.automation),
+  }),
+  pause_automation: (d) => ({
+    title: `Pause the automation ${quoted(d.automation)}`,
+    facts: [{ label: "Automation", value: automationText(d.automation) }],
+    does: "It stops running when it would start. A run already going finishes.",
+    run: "Pause",
+    target: nameOf(d.automation),
+  }),
+  resume_automation: (d) => ({
+    title: `Turn the automation ${quoted(d.automation)} back on`,
+    facts: [{ label: "Automation", value: automationText(d.automation) }],
+    does: "It runs again each time it starts, from now on.",
+    run: "Turn on",
+    target: nameOf(d.automation),
+  }),
+  delete_automation: (d) => ({
+    title: `Delete the automation ${quoted(d.automation)}`,
+    facts: [{ label: "Automation", value: automationText(d.automation) }],
+    does: "Deletes the automation and its runs. Nothing it already did is undone.",
+    run: "Delete",
+    target: nameOf(d.automation),
+  }),
+  run_automation: (d) => ({
+    title: `Run the automation ${quoted(d.automation)} now`,
+    facts: [{ label: "Automation", value: automationText(d.automation) }],
+    does: "Runs its approved steps once, now, as you.",
+    run: "Run now",
+    target: nameOf(d.automation),
+  }),
 };
+
+/** An automation as a card names it, with whether it runs. */
+const automationText = (a: AgentAutomationRef) =>
+  [
+    nameOf(a),
+    a.status === "active"
+      ? "on"
+      : a.status === "paused"
+        ? "paused"
+        : a.status === "needs_approval" && "waits for approval",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
 /** A dashboard as a card names it, with whether it is pinned and published. */
 const dashboardText = (d: AgentDashboardRef) =>
@@ -1663,7 +1792,23 @@ export function resultLink(
         "Open the dashboard",
       );
     case "delete_dashboard":
+    case "delete_automation":
       return undefined;
+    case "create_automation":
+      return on(made && automationPaths.automation(made), "Open the automation");
+    case "update_automation":
+    case "pause_automation":
+    case "resume_automation":
+      return on(
+        automationPaths.automation(card.display.automation.id),
+        "Open the automation",
+      );
+    case "run_automation":
+      return on(
+        made &&
+          automationPaths.automationRun(card.display.automation.id, made),
+        "Open the run",
+      );
   }
 }
 
