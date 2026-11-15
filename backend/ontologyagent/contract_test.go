@@ -76,8 +76,8 @@ func TestContract(t *testing.T) {
 		}{
 			"a start with goals":    {Start{Workflow: "We bill customers monthly.", Goals: []string{"Which customers churn?"}}, nil},
 			"a start without goals": {Start{Workflow: "We bill customers monthly.", Goals: []string{}}, nil},
-			"answers": {Feedback{DraftRev: 3, Answers: []agentquestion.Answer{{QuestionID: "q1", Text: "Yes"}, {QuestionID: "q2", Options: []string{"Monthly", "Yearly"}, Text: "and weekly"}}},
-				state},
+			"answers": {Feedback{DraftRev: 3, Answers: []agentquestion.Answer{{QuestionID: "q1", Text: "Yes"}, {QuestionID: "q2", Options: []string{"Monthly", "Yearly"}, Text: "and weekly"},
+				{QuestionID: "q3", Left: true}}}, state},
 			"no answers": {Feedback{DraftRev: 3}, state},
 		} {
 			body, err := json.Marshal(TurnRequest{
@@ -212,11 +212,12 @@ func ExampleSource_MarshalJSON() {
 func ExampleFeedback_MarshalJSON() {
 	start, _ := json.Marshal(Start{Workflow: "We bill customers monthly.", Goals: []string{}})
 	fmt.Println(string(start))
-	answers, _ := json.Marshal(Feedback{DraftRev: 3, Answers: []agentquestion.Answer{{QuestionID: "q1", Text: "Yes"}, {QuestionID: "q2", Options: []string{"Monthly"}}}})
+	answers, _ := json.Marshal(Feedback{DraftRev: 3, Answers: []agentquestion.Answer{{QuestionID: "q1", Text: "Yes"}, {QuestionID: "q2", Options: []string{"Monthly"}},
+		{QuestionID: "q3", Left: true}}})
 	fmt.Println(string(answers))
 	// Output:
 	// {"start":{"workflow":"We bill customers monthly.","goals":[]}}
-	// {"feedback":{"draft_rev":3,"actions":[{"answer":{"question_id":"q1","options":[],"text":"Yes"}},{"answer":{"question_id":"q2","options":["Monthly"]}}]}}
+	// {"feedback":{"draft_rev":3,"actions":[{"answer":{"question_id":"q1","options":[],"text":"Yes"}},{"answer":{"question_id":"q2","options":["Monthly"]}},{"leave":{"question_id":"q3"}}]}}
 }
 
 func TestTurnRuleCounts(t *testing.T) {

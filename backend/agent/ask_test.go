@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -10,9 +11,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
+	"github.com/helixdb/helix-foundry/backend/integration"
+	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -222,72 +227,93 @@ func TestAnswersOpenTheNextTurn(t *testing.T) {
 	assert.True(t, failure.Permanent)
 }
 
-// A relayed generation's answers become its answer_generation_questions card
-// unchanged, and nothing else answers a generation.
-func TestRelayedAnswersBecomeTheGenerationsCard(t *testing.T) {
-	relayed := func() *model.FoundryAgentAsked {
-		return &model.FoundryAgentAsked{Questions: asking().Questions.Questions(),
-			Generation: &model.FoundryAgentAskedGeneration{OntologyID: ontology, GenerationID: "gen1", Round: 1}}
-	}
+// A relayed generation's answers go to it as the person, at their click,
+// each as given and the rest left to its agent; the answers turn only says
+// so, and the Assistant never answers a generation itself.
+func TestRelayedAnswersAreSentAsThePerson(t *testing.T) {
+	relayed := &model.FoundryAgentAsked{Questions: asking().Questions.Questions(),
+		Generation: &model.FoundryAgentAskedGeneration{OntologyID: ontology, GenerationID: "gen1", Round: 1}}
 	answers := []agentquestion.Answer{{QuestionID: "q1", Options: []string{"Each person"}}, {QuestionID: "q2", Options: []string{}, Text: "90 days"}}
-	exact := `{"generation_id":"gen1","round":1,"answers":[{"question_id":"q1","options":["Each person"]},{"question_id":"q2","options":[],"text":"90 days"}],"use_defaults":true}`
-	prepare := func(payload string) []llm.Chunk {
-		return call("toolu_1", toolPrepare, `{"operation":"answer_generation_questions","target":"ontology:ws1/ont1","payload":`+payload+`}`)
-	}
 
-	t.Run("the answers turn prepares them", func(t *testing.T) {
-		h := workspaceHarness(t, prepare(exact), say("Run the card to send your answers."))
+	t.Run("sends them as the person", func(t *testing.T) {
+		h := workspaceHarness(t)
+		require.NoError(t, SendAnswers(context.Background(), h.host, user, relayed, ws, answers))
+		require.Len(t, h.backend.answered, 1)
+		sent := h.backend.answered[0]
+		assert.Equal(t, []any{ws, ontology, "gen1", int32(1), true}, []any{sent.GetWorkspaceId(), sent.GetOntologyId(), sent.GetId(), sent.GetRound(), sent.GetUseDefaults()})
+		require.Len(t, sent.GetAnswers(), 2)
+		assert.Equal(t, []string{"Each person"}, sent.GetAnswers()[0].GetOptions())
+		assert.Equal(t, "90 days", sent.GetAnswers()[1].GetText())
+		assert.Equal(t, []ports.Actor{{Source: ports.SourceUser, UserID: user, WorkspaceID: ws}}, h.host.actors, "as its person")
+
+		// Every question answered leaves none to the agent.
+		h = workspaceHarness(t)
+		all := append(slices.Clone(answers), agentquestion.Answer{QuestionID: "q3", Options: []string{"Active"}})
+		require.NoError(t, SendAnswers(context.Background(), h.host, user, relayed, ws, all))
+		assert.False(t, h.backend.answered[0].GetUseDefaults())
+	})
+
+	t.Run("says why they weren't sent", func(t *testing.T) {
+		h := workspaceHarness(t)
+		h.backend.answerErr = status.Error(codes.FailedPrecondition, "this generation isn't waiting for answers")
+		err := SendAnswers(context.Background(), h.host, user, relayed, ws, answers)
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+		assert.Contains(t, status.Convert(err).Message(), "your answers weren't sent to the draft")
+
+		h = workspaceHarness(t)
+		h.host.err = errors.New("no session")
+		err = SendAnswers(context.Background(), h.host, user, relayed, ws, answers)
+		assert.Equal(t, codes.Unavailable, status.Code(err))
+		assert.Empty(t, h.backend.answered)
+
+		// One who may not answer is refused before anything is sent.
+		h = workspaceHarness(t)
+		h.host.may = func(integration.Permission) bool { return false }
+		err = SendAnswers(context.Background(), h.host, user, relayed, ws, answers)
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+		assert.Empty(t, h.backend.answered)
+	})
+
+	t.Run("the answers turn says they were sent", func(t *testing.T) {
+		h := workspaceHarness(t, say("Sent: the draft carries on."))
 		h.db.generations = []*model.OntologyGeneration{asking()}
-		turn := answering(h, relayed(), answers)
-		_, err := h.runner.Run(context.Background(), turn)
+		_, err := h.runner.Run(context.Background(), answering(h, relayed, answers))
 		require.NoError(t, err)
 		text := h.model.requests[0].Messages[0].Content[0].(llm.Text).Text
-		assert.Contains(t, text, "These answer round 1 of generation gen1's questions. Prepare answer_generation_questions on target ontology:ws1/ont1 with exactly this payload")
-		assert.Contains(t, text, exact, "the payload to copy")
-		require.Len(t, h.db.actions, 1, lastResult(t, h).Content)
-		a := h.db.actions[0]
-		assert.JSONEq(t, exact, string(a.Payload))
-		assert.True(t, a.TargetNamedByUser, "the person answered that generation's questions")
-		assert.JSONEq(t, `{"ontology":{"id":"ont1","name":"Sales graph"},"generation":{"id":"gen1","name":"Track renewals"},"round":1,
-			"answers":[{"question_id":"q1","header":"Customers","question":"Is a customer the company that pays?","options":["Each person"]},
-			  {"question_id":"q2","question":"How many days before renewal is at risk?","options":[],"text":"90 days"}],"use_defaults":true,
-			"defaulted":[{"question_id":"q3","question":"Keep <b>cancelled</b> orders?","options":[],"text":"`+agentquestion.NoPreference+`"}]}`, string(a.Display))
+		assert.Contains(t, text, "1. Customers: Is a customer the company that pays?\n   Answer: Each person")
+		assert.Contains(t, text, "3. Keep <b>cancelled</b> orders?\n   Left to you: they let you decide.")
+		assert.Contains(t, text, "These answered round 1 of generation gen1's questions, and Foundry has sent them to it")
+		assert.Contains(t, text, "there is nothing to prepare")
+		assert.Empty(t, h.db.actions)
+		assert.Empty(t, h.backend.answered, "the API sent them, not the turn")
 	})
 
-	t.Run("answers changed are refused", func(t *testing.T) {
-		for name, payload := range map[string]string{
-			"another answer": strings.Replace(exact, "Each person", "The company that pays", 1),
-			"no defaults":    strings.Replace(exact, `"use_defaults":true`, `"use_defaults":false`, 1),
-			"another round":  strings.Replace(exact, `"round":1`, `"round":2`, 1),
-		} {
-			h := workspaceHarness(t, prepare(payload), say("x"))
-			h.db.generations = []*model.OntologyGeneration{asking()}
-			_, err := h.runner.Run(context.Background(), answering(h, relayed(), answers))
-			require.NoError(t, err)
-			assert.Empty(t, h.db.actions, name)
-			assert.Contains(t, lastResult(t, h).Content, "exactly the payload the person's answers came with", name)
-		}
-	})
-
-	t.Run("a message turn answers no generation", func(t *testing.T) {
+	t.Run("the Assistant prepares no answers to a generation", func(t *testing.T) {
 		h := workspaceHarness(t)
 		h.db.generations = []*model.OntologyGeneration{asking()}
-		a, result := prepared(t, h, "Answer them: each person, 90 days", "answer_generation_questions", "ontology:ws1/ont1", exact)
+		a, result := prepared(t, h, "Answer them: each person, 90 days", "answer_generation_questions", "ontology:ws1/ont1",
+			`{"generation_id":"gen1","round":1,"answers":[{"question_id":"q1","options":["Each person"]}],"use_defaults":true}`)
 		assert.Nil(t, a)
 		assert.True(t, result.IsError)
-		assert.Contains(t, result.Content, "relay them with "+toolAskPerson)
+		assert.Contains(t, result.Content, "answer_generation_questions does not equal any of", "not an operation the tool offers")
+		assert.False(t, Operations["answer_generation_questions"])
 	})
+}
 
-	t.Run("answers to the Assistant's own questions answer no generation", func(t *testing.T) {
-		h := workspaceHarness(t, prepare(exact), say("x"))
-		h.db.generations = []*model.OntologyGeneration{asking()}
-		own := relayed()
-		own.Generation = nil
-		_, err := h.runner.Run(context.Background(), answering(h, own, answers))
-		require.NoError(t, err)
-		assert.Empty(t, h.db.actions)
-		assert.Contains(t, lastResult(t, h).Content, "aren't to a generation's questions")
-	})
+// A generation's questions are relayed only to a person who may answer
+// them: one who may not is told, in the model's words, who can.
+func TestAGenerationIsRelayedOnlyToWhoMayAnswer(t *testing.T) {
+	h := newHarness(t, call("toolu_1", toolAskPerson, `{"generation":{"ontology_id":"ont1","generation_id":"gen1"}}`), say("Ask an owner."))
+	h.db.generations = []*model.OntologyGeneration{asking()}
+	h.host.may = func(integration.Permission) bool { return false }
+	a, err := h.runner.Run(context.Background(), message("Carry on with the draft"))
+	require.NoError(t, err)
+	assert.Equal(t, StopAnswered, a.Stop)
+	assert.Empty(t, h.db.asked)
+	result := lastResult(t, h)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "The person can't answer this generation's questions")
+	assert.Contains(t, result.Content, "an owner or admin of the workspace answers them")
 }
 
 // An automation's turn runs with no one to ask.

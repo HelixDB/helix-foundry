@@ -247,16 +247,32 @@ func (s *Service) ExecuteForPerson(ctx context.Context, identity *Identity, inpu
 // step runs.
 const toolRunApproved = "helix_foundry_automation_action"
 
+// toolRunAnswers is how the audit names the answers a person sent a
+// generation from the Assistant's dock.
+const toolRunAnswers = "helix_foundry_ask_person"
+
 // RunApproved runs an action its person approved beforehand, an
 // automation's action step, as identity (that person, now, confirming as the
 // caller): validated and authorized again, a confirmation prepared and
 // consumed at once, and the backend called once, under Run's audit. It ends
 // as ExecuteForPerson does; unknown is never run again.
 func (s *Service) RunApproved(ctx context.Context, identity *Identity, input FoundryOperationInput) Executed {
+	return s.runNow(ctx, identity, toolRunApproved, input)
+}
+
+// RunAnswers sends a generation the answers its person gave its questions
+// in the Assistant's dock, an answer_generation_questions, as RunApproved
+// runs an action: their click on Send answers is their consent.
+func (s *Service) RunAnswers(ctx context.Context, identity *Identity, input FoundryOperationInput) Executed {
+	return s.runNow(ctx, identity, toolRunAnswers, input)
+}
+
+// runNow is RunApproved and RunAnswers, under tool's name in the audit.
+func (s *Service) runNow(ctx context.Context, identity *Identity, tool string, input FoundryOperationInput) Executed {
 	var out FoundryOperationOutput
 	var consumed bool
 	var raw error
-	_, _, _ = s.Run(ctx, toolRunApproved, func(ctx context.Context, call *Call) (any, int, error) {
+	_, _, _ = s.Run(ctx, tool, func(ctx context.Context, call *Call) (any, int, error) {
 		prepared, _, err := s.PrepareFoundryOperation(ctx, identity, call, input)
 		if err != nil {
 			raw = err

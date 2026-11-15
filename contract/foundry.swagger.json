@@ -6078,7 +6078,7 @@
           "description": "The generation's question_round the answers are for."
         }
       },
-      "description": "AnswerOntologyGenerationRequest answers the round of questions a\ngeneration waits on (status needs_input) and queues it to carry on from\nwhere the agent asked. Each answer names one of its questions, at most\nonce, and answers it as AgentQuestionAnswer says. With use_defaults, every\nquestion left out takes its recommended answer (or, with none, is left for\nthe agent to decide); without, every blocking question must be answered,\nand a non-blocking one left out stays open in the draft. INVALID_ARGUMENT\notherwise. A generation that isn't waiting, or waits on another round\nthan round (the questions were answered, and the agent asked again), is\nFAILED_PRECONDITION. It needs what GenerateOntology needs: managing the\nontology, and an AI provider."
+      "description": "AnswerOntologyGenerationRequest answers the round of questions a\ngeneration waits on (status needs_input) and queues it to carry on from\nwhere the agent asked. Each answer names one of its questions, at most\nonce, and answers it as AgentQuestionAnswer says. With use_defaults, every\nquestion left out is left to the agent (left_to_agent), which takes its\nrecommended answer, or decides, as its own choice; without, every\nblocking question must be answered, and a non-blocking one left out stays\nopen in the draft. INVALID_ARGUMENT otherwise, and for a round below 1. A generation that isn't waiting, or waits on another round\nthan round (the questions were answered, and the agent asked again), is\nFAILED_PRECONDITION. It needs what GenerateOntology needs: managing the\nontology, and an AI provider."
     },
     "FoundryServiceApproveFoundryAutomationBody": {
       "type": "object",
@@ -6602,7 +6602,7 @@
         },
         "answers": {
           "$ref": "#/definitions/v1FoundryAgentAnswers",
-          "description": "Answers to the questions answers.turn_id asked, which must be the\nthread's newest turn, done, having asked (FAILED_PRECONDITION, reason\nFOUNDRY_AGENT_QUESTIONS_CLOSED, once anything followed it, its answers\namong them). Checked against its questions as AgentQuestionAnswer\nsays, every blocking one answered (INVALID_ARGUMENT otherwise)."
+          "description": "Answers to the questions answers.turn_id asked, which must be the\nthread's newest turn, done, having asked (FAILED_PRECONDITION, reason\nFOUNDRY_AGENT_QUESTIONS_CLOSED, once anything followed it, its answers\namong them). Checked against its questions as AgentQuestionAnswer\nsays, every blocking one answered (INVALID_ARGUMENT otherwise).\nAnswers to a relayed generation's questions are sent to it first, as\nthe caller (answer_generation_questions, use_defaults when any is left\nout), while it still waits on that round: else FAILED_PRECONDITION,\nreason FOUNDRY_AGENT_QUESTIONS_CLOSED. A refusal of the send (the\ncaller may not answer it) is FAILED_PRECONDITION and queues nothing; a\nrefusal of the turn after it says the answers reached the draft."
         },
         "pageContext": {
           "$ref": "#/definitions/v1FoundryAgentPageContext"
@@ -6981,7 +6981,7 @@
         },
         "recommended": {
           "type": "string",
-          "description": "The answer the agent recommends, which a question left to it takes: the\nlabel of one of its options (shown first, marked), or, without options,\nthe words it suggests; empty for none."
+          "description": "The answer the agent recommends, which it takes as its own choice for a\nquestion left to it: the label of one of its options (shown first,\nmarked), or, without options, the words it suggests; empty for none."
         },
         "blocking": {
           "type": "boolean",
@@ -8372,7 +8372,7 @@
           "format": "int32"
         }
       },
-      "description": "FoundryAgentAskedGeneration is a generation whose questions a turn relayed,\nand their round: the answers turn prepares answer_generation_questions\nwith the person's answers, unchanged, as a card the person runs."
+      "description": "FoundryAgentAskedGeneration is a generation whose questions a turn relayed,\nand their round: SendFoundryAgentMessage sends the person's answers to it,\nas them, while it still waits on that round."
     },
     "v1FoundryAgentEvent": {
       "type": "object",
@@ -12483,7 +12483,7 @@
         },
         "recommended": {
           "type": "string",
-          "description": "As AgentQuestion's: the ontology agent's default, which use_defaults\nanswers with; a question without one is left to the agent."
+          "description": "As AgentQuestion's: the ontology agent's default, which it takes for a\nquestion left to it (use_defaults), or decides without one."
         },
         "blocking": {
           "type": "boolean",
@@ -12498,7 +12498,11 @@
         },
         "answer": {
           "$ref": "#/definitions/v1AgentQuestionAnswer",
-          "title": "The answer it was given, once answered; unset while it waits. One the\nagent was left to decide, with no recommended answer, is the text\n\"No preference: decide from the data and the goal.\""
+          "description": "The answer it was given, once answered; unset while it waits, or when\nit was left to the agent."
+        },
+        "leftToAgent": {
+          "type": "boolean",
+          "description": "The person (or the automatic answers once due) left it to the agent,\nwhich took its recommended answer, or decided, as its own choice, never\nas the person's words. Never set beside answer."
         }
       },
       "description": "A question the ontology agent asked about its draft (AgentQuestion's\nfields), the draft items it is about, and its answer once given."

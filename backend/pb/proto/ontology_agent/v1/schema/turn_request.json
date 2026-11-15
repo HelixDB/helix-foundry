@@ -221,6 +221,29 @@
           "required": [
             "answer"
           ]
+        },
+        {
+          "description": "Leaves an open question to the agent: the user chose nothing and wrote nothing, so the\nagent takes its own default (the option it recommended, or the answer it would take)\nor, with none, decides from the data and the goals. Nothing of it is the user's words.",
+          "type": "object",
+          "properties": {
+            "leave": {
+              "type": "object",
+              "properties": {
+                "question_id": {
+                  "description": "The question.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "question_id"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "leave"
+          ]
         }
       ]
     },

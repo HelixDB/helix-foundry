@@ -540,7 +540,7 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 		var payload AnswerGenerationQuestionsPayload
 		malformed := invalid(fmt.Sprintf("answer_generation_questions takes payload {generation_id, round, answers, use_defaults}: the generation's question_round, "+
 			"and up to %d answers, each {question_id, options, text} naming a question once with the labels of the options chosen and the user's own words "+
-			"(1 to %d characters), at least one of the two; use_defaults answers every question left out with its recommended answer", maxFoundryAnswers, agentquestion.MaxAnswerChars))
+			"(1 to %d characters), at least one of the two; use_defaults leaves every question left out to the agent, which takes its recommended answer or decides, as its own choice", maxFoundryAnswers, agentquestion.MaxAnswerChars))
 		if decodeStrict(raw, &payload) != nil || !ValidIDs([]string{payload.GenerationID}) || payload.Round < 1 || len(payload.Answers) > maxFoundryAnswers ||
 			len(payload.Answers) == 0 && !payload.UseDefaults {
 			return nil, malformed

@@ -170,8 +170,8 @@ type FoundryAgentAsked struct {
 }
 
 // FoundryAgentAskedGeneration is the generation, and the round of its
-// questions, a turn relayed: the answers to them are its
-// answer_generation_questions.
+// questions, a turn relayed: the person's answers to them are sent to it
+// (answer_generation_questions, run as them) before the answers turn.
 type FoundryAgentAskedGeneration struct {
 	OntologyID   string `json:"ontology_id"`
 	GenerationID string `json:"generation_id"`

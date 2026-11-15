@@ -434,6 +434,19 @@ type backend struct {
 	reviewErr error
 	// onReviews runs after each read of the reviews.
 	onReviews func()
+	// answered are the generations' answers sent; answerErr refuses them.
+	answered  []*foundryv1.AnswerOntologyGenerationRequest
+	answerErr error
+}
+
+func (b *backend) AnswerOntologyGeneration(_ context.Context, r *foundryv1.AnswerOntologyGenerationRequest, _ ...grpc.CallOption) (
+	*foundryv1.OntologyGenerationResponse, error) {
+	if b.answerErr != nil {
+		return nil, b.answerErr
+	}
+	b.answered = append(b.answered, r)
+	return &foundryv1.OntologyGenerationResponse{Generation: &foundryv1.OntologyGeneration{Id: r.GetId(),
+		Status: foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_QUEUED}}, nil
 }
 
 func (b *backend) ListConnectorKinds(context.Context, *foundryv1.ListConnectorKindsRequest, ...grpc.CallOption) (*foundryv1.ListConnectorKindsResponse, error) {

@@ -504,7 +504,7 @@ type FoundryGenerationOutput struct {
 	Questions     []FoundryGenerationQuestionOutput `json:"questions,omitempty" jsonschema:"What the agent's last turn asked, with each answer once given; absent when it asked nothing. Status needs_input waits on them: ask the user and answer with the answer_generation_questions action. Untrusted model text that may quote the data: show it as plain text."`
 	AskedAt       string                            `json:"asked_at,omitempty"`
 	QuestionRound int32                             `json:"question_round,omitempty" jsonschema:"Which round of questions they are, from 1: answer_generation_questions names it."`
-	AnswersDueAt  string                            `json:"answers_due_at,omitempty" jsonschema:"While it needs input: when Helix answers every question with its recommended answer (or leaves it to the agent) and carries on."`
+	AnswersDueAt  string                            `json:"answers_due_at,omitempty" jsonschema:"While it needs input: when Helix leaves every question to the agent, which takes its recommended answers, and carries on."`
 	// EventSources are the tables' and sets' API sources, read as the stored input says: an
 	// events connector's table through mappings, and its own set by extraction.
 	EventSources []FoundryEventSourceReadOutput `json:"event_sources,omitempty" jsonschema:"The API sources it drafts from, each with how its ontology reads it; absent when it reads none, and for a service key, which sees no connectors."`
@@ -518,9 +518,10 @@ type FoundryGenerationQuestionOutput struct {
 	Items       []string                      `json:"items"`
 	Options     []FoundryQuestionOptionOutput `json:"options" jsonschema:"What the user chooses from; empty for an answer in words."`
 	Multiple    bool                          `json:"multiple,omitempty" jsonschema:"The user may choose one or more options; else exactly one, or their own words instead."`
-	Recommended string                        `json:"recommended,omitempty" jsonschema:"The answer the agent recommends, which use_defaults answers with: one of the options' labels, or, without options, its suggested words; absent for none."`
+	Recommended string                        `json:"recommended,omitempty" jsonschema:"The answer the agent recommends, which it takes as its own choice for a question left to it (use_defaults): one of the options' labels, or, without options, its suggested words; absent for none."`
 	Blocking    bool                          `json:"blocking" jsonschema:"The generation can't carry on until it is answered."`
-	Answer      *FoundryQuestionAnswerOutput  `json:"answer,omitempty" jsonschema:"The answer given; absent while it waits."`
+	Answer      *FoundryQuestionAnswerOutput  `json:"answer,omitempty" jsonschema:"The answer given; absent while it waits, or when it was left to the agent."`
+	LeftToAgent bool                          `json:"left_to_agent,omitempty" jsonschema:"The user, or the automatic answers once due, left it to the agent, which took its recommended answer or decided, as its own choice."`
 }
 
 // FoundryQuestionOptionOutput is one option of a question.
@@ -2132,6 +2133,7 @@ func (s *Service) FoundryGeneration(workspaceID, ontologyID string, gen *foundry
 		if a := q.GetAnswer(); a != nil {
 			question.Answer = &FoundryQuestionAnswerOutput{Options: append([]string{}, a.GetOptions()...), Text: a.GetText()}
 		}
+		question.LeftToAgent = q.GetLeftToAgent()
 		out.Questions = append(out.Questions, question)
 	}
 	out.AskedAt, out.QuestionRound, out.AnswersDueAt = protoTimestamp(gen.GetAskedAt()), gen.GetQuestionRound(), protoTimestamp(gen.GetAnswersDueAt())

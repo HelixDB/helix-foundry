@@ -659,9 +659,9 @@ message AgentQuestion {
   repeated AgentQuestionOption options = 4;
   // Whether the person may pick several options; false without options.
   bool multiple = 5;
-  // The answer the agent recommends, which a question left to it takes: the
-  // label of one of its options (shown first, marked), or, without options,
-  // the words it suggests; empty for none.
+  // The answer the agent recommends, which it takes as its own choice for a
+  // question left to it: the label of one of its options (shown first,
+  // marked), or, without options, the words it suggests; empty for none.
   string recommended = 6;
   // A blocking question needs an answer; another may be left to the agent
   // (its recommended answer, or the agent decides).
@@ -694,18 +694,21 @@ message OntologyGenerationQuestion {
   string text = 3;
   repeated AgentQuestionOption options = 4;
   bool multiple = 5;
-  // As AgentQuestion's: the ontology agent's default, which use_defaults
-  // answers with; a question without one is left to the agent.
+  // As AgentQuestion's: the ontology agent's default, which it takes for a
+  // question left to it (use_defaults), or decides without one.
   string recommended = 6;
   // The generation can't carry on until a blocking question is answered;
   // another may be left for the agent to decide.
   bool blocking = 7;
   // The draft items it is about, such as type.Customer; may be empty.
   repeated string items = 8;
-  // The answer it was given, once answered; unset while it waits. One the
-  // agent was left to decide, with no recommended answer, is the text
-  // "No preference: decide from the data and the goal."
+  // The answer it was given, once answered; unset while it waits, or when
+  // it was left to the agent.
   AgentQuestionAnswer answer = 9;
+  // The person (or the automatic answers once due) left it to the agent,
+  // which took its recommended answer, or decided, as its own choice, never
+  // as the person's words. Never set beside answer.
+  bool left_to_agent = 10;
 }
 
 // One edit of a version's draft: put an item, or remove one.
@@ -2676,8 +2679,8 @@ message FoundryAgentAsked {
 }
 
 // FoundryAgentAskedGeneration is a generation whose questions a turn relayed,
-// and their round: the answers turn prepares answer_generation_questions
-// with the person's answers, unchanged, as a card the person runs.
+// and their round: SendFoundryAgentMessage sends the person's answers to it,
+// as them, while it still waits on that round.
 message FoundryAgentAskedGeneration {
   string ontology_id = 1;
   string generation_id = 2;

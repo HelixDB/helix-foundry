@@ -688,7 +688,7 @@ func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, worker
 		return nil, err
 	}
 	sink.cards = SessionCards(h.DB, h.Databases, session, turn.WorkspaceID)
-	server, offered, err := toolServer(session, asker{db: h.DB, turn: turn, workerID: workerID}.register)
+	server, offered, err := toolServer(session, asker{db: h.DB, session: session, turn: turn, workerID: workerID}.register)
 	if err != nil {
 		return nil, err
 	}

@@ -9,7 +9,8 @@
 // own words instead (one) or as well (several). The agent may recommend an
 // answer: one of its options, marked, or, for a free answer, its words. A
 // blocking question needs an answer; one that isn't may be left to the
-// asking agent, which then takes its recommended answer.
+// asking agent (Answer.Left), which then takes its recommended answer, or
+// decides, as its own choice, never as the person's.
 //
 // Its JSON, as the store keeps it and the API and the agents read it:
 //
@@ -18,7 +19,8 @@
 //	 "multiple": false, "recommended": "An account", "blocking": true}
 //
 // (the ontology agent's own JSON names recommended "default":
-// model.OntologyQuestion reads it), and an answer's {"question_id": "q1", "options": ["An account"], "text": "..."}.
+// model.OntologyQuestion reads it), and an answer's {"question_id": "q1", "options": ["An account"], "text": "..."},
+// or {"question_id": "q1", "left": true} for one left to the agent.
 // Every string an agent wrote may quote the data: it is shown as plain text.
 package agentquestion
 
@@ -40,10 +42,6 @@ const (
 	// MaxAnswerChars bounds an answer's own words, once trimmed.
 	MaxAnswerChars = 2000
 )
-
-// NoPreference answers a question left to the agent that recommended no
-// answer: the agent decides.
-const NoPreference = "No preference: decide from the data and the goal."
 
 // Option is one answer a question offers: a short label, which an answer
 // names, and an optional line saying what choosing it means.
@@ -114,7 +112,9 @@ func (q *Question) UnmarshalJSON(data []byte) error {
 
 // New is a question from its fields as JSON carries them: a choice when it
 // has options, else a free answer, which can't be multiple; refused as
-// Validate refuses.
+// Validate refuses. A free answer's recommended words are trimmed, and none
+// when they are blank or longer than an answer may be, so an agent's
+// suggestion never makes its question unreadable.
 func New(id, header, text string, blocking bool, options []Option, multiple bool, recommended string) (Question, error) {
 	out := Question{ID: id, Header: header, Text: text, Blocking: blocking, Recommended: recommended}
 	switch {
@@ -122,6 +122,11 @@ func New(id, header, text string, blocking bool, options []Option, multiple bool
 		out.Choice = &Choice{Options: options, Multiple: multiple}
 	case multiple:
 		return Question{}, fmt.Errorf("question %q: multiple comes only with options", id)
+	default:
+		out.Recommended = strings.TrimSpace(recommended)
+		if utf8.RuneCountInString(out.Recommended) > MaxAnswerChars {
+			out.Recommended = ""
+		}
 	}
 	if err := out.Validate(); err != nil {
 		return Question{}, err
@@ -169,33 +174,58 @@ func (q Question) offers(label string) bool {
 }
 
 // Answer is the person's answer to one question: the labels of the options
-// they chose, in the question's order, and their own words; at least one.
+// they chose, in the question's order, and their own words, at least one;
+// or, Left, that they left it to the agent, with neither. Only Check leaves
+// a question: an answer given with Left is refused.
 type Answer struct {
+	QuestionID string
+	Options    []string
+	Text       string
+	// Left: the person chose nothing and wrote nothing, and the agent takes
+	// its recommended answer, or decides, as its own choice.
+	Left bool
+}
+
+// answerJSON is an answer's JSON: options and text, or left.
+type answerJSON struct {
 	QuestionID string   `json:"question_id"`
-	Options    []string `json:"options"`
+	Options    []string `json:"options,omitempty"`
 	Text       string   `json:"text,omitempty"`
+	Left       bool     `json:"left,omitempty"`
 }
 
-// MarshalJSON writes the answer's JSON, its options an array even when it
-// has none.
+// MarshalJSON writes {"question_id", "options": [...], "text"?}, its options
+// an array even when it has none, or {"question_id", "left": true}.
 func (a Answer) MarshalJSON() ([]byte, error) {
-	type plain Answer
-	if a.Options == nil {
-		a.Options = []string{}
+	if a.Left {
+		return json.Marshal(answerJSON{QuestionID: a.QuestionID, Left: true})
 	}
-	return json.Marshal(plain(a))
+	options := a.Options
+	if options == nil {
+		options = []string{}
+	}
+	return json.Marshal(struct {
+		QuestionID string   `json:"question_id"`
+		Options    []string `json:"options"`
+		Text       string   `json:"text,omitempty"`
+	}{a.QuestionID, options, a.Text})
 }
 
-// Default is the answer a question left to the agent takes: the option it
-// recommended, or its recommended words, else NoPreference.
-func Default(q Question) Answer {
-	switch {
-	case q.Recommended == "":
-		return Answer{QuestionID: q.ID, Options: []string{}, Text: NoPreference}
-	case q.Choice != nil:
-		return Answer{QuestionID: q.ID, Options: []string{q.Recommended}}
+// UnmarshalJSON reads what MarshalJSON writes, refusing a left answer with
+// options or text.
+func (a *Answer) UnmarshalJSON(data []byte) error {
+	var w answerJSON
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
 	}
-	return Answer{QuestionID: q.ID, Options: []string{}, Text: q.Recommended}
+	if w.Left && (len(w.Options) > 0 || w.Text != "") {
+		return fmt.Errorf("question %s's answer is left to the agent, so it has no options or text", w.QuestionID)
+	}
+	if w.Options == nil && !w.Left {
+		w.Options = []string{}
+	}
+	*a = Answer(w)
+	return nil
 }
 
 // Check checks the person's answers to asked and returns them as the agent
@@ -206,9 +236,9 @@ func Default(q Question) Answer {
 //   - for a choice of several, one or more of its options, once each, with
 //     their words or without, or their words alone.
 //
-// With useDefaults, every question left out takes its Default; without,
-// every blocking question must be answered, and one that isn't may be left
-// out (left to the agent). The error says what is wrong, for the person.
+// With useDefaults, every question left out is left to the agent (Left);
+// without, every blocking question must be answered, and one that isn't is
+// left out. The error says what is wrong, for the person.
 func Check(asked []Question, given []Answer, useDefaults bool) ([]Answer, error) {
 	byID := make(map[string]Answer, len(given))
 	for _, a := range given {
@@ -231,7 +261,7 @@ func Check(asked []Question, given []Answer, useDefaults bool) ([]Answer, error)
 		switch {
 		case ok:
 		case useDefaults:
-			a = Default(q)
+			a = Answer{QuestionID: q.ID, Left: true}
 		case q.Blocking:
 			return nil, fmt.Errorf("question %s needs an answer", q.ID)
 		default:
@@ -244,6 +274,9 @@ func Check(asked []Question, given []Answer, useDefaults bool) ([]Answer, error)
 
 // checkOne checks one answer to q, as Check says.
 func checkOne(q Question, a Answer) (Answer, error) {
+	if a.Left {
+		return Answer{}, fmt.Errorf("question %s: leave it out to leave it to the agent", q.ID)
+	}
 	text := strings.TrimSpace(a.Text)
 	if a.Text != "" && (text == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > MaxAnswerChars) {
 		return Answer{}, fmt.Errorf("the words answering question %s are 1 to %d characters", q.ID, MaxAnswerChars)
@@ -281,10 +314,14 @@ func checkOne(q Question, a Answer) (Answer, error) {
 }
 
 // Words is an answer in plain words, as an agent reads it: the options
-// chosen, then the person's own words, quoted.
+// chosen, then the person's own words, quoted; or that they left it to the
+// agent.
 //
 //	Words(Answer{Options: []string{"Monthly", "Yearly"}, Text: "and quarterly"}) // Monthly; Yearly; in their words: "and quarterly"
 func Words(a Answer) string {
+	if a.Left {
+		return "left to the agent"
+	}
 	parts := slices.Clone(a.Options)
 	if a.Text != "" {
 		parts = append(parts, "in their words: "+strconv.Quote(a.Text))

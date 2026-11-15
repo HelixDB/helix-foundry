@@ -69,31 +69,30 @@ const (
 // (describe). The sink refuses every other before it is checked or
 // confirmed: upload_document (the person's browser holds the file),
 // create_event_source (an API source is set up with its send tokens, in
-// Foundry) and pair_assistant_helper (its result is a credential, which
+// Foundry), answer_generation_questions (the person sends a relayed
+// generation's answers themselves, from the questions in the dock) and
+// pair_assistant_helper (its result is a credential, which
 // would pass through the model's provider). publish_dashboard and
 // unpublish_dashboard are prepared only where the host offers public links.
 var Operations = map[string]bool{
-	"create_ontology":   true,
-	"generate_ontology": true,
-	// A generation's questions answered: the person's words, which the
-	// card shows beside each question.
-	"answer_generation_questions": true,
-	"set_current_version":         true,
-	"create_load":                 true,
-	"set_current_load":            true,
-	"revise_version":              true,
-	"sync_connector":              true,
-	"add_sample_data":             true,
-	"create_document_set":         true,
-	"update_document_set":         true,
-	"move_document":               true,
-	"settle_review":               true,
-	"create_dashboard":            true,
-	"update_dashboard":            true,
-	"delete_dashboard":            true,
-	"pin_dashboard":               true,
-	"publish_dashboard":           true,
-	"unpublish_dashboard":         true,
+	"create_ontology":     true,
+	"generate_ontology":   true,
+	"set_current_version": true,
+	"create_load":         true,
+	"set_current_load":    true,
+	"revise_version":      true,
+	"sync_connector":      true,
+	"add_sample_data":     true,
+	"create_document_set": true,
+	"update_document_set": true,
+	"move_document":       true,
+	"settle_review":       true,
+	"create_dashboard":    true,
+	"update_dashboard":    true,
+	"delete_dashboard":    true,
+	"pin_dashboard":       true,
+	"publish_dashboard":   true,
+	"unpublish_dashboard": true,
 	// Automations: the person's click on a create or an edit approves the
 	// spec its card showed, and nothing when it showed none (the API's
 	// ExecuteFoundryAgentAction).

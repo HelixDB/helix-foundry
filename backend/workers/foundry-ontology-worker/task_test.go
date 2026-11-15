@@ -193,7 +193,8 @@ func TestFoundryOntologyWorker(t *testing.T) {
 		if !q.askedBefore.Equal(now.Add(-7 * 24 * time.Hour)) {
 			t.Fatalf("listed those asked before %s", q.askedBefore)
 		}
-		want := []agentquestion.Answer{{QuestionID: "q1", Options: []string{}, Text: agentquestion.NoPreference}, {QuestionID: "q2", Options: []string{"Monthly"}}}
+		// Left to the agent, which takes its recommended answers as its own.
+		want := []agentquestion.Answer{{QuestionID: "q1", Left: true}, {QuestionID: "q2", Left: true}}
 		if len(q.answered) != 1 || fmt.Sprint(q.answered["g-old"]) != fmt.Sprint(want) {
 			t.Fatalf("answered = %v", q.answered)
 		}

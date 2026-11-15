@@ -205,7 +205,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	t := &turnRun{r: r, turn: turn, automation: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out, asked: turn.Asked != nil}
 	client, offered, err := serve(session, func(server *mcp.Server) {
 		t.reportTool(server)
-		asker{db: r.DB, turn: turn, workerID: r.WorkerID}.register(server)
+		asker{db: r.DB, session: session, turn: turn, workerID: r.WorkerID}.register(server)
 	})
 	if err != nil {
 		return out, &Failure{Message: "The Assistant's tools couldn't start; Helix will retry", Err: err}
@@ -348,7 +348,7 @@ func openingText(ctx context.Context, db Store, turn *model.FoundryAgentTurn) (s
 		if err != nil {
 			return "", &Failure{Message: "The questions these answers answer can't be read", Permanent: true, Err: err}
 		}
-		return answersText(turn.WorkspaceID, asking.Asked, turn.Answers), nil
+		return answersText(asking.Asked, turn.Answers), nil
 	case model.FoundryAgentTurnActionResult:
 		a, err := db.GetFoundryAgentAction(ctx, turn.WorkspaceID, turn.Input)
 		if err != nil {

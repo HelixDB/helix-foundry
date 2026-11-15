@@ -329,14 +329,17 @@ func (s *Service) ListOntologyGenerations(ctx context.Context, req *foundryv1.Li
 // provider (FOUNDRY_AI_NOT_CONFIGURED). One that isn't waiting, or stopped waiting
 // as it was answered (answered, cancelled or answered with defaults
 // meanwhile), or waits on another round than the request's, is
-// FAILED_PRECONDITION.
+// FAILED_PRECONDITION; a request without a round is INVALID_ARGUMENT.
 func (s *Service) AnswerOntologyGeneration(ctx context.Context, req *foundryv1.AnswerOntologyGenerationRequest) (*foundryv1.OntologyGenerationResponse, error) {
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
 		return nil, err
 	}
-	if req.GetId() == "" {
+	switch {
+	case req.GetId() == "":
 		return nil, status.Error(codes.InvalidArgument, "id is required")
+	case req.GetRound() < 1:
+		return nil, status.Error(codes.InvalidArgument, "round is required: the generation's question_round the answers are for")
 	}
 	gen, err := s.deps.DB.GetOntologyGeneration(ctx, o.ID, req.GetId())
 	if errors.Is(err, foundrystore.ErrNotFound) {
@@ -483,7 +486,11 @@ func ontologyGenerationToProto(gen *foundrymodel.OntologyGeneration, evidence bo
 			Id: shown.GetId(), Header: shown.GetHeader(), Text: shown.GetText(), Options: shown.GetOptions(), Multiple: shown.GetMultiple(),
 			Recommended: shown.GetRecommended(), Blocking: shown.GetBlocking(), Items: q.Items,
 		}
-		if i := slices.IndexFunc(asked.Answers, func(a agentquestion.Answer) bool { return a.QuestionID == q.ID }); i >= 0 {
+		switch i := slices.IndexFunc(asked.Answers, func(a agentquestion.Answer) bool { return a.QuestionID == q.ID }); {
+		case i < 0:
+		case asked.Answers[i].Left:
+			question.LeftToAgent = true
+		default:
 			question.Answer = agentAnswerToProto(asked.Answers[i])
 		}
 		out.Questions = append(out.Questions, question)

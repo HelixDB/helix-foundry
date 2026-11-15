@@ -48,10 +48,7 @@ var _ integration.ActionSink = (*actionSink)(nil)
 func (s *actionSink) Allows(operation string) bool { return Operations[operation] }
 
 // Record checks the action acts in the turn's workspace, names what it acts
-// on, and stores it with its card in one write. An
-// answer_generation_questions must send the person's answers to the
-// generation the turn before relayed, unchanged (relayedAnswers); its target
-// counts as theirs. A payload the turn already
+// on, and stores it with its card in one write. A payload the turn already
 // prepared is the action already stored, unless its person already decided
 // it, and is never drawn again: a replayed attempt finds the card the first
 // drew, whatever changed since. Its refusals reach the model as their words.
@@ -65,12 +62,6 @@ func (s *actionSink) Allows(operation string) bool { return Operations[operation
 func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (integration.Recorded, error) {
 	if s.keys == nil {
 		return nil, status.Error(codes.Unavailable, "the Assistant can't keep actions on this host")
-	}
-	relayed := a.Operation == "answer_generation_questions"
-	if relayed {
-		if err := relayedAnswers(ctx, s.db, s.turn, a); err != nil {
-			return nil, err
-		}
 	}
 	approved := slices.ContainsFunc(s.approved, func(x automation.Action) bool {
 		return automation.Fits(x, s.turn.WorkspaceID, a.Operation, a.Target, a.Payload)
@@ -93,7 +84,7 @@ func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (
 	stored, err := s.db.GetFoundryAgentActionByPayload(ctx, s.turn.ID, a.PayloadHash)
 	if errors.Is(err, foundrystore.ErrNotFound) {
 		actionID = id.New()
-		stored, err = s.record(ctx, a, actionID, approved, relayed)
+		stored, err = s.record(ctx, a, actionID, approved)
 	}
 	var refusal model.FoundryAgentRefusal
 	switch {
@@ -159,17 +150,14 @@ func (s *actionSink) runApproved(ctx context.Context, a *model.FoundryAgentActio
 // record draws a's card and stores it as actionID, with its card's event:
 // executing, decided by the turn's person, when approved. ErrNotFound means
 // the turn's lease was lost.
-func (s *actionSink) record(ctx context.Context, a integration.PreparedAction, actionID string, approved, relayed bool) (*model.FoundryAgentAction, error) {
+func (s *actionSink) record(ctx context.Context, a integration.PreparedAction, actionID string, approved bool) (*model.FoundryAgentAction, error) {
 	card, err := s.cards.Draw(ctx, a)
 	if err != nil {
 		return nil, err
 	}
-	// The person answered the relayed generation's questions themselves.
-	named := relayed
-	if !named {
-		if named, err = s.namedByPerson(ctx, card.target); err != nil {
-			return nil, err
-		}
+	named, err := s.namedByPerson(ctx, card.target)
+	if err != nil {
+		return nil, err
 	}
 	sealed, keyID, err := s.keys.Seal([]byte(a.Confirmation.Token), actionID)
 	if err != nil {

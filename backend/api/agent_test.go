@@ -41,6 +41,18 @@ type agentStore struct {
 	finished []foundrymodel.FoundryAgentActionEnd
 	// currentLoad is Sales graph's (ont-1).
 	currentLoad string
+	// generations are Sales graph's, by id.
+	generations map[string]*foundrymodel.OntologyGeneration
+}
+
+func (s *agentStore) GetOntologyGeneration(_ context.Context, ontologyID, id string) (*foundrymodel.OntologyGeneration, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	g, ok := s.generations[id]
+	if !ok || g.OntologyID != ontologyID {
+		return nil, foundrystore.ErrNotFound
+	}
+	return g, nil
 }
 
 func newAgentStore() *agentStore {
@@ -258,6 +270,8 @@ type agentLoads struct {
 	err   error
 	calls int
 	ran   []string
+	// answered are the generations' answers sent.
+	answered []*foundryv1.AnswerOntologyGenerationRequest
 }
 
 // done records a call and answers it with out, or err.
@@ -269,6 +283,12 @@ func done[T any](l *agentLoads, method string, out T) (T, error) {
 		return none, l.err
 	}
 	return out, nil
+}
+
+func (l *agentLoads) AnswerOntologyGeneration(_ context.Context, r *foundryv1.AnswerOntologyGenerationRequest, _ ...grpc.CallOption) (
+	*foundryv1.OntologyGenerationResponse, error) {
+	l.answered = append(l.answered, r)
+	return done(l, "AnswerOntologyGeneration", &foundryv1.OntologyGenerationResponse{Generation: &foundryv1.OntologyGeneration{Id: r.GetId()}})
 }
 
 func (l *agentLoads) CreateFoundryLoad(context.Context, *foundryv1.CreateFoundryLoadRequest, ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error) {
@@ -650,6 +670,81 @@ func TestSendFoundryAgentAnswers(t *testing.T) {
 		f.store.turns["turn-ask"].ThreadID = "th-2"
 		_, err = f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
 		assert.Equal(t, codes.NotFound, status.Code(err))
+	})
+
+	// relaying is asking's thread with the questions relayed from gen-1's
+	// round 1, which it waits on.
+	relaying := func(t *testing.T) agentFixture {
+		f := asking(t)
+		f.store.turns["turn-ask"].Asked.Generation = &foundrymodel.FoundryAgentAskedGeneration{OntologyID: "ont-1", GenerationID: "gen-1", Round: 1}
+		f.store.generations = map[string]*foundrymodel.OntologyGeneration{"gen-1": {ID: "gen-1", OntologyID: "ont-1",
+			Status: foundrymodel.OntologyGenerationNeedsInput, Questions: &foundrymodel.OntologyQuestions{Round: 1}}}
+		return f
+	}
+
+	// The person's Send answers is their consent: the answers reach the
+	// generation at once, as them, with no card and no model in between.
+	t.Run("sends a relayed generation's answers to it, then queues the turn", func(t *testing.T) {
+		f := relaying(t)
+		resp, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+		require.NoError(t, err)
+		require.Len(t, f.loads.answered, 1)
+		sent := f.loads.answered[0]
+		assert.Equal(t, []any{"ws-1", "ont-1", "gen-1", int32(1), true}, []any{sent.GetWorkspaceId(), sent.GetOntologyId(), sent.GetId(), sent.GetRound(), sent.GetUseDefaults()},
+			"the optional question left out is left to the ontology agent")
+		require.Len(t, sent.GetAnswers(), 2)
+		assert.Equal(t, "Which customers churn?", sent.GetAnswers()[1].GetText())
+		assert.Equal(t, []ports.Actor{{Source: ports.SourceUser, UserID: person.UserID, WorkspaceID: "ws-1"}}, f.host.actors, "as the person")
+		assert.Equal(t, "answers", resp.GetTurn().GetKind())
+		assert.Empty(t, f.store.actions, "no card")
+
+		// The same click again finds its turn, and sends nothing more.
+		f.store.generations["gen-1"].Status = foundrymodel.OntologyGenerationQueued
+		again, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+		require.NoError(t, err)
+		assert.Equal(t, resp.GetTurn().GetId(), again.GetTurn().GetId())
+		assert.Len(t, f.loads.answered, 1)
+	})
+
+	// Answered on the generation's page, or moved on to another round, the
+	// draft no longer waits on these: nothing is sent, no turn is queued.
+	t.Run("refuses a relayed round the generation no longer waits on", func(t *testing.T) {
+		for name, change := range map[string]func(*foundrymodel.OntologyGeneration){
+			"answered on its page": func(g *foundrymodel.OntologyGeneration) { g.Status = foundrymodel.OntologyGenerationQueued },
+			"another round":        func(g *foundrymodel.OntologyGeneration) { g.Questions.Round = 2 },
+			"cancelled":            func(g *foundrymodel.OntologyGeneration) { g.Status = foundrymodel.OntologyGenerationCancelled },
+		} {
+			f := relaying(t)
+			change(f.store.generations["gen-1"])
+			_, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+			assert.Equal(t, "FOUNDRY_AGENT_QUESTIONS_CLOSED", reasonOf(err), name)
+			assert.Empty(t, f.loads.answered, name)
+			assert.Len(t, f.store.turns, 1, name)
+		}
+		f := relaying(t)
+		f.store.generations = nil
+		_, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+		assert.Equal(t, "FOUNDRY_AGENT_QUESTIONS_CLOSED", reasonOf(err), "deleted")
+	})
+
+	t.Run("queues nothing when the answers aren't sent", func(t *testing.T) {
+		f := relaying(t)
+		f.loads.err = status.Error(codes.PermissionDenied, "only owners and admins answer")
+		_, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+		assert.Contains(t, status.Convert(err).Message(), "your answers weren't sent to the draft")
+		assert.Len(t, f.store.turns, 1)
+	})
+
+	// The draft has them: only the Assistant's reply is refused, and the
+	// refusal says so.
+	t.Run("says the answers were sent when only the turn is refused", func(t *testing.T) {
+		f := relaying(t)
+		f.store.refusal = foundrymodel.FoundryAgentRefusal{Reason: foundrymodel.FoundryAgentPerHour, Detail: "slow down"}
+		_, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+		assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+		assert.Contains(t, status.Convert(err).Message(), "your answers reached the draft, which carries on from them, but the Assistant can't reply: slow down")
+		assert.Len(t, f.loads.answered, 1)
 	})
 
 	t.Run("a relayed generation's questions show which", func(t *testing.T) {

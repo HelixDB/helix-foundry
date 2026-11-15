@@ -85,7 +85,10 @@ func agentRefusal(workspaceID string, err error) (error, bool) {
 // SendFoundryAgentMessage queues a person's message in their thread, or a new
 // one, which takes the workspace's runtime (agentThreadRuntime), or their
 // answers to the questions their thread's newest turn asked them, checked by
-// agentquestion.Check, opened by an answers event. The same client token
+// agentquestion.Check, opened by an answers event. Answers to a relayed
+// generation's questions are sent to it first, as the person
+// (foundryagent.SendAnswers), while it still waits on that round
+// (FOUNDRY_AGENT_QUESTIONS_CLOSED once it doesn't). The same client token
 // returns the turn it queued. A thread a helper runs is refused while no
 // helper that runs it is online; one Foundry's worker runs, while the
 // workspace's model can't run.
@@ -111,6 +114,8 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		ID: id.New(), WorkspaceID: ws, ThreadID: req.GetThreadId(), UserID: userID, ClientToken: &token, MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
 	}
 	var first json.RawMessage
+	// asked is what the answers answer.
+	var asked *foundrymodel.FoundryAgentAsked
 	switch input := req.GetInput().(type) {
 	case *foundryv1.SendFoundryAgentMessageRequest_Text:
 		text := strings.TrimSpace(input.Text)
@@ -139,7 +144,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
-		t.Kind, t.Input, t.Answers = foundrymodel.FoundryAgentTurnAnswers, asking.ID, answers
+		t.Kind, t.Input, t.Answers, asked = foundrymodel.FoundryAgentTurnAnswers, asking.ID, answers, asking.Asked
 		if first, err = foundryagent.MarshalEvent(foundryagent.Answered{TurnID: asking.ID, Answers: answers}); err != nil {
 			return nil, status.Errorf(codes.Internal, "write the answers: %v", err)
 		}
@@ -163,6 +168,17 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	if err != nil {
 		return nil, err
 	}
+	// sent: the answers reached a relayed generation before the turn is queued.
+	sent := asked != nil && asked.Generation != nil
+	if sent {
+		if err := s.sendRelayedAnswers(ctx, ws, userID, asked, t.Answers); err != nil {
+			// The same click again, which sent them first, has its turn.
+			if raced, lookupErr := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, userID, token); lookupErr == nil && same(raced) {
+				return s.agentTurnResponse(ctx, raced)
+			}
+			return nil, err
+		}
+	}
 	// A helper's thread runs on its owner's subscription, not the workspace's model.
 	if !runtime.Subscription() {
 		if err := s.requireAI(ctx, ws); err != nil {
@@ -179,6 +195,12 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 			Runtime: runtime}
 	}
 	err = s.deps.DB.CreateFoundryAgentTurn(ctx, t, thread, s.agentLimits(), first)
+	var refusal foundrymodel.FoundryAgentRefusal
+	if sent && errors.As(err, &refusal) {
+		// The draft has the answers: only the Assistant's reply is refused.
+		refusal.Detail = "your answers reached the draft, which carries on from them, but the Assistant can't reply: " + refusal.Detail
+		err = refusal
+	}
 	if refused, ok := agentRefusal(ws, err); ok {
 		return nil, refused
 	}
@@ -200,6 +222,27 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		return nil, status.Errorf(codes.Internal, "read the message: %v", err)
 	}
 	return s.agentTurnResponse(ctx, stored)
+}
+
+// sendRelayedAnswers sends a relayed generation the person's answers, as
+// them, while it still waits on the round asked: else, answered on its page
+// or moved on, the questions are closed (FOUNDRY_AGENT_QUESTIONS_CLOSED).
+func (s *Service) sendRelayedAnswers(ctx context.Context, ws, userID string, asked *foundrymodel.FoundryAgentAsked, answers []agentquestion.Answer) error {
+	g := asked.Generation
+	gen, err := s.deps.DB.GetOntologyGeneration(ctx, g.OntologyID, g.GenerationID)
+	switch {
+	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && (gen.Status != foundrymodel.OntologyGenerationNeedsInput || gen.Questions == nil ||
+		gen.Questions.Round != g.Round):
+		return foundryPrecondition(ws, "FOUNDRY_AGENT_QUESTIONS_CLOSED",
+			"the draft isn't waiting for these answers any more: they were answered on its page, or it moved on")
+	case err != nil:
+		return status.Errorf(codes.Internal, "read the generation: %v", err)
+	}
+	sessions, err := s.agentSessions()
+	if err != nil {
+		return err
+	}
+	return foundryagent.SendAnswers(ctx, sessions, userID, asked, ws, answers)
 }
 
 // agentLimits are foundry.agent's limits this month.

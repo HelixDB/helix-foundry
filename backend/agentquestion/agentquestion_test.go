@@ -20,25 +20,19 @@ func ExampleCheck() {
 	fmt.Println(Check(asked, []Answer{{QuestionID: "q2", Options: []string{"Invoices", "Stripe"}, Text: " and refunds "}}, true))
 	fmt.Println(Check(asked, nil, false))
 	// Output:
-	// [{q1 [A person] }] <nil>
-	// [{q1 [An account] } {q2 [Stripe Invoices] and refunds} {q3 [] No preference: decide from the data and the goal.}] <nil>
+	// [{q1 [A person]  false}] <nil>
+	// [{q1 []  true} {q2 [Stripe Invoices] and refunds false} {q3 []  true}] <nil>
 	// [] question q1 needs an answer
 }
 
 func ExampleWords() {
 	fmt.Println(Words(Answer{QuestionID: "q1", Options: []string{"Monthly", "Yearly"}, Text: "and \"quarterly\""}))
 	fmt.Println(Words(Answer{QuestionID: "q2", Options: []string{}, Text: "GBP"}))
+	fmt.Println(Words(Answer{QuestionID: "q3", Left: true}))
 	// Output:
 	// Monthly; Yearly; in their words: "and \"quarterly\""
 	// in their words: "GBP"
-}
-
-func one(labels ...string) *Choice {
-	c := &Choice{}
-	for _, l := range labels {
-		c.Options = append(c.Options, Option{Label: l})
-	}
-	return c
+	// left to the agent
 }
 
 func TestJSON(t *testing.T) {
@@ -72,9 +66,52 @@ func TestJSON(t *testing.T) {
 		if string(free) != `{"id":"q2","text":"T","blocking":false}` {
 			t.Errorf("a free question: %s", free)
 		}
-		answer, _ := json.Marshal(Answer{QuestionID: "q2", Options: []string{}, Text: "x"})
+		answer, _ := json.Marshal(Answer{QuestionID: "q2", Text: "x"})
 		if string(answer) != `{"question_id":"q2","options":[],"text":"x"}` {
 			t.Errorf("an answer: %s", answer)
+		}
+		left, _ := json.Marshal(Answer{QuestionID: "q3", Left: true})
+		if string(left) != `{"question_id":"q3","left":true}` {
+			t.Errorf("a question left to the agent: %s", left)
+		}
+	})
+
+	t.Run("reads answers as written, never left with words", func(t *testing.T) {
+		for raw, want := range map[string]Answer{
+			`{"question_id":"q2","options":[],"text":"x"}`:    {QuestionID: "q2", Options: []string{}, Text: "x"},
+			`{"question_id":"q2","text":"x"}`:                 {QuestionID: "q2", Options: []string{}, Text: "x"},
+			`{"question_id":"q1","options":["A","B"]}`:        {QuestionID: "q1", Options: []string{"A", "B"}},
+			`{"question_id":"q3","left":true}`:                {QuestionID: "q3", Left: true},
+		} {
+			var got Answer
+			if err := json.Unmarshal([]byte(raw), &got); err != nil || !reflect.DeepEqual(got, want) {
+				t.Errorf("%s read as %+v (%v), want %+v", raw, got, err, want)
+			}
+		}
+		for _, raw := range []string{`{"question_id":"q3","left":true,"text":"x"}`, `{"question_id":"q3","left":true,"options":["A"]}`, `[]`} {
+			var got Answer
+			if err := json.Unmarshal([]byte(raw), &got); err == nil {
+				t.Errorf("%s read as %+v", raw, got)
+			}
+		}
+	})
+
+	t.Run("a free answer's recommended words never make it unreadable", func(t *testing.T) {
+		for raw, want := range map[string]string{
+			`{"id":"q","text":"T","recommended":" GBP "}`:                                              "GBP",
+			`{"id":"q","text":"T","recommended":" \n "}`:                                               "",
+			`{"id":"q","text":"T","recommended":"` + strings.Repeat("w", MaxAnswerChars+1) + `"}`:      "",
+			`{"id":"q","text":"T","recommended":"` + strings.Repeat("w", MaxAnswerChars) + `"}`:        strings.Repeat("w", MaxAnswerChars),
+		} {
+			var q Question
+			if err := json.Unmarshal([]byte(raw), &q); err != nil || q.Recommended != want {
+				t.Errorf("%.60s: read as %q (%v)", raw, q.Recommended, err)
+			}
+		}
+		// A choice's recommendation names a label exactly as written.
+		var q Question
+		if err := json.Unmarshal([]byte(`{"id":"q","text":"T","options":[{"label":"Jets "},{"label":"B"}],"recommended":"Jets "}`), &q); err != nil || q.Recommended != "Jets " {
+			t.Errorf("a label with a space: %+v (%v)", q, err)
 		}
 	})
 
@@ -90,7 +127,6 @@ func TestJSON(t *testing.T) {
 			"a label twice":              `{"id":"q","text":"T","options":[{"label":"A"},{"label":"A"}]}`,
 			"a recommendation outside":   `{"id":"q","text":"T","options":[{"label":"A"},{"label":"B"}],"recommended":"C"}`,
 			"multiple without options":   `{"id":"q","text":"T","multiple":true}`,
-			"long recommended words":     `{"id":"q","text":"T","recommended":"` + strings.Repeat("w", MaxAnswerChars+1) + `"}`,
 			"options that aren't a list": `{"id":"q","text":"T","options":"A"}`,
 		} {
 			var q Question
@@ -125,14 +161,13 @@ func TestCheck(t *testing.T) {
 		}
 	})
 
-	t.Run("leaves out a question that doesn't block, or defaults it", func(t *testing.T) {
+	t.Run("leaves out a question that doesn't block, or leaves it to the agent", func(t *testing.T) {
 		got, err := Check(asked, []Answer{free, monthly}, false)
 		if err != nil || len(got) != 2 {
 			t.Fatalf("Check = (%v, %v)", got, err)
 		}
-		got, err = Check(asked, nil, true)
-		want := []Answer{{QuestionID: "free", Options: []string{}, Text: NoPreference}, {QuestionID: "one", Options: []string{"Yearly"}},
-			{QuestionID: "many", Options: []string{}, Text: NoPreference}}
+		got, err = Check(asked, []Answer{free}, true)
+		want := []Answer{{QuestionID: "free", Options: []string{}, Text: "GBP"}, {QuestionID: "one", Left: true}, {QuestionID: "many", Left: true}}
 		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("Check with defaults = (%v, %v), want %v", got, err, want)
 		}
@@ -157,6 +192,7 @@ func TestCheck(t *testing.T) {
 			"an option twice":         {[]Answer{{QuestionID: "many", Options: []string{"A", "A"}}}, "chosen twice"},
 			"a blocking one left out": {[]Answer{free}, "question one needs an answer"},
 			"nothing for several":     {[]Answer{{QuestionID: "many", Options: []string{}}}, "needs an option chosen"},
+			"given as left":           {[]Answer{{QuestionID: "many", Left: true}}, "leave it out to leave it to the agent"},
 		} {
 			for _, useDefaults := range []bool{false, true} {
 				if c.want == "question one needs an answer" && useDefaults {
@@ -169,15 +205,6 @@ func TestCheck(t *testing.T) {
 		}
 		if got, err := Check(asked, []Answer{{QuestionID: "free", Text: strings.Repeat("é", MaxAnswerChars)}, monthly}, false); err != nil || len(got) != 2 {
 			t.Fatalf("words of %d characters: (%v, %v)", MaxAnswerChars, got, err)
-		}
-	})
-
-	t.Run("a default without a recommendation leaves it to the agent", func(t *testing.T) {
-		if got := Default(Question{ID: "q", Text: "T", Choice: one("A", "B")}); got.Text != NoPreference || len(got.Options) != 0 {
-			t.Errorf("Default = %+v", got)
-		}
-		if got := Default(Question{ID: "q", Text: "Which currency?", Recommended: "GBP"}); got.Text != "GBP" || len(got.Options) != 0 {
-			t.Errorf("a free answer's recommended words: Default = %+v", got)
 		}
 	})
 }

@@ -1193,10 +1193,10 @@ message ListOntologyGenerationsResponse {
 // generation waits on (status needs_input) and queues it to carry on from
 // where the agent asked. Each answer names one of its questions, at most
 // once, and answers it as AgentQuestionAnswer says. With use_defaults, every
-// question left out takes its recommended answer (or, with none, is left for
-// the agent to decide); without, every blocking question must be answered,
-// and a non-blocking one left out stays open in the draft. INVALID_ARGUMENT
-// otherwise. A generation that isn't waiting, or waits on another round
+// question left out is left to the agent (left_to_agent), which takes its
+// recommended answer, or decides, as its own choice; without, every
+// blocking question must be answered, and a non-blocking one left out stays
+// open in the draft. INVALID_ARGUMENT otherwise, and for a round below 1. A generation that isn't waiting, or waits on another round
 // than round (the questions were answered, and the agent asked again), is
 // FAILED_PRECONDITION. It needs what GenerateOntology needs: managing the
 // ontology, and an AI provider.
@@ -2092,6 +2092,12 @@ message SendFoundryAgentMessageRequest {
     // FOUNDRY_AGENT_QUESTIONS_CLOSED, once anything followed it, its answers
     // among them). Checked against its questions as AgentQuestionAnswer
     // says, every blocking one answered (INVALID_ARGUMENT otherwise).
+    // Answers to a relayed generation's questions are sent to it first, as
+    // the caller (answer_generation_questions, use_defaults when any is left
+    // out), while it still waits on that round: else FAILED_PRECONDITION,
+    // reason FOUNDRY_AGENT_QUESTIONS_CLOSED. A refusal of the send (the
+    // caller may not answer it) is FAILED_PRECONDITION and queues nothing; a
+    // refusal of the turn after it says the answers reached the draft.
     FoundryAgentAnswers answers = 6;
   }
   FoundryAgentPageContext page_context = 4;

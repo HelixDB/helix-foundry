@@ -124,15 +124,22 @@ func TestOntologyGenerationQuestionRPCs(t *testing.T) {
 		}
 	})
 
-	// Every question can take the agent's default, so a person who can't
-	// answer still moves the generation on.
-	t.Run("answers every question with the agent's defaults", func(t *testing.T) {
+	// Every question can be left to the agent, so a person who can't answer
+	// still moves the generation on; what the agent takes is its own choice,
+	// so nothing is stored or shown as the person's answer.
+	t.Run("leaves every question to the agent", func(t *testing.T) {
 		s, store := waiting(t)
-		if _, err := answer(s, &foundryv1.AnswerOntologyGenerationRequest{UseDefaults: true}); err != nil {
+		gen, err := answer(s, &foundryv1.AnswerOntologyGenerationRequest{UseDefaults: true,
+			Answers: []*foundryv1.AgentQuestionAnswer{{QuestionId: "q2", Options: []string{"Yearly"}}}})
+		if err != nil {
 			t.Fatal(err)
 		}
-		if got := store.generations[0].Questions.Answers; len(got) != 2 || got[0].Text != agentquestion.NoPreference || got[1].Options[0] != "Monthly" {
-			t.Fatalf("answers = %+v", got)
+		want := []agentquestion.Answer{{QuestionID: "q1", Left: true}, {QuestionID: "q2", Options: []string{"Yearly"}}}
+		if got := store.generations[0].Questions.Answers; !reflect.DeepEqual(got, want) {
+			t.Fatalf("answers = %+v, want %+v", got, want)
+		}
+		if q := gen.GetQuestions(); !q[0].GetLeftToAgent() || q[0].GetAnswer() != nil || q[1].GetLeftToAgent() || q[1].GetAnswer() == nil {
+			t.Fatalf("shown = %+v", q)
 		}
 	})
 
@@ -174,6 +181,20 @@ func TestOntologyGenerationQuestionRPCs(t *testing.T) {
 			s, store := waiting(t)
 			if _, err := answer(s, req); status.Code(err) != codes.InvalidArgument || store.generations[0].Status != foundrymodel.OntologyGenerationNeedsInput {
 				t.Errorf("%s: err = %v, status %s", name, err, store.generations[0].Status)
+			}
+		}
+	})
+
+	// A client that sends no round can never answer by reading the
+	// questions again: its request is wrong, not stale.
+	t.Run("refuses answers without a round", func(t *testing.T) {
+		s, store := waiting(t)
+		for _, round := range []int32{0, -1} {
+			_, err := s.AnswerOntologyGeneration(ctx, &foundryv1.AnswerOntologyGenerationRequest{
+				WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "gen-1", Round: round, UseDefaults: true})
+			if status.Code(err) != codes.InvalidArgument || !strings.Contains(status.Convert(err).Message(), "round is required") ||
+				store.generations[0].Status != foundrymodel.OntologyGenerationNeedsInput {
+				t.Errorf("round %d: %v", round, err)
 			}
 		}
 	})

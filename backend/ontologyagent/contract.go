@@ -281,20 +281,39 @@ func (s Start) MarshalJSON() ([]byte, error) {
 	}{start(s)})
 }
 
-// MarshalJSON writes {"feedback": {"draft_rev": ..., "actions": [{"answer":
-// {"question_id": ..., "options": [...], "text": ...}}, ...]}}: the labels of
-// the options chosen, and the person's own words when they gave any.
+// MarshalJSON writes {"feedback": {"draft_rev": ..., "actions": [...]}}:
+// for each answer {"answer": {"question_id", "options": [...], "text"?}},
+// the labels of the options chosen and the person's own words when they
+// gave any, or {"leave": {"question_id"}} for a question left to the agent,
+// which it then decides as its own choice, never as the person's words.
 func (f Feedback) MarshalJSON() ([]byte, error) {
 	type answer struct {
-		Answer agentquestion.Answer `json:"answer"`
+		QuestionID string   `json:"question_id"`
+		Options    []string `json:"options"`
+		Text       string   `json:"text,omitempty"`
+	}
+	type leave struct {
+		QuestionID string `json:"question_id"`
+	}
+	type action struct {
+		Answer *answer `json:"answer,omitempty"`
+		Leave  *leave  `json:"leave,omitempty"`
 	}
 	type feedback struct {
 		DraftRev uint64   `json:"draft_rev"`
-		Actions  []answer `json:"actions"`
+		Actions  []action `json:"actions"`
 	}
-	actions := make([]answer, 0, len(f.Answers))
+	actions := make([]action, 0, len(f.Answers))
 	for _, a := range f.Answers {
-		actions = append(actions, answer{a})
+		if a.Left {
+			actions = append(actions, action{Leave: &leave{a.QuestionID}})
+			continue
+		}
+		options := a.Options
+		if options == nil {
+			options = []string{}
+		}
+		actions = append(actions, action{Answer: &answer{a.QuestionID, options, a.Text}})
 	}
 	return json.Marshal(struct {
 		Feedback feedback `json:"feedback"`
