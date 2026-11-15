@@ -10,9 +10,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// A name's words, the name as the engine normalizes it: the engine's words,
+// each folded on its own. A Thai mark on a Latin letter splits it from its
+// word, as the engine reads it.
 func ExampleWords() {
-	fmt.Println(namewords.Words("ＡＣＭＥ, Inc.™️ — proﬁt 東京 İstanbul Zu\u0308rich ﾄｳ 3½ ジョン・スミス Slack™"))
-	// Output: [acme inc tm profit 東 京 istanbul zurich ト ウ 31 2 シ ョ ン ス ミ ス slacktm]
+	fmt.Println(namewords.Words("acme inc.tm profit 東京 zürich 31 2 ジョン スミス acme\u0E31"))
+	// Output: [acme inc tm profit 東 京 zurich 31 2 シ ョ ン ス ミ ス acm e ั]
+}
+
+// A document's words: its text normalized as a name is, then read as words.
+// A symbol that folds to letters joins the word beside it, and a Thai mark
+// on a Latin letter splits it from its word, as in the engine.
+func ExampleNewText() {
+	text := namewords.NewText("ＡＣＭＥ, Inc.™️ — Slack™ 3½")
+	fmt.Println(text.Writes("acme inc.tm"), text.Writes("slacktm"), text.Writes("31 2"), text.Writes("slack"))
+	thai := namewords.NewText("Acme\u0E31")
+	fmt.Println(thai.Writes("acm"), thai.Writes("acme"))
+	// Output:
+	// true true true false
+	// true false
 }
 
 func ExampleText_Writes() {
@@ -57,6 +73,10 @@ func TestWritesWhatTheEngineFinds(t *testing.T) {
 		{"از دیجی\u200cکالا خرید", "دیجی کالا"},
 		{"Slack™ wrote.", "slacktm"},
 		{"Acme Inc.™ Group", "acme inc tm group"},
+		// A mark of a script written without spaces splits a Latin word.
+		{"Acme\u0E31", "acm"},
+		{"Acme\u0E31 Corp", "acm e"},
+		{"한국 \u1112\u1161\u11AB\u1100\u116E\u11A8", "한국 한국"},
 	} {
 		assert.True(t, namewords.NewText(c.text).Writes(c.name), "%q writes %q", c.text, c.name)
 		key, ok := namewords.Key(c.name)
