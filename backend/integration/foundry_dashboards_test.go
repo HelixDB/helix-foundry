@@ -37,6 +37,8 @@ type dashBackend struct {
 	publishes  []*foundryv1.PublishFoundryDashboardRequest
 	unpublish  int
 	previews   []*foundryv1.PreviewFoundryDashboardTileRequest
+	// scopes are the caller's scopes that reached the reads of tiles: preview and publish.
+	scopes []testScope
 }
 
 func dashboardProto() *foundryv1.FoundryDashboard {
@@ -62,8 +64,11 @@ func (b *dashBackend) GetFoundryOntology(_ context.Context, r *foundryv1.GetFoun
 	return &foundryv1.FoundryOntologyResponse{Ontology: &foundryv1.FoundryOntology{Id: r.GetOntologyId()}}, nil
 }
 
-func (b *dashBackend) PreviewFoundryDashboardTile(_ context.Context, r *foundryv1.PreviewFoundryDashboardTileRequest, _ ...grpc.CallOption) (
+func (b *dashBackend) PreviewFoundryDashboardTile(ctx context.Context, r *foundryv1.PreviewFoundryDashboardTileRequest, _ ...grpc.CallOption) (
 	*foundryv1.PreviewFoundryDashboardTileResponse, error) {
+	if scope, ok := scopeOf(ctx); ok {
+		b.scopes = append(b.scopes, scope)
+	}
 	b.previews = append(b.previews, r)
 	return &foundryv1.PreviewFoundryDashboardTileResponse{TileJson: r.GetTileJson(), LoadId: "load-1", AsOf: "2026-11-14",
 		OutcomeJson: `{"ok":{"kind":"count","count":12345678901234567890}}`}, nil
@@ -89,8 +94,11 @@ func (b *dashBackend) PinFoundryDashboard(_ context.Context, r *foundryv1.PinFou
 	return &foundryv1.FoundryDashboardResponse{Dashboard: dashboardProto()}, nil
 }
 
-func (b *dashBackend) PublishFoundryDashboard(_ context.Context, r *foundryv1.PublishFoundryDashboardRequest, _ ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error) {
+func (b *dashBackend) PublishFoundryDashboard(ctx context.Context, r *foundryv1.PublishFoundryDashboardRequest, _ ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error) {
 	b.publishes = append(b.publishes, r)
+	if scope, ok := scopeOf(ctx); ok {
+		b.scopes = append(b.scopes, scope)
+	}
 	return &foundryv1.FoundryDashboardResponse{Dashboard: dashboardProto()}, nil
 }
 
@@ -135,6 +143,8 @@ func TestDashboardReadTools(t *testing.T) {
 	preview := called(t, s, toolFoundryPreviewDashboardTile, map[string]any{"workspace_id": dashWorkspace, "tile": tileArgs(t)})
 	assert.Equal(t, "load-1", preview["load_id"])
 	require.Len(t, b.previews, 1)
+	assert.Equal(t, []testScope{{dashWorkspace, false}}, b.scopes,
+		"a preview reads the tile's database with the caller's read scope, which the backend checks")
 	assert.JSONEq(t, `{"id":"t1","title":"Invoices","ontology_id":"ont-1","load":{"kind":"current"},"query":{"return":{"count":{}},"start":{"type":"Invoice"}},"visual":{"kind":"figure"}}`,
 		b.previews[0].GetTileJson(), "the tile is sent as a spec keeps it")
 	raw, err = json.Marshal(preview["outcome"])
@@ -215,6 +225,8 @@ func TestDashboardOperations(t *testing.T) {
 		published, err := op.Execute(context.Background(), s, reader(), "conf-4")
 		require.NoError(t, err)
 		assert.True(t, published.(FoundryDashboardOutput).Share.Published)
+		assert.Equal(t, []testScope{{dashWorkspace, false}}, b.scopes,
+			"publishing reads the tiles for its snapshot with the caller's read scope, which the backend checks")
 		assert.NotContains(t, string(mustCanonical(published)), "hxd_token", "the card's result, which the model reads, holds no link")
 
 		op, err = prepare(s, "unpublish_dashboard", dashboardTarget, map[string]any{})

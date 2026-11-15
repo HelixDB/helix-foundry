@@ -317,6 +317,29 @@ func TestFoundryOntologyWorker(t *testing.T) {
 			}
 		}
 	})
+	// A claim past max_attempts takes back a generation whose attempts ended
+	// without recording an outcome: it fails without another turn.
+	t.Run("fails a generation claimed past its attempts without running it", func(t *testing.T) {
+		for _, tc := range []struct {
+			attempt int
+			runs    bool
+		}{{3, true}, {4, false}, {13, false}} {
+			q := newQueue(&model.OntologyGeneration{ID: "g1", Attempts: tc.attempt})
+			ran := false
+			newTask(q, func(context.Context, *model.OntologyGeneration) (ontologygen.Result, error) {
+				ran = true
+				return ontologygen.Result{Format: model.OntologyFormatFoundryV1, Definition: []byte(`{"entities":[]}`)}, nil
+			}).drain(context.Background())
+			got := q.outcomes["g1"]
+			if ran != tc.runs {
+				t.Fatalf("attempt %d of 3: ran = %v", tc.attempt, ran)
+			}
+			if !tc.runs && (got.Status != model.OntologyGenerationFailed ||
+				got.Error != fmt.Sprintf("the generation failed; Helix gave up after %d attempts", tc.attempt-1)) {
+				t.Fatalf("attempt %d of 3: outcome = %+v", tc.attempt, got)
+			}
+		}
+	})
 	// Another worker owns a generation whose lease was lost, so this attempt must stop.
 	t.Run("cancels the attempt when the lease is lost", func(t *testing.T) {
 		q := newQueue(&model.OntologyGeneration{ID: "g1", Attempts: 1})
