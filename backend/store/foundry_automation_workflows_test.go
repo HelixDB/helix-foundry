@@ -56,12 +56,18 @@ func TestFoundryAutomationWorkflowRuns(t *testing.T) {
 	ctx := context.Background()
 	f := newAutomationWorkflowFixture(t, "AWR")
 	first := f.claim(t, 1)
+	// A person's workflow whatever its client token: it never stands in the
+	// automation's way.
+	require.NoError(t, f.db.CreateFoundryWorkflow(ctx, &model.FoundryWorkflow{ID: id26("FW-SQUAT"), WorkspaceID: f.workspaceID, OntologyID: f.sales.ID,
+		Name: "Squat", ClientToken: "automation:" + f.automation.ID, CreatedByUserID: automationOther}))
 
 	_, err := f.db.GetFoundryAutomationWorkflowRun(ctx, first.ID, f.sales.ID)
 	require.ErrorIs(t, err, store.ErrNotFound, "no use yet")
 	r, err := f.use(first, f.sales)
 	require.NoError(t, err)
 	assert.Equal(t, model.FoundryWorkflowRunOpen, r.Status())
+	assert.Regexp(t, `^[0-9a-f]{32}$`, r.AutomationKey, "the key its calls name it with")
+	assert.Equal(t, r.ID+"_"+r.AutomationKey, r.Recording())
 	assert.Equal(t, access.Principal{Kind: access.PrincipalUser, ID: automationOwner}, r.StartedBy, "the owner's")
 	assert.Equal(t, &first.ID, r.AutomationRunID)
 	assert.Equal(t, first.ID, r.ClientToken)
@@ -78,6 +84,7 @@ func TestFoundryAutomationWorkflowRuns(t *testing.T) {
 	again, err := f.use(first, f.sales)
 	require.NoError(t, err)
 	assert.Equal(t, r.ID, again.ID, "a run uses an ontology once")
+	assert.Equal(t, r.AutomationKey, again.AutomationKey)
 	got, err := f.db.GetFoundryAutomationWorkflowRun(ctx, first.ID, f.sales.ID)
 	require.NoError(t, err)
 	assert.Equal(t, r.ID, got.ID)
@@ -280,7 +287,11 @@ func TestFoundryAutomationWorkflowVerdictsAndInsights(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, byHand, 1, "a principal asked for counts what it started itself")
 	assert.Nil(t, byHand[0].Automation)
-	all3, err := f.db.ListFoundryWorkflowInsightRuns(ctx, f.sales.ID, "", nil, false, day, day.AddDate(0, 0, 3), 10)
+	persons, err := f.db.ListFoundryWorkflowInsightRuns(ctx, f.sales.ID, "", nil, false, day, day.AddDate(0, 0, 3), 10)
+	require.NoError(t, err)
+	require.Len(t, persons, 1, "without automations', as a grantee reads them")
+	assert.Nil(t, persons[0].Automation)
+	all3, err := f.db.ListFoundryWorkflowInsightRuns(ctx, f.sales.ID, "", nil, true, day, day.AddDate(0, 0, 3), 10)
 	require.NoError(t, err)
 	require.Len(t, all3, 3)
 	automated := 0
@@ -292,6 +303,31 @@ func TestFoundryAutomationWorkflowVerdictsAndInsights(t *testing.T) {
 	}
 	assert.Equal(t, 2, automated)
 	assert.Len(t, runs, 2)
+
+	listed, _, err := f.db.ListFoundryWorkflows(ctx, f.sales.ID, true, "", 10)
+	require.NoError(t, err)
+	assert.Len(t, listed, 2)
+	listed, _, err = f.db.ListFoundryWorkflows(ctx, f.sales.ID, false, "", 10)
+	require.NoError(t, err)
+	require.Len(t, listed, 1, "without automations', as a grantee lists them")
+	assert.Equal(t, mine.ID, listed[0].ID)
+}
+
+// Deleting the workspace ends its automations' live runs, and the workflow
+// runs they started with them, unassessed.
+func TestFoundryAutomationWorkflowRunsEndWithTheWorkspace(t *testing.T) {
+	ctx := context.Background()
+	f := newAutomationWorkflowFixture(t, "AWD")
+	run := f.claim(t, 1)
+	r, err := f.use(run, f.sales)
+	require.NoError(t, err)
+	require.NoError(t, f.db.WithTx(ctx, func(tx store.Store) error { return tx.CancelWorkspaceFoundryWork(ctx, f.workspaceID) }))
+	ended, err := f.db.GetFoundryWorkflowRun(ctx, f.sales.ID, r.ID)
+	require.NoError(t, err)
+	require.NotNil(t, ended.Finished)
+	assert.Equal(t, "The workspace was deleted before the run finished.", ended.Finished.Output)
+	_, err = f.db.GetFoundryWorkflowRunAssessment(ctx, r.ID)
+	assert.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestFoundryAutomationWorkflowRunStartsOnceUnderRaces(t *testing.T) {

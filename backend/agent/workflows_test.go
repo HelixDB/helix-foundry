@@ -36,7 +36,7 @@ func TestAnAutomationsCallsAreRecordedUnderItsWorkflowRun(t *testing.T) {
 
 	require.Len(t, h.backend.asked, 3)
 	for _, asked := range h.backend.asked[:2] {
-		assert.Equal(t, "wfrun-ont1", asked.GetWorkflowRunId(), "recorded under its run's use of the ontology")
+		assert.Equal(t, "wfrun-ont1_key-ont1", asked.GetWorkflowRunId(), "recorded under its run's use of the ontology, with its key")
 	}
 	assert.Empty(t, h.backend.asked[2].GetWorkflowRunId(), "an ontology the workspace hasn't goes untracked, and nothing the model wrote is sent")
 	require.Len(t, h.db.uses.starts, 1, "a run uses an ontology once; another workspace's goes untracked")

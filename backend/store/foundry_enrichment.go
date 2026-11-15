@@ -170,6 +170,11 @@ WHERE ontology_id=? AND status='writing'`, ontologyID); err != nil {
 		workspaceID, "the workspace was deleted"); err != nil {
 		return err
 	}
+	// The workflow runs they started finish with them, unassessed.
+	if err := s.finishFoundryAutomationWorkflowRuns(ctx, `SELECT id FROM foundry_automation_runs WHERE workspace_id=? AND status IN ('queued', 'running')`,
+		workspaceID, "The workspace was deleted before the run finished.", false); err != nil {
+		return err
+	}
 	for _, q := range []string{
 		`UPDATE foundry_automation_runs SET status='cancelled', error='The workspace was deleted.', lease_owner=NULL, lease_until=NULL, finished_at=NOW(6)
 WHERE workspace_id=? AND status IN ('queued', 'running')`,

@@ -1177,7 +1177,7 @@ func (u Unimplemented) GetFoundryWorkflowByClientToken(context.Context, string, 
 	u.unimplemented("GetFoundryWorkflowByClientToken")
 	return nil, nil
 }
-func (u Unimplemented) ListFoundryWorkflows(context.Context, string, string, int) ([]*model.FoundryWorkflow, string, error) {
+func (u Unimplemented) ListFoundryWorkflows(context.Context, string, bool, string, int) ([]*model.FoundryWorkflow, string, error) {
 	u.unimplemented("ListFoundryWorkflows")
 	return nil, "", nil
 }

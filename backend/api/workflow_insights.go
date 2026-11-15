@@ -55,10 +55,9 @@ func (s *Service) GetFoundryWorkflowInsights(ctx context.Context, req *foundryv1
 	}
 	// A principal the request names counts the runs it started itself:
 	// those Foundry started for its automations are the automations' own
-	// (their workflow_id names them). A grantee seeing only its own runs
-	// reads all it started.
+	// (their workflow_id names them). A grantee sees no automation's.
 	var startedBy *access.Principal
-	withAutomations := true
+	withAutomations := seesAutomations(ctx)
 	if p := req.GetStartedBy(); p.GetKind() != foundryv1.FoundryPrincipal_KIND_UNSPECIFIED || p.GetId() != "" {
 		principal, err := principalFromProto(p)
 		if err != nil || principal.Kind == access.PrincipalTeam {
@@ -67,7 +66,7 @@ func (s *Service) GetFoundryWorkflowInsights(ctx context.Context, req *foundryv1
 		startedBy, withAutomations = &principal, false
 	}
 	if by, own := ownRunsOnly(ctx); own {
-		startedBy, withAutomations = &by, true
+		startedBy = &by
 	}
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {

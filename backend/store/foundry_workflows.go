@@ -108,9 +108,12 @@ FROM foundry_workflows w WHERE w.ontology_id=? AND w.client_token=?`, ontologyID
 }
 
 // ListFoundryWorkflows lists an ontology's workflows newest first, limit a
-// page.
-func (s *mysqlDB) ListFoundryWorkflows(ctx context.Context, ontologyID, pageToken string, limit int) ([]*model.FoundryWorkflow, string, error) {
+// page: those Foundry made for automations only withAutomations.
+func (s *mysqlDB) ListFoundryWorkflows(ctx context.Context, ontologyID string, withAutomations bool, pageToken string, limit int) ([]*model.FoundryWorkflow, string, error) {
 	conds, args := []string{"w.ontology_id=?"}, []any{ontologyID}
+	if !withAutomations {
+		conds = append(conds, "w.automation_id IS NULL")
+	}
 	if pageToken != "" {
 		cursor, err := decodeTimeIDCursor(pageToken)
 		if err != nil {
@@ -227,17 +230,17 @@ func (s *mysqlDB) deleteFoundryWorkflowRows(ctx context.Context, column, id stri
 
 const foundryWorkflowRunColumns = `id, workflow_id, workspace_id, ontology_id, status, input, output, client_token,
   started_by_user_id, started_by_service_credential_id, started_at, finished_at,
-  accesses, reads_count, questions, sends, uploads, pieces, results_omitted, result_bytes, automation_run_id`
+  accesses, reads_count, questions, sends, uploads, pieces, results_omitted, result_bytes, automation_run_id, automation_key`
 
 func scanFoundryWorkflowRun(row rowScanner) (*model.FoundryWorkflowRun, error) {
 	var r model.FoundryWorkflowRun
 	var status string
-	var input, output, user, credential, automationRun sql.NullString
+	var input, output, user, credential, automationRun, automationKey sql.NullString
 	var finished sql.NullTime
 	c := &r.Counts
 	err := row.Scan(&r.ID, &r.WorkflowID, &r.WorkspaceID, &r.OntologyID, &status, &input, &output, &r.ClientToken,
 		&user, &credential, &r.StartedAt, &finished,
-		&c.Accesses, &c.Reads, &c.Questions, &c.Sends, &c.Uploads, &c.Pieces, &c.ResultsOmitted, &c.ResultBytes, &automationRun)
+		&c.Accesses, &c.Reads, &c.Questions, &c.Sends, &c.Uploads, &c.Pieces, &c.ResultsOmitted, &c.ResultBytes, &automationRun, &automationKey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -248,7 +251,7 @@ func scanFoundryWorkflowRun(row rowScanner) (*model.FoundryWorkflowRun, error) {
 		r.Input = &input.String
 	}
 	if automationRun.Valid {
-		r.AutomationRunID = &automationRun.String
+		r.AutomationRunID, r.AutomationKey = &automationRun.String, automationKey.String
 	}
 	switch {
 	case user.Valid:
@@ -283,8 +286,12 @@ func (s *mysqlDB) StartFoundryWorkflowRun(ctx context.Context, r *model.FoundryW
 	default:
 		return fmt.Errorf("foundry workflow run %s is started by a %s", r.ID, r.StartedBy.Kind)
 	}
-	if r.AutomationRunID != nil && (r.StartedBy.Kind != access.PrincipalUser || r.ClientToken != *r.AutomationRunID) {
-		return fmt.Errorf("foundry workflow run %s of an automation is its owner's, under the automation run's id", r.ID)
+	var key any
+	if r.AutomationRunID != nil {
+		if r.StartedBy.Kind != access.PrincipalUser || r.ClientToken != *r.AutomationRunID || r.AutomationKey == "" {
+			return fmt.Errorf("foundry workflow run %s of an automation is its owner's, under the automation run's id, with a key", r.ID)
+		}
+		key = r.AutomationKey
 	}
 	return s.inTx(ctx, func(tx *mysqlDB) error {
 		var locked string
@@ -301,9 +308,10 @@ func (s *mysqlDB) StartFoundryWorkflowRun(ctx context.Context, r *model.FoundryW
 			input = *r.Input
 		}
 		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_workflow_runs
-  (id, workflow_id, workspace_id, ontology_id, status, input, client_token, started_by_user_id, started_by_service_credential_id, automation_run_id)
-VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
-			r.ID, r.WorkflowID, r.WorkspaceID, r.OntologyID, input, r.ClientToken, user, credential, r.AutomationRunID)
+  (id, workflow_id, workspace_id, ontology_id, status, input, client_token, started_by_user_id, started_by_service_credential_id,
+   automation_run_id, automation_key)
+VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
+			r.ID, r.WorkflowID, r.WorkspaceID, r.OntologyID, input, r.ClientToken, user, credential, r.AutomationRunID, key)
 		if isDuplicateKey(err) {
 			return ErrConflict
 		}
@@ -768,9 +776,9 @@ func (s *mysqlDB) ListFoundryWorkflowInsightRuns(ctx context.Context, ontologyID
 			return nil, nil
 		}
 		conds, args = append(conds, "r."+column+"=?"), append(args, startedBy.ID)
-		if !withAutomations {
-			conds = append(conds, "r.automation_run_id IS NULL")
-		}
+	}
+	if !withAutomations {
+		conds = append(conds, "r.automation_run_id IS NULL")
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT r.id, r.workflow_id, r.started_by_user_id, r.started_by_service_credential_id, r.started_at,
   r.status, r.accesses, r.reads_count, r.questions, r.sends, r.uploads, a.status, a.verdict, a.assessment, a.usd_micros,

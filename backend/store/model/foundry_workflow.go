@@ -135,7 +135,19 @@ type FoundryWorkflowRun struct {
 	// AutomationRunID is the automation's run it records, for a run Foundry
 	// started (StartedBy is then the automation's owner); nil for an agent's.
 	AutomationRunID *string
+	// AutomationKey is the secret a call names a run Foundry started with
+	// (Recording), "" for an agent's: only Foundry's workers read it, so
+	// only the automation's own calls record under the run.
+	AutomationKey string
 }
+
+// Recording is what a call of an automation's Assistant step passes as
+// workflow_run_id to be recorded under r, a run Foundry started: its id and
+// its key, joined by "_" (which neither holds, and the MCP's ids allow),
+// which no API answer shows. A run's id alone names an agent's run.
+//
+//	(&model.FoundryWorkflowRun{ID: "01RUN", AutomationKey: "k3y"}).Recording() // "01RUN_k3y"
+func (r *FoundryWorkflowRun) Recording() string { return r.ID + "_" + r.AutomationKey }
 
 // FoundryWorkflowRunEnd is how a run finished.
 type FoundryWorkflowRunEnd struct {

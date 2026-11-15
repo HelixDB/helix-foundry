@@ -22,8 +22,9 @@ import (
 // ontology (AutomationUses.Called) or an action step on it. Its Assistant
 // steps' reads and questions of the ontology are recorded under the
 // workflow run, whose id Foundry gives the tool: a model never chooses or
-// forges one. Tracking never stops a run: a use that can't be recorded goes
-// untracked.
+// forges one, and only these calls hold its key (FoundryWorkflowRun.
+// Recording), so no other caller records under it. Tracking never stops a
+// run: a use that can't be recorded goes untracked.
 
 // WorkflowStore is what recording an automation run's uses of ontologies
 // reads and writes.
@@ -44,7 +45,8 @@ type AutomationUses struct {
 	run  *model.FoundryAutomationRun
 	name string
 	spec automation.Spec
-	// runs is each ontology's workflow run, "" for one gone untracked.
+	// runs is how calls name each ontology's workflow run (its Recording),
+	// "" for one gone untracked.
 	runs map[string]string
 }
 
@@ -61,14 +63,14 @@ var workflowToolsRecorded = map[string]bool{"helix_foundry_read_graph": true, to
 // workflowRunField is the input field a tool records its call under.
 const workflowRunField = "workflow_run_id"
 
-// Use is the open workflow run that records the run's use of ontologyID,
-// started at its first: "" when it goes untracked (the ontology holds as
+// Use is how calls name the open workflow run that records the run's use of
+// ontologyID (its Recording), started at its first: "" when it goes untracked (the ontology holds as
 // many workflows as it may, it isn't a live ontology of the workspace, or
 // the run ended). An error is the store's: the use goes untracked too, and
 // the caller logs it.
 func (u *AutomationUses) Use(ctx context.Context, ontologyID string) (string, error) {
-	if runID, ok := u.runs[ontologyID]; ok {
-		return runID, nil
+	if recording, ok := u.runs[ontologyID]; ok {
+		return recording, nil
 	}
 	r, err := u.db.GetFoundryAutomationWorkflowRun(ctx, u.run.ID, ontologyID)
 	if errors.Is(err, foundrystore.ErrNotFound) {
@@ -89,8 +91,8 @@ func (u *AutomationUses) Use(ctx context.Context, ontologyID string) (string, er
 		u.runs[ontologyID] = ""
 		return "", nil
 	}
-	u.runs[ontologyID] = r.ID
-	return r.ID, nil
+	u.runs[ontologyID] = r.Recording()
+	return u.runs[ontologyID], nil
 }
 
 // request is the run in words (automation.Request): what fired it, as its
@@ -148,9 +150,9 @@ func (u *AutomationUses) Called(ctx context.Context, tool string, args map[strin
 	if ontologyID == "" {
 		return nil
 	}
-	runID, err := u.Use(ctx, ontologyID)
-	if runID != "" && workflowToolsRecorded[tool] {
-		args[workflowRunField] = runID
+	recording, err := u.Use(ctx, ontologyID)
+	if recording != "" && workflowToolsRecorded[tool] {
+		args[workflowRunField] = recording
 	}
 	return err
 }
@@ -193,6 +195,24 @@ func (u *AutomationUses) DashboardOntologies(ctx context.Context, dashboardID st
 		return nil
 	}
 	return spec.Ontologies()
+}
+
+// withoutWorkflowRunArg is a call's input (JSON) without workflow_run_id:
+// input itself when it names none or isn't an object.
+func withoutWorkflowRunArg(input json.RawMessage) json.RawMessage {
+	var args map[string]json.RawMessage
+	if json.Unmarshal(input, &args) != nil || args == nil {
+		return input
+	}
+	if _, ok := args[workflowRunField]; !ok {
+		return input
+	}
+	delete(args, workflowRunField)
+	out, err := json.Marshal(args)
+	if err != nil {
+		return input
+	}
+	return out
 }
 
 // withoutWorkflowRun is a tool's input schema (JSON) without workflow_run_id:

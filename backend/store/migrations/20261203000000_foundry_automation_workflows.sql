@@ -11,11 +11,15 @@ ALTER TABLE foundry_workflows
   ADD UNIQUE KEY foundry_workflows_automation_uq (ontology_id, automation_id),
   ADD INDEX foundry_workflows_automation_idx (automation_id);
 
--- A run Foundry started for an automation is its owner's.
+-- A run Foundry started for an automation is its owner's, and records only
+-- the calls that name it with its key (automation_key), which Foundry gives
+-- the automation's Assistant steps and never shows anyone.
 ALTER TABLE foundry_workflow_runs
   ADD COLUMN automation_run_id CHAR(26) NULL,
+  ADD COLUMN automation_key CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
   ADD INDEX foundry_workflow_runs_automation_run_idx (automation_run_id),
-  ADD CONSTRAINT foundry_workflow_runs_automation_chk CHECK (automation_run_id IS NULL OR started_by_user_id IS NOT NULL);
+  ADD CONSTRAINT foundry_workflow_runs_automation_chk CHECK (automation_run_id IS NULL OR started_by_user_id IS NOT NULL),
+  ADD CONSTRAINT foundry_workflow_runs_automation_key_chk CHECK ((automation_run_id IS NULL) = (automation_key IS NULL));
 
 -- An ontology an automation's run used that Foundry couldn't make the
 -- automation's workflow of, and why: workflows_full, the ontology held as
@@ -34,8 +38,10 @@ CREATE TABLE foundry_automation_untracked (
 -- +goose Down
 DROP TABLE foundry_automation_untracked;
 ALTER TABLE foundry_workflow_runs
+  DROP CHECK foundry_workflow_runs_automation_key_chk,
   DROP CHECK foundry_workflow_runs_automation_chk,
   DROP INDEX foundry_workflow_runs_automation_run_idx,
+  DROP COLUMN automation_key,
   DROP COLUMN automation_run_id;
 ALTER TABLE foundry_workflows
   DROP INDEX foundry_workflows_automation_idx,

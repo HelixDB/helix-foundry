@@ -124,7 +124,7 @@ func (w *workflowUses) StartFoundryAutomationWorkflowRun(ctx context.Context, st
 	w.starts = append(w.starts, start)
 	runID, input := start.AutomationRunID, start.Input
 	r := &model.FoundryWorkflowRun{ID: "wfrun-" + start.OntologyID, WorkflowID: "wf-" + start.OntologyID, WorkspaceID: start.WorkspaceID,
-		OntologyID: start.OntologyID, ClientToken: runID, Input: &input, AutomationRunID: &runID}
+		OntologyID: start.OntologyID, ClientToken: runID, Input: &input, AutomationRunID: &runID, AutomationKey: "key-" + start.OntologyID}
 	w.runs = append(w.runs, r)
 	return r, nil
 }

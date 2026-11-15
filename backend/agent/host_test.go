@@ -386,13 +386,15 @@ func TestAHelpersCLICallsTheAssistantsToolsAsThePerson(t *testing.T) {
 	assert.Contains(t, db.eventTypes(), "action_card")
 	assert.Zero(t, h.backend.loads, "preparing runs nothing")
 
-	// The same question in the turn is asked once, whatever token the CLI sends.
+	// The same question in the turn is asked once, whatever token the CLI
+	// sends, and under no workflow run it names.
 	for _, token := range []string{"a", "b"} {
 		_, err = client.CallTool(ctx, &mcp.CallToolParams{Name: toolAsk, Arguments: map[string]any{
-			"workspace_id": ws, "ontology_id": ontology, "question": "Who?", "client_token": token}})
+			"workspace_id": ws, "ontology_id": ontology, "question": "Who?", "client_token": token, "workflow_run_id": "01RUN_key"}})
 		require.NoError(t, err)
 	}
 	require.Len(t, h.backend.asked, 2)
+	assert.Empty(t, h.backend.asked[0].GetWorkflowRunId(), "a person's turn records under no workflow run")
 	assert.Equal(t, h.backend.asked[0].GetClientToken(), h.backend.asked[1].GetClientToken())
 	assert.NotEqual(t, "a", h.backend.asked[0].GetClientToken())
 	assert.Equal(t, 4, calls)

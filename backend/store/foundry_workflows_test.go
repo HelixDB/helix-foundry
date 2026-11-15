@@ -101,7 +101,7 @@ func TestFoundryWorkflows(t *testing.T) {
 		seen := map[string]bool{}
 		token := ""
 		for {
-			page, next, err := f.db.ListFoundryWorkflows(ctx, f.ontology.ID, token, 30)
+			page, next, err := f.db.ListFoundryWorkflows(ctx, f.ontology.ID, true, token, 30)
 			require.NoError(t, err)
 			for _, w := range page {
 				assert.False(t, seen[w.ID], "listed twice: %s", w.ID)
@@ -113,7 +113,7 @@ func TestFoundryWorkflows(t *testing.T) {
 			token = next
 		}
 		assert.Len(t, seen, model.FoundryWorkflowsMax)
-		_, _, err := f.db.ListFoundryWorkflows(ctx, f.ontology.ID, "not-a-token", 30)
+		_, _, err := f.db.ListFoundryWorkflows(ctx, f.ontology.ID, true, "not-a-token", 30)
 		assert.ErrorIs(t, err, store.ErrInvalidPageToken)
 	})
 }

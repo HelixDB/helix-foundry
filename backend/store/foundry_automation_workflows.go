@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -22,10 +24,6 @@ import (
 //
 // Lock order, the automations' and the workflows' together: an automation,
 // its run, an ontology, its workflows, their runs.
-
-// automationWorkflowToken is the client token of an automation's workflow
-// of an ontology.
-func automationWorkflowToken(automationID string) string { return "automation:" + automationID }
 
 // EnsureFoundryAutomationWorkflow makes the automation's workflow of the
 // ontology, unless it has one, and returns it: named after the automation and
@@ -101,9 +99,13 @@ func (s *mysqlDB) StartFoundryAutomationWorkflowRun(ctx context.Context, start m
 			return err
 		}
 		input := start.Input
+		key := make([]byte, 16)
+		if _, err := rand.Read(key); err != nil {
+			return err
+		}
 		r := &model.FoundryWorkflowRun{ID: id.New(), WorkflowID: workflowID, WorkspaceID: start.WorkspaceID, OntologyID: start.OntologyID,
 			ClientToken: start.AutomationRunID, StartedBy: access.Principal{Kind: access.PrincipalUser, ID: owner}, Input: &input,
-			AutomationRunID: &start.AutomationRunID}
+			AutomationRunID: &start.AutomationRunID, AutomationKey: hex.EncodeToString(key)}
 		switch err := tx.StartFoundryWorkflowRun(ctx, r); {
 		case errors.Is(err, ErrConflict):
 			// Another use started it first.
@@ -162,7 +164,9 @@ func (s *mysqlDB) ensureFoundryAutomationWorkflow(ctx context.Context, workspace
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_workflows
   (id, workspace_id, ontology_id, name, description, client_token, created_by_user_id, automation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		workflowID, workspaceID, ontologyID, model.FoundryAutomationWorkflowName(name), model.FoundryAutomationWorkflowDescription,
-		automationWorkflowToken(automationID), owner, automationID); err != nil {
+		// Its own token: the (ontology, automation) key makes it one, and a
+		// token a person's workflow may take never stands in its way.
+		id.New(), owner, automationID); err != nil {
 		return "", err
 	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_automation_untracked WHERE automation_id=? AND ontology_id=?`, automationID, ontologyID)

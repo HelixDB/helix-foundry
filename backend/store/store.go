@@ -218,7 +218,7 @@ type ReadStore interface {
 	// runs recorded (foundry_workflows.go)
 	GetFoundryWorkflow(ctx context.Context, ontologyID, id string) (*model.FoundryWorkflow, error)
 	GetFoundryWorkflowByClientToken(ctx context.Context, ontologyID, clientToken string) (*model.FoundryWorkflow, error)
-	ListFoundryWorkflows(ctx context.Context, ontologyID, pageToken string, limit int) ([]*model.FoundryWorkflow, string, error)
+	ListFoundryWorkflows(ctx context.Context, ontologyID string, withAutomations bool, pageToken string, limit int) ([]*model.FoundryWorkflow, string, error)
 	GetFoundryWorkflowRun(ctx context.Context, ontologyID, id string) (*model.FoundryWorkflowRun, error)
 	GetFoundryWorkflowRunInWorkspace(ctx context.Context, workspaceID, id string) (*model.FoundryWorkflowRun, error)
 	GetFoundryWorkflowRunByClientToken(ctx context.Context, workflowID, clientToken string) (*model.FoundryWorkflowRun, error)

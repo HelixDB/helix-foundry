@@ -24,7 +24,7 @@ func automationWorkflow(store *workflowStore) (*foundrymodel.FoundryWorkflow, *f
 		CreatedByUserID: person.UserID, CreatedAt: time.Now(), Automation: &foundrymodel.FoundryWorkflowAutomation{ID: "auto-1", Name: "Weekly digest"}}
 	input, runID := "The automation \"Weekly digest\" ran.", "arun-1"
 	r := &foundrymodel.FoundryWorkflowRun{ID: "wfr-auto", WorkflowID: w.ID, WorkspaceID: "ws-1", OntologyID: "ont-1", ClientToken: runID,
-		StartedBy: personPrincipal(), StartedAt: time.Now(), Input: &input, AutomationRunID: &runID}
+		StartedBy: personPrincipal(), StartedAt: time.Now(), Input: &input, AutomationRunID: &runID, AutomationKey: "0123456789abcdef0123456789abcdef"}
 	store.workflows, store.runs = append(store.workflows, w), append(store.runs, r)
 	return w, r
 }
@@ -67,23 +67,79 @@ func TestAutomationWorkflowsAreFoundrys(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// Only the automation's owner records under its runs: its Assistant steps
-// call as them.
-func TestAutomationWorkflowRunsRecordTheirOwnersCalls(t *testing.T) {
+// Only the automation's own calls record under its runs: they name the run
+// with its key, which no answer shows. Its id alone, which its pages show,
+// records nothing, whoever passes it, the owner's own agent included.
+func TestAutomationWorkflowRunsRecordOnlyTheirOwnCalls(t *testing.T) {
 	s, store := workflowService(t)
 	_, r := automationWorkflow(store)
-	got, err := s.trackedRun(asPerson(), "ws-1", "ont-1", r.ID)
-	require.NoError(t, err)
-	require.Equal(t, r.ID, got.ID)
 	for name, ctx := range map[string]context.Context{
+		"its owner":      asPerson(),
 		"another person": ports.WithActor(context.Background(), ports.Actor{Source: ports.SourceUser, UserID: "user-2"}),
 		"an agent's key": ports.WithActor(context.Background(), ports.Actor{Source: ports.SourceMCP, ServiceCredentialID: "cred-1"}),
-		"no one":         context.Background(),
 	} {
-		_, err := s.trackedRun(ctx, "ws-1", "ont-1", r.ID)
-		wantCode(t, err, codes.NotFound)
+		for _, ref := range []string{r.ID, r.ID + "_", r.ID + "_0123456789abcdef0123456789abcdee", r.ID + "_" + strings.ToUpper(r.AutomationKey)} {
+			_, err := s.trackedRun(ctx, "ws-1", "ont-1", ref)
+			wantCode(t, err, codes.NotFound)
+		}
 		require.NotEmpty(t, name)
 	}
+	got, err := s.trackedRun(asPerson(), "ws-1", "ont-1", r.Recording())
+	require.NoError(t, err)
+	require.Equal(t, r.ID, got.ID)
+	_, err = s.trackedRun(asPerson(), "ws-2", "", r.Recording())
+	wantCode(t, err, codes.NotFound)
+
+	// A person's run named with a key is no run.
+	mine := startRun(t, s, "Mine")
+	_, err = s.trackedRun(asPerson(), "ws-1", "ont-1", mine.GetId()+"_"+r.AutomationKey)
+	wantCode(t, err, codes.NotFound)
+
+	// Tracking never fails the automation's calls: a run that holds all it
+	// may, or finished, records nothing more and the call goes on.
+	r.Counts.Accesses = foundrymodel.FoundryWorkflowRunMaxAccesses
+	got, err = s.trackedRun(asPerson(), "ws-1", "ont-1", r.Recording())
+	require.NoError(t, err)
+	require.Nil(t, got)
+	r.Counts.Accesses = 0
+	r.Finished = &foundrymodel.FoundryWorkflowRunEnd{At: time.Now(), Output: "Done."}
+	got, err = s.trackedRun(asPerson(), "ws-1", "ont-1", r.Recording())
+	require.NoError(t, err)
+	require.Nil(t, got)
+}
+
+// A grantee sees no automation, so neither the workflows Foundry made for
+// automations nor their runs: they speak for the owner's access.
+func TestGranteesSeeNoAutomationsWorkflows(t *testing.T) {
+	s, store := workflowService(t)
+	w, r := automationWorkflow(store)
+	mine := startRun(t, s, "Mine")
+	grantee := context.WithValue(access.WithCaller(asPerson(), access.Grantee{WorkspaceID: "ws-1", Principal: agentKey}), granteeLoadKey{},
+		foundrymodel.FoundryLoadInputs{LoadID: "load-1"})
+
+	listed := must(s.ListFoundryWorkflows(grantee, &foundryv1.ListFoundryWorkflowsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})).GetWorkflows()
+	require.Len(t, listed, 1)
+	require.Equal(t, mine.GetWorkflowId(), listed[0].GetId())
+	require.Len(t, must(s.ListFoundryWorkflows(asPerson(), &foundryv1.ListFoundryWorkflowsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})).GetWorkflows(), 2)
+
+	_, err := s.GetFoundryWorkflow(grantee, &foundryv1.GetFoundryWorkflowRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: w.ID})
+	wantCode(t, err, codes.NotFound)
+	_, err = s.ListFoundryWorkflowRuns(grantee, &foundryv1.ListFoundryWorkflowRunsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: w.ID})
+	wantCode(t, err, codes.NotFound)
+	_, err = s.GetFoundryWorkflowRun(grantee, &foundryv1.GetFoundryWorkflowRunRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: w.ID, Id: r.ID})
+	wantCode(t, err, codes.NotFound)
+	_, err = s.ListFoundryWorkflowRunAccesses(grantee, &foundryv1.ListFoundryWorkflowRunAccessesRequest{WorkspaceId: "ws-1", OntologyId: "ont-1",
+		WorkflowId: w.ID, Id: r.ID})
+	wantCode(t, err, codes.NotFound)
+	_, err = s.GetFoundryWorkflowInsights(grantee, &foundryv1.GetFoundryWorkflowInsightsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: w.ID})
+	wantCode(t, err, codes.NotFound)
+	insights := must(s.GetFoundryWorkflowInsights(grantee, &foundryv1.GetFoundryWorkflowInsightsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"}))
+	require.Equal(t, int32(1), insights.GetTotals().GetRuns(), "the person's run, not the automation's")
+	for _, a := range insights.GetAgents() {
+		require.Nil(t, a.GetAutomation())
+	}
+	require.Equal(t, int32(2), must(s.GetFoundryWorkflowInsights(asPerson(), &foundryv1.GetFoundryWorkflowInsightsRequest{WorkspaceId: "ws-1",
+		OntologyId: "ont-1"})).GetTotals().GetRuns())
 }
 
 func TestWorkflowInsightsCountAutomationsApart(t *testing.T) {

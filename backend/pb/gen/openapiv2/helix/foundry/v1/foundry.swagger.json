@@ -5209,7 +5209,7 @@
         ]
       },
       "post": {
-        "summary": "Workflows: an agent's task over an ontology, whose runs record what the\nagent read of the ontology and wrote to Foundry between its request and\nits answer. Owners and admins create and delete workflows; a caller that\nmay read the ontology's database starts and finishes runs, and reads\nthem. Foundry makes a workflow of each ontology an automation uses\n(FoundryWorkflow.automation) and records each of its runs there: only\nFoundry starts and finishes those runs (FAILED_PRECONDITION, reason\nFOUNDRY_WORKFLOW_OF_AUTOMATION), only the automation's owner records\nunder them, and the workflow is deleted only once its automation is.",
+        "summary": "Workflows: an agent's task over an ontology, whose runs record what the\nagent read of the ontology and wrote to Foundry between its request and\nits answer. Owners and admins create and delete workflows; a caller that\nmay read the ontology's database starts and finishes runs, and reads\nthem. Foundry makes a workflow of each ontology an automation uses\n(FoundryWorkflow.automation) and records each of its runs there: only\nFoundry starts and finishes those runs (FAILED_PRECONDITION, reason\nFOUNDRY_WORKFLOW_OF_AUTOMATION), only the automation's own calls record\nunder them (a run's id alone records nothing), and the workflow is\ndeleted only once its automation is. A grantee sees none of them.",
         "operationId": "FoundryService_CreateFoundryWorkflow",
         "responses": {
           "200": {

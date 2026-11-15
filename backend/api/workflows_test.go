@@ -90,13 +90,13 @@ func (s *workflowStore) GetFoundryWorkflowByClientToken(_ context.Context, ontol
 	})
 }
 
-func (s *workflowStore) ListFoundryWorkflows(_ context.Context, ontologyID, pageToken string, _ int) ([]*foundrymodel.FoundryWorkflow, string, error) {
+func (s *workflowStore) ListFoundryWorkflows(_ context.Context, ontologyID string, withAutomations bool, pageToken string, _ int) ([]*foundrymodel.FoundryWorkflow, string, error) {
 	if pageToken == "bad" {
 		return nil, "", foundrystore.ErrInvalidPageToken
 	}
 	var out []*foundrymodel.FoundryWorkflow
 	for _, w := range s.workflows {
-		if w.OntologyID == ontologyID {
+		if w.OntologyID == ontologyID && (withAutomations || w.Automation == nil) {
 			out = append(out, s.counted(w))
 		}
 	}
@@ -173,7 +173,7 @@ func (s *workflowStore) ListFoundryWorkflowInsightRuns(_ context.Context, ontolo
 	var out []foundrymodel.FoundryWorkflowInsightRun
 	for _, r := range s.runs {
 		if r.OntologyID != ontologyID || workflowID != "" && r.WorkflowID != workflowID || startedBy != nil && r.StartedBy != *startedBy ||
-			startedBy != nil && !withAutomations && r.AutomationRunID != nil || r.StartedAt.Before(from) || !r.StartedAt.Before(to) {
+			!withAutomations && r.AutomationRunID != nil || r.StartedAt.Before(from) || !r.StartedAt.Before(to) {
 			continue
 		}
 		run := foundrymodel.FoundryWorkflowInsightRun{ID: r.ID, WorkflowID: r.WorkflowID, StartedBy: r.StartedBy, StartedAt: r.StartedAt,

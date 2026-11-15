@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"strings"
 	"unicode/utf8"
@@ -90,7 +91,7 @@ func (s *Service) ListFoundryWorkflows(ctx context.Context, req *foundryv1.ListF
 	if err != nil {
 		return nil, err
 	}
-	workflows, next, err := s.deps.DB.ListFoundryWorkflows(ctx, o.ID, req.GetPageToken(), workflowsPage)
+	workflows, next, err := s.deps.DB.ListFoundryWorkflows(ctx, o.ID, seesAutomations(ctx), req.GetPageToken(), workflowsPage)
 	switch {
 	case errors.Is(err, foundrystore.ErrInvalidPageToken):
 		return nil, status.Error(codes.InvalidArgument, "invalid page_token")
@@ -324,12 +325,18 @@ func (s *Service) ListFoundryWorkflowRunAccesses(ctx context.Context, req *found
 // or empty for a call of the workspace (a send), whose run may be of any
 // of its ontologies. A grantee records only with its Workflows permission,
 // and, holding only some of the ontology's current load, only under a run it
-// started. Under a run Foundry started for an automation, only that
-// automation's owner records.
-func (s *Service) trackedRun(ctx context.Context, workspaceID, ontologyID, runID string) (*foundrymodel.FoundryWorkflowRun, error) {
-	if runID == "" {
+// started.
+//
+// A run Foundry started for an automation records only its Assistant steps'
+// calls, which name it with its key (FoundryWorkflowRun.Recording): its id
+// alone, which its pages show, names no run anyone records under. Tracking
+// never fails those calls: once the run finished or holds all it may, they
+// go on unrecorded.
+func (s *Service) trackedRun(ctx context.Context, workspaceID, ontologyID, ref string) (*foundrymodel.FoundryWorkflowRun, error) {
+	if ref == "" {
 		return nil, nil
 	}
+	runID, key, keyed := strings.Cut(ref, "_")
 	var r *foundrymodel.FoundryWorkflowRun
 	var err error
 	if ontologyID == "" {
@@ -337,14 +344,22 @@ func (s *Service) trackedRun(ctx context.Context, workspaceID, ontologyID, runID
 	} else {
 		r, err = s.deps.DB.GetFoundryWorkflowRun(ctx, ontologyID, runID)
 	}
-	if err == nil && r.AutomationRunID != nil {
-		// Foundry's record of its owner's automation: only the owner's calls
-		// (its Assistant steps') go under it, whatever their Workflows
-		// permission, which is about their own runs.
-		if a := actor(ctx); a.UserID == "" || a.ServiceCredentialID != "" || r.StartedBy != (access.Principal{Kind: access.PrincipalUser, ID: a.UserID}) {
-			return nil, status.Error(codes.NotFound, "workflow run not found")
+	notFound := status.Error(codes.NotFound, "workflow run not found")
+	if keyed || err == nil && r.AutomationRunID != nil {
+		switch {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			return nil, notFound
+		case err != nil:
+			return nil, status.Errorf(codes.Internal, "get workflow run: %v", err)
+		case !keyed || r.AutomationRunID == nil || r.WorkspaceID != workspaceID ||
+			subtle.ConstantTimeCompare([]byte(key), []byte(r.AutomationKey)) != 1:
+			return nil, notFound
+		case r.Finished != nil || r.Counts.Accesses >= foundrymodel.FoundryWorkflowRunMaxAccesses:
+			return nil, nil
 		}
-	} else if g, ok := access.GranteeFrom(ctx); ok {
+		return r, nil
+	}
+	if g, ok := access.GranteeFrom(ctx); ok {
 		switch on, onErr := s.workflowsOn(ctx, g); {
 		case onErr != nil:
 			return nil, onErr
@@ -355,7 +370,7 @@ func (s *Service) trackedRun(ctx context.Context, workspaceID, ontologyID, runID
 	by, own := ownRunsOnly(ctx)
 	switch {
 	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && (r.WorkspaceID != workspaceID || own && r.StartedBy != by):
-		return nil, status.Error(codes.NotFound, "workflow run not found")
+		return nil, notFound
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "get workflow run: %v", err)
 	case r.Finished != nil:
@@ -384,7 +399,7 @@ func (s *Service) track(ctx context.Context, run *foundrymodel.FoundryWorkflowRu
 func (s *Service) foundryWorkflow(ctx context.Context, ontologyID, workflowID string) (*foundrymodel.FoundryWorkflow, error) {
 	w, err := s.deps.DB.GetFoundryWorkflow(ctx, ontologyID, workflowID)
 	switch {
-	case errors.Is(err, foundrystore.ErrNotFound):
+	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && w.Automation != nil && !seesAutomations(ctx):
 		return nil, status.Error(codes.NotFound, "workflow not found")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "get workflow: %v", err)
@@ -402,6 +417,15 @@ func (s *Service) foundryWorkflowResponse(ctx context.Context, ontologyID, workf
 		return nil, err
 	}
 	return &foundryv1.FoundryWorkflowResponse{Workflow: foundryWorkflowToProto(w, verdicts[w.ID])}, nil
+}
+
+// seesAutomations is whether the caller sees the workflows Foundry made for
+// automations, and their runs: a grantee of source grants doesn't, as it
+// sees no automation. An automation runs with its owner's access, so its
+// runs' requests and answers may speak of what the grantee wasn't granted.
+func seesAutomations(ctx context.Context) bool {
+	_, grantee := access.GranteeFrom(ctx)
+	return !grantee
 }
 
 // ownRunsOnly is the principal whose runs alone the call sees: a grantee's,
@@ -452,7 +476,8 @@ func (s *Service) foundryWorkflowRun(ctx context.Context, ontologyID, workflowID
 	r, err := s.deps.DB.GetFoundryWorkflowRun(ctx, ontologyID, runID)
 	by, own := ownRunsOnly(ctx)
 	switch {
-	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && (r.WorkflowID != workflowID || own && r.StartedBy != by):
+	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && (r.WorkflowID != workflowID || own && r.StartedBy != by ||
+		r.AutomationRunID != nil && !seesAutomations(ctx)):
 		return nil, status.Error(codes.NotFound, "workflow run not found")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "get workflow run: %v", err)

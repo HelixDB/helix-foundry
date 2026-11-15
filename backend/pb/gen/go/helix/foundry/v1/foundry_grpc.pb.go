@@ -280,8 +280,9 @@ type FoundryServiceClient interface {
 	// them. Foundry makes a workflow of each ontology an automation uses
 	// (FoundryWorkflow.automation) and records each of its runs there: only
 	// Foundry starts and finishes those runs (FAILED_PRECONDITION, reason
-	// FOUNDRY_WORKFLOW_OF_AUTOMATION), only the automation's owner records
-	// under them, and the workflow is deleted only once its automation is.
+	// FOUNDRY_WORKFLOW_OF_AUTOMATION), only the automation's own calls record
+	// under them (a run's id alone records nothing), and the workflow is
+	// deleted only once its automation is. A grantee sees none of them.
 	CreateFoundryWorkflow(ctx context.Context, in *CreateFoundryWorkflowRequest, opts ...grpc.CallOption) (*FoundryWorkflowResponse, error)
 	ListFoundryWorkflows(ctx context.Context, in *ListFoundryWorkflowsRequest, opts ...grpc.CallOption) (*ListFoundryWorkflowsResponse, error)
 	GetFoundryWorkflow(ctx context.Context, in *GetFoundryWorkflowRequest, opts ...grpc.CallOption) (*FoundryWorkflowResponse, error)
@@ -2008,8 +2009,9 @@ type FoundryServiceServer interface {
 	// them. Foundry makes a workflow of each ontology an automation uses
 	// (FoundryWorkflow.automation) and records each of its runs there: only
 	// Foundry starts and finishes those runs (FAILED_PRECONDITION, reason
-	// FOUNDRY_WORKFLOW_OF_AUTOMATION), only the automation's owner records
-	// under them, and the workflow is deleted only once its automation is.
+	// FOUNDRY_WORKFLOW_OF_AUTOMATION), only the automation's own calls record
+	// under them (a run's id alone records nothing), and the workflow is
+	// deleted only once its automation is. A grantee sees none of them.
 	CreateFoundryWorkflow(context.Context, *CreateFoundryWorkflowRequest) (*FoundryWorkflowResponse, error)
 	ListFoundryWorkflows(context.Context, *ListFoundryWorkflowsRequest) (*ListFoundryWorkflowsResponse, error)
 	GetFoundryWorkflow(context.Context, *GetFoundryWorkflowRequest) (*FoundryWorkflowResponse, error)
