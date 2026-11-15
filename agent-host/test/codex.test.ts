@@ -136,10 +136,10 @@ describe("a turn on Codex", () => {
         received.indexOf("config/read") < received.indexOf("thread/start"),
       "what Codex will run with is read back before any thread starts",
     );
-    assert.deepEqual(
-      entries.find((e) => e.received === "config/read").params,
-      { cwd: start.cwd, includeLayers: false },
-    );
+    assert.deepEqual(entries.find((e) => e.received === "config/read").params, {
+      cwd: start.cwd,
+      includeLayers: false,
+    });
     const thread = entries.find((e) => e.received === "thread/start");
     assert.deepEqual(thread.params, {
       cwd: start.cwd,
@@ -467,7 +467,10 @@ describe("Codex's account and sessions", () => {
       await new Promise((r) => setTimeout(r, 25));
     stop.abort();
     await serving;
-    assert.equal(foundry.sent("/agent-host/hello")[0].accounts[0].version, "0.150.0");
+    assert.equal(
+      foundry.sent("/agent-host/hello")[0].accounts[0].version,
+      "0.150.0",
+    );
     assert.ok(claimed(), "a later claim says the updated version");
   });
 
@@ -553,7 +556,9 @@ describe("Codex's account and sessions", () => {
       checks = await doctor({ codex: FAKE_CODEX, env });
       assert.deepEqual(
         checks.filter((c) => !c.ok).map((c) => c.what),
-        [`Codex runs as Foundry sets it: your configuration turns back on ${key}`],
+        [
+          `Codex runs as Foundry sets it: your configuration turns back on ${key}`,
+        ],
       );
     }
   });
@@ -623,13 +628,25 @@ describe("Codex's rules", () => {
       approvalsReviewer: "user",
     };
     assert.deepEqual(unheld(held, thread), []);
-    for (const k of ["agents.enabled", "features.multi_agent", "features.multi_agent_v2", "features.shell_tool", "features.unified_exec"])
-      assert.ok(LOCKED.some(([l]) => l === k), `${k} is turned off`);
+    for (const k of [
+      "agents.enabled",
+      "features.multi_agent",
+      "features.multi_agent_v2",
+      "features.shell_tool",
+      "features.unified_exec",
+    ])
+      assert.ok(
+        LOCKED.some(([l]) => l === k),
+        `${k} is turned off`,
+      );
     assert.deepEqual(
       unheld({ ...held, agents: { enabled: true }, web_search: "live" }),
       ["web_search", "agents.enabled"],
     );
-    assert.deepEqual(unheld({ ...held, features: null }).length, LOCKED.filter(([k]) => k.startsWith("features.")).length);
+    assert.deepEqual(
+      unheld({ ...held, features: null }).length,
+      LOCKED.filter(([k]) => k.startsWith("features.")).length,
+    );
     assert.deepEqual(
       unheld(undefined, {
         approvalPolicy: { granular: {} },

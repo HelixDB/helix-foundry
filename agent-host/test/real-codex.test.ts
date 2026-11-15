@@ -679,9 +679,10 @@ describe("the helper on the real Codex (sub-agents)", { skip: !REAL }, () => {
         }
         assert.match(world.output("call_spawn"), /unsupported/);
         assert.equal(
-          world.requests.filter((r) =>
-            JSON.stringify(r.input ?? []).includes("SUBAGENT TASK") &&
-            (r.input ?? []).some((x: any) => x.type === "agent_message"),
+          world.requests.filter(
+            (r) =>
+              JSON.stringify(r.input ?? []).includes("SUBAGENT TASK") &&
+              (r.input ?? []).some((x: any) => x.type === "agent_message"),
           ).length,
           0,
           "no sub-agent ran",
@@ -738,7 +739,11 @@ describe(
       );
       assert.equal(await run(), "failed: cli_error");
       const end = finish();
-      for (const k of ["features.shell_tool", "features.unified_exec", "agents.enabled"])
+      for (const k of [
+        "features.shell_tool",
+        "features.unified_exec",
+        "agents.enabled",
+      ])
         assert.ok(end.detail.includes(k), end.detail);
       assert.equal(world.requests.length, 0, "the model is never called");
       assert.deepEqual(await checkLocked(pc.wrapper, pc.env), [

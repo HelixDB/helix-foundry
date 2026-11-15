@@ -122,7 +122,9 @@ export function unheld(config?: unknown, thread?: unknown): string[] {
       .split(".")
       .reduce<unknown>(
         (x, k) =>
-          x && typeof x === "object" ? (x as Record<string, unknown>)[k] : undefined,
+          x && typeof x === "object"
+            ? (x as Record<string, unknown>)[k]
+            : undefined,
         o,
       );
   const keys =
@@ -132,9 +134,13 @@ export function unheld(config?: unknown, thread?: unknown): string[] {
   if (thread === undefined) return keys;
   return [
     ...keys,
-    ...(at(thread, "approvalPolicy") === "untrusted" ? [] : ["approval_policy"]),
+    ...(at(thread, "approvalPolicy") === "untrusted"
+      ? []
+      : ["approval_policy"]),
     ...(at(thread, "sandbox.type") === "readOnly" ? [] : ["sandbox_mode"]),
-    ...(at(thread, "approvalsReviewer") === "user" ? [] : ["approvals_reviewer"]),
+    ...(at(thread, "approvalsReviewer") === "user"
+      ? []
+      : ["approvals_reviewer"]),
   ];
 }
 
@@ -739,7 +745,11 @@ export async function runCodex(
     }
     const off = unheld(undefined, thread);
     if (off.length)
-      return ran({ end: "failed", failure: "cli_error", detail: unheldDetail(off) });
+      return ran({
+        end: "failed",
+        failure: "cli_error",
+        detail: unheldDetail(off),
+      });
     // The model's first call never runs without Foundry's tools.
     const status = await new Promise<string>((resolve) => {
       const timer = setTimeout(() => resolve("timeout"), START_MS);

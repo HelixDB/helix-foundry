@@ -551,15 +551,23 @@ describe("the helper", () => {
       lines.push(l),
     );
     assert.deepEqual(await listThreads(env), [bad], "the good one went");
-    assert.deepEqual(kept.get(join(dir, "state", "threads", "ws-1", "thread-good")), []);
+    assert.deepEqual(
+      kept.get(join(dir, "state", "threads", "ws-1", "thread-good")),
+      [],
+    );
     assert.ok(
-      lines.some((l) => l.includes("thread-bad") && l.includes("trying again later")),
+      lines.some(
+        (l) => l.includes("thread-bad") && l.includes("trying again later"),
+      ),
     );
 
     kept.set(await threadDir(good, env), ["s-good"]);
     foundry.revoked = true;
     const told: string[] = [];
-    const cli = { ...claudeCli(FAKE_CLAUDE, env, { sessions }), sessions: flaky };
+    const cli = {
+      ...claudeCli(FAKE_CLAUDE, env, { sessions }),
+      sessions: flaky,
+    };
     await assert.rejects(
       serve({ ...options(), clis: [cli], log: (l) => told.push(l) }),
       (e: unknown) => e instanceof FoundryError && e.code === "unauthenticated",
