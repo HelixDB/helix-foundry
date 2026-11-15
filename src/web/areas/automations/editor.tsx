@@ -649,7 +649,8 @@ function Editor({
           </button>
         )}
         {/* Off while it can't change, but still focusable: a tap, a key
-            or a screen reader learns why. */}
+            or a screen reader learns why. React reports the tap's change
+            though it was prevented, so onChange checks again. */}
         <label className="checkbox au-live" title={liveWhy}>
           <input
             type="checkbox"
@@ -663,7 +664,7 @@ function Editor({
               e.preventDefault();
               setWhyShown(true);
             }}
-            onChange={(e) => flip(e.target.checked)}
+            onChange={(e) => !liveWhy && flip(e.target.checked)}
           />
           Live
           {liveWhy && (
