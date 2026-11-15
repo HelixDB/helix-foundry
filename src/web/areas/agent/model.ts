@@ -1,6 +1,7 @@
 import type {
   AgentActionDisplays,
   AgentActionStatus,
+  AgentAnswer,
   AgentAutomationRef,
   AgentConnectorRef,
   AgentDashboardRef,
@@ -658,6 +659,15 @@ function automationRef(x: unknown): AgentAutomationRef | undefined {
       }
     : r;
 }
+function answer(x: unknown): AgentAnswer | undefined {
+  if (!isRecord(x)) return undefined;
+  const id = str(x.question_id),
+    question = str(x.question),
+    text = str(x.answer);
+  return id && question !== undefined && text
+    ? { question_id: id, question, answer: text }
+    : undefined;
+}
 function specDisplay(x: unknown): AgentSpecDisplay | undefined {
   const tiles = isRecord(x)
     ? list(x.tiles ?? [], (t) => {
@@ -840,6 +850,27 @@ const DISPLAYS: {
       document_sets: sets,
       ...opt("event_sources", sources.length ? sources : undefined),
       ...opt("sample", str(d.sample) || undefined),
+    };
+  },
+  answer_generation_questions: (d) => {
+    const ontology = ref(d.ontology),
+      generation = ref(d.generation),
+      answers = list(d.answers, answer),
+      defaulted = d.defaulted === undefined ? [] : list(d.defaulted, answer);
+    if (
+      !ontology ||
+      !generation ||
+      !answers ||
+      !defaulted ||
+      typeof d.use_defaults !== "boolean"
+    )
+      return undefined;
+    return {
+      ontology,
+      generation,
+      answers,
+      use_defaults: d.use_defaults,
+      ...opt("defaulted", defaulted.length ? defaulted : undefined),
     };
   },
   set_current_version: (d) => {
@@ -1266,6 +1297,30 @@ const VIEWS: {
         : undefined,
     ),
     run: "Generate",
+    target: nameOf(d.ontology),
+  }),
+  answer_generation_questions: (d) => ({
+    title: `Answer the draft’s questions for ${quoted(d.ontology)}`,
+    facts: [
+      { label: "Ontology", value: nameOf(d.ontology) },
+      {
+        label: "Draft",
+        entities: [
+          {
+            text: d.generation.name || "The draft",
+            to: ontologyPaths.generation(d.ontology.id, d.generation.id),
+          },
+        ],
+      },
+      ...[
+        ...d.answers.map((a) => `${a.question} Your answer: “${a.answer}”.`),
+        ...(d.defaulted ?? []).map(
+          (a) => `${a.question} The agent’s default: “${a.answer}”.`,
+        ),
+      ].map((value, i) => ({ label: `Question ${i + 1}`, value })),
+    ],
+    does: `Sends these answers to the agent drafting this version, which carries on from them.${d.use_defaults ? " Questions you didn’t answer take the agent’s default." : ""} The questions are the agent’s own words; the draft’s page shows them too.`,
+    run: "Send answers",
     target: nameOf(d.ontology),
   }),
   set_current_version: (d) => ({
@@ -1742,6 +1797,11 @@ export function resultLink(
     case "generate_ontology":
       return on(
         o && made && ontologyPaths.generation(o, made),
+        "Open the draft",
+      );
+    case "answer_generation_questions":
+      return on(
+        o && ontologyPaths.generation(o, card.display.generation.id),
         "Open the draft",
       );
     case "revise_version":

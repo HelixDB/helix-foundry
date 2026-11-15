@@ -305,6 +305,70 @@ test("builds an ontology card by card: create, draft, make current, load", async
   await expect(page).toHaveURL(/\/ontology\/ont_[^/]+\/loads\/load_/);
 });
 
+test("asks a draft's questions in the chat, and sends the person's answers from a card", async ({
+  page,
+}) => {
+  await mock.configure({
+    agentStepMs: 100,
+    ontologyStepMs: 300,
+    ontologyQuestions: true,
+  });
+  await signIn(page);
+  await shortcut(page);
+  await say(
+    page,
+    "Create an ontology called Orders graph on database orders, goal: Which customers order the most",
+  );
+  await run(page, "Create the ontology “Orders graph”", "Create");
+  await run(page, "Draft a new version of “Orders graph”", "Generate");
+  // The draft waits on its agent's questions: the Assistant asks them, its
+  // markup shown as text, and prepares nothing until the person answers.
+  const dock = dockOf(page);
+  await expect(
+    dock.getByText(
+      /The draft of Orders graph waits for answers to 3 questions only you can answer/,
+    ),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(
+    dock.getByText(/Should orders whose status is <b>cancelled<\/b> stay/),
+  ).toBeVisible();
+  await expect(
+    cardOf(page, "Answer the draft’s questions for “Orders graph”"),
+  ).toHaveCount(0);
+  await say(
+    page,
+    "Answer the Orders graph questions: Each person who signs in, and use the defaults for the rest",
+  );
+  const answers = cardOf(
+    page,
+    "Answer the draft’s questions for “Orders graph”",
+  );
+  await expect(
+    answers.getByText(
+      "Is a customer the company that pays, or each person who signs in? Your answer: “Each person who signs in”.",
+    ),
+  ).toBeVisible();
+  await expect(
+    answers.getByText(/The agent’s default: “90 days”\./),
+  ).toBeVisible();
+  // The card links the draft, whose page asks the same questions.
+  await expect(answers.getByRole("link").first()).toHaveAttribute(
+    "href",
+    /\/ontology\/ont_[^/]+\/generations\/gen_/,
+  );
+  await run(
+    page,
+    "Answer the draft’s questions for “Orders graph”",
+    "Send answers",
+  );
+  // The draft goes on from the answers, and is offered as current.
+  await expect(cardOf(page, "Make v1 current for “Orders graph”")).toBeVisible({
+    timeout: 20_000,
+  });
+  await answers.getByRole("link", { name: "Open the draft" }).click();
+  await expect(page).toHaveURL(/\/ontology\/ont_[^/]+\/generations\/gen_/);
+});
+
 test("settles a review from a card", async ({ page }) => {
   await mock.configure({ agentStepMs: 100, loadStepMs: 200 });
   await signIn(page);

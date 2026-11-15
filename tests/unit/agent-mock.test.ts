@@ -1322,6 +1322,113 @@ describe("operations", () => {
     expect(step4.said).toContain(`/ontology/${ontologyId}/loads/`);
   });
 
+  it("says a draft's questions, sends the person's answers, and goes on from the draft", async () => {
+    Object.assign(config, { ontologyQuestions: true, ontologyStepMs: 300 });
+    const created = await card(
+      "Create an ontology called Orders graph on database orders, goal: Which customers order the most",
+    );
+    const step1 = await runCard(created.action);
+    const ontologyId = step1.result.id;
+    const step2 = await runCard(step1.next);
+    // The draft waits on its agent's questions: said, and nothing prepared.
+    const read = step2.events.find(
+      (e) =>
+        e.type === "tool_result" && e.name === "helix_foundry_get_generation",
+    ) as { output: { generation: { id: string; status: string } } };
+    expect(read.output.generation.status).toBe(
+      "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT",
+    );
+    const generationId = read.output.generation.id;
+    expect(step2.said).toContain(
+      "The draft of Orders graph waits for answers to 3 questions only you can answer:",
+    );
+    expect(step2.said).toContain(
+      "1. Is a customer the company that pays, or each person who signs in? Options: The company that pays; Each person who signs in. It suggests: The company that pays.",
+    );
+    expect(step2.said).toContain("It can decide this one itself.");
+    expect(step2.said).toContain(
+      `/ontology/${ontologyId}/generations/${generationId}`,
+    );
+    expect(step2.next.operation).toBe("generate_ontology");
+
+    // A blocking question left open: it asks for it, and prepares nothing.
+    const partial = await card(
+      "Answer the Orders graph questions: Each person who signs in",
+    );
+    expect(partial.action).toBeUndefined();
+    expect(partial.said).toContain(
+      "I still need an answer to “How many days before a contract ends does its renewal count as at risk?”",
+    );
+
+    const answered = await card(
+      "Answer the Orders graph questions: Each person who signs in, and use the defaults for the rest",
+    );
+    expect(answered.action).toMatchObject({
+      operation: "answer_generation_questions",
+      target: `ontology:ws_acme/${ontologyId}`,
+      targetNamedByUser: true,
+    });
+    expect(JSON.parse(answered.action.payloadJson)).toEqual({
+      generation_id: generationId,
+      answers: [{ question_id: "q1", text: "Each person who signs in" }],
+      use_defaults: true,
+    });
+    expect(answered.display).toMatchObject({
+      ontology: { id: ontologyId, name: "Orders graph" },
+      generation: { id: generationId },
+      answers: [
+        {
+          question_id: "q1",
+          question:
+            "Is a customer the company that pays, or each person who signs in?",
+          answer: "Each person who signs in",
+        },
+      ],
+      use_defaults: true,
+      defaulted: [
+        { question_id: "q2", answer: "90 days" },
+        {
+          question_id: "q3",
+          answer: "No preference: decide from the data and the goal.",
+        },
+      ],
+    });
+    // Sent, the draft goes on from the answers, and is offered as current.
+    const step3 = await runCard(answered.action);
+    expect(step3.ran.status).toBe("succeeded");
+    expect(step3.next.operation).toBe("set_current_version");
+    const got = await call(
+      "GET",
+      `${WS}/ontologies/${ontologyId}/generations/${generationId}`,
+    );
+    expect(got.body.generation.questions[0].answer).toBe(
+      "Each person who signs in",
+    );
+  });
+
+  it("answers a draft's questions only for an owner or admin", async () => {
+    Object.assign(config, { ontologyQuestions: true });
+    const c = await card(
+      "Answer the Customer contracts questions: use the defaults",
+      {},
+      "usr_alan",
+    );
+    expect(c.action).toBeUndefined();
+    expect(c.said).toContain(
+      "Only an owner or admin of this workspace can answer a draft's questions",
+    );
+  });
+
+  it("says when no draft waits for answers", async () => {
+    const c = await card(
+      "Answer the Customer contracts questions: use the defaults",
+    );
+    expect(c.action).toBeUndefined();
+    expect(c.said).toContain(
+      "No draft of Customer contracts is waiting for answers.",
+    );
+  });
+
   it("makes an ontology on a new database in the workspace's project", async () => {
     const c = await card(
       "Create an ontology called Lab on a new database Lab db",

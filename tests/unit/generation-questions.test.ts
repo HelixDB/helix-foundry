@@ -23,6 +23,7 @@ import {
 } from "@/web/areas/ontology/queries";
 import type { MockReply } from "../../mock/http";
 import { routes } from "../../mock/routes";
+import { draftsEnded } from "../../mock/routes/ontology";
 import { config, db, resetState } from "../../mock/state";
 
 // A generation the agent asked questions of (needs_input): where its goal
@@ -537,6 +538,15 @@ describe("the mock's questions", () => {
       status: "ONTOLOGY_GENERATION_STATUS_CANCELLED",
       resultVersionId: "",
     });
+  });
+
+  it("fires no automation's draft trigger while it waits, nor once cancelled", async () => {
+    const ontologyId = O.split("/").at(-1)!;
+    const before = draftsEnded(ontologyId).length;
+    const { id } = await asked();
+    expect(draftsEnded(ontologyId)).toHaveLength(before);
+    await call("POST", `${O}/generations/${id}:cancel`, {});
+    expect(draftsEnded(ontologyId).map((d) => d.id)).not.toContain(id);
   });
 
   it("asks nothing once a reset turns the knob off", async () => {

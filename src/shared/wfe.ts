@@ -2806,6 +2806,16 @@ export type AgentActionDisplays = {
     // "acme": the sample company's ready-made draft.
     sample?: string;
   };
+  // Each question the answers answer, as the agent asked it (the model's
+  // words), with the person's answer; with use_defaults, the rest with the
+  // agent's default (or its "no preference").
+  answer_generation_questions: {
+    ontology: AgentRef;
+    generation: AgentRef;
+    answers: AgentAnswer[];
+    use_defaults: boolean;
+    defaulted?: AgentAnswer[];
+  };
   // current: the version current now; missing when none is.
   set_current_version: {
     ontology: AgentRef;
@@ -2896,6 +2906,12 @@ export type AgentActionDisplays = {
   resume_automation: { automation: AgentAutomationRef };
   delete_automation: { automation: AgentAutomationRef };
   run_automation: { automation: AgentAutomationRef };
+};
+/** One of a generation's questions and its answer. */
+export type AgentAnswer = {
+  question_id: string;
+  question: string;
+  answer: string;
 };
 /** An automation as it was when the action was prepared, with its status. */
 export type AgentAutomationRef = AgentRef & { status?: AutomationStatus };

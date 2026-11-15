@@ -16,7 +16,7 @@ import {
   type AgentStep,
 } from "@/web/areas/agent/model";
 
-// The Assistant's cards (src/web/areas/agent/model.ts): each of the 20
+// The Assistant's cards (src/web/areas/agent/model.ts): each of the 27
 // operations' displays as the backend's display.go writes them (its
 // display_test.go's), read without trust, worded by its card, and where a
 // ran one opens; a connect step's form; a call a limit kept from running.
@@ -479,6 +479,39 @@ const DISPLAYS: [string, string, unknown][] = [
     "an automation run now",
     "run_automation",
     { automation: { id: "aut1", name: "Weekly", status: "active" } },
+  ],
+  [
+    "a draft's questions answered",
+    "answer_generation_questions",
+    {
+      ontology: ONT,
+      generation: { id: "gen1", name: "Track renewals" },
+      answers: [
+        {
+          question_id: "q1",
+          question: "Is a customer the company that pays?",
+          answer: "Each person",
+        },
+      ],
+      use_defaults: true,
+      defaulted: [
+        {
+          question_id: "q2",
+          question: "Keep <b>cancelled</b> orders?",
+          answer: "Keep them",
+        },
+      ],
+    },
+  ],
+  [
+    "a draft's questions answered without defaults",
+    "answer_generation_questions",
+    {
+      ontology: ONT,
+      generation: { id: "gen1" },
+      answers: [{ question_id: "q1", question: "", answer: "Yes" }],
+      use_defaults: false,
+    },
   ],
 ];
 
@@ -1047,7 +1080,71 @@ describe("cardView", () => {
         "Run now",
         "Weekly",
       ],
+      [
+        "a draft's questions answered",
+        "Answer the draft’s questions for “Sales graph”",
+        "Send answers",
+        "Sales graph",
+      ],
+      [
+        "a draft's questions answered without defaults",
+        "Answer the draft’s questions for “Sales graph”",
+        "Send answers",
+        "Sales graph",
+      ],
     ]);
+  });
+
+  it("shows each question beside its answer, and links the draft's own questions", () => {
+    const v = of("a draft's questions answered");
+    expect(v.facts).toEqual([
+      { label: "Ontology", value: "Sales graph" },
+      {
+        label: "Draft",
+        entities: [
+          { text: "Track renewals", to: "/ontology/ont1/generations/gen1" },
+        ],
+      },
+      {
+        label: "Question 1",
+        value:
+          "Is a customer the company that pays? Your answer: “Each person”.",
+      },
+      {
+        label: "Question 2",
+        value:
+          "Keep <b>cancelled</b> orders? The agent’s default: “Keep them”.",
+      },
+    ]);
+    expect(v.does).toContain("take the agent’s default");
+    const bare = of("a draft's questions answered without defaults");
+    expect(bare.does).not.toContain("default");
+    expect(bare.facts[1]).toEqual({
+      label: "Draft",
+      entities: [{ text: "The draft", to: "/ontology/ont1/generations/gen1" }],
+    });
+    // An answer it can't read makes no card.
+    for (const display of [
+      {
+        ...(DISPLAYS.find(
+          ([n]) => n === "a draft's questions answered",
+        )![2] as object),
+        use_defaults: "yes",
+      },
+      {
+        ontology: ONT,
+        generation: { id: "gen1" },
+        answers: [{ question_id: "q1", question: "Q", answer: "" }],
+        use_defaults: false,
+      },
+      {
+        ontology: ONT,
+        generation: { id: "../x" },
+        answers: [],
+        use_defaults: true,
+      },
+    ])
+      expect(parseCard("answer_generation_questions", display)).toBeUndefined();
   });
 
   it("names an automation's state, and whether an edit approves its steps", () => {
@@ -1544,6 +1641,13 @@ describe("resultLink", () => {
         "automation:ws1/aut1",
       ),
       { to: "/automations/aut1/runs/run3", label: "Open the run" },
+    ],
+    [
+      "a draft answered",
+      ran("answer_generation_questions", d("a draft's questions answered"), {
+        id: "gen1",
+      }),
+      { to: "/ontology/ont1/generations/gen1", label: "Open the draft" },
     ],
     [
       "a deleted automation",

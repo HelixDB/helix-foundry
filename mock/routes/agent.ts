@@ -16,6 +16,7 @@ import type {
   AgentActionDisplays,
   AgentActionResponse,
   AgentActionStatus,
+  AgentAnswer,
   AgentDecision,
   AgentEvent,
   AgentLoadRef,
@@ -136,6 +137,13 @@ import { manages } from "./workspaces";
 // - "generate" or "draft" (generate_ontology: the connections and sets the
 //   message names, else every connection; "documents only" reads none; a
 //   quoted text is the goal);
+// - a draft that waits on its agent's questions (needs_input, the mock's
+//   `ontologyQuestions`) is said in the agent's words, each question with
+//   its options and default, and nothing is prepared; then "answer the
+//   draft's questions: …" (answer_generation_questions, after
+//   helix_foundry_get_generation: each question takes the option the
+//   message names, or a quoted answer the first blocking one; "use the
+//   defaults" for the rest, else it asks for them);
 // - "make v3 current" (set_current_version: else the newest finished draft);
 // - "load" (create_load: the current version if it loads, else the newest
 //   finished draft); "make the previous load current" (set_current_load);
@@ -966,6 +974,7 @@ const MEMBER_OPERATIONS: readonly (AgentOperation | "connect")[] = [
 const VERBS: Record<AgentOperation, string> = {
   create_ontology: "create an ontology",
   generate_ontology: "draft a version",
+  answer_generation_questions: "answer a draft's questions",
   set_current_version: "make a version current",
   create_load: "load an ontology",
   set_current_load: "make a load current",
@@ -1358,42 +1367,46 @@ function messageScript(a: Ask, manager: boolean): Step[] {
       ? "create_dashboard"
       : asked
         ? asked.operation
-        : /\brevoke\b.*\bhelper\b/i.test(t)
-          ? "revoke_assistant_helper"
-          : /\b(run|switch|move)\b.*\b(subscription|claude code|foundry['’]s model)\b/i.test(
-                t,
-              )
-            ? "set_assistant_runtime"
-            : /\bconnect\b/i.test(t)
-              ? "connect"
-              : /\bcreate\b.*\bontology\b/i.test(t)
-                ? "create_ontology"
-                : /\b(settle|resolve)\b.*\breview\b|\breview about\b/i.test(t)
-                  ? "settle_review"
-                  : /\bsync\b/i.test(t)
-                    ? "sync_connector"
-                    : /\bsample\b/i.test(t)
-                      ? "add_sample_data"
-                      : /\bmove\b/i.test(t)
-                        ? "move_document"
-                        : /\b(rename|describe)\b.*\bset\b/i.test(t)
-                          ? "update_document_set"
-                          : /\b(create|make|add)\b.*\bset\b/i.test(t)
-                            ? "create_document_set"
-                            : /\b(revise|preview)\b/i.test(t)
-                              ? "revise_version"
-                              : /\b(generate|draft)\b/i.test(t)
-                                ? "generate_ontology"
-                                : /\bload\b.*\bcurrent\b/i.test(t)
-                                  ? "set_current_load"
-                                  : /\bcurrent\b/i.test(t)
-                                    ? "set_current_version"
-                                    : /\b(re)?load\b/i.test(t) &&
-                                        !/\b(how many|which|what|when|why)\b/i.test(
-                                          t,
-                                        )
-                                      ? "create_load"
-                                      : undefined;
+        : /\banswers?\b.*\bquestions?\b|\buse (?:the|its) (?:defaults|suggestions)\b/i.test(
+              t,
+            )
+          ? "answer_generation_questions"
+          : /\brevoke\b.*\bhelper\b/i.test(t)
+            ? "revoke_assistant_helper"
+            : /\b(run|switch|move)\b.*\b(subscription|claude code|foundry['’]s model)\b/i.test(
+                  t,
+                )
+              ? "set_assistant_runtime"
+              : /\bconnect\b/i.test(t)
+                ? "connect"
+                : /\bcreate\b.*\bontology\b/i.test(t)
+                  ? "create_ontology"
+                  : /\b(settle|resolve)\b.*\breview\b|\breview about\b/i.test(t)
+                    ? "settle_review"
+                    : /\bsync\b/i.test(t)
+                      ? "sync_connector"
+                      : /\bsample\b/i.test(t)
+                        ? "add_sample_data"
+                        : /\bmove\b/i.test(t)
+                          ? "move_document"
+                          : /\b(rename|describe)\b.*\bset\b/i.test(t)
+                            ? "update_document_set"
+                            : /\b(create|make|add)\b.*\bset\b/i.test(t)
+                              ? "create_document_set"
+                              : /\b(revise|preview)\b/i.test(t)
+                                ? "revise_version"
+                                : /\b(generate|draft)\b/i.test(t)
+                                  ? "generate_ontology"
+                                  : /\bload\b.*\bcurrent\b/i.test(t)
+                                    ? "set_current_load"
+                                    : /\bcurrent\b/i.test(t)
+                                      ? "set_current_version"
+                                      : /\b(re)?load\b/i.test(t) &&
+                                          !/\b(how many|which|what|when|why)\b/i.test(
+                                            t,
+                                          )
+                                        ? "create_load"
+                                        : undefined;
   if (intent && !manager && !MEMBER_OPERATIONS.includes(intent))
     return [
       started,
@@ -1562,6 +1575,8 @@ function operationOf(
   const numbered = (n: string | undefined) =>
     n ? ontologyVersions(o.id).find((v) => String(v.version) === n) : undefined;
   switch (intent) {
+    case "answer_generation_questions":
+      return answerQuestions(a, o, named);
     case "generate_ontology":
       return [
         call("tu_connectors", CONNECTORS, { workspace_id: a.ws }),
@@ -2217,6 +2232,119 @@ function dashboardOutput(ws: string, d: FoundryDashboard) {
   };
 }
 
+// ---------------------------------------------------------------- questions
+
+// The backend's ontologygen.NoPreference: a default-less question's answer
+// when the defaults are taken.
+const NO_PREFERENCE = "No preference: decide from the data and the goal.";
+
+/** A waiting generation's questions in the agent's words, for the person to answer. */
+function questionsText(o: StoredOntology, g: OntologyGeneration) {
+  const asked = (g.questions || []).map(
+    (q, i) =>
+      `${i + 1}. ${q.text || "(no text)"}${q.options?.length ? ` Options: ${q.options.join("; ")}.` : ""}${q.defaultAnswer ? ` It suggests: ${q.defaultAnswer}.` : ""}${q.blocking ? "" : " It can decide this one itself."}`,
+  );
+  return [
+    `The draft of ${o.name} waits for answers to ${asked.length === 1 ? "a question" : `${asked.length} questions`} only you can answer:`,
+    ...asked,
+    `Tell me your answers, or to use its suggestions, and I'll send them. You can also answer on the draft's page: /ontology/${o.id}/generations/${g.id}`,
+  ].join("\n");
+}
+
+/**
+ * Answers the newest generation of `o` that waits on its questions: each
+ * question takes the option the message names, or the first blocking one a
+ * quoted answer; "use the defaults" answers the rest with the agent's
+ * defaults, else the agent asks for them.
+ */
+function answerQuestions(a: Ask, o: StoredOntology, named: boolean): Step[] {
+  let read: OntologyGeneration | undefined;
+  const waiting = () =>
+    (read ??= (
+      wfe(a.userId, "GET", `${ONT(a.ws, o.id)}/generations`).body
+        ?.generations as OntologyGeneration[] | undefined
+    )?.find((g) => g.status === "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT"));
+  return [
+    call("tu_generation", GET_GENERATION, { ontology_id: o.id }),
+    result("tu_generation", GET_GENERATION, () => ({
+      generation: snake(
+        waiting() &&
+          wfe(
+            a.userId,
+            "GET",
+            `${ONT(a.ws, o.id)}/generations/${waiting()!.id}`,
+          ).body?.generation,
+      ),
+    })),
+    ...prepare(() => {
+      const g = waiting();
+      if (!g) return `No draft of ${o.name} is waiting for answers.`;
+      // The list leaves the questions out: read the generation itself.
+      const asked =
+        (
+          wfe(a.userId, "GET", `${ONT(a.ws, o.id)}/generations/${g.id}`).body
+            ?.generation as OntologyGeneration | undefined
+        )?.questions || [];
+      const quoted = quotedText(a.text);
+      const answers: AgentAnswer[] = [];
+      for (const q of asked) {
+        const option = q.options?.find((x) => says(a.text, x));
+        const text =
+          option ??
+          (quoted && q.blocking && !answers.length ? quoted : undefined);
+        if (text)
+          answers.push({
+            question_id: q.id,
+            question: q.text || "",
+            answer: text,
+          });
+      }
+      const defaults = /\b(defaults|suggestions)\b/i.test(a.text),
+        open = asked.filter(
+          (q) => !answers.some((x) => x.question_id === q.id),
+        );
+      if (!defaults && open.some((q) => q.blocking))
+        return `${questionsText(o, { ...g, questions: asked })}\nI still need an answer to ${open
+          .filter((q) => q.blocking)
+          .map((q) => `“${q.text}”`)
+          .join(" and ")}, or say to use its suggestions.`;
+      if (!answers.length && !defaults)
+        return "Tell me your answers, or to use its suggestions.";
+      return onOntology(
+        a.ws,
+        o,
+        named,
+        "answer_generation_questions",
+        {
+          generation_id: g.id,
+          ...(answers.length && {
+            answers: answers.map((x) => ({
+              question_id: x.question_id,
+              text: x.answer,
+            })),
+          }),
+          ...(defaults && { use_defaults: true }),
+        },
+        {
+          ontology: ref(o),
+          generation: { id: g.id, ...(g.title && { name: g.title }) },
+          answers,
+          use_defaults: defaults,
+          ...(defaults &&
+            open.length && {
+              defaulted: open.map((q) => ({
+                question_id: q.id,
+                question: q.text || "",
+                answer: q.defaultAnswer || NO_PREFERENCE,
+              })),
+            }),
+        },
+        `I've prepared your answers to the draft's ${asked.length === 1 ? "question" : "questions"}${defaults ? ", with its suggestions for the rest" : ""}. Send them from the card, and the draft carries on.`,
+      );
+    }),
+  ];
+}
+
 // ---------------------------------------------------------------- automations
 
 type AutomationAsk =
@@ -2746,7 +2874,8 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
         ),
       ];
     }
-    case "generate_ontology": {
+    case "generate_ontology":
+    case "answer_generation_questions": {
       const g = String(out.id || "");
       let read: OntologyGeneration | undefined;
       const generation = () =>
@@ -2778,6 +2907,8 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
           if (!o) return "The ontology is gone.";
           if (read?.status === "ONTOLOGY_GENERATION_STATUS_FAILED")
             return `The draft failed: ${read.error || "the agent gave no reason"}. Ask me to try again.`;
+          if (read?.status === "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT")
+            return questionsText(o, read);
           if (!v)
             return `The draft of ${o.name} is still being written. Ask me to make it current once it's done: /ontology/${o.id}/generations/${g}`;
           return currentPlan(a.workspaceId, o, true, v);
@@ -3016,6 +3147,21 @@ function run(a: StoredAction, userId: string): MockReply {
         documentSetIds: p.document_set_ids || [],
         ...(p.no_connectors && { noConnectors: true }),
       });
+    case "answer_generation_questions":
+      return wfe(
+        userId,
+        "POST",
+        `${at}/generations/${p.generation_id}:answer`,
+        {
+          answers: (p.answers || []).map(
+            (x: { question_id: string; text: string }) => ({
+              questionId: x.question_id,
+              text: x.text,
+            }),
+          ),
+          ...(p.use_defaults && { useDefaults: true }),
+        },
+      );
     case "set_current_version":
       return wfe(userId, "POST", `${at}:set-current`, {
         versionId: p.version_id,

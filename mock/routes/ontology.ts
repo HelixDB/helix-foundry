@@ -551,13 +551,19 @@ const holds = (g: OntologyGeneration) =>
 /**
  * An ontology's drafts (not revisions) that ended, oldest first, with how:
  * what an automation's generation_finished trigger looks for
- * (./automations.ts).
+ * (./automations.ts). As the backend's, a draft waiting on its questions
+ * hasn't ended, and one cancelled is no draft that finished.
  */
 export function draftsEnded(ontologyId: string) {
   return state.generations
     .filter((g) => g.ontologyId === ontologyId && !g.revision)
     .map((g) => (advance(g), g))
-    .filter((g) => !live(g) && g.finishedAt)
+    .filter(
+      (g) =>
+        (g.status === "ONTOLOGY_GENERATION_STATUS_SUCCEEDED" ||
+          g.status === "ONTOLOGY_GENERATION_STATUS_FAILED") &&
+        g.finishedAt,
+    )
     .map((g) => ({
       id: g.id,
       at: Date.parse(g.finishedAt!),
