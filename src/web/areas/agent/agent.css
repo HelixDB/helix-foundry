@@ -373,9 +373,17 @@
   border: 1px solid var(--hf-border);
   border-radius: var(--hf-radius);
 }
+/* What a helper's CLI is signed in to matters more than one line: its
+   row wraps, where the members list's truncates. */
+.ag-helper .wk-member-text strong {
+  flex-wrap: wrap;
+  white-space: normal;
+}
+.ag-helper .wk-member-text small {
+  white-space: normal;
+}
 .ag-helper .wk-member-text small.ag-helper-problem {
   color: var(--hf-warning-text);
-  white-space: normal;
 }
 .ag-pairing {
   display: grid;
@@ -402,6 +410,13 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--hf-space-1);
+}
+.ag-mark-openai {
+  display: block;
+  width: 36px;
+  height: 36px;
+  background: currentColor;
+  mask: url("/providers/openai.svg") center / contain no-repeat;
 }
 /* A command to copy, its button over the code's corner. */
 .ag-command {
@@ -447,10 +462,12 @@
   gap: 6px;
   margin: 0;
 }
-.ag-runtime-line img {
+.ag-runtime-line img,
+.ag-runtime-line .ag-mark-openai {
+  flex: none;
   width: 14px;
   height: 14px;
 }
-.ag-runtime.is-offline .ag-runtime-line {
+.ag-runtime.is-offline .ag-runtime-line:first-child {
   color: var(--hf-warning-text);
 }

@@ -45,7 +45,9 @@ const SLOW_POLL_MS = 30_000;
 const ICONS: Record<AgentRuntime, ReactNode> = {
   api: <Sparkles strokeWidth={1.5} />,
   claude_code: <img src="/providers/claude.svg" alt="" />,
-  codex: <img src="/providers/openai.svg" alt="" />,
+  // OpenAI's mark is drawn in currentColor, which an <img> takes as black:
+  // as a mask it takes the card's color, in either theme.
+  codex: <span className="ag-mark-openai" />,
 };
 const DESCRIPTIONS: Record<AgentRuntime, string> = {
   api: "The provider above. Its turns count toward the workspace’s Assistant budget.",

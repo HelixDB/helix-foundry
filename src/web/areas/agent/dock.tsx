@@ -283,17 +283,12 @@ function RuntimeLine({
       role={online ? undefined : "status"}
     >
       <p className="ag-runtime-line">
-        {online ? (
-          <img
-            src={
-              runtime === "codex"
-                ? "/providers/openai.svg"
-                : "/providers/claude.svg"
-            }
-            alt=""
-          />
-        ) : (
+        {!online ? (
           <TriangleAlert size={14} aria-hidden />
+        ) : runtime === "codex" ? (
+          <span className="ag-mark-openai" aria-hidden />
+        ) : (
+          <img src="/providers/claude.svg" alt="" />
         )}
         {online
           ? `${thread ? "This thread runs" : "New threads run"} on ${r.on}, through ${r.cli} on your computer.`
