@@ -58,7 +58,9 @@ func (h *agentHosts) AgentRuntimeOnline(_ context.Context, r foundrymodel.Foundr
 	return false, nil
 }
 
-func (h *agentHosts) ListAgentHosts(context.Context) ([]foundryagent.Host, error) { return h.hosts, nil }
+func (h *agentHosts) ListAgentHosts(context.Context) ([]foundryagent.Host, error) {
+	return h.hosts, nil
+}
 
 func (h *agentHosts) CreateAgentPairing(context.Context) (string, time.Time, error) {
 	return "hxp_code", time.Now().Add(10 * time.Minute), nil
@@ -79,7 +81,9 @@ func (h *agentHosts) RevokeAgentHost(_ context.Context, id string) (foundryagent
 // wsOwner may choose ws-1's model; anyone else may not.
 type wsOwner struct{ ports.People }
 
-func (wsOwner) MayManageAI(_ context.Context, ws, userID string) bool { return ws == "ws-1" && userID == person.UserID }
+func (wsOwner) MayManageAI(_ context.Context, ws, userID string) bool {
+	return ws == "ws-1" && userID == person.UserID
+}
 
 func withHosts(t *testing.T) (agentFixture, *agentHosts) {
 	t.Helper()
