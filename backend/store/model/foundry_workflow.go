@@ -44,7 +44,36 @@ type FoundryWorkflow struct {
 	// newest started, nil before any.
 	Runs, FinishedRuns int64
 	LastRunAt          *time.Time
+	// Automation is the automation whose runs it records, for a workflow
+	// Foundry made; nil for one a person made.
+	Automation *FoundryWorkflowAutomation
 }
+
+// FoundryWorkflowAutomation is the automation a workflow Foundry made
+// records the runs of: its id, its name as the workflow keeps it (the
+// automation's, kept in step), and whether it was deleted since, the
+// workflow then keeping its runs as history.
+type FoundryWorkflowAutomation struct {
+	ID, Name string
+	Deleted  bool
+}
+
+// FoundryAutomationWorkflowName is the name of the workflow Foundry makes
+// for an automation named name: its name, cut to FoundryWorkflowNameMax
+// characters.
+//
+//	FoundryAutomationWorkflowName("Weekly digest") // "Weekly digest"
+func FoundryAutomationWorkflowName(name string) string {
+	if runes := []rune(name); len(runes) > FoundryWorkflowNameMax {
+		return string(runes[:FoundryWorkflowNameMax-1]) + "…"
+	}
+	return name
+}
+
+// FoundryAutomationWorkflowDescription is the description of every workflow
+// Foundry makes for an automation.
+const FoundryAutomationWorkflowDescription = "Foundry records here each run of its automation that uses this ontology: " +
+	"what the run read of it and what the run found, so each run's assessment says how much the ontology helped."
 
 // FoundryWorkflowRunStatus is where a run stands.
 type FoundryWorkflowRunStatus string
@@ -76,6 +105,9 @@ type FoundryWorkflowInsightRun struct {
 	Counts         FoundryWorkflowRunCounts
 	// Assessment is nil until the run's first assessment is queued.
 	Assessment *FoundryWorkflowInsightAssessment
+	// Automation is the automation Foundry started it for; nil for an
+	// agent's run.
+	Automation *FoundryWorkflowAutomation
 }
 
 // FoundryWorkflowInsightAssessment is what insights read of a run's
@@ -100,6 +132,9 @@ type FoundryWorkflowRun struct {
 	// Finished is its end; nil while it is open.
 	Finished *FoundryWorkflowRunEnd
 	Counts   FoundryWorkflowRunCounts
+	// AutomationRunID is the automation's run it records, for a run Foundry
+	// started (StartedBy is then the automation's owner); nil for an agent's.
+	AutomationRunID *string
 }
 
 // FoundryWorkflowRunEnd is how a run finished.

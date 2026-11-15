@@ -5209,7 +5209,7 @@
         ]
       },
       "post": {
-        "summary": "Workflows: an agent's task over an ontology, whose runs record what the\nagent read of the ontology and wrote to Foundry between its request and\nits answer. Owners and admins create and delete workflows; a caller that\nmay read the ontology's database starts and finishes runs, and reads\nthem.",
+        "summary": "Workflows: an agent's task over an ontology, whose runs record what the\nagent read of the ontology and wrote to Foundry between its request and\nits answer. Owners and admins create and delete workflows; a caller that\nmay read the ontology's database starts and finishes runs, and reads\nthem. Foundry makes a workflow of each ontology an automation uses\n(FoundryWorkflow.automation) and records each of its runs there: only\nFoundry starts and finishes those runs (FAILED_PRECONDITION, reason\nFOUNDRY_WORKFLOW_OF_AUTOMATION), only the automation's owner records\nunder them, and the workflow is deleted only once its automation is.",
         "operationId": "FoundryService_CreateFoundryWorkflow",
         "responses": {
           "200": {
@@ -8818,9 +8818,70 @@
         "stats": {
           "$ref": "#/definitions/v1FoundryAutomationRunCounts",
           "description": "Its runs of the days a list asked for (stats_days); unset otherwise."
+        },
+        "ontologies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAutomationOntology"
+          },
+          "description": "The ontologies its runs use, by name, and how much each helped them:\nFoundry records those runs in a workflow of each, made at the first run\nthat uses it, or once its owner approves steps that name it. Gaps only\nwhen got alone."
         }
       },
       "description": "FoundryAutomation is an automation: its spec, whether it runs, and what the\ncaller may do with it."
+    },
+    "v1FoundryAutomationOntology": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "ontologyName": {
+          "type": "string"
+        },
+        "workflowId": {
+          "type": "string",
+          "description": "The workflow its runs are recorded in; empty when untracked."
+        },
+        "runs": {
+          "type": "string",
+          "format": "int64",
+          "description": "That workflow's runs kept, how many finished, and when the newest\nstarted (absent before any)."
+        },
+        "finishedRuns": {
+          "type": "string",
+          "format": "int64"
+        },
+        "lastRunAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "verdicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowVerdictCount"
+          },
+          "description": "Their done assessments by verdict, in the verdicts' order."
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What the ontology lacked, as the newest assessed run named it, at most\n5: when the automation is got alone."
+        },
+        "untracked": {
+          "type": "string",
+          "description": "Why its runs go unrecorded: workflows_full (the ontology holds 100\nworkflows, so Foundry couldn't make the automation's). Empty when\ntracked."
+        },
+        "untrackedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the latest run went on untracked."
+        }
+      },
+      "description": "FoundryAutomationOntology is an ontology an automation's runs use: its\nworkflow of the automation's, with its runs and their verdicts, or why\nFoundry records none of them."
     },
     "v1FoundryAutomationResponse": {
       "type": "object",
@@ -8895,6 +8956,14 @@
         "canCancel": {
           "type": "boolean",
           "description": "Whether the caller may cancel it: live, and theirs or the caller an\nowner or admin."
+        },
+        "ontologies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAutomationRunOntology"
+          },
+          "description": "The ontologies it used, by name, each with the workflow run that\nrecords it and that run's verdict; only when got alone."
         }
       },
       "description": "FoundryAutomationRun is one run of an automation."
@@ -8981,6 +9050,36 @@
         }
       },
       "description": "FoundryAutomationRunNode is one step of a run, the spec's node node_id."
+    },
+    "v1FoundryAutomationRunOntology": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "ontologyName": {
+          "type": "string"
+        },
+        "workflowId": {
+          "type": "string"
+        },
+        "workflowRunId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "The workflow run: open while the automation's run is live, then\nfinished."
+        },
+        "assessmentStatus": {
+          "type": "string",
+          "description": "Its assessment: queued, running, done, failed or skipped; empty before\nit is queued, and for a run finished unassessed (cancelled)."
+        },
+        "verdict": {
+          "type": "string",
+          "description": "Once done: essential, helpful, marginal, unused or misleading."
+        }
+      },
+      "description": "FoundryAutomationRunOntology is an ontology one run of an automation used,\nand how much it helped: the run of the automation's workflow of it."
     },
     "v1FoundryAutomationRunResponse": {
       "type": "object",
@@ -11315,6 +11414,10 @@
             "$ref": "#/definitions/v1FoundryWorkflowVerdictCount"
           },
           "description": "Its runs' assessments that are done, by verdict, in the verdicts'\norder; a verdict no run has is absent."
+        },
+        "automation": {
+          "$ref": "#/definitions/v1FoundryWorkflowAutomation",
+          "description": "The automation whose runs it records, for a workflow Foundry made: one\nof each ontology an automation uses, which only Foundry starts and\nfinishes runs of, and no one deletes while its automation exists.\nAbsent for a workflow a person made."
         }
       },
       "description": "FoundryWorkflow is an agent's task over one ontology. Each of its runs\nrecords the agent's request, what the agent read of the ontology's loads\nand wrote to Foundry while answering it, and its answer, so the runs show\nwhat the ontology gave the agent."
@@ -11388,6 +11491,23 @@
         }
       },
       "description": "FoundryWorkflowAssessment is a finished run's assessment by the ontology\nagent's Assess (contract 4.15.0), on the workspace's questions model: how\nmuch what the agent read made its answer, the answer's claims and the\ncalls that bear on them, what the ontology lacked and what would close it."
+    },
+    "v1FoundryWorkflowAutomation": {
+      "type": "object",
+      "properties": {
+        "automationId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "Its name, as the workflow keeps it: the automation's, kept in step."
+        },
+        "deleted": {
+          "type": "boolean",
+          "description": "The automation was deleted: the workflow keeps its runs as history."
+        }
+      },
+      "description": "FoundryWorkflowAutomation is the automation a workflow Foundry made\nrecords the runs of."
     },
     "v1FoundryWorkflowGapCount": {
       "type": "object",
@@ -11497,6 +11617,10 @@
         },
         "topGap": {
           "type": "string"
+        },
+        "automation": {
+          "$ref": "#/definitions/v1FoundryWorkflowAutomation",
+          "description": "Of who started runs: the automation Foundry started them for, which\nthey are counted by apart from what its owner (principal) started\nthemselves; workflow_id is then its workflow, which filters them."
         }
       },
       "description": "FoundryWorkflowInsightSegment is the window's totals for one who started\nruns (principal) or one workflow (workflow_id), with its runs by day and\nthe gap its runs named most (the newest of those named as often)."
@@ -11729,6 +11853,10 @@
         "assessment": {
           "$ref": "#/definitions/v1FoundryWorkflowAssessment",
           "description": "Its assessment, once it finished: absent where assessments are off, or\nfor a run finished before."
+        },
+        "automationRunId": {
+          "type": "string",
+          "description": "The automation's run it records, for a run Foundry started (its\nworkflow's automation names the automation; started_by_user_id is its\nowner); empty for an agent's run."
         }
       },
       "description": "FoundryWorkflowRun is one run of a workflow: open while it records the\ncalls made with its id, finished once its answer is in, after which it\nrecords nothing more."

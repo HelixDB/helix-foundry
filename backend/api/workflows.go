@@ -117,7 +117,8 @@ func (s *Service) GetFoundryWorkflow(ctx context.Context, req *foundryv1.GetFoun
 	return s.foundryWorkflowResponse(ctx, o.ID, req.GetId())
 }
 
-// DeleteFoundryWorkflow deletes a workflow, its runs and what they recorded.
+// DeleteFoundryWorkflow deletes a workflow, its runs and what they recorded:
+// not an automation's while the automation exists.
 func (s *Service) DeleteFoundryWorkflow(ctx context.Context, req *foundryv1.DeleteFoundryWorkflowRequest) (*emptypb.Empty, error) {
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
@@ -126,6 +127,9 @@ func (s *Service) DeleteFoundryWorkflow(ctx context.Context, req *foundryv1.Dele
 	switch err := s.deps.DB.DeleteFoundryWorkflow(ctx, o.ID, req.GetId()); {
 	case errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "workflow not found")
+	case errors.Is(err, foundrystore.ErrAutomationWorkflow):
+		return nil, foundryPrecondition(o.WorkspaceID, reasonWorkflowOfAutomation,
+			"this workflow records an automation's runs: it goes only once the automation is deleted, and stays as history after")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "delete workflow: %v", err)
 	}
@@ -134,7 +138,8 @@ func (s *Service) DeleteFoundryWorkflow(ctx context.Context, req *foundryv1.Dele
 
 // StartFoundryWorkflowRun opens a run of a workflow for the calling user or
 // agent's service credential, with its input when given. The same client
-// token returns the run it opened, refused when the input differs.
+// token returns the run it opened, refused when the input differs. An
+// automation's workflow takes none: Foundry starts its runs.
 func (s *Service) StartFoundryWorkflowRun(ctx context.Context, req *foundryv1.StartFoundryWorkflowRunRequest) (*foundryv1.FoundryWorkflowRunResponse, error) {
 	var by access.Principal
 	switch a := actor(ctx); {
@@ -156,6 +161,14 @@ func (s *Service) StartFoundryWorkflowRun(ctx context.Context, req *foundryv1.St
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
 		return nil, err
+	}
+	w, err := s.foundryWorkflow(ctx, o.ID, req.GetWorkflowId())
+	if err != nil {
+		return nil, err
+	}
+	if w.Automation != nil {
+		return nil, foundryPrecondition(o.WorkspaceID, reasonWorkflowOfAutomation,
+			"this workflow records an automation's runs, which Foundry starts as the automation runs")
 	}
 	if token == "" {
 		token = id.New()
@@ -232,7 +245,7 @@ func (s *Service) GetFoundryWorkflowRun(ctx context.Context, req *foundryv1.GetF
 
 // FinishFoundryWorkflowRun closes an open run with its output, and its input
 // when it was started without one. Finishing it again with the same input
-// and output returns it.
+// and output returns it. Foundry finishes an automation's runs itself.
 func (s *Service) FinishFoundryWorkflowRun(ctx context.Context, req *foundryv1.FinishFoundryWorkflowRunRequest) (*foundryv1.FoundryWorkflowRunResponse, error) {
 	input, err := workflowRunInput(req.GetInput())
 	if err != nil {
@@ -251,6 +264,9 @@ func (s *Service) FinishFoundryWorkflowRun(ctx context.Context, req *foundryv1.F
 		return nil, err
 	}
 	switch {
+	case r.AutomationRunID != nil:
+		return nil, foundryPrecondition(o.WorkspaceID, reasonWorkflowOfAutomation,
+			"this run records an automation's run, which Foundry finishes when that run ends")
 	case r.Finished != nil && r.Finished.Output == output && (input == nil || sameText(r.Input, input)):
 		return s.foundryWorkflowRunResponse(ctx, o.ID, r.WorkflowID, r.ID)
 	case r.Finished != nil:
@@ -308,18 +324,11 @@ func (s *Service) ListFoundryWorkflowRunAccesses(ctx context.Context, req *found
 // or empty for a call of the workspace (a send), whose run may be of any
 // of its ontologies. A grantee records only with its Workflows permission,
 // and, holding only some of the ontology's current load, only under a run it
-// started.
+// started. Under a run Foundry started for an automation, only that
+// automation's owner records.
 func (s *Service) trackedRun(ctx context.Context, workspaceID, ontologyID, runID string) (*foundrymodel.FoundryWorkflowRun, error) {
 	if runID == "" {
 		return nil, nil
-	}
-	if g, ok := access.GranteeFrom(ctx); ok {
-		switch on, err := s.workflowsOn(ctx, g); {
-		case err != nil:
-			return nil, err
-		case !on:
-			return nil, errWorkflowsOff
-		}
 	}
 	var r *foundrymodel.FoundryWorkflowRun
 	var err error
@@ -327,6 +336,21 @@ func (s *Service) trackedRun(ctx context.Context, workspaceID, ontologyID, runID
 		r, err = s.deps.DB.GetFoundryWorkflowRunInWorkspace(ctx, workspaceID, runID)
 	} else {
 		r, err = s.deps.DB.GetFoundryWorkflowRun(ctx, ontologyID, runID)
+	}
+	if err == nil && r.AutomationRunID != nil {
+		// Foundry's record of its owner's automation: only the owner's calls
+		// (its Assistant steps') go under it, whatever their Workflows
+		// permission, which is about their own runs.
+		if a := actor(ctx); a.UserID == "" || a.ServiceCredentialID != "" || r.StartedBy != (access.Principal{Kind: access.PrincipalUser, ID: a.UserID}) {
+			return nil, status.Error(codes.NotFound, "workflow run not found")
+		}
+	} else if g, ok := access.GranteeFrom(ctx); ok {
+		switch on, onErr := s.workflowsOn(ctx, g); {
+		case onErr != nil:
+			return nil, onErr
+		case !on:
+			return nil, errWorkflowsOff
+		}
 	}
 	by, own := ownRunsOnly(ctx)
 	switch {
@@ -495,18 +519,40 @@ func sameText(a, b *string) bool {
 func foundryWorkflowToProto(w *foundrymodel.FoundryWorkflow, verdicts map[string]int64) *foundryv1.FoundryWorkflow {
 	out := &foundryv1.FoundryWorkflow{
 		Id: w.ID, OntologyId: w.OntologyID, Name: w.Name, Description: w.Description, CreatedByUserId: w.CreatedByUserID,
-		CreatedAt: timestamppb.New(w.CreatedAt), Runs: w.Runs, FinishedRuns: w.FinishedRuns,
+		CreatedAt: timestamppb.New(w.CreatedAt), Runs: w.Runs, FinishedRuns: w.FinishedRuns, Automation: workflowAutomationToProto(w.Automation),
 	}
 	if w.LastRunAt != nil {
 		out.LastRunAt = timestamppb.New(*w.LastRunAt)
 	}
+	out.Verdicts = verdictCountsToProto(verdicts)
+	return out
+}
+
+// verdictCountsToProto is verdicts in the verdicts' order, those no run has
+// left out.
+func verdictCountsToProto(verdicts map[string]int64) []*foundryv1.FoundryWorkflowVerdictCount {
+	var out []*foundryv1.FoundryWorkflowVerdictCount
 	for _, v := range foundrymodel.FoundryWorkflowVerdicts {
 		if n := verdicts[v]; n > 0 {
-			out.Verdicts = append(out.Verdicts, &foundryv1.FoundryWorkflowVerdictCount{Verdict: v, Runs: n})
+			out = append(out, &foundryv1.FoundryWorkflowVerdictCount{Verdict: v, Runs: n})
 		}
 	}
 	return out
 }
+
+// workflowAutomationToProto is the automation a workflow records the runs
+// of: nil for a person's workflow.
+func workflowAutomationToProto(a *foundrymodel.FoundryWorkflowAutomation) *foundryv1.FoundryWorkflowAutomation {
+	if a == nil {
+		return nil
+	}
+	return &foundryv1.FoundryWorkflowAutomation{AutomationId: a.ID, Name: a.Name, Deleted: a.Deleted}
+}
+
+// reasonWorkflowOfAutomation refuses what only Foundry does to an
+// automation's workflow: start and finish its runs, and delete it while
+// the automation exists.
+const reasonWorkflowOfAutomation = "FOUNDRY_WORKFLOW_OF_AUTOMATION"
 
 func foundryWorkflowRunToProto(r *foundrymodel.FoundryWorkflowRun, a *foundrymodel.FoundryWorkflowAssessment) *foundryv1.FoundryWorkflowRun {
 	c := r.Counts
@@ -519,6 +565,9 @@ func foundryWorkflowRunToProto(r *foundrymodel.FoundryWorkflowRun, a *foundrymod
 	}
 	if r.Input != nil {
 		out.Input = *r.Input
+	}
+	if r.AutomationRunID != nil {
+		out.AutomationRunId = *r.AutomationRunID
 	}
 	if r.Finished != nil {
 		out.Output, out.FinishedAt = r.Finished.Output, timestamppb.New(r.Finished.At)

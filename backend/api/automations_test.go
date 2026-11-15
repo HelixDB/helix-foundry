@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,44 @@ type automationStore struct {
 	// stats is what FoundryAutomationRunStats answers, and statsSince what it was asked.
 	stats      *foundrymodel.FoundryAutomationRunStats
 	statsSince time.Time
+	// tracked are the ontologies approvals made workflows of; ontologies,
+	// runOntologies and latest what the reads of them answer.
+	tracked         []string
+	ontologiesKnown []string
+	ontologies      map[string][]foundrymodel.FoundryAutomationOntology
+	runOntologies   []foundrymodel.FoundryAutomationRunOntology
+	latest          map[string]*foundrymodel.FoundryWorkflowAssessment
+}
+
+func (s *automationStore) EnsureFoundryAutomationWorkflow(_ context.Context, ws, automationID, ontologyID string) (*foundrymodel.FoundryWorkflow, error) {
+	if ontologyID == "ont-full" {
+		return nil, foundrystore.ErrLimitExceeded
+	}
+	s.tracked = append(s.tracked, ontologyID)
+	return &foundrymodel.FoundryWorkflow{ID: "wf-" + ontologyID, WorkspaceID: ws, OntologyID: ontologyID,
+		Automation: &foundrymodel.FoundryWorkflowAutomation{ID: automationID}}, nil
+}
+
+func (s *automationStore) ListFoundryAutomationOntologies(_ context.Context, _ string, ids []string) (map[string][]foundrymodel.FoundryAutomationOntology, error) {
+	out := map[string][]foundrymodel.FoundryAutomationOntology{}
+	for _, id := range ids {
+		out[id] = s.ontologies[id]
+	}
+	return out, nil
+}
+
+func (s *automationStore) ListFoundryAutomationRunOntologies(context.Context, string) ([]foundrymodel.FoundryAutomationRunOntology, error) {
+	return s.runOntologies, nil
+}
+
+func (s *automationStore) LatestFoundryWorkflowAssessments(_ context.Context, ids []string) (map[string]*foundrymodel.FoundryWorkflowAssessment, error) {
+	out := map[string]*foundrymodel.FoundryWorkflowAssessment{}
+	for _, id := range ids {
+		if a := s.latest[id]; a != nil {
+			out[id] = a
+		}
+	}
+	return out, nil
 }
 
 func newAutomationStore() *automationStore {
@@ -58,6 +97,8 @@ func (s *automationStore) GetFoundryOntology(_ context.Context, ws, id string) (
 	case ws == "ws-1" && id == "ont-gone":
 		now := time.Now()
 		return &foundrymodel.FoundryOntology{ID: id, WorkspaceID: ws, DeletedAt: &now}, nil
+	case ws == "ws-1" && slices.Contains(s.ontologiesKnown, id):
+		return &foundrymodel.FoundryOntology{ID: id, WorkspaceID: ws}, nil
 	}
 	return nil, foundrystore.ErrNotFound
 }

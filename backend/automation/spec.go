@@ -204,7 +204,18 @@ type Targets struct {
 }
 
 // Targets names what the spec's trigger listens to and its actions act on.
-func (s Spec) Targets() Targets {
+func (s Spec) Targets() Targets { return s.targets(true) }
+
+// StepTargets names what its steps act on: their actions and the actions
+// they may run unasked, not what its trigger listens to. An ontology an
+// automation's runs use is one of these, or one an Assistant step reads.
+//
+//	spec.StepTargets().Ontologies // the ontologies its loads name
+func (s Spec) StepTargets() Targets { return s.targets(false) }
+
+// targets names what the spec's actions act on, and what its trigger
+// listens to with trigger.
+func (s Spec) targets(trigger bool) Targets {
 	var t Targets
 	add := func(list *[]string, id string) {
 		if !slices.Contains(*list, id) {
@@ -224,6 +235,9 @@ func (s Spec) Targets() Targets {
 	for _, n := range s.nodes {
 		switch c := n.Config.(type) {
 		case TriggerNode:
+			if !trigger {
+				continue
+			}
 			switch tr := c.Trigger.(type) {
 			case SyncFinished:
 				add(&t.Connectors, tr.ConnectorID)

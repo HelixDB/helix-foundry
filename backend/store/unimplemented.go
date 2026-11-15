@@ -1203,7 +1203,7 @@ func (u Unimplemented) TallyFoundryWorkflowRuns(context.Context, []string, acces
 	return nil, nil
 }
 
-func (u Unimplemented) ListFoundryWorkflowInsightRuns(context.Context, string, string, *access.Principal, time.Time, time.Time,
+func (u Unimplemented) ListFoundryWorkflowInsightRuns(context.Context, string, string, *access.Principal, bool, time.Time, time.Time,
 	int) ([]model.FoundryWorkflowInsightRun, error) {
 	u.unimplemented("ListFoundryWorkflowInsightRuns")
 	return nil, nil
@@ -1603,4 +1603,34 @@ func (u Unimplemented) FinishFoundryAutomationRun(context.Context, string, strin
 func (u Unimplemented) PruneFoundryAutomationRuns(context.Context, time.Time) (int, error) {
 	u.unimplemented("PruneFoundryAutomationRuns")
 	return 0, nil
+}
+
+func (u Unimplemented) LatestFoundryWorkflowAssessments(context.Context, []string) (map[string]*model.FoundryWorkflowAssessment, error) {
+	u.unimplemented("LatestFoundryWorkflowAssessments")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryAutomationWorkflowRun(context.Context, string, string) (*model.FoundryWorkflowRun, error) {
+	u.unimplemented("GetFoundryAutomationWorkflowRun")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAutomationOntologies(context.Context, string, []string) (map[string][]model.FoundryAutomationOntology, error) {
+	u.unimplemented("ListFoundryAutomationOntologies")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAutomationRunOntologies(context.Context, string) ([]model.FoundryAutomationRunOntology, error) {
+	u.unimplemented("ListFoundryAutomationRunOntologies")
+	return nil, nil
+}
+
+func (u Unimplemented) EnsureFoundryAutomationWorkflow(context.Context, string, string, string) (*model.FoundryWorkflow, error) {
+	u.unimplemented("EnsureFoundryAutomationWorkflow")
+	return nil, nil
+}
+
+func (u Unimplemented) StartFoundryAutomationWorkflowRun(context.Context, model.FoundryAutomationWorkflowStart) (*model.FoundryWorkflowRun, error) {
+	u.unimplemented("StartFoundryAutomationWorkflowRun")
+	return nil, nil
 }

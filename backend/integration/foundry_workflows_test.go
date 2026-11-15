@@ -31,7 +31,9 @@ func (b *workflowBackend) CreateFoundryWorkflow(_ context.Context, r *foundryv1.
 }
 
 func (b *workflowBackend) ListFoundryWorkflows(context.Context, *foundryv1.ListFoundryWorkflowsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryWorkflowsResponse, error) {
-	return &foundryv1.ListFoundryWorkflowsResponse{Workflows: []*foundryv1.FoundryWorkflow{{Id: "wf-1", Name: "Triage", Runs: 3}}, NextPageToken: "p2"}, nil
+	return &foundryv1.ListFoundryWorkflowsResponse{Workflows: []*foundryv1.FoundryWorkflow{{Id: "wf-1", Name: "Triage", Runs: 3},
+		{Id: "wf-2", Name: "Weekly digest", Automation: &foundryv1.FoundryWorkflowAutomation{AutomationId: "auto-1", Name: "Weekly digest", Deleted: true}}},
+		NextPageToken: "p2"}, nil
 }
 
 func (b *workflowBackend) StartFoundryWorkflowRun(_ context.Context, r *foundryv1.StartFoundryWorkflowRunRequest, _ ...grpc.CallOption) (*foundryv1.FoundryWorkflowRunResponse, error) {
@@ -48,7 +50,7 @@ func (b *workflowBackend) FinishFoundryWorkflowRun(_ context.Context, r *foundry
 }
 
 func (b *workflowBackend) GetFoundryWorkflowRun(_ context.Context, r *foundryv1.GetFoundryWorkflowRunRequest, _ ...grpc.CallOption) (*foundryv1.FoundryWorkflowRunResponse, error) {
-	return &foundryv1.FoundryWorkflowRunResponse{Run: &foundryv1.FoundryWorkflowRun{Id: r.GetId(), Status: "finished",
+	return &foundryv1.FoundryWorkflowRunResponse{Run: &foundryv1.FoundryWorkflowRun{Id: r.GetId(), Status: "finished", AutomationRunId: "arun-1",
 		Assessment: &foundryv1.FoundryWorkflowAssessment{Status: "done", Verdict: "helpful", AssessmentJson: `{"verdict":"helpful","summary":"s"}`, UsdMicros: 7}}}, nil
 }
 
@@ -138,7 +140,12 @@ func TestWorkflowRunTools(t *testing.T) {
 
 	listed := callTool(t, session, toolFoundryListWorkflows, `{`+workflowIDs+`}`)
 	assert.Equal(t, "p2", listed["next_page_token"])
-	assert.Len(t, listed["workflows"], 1)
+	workflows := listed["workflows"].([]any)
+	require.Len(t, workflows, 2)
+	assert.Equal(t, "person", workflows[0].(map[string]any)["origin"])
+	assert.NotContains(t, workflows[0], "automation")
+	assert.Equal(t, "automation", workflows[1].(map[string]any)["origin"], "Foundry's, for an automation")
+	assert.Equal(t, map[string]any{"id": "auto-1", "name": "Weekly digest", "deleted": true}, workflows[1].(map[string]any)["automation"])
 
 	started := callTool(t, session, toolFoundryStartWorkflowRun, `{`+workflowIDs+`,"workflow_id":"wf-1","input":"Who renews?","client_token":"r-1"}`)
 	assert.Equal(t, "run-1", started["id"])
@@ -152,6 +159,7 @@ func TestWorkflowRunTools(t *testing.T) {
 
 	got := callTool(t, session, toolFoundryGetWorkflowRun, `{`+workflowIDs+`,"workflow_id":"wf-1","run_id":"run-1","after_seq":0}`)
 	assert.EqualValues(t, 5, got["next_after_seq"])
+	assert.Equal(t, "arun-1", got["run"].(map[string]any)["automation_run_id"])
 	assessment := got["run"].(map[string]any)["assessment"].(map[string]any)
 	assert.Equal(t, "helpful", assessment["verdict"])
 	assert.Equal(t, "s", assessment["assessment"].(map[string]any)["summary"])

@@ -277,7 +277,11 @@ type FoundryServiceClient interface {
 	// agent read of the ontology and wrote to Foundry between its request and
 	// its answer. Owners and admins create and delete workflows; a caller that
 	// may read the ontology's database starts and finishes runs, and reads
-	// them.
+	// them. Foundry makes a workflow of each ontology an automation uses
+	// (FoundryWorkflow.automation) and records each of its runs there: only
+	// Foundry starts and finishes those runs (FAILED_PRECONDITION, reason
+	// FOUNDRY_WORKFLOW_OF_AUTOMATION), only the automation's owner records
+	// under them, and the workflow is deleted only once its automation is.
 	CreateFoundryWorkflow(ctx context.Context, in *CreateFoundryWorkflowRequest, opts ...grpc.CallOption) (*FoundryWorkflowResponse, error)
 	ListFoundryWorkflows(ctx context.Context, in *ListFoundryWorkflowsRequest, opts ...grpc.CallOption) (*ListFoundryWorkflowsResponse, error)
 	GetFoundryWorkflow(ctx context.Context, in *GetFoundryWorkflowRequest, opts ...grpc.CallOption) (*FoundryWorkflowResponse, error)
@@ -2001,7 +2005,11 @@ type FoundryServiceServer interface {
 	// agent read of the ontology and wrote to Foundry between its request and
 	// its answer. Owners and admins create and delete workflows; a caller that
 	// may read the ontology's database starts and finishes runs, and reads
-	// them.
+	// them. Foundry makes a workflow of each ontology an automation uses
+	// (FoundryWorkflow.automation) and records each of its runs there: only
+	// Foundry starts and finishes those runs (FAILED_PRECONDITION, reason
+	// FOUNDRY_WORKFLOW_OF_AUTOMATION), only the automation's owner records
+	// under them, and the workflow is deleted only once its automation is.
 	CreateFoundryWorkflow(context.Context, *CreateFoundryWorkflowRequest) (*FoundryWorkflowResponse, error)
 	ListFoundryWorkflows(context.Context, *ListFoundryWorkflowsRequest) (*ListFoundryWorkflowsResponse, error)
 	GetFoundryWorkflow(context.Context, *GetFoundryWorkflowRequest) (*FoundryWorkflowResponse, error)

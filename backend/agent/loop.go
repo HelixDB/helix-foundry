@@ -72,6 +72,9 @@ type Store interface {
 	GetFoundryAgentActionByPayload(ctx context.Context, turnID, payloadHash string) (*model.FoundryAgentAction, error)
 	FinishFoundryAgentAction(ctx context.Context, id string, end model.FoundryAgentActionEnd, continuation *model.FoundryAgentTurn, firstEvent json.RawMessage) error
 	GetFoundryAutomationRun(ctx context.Context, workspaceID, id string) (*model.FoundryAutomationRun, error)
+	ListFoundryAutomationRunNodes(ctx context.Context, runID string) ([]*model.FoundryAutomationRunNode, error)
+	GetFoundryAutomationWorkflowRun(ctx context.Context, automationRunID, ontologyID string) (*model.FoundryWorkflowRun, error)
+	StartFoundryAutomationWorkflowRun(ctx context.Context, start model.FoundryAutomationWorkflowStart) (*model.FoundryWorkflowRun, error)
 }
 
 // Resolver is where a workspace's model calls go; *ai.Resolver resolves it.
@@ -133,8 +136,10 @@ type Attempt struct {
 type turnRun struct {
 	r    *Runner
 	turn *model.FoundryAgentTurn
-	// automation is an automation's turn's step; nil for a person's turn.
+	// automation is an automation's turn's step, and uses its run's uses of
+	// ontologies; both nil for a person's turn.
 	automation *automationStep
+	uses       *AutomationUses
 	model      llm.Model
 	pricer     llm.Pricer
 	client     *mcp.ClientSession
@@ -203,6 +208,9 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	// A card is drawn as its person reads the workspace.
 	sink.cards = SessionCards(r.DB, r.Databases, session, turn.WorkspaceID)
 	t := &turnRun{r: r, turn: turn, automation: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out, asked: turn.Asked != nil}
+	if step != nil {
+		t.uses = NewAutomationUses(r.DB, step.run, step.name, step.spec)
+	}
 	client, offered, err := serve(session, func(server *mcp.Server) {
 		t.reportTool(server)
 		asker{db: r.DB, session: session, turn: turn, workerID: r.WorkerID}.register(server)
@@ -227,6 +235,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 		if err != nil {
 			return out, err
 		}
+		schema = withoutWorkflowRun(schema)
 		t.tools = append(t.tools, llm.Tool{Name: tool.Name, Description: tool.Description, InputSchema: schema})
 		fixed += len(tool.Name) + len(tool.Description) + len(schema)
 	}
@@ -681,8 +690,15 @@ func (t *turnRun) callTool(ctx context.Context, use llm.ToolUse, offered bool) (
 		input = forced
 	}
 	var args map[string]any
-	if err := json.Unmarshal(input, &args); err != nil {
+	if err := json.Unmarshal(input, &args); err != nil || args == nil {
 		return "The input isn't a JSON object.", nil, true
+	}
+	// Only Foundry names the workflow run a call is recorded under: an
+	// automation's for its turns, none for a person's.
+	if t.uses == nil {
+		delete(args, workflowRunField)
+	} else if err := t.uses.Called(ctx, use.Name, args); err != nil {
+		log.From(ctx).Warn("automation workflows: a use of an ontology went unrecorded", "turn", t.turn.ID, "tool", use.Name, "err", err)
 	}
 	callCtx, cancel := context.WithTimeout(ctx, toolTimeout)
 	defer cancel()

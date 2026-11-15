@@ -224,13 +224,18 @@ type ReadStore interface {
 	GetFoundryWorkflowRunByClientToken(ctx context.Context, workflowID, clientToken string) (*model.FoundryWorkflowRun, error)
 	ListFoundryWorkflowRuns(ctx context.Context, workflowID string, startedBy *access.Principal, pageToken string, limit int) ([]*model.FoundryWorkflowRun, string, error)
 	TallyFoundryWorkflowRuns(ctx context.Context, workflowIDs []string, by access.Principal) (map[string]model.FoundryWorkflowRunTally, error)
-	ListFoundryWorkflowInsightRuns(ctx context.Context, ontologyID, workflowID string, startedBy *access.Principal, from, to time.Time,
-		limit int) ([]model.FoundryWorkflowInsightRun, error)
+	ListFoundryWorkflowInsightRuns(ctx context.Context, ontologyID, workflowID string, startedBy *access.Principal, withAutomations bool,
+		from, to time.Time, limit int) ([]model.FoundryWorkflowInsightRun, error)
 	ListFoundryWorkflowRunAccesses(ctx context.Context, runID string, afterSeq int32, limit int) ([]*model.FoundryWorkflowAccess, bool, error)
 	GetFoundryWorkflowRunAssessment(ctx context.Context, runID string) (*model.FoundryWorkflowAssessment, error)
 	ListFoundryWorkflowRunAssessments(ctx context.Context, runIDs []string) (map[string]*model.FoundryWorkflowAssessment, error)
 	CountFoundryWorkflowVerdicts(ctx context.Context, workflowIDs []string) (map[string]map[string]int64, error)
 	SumFoundryWorkflowAssessmentSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
+	LatestFoundryWorkflowAssessments(ctx context.Context, workflowIDs []string) (map[string]*model.FoundryWorkflowAssessment, error)
+	// Automations' workflows (foundry_automation_workflows.go)
+	GetFoundryAutomationWorkflowRun(ctx context.Context, automationRunID, ontologyID string) (*model.FoundryWorkflowRun, error)
+	ListFoundryAutomationOntologies(ctx context.Context, workspaceID string, automationIDs []string) (map[string][]model.FoundryAutomationOntology, error)
+	ListFoundryAutomationRunOntologies(ctx context.Context, automationRunID string) ([]model.FoundryAutomationRunOntology, error)
 
 	// The Assistant (foundry_agent.go)
 	GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error)
@@ -462,6 +467,10 @@ type Store interface {
 	ClaimFoundryWorkflowRunAssessment(ctx context.Context, owner string, lease time.Duration) (*model.FoundryWorkflowAssessment, error)
 	RenewFoundryWorkflowRunAssessment(ctx context.Context, runID, owner string, lease time.Duration) error
 	FinishFoundryWorkflowRunAssessment(ctx context.Context, runID, owner string, o model.FoundryWorkflowAssessmentOutcome) error
+	// Automations' workflows: Foundry's own, made and run as automations use
+	// ontologies (foundry_automation_workflows.go)
+	EnsureFoundryAutomationWorkflow(ctx context.Context, workspaceID, automationID, ontologyID string) (*model.FoundryWorkflow, error)
+	StartFoundryAutomationWorkflowRun(ctx context.Context, start model.FoundryAutomationWorkflowStart) (*model.FoundryWorkflowRun, error)
 
 	// The Assistant: a person's sends and clicks, and the
 	// foundry-agent-worker's turns (foundry_agent.go)

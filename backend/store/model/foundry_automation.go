@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -347,6 +348,11 @@ type FoundryAutomationRunEnd struct {
 	Backoff    time.Duration
 	Notice     *FoundryNotification
 	LostAccess bool
+	// Answer is what the run found, in words: the answer of each workflow
+	// run it started (one an ontology it used), which it finishes, queueing
+	// their assessments with Assess.
+	Answer string
+	Assess bool
 }
 
 // Validate refuses an end no run can have.
@@ -368,6 +374,9 @@ func (e FoundryAutomationRunEnd) Validate() error {
 	}
 	if e.PauseAfter < 1 || e.Backoff < 0 {
 		return fmt.Errorf("a run's end pauses after at least one failure")
+	}
+	if strings.TrimSpace(e.Answer) == "" || len(e.Answer) > FoundryWorkflowOutputMaxBytes {
+		return fmt.Errorf("a run's end says what it found, in at most %d bytes", FoundryWorkflowOutputMaxBytes)
 	}
 	return nil
 }
@@ -425,4 +434,59 @@ type FoundryAutomationNotice struct {
 	Run     *FoundryAutomationRun
 	Node    *FoundryAutomationRunNode
 	Earlier []*FoundryAutomationRunNode
+}
+
+// FoundryAutomationUntrackedReason is why Foundry records none of an
+// automation's runs that use an ontology: a closed set.
+type FoundryAutomationUntrackedReason string
+
+const (
+	// FoundryAutomationWorkflowsFull: the ontology holds FoundryWorkflowsMax
+	// workflows, so Foundry couldn't make the automation's.
+	FoundryAutomationWorkflowsFull FoundryAutomationUntrackedReason = "workflows_full"
+)
+
+// FoundryAutomationOntology is an ontology an automation's runs use, by its
+// id and name, and how Foundry records them: a closed set of trackings.
+type FoundryAutomationOntology struct {
+	OntologyID, OntologyName string
+	Tracking                 FoundryAutomationTracking
+}
+
+// FoundryAutomationTracking is how Foundry records an automation's runs that
+// use an ontology: FoundryAutomationTracked or FoundryAutomationUntracked.
+type FoundryAutomationTracking interface{ tracking() }
+
+// FoundryAutomationTracked records them as runs of Workflow, with its runs
+// counted, and Verdicts counting their done assessments by verdict.
+type FoundryAutomationTracked struct {
+	Workflow *FoundryWorkflow
+	Verdicts map[string]int64
+}
+
+// FoundryAutomationUntracked records none of them, for Reason, since At (the
+// latest run that went on untracked).
+type FoundryAutomationUntracked struct {
+	Reason FoundryAutomationUntrackedReason
+	At     time.Time
+}
+
+func (FoundryAutomationTracked) tracking()   {}
+func (FoundryAutomationUntracked) tracking() {}
+
+// FoundryAutomationRunOntology is an ontology one run of an automation used:
+// the workflow run that records it, and that run's assessment, nil until it
+// is queued.
+type FoundryAutomationRunOntology struct {
+	OntologyID, OntologyName string
+	Run                      *FoundryWorkflowRun
+	Assessment               *FoundryWorkflowAssessment
+}
+
+// FoundryAutomationWorkflowStart starts the workflow run that records an
+// automation run's use of an ontology. Input is its request: what fired the
+// run and its steps, in words.
+type FoundryAutomationWorkflowStart struct {
+	WorkspaceID, AutomationRunID, OntologyID string
+	Input                                    string
 }

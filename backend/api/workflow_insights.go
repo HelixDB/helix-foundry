@@ -53,16 +53,21 @@ func (s *Service) GetFoundryWorkflowInsights(ctx context.Context, req *foundryv1
 	case days == 0:
 		days = insightDays
 	}
+	// A principal the request names counts the runs it started itself:
+	// those Foundry started for its automations are the automations' own
+	// (their workflow_id names them). A grantee seeing only its own runs
+	// reads all it started.
 	var startedBy *access.Principal
+	withAutomations := true
 	if p := req.GetStartedBy(); p.GetKind() != foundryv1.FoundryPrincipal_KIND_UNSPECIFIED || p.GetId() != "" {
 		principal, err := principalFromProto(p)
 		if err != nil || principal.Kind == access.PrincipalTeam {
 			return nil, status.Error(codes.InvalidArgument, "started_by names a user or a service credential, and its id")
 		}
-		startedBy = &principal
+		startedBy, withAutomations = &principal, false
 	}
 	if by, own := ownRunsOnly(ctx); own {
-		startedBy = &by
+		startedBy, withAutomations = &by, true
 	}
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
@@ -75,11 +80,13 @@ func (s *Service) GetFoundryWorkflowInsights(ctx context.Context, req *foundryv1
 	}
 	now := time.Now().UTC()
 	from := time.Date(now.Year(), now.Month(), now.Day()+1-days, 0, 0, 0, 0, time.UTC)
-	runs, err := s.deps.DB.ListFoundryWorkflowInsightRuns(ctx, o.ID, req.GetWorkflowId(), startedBy, from, from.AddDate(0, 0, days), insightRuns+1)
+	runs, err := s.deps.DB.ListFoundryWorkflowInsightRuns(ctx, o.ID, req.GetWorkflowId(), startedBy, withAutomations, from, from.AddDate(0, 0, days),
+		insightRuns+1)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list workflow runs: %v", err)
 	}
-	previous, err := s.deps.DB.ListFoundryWorkflowInsightRuns(ctx, o.ID, req.GetWorkflowId(), startedBy, from.AddDate(0, 0, -days), from, insightRuns)
+	previous, err := s.deps.DB.ListFoundryWorkflowInsightRuns(ctx, o.ID, req.GetWorkflowId(), startedBy, withAutomations, from.AddDate(0, 0, -days), from,
+		insightRuns)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list workflow runs: %v", err)
 	}
@@ -100,11 +107,22 @@ type insightIssue struct{ kind, text string }
 // assessedOf reads r's assessment once it is done; nothing for any other,
 // or one that isn't the engine's JSON.
 func assessedOf(r *foundrymodel.FoundryWorkflowInsightRun) insightAssessed {
-	var out insightAssessed
 	a := r.Assessment
 	if a == nil || a.Status != foundrymodel.FoundryWorkflowAssessmentDone || len(a.Assessment) == 0 {
-		return out
+		return insightAssessed{}
 	}
+	return readAssessment(a.Assessment)
+}
+
+// assessmentGaps are the gaps a done assessment (the engine's JSON) named.
+func assessmentGaps(assessment json.RawMessage) []insightIssue {
+	return readAssessment(assessment).gaps
+}
+
+// readAssessment reads the engine's assessment without trust: what isn't
+// its JSON reads as nothing.
+func readAssessment(assessment json.RawMessage) insightAssessed {
+	var out insightAssessed
 	var body struct {
 		Claims []struct {
 			Support any `json:"support"`
@@ -115,7 +133,7 @@ func assessedOf(r *foundrymodel.FoundryWorkflowInsightRun) insightAssessed {
 		} `json:"gaps"`
 		Suggestions []any `json:"suggestions"`
 	}
-	if json.Unmarshal(a.Assessment, &body) != nil {
+	if json.Unmarshal(assessment, &body) != nil {
 		return out
 	}
 	for _, c := range body.Claims {
@@ -360,12 +378,20 @@ func workflowInsights(runs, previous []foundrymodel.FoundryWorkflowInsightRun, f
 		}
 	}
 	out.Funnel = f
+	// The runs Foundry started for an automation count by the automation,
+	// apart from what its owner started themselves.
 	agents := groups(func(r *foundrymodel.FoundryWorkflowInsightRun) string {
+		if r.Automation != nil {
+			return "automation:" + r.Automation.ID
+		}
 		return r.StartedBy.Kind.String() + ":" + r.StartedBy.ID
 	})
 	for _, rs := range agents[:min(len(agents), insightAgents)] {
 		seg := segment(rs)
 		seg.Principal = principalToProto(rs[0].StartedBy)
+		if a := rs[0].Automation; a != nil {
+			seg.Automation, seg.WorkflowId = workflowAutomationToProto(a), rs[0].WorkflowID
+		}
 		out.Agents = append(out.Agents, seg)
 	}
 	if byWorkflow {

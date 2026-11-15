@@ -75,6 +75,18 @@ type FoundryWorkflowOutput struct {
 	FinishedRuns int64  `json:"finished_runs"`
 	CreatedAt    string `json:"created_at"`
 	LastRunAt    string `json:"last_run_at,omitempty"`
+	// Origin is who made it: a person, or Foundry for an automation.
+	Origin     string                           `json:"origin" jsonschema:"person (an owner or admin made it), or automation: Foundry made it to record the runs of the automation that use this ontology, and only Foundry starts and finishes its runs."`
+	Automation *FoundryWorkflowAutomationOutput `json:"automation,omitempty" jsonschema:"The automation whose runs it records, for an automation's workflow."`
+}
+
+// FoundryWorkflowAutomationOutput is the automation a workflow Foundry made
+// records the runs of.
+type FoundryWorkflowAutomationOutput struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Deleted says the automation was deleted: the workflow keeps its runs as history.
+	Deleted bool `json:"deleted"`
 }
 
 type ListFoundryWorkflowsOutput struct {
@@ -95,7 +107,9 @@ type FoundryWorkflowRunOutput struct {
 	FinishedAt string                              `json:"finished_at,omitempty"`
 	Counts     *foundryv1.FoundryWorkflowRunCounts `json:"counts"`
 	Assessment *FoundryWorkflowAssessmentOutput    `json:"assessment,omitempty" jsonschema:"Its assessment, once it finished: how much what it read made its answer."`
-	Next       string                              `json:"next,omitempty"`
+	// AutomationRunID is the automation's run it records, for a run Foundry started.
+	AutomationRunID string `json:"automation_run_id,omitempty" jsonschema:"The automation run it records, for a run Foundry started (its workflow's automation names the automation)."`
+	Next            string `json:"next,omitempty"`
 }
 
 // FoundryWorkflowAssessmentOutput is a run's assessment by the ontology agent.
@@ -293,10 +307,15 @@ func (s *Service) GetFoundryWorkflowRun(
 // FoundryWorkflow is a workflow as the tools return it, without its content trust, which a list
 // says once.
 func FoundryWorkflow(w *foundryv1.FoundryWorkflow) FoundryWorkflowOutput {
-	return FoundryWorkflowOutput{
+	out := FoundryWorkflowOutput{
 		ID: w.GetId(), OntologyID: w.GetOntologyId(), Name: w.GetName(), Description: w.GetDescription(),
 		Runs: w.GetRuns(), FinishedRuns: w.GetFinishedRuns(), CreatedAt: protoTimestamp(w.GetCreatedAt()), LastRunAt: protoTimestamp(w.GetLastRunAt()),
+		Origin: "person",
 	}
+	if a := w.GetAutomation(); a != nil {
+		out.Origin, out.Automation = "automation", &FoundryWorkflowAutomationOutput{ID: a.GetAutomationId(), Name: a.GetName(), Deleted: a.GetDeleted()}
+	}
+	return out
 }
 
 // FoundryWorkflowRun is a run as the tools return it: its input and output are whoever sent
@@ -309,7 +328,7 @@ func FoundryWorkflowRun(r *foundryv1.FoundryWorkflowRun) FoundryWorkflowRunOutpu
 	return FoundryWorkflowRunOutput{
 		ContentTrust: contentTrustUntrusted, ID: r.GetId(), WorkflowID: r.GetWorkflowId(), Status: r.GetStatus(),
 		Input: r.GetInput(), Output: r.GetOutput(), StartedAt: protoTimestamp(r.GetStartedAt()), FinishedAt: protoTimestamp(r.GetFinishedAt()),
-		Counts: counts, Assessment: FoundryWorkflowAssessment(r.GetAssessment()),
+		Counts: counts, Assessment: FoundryWorkflowAssessment(r.GetAssessment()), AutomationRunID: r.GetAutomationRunId(),
 	}
 }
 

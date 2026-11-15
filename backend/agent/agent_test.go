@@ -71,6 +71,62 @@ type memStore struct {
 	deltaFailures int
 	// asked is what each turn asked its person.
 	asked map[string]*model.FoundryAgentAsked
+	// nodes are each automation run's steps; uses the workflow runs that
+	// record the runs' uses of ontologies.
+	nodes map[string][]*model.FoundryAutomationRunNode
+	uses  workflowUses
+}
+
+func (s *memStore) ListFoundryAutomationRunNodes(_ context.Context, runID string) ([]*model.FoundryAutomationRunNode, error) {
+	return s.nodes[runID], nil
+}
+
+func (s *memStore) GetFoundryAutomationWorkflowRun(ctx context.Context, automationRunID, ontologyID string) (*model.FoundryWorkflowRun, error) {
+	return s.uses.GetFoundryAutomationWorkflowRun(ctx, automationRunID, ontologyID)
+}
+
+func (s *memStore) StartFoundryAutomationWorkflowRun(ctx context.Context, start model.FoundryAutomationWorkflowStart) (*model.FoundryWorkflowRun, error) {
+	if _, err := s.GetFoundryOntology(ctx, start.WorkspaceID, start.OntologyID); err != nil {
+		return nil, err
+	}
+	return s.uses.StartFoundryAutomationWorkflowRun(ctx, start)
+}
+
+// workflowUses keeps the workflow runs that record automation runs' uses of
+// ontologies, as the store starts them: one per run and ontology, none on a
+// full ontology's (full) or one the workspace hasn't (gone).
+type workflowUses struct {
+	runs   []*model.FoundryWorkflowRun
+	starts []model.FoundryAutomationWorkflowStart
+	full   map[string]bool
+	gone   map[string]bool
+}
+
+func (w *workflowUses) GetFoundryAutomationWorkflowRun(_ context.Context, automationRunID, ontologyID string) (*model.FoundryWorkflowRun, error) {
+	for _, r := range w.runs {
+		if *r.AutomationRunID == automationRunID && r.OntologyID == ontologyID {
+			return r, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
+}
+
+func (w *workflowUses) StartFoundryAutomationWorkflowRun(ctx context.Context, start model.FoundryAutomationWorkflowStart) (*model.FoundryWorkflowRun, error) {
+	switch {
+	case w.full[start.OntologyID]:
+		return nil, foundrystore.ErrLimitExceeded
+	case w.gone[start.OntologyID]:
+		return nil, foundrystore.ErrNotFound
+	}
+	if r, err := w.GetFoundryAutomationWorkflowRun(ctx, start.AutomationRunID, start.OntologyID); err == nil {
+		return r, nil
+	}
+	w.starts = append(w.starts, start)
+	runID, input := start.AutomationRunID, start.Input
+	r := &model.FoundryWorkflowRun{ID: "wfrun-" + start.OntologyID, WorkflowID: "wf-" + start.OntologyID, WorkspaceID: start.WorkspaceID,
+		OntologyID: start.OntologyID, ClientToken: runID, Input: &input, AutomationRunID: &runID}
+	w.runs = append(w.runs, r)
+	return r, nil
 }
 
 func (s *memStore) GetFoundryAgentTurn(_ context.Context, _, id string) (*model.FoundryAgentTurn, error) {
