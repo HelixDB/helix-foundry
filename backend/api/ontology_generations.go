@@ -493,9 +493,9 @@ func ontologyGenerationToProto(gen *foundrymodel.OntologyGeneration, evidence bo
 
 // agentQuestionToProto is a question an agent asked, as the API shows it.
 func agentQuestionToProto(q agentquestion.Question) *foundryv1.AgentQuestion {
-	out := &foundryv1.AgentQuestion{Id: q.ID, Header: q.Header, Text: q.Text, Blocking: q.Blocking}
+	out := &foundryv1.AgentQuestion{Id: q.ID, Header: q.Header, Text: q.Text, Recommended: q.Recommended, Blocking: q.Blocking}
 	if c := q.Choice; c != nil {
-		out.Multiple, out.Recommended = c.Multiple, c.Recommended
+		out.Multiple = c.Multiple
 		for _, o := range c.Options {
 			out.Options = append(out.Options, &foundryv1.AgentQuestionOption{Label: o.Label, Description: o.Description})
 		}

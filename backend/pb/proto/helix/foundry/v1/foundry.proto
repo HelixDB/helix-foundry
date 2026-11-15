@@ -1193,7 +1193,7 @@ message ListOntologyGenerationsResponse {
 // generation waits on (status needs_input) and queues it to carry on from
 // where the agent asked. Each answer names one of its questions, at most
 // once, and answers it as AgentQuestionAnswer says. With use_defaults, every
-// question left out takes its recommended option (or, with none, is left for
+// question left out takes its recommended answer (or, with none, is left for
 // the agent to decide); without, every blocking question must be answered,
 // and a non-blocking one left out stays open in the draft. INVALID_ARGUMENT
 // otherwise. A generation that isn't waiting, or waits on another round

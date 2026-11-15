@@ -630,8 +630,7 @@ func TestGenerator(t *testing.T) {
 			t.Fatalf("result = %+v", result)
 		}
 		want := []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q1", Header: "Customers", Text: "Is a customer an account?", Blocking: true,
-			Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "An account", Description: "One customer per billing account"}, {Label: "A person"}},
-				Recommended: "An account"}}, Items: []string{"type.Customer"}}}
+			Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "An account", Description: "One customer per billing account"}, {Label: "A person"}}}, Recommended: "An account"}, Items: []string{"type.Customer"}}}
 		if result.Asked.DraftRev != 4 || string(result.Asked.State) != `{"draft_rev":4,"opaque":[1,2,3]}` || !reflect.DeepEqual(result.Asked.Questions, want) {
 			t.Fatalf("asked = %+v", result.Asked)
 		}
@@ -644,7 +643,7 @@ func TestGenerator(t *testing.T) {
 		}{
 			"no blocking question":              {testResult(`"needs_input"`, 1), "without a question"},
 			"unreadable questions":              {strings.Replace(testResult(`"needs_input"`, 1), `"questions":[{`, `"questions":[7,{`, 1), "can't read"},
-			"a recommendation it doesn't offer": {strings.Replace(asking(1), `"recommended":"An account"`, `"recommended":"A team"`, 1), "can't read"},
+			"a recommendation it doesn't offer": {strings.Replace(asking(1), `"default":"An account"`, `"default":"A team"`, 1), "can't read"},
 			"one option":                        {strings.Replace(asking(1), `,{"label":"A person"}`, ``, 1), "can't read"},
 			"a question twice": {strings.Replace(asking(1), `"blocking":true}]`,
 				`"blocking":true},{"id":"q1","items":[],"text":"Again?","blocking":true}]`, 1), "can't read"},

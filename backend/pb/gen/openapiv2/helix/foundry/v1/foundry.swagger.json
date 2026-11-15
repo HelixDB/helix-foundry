@@ -6078,7 +6078,7 @@
           "description": "The generation's question_round the answers are for."
         }
       },
-      "description": "AnswerOntologyGenerationRequest answers the round of questions a\ngeneration waits on (status needs_input) and queues it to carry on from\nwhere the agent asked. Each answer names one of its questions, at most\nonce, and answers it as AgentQuestionAnswer says. With use_defaults, every\nquestion left out takes its recommended option (or, with none, is left for\nthe agent to decide); without, every blocking question must be answered,\nand a non-blocking one left out stays open in the draft. INVALID_ARGUMENT\notherwise. A generation that isn't waiting, or waits on another round\nthan round (the questions were answered, and the agent asked again), is\nFAILED_PRECONDITION. It needs what GenerateOntology needs: managing the\nontology, and an AI provider."
+      "description": "AnswerOntologyGenerationRequest answers the round of questions a\ngeneration waits on (status needs_input) and queues it to carry on from\nwhere the agent asked. Each answer names one of its questions, at most\nonce, and answers it as AgentQuestionAnswer says. With use_defaults, every\nquestion left out takes its recommended answer (or, with none, is left for\nthe agent to decide); without, every blocking question must be answered,\nand a non-blocking one left out stays open in the draft. INVALID_ARGUMENT\notherwise. A generation that isn't waiting, or waits on another round\nthan round (the questions were answered, and the agent asked again), is\nFAILED_PRECONDITION. It needs what GenerateOntology needs: managing the\nontology, and an AI provider."
     },
     "FoundryServiceApproveFoundryAutomationBody": {
       "type": "object",
@@ -6981,14 +6981,14 @@
         },
         "recommended": {
           "type": "string",
-          "description": "The label of the option the agent recommends; empty for none, and\nwithout options."
+          "description": "The answer the agent recommends, which a question left to it takes: the\nlabel of one of its options (shown first, marked), or, without options,\nthe words it suggests; empty for none."
         },
         "blocking": {
           "type": "boolean",
-          "description": "A blocking question needs an answer; another may be left to the agent\n(its recommended option, or the agent decides)."
+          "description": "A blocking question needs an answer; another may be left to the agent\n(its recommended answer, or the agent decides)."
         }
       },
-      "description": "A question an agent asks the person: the ontology agent of a generation\nthat needs input (OntologyGenerationQuestion), or the Assistant\n(FoundryAgentAsked). With no options it takes an answer in words; with\noptions (2 to 20, labels unique) the person picks one, or one or more when\nmultiple, and may always answer in their own words instead (one) or as\nwell (multiple). Its header, text and options are the agent's words and\nmay quote the data: show them as plain text, never as markup. The site\nshows such questions one at a time, the recommended option first."
+      "description": "A question an agent asks the person: the ontology agent of a generation\nthat needs input (OntologyGenerationQuestion), or the Assistant\n(FoundryAgentAsked). With no options it takes an answer in words; with\noptions (2 to 20, labels unique) the person picks one, or one or more when\nmultiple, and may always answer in their own words instead (one) or as\nwell (multiple). Its header, text, options and recommended answer are the\nagent's words and may quote the data: show them as plain text, never as\nmarkup. The site shows such questions one at a time, the recommended\noption first."
     },
     "v1AgentQuestionAnswer": {
       "type": "object",
@@ -12440,7 +12440,7 @@
         },
         "recommended": {
           "type": "string",
-          "description": "use_defaults answers with it; a question without one is left to the agent."
+          "description": "As AgentQuestion's: the ontology agent's default, which use_defaults\nanswers with; a question without one is left to the agent."
         },
         "blocking": {
           "type": "boolean",
@@ -12455,7 +12455,7 @@
         },
         "answer": {
           "$ref": "#/definitions/v1AgentQuestionAnswer",
-          "title": "The answer it was given, once answered; unset while it waits. One the\nagent was left to decide, with no recommended option, is the text\n\"No preference: decide from the data and the goal.\""
+          "title": "The answer it was given, once answered; unset while it waits. One the\nagent was left to decide, with no recommended answer, is the text\n\"No preference: decide from the data and the goal.\""
         }
       },
       "description": "A question the ontology agent asked about its draft (AgentQuestion's\nfields), the draft items it is about, and its answer once given."

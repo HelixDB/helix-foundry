@@ -98,7 +98,7 @@ func (a asker) register(server *mcp.Server) {
 	if a.turn.Kind == model.FoundryAgentTurnAutomation {
 		return
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: toolAskPerson, Title: "Ask you",
+	mcp.AddTool(server, &mcp.Tool{Name: toolAskPerson, Title: "Questions for you",
 		Description: "Ask the person what only they can tell you, and end your turn: 1 to 4 questions, each a choice of 2 to 6 options " +
 			"(your recommended one named, multiple only when several can be true) or, without options, an answer in their words; " +
 			"or a generation's questions, relayed as its agent wrote them. Foundry shows them one at a time; the answers come as the next message. Ask once a turn."},
@@ -168,7 +168,7 @@ func ownQuestions(in []AskQuestionInput) (*model.FoundryAgentAsked, error) {
 			return nil, bad("Question %d offers 2 to %d options, or none for an answer in words.", n, maxAskOptions)
 		}
 		if len(q.Options) > 0 {
-			choice := &agentquestion.Choice{Multiple: q.Multiple, Recommended: strings.TrimSpace(q.Recommended)}
+			choice := &agentquestion.Choice{Multiple: q.Multiple}
 			for _, o := range q.Options {
 				option := agentquestion.Option{Label: strings.TrimSpace(o.Label), Description: strings.TrimSpace(o.Description)}
 				switch {
@@ -181,8 +181,9 @@ func ownQuestions(in []AskQuestionInput) (*model.FoundryAgentAsked, error) {
 				}
 				choice.Options = append(choice.Options, option)
 			}
-			if choice.Recommended != "" && !slices.ContainsFunc(choice.Options, func(o agentquestion.Option) bool { return o.Label == choice.Recommended }) {
-				return nil, bad("Question %d recommends %q, which isn't one of its options' labels.", n, choice.Recommended)
+			question.Recommended = strings.TrimSpace(q.Recommended)
+			if question.Recommended != "" && !slices.ContainsFunc(choice.Options, func(o agentquestion.Option) bool { return o.Label == question.Recommended }) {
+				return nil, bad("Question %d recommends %q, which isn't one of its options' labels.", n, question.Recommended)
 			}
 			question.Choice = choice
 		}

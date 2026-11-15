@@ -63,45 +63,69 @@ type OntologyGeneration struct {
 // OntologyQuestion is a question the agent asked about its draft, as the
 // turn's draft has it (schema/turn_result.json Question): the shape every
 // agent's questions have (agentquestion), and the draft items it is about.
-// Its text, header and options are the model's words and may quote the data.
+// Its text, header, options and recommended answer are the model's words and
+// may quote the data. Its JSON is the agent's, which the store keeps:
+//
+//	{"id": "Q1", "items": ["type.Customer"], "header": "Customers", "text": "...",
+//	 "options": [{"label": "...", "description": "..."}], "multiple": false,
+//	 "default": "...", "blocking": true}
+//
+// default being the recommended answer, and header and default null for none.
 type OntologyQuestion struct {
 	agentquestion.Question
 	// Items are the draft items it is about, such as type.Customer; may be empty.
 	Items []string
 }
 
-// MarshalJSON writes the question's JSON with its "items".
-func (q OntologyQuestion) MarshalJSON() ([]byte, error) {
-	question, err := json.Marshal(q.Question)
-	if err != nil {
-		return nil, err
-	}
-	items := q.Items
-	if items == nil {
-		items = []string{}
-	}
-	listed, err := json.Marshal(items)
-	if err != nil {
-		return nil, err
-	}
-	// The question's object, its closing brace replaced by the items and one of its own.
-	return append(append(question[:len(question)-1], `,"items":`...), append(listed, '}')...), nil
+// ontologyQuestionJSON is a question as the ontology agent writes it.
+type ontologyQuestionJSON struct {
+	ID       string                 `json:"id"`
+	Items    []string               `json:"items"`
+	Header   *string                `json:"header"`
+	Text     string                 `json:"text"`
+	Options  []agentquestion.Option `json:"options"`
+	Multiple bool                   `json:"multiple"`
+	Default  *string                `json:"default"`
+	Blocking bool                   `json:"blocking"`
 }
 
-// UnmarshalJSON reads a question's JSON with its "items", refusing one
+// MarshalJSON writes the question as the agent does.
+func (q OntologyQuestion) MarshalJSON() ([]byte, error) {
+	out := ontologyQuestionJSON{ID: q.ID, Items: q.Items, Text: q.Text, Options: []agentquestion.Option{}, Blocking: q.Blocking}
+	if out.Items == nil {
+		out.Items = []string{}
+	}
+	if q.Header != "" {
+		out.Header = &q.Header
+	}
+	if q.Recommended != "" {
+		out.Default = &q.Recommended
+	}
+	if c := q.Choice; c != nil {
+		out.Options, out.Multiple = c.Options, c.Multiple
+	}
+	return json.Marshal(out)
+}
+
+// UnmarshalJSON reads a question as the agent writes it, refusing one
 // agentquestion refuses.
 func (q *OntologyQuestion) UnmarshalJSON(data []byte) error {
-	var question agentquestion.Question
-	if err := json.Unmarshal(data, &question); err != nil {
+	var in ontologyQuestionJSON
+	if err := json.Unmarshal(data, &in); err != nil {
 		return err
 	}
-	var items struct {
-		Items []string `json:"items"`
+	var header, recommended string
+	if in.Header != nil {
+		header = *in.Header
 	}
-	if err := json.Unmarshal(data, &items); err != nil {
+	if in.Default != nil {
+		recommended = *in.Default
+	}
+	question, err := agentquestion.New(in.ID, header, in.Text, in.Blocking, in.Options, in.Multiple, recommended)
+	if err != nil {
 		return err
 	}
-	*q = OntologyQuestion{Question: question, Items: items.Items}
+	*q = OntologyQuestion{Question: question, Items: in.Items}
 	return nil
 }
 

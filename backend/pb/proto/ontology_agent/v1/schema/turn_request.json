@@ -195,6 +195,7 @@
                 "options": {
                   "description": "The labels of the options the user chose.",
                   "type": "array",
+                  "default": [],
                   "items": {
                     "type": "string"
                   }
@@ -208,14 +209,12 @@
                   "type": [
                     "string",
                     "null"
-                  ],
-                  "default": null
+                  ]
                 }
               },
               "additionalProperties": false,
               "required": [
-                "question_id",
-                "options"
+                "question_id"
               ]
             }
           },

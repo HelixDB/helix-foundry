@@ -29,7 +29,7 @@ func TestOntologyGenerationQuestions(t *testing.T) {
 	questions := []model.OntologyQuestion{
 		{Question: agentquestion.Question{ID: "q1", Text: "Is a customer an account?", Blocking: true}, Items: []string{"type.Customer"}},
 		{Question: agentquestion.Question{ID: "q2", Header: "Renewals", Text: "How often do they renew?", Choice: &agentquestion.Choice{
-			Options: []agentquestion.Option{{Label: "Monthly", Description: "Every month"}, {Label: "Yearly"}}, Multiple: true, Recommended: "Monthly"}},
+			Options: []agentquestion.Option{{Label: "Monthly", Description: "Every month"}, {Label: "Yearly"}}, Multiple: true}, Recommended: "Monthly"},
 			Items: []string{}},
 	}
 	state := json.RawMessage(`{"draft":{"rev":3},"excerpt":"Acme Corp"}`)

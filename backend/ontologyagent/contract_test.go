@@ -27,7 +27,7 @@ func testResult(status string, rev uint64) string {
 			"base_version":null,"items":{},"left_out":[],"acknowledged":[],"lint":[],
 			"questions":[{"id":"q1","items":["type.Customer"],"header":"Customers","text":"Is a customer an account?",
 				"options":[{"label":"An account","description":"One customer per billing account"},{"label":"A person"}],"multiple":false,
-				"recommended":"An account","blocking":false}]}},
+				"default":"An account","blocking":false}]}},
 		"bundle":%s,"summary":"built a draft","usage":{"input":1000,"cache_read":200,"cache_write":300,"output":400,"usd":1.25}}`,
 		status, rev, rev, bundle)
 }

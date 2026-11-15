@@ -564,7 +564,7 @@ func TestSendFoundryAgentAnswers(t *testing.T) {
 			Kind: foundrymodel.FoundryAgentTurnMessage, Input: "Build me an ontology", Status: foundrymodel.FoundryAgentTurnDone,
 			Asked: &foundrymodel.FoundryAgentAsked{Questions: []agentquestion.Question{
 				{ID: "q1", Header: "Ontology", Text: "Which ontology?", Blocking: true,
-					Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "Sales graph"}, {Label: "A new one"}}, Recommended: "Sales graph"}},
+					Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "Sales graph"}, {Label: "A new one"}}}, Recommended: "Sales graph"},
 				{ID: "q2", Text: "What should it answer?", Blocking: true},
 				{ID: "q3", Text: "Which sources?", Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "Stripe"}, {Label: "Documents"}}, Multiple: true}},
 			}}}

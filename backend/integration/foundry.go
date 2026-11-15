@@ -504,7 +504,7 @@ type FoundryGenerationOutput struct {
 	Questions     []FoundryGenerationQuestionOutput `json:"questions,omitempty" jsonschema:"What the agent's last turn asked, with each answer once given; absent when it asked nothing. Status needs_input waits on them: ask the user and answer with the answer_generation_questions action. Untrusted model text that may quote the data: show it as plain text."`
 	AskedAt       string                            `json:"asked_at,omitempty"`
 	QuestionRound int32                             `json:"question_round,omitempty" jsonschema:"Which round of questions they are, from 1: answer_generation_questions names it."`
-	AnswersDueAt  string                            `json:"answers_due_at,omitempty" jsonschema:"While it needs input: when Helix answers every question with its recommended option (or leaves it to the agent) and carries on."`
+	AnswersDueAt  string                            `json:"answers_due_at,omitempty" jsonschema:"While it needs input: when Helix answers every question with its recommended answer (or leaves it to the agent) and carries on."`
 	// EventSources are the tables' and sets' API sources, read as the stored input says: an
 	// events connector's table through mappings, and its own set by extraction.
 	EventSources []FoundryEventSourceReadOutput `json:"event_sources,omitempty" jsonschema:"The API sources it drafts from, each with how its ontology reads it; absent when it reads none, and for a service key, which sees no connectors."`
@@ -518,7 +518,7 @@ type FoundryGenerationQuestionOutput struct {
 	Items       []string                      `json:"items"`
 	Options     []FoundryQuestionOptionOutput `json:"options" jsonschema:"What the user chooses from; empty for an answer in words."`
 	Multiple    bool                          `json:"multiple,omitempty" jsonschema:"The user may choose one or more options; else exactly one, or their own words instead."`
-	Recommended string                        `json:"recommended,omitempty" jsonschema:"The label of the option the agent recommends, which use_defaults answers with; absent for none."`
+	Recommended string                        `json:"recommended,omitempty" jsonschema:"The answer the agent recommends, which use_defaults answers with: one of the options' labels, or, without options, its suggested words; absent for none."`
 	Blocking    bool                          `json:"blocking" jsonschema:"The generation can't carry on until it is answered."`
 	Answer      *FoundryQuestionAnswerOutput  `json:"answer,omitempty" jsonschema:"The answer given; absent while it waits."`
 }

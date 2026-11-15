@@ -11,7 +11,7 @@ import (
 func ExampleCheck() {
 	asked := []Question{
 		{ID: "q1", Text: "Is a customer an account?", Blocking: true,
-			Choice: &Choice{Options: []Option{{Label: "An account"}, {Label: "A person"}}, Recommended: "An account"}},
+			Choice: &Choice{Options: []Option{{Label: "An account"}, {Label: "A person"}}}, Recommended: "An account"},
 		{ID: "q2", Text: "Which sources count as revenue?",
 			Choice: &Choice{Options: []Option{{Label: "Stripe"}, {Label: "Invoices"}}, Multiple: true}},
 		{ID: "q3", Text: "Which currency?"},
@@ -46,8 +46,9 @@ func TestJSON(t *testing.T) {
 		for _, q := range []Question{
 			{ID: "q1", Text: "Which currency?"},
 			{ID: "q2", Header: "Renewals", Text: "How often?", Blocking: true, Choice: &Choice{
-				Options: []Option{{Label: "Monthly", Description: "Every month"}, {Label: "Yearly"}}, Recommended: "Yearly"}},
+				Options: []Option{{Label: "Monthly", Description: "Every month"}, {Label: "Yearly"}}}, Recommended: "Yearly"},
 			{ID: "q3", Text: "Which?", Choice: &Choice{Options: []Option{{Label: "A"}, {Label: "B"}}, Multiple: true}},
+			{ID: "q4", Text: "Which currency?", Recommended: "GBP"},
 		} {
 			raw, err := json.Marshal(q)
 			if err != nil {
@@ -62,7 +63,7 @@ func TestJSON(t *testing.T) {
 
 	t.Run("writes the documented shape", func(t *testing.T) {
 		raw, _ := json.Marshal(Question{ID: "q1", Header: "H", Text: "T", Blocking: true,
-			Choice: &Choice{Options: []Option{{Label: "A", Description: "d"}, {Label: "B"}}, Multiple: true, Recommended: "A"}})
+			Choice: &Choice{Options: []Option{{Label: "A", Description: "d"}, {Label: "B"}}, Multiple: true}, Recommended: "A"})
 		want := `{"id":"q1","header":"H","text":"T","options":[{"label":"A","description":"d"},{"label":"B"}],"multiple":true,"recommended":"A","blocking":true}`
 		if string(raw) != want {
 			t.Errorf("got %s, want %s", raw, want)
@@ -89,7 +90,7 @@ func TestJSON(t *testing.T) {
 			"a label twice":              `{"id":"q","text":"T","options":[{"label":"A"},{"label":"A"}]}`,
 			"a recommendation outside":   `{"id":"q","text":"T","options":[{"label":"A"},{"label":"B"}],"recommended":"C"}`,
 			"multiple without options":   `{"id":"q","text":"T","multiple":true}`,
-			"recommended without one":    `{"id":"q","text":"T","recommended":"A"}`,
+			"long recommended words":     `{"id":"q","text":"T","recommended":"` + strings.Repeat("w", MaxAnswerChars+1) + `"}`,
 			"options that aren't a list": `{"id":"q","text":"T","options":"A"}`,
 		} {
 			var q Question
@@ -103,7 +104,7 @@ func TestJSON(t *testing.T) {
 func TestCheck(t *testing.T) {
 	asked := []Question{
 		{ID: "free", Text: "Which currency?", Blocking: true},
-		{ID: "one", Text: "How often?", Blocking: true, Choice: &Choice{Options: []Option{{Label: "Monthly"}, {Label: "Yearly"}}, Recommended: "Yearly"}},
+		{ID: "one", Text: "How often?", Blocking: true, Choice: &Choice{Options: []Option{{Label: "Monthly"}, {Label: "Yearly"}}}, Recommended: "Yearly"},
 		{ID: "many", Text: "Which?", Choice: &Choice{Options: []Option{{Label: "A"}, {Label: "B"}, {Label: "C"}}, Multiple: true}},
 	}
 	free := Answer{QuestionID: "free", Text: "GBP"}
@@ -174,6 +175,9 @@ func TestCheck(t *testing.T) {
 	t.Run("a default without a recommendation leaves it to the agent", func(t *testing.T) {
 		if got := Default(Question{ID: "q", Text: "T", Choice: one("A", "B")}); got.Text != NoPreference || len(got.Options) != 0 {
 			t.Errorf("Default = %+v", got)
+		}
+		if got := Default(Question{ID: "q", Text: "Which currency?", Recommended: "GBP"}); got.Text != "GBP" || len(got.Options) != 0 {
+			t.Errorf("a free answer's recommended words: Default = %+v", got)
 		}
 	})
 }

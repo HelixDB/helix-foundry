@@ -481,7 +481,7 @@ func asking() *model.OntologyGeneration {
 	return &model.OntologyGeneration{ID: "gen1", OntologyID: ontology, Status: model.OntologyGenerationNeedsInput, Title: &title,
 		Questions: &model.OntologyQuestions{Round: 1, Asked: []model.OntologyQuestion{
 			{Question: agentquestion.Question{ID: "q1", Header: "Customers", Text: "Is a customer the company that pays?", Blocking: true,
-				Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "The company that pays"}, {Label: "Each person"}}, Recommended: "The company that pays"}}},
+				Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "The company that pays"}, {Label: "Each person"}}}, Recommended: "The company that pays"}},
 			{Question: agentquestion.Question{ID: "q2", Text: "How many days before renewal is at risk?", Blocking: true}},
 			{Question: agentquestion.Question{ID: "q3", Text: "Keep <b>cancelled</b> orders?",
 				Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "Active"}, {Label: "Cancelled"}}, Multiple: true}}},

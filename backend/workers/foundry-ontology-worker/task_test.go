@@ -184,7 +184,7 @@ func TestFoundryOntologyWorker(t *testing.T) {
 				Questions: &model.OntologyQuestions{DraftRev: 3, AskedAt: askedAt, Asked: []model.OntologyQuestion{
 					{Question: agentquestion.Question{ID: "q1", Text: "Is a customer an account?", Blocking: true}},
 					{Question: agentquestion.Question{ID: "q2", Text: "How often?", Choice: &agentquestion.Choice{
-						Options: []agentquestion.Option{{Label: "Monthly"}, {Label: "Yearly"}}, Multiple: true, Recommended: "Monthly"}}},
+						Options: []agentquestion.Option{{Label: "Monthly"}, {Label: "Yearly"}}, Multiple: true}, Recommended: "Monthly"}},
 				}}}
 		}
 		q := newQueue()

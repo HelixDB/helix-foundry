@@ -98,7 +98,7 @@ type GenerateDisplay struct {
 // AnswersDisplay is answer_generation_questions's: the generation, by its
 // title, the round of its questions, and each question the answers answer,
 // as the agent asked it (the model's words), with the person's answer; with
-// use_defaults, the rest with their recommended option
+// use_defaults, the rest with their recommended answer
 // (agentquestion.NoPreference for none: the agent decides itself).
 type AnswersDisplay struct {
 	Ontology    Ref             `json:"ontology"`

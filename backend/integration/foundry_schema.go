@@ -63,7 +63,7 @@ var foundryOperationDocs = []foundryOperationDoc{
 			"answers are {question_id, options, text}, each question once: options are the labels of the options the user chose, as the question lists them, and text their own words (1 to 2000 characters). " +
 			"A question without options takes text alone; one of one option (multiple false) one option or text, not both; one with multiple one or more options, with text or without, or text alone. " +
 			"Ask the user, never answer for them: show each question with its options, the recommended one marked, and let them answer in their own words too. " +
-			"Every blocking question needs an answer unless use_defaults, which answers each question left out with its recommended option (or leaves it to the agent); " +
+			"Every blocking question needs an answer unless use_defaults, which answers each question left out with its recommended answer (or leaves it to the agent); " +
 			"questions no one answers take those at the generation's answers_due_at."},
 	{name: "set_current_version", doc: "{version_id, expected_current_version_id}: the current version as you read it, empty when there is none."},
 	{name: "create_load", doc: "{version_id}."},

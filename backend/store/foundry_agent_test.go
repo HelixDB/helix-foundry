@@ -724,7 +724,7 @@ WHERE id=?`
 // questions are what Ada's turn asks her.
 var agentQuestions = &model.FoundryAgentAsked{Questions: []agentquestion.Question{
 	{ID: "q1", Header: "Ontology", Text: "Which ontology?", Blocking: true,
-		Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "Sales graph"}, {Label: "A new one"}}, Recommended: "Sales graph"}},
+		Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "Sales graph"}, {Label: "A new one"}}}, Recommended: "Sales graph"},
 	{ID: "q2", Text: "What should it answer?"},
 }}
 

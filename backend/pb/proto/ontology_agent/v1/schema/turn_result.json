@@ -1005,14 +1005,21 @@
       ]
     },
     "Question": {
-      "description": "A question the agent asked the user: a free answer without `options`, else a choice of 2 or more options, one or (with `multiple`) several, `recommended` naming the option the agent recommends.",
+      "description": "A question the agent asked the user: an answer in the user's words without `options`, else a choice of two or more options, one or (with `multiple`) several. Its `default` is the answer the agent recommends: one of the options' labels, or, without options, its words.",
       "type": "object",
       "properties": {
         "blocking": {
           "type": "boolean"
         },
+        "default": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "header": {
-          "description": "A few words naming the question.",
+          "description": "A few words naming the question, on one line.",
           "type": [
             "string",
             "null"
@@ -1039,14 +1046,6 @@
           "items": {
             "$ref": "#/$defs/QuestionOption"
           }
-        },
-        "recommended": {
-          "description": "The label of the option the agent recommends; only with options.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
         },
         "text": {
           "type": "string"

@@ -5,10 +5,11 @@
 //
 // A question is a free answer (no Choice: the person writes it) or a choice
 // of 2 to MaxOptions options, of which the person picks one, or several when
-// the asking agent made it Multiple, the agent's recommended one, if any,
-// marked; the person may always answer in their own words instead (one) or
-// as well (several). A blocking question needs an answer; one that isn't may
-// be left to the asking agent.
+// the asking agent made it Multiple; the person may always answer in their
+// own words instead (one) or as well (several). The agent may recommend an
+// answer: one of its options, marked, or, for a free answer, its words. A
+// blocking question needs an answer; one that isn't may be left to the
+// asking agent, which then takes its recommended answer.
 //
 // Its JSON, as the store keeps it and the API and the agents read it:
 //
@@ -16,7 +17,8 @@
 //	 "options": [{"label": "An account", "description": "..."}, {"label": "A person"}],
 //	 "multiple": false, "recommended": "An account", "blocking": true}
 //
-// and an answer's {"question_id": "q1", "options": ["An account"], "text": "..."}.
+// (the ontology agent's own JSON names recommended "default":
+// model.OntologyQuestion reads it), and an answer's {"question_id": "q1", "options": ["An account"], "text": "..."}.
 // Every string an agent wrote may quote the data: it is shown as plain text.
 package agentquestion
 
@@ -40,7 +42,7 @@ const (
 )
 
 // NoPreference answers a question left to the agent that recommended no
-// option: the agent decides.
+// answer: the agent decides.
 const NoPreference = "No preference: decide from the data and the goal."
 
 // Option is one answer a question offers: a short label, which an answer
@@ -56,9 +58,6 @@ type Choice struct {
 	Options []Option
 	// Multiple lets the person pick one or more; else exactly one.
 	Multiple bool
-	// Recommended is the label of the option the asking agent recommends,
-	// empty for none.
-	Recommended string
 }
 
 // Question is a question an agent asks the person. Validate holds its
@@ -72,6 +71,10 @@ type Question struct {
 	Blocking bool
 	// Choice is nil for a free answer, which the person writes.
 	Choice *Choice
+	// Recommended is the answer the agent recommends, which the question
+	// takes when left to it: one of Choice's labels, or, for a free answer,
+	// its words; empty for none.
+	Recommended string
 }
 
 // wire is a question's JSON.
@@ -87,44 +90,58 @@ type wire struct {
 
 // MarshalJSON writes the question's JSON (the package's doc).
 func (q Question) MarshalJSON() ([]byte, error) {
-	w := wire{ID: q.ID, Header: q.Header, Text: q.Text, Blocking: q.Blocking}
+	w := wire{ID: q.ID, Header: q.Header, Text: q.Text, Recommended: q.Recommended, Blocking: q.Blocking}
 	if c := q.Choice; c != nil {
-		w.Options, w.Multiple, w.Recommended = c.Options, c.Multiple, c.Recommended
+		w.Options, w.Multiple = c.Options, c.Multiple
 	}
 	return json.Marshal(w)
 }
 
 // UnmarshalJSON reads a question's JSON, refusing one Validate refuses, or
-// multiple or recommended without options.
+// multiple without options.
 func (q *Question) UnmarshalJSON(data []byte) error {
 	var w wire
 	if err := json.Unmarshal(data, &w); err != nil {
 		return err
 	}
-	out := Question{ID: w.ID, Header: w.Header, Text: w.Text, Blocking: w.Blocking}
-	switch {
-	case len(w.Options) > 0:
-		out.Choice = &Choice{Options: w.Options, Multiple: w.Multiple, Recommended: w.Recommended}
-	case w.Multiple || w.Recommended != "":
-		return fmt.Errorf("question %q: multiple and recommended come only with options", w.ID)
-	}
-	if err := out.Validate(); err != nil {
+	out, err := New(w.ID, w.Header, w.Text, w.Blocking, w.Options, w.Multiple, w.Recommended)
+	if err != nil {
 		return err
 	}
 	*q = out
 	return nil
 }
 
+// New is a question from its fields as JSON carries them: a choice when it
+// has options, else a free answer, which can't be multiple; refused as
+// Validate refuses.
+func New(id, header, text string, blocking bool, options []Option, multiple bool, recommended string) (Question, error) {
+	out := Question{ID: id, Header: header, Text: text, Blocking: blocking, Recommended: recommended}
+	switch {
+	case len(options) > 0:
+		out.Choice = &Choice{Options: options, Multiple: multiple}
+	case multiple:
+		return Question{}, fmt.Errorf("question %q: multiple comes only with options", id)
+	}
+	if err := out.Validate(); err != nil {
+		return Question{}, err
+	}
+	return out, nil
+}
+
 // Validate checks the question's invariants: an id of 1 to MaxIDBytes
 // bytes without control characters, text that isn't blank, and, for a
 // choice, 2 to MaxOptions options whose labels aren't blank and differ, the
-// recommended one among them.
+// recommended one among them; for a free answer, recommended words of at
+// most MaxAnswerChars.
 func (q Question) Validate() error {
 	switch {
 	case q.ID == "" || len(q.ID) > MaxIDBytes || !utf8.ValidString(q.ID) || strings.ContainsFunc(q.ID, unicode.IsControl):
 		return fmt.Errorf("a question's id is 1 to %d bytes without control characters", MaxIDBytes)
 	case strings.TrimSpace(q.Text) == "" || !utf8.ValidString(q.Text) || !utf8.ValidString(q.Header):
 		return fmt.Errorf("question %s has no text", q.ID)
+	case !utf8.ValidString(q.Recommended) || utf8.RuneCountInString(q.Recommended) > MaxAnswerChars:
+		return fmt.Errorf("question %s recommends words of more than %d characters", q.ID, MaxAnswerChars)
 	case q.Choice == nil:
 		return nil
 	}
@@ -140,8 +157,8 @@ func (q Question) Validate() error {
 			return fmt.Errorf("question %s offers %q twice", q.ID, o.Label)
 		}
 	}
-	if c.Recommended != "" && !q.offers(c.Recommended) {
-		return fmt.Errorf("question %s recommends %q, which isn't one of its options", q.ID, c.Recommended)
+	if q.Recommended != "" && !q.offers(q.Recommended) {
+		return fmt.Errorf("question %s recommends %q, which isn't one of its options", q.ID, q.Recommended)
 	}
 	return nil
 }
@@ -170,12 +187,15 @@ func (a Answer) MarshalJSON() ([]byte, error) {
 }
 
 // Default is the answer a question left to the agent takes: the option it
-// recommended, else NoPreference.
+// recommended, or its recommended words, else NoPreference.
 func Default(q Question) Answer {
-	if q.Choice != nil && q.Choice.Recommended != "" {
-		return Answer{QuestionID: q.ID, Options: []string{q.Choice.Recommended}}
+	switch {
+	case q.Recommended == "":
+		return Answer{QuestionID: q.ID, Options: []string{}, Text: NoPreference}
+	case q.Choice != nil:
+		return Answer{QuestionID: q.ID, Options: []string{q.Recommended}}
 	}
-	return Answer{QuestionID: q.ID, Options: []string{}, Text: NoPreference}
+	return Answer{QuestionID: q.ID, Options: []string{}, Text: q.Recommended}
 }
 
 // Check checks the person's answers to asked and returns them as the agent

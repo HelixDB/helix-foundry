@@ -54,7 +54,7 @@ func TestOntologyGenerationQuestionRPCs(t *testing.T) {
 			Questions: &foundrymodel.OntologyQuestions{Round: 1, DraftRev: 3, AskedAt: askedAt, Asked: []foundrymodel.OntologyQuestion{
 				{Question: agentquestion.Question{ID: "q1", Text: "Is a customer an account? <b>bold</b>", Blocking: true}, Items: []string{"type.Customer"}},
 				{Question: agentquestion.Question{ID: "q2", Header: "Renewals", Text: "How often do they renew?", Choice: &agentquestion.Choice{
-					Options: []agentquestion.Option{{Label: "Monthly", Description: "Every month"}, {Label: "Yearly"}}, Recommended: "Monthly"}}},
+					Options: []agentquestion.Option{{Label: "Monthly", Description: "Every month"}, {Label: "Yearly"}}}, Recommended: "Monthly"}},
 			}},
 		})
 		return s, store

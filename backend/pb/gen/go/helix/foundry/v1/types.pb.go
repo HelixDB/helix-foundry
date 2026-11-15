@@ -5062,9 +5062,10 @@ func (x *OntologyVersion) GetDocumentSetIds() []string {
 // (FoundryAgentAsked). With no options it takes an answer in words; with
 // options (2 to 20, labels unique) the person picks one, or one or more when
 // multiple, and may always answer in their own words instead (one) or as
-// well (multiple). Its header, text and options are the agent's words and
-// may quote the data: show them as plain text, never as markup. The site
-// shows such questions one at a time, the recommended option first.
+// well (multiple). Its header, text, options and recommended answer are the
+// agent's words and may quote the data: show them as plain text, never as
+// markup. The site shows such questions one at a time, the recommended
+// option first.
 type AgentQuestion struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -5078,11 +5079,12 @@ type AgentQuestion struct {
 	Options []*AgentQuestionOption `protobuf:"bytes,4,rep,name=options,proto3" json:"options,omitempty"`
 	// Whether the person may pick several options; false without options.
 	Multiple bool `protobuf:"varint,5,opt,name=multiple,proto3" json:"multiple,omitempty"`
-	// The label of the option the agent recommends; empty for none, and
-	// without options.
+	// The answer the agent recommends, which a question left to it takes: the
+	// label of one of its options (shown first, marked), or, without options,
+	// the words it suggests; empty for none.
 	Recommended string `protobuf:"bytes,6,opt,name=recommended,proto3" json:"recommended,omitempty"`
 	// A blocking question needs an answer; another may be left to the agent
-	// (its recommended option, or the agent decides).
+	// (its recommended answer, or the agent decides).
 	Blocking bool `protobuf:"varint,7,opt,name=blocking,proto3" json:"blocking,omitempty"`
 }
 
@@ -5298,7 +5300,8 @@ type OntologyGenerationQuestion struct {
 	Text     string                 `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`
 	Options  []*AgentQuestionOption `protobuf:"bytes,4,rep,name=options,proto3" json:"options,omitempty"`
 	Multiple bool                   `protobuf:"varint,5,opt,name=multiple,proto3" json:"multiple,omitempty"`
-	// use_defaults answers with it; a question without one is left to the agent.
+	// As AgentQuestion's: the ontology agent's default, which use_defaults
+	// answers with; a question without one is left to the agent.
 	Recommended string `protobuf:"bytes,6,opt,name=recommended,proto3" json:"recommended,omitempty"`
 	// The generation can't carry on until a blocking question is answered;
 	// another may be left for the agent to decide.
@@ -5306,7 +5309,7 @@ type OntologyGenerationQuestion struct {
 	// The draft items it is about, such as type.Customer; may be empty.
 	Items []string `protobuf:"bytes,8,rep,name=items,proto3" json:"items,omitempty"`
 	// The answer it was given, once answered; unset while it waits. One the
-	// agent was left to decide, with no recommended option, is the text
+	// agent was left to decide, with no recommended answer, is the text
 	// "No preference: decide from the data and the goal."
 	Answer *AgentQuestionAnswer `protobuf:"bytes,9,opt,name=answer,proto3" json:"answer,omitempty"`
 }
