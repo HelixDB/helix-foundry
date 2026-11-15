@@ -6,7 +6,9 @@
 import type {
   FoundryPrincipal,
   FoundryWorkflowAccess,
+  FoundryWorkflowAutomation,
   FoundryWorkflowInsightDay,
+  FoundryWorkflowInsightSegment,
   FoundryWorkflowInsightFunnel,
   FoundryWorkflowInsightTotals,
   FoundryWorkflowRun,
@@ -739,6 +741,60 @@ export const starterOf = (r: FoundryWorkflowRun): FoundryPrincipal =>
 export const principalKey = (p?: FoundryPrincipal) =>
   p?.kind && p.id ? `${p.kind}:${p.id}` : "";
 
+/**
+ * Who started runs, as insights count them: a principal by the runs it
+ * started itself, or an automation by the runs Foundry started for it (its
+ * owner's), which its workflow holds.
+ */
+export type Starter =
+  | { principal: FoundryPrincipal }
+  | { automation: FoundryWorkflowAutomation; workflowId: string };
+
+/** The starter an insights segment of who started runs counts; undefined for none. */
+export function segmentStarter(
+  seg: FoundryWorkflowInsightSegment,
+): Starter | undefined {
+  if (seg.automation && seg.workflowId)
+    return { automation: seg.automation, workflowId: seg.workflowId };
+  return seg.principal?.id ? { principal: seg.principal } : undefined;
+}
+
+/** A starter as one string, for a choice's value; "" for none. */
+export const starterKey = (s?: Starter) =>
+  !s
+    ? ""
+    : "automation" in s
+      ? `automation:${s.automation.automationId}`
+      : principalKey(s.principal);
+
+/**
+ * An automation as the pages name it among who started runs.
+ *
+ *   automationLabel({ automationId: "a", name: "Weekly digest", deleted: true })
+ *   // "Automation: Weekly digest (deleted)"
+ */
+export const automationLabel = (a: FoundryWorkflowAutomation) =>
+  `Automation: ${a.name || "unnamed"}${a.deleted ? " (deleted)" : ""}`;
+
+/** A starter as the pages name it: an automation, else as starterLabel names a principal. */
+export const starterText = (
+  s: Starter | undefined,
+  names: ReadonlyMap<string, string>,
+  me: string,
+) =>
+  s && "automation" in s
+    ? automationLabel(s.automation)
+    : starterLabel(s?.principal, names, me);
+
+/** Who started a run of a workflow: its automation, for an automation's workflow, else its principal. */
+export const runStarter = (
+  r: FoundryWorkflowRun,
+  automation?: FoundryWorkflowAutomation | null,
+): Starter =>
+  r.automationRunId && automation
+    ? { automation, workflowId: r.workflowId || "" }
+    : { principal: starterOf(r) };
+
 // ---------------------------------------------------------------- runs list
 
 /** How a workflow's runs list narrows by what their assessments found. */
@@ -791,7 +847,7 @@ export const issueKey = (text: string) =>
 /** What narrows a workflow's runs list: the window, who, the filter, a gap or suggestion. */
 export type RunQuery = {
   from: number;
-  who?: FoundryPrincipal;
+  who?: Starter;
   filter: RunFilter;
   // issueKey of a gap or suggestion the run's assessment names.
   issue?: string;
@@ -800,7 +856,16 @@ export type RunQuery = {
 /** Whether a run is one the list shows. */
 export function runShown(r: FoundryWorkflowRun, q: RunQuery): boolean {
   if (!r.startedAt || Date.parse(r.startedAt) < q.from) return false;
-  if (q.who && principalKey(starterOf(r)) !== principalKey(q.who)) return false;
+  // A principal counts what it started itself; an automation, the runs
+  // Foundry started for it.
+  if (q.who) {
+    const mine =
+      "automation" in q.who
+        ? !!r.automationRunId && r.workflowId === q.who.workflowId
+        : !r.automationRunId &&
+          principalKey(starterOf(r)) === principalKey(q.who.principal);
+    if (!mine) return false;
+  }
   if (q.filter !== "all" && runBucket(r) !== q.filter) return false;
   if (!q.issue) return true;
   const a = assessmentOf(r.assessment?.assessmentJson);

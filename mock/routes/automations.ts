@@ -57,6 +57,17 @@ import { documentSets, documentsArrived } from "./documents";
 import { loadsEnded, queueLoad } from "./loads";
 import { ontologyById } from "./ontologies";
 import { currentVersionOf, draftsEnded } from "./ontology";
+import {
+  automationDeleted,
+  automationOntologies,
+  automationRunOntologies,
+  automationWorkflow,
+  finishAutomationRuns,
+  record,
+  renameAutomationWorkflows,
+  useOntology,
+  type AutomationRef,
+} from "./workflows";
 import { manages } from "./workspaces";
 
 // Automations, as the backend's API, store and foundry-automation-worker
@@ -89,7 +100,12 @@ import { manages } from "./workspaces";
 // runs a day (`automationRunsPerDay`). `automationClockMs` moves the
 // worker's clock this far ahead, so a test fires a schedule without
 // waiting; `automationsDisabled` refuses every route as a stamp with
-// automations off does.
+// automations off does. A run's uses of ontologies are recorded as the
+// backend records them (./workflows.ts "automations' workflows"): an
+// Assistant step's reads of one, a load of one or a publish of a dashboard
+// reading one start the run of the automation's workflow of it, finished
+// with the run's answer when it ends; approving steps that name one makes
+// its workflow.
 
 type Knobs = {
   automationClockMs?: number;
@@ -342,6 +358,7 @@ function automationOut(
     canResume: owner && a.status === "paused",
     canRun: owner && a.status !== "needs_approval" && !(last && live(last)),
     canDelete: owner || c.manager,
+    ontologies: automationOntologies(a.id, withSpec),
   };
 }
 
@@ -383,6 +400,7 @@ function runOut(
       })),
     }),
     canCancel: live(r) && detail,
+    ...(withSteps && { ontologies: automationRunOntologies(r.id) }),
   };
 }
 
@@ -690,6 +708,7 @@ function runAction(r: StoredRun, nodeId: string, a: AutomationAction) {
         : failed(message(reply));
     }
     case "create_load": {
+      uses(r, [a.ontology_id]);
       const o = ontologyById(a.ontology_id);
       if (!o || o.workspaceId !== r.workspaceId)
         return failed("Its ontology is gone.");
@@ -719,6 +738,7 @@ function runAction(r: StoredRun, nodeId: string, a: AutomationAction) {
         return failed(
           "Its dashboard was changed since it was published: publish it again on its page to put the change at its link.",
         );
+      uses(r, d.ontologyIds);
       const reply = dashboardRoute(
         "POST",
         "/{id}:publish",
@@ -728,6 +748,110 @@ function runAction(r: StoredRun, nodeId: string, a: AutomationAction) {
         : failed(message(reply));
     }
   }
+}
+
+/** The automation, as its workflows name it. */
+const refOf = (a: StoredAutomation): AutomationRef => ({
+  workspaceId: a.workspaceId,
+  automationId: a.id,
+  name: a.name,
+  ownerUserId: a.ownerUserId,
+});
+
+/**
+ * Records the run's uses of ontologies: the open workflow run of each, or
+ * undefined where it goes untracked.
+ */
+function uses(r: StoredRun, ontologyIds: string[]) {
+  const a = state.automations.find((x) => x.id === r.automationId);
+  return ontologyIds.map((ontologyId) =>
+    a
+      ? useOntology(refOf(a), r.id, ontologyId, () => requestOf(a, r))
+      : undefined,
+  );
+}
+
+/** Makes the workflows of the ontologies its steps name, once approved. */
+function track(a: StoredAutomation) {
+  const named = new Set<string>();
+  for (const n of a.spec.nodes) {
+    const actions =
+      n.kind === "action"
+        ? [n.config]
+        : n.kind === "assistant"
+          ? n.config.allow || []
+          : [];
+    for (const x of actions) {
+      if (x.operation === "create_load") named.add(x.ontology_id);
+      if (x.operation === "publish_dashboard") {
+        const d = storedDashboard(a.workspaceId, x.dashboard_id);
+        for (const o of d?.ontologyIds ?? []) named.add(o);
+      }
+    }
+  }
+  for (const o of named) automationWorkflow(refOf(a), o);
+}
+
+/** A run in words, as its workflow runs' request (the backend's automation.Request). */
+function requestOf(a: StoredAutomation, r: StoredRun): string {
+  const name = (what: string, idOf: string, n?: string) =>
+    n ? `the ${what} "${n}"` : `the ${what} ${idOf}`;
+  const action = (x: AutomationAction) =>
+    x.operation === "sync_connector"
+      ? `sync ${name("connector", x.connector_id, storedConnector(x.connector_id)?.name)}`
+      : x.operation === "create_load"
+        ? `load the current version of ${name("ontology", x.ontology_id, ontologyById(x.ontology_id)?.name)}`
+        : `publish ${name("dashboard", x.dashboard_id, storedDashboard(a.workspaceId, x.dashboard_id)?.name)} again at its link`;
+  const read = parseSpec(canonicalJson(r.spec));
+  const order = read.ok ? read.order : r.spec.nodes.map((n) => n.id);
+  const fired = r.nodes.find((n) => n.nodeId === order[0])?.output?.summary;
+  const lines = [
+    `The automation "${a.name}" ran.${fired ? ` ${fired}` : ""}`,
+    "Its steps, in order:",
+  ];
+  let step = 0;
+  for (const nodeId of order) {
+    const n = r.spec.nodes.find((x) => x.id === nodeId);
+    if (!n || n.kind === "trigger") continue;
+    step += 1;
+    const text =
+      n.kind === "assistant"
+        ? `Assistant step "${n.id}": ${n.config.instruction}${n.config.allow?.length ? ` (It may ${n.config.allow.map(action).join("; ")} unasked.)` : ""}`
+        : n.kind === "action"
+          ? `Action step "${n.id}": ${action(n.config)}.`
+          : n.kind === "condition"
+            ? `Condition "${n.id}": go on one way if ${n.config.check === "answer" ? `the step before answered ${n.config.equals}` : `the step before counted ${{ at_least: "at least", at_most: "at most", equals: "exactly" }[n.config.op]} ${n.config.value}`}, the other way if not.`
+            : `Notify step "${n.id}": email its owner${n.config.message ? ` "${n.config.message}"` : ""}, with what the Assistant steps before it said.`;
+    lines.push(`${step}. ${text}`);
+  }
+  return lines.join("\n");
+}
+
+/** What a run found, in words, as its workflow runs' answer (the worker's runState.answer). */
+function answerOf(r: StoredRun, status: "succeeded" | "failed", error: string) {
+  const read = parseSpec(canonicalJson(r.spec));
+  const order = read.ok ? read.order : [];
+  const lines = [
+    status === "succeeded" ? "The run succeeded." : `The run failed: ${error}`,
+  ];
+  if (!order.length) return lines[0]!;
+  lines.push("What its steps found:");
+  for (const nodeId of order.slice(1)) {
+    const n = stateOf(r, nodeId),
+      kind = r.spec.nodes.find((x) => x.id === nodeId)?.kind;
+    if (!n) continue;
+    const summary = n.output?.summary || n.error;
+    lines.push(
+      `- The ${kind} step "${nodeId}" ${n.status}${summary ? `: ${summary}` : ""}` +
+        (n.output?.answer !== undefined
+          ? ` (It answered ${n.output.answer ? "yes" : "no"}.)`
+          : "") +
+        (n.output?.count !== undefined && kind === "assistant"
+          ? ` (It counted ${n.output.count}.)`
+          : ""),
+    );
+  }
+  return lines.join("\n");
 }
 
 /** Walks a live run as far as its clock allows (Task.advance). */
@@ -826,6 +950,10 @@ function advance(r: StoredRun) {
           title: a.name,
           instruction: node.config.instruction,
           allow: node.config.allow || [],
+          use: (ontologyId) => {
+            const run = uses(r, [ontologyId])[0];
+            return run && ((call) => record(run, call));
+          },
         });
         r.threadId = queued.threadId;
         r.nodes.push({
@@ -897,6 +1025,7 @@ function finish(
   lostAccess = false,
 ) {
   Object.assign(r, { status, error, finishedAt: now() });
+  finishAutomationRuns(r.id, answerOf(r, status, error), true);
   if (status === "succeeded") {
     Object.assign(a, { failures: 0, backoffUntil: null });
     return;
@@ -949,7 +1078,8 @@ function activate(a: StoredAutomation, approved: boolean) {
 }
 
 /** Cancels a run's live steps and the Assistant turn it waits on. */
-function cancelRun(r: StoredRun, why: string) {
+function cancelRun(r: StoredRun, why: string, answer: string) {
+  finishAutomationRuns(r.id, answer, false);
   cancelAutomationTurns(r.nodes.map((n) => n.turnId).filter(Boolean));
   for (const n of r.nodes)
     if (n.status === "running")
@@ -1294,6 +1424,7 @@ export const automationRoutes: MockRoute[] = [
       const refusal = owned(ws, a, c, body.expectedRevision);
       if (refusal) return refusal;
       Object.assign(a, named);
+      renameAutomationWorkflows(a.id, a.name);
       a.revision += 1;
       if (has("specJson") && canonicalJson(spec) !== canonicalJson(a.spec)) {
         const layoutOnly = sameSteps(a.spec, spec);
@@ -1330,9 +1461,15 @@ export const automationRoutes: MockRoute[] = [
           "only its owner, or an owner or admin, deletes an automation",
         );
       for (const r of state.runs)
-        if (r.automationId === a.id && live(r)) cancelRun(r, "Deleted.");
+        if (r.automationId === a.id && live(r))
+          cancelRun(
+            r,
+            "Deleted.",
+            "The automation was deleted before its run finished.",
+          );
       state.runs = state.runs.filter((r) => r.automationId !== a.id);
       state.automations = state.automations.filter((x) => x !== a);
+      automationDeleted(a.id);
       return ok({});
     },
   },
@@ -1359,6 +1496,7 @@ export const automationRoutes: MockRoute[] = [
         return reply(a, c);
       a.revision += 1;
       activate(a, true);
+      track(a);
       return reply(a, c);
     },
   },
@@ -1527,7 +1665,11 @@ export const automationRoutes: MockRoute[] = [
             "FOUNDRY_AUTOMATION_RUN_ENDED",
             `the run already ended: it ${r.status}`,
           );
-        cancelRun(r, "Cancelled by a person.");
+        cancelRun(
+          r,
+          "Cancelled by a person.",
+          "A person cancelled the automation's run before it finished.",
+        );
       }
       return ok({ run: runOut(r, a, c, true) } satisfies AutomationRunResponse);
     },

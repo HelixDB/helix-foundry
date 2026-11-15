@@ -3,7 +3,10 @@ import type {
   FinishFoundryWorkflowRunRequest,
   FoundryWorkflow,
   FoundryWorkflowAccess,
+  FoundryAutomationOntology,
+  FoundryAutomationRunOntology,
   FoundryWorkflowAssessment,
+  FoundryWorkflowAutomation,
   FoundryWorkflowResponse,
   FoundryWorkflowRun,
   FoundryWorkflowRunResponse,
@@ -23,9 +26,10 @@ import {
   type MockRoute,
 } from "../http";
 import { config, onReset } from "../state";
+import { foundryPrecondition } from "./ai";
 import { workflowDemo } from "../fixtures/workflow-demo";
 import { WORKFLOWS_OFF, workflowsOn } from "./access";
-import { isScope, ontologyOf } from "./ontologies";
+import { isScope, ontologyById, ontologyOf } from "./ontologies";
 import { insights, starterOf } from "./workflow-insights";
 
 // Workflows, as the backend serves them (api/workflows.go): an agent's task
@@ -67,6 +71,9 @@ type StoredWorkflow = FoundryWorkflow & {
   ontologyId: string;
   clientToken: string;
   createdAt: string;
+  // An automation's workflow: the automation, and whether it was deleted.
+  automationId?: string;
+  automationDeleted?: boolean;
 };
 type StoredRun = FoundryWorkflowRun & {
   // Who started it: a user, or an agent's key.
@@ -80,6 +87,8 @@ type StoredRun = FoundryWorkflowRun & {
   accesses: (FoundryWorkflowAccess & { dedupe?: string })[];
   // Its assessment once it finished, and when a live one ends.
   assessment?: FoundryWorkflowAssessment & { startsAt: number; endsAt: number };
+  // The automation's run it records, for a run Foundry started.
+  automationRunId?: string;
 };
 
 // Knobs, through POST /__mock/config: `assessEnabled: false` (the
@@ -112,11 +121,14 @@ const state = {
   workflows: [] as StoredWorkflow[],
   runs: [] as StoredRun[],
   demo: false,
+  // Each automation's ontologies its runs went untracked on, by when.
+  untracked: new Map<string, Map<string, string>>(),
 };
 onReset(() => {
   state.workflows = [];
   state.runs = [];
   state.demo = false;
+  state.untracked = new Map();
 });
 
 const bytes = (s: string) => new TextEncoder().encode(s).length;
@@ -377,8 +389,16 @@ function toWorkflow(w: StoredWorkflow, by?: string): FoundryWorkflow {
     finishedRuns: String(runs.filter((r) => r.status === "finished").length),
     ...(last && { lastRunAt: last }),
     ...(verdicts.length && { verdicts }),
+    ...(w.automationId && { automation: automationOf(w) }),
   };
 }
+
+/** The automation a workflow Foundry made records the runs of. */
+const automationOf = (w: StoredWorkflow): FoundryWorkflowAutomation => ({
+  automationId: w.automationId!,
+  name: w.name,
+  deleted: !!w.automationDeleted,
+});
 
 function toRun(r: StoredRun): FoundryWorkflowRun {
   settle(r);
@@ -410,6 +430,7 @@ function toRun(r: StoredRun): FoundryWorkflowRun {
       resultsOmitted: r.accesses.filter((a) => a.read?.resultOmitted).length,
     },
     ...(assessment && { assessment }),
+    ...(r.automationRunId && { automationRunId: r.automationRunId }),
   };
 }
 
@@ -480,8 +501,18 @@ export function openRun(
   ontologyId: string | undefined,
   runId: string,
   grantee?: MockGrantee,
+  userId?: string,
 ): StoredRun | MockReply {
-  if (grantee && !workflowsOn(workspaceId, grantee.principal.split(":")[1]!))
+  // Foundry's record of an automation's run takes its owner's calls alone
+  // (its Assistant steps'), whatever their Workflows permission.
+  const automated = state.runs.find((x) => x.id === runId && x.automationRunId);
+  if (automated && automated.startedByUserId !== userId)
+    return fail("NOT_FOUND", "workflow run not found");
+  if (
+    !automated &&
+    grantee &&
+    !workflowsOn(workspaceId, grantee.principal.split(":")[1]!)
+  )
     return fail("PERMISSION_DENIED", WORKFLOWS_OFF);
   const by =
     grantee && (!grantee.load || grantee.load.partial)
@@ -558,11 +589,248 @@ export async function tracked(
   const runId = (req.body as { workflowRunId?: unknown } | undefined)
     ?.workflowRunId;
   if (typeof runId !== "string" || !runId) return handle();
-  const run = openRun(req.params.workspaceId!, ontologyId, runId, req.grantee);
+  const run = openRun(
+    req.params.workspaceId!,
+    ontologyId,
+    runId,
+    req.grantee,
+    req.principal.user.id,
+  );
   if (isReplyOf(run)) return run;
   const reply = await handle();
   if (reply.status === 200) record(run, call(reply.body));
   return reply;
+}
+
+// ---------------------------------------------------------------- automations' workflows
+
+// Foundry's own workflows, as the backend keeps them (store/
+// foundry_automation_workflows.go): one of each ontology an automation uses,
+// made at the first run that uses it or when its owner approves steps that
+// name it, named after it, its owner's; each run of the automation that uses
+// the ontology starts one run of it (its request the run in words), which
+// the automation run's end finishes with what it found, assessed (a
+// cancelled run, or one its deletion ended, unassessed). An ontology with
+// 100 workflows leaves the automation's runs there untracked. Only Foundry
+// starts and finishes those runs; the workflow is deleted only once its
+// automation is, and stays as history.
+
+/** The automation an automations.ts caller speaks for. */
+export type AutomationRef = {
+  workspaceId: string;
+  automationId: string;
+  name: string;
+  ownerUserId: string;
+};
+
+const automationWorkflowName = (name: string) =>
+  [...name].length > WORKFLOW_CAPS.name
+    ? [...name].slice(0, WORKFLOW_CAPS.name - 1).join("") + "…"
+    : name;
+
+/**
+ * The automation's workflow of the ontology, made if it has none: undefined
+ * when the ontology isn't a live one of the workspace, "full" when it holds
+ * as many workflows as it may (recorded as why the automation goes
+ * untracked there).
+ */
+export function automationWorkflow(
+  a: AutomationRef,
+  ontologyId: string,
+): StoredWorkflow | "full" | undefined {
+  ensureDemo();
+  const o = ontologyById(ontologyId);
+  if (!o || o.deletedAt || o.workspaceId !== a.workspaceId) return undefined;
+  const found = state.workflows.find(
+    (w) => w.ontologyId === ontologyId && w.automationId === a.automationId,
+  );
+  if (found) return found;
+  if (
+    state.workflows.filter((w) => w.ontologyId === ontologyId).length >=
+    WORKFLOW_CAPS.workflows
+  ) {
+    const was = state.untracked.get(a.automationId) ?? new Map();
+    was.set(ontologyId, now());
+    state.untracked.set(a.automationId, was);
+    return "full";
+  }
+  const w: StoredWorkflow = {
+    id: id("wf"),
+    workspaceId: a.workspaceId,
+    ontologyId,
+    name: automationWorkflowName(a.name),
+    description:
+      "Foundry records here each run of its automation that uses this ontology: what the run read of it and what the run found, so each run's assessment says how much the ontology helped.",
+    clientToken: `automation:${a.automationId}`,
+    createdByUserId: a.ownerUserId,
+    createdAt: now(),
+    automationId: a.automationId,
+  };
+  state.workflows.push(w);
+  state.untracked.get(a.automationId)?.delete(ontologyId);
+  return w;
+}
+
+/**
+ * The open run that records the automation run's use of the ontology,
+ * started at its first (`input` the run in words): undefined when it goes
+ * untracked.
+ */
+export function useOntology(
+  a: AutomationRef,
+  automationRunId: string,
+  ontologyId: string,
+  input: () => string,
+): StoredRun | undefined {
+  const w = automationWorkflow(a, ontologyId);
+  if (!w || w === "full") return undefined;
+  const found = state.runs.find(
+    (r) => r.workflowId === w.id && r.automationRunId === automationRunId,
+  );
+  if (found) return found.status === "open" ? found : undefined;
+  const r: StoredRun = {
+    id: id("wfr"),
+    workflowId: w.id,
+    workspaceId: a.workspaceId,
+    ontologyId,
+    clientToken: automationRunId,
+    status: "open",
+    input: input().slice(0, WORKFLOW_CAPS.input),
+    startedByUserId: a.ownerUserId,
+    startedAt: now(),
+    resultBytes: 0,
+    accesses: [],
+    automationRunId,
+  };
+  state.runs.push(r);
+  return r;
+}
+
+/** Finishes the open runs an automation's run started, with its answer. */
+export function finishAutomationRuns(
+  automationRunId: string,
+  output: string,
+  assess: boolean,
+) {
+  for (const r of state.runs)
+    if (r.automationRunId === automationRunId && r.status === "open") {
+      Object.assign(r, { status: "finished", output, finishedAt: now() });
+      if (assess && knobs.assessEnabled !== false) queueAssessment(r);
+    }
+}
+
+/** Keeps an automation's workflows named after it. */
+export function renameAutomationWorkflows(automationId: string, name: string) {
+  for (const w of state.workflows)
+    if (w.automationId === automationId) w.name = automationWorkflowName(name);
+}
+
+/** An automation was deleted: its workflows stay, as history. */
+export function automationDeleted(automationId: string) {
+  for (const w of state.workflows)
+    if (w.automationId === automationId) w.automationDeleted = true;
+  state.untracked.delete(automationId);
+}
+
+const VERDICT_ORDER = [
+  "essential",
+  "helpful",
+  "marginal",
+  "unused",
+  "misleading",
+];
+
+/**
+ * The ontologies an automation's runs use, by name: each tracked one with
+ * its workflow's runs and verdicts (and, `withGaps`, the gaps its newest
+ * assessed run named, at most 5), each untracked one with why.
+ */
+export function automationOntologies(
+  automationId: string,
+  withGaps: boolean,
+): FoundryAutomationOntology[] {
+  const live = (ontologyId: string) => {
+    const o = ontologyById(ontologyId);
+    return o && !o.deletedAt ? o : undefined;
+  };
+  const out: FoundryAutomationOntology[] = [];
+  for (const w of state.workflows) {
+    const o = w.automationId === automationId && live(w.ontologyId);
+    if (!o) continue;
+    const shown = toWorkflow(w);
+    const newest = state.runs
+      .filter((r) => r.workflowId === w.id && r.assessment?.status === "done")
+      .sort((x, y) =>
+        (y.assessment?.finishedAt || "").localeCompare(
+          x.assessment?.finishedAt || "",
+        ),
+      )[0];
+    const gaps = withGaps
+      ? (
+          (
+            JSON.parse(newest?.assessment?.assessmentJson || "{}") as {
+              gaps?: { what?: unknown }[];
+            }
+          ).gaps || []
+        )
+          .map((g) => (typeof g.what === "string" ? g.what.trim() : ""))
+          .filter(Boolean)
+          .slice(0, 5)
+      : [];
+    out.push({
+      ontologyId: o.id,
+      ontologyName: o.name,
+      workflowId: w.id,
+      runs: shown.runs,
+      finishedRuns: shown.finishedRuns,
+      ...(shown.lastRunAt && { lastRunAt: shown.lastRunAt }),
+      ...(shown.verdicts && {
+        verdicts: [...shown.verdicts].sort(
+          (x, y) =>
+            VERDICT_ORDER.indexOf(x.verdict) - VERDICT_ORDER.indexOf(y.verdict),
+        ),
+      }),
+      ...(gaps.length && { gaps }),
+    });
+  }
+  for (const [ontologyId, at] of state.untracked.get(automationId) ?? []) {
+    const o = live(ontologyId);
+    if (o)
+      out.push({
+        ontologyId,
+        ontologyName: o.name,
+        untracked: "workflows_full",
+        untrackedAt: at,
+      });
+  }
+  return out.sort((x, y) =>
+    (x.ontologyName || "").localeCompare(y.ontologyName || ""),
+  );
+}
+
+/** The ontologies an automation's run used, by name, with their verdicts. */
+export function automationRunOntologies(
+  automationRunId: string,
+): FoundryAutomationRunOntology[] {
+  return state.runs
+    .filter((r) => r.automationRunId === automationRunId)
+    .flatMap((r) => {
+      const o = ontologyById(r.ontologyId);
+      if (!o || o.deletedAt) return [];
+      settle(r);
+      return [
+        {
+          ontologyId: o.id,
+          ontologyName: o.name,
+          workflowId: r.workflowId,
+          workflowRunId: r.id,
+          status: r.status,
+          ...(r.assessment && { assessmentStatus: r.assessment.status }),
+          ...(r.assessment?.verdict && { verdict: r.assessment.verdict }),
+        },
+      ];
+    })
+    .sort((x, y) => (x.ontologyName || "").localeCompare(y.ontologyName || ""));
 }
 
 export const workflowRoutes: MockRoute[] = [
@@ -637,15 +905,26 @@ export const workflowRoutes: MockRoute[] = [
         return fail("INVALID_ARGUMENT", "days is 1 to 90");
       const kind = req.query.get("startedBy.kind"),
         who = req.query.get("startedBy.id");
-      const by = own(req) || (kind && who ? `${kind}:${who}` : undefined);
+      // A starter the request names counts what it started itself: an
+      // automation's runs are the automation's.
+      const asked = kind && who ? `${kind}:${who}` : undefined;
+      const by = own(req) || asked;
       const runs = state.runs
         .filter(
           (r) =>
             r.ontologyId === s.o.id &&
             (!workflowId || r.workflowId === workflowId) &&
-            startedBy(r, by),
+            startedBy(r, by) &&
+            !(asked && !own(req) && r.automationRunId),
         )
-        .map((r) => ({ ...toRun(r), startedAt: r.startedAt }));
+        .map((r) => {
+          const w = state.workflows.find((x) => x.id === r.workflowId);
+          return {
+            ...toRun(r),
+            startedAt: r.startedAt,
+            ...(w?.automationId && { automation: automationOf(w) }),
+          };
+        });
       return ok(
         insights(runs, { days: days || 30, now: new Date(), workflowId }),
       );
@@ -687,6 +966,12 @@ export const workflowRoutes: MockRoute[] = [
       if (!isScope(s)) return s;
       const w = workflowOf(s.o.id, req.params.id);
       if (isReplyOf(w)) return w;
+      if (w.automationId && !w.automationDeleted)
+        return foundryPrecondition(
+          s.m.workspaceId,
+          "FOUNDRY_WORKFLOW_OF_AUTOMATION",
+          "this workflow records an automation's runs: it goes only once the automation is deleted, and stays as history after",
+        );
       state.workflows = state.workflows.filter((x) => x !== w);
       state.runs = state.runs.filter((r) => r.workflowId !== w.id);
       return ok({});
@@ -703,6 +988,12 @@ export const workflowRoutes: MockRoute[] = [
       if (typeof input === "object") return input;
       const w = workflowOf(s.o.id, req.params.workflowId);
       if (isReplyOf(w)) return w;
+      if (w.automationId)
+        return foundryPrecondition(
+          s.m.workspaceId,
+          "FOUNDRY_WORKFLOW_OF_AUTOMATION",
+          "this workflow records an automation's runs, which Foundry starts as the automation runs",
+        );
       const clientToken = body.clientToken || id("wfrt");
       const again = state.runs.find(
         (r) => r.workflowId === w.id && r.clientToken === clientToken,
@@ -792,6 +1083,12 @@ export const workflowRoutes: MockRoute[] = [
         );
       const r = runOf(s.o.id, req.params.workflowId, req.params.id, own(req));
       if (isReplyOf(r)) return r;
+      if (r.automationRunId)
+        return foundryPrecondition(
+          s.m.workspaceId,
+          "FOUNDRY_WORKFLOW_OF_AUTOMATION",
+          "this run records an automation's run, which Foundry finishes when that run ends",
+        );
       if (r.status === "finished") {
         return r.output === output && (input === undefined || input === r.input)
           ? ok({ run: toRun(r) } satisfies FoundryWorkflowRunResponse)

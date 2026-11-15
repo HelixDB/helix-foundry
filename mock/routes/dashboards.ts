@@ -980,6 +980,8 @@ export function storedDashboard(workspaceId: string, id: string) {
         published: !!d.share,
         // The revision at its public link, while published.
         publishedRevision: d.share?.specRevision,
+        // The ontologies its tiles read, each once.
+        ontologyIds: [...new Set(d.spec.tiles.map((t) => t.ontology_id))],
       }
     : undefined;
 }

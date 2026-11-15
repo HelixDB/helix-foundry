@@ -629,3 +629,23 @@ button.wf-card:hover {
     justify-content: flex-start;
   }
 }
+
+/* A workflow Foundry made for an automation: where it comes from, linking
+   back (MadeBy). */
+.wf-origin {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.wf-origin svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--hf-muted);
+}

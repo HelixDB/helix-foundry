@@ -11,7 +11,9 @@ import type {
   AutomationTrigger,
   AutomationTriggerEvent,
   FoundryAutomation,
+  FoundryAutomationOntology,
   FoundryAutomationRun,
+  FoundryAutomationRunOntology,
 } from "../../../shared/wfe";
 import { AUTOMATION_REFUSALS } from "../../../shared/wfe";
 import { isRecord } from "../../../shared/json";
@@ -1775,3 +1777,87 @@ export function automationRefusal(
 export const automationsUnavailable = (error: unknown) =>
   automationRefusal(error) === "FOUNDRY_AUTOMATIONS_DISABLED" ||
   (error instanceof ApiError && (error.status === 404 || error.status === 501));
+
+// ---------------------------------------------------------------- ontologies' impact
+
+// How much each ontology an automation uses helped its runs: Foundry
+// records each run that uses one in a workflow of it (the backend's
+// automation workflows), and each run's assessment gives a verdict.
+
+/** Verdicts that say the ontology helped. */
+const HELPED = new Set(["essential", "helpful"]);
+
+/**
+ * How much an ontology helped an automation's runs, in a sentence.
+ *
+ *   impactText({ ontologyId: "o", runs: "4", finishedRuns: "4",
+ *     verdicts: [{ verdict: "essential", runs: "2" }, { verdict: "unused", runs: "1" }] })
+ *   // "Helped 2 of the 3 runs assessed."
+ */
+export function impactText(o: FoundryAutomationOntology): string {
+  if (o.untracked === "workflows_full")
+    return "Its runs aren’t recorded: the ontology holds 100 workflows, the most it may. Delete one of its workflows and the next run is recorded.";
+  const runs = Number(o.runs || 0),
+    assessed = (o.verdicts || []).reduce((n, v) => n + Number(v.runs || 0), 0),
+    helped = (o.verdicts || [])
+      .filter((v) => HELPED.has(v.verdict))
+      .reduce((n, v) => n + Number(v.runs || 0), 0);
+  if (!runs) return "No run has used it yet: its first is recorded here.";
+  if (!assessed)
+    return runs === 1
+      ? "One run used it; it isn’t assessed yet."
+      : `${runs.toLocaleString("en-US")} runs used it; none is assessed yet.`;
+  return `Helped ${helped.toLocaleString("en-US")} of the ${assessed === 1 ? "run" : `${assessed.toLocaleString("en-US")} runs`} assessed.`;
+}
+
+/** Where a run's assessment of an ontology stands, for its tag: a verdict once done. */
+export type RunImpact =
+  | { kind: "verdict"; verdict: string }
+  | {
+      kind: "pending" | "open" | "unassessed" | "failed" | "skipped";
+      text: string;
+    };
+
+/**
+ * How much an ontology helped one run, as its page tags it.
+ *
+ *   runImpact({ ontologyId: "o", workflowId: "w", workflowRunId: "r", status: "finished", assessmentStatus: "done", verdict: "helpful" })
+ *   // { kind: "verdict", verdict: "helpful" }
+ */
+export function runImpact(o: FoundryAutomationRunOntology): RunImpact {
+  if (o.status !== "finished")
+    return { kind: "open", text: "Recording while the run goes" };
+  switch (o.assessmentStatus) {
+    case "done":
+      return o.verdict
+        ? { kind: "verdict", verdict: o.verdict }
+        : { kind: "failed", text: "Assessed, without a verdict" };
+    case "queued":
+    case "running":
+      return { kind: "pending", text: "Being assessed" };
+    case "failed":
+      return { kind: "failed", text: "Its assessment failed" };
+    case "skipped":
+      return {
+        kind: "skipped",
+        text: "Not assessed: the month’s budget is spent",
+      };
+    default:
+      return { kind: "unassessed", text: "Not assessed" };
+  }
+}
+
+/** Whether any of a run's ontologies is still to be assessed: its page reads it again until each is. */
+export const assessing = (r?: FoundryAutomationRun) =>
+  !!r?.ontologies?.some(
+    (o) =>
+      o.status !== "finished" ||
+      o.assessmentStatus === "queued" ||
+      o.assessmentStatus === "running",
+  );
+
+/**
+ * How long after a run ends an automation's page reads it again: its
+ * ontologies' assessments come in by then.
+ */
+export const ASSESSED_WITHIN_MS = 60_000;

@@ -82,6 +82,7 @@ import {
   type Draft,
 } from "./review";
 import { RunNotice, RunSteps, RunsList, StepOutcome, useRuns } from "./runs";
+import { RunOntologies } from "./impact";
 import { RunHead, SettingsPanel, Summary } from "./summary";
 
 // An automation on its own page, as the Explorer lays its graph out: a slim
@@ -1055,6 +1056,7 @@ function RunPanel({
       ) : (
         <p className="au-hint">Its steps can’t be read.</p>
       )}
+      <RunOntologies run={run} />
     </div>
   );
 }

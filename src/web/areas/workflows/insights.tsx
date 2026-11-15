@@ -22,7 +22,6 @@ import {
   YAxis,
 } from "recharts";
 import type {
-  FoundryPrincipal,
   FoundryWorkflowInsightIssue,
   FoundryWorkflowInsights,
   FoundryWorkflowInsightTotals,
@@ -64,8 +63,10 @@ import {
   metricText,
   rollingDays,
   verdictDay,
-  principalKey,
-  starterLabel,
+  segmentStarter,
+  starterKey,
+  starterText,
+  type Starter,
   suggestionGoal,
   verdictParts,
   verdictRuns,
@@ -89,9 +90,15 @@ export function useInsights(workflowId?: string) {
     { id: o } = useOntology();
   const [days, setDays] = useState(30),
     [metric, setMetric] = useState<InsightMetric>("helped"),
-    [who, setWho] = useState<FoundryPrincipal>();
+    [who, setWho] = useState<Starter>();
+  // An automation's runs are its workflow's.
   const query = useQuery(
-    workflowQueries.insights(ws, o, { workflowId, days, startedBy: who }),
+    workflowQueries.insights(ws, o, {
+      workflowId:
+        workflowId ?? (who && "automation" in who ? who.workflowId : undefined),
+      days,
+      startedBy: who && "principal" in who ? who.principal : undefined,
+    }),
   );
   // Everyone's, for the list of who started runs: the same query while no
   // one is chosen.
@@ -145,10 +152,12 @@ export function InsightsToolbar({
       {!own && agents.length > 0 && (
         <FilterSelect
           label="Started by"
-          value={principalKey(who)}
+          value={starterKey(who)}
           onChange={(key) =>
             setWho(
-              agents.find((a) => principalKey(a.principal) === key)?.principal,
+              agents
+                .map(segmentStarter)
+                .find((s) => s && starterKey(s) === key),
             )
           }
           options={[
@@ -158,8 +167,8 @@ export function InsightsToolbar({
               hint: plural(everyone.data?.totals?.runs || 0, "run"),
             },
             ...agents.map((a) => ({
-              value: principalKey(a.principal),
-              label: starterLabel(a.principal, names, user.id),
+              value: starterKey(segmentStarter(a)),
+              label: starterText(segmentStarter(a), names, user.id),
               hint: plural(a.totals?.runs || 0, "run"),
             })),
           ]}

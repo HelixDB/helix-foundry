@@ -1,5 +1,6 @@
 import type {
   FoundryPrincipal,
+  FoundryWorkflowAutomation,
   FoundryWorkflowInsightIssue,
   FoundryWorkflowInsightSegment,
   FoundryWorkflowInsightTotals,
@@ -14,8 +15,14 @@ import type {
 // count; a gap or suggestion recurs when runs name the same text, case,
 // spacing and end punctuation aside.
 
-/** A run with what insights read of it. */
-export type InsightRun = FoundryWorkflowRun & { startedAt: string };
+/**
+ * A run with what insights read of it: when it started, and the automation
+ * Foundry started it for, if any.
+ */
+export type InsightRun = FoundryWorkflowRun & {
+  startedAt: string;
+  automation?: FoundryWorkflowAutomation;
+};
 
 const HELPED = new Set(["essential", "helpful"]);
 const VERDICTS = ["essential", "helpful", "marginal", "unused", "misleading"];
@@ -267,8 +274,22 @@ export function insights(
     },
     gaps: recurring(inWindow, gapsOf),
     suggestions: recurring(inWindow, suggestionsOf),
-    agents: groups((r) => JSON.stringify(starterOf(r)))
-      .map(([k, rs]) => segment(rs, { principal: JSON.parse(k) }))
+    // An automation's runs count by the automation, apart from what its
+    // owner started themselves.
+    agents: groups((r) =>
+      r.automation
+        ? `automation:${r.automation.automationId}`
+        : JSON.stringify(starterOf(r)),
+    )
+      .map(([, rs]) =>
+        segment(rs, {
+          principal: starterOf(rs[0]!),
+          ...(rs[0]!.automation && {
+            automation: rs[0]!.automation,
+            workflowId: rs[0]!.workflowId,
+          }),
+        }),
+      )
       .sort((a, b) => (b.totals?.runs || 0) - (a.totals?.runs || 0))
       .slice(0, AGENTS),
     workflows: opts.workflowId

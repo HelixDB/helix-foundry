@@ -22,7 +22,10 @@ import {
   eventText,
   freeBranch,
   incomplete,
+  impactText,
   isLiveRun,
+  runImpact,
+  assessing,
   listTriggerText,
   moveNode,
   newNodeId,
@@ -1364,6 +1367,114 @@ describe("the overview's reads", () => {
     );
     expect(
       automationQueries.overview("ws", 7, "UTC").refetchInterval({ state: {} }),
+    ).toBe(false);
+  });
+});
+
+// How much each ontology an automation uses helped it, in words.
+describe("an automation's ontologies' impact", () => {
+  const o = { ontologyId: "o1", ontologyName: "Sales" };
+  it("says how many assessed runs the ontology helped", () => {
+    expect(impactText({ ...o, workflowId: "w", runs: "0" })).toBe(
+      "No run has used it yet: its first is recorded here.",
+    );
+    expect(impactText({ ...o, workflowId: "w", runs: "1" })).toBe(
+      "One run used it; it isn’t assessed yet.",
+    );
+    expect(impactText({ ...o, workflowId: "w", runs: "1200" })).toBe(
+      "1,200 runs used it; none is assessed yet.",
+    );
+    expect(
+      impactText({
+        ...o,
+        workflowId: "w",
+        runs: "4",
+        verdicts: [
+          { verdict: "essential", runs: "2" },
+          { verdict: "helpful", runs: "1" },
+          { verdict: "unused", runs: "1" },
+        ],
+      }),
+    ).toBe("Helped 3 of the 4 runs assessed.");
+    expect(
+      impactText({
+        ...o,
+        workflowId: "w",
+        runs: "1",
+        verdicts: [{ verdict: "unused", runs: "1" }],
+      }),
+    ).toBe("Helped 0 of the run assessed.");
+    expect(impactText({ ...o, untracked: "workflows_full" })).toMatch(
+      /^Its runs aren’t recorded: the ontology holds 100 workflows/,
+    );
+  });
+
+  it("tags how much an ontology helped one run", () => {
+    const r = { ...o, workflowId: "w", workflowRunId: "r" };
+    expect(runImpact({ ...r, status: "open" })).toEqual({
+      kind: "open",
+      text: "Recording while the run goes",
+    });
+    expect(
+      runImpact({
+        ...r,
+        status: "finished",
+        assessmentStatus: "done",
+        verdict: "helpful",
+      }),
+    ).toEqual({
+      kind: "verdict",
+      verdict: "helpful",
+    });
+    expect(
+      runImpact({ ...r, status: "finished", assessmentStatus: "done" }).kind,
+    ).toBe("failed");
+    expect(
+      runImpact({ ...r, status: "finished", assessmentStatus: "queued" }).kind,
+    ).toBe("pending");
+    expect(
+      runImpact({ ...r, status: "finished", assessmentStatus: "running" }).kind,
+    ).toBe("pending");
+    expect(
+      runImpact({ ...r, status: "finished", assessmentStatus: "failed" }).kind,
+    ).toBe("failed");
+    expect(
+      runImpact({ ...r, status: "finished", assessmentStatus: "skipped" }).kind,
+    ).toBe("skipped");
+    expect(runImpact({ ...r, status: "finished" })).toEqual({
+      kind: "unassessed",
+      text: "Not assessed",
+    });
+  });
+
+  it("reads a run again until its ontologies are assessed", () => {
+    const r = { ...o, workflowId: "w", workflowRunId: "r" };
+    expect(assessing(undefined)).toBe(false);
+    expect(assessing({ id: "x" })).toBe(false);
+    expect(assessing({ id: "x", ontologies: [{ ...r, status: "open" }] })).toBe(
+      true,
+    );
+    expect(
+      assessing({
+        id: "x",
+        ontologies: [{ ...r, status: "finished", assessmentStatus: "queued" }],
+      }),
+    ).toBe(true);
+    expect(
+      assessing({
+        id: "x",
+        ontologies: [
+          {
+            ...r,
+            status: "finished",
+            assessmentStatus: "done",
+            verdict: "helpful",
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      assessing({ id: "x", ontologies: [{ ...r, status: "finished" }] }),
     ).toBe(false);
   });
 });
