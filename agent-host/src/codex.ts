@@ -673,8 +673,11 @@ export async function runCodex(
   });
   const abort = () => void server.close();
   opts.abort.signal.addEventListener("abort", abort, { once: true });
-  // Codex's own words, never the turn's token, should it have written it.
-  const said = (message: string) => {
+  // A failure of Codex's, with its own last words when it is an error
+  // (never the turn's token, should Codex have written it): told apart by
+  // the message alone, so its stderr's noise can't make it signed out.
+  const failed = (message: string): End => {
+    const end = codexFailure({ message });
     const tail = (
       turn.mcp_token
         ? server.stderr.split(turn.mcp_token).join("hxr_…")
@@ -682,7 +685,9 @@ export async function runCodex(
     )
       .trim()
       .slice(-800);
-    return tail ? `${message}: ${tail}` : message;
+    return end.end === "failed" && end.failure === "cli_error" && tail
+      ? { ...end, detail: `${message}: ${tail}`.slice(0, 1000) }
+      : end;
   };
   try {
     let version: string | undefined;
@@ -694,14 +699,16 @@ export async function runCodex(
         return ran({ end: "failed", failure: "not_installed" });
       // Its last words, not just its exit code: a broken config.toml says why.
       await new Promise((r) => setTimeout(r, 100));
-      return ran(codexFailure({ message: said(err.message) }));
+      return ran(failed(err.message));
     }
     // Foundry checks the version it was last told; this one is the version that runs.
-    if (!atLeast(version ?? "", MIN_CODEX))
+    if (!version || !atLeast(version, MIN_CODEX))
       return ran({
         end: "failed",
         failure: "cli_error",
-        detail: `Codex ${version ?? "of an unknown version"} is older than ${MIN_CODEX}, the oldest Foundry runs: update it`,
+        detail: version
+          ? `Codex ${version} is older than ${MIN_CODEX}, the oldest Foundry runs: update it`
+          : "Codex didn't say its version, so Foundry runs nothing on it",
       });
     try {
       const read = await server.request<{ config?: unknown }>("config/read", {
@@ -716,7 +723,7 @@ export async function runCodex(
           detail: unheldDetail(off),
         });
     } catch (e) {
-      return ran(codexFailure({ message: said((e as Error).message) }));
+      return ran(failed((e as Error).message));
     }
     let resumed = false;
     let thread: unknown;
@@ -740,7 +747,7 @@ export async function runCodex(
         );
         at.threadId = (thread as { thread: { id: string } }).thread.id;
       } catch (e) {
-        return ran(codexFailure({ message: said((e as Error).message) }));
+        return ran(failed((e as Error).message));
       }
     }
     const off = unheld(undefined, thread);

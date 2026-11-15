@@ -692,6 +692,43 @@ describe("the helper on the real Codex (sub-agents)", { skip: !REAL }, () => {
   }
 });
 
+describe(
+  "the helper on the real Codex (a broken config.toml)",
+  { skip: !REAL },
+  () => {
+    it("says why Codex didn't start, in Codex's words", async () => {
+      const world = await new World().start();
+      try {
+        const pc = await computer(world);
+        await writeFile(
+          join(pc.codexHome, "config.toml"),
+          (await readFile(join(pc.codexHome, "config.toml"), "utf8")) +
+            "\nthis is = = not toml\n",
+        );
+        const outcome = await runTurn(
+          turn({ runtime: "codex", system: MARKER, mcp_token: TOKEN }),
+          {
+            foundry: new Foundry(world.url, "hxh_token"),
+            clis: [codexCli(pc.wrapper, pc.env)],
+            version: VERSION,
+            concurrency: 1,
+            env: pc.env,
+          },
+        );
+        assert.equal(outcome, "failed: cli_error");
+        const end = world.told.find(
+          (t) => t.path === claimPath("finish"),
+        )!.body;
+        assert.match(end.detail, /config\.toml/, end.detail);
+        assert.ok(!end.detail.includes(TOKEN));
+        assert.equal(world.requests.length, 0);
+      } finally {
+        await world.stop();
+      }
+    });
+  },
+);
+
 // A managed configuration (/etc/codex/managed_config.toml) outranks the
 // helper's -c overrides and its thread settings alike. The helper reads
 // back what Codex will run with and runs nothing unless it holds. Writing

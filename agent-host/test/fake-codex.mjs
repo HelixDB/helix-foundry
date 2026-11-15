@@ -39,7 +39,7 @@ if (argv[0] === "--version") {
 }
 if (scenario === "broken_config") {
   process.stderr.write(
-    "WARNING: noise\nError loading config.toml: duplicate key `mcp_servers.x`\n",
+    "WARNING: sign in with ChatGPT to use your plan\nError loading config.toml: duplicate key `mcp_servers.x`\n",
   );
   process.exit(1);
 }

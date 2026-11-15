@@ -305,7 +305,11 @@ describe("a turn on Codex", () => {
     env.FAKE_CODEX_SCENARIO = "broken_config";
     await runTurn(codexTurn(), options());
     const [finished] = foundry.sent(claimPath("finish"));
-    assert.equal(finished.failure, "cli_error");
+    assert.equal(
+      finished.failure,
+      "cli_error",
+      "its stderr's words don't make it signed out",
+    );
     assert.match(finished.detail, /^Codex exited \(1\): /);
     assert.match(finished.detail, /duplicate key `mcp_servers.x`/);
   });
