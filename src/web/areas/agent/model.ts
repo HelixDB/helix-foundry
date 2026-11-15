@@ -528,6 +528,21 @@ export function reduceTurnEvents(
     : { ...next, complete, live };
 }
 
+/**
+ * The operations whose run starts work that goes on after it (a draft, a
+ * load, a sync, an automation's run): a ran one says it started, any other
+ * that it succeeded.
+ */
+export const STARTS_WORK: ReadonlySet<string> = new Set([
+  "generate_ontology",
+  "answer_generation_questions",
+  "revise_version",
+  "create_load",
+  "sync_connector",
+  "add_sample_data",
+  "run_automation",
+]);
+
 /** A tool's step, as the dock names it; the tool's own name for another. */
 export const TOOL_LABELS: Record<string, string> = {
   helix_foundry_list_ontologies: "Listed the ontologies",

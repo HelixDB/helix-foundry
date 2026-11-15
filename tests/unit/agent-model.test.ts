@@ -6,6 +6,7 @@ import {
   EMPTY_STREAM,
   HELPER_COMMANDS,
   HELPER_PACKAGE,
+  STARTS_WORK,
   STOP_TEXT,
   accountText,
   agentRefusal,
@@ -798,6 +799,12 @@ describe("actions", () => {
     ],
   ])("offers %s what it can", (_, a, state) => {
     expect(cardState(action(a), NOW)).toEqual(state);
+  });
+
+  it("names only operations it knows as starting work", () => {
+    expect([...STARTS_WORK].filter((op) => !isAgentOperation(op))).toEqual([]);
+    expect(STARTS_WORK.has("create_load")).toBe(true);
+    expect(STARTS_WORK.has("create_dashboard")).toBe(false);
   });
 
   it("knows the operations the agent may prepare, and no other key", () => {

@@ -68,6 +68,7 @@ import {
   RUNTIMES,
   MAX_MESSAGE,
   NOT_RUN_TEXT,
+  STARTS_WORK,
   STOP_TEXT,
   TOOL_LABELS,
   agentRefusal,
@@ -679,7 +680,9 @@ function Block({
         <p className="ag-ran">
           You ran this action: it{" "}
           {block.status === "succeeded"
-            ? "started"
+            ? STARTS_WORK.has(block.operation)
+              ? "started"
+              : "succeeded"
             : block.status === "failed"
               ? `failed${block.error ? ` (${block.error})` : ""}`
               : block.status === "unknown"

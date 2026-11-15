@@ -330,7 +330,9 @@ test("asks a draft's questions in the chat, and sends the person's answers from 
     ),
   ).toBeVisible({ timeout: 20_000 });
   await expect(
-    dock.getByText(/Should orders whose status is <b>cancelled<\/b> stay/),
+    dock
+      .getByText(/Should orders whose status is <b>cancelled<\/b> stay/)
+      .filter({ visible: true }),
   ).toBeVisible();
   await expect(
     cardOf(page, "Answer the draft’s questions for “Orders graph”"),
