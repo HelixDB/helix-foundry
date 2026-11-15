@@ -397,7 +397,9 @@ function Editor({
   const [reviewing, setReviewing] = useState(false),
     [approving, setApproving] = useState(false),
     [pending, setPending] = useState<string | null>(null),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    // Why the Live switch can't change, shown once tapped.
+    [whyShown, setWhyShown] = useState(false);
   const act = async (which: string, call: () => Promise<FoundryAutomation>) => {
     setPending(which);
     setError("");
@@ -539,7 +541,6 @@ function Editor({
           : a.status === "needs_approval" && a.canEdit
             ? "Approve it in Foundry to go live"
             : "Only its owner turns it on";
-  const [whyShown, setWhyShown] = useState(false);
   const flip = (on: boolean) => {
     if (!a) return;
     if (!on) return void act("pause", () => pauseAutomation(ws, a.id, true));
