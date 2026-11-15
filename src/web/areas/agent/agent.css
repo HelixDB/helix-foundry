@@ -120,7 +120,8 @@
   flex: none;
   margin-top: 2px;
 }
-.ag-card-error a {
+.ag-card-error a,
+.ag-hint a {
   text-decoration: underline;
   text-underline-offset: 2px;
 }

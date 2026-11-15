@@ -727,14 +727,17 @@ function Composer({
     }
   };
   const caption: ReactNode = checkFailed ? (
-    <SettingsLinked
-      text={
-        role === "owner"
-          ? `${checkFailed} Open Settings › AI models.`
-          : "The Assistant can’t run on this workspace’s AI model. An owner can fix this in Settings › AI models."
-      }
-      onNavigate={onNavigate}
-    />
+    // One span, so the hint's flex row wraps the sentence as text.
+    <span>
+      <SettingsLinked
+        text={
+          role === "owner"
+            ? `${checkFailed} Open Settings › AI models.`
+            : "The Assistant can’t run on this workspace’s AI model. An owner can fix this in Settings › AI models."
+        }
+        onNavigate={onNavigate}
+      />
+    </span>
   ) : tooLong ? (
     `${length - MAX_MESSAGE} characters too long.`
   ) : busy ? (
