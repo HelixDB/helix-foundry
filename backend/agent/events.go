@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"time"
+
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 )
 
 // Event is one thing a turn shows its person, stored as JSON with its type:
@@ -69,6 +71,8 @@ const (
 	NotRunLength NotRunReason = "length"
 	// NotRunInput is a call whose input isn't JSON.
 	NotRunInput NotRunReason = "input"
+	// NotRunAsked is a call after the turn asked its person: it ends there.
+	NotRunAsked NotRunReason = "asked"
 )
 
 // ActionCard is an action the agent prepared, for its person to run or
@@ -92,6 +96,33 @@ type ActionResult struct {
 	Status    string          `json:"status"`
 	Result    json.RawMessage `json:"result,omitempty"`
 	Error     string          `json:"error,omitempty"`
+}
+
+// Asked shows the person the questions the turn asks them
+// (toolAskPerson), which it ends waiting on (StopAsked): the Assistant's
+// own, or a generation's, as its agent wrote them (Generation set). They
+// are the agents' words, which may quote the data: plain text.
+type Asked struct {
+	Questions  []agentquestion.Question `json:"questions"`
+	Generation *AskedGeneration         `json:"generation,omitempty"`
+}
+
+// AskedGeneration is the generation whose questions a turn relays, by its
+// names as the workspace has them, and the round of its questions.
+type AskedGeneration struct {
+	OntologyID      string `json:"ontology_id"`
+	OntologyName    string `json:"ontology_name"`
+	GenerationID    string `json:"generation_id"`
+	GenerationTitle string `json:"generation_title,omitempty"`
+	Round           int    `json:"round"`
+}
+
+// Answered opens an answers turn: the person's answers to the questions
+// turn TurnID asked, as checked (the labels of the options chosen, and their
+// own words); a question left out was left to the agent.
+type Answered struct {
+	TurnID  string                 `json:"turn_id"`
+	Answers []agentquestion.Answer `json:"answers"`
 }
 
 // Reported is an automation's step's report (toolReport): what it found and
@@ -128,6 +159,9 @@ const (
 	StopContext StopReason = "context"
 	// StopFailed: the turn failed; Error says why.
 	StopFailed StopReason = "failed"
+	// StopAsked: the turn asked its person questions (Asked) and waits for
+	// their answers, which come as the thread's next turn.
+	StopAsked StopReason = "asked"
 )
 
 func (Started) eventType() string      { return "started" }
@@ -139,6 +173,8 @@ func (ActionCard) eventType() string   { return "action_card" }
 func (ActionResult) eventType() string { return "action_result" }
 func (Finished) eventType() string     { return "finished" }
 func (Reported) eventType() string     { return "automation_report" }
+func (Asked) eventType() string        { return "questions" }
+func (Answered) eventType() string     { return "answers" }
 
 // MarshalEvent is e as a turn's event: its fields and its type.
 func MarshalEvent(e Event) (json.RawMessage, error) {

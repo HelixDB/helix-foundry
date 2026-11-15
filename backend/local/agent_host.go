@@ -495,7 +495,7 @@ func (h *agentHostHandler) finish(w http.ResponseWriter, r *http.Request, claim 
 		h.failed(w, r, err)
 		return
 	}
-	err = h.turns.Finish(r.Context(), claim.TurnID, claim.LeaseOwner, turn.Runtime, agent.HostOutcome{End: end, Steps: req.Steps, Session: req.SessionID})
+	err = h.turns.Finish(r.Context(), turn, claim.LeaseOwner, agent.HostOutcome{End: end, Steps: req.Steps, Session: req.SessionID})
 	if refusal, ok := invalidArgument(err); ok {
 		h.refuse(w, invalid(refusal))
 		return

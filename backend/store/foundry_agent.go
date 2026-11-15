@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -22,7 +23,7 @@ import (
 const foundryAgentThreadColumns = `id, workspace_id, user_id, kind, title, runtime, runtime_session_id, created_at, updated_at`
 
 const foundryAgentTurnColumns = `id, workspace_id, thread_id, user_id, runtime, kind, input, automation_run_id, automation_node_id, page_context,
-       status, error, client_token,
+       asked, answers, status, error, client_token,
        lease_owner, lease_until, attempts, next_attempt_at, max_usd_micros, reserved_micros, usd_micros, lost_micros, input_tokens,
        output_tokens, steps, last_seq, created_at, started_at, finished_at`
 
@@ -39,26 +40,36 @@ const dueFoundryAgentTurn = `((status='queued' AND next_attempt_at <= NOW(6)) OR
 // claimFoundryAgentTurnTries bounds the turns one claim looks at.
 const claimFoundryAgentTurnTries = 20
 
-// CreateFoundryAgentTurn queues t, a person's message, under the workspace's
-// limits, in one transaction holding the workspace's lock, then the thread's:
+// CreateFoundryAgentTurn queues t, a person's message or their answers, under
+// the workspace's limits, in one transaction holding the workspace's lock,
+// then the thread's, with first, when not nil, as its first event:
 //   - thread is the new thread t starts, or nil for t.ThreadID, which must be
 //     the user's own live thread (ErrNotFound otherwise);
+//   - answers (t.Answers, checked by the caller against the questions) answer
+//     the thread's newest turn, t.Input, which ended done having asked its
+//     person (FoundryAgentQuestionsClosed otherwise: answered, or the thread
+//     went on);
 //   - the user has no turn with t's client token (ErrConflict: a double
 //     click, which the caller answers with that turn);
 //   - the thread has no live turn and no action running (FoundryAgentThreadBusy);
 //     a click that ran past model.FoundryAgentExecutingFor is ended unknown;
-//   - the user sent fewer than limits.PerHour messages in the last hour;
+//   - the user sent fewer than limits.PerHour messages and answers in the
+//     last hour;
 //   - what the month's turns settled, plus t's cap, is within limits.CapMicros.
 //
 // t takes its thread's runtime. t.MaxUSDMicros is an 'api' turn's cap: a
 // helper's turn runs on its owner's subscription, and is stored with a cap
 // of 0, spending nothing of the month's budget.
-func (s *mysqlDB) CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAgentTurn, thread *model.FoundryAgentThread, limits model.FoundryAgentLimits) error {
+func (s *mysqlDB) CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAgentTurn, thread *model.FoundryAgentThread, limits model.FoundryAgentLimits,
+	first json.RawMessage) error {
+	answering := t.Kind == model.FoundryAgentTurnAnswers
 	switch {
 	case t.ID == "" || t.WorkspaceID == "" || t.ThreadID == "" || t.UserID == "":
 		return fmt.Errorf("foundry agent turn is missing an id")
-	case t.Kind != model.FoundryAgentTurnMessage || strings.TrimSpace(t.Input) == "" || t.MaxUSDMicros <= 0:
-		return fmt.Errorf("foundry agent turn %s is no message with a cap", t.ID)
+	case t.Kind != model.FoundryAgentTurnMessage && !answering || strings.TrimSpace(t.Input) == "" || t.MaxUSDMicros <= 0:
+		return fmt.Errorf("foundry agent turn %s is no message or answers with a cap", t.ID)
+	case answering != (t.Answers != nil) || answering && thread != nil || t.Asked != nil:
+		return fmt.Errorf("foundry agent turn %s: answers come exactly with an answers turn, of a thread that asked", t.ID)
 	case thread != nil && (thread.ID != t.ThreadID || thread.WorkspaceID != t.WorkspaceID || thread.UserID != t.UserID):
 		return fmt.Errorf("foundry agent turn %s isn't of its new thread", t.ID)
 	case limits.PerHour < 1 || limits.CapMicros <= 0:
@@ -95,10 +106,18 @@ VALUES (?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread.Ti
 			}
 			return err
 		}
+		if answering {
+			if err := tx.openFoundryAgentQuestions(ctx, t.ThreadID, t.Input); err != nil {
+				if sent, sentErr := tx.sentFoundryAgentTurn(ctx, t); sentErr != nil || sent {
+					return cmp.Or(sentErr, ErrConflict)
+				}
+				return err
+			}
+		}
 		var lastHour int
 		var settled int64
 		if err := tx.db.QueryRowContext(ctx, `SELECT
-  (SELECT COUNT(*) FROM foundry_agent_turns WHERE workspace_id=? AND user_id=? AND kind='message' AND created_at >= NOW(6) - INTERVAL 1 HOUR),
+  (SELECT COUNT(*) FROM foundry_agent_turns WHERE workspace_id=? AND user_id=? AND kind IN ('message', 'answers') AND created_at >= NOW(6) - INTERVAL 1 HOUR),
   (SELECT COALESCE(SUM(usd_micros), 0) FROM foundry_agent_turns WHERE workspace_id=? AND charged_at >= ? AND automation_run_id IS NULL)`,
 			t.WorkspaceID, t.UserID, t.WorkspaceID, limits.Since.UTC()).Scan(&lastHour, &settled); err != nil {
 			return err
@@ -111,10 +130,18 @@ VALUES (?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread.Ti
 			return model.FoundryAgentRefusal{Reason: model.FoundryAgentBudget,
 				Detail: fmt.Sprintf("the workspace has spent this month's $%.2f of the Assistant", float64(limits.CapMicros)/1e6)}
 		}
+		var answers json.RawMessage
+		if answering {
+			raw, err := json.Marshal(t.Answers)
+			if err != nil {
+				return fmt.Errorf("encode foundry agent turn %s's answers: %w", t.ID, err)
+			}
+			answers = raw
+		}
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
-  (id, workspace_id, thread_id, user_id, runtime, kind, input, page_context, status, client_token, max_usd_micros)
-SELECT ?, ?, ?, ?, runtime, ?, ?, ?, 'queued', ?, ? FROM foundry_agent_threads WHERE id=?`,
-			t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, nullJSON(t.PageContext), t.ClientToken, maxMicros, t.ThreadID)
+  (id, workspace_id, thread_id, user_id, runtime, kind, input, page_context, answers, status, client_token, max_usd_micros)
+SELECT ?, ?, ?, ?, runtime, ?, ?, ?, ?, 'queued', ?, ? FROM foundry_agent_threads WHERE id=?`,
+			t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, nullJSON(t.PageContext), nullJSON(answers), t.ClientToken, maxMicros, t.ThreadID)
 		if isDuplicateKey(err) {
 			if live, liveErr := tx.liveFoundryAgentTurn(ctx, t.ThreadID); liveErr == nil && live {
 				return model.FoundryAgentRefusal{Reason: model.FoundryAgentThreadBusy, Detail: "the Assistant is still answering in this thread"}
@@ -124,8 +151,73 @@ SELECT ?, ?, ?, ?, runtime, ?, ?, ?, 'queued', ?, ? FROM foundry_agent_threads W
 		if err != nil {
 			return err
 		}
+		if first != nil {
+			if err := tx.appendFoundryAgentEvents(ctx, t.ID, []json.RawMessage{first}); err != nil {
+				return err
+			}
+		}
 		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_agent_threads SET updated_at=NOW(6) WHERE id=?`, t.ThreadID)
 		return err
+	})
+}
+
+// openFoundryAgentQuestions refuses answers to askedID unless it is the
+// locked thread's newest turn, done, and asked its person: the questions it
+// asked close once anything follows it (its answers among them).
+func (s *mysqlDB) openFoundryAgentQuestions(ctx context.Context, threadID, askedID string) error {
+	var newest, status string
+	var asked bool
+	err := s.db.QueryRowContext(ctx, `SELECT id, status, asked IS NOT NULL FROM foundry_agent_turns
+WHERE thread_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, threadID).Scan(&newest, &status, &asked)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if newest != askedID || status != string(model.FoundryAgentTurnDone) || !asked {
+		return model.FoundryAgentRefusal{Reason: model.FoundryAgentQuestionsClosed,
+			Detail: "these questions are no longer open: they were answered, or the conversation went on since"}
+	}
+	return nil
+}
+
+// AskFoundryAgentQuestions records what turnID asked its person, once, with
+// event, while workerID holds its lease (ErrNotFound otherwise). Asking the
+// same again records nothing more (a replayed attempt); asking anything else
+// once it asked is ErrConflict. An automation's turn asks no one.
+func (s *mysqlDB) AskFoundryAgentQuestions(ctx context.Context, turnID, workerID string, asked *model.FoundryAgentAsked, event json.RawMessage) error {
+	if err := asked.Validate(); err != nil {
+		return fmt.Errorf("foundry agent turn %s: %w", turnID, err)
+	}
+	encoded, err := json.Marshal(asked)
+	if err != nil {
+		return fmt.Errorf("encode foundry agent turn %s's questions: %w", turnID, err)
+	}
+	return s.WithTx(ctx, func(txDB Store) error {
+		tx := txDB.(*mysqlDB)
+		if err := tx.ownFoundryAgentTurn(ctx, turnID, workerID); err != nil {
+			return err
+		}
+		var kind string
+		var before sql.NullString
+		if err := tx.db.QueryRowContext(ctx, `SELECT kind, asked FROM foundry_agent_turns WHERE id=?`, turnID).Scan(&kind, &before); err != nil {
+			return err
+		}
+		switch {
+		case kind == string(model.FoundryAgentTurnAutomation):
+			return fmt.Errorf("foundry agent turn %s is an automation's, which asks no one", turnID)
+		case before.Valid:
+			var was model.FoundryAgentAsked
+			if err := json.Unmarshal([]byte(before.String), &was); err != nil {
+				return err
+			}
+			if again, _ := json.Marshal(&was); string(again) == string(encoded) {
+				return nil
+			}
+			return ErrConflict
+		}
+		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_turns SET asked=CAST(? AS JSON) WHERE id=?`, string(encoded), turnID); err != nil {
+			return err
+		}
+		return tx.appendFoundryAgentEvents(ctx, turnID, []json.RawMessage{event})
 	})
 }
 
@@ -899,11 +991,11 @@ func scanFoundryAgentThread(scanner rowScanner) (*model.FoundryAgentThread, erro
 func scanFoundryAgentTurn(scanner rowScanner) (*model.FoundryAgentTurn, error) {
 	var t model.FoundryAgentTurn
 	var runtime, kind, status string
-	var pageContext, errText, clientToken, leaseOwner, automationRun, automationNode sql.NullString
+	var pageContext, asked, answers, errText, clientToken, leaseOwner, automationRun, automationNode sql.NullString
 	var leaseUntil, startedAt, finishedAt sql.NullTime
 	spend := &t.Spend
 	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.ThreadID, &t.UserID, &runtime, &kind, &t.Input, &automationRun, &automationNode, &pageContext,
-		&status, &errText, &clientToken,
+		&asked, &answers, &status, &errText, &clientToken,
 		&leaseOwner, &leaseUntil, &t.Attempts, &t.NextAttemptAt, &t.MaxUSDMicros, &t.ReservedMicros, &spend.USDMicros, &t.LostMicros, &spend.InputTokens,
 		&spend.OutputTokens, &t.Steps, &t.LastSeq, &t.CreatedAt, &startedAt, &finishedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -914,6 +1006,20 @@ func scanFoundryAgentTurn(scanner rowScanner) (*model.FoundryAgentTurn, error) {
 	t.Runtime, t.Kind, t.Status = model.FoundryAgentRuntime(runtime), model.FoundryAgentTurnKind(kind), model.FoundryAgentTurnStatus(status)
 	if pageContext.Valid {
 		t.PageContext = json.RawMessage(pageContext.String)
+	}
+	if asked.Valid {
+		t.Asked = &model.FoundryAgentAsked{}
+		if err := json.Unmarshal([]byte(asked.String), t.Asked); err != nil {
+			return nil, fmt.Errorf("read foundry agent turn %s's questions: %w", t.ID, err)
+		}
+	}
+	if answers.Valid {
+		if err := json.Unmarshal([]byte(answers.String), &t.Answers); err != nil {
+			return nil, fmt.Errorf("read foundry agent turn %s's answers: %w", t.ID, err)
+		}
+		if t.Answers == nil {
+			t.Answers = []agentquestion.Answer{}
+		}
 	}
 	for _, f := range []struct {
 		src sql.NullString

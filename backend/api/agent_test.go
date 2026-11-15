@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	foundryagent "github.com/helixdb/helix-foundry/backend/agent"
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
@@ -112,11 +113,15 @@ func (s *agentStore) GetActiveFoundryAIConfig(context.Context, string) (*foundry
 	return nil, foundrystore.ErrNotFound
 }
 
-func (s *agentStore) CreateFoundryAgentTurn(_ context.Context, t *foundrymodel.FoundryAgentTurn, thread *foundrymodel.FoundryAgentThread, _ foundrymodel.FoundryAgentLimits) error {
+func (s *agentStore) CreateFoundryAgentTurn(_ context.Context, t *foundrymodel.FoundryAgentTurn, thread *foundrymodel.FoundryAgentThread, _ foundrymodel.FoundryAgentLimits,
+	first json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.refusal != nil {
 		return s.refusal
+	}
+	if first != nil {
+		s.events[t.ID] = append(s.events[t.ID], first)
 	}
 	if thread != nil {
 		s.threads[thread.ID] = thread
@@ -464,7 +469,7 @@ func TestTheAssistantAnswersPeopleOnlyAndOnlyWhenOn(t *testing.T) {
 
 func TestSendFoundryAgentMessage(t *testing.T) {
 	send := func(f agentFixture, mutate func(*foundryv1.SendFoundryAgentMessageRequest)) (*foundryv1.FoundryAgentTurnResponse, error) {
-		req := &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws-1", Text: "  Load the sales graph\nplease ", ClientToken: "c1",
+		req := &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws-1", Input: textInput("  Load the sales graph\nplease "), ClientToken: "c1",
 			PageContext: &foundryv1.FoundryAgentPageContext{OntologyId: "ont-1", LoadId: "load-1"}}
 		if mutate != nil {
 			mutate(req)
@@ -486,7 +491,7 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 		again, err := send(f, nil)
 		require.NoError(t, err)
 		assert.Equal(t, resp.GetTurn().GetId(), again.GetTurn().GetId())
-		_, err = send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) { r.Text = "something else" })
+		_, err = send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) { r.Input = textInput("something else") })
 		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	})
 	t.Run("malformed", func(t *testing.T) {
@@ -494,9 +499,10 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 		for name, mutate := range map[string]func(*foundryv1.SendFoundryAgentMessageRequest){
 			"no token":   func(r *foundryv1.SendFoundryAgentMessageRequest) { r.ClientToken = "" },
 			"long token": func(r *foundryv1.SendFoundryAgentMessageRequest) { r.ClientToken = strings.Repeat("c", 65) },
-			"no text":    func(r *foundryv1.SendFoundryAgentMessageRequest) { r.Text = "   " },
+			"no text":    func(r *foundryv1.SendFoundryAgentMessageRequest) { r.Input = textInput("   ") },
+			"no input":   func(r *foundryv1.SendFoundryAgentMessageRequest) { r.Input = nil },
 			"long text": func(r *foundryv1.SendFoundryAgentMessageRequest) {
-				r.Text = strings.Repeat("é", maxAgentMessageChars+1)
+				r.Input = textInput(strings.Repeat("é", maxAgentMessageChars+1))
 			},
 			"bad thread":     func(r *foundryv1.SendFoundryAgentMessageRequest) { r.ThreadId = "a/b" },
 			"bad page":       func(r *foundryv1.SendFoundryAgentMessageRequest) { r.PageContext.OntologyId = "x y" },
@@ -538,6 +544,121 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 		f.store.refusal = foundrymodel.FoundryAgentRefusal{Reason: foundrymodel.FoundryAgentPerHour, Detail: "slow down"}
 		_, err := send(f, nil)
 		assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	})
+}
+
+// textInput is a message's text, as a request's input.
+func textInput(text string) *foundryv1.SendFoundryAgentMessageRequest_Text {
+	return &foundryv1.SendFoundryAgentMessageRequest_Text{Text: text}
+}
+
+// The person answers the questions their thread's newest turn asked, checked
+// against them, as the next turn, opened by an answers event.
+func TestSendFoundryAgentAnswers(t *testing.T) {
+	// asking is a thread whose turn turn-ask asked three questions: a choice
+	// of one, a free one, and an optional choice of several.
+	asking := func(t *testing.T) agentFixture {
+		f := newAgentFixture(t)
+		f.store.threads["th-1"] = &foundrymodel.FoundryAgentThread{ID: "th-1", WorkspaceID: "ws-1", UserID: person.UserID, Runtime: foundrymodel.FoundryAgentRuntimeAPI}
+		f.store.turns["turn-ask"] = &foundrymodel.FoundryAgentTurn{ID: "turn-ask", WorkspaceID: "ws-1", ThreadID: "th-1", UserID: person.UserID,
+			Kind: foundrymodel.FoundryAgentTurnMessage, Input: "Build me an ontology", Status: foundrymodel.FoundryAgentTurnDone,
+			Asked: &foundrymodel.FoundryAgentAsked{Questions: []agentquestion.Question{
+				{ID: "q1", Header: "Ontology", Text: "Which ontology?", Blocking: true,
+					Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "Sales graph"}, {Label: "A new one"}}, Recommended: "Sales graph"}},
+				{ID: "q2", Text: "What should it answer?", Blocking: true},
+				{ID: "q3", Text: "Which sources?", Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "Stripe"}, {Label: "Documents"}}, Multiple: true}},
+			}}}
+		return f
+	}
+	answers := func(turnID string, given ...*foundryv1.AgentQuestionAnswer) *foundryv1.SendFoundryAgentMessageRequest {
+		return &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws-1", ThreadId: "th-1", ClientToken: "c-answers",
+			Input: &foundryv1.SendFoundryAgentMessageRequest_Answers{Answers: &foundryv1.FoundryAgentAnswers{TurnId: turnID, Answers: given}}}
+	}
+	sales := &foundryv1.AgentQuestionAnswer{QuestionId: "q1", Options: []string{"Sales graph"}}
+	why := &foundryv1.AgentQuestionAnswer{QuestionId: "q2", Text: " Which customers churn? "}
+
+	t.Run("queues the answers as the next turn", func(t *testing.T) {
+		f := asking(t)
+		resp, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+		require.NoError(t, err)
+		turn := resp.GetTurn()
+		assert.Equal(t, "answers", turn.GetKind())
+		assert.Empty(t, turn.GetText())
+		assert.Equal(t, "turn-ask", turn.GetAnswers().GetTurnId())
+		require.Len(t, turn.GetAnswers().GetAnswers(), 2, "the optional question is left to the Assistant")
+		assert.Equal(t, []string{"Sales graph"}, turn.GetAnswers().GetAnswers()[0].GetOptions(), "in the order asked")
+		assert.Equal(t, "Which customers churn?", turn.GetAnswers().GetAnswers()[1].GetText())
+		stored := f.store.turns[turn.GetId()]
+		assert.Equal(t, foundrymodel.FoundryAgentTurnAnswers, stored.Kind)
+		assert.Equal(t, "turn-ask", stored.Input)
+		require.Len(t, f.store.events[turn.GetId()], 1)
+		assert.JSONEq(t, `{"type":"answers","turn_id":"turn-ask","answers":[{"question_id":"q1","options":["Sales graph"]},
+			{"question_id":"q2","options":[],"text":"Which customers churn?"}]}`, string(f.store.events[turn.GetId()][0]))
+
+		// The same click is the same answers; other answers under its token aren't.
+		again, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+		require.NoError(t, err)
+		assert.Equal(t, turn.GetId(), again.GetTurn().GetId())
+		_, err = f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, &foundryv1.AgentQuestionAnswer{QuestionId: "q1", Text: "Neither"}))
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+
+		// The asking turn shows what it asked.
+		asked := agentTurnToProto(f.store.turns["turn-ask"]).GetAsked()
+		require.Len(t, asked.GetQuestions(), 3)
+		assert.Equal(t, "Sales graph", asked.GetQuestions()[0].GetRecommended())
+		assert.True(t, asked.GetQuestions()[2].GetMultiple())
+		assert.False(t, asked.GetQuestions()[2].GetBlocking())
+		assert.Nil(t, asked.GetGeneration())
+	})
+
+	t.Run("refuses answers the questions don't take", func(t *testing.T) {
+		for name, req := range map[string]*foundryv1.SendFoundryAgentMessageRequest{
+			"a blocking one left out": answers("turn-ask", sales),
+			"an option not offered":   answers("turn-ask", why, &foundryv1.AgentQuestionAnswer{QuestionId: "q1", Options: []string{"Renewals"}}),
+			"two of a choice of one":  answers("turn-ask", why, &foundryv1.AgentQuestionAnswer{QuestionId: "q1", Options: []string{"Sales graph", "A new one"}}),
+			"a question not asked":    answers("turn-ask", why, sales, &foundryv1.AgentQuestionAnswer{QuestionId: "q9", Text: "x"}),
+			"no thread": func() *foundryv1.SendFoundryAgentMessageRequest {
+				r := answers("turn-ask", why, sales)
+				r.ThreadId = ""
+				return r
+			}(),
+		} {
+			f := asking(t)
+			_, err := f.s.SendFoundryAgentMessage(personCtx, req)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err), name)
+		}
+	})
+
+	t.Run("refuses answers to questions no longer open", func(t *testing.T) {
+		f := asking(t)
+		f.store.turns["turn-ask"].Asked = nil
+		_, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+		assert.Equal(t, "FOUNDRY_AGENT_QUESTIONS_CLOSED", reasonOf(err), "a turn that asked nothing")
+		f = asking(t)
+		f.store.refusal = foundrymodel.FoundryAgentRefusal{Reason: foundrymodel.FoundryAgentQuestionsClosed, Detail: "the conversation went on"}
+		_, err = f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+		assert.Equal(t, "FOUNDRY_AGENT_QUESTIONS_CLOSED", reasonOf(err), "the store's check, under the thread's lock")
+	})
+
+	t.Run("another's turn, or another thread's, isn't found", func(t *testing.T) {
+		f := asking(t)
+		f.store.turns["turn-ask"].UserID = "user-eve"
+		_, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+		assert.Equal(t, codes.NotFound, status.Code(err))
+		f = asking(t)
+		f.store.turns["turn-ask"].ThreadID = "th-2"
+		_, err = f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+		assert.Equal(t, codes.NotFound, status.Code(err))
+	})
+
+	t.Run("a relayed generation's questions show which", func(t *testing.T) {
+		f := asking(t)
+		f.store.turns["turn-ask"].Asked.Generation = &foundrymodel.FoundryAgentAskedGeneration{OntologyID: "ont-1", GenerationID: "gen-1", Round: 2}
+		g := agentTurnToProto(f.store.turns["turn-ask"]).GetAsked().GetGeneration()
+		assert.Equal(t, "ont-1", g.GetOntologyId())
+		assert.Equal(t, "gen-1", g.GetGenerationId())
+		assert.EqualValues(t, 2, g.GetRound())
 	})
 }
 

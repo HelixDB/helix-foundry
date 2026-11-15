@@ -2583,9 +2583,9 @@ message FoundryAgentHostAccount {
 message FoundryAgentTurn {
   string id = 1;
   string thread_id = 2;
-  // message or action_result.
+  // message, action_result, answers or automation.
   string kind = 3;
-  // The person's text; empty for an action_result.
+  // The person's text, for a message.
   string text = 4;
   // The action an action_result turn goes on from.
   string action_id = 5;
@@ -2601,10 +2601,44 @@ message FoundryAgentTurn {
   google.protobuf.Timestamp created_at = 13;
   google.protobuf.Timestamp started_at = 14;
   google.protobuf.Timestamp finished_at = 15;
+  // What the turn asked its person (helix_foundry_ask_person), which it
+  // ended waiting on (its finished event's reason asked); unset when it asked
+  // nothing. The person answers it (SendFoundryAgentMessage with answers)
+  // while it is the thread's newest turn and done.
+  FoundryAgentAsked asked = 16;
+  // An answers turn's: the turn it answers, and the person's answers.
+  FoundryAgentAnswers answers = 17;
+}
+
+// FoundryAgentAsked is what a turn asked its person: 1 to 4 questions of the
+// Assistant's own (ids q1, q2, ...), or a generation's waiting round,
+// relayed as its agent wrote it, under its own question ids (generation
+// set). Each question is the agent's words, plain text.
+message FoundryAgentAsked {
+  repeated AgentQuestion questions = 1;
+  FoundryAgentAskedGeneration generation = 2;
+}
+
+// FoundryAgentAskedGeneration is a generation whose questions a turn relayed,
+// and their round: the answers turn prepares answer_generation_questions
+// with the person's answers, unchanged, as a card the person runs.
+message FoundryAgentAskedGeneration {
+  string ontology_id = 1;
+  string generation_id = 2;
+  int32 round = 3;
+}
+
+// FoundryAgentAnswers are the person's answers to the questions turn_id
+// asked: one per question at most, as AgentQuestionAnswer says; a question
+// left out (only one that isn't blocking) is left to the Assistant.
+message FoundryAgentAnswers {
+  string turn_id = 1;
+  repeated AgentQuestionAnswer answers = 2;
 }
 
 // FoundryAgentEvent is one event a turn shows, as JSON: started, text,
-// tool_call, tool_result, action_card, action_result and finished.
+// text_delta, tool_call, tool_result, action_card, action_result,
+// questions, answers, automation_report and finished.
 message FoundryAgentEvent {
   int32 seq = 1;
   string event_json = 2;

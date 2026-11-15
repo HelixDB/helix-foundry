@@ -488,51 +488,46 @@ func asking() *model.OntologyGeneration {
 		}}}
 }
 
-// A generation's answers are a card naming each question as the agent asked
-// it beside the person's answer, and what the defaults answer.
-func TestAGenerationsAnswersAreACard(t *testing.T) {
-	h := workspaceHarness(t)
-	h.db.generations = []*model.OntologyGeneration{asking()}
-	a, result := prepared(t, h, "Answer the Sales graph's questions: a customer is each person, and use the defaults for the rest", "answer_generation_questions",
-		"ontology:ws1/ont1", `{"generation_id":"gen1","round":1,"answers":[{"question_id":"q1","options":["Each person"]},{"question_id":"q2","text":"90 days"}],"use_defaults":true}`)
-	require.NotNil(t, a, result.Content)
-	assert.JSONEq(t, `{"ontology":{"id":"ont1","name":"Sales graph"},"generation":{"id":"gen1","name":"Track renewals"},"round":1,
-		"answers":[{"question_id":"q1","header":"Customers","question":"Is a customer the company that pays?","options":["Each person"]},
-		  {"question_id":"q2","question":"How many days before renewal is at risk?","options":[],"text":"90 days"}],"use_defaults":true,
-		"defaulted":[{"question_id":"q3","question":"Keep <b>cancelled</b> orders?","options":[],"text":"`+agentquestion.NoPreference+`"}]}`, string(a.Display))
-	assert.True(t, a.TargetNamedByUser)
-	assert.Zero(t, h.backend.loads, "preparing answers nothing")
-	assert.True(t, Operations["answer_generation_questions"])
-}
-
-// What the generation won't take is refused before its person sees a card.
+// What the generation won't take now is refused before its person sees a
+// card, though they answered it as it was relayed: it ended, moved on to
+// another round, or asks otherwise since.
 func TestAGenerationsAnswersAreRefused(t *testing.T) {
+	relayed := &model.FoundryAgentAsked{Questions: asking().Questions.Questions(),
+		Generation: &model.FoundryAgentAskedGeneration{OntologyID: ontology, GenerationID: "gen1", Round: 1}}
+	answers := []agentquestion.Answer{{QuestionID: "q1", Options: []string{"Each person"}}, {QuestionID: "q2", Options: []string{}, Text: "90 days"}}
+	payload, err := json.Marshal(relayPayload(relayed, answers))
+	require.NoError(t, err)
 	done := asking()
 	done.Status = model.OntologyGenerationSucceeded
+	later := asking()
+	later.Questions.Round = 2
+	fewer := asking()
+	fewer.Questions.Asked = fewer.Questions.Asked[1:]
+	reworded := asking()
+	reworded.Questions.Asked[0].Choice = &agentquestion.Choice{Options: []agentquestion.Option{{Label: "A company"}, {Label: "A person"}}}
 	for name, c := range map[string]struct {
 		generation *model.OntologyGeneration
-		payload    string
 		want       string
 	}{
-		"a generation that isn't waiting": {done, `{"generation_id":"gen1","round":1,"use_defaults":true}`, "isn't waiting for answers: it is succeeded"},
-		"a generation of no ontology":     {nil, `{"generation_id":"gen1","round":1,"use_defaults":true}`, "has no generation gen1"},
-		"another round":                   {asking(), `{"generation_id":"gen1","round":2,"use_defaults":true}`, "waits on round 1 of its questions, not 2"},
-		"a question it didn't ask": {asking(), `{"generation_id":"gen1","round":1,"answers":[{"question_id":"q9","text":"Yes"}],"use_defaults":true}`,
-			`no question "q9" was asked`},
-		"an option it doesn't offer": {asking(), `{"generation_id":"gen1","round":1,"answers":[{"question_id":"q1","options":["Both"]}],"use_defaults":true}`,
-			`offers no option "Both"`},
-		"a blocking question left open": {asking(), `{"generation_id":"gen1","round":1,"answers":[{"question_id":"q1","text":"Yes"}]}`,
-			"question q2 needs an answer"},
+		"a generation that isn't waiting": {done, "isn't waiting for answers: it is succeeded"},
+		"a generation of no ontology":     {nil, "has no generation gen1"},
+		"another round":                   {later, "waits on round 2 of its questions, not 1"},
+		"a question it no longer asks":    {fewer, `no question "q1" was asked`},
+		"an option it no longer offers":   {reworded, `offers no option "Each person"`},
 	} {
 		t.Run(name, func(t *testing.T) {
-			h := workspaceHarness(t)
+			h := workspaceHarness(t, call("toolu_1", toolPrepare, `{"operation":"answer_generation_questions","target":"ontology:ws1/ont1","payload":`+string(payload)+`}`),
+				say("x"))
 			if c.generation != nil {
 				h.db.generations = []*model.OntologyGeneration{c.generation}
 			}
-			a, result := prepared(t, h, "Answer them", "answer_generation_questions", "ontology:ws1/ont1", c.payload)
-			assert.Nil(t, a)
+			_, err := h.runner.Run(context.Background(), answering(h, relayed, answers))
+			require.NoError(t, err)
+			assert.Empty(t, h.db.actions)
+			result := lastResult(t, h)
 			assert.True(t, result.IsError)
 			assert.Contains(t, result.Content, c.want)
 		})
 	}
+	assert.True(t, Operations["answer_generation_questions"])
 }

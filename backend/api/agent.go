@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	foundryagent "github.com/helixdb/helix-foundry/backend/agent"
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/automation"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
@@ -71,6 +73,8 @@ func agentRefusal(workspaceID string, err error) (error, bool) {
 		foundrymodel.FoundryAgentNotPrepared:  "FOUNDRY_AGENT_ACTION_NOT_PREPARED",
 		foundrymodel.FoundryAgentChanged:      "FOUNDRY_AGENT_ACTION_CHANGED",
 		foundrymodel.FoundryAgentExpired:      "FOUNDRY_AGENT_ACTION_EXPIRED",
+		// The answers are to questions no longer open.
+		foundrymodel.FoundryAgentQuestionsClosed: "FOUNDRY_AGENT_QUESTIONS_CLOSED",
 	}[r.Reason]
 	if r.Reason == foundrymodel.FoundryAgentPerHour {
 		return status.Error(codes.ResourceExhausted, r.Detail), true
@@ -79,33 +83,76 @@ func agentRefusal(workspaceID string, err error) (error, bool) {
 }
 
 // SendFoundryAgentMessage queues a person's message in their thread, or a new
-// one, which takes the workspace's runtime (agentThreadRuntime). The same
-// client token returns the turn it queued. A thread a helper runs is refused
-// while no helper that runs it is online; one Foundry's worker runs, while
-// the workspace's model can't run.
+// one, which takes the workspace's runtime (agentThreadRuntime), or their
+// answers to the questions their thread's newest turn asked them, checked by
+// agentquestion.Check, opened by an answers event. The same client token
+// returns the turn it queued. A thread a helper runs is refused while no
+// helper that runs it is online; one Foundry's worker runs, while the
+// workspace's model can't run.
 func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.SendFoundryAgentMessageRequest) (*foundryv1.FoundryAgentTurnResponse, error) {
 	ws := req.GetWorkspaceId()
 	userID, err := s.agentUser(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
-	text, token := strings.TrimSpace(req.GetText()), req.GetClientToken()
+	token := req.GetClientToken()
 	page := foundryagent.PageContext{OntologyID: req.GetPageContext().GetOntologyId(), LoadID: req.GetPageContext().GetLoadId(),
 		DashboardID: req.GetPageContext().GetDashboardId()}
 	switch {
 	case token == "" || len(token) > maxClientTokenLength:
 		return nil, status.Errorf(codes.InvalidArgument, "client_token is required, at most %d characters", maxClientTokenLength)
-	case text == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > maxAgentMessageChars:
-		return nil, status.Errorf(codes.InvalidArgument, "text is required, at most %d characters", maxAgentMessageChars)
 	case req.GetThreadId() != "" && !agentIDPattern.MatchString(req.GetThreadId()):
 		return nil, status.Error(codes.InvalidArgument, "thread_id is malformed")
 	case page.OntologyID != "" && !agentIDPattern.MatchString(page.OntologyID), page.LoadID != "" && !agentIDPattern.MatchString(page.LoadID),
 		page.LoadID != "" && page.OntologyID == "", page.DashboardID != "" && !agentIDPattern.MatchString(page.DashboardID):
 		return nil, status.Error(codes.InvalidArgument, "page_context names a load of an ontology, or a dashboard, by their ids")
 	}
+	t := &foundrymodel.FoundryAgentTurn{
+		ID: id.New(), WorkspaceID: ws, ThreadID: req.GetThreadId(), UserID: userID, ClientToken: &token, MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
+	}
+	var first json.RawMessage
+	switch input := req.GetInput().(type) {
+	case *foundryv1.SendFoundryAgentMessageRequest_Text:
+		text := strings.TrimSpace(input.Text)
+		if text == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > maxAgentMessageChars {
+			return nil, status.Errorf(codes.InvalidArgument, "text is required, at most %d characters", maxAgentMessageChars)
+		}
+		t.Kind, t.Input = foundrymodel.FoundryAgentTurnMessage, text
+	case *foundryv1.SendFoundryAgentMessageRequest_Answers:
+		if t.ThreadID == "" {
+			return nil, status.Error(codes.InvalidArgument, "thread_id is required with answers: the thread of the turn they answer")
+		}
+		asking, err := s.agentTurn(ctx, ws, userID, input.Answers.GetTurnId())
+		switch {
+		case err != nil:
+			return nil, err
+		case asking.ThreadID != t.ThreadID:
+			return nil, status.Error(codes.NotFound, "turn not found")
+		case asking.Asked == nil:
+			return nil, foundryPrecondition(ws, "FOUNDRY_AGENT_QUESTIONS_CLOSED", "that turn asked you nothing")
+		}
+		given := make([]agentquestion.Answer, 0, len(input.Answers.GetAnswers()))
+		for _, a := range input.Answers.GetAnswers() {
+			given = append(given, agentquestion.Answer{QuestionID: a.GetQuestionId(), Options: a.GetOptions(), Text: a.GetText()})
+		}
+		answers, err := agentquestion.Check(asking.Asked.Questions, given, false)
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		t.Kind, t.Input, t.Answers = foundrymodel.FoundryAgentTurnAnswers, asking.ID, answers
+		if first, err = foundryagent.MarshalEvent(foundryagent.Answered{TurnID: asking.ID, Answers: answers}); err != nil {
+			return nil, status.Errorf(codes.Internal, "write the answers: %v", err)
+		}
+	default:
+		return nil, status.Error(codes.InvalidArgument, "text or answers is required")
+	}
+	// The same client token is the same turn: its kind, and what it says.
+	same := func(other *foundrymodel.FoundryAgentTurn) bool {
+		return other.Kind == t.Kind && other.Input == t.Input && reflect.DeepEqual(other.Answers, t.Answers)
+	}
 	existing, err := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, userID, token)
 	switch {
-	case err == nil && existing.Input != text:
+	case err == nil && !same(existing):
 		return nil, status.Error(codes.InvalidArgument, "client_token was already used for another message")
 	case err == nil:
 		return s.agentTurnResponse(ctx, existing)
@@ -122,20 +169,16 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 			return nil, err
 		}
 	}
-	t := &foundrymodel.FoundryAgentTurn{
-		ID: id.New(), WorkspaceID: ws, UserID: userID, Kind: foundrymodel.FoundryAgentTurnMessage, Input: text, ClientToken: &token,
-		MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
-	}
 	if page != (foundryagent.PageContext{}) {
 		t.PageContext, _ = json.Marshal(page) // strings only: it can't fail
 	}
 	var thread *foundrymodel.FoundryAgentThread
-	if t.ThreadID = req.GetThreadId(); t.ThreadID == "" {
+	if t.ThreadID == "" {
 		t.ThreadID = id.New()
-		thread = &foundrymodel.FoundryAgentThread{ID: t.ThreadID, WorkspaceID: ws, UserID: userID, Title: foundryagent.Title(text),
+		thread = &foundrymodel.FoundryAgentThread{ID: t.ThreadID, WorkspaceID: ws, UserID: userID, Title: foundryagent.Title(t.Input),
 			Runtime: runtime}
 	}
-	err = s.deps.DB.CreateFoundryAgentTurn(ctx, t, thread, s.agentLimits())
+	err = s.deps.DB.CreateFoundryAgentTurn(ctx, t, thread, s.agentLimits(), first)
 	if refused, ok := agentRefusal(ws, err); ok {
 		return nil, refused
 	}
@@ -143,7 +186,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	case errors.Is(err, foundrystore.ErrConflict):
 		// The same click again won the race.
 		raced, lookupErr := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, userID, token)
-		if lookupErr != nil || raced.Input != text {
+		if lookupErr != nil || !same(raced) {
 			return nil, status.Error(codes.InvalidArgument, "client_token was already used for another message")
 		}
 		return s.agentTurnResponse(ctx, raced)
@@ -575,6 +618,20 @@ func agentTurnToProto(t *foundrymodel.FoundryAgentTurn) *foundryv1.FoundryAgentT
 		out.Text = t.Input
 	case foundrymodel.FoundryAgentTurnActionResult:
 		out.ActionId = t.Input
+	case foundrymodel.FoundryAgentTurnAnswers:
+		out.Answers = &foundryv1.FoundryAgentAnswers{TurnId: t.Input}
+		for _, a := range t.Answers {
+			out.Answers.Answers = append(out.Answers.Answers, agentAnswerToProto(a))
+		}
+	}
+	if asked := t.Asked; asked != nil {
+		out.Asked = &foundryv1.FoundryAgentAsked{}
+		for _, q := range asked.Questions {
+			out.Asked.Questions = append(out.Asked.Questions, agentQuestionToProto(q))
+		}
+		if g := asked.Generation; g != nil {
+			out.Asked.Generation = &foundryv1.FoundryAgentAskedGeneration{OntologyId: g.OntologyID, GenerationId: g.GenerationID, Round: int32(g.Round)}
+		}
 	}
 	var page foundryagent.PageContext
 	if len(t.PageContext) > 0 && json.Unmarshal(t.PageContext, &page) == nil {

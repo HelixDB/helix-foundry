@@ -28,8 +28,10 @@ CREATE TABLE foundry_agent_threads (
 );
 
 -- One turn of a thread: a person's message, the result of an action the
--- person ran, which the agent goes on from, or an automation's Assistant step
--- (automation_run_id, automation_node_id), whose input is its instruction.
+-- person ran, which the agent goes on from, the person's answers to the
+-- questions a turn asked them (helix_foundry_ask_person), or an automation's
+-- Assistant step (automation_run_id, automation_node_id), whose input is its
+-- instruction.
 -- The foundry-agent-worker claims a queued turn, reserving its max_usd
 -- against the workspace's monthly budget in the same transaction, as foundry_questions are claimed; a thread has at
 -- most one live turn (live_thread). A turn has its thread's runtime, so each
@@ -46,8 +48,17 @@ CREATE TABLE foundry_agent_turns (
   runtime         VARCHAR(16) NOT NULL,
   kind            VARCHAR(16) NOT NULL,
   -- The person's text, for a message; the action's id, for an action result;
-  -- the step's instruction, with what fired the run, for an automation's.
+  -- the asking turn's id, for answers; the step's instruction, with what
+  -- fired the run, for an automation's.
   input           TEXT        NOT NULL,
+  -- What the turn asked the person and ended waiting on: {questions, and
+  -- generation {ontology_id, generation_id, round} when they are a
+  -- generation's, relayed}; set once, by the turn's worker. NULL for a turn
+  -- that asked nothing, and always for an automation's (no one is there).
+  asked           JSON        NULL,
+  -- An answers turn's answers, each {question_id, options, text}, checked
+  -- against the asking turn's questions; [] leaves every one to the agent.
+  answers         JSON        NULL,
   automation_run_id  CHAR(26)    NULL,
   automation_node_id VARCHAR(32) NULL,
   -- What the person was looking at: ids only.
@@ -75,7 +86,10 @@ CREATE TABLE foundry_agent_turns (
   started_at      DATETIME(6) NULL,
   finished_at     DATETIME(6) NULL,
   live_thread     CHAR(26) AS (IF(status IN ('queued', 'running'), thread_id, NULL)) STORED,
+  -- The turn an answers turn answers: questions are answered once.
+  answered_turn   CHAR(26) AS (IF(kind = 'answers', input, NULL)) STORED,
   UNIQUE KEY foundry_agent_turns_live_uq (live_thread),
+  UNIQUE KEY foundry_agent_turns_answered_uq (answered_turn),
   UNIQUE KEY foundry_agent_turns_client_token_uq (workspace_id, user_id, client_token),
   INDEX foundry_agent_turns_claim_idx (runtime, status, next_attempt_at),
   INDEX foundry_agent_turns_thread_idx (thread_id, created_at, id),
@@ -83,8 +97,9 @@ CREATE TABLE foundry_agent_turns (
   INDEX foundry_agent_turns_spend_idx (workspace_id, charged_at),
   INDEX foundry_agent_turns_running_idx (workspace_id, status),
   CONSTRAINT foundry_agent_turns_runtime_chk CHECK (runtime IN ('api', 'claude_code', 'codex')),
-  CONSTRAINT foundry_agent_turns_kind_chk CHECK (kind IN ('message', 'action_result', 'automation') AND
+  CONSTRAINT foundry_agent_turns_kind_chk CHECK (kind IN ('message', 'action_result', 'answers', 'automation') AND
     (kind = 'automation') = (automation_run_id IS NOT NULL) AND (automation_run_id IS NULL) = (automation_node_id IS NULL)),
+  CONSTRAINT foundry_agent_turns_asked_chk CHECK ((kind = 'answers') = (answers IS NOT NULL) AND (asked IS NULL OR kind <> 'automation')),
   CONSTRAINT foundry_agent_turns_status_chk CHECK (status IN ('queued', 'running', 'done', 'failed', 'cancelled')),
   CONSTRAINT foundry_agent_turns_finished_chk CHECK ((status IN ('queued', 'running')) = (finished_at IS NULL)),
   CONSTRAINT foundry_agent_turns_reserved_chk CHECK (reserved_micros >= 0 AND (status = 'running' OR reserved_micros = 0)),

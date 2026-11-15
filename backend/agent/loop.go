@@ -61,6 +61,8 @@ type Store interface {
 	Reads
 	ListFoundryAgentMessages(ctx context.Context, threadID string) ([]model.FoundryAgentMessage, error)
 	ListFoundryAgentTurns(ctx context.Context, threadID string, limit int) ([]*model.FoundryAgentTurn, error)
+	GetFoundryAgentTurn(ctx context.Context, workspaceID, id string) (*model.FoundryAgentTurn, error)
+	AskFoundryAgentQuestions(ctx context.Context, turnID, workerID string, asked *model.FoundryAgentAsked, event json.RawMessage) error
 	AppendFoundryAgentMessages(ctx context.Context, turnID, workerID string, messages []model.FoundryAgentMessage, keep int) error
 	AppendFoundryAgentEvents(ctx context.Context, id, workerID string, events []json.RawMessage) error
 	FinishFoundryAgentText(ctx context.Context, id, workerID string, step int, events []json.RawMessage) error
@@ -147,6 +149,9 @@ type turnRun struct {
 	all     []entry
 	started time.Time
 	out     *Attempt
+	// asked is whether the turn asked its person (toolAskPerson), in this
+	// attempt or one before: it ends once that call's result is committed.
+	asked bool
 }
 
 // Run runs an attempt of turn:
@@ -197,8 +202,11 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	}
 	// A card is drawn as its person reads the workspace.
 	sink.cards = SessionCards(r.DB, r.Databases, session, turn.WorkspaceID)
-	t := &turnRun{r: r, turn: turn, automation: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out}
-	client, offered, err := serve(session, t.reportTool)
+	t := &turnRun{r: r, turn: turn, automation: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out, asked: turn.Asked != nil}
+	client, offered, err := serve(session, func(server *mcp.Server) {
+		t.reportTool(server)
+		asker{db: r.DB, turn: turn, workerID: r.WorkerID}.register(server)
+	})
 	if err != nil {
 		return out, &Failure{Message: "The Assistant's tools couldn't start; Helix will retry", Err: err}
 	}
@@ -310,8 +318,8 @@ func toolServer(session integration.Session, own func(*mcp.Server)) (*mcp.Server
 }
 
 // open adds the turn's own message to the transcript: the person's text with
-// the page they were on, checked against the workspace, or how their click
-// on an action ended.
+// the page they were on, checked against the workspace, their answers, or
+// how their click on an action ended.
 func (t *turnRun) open(ctx context.Context) error {
 	text, err := openingText(ctx, t.r.DB, t.turn)
 	if err != nil {
@@ -322,7 +330,8 @@ func (t *turnRun) open(ctx context.Context) error {
 
 // openingText is what a turn opens its model's part of the transcript with:
 // the person's text with the page they were on, checked against the
-// workspace, or how their click on an action ended.
+// workspace, their answers to the questions the turn before asked, or how
+// their click on an action ended.
 func openingText(ctx context.Context, db Store, turn *model.FoundryAgentTurn) (string, error) {
 	switch turn.Kind {
 	case model.FoundryAgentTurnMessage:
@@ -331,6 +340,15 @@ func openingText(ctx context.Context, db Store, turn *model.FoundryAgentTurn) (s
 		// The step's instruction, with what fired the run, as the
 		// foundry-automation-worker wrote it.
 		return turn.Input, nil
+	case model.FoundryAgentTurnAnswers:
+		asking, err := db.GetFoundryAgentTurn(ctx, turn.WorkspaceID, turn.Input)
+		if err == nil && asking.Asked == nil {
+			err = errors.New("the turn answered asked nothing")
+		}
+		if err != nil {
+			return "", &Failure{Message: "The questions these answers answer can't be read", Permanent: true, Err: err}
+		}
+		return answersText(turn.WorkspaceID, asking.Asked, turn.Answers), nil
 	case model.FoundryAgentTurnActionResult:
 		a, err := db.GetFoundryAgentAction(ctx, turn.WorkspaceID, turn.Input)
 		if err != nil {
@@ -384,6 +402,10 @@ func (t *turnRun) loop(ctx context.Context) error {
 				return err
 			}
 			continue
+		}
+		if t.asked {
+			// The person answers next: no call until then.
+			return t.finish(ctx, StopAsked)
 		}
 		messages := prompt(t.all, t.turn.ID, t.budget)
 		in := t.fixedTokens
@@ -563,8 +585,10 @@ func checkFailure(check ai.AssistantCheck, provider, model string) string {
 
 // runTools runs the model's calls, in order, and commits their results as one
 // message. A tool the model wasn't offered isn't called, nor are the calls
-// past maxCallsPerReply, an ask past maxAsksPerTurn, or anything once the
-// turn's wall time is up: each is answered with why.
+// past maxCallsPerReply, an ask past maxAsksPerTurn, anything once the
+// turn's wall time is up, or anything but toolAskPerson once the turn asked
+// its person (a second ask is the tool's to refuse): each is answered with
+// why.
 func (t *turnRun) runTools(ctx context.Context, uses []llm.ToolUse) error {
 	asked := 0
 	for _, e := range t.all[:len(t.all)-1] {
@@ -584,6 +608,8 @@ func (t *turnRun) runTools(ctx context.Context, uses []llm.ToolUse) error {
 			why, told = NotRunTime, "Not run: the turn ran out of time. Tell the person what you found so far."
 		case use.Name == toolAsk && asked >= maxAsksPerTurn:
 			why, told = NotRunAsks, fmt.Sprintf("Not run: a turn asks at most %d questions. Answer with what you have, or let the person ask again.", maxAsksPerTurn)
+		case t.asked && use.Name != toolAskPerson:
+			why, told = NotRunAsked, "Not run: you asked the person, which ends your turn. Their answers come as the next message."
 		}
 		if use.Name == toolAsk {
 			asked++
@@ -611,6 +637,7 @@ func (t *turnRun) runTools(ctx context.Context, uses []llm.ToolUse) error {
 		if err := t.event(ctx, shown); err != nil {
 			return err
 		}
+		t.asked = t.asked || use.Name == toolAskPerson && !failed
 		results = append(results, llm.ToolResult{ToolUseID: use.ID, Content: content, IsError: failed})
 	}
 	return t.commit(ctx, llm.Message{Role: llm.User, Content: results})

@@ -2074,15 +2074,26 @@ message AssessFoundryWorkflowRunRequest {
 }
 
 // SendFoundryAgentMessageRequest queues a person's message in their thread,
-// or in a new one when thread_id is empty. The same client_token returns the
-// turn it queued. A thread with a live turn, or an action running, is
-// FAILED_PRECONDITION (reason FOUNDRY_AGENT_THREAD_BUSY); the user's hourly
-// messages RESOURCE_EXHAUSTED; the month's budget FAILED_PRECONDITION.
+// or in a new one when thread_id is empty, or their answers to the
+// questions their thread's newest turn asked them. The same client_token
+// returns the turn it queued. A thread with a live turn, or an action
+// running, is FAILED_PRECONDITION (reason FOUNDRY_AGENT_THREAD_BUSY); the
+// user's hourly messages and answers RESOURCE_EXHAUSTED; the month's budget
+// FAILED_PRECONDITION.
 message SendFoundryAgentMessageRequest {
   string workspace_id = 1;
+  // Required with answers: the thread of the turn they answer.
   string thread_id = 2;
-  // At most 4,000 characters.
-  string text = 3;
+  oneof input {
+    // At most 4,000 characters.
+    string text = 3;
+    // Answers to the questions answers.turn_id asked, which must be the
+    // thread's newest turn, done, having asked (FAILED_PRECONDITION, reason
+    // FOUNDRY_AGENT_QUESTIONS_CLOSED, once anything followed it, its answers
+    // among them). Checked against its questions as AgentQuestionAnswer
+    // says, every blocking one answered (INVALID_ARGUMENT otherwise).
+    FoundryAgentAnswers answers = 6;
+  }
   FoundryAgentPageContext page_context = 4;
   // At most 64 characters.
   string client_token = 5;

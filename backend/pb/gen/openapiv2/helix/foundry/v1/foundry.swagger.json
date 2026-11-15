@@ -6593,11 +6593,16 @@
       "type": "object",
       "properties": {
         "threadId": {
-          "type": "string"
+          "type": "string",
+          "description": "Required with answers: the thread of the turn they answer."
         },
         "text": {
           "type": "string",
           "description": "At most 4,000 characters."
+        },
+        "answers": {
+          "$ref": "#/definitions/v1FoundryAgentAnswers",
+          "description": "Answers to the questions answers.turn_id asked, which must be the\nthread's newest turn, done, having asked (FAILED_PRECONDITION, reason\nFOUNDRY_AGENT_QUESTIONS_CLOSED, once anything followed it, its answers\namong them). Checked against its questions as AgentQuestionAnswer\nsays, every blocking one answered (INVALID_ARGUMENT otherwise)."
         },
         "pageContext": {
           "$ref": "#/definitions/v1FoundryAgentPageContext"
@@ -6607,7 +6612,7 @@
           "description": "At most 64 characters."
         }
       },
-      "description": "SendFoundryAgentMessageRequest queues a person's message in their thread,\nor in a new one when thread_id is empty. The same client_token returns the\nturn it queued. A thread with a live turn, or an action running, is\nFAILED_PRECONDITION (reason FOUNDRY_AGENT_THREAD_BUSY); the user's hourly\nmessages RESOURCE_EXHAUSTED; the month's budget FAILED_PRECONDITION."
+      "description": "SendFoundryAgentMessageRequest queues a person's message in their thread,\nor in a new one when thread_id is empty, or their answers to the\nquestions their thread's newest turn asked them. The same client_token\nreturns the turn it queued. A thread with a live turn, or an action\nrunning, is FAILED_PRECONDITION (reason FOUNDRY_AGENT_THREAD_BUSY); the\nuser's hourly messages and answers RESOURCE_EXHAUSTED; the month's budget\nFAILED_PRECONDITION."
     },
     "FoundryServiceSetCurrentFoundryLoadBody": {
       "type": "object",
@@ -6948,6 +6953,42 @@
           }
         }
       }
+    },
+    "v1AgentQuestion": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "header": {
+          "type": "string",
+          "description": "A few words naming the question, for a progress strip; may be empty."
+        },
+        "text": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1AgentQuestionOption"
+          },
+          "description": "Empty for an answer in words."
+        },
+        "multiple": {
+          "type": "boolean",
+          "description": "Whether the person may pick several options; false without options."
+        },
+        "recommended": {
+          "type": "string",
+          "description": "The label of the option the agent recommends; empty for none, and\nwithout options."
+        },
+        "blocking": {
+          "type": "boolean",
+          "description": "A blocking question needs an answer; another may be left to the agent\n(its recommended option, or the agent decides)."
+        }
+      },
+      "description": "A question an agent asks the person: the ontology agent of a generation\nthat needs input (OntologyGenerationQuestion), or the Assistant\n(FoundryAgentAsked). With no options it takes an answer in words; with\noptions (2 to 20, labels unique) the person picks one, or one or more when\nmultiple, and may always answer in their own words instead (one) or as\nwell (multiple). Its header, text and options are the agent's words and\nmay quote the data: show them as plain text, never as markup. The site\nshows such questions one at a time, the recommended option first."
     },
     "v1AgentQuestionAnswer": {
       "type": "object",
@@ -8285,6 +8326,54 @@
         }
       }
     },
+    "v1FoundryAgentAnswers": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "type": "string"
+        },
+        "answers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1AgentQuestionAnswer"
+          }
+        }
+      },
+      "description": "FoundryAgentAnswers are the person's answers to the questions turn_id\nasked: one per question at most, as AgentQuestionAnswer says; a question\nleft out (only one that isn't blocking) is left to the Assistant."
+    },
+    "v1FoundryAgentAsked": {
+      "type": "object",
+      "properties": {
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1AgentQuestion"
+          }
+        },
+        "generation": {
+          "$ref": "#/definitions/v1FoundryAgentAskedGeneration"
+        }
+      },
+      "description": "FoundryAgentAsked is what a turn asked its person: 1 to 4 questions of the\nAssistant's own (ids q1, q2, ...), or a generation's waiting round,\nrelayed as its agent wrote it, under its own question ids (generation\nset). Each question is the agent's words, plain text."
+    },
+    "v1FoundryAgentAskedGeneration": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "generationId": {
+          "type": "string"
+        },
+        "round": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "FoundryAgentAskedGeneration is a generation whose questions a turn relayed,\nand their round: the answers turn prepares answer_generation_questions\nwith the person's answers, unchanged, as a card the person runs."
+    },
     "v1FoundryAgentEvent": {
       "type": "object",
       "properties": {
@@ -8300,7 +8389,7 @@
           "format": "date-time"
         }
       },
-      "description": "FoundryAgentEvent is one event a turn shows, as JSON: started, text,\ntool_call, tool_result, action_card, action_result and finished."
+      "description": "FoundryAgentEvent is one event a turn shows, as JSON: started, text,\ntext_delta, tool_call, tool_result, action_card, action_result,\nquestions, answers, automation_report and finished."
     },
     "v1FoundryAgentHost": {
       "type": "object",
@@ -8506,11 +8595,11 @@
         },
         "kind": {
           "type": "string",
-          "description": "message or action_result."
+          "description": "message, action_result, answers or automation."
         },
         "text": {
           "type": "string",
-          "description": "The person's text; empty for an action_result."
+          "description": "The person's text, for a message."
         },
         "actionId": {
           "type": "string",
@@ -8554,6 +8643,14 @@
         "finishedAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "asked": {
+          "$ref": "#/definitions/v1FoundryAgentAsked",
+          "description": "What the turn asked its person (helix_foundry_ask_person), which it\nended waiting on (its finished event's reason asked); unset when it asked\nnothing. The person answers it (SendFoundryAgentMessage with answers)\nwhile it is the thread's newest turn and done."
+        },
+        "answers": {
+          "$ref": "#/definitions/v1FoundryAgentAnswers",
+          "description": "An answers turn's: the turn it answers, and the person's answers."
         }
       },
       "description": "FoundryAgentTurn is one turn of a thread: a person's message, or the result\nof an action they ran."

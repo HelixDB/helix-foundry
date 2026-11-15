@@ -172,7 +172,7 @@ func TestPairAndRevokeAHelper(t *testing.T) {
 
 func TestASendRunsOnItsThreadsRuntime(t *testing.T) {
 	send := func(f agentFixture, token, thread string) (*foundryv1.FoundryAgentTurnResponse, error) {
-		return f.s.SendFoundryAgentMessage(personCtx, &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws-1", Text: "Load it",
+		return f.s.SendFoundryAgentMessage(personCtx, &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws-1", Input: textInput("Load it"),
 			ClientToken: token, ThreadId: thread})
 	}
 	t.Run("a new thread takes the workspace's, on a helper's subscription", func(t *testing.T) {

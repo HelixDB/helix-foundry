@@ -455,7 +455,8 @@ type Store interface {
 
 	// The Assistant: a person's sends and clicks, and the
 	// foundry-agent-worker's turns (foundry_agent.go)
-	CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAgentTurn, thread *model.FoundryAgentThread, limits model.FoundryAgentLimits) error
+	CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAgentTurn, thread *model.FoundryAgentThread, limits model.FoundryAgentLimits, first json.RawMessage) error
+	AskFoundryAgentQuestions(ctx context.Context, turnID, workerID string, asked *model.FoundryAgentAsked, event json.RawMessage) error
 	DeleteFoundryAgentThread(ctx context.Context, workspaceID, userID, id string) error
 	CancelFoundryAgentTurn(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentTurn, error)
 	ClaimFoundryAgentTurn(ctx context.Context, workerID string, claim model.FoundryAgentClaim) (*model.FoundryAgentTurn, error)

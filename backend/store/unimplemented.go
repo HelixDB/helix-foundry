@@ -1283,8 +1283,13 @@ func (u Unimplemented) ListFoundryAgentActions(context.Context, string) ([]*mode
 	return nil, nil
 }
 
-func (u Unimplemented) CreateFoundryAgentTurn(context.Context, *model.FoundryAgentTurn, *model.FoundryAgentThread, model.FoundryAgentLimits) error {
+func (u Unimplemented) CreateFoundryAgentTurn(context.Context, *model.FoundryAgentTurn, *model.FoundryAgentThread, model.FoundryAgentLimits, json.RawMessage) error {
 	u.unimplemented("CreateFoundryAgentTurn")
+	return nil
+}
+
+func (u Unimplemented) AskFoundryAgentQuestions(context.Context, string, string, *model.FoundryAgentAsked, json.RawMessage) error {
+	u.unimplemented("AskFoundryAgentQuestions")
 	return nil
 }
 

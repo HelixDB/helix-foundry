@@ -56,6 +56,8 @@ var Tools = map[string]bool{
 	toolPrepare: true,
 	// An automation's turn's report, registered for those turns alone.
 	toolReport: true,
+	// Asks the person, for a person's turns alone, and ends the turn.
+	toolAskPerson: true,
 }
 
 const (

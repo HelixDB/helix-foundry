@@ -3,7 +3,10 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
+
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 )
 
 // FoundryAgentRuntime is who runs a thread's turns. A thread keeps the
@@ -82,6 +85,10 @@ const (
 	// FoundryAgentTurnActionResult is an action the person ran, which the
 	// agent goes on from; its Input is the action's id.
 	FoundryAgentTurnActionResult FoundryAgentTurnKind = "action_result"
+	// FoundryAgentTurnAnswers is the person's answers to the questions the
+	// thread's newest turn asked them (its Asked); its Input is that turn's
+	// id, and Answers the answers, checked against its questions.
+	FoundryAgentTurnAnswers FoundryAgentTurnKind = "answers"
 	// FoundryAgentTurnAutomation is an automation's Assistant step, run
 	// unattended as its owner; its Input is the step's instruction with what
 	// fired the run, and AutomationRunID and AutomationNodeID name the step.
@@ -119,7 +126,15 @@ type FoundryAgentTurn struct {
 	AutomationRunID  *string
 	AutomationNodeID *string
 	// PageContext is what the person was looking at, ids only; nil for none.
-	PageContext    json.RawMessage
+	PageContext json.RawMessage
+	// Asked is what the turn asked its person and ended waiting on
+	// (helix_foundry_ask_person); nil for none, and always for an
+	// automation's turn.
+	Asked *FoundryAgentAsked
+	// Answers are an answers turn's: the person's, one per question at
+	// most, every blocking one answered (agentquestion.Check); nil for any
+	// other kind, and empty when they left every question to the agent.
+	Answers        []agentquestion.Answer
 	Status         FoundryAgentTurnStatus
 	Error          *string
 	ClientToken    *string
@@ -141,6 +156,49 @@ type FoundryAgentTurn struct {
 	CreatedAt  time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time
+}
+
+// MaxAgentQuestions is the most questions a turn asks its person at once.
+const MaxAgentQuestions = 4
+
+// FoundryAgentAsked is what a turn asked its person: 1 to MaxAgentQuestions
+// questions of the Assistant's own, or a generation's questions, relayed as
+// its agent wrote them (Generation set).
+type FoundryAgentAsked struct {
+	Questions  []agentquestion.Question     `json:"questions"`
+	Generation *FoundryAgentAskedGeneration `json:"generation,omitempty"`
+}
+
+// FoundryAgentAskedGeneration is the generation, and the round of its
+// questions, a turn relayed: the answers to them are its
+// answer_generation_questions.
+type FoundryAgentAskedGeneration struct {
+	OntologyID   string `json:"ontology_id"`
+	GenerationID string `json:"generation_id"`
+	Round        int    `json:"round"`
+}
+
+// Validate checks what a turn asked: questions with unique ids, the
+// Assistant's own at most MaxAgentQuestions, and a relay naming its
+// generation and a round.
+func (a *FoundryAgentAsked) Validate() error {
+	switch g := a.Generation; {
+	case len(a.Questions) == 0:
+		return fmt.Errorf("a turn asks at least one question")
+	case g == nil && len(a.Questions) > MaxAgentQuestions:
+		return fmt.Errorf("a turn asks at most %d questions of its own", MaxAgentQuestions)
+	case g != nil && (g.OntologyID == "" || g.GenerationID == "" || g.Round < 1):
+		return fmt.Errorf("a relayed generation's questions name it and their round")
+	}
+	for i, q := range a.Questions {
+		if err := q.Validate(); err != nil {
+			return err
+		}
+		if slices.ContainsFunc(a.Questions[:i], func(p agentquestion.Question) bool { return p.ID == q.ID }) {
+			return fmt.Errorf("question %s is asked twice", q.ID)
+		}
+	}
+	return nil
 }
 
 // FoundryAgentEvent is one event a turn shows, in its order.
@@ -278,6 +336,9 @@ const (
 	FoundryAgentChanged FoundryAgentRefusalReason = "changed"
 	// FoundryAgentExpired: the action's confirmation ran out; refresh it.
 	FoundryAgentExpired FoundryAgentRefusalReason = "expired"
+	// FoundryAgentQuestionsClosed: the answers are to questions no longer
+	// open: answered already, or the thread went on since they were asked.
+	FoundryAgentQuestionsClosed FoundryAgentRefusalReason = "questions_closed"
 )
 
 // FoundryAgentRefusal is a write the Assistant's rules refuse now.

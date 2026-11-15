@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -68,6 +69,46 @@ type memStore struct {
 	// deltaFailures fails that many text_delta writes, as a store that
 	// errs for a moment.
 	deltaFailures int
+	// asked is what each turn asked its person.
+	asked map[string]*model.FoundryAgentAsked
+}
+
+func (s *memStore) GetFoundryAgentTurn(_ context.Context, _, id string) (*model.FoundryAgentTurn, error) {
+	for _, t := range s.turns {
+		if t.ID == id {
+			return t, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
+}
+
+// AskFoundryAgentQuestions records what a turn asked, once, as the store does.
+func (s *memStore) AskFoundryAgentQuestions(_ context.Context, turnID, _ string, asked *model.FoundryAgentAsked, event json.RawMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lost {
+		return foundrystore.ErrNotFound
+	}
+	if err := asked.Validate(); err != nil {
+		return err
+	}
+	if was, ok := s.asked[turnID]; ok {
+		if reflect.DeepEqual(was, asked) {
+			return nil
+		}
+		return foundrystore.ErrConflict
+	}
+	if s.asked == nil {
+		s.asked = map[string]*model.FoundryAgentAsked{}
+	}
+	s.asked[turnID] = asked
+	for _, t := range s.turns {
+		if t.ID == turnID {
+			t.Asked = asked
+		}
+	}
+	s.events = append(s.events, event)
+	return nil
 }
 
 func (s *memStore) ListFoundryAgentMessages(context.Context, string) ([]model.FoundryAgentMessage, error) {

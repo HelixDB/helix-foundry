@@ -189,7 +189,6 @@ func PairCommand(code, foundry string) string {
 type HostStore interface {
 	Store
 	GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error)
-	GetFoundryAgentTurn(ctx context.Context, workspaceID, id string) (*model.FoundryAgentTurn, error)
 	ListFoundryAgentEvents(ctx context.Context, turnID string, afterSeq, limit int) ([]model.FoundryAgentEvent, error)
 	ClaimFoundryAgentTurn(ctx context.Context, workerID string, claim model.FoundryAgentClaim) (*model.FoundryAgentTurn, error)
 	RenewFoundryAgentTurnLease(ctx context.Context, id, workerID string, lease time.Duration) error
@@ -366,7 +365,8 @@ func (h *Hosts) spent(ctx context.Context, turn *model.FoundryAgentTurn) (string
 		var typed struct {
 			Type string `json:"type"`
 		}
-		if json.Unmarshal(e.Event, &typed) == nil && typed.Type != "started" && typed.Type != "text_delta" && typed.Type != "action_result" {
+		if json.Unmarshal(e.Event, &typed) == nil && typed.Type != "started" && typed.Type != "text_delta" && typed.Type != "action_result" &&
+			typed.Type != "answers" {
 			return "The helper stopped before it finished, after it had started work: send your message again to go on.", nil
 		}
 	}
@@ -553,8 +553,10 @@ type HostOutcome struct {
 	Session string
 }
 
-// Finish ends the claim's turn as the helper reports it.
-func (h *Hosts) Finish(ctx context.Context, turnID, workerID string, runtime model.FoundryAgentRuntime, o HostOutcome) error {
+// Finish ends the claim's turn as the helper reports it: one that asked its
+// person (toolAskPerson) and wasn't failed ends waiting for their answers
+// (StopAsked), however the CLI stopped after.
+func (h *Hosts) Finish(ctx context.Context, turn *model.FoundryAgentTurn, workerID string, o HostOutcome) error {
 	if o.Steps < 0 || o.Steps > h.Cfg.MaxSteps || len(o.Session) > 128 {
 		return status.Errorf(codes.InvalidArgument, "steps is 0 to %d, and a session id at most 128 bytes", h.Cfg.MaxSteps)
 	}
@@ -568,7 +570,7 @@ func (h *Hosts) Finish(ctx context.Context, turnID, workerID string, runtime mod
 		}
 		finished = Finished{Status: string(model.FoundryAgentTurnDone), Reason: end.Reason}
 	case HostFailed:
-		why, ok := hostFailureText(runtime, end)
+		why, ok := hostFailureText(turn.Runtime, end)
 		if !ok {
 			return status.Errorf(codes.InvalidArgument, "no failure %q", end.Kind)
 		}
@@ -576,8 +578,11 @@ func (h *Hosts) Finish(ctx context.Context, turnID, workerID string, runtime mod
 	default:
 		return status.Error(codes.InvalidArgument, "the turn ended in no way Foundry knows")
 	}
+	if turn.Asked != nil && finished.Status == string(model.FoundryAgentTurnDone) {
+		finished.Reason = StopAsked
+	}
 	if o.Session != "" {
-		err := h.DB.SetFoundryAgentThreadSession(ctx, turnID, workerID, o.Session)
+		err := h.DB.SetFoundryAgentThreadSession(ctx, turn.ID, workerID, o.Session)
 		if errors.Is(err, foundrystore.ErrNotFound) {
 			return ErrLost
 		}
@@ -585,7 +590,7 @@ func (h *Hosts) Finish(ctx context.Context, turnID, workerID string, runtime mod
 			return err
 		}
 	}
-	return h.end(ctx, &model.FoundryAgentTurn{ID: turnID}, workerID, o.Steps, finished)
+	return h.end(ctx, turn, workerID, o.Steps, finished)
 }
 
 // hostFailureText words a helper's failure for the person.
@@ -670,7 +675,8 @@ var (
 // Server is the MCP server a claim's CLI calls Foundry's tools on: the
 // person's session in the turn's workspace, confirming as the person (what
 // it prepares becomes a card, its token sealed and never returned), Tools
-// alone. Each call is counted by spend first, the ask tool's client token is
+// alone, toolAskPerson among them; once the turn asked its person, only that
+// tool runs. Each call is counted by spend first, the ask tool's client token is
 // forced (the same question in a turn is asked once), and the call and its
 // result are shown to the person as the worker shows its own. A call after
 // the claim lost its lease fails.
@@ -682,7 +688,7 @@ func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, worker
 		return nil, err
 	}
 	sink.cards = SessionCards(h.DB, h.Databases, session, turn.WorkspaceID)
-	server, offered, err := toolServer(session, nil)
+	server, offered, err := toolServer(session, asker{db: h.DB, turn: turn, workerID: workerID}.register)
 	if err != nil {
 		return nil, err
 	}
@@ -720,6 +726,9 @@ func (h *Hosts) call(ctx context.Context, turn *model.FoundryAgentTurn, workerID
 			return nil, err
 		}
 		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: told}}}, nil
+	}
+	if turn.Asked != nil && name != toolAskPerson {
+		return refused(NotRunAsked, "Not run: you asked the person, which ends your turn. End it now: their answers come as the next message.")
 	}
 	switch err := spend(ctx, name == toolAsk); {
 	case errors.Is(err, ErrHostCallsSpent):

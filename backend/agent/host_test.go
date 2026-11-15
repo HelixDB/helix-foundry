@@ -51,15 +51,6 @@ func (s *hostMem) GetFoundryAgentThread(_ context.Context, _, id string) (*model
 	return &model.FoundryAgentThread{ID: id, WorkspaceID: ws, UserID: user, Runtime: model.FoundryAgentRuntimeClaudeCode, RuntimeSessionID: s.session}, nil
 }
 
-func (s *hostMem) GetFoundryAgentTurn(_ context.Context, _, id string) (*model.FoundryAgentTurn, error) {
-	for _, t := range s.turns {
-		if t.ID == id {
-			return t, nil
-		}
-	}
-	return nil, foundrystore.ErrNotFound
-}
-
 func (s *hostMem) ListFoundryAgentEvents(context.Context, string, int, int) ([]model.FoundryAgentEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -275,7 +266,7 @@ func TestAHelperEndsItsTurnInFoundrysWords(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hosts, db, _ := newHosts(t)
-			require.NoError(t, hosts.Finish(ctx, "turn1", "host:1", tc.runtime, tc.outcome))
+			require.NoError(t, hosts.Finish(ctx, &model.FoundryAgentTurn{ID: "turn1", Runtime: tc.runtime}, "host:1", tc.outcome))
 			last := db.lastEvent(t)
 			assert.Equal(t, "finished", last["type"])
 			assert.Equal(t, string(tc.status), last["status"])
@@ -290,18 +281,18 @@ func TestAHelperEndsItsTurnInFoundrysWords(t *testing.T) {
 	}
 	hosts, db, _ := newHosts(t)
 	long := HostOutcome{End: HostFailed{Kind: HostCLIError, Detail: strings.Repeat("é", 2*maxHostDetail)}}
-	require.NoError(t, hosts.Finish(ctx, "turn1", "host:1", model.FoundryAgentRuntimeCodex, long))
+	require.NoError(t, hosts.Finish(ctx, &model.FoundryAgentTurn{ID: "turn1", Runtime: model.FoundryAgentRuntimeCodex}, "host:1", long))
 	assert.LessOrEqual(t, len([]rune(db.settled[0].Error)), maxHostDetail+40)
 
 	for _, bad := range []HostOutcome{
 		{End: HostStopped{Reason: StopBudget}}, {End: HostStopped{Reason: StopFailed}}, {End: HostFailed{Kind: "crashed"}}, {End: nil},
 		{End: HostAnswered{}, Steps: -1}, {End: HostAnswered{}, Steps: hosts.Cfg.MaxSteps + 1}, {End: HostAnswered{}, Session: strings.Repeat("s", 129)},
 	} {
-		assert.Equal(t, codes.InvalidArgument, status.Code(hosts.Finish(ctx, "turn1", "host:1", model.FoundryAgentRuntimeCodex, bad)), "%+v", bad)
+		assert.Equal(t, codes.InvalidArgument, status.Code(hosts.Finish(ctx, &model.FoundryAgentTurn{ID: "turn1", Runtime: model.FoundryAgentRuntimeCodex}, "host:1", bad)), "%+v", bad)
 	}
 	db.lost = true
-	assert.ErrorIs(t, hosts.Finish(ctx, "turn1", "host:1", model.FoundryAgentRuntimeCodex, HostOutcome{End: HostAnswered{}, Session: "s"}), ErrLost)
-	assert.ErrorIs(t, hosts.Finish(ctx, "turn1", "host:1", model.FoundryAgentRuntimeCodex, HostOutcome{End: HostAnswered{}}), ErrLost)
+	assert.ErrorIs(t, hosts.Finish(ctx, &model.FoundryAgentTurn{ID: "turn1", Runtime: model.FoundryAgentRuntimeCodex}, "host:1", HostOutcome{End: HostAnswered{}, Session: "s"}), ErrLost)
+	assert.ErrorIs(t, hosts.Finish(ctx, &model.FoundryAgentTurn{ID: "turn1", Runtime: model.FoundryAgentRuntimeCodex}, "host:1", HostOutcome{End: HostAnswered{}}), ErrLost)
 }
 
 func TestAHelpersTurnEndsAtItsWallTime(t *testing.T) {
