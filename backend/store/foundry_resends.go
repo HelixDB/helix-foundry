@@ -360,11 +360,12 @@ func (s *mysqlDB) makeFoundryLoadCurrent(ctx context.Context, o *model.FoundryOn
 // name, settled while this load was current, joined the list then
 // (SettleFoundryResolve) and is held by id. One of a name this load links
 // already, settled while it was current, was the next load's then
-// (SettleFoundryBoundResolve) and its list never held it: nothing records
-// which load was current when, so made current again (another load current
-// between) the load gets it as any other it lacks. The engine refuses it on
-// its own document (bound), which its card shows, and, as an alias, it links
-// the name in the load's other documents whose reviews ask about it.
+// (SettleFoundryBoundResolve) and its list holds no copy of it as chosen:
+// nothing records which load was current when, so made current again
+// (another load current between) the load gets it as any other it lacks.
+// The engine refuses it on its own document (bound), which its card shows,
+// and, as an alias, it links the name in the load's other documents whose
+// reviews ask about it.
 //
 // Each resolve the list holds no copy of by id joins it, with its name key,
 // as a settle against this load would: the load owes its document a resend
