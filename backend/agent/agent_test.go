@@ -54,6 +54,8 @@ type memStore struct {
 	// automations and runs are the workspace's; none unless a test says.
 	automations []*model.FoundryAutomation
 	runs        []*model.FoundryAutomationRun
+	// generations are the ontologies'; none unless a test says.
+	generations []*model.OntologyGeneration
 	// decided is what the person did with an action by the time the turn
 	// prepares it again; nothing when empty.
 	decided model.FoundryAgentActionStatus
@@ -201,6 +203,15 @@ func (s *memStore) GetOntologyVersion(_ context.Context, _, id string) (*model.O
 		n = 3
 	}
 	return &model.OntologyVersion{ID: id, Version: n}, nil
+}
+
+func (s *memStore) GetOntologyGeneration(_ context.Context, ontologyID, id string) (*model.OntologyGeneration, error) {
+	for _, g := range s.generations {
+		if g.OntologyID == ontologyID && g.ID == id {
+			return g, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
 }
 
 // loadedAt is when every load of the store started.

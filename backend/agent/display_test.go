@@ -16,6 +16,7 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/integration"
+	"github.com/helixdb/helix-foundry/backend/ontologygen"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -470,4 +471,63 @@ func TestAnAPISourceIsMadeInItsForm(t *testing.T) {
 	require.False(t, kinds.IsError, kinds.Content)
 	assert.NotContains(t, kinds.Content, "create_event_source")
 	assert.Contains(t, kinds.Content, "helix_foundry_connect links it")
+}
+
+// asking is a generation of the Sales graph waiting for answers to three
+// questions: one with options and a default, one free with a default, and
+// one it may decide itself.
+func asking() *model.OntologyGeneration {
+	title, def, days := "Track renewals", "The company that pays", "90 days"
+	return &model.OntologyGeneration{ID: "gen1", OntologyID: ontology, Status: model.OntologyGenerationNeedsInput, Title: &title,
+		Questions: &model.OntologyQuestions{Round: 1, Asked: []model.OntologyQuestion{
+			{ID: "q1", Text: "Is a customer the company that pays?", Options: []string{"The company that pays", "Each person"}, Default: &def, Blocking: true},
+			{ID: "q2", Text: "How many days before renewal is at risk?", Default: &days, Blocking: true},
+			{ID: "q3", Text: "Keep <b>cancelled</b> orders?", Options: []string{"Keep them", "Leave them out"}},
+		}}}
+}
+
+// A generation's answers are a card naming each question as the agent asked
+// it beside the person's answer, and what the defaults answer.
+func TestAGenerationsAnswersAreACard(t *testing.T) {
+	h := workspaceHarness(t)
+	h.db.generations = []*model.OntologyGeneration{asking()}
+	a, result := prepared(t, h, "Answer the Sales graph's questions: a customer is each person, and use the defaults for the rest", "answer_generation_questions",
+		"ontology:ws1/ont1", `{"generation_id":"gen1","answers":[{"question_id":"q1","text":"Each person"}],"use_defaults":true}`)
+	require.NotNil(t, a, result.Content)
+	assert.JSONEq(t, `{"ontology":{"id":"ont1","name":"Sales graph"},"generation":{"id":"gen1","name":"Track renewals"},
+		"answers":[{"question_id":"q1","question":"Is a customer the company that pays?","answer":"Each person"}],"use_defaults":true,
+		"defaulted":[{"question_id":"q2","question":"How many days before renewal is at risk?","answer":"90 days"},
+		  {"question_id":"q3","question":"Keep <b>cancelled</b> orders?","answer":"`+ontologygen.NoPreference+`"}]}`, string(a.Display))
+	assert.True(t, a.TargetNamedByUser)
+	assert.Zero(t, h.backend.loads, "preparing answers nothing")
+	assert.True(t, Operations["answer_generation_questions"])
+}
+
+// What the generation won't take is refused before its person sees a card.
+func TestAGenerationsAnswersAreRefused(t *testing.T) {
+	done := asking()
+	done.Status = model.OntologyGenerationSucceeded
+	for name, c := range map[string]struct {
+		generation *model.OntologyGeneration
+		payload    string
+		want       string
+	}{
+		"a generation that isn't waiting": {done, `{"generation_id":"gen1","use_defaults":true}`, "isn't waiting for answers: it is succeeded"},
+		"a generation of no ontology":     {nil, `{"generation_id":"gen1","use_defaults":true}`, "has no generation gen1"},
+		"a question it didn't ask": {asking(), `{"generation_id":"gen1","answers":[{"question_id":"q9","text":"Yes"}],"use_defaults":true}`,
+			"asked no question q9"},
+		"a blocking question left open": {asking(), `{"generation_id":"gen1","answers":[{"question_id":"q1","text":"Yes"}]}`,
+			"question q2 blocks the draft"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := workspaceHarness(t)
+			if c.generation != nil {
+				h.db.generations = []*model.OntologyGeneration{c.generation}
+			}
+			a, result := prepared(t, h, "Answer them", "answer_generation_questions", "ontology:ws1/ont1", c.payload)
+			assert.Nil(t, a)
+			assert.True(t, result.IsError)
+			assert.Contains(t, result.Content, c.want)
+		})
+	}
 }
