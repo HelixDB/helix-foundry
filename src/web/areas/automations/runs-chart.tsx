@@ -105,48 +105,51 @@ export default function RunsChart({ days }: { days: AutomationRunDay[] }) {
       </ul>
       <div role="img" aria-label={chartText(data)}>
         <ResponsiveContainer width="100%" height={168}>
-        <BarChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: 0 }}>
-          <CartesianGrid vertical={false} />
-          <XAxis
-            dataKey="date"
-            tickFormatter={(d) => dayText(String(d))}
-            tickLine={false}
-            minTickGap={16}
-            height={24}
-          />
-          <YAxis
-            allowDecimals={false}
-            width={32}
-            axisLine={false}
-            tickLine={false}
-          />
-          <Tooltip
-            isAnimationActive={false}
-            cursor={{ className: "au-chart-cursor" }}
-            content={(p) => <Tip active={p.active} payload={p.payload} />}
-          />
-          <Bar
-            dataKey="succeeded"
-            stackId="runs"
-            className="au-chart-succeeded"
-            maxBarSize={28}
-            isAnimationActive={false}
-          />
-          <Bar
-            dataKey="failed"
-            stackId="runs"
-            className="au-chart-failed"
-            maxBarSize={28}
-            isAnimationActive={false}
-          />
-          <Bar
-            dataKey="other"
-            stackId="runs"
-            className="au-chart-other"
-            maxBarSize={28}
-            isAnimationActive={false}
-          />
-        </BarChart>
+          <BarChart
+            data={data}
+            margin={{ top: 8, right: 4, bottom: 0, left: 0 }}
+          >
+            <CartesianGrid vertical={false} />
+            <XAxis
+              dataKey="date"
+              tickFormatter={(d) => dayText(String(d))}
+              tickLine={false}
+              minTickGap={16}
+              height={24}
+            />
+            <YAxis
+              allowDecimals={false}
+              width={32}
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip
+              isAnimationActive={false}
+              cursor={{ className: "au-chart-cursor" }}
+              content={(p) => <Tip active={p.active} payload={p.payload} />}
+            />
+            <Bar
+              dataKey="succeeded"
+              stackId="runs"
+              className="au-chart-succeeded"
+              maxBarSize={28}
+              isAnimationActive={false}
+            />
+            <Bar
+              dataKey="failed"
+              stackId="runs"
+              className="au-chart-failed"
+              maxBarSize={28}
+              isAnimationActive={false}
+            />
+            <Bar
+              dataKey="other"
+              stackId="runs"
+              className="au-chart-other"
+              maxBarSize={28}
+              isAnimationActive={false}
+            />
+          </BarChart>
         </ResponsiveContainer>
       </div>
     </div>

@@ -36,7 +36,6 @@ import type { useNames } from "./queries";
 // unattended, which an owner reads before approving them (the builder's
 // review, an unapproved automation's page, the Assistant's card).
 
-
 /** An automation's state, as a dot and its words. */
 export function automationStatus(a: FoundryAutomation): {
   dot: Status;

@@ -1359,13 +1359,11 @@ describe("the overview's reads", () => {
       ACTIVE_POLL_MS,
     );
     // A live run's counts are read no faster: each read counts every run.
+    expect(poll([{ status: "paused", lastRun: { status: "running" } }])).toBe(
+      ACTIVE_POLL_MS,
+    );
     expect(
-      poll([{ status: "paused", lastRun: { status: "running" } }]),
-    ).toBe(ACTIVE_POLL_MS);
-    expect(
-      automationQueries
-        .overview("ws", 7, "UTC")
-        .refetchInterval({ state: {} }),
+      automationQueries.overview("ws", 7, "UTC").refetchInterval({ state: {} }),
     ).toBe(false);
   });
 });
