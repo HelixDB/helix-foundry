@@ -118,6 +118,41 @@ test("loads an ontology from a card the person runs, and reports it", async ({
   ).toBeVisible({ timeout: 20_000 });
 });
 
+test("stays where its reader scrolled up to, until they send again", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 100 });
+  await page.setViewportSize({ width: 1440, height: 560 });
+  await signIn(page);
+  await page.getByRole("button", { name: "Assistant", exact: true }).click();
+  const dock = dockOf(page);
+  const log = dock.getByRole("log", { name: "Conversation" });
+  await say(page, "Load Customer contracts");
+  const card = dock.getByRole("region", {
+    name: "Action: Load v3 of “Customer contracts”",
+  });
+  await card.getByText("Full request").click();
+  // It followed the card in, past what the log holds at once.
+  await expect(card.getByRole("button", { name: "Load" })).toBeInViewport();
+  await expect.poll(() => log.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect
+    .poll(() =>
+      log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
+    )
+    .toBeLessThan(48);
+  // Read back up: it stays there.
+  await log.evaluate((el) => el.scrollTo({ top: 0 }));
+  await expect(dock.getByText("Load Customer contracts")).toBeInViewport();
+  // Sending again follows the end, the answer in view.
+  await dock
+    .getByRole("textbox", { name: "Message" })
+    .fill("What ontologies do I have?");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  const answer = dock.getByText(/^This workspace has \d+ ontolog/);
+  await expect(answer).toBeVisible();
+  await expect(answer).toBeInViewport();
+});
+
 test("dismisses a card it chose itself, and refreshes an expired one", async ({
   page,
 }) => {
