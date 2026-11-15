@@ -134,7 +134,9 @@ test("stays where its reader scrolled up to, until they send again", async ({
   await card.getByText("Full request").click();
   // It followed the card in, past what the log holds at once.
   await expect(card.getByRole("button", { name: "Load" })).toBeInViewport();
-  await expect.poll(() => log.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect
+    .poll(() => log.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(0);
   await expect
     .poll(() =>
       log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
