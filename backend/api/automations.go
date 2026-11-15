@@ -205,10 +205,19 @@ func (s *Service) ListFoundryAutomations(ctx context.Context, req *foundryv1.Lis
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "count the automations' runs: %v", err)
 	}
-	for _, a := range out.Automations {
-		a.Stats = runCountsToProto(stats.ByAutomation[a.Id])
+	// The actions a run's Assistant steps left waiting are its owner's, in
+	// their own thread: only they, and owners and admins, count them, as
+	// only they read what its steps found. The totals are the listed
+	// automations' counts as the caller reads them.
+	var total foundrymodel.FoundryAutomationRunCounts
+	for i, a := range out.Automations {
+		counts := stats.ByAutomation[a.Id]
+		if list[i].OwnerUserID != c.userID && !c.manager {
+			counts.Waiting = 0
+		}
+		a.Stats, total = runCountsToProto(counts), total.Add(counts)
 	}
-	out.Summary = runSummary(stats, from, zone, int(days))
+	out.Summary = runSummary(stats.Slots, total, from, zone, int(days))
 	return out, nil
 }
 
@@ -227,14 +236,11 @@ func runCountsToProto(c foundrymodel.FoundryAutomationRunCounts) *foundryv1.Foun
 		UsdMicros: c.USDMicros, Waiting: int32(c.Waiting)}
 }
 
-// runSummary sums stats, the runs since from, and counts them by the days
-// of zone from from's, days of them, oldest first, each listed.
-func runSummary(stats *foundrymodel.FoundryAutomationRunStats, from time.Time, zone *time.Location, days int) *foundryv1.FoundryAutomationRunSummary {
-	var total foundrymodel.FoundryAutomationRunCounts
-	for _, c := range stats.ByAutomation {
-		total = total.Add(c)
-	}
-	out := &foundryv1.FoundryAutomationRunSummary{Days: int32(days), Totals: runCountsToProto(total)}
+// runSummary is the runs since from, totals summed, slots counted by the
+// days of zone from from's, days of them, oldest first, each listed.
+func runSummary(slots []foundrymodel.FoundryAutomationRunSlot, totals foundrymodel.FoundryAutomationRunCounts, from time.Time,
+	zone *time.Location, days int) *foundryv1.FoundryAutomationRunSummary {
+	out := &foundryv1.FoundryAutomationRunSummary{Days: int32(days), Totals: runCountsToProto(totals)}
 	byDate := make(map[string]*foundryv1.FoundryAutomationRunDay, days)
 	y, m, d := from.Date()
 	for i := range days {
@@ -242,7 +248,7 @@ func runSummary(stats *foundrymodel.FoundryAutomationRunStats, from time.Time, z
 		byDate[day.Date] = day
 		out.ByDay = append(out.ByDay, day)
 	}
-	for _, slot := range stats.Slots {
+	for _, slot := range slots {
 		day, ok := byDate[slot.At.In(zone).Format(time.DateOnly)]
 		if !ok {
 			// A quarter hour that began before from: its runs did not.

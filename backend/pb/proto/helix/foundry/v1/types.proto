@@ -2654,7 +2654,8 @@ message FoundryAutomation {
   bool can_resume = 25;
   bool can_run = 26;
   bool can_delete = 27;
-  // When its newest failed run started; unset when none failed.
+  // When its newest failed run started, in a list; unset when none failed,
+  // and outside a list.
   google.protobuf.Timestamp last_failed_at = 28;
   // Its runs of the days a list asked for (stats_days); unset otherwise.
   FoundryAutomationRunCounts stats = 29;
@@ -2663,7 +2664,8 @@ message FoundryAutomation {
 // FoundryAutomationRunCounts counts runs started within some days: every
 // one (queued, running, cancelled and skipped too), those that succeeded and
 // failed, what their Assistant steps spent, and the actions those steps
-// prepared that still wait for the automation's owner.
+// prepared that still wait for the automation's owner (counted for its
+// owner, and owners and admins, only; 0 for another member).
 message FoundryAutomationRunCounts {
   int32 runs = 1;
   int32 succeeded = 2;

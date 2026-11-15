@@ -3528,7 +3528,7 @@ export type FoundryAutomation = {
   canResume?: boolean;
   canRun?: boolean;
   canDelete?: boolean;
-  // When its newest failed run started.
+  // When its newest failed run started: a list's only.
   lastFailedAt?: string | null;
   // Its runs of the days a list asked for (statsDays).
   stats?: AutomationRunCounts | null;
@@ -3538,7 +3538,8 @@ export type FoundryAutomation = {
  * v1FoundryAutomationRunCounts: runs started within some days, every one
  * (live, cancelled and skipped too), those that succeeded and failed, what
  * they spent (int64), and the actions their Assistant steps prepared that
- * still wait for the owner.
+ * still wait for the owner (counted for its owner, and owners and admins,
+ * only; 0 for another member).
  */
 export type AutomationRunCounts = {
   runs?: number;

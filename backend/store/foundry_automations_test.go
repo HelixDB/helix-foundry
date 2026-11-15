@@ -749,6 +749,8 @@ func TestFoundryAutomationListAndRunStats(t *testing.T) {
 	// Two runs made in the same microsecond: the newest is the greater id.
 	insert(id26("SR7A"), c.ID, "succeeded", hour.Add(-30*time.Minute), 0)
 	insert(id26("SR7B"), c.ID, "succeeded", hour.Add(-30*time.Minute), 0)
+	// A run of an automation deleted before its runs were: counted nowhere.
+	insert(id26("SR8"), id26("SGONE"), "succeeded", hour.Add(-20*time.Minute), 7)
 
 	// SR3's Assistant step left one action waiting and one dismissed.
 	turn := id26("STURN")

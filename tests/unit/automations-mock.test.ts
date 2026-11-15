@@ -644,6 +644,9 @@ describe("the list's counts", () => {
     );
     expect(byId(plain)[a.id].stats).toBeUndefined();
     expect(byId(plain)[b.id].lastRun.status).toBe("cancelled");
+    // A list's only, as the backend's: one automation's read has none.
+    const one = await call("GET", `${A}/${a.id}`);
+    expect(one.body.automation.lastFailedAt).toBeUndefined();
 
     const week = await call(
       "GET",
@@ -709,6 +712,13 @@ describe("the list's counts", () => {
     const r = await call("GET", `${A}?statsDays=7`);
     expect(r.body.summary.totals.waiting).toBe(1);
     expect(r.body.automations[0].stats.waiting).toBe(1);
+    // They wait in its owner's thread: another member counts the runs only.
+    const member = await call("GET", `${A}?statsDays=7`, undefined, "usr_alan");
+    expect(member.body.automations[0].stats).toMatchObject({
+      runs: 1,
+      waiting: 0,
+    });
+    expect(member.body.summary.totals).toMatchObject({ runs: 1, waiting: 0 });
   });
 
   it("refuses days and zones the backend refuses", async () => {

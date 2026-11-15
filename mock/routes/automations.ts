@@ -334,7 +334,6 @@ function automationOut(
     failures: a.failures,
     backoffUntil: a.backoffUntil === null ? null : iso(a.backoffUntil),
     lastRun: last ? runOut(last, a, c, false) : null,
-    lastFailedAt: lastFailed(a)?.createdAt ?? null,
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
     canEdit: owner,
@@ -1062,9 +1061,13 @@ function statsDays(
     : null;
 }
 
-/** The workspace's runs of `dates` in `zone`: their counts, and each day's. */
+/**
+ * The workspace's runs of `dates` in `zone`: `totals`, the listed
+ * automations' counts as the caller reads them, and each day's.
+ */
 function summary(
   runs: StoredRun[],
+  totals: AutomationRunCounts[],
   dates: string[],
   zone: string,
 ): AutomationRunSummary {
@@ -1079,7 +1082,13 @@ function summary(
   }
   return {
     days: dates.length,
-    totals: counts(runs),
+    totals: {
+      runs: totals.reduce((n, t) => n + t.runs!, 0),
+      succeeded: totals.reduce((n, t) => n + t.succeeded!, 0),
+      failed: totals.reduce((n, t) => n + t.failed!, 0),
+      usdMicros: String(totals.reduce((n, t) => n + Number(t.usdMicros), 0)),
+      waiting: totals.reduce((n, t) => n + t.waiting!, 0),
+    },
     byDay: [...days.values()],
   };
 }
@@ -1150,19 +1159,37 @@ export const automationRoutes: MockRoute[] = [
               dayIn(Date.parse(r.createdAt), stats.zone) >= stats.dates[0]!,
           )
         : [];
-      return ok({
-        automations: state.automations
-          .filter((a) => a.workspaceId === ws)
-          .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt))
-          .map((a) => ({
+      // The actions its runs left waiting are its owner's: only they, and
+      // owners and admins, count them, as the backend's list does.
+      const automations = state.automations
+        .filter((a) => a.workspaceId === ws)
+        .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt))
+        .map((a) => {
+          const mine = within.filter((r) => r.automationId === a.id),
+            n = counts(mine);
+          return {
             ...automationOut(a, c, false),
+            lastFailedAt: lastFailed(a)?.createdAt ?? null,
             ...(stats && {
-              stats: counts(within.filter((r) => r.automationId === a.id)),
+              stats:
+                a.ownerUserId === c.userId || c.manager
+                  ? n
+                  : { ...n, waiting: 0 },
             }),
-          })),
+          };
+        });
+      return ok({
+        automations,
         canCreate: true,
         email: !LOCAL_TOKEN,
-        ...(stats && { summary: summary(within, stats.dates, stats.zone) }),
+        ...(stats && {
+          summary: summary(
+            within,
+            automations.map((a) => a.stats!),
+            stats.dates,
+            stats.zone,
+          ),
+        }),
       } satisfies ListAutomationsResponse);
     },
   },

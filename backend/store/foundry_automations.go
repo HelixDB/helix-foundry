@@ -184,13 +184,17 @@ FROM foundry_automation_runs WHERE `+strings.Join(conds, " OR "), args...)
 // since: by automation and status, with what they spent; by quarter hour
 // and status; and the actions their Assistant steps prepared that still
 // wait. Each statement reads the runs of that time by the day index, which
-// the workspace's runs a day (foundry.automations.runs_per_day) bound, and
-// a waiting action by its turn (foundry_agent_actions' payload key).
+// the workspace's runs a day (foundry.automations.runs_per_day) bound, each
+// joined to its automation by primary key, so runs a deletion has yet to
+// reach (DeleteFoundryAutomation takes them a batch at a time after the
+// automation) count nowhere; and a waiting action by its turn
+// (foundry_agent_actions' payload key).
 func (s *mysqlDB) FoundryAutomationRunStats(ctx context.Context, workspaceID string, since time.Time) (*model.FoundryAutomationRunStats, error) {
 	out := &model.FoundryAutomationRunStats{ByAutomation: map[string]model.FoundryAutomationRunCounts{}}
 	since = since.UTC()
-	rows, err := s.db.QueryContext(ctx, `SELECT automation_id, status, COUNT(*), SUM(usd_micros) FROM foundry_automation_runs
-WHERE workspace_id=? AND created_at>=? GROUP BY automation_id, status`, workspaceID, since)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.automation_id, r.status, COUNT(*), SUM(r.usd_micros) FROM foundry_automation_runs r
+JOIN foundry_automations a ON a.id=r.automation_id
+WHERE r.workspace_id=? AND r.created_at>=? GROUP BY r.automation_id, r.status`, workspaceID, since)
 	if err != nil {
 		return nil, err
 	}
@@ -215,9 +219,10 @@ WHERE workspace_id=? AND created_at>=? GROUP BY automation_id, status`, workspac
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	slots, err := s.db.QueryContext(ctx, `SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H') AS hour, FLOOR(MINUTE(created_at) / 15) AS quarter,
-       status, COUNT(*)
-FROM foundry_automation_runs WHERE workspace_id=? AND created_at>=? GROUP BY hour, quarter, status`, workspaceID, since)
+	slots, err := s.db.QueryContext(ctx, `SELECT DATE_FORMAT(r.created_at, '%Y-%m-%d %H') AS hour, FLOOR(MINUTE(r.created_at) / 15) AS quarter,
+       r.status, COUNT(*)
+FROM foundry_automation_runs r JOIN foundry_automations a ON a.id=r.automation_id
+WHERE r.workspace_id=? AND r.created_at>=? GROUP BY hour, quarter, r.status`, workspaceID, since)
 	if err != nil {
 		return nil, err
 	}
@@ -239,6 +244,7 @@ FROM foundry_automation_runs WHERE workspace_id=? AND created_at>=? GROUP BY hou
 		return nil, err
 	}
 	waiting, err := s.db.QueryContext(ctx, `SELECT r.automation_id, COUNT(*) FROM foundry_automation_runs r
+JOIN foundry_automations a ON a.id=r.automation_id
 JOIN foundry_automation_run_nodes n ON n.run_id=r.id
 JOIN foundry_agent_actions x ON x.turn_id=n.turn_id AND x.workspace_id=r.workspace_id
 WHERE r.workspace_id=? AND r.created_at>=? AND n.turn_id IS NOT NULL AND x.status='prepared'
