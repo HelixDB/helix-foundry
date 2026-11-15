@@ -164,7 +164,8 @@ func (s *Service) addFoundryWorkflowTools(server *mcp.Server, identity *Identity
 		return
 	}
 	addFoundryTool(s, server, identity, tool(toolFoundryListWorkflows,
-		"List a Foundry ontology's workflows, newest first, with how many runs each kept."), s.ListFoundryWorkflows)
+		"List a Foundry ontology's workflows, newest first, with how many runs each kept. A workflow of origin automation is Foundry's record of an "+
+			"automation's runs that use the ontology: only Foundry starts and finishes its runs."), s.ListFoundryWorkflows)
 	// A host without API sources names no send tool.
 	tracked := toolFoundryReadGraph + ", " + toolFoundryAsk + " and " + toolFoundryCompleteUpload
 	if s.Events {
@@ -173,7 +174,7 @@ func (s *Service) addFoundryWorkflowTools(server *mcp.Server, identity *Identity
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryStartWorkflowRun,
 		Description: "Start a run of a Foundry workflow when the agent takes on a request. Pass the run's id as workflow_run_id to " + tracked +
 			" while working on it: each records what it read or wrote under the run. " +
-			"Finish it with " + toolFoundryFinishWorkflowRun + " and the agent's answer.",
+			"Finish it with " + toolFoundryFinishWorkflowRun + " and the agent's answer. A workflow of origin automation takes none: Foundry runs those.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.StartFoundryWorkflowRun)
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryFinishWorkflowRun,

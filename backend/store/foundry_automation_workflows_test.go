@@ -49,7 +49,7 @@ func (f automationWorkflowFixture) claim(t *testing.T, n int) *model.FoundryAuto
 // use starts the workflow run recording run's use of ontology.
 func (f automationWorkflowFixture) use(run *model.FoundryAutomationRun, ontology *model.FoundryOntology) (*model.FoundryWorkflowRun, error) {
 	return f.db.StartFoundryAutomationWorkflowRun(context.Background(), model.FoundryAutomationWorkflowStart{WorkspaceID: f.workspaceID,
-		AutomationRunID: run.ID, OntologyID: ontology.ID, Input: "The automation \"Automation 1\" ran. Run by hand."})
+		AutomationRunID: run.ID, OntologyID: ontology.ID, Input: "Run by hand. The automation \"Automation 1\" ran these steps, in order:"})
 }
 
 func TestFoundryAutomationWorkflowRuns(t *testing.T) {

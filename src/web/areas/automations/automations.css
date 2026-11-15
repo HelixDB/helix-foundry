@@ -1557,6 +1557,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.au-impact-head a,
+.au-impact-run a span {
+  color: var(--hf-accent-text);
+  text-decoration: none;
+}
+.au-impact-head a:hover,
+.au-impact-run a:hover span {
+  text-decoration: underline;
+}
 .au-impact-head small {
   font-size: var(--hf-text-xs);
 }

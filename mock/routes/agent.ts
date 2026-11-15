@@ -2729,20 +2729,29 @@ function automationScript(
   const v = o && loadable(o.id);
   const steps: Step[] = [started, ...list];
   const did = new Map<string, string>();
-  // An ontology its instruction names, loaded, it reads: a count of its
-  // first type's entities, recorded under its run's use of it.
+  // An ontology its instruction names, loaded, it reads: a count of the
+  // entities of a type of it, recorded under its run's use of it.
   const reads = named(ws, instruction);
   const readLoadId = reads && currentLoadId(reads.id);
-  const readType =
-    readLoadId &&
-    Object.keys(
-      decisionTypes(
-        ontologyVersion(
-          reads.id,
-          ontologyLoad(reads.id, readLoadId)?.versionId || "",
-        )?.definition as Record<string, unknown> | undefined,
-      ),
-    )[0];
+  // The type its instruction names (invoices: Invoice), else the first.
+  const types = readLoadId
+    ? Object.keys(
+        decisionTypes(
+          ontologyVersion(
+            reads.id,
+            ontologyLoad(reads.id, readLoadId)?.versionId || "",
+          )?.definition as Record<string, unknown> | undefined,
+        ),
+      )
+    : [];
+  // (The ontology's own name aside: "Customer contracts" names no Contract.)
+  const asked = reads
+    ? instruction.replace(
+        new RegExp(reads.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
+        " ",
+      )
+    : "";
+  const readType = types.find((t) => says(asked, t)) ?? types[0];
   if (reads && readLoadId && readType) {
     const readsJson = JSON.stringify([
       { query: { start: { type: readType }, return: { count: {} } } },

@@ -618,6 +618,15 @@ button.wf-card:hover {
   .wf-runs-head {
     display: none;
   }
+  /* Its filters scroll rather than widen the page. */
+  .wf-runs-bar .hf-segmented {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .wf-runs-bar .hf-segmented button {
+    flex: none;
+    white-space: nowrap;
+  }
   .wf-run {
     grid-template-columns: auto minmax(0, 1fr) auto 32px;
     gap: var(--hf-space-05) var(--hf-space-1);
@@ -648,4 +657,10 @@ button.wf-card:hover {
   flex: none;
   margin-top: 2px;
   color: var(--hf-muted);
+}
+.wf-origin a {
+  color: var(--hf-accent-text);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }

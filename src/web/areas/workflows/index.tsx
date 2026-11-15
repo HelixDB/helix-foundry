@@ -266,6 +266,15 @@ export function WorkflowsPage() {
   const segments = new Map(
     (data?.workflows || []).map((w) => [w.workflowId, w]),
   );
+  // Narrowed to an automation, the window's runs are its workflow's alone
+  // (the read names that workflow, so it lists none).
+  const who = insights.who;
+  if (data && who && "automation" in who)
+    segments.set(who.workflowId, {
+      workflowId: who.workflowId,
+      totals: data.totals,
+      dailyRuns: (data.series || []).map((d) => d.totals?.runs || 0),
+    });
   return (
     <Page>
       {header}

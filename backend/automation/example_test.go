@@ -71,8 +71,7 @@ func ExampleRequest() {
 	}
 	fmt.Println(automation.Request("Renewals", "Run by hand.", spec, map[string]string{"01SALES": "Sales", "01STRIPE": "Stripe"}))
 	// Output:
-	// The automation "Renewals" ran. Run by hand.
-	// Its steps, in order:
+	// Run by hand. The automation "Renewals" ran these steps, in order:
 	// 1. Assistant step "ask": Are any renewals due? (It may sync the connector "Stripe" unasked.)
 	// 2. Condition "due": go on one way if the step before answered yes, the other way if not.
 	// 3. Condition "count": go on one way if the step before counted at least 2, the other way if not.

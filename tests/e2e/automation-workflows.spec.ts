@@ -132,7 +132,10 @@ test("an automation that reads an ontology records each run in one workflow, whi
     page.getByRole("list", { name: "Recorded calls" }).getByRole("article"),
   ).toHaveCount(1);
   await expect(
-    page.getByText('The automation "Invoice check" ran.'),
+    page.getByText(
+      'Run by hand. The automation "Invoice check" ran these steps, in order:',
+      { exact: false },
+    ),
   ).toBeVisible();
   await origin.getByRole("link", { name: "one of its runs" }).click();
   await expect(page).toHaveURL(new RegExp(`/automations/${id}/runs/${first}$`));

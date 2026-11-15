@@ -7,13 +7,12 @@ import (
 
 // Request is a run of the automation named name, in words, as the workflow
 // runs that record its uses of ontologies take it for their request: what
-// fired it (fired, its trigger's output) and each of its steps, in order.
+// fired it (fired, its trigger's output), then each of its steps, in order.
 // names names the connectors, ontologies, document sets and dashboards its
 // steps act on, by id; an id it lacks is written as it is.
 //
 //	automation.Request("Weekly digest", "Its schedule fired.", spec, map[string]string{"01ONT": "Sales"})
-//	// The automation "Weekly digest" ran. Its schedule fired.
-//	// Its steps, in order:
+//	// Its schedule fired. The automation "Weekly digest" ran these steps, in order:
 //	// 1. Assistant step "ask": Summarise the week's deals.
 //	// 2. Action step "load": load the current version of the ontology "Sales".
 func Request(name, fired string, s Spec, names map[string]string) string {
@@ -34,12 +33,12 @@ func Request(name, fired string, s Spec, names map[string]string) string {
 		}
 		panic(fmt.Sprintf("automation: no words for %T", a))
 	}
+	// What fired it first: it tells one run of an automation from another.
 	var b strings.Builder
-	fmt.Fprintf(&b, "The automation %q ran.", name)
 	if fired = strings.TrimSpace(fired); fired != "" {
-		b.WriteString(" " + fired)
+		b.WriteString(fired + " ")
 	}
-	b.WriteString("\nIts steps, in order:")
+	fmt.Fprintf(&b, "The automation %q ran these steps, in order:", name)
 	step := 0
 	for _, id := range s.order {
 		n, _ := s.Node(id)

@@ -805,9 +805,9 @@ function requestOf(a: StoredAutomation, r: StoredRun): string {
   const read = parseSpec(canonicalJson(r.spec));
   const order = read.ok ? read.order : r.spec.nodes.map((n) => n.id);
   const fired = r.nodes.find((n) => n.nodeId === order[0])?.output?.summary;
+  // What fired it first: it tells one run of an automation from another.
   const lines = [
-    `The automation "${a.name}" ran.${fired ? ` ${fired}` : ""}`,
-    "Its steps, in order:",
+    `${fired ? `${fired} ` : ""}The automation "${a.name}" ran these steps, in order:`,
   ];
   let step = 0;
   for (const nodeId of order) {
