@@ -8540,7 +8540,7 @@
         "lastFailedAt": {
           "type": "string",
           "format": "date-time",
-          "description": "When its newest failed run started; unset when none failed."
+          "description": "When its newest failed run started, in a list; unset when none failed,\nand outside a list."
         },
         "stats": {
           "$ref": "#/definitions/v1FoundryAutomationRunCounts",
@@ -8650,7 +8650,7 @@
           "format": "int32"
         }
       },
-      "description": "FoundryAutomationRunCounts counts runs started within some days: every\none (queued, running, cancelled and skipped too), those that succeeded and\nfailed, what their Assistant steps spent, and the actions those steps\nprepared that still wait for the automation's owner."
+      "description": "FoundryAutomationRunCounts counts runs started within some days: every\none (queued, running, cancelled and skipped too), those that succeeded and\nfailed, what their Assistant steps spent, and the actions those steps\nprepared that still wait for the automation's owner (counted for its\nowner, and owners and admins, only; 0 for another member)."
     },
     "v1FoundryAutomationRunDay": {
       "type": "object",

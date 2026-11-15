@@ -14950,7 +14950,8 @@ type FoundryAutomation struct {
 	CanResume  bool `protobuf:"varint,25,opt,name=can_resume,json=canResume,proto3" json:"can_resume,omitempty"`
 	CanRun     bool `protobuf:"varint,26,opt,name=can_run,json=canRun,proto3" json:"can_run,omitempty"`
 	CanDelete  bool `protobuf:"varint,27,opt,name=can_delete,json=canDelete,proto3" json:"can_delete,omitempty"`
-	// When its newest failed run started; unset when none failed.
+	// When its newest failed run started, in a list; unset when none failed,
+	// and outside a list.
 	LastFailedAt *timestamppb.Timestamp `protobuf:"bytes,28,opt,name=last_failed_at,json=lastFailedAt,proto3" json:"last_failed_at,omitempty"`
 	// Its runs of the days a list asked for (stats_days); unset otherwise.
 	Stats *FoundryAutomationRunCounts `protobuf:"bytes,29,opt,name=stats,proto3" json:"stats,omitempty"`
@@ -15192,7 +15193,8 @@ func (x *FoundryAutomation) GetStats() *FoundryAutomationRunCounts {
 // FoundryAutomationRunCounts counts runs started within some days: every
 // one (queued, running, cancelled and skipped too), those that succeeded and
 // failed, what their Assistant steps spent, and the actions those steps
-// prepared that still wait for the automation's owner.
+// prepared that still wait for the automation's owner (counted for its
+// owner, and owners and admins, only; 0 for another member).
 type FoundryAutomationRunCounts struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
