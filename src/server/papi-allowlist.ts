@@ -28,6 +28,7 @@ export type PapiArea =
   | "explore"
   | "agent"
   | "dashboards"
+  | "automations"
   | "access";
 export type PapiRoute = {
   area: PapiArea;
@@ -575,6 +576,72 @@ export const papiRoutes = [
     area: "dashboards",
     method: "POST",
     path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:unpublish",
+  },
+
+  // Automations: a person's graph of steps Foundry runs as them when its
+  // trigger fires. Listed and read by every member; made by any member, then
+  // edited, approved (its owner's click here, never an agent's), run by hand
+  // and resumed by its owner; paused, deleted and a run cancelled by its
+  // owner or an owner or admin. Its runs and their steps are read here too.
+  {
+    area: "automations",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations",
+  },
+  {
+    area: "automations",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations",
+  },
+  {
+    area: "automations",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}",
+  },
+  {
+    area: "automations",
+    method: "PATCH",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}",
+  },
+  {
+    area: "automations",
+    method: "DELETE",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}",
+  },
+  {
+    area: "automations",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}:approve",
+  },
+  {
+    area: "automations",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}:pause",
+  },
+  {
+    area: "automations",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}:resume",
+  },
+  {
+    area: "automations",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}:run",
+  },
+  {
+    area: "automations",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{automationId}/runs",
+  },
+  {
+    area: "automations",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{automationId}/runs/{id}",
+  },
+  {
+    area: "automations",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{automationId}/runs/{id}:cancel",
   },
 
   // Ontology: decisions, applied from the next load.

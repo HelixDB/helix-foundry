@@ -2592,8 +2592,10 @@ export type FoundryAgentThread = {
 export type FoundryAgentTurn = {
   id: string;
   threadId?: string;
-  kind?: "message" | "action_result";
-  // The person's text; empty for an action_result.
+  // automation: an automation's Assistant step, in its run's thread (a
+  // thread of the run's owner's, out of their list of threads).
+  kind?: "message" | "action_result" | "automation";
+  // The person's text; empty for an action_result and an automation's step.
   text?: string;
   // The action an action_result turn goes on from.
   actionId?: string;
@@ -3054,6 +3056,14 @@ export type AgentEvent =
       error?: string;
     }
   | {
+      // An automation's step's report (its newest is the step's output):
+      // untrusted, the model's words; answer true for yes.
+      type: "automation_report";
+      summary: string;
+      answer?: boolean;
+      count?: number;
+    }
+  | {
       type: "finished";
       status: "done" | "failed";
       reason: AgentStopReason;
@@ -3341,14 +3351,15 @@ export type AutomationNodeConfig =
   | { kind: "action"; config: AutomationAction }
   // answer: the Assistant step before it said yes or no; count: its count,
   // or a document_arrived or sync_finished trigger's.
-  | { kind: "condition"; config: { check: "answer"; equals: "yes" | "no" } }
   | {
       kind: "condition";
-      config: {
-        check: "count";
-        op: "at_least" | "at_most" | "equals";
-        value: number;
-      };
+      config:
+        | { check: "answer"; equals: "yes" | "no" }
+        | {
+            check: "count";
+            op: "at_least" | "at_most" | "equals";
+            value: number;
+          };
     }
   // message: at most 500 characters.
   | { kind: "notify"; config: { message: string } };
