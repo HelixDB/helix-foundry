@@ -300,7 +300,7 @@ WHERE id=?`, id); err != nil {
 // left unsettled (its lease ran out) is charged, and counted lost.
 func (s *mysqlDB) ClaimFoundryAgentTurn(ctx context.Context, workerID string, claim model.FoundryAgentClaim) (*model.FoundryAgentTurn, error) {
 	if workerID == "" || claim.Runtime == "" || claim.Lease <= 0 || claim.Defer <= 0 || claim.Limits.CapMicros <= 0 || claim.Limits.Running < 1 ||
-		claim.Automations.CapMicros <= 0 || claim.Automations.Running < 1 {
+		claim.Runtime == model.FoundryAgentRuntimeAPI && (claim.Automations.CapMicros <= 0 || claim.Automations.Running < 1) {
 		return nil, fmt.Errorf("invalid foundry agent turn claim")
 	}
 	for range claimFoundryAgentTurnTries {

@@ -253,7 +253,8 @@ type FoundryAgentClaim struct {
 	Defer   time.Duration
 	// Limits bound people's turns; Automations automations' turns, a budget
 	// and a running cap of their own (PerHour unused): unattended work never
-	// spends what people use.
+	// spends what people use. Only the api runtime runs automations' turns
+	// (their threads are Foundry's worker's), so a helper's claim sets none.
 	Limits      FoundryAgentLimits
 	Automations FoundryAgentLimits
 }

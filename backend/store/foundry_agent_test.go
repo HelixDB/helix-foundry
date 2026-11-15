@@ -519,8 +519,9 @@ func TestFoundryAgentClaimTakesItsRuntimeOnly(t *testing.T) {
 	none, err := f.db.ClaimFoundryAgentTurn(ctx, "w1", f.claim())
 	require.NoError(t, err)
 	assert.Nil(t, none, "the API's worker leaves a helper's turns")
+	// A helper runs no automation's turns: its claim names no automations' limits.
 	claim := f.claim()
-	claim.Runtime = model.FoundryAgentRuntimeClaudeCode
+	claim.Runtime, claim.Automations = model.FoundryAgentRuntimeClaudeCode, model.FoundryAgentLimits{}
 	got, err := f.db.ClaimFoundryAgentTurn(ctx, "w1", claim)
 	require.NoError(t, err)
 	require.NotNil(t, got)
@@ -528,6 +529,9 @@ func TestFoundryAgentClaimTakesItsRuntimeOnly(t *testing.T) {
 	claim.Runtime = ""
 	_, err = f.db.ClaimFoundryAgentTurn(ctx, "w1", claim)
 	assert.Error(t, err, "a claim names its runtime")
+	claim.Runtime = model.FoundryAgentRuntimeAPI
+	_, err = f.db.ClaimFoundryAgentTurn(ctx, "w1", claim)
+	assert.Error(t, err, "the worker's claim bounds automations' turns")
 }
 
 func TestFoundryAgentClaimFailsADeletedWorkspacesTurn(t *testing.T) {
