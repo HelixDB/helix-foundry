@@ -37,9 +37,26 @@ CREATE TABLE foundry_automation_untracked (
 
 -- +goose Down
 DROP TABLE foundry_automation_untracked;
+-- A Vitess-based MySQL host (PlanetScale) names a CHECK by its first 38
+-- characters and a hash, so the two are dropped by the prefix they share.
+SET @drop_workflow_run_automation_chks = (
+  SELECT COALESCE(
+    CONCAT(
+      'ALTER TABLE foundry_workflow_runs ',
+      GROUP_CONCAT(CONCAT('DROP CHECK `', REPLACE(constraint_name, '`', '``'), '`') SEPARATOR ', ')
+    ),
+    'SELECT 1'
+  )
+  FROM information_schema.table_constraints
+  WHERE constraint_schema = DATABASE()
+    AND table_name = 'foundry_workflow_runs'
+    AND constraint_type = 'CHECK'
+    AND constraint_name LIKE 'foundry_workflow_runs_automation%'
+);
+PREPARE drop_workflow_run_automation_chks FROM @drop_workflow_run_automation_chks;
+EXECUTE drop_workflow_run_automation_chks;
+DEALLOCATE PREPARE drop_workflow_run_automation_chks;
 ALTER TABLE foundry_workflow_runs
-  DROP CHECK foundry_workflow_runs_automation_key_chk,
-  DROP CHECK foundry_workflow_runs_automation_chk,
   DROP INDEX foundry_workflow_runs_automation_run_idx,
   DROP COLUMN automation_key,
   DROP COLUMN automation_run_id;
