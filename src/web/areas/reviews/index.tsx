@@ -761,7 +761,7 @@ function ClaimItem({
       ) : (
         <p className="rq-writes">
           {nested
-            ? "Approve it once the name is settled: the first load after that writes it."
+            ? "Approve it once the name is settled: the load that settles it writes it."
             : "Writes one fact once approved."}
         </p>
       )}
@@ -803,9 +803,10 @@ function NameItem({
         {held > 0 &&
           `${plural(held, "held claim")} ${held > 1 ? "wait" : "waits"} on it, each approved below. `}
         {!card.blocked && !held && "No claim waits on it. "}A name’s decision
-        applies from the next load, not this one: that load writes what it
-        unblocks. Linked to a record, the name is linked in other documents too,
-        where nothing else links it; Not in data is for this document only.
+        applies to this load at once, writing what it unblocks (a load built
+        before names could be applied at once leaves it to the next load).
+        Linked to a record, the name is linked in other documents too, where
+        nothing else links it; Not in data is for this document only.
       </p>
       <SettleReview
         review={card.review}

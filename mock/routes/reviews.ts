@@ -36,8 +36,10 @@ import {
   currentLoadId,
   currentLoadVersionId,
   forgetRelease,
+  forgetResolve,
   forgetValue,
   owePendingRelease,
+  owePendingResolve,
   owePendingValue,
 } from "./loads";
 import { isScope, ontologyOf } from "./ontologies";
@@ -449,6 +451,18 @@ export const reviewRoutes: MockRoute[] = [
         draw,
       );
       if (stored.kind === "prop") owePendingValue(s.o.id, stored);
+      // A name the load links to no one is settled in place; one it links
+      // already waits for the next load, as the engine would say bound.
+      if (
+        stored.kind === "resolve" &&
+        [
+          "unresolved",
+          "ambiguous",
+          "collision",
+          "identifier_conflict",
+        ].includes(text(r.reason))
+      )
+        owePendingResolve(s.o.id, stored);
       const applied = appliedOf(s.o.id, stored);
       return ok({
         decision: applied ? { ...stored, applied } : stored,
@@ -500,6 +514,7 @@ export const reviewRoutes: MockRoute[] = [
       // a chosen value from every load that holds it.
       forgetRelease(s.o.id, req.params.id!);
       forgetValue(s.o.id, req.params.id!);
+      forgetResolve(s.o.id, req.params.id!);
       decisions.set(
         s.o.id,
         own.filter((d) => d.id !== req.params.id),

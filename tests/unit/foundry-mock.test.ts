@@ -2572,6 +2572,18 @@ describe("review decisions", () => {
       normName: "globexx corporation",
       entityKey: "cus_GLOBEX01",
     });
+    // A name the load links to no one applies at once (contract 4.22.0): it
+    // waits, and this load, read before names could be settled in place,
+    // leaves it to the next load; its review stays.
+    expect(saved.applied).toEqual({ status: "pending" });
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(
+      (await call("GET", `${O}/review-decisions`)).body.decisions[0].applied,
+    ).toEqual({
+      status: "refused",
+      reason: "not_replayed",
+      at: expect.any(String),
+    });
     expect(reviews(old)).toHaveLength(1);
     expect(
       [...old.nodes()].filter((n) => n.props.resolved_by === "user"),
@@ -3741,7 +3753,8 @@ describe("review decisions", () => {
     expect(
       reviews(g).filter((n) => n.props.reason === "low_confidence"),
     ).toHaveLength(1);
-    // A decision of another kind says nothing of a load.
+    // A name the load links already (here by its legal form) is the next
+    // load's: the engine keeps that link in place, so nothing is applied.
     const name = reviews(g).find((n) => n.props.reason === "legal_form")!;
     const resolved = (
       await call("POST", `${O}/reviews/${name.props.review_key}:settle`, {

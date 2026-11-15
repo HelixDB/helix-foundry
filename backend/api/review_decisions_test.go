@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"io"
@@ -49,6 +50,10 @@ type decisionStore struct {
 	// firstApprover, when set, is who SettleFoundryReleases says approved
 	// the statement first, as the store keeps them.
 	firstApprover string
+	// asking is the documents SettleFoundryResolve was handed besides its
+	// own, and askingReviews what the read of a name's reviews answers.
+	asking        []string
+	askingReviews string
 }
 
 func (s *decisionStore) GetFoundryOntology(_ context.Context, ws, id string) (*foundrymodel.FoundryOntology, error) {
@@ -79,6 +84,19 @@ func (s *decisionStore) SettleFoundryReviewDecision(_ context.Context, ws string
 	d.DecidedAt = time.Now()
 	s.saved = append(s.saved, d)
 	return nil
+}
+func (s *decisionStore) SettleFoundryResolve(_ context.Context, ws, load string, d *foundrymodel.FoundryReviewDecision, docs []string,
+	resend *foundrymodel.FoundryGraphJob) (bool, error) {
+	if ws != s.ontology.WorkspaceID {
+		return false, foundrystore.ErrNotFound
+	}
+	if s.saveErr != nil {
+		return false, s.saveErr
+	}
+	d.DecidedAt = time.Now()
+	d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
+	s.saved, s.releasedTo, s.resends, s.asking = append(s.saved, d), load, append(s.resends, resend), docs
+	return true, nil
 }
 func (s *decisionStore) SettleFoundryReleases(_ context.Context, ws, load string, ds []*foundrymodel.FoundryReviewDecision,
 	resend *foundrymodel.FoundryGraphJob) (bool, error) {
@@ -188,7 +206,10 @@ func reviewService(t *testing.T, review string) (*Service, *decisionStore, *[]st
 			t.Errorf("read as %+v, not the reviewer", a)
 		}
 		response := review
-		if len(queries) > 1 {
+		switch {
+		case strings.Contains(string(query), `"properties":["doc_id","reason","entity_key"]`):
+			response = cmp.Or(db.askingReviews, `{"items":[]}`)
+		case len(queries) > 1:
 			response = `{"items":[{"entity_key":"customer-1"}]}`
 		}
 		return 200, []byte(response), nil
@@ -274,9 +295,52 @@ func TestSettleFoundryReview(t *testing.T) {
 						t.Fatalf("unscoped read %s", q)
 					}
 				}
+				// A name the load links to no one applies at once (contract
+				// 4.22.0): to the load its review was read from, by a resend job
+				// the person asked for. One it links already is the next load's:
+				// the engine would say bound.
+				asks := reason == "unresolved" || reason == "ambiguous" || reason == "collision" || reason == "identifier_conflict"
+				if asks && (db.releasedTo != "load-1" || len(db.resends) != 1 || db.resends[0].RequestedByUserID == nil ||
+					out.Decision.GetApplied().GetStatus() != "pending") {
+					t.Fatalf("applied to %q by %+v: %+v", db.releasedTo, db.resends, out.Decision.GetApplied())
+				}
+				if !asks && (len(db.resends) != 0 || out.Decision.Applied != nil) {
+					t.Fatalf("%s applied at once: %+v %+v", reason, db.resends, out.Decision.GetApplied())
+				}
 			})
 		}
 	}
+	// A chosen entity is an alias of every document: the documents whose
+	// reviews still ask about the name go again with it, each once; a linked
+	// review, another reason and a review with no document don't. "Not in
+	// data" carries nothing, and reads no other review.
+	t.Run("an alias's documents", func(t *testing.T) {
+		review := `{"items":[{"reason":"unresolved","type":"Customer","doc_id":"doc-a","norm_name":"variant"}]}`
+		s, db, queries := reviewService(t, review)
+		db.askingReviews = `{"items":[{"doc_id":"doc-b","reason":"unresolved"},{"doc_id":"doc-b","reason":"ambiguous"},` +
+			`{"doc_id":"doc-c","reason":"collision","entity_key":null},{"doc_id":"doc-d","reason":"unresolved","entity_key":"x"},` +
+			`{"doc_id":"doc-e","reason":"adjudicated"},{"reason":"unresolved"},{"doc_id":"doc-f","reason":"identifier_conflict"}]}`
+		if _, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(resolveChoice("customer-1"))); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(db.asking, []string{"doc-b", "doc-c", "doc-f"}) {
+			t.Fatalf("asking %v", db.asking)
+		}
+		last := (*queries)[len(*queries)-1]
+		for _, want := range []string{`"norm_name"`, `"variant"`, `"FoundryReview"`, `"load-1"`, `"Customer"`} {
+			if !strings.Contains(last, want) {
+				t.Fatalf("the read of the name's reviews lacks %s: %s", want, last)
+			}
+		}
+		s, db, queries = reviewService(t, review)
+		db.askingReviews = `{"items":[{"doc_id":"doc-b","reason":"unresolved"}]}`
+		if _, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(noneChoice())); err != nil {
+			t.Fatal(err)
+		}
+		if len(db.asking) != 0 || len(*queries) != 1 {
+			t.Fatalf("not in data: asking %v after %d reads", db.asking, len(*queries))
+		}
+	})
 	for _, value := range []*foundryv1.FoundryPropValue{propText("Chosen"), propNull()} {
 		s, db, _ := reviewService(t, `{"items":[{"reason":"prop_conflict","type":"Customer","entity_key":"customer-1","prop":"name"}]}`)
 		out, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(propChoice(value)))

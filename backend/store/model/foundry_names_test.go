@@ -75,3 +75,20 @@ func TestMergeFoundryDocumentNames(t *testing.T) {
 		})
 	}
 }
+
+func ExampleFoundryNameApplied() {
+	for _, n := range []FoundryDocumentName{
+		{Outcome: FoundryNameWritten},
+		{Outcome: FoundryNameRefused, Reason: FoundryNameNotReplayed},
+		{Outcome: FoundryNameNotAsked},
+		{Outcome: FoundryNameNotNamed},
+	} {
+		status, reason := FoundryNameApplied(n)
+		fmt.Printf("%s %q\n", status, reason)
+	}
+	// Output:
+	// written ""
+	// refused "not_replayed"
+	// written "not_asked"
+	// refused "not_named"
+}

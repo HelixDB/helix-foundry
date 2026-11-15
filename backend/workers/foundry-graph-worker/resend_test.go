@@ -996,3 +996,71 @@ func TestResendTakesBackApprovals(t *testing.T) {
 		}
 	})
 }
+
+// A document owed for a name (contract 4.22.0: a resolve settled since its
+// commit, of it or as an alias of a name its reviews ask about) goes with
+// its saved model work, which the engine replays to settle the name, still
+// with nothing to spend; one owed only an approval goes with none. A
+// document owed for both goes once, and each request ends. One the engine
+// sent no event for refuses each request: its approvals and its names.
+func TestResendSettlesNames(t *testing.T) {
+	setup := func(t *testing.T) *harness {
+		h := newHarness(t)
+		owes(h, "doc-a", "doc-b")
+		h.store.resends = append(h.store.resends, &model.FoundryLoadResend{
+			LoadID: "load-0", DocumentID: "doc-a", Reason: model.FoundryResendName, Requests: 1, Document: h.store.resends[0].Document,
+		})
+		h.bucket.put(document.ArtifactPrefix("ws-1", "doc-a")+"key_a.json.gz", []byte(`{"calls":[]}`))
+		h.bucket.put(document.ArtifactPrefix("ws-1", "doc-b")+"key_b.json.gz", []byte(`{"calls":[]}`))
+		h.store.decisions = []*model.FoundryReviewDecision{approval("1", "doc-a", hashA), approval("2", "doc-b", hashB)}
+		return h
+	}
+	t.Run("with the saved work of a name's documents", func(t *testing.T) {
+		h := setup(t)
+		h.agent.extract = writesAll(t)
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		_, calls := h.agent.calls()
+		if len(calls) != 1 {
+			t.Fatalf("%d extracts", len(calls))
+		}
+		req := decodeExtract(t, calls[0])
+		if len(req.Documents) != 2 || req.Documents[0].DocID != "doc-a" || req.Documents[1].DocID != "doc-b" || req.Limits.MaxUSD != 0 {
+			t.Fatalf("sent %+v at %v", req.Documents, req.Limits.MaxUSD)
+		}
+		if len(req.Documents[0].Artifacts) != 1 || len(req.Documents[1].Artifacts) != 0 {
+			t.Fatalf("artifacts %v and %v: doc-a's for its name, none for doc-b's approval", req.Documents[0].Artifacts, req.Documents[1].Artifacts)
+		}
+		want := []model.FoundryResendEnd{
+			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1},
+			{DocumentID: "doc-a", Reason: model.FoundryResendName, Requests: 1},
+			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2},
+		}
+		if !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+		// Only the document read with its saved work says what became of
+		// its resolves.
+		if !h.store.extractions["doc-a"].SettlesNames || h.store.extractions["doc-b"].SettlesNames {
+			t.Fatalf("settles names: doc-a %v, doc-b %v", h.store.extractions["doc-a"].SettlesNames, h.store.extractions["doc-b"].SettlesNames)
+		}
+	})
+	t.Run("no event", func(t *testing.T) {
+		h := setup(t)
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{extracted[0], `{"event":"extract_finished"}`}, `{"status":"budget_exhausted","totals":`+totals+`}`)
+		}
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		want := []model.FoundryResendEnd{
+			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseNotReplayed, Unsaid: true},
+			{DocumentID: "doc-a", Reason: model.FoundryResendName, Requests: 1, Refused: model.FoundryNameNoWord},
+			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2, Refused: model.FoundryReleaseNotReplayed, Unsaid: true},
+		}
+		if !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+	})
+}

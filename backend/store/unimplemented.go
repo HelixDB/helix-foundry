@@ -67,6 +67,11 @@ func (u Unimplemented) SettleFoundryReleases(context.Context, string, string, []
 	u.unimplemented("SettleFoundryReleases")
 	return false, nil
 }
+func (u Unimplemented) SettleFoundryResolve(context.Context, string, string, *model.FoundryReviewDecision, []string, *model.FoundryGraphJob) (bool, error) {
+	u.unimplemented("SettleFoundryResolve")
+	return false, nil
+}
+
 func (u Unimplemented) SettleFoundryValue(context.Context, string, string, *model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
 	u.unimplemented("SettleFoundryValue")
 	return false, nil

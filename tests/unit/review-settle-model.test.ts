@@ -1145,6 +1145,59 @@ describe("why a load kept an approved claim held", () => {
       "Approved. A load is running, so this waits: it’s written when that ends, to the load that is current then.",
     );
   });
+  it("says what became of a name chosen in this load at once", () => {
+    expect(model.resolvedText({ status: "pending" })).toBe(
+      "Decision saved. Linking this name in this load…",
+    );
+    expect(model.resolvedText({ status: "pending" }, "extract")).toBe(
+      "Decision saved. Another job is running, so this waits: it’s linked in this load when that ends.",
+    );
+    expect(model.waitingText("load", "resolve")).toContain(
+      "otherwise the next load applies it",
+    );
+    expect(model.resolvedText({ status: "written" })).toBe(
+      "Linked in this load. Later loads read the choice too.",
+    );
+    // A load read before names could be settled in place, said plainly.
+    expect(
+      model.resolvedText({ status: "refused", reason: "not_replayed" }),
+    ).toBe(
+      "This load was built before names could be applied at once; the next load applies it.",
+    );
+    // No review asks about it now: settled in this load, by this choice in
+    // a run whose word was lost, or by another since.
+    expect(
+      model.resolvedText({ status: "written", reason: "not_asked" }),
+    ).toContain("already settled this name");
+    for (const reason of [
+      "no_word",
+      "not_named",
+      "bound",
+      "collides",
+      "differs",
+      "absent",
+    ])
+      expect(model.resolvedText({ status: "refused", reason })).toMatch(
+        /The next load applies your choice\.$/,
+      );
+    expect(
+      model.resolvedText({ status: "refused", reason: "document_gone" }),
+    ).toBe("The document left this load, so nothing was linked here.");
+    expect(
+      model.resolvedText({ status: "refused", reason: "a_later_reason" }),
+    ).toBe(
+      "Not linked in this load (a_later_reason). The next load applies your choice.",
+    );
+    expect(model.resolvedText({ status: "refused", reason: "" })).toContain(
+      "no reason given",
+    );
+    expect(
+      model.resolvedText({ status: "unconfirmed", reason: "job_failed" }),
+    ).toContain("Choose it again to finish.");
+    // Read when the load was made, or not in its list: the card's own words.
+    expect(model.resolvedText({ status: "" })).toBeUndefined();
+    expect(model.resolvedText(undefined)).toBeUndefined();
+  });
   it("reads the decisions less often the longer an approval has waited", () => {
     expect(model.applyPollMs(0)).toBe(2000);
     expect(model.applyPollMs(29_999)).toBe(2000);

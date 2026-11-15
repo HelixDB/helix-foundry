@@ -664,6 +664,12 @@ type FoundryDocumentExtraction struct {
 	// aliases the load carries where the names rung asked. An event of a
 	// document the load held already adds to them (MergeFoundryDocumentNames).
 	Names []FoundryDocumentName
+	// SettlesNames is that the run read the document with its saved model
+	// work, so its word on a resolve of the document is the decision's, which
+	// the load's copy that waits to be settled records
+	// (FoundryNameApplied). A send without it can't settle a name, and says
+	// not_replayed whatever the load. Nothing stores it.
+	SettlesNames bool
 }
 
 // FoundryNameDecision is which kind of decision a document's name outcome is
@@ -730,6 +736,31 @@ const (
 	// or a resend, which sends no artifact); the next load applies it.
 	FoundryNameNotReplayed FoundryNameRefusal = "not_replayed"
 )
+
+// FoundryNameApplied is what the load's copy of resolve decision records of
+// the engine's word on its own document (foundry_load_decisions
+// applied_status and applied_reason): written is written; not_asked is
+// written with not_asked as its reason, as the copy waited on a review that
+// asked about the name and none asks now: the name is settled in the load,
+// by this decision in a run whose word was lost, or by another since (an
+// alias of it); anything else is refused, with the refusal, or not_named,
+// as its reason.
+func FoundryNameApplied(n FoundryDocumentName) (FoundryReleaseStatus, string) {
+	switch n.Outcome {
+	case FoundryNameWritten:
+		return FoundryReleaseWritten, ""
+	case FoundryNameNotAsked:
+		return FoundryReleaseWritten, string(FoundryNameNotAsked)
+	case FoundryNameRefused:
+		return FoundryReleaseRefused, string(n.Reason)
+	}
+	return FoundryReleaseRefused, string(n.Outcome)
+}
+
+// FoundryNameNoWord is the backend's reason a resolve waiting in the
+// current load is refused when the job that sent its document ended with no
+// event of the document: no word came, and the next load applies it.
+const FoundryNameNoWord = "no_word"
 
 // FoundryDocumentName is what a run did with one name decision of a
 // document: Reason is set exactly for refused. DecisionID is the decision's

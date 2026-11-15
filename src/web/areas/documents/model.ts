@@ -1626,7 +1626,7 @@ export function nameOutcomeText(n: DocumentNameOutcome): string {
     case "other_identity":
       return "The names show a different legal company";
     case "not_replayed":
-      return "Not written in place; it applies when the document is read again";
+      return "Built before names could be applied at once; the next load applies it";
     default:
       return "Not applied in this load";
   }

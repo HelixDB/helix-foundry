@@ -1930,7 +1930,7 @@ describe("name outcomes", () => {
       "Another party in this document goes by it too",
       "The document gives an ID that doesn’t match the record chosen",
       "The names show a different legal company",
-      "Not written in place; it applies when the document is read again",
+      "Built before names could be applied at once; the next load applies it",
     ]);
     expect(refused("a_new_reason")).toBe("Not applied in this load");
     expect(refused(undefined)).toBe("Not applied in this load");
