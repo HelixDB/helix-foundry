@@ -457,9 +457,12 @@ function Editor({
   });
   const problems = [
     ...missing,
-    ...(!missing.length && !read.ok
-      ? [{ id: read.nodeId, text: asSentence(read.error) }]
-      : []),
+    // Only what starts it: the graph's own refusal names nodes.
+    ...(current.spec.nodes.length < 2
+      ? [{ id: undefined, text: "Add a step after what starts it." }]
+      : !missing.length && !read.ok
+        ? [{ id: read.nodeId, text: asSentence(read.error) }]
+        : []),
     ...(current.name.trim()
       ? []
       : [{ id: undefined, text: "Give it a name." }]),

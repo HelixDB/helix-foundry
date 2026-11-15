@@ -190,7 +190,7 @@ test("starts from scratch on the full canvas: adds, joins, tidies and inspects i
   await expect(nodes).toHaveCount(1);
   await expect(
     inspector(page).getByRole("list", { name: "Before you save" }),
-  ).toContainText("An automation has a trigger and at least one step");
+  ).toContainText("Add a step after what starts it.");
   await expect(
     page.getByRole("button", { name: "Review and save" }),
   ).toBeDisabled();
