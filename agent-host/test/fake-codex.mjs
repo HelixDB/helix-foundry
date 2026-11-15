@@ -76,7 +76,7 @@ const ask = (method, params) =>
 let interrupted = false;
 
 async function mcpCall(name) {
-  const res = await fetch(url, {
+  const res = await globalThis.fetch(url, {
     method: "POST",
     headers: {
       "content-type": "application/json",

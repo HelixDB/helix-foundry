@@ -183,24 +183,26 @@ Configure the MCP client to read `FOUNDRY_LOCAL_TOKEN` and send `Authorization: 
 
 Changes use `helix_foundry_prepare_operation` followed by `helix_foundry_execute_operation` after confirmation. The confirmation lasts five minutes, binds the exact operation and payload, and can be consumed once: one that has expired or doesn't match fails with `failed_precondition`, so prepare it again. After a lost response or an already-consumed confirmation, read the current state before retrying: token consumption does not prove the operation finished.
 
-## The Assistant on your Claude subscription
+## The Assistant on your Claude or ChatGPT subscription
 
-Foundry's Assistant runs on the install's AI provider. It can instead run on the Claude Code you're signed in to on this computer, on your Claude subscription, at no cost to the install: a small helper, outside Docker (the Keychain and Claude Code's login are this computer's), takes each turn and drives your own `claude`, which can call nothing but Foundry's tools, with a token for that turn alone.
+Foundry's Assistant runs on the install's AI provider. It can instead run on the Claude Code or Codex you're signed in to on this computer, on your Claude or ChatGPT subscription, at no cost to the install: a small helper, outside Docker (your CLIs' logins are this computer's), takes each turn and drives your own `claude` or `codex app-server`, with a token for that turn alone.
 
-1. In Foundry, Settings › AI models, choose your Claude subscription. It shows a one-time code, good for ten minutes, and the command that pairs a helper with it:
+1. In Foundry, Settings › AI models, choose your Claude subscription or your ChatGPT subscription (Codex). Codex runs with your own Codex setup (its MCP servers and plugins), so choosing it the first time says what it runs with, and you confirm that once. Then Pair a helper shows a one-time code, good for ten minutes, and the command that pairs a helper with it:
 
    ```sh
    npx -y @helixdb/foundry-agent-host@0.1.0 pair hxp_…
    ```
 
-   Run it here, with Node 24 and Claude Code installed and signed in (`claude`, then `/login`). The helper keeps its token in `~/.config/helix-foundry/agent-host.json`, readable by you alone; Foundry keeps only its hash.
+   Run it here, with Node 24 and Claude Code (`claude`, then `/login`) or Codex 0.169.0 or later (`codex login`, with ChatGPT) installed and signed in. The helper keeps its token in `~/.config/helix-foundry/agent-host.json`, readable by you alone; Foundry keeps only its hash.
 
 2. `npx -y @helixdb/foundry-agent-host@0.1.0 install` keeps it running, now and at every login (a launchd agent on macOS, a systemd user unit on Linux), or `… run` runs it in a terminal. `… doctor` says what stands in the way.
-3. New threads of that workspace run on Claude Code from then on; a thread keeps where it started. While no helper has called Foundry for 30 seconds, the Assistant says so instead of sending.
+3. New threads of that workspace run on that CLI from then on; a thread keeps where it started. While no helper has called Foundry for 30 seconds, or its Codex is older than 0.169.0, the Assistant says so instead of sending.
 
-The helper reaches Foundry at `http://127.0.0.1:8081`, or the port `FOUNDRY_MCP_PORT` sets, which the pair command Foundry shows names (`--foundry`). Revoke it in Settings › AI models: its token, and those of the turns it runs, stop at once, and it deletes the Claude Code sessions it kept.
+Claude Code can call nothing but Foundry's tools. Codex runs with your own setup, its shell, web search and image viewer off, read-only, and the helper declines every command or file change it asks for, and any tool call of your servers that asks for approval; one that doesn't ask can run. [The helper's README](../agent-host/README.md#codex) says exactly what holds, and how it was tested.
 
-Claude Code keeps each thread's session on this computer, under `~/.claude/projects/` (in a folder named for the thread's directory in `~/.local/state/helix-foundry/agent-host/threads/`), and it holds what Foundry's tools answered in that thread: graph reads, document text, reviews. The helper deletes a thread's session once the thread is deleted in Foundry (it asks as it starts, then hourly), and every one when it is revoked. Codex isn't offered yet: [the helper's README](../agent-host/README.md#codex) says why. Your plan's terms decide whether you may use your subscription this way.
+The helper reaches Foundry at `http://127.0.0.1:8081`, or the port `FOUNDRY_MCP_PORT` sets, which the pair command Foundry shows names (`--foundry`). Revoke it in Settings › AI models: its token, and those of the turns it runs, stop at once, and it deletes the sessions it kept.
+
+Each CLI keeps a thread's session on this computer (Claude Code under `~/.claude/projects/`, Codex in its `CODEX_HOME`), and it holds what Foundry's tools answered in that thread: graph reads, document text, reviews. The helper deletes a thread's sessions once the thread is deleted in Foundry (it asks as it starts, then hourly), and every one when it is revoked. Your plan's terms decide whether you may use your subscription this way.
 
 ## Ask over HTTP
 
