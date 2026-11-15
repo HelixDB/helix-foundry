@@ -422,7 +422,9 @@ ON DUPLICATE KEY UPDATE usd_micros=usd_micros+VALUES(usd_micros)`, utcMonth(time
 //     when it refreshes the current load and holds what that load held:
 //     of the sets with an allowance its budget stop left unfinished,
 //     outcome.HeldSets, every document that load recorded, deleted since
-//     or not, else it is deleted) or failed; a delete job's load becomes
+//     or not, else it is deleted) or failed; a load that becomes current
+//     gets the resolves saved since it was created (makeFoundryLoadCurrent);
+//     a delete job's load becomes
 //     deleted, its extraction rows removed, or delete_failed, never
 //     requeued by itself. Then:
 //   - a succeeded load or extract whose load is current, with uploads it has
@@ -439,7 +441,8 @@ ON DUPLICATE KEY UPDATE usd_micros=usd_micros+VALUES(usd_micros)`, utcMonth(time
 //     failing that, a resend into the current load of the documents it owes
 //     one (queueFoundryResend), the approvals it hasn't read carried over
 //     first; a resend job that ended without succeeding ends what its load
-//     owed, so none follows it; the value decisions and withdrawals a
+//     owed but the carried aliases it never read, and none follows it for
+//     those alone; the value decisions and withdrawals a
 //     resend that failed earlier left unsent are owed again by any job's
 //     end after it, as nothing else would send a withdrawal;
 //     failing that, a delete of the oldest load being deleted. A deleted
@@ -566,7 +569,12 @@ WHERE load_id=? AND (kind='prop' AND applied_status IN ('pending', 'carried', 'r
 				return err
 			}
 		}
-		return tx.queueAfterFoundryGraphJob(ctx, o, outcome.Next)
+		// A resend that failed leaves its load owing only the aliases it
+		// never read (failFoundryResends): queued for them alone, a failure
+		// would follow itself.
+		unread := job.Kind != model.FoundryGraphJobResend || outcome.Status == model.FoundryGraphJobSucceeded ||
+			o.CurrentLoadID == nil || *o.CurrentLoadID != job.LoadID
+		return tx.queueAfterFoundryGraphJob(ctx, o, outcome.Next, unread)
 	})
 	return finish, err
 }
@@ -676,10 +684,9 @@ SET status=IF(cancel_requested, 'cancelled', 'failed'), ended_at=NOW(6) WHERE lo
 			_, err := s.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting' WHERE id=?`, job.LoadID)
 			return err
 		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_ontologies SET current_load_id=? WHERE id=?`, job.LoadID, o.ID); err != nil {
+		if err := s.makeFoundryLoadCurrent(ctx, o, job.LoadID); err != nil {
 			return err
 		}
-		o.CurrentLoadID = &job.LoadID
 		// A refresh that replaced a refresh deletes it now, so refreshes never crowd out a customer's loads.
 		if refresh && replaced != nil {
 			if _, err := s.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting'
@@ -723,9 +730,9 @@ WHERE id=? AND origin='refresh' AND status IN ('ready', 'partial')`, *replaced);
 }
 
 // queueAfterFoundryGraphJob queues what follows a job that ended, as
-// FinishFoundryGraphJob says. The caller holds the ontology's lock and no job
-// of it is live.
-func (s *mysqlDB) queueAfterFoundryGraphJob(ctx context.Context, o *model.FoundryOntology, next model.FoundryGraphNext) error {
+// FinishFoundryGraphJob says; unread is queueFoundryResend's. The caller
+// holds the ontology's lock and no job of it is live.
+func (s *mysqlDB) queueAfterFoundryGraphJob(ctx context.Context, o *model.FoundryOntology, next model.FoundryGraphNext, unread bool) error {
 	if o.DeletedAt != nil {
 		return s.queueNextFoundryDelete(ctx, o, next.DeleteID)
 	}
@@ -752,7 +759,7 @@ func (s *mysqlDB) queueAfterFoundryGraphJob(ctx context.Context, o *model.Foundr
 	}
 	// What the current load owes the engine again: approvals saved since it
 	// copied its decisions, those a job that just ended kept waiting included.
-	if queued, err := s.queueFoundryResend(ctx, o, &model.FoundryGraphJob{ID: next.ResendID}, 0); err != nil || queued {
+	if queued, err := s.queueFoundryResend(ctx, o, &model.FoundryGraphJob{ID: next.ResendID}, 0, unread); err != nil || queued {
 		return err
 	}
 	return s.queueNextFoundryDelete(ctx, o, next.DeleteID)

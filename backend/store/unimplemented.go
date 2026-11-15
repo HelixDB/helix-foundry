@@ -71,6 +71,10 @@ func (u Unimplemented) SettleFoundryResolve(context.Context, string, string, *mo
 	u.unimplemented("SettleFoundryResolve")
 	return false, nil
 }
+func (u Unimplemented) SettleFoundryBoundResolve(context.Context, string, string, *model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
+	u.unimplemented("SettleFoundryBoundResolve")
+	return false, nil
+}
 
 func (u Unimplemented) SettleFoundryValue(context.Context, string, string, *model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
 	u.unimplemented("SettleFoundryValue")
@@ -87,6 +91,14 @@ func (u Unimplemented) ListFoundryDecisionsApplied(context.Context, string, []st
 func (u Unimplemented) ListFoundryLoadResends(context.Context, string) ([]*model.FoundryLoadResend, error) {
 	u.unimplemented("ListFoundryLoadResends")
 	return nil, nil
+}
+func (u Unimplemented) ListFoundryCarriedAliases(context.Context, string, int) ([]*model.FoundryReviewDecision, error) {
+	u.unimplemented("ListFoundryCarriedAliases")
+	return nil, nil
+}
+func (u Unimplemented) OweFoundryAskingResends(context.Context, *model.FoundryGraphJob, string, []string, []string) (bool, error) {
+	u.unimplemented("OweFoundryAskingResends")
+	return false, nil
 }
 func (u Unimplemented) FoundryLoadDecisionsOwed(context.Context, string) (*model.FoundryLoadResend, error) {
 	u.unimplemented("FoundryLoadDecisionsOwed")

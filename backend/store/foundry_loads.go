@@ -325,8 +325,10 @@ WHERE m.load_id=? GROUP BY m.set_id ORDER BY m.set_id`, loadID)
 // saved since it copied its decisions: with no job live and no extract
 // queued, they are carried to it and a resend (resend's id and requester)
 // queued for their documents, as a job's end does (queueFoundryResend); a
-// live or queued job's end carries them otherwise. ErrNotFound means the
-// ontology is not live or has no such load not yet deleted.
+// live or queued job's end carries them otherwise. The resolves saved since
+// join it at once (makeFoundryLoadCurrent), their documents owed, sent by
+// that resend or the job's end. ErrNotFound means the ontology is not live
+// or has no such load not yet deleted.
 func (s *mysqlDB) SetCurrentFoundryLoad(ctx context.Context, workspaceID, ontologyID, loadID string, extract, resend *model.FoundryGraphJob,
 	budget model.FoundryGraphBudget) (queued bool, err error) {
 	err = s.WithTx(ctx, func(txDB Store) error {
@@ -353,17 +355,18 @@ FROM foundry_load_enrichments WHERE load_id=?`, loadID).Scan(&purged); {
 		case purged:
 			return FoundryLoadPurged
 		}
-		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontologies SET current_load_id=? WHERE id=?`, loadID, ontologyID); err != nil {
+		// The live job's row before any decision's (the carry writes them), as
+		// a worker recording a decision's outcome locks them.
+		live, err := tx.liveFoundryGraphJob(ctx, ontologyID)
+		if err != nil {
 			return err
 		}
-		o.CurrentLoadID = &loadID
+		if err := tx.makeFoundryLoadCurrent(ctx, o, loadID); err != nil {
+			return err
+		}
 		// What the load waits for is what joined it: the uploads since it was
 		// written join it now.
 		if err := tx.snapshotFoundryLoadDocuments(ctx, loadID); err != nil {
-			return err
-		}
-		live, err := tx.liveFoundryGraphJob(ctx, ontologyID)
-		if err != nil {
 			return err
 		}
 		if live == nil {
@@ -371,7 +374,7 @@ FROM foundry_load_enrichments WHERE load_id=?`, loadID).Scan(&purged); {
 			if err != nil || queued {
 				return err
 			}
-			_, err = tx.queueFoundryResend(ctx, o, resend, 0)
+			_, err = tx.queueFoundryResend(ctx, o, resend, 0, true)
 			return err
 		}
 		waiting, err := tx.countWaitingFoundryDocuments(ctx, loadID)

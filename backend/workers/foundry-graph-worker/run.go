@@ -74,6 +74,8 @@ type store interface {
 	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
 	ListFoundryDocumentExtractions(ctx context.Context, loadID string, documentIDs []string) (map[string]*model.FoundryDocumentExtraction, error)
 	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
+	ListFoundryCarriedAliases(ctx context.Context, loadID string, limit int) ([]*model.FoundryReviewDecision, error)
+	OweFoundryAskingResends(ctx context.Context, job *model.FoundryGraphJob, workerID string, aliasIDs, documentIDs []string) (bool, error)
 	FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error)
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
 	RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome, names []model.FoundryDocumentName) error
@@ -1009,7 +1011,12 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 // load read before prompt 9 the saved work lacks calls settling asks, so the
 // names read not_replayed and the next load applies them. A document owed
 // for several reasons goes once, and each request ends; one the engine sent
-// no event for refuses each request's decisions, a name's its resolves.
+// no event for refuses each request's decisions, a name's its resolves. An
+// alias carried to the load from another time (store carryFoundryResolves)
+// owes, before anything owed is read, the documents of this load whose
+// reviews ask about its name (oweAskingDocuments), which go the same way;
+// until it has, its own document's name is not listed as owed. A name whose
+// read fails waits, the rest is sent, and then the attempt is retried.
 //
 // The load's own decisions (model.FoundryResendDecisions) are owed when a
 // person chose a value of a property or took a choice back. Every Extract
@@ -1032,6 +1039,11 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition,
 	binding graphproxy.Binding, target ontologyagent.HelixTarget, ontologyVersion string, providers []string, a *attempt) error {
 	if err := r.update(ctx, job, model.FoundryGraphJobDocuments, a); err != nil {
+		return err
+	}
+	// What an alias carried to the load owes, before what is owed is read.
+	unread, err := r.oweAskingDocuments(ctx, job, binding)
+	if err != nil {
 		return err
 	}
 	// Before the documents, and so before any Extract reads the decisions.
@@ -1186,7 +1198,114 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 			return err
 		}
 	}
+	// What else was owed went; a name whose read failed is read again.
+	if unread != nil {
+		return unread
+	}
 	return r.update(ctx, job, model.FoundryGraphJobFinishing, a)
+}
+
+// carriedAliasesPerJob is the most aliases carried to a load whose asking
+// documents one resend job owes (oweAskingDocuments), and
+// askingDocumentsPerJob how many documents it owes them before it stops
+// reading names: each distinct name is a read that filters the load's
+// reviews, and each document it owes is sent with its saved work, so a load
+// that became current with many is worked through by job after job, each
+// queued as the last ends (their documents' requests stay owed), rather than
+// holding one job back for every read before it sends anything. A job owes at
+// most askingDocumentsPerJob + ontologyagent.AskingDocumentsMax - 1.
+const (
+	carriedAliasesPerJob  = 100
+	askingDocumentsPerJob = ontologyagent.AskingDocumentsMax
+)
+
+// oweAskingDocuments owes the job's load, for a name
+// (model.FoundryResendName), the documents whose reviews ask about the name
+// of each alias carried to it (store ListFoundryCarriedAliases: a resolve
+// that chose an entity, saved while another load was current), at most
+// carriedAliasesPerJob of them and until askingDocumentsPerJob are owed, as
+// SettleFoundryResolve owes them for one settled against the load; the
+// store, in its transaction, has no Helix to read them from. One read of the
+// load's reviews a type and name (ontologyagent.AskingQuery, the read the
+// API makes), at most ontologyagent.AskingDocumentsMax documents each; the
+// engine keeps no index of reviews by name, so each read filters the load's
+// reviews. They are owed under the ontology's lock while the load is current
+// (store OweFoundryAskingResends), so the documents are this load's and the
+// job reads them next, with the aliases' own documents; with the load no
+// longer current none is owed, and the aliases wait, their documents' names
+// held back, until a resend of the load owes them when it is current again.
+// Owing a document again is harmless: a send whose reviews no longer ask
+// about the name writes nothing (not_asked).
+//
+// A read that fails (an error, a status other than 200, an answer it can't
+// read) leaves its aliases carried and their documents held back, and reads
+// no other name: each filters the same reviews, and would fail the same way.
+// The job goes on and sends what else is owed, so approvals and values never
+// wait on a name's read, and unread says the attempt is retried once it has
+// (Task.outcome's backoff); the store's failFoundryResends leaves an alias
+// still unread when the attempts run out, for the next resend of the load.
+// err is a failure of the store's, which retries the attempt at once.
+func (r *runner) oweAskingDocuments(ctx context.Context, job *model.FoundryGraphJob, binding graphproxy.Binding) (unread, err error) {
+	carried, err := r.db.ListFoundryCarriedAliases(ctx, job.LoadID, carriedAliasesPerJob)
+	if err != nil {
+		return nil, retry("could not read the names carried to the load; Helix will retry", err)
+	}
+	// The copies of each name, in the order first read.
+	var names [][2]string
+	copies := map[[2]string][]string{}
+	for _, d := range carried {
+		name := [2]string{d.Type, *d.NormName}
+		if copies[name] == nil {
+			names = append(names, name)
+		}
+		copies[name] = append(copies[name], d.ID)
+	}
+	owedDocuments := 0
+	for _, name := range names {
+		if owedDocuments >= askingDocumentsPerJob {
+			log.From(ctx).Info("graph job: the names carried to the load owe more documents than a job sends; the rest wait for the next",
+				"job", job.ID, "documents", owedDocuments)
+			return nil, nil
+		}
+		body, err := ontologyagent.AskingQuery(job.LoadID, name[0], name[1])
+		if err != nil {
+			return nil, permanent("could not build the read of a name's reviews", err)
+		}
+		resp, err := r.gateway.Query(ctx, binding.Endpoint, binding.TenantID, body, nil)
+		if err == nil && resp.StatusCode != 200 {
+			err = fmt.Errorf("the database answered %d", resp.StatusCode)
+		}
+		var docs []string
+		var past bool
+		if err == nil {
+			docs, past, err = ontologyagent.AskingDocuments(resp.Body)
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, retry("the attempt stopped while reading a name's reviews", ctx.Err())
+			}
+			log.From(ctx).Warn("graph job: could not read which documents ask about a carried name; it waits, and the rest go",
+				"job", job.ID, "aliases", len(carried), "err", err)
+			return retry("could not read which documents ask about a name; Helix will retry", err), nil
+		}
+		if past {
+			log.From(ctx).Warn("graph job: a carried name asks more documents than a resend sends again; the rest wait for the next load",
+				"job", job.ID, "documents", len(docs))
+		}
+		owed, err := r.db.OweFoundryAskingResends(ctx, job, r.workerID, copies[name], docs)
+		if errors.Is(err, foundrystore.ErrNotFound) {
+			return nil, retry("the job's lease was lost", err)
+		}
+		if err != nil {
+			return nil, retry("could not owe the documents that ask about a name; Helix will retry", err)
+		}
+		if !owed {
+			log.From(ctx).Info("graph job: the load is no longer current; its carried names wait until it is", "job", job.ID)
+			return nil, nil
+		}
+		owedDocuments += len(docs)
+	}
+	return nil, nil
 }
 
 // partition splits the documents a job sends. For a job no person started,

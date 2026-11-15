@@ -2,6 +2,7 @@ package foundrygraphworker
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -396,6 +397,16 @@ type memStore struct {
 	// namesSaid are the names a failed resend's event said, by document.
 	namesSaid map[string][]model.FoundryDocumentName
 	endErr    error
+	// carried are the aliases carried to the job's load whose asking
+	// documents are yet to be owed (ListFoundryCarriedAliases), each holding
+	// back its document's name; asked the documents OweFoundryAskingResends
+	// owed, each joining resends as owed for a name, as the load holds it
+	// (held); notCurrent is that the job's load is no longer current, so it
+	// owes none and the aliases stay carried.
+	carried    []*model.FoundryReviewDecision
+	asked      []string
+	held       map[string]*model.FoundryDocument
+	notCurrent bool
 }
 
 func (s *memStore) FoundryLoadDecisionsOwed(context.Context, string) (*model.FoundryLoadResend, error) {
@@ -404,10 +415,47 @@ func (s *memStore) FoundryLoadDecisionsOwed(context.Context, string) (*model.Fou
 	return s.owedDecisions, nil
 }
 
+// ListFoundryLoadResends is the store's: a document's name waits while it
+// holds an alias carried whose asking documents are yet to be owed.
 func (s *memStore) ListFoundryLoadResends(context.Context, string) ([]*model.FoundryLoadResend, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.resends, nil
+	return slices.DeleteFunc(slices.Clone(s.resends), func(r *model.FoundryLoadResend) bool {
+		return r.Reason == model.FoundryResendName && slices.ContainsFunc(s.carried, func(d *model.FoundryReviewDecision) bool {
+			return *d.DocID == r.DocumentID
+		})
+	}), nil
+}
+
+func (s *memStore) ListFoundryCarriedAliases(_ context.Context, _ string, limit int) ([]*model.FoundryReviewDecision, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.carried[:min(len(s.carried), limit)]), nil
+}
+
+// OweFoundryAskingResends is the store's: with the job's load current, each
+// document is owed for a name, once more where it already is, and the
+// aliases are carried no more.
+func (s *memStore) OweFoundryAskingResends(_ context.Context, job *model.FoundryGraphJob, _ string, aliases, docs []string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.notCurrent {
+		return false, nil
+	}
+	s.carried = slices.DeleteFunc(s.carried, func(d *model.FoundryReviewDecision) bool { return slices.Contains(aliases, d.ID) })
+	for _, doc := range docs {
+		s.asked = append(s.asked, doc)
+		i := slices.IndexFunc(s.resends, func(r *model.FoundryLoadResend) bool {
+			return r.DocumentID == doc && r.Reason == model.FoundryResendName
+		})
+		if i >= 0 {
+			s.resends[i].Requests++
+			continue
+		}
+		s.resends = append(s.resends, &model.FoundryLoadResend{LoadID: job.LoadID, DocumentID: doc, Reason: model.FoundryResendName, Requests: 1,
+			Document: s.held[doc]})
+	}
+	return true, nil
 }
 
 func (s *memStore) EndFoundryLoadResend(_ context.Context, _, _ string, end model.FoundryResendEnd) error {
@@ -844,9 +892,23 @@ type gateway struct {
 	writer  []string
 	answers []helixgateway.Response
 	store   *memStore
+	// reviews answers a read of a load's reviews of a type and name
+	// (ontologyagent.AskingQuery), keyed "load/type/name", with its items;
+	// one it has no answer for has none. asks are the keys read, in order.
+	reviews map[string]string
+	asks    []string
+	// askStatus, when set, is the status every such read answers.
+	askStatus int
 }
 
-func (g *gateway) Query(_ context.Context, _, tenantID string, _ []byte, extra http.Header) (helixgateway.Response, error) {
+func (g *gateway) Query(_ context.Context, _, tenantID string, body []byte, extra http.Header) (helixgateway.Response, error) {
+	if key, ok := askingKey(body); ok {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		g.asks = append(g.asks, key)
+		return helixgateway.Response{StatusCode: cmp.Or(g.askStatus, 200), ContentType: "application/json",
+			Body: []byte(`{"items":[` + g.reviews[key] + `]}`)}, nil
+	}
 	g.store.record("write")
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -858,6 +920,30 @@ func (g *gateway) Query(_ context.Context, _, tenantID string, _ []byte, extra h
 		return answer, nil
 	}
 	return helixgateway.Response{StatusCode: 200, ContentType: "application/json", Body: []byte(`{}`)}, nil
+}
+
+// askingKey is "load/type/name" of a read of a load's reviews of a name, as
+// ontologyagent.AskingQuery writes one.
+func askingKey(body []byte) (string, bool) {
+	var q struct {
+		RequestType string `json:"request_type"`
+	}
+	if json.Unmarshal(body, &q) != nil || q.RequestType != "read" {
+		return "", false
+	}
+	var where []string
+	for _, p := range []string{"foundry_load", "type", "norm_name"} {
+		_, rest, ok := strings.Cut(string(body), `{"property":"`+p+`"},"right":{"constant":{"string":`)
+		if !ok {
+			return "", false
+		}
+		var value string
+		if err := json.NewDecoder(strings.NewReader(rest)).Decode(&value); err != nil {
+			return "", false
+		}
+		where = append(where, value)
+	}
+	return strings.Join(where, "/"), true
 }
 
 type harness struct {
