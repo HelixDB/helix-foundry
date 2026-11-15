@@ -1773,9 +1773,7 @@ describe("dashboards", () => {
       dashboard: { name: "Paid invoices", pinned: true },
     });
     // Publishing needs a tile: the run fails, and the agent says why.
-    const published = await runCard(
-      (await card("Publish it", page)).action,
-    );
+    const published = await runCard((await card("Publish it", page)).action);
     expect(published.ran).toMatchObject({
       status: "failed",
       error: "the dashboard has no tiles to publish",

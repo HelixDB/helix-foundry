@@ -628,7 +628,10 @@ function specDisplay(x: unknown): AgentSpecDisplay | undefined {
           ? {
               title,
               ontology,
-              ...opt("visual", str((t as { visual?: unknown }).visual) || undefined),
+              ...opt(
+                "visual",
+                str((t as { visual?: unknown }).visual) || undefined,
+              ),
             }
           : undefined;
       })
@@ -1456,7 +1459,9 @@ const VIEWS: {
     title: `Change the dashboard ${quoted(d.dashboard)}`,
     facts: [
       { label: "Dashboard", value: dashboardText(d.dashboard) },
-      ...(d.name !== undefined ? [{ label: "New name", value: `“${d.name}”` }] : []),
+      ...(d.name !== undefined
+        ? [{ label: "New name", value: `“${d.name}”` }]
+        : []),
       ...(d.description !== undefined
         ? [
             {

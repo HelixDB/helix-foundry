@@ -92,7 +92,8 @@ export function ActionCard({
     try {
       if (which === "run") {
         const ran = await executeAgentAction(ws, action);
-        if (action.operation?.endsWith("_dashboard")) ranOnDashboards(ran.action);
+        if (action.operation?.endsWith("_dashboard"))
+          ranOnDashboards(ran.action);
         // Where the Assistant runs, as the dock and the settings show it.
         if (
           action.operation === "set_assistant_runtime" ||

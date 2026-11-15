@@ -422,7 +422,10 @@ const DISPLAYS: [string, string, unknown][] = [
   [
     "a dashboard unpinned",
     "pin_dashboard",
-    { dashboard: { id: "dash1", name: "Revenue", pinned: true }, pinned: false },
+    {
+      dashboard: { id: "dash1", name: "Revenue", pinned: true },
+      pinned: false,
+    },
   ],
   [
     "a dashboard published",
@@ -968,9 +971,10 @@ describe("cardView", () => {
   });
 
   it("names a dashboard's state and its tiles' ontologies", () => {
-    const facts = (name: string) => Object.fromEntries(
-      of(name).facts.map((f) => [f.label, "value" in f ? f.value : ""]),
-    );
+    const facts = (name: string) =>
+      Object.fromEntries(
+        of(name).facts.map((f) => [f.label, "value" in f ? f.value : ""]),
+      );
     expect(facts("a dashboard made")).toEqual({
       Name: "“Invoices by status” (as the Assistant wrote it)",
       Tiles: "Invoices by status (Sales graph), Customers (gone1)",
@@ -1391,13 +1395,11 @@ describe("resultLink", () => {
         ["publish_dashboard", "a dashboard published"],
         ["unpublish_dashboard", "a dashboard unpublished"],
       ] as const
-    ).map(
-      ([op, name]): [string, FoundryAgentAction, unknown] => [
-        name,
-        ran(op, d(name), { id: "dash1" }, "dashboard:ws1/dash1"),
-        { to: "/dashboards/dash1", label: "Open the dashboard" },
-      ],
-    ),
+    ).map(([op, name]): [string, FoundryAgentAction, unknown] => [
+      name,
+      ran(op, d(name), { id: "dash1" }, "dashboard:ws1/dash1"),
+      { to: "/dashboards/dash1", label: "Open the dashboard" },
+    ]),
     [
       "a deleted dashboard",
       ran(

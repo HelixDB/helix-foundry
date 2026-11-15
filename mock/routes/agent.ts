@@ -1310,41 +1310,41 @@ function messageScript(a: Ask, manager: boolean): Step[] {
       : asked
         ? asked.operation
         : /\brevoke\b.*\bhelper\b/i.test(t)
-      ? "revoke_assistant_helper"
-      : /\b(run|switch|move)\b.*\b(subscription|claude code|foundry['’]s model)\b/i.test(
-            t,
-          )
-        ? "set_assistant_runtime"
-        : /\bconnect\b/i.test(t)
-          ? "connect"
-          : /\bcreate\b.*\bontology\b/i.test(t)
-            ? "create_ontology"
-            : /\b(settle|resolve)\b.*\breview\b|\breview about\b/i.test(t)
-              ? "settle_review"
-              : /\bsync\b/i.test(t)
-                ? "sync_connector"
-                : /\bsample\b/i.test(t)
-                  ? "add_sample_data"
-                  : /\bmove\b/i.test(t)
-                    ? "move_document"
-                    : /\b(rename|describe)\b.*\bset\b/i.test(t)
-                      ? "update_document_set"
-                      : /\b(create|make|add)\b.*\bset\b/i.test(t)
-                        ? "create_document_set"
-                        : /\b(revise|preview)\b/i.test(t)
-                          ? "revise_version"
-                          : /\b(generate|draft)\b/i.test(t)
-                            ? "generate_ontology"
-                            : /\bload\b.*\bcurrent\b/i.test(t)
-                              ? "set_current_load"
-                              : /\bcurrent\b/i.test(t)
-                                ? "set_current_version"
-                                : /\b(re)?load\b/i.test(t) &&
-                                    !/\b(how many|which|what|when|why)\b/i.test(
-                                      t,
-                                    )
-                                  ? "create_load"
-                                  : undefined;
+          ? "revoke_assistant_helper"
+          : /\b(run|switch|move)\b.*\b(subscription|claude code|foundry['’]s model)\b/i.test(
+                t,
+              )
+            ? "set_assistant_runtime"
+            : /\bconnect\b/i.test(t)
+              ? "connect"
+              : /\bcreate\b.*\bontology\b/i.test(t)
+                ? "create_ontology"
+                : /\b(settle|resolve)\b.*\breview\b|\breview about\b/i.test(t)
+                  ? "settle_review"
+                  : /\bsync\b/i.test(t)
+                    ? "sync_connector"
+                    : /\bsample\b/i.test(t)
+                      ? "add_sample_data"
+                      : /\bmove\b/i.test(t)
+                        ? "move_document"
+                        : /\b(rename|describe)\b.*\bset\b/i.test(t)
+                          ? "update_document_set"
+                          : /\b(create|make|add)\b.*\bset\b/i.test(t)
+                            ? "create_document_set"
+                            : /\b(revise|preview)\b/i.test(t)
+                              ? "revise_version"
+                              : /\b(generate|draft)\b/i.test(t)
+                                ? "generate_ontology"
+                                : /\bload\b.*\bcurrent\b/i.test(t)
+                                  ? "set_current_load"
+                                  : /\bcurrent\b/i.test(t)
+                                    ? "set_current_version"
+                                    : /\b(re)?load\b/i.test(t) &&
+                                        !/\b(how many|which|what|when|why)\b/i.test(
+                                          t,
+                                        )
+                                      ? "create_load"
+                                      : undefined;
   if (intent && !manager && !MEMBER_OPERATIONS.includes(intent))
     return [
       started,
@@ -2034,7 +2034,8 @@ function dashboardAsk(text: string): DashboardAsk | undefined {
   if (/\bpublish\b/i.test(text)) return { operation: "publish_dashboard" };
   if (/\bunpin\b/i.test(text))
     return { operation: "pin_dashboard", pinned: false };
-  if (/\bpin\b/i.test(text)) return { operation: "pin_dashboard", pinned: true };
+  if (/\bpin\b/i.test(text))
+    return { operation: "pin_dashboard", pinned: true };
   if (/\bdelete\b/i.test(text)) return { operation: "delete_dashboard" };
   return undefined;
 }
@@ -2072,8 +2073,7 @@ function onDashboard(
     named =
       namedByPerson(a.threadId, [d.name, d.id]) ||
       state.turns.some(
-        (t) =>
-          t.threadId === a.threadId && t.pageContext?.dashboardId === d.id,
+        (t) => t.threadId === a.threadId && t.pageContext?.dashboardId === d.id,
       ),
     run = " Run it from the card when you're ready.";
   const plan = (): Plan => {
@@ -2342,7 +2342,9 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
     case "pin_dashboard":
     case "publish_dashboard":
     case "unpublish_dashboard": {
-      const name = String(out.name || a.display.dashboard.name || "the dashboard"),
+      const name = String(
+          out.name || a.display.dashboard.name || "the dashboard",
+        ),
         link = `/dashboards/${a.display.dashboard.id}`;
       const words: Record<typeof a.operation, string> = {
         update_dashboard: `“${name}” is changed: ${link}`,
