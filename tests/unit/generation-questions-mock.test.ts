@@ -5,7 +5,7 @@ import { readQuestions } from "@/web/questions/model";
 import type { MockReply } from "../../mock/http";
 import { routes } from "../../mock/routes";
 import { config, db, resetState } from "../../mock/state";
-import { checkAnswers, defaultAnswer } from "../../mock/agent-questions";
+import { checkAnswers } from "../../mock/agent-questions";
 import {
   ENGINE_QUESTIONS,
   wfeQuestion,
@@ -84,6 +84,10 @@ describe("a generation that asks", () => {
     const stale = await answer({ answers: [], useDefaults: true, round: 2 });
     expect(stale.status).toBe(400);
     expect(stale.body.message).toContain("waits on round 1");
+    // No round is a request that reading the questions again can't mend.
+    const none = await answer({ answers: [], useDefaults: true });
+    expect([none.status, none.body.code]).toEqual([400, 3]);
+    expect(none.body.message).toContain("round is required");
     const bad = await answer({
       answers: [{ questionId: "Q1", options: ["Nope"] }],
       round: 1,
@@ -104,17 +108,17 @@ describe("a generation that asks", () => {
     });
     expect(ok.status).toBe(200);
     expect(ok.body.generation.status).toBe("ONTOLOGY_GENERATION_STATUS_QUEUED");
+    // A question left out is left to the agent, never answered in its words.
     expect(
-      ok.body.generation.questions.map((q: { answer: unknown }) => q.answer),
+      ok.body.generation.questions.map(
+        (q: { answer?: unknown; leftToAgent?: boolean }) =>
+          q.answer ?? (q.leftToAgent && "left"),
+      ),
     ).toEqual([
-      { questionId: "Q1", options: ["The company that pays"] },
+      "left",
       { questionId: "Q2", options: ["Falling usage"], text: "and seats" },
-      { questionId: "Q3", options: [], text: "90 days" },
-      {
-        questionId: "Q4",
-        options: [],
-        text: "No preference: decide from the data and the goal.",
-      },
+      "left",
+      "left",
     ]);
     // Answered, it no longer waits.
     const again = await answer({ answers: [], useDefaults: true, round: 1 });
@@ -138,19 +142,12 @@ describe("a generation that asks", () => {
 
 describe("agentquestion.Check, as the mock keeps it", () => {
   const [one, many, free, optional] = ENGINE_QUESTIONS.map(wfeQuestion);
-  it("defaults a question left to the agent", () => {
-    expect(defaultAnswer(one!)).toEqual({
-      questionId: "Q1",
-      options: ["The company that pays"],
-    });
-    expect(defaultAnswer(free!)).toEqual({
-      questionId: "Q3",
-      options: [],
-      text: "90 days",
-    });
-    expect(defaultAnswer(optional!).text).toBe(
-      "No preference: decide from the data and the goal.",
-    );
+  it("leaves a question left out to the agent, with useDefaults", () => {
+    expect(checkAnswers([one!, free!, optional!], [], true)).toEqual([
+      { questionId: "Q1", left: true },
+      { questionId: "Q3", left: true },
+      { questionId: "Q4", left: true },
+    ]);
   });
 
   it("refuses what the backend refuses, in its words", () => {

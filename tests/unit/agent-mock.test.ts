@@ -1322,7 +1322,7 @@ describe("operations", () => {
     expect(step4.said).toContain(`/ontology/${ontologyId}/loads/`);
   });
 
-  it("relays a draft's questions, takes the person's answers, and prepares them unchanged", async () => {
+  it("relays a draft's questions, and sends the person's answers to it as they send them", async () => {
     Object.assign(config, { ontologyQuestions: true, ontologyStepMs: 300 });
     const created = await card(
       "Create an ontology called Orders graph on database orders, goal: Which customers order the most",
@@ -1480,61 +1480,19 @@ describe("operations", () => {
     });
     expect(reason(await answer(given))).toBe("FOUNDRY_AGENT_QUESTIONS_CLOSED");
 
-    // Prepared as the card, unchanged, Q4 left: its recommended answer.
-    const after = await call("GET", `${A}/threads/${threadId}`);
-    const action = after.body.actions.at(-1);
-    expect(action).toMatchObject({
-      operation: "answer_generation_questions",
-      target: `ontology:ws_acme/${ontologyId}`,
-      targetNamedByUser: true,
-    });
-    expect(JSON.parse(action.payloadJson)).toEqual({
-      generation_id: generationId,
-      round: 1,
-      answers: [
-        { question_id: "Q1", options: ["Each person who signs in"] },
-        {
-          question_id: "Q2",
-          options: ["Unpaid invoices", "Falling usage"],
-          text: "and churned seats",
-        },
-        { question_id: "Q3", options: [], text: "60 days" },
-      ],
-      use_defaults: true,
-    });
-    expect(display(action)).toMatchObject({
-      ontology: { id: ontologyId, name: "Orders graph" },
-      generation: { id: generationId },
-      round: 1,
-      answers: [
-        {
-          question_id: "Q1",
-          header: "Customers",
-          question:
-            "Is a customer the company that pays, or each person who signs in?",
-          options: ["Each person who signs in"],
-        },
-        { question_id: "Q2" },
-        { question_id: "Q3", text: "60 days" },
-      ],
-      use_defaults: true,
-      defaulted: [
-        {
-          question_id: "Q4",
-          options: [],
-          text: "No preference: decide from the data and the goal.",
-        },
-      ],
-    });
-    // Sent, the draft goes on from the answers, and is offered as current.
-    const step3 = await runCard(action);
-    expect(step3.ran.status).toBe("succeeded");
-    expect(step3.next.operation).toBe("set_current_version");
+    // Sent to the draft as the person, at once: Q4, left out, is left to
+    // its agent; no card, and the answers turn only says so.
     const got = await call(
       "GET",
       `${WS}/ontologies/${ontologyId}/generations/${generationId}`,
     );
-    expect(got.body.generation.questions.map((q: any) => q.answer)).toEqual([
+    expect(got.body.generation.questionRound).toBe(1);
+    expect(
+      got.body.generation.questions.map(
+        (q: { answer?: unknown; leftToAgent?: boolean }) =>
+          q.answer ?? (q.leftToAgent && "left"),
+      ),
+    ).toEqual([
       { questionId: "Q1", options: ["Each person who signs in"] },
       {
         questionId: "Q2",
@@ -1542,12 +1500,55 @@ describe("operations", () => {
         text: "and churned seats",
       },
       { questionId: "Q3", options: [], text: "60 days" },
-      {
-        questionId: "Q4",
-        options: [],
-        text: "No preference: decide from the data and the goal.",
-      },
+      "left",
     ]);
+    const said = evs.filter((e) => e.type === "text").map((e) => e.text);
+    expect(said.join(" ")).toContain("Your answers went to the draft");
+    const after = await call("GET", `${A}/threads/${threadId}`);
+    expect(
+      after.body.actions.filter(
+        (a: { operation: string }) =>
+          a.operation === "answer_generation_questions",
+      ),
+    ).toEqual([]);
+  });
+
+  it("closes a relayed round the draft no longer waits on, sending nothing", async () => {
+    Object.assign(config, { ontologyQuestions: true, ontologyStepMs: 300 });
+    const created = await card(
+      "Create an ontology called Orders graph on database orders, goal: Which customers order the most",
+    );
+    const step1 = await runCard(created.action);
+    const ontologyId = step1.result.id;
+    const step2 = await runCard(step1.next);
+    const threadId = step2.next.threadId as string;
+    const asking = (await call("GET", `${A}/threads/${threadId}`)).body.turns.at(
+      -1,
+    );
+    const generationId = asking.asked.generation.generationId;
+    // Answered on its page meanwhile.
+    const onPage = await call(
+      "POST",
+      `${WS}/ontologies/${ontologyId}/generations/${generationId}:answer`,
+      { answers: [], useDefaults: true, round: 1 },
+    );
+    expect(onPage.status).toBe(200);
+    const late = await call("POST", `${A}/turns`, {
+      threadId,
+      answers: {
+        turnId: asking.id,
+        answers: [
+          { questionId: "Q1", options: ["The company that pays"] },
+          { questionId: "Q2", options: ["Unpaid invoices"] },
+          { questionId: "Q3", text: "60 days" },
+        ],
+      },
+      clientToken: "late-1",
+    });
+    expect(reason(late)).toBe("FOUNDRY_AGENT_QUESTIONS_CLOSED");
+    expect(late.body.message).toContain("answered on its page");
+    const thread = await call("GET", `${A}/threads/${threadId}`);
+    expect(thread.body.turns.at(-1).id).toBe(asking.id);
   });
 
   it("asks its own questions to set up an ontology, and reads the answers back", async () => {

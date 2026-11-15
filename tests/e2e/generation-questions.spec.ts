@@ -156,6 +156,26 @@ test("carries the goal on, then answers the agent's questions one by one and dra
     asked.getByText("Question 1 of 4", { exact: true }),
   ).toBeVisible();
   await steps.nth(3).click();
+  // Touched, it can still be left to the agent: Something else, while its
+  // box is empty, closes again, and Leave to the agent clears a choice.
+  const cancelled = asked.getByRole("radiogroup", { name: /^Should orders/ });
+  const elsewise = cancelled.getByRole("radio", { name: /^Something else/ });
+  const words = asked.getByRole("textbox", { name: "Your own words" });
+  await elsewise.click();
+  await expect(words).toBeVisible();
+  await expect(asked.getByRole("button", { name: "Next" })).toBeDisabled();
+  await elsewise.click();
+  await expect(words).toHaveCount(0);
+  await expect(
+    asked.getByRole("button", { name: "Skip", exact: true }),
+  ).toBeEnabled();
+  await elsewise.click();
+  await asked.getByRole("button", { name: "Leave to the agent" }).click();
+  await expect(words).toHaveCount(0);
+  await expect(cancelled.getByRole("radio", { checked: true })).toHaveCount(0);
+  await expect(
+    asked.getByRole("button", { name: "Leave to the agent" }),
+  ).toHaveCount(0);
   await asked.getByRole("button", { name: "Skip", exact: true }).click();
 
   // Review lists every answer, the one left to the agent too.
@@ -194,9 +214,9 @@ test("carries the goal on, then answers the agent's questions one by one and dra
   await expect(answers).toHaveText("“60 days”");
   const summary = page.getByLabel("Your answers");
   await expect(summary).toContainText("Unpaid invoices, Falling usage");
-  await expect(summary).toContainText(
-    "“No preference: decide from the data and the goal.”",
-  );
+  // The one left to the agent is its own choice, never shown as an answer.
+  await expect(summary).toContainText("Left to the agent");
+  await expect(summary).not.toContainText("No preference");
   await expect(
     page.getByRole("link", { name: /^Review version/ }),
   ).toBeVisible();
@@ -460,9 +480,21 @@ test.describe("on a phone", () => {
     await signIn(page);
     const asked = await generate(page);
     await expect(asked.locator(".qf-step")).toHaveCount(1);
-    // Only the current step is named in the strip.
+    // Only the current step is named in the strip; each mark is still
+    // named, with its answer, for a screen reader and in its title.
     await expect(strip(asked).getByText("Customers")).toBeVisible();
     await expect(strip(asked).getByText("Risk signals")).toBeHidden();
+    const signalsStep = strip(asked).getByRole("button", {
+      name: "Risk signals: Needs an answer",
+    });
+    await expect(signalsStep).toBeVisible();
+    await expect(signalsStep).toHaveAttribute(
+      "title",
+      "Risk signals: Needs an answer",
+    );
+    await expect(
+      strip(asked).getByRole("button", { name: "Review" }),
+    ).toBeVisible();
     await customers(asked)
       .getByRole("radio", { name: /^The company that pays/ })
       .click();
@@ -470,6 +502,11 @@ test.describe("on a phone", () => {
       asked.getByText("Question 2 of 4", { exact: true }),
     ).toBeVisible();
     await expect(strip(asked).getByText("Risk signals")).toBeVisible();
+    await expect(
+      strip(asked).getByRole("button", {
+        name: "Customers: The company that pays",
+      }),
+    ).toBeVisible();
     // Nothing scrolls sideways.
     expect(
       await page.evaluate(

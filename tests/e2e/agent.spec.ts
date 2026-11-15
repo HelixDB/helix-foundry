@@ -305,7 +305,7 @@ test("builds an ontology card by card: create, draft, make current, load", async
   await expect(page).toHaveURL(/\/ontology\/ont_[^/]+\/loads\/load_/);
 });
 
-test("asks a draft's questions one at a time in the dock, and sends the answers from a card", async ({
+test("asks a draft's questions one at a time in the dock, and sends the answers to the draft", async ({
   page,
 }) => {
   await mock.configure({
@@ -351,7 +351,7 @@ test("asks a draft's questions one at a time in the dock, and sends the answers 
   const sent = page.waitForRequest(
     (r) => r.url().endsWith("/agent/turns") && r.method() === "POST",
   );
-  await asked.getByRole("button", { name: "Send answers" }).click();
+  await asked.getByRole("button", { name: "Send answers to the draft" }).click();
   expect((await sent).postDataJSON()).toMatchObject({
     answers: {
       answers: [
@@ -361,8 +361,8 @@ test("asks a draft's questions one at a time in the dock, and sends the answers 
       ],
     },
   });
-  // Sent, the questions fold to a line, and the answers show as the
-  // person's, each beside its question.
+  // Sent to the draft at once, as the person: the questions fold to a
+  // line, the answers show as theirs, and no card asks for a second click.
   await expect(asked).toHaveCount(0);
   await expect(
     dock.getByText(/Asked you the ontology agent’s questions about/),
@@ -371,35 +371,12 @@ test("asks a draft's questions one at a time in the dock, and sends the answers 
   await expect(mine).toContainText("Each person who signs in");
   await expect(mine).toContainText("Unpaid invoices and Falling usage");
   await expect(mine).toContainText("Left to the agent");
-  // Its card shows each question beside its answer.
-  const answers = cardOf(
-    page,
-    "Answer the draft’s questions for “Orders graph”",
-  );
-  await expect(answers).toBeVisible({ timeout: 20_000 });
-  const qa = answers.getByLabel("Questions and answers");
-  await expect(qa).toContainText("Customers");
-  await expect(qa).toContainText("Each person who signs in");
-  await expect(qa).toContainText("“60 days”");
-  await expect(qa).toContainText(
-    "Left to the agent: “No preference: decide from the data and the goal.”",
-  );
-  // The card links the draft, whose page asks the same questions.
-  await expect(answers.getByRole("link").first()).toHaveAttribute(
-    "href",
-    /\/ontology\/ont_[^/]+\/generations\/gen_/,
-  );
-  await run(
-    page,
-    "Answer the draft’s questions for “Orders graph”",
-    "Send answers",
-  );
-  // The draft goes on from the answers, and is offered as current.
-  await expect(cardOf(page, "Make v1 current for “Orders graph”")).toBeVisible({
+  await expect(dock.getByText(/Your answers went to the draft/)).toBeVisible({
     timeout: 20_000,
   });
-  await answers.getByRole("link", { name: "Open the draft" }).click();
-  await expect(page).toHaveURL(/\/ontology\/ont_[^/]+\/generations\/gen_/);
+  await expect(
+    cardOf(page, "Answer the draft’s questions for “Orders graph”"),
+  ).toHaveCount(0);
 });
 
 test("asks its own questions from the keyboard, then reads the answers back", async ({
@@ -469,6 +446,73 @@ test("closes questions the conversation went past", async ({ page }) => {
   await expect(
     dock.getByRole("region", { name: "Questions for you" }),
   ).toHaveCount(0);
+});
+
+test("closes a draft's relayed questions once its page answered them", async ({
+  page,
+  context,
+}) => {
+  await mock.configure({
+    agentStepMs: 100,
+    ontologyStepMs: 300,
+    ontologyQuestions: true,
+  });
+  await signIn(page);
+  await shortcut(page);
+  await say(
+    page,
+    "Create an ontology called Orders graph on database orders, goal: Which customers order the most",
+  );
+  await run(page, "Create the ontology “Orders graph”", "Create");
+  await run(page, "Draft a new version of “Orders graph”", "Generate");
+  const dock = dockOf(page);
+  const asked = dock.getByRole("region", { name: "Questions for you" });
+  await expect(asked).toBeVisible({ timeout: 20_000 });
+  // Another tab answers them on the draft's page meanwhile.
+  const href = await cardOf(page, "Draft a new version of “Orders graph”")
+    .getByRole("link", { name: "Open the draft" })
+    .getAttribute("href");
+  const other = await context.newPage();
+  await other.goto(href!);
+  await expect(
+    other.getByText("Question 1 of 4", { exact: true }),
+  ).toBeVisible({ timeout: 15_000 });
+  await other
+    .getByRole("radio", { name: /^The company that pays/ })
+    .click();
+  await other.getByRole("checkbox", { name: /^Unpaid invoices/ }).click();
+  await other.getByRole("button", { name: "Next", exact: true }).click();
+  await other.getByRole("button", { name: "Use “90 days”" }).click();
+  await other.getByRole("button", { name: "Next", exact: true }).click();
+  await other.getByRole("button", { name: "Skip", exact: true }).click();
+  await other.getByRole("button", { name: "Send answers" }).click();
+  await expect(other.getByText("Question 1 of 4")).toHaveCount(0, {
+    timeout: 15_000,
+  });
+  await other.close();
+  // The dock's send is refused, nothing is sent twice, and it says where
+  // the draft is.
+  await asked
+    .getByRole("radiogroup", { name: /^Is a customer/ })
+    .getByRole("radio", { name: /^Each person who signs in/ })
+    .click();
+  await asked
+    .getByRole("group", {
+      name: "Which signals should mark a renewal as at risk?",
+    })
+    .getByRole("checkbox", { name: /^Falling usage/ })
+    .click();
+  await asked.getByRole("button", { name: "Next", exact: true }).click();
+  await asked.getByRole("textbox").fill("60 days");
+  await asked.getByRole("button", { name: "Next", exact: true }).click();
+  await asked.getByRole("button", { name: "Skip", exact: true }).click();
+  await asked.getByRole("button", { name: "Send answers to the draft" }).click();
+  await expect(
+    dock.getByText(/the draft no longer waits on them/).first(),
+  ).toBeVisible();
+  await expect(
+    dock.getByRole("link", { name: "Open the draft" }).last(),
+  ).toHaveAttribute("href", href!);
 });
 
 test("settles a review from a card", async ({ page }) => {

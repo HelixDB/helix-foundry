@@ -54,6 +54,7 @@ import { activeSection } from "../../shell/nav";
 import { useWorkspace } from "../../ui";
 import { loadVersion } from "../ontology/model";
 import { dashboardQueries } from "../dashboards/queries";
+import { ontologyPaths } from "../ontology/paths";
 import { ontologyQueries } from "../ontology/queries";
 import {
   AiRefusal,
@@ -760,7 +761,10 @@ type AskedState = "no" | "open" | "answered" | "passed";
 /**
  * The questions a turn asked its person: while they are open, the
  * question-by-question flow, whose answers go as the thread's next turn;
- * after, a line saying so (the answers show as the person's message).
+ * after, a line saying so (the answers show as the person's message). A
+ * relayed generation's answers go to its draft as they are sent, so its
+ * questions close once the draft no longer waits on that round: answered
+ * on its page, or moved on.
  */
 function AskedBlock({
   block,
@@ -783,6 +787,29 @@ function AskedBlock({
     [token] = useState(() => crypto.randomUUID());
   // The turn's own record, once read, else what its event showed.
   const questions = readQuestions(turn.asked?.questions ?? block.questions);
+  const relayed = turn.asked?.generation,
+    draft = useQuery({
+      ...ontologyQueries.generation(
+        ws,
+        relayed?.ontologyId ?? "",
+        relayed?.generationId ?? "",
+      ),
+      enabled: state === "open" && !!relayed?.generationId,
+    });
+  const read = draft.data?.generation;
+  const moved =
+    !!relayed &&
+    !!read &&
+    (read.status !== "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT" ||
+      (read.questionRound || 1) !== (relayed.round || 1));
+  const draftLink = relayed?.ontologyId && relayed.generationId && (
+    <Link
+      to={ontologyPaths.generation(relayed.ontologyId, relayed.generationId)}
+      onClick={onNavigate}
+    >
+      Open the draft
+    </Link>
+  );
   const what = block.generation
     ? `the ontology agent’s questions about ${block.generation}`
     : questions?.length === 1
@@ -795,11 +822,16 @@ function AskedBlock({
         Foundry.
       </p>
     );
-  if (state !== "open")
+  if (state !== "open" || moved)
     return (
       <p className="ag-ran">
         <CircleHelp size={13} aria-hidden /> Asked you {what}
-        {state === "answered" ? "." : ", which went unanswered."}
+        {state === "answered"
+          ? "."
+          : moved
+            ? ": the draft no longer waits on them here (answered on its page, or it moved on). "
+            : ", which went unanswered."}
+        {moved && draftLink}
       </p>
     );
   return (
@@ -813,7 +845,8 @@ function AskedBlock({
       <QuestionFlow
         questions={questions}
         storageKey={`agent:${turn.id}`}
-        agent={block.generation ? "the agent" : "the Assistant"}
+        agent={relayed ? "the agent" : "the Assistant"}
+        sendLabel={relayed ? "Send answers to the draft" : "Send answers"}
         pending={pending}
         disabled={busy}
         error={
@@ -821,7 +854,15 @@ function AskedBlock({
             <p className="ag-card-error" role="alert">
               <span>
                 {agentRefusal(error) === "FOUNDRY_AGENT_QUESTIONS_CLOSED" ? (
-                  "These questions are closed: they were answered, or the conversation went on."
+                  relayed ? (
+                    <>
+                      These questions are closed: the draft no longer waits
+                      on them (answered on its page, or it moved on).{" "}
+                      {draftLink}
+                    </>
+                  ) : (
+                    "These questions are closed: they were answered, or the conversation went on."
+                  )
                 ) : (
                   <SettingsLinked
                     text={sentence((error as Error).message)}
@@ -854,6 +895,11 @@ function AskedBlock({
             await qc.invalidateQueries({
               queryKey: [ws, "agent", "thread", turn.threadId],
             });
+            // The draft carries on from them.
+            if (relayed?.ontologyId)
+              await qc.invalidateQueries({
+                queryKey: [ws, "ontology", relayed.ontologyId],
+              });
           }
         }}
       />

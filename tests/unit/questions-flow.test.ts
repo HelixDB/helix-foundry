@@ -129,6 +129,27 @@ describe("readQuestion", () => {
     expect(readQuestion({ ...base, options: opts(MAX_OPTIONS) })).toBeDefined();
   });
 
+  // The WFE compares a recommendation with its labels exactly, so a label
+  // with a space reads as it is written: trimming one side alone would make
+  // every question unreadable.
+  it("names a recommended label exactly as written", () => {
+    const q = readQuestion({
+      id: "q",
+      text: "Which?",
+      options: [{ label: "Jets " }, { label: "Gliders" }],
+      recommended: "Jets ",
+    });
+    expect(q?.ask).toMatchObject({ kind: "choice", recommended: "Jets " });
+    expect(
+      readQuestion({
+        id: "q",
+        text: "Which?",
+        options: [{ label: "Jets" }, { label: "Gliders" }],
+        recommended: "Jets ",
+      }),
+    ).toBeUndefined();
+  });
+
   it("reads a round only when every question reads, ids distinct", () => {
     expect(readQuestions([{ id: "q1", text: "A?" }])).toHaveLength(1);
     expect(readQuestions([])).toBeUndefined();
@@ -316,6 +337,20 @@ describe("reduceFlow", () => {
     expect(
       run(all, [{ type: "choose", label: "A", advance: false }], s).drafts.q1,
     ).toEqual({ kind: "option", label: "A" });
+    // Chosen again while its box is empty, it closes: the question is
+    // unanswered again, so one that doesn't block is left to the agent.
+    expect(run(all, [{ type: "own" }, { type: "own" }]).drafts.q1).toBe(
+      undefined,
+    );
+    const opened = run(all, [{ type: "own" }, { type: "write", text: " " }], {
+      ...startFlow(),
+      step: 3,
+    });
+    expect(opened.drafts.q4).toEqual({ kind: "own", text: " " });
+    expect(run(all, [{ type: "own" }], opened).drafts.q4).toBeUndefined();
+    expect(canReview(all.slice(3), run(all, [{ type: "own" }], opened).drafts)).toBe(
+      true,
+    );
     // A choice of several opens a box beside its options, and closes it.
     const at = { ...startFlow(), step: 1 };
     s = run(

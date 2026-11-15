@@ -351,7 +351,8 @@
 }
 
 /* Narrow (the dock, a phone): the strip is its marks, the current step
-   named. */
+   named with its answer. Each step's label and title still name it and
+   its answer (flow.tsx). */
 @container (max-width: 520px) {
   .qf-strip li {
     flex: 0 0 auto;
@@ -361,9 +362,6 @@
     padding: 5px 8px;
   }
   .qf-strip-step:not([aria-current="step"]) .qf-strip-text {
-    display: none;
-  }
-  .qf-strip-step[aria-current="step"] .qf-strip-answer {
     display: none;
   }
   .qf-strip li:has([aria-current="step"]) {

@@ -8,20 +8,17 @@ import type { AgentQuestion, AgentQuestionAnswer } from "../src/shared/wfe";
 
 /** At most this many characters of the person's own words, once trimmed. */
 export const MAX_ANSWER_CHARS = 2000;
-/** A question left to the agent with no recommended answer: the agent decides. */
-export const NO_PREFERENCE =
-  "No preference: decide from the data and the goal.";
 
 const chars = (s: string) => [...s].length;
 
-/** The answer a question left to the agent takes (agentquestion.Default). */
-export function defaultAnswer(q: AgentQuestion): AgentQuestionAnswer {
-  if (!q.recommended)
-    return { questionId: q.id, options: [], text: NO_PREFERENCE };
-  return q.options?.length
-    ? { questionId: q.id, options: [q.recommended] }
-    : { questionId: q.id, options: [], text: q.recommended };
-}
+/**
+ * An answer as Check returns it: the person's, or, with `useDefaults`, a
+ * question left to the agent (agentquestion.Answer's Left), which takes its
+ * recommended answer, or decides, as its own choice.
+ */
+export type CheckedAnswer =
+  | AgentQuestionAnswer
+  | { questionId: string; left: true };
 
 /** One answer to q, as agentquestion's checkOne: the answer as kept, or why not. */
 function checkOne(
@@ -59,7 +56,7 @@ function checkOne(
 /**
  * The person's answers to `asked`, as agentquestion.Check takes them, in
  * the order asked: each names a question asked, once; with `useDefaults`
- * every question left out takes its default, without every blocking one
+ * every question left out is left to the agent, without every blocking one
  * must be answered. Given as the REST body has them (camelCase), or as an
  * MCP payload (snake_case `question_id`). A string says what is wrong.
  */
@@ -67,7 +64,7 @@ export function checkAnswers(
   asked: readonly AgentQuestion[],
   given: unknown,
   useDefaults: boolean,
-): AgentQuestionAnswer[] | string {
+): CheckedAnswer[] | string {
   if (!Array.isArray(given))
     return "answers is a list of {questionId, options, text}";
   const byId = new Map<string, AgentQuestionAnswer>();
@@ -90,11 +87,11 @@ export function checkAnswers(
     if (typeof checked === "string") return checked;
     byId.set(qid, checked);
   }
-  const out: AgentQuestionAnswer[] = [];
+  const out: CheckedAnswer[] = [];
   for (const q of asked) {
     const a = byId.get(q.id);
     if (a) out.push(a);
-    else if (useDefaults) out.push(defaultAnswer(q));
+    else if (useDefaults) out.push({ questionId: q.id, left: true });
     else if (q.blocking) return `question ${q.id} needs an answer`;
   }
   return out;

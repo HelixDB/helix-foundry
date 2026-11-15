@@ -480,50 +480,6 @@ const DISPLAYS: [string, string, unknown][] = [
     "run_automation",
     { automation: { id: "aut1", name: "Weekly", status: "active" } },
   ],
-  [
-    "a draft's questions answered",
-    "answer_generation_questions",
-    {
-      ontology: ONT,
-      generation: { id: "gen1", name: "Track renewals" },
-      round: 1,
-      answers: [
-        {
-          question_id: "Q1",
-          header: "Customers",
-          question: "Is a customer the company that pays?",
-          options: ["Each person"],
-        },
-        {
-          question_id: "Q2",
-          question: "Which signals?",
-          options: ["Unpaid invoices", "Falling usage"],
-          text: "and churned seats",
-        },
-      ],
-      use_defaults: true,
-      defaulted: [
-        {
-          question_id: "Q3",
-          header: "Cancelled",
-          question: "Keep <b>cancelled</b> orders?",
-          options: [],
-          text: "No preference: decide from the data and the goal.",
-        },
-      ],
-    },
-  ],
-  [
-    "a draft's questions answered without defaults",
-    "answer_generation_questions",
-    {
-      ontology: ONT,
-      generation: { id: "gen1" },
-      round: 2,
-      answers: [{ question_id: "q1", question: "", options: [], text: "Yes" }],
-      use_defaults: false,
-    },
-  ],
 ];
 
 describe("parseCard", () => {
@@ -1091,98 +1047,7 @@ describe("cardView", () => {
         "Run now",
         "Weekly",
       ],
-      [
-        "a draft's questions answered",
-        "Answer the draft’s questions for “Sales graph”",
-        "Send answers",
-        "Sales graph",
-      ],
-      [
-        "a draft's questions answered without defaults",
-        "Answer the draft’s questions for “Sales graph”",
-        "Send answers",
-        "Sales graph",
-      ],
     ]);
-  });
-
-  it("shows each question beside its answer, and links the draft's own questions", () => {
-    const v = of("a draft's questions answered");
-    expect(v.facts).toEqual([
-      { label: "Ontology", value: "Sales graph" },
-      {
-        label: "Draft",
-        entities: [
-          { text: "Track renewals", to: "/ontology/ont1/generations/gen1" },
-        ],
-      },
-    ]);
-    expect(v.answers).toEqual([
-      {
-        name: "Customers",
-        question: "Is a customer the company that pays?",
-        answer: "Each person",
-      },
-      {
-        name: "Question 2",
-        question: "Which signals?",
-        answer: "Unpaid invoices, Falling usage, and “and churned seats”",
-      },
-      {
-        name: "Cancelled",
-        question: "Keep <b>cancelled</b> orders?",
-        answer:
-          "Left to the agent: “No preference: decide from the data and the goal.”",
-        left: true,
-      },
-    ]);
-    expect(v.does).toContain("take the agent’s recommended answer");
-    const bare = of("a draft's questions answered without defaults");
-    expect(bare.does).not.toContain("recommended");
-    expect(bare.answers).toEqual([
-      { name: "Question 1", question: "", answer: "“Yes”" },
-    ]);
-    expect(bare.facts[1]).toEqual({
-      label: "Draft",
-      entities: [{ text: "The draft", to: "/ontology/ont1/generations/gen1" }],
-    });
-    // An answer it can't read makes no card.
-    for (const display of [
-      {
-        ...(DISPLAYS.find(
-          ([n]) => n === "a draft's questions answered",
-        )![2] as object),
-        use_defaults: "yes",
-      },
-      {
-        ontology: ONT,
-        generation: { id: "gen1" },
-        round: 1,
-        answers: [{ question_id: "q1", question: "Q", options: [] }],
-        use_defaults: false,
-      },
-      {
-        ontology: ONT,
-        generation: { id: "gen1" },
-        round: 1,
-        answers: [{ question_id: "q1", question: "Q", options: "A" }],
-        use_defaults: false,
-      },
-      {
-        ontology: ONT,
-        generation: { id: "gen1" },
-        answers: [],
-        use_defaults: true,
-      },
-      {
-        ontology: ONT,
-        generation: { id: "../x" },
-        round: 1,
-        answers: [],
-        use_defaults: true,
-      },
-    ])
-      expect(parseCard("answer_generation_questions", display)).toBeUndefined();
   });
 
   it("names an automation's state, and whether an edit approves its steps", () => {
@@ -1679,13 +1544,6 @@ describe("resultLink", () => {
         "automation:ws1/aut1",
       ),
       { to: "/automations/aut1/runs/run3", label: "Open the run" },
-    ],
-    [
-      "a draft answered",
-      ran("answer_generation_questions", d("a draft's questions answered"), {
-        id: "gen1",
-      }),
-      { to: "/ontology/ont1/generations/gen1", label: "Open the draft" },
     ],
     [
       "a deleted automation",

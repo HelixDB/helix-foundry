@@ -28,7 +28,6 @@ import {
   executeAgentAction,
   refreshAgentAction,
 } from "./queries";
-import { AnswerSummary } from "../../questions/flow";
 
 const ENDED: Record<
   Extract<CardState, { kind: "ended" }>["status"],
@@ -195,9 +194,6 @@ export function ActionCard({
             </Fragment>
           ))}
         </dl>
-      )}
-      {!!view?.answers?.length && (
-        <AnswerSummary rows={view.answers} label="Questions and answers" />
       )}
       {view?.quote && (
         <blockquote className="ag-card-quote">

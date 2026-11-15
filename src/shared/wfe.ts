@@ -1170,14 +1170,17 @@ export type AgentQuestionAnswer = {
 
 /**
  * v1OntologyGenerationQuestion: a question the ontology agent asked about
- * its draft, the draft items it is about, and its answer once given (one
- * left to the agent with no recommended answer reads "No preference: decide
- * from the data and the goal.").
+ * its draft, the draft items it is about, and its answer once given, or
+ * that it was left to the agent.
  */
 export type OntologyGenerationQuestion = AgentQuestion & {
   // The draft items it is about ("type.Customer"); may be empty.
   items?: string[];
+  // Unset while it waits, or when it was left to the agent.
   answer?: AgentQuestionAnswer | null;
+  // Left to the agent (by the person, or the automatic answers once due),
+  // which took its recommended answer, or decided, as its own choice.
+  leftToAgent?: boolean;
 };
 
 /** v1OntologyGenerationTable: one synced table a generation drafts from. */
@@ -1337,11 +1340,12 @@ export type GenerateOntologyRequest = {
  * .../generations/{id}:answer answers the round of questions a needs_input
  * generation waits on and queues it to carry on. Each answer names a
  * question asked, at most once, as AgentQuestionAnswer says. With
- * useDefaults, every question left out takes its recommended answer (with
- * none, the agent decides); without, every blocking question must be
- * answered, and one that isn't may be left open (INVALID_ARGUMENT
- * otherwise). A generation not waiting, or waiting on another round than
- * `round`, is FAILED_PRECONDITION. It needs what :generate needs (managing
+ * useDefaults, every question left out is left to the agent (leftToAgent),
+ * which takes its recommended answer, or decides, as its own choice;
+ * without, every blocking question must be answered, and one that isn't may
+ * be left open (INVALID_ARGUMENT otherwise, and for a round below 1). A
+ * generation not waiting, or waiting on another round than `round`, is
+ * FAILED_PRECONDITION. It needs what :generate needs (managing
  * the ontology, an AI provider). POST .../generations/{id}:cancel (body
  * `{}`) ends a queued, running or waiting generation as cancelled; one that
  * ended is FAILED_PRECONDITION. Both answer OntologyGenerationResponse.
@@ -2793,8 +2797,8 @@ export type FoundryAgentAsked = {
 };
 /**
  * v1FoundryAgentAskedGeneration: the generation whose round of questions a
- * turn relayed: the answers turn prepares answer_generation_questions with
- * the person's answers, unchanged, as a card they run.
+ * turn relayed: sending the answers sends them to it, as the person, while
+ * it still waits on that round (else FOUNDRY_AGENT_QUESTIONS_CLOSED).
  */
 export type FoundryAgentAskedGeneration = {
   ontologyId?: string;
@@ -2942,18 +2946,6 @@ export type AgentActionDisplays = {
     // "acme": the sample company's ready-made draft.
     sample?: string;
   };
-  // Each question the answers answer, as the agent asked it (the model's
-  // words), with the person's answer; with use_defaults, the rest with the
-  // agent's default (or its "no preference").
-  answer_generation_questions: {
-    ontology: AgentRef;
-    generation: AgentRef;
-    // The round of its questions the answers are for.
-    round: number;
-    answers: AgentAnswer[];
-    use_defaults: boolean;
-    defaulted?: AgentAnswer[];
-  };
   // current: the version current now; missing when none is.
   set_current_version: {
     ontology: AgentRef;
@@ -3044,19 +3036,6 @@ export type AgentActionDisplays = {
   resume_automation: { automation: AgentAutomationRef };
   delete_automation: { automation: AgentAutomationRef };
   run_automation: { automation: AgentAutomationRef };
-};
-/**
- * One of a generation's questions, by its header and text, and its answer:
- * the labels of the options chosen and the person's own words (or, for a
- * question left to the agent, its recommended answer, else "No preference:
- * decide from the data and the goal.").
- */
-export type AgentAnswer = {
-  question_id: string;
-  header?: string;
-  question: string;
-  options: string[];
-  text?: string;
 };
 /** An automation as it was when the action was prepared, with its status. */
 export type AgentAutomationRef = AgentRef & { status?: AutomationStatus };

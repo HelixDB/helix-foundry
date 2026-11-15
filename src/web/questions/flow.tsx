@@ -131,7 +131,18 @@ export function QuestionFlow({
       <nav className="qf-strip" aria-label="Questions">
         <ol>
           {questions.map((x, i) => {
-            const c = check(x, s.drafts[x.id]);
+            const c = check(x, s.drafts[x.id]),
+              name = questionName(x, i),
+              stands =
+                c.kind === "answered"
+                  ? answerText(c.answer)
+                  : c.kind === "incomplete"
+                    ? "Not finished"
+                    : x.blocking
+                      ? "Needs an answer"
+                      : "Optional";
+            // Narrow, a step not shown is its mark alone: its label names
+            // it and its answer for a screen reader, its title for a pointer.
             return (
               <li key={x.id}>
                 <button
@@ -140,6 +151,8 @@ export function QuestionFlow({
                     "qf-strip-step",
                     c.kind === "answered" && "is-answered",
                   )}
+                  title={`${name}: ${stands}`}
+                  aria-label={`${name}: ${stands}`}
                   aria-current={i === s.step ? "step" : undefined}
                   onClick={() => act({ type: "go", step: i })}
                 >
@@ -147,16 +160,8 @@ export function QuestionFlow({
                     {c.kind === "answered" ? <Check size={11} /> : i + 1}
                   </span>
                   <span className="qf-strip-text">
-                    <span className="qf-strip-name">{questionName(x, i)}</span>
-                    <span className="qf-strip-answer">
-                      {c.kind === "answered"
-                        ? answerText(c.answer)
-                        : c.kind === "incomplete"
-                          ? "Not finished"
-                          : x.blocking
-                            ? "Needs an answer"
-                            : "Optional"}
-                    </span>
+                    <span className="qf-strip-name">{name}</span>
+                    <span className="qf-strip-answer">{stands}</span>
                   </span>
                 </button>
               </li>
@@ -166,6 +171,8 @@ export function QuestionFlow({
             <button
               type="button"
               className="qf-strip-step"
+              title="Review"
+              aria-label="Review"
               aria-current={s.step === n ? "step" : undefined}
               disabled={!canReview(questions, s.drafts)}
               onClick={() => act({ type: "go", step: n })}
@@ -477,6 +484,11 @@ function Step({
           Back
         </Button>
         <span className="qf-nav-end">
+          {!q.blocking && draft && (
+            <Button variant="ghost" onClick={() => act({ type: "clear" })}>
+              Leave to {agent}
+            </Button>
+          )}
           {rest && (
             <Button variant="ghost" onClick={() => act({ type: "rest" })}>
               Let {agent} decide the rest

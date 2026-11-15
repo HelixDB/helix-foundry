@@ -18,6 +18,7 @@ import {
 } from "../../questions/flow";
 import {
   answerText,
+  leftText,
   questionName,
   readQuestion,
   readQuestions,
@@ -33,8 +34,8 @@ import { useOntology } from "./scope";
 // The questions a generation waits on (status needs_input): the agent asked
 // what only a person can answer, and drafts on once they are answered. An
 // owner or admin answers them one at a time (QuestionFlow); a question left
-// to the agent takes its recommended answer (useDefaults), or the agent
-// decides. Cancel ends the generation without a draft. Members read the
+// to the agent (useDefaults) is its to decide, as its own choice, taking
+// its recommended answer. Cancel ends the generation without a draft. Members read the
 // questions. The agent's words may quote the data: plain text only.
 
 export function GenerationQuestions({
@@ -189,15 +190,16 @@ export function AnsweredQuestions({
 }) {
   const rows = (g.questions || []).flatMap((x, i) => {
     const q = readQuestion(x);
-    return q && x.answer
-      ? [
-          {
-            name: questionName(q, i),
-            question: q.text,
-            answer: answerText(x.answer),
-          },
-        ]
-      : [];
+    if (!q || (!x.answer && !x.leftToAgent)) return [];
+    return [
+      {
+        name: questionName(q, i),
+        question: q.text,
+        ...(x.answer
+          ? { answer: answerText(x.answer) }
+          : { answer: leftText(q), left: true }),
+      },
+    ];
   });
   if (!rows.length) return null;
   return (

@@ -68,7 +68,7 @@ import {
   membership,
   onReset,
 } from "../state";
-import { answerWords, checkAnswers, defaultAnswer } from "../agent-questions";
+import { answerWords, checkAnswers } from "../agent-questions";
 import {
   aiAssistantFailure,
   aiModel,
@@ -149,8 +149,9 @@ import { manages } from "./workspaces";
 //   `ontologyQuestions`), once its generate or answers card ran, or asked
 //   to "answer the draft's questions", is relayed through
 //   helix_foundry_ask_person as its agent wrote it; the person's answers
-//   become its answer_generation_questions card unchanged (use_defaults
-//   for a question left out), the only way it answers a draft;
+//   go to it as they send them (use_defaults for a question left out),
+//   before the answers turn, which says so: the Assistant never answers a
+//   draft itself;
 // - "make v3 current" (set_current_version: else the newest finished draft);
 // - "load" (create_load: the current version if it loads, else the newest
 //   finished draft); "make the previous load current" (set_current_load);
@@ -981,7 +982,11 @@ const LIST = "helix_foundry_list_ontologies",
   PREPARE = "helix_foundry_prepare_operation";
 
 /** What a member, who manages nothing, prepares: their own dashboards and automations (integration.memberOperations). */
-const MEMBER_OPERATIONS: readonly (AgentOperation | "connect")[] = [
+const MEMBER_OPERATIONS: readonly (
+  | AgentOperation
+  | "connect"
+  | "relay_questions"
+)[] = [
   "create_dashboard",
   "update_dashboard",
   "delete_dashboard",
@@ -997,7 +1002,6 @@ const MEMBER_OPERATIONS: readonly (AgentOperation | "connect")[] = [
 const VERBS: Record<AgentOperation, string> = {
   create_ontology: "create an ontology",
   generate_ontology: "draft a version",
-  answer_generation_questions: "answer a draft's questions",
   set_current_version: "make a version current",
   create_load: "load an ontology",
   set_current_load: "make a load current",
@@ -1387,7 +1391,8 @@ function messageScript(a: Ask, manager: boolean): Step[] {
   if (manager && /\bset ?up\b.*\bontolog|\bhelp me\b.*\bontolog/i.test(t))
     return [started, ...list, ...setupQuestions(a)];
   const automated = automationAsk(a.ws, t);
-  const intent: AgentOperation | "connect" | undefined = automated
+  const intent: AgentOperation | "connect" | "relay_questions" | undefined =
+    automated
     ? automated.kind
     : /\bdashboard\b/i.test(t) && /\b(build|make|create)\b/i.test(t)
       ? "create_dashboard"
@@ -1396,7 +1401,7 @@ function messageScript(a: Ask, manager: boolean): Step[] {
         : /\banswers?\b.*\bquestions?\b|\buse (?:the|its) (?:defaults|suggestions)\b/i.test(
               t,
             )
-          ? "answer_generation_questions"
+          ? "relay_questions"
           : /\brevoke\b.*\bhelper\b/i.test(t)
             ? "revoke_assistant_helper"
             : /\b(run|switch|move)\b.*\b(subscription|claude code|foundry['’]s model)\b/i.test(
@@ -1442,7 +1447,9 @@ function messageScript(a: Ask, manager: boolean): Step[] {
           `Only an owner or admin of this workspace can ${
             intent === "connect"
               ? "connect data"
-              : intent === "create_load" && named(a.ws, t)
+              : intent === "relay_questions"
+                ? "answer a draft's questions"
+                : intent === "create_load" && named(a.ws, t)
                 ? `load ${named(a.ws, t)!.name}`
                 : VERBS[intent]
           }, so I can't prepare that for you.`,
@@ -1585,14 +1592,16 @@ function runtimeOperation(
 
 /** The reads and the prepare of an operation on `o`. */
 function operationOf(
-  intent: Exclude<
-    AgentOperation,
-    | "create_ontology"
-    | "set_assistant_runtime"
-    | "revoke_assistant_helper"
-    | `${string}_dashboard`
-    | `${string}_automation`
-  >,
+  intent:
+    | Exclude<
+        AgentOperation,
+        | "create_ontology"
+        | "set_assistant_runtime"
+        | "revoke_assistant_helper"
+        | `${string}_dashboard`
+        | `${string}_automation`
+      >
+    | "relay_questions",
   a: Ask,
   o: StoredOntology,
   named: boolean,
@@ -1601,7 +1610,7 @@ function operationOf(
   const numbered = (n: string | undefined) =>
     n ? ontologyVersions(o.id).find((v) => String(v.version) === n) : undefined;
   switch (intent) {
-    case "answer_generation_questions":
+    case "relay_questions":
       return relayQuestions(a, o);
     case "generate_ontology":
       return [
@@ -2444,9 +2453,8 @@ function setupQuestions(a: Ask): Step[] {
 
 /**
  * An answers turn: the person's answers to the questions `asking` asked.
- * A relayed generation's become its answer_generation_questions card,
- * unchanged (use_defaults when a question was left out); the Assistant's
- * own it reads back as the plan they make.
+ * A relayed generation's were sent to it as the person before the turn, so
+ * it says so; the Assistant's own it reads back as the plan they make.
  */
 function answersScript(
   a: Ask,
@@ -2469,77 +2477,13 @@ function answersScript(
       ),
     ];
   }
-  const o = ontologyById(g.ontologyId || "");
-  if (!o)
-    return [
-      started,
-      said(() => "That ontology is gone, so there is nothing to answer."),
-    ];
+  // Foundry sent them to the draft before this turn: nothing to prepare.
   return [
     started,
-    call("tu_generation", GET_GENERATION, {
-      ontology_id: o.id,
-      generation_id: g.generationId,
-    }),
-    result("tu_generation", GET_GENERATION, () => ({
-      generation: snake(
-        wfe(a.userId, "GET", `${ONT(a.ws, o.id)}/generations/${g.generationId}`)
-          .body?.generation ?? null,
-      ),
-    })),
-    ...prepare(() => {
-      const read = wfe(
-        a.userId,
-        "GET",
-        `${ONT(a.ws, o.id)}/generations/${g.generationId}`,
-      ).body?.generation as OntologyGeneration | undefined;
-      if (
-        read?.status !== "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT" ||
-        read.questionRound !== g.round
-      )
-        return "The draft isn't waiting for those answers any more: read it again on its page.";
-      const questions = read.questions || [],
-        left = questions.filter(
-          (q) => !answers.some((x) => x.questionId === q.id),
-        );
-      const shown = (q: AgentQuestion, x: AgentQuestionAnswer) => ({
-        question_id: q.id,
-        ...(q.header && { header: q.header }),
-        question: q.text || "",
-        options: x.options || [],
-        ...(x.text && { text: x.text }),
-      });
-      return onOntology(
-        a.ws,
-        o,
-        true,
-        "answer_generation_questions",
-        {
-          generation_id: read.id,
-          round: g.round,
-          answers: answers.map((x) => ({
-            question_id: x.questionId,
-            options: x.options || [],
-            ...(x.text && { text: x.text }),
-          })),
-          ...(left.length && { use_defaults: true }),
-        },
-        {
-          ontology: ref(o),
-          generation: { id: read.id, ...(read.title && { name: read.title }) },
-          round: g.round!,
-          answers: questions.flatMap((q) => {
-            const x = answers.find((y) => y.questionId === q.id);
-            return x ? [shown(q, x)] : [];
-          }),
-          use_defaults: left.length > 0,
-          ...(left.length && {
-            defaulted: left.map((q) => shown(q, defaultAnswer(q))),
-          }),
-        },
-        `I've prepared your answers to the draft's ${questions.length === 1 ? "question" : "questions"}${left.length ? ", its recommended answers for the ones you left" : ""}. Send them from the card, and the draft carries on.`,
-      );
-    }),
+    said(
+      () =>
+        `Your answers went to the draft${answers.length < (asked.questions || []).length ? ", and it decides the ones you left itself" : ""}: it carries on from them, and its page shows how it goes.`,
+    ),
   ];
 }
 
@@ -3072,8 +3016,7 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
         ),
       ];
     }
-    case "generate_ontology":
-    case "answer_generation_questions": {
+    case "generate_ontology": {
       const g = String(out.id || "");
       let read: OntologyGeneration | undefined;
       const generation = () =>
@@ -3352,23 +3295,6 @@ function run(a: StoredAction, userId: string): MockReply {
         documentSetIds: p.document_set_ids || [],
         ...(p.no_connectors && { noConnectors: true }),
       });
-    case "answer_generation_questions":
-      return wfe(
-        userId,
-        "POST",
-        `${at}/generations/${p.generation_id}:answer`,
-        {
-          answers: (p.answers || []).map(
-            (x: { question_id: string; options: string[]; text?: string }) => ({
-              questionId: x.question_id,
-              options: x.options,
-              ...(x.text && { text: x.text }),
-            }),
-          ),
-          round: p.round,
-          ...(p.use_defaults && { useDefaults: true }),
-        },
-      );
     case "set_current_version":
       return wfe(userId, "POST", `${at}:set-current`, {
         versionId: p.version_id,
@@ -3835,7 +3761,8 @@ export const agentRoutes: MockRoute[] = [
         );
         if (typeof checked === "string")
           return fail("INVALID_ARGUMENT", checked);
-        reply = { asking, answers: checked };
+        // No question is left to the agent without useDefaults.
+        reply = { asking, answers: checked as AgentQuestionAnswer[] };
       }
       if (
         (page?.ontologyId && !ID.test(page.ontologyId)) ||
@@ -3873,19 +3800,6 @@ export const agentRoutes: MockRoute[] = [
           thread: toThread(threadOf(ws, p.userId, again.threadId)!),
         } satisfies AgentTurnResponse);
       }
-      const hourAgo = Date.now() - 3_600_000,
-        sent = state.turns.filter(
-          (t) =>
-            t.workspaceId === ws &&
-            t.userId === p.userId &&
-            (t.kind === "message" || t.kind === "answers") &&
-            t.at >= hourAgo,
-        ).length;
-      if (sent >= PER_HOUR)
-        return fail(
-          "RESOURCE_EXHAUSTED",
-          `you have sent ${sent} messages in the last hour; try again later`,
-        );
       let thread = body.threadId
         ? threadOf(ws, p.userId, body.threadId)
         : undefined;
@@ -3898,9 +3812,61 @@ export const agentRoutes: MockRoute[] = [
       if (offline) return offline;
       const ai = runtime === "api" ? aiRefusal(ws) : undefined;
       if (ai) return ai;
+      // A relayed generation's answers go to it first, as the person, while
+      // it still waits on that round; once they have, a refusal of the turn
+      // says the draft has them.
+      const relayed = reply?.asking.asked?.generation;
+      if (reply && relayed) {
+        const at = `${ONT(ws, relayed.ontologyId || "")}/generations/${relayed.generationId || ""}`;
+        const read = wfe(p.userId, "GET", at).body?.generation as
+          | OntologyGeneration
+          | undefined;
+        if (
+          read?.status !== "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT" ||
+          read.questionRound !== relayed.round
+        )
+          return refused(
+            ws,
+            "FOUNDRY_AGENT_QUESTIONS_CLOSED",
+            "the draft isn't waiting for these answers any more: they were answered on its page, or it moved on",
+          );
+        const left = (reply.asking.asked!.questions || []).some(
+          (q) => !reply!.answers.some((x) => x.questionId === q.id),
+        );
+        const sentTo = wfe(p.userId, "POST", `${at}:answer`, {
+          answers: reply.answers,
+          round: relayed.round,
+          ...(left && { useDefaults: true }),
+        });
+        if (sentTo.status !== 200)
+          return fail(
+            "FAILED_PRECONDITION",
+            `your answers weren't sent to the draft: ${sentTo.body?.message ?? "it refused them"}`,
+          );
+      }
+      const draftHas = (why: string) =>
+        relayed
+          ? `your answers reached the draft, which carries on from them, but the Assistant can't reply: ${why}`
+          : why;
+      const hourAgo = Date.now() - 3_600_000,
+        sent = state.turns.filter(
+          (t) =>
+            t.workspaceId === ws &&
+            t.userId === p.userId &&
+            (t.kind === "message" || t.kind === "answers") &&
+            t.at >= hourAgo,
+        ).length;
+      if (sent >= PER_HOUR)
+        return fail(
+          "RESOURCE_EXHAUSTED",
+          draftHas(
+            `you have sent ${sent} messages in the last hour; try again later`,
+          ),
+        );
       if (thread) {
         const busyWhy = busy(thread);
-        if (busyWhy) return refused(ws, "FOUNDRY_AGENT_THREAD_BUSY", busyWhy);
+        if (busyWhy)
+          return refused(ws, "FOUNDRY_AGENT_THREAD_BUSY", draftHas(busyWhy));
         // Answerable while the asking turn is the thread's newest, done.
         const newest = state.turns
           .filter((t) => t.threadId === thread!.id)
@@ -3912,7 +3878,9 @@ export const agentRoutes: MockRoute[] = [
           return refused(
             ws,
             "FOUNDRY_AGENT_QUESTIONS_CLOSED",
-            "these questions are closed: they were answered, or the conversation went on",
+            draftHas(
+              "these questions are closed: they were answered, or the conversation went on",
+            ),
           );
       } else {
         const line = text.split("\n")[0]!.trim();

@@ -60,7 +60,8 @@ export function readQuestion(x: unknown): Question | undefined {
   if (!isRecord(x)) return undefined;
   const id = str(x.id),
     text = str(x.text),
-    recommended = str(x.recommended).trim(),
+    // A choice's names a label exactly as written, as the WFE compares it.
+    recommended = str(x.recommended),
     raw = Array.isArray(x.options) ? x.options : [];
   if (!id || !text.trim()) return undefined;
   const options = raw.map((o) =>
@@ -80,7 +81,7 @@ export function readQuestion(x: unknown): Question | undefined {
   if (!options.length)
     return x.multiple === true
       ? undefined
-      : { ...base, ask: { kind: "free", suggested: recommended } };
+      : { ...base, ask: { kind: "free", suggested: recommended.trim() } };
   const labels = options.map((o) => o.label);
   if (
     options.length < 2 ||
@@ -217,8 +218,8 @@ export type FlowAction =
   | { type: "choose"; label: string; advance: boolean }
   // A choice of several: tick or untick an option.
   | { type: "toggle"; label: string }
-  // "Something else": a choice of one answers in words; a choice of
-  // several opens or closes its box.
+  // "Something else": a choice of one answers in words (again, while its
+  // box is empty, closes it); a choice of several opens or closes its box.
   | { type: "own" }
   // The person's own words, as typed.
   | { type: "write"; text: string }
@@ -364,7 +365,11 @@ export function reduceFlow(
           ...s,
           cursor,
           drafts:
-            draft?.kind === "own" ? s.drafts : set({ kind: "own", text: "" }),
+            draft?.kind !== "own"
+              ? set({ kind: "own", text: "" })
+              : draft.text.trim()
+                ? s.drafts
+                : set(undefined),
         };
       const was = draft?.kind === "many" ? draft : null,
         labels = was?.labels ?? [];

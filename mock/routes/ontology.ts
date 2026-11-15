@@ -7,7 +7,6 @@ import type {
   ListOntologyGenerationsResponse,
   ListOntologyVersionsResponse,
   OntologyGeneration,
-  AgentQuestionAnswer,
   OntologyGenerationResponse,
   OntologyVersion,
   OntologyVersionResponse,
@@ -108,7 +107,7 @@ import {
 import { aiModel, aiRefusal, draftFailure } from "./ai";
 import { currentLoadVersionId, liveJob, queueLoad } from "./loads";
 import { comparableSchema, reviseDefinition } from "./ontology-revise";
-import { checkAnswers } from "../agent-questions";
+import { checkAnswers, type CheckedAnswer } from "../agent-questions";
 import {
   ENGINE_QUESTIONS,
   wfeQuestion,
@@ -586,10 +585,11 @@ function sampleDraft(
 }
 
 /** Keeps a waiting generation's answers and queues it to draft on from now. */
-function resume(g: StoredGeneration, answers: AgentQuestionAnswer[]) {
+function resume(g: StoredGeneration, answers: CheckedAnswer[]) {
   g.questions = (g.questions || []).map((q) => {
     const answer = answers.find((a) => a.questionId === q.id);
-    return answer ? { ...q, answer } : q;
+    if (!answer) return q;
+    return "left" in answer ? { ...q, leftToAgent: true } : { ...q, answer };
   });
   Object.assign(g, {
     status: "ONTOLOGY_GENERATION_STATUS_QUEUED",
@@ -610,7 +610,7 @@ function advance(g: StoredGeneration) {
     g.status === "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT" &&
     Date.now() >= Date.parse(answersDue(g))
   ) {
-    // Every question takes its default: nothing to refuse.
+    // Every question is left to the agent: nothing to refuse.
     const defaults = checkAnswers(g.questions || [], [], true);
     if (typeof defaults !== "string") resume(g, defaults);
   }
@@ -1328,6 +1328,12 @@ export const ontologyRoutes: MockRoute[] = [
     handle: (req) => {
       const scope = ontologyOf(req, true);
       if (!isScope(scope)) return scope;
+      const body = (req.body || {}) as Partial<AnswerOntologyGenerationRequest>;
+      if (!Number.isInteger(body.round) || body.round! < 1)
+        return fail(
+          "INVALID_ARGUMENT",
+          "round is required: the generation's question_round the answers are for",
+        );
       const g = state.generations.find(
         (x) => x.ontologyId === scope.o.id && x.id === req.params.id,
       );
@@ -1338,7 +1344,6 @@ export const ontologyRoutes: MockRoute[] = [
           "FAILED_PRECONDITION",
           "this generation isn't waiting for answers",
         );
-      const body = (req.body || {}) as Partial<AnswerOntologyGenerationRequest>;
       if (body.round !== g.questionRound)
         return fail(
           "FAILED_PRECONDITION",

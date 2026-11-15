@@ -1,7 +1,6 @@
 import type {
   AgentActionDisplays,
   AgentActionStatus,
-  AgentAnswer,
   AgentAutomationRef,
   AgentConnectorRef,
   AgentDashboardRef,
@@ -42,7 +41,6 @@ import { entityId } from "../explore/model";
 import { LOAD_LIMITS } from "../ontology/model";
 import { ontologyPaths } from "../ontology/paths";
 import { workspacePaths } from "../workspace/paths";
-import { answerText } from "../../questions/model";
 
 export type { AgentOperation };
 
@@ -593,7 +591,6 @@ export function reduceTurnEvents(
  */
 export const STARTS_WORK: ReadonlySet<string> = new Set([
   "generate_ontology",
-  "answer_generation_questions",
   "revise_version",
   "create_load",
   "sync_connector",
@@ -735,22 +732,6 @@ function automationRef(x: unknown): AgentAutomationRef | undefined {
         ),
       }
     : r;
-}
-function answer(x: unknown): AgentAnswer | undefined {
-  if (!isRecord(x)) return undefined;
-  const id = str(x.question_id),
-    question = str(x.question),
-    options = list(x.options ?? [], str),
-    text = str(x.text);
-  return id && question !== undefined && options && (options.length || text)
-    ? {
-        question_id: id,
-        ...opt("header", str(x.header) || undefined),
-        question,
-        options,
-        ...opt("text", text || undefined),
-      }
-    : undefined;
 }
 function specDisplay(x: unknown): AgentSpecDisplay | undefined {
   const tiles = isRecord(x)
@@ -934,29 +915,6 @@ const DISPLAYS: {
       document_sets: sets,
       ...opt("event_sources", sources.length ? sources : undefined),
       ...opt("sample", str(d.sample) || undefined),
-    };
-  },
-  answer_generation_questions: (d) => {
-    const ontology = ref(d.ontology),
-      generation = ref(d.generation),
-      answers = list(d.answers, answer),
-      defaulted = d.defaulted === undefined ? [] : list(d.defaulted, answer);
-    if (
-      !ontology ||
-      !generation ||
-      !answers ||
-      !defaulted ||
-      !Number.isSafeInteger(d.round) ||
-      typeof d.use_defaults !== "boolean"
-    )
-      return undefined;
-    return {
-      ontology,
-      generation,
-      round: d.round as number,
-      answers,
-      use_defaults: d.use_defaults,
-      ...opt("defaulted", defaulted.length ? defaulted : undefined),
     };
   },
   set_current_version: (d) => {
@@ -1185,14 +1143,6 @@ export type CardView = {
   )[];
   // The document's words a review was read from: untrusted.
   quote?: string;
-  // Questions and their answers (the agents' words and the person's), each
-  // shown beside its answer.
-  answers?: {
-    name: string;
-    question: string;
-    answer: string;
-    left?: boolean;
-  }[];
   does: string;
   cost?: string;
   // What to check before running it, beyond the "not named by you" warning.
@@ -1391,37 +1341,6 @@ const VIEWS: {
         : undefined,
     ),
     run: "Generate",
-    target: nameOf(d.ontology),
-  }),
-  answer_generation_questions: (d) => ({
-    title: `Answer the draft’s questions for ${quoted(d.ontology)}`,
-    facts: [
-      { label: "Ontology", value: nameOf(d.ontology) },
-      {
-        label: "Draft",
-        entities: [
-          {
-            text: d.generation.name || "The draft",
-            to: ontologyPaths.generation(d.ontology.id, d.generation.id),
-          },
-        ],
-      },
-    ],
-    answers: [
-      ...d.answers.map((a, i) => ({
-        name: a.header || `Question ${i + 1}`,
-        question: a.question,
-        answer: answerText(a),
-      })),
-      ...(d.defaulted ?? []).map((a, i) => ({
-        name: a.header || `Question ${d.answers.length + i + 1}`,
-        question: a.question,
-        answer: `Left to the agent: ${answerText(a)}`,
-        left: true,
-      })),
-    ],
-    does: `Sends these answers to the agent drafting this version, which carries on from them.${d.use_defaults ? " Questions you left take the agent’s recommended answer." : ""} The questions are the agent’s own words; the draft’s page shows them too.`,
-    run: "Send answers",
     target: nameOf(d.ontology),
   }),
   set_current_version: (d) => ({
@@ -1898,11 +1817,6 @@ export function resultLink(
     case "generate_ontology":
       return on(
         o && made && ontologyPaths.generation(o, made),
-        "Open the draft",
-      );
-    case "answer_generation_questions":
-      return on(
-        o && ontologyPaths.generation(o, card.display.generation.id),
         "Open the draft",
       );
     case "revise_version":
