@@ -682,10 +682,12 @@ func TestFoundryAgentUnclaimedHelperTurnsEnd(t *testing.T) {
 		_, err := testDB.Exec(`UPDATE foundry_agent_turns SET next_attempt_at=? WHERE id=?`, long, f.turnID(n))
 		require.NoError(t, err)
 	}
-	_, err := testDB.Exec(`UPDATE foundry_agent_turns SET status='running', lease_owner='gone', lease_until=? WHERE id=?`, long, f.turnID(5))
+	// Running as a claim leaves a turn: charged (nothing, on a helper's) and started.
+	const running = `UPDATE foundry_agent_turns SET status='running', attempts=1, lease_owner=?, lease_until=?, charged_at=NOW(6), started_at=NOW(6)
+WHERE id=?`
+	_, err := testDB.Exec(running, "gone", long, f.turnID(5))
 	require.NoError(t, err)
-	_, err = testDB.Exec(`UPDATE foundry_agent_turns SET status='running', lease_owner='live', lease_until=? WHERE id=?`,
-		time.Now().UTC().Add(time.Minute), f.turnID(6))
+	_, err = testDB.Exec(running, "live", time.Now().UTC().Add(time.Minute), f.turnID(6))
 	require.NoError(t, err)
 
 	_, err = f.db.EndUnclaimedFoundryAgentTurns(ctx, model.FoundryAgentRuntimeAPI, time.Now(), "x")
