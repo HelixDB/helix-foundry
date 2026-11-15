@@ -111,12 +111,12 @@ func TestOntologyGenerationQuestionRPCs(t *testing.T) {
 			t.Fatal(err)
 		}
 		stored := store.generations[0]
-		want := []agentquestion.Answer{{QuestionID: "q1", Options: []string{}, Text: "Yes, one account each"}, {QuestionID: "q2", Options: []string{"Monthly"}}}
+		want := []agentquestion.Answer{{QuestionID: "q1", Options: []string{}, Text: "Yes, one account each"}, {QuestionID: "q2", Left: true}}
 		if stored.Status != foundrymodel.OntologyGenerationQueued || !reflect.DeepEqual(stored.Questions.Answers, want) {
 			t.Fatalf("stored = %+v, answers %+v", stored, stored.Questions.Answers)
 		}
 		if gen.GetStatus() != foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_QUEUED || gen.AnswersDueAt != nil ||
-			gen.GetQuestions()[0].GetAnswer().GetText() != "Yes, one account each" || strings.Join(gen.GetQuestions()[1].GetAnswer().GetOptions(), ",") != "Monthly" {
+			gen.GetQuestions()[0].GetAnswer().GetText() != "Yes, one account each" || !gen.GetQuestions()[1].GetLeftToAgent() {
 			t.Fatalf("answered generation = %+v", gen)
 		}
 		if _, err := answer(s, &foundryv1.AnswerOntologyGenerationRequest{UseDefaults: true}); status.Code(err) != codes.FailedPrecondition {

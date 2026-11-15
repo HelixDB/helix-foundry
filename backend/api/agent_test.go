@@ -725,6 +725,12 @@ func TestSendFoundryAgentAnswers(t *testing.T) {
 		f.store.generations = nil
 		_, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
 		assert.Equal(t, "FOUNDRY_AGENT_QUESTIONS_CLOSED", reasonOf(err), "deleted")
+		// Nor once the questions closed in the thread: nothing reaches the draft.
+		f = relaying(t)
+		f.store.turns["turn-ask"].Status = foundrymodel.FoundryAgentTurnRunning
+		_, err = f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
+		assert.Equal(t, "FOUNDRY_AGENT_QUESTIONS_CLOSED", reasonOf(err), "the asking turn not done")
+		assert.Empty(t, f.loads.answered)
 	})
 
 	t.Run("queues nothing when the answers aren't sent", func(t *testing.T) {

@@ -3817,6 +3817,15 @@ export const agentRoutes: MockRoute[] = [
       // says the draft has them.
       const relayed = reply?.asking.asked?.generation;
       if (reply && relayed) {
+        const newest = state.turns
+          .filter((t) => t.threadId === reply!.asking.threadId)
+          .at(-1);
+        if (newest !== reply.asking || reply.asking.status !== "done")
+          return refused(
+            ws,
+            "FOUNDRY_AGENT_QUESTIONS_CLOSED",
+            "these questions are closed: they were answered, or the conversation went on",
+          );
         const at = `${ONT(ws, relayed.ontologyId || "")}/generations/${relayed.generationId || ""}`;
         const read = wfe(p.userId, "GET", at).body?.generation as
           | OntologyGeneration

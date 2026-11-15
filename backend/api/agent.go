@@ -114,8 +114,8 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		ID: id.New(), WorkspaceID: ws, ThreadID: req.GetThreadId(), UserID: userID, ClientToken: &token, MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
 	}
 	var first json.RawMessage
-	// asked is what the answers answer.
-	var asked *foundrymodel.FoundryAgentAsked
+	// answered is the turn the answers answer.
+	var answered *foundrymodel.FoundryAgentTurn
 	switch input := req.GetInput().(type) {
 	case *foundryv1.SendFoundryAgentMessageRequest_Text:
 		text := strings.TrimSpace(input.Text)
@@ -144,7 +144,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
-		t.Kind, t.Input, t.Answers, asked = foundrymodel.FoundryAgentTurnAnswers, asking.ID, answers, asking.Asked
+		t.Kind, t.Input, t.Answers, answered = foundrymodel.FoundryAgentTurnAnswers, asking.ID, answers, asking
 		if first, err = foundryagent.MarshalEvent(foundryagent.Answered{TurnID: asking.ID, Answers: answers}); err != nil {
 			return nil, status.Errorf(codes.Internal, "write the answers: %v", err)
 		}
@@ -168,20 +168,20 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	if err != nil {
 		return nil, err
 	}
+	// A helper's thread runs on its owner's subscription, not the workspace's model.
+	if !runtime.Subscription() {
+		if err := s.requireAI(ctx, ws); err != nil {
+			return nil, err
+		}
+	}
 	// sent: the answers reached a relayed generation before the turn is queued.
-	sent := asked != nil && asked.Generation != nil
+	sent := answered != nil && answered.Asked.Generation != nil
 	if sent {
-		if err := s.sendRelayedAnswers(ctx, ws, userID, asked, t.Answers); err != nil {
+		if err := s.sendRelayedAnswers(ctx, ws, userID, answered, t.Answers); err != nil {
 			// The same click again, which sent them first, has its turn.
 			if raced, lookupErr := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, userID, token); lookupErr == nil && same(raced) {
 				return s.agentTurnResponse(ctx, raced)
 			}
-			return nil, err
-		}
-	}
-	// A helper's thread runs on its owner's subscription, not the workspace's model.
-	if !runtime.Subscription() {
-		if err := s.requireAI(ctx, ws); err != nil {
 			return nil, err
 		}
 	}
@@ -225,10 +225,20 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 }
 
 // sendRelayedAnswers sends a relayed generation the person's answers, as
-// them, while it still waits on the round asked: else, answered on its page
-// or moved on, the questions are closed (FOUNDRY_AGENT_QUESTIONS_CLOSED).
-func (s *Service) sendRelayedAnswers(ctx context.Context, ws, userID string, asked *foundrymodel.FoundryAgentAsked, answers []agentquestion.Answer) error {
-	g := asked.Generation
+// them, while asking is still the thread's newest turn, done, and the
+// generation still waits on the round asked: else (the conversation went on,
+// or the round was answered on its page or moved on) the questions are
+// closed (FOUNDRY_AGENT_QUESTIONS_CLOSED) and nothing is sent. The store
+// checks the thread again, under its lock, when it queues the turn.
+func (s *Service) sendRelayedAnswers(ctx context.Context, ws, userID string, asking *foundrymodel.FoundryAgentTurn, answers []agentquestion.Answer) error {
+	newest, err := s.deps.DB.ListFoundryAgentTurns(ctx, asking.ThreadID, 1)
+	switch {
+	case err != nil:
+		return status.Errorf(codes.Internal, "read the thread: %v", err)
+	case len(newest) == 0 || newest[len(newest)-1].ID != asking.ID || asking.Status != foundrymodel.FoundryAgentTurnDone:
+		return foundryPrecondition(ws, "FOUNDRY_AGENT_QUESTIONS_CLOSED", "these questions are closed: they were answered, or the conversation went on")
+	}
+	g := asking.Asked.Generation
 	gen, err := s.deps.DB.GetOntologyGeneration(ctx, g.OntologyID, g.GenerationID)
 	switch {
 	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && (gen.Status != foundrymodel.OntologyGenerationNeedsInput || gen.Questions == nil ||
@@ -242,7 +252,7 @@ func (s *Service) sendRelayedAnswers(ctx context.Context, ws, userID string, ask
 	if err != nil {
 		return err
 	}
-	return foundryagent.SendAnswers(ctx, sessions, userID, asked, ws, answers)
+	return foundryagent.SendAnswers(ctx, sessions, userID, asking.Asked, ws, answers)
 }
 
 // agentLimits are foundry.agent's limits this month.

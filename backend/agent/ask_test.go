@@ -2,8 +2,8 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"

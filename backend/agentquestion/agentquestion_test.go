@@ -78,10 +78,10 @@ func TestJSON(t *testing.T) {
 
 	t.Run("reads answers as written, never left with words", func(t *testing.T) {
 		for raw, want := range map[string]Answer{
-			`{"question_id":"q2","options":[],"text":"x"}`:    {QuestionID: "q2", Options: []string{}, Text: "x"},
-			`{"question_id":"q2","text":"x"}`:                 {QuestionID: "q2", Options: []string{}, Text: "x"},
-			`{"question_id":"q1","options":["A","B"]}`:        {QuestionID: "q1", Options: []string{"A", "B"}},
-			`{"question_id":"q3","left":true}`:                {QuestionID: "q3", Left: true},
+			`{"question_id":"q2","options":[],"text":"x"}`: {QuestionID: "q2", Options: []string{}, Text: "x"},
+			`{"question_id":"q2","text":"x"}`:              {QuestionID: "q2", Options: []string{}, Text: "x"},
+			`{"question_id":"q1","options":["A","B"]}`:     {QuestionID: "q1", Options: []string{"A", "B"}},
+			`{"question_id":"q3","left":true}`:             {QuestionID: "q3", Left: true},
 		} {
 			var got Answer
 			if err := json.Unmarshal([]byte(raw), &got); err != nil || !reflect.DeepEqual(got, want) {
@@ -98,10 +98,10 @@ func TestJSON(t *testing.T) {
 
 	t.Run("a free answer's recommended words never make it unreadable", func(t *testing.T) {
 		for raw, want := range map[string]string{
-			`{"id":"q","text":"T","recommended":" GBP "}`:                                              "GBP",
-			`{"id":"q","text":"T","recommended":" \n "}`:                                               "",
-			`{"id":"q","text":"T","recommended":"` + strings.Repeat("w", MaxAnswerChars+1) + `"}`:      "",
-			`{"id":"q","text":"T","recommended":"` + strings.Repeat("w", MaxAnswerChars) + `"}`:        strings.Repeat("w", MaxAnswerChars),
+			`{"id":"q","text":"T","recommended":" GBP "}`:                                         "GBP",
+			`{"id":"q","text":"T","recommended":" \n "}`:                                          "",
+			`{"id":"q","text":"T","recommended":"` + strings.Repeat("w", MaxAnswerChars+1) + `"}`: "",
+			`{"id":"q","text":"T","recommended":"` + strings.Repeat("w", MaxAnswerChars) + `"}`:   strings.Repeat("w", MaxAnswerChars),
 		} {
 			var q Question
 			if err := json.Unmarshal([]byte(raw), &q); err != nil || q.Recommended != want {

@@ -487,4 +487,3 @@ func asking() *model.OntologyGeneration {
 				Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "Active"}, {Label: "Cancelled"}}, Multiple: true}}},
 		}}}
 }
-
