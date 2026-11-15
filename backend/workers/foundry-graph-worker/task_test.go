@@ -397,11 +397,12 @@ type memStore struct {
 	// namesSaid are the names a failed resend's event said, by document.
 	namesSaid map[string][]model.FoundryDocumentName
 	endErr    error
-	// carried are the aliases carried to the job's load that it sends
-	// (ListFoundryCarriedAliases); asked the documents OweFoundryAskingResends
+	// carried are the aliases carried to the job's load whose asking
+	// documents are yet to be owed (ListFoundryCarriedAliases), each holding
+	// back its document's name; asked the documents OweFoundryAskingResends
 	// owed, each joining resends as owed for a name, as the load holds it
 	// (held); notCurrent is that the job's load is no longer current, so it
-	// owes none.
+	// owes none and the aliases stay carried.
 	carried    []*model.FoundryReviewDecision
 	asked      []string
 	held       map[string]*model.FoundryDocument
@@ -414,26 +415,34 @@ func (s *memStore) FoundryLoadDecisionsOwed(context.Context, string) (*model.Fou
 	return s.owedDecisions, nil
 }
 
+// ListFoundryLoadResends is the store's: a document's name waits while it
+// holds an alias carried whose asking documents are yet to be owed.
 func (s *memStore) ListFoundryLoadResends(context.Context, string) ([]*model.FoundryLoadResend, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.resends, nil
+	return slices.DeleteFunc(slices.Clone(s.resends), func(r *model.FoundryLoadResend) bool {
+		return r.Reason == model.FoundryResendName && slices.ContainsFunc(s.carried, func(d *model.FoundryReviewDecision) bool {
+			return *d.DocID == r.DocumentID
+		})
+	}), nil
 }
 
-func (s *memStore) ListFoundryCarriedAliases(context.Context, string) ([]*model.FoundryReviewDecision, error) {
+func (s *memStore) ListFoundryCarriedAliases(_ context.Context, _ string, limit int) ([]*model.FoundryReviewDecision, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.carried, nil
+	return slices.Clone(s.carried[:min(len(s.carried), limit)]), nil
 }
 
 // OweFoundryAskingResends is the store's: with the job's load current, each
-// document is owed for a name, once more where it already is.
-func (s *memStore) OweFoundryAskingResends(_ context.Context, job *model.FoundryGraphJob, _ string, docs []string) (bool, error) {
+// document is owed for a name, once more where it already is, and the
+// aliases are carried no more.
+func (s *memStore) OweFoundryAskingResends(_ context.Context, job *model.FoundryGraphJob, _ string, aliases, docs []string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.notCurrent {
 		return false, nil
 	}
+	s.carried = slices.DeleteFunc(s.carried, func(d *model.FoundryReviewDecision) bool { return slices.Contains(aliases, d.ID) })
 	for _, doc := range docs {
 		s.asked = append(s.asked, doc)
 		i := slices.IndexFunc(s.resends, func(r *model.FoundryLoadResend) bool {

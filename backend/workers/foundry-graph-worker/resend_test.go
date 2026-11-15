@@ -1070,9 +1070,11 @@ func TestResendSettlesNames(t *testing.T) {
 // what is owed, the documents of the job's load whose reviews ask about its
 // name: one read a type and name, of the job's load and of no other, and
 // those documents go with their saved work, each request ended. Two copies
-// of one name read once. A load no longer current owes none, and its own
-// document still goes. A read that fails retries the attempt, sending
-// nothing.
+// of one name read once. A load no longer current owes none, and the
+// alias's own document waits with it, so the alias is read when the load is
+// current again. One job reads at most carriedAliasesPerJob aliases; the
+// documents of the rest wait for the next. A read that fails retries the
+// attempt, sending nothing.
 func TestResendOwesWhatACarriedAliasAsks(t *testing.T) {
 	setup := func(t *testing.T) *harness {
 		h := newHarness(t)
@@ -1139,11 +1141,31 @@ func TestResendOwesWhatACarriedAliasAsks(t *testing.T) {
 		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
 			t.Fatalf("%+v", outcome)
 		}
-		if len(h.store.asked) != 0 {
-			t.Fatalf("owed %v", h.store.asked)
+		if len(h.store.asked) != 0 || len(h.store.ended) != 0 || len(h.store.carried) != 2 {
+			t.Fatalf("owed %v, ended %+v, carried %d", h.store.asked, h.store.ended, len(h.store.carried))
 		}
-		if docs := sent(t, h); !slices.Equal(docs, []string{"doc-a"}) {
-			t.Fatalf("sent %v", docs)
+		if _, calls := h.agent.calls(); len(calls) != 0 {
+			t.Fatalf("%d extracts: its own document went before its asking documents were owed", len(calls))
+		}
+	})
+	t.Run("more than a job reads", func(t *testing.T) {
+		h := setup(t)
+		acme := "acme"
+		h.store.carried = nil
+		for i := range carriedAliasesPerJob + 1 {
+			h.store.carried = append(h.store.carried, linked(fmt.Sprintf("r%03d", i), "doc-a", fmt.Sprintf("acme %03d", i), &acme, settledAt))
+		}
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		if len(h.gateway.asks) != carriedAliasesPerJob {
+			t.Fatalf("%d reads", len(h.gateway.asks))
+		}
+		if len(h.store.carried) != 1 || h.store.carried[0].ID != fmt.Sprintf("r%03d", carriedAliasesPerJob) {
+			t.Fatalf("carried %v", h.store.carried)
+		}
+		if _, calls := h.agent.calls(); len(calls) != 0 || len(h.store.ended) != 0 {
+			t.Fatalf("%d extracts, ended %+v: the document went before its last alias was read", len(calls), h.store.ended)
 		}
 	})
 	t.Run("a read that fails", func(t *testing.T) {

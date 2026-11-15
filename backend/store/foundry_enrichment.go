@@ -1086,10 +1086,10 @@ FROM foundry_loads l LEFT JOIN foundry_load_enrichments e ON e.load_id = l.id WH
 				return err
 			}
 			if servable {
-				if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontologies SET current_load_id=? WHERE id=?`, last.String, ontologyID); err != nil {
+				if err := tx.makeFoundryLoadCurrent(ctx, o, last.String); err != nil {
 					return err
 				}
-				o.CurrentLoadID, clean = &last.String, true
+				clean = true
 			}
 		}
 		switch {

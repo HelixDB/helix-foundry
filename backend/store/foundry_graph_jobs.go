@@ -422,7 +422,9 @@ ON DUPLICATE KEY UPDATE usd_micros=usd_micros+VALUES(usd_micros)`, utcMonth(time
 //     when it refreshes the current load and holds what that load held:
 //     of the sets with an allowance its budget stop left unfinished,
 //     outcome.HeldSets, every document that load recorded, deleted since
-//     or not, else it is deleted) or failed; a delete job's load becomes
+//     or not, else it is deleted) or failed; a load that becomes current
+//     gets the resolves saved since it was created (makeFoundryLoadCurrent);
+//     a delete job's load becomes
 //     deleted, its extraction rows removed, or delete_failed, never
 //     requeued by itself. Then:
 //   - a succeeded load or extract whose load is current, with uploads it has
@@ -676,10 +678,9 @@ SET status=IF(cancel_requested, 'cancelled', 'failed'), ended_at=NOW(6) WHERE lo
 			_, err := s.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting' WHERE id=?`, job.LoadID)
 			return err
 		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_ontologies SET current_load_id=? WHERE id=?`, job.LoadID, o.ID); err != nil {
+		if err := s.makeFoundryLoadCurrent(ctx, o, job.LoadID); err != nil {
 			return err
 		}
-		o.CurrentLoadID = &job.LoadID
 		// A refresh that replaced a refresh deletes it now, so refreshes never crowd out a customer's loads.
 		if refresh && replaced != nil {
 			if _, err := s.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting'

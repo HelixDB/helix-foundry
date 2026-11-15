@@ -31,6 +31,39 @@ func resolvesIn(t *testing.T, load string) map[string]string {
 	return out
 }
 
+// owedRaw lists load's owed requests by document and reason as stored,
+// those a resend holds back included (ListFoundryLoadResends).
+func owedRaw(t *testing.T, load string) map[string]int {
+	t.Helper()
+	rows, err := testDB.Query(`SELECT document_id, reason, requests FROM foundry_load_resends WHERE load_id=? AND status='owed'`, load)
+	require.NoError(t, err)
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var doc, reason string
+		var requests int
+		require.NoError(t, rows.Scan(&doc, &reason, &requests))
+		out[doc+"/"+reason] = requests
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+// entityIn is the entity load's copy of decision id chose ("" for none).
+func entityIn(t *testing.T, load, id string) string {
+	t.Helper()
+	var entity sql.NullString
+	require.NoError(t, testDB.QueryRow(`SELECT entity_key FROM foundry_load_decisions WHERE load_id=? AND id=?`, load, id).Scan(&entity))
+	return entity.String
+}
+
+// settleBound saves d as a resolve of a name the load links already, as the
+// API does: for the next load (SettleFoundryReviewDecision).
+func (f resendFixture) settleBound(t *testing.T, d *model.FoundryReviewDecision) {
+	t.Helper()
+	require.NoError(t, f.db.SettleFoundryReviewDecision(context.Background(), f.ontology.WorkspaceID, d))
+}
+
 // newLoad starts a load of a version of customerTOML, FJ-<tag>, as its
 // queued load job.
 func (f resendFixture) newLoad(t *testing.T, tag string) string {
@@ -52,13 +85,13 @@ func (f resendFixture) nameWritten(t *testing.T, job *model.FoundryGraphJob, d *
 }
 
 // A resolve settled while a load created before it is written reaches that
-// load when it becomes current: it joins the list carried, with its name's
-// key (an alias; "not in data" has none), and the load owes its document a
-// resend for a name. The alias, whose document's request the resend sends,
-// is read for the documents that ask about its name; the engine's word on
-// its document lands on the carried copy as on a pending one, and then it is
-// read no more. Carrying again owes nothing: a copy no word came of waits,
-// and the next job's end queues no resend for it.
+// load when it becomes current, by the load job's end: an alias joins the
+// list carried, with its name's key, and "not in data" pending, with none;
+// the load owes each one's document a resend for a name, and the alias's is
+// held back until the resend job has owed the documents of this load whose
+// reviews ask about its name, which moves the copy to pending. The engine's
+// word on its document lands on the copy as on any pending one. A job's end
+// carries nothing again, and the load made current again owes nothing.
 func TestFoundryResolveCarriedToALoadMadeBeforeIt(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "RVCARRY")
@@ -79,15 +112,16 @@ func TestFoundryResolveCarriedToALoadMadeBeforeIt(t *testing.T) {
 	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "rvcarry", model.FoundryGraphJobSucceeded))
 	require.Equal(t, second, *f.ontologyNow(t).CurrentLoadID)
 	f.load = second
-	assert.Equal(t, map[string]string{alias.ID: "carried", none.ID: "carried"}, f.applied(t, alias, none))
+	assert.Equal(t, map[string]string{alias.ID: "carried", none.ID: "pending"}, f.applied(t, alias, none))
 	var key, noKey sql.NullInt64
 	require.NoError(t, testDB.QueryRow(`SELECT name_key FROM foundry_load_decisions WHERE load_id=? AND id=?`, second, alias.ID).Scan(&key))
 	want, _ := namewords.Key("acme corp")
 	assert.Equal(t, sql.NullInt64{Int64: want, Valid: true}, key, "found by the Extracts of the documents that write it")
 	require.NoError(t, testDB.QueryRow(`SELECT name_key FROM foundry_load_decisions WHERE load_id=? AND id=?`, second, none.ID).Scan(&noKey))
 	assert.False(t, noKey.Valid, "not in data carries nothing to other documents")
-	assert.Equal(t, map[string]int{f.a + "/name": 1, f.b + "/name": 1}, f.owedFor(t), "their own documents, not those the first load's reviews asked")
-	carried, err := f.db.ListFoundryCarriedAliases(ctx, second)
+	assert.Equal(t, map[string]int{f.a + "/name": 1, f.b + "/name": 1}, owedRaw(t, second), "their own documents, not those the first load's reviews asked")
+	assert.Equal(t, map[string]int{f.b + "/name": 1}, f.owedFor(t), "the alias's document waits for its asking documents")
+	carried, err := f.db.ListFoundryCarriedAliases(ctx, second, 10)
 	require.NoError(t, err)
 	require.Len(t, carried, 1, "an alias reaches the documents that ask; not in data doesn't")
 	assert.Equal(t, alias.ID, carried[0].ID)
@@ -97,30 +131,37 @@ func TestFoundryResolveCarriedToALoadMadeBeforeIt(t *testing.T) {
 	assert.Equal(t, second, resend.LoadID)
 
 	job = f.claim(t)
+	owed, err := f.db.OweFoundryAskingResends(ctx, job, f.worker, []string{alias.ID}, []string{f.b})
+	require.NoError(t, err)
+	require.True(t, owed)
+	assert.Equal(t, map[string]string{alias.ID: "pending", none.ID: "pending"}, f.applied(t, alias, none))
+	assert.Equal(t, map[string]int{f.a + "/name": 1, f.b + "/name": 2}, f.owedFor(t))
+	carried, err = f.db.ListFoundryCarriedAliases(ctx, second, 10)
+	require.NoError(t, err)
+	assert.Empty(t, carried, "read once")
 	f.nameWritten(t, job, alias)
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, &model.FoundryDocumentExtraction{
 		DocumentID: f.b, Status: model.FoundryExtractionExtracted, SettlesNames: true}, true))
-	for _, doc := range []string{f.a, f.b} {
-		require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{DocumentID: doc, Reason: model.FoundryResendName, Requests: 1}))
-	}
-	assert.Equal(t, map[string]string{alias.ID: "written", none.ID: "carried"}, f.applied(t, alias, none))
-	carried, err = f.db.ListFoundryCarriedAliases(ctx, second)
-	require.NoError(t, err)
-	assert.Empty(t, carried, "read once")
+	require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{DocumentID: f.a, Reason: model.FoundryResendName, Requests: 1}))
+	require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{DocumentID: f.b, Reason: model.FoundryResendName, Requests: 2}))
+	assert.Equal(t, map[string]string{alias.ID: "written", none.ID: "pending"}, f.applied(t, alias, none))
 	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "rvcarried", model.FoundryGraphJobSucceeded))
 	assert.Nil(t, f.liveJob(t), "carried once: nothing is owed again")
-	assert.Empty(t, f.owedFor(t))
+	assert.Empty(t, owedRaw(t, second))
 	assert.Len(t, resolvesIn(t, second), 2, "one copy each")
 	_, err = f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, second, extractJob("RVCARRY"), resendJob("RVCARRY"), noBudget)
 	require.NoError(t, err)
 	assert.Nil(t, f.liveJob(t), "made current again, it owes nothing")
 }
 
-// A decision the load holds by id, copied when it was created, is not
-// carried again, and its document is not owed.
+// A decision the load holds by id, copied when it was created, is left as it
+// is when the load becomes current, while one saved during its writing is
+// carried: only that one's document is owed. Made current again, the load
+// carries nothing anew and owes nothing more.
 func TestFoundryResolveHeldByIDNotCarried(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "RVHELD")
+	first := f.load
 	acme := "acme"
 	d := f.resolveOf("1", f.a, "acme corp", &acme)
 	require.True(t, f.settleName(t, "1", d))
@@ -130,12 +171,21 @@ func TestFoundryResolveHeldByIDNotCarried(t *testing.T) {
 	f.end(t, job, "rvheld", model.FoundryGraphJobSucceeded)
 
 	second := f.newLoad(t, "RVHELD2")
+	later := f.resolveOf("2", f.b, "helio", &acme)
+	require.False(t, f.settleName(t, "2", later))
 	f.loaded(t, f.worker, f.a, f.b)
 	require.Equal(t, second, *f.ontologyNow(t).CurrentLoadID)
-	f.load = second
-	assert.Equal(t, map[string]string{d.ID: ""}, resolvesIn(t, second), "the copy made with the load, as it was")
-	assert.Empty(t, f.owedFor(t))
-	assert.Nil(t, f.liveJob(t))
+	assert.Equal(t, map[string]string{d.ID: "", later.ID: "carried"}, resolvesIn(t, second), "the copy made with the load, as it was")
+	assert.Equal(t, map[string]int{f.b + "/name": 1}, owedRaw(t, second))
+
+	for i, load := range []string{first, second} {
+		_, err := f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, load, extractJob(fmt.Sprint("RVHELD", i)),
+			resendJob(fmt.Sprint("RVHELD", i)), noBudget)
+		require.NoError(t, err)
+	}
+	assert.Equal(t, map[string]string{d.ID: "", later.ID: "carried"}, resolvesIn(t, second))
+	assert.Equal(t, map[string]int{f.b + "/name": 1}, owedRaw(t, second), "owed once")
+	assert.Equal(t, map[string]string{d.ID: "written", later.ID: "pending"}, resolvesIn(t, first))
 }
 
 // What a person did while the load was written reaches it as they left it:
@@ -164,18 +214,115 @@ func TestFoundryResolveChangedOrRemovedWhileTheLoadIsWritten(t *testing.T) {
 
 	f.loaded(t, f.worker, f.a, f.b)
 	require.Equal(t, second, *f.ontologyNow(t).CurrentLoadID)
-	f.load = second
 	assert.Equal(t, map[string]string{changed.ID: "carried"}, resolvesIn(t, second))
-	assert.Equal(t, map[string]int{f.a + "/name": 1}, f.owedFor(t))
+	assert.Equal(t, map[string]int{f.a + "/name": 1}, owedRaw(t, second))
 	list, err := f.db.ListFoundryLoadDecisions(ctx, second, "", []string{f.a, f.b}, 100)
 	require.NoError(t, err)
 	require.Len(t, list, 1, "the document's Extract decides its name once")
 	assert.Equal(t, "globex", *list[0].EntityKey)
 }
 
+// A resolve of a name the load links already is saved for the next load
+// (SettleFoundryReviewDecision): the current load's later resends and job
+// ends leave it out. Chosen again under its id while a load created before
+// is written, it reaches that load as last chosen: the copy the load was
+// created with gives way, as a changed choice under another id does.
+func TestFoundryResolveBoundIsTheNextLoads(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "RVBOUND")
+	first := f.load
+	acme, globex := "acme", "globex"
+	bound := f.resolveOf("1", f.a, "acme corp", &acme)
+	f.settleBound(t, bound)
+	asks := f.resolveOf("2", f.b, "helio", &acme)
+	require.True(t, f.settleName(t, "2", asks))
+	job := f.claim(t)
+	require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{DocumentID: f.b, Reason: model.FoundryResendName, Requests: 1}))
+	f.end(t, job, "rvbound", model.FoundryGraphJobSucceeded)
+	assert.Equal(t, map[string]string{asks.ID: "pending"}, resolvesIn(t, first), "the bound name is not this load's")
+	assert.Empty(t, owedRaw(t, first))
+	assert.Nil(t, f.liveJob(t))
+
+	second := f.newLoad(t, "RVBOUND2")
+	assert.Equal(t, "acme", entityIn(t, second, bound.ID), "copied as it was chosen then")
+	again := f.resolveOf("1", f.a, "acme corp", &globex)
+	f.settleBound(t, again)
+	require.Equal(t, bound.ID, again.ID, "a bound name chosen again keeps its decision")
+	assert.NotContains(t, resolvesIn(t, first), bound.ID)
+
+	f.loaded(t, f.worker, f.a, f.b)
+	require.Equal(t, second, *f.ontologyNow(t).CurrentLoadID)
+	assert.Equal(t, map[string]string{bound.ID: "carried", asks.ID: ""}, resolvesIn(t, second))
+	assert.Equal(t, "globex", entityIn(t, second, bound.ID), "the choice that stands")
+	assert.Equal(t, map[string]int{f.a + "/name": 1}, owedRaw(t, second))
+}
+
+// An alias carried to a load that holds no extraction of its document still
+// reaches that load's other documents: its document is owed, so the resend
+// job owes the documents that ask about its name, and the copy then waits on
+// nothing, as one the load was created with: the document's Extract carries
+// it, and its request, which the load can't send, refuses nothing. "Not in
+// data" joins the same way, with nothing owed.
+func TestFoundryResolveCarriedWhereItsDocumentIsUnread(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "RVUNREAD")
+	first := f.load
+	second := f.newLoad(t, "RVUNREAD2")
+	f.loaded(t, f.worker, f.a, f.b)
+	_, err := f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, first, extractJob("RVUNREAD"), resendJob("RVUNREAD"), noBudget)
+	require.NoError(t, err)
+	_, err = testDB.Exec(`UPDATE foundry_load_extractions SET status='failed', error_code='unsupported', error_retryable=FALSE
+WHERE load_id=? AND document_id=?`, second, f.a)
+	require.NoError(t, err)
+	acme := "acme"
+	alias, none := f.resolveOf("1", f.a, "acme corp", &acme), f.resolveOf("2", f.a, "helio", nil)
+	f.settleName(t, "1", alias, f.b)
+	f.settleName(t, "2", none)
+	job := f.claim(t)
+	owedFirst, err := f.db.ListFoundryLoadResends(ctx, first)
+	require.NoError(t, err)
+	for _, r := range owedFirst {
+		require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{DocumentID: r.DocumentID, Reason: r.Reason, Requests: r.Requests}))
+	}
+	f.end(t, job, "rvunread", model.FoundryGraphJobSucceeded)
+	require.Nil(t, f.liveJob(t))
+
+	_, err = f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, second, extractJob("RVUNREAD2"), resendJob("RVUNREAD2"), noBudget)
+	require.NoError(t, err)
+	f.load = second
+	assert.Equal(t, map[string]string{alias.ID: "carried", none.ID: ""}, resolvesIn(t, second))
+	assert.Equal(t, map[string]int{f.a + "/name": 1}, owedRaw(t, second), "the alias's document, to reach the documents that ask")
+	assert.Empty(t, f.owedFor(t))
+
+	job = f.claim(t)
+	require.Equal(t, second, job.LoadID)
+	owed, err := f.db.OweFoundryAskingResends(ctx, job, f.worker, []string{alias.ID}, []string{f.b})
+	require.NoError(t, err)
+	require.True(t, owed)
+	assert.Equal(t, map[string]string{alias.ID: "", none.ID: ""}, resolvesIn(t, second))
+	listed, err := f.db.ListFoundryLoadResends(ctx, second)
+	require.NoError(t, err)
+	require.Len(t, listed, 2)
+	assert.Equal(t, f.b, listed[0].DocumentID)
+	assert.Equal(t, f.a, listed[1].DocumentID)
+	assert.Equal(t, model.FoundryReleaseDocumentUnread, listed[1].Unsendable)
+	require.NoError(t, f.db.EndFoundryLoadResend(ctx, job.ID, f.worker, model.FoundryResendEnd{DocumentID: f.a, Reason: model.FoundryResendName,
+		Requests: 1, Refused: listed[1].Unsendable}))
+	assert.Equal(t, map[string]string{alias.ID: "", none.ID: ""}, resolvesIn(t, second), "nothing refused")
+	list, err := f.db.ListFoundryLoadDecisions(ctx, second, "", []string{f.a}, 100)
+	require.NoError(t, err)
+	assert.Len(t, list, 2, "its document's Extract carries both")
+	key, _ := namewords.Key("acme corp")
+	aliases, err := f.db.ListFoundryLoadAliasesNamed(ctx, second, []int64{key})
+	require.NoError(t, err)
+	require.Len(t, aliases, 1, "and every Extract of a document that writes the name")
+	assert.Equal(t, alias.ID, aliases[0].ID)
+}
+
 // A resolve removed while a load that holds it waiting, or refused, is not
-// current never applies there: when that load is current again, the job end
-// that carries to it drops the copy, as removing it then would have.
+// current never applies there: when that load is current again, the carry
+// drops the copy at once, as removing it then would have, though another
+// load's resend is live.
 func TestFoundryResolveRemovedWhileItsLoadWasNotCurrent(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "RVBACK")
@@ -205,14 +352,15 @@ func TestFoundryResolveRemovedWhileItsLoadWasNotCurrent(t *testing.T) {
 	assert.Empty(t, resolvesIn(t, second))
 	assert.Equal(t, map[string]string{d.ID: "refused"}, resolvesIn(t, first), "not current: left until it is")
 
-	// The first is current again while the second's resend is live: that
-	// job's end carries to it.
+	// The first is current again while the second's resend is live.
+	require.NotNil(t, f.liveJob(t))
 	_, err = f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, first, extractJob("RVBACK3"), resendJob("RVBACK3"), noBudget)
 	require.NoError(t, err)
+	assert.Empty(t, resolvesIn(t, first), "the removed choice is sent to no load")
 	job = f.claim(t)
 	require.Equal(t, second, job.LoadID)
 	f.end(t, job, "rvback-2", model.FoundryGraphJobSucceeded)
-	assert.Empty(t, resolvesIn(t, first), "the removed choice is sent to no load")
+	assert.Empty(t, resolvesIn(t, first))
 	list, err := f.db.ListFoundryLoadDecisions(ctx, first, "", []string{f.a}, 100)
 	require.NoError(t, err)
 	assert.Empty(t, list)
@@ -220,19 +368,25 @@ func TestFoundryResolveRemovedWhileItsLoadWasNotCurrent(t *testing.T) {
 
 // Another load became current between the person reading the review and
 // settling it: the decision is saved, checked against the current load's
-// version, and carried to that load, which owes its own document only; the
+// version, and joins that load, which owes its own document only; the
 // documents read from the load the review came from are another load's, and
 // the resend job reads the current load's. The load the review came from is
-// left as it is. A current load whose version doesn't take the decision
-// refuses it, and nothing is saved.
+// left as it is. "Not in data" waits as pending where the current load holds
+// its document extracted, and with no status, nothing owed, where it
+// doesn't. A current load whose version doesn't take the decision refuses
+// it, and nothing is saved.
 func TestFoundryResolveSettledAfterTheLoadChanged(t *testing.T) {
 	ctx := context.Background()
-	t.Run("carried to the current load", func(t *testing.T) {
-		f := newResendFixture(t, "RVSWAP")
-		first := f.load
-		second := f.newLoad(t, "RVSWAP2")
+	swapped := func(t *testing.T, tag string) (f resendFixture, first, second string) {
+		f = newResendFixture(t, tag)
+		first = f.load
+		second = f.newLoad(t, tag+"2")
 		f.loaded(t, f.worker, f.a, f.b)
 		require.Nil(t, f.liveJob(t))
+		return f, first, second
+	}
+	t.Run("an alias carried to the current load", func(t *testing.T) {
+		f, first, second := swapped(t, "RVSWAP")
 		acme := "acme"
 		d := f.resolveOf("1", f.a, "acme corp", &acme)
 		queued, err := f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, first, d, []string{f.b},
@@ -241,17 +395,34 @@ func TestFoundryResolveSettledAfterTheLoadChanged(t *testing.T) {
 		assert.True(t, queued)
 		require.NotNil(t, d.Applied)
 		assert.Equal(t, model.FoundryReleaseCarried, d.Applied.Status)
-		f.load = second
 		assert.Equal(t, map[string]string{d.ID: "carried"}, resolvesIn(t, second))
 		assert.Empty(t, resolvesIn(t, first))
-		assert.Equal(t, map[string]int{f.a + "/name": 1}, f.owedFor(t))
-		carried, err := f.db.ListFoundryCarriedAliases(ctx, second)
+		assert.Equal(t, map[string]int{f.a + "/name": 1}, owedRaw(t, second))
+		carried, err := f.db.ListFoundryCarriedAliases(ctx, second, 10)
 		require.NoError(t, err)
 		require.Len(t, carried, 1)
 		resend := f.liveJob(t)
 		require.NotNil(t, resend)
 		assert.Equal(t, id26("RN-1"), resend.ID)
 		assert.Equal(t, second, resend.LoadID)
+	})
+	t.Run("not in data", func(t *testing.T) {
+		f, first, second := swapped(t, "RVSWAPN")
+		d := f.resolveOf("1", f.a, "helio", nil)
+		_, err := f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, first, d, nil, &model.FoundryGraphJob{ID: id26("RN-1")})
+		require.NoError(t, err)
+		require.NotNil(t, d.Applied)
+		assert.Equal(t, model.FoundryReleasePending, d.Applied.Status)
+		assert.Equal(t, map[string]int{f.a + "/name": 1}, owedRaw(t, second))
+		_, err = testDB.Exec(`UPDATE foundry_load_extractions SET status='failed', error_code='unsupported', error_retryable=FALSE
+WHERE load_id=? AND document_id=?`, second, f.b)
+		require.NoError(t, err)
+		unread := f.resolveOf("2", f.b, "helio", nil)
+		_, err = f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, first, unread, nil, &model.FoundryGraphJob{ID: id26("RN-2")})
+		require.NoError(t, err)
+		assert.Nil(t, unread.Applied)
+		assert.Equal(t, map[string]string{d.ID: "pending", unread.ID: ""}, resolvesIn(t, second))
+		assert.Equal(t, map[string]int{f.a + "/name": 1}, owedRaw(t, second), "nothing for the unread document")
 	})
 	t.Run("a version that doesn't take it", func(t *testing.T) {
 		f := newResendFixture(t, "RVSWAPV")
@@ -301,9 +472,8 @@ func TestFoundryResolveSettledAsTheLoadChanges(t *testing.T) {
 			require.NoError(t, settleErr)
 			require.NoError(t, endErr)
 			require.Equal(t, second, *f.ontologyNow(t).CurrentLoadID)
-			f.load = second
 			assert.Equal(t, map[string]string{d.ID: "carried"}, resolvesIn(t, second))
-			assert.Equal(t, map[string]int{f.a + "/name": 1}, f.owedFor(t))
+			assert.Equal(t, map[string]int{f.a + "/name": 1}, owedRaw(t, second))
 			resend := f.liveJob(t)
 			require.NotNil(t, resend)
 			assert.Equal(t, second, resend.LoadID)
@@ -313,7 +483,9 @@ func TestFoundryResolveSettledAsTheLoadChanges(t *testing.T) {
 
 // The resend job owes the documents of its load whose reviews ask about a
 // carried alias's name while that load is current, and holds the job's
-// lease; a load no longer current is owed none.
+// lease, and the copy then waits as pending. With the load no longer current
+// none is owed, and the copy stays carried, its document's name held back,
+// until the load is current again and a resend of it owes them.
 func TestFoundryAskingDocumentsOwed(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "RVASK")
@@ -327,17 +499,44 @@ func TestFoundryAskingDocumentsOwed(t *testing.T) {
 	job := f.claim(t)
 	require.Equal(t, model.FoundryGraphJobResend, job.Kind)
 
-	owed, err := f.db.OweFoundryAskingResends(ctx, job, f.worker, []string{f.b})
+	_, err := f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, first, extractJob("RVASK"), resendJob("RVASK"), noBudget)
 	require.NoError(t, err)
-	assert.True(t, owed)
-	assert.Equal(t, map[string]int{f.a + "/name": 1, f.b + "/name": 1}, f.owedFor(t))
-	_, err = f.db.OweFoundryAskingResends(ctx, job, "w-other", []string{f.b})
-	assert.ErrorIs(t, err, store.ErrNotFound, "the lease is the job's worker's")
-
-	_, err = f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, first, extractJob("RVASK"), resendJob("RVASK"), noBudget)
-	require.NoError(t, err)
-	owed, err = f.db.OweFoundryAskingResends(ctx, job, f.worker, []string{f.b})
+	owed, err := f.db.OweFoundryAskingResends(ctx, job, f.worker, []string{d.ID}, []string{f.b})
 	require.NoError(t, err)
 	assert.False(t, owed)
-	assert.Equal(t, map[string]int{f.a + "/name": 1, f.b + "/name": 1}, f.owedFor(t), "nothing more")
+	assert.Equal(t, map[string]string{d.ID: "carried"}, resolvesIn(t, second))
+	assert.Equal(t, map[string]int{f.a + "/name": 1}, owedRaw(t, second))
+	assert.Empty(t, f.owedFor(t), "its document waits with it")
+
+	_, err = f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, second, extractJob("RVASK2"), resendJob("RVASK2"), noBudget)
+	require.NoError(t, err)
+	_, err = f.db.OweFoundryAskingResends(ctx, job, "w-other", []string{d.ID}, []string{f.b})
+	assert.ErrorIs(t, err, store.ErrNotFound, "the lease is the job's worker's")
+	owed, err = f.db.OweFoundryAskingResends(ctx, job, f.worker, []string{d.ID}, []string{f.b})
+	require.NoError(t, err)
+	assert.True(t, owed)
+	assert.Equal(t, map[string]string{d.ID: "pending"}, resolvesIn(t, second))
+	assert.Equal(t, map[string]int{f.a + "/name": 1, f.b + "/name": 1}, f.owedFor(t))
+}
+
+// A resend job that fails leaves a carried alias unconfirmed, as a pending
+// one, and its documents' requests end: no job is queued for it again.
+func TestFoundryCarriedAliasJobFailed(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "RVFAIL")
+	second := f.newLoad(t, "RVFAIL2")
+	acme := "acme"
+	d := f.resolveOf("1", f.a, "acme corp", &acme)
+	f.settleName(t, "1", d)
+	f.loaded(t, f.worker, f.a, f.b)
+	f.load = second
+	job := f.claim(t)
+	require.Equal(t, second, job.LoadID)
+	f.end(t, job, "rvfail", model.FoundryGraphJobFailed)
+	assert.Equal(t, map[string]string{d.ID: "carried/" + model.FoundryReleaseJobFailed}, f.applied(t, d))
+	assert.Empty(t, owedRaw(t, second))
+	assert.Nil(t, f.liveJob(t))
+	carried, err := f.db.ListFoundryCarriedAliases(ctx, second, 10)
+	require.NoError(t, err)
+	assert.Empty(t, carried)
 }

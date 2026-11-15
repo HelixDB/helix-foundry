@@ -111,7 +111,9 @@ const (
 	// FoundryReleaseCarried was saved while another load was current, and
 	// joined this load's list when it became current: no review of this load
 	// was read for it, and the engine has yet to say what became of it, as
-	// with a pending one.
+	// with a pending one. A resolve is carried only while it is an alias
+	// whose asking documents in this load are yet to be owed (store
+	// OweFoundryAskingResends); then it waits as pending.
 	FoundryReleaseCarried FoundryReleaseStatus = "carried"
 	// FoundryReleaseWritten is a claim the engine wrote as a fact. From
 	// contract 4.14.0, on a link that holds one value, a statement dated

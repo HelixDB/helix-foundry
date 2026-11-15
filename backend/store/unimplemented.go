@@ -88,11 +88,11 @@ func (u Unimplemented) ListFoundryLoadResends(context.Context, string) ([]*model
 	u.unimplemented("ListFoundryLoadResends")
 	return nil, nil
 }
-func (u Unimplemented) ListFoundryCarriedAliases(context.Context, string) ([]*model.FoundryReviewDecision, error) {
+func (u Unimplemented) ListFoundryCarriedAliases(context.Context, string, int) ([]*model.FoundryReviewDecision, error) {
 	u.unimplemented("ListFoundryCarriedAliases")
 	return nil, nil
 }
-func (u Unimplemented) OweFoundryAskingResends(context.Context, *model.FoundryGraphJob, string, []string) (bool, error) {
+func (u Unimplemented) OweFoundryAskingResends(context.Context, *model.FoundryGraphJob, string, []string, []string) (bool, error) {
 	u.unimplemented("OweFoundryAskingResends")
 	return false, nil
 }

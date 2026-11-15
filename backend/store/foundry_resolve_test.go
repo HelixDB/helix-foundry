@@ -129,13 +129,13 @@ func TestSettleFoundryResolveAppliesAtOnce(t *testing.T) {
 			Outcome: model.FoundryNameRefused, Reason: model.FoundryNameNotReplayed}}))
 	assert.Equal(t, map[string]string{d.ID: "written"}, f.applied(t, d))
 
-	// Read from a load no longer current: carried to the current one, with
+	// Read from a load no longer current: applied to the current one, with
 	// none of the documents read from the other.
 	elsewhere := f.resolveOf("3", f.b, "helio", nil)
 	_, err = f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, id26("FJ-other"), elsewhere, []string{f.a},
 		&model.FoundryGraphJob{ID: id26("RN-3")})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]string{elsewhere.ID: "carried"}, f.applied(t, elsewhere))
+	assert.Equal(t, map[string]string{elsewhere.ID: "pending"}, f.applied(t, elsewhere))
 	assert.Equal(t, map[string]int{f.b + "/name": 2}, f.owedFor(t), "its document owed again")
 	_, err = f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, f.load, f.held(f.a, 0, readA), nil, &model.FoundryGraphJob{ID: id26("RN-4")})
 	assert.Error(t, err, "a release is not a resolve")
