@@ -76,9 +76,11 @@ test("builds a dashboard from the Assistant's card, which its person runs", asyn
   await dock.getByRole("button", { name: "Send", exact: true }).click();
   // It tried the tile before it proposed it.
   await expect(dock.getByText("Tried a dashboard tile")).toBeVisible();
-  const card = dock.getByRole("region", { name: "Action: Make a dashboard" });
+  const card = dock.getByRole("region", {
+    name: "Action: Make the dashboard “Invoices by status”",
+  });
   await expect(card).toBeVisible();
-  // A new dashboard's workspace is the person's own: no warning.
+  // The person named it: no warning.
   await expect(card.getByText(/Not named by you/)).toHaveCount(0);
   await expect(card).toContainText("“Invoices by status”");
   await card.getByText("Full request", { exact: true }).click();
@@ -420,7 +422,11 @@ test("on a dashboard's page, the Assistant's renames, pins and deletes show at o
     await action.getByRole("button", { name: button, exact: true }).click();
     await expect(action.getByText("Ran", { exact: true })).toBeVisible();
   };
-  await run("Rename it to Quarterly revenue", "Change “Revenue”", "Save");
+  await run(
+    "Rename it to Quarterly revenue",
+    "Change the dashboard “Revenue”",
+    "Save",
+  );
   await expect(
     page.getByRole("heading", { level: 1, name: "Quarterly revenue" }),
   ).toBeVisible();
@@ -431,11 +437,15 @@ test("on a dashboard's page, the Assistant's renames, pins and deletes show at o
   ).toBeVisible();
   await run(
     "Pin this dashboard",
-    "Pin “Quarterly revenue” for everyone",
-    "Apply",
+    "Pin the dashboard “Quarterly revenue” for everyone",
+    "Pin",
   );
   await expect(page.getByRole("main").getByText("Pinned")).toBeVisible();
-  await run("Delete this dashboard", "Delete “Quarterly revenue”", "Delete");
+  await run(
+    "Delete this dashboard",
+    "Delete the dashboard “Quarterly revenue”",
+    "Delete",
+  );
   await expect(page).toHaveURL(/\/dashboards$/);
   await expect(
     page.getByRole("heading", { name: "No dashboards yet" }),

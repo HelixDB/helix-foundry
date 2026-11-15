@@ -383,7 +383,7 @@ test("leaves an action the owner didn't approve on the run's page, for them to r
     main(page).getByText("One action it prepared waits for you:"),
   ).toBeVisible();
   const card = main(page).getByRole("region", {
-    name: /^Action: Load v3 of Customer contracts/,
+    name: /^Action: Load v3 of “Customer contracts”/,
   });
   await card.getByRole("button", { name: "Load", exact: true }).click();
   await expect(card.getByText("Ran", { exact: true })).toBeVisible();
