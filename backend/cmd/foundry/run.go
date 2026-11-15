@@ -217,7 +217,16 @@ type front struct {
 	api *api.Service
 	// sessions open the owner's tools for the Assistant, in this process.
 	sessions *local.AgentSessions
+	// turns are the helpers' side of the Assistant's turns, nil while it is
+	// off; hosts the install's helpers.
+	turns  *foundryagent.Hosts
+	hosts  *directory.Store
+	logger *slog.Logger
 }
+
+// sweepUnclaimedEvery is how often the front end fails helpers' turns that
+// no helper took (agent.Hosts.EndUnclaimed).
+const sweepUnclaimedEvery = 30 * time.Second
 
 // newFront builds the front end over the install's directory and Foundry's
 // store, its objects kept in the install's bucket (foundry.sync.data_bucket),
@@ -236,8 +245,9 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 		Name: "foundry", Logger: logger.With("service", "foundry"), Health: probes,
 		GRPC: endpoint.GRPC{Listen: cfg.Local.Listen.GRPC, MaxRecvMsgMB: 16}, HTTP: endpoint.HTTP{Listen: cfg.Local.Listen.REST},
 		Interceptor: auth, BuildGateway: true,
-		// local/compose.mcp.yaml publishes REST on the host for agents; the probes
-		// stay on the health listener (serve), which isn't.
+		// local/compose.yaml publishes REST on this machine's loopback for
+		// agents and the Assistant's helper; the probes stay on the health
+		// listener (serve), which isn't published.
 		NoProbes: true,
 	})
 	if err != nil {
@@ -254,12 +264,13 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 		Databases: dbs,
 		Graph:     local.GraphReader{Directory: directorySvc}, People: local.People{Directory: dir},
 		LocalAI: detector, AgentSessions: sessions, AgentHosts: dir,
+		AgentHostURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Local.MCPPort),
 	})
 	if err != nil {
 		_ = ep.GracefulStop(ctx)
 		return nil, err
 	}
-	f := &front{ep: ep, api: foundrySvc, sessions: sessions}
+	f := &front{ep: ep, api: foundrySvc, sessions: sessions, hosts: dir, logger: logger.With("component", "agent")}
 	directoryv1.RegisterDirectoryServiceServer(ep.GRPC, directorySvc)
 	foundrySvc.Register(ep.GRPC)
 	for _, register := range []func(context.Context, *runtime.ServeMux, *grpc.ClientConn) error{
@@ -280,6 +291,7 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 			return nil, err
 		}
 		turns = &foundryagent.Hosts{DB: st, Sessions: sessions, Keys: keys, Databases: dbs, Cfg: fcfg.Foundry.Agent, Now: time.Now}
+		f.turns = turns
 	}
 	integrations := local.IntegrationHandler(auth, dir, ep.GatewayConn, fcfg.Foundry.Documents, cfg.Local.SiteOrigin, turns, logger.With("component", "integration"))
 	ep.RegisterHTTPHandler("/mcp", integrations)
@@ -290,7 +302,30 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 
 func (f *front) Name() string { return "foundry" }
 
-func (f *front) Start(ctx context.Context) error { return f.ep.Serve(ctx) }
+func (f *front) Start(ctx context.Context) error {
+	if f.turns != nil {
+		go f.sweepUnclaimed(ctx)
+	}
+	return f.ep.Serve(ctx)
+}
+
+// sweepUnclaimed fails, every sweepUnclaimedEvery until ctx ends, the
+// helpers' turns that waited too long while no helper that runs them is
+// online, so their threads don't wait for ever.
+func (f *front) sweepUnclaimed(ctx context.Context) {
+	tick := time.NewTicker(sweepUnclaimedEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		if err := f.turns.EndUnclaimed(ctx, f.hosts); err != nil && ctx.Err() == nil {
+			f.logger.Warn("agent: end unclaimed helper turns", "err", err)
+		}
+	}
+}
 
 func (f *front) Stop(ctx context.Context) error {
 	return errors.Join(f.ep.GracefulStop(ctx), f.api.Close())

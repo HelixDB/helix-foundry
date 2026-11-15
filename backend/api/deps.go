@@ -54,4 +54,8 @@ type Deps struct {
 	// where every thread runs on the worker and the runtime routes are
 	// refused.
 	AgentHosts foundryagent.HostRegistry
+	// AgentHostURL is where a helper on the owner's machine reaches the
+	// install's integration listener, when not at the helper's default
+	// (agent.DefaultHelperFoundry): the pair command names it.
+	AgentHostURL string
 }

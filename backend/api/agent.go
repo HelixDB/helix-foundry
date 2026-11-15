@@ -354,6 +354,11 @@ func (s *Service) ExecuteFoundryAgentAction(ctx context.Context, req *foundryv1.
 		ID: id.New(), WorkspaceID: ws, ThreadID: a.ThreadID, UserID: userID, Kind: foundrymodel.FoundryAgentTurnActionResult, Input: a.ID,
 		MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
 	}
+	if !s.agentContinues(ctx, ws, a.ThreadID) {
+		// No helper would take it: the click ends, and the thread waits for
+		// the person's next message.
+		continuation = nil
+	}
 	first, err := foundryagent.MarshalEvent(foundryagent.ActionResult{ActionID: a.ID, Operation: a.Operation, Status: string(end.Status), Result: end.Result, Error: end.Error})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "write the action's result: %v", err)
@@ -366,6 +371,9 @@ func (s *Service) ExecuteFoundryAgentAction(ctx context.Context, req *foundryv1.
 		return nil, status.Errorf(codes.Internal, "read the action: %v", err)
 	}
 	out := &foundryv1.FoundryAgentActionResponse{Action: agentActionToProto(done, time.Now())}
+	if continuation == nil {
+		return out, nil
+	}
 	switch queued, err := s.deps.DB.GetFoundryAgentTurn(ctx, ws, continuation.ID); {
 	case errors.Is(err, foundrystore.ErrNotFound):
 		// Another turn went live first: the click ended with no continuation.
@@ -375,6 +383,22 @@ func (s *Service) ExecuteFoundryAgentAction(ctx context.Context, req *foundryv1.
 		out.Continuation = agentTurnToProto(queued)
 	}
 	return out, nil
+}
+
+// agentContinues reports whether a click's thread goes on from it: always
+// on Foundry's worker; on a helper's runtime only while a helper that runs
+// it is online, since a turn queued for none (the helper just revoked, or
+// stopped) would only wait. A failed read goes on, as before helpers.
+func (s *Service) agentContinues(ctx context.Context, workspaceID, threadID string) bool {
+	thread, err := s.deps.DB.GetFoundryAgentThread(ctx, workspaceID, threadID)
+	if err != nil || !thread.Runtime.Subscription() {
+		return true
+	}
+	if s.deps.AgentHosts == nil {
+		return false
+	}
+	online, err := s.deps.AgentHosts.AgentRuntimeOnline(ctx, thread.Runtime)
+	return err != nil || online
 }
 
 // agentRunMargin is how long before foundrymodel.FoundryAgentExecutingFor a

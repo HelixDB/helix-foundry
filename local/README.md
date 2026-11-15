@@ -163,6 +163,8 @@ The site must stay on `http://localhost:3000` and the store on `http://localhost
 - **The site:** the host side of its port, `FOUNDRY_ORIGIN`, `HELIX_LOCAL__SITE_ORIGIN` under foundry's `environment` (the links agents are given start there), and the store's `-s3.allowedOrigins`, which lets the site's page upload.
 - **The store:** the `pod`'s port, the store's `-s3.port` and its health check's `nc -z 127.0.0.1 <port>`, and `HELIX_LOCAL__S3__ENDPOINT: http://localhost:<port>` under foundry's `environment` (its config is in the image; `HELIX_*` variables override it).
 
+Foundry's MCP, HTTP Ask and the Assistant's helper reach it on `127.0.0.1:8081`, published by default. If `docker compose up` fails because 8081 is taken here (`port is already allocated`, `address already in use`), set `FOUNDRY_MCP_PORT` in `local/.env` to a free port and run it again: the helper's pair command then names that port, and an agent's setup takes it in place of 8081.
+
 ## Connect your agent
 
 These need `foundry` 0.1.2 and `foundry-site` 0.1.3 or newer, the images `docker compose up` pulls: older ones have no MCP and no **Set up with your agent**. `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 where the MCP is served, and 404 where it isn't: don't run an image that prints 404 with this compose file, which publishes that port, where such an image serves its probes and metrics without a token.
@@ -196,7 +198,9 @@ Foundry's Assistant runs on the install's AI provider. It can instead run on the
 2. `npx -y @helixdb/foundry-agent-host@0.1.0 install` keeps it running, now and at every login (a launchd agent on macOS, a systemd user unit on Linux), or `… run` runs it in a terminal. `… doctor` says what stands in the way.
 3. New threads of that workspace run on Claude Code from then on; a thread keeps where it started. While no helper has called Foundry for 30 seconds, the Assistant says so instead of sending.
 
-The helper reaches Foundry at `http://127.0.0.1:8081` (`--foundry` on `pair` for another port). Revoke it in Settings › AI models: its token, and those of the turns it runs, stop at once. Codex isn't offered yet: [the helper's README](../agent-host/README.md#codex) says why. Your plan's terms decide whether you may use your subscription this way.
+The helper reaches Foundry at `http://127.0.0.1:8081`, or the port `FOUNDRY_MCP_PORT` sets, which the pair command Foundry shows names (`--foundry`). Revoke it in Settings › AI models: its token, and those of the turns it runs, stop at once, and it deletes the Claude Code sessions it kept.
+
+Claude Code keeps each thread's session on this computer, under `~/.claude/projects/` (in a folder named for the thread's directory in `~/.local/state/helix-foundry/agent-host/threads/`), and it holds what Foundry's tools answered in that thread: graph reads, document text, reviews. The helper deletes a thread's session once the thread is deleted in Foundry (it asks as it starts, then hourly), and every one when it is revoked. Codex isn't offered yet: [the helper's README](../agent-host/README.md#codex) says why. Your plan's terms decide whether you may use your subscription this way.
 
 ## Ask over HTTP
 

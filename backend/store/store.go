@@ -446,6 +446,9 @@ type Store interface {
 	// SetFoundryAgentThreadSession keeps the helper's CLI session that the
 	// turn's thread's next turn resumes, under the turn's lease.
 	SetFoundryAgentThreadSession(ctx context.Context, turnID, workerID, sessionID string) error
+	// EndUnclaimedFoundryAgentTurns fails a helper runtime's turns that have
+	// waited for a claim since before: how many.
+	EndUnclaimedFoundryAgentTurns(ctx context.Context, runtime model.FoundryAgentRuntime, before time.Time, why string) (int64, error)
 	RecordFoundryAgentAction(ctx context.Context, workerID string, a *model.FoundryAgentAction, maxPending int,
 		card func(*model.FoundryAgentAction) (json.RawMessage, error)) (*model.FoundryAgentAction, error)
 	ClaimFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string) (*model.FoundryAgentAction, error)

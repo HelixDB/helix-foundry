@@ -29,10 +29,18 @@ const macID = "01JAAAAAAAAAAAAAAAAAAAAAAA"
 
 func newAgentHosts() *agentHosts {
 	return &agentHosts{runtimes: map[string]foundrymodel.FoundryAgentRuntime{}, hosts: []foundryagent.Host{
-		{ID: macID, Name: "Ada's Mac", Runtimes: []foundrymodel.FoundryAgentRuntime{foundrymodel.FoundryAgentRuntimeClaudeCode}, LastSeenAt: time.Now()},
+		{ID: macID, Name: "Ada's Mac", Runtimes: []foundrymodel.FoundryAgentRuntime{foundrymodel.FoundryAgentRuntimeClaudeCode}, LastSeenAt: ago(0)},
 		{ID: "01JBBBBBBBBBBBBBBBBBBBBBBB", Name: "Old laptop", Runtimes: []foundrymodel.FoundryAgentRuntime{foundrymodel.FoundryAgentRuntimeCodex},
-			LastSeenAt: time.Now().Add(-time.Hour)},
+			LastSeenAt: ago(time.Hour)},
+		// Paired a moment ago, and not started yet.
+		{ID: "01JDDDDDDDDDDDDDDDDDDDDDDD", Name: "New laptop", Runtimes: []foundrymodel.FoundryAgentRuntime{foundrymodel.FoundryAgentRuntimeCodex}},
 	}}
+}
+
+// ago is a time d before now.
+func ago(d time.Duration) *time.Time {
+	t := time.Now().Add(-d)
+	return &t
 }
 
 func (h *agentHosts) AgentRuntime(_ context.Context, ws string) (foundrymodel.FoundryAgentRuntime, error) {
@@ -117,10 +125,12 @@ func TestGetAndUpdateTheRuntime(t *testing.T) {
 	r := got.GetRuntime()
 	assert.Equal(t, "api", r.GetRuntime())
 	assert.Equal(t, []string{"claude_code"}, r.GetOnline(), "only an online helper's runtimes")
-	require.Len(t, r.GetHosts(), 2)
+	require.Len(t, r.GetHosts(), 3)
 	assert.True(t, r.GetHosts()[0].GetOnline())
 	assert.False(t, r.GetHosts()[1].GetOnline())
 	assert.Equal(t, []string{"codex"}, r.GetHosts()[1].GetRuntimes())
+	assert.False(t, r.GetHosts()[2].GetOnline(), "a helper that only paired isn't running")
+	assert.Nil(t, r.GetHosts()[2].GetLastSeenAt(), "nor was it ever seen")
 
 	_, err = f.s.UpdateFoundryAgentRuntime(personCtx, &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: "ws-1", Runtime: "gemini"})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -138,8 +148,16 @@ func TestPairAndRevokeAHelper(t *testing.T) {
 	paired, err := f.s.CreateFoundryAgentHostPairing(personCtx, &foundryv1.CreateFoundryAgentHostPairingRequest{WorkspaceId: "ws-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "hxp_code", paired.GetCode())
-	assert.Equal(t, foundryagent.PairCommand("hxp_code"), paired.GetCommand())
+	assert.Equal(t, "npx -y @helixdb/foundry-agent-host@0.1.0 pair hxp_code", paired.GetCommand(), "a helper's default port needs no --foundry")
+	f.s.deps.AgentHostURL = foundryagent.DefaultHelperFoundry
+	paired, err = f.s.CreateFoundryAgentHostPairing(personCtx, &foundryv1.CreateFoundryAgentHostPairingRequest{WorkspaceId: "ws-1"})
+	require.NoError(t, err)
 	assert.Equal(t, "npx -y @helixdb/foundry-agent-host@0.1.0 pair hxp_code", paired.GetCommand())
+	// FOUNDRY_MCP_PORT moved the listener: the command says where.
+	f.s.deps.AgentHostURL = "http://127.0.0.1:8090"
+	paired, err = f.s.CreateFoundryAgentHostPairing(personCtx, &foundryv1.CreateFoundryAgentHostPairingRequest{WorkspaceId: "ws-1"})
+	require.NoError(t, err)
+	assert.Equal(t, "npx -y @helixdb/foundry-agent-host@0.1.0 pair hxp_code --foundry http://127.0.0.1:8090", paired.GetCommand())
 
 	_, err = f.s.RevokeFoundryAgentHost(personCtx, &foundryv1.RevokeFoundryAgentHostRequest{WorkspaceId: "ws-1", Id: "../x"})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))

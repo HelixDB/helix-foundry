@@ -109,7 +109,7 @@ func (s *Service) CreateFoundryAgentHostPairing(ctx context.Context, req *foundr
 		return nil, status.Errorf(codes.Internal, "make a pairing code: %v", err)
 	}
 	return &foundryv1.FoundryAgentHostPairingResponse{Code: code, ExpiresAt: timestamppb.New(expires),
-		Command: foundryagent.PairCommand(code)}, nil
+		Command: foundryagent.PairCommand(code, s.deps.AgentHostURL)}, nil
 }
 
 // RevokeFoundryAgentHost unpairs a helper.
@@ -170,7 +170,10 @@ func (s *Service) agentThreadRuntime(ctx context.Context, workspaceID, userID, t
 
 func agentHostToProto(h foundryagent.Host, now time.Time) *foundryv1.FoundryAgentHost {
 	out := &foundryv1.FoundryAgentHost{Id: h.ID, Name: h.Name, Version: h.Version, Platform: h.Platform, Runtimes: []string{},
-		CreatedAt: timestamppb.New(h.CreatedAt), LastSeenAt: timestamppb.New(h.LastSeenAt), Online: h.Online(now)}
+		CreatedAt: timestamppb.New(h.CreatedAt), Online: h.Online(now)}
+	if h.LastSeenAt != nil {
+		out.LastSeenAt = timestamppb.New(*h.LastSeenAt)
+	}
 	for _, r := range h.Runtimes {
 		out.Runtimes = append(out.Runtimes, string(r))
 	}

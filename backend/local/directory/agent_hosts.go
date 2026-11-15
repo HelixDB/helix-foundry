@@ -14,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/helixdb/helix-foundry/backend/agent"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
@@ -112,10 +114,18 @@ func runtimeSet(runtimes []model.FoundryAgentRuntime) (string, error) {
 	return strings.Join(names, ","), nil
 }
 
-// validLabel is a helper's name, version or platform: printable, bounded.
-func validLabel(s string, maxBytes int) bool {
-	return len(s) <= maxBytes && !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
+// validHostName is a helper's name, as the owner's settings show it: 1 to
+// maxHostName bytes of UTF-8 (a machine's name may be any language's), with
+// no control character (C0, DEL or C1) and no bidi control, which could
+// make one row read as another.
+func validHostName(s string) bool {
+	return strings.TrimSpace(s) != "" && len(s) <= maxHostName && utf8.ValidString(s) && !strings.ContainsFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)
+	})
 }
+
+// validLabel is a helper's version or platform: printable ASCII, bounded.
+func validLabel(s string) bool { return len(s) <= maxHostLabel && agent.PrintableASCII(s) }
 
 const agentHostColumns = `id, name, runtimes, accounts, version, platform, created_at, last_seen_at, revoked_at`
 
@@ -123,8 +133,8 @@ func scanAgentHost(row scanner) (agent.Host, error) {
 	var h agent.Host
 	var runtimes string
 	var accounts []byte
-	var revoked sql.NullTime
-	if err := row.Scan(&h.ID, &h.Name, &runtimes, &accounts, &h.Version, &h.Platform, &h.CreatedAt, &h.LastSeenAt, &revoked); err != nil {
+	var seen, revoked sql.NullTime
+	if err := row.Scan(&h.ID, &h.Name, &runtimes, &accounts, &h.Version, &h.Platform, &h.CreatedAt, &seen, &revoked); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return agent.Host{}, store.ErrNotFound
 		}
@@ -137,6 +147,9 @@ func scanAgentHost(row scanner) (agent.Host, error) {
 		if err := json.Unmarshal(accounts, &h.Accounts); err != nil {
 			return agent.Host{}, fmt.Errorf("helper %s's accounts: %w", h.ID, err)
 		}
+	}
+	if seen.Valid {
+		h.LastSeenAt = &seen.Time
 	}
 	if revoked.Valid {
 		h.RevokedAt = &revoked.Time
@@ -169,8 +182,9 @@ func (s *Store) PairAgentHost(ctx context.Context, code string, h agent.Host) (a
 	switch {
 	case err != nil:
 		return agent.Host{}, "", err
-	case strings.TrimSpace(h.Name) == "" || !validLabel(h.Name, maxHostName) || !validLabel(h.Version, maxHostLabel) || !validLabel(h.Platform, maxHostLabel):
-		return agent.Host{}, "", fmt.Errorf("%w: its name is 1 to %d bytes, its version and platform at most %d, printable", ErrInvalidAgentHost, maxHostName, maxHostLabel)
+	case !validHostName(h.Name) || !validLabel(h.Version) || !validLabel(h.Platform):
+		return agent.Host{}, "", fmt.Errorf("%w: its name is 1 to %d bytes of text without control characters, its version and platform at most %d of printable ASCII",
+			ErrInvalidAgentHost, maxHostName, maxHostLabel)
 	case !strings.HasPrefix(code, PairingPrefix):
 		return agent.Host{}, "", store.ErrNotFound
 	}
@@ -189,8 +203,10 @@ func (s *Store) PairAgentHost(ctx context.Context, code string, h agent.Host) (a
 		if n, err := res.RowsAffected(); err != nil || n == 0 {
 			return cmp.Or(err, store.ErrNotFound)
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO foundry_local_agent_hosts (id, name, token_hash, runtimes, version, platform, created_at, last_seen_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, h.ID, strings.TrimSpace(h.Name), tokenHash(token), runtimes, h.Version, h.Platform, now, now)
+		// Not seen yet: pairing starts nothing, and the helper is online once
+		// it runs (its hello, or a claim).
+		_, err = tx.ExecContext(ctx, `INSERT INTO foundry_local_agent_hosts (id, name, token_hash, runtimes, version, platform, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)`, h.ID, strings.TrimSpace(h.Name), tokenHash(token), runtimes, h.Version, h.Platform, now)
 		return err
 	})
 	if err != nil {
@@ -223,8 +239,8 @@ func (s *Store) SeeAgentHost(ctx context.Context, id string, runtimes []model.Fo
 	if err != nil {
 		return err
 	}
-	if !validLabel(version, maxHostLabel) {
-		return fmt.Errorf("%w: its version is at most %d printable bytes", ErrInvalidAgentHost, maxHostLabel)
+	if !validLabel(version) {
+		return fmt.Errorf("%w: its version is at most %d bytes of printable ASCII", ErrInvalidAgentHost, maxHostLabel)
 	}
 	if err := agent.ValidHostAccounts(accounts, runtimes); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidAgentHost, err)
@@ -321,7 +337,8 @@ ON DUPLICATE KEY UPDATE runtime=VALUES(runtime)`, workspaceID, string(runtime))
 }
 
 // CreateAgentTurnToken mints the hxr_ token of a turn a live helper claimed,
-// under its claim's lease owner, working until expires.
+// under its claim's lease owner, working until expires. A helper revoked
+// meanwhile gets none: ErrNotFound.
 func (s *Store) CreateAgentTurnToken(ctx context.Context, t AgentTurnToken) (string, error) {
 	if t.HostID == "" || t.TurnID == "" || t.WorkspaceID == "" || t.LeaseOwner == "" || t.ExpiresAt.IsZero() || t.Deadline.IsZero() {
 		return "", fmt.Errorf("a turn token names its helper, turn, workspace, claim, expiry and deadline")
@@ -331,10 +348,15 @@ func (s *Store) CreateAgentTurnToken(ctx context.Context, t AgentTurnToken) (str
 		return "", err
 	}
 	now := time.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_local_agent_turn_tokens
-  (token_hash, host_id, turn_id, workspace_id, lease_owner, expires_at, deadline) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		tokenHash(token), t.HostID, t.TurnID, t.WorkspaceID, t.LeaseOwner, t.ExpiresAt.UTC(), t.Deadline.UTC()); err != nil {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO foundry_local_agent_turn_tokens
+  (token_hash, host_id, turn_id, workspace_id, lease_owner, expires_at, deadline)
+SELECT ?, id, ?, ?, ?, ?, ? FROM foundry_local_agent_hosts WHERE id=? AND revoked_at IS NULL`,
+		tokenHash(token), t.TurnID, t.WorkspaceID, t.LeaseOwner, t.ExpiresAt.UTC(), t.Deadline.UTC(), t.HostID)
+	if err != nil {
 		return "", err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return "", cmp.Or(err, store.ErrNotFound)
 	}
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM foundry_local_agent_turn_tokens WHERE expires_at < ?`, now.Add(-time.Hour))
 	return token, nil
@@ -362,12 +384,13 @@ FROM foundry_local_agent_turn_tokens t JOIN foundry_local_agent_hosts h ON h.id 
 WHERE t.token_hash=? AND t.expires_at > ?`, tokenHash(token), time.Now().UTC()))
 }
 
-// AgentTurnClaim is the live claim of turnID that the helper hostID holds:
-// its newest token's row. ErrNotFound when it holds none.
-func (s *Store) AgentTurnClaim(ctx context.Context, hostID, turnID string) (AgentTurnToken, error) {
+// AgentTurnClaim is the live claim the helper hostID holds under leaseOwner:
+// its token's row. ErrNotFound when it holds none (its lease ran out, or
+// its turn ended).
+func (s *Store) AgentTurnClaim(ctx context.Context, hostID, leaseOwner string) (AgentTurnToken, error) {
 	return scanAgentTurnToken(s.db.QueryRowContext(ctx, `SELECT `+agentTurnTokenColumns+`
 FROM foundry_local_agent_turn_tokens t JOIN foundry_local_agent_hosts h ON h.id = t.host_id AND h.revoked_at IS NULL
-WHERE t.host_id=? AND t.turn_id=? AND t.expires_at > ? ORDER BY t.expires_at DESC LIMIT 1`, hostID, turnID, time.Now().UTC()))
+WHERE t.host_id=? AND t.lease_owner=? AND t.expires_at > ? LIMIT 1`, hostID, leaseOwner, time.Now().UTC()))
 }
 
 // ExtendAgentTurnTokens moves the expiry of a claim's tokens with its lease.

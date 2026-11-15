@@ -574,6 +574,25 @@ SET h.runtime_session_id=? WHERE t.id=?`, nullString(sessionID), turnID)
 	})
 }
 
+// EndUnclaimedFoundryAgentTurns fails runtime's turns that waited for a
+// claim since before, with why: queued and due since then, or running under
+// a lease that ran out then. Only a helper's runtime: Foundry's worker
+// claims its own. A reservation is charged as any end charges it (a
+// helper's turns reserve nothing). It returns how many it ended.
+func (s *mysqlDB) EndUnclaimedFoundryAgentTurns(ctx context.Context, runtime model.FoundryAgentRuntime, before time.Time, why string) (int64, error) {
+	if !runtime.Subscription() || why == "" {
+		return 0, fmt.Errorf("end unclaimed foundry agent turns: a helper's runtime, and why")
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE foundry_agent_turns
+SET status='failed', error=?, lease_owner=NULL, lease_until=NULL, usd_micros=usd_micros+reserved_micros, reserved_micros=0, finished_at=NOW(6)
+WHERE runtime=? AND ((status='queued' AND next_attempt_at < ?) OR (status='running' AND lease_until < ?))`,
+		why, string(runtime), before.UTC(), before.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // RecordFoundryAgentAction stores a, prepared by the turn workerID holds, and
 // the event card makes of it, together. The same payload prepared again in
 // the turn (a replayed attempt) returns the action already stored, and no

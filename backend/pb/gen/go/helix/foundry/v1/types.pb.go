@@ -14015,9 +14015,11 @@ type FoundryAgentHost struct {
 	// What it offers, as of its last call: claude_code, codex.
 	Runtimes []string `protobuf:"bytes,3,rep,name=runtimes,proto3" json:"runtimes,omitempty"`
 	// The helper's version and platform (darwin-arm64, linux-x64, ...).
-	Version    string                 `protobuf:"bytes,4,opt,name=version,proto3" json:"version,omitempty"`
-	Platform   string                 `protobuf:"bytes,5,opt,name=platform,proto3" json:"platform,omitempty"`
-	CreatedAt  *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Version   string                 `protobuf:"bytes,4,opt,name=version,proto3" json:"version,omitempty"`
+	Platform  string                 `protobuf:"bytes,5,opt,name=platform,proto3" json:"platform,omitempty"`
+	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// Its last call; unset until its first after pairing, which starts
+	// nothing.
 	LastSeenAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=last_seen_at,json=lastSeenAt,proto3" json:"last_seen_at,omitempty"`
 	// Seen within 30 seconds.
 	Online bool `protobuf:"varint,8,opt,name=online,proto3" json:"online,omitempty"`

@@ -216,6 +216,9 @@ func (s *agentStore) FinishFoundryAgentAction(_ context.Context, id string, end 
 		a.Error = &end.Error
 	}
 	s.finished = append(s.finished, end)
+	if next == nil {
+		return nil
+	}
 	queued := *next
 	queued.Status, queued.LastSeq = foundrymodel.FoundryAgentTurnQueued, 1
 	s.turns[next.ID] = &queued
@@ -604,6 +607,36 @@ func TestExecuteFoundryAgentAction(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "failed", resp.GetAction().GetStatus())
 		assert.Zero(t, f.loads.calls)
+	})
+	t.Run("a helper's thread goes on only while a helper runs it", func(t *testing.T) {
+		f, hosts := withHosts(t)
+		a := f.prepared(t, "act-1")
+		f.store.threads["th-1"].Runtime = foundrymodel.FoundryAgentRuntimeCodex
+		resp, err := execute(f, personCtx, "act-1", a.PayloadHash)
+		require.NoError(t, err)
+		assert.Equal(t, "succeeded", resp.GetAction().GetStatus(), "the click runs")
+		assert.Nil(t, resp.GetContinuation(), "no helper runs Codex: a turn queued for none would only wait")
+
+		b := f.prepared(t, "act-2")
+		f.store.threads["th-1"].Runtime = foundrymodel.FoundryAgentRuntimeClaudeCode
+		resp, err = execute(f, personCtx, "act-2", b.PayloadHash)
+		require.NoError(t, err)
+		assert.NotNil(t, resp.GetContinuation(), "Ada's Mac runs Claude Code")
+
+		hosts.hosts = nil
+		c := f.prepared(t, "act-3")
+		f.store.threads["th-1"].Runtime = foundrymodel.FoundryAgentRuntimeClaudeCode
+		resp, err = execute(f, personCtx, "act-3", c.PayloadHash)
+		require.NoError(t, err)
+		assert.Nil(t, resp.GetContinuation(), "a helper just revoked runs nothing more")
+	})
+	t.Run("a helper's thread on a host without helpers ends with its click", func(t *testing.T) {
+		f := newAgentFixture(t)
+		a := f.prepared(t, "act-1")
+		f.store.threads["th-1"].Runtime = foundrymodel.FoundryAgentRuntimeClaudeCode
+		resp, err := execute(f, personCtx, "act-1", a.PayloadHash)
+		require.NoError(t, err)
+		assert.Nil(t, resp.GetContinuation())
 	})
 	t.Run("a host without sessions refuses", func(t *testing.T) {
 		f := newAgentFixture(t)

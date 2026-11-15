@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/agent"
+	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/local/directory"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -31,12 +34,19 @@ import (
 //
 // The routes, JSON in and out, each with the helper's hxh_ bearer but pair:
 //
-//	POST /agent-host/pair                {code, name, runtimes, version, platform} → {host_id, token}
-//	POST /agent-host/hello               {runtimes, version, accounts} → {host_id, name}
-//	POST /agent-host/claim               {runtimes, version, accounts} → {turn} within 25 s, or 204
-//	POST /agent-host/turns/{id}/renew    {} → {lease_expires_at}
-//	POST /agent-host/turns/{id}/text     {step, text, final} → 204
-//	POST /agent-host/turns/{id}/finish   {end, reason, failure, detail, steps, session_id} → 204
+//	POST /agent-host/pair                 {code, name, runtimes, version, platform} → {host_id, token}
+//	POST /agent-host/hello                {runtimes, version, accounts} → {host_id, name}
+//	POST /agent-host/claim                {runtimes, version, accounts} → {turn} within 25 s, or 204
+//	POST /agent-host/claims/{claim}/renew  {} → {lease_expires_at}
+//	POST /agent-host/claims/{claim}/text   {step, text, final} → 204
+//	POST /agent-host/claims/{claim}/finish {end, reason, failure, detail, steps, session_id} → 204
+//	POST /agent-host/threads/gone         {threads: [{workspace_id, thread_id}]} → {gone: [thread_id]}
+//
+// A claimed turn names its claim (claim_id): renew, text and finish act on
+// that claim alone, so a run whose lease lapsed, and whose turn another of
+// the helper's claims took again, can't write to it. threads/gone says which
+// of the threads a helper keeps a CLI session of were deleted (or never
+// were), so it deletes those sessions: at most 100 a call.
 //
 // accounts says what each runtime's CLI is signed in to, as the helper last
 // found it ([{runtime, state, subscription}], agent.HostAccount): the owner
@@ -56,7 +66,16 @@ const (
 	// maxHostRequestBytes bounds a helper's request: a step's text is at most
 	// 64 KiB, which JSON may escape to six times its size.
 	maxHostRequestBytes = 512 << 10
+	// maxGoneThreads bounds the threads one threads/gone asks after.
+	maxGoneThreads = 100
 )
+
+// claimIDPattern is a claim's id: 8 random bytes in hex.
+var claimIDPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+// leaseOwner is the lease owner of a helper's claim: the helper's id and
+// the claim's, so no two claims share one.
+func leaseOwner(hostID, claimID string) string { return "agent-host:" + hostID + ":" + claimID }
 
 // agentHostHandler serves the helpers.
 type agentHostHandler struct {
@@ -71,9 +90,10 @@ func newAgentHostHandler(dir *directory.Store, turns *agent.Hosts, logger *slog.
 	h.mux.HandleFunc("POST /agent-host/pair", h.pair)
 	h.mux.HandleFunc("POST /agent-host/hello", h.withHost(h.hello))
 	h.mux.HandleFunc("POST /agent-host/claim", h.withHost(h.claim))
-	h.mux.HandleFunc("POST /agent-host/turns/{id}/renew", h.withClaim(h.renew))
-	h.mux.HandleFunc("POST /agent-host/turns/{id}/text", h.withClaim(h.text))
-	h.mux.HandleFunc("POST /agent-host/turns/{id}/finish", h.withClaim(h.finish))
+	h.mux.HandleFunc("POST /agent-host/claims/{claim}/renew", h.withClaim(h.renew))
+	h.mux.HandleFunc("POST /agent-host/claims/{claim}/text", h.withClaim(h.text))
+	h.mux.HandleFunc("POST /agent-host/claims/{claim}/finish", h.withClaim(h.finish))
+	h.mux.HandleFunc("POST /agent-host/threads/gone", h.withHost(h.gone))
 	return h
 }
 
@@ -214,10 +234,15 @@ func (h *agentHostHandler) withHost(next func(http.ResponseWriter, *http.Request
 	}
 }
 
-// withClaim runs next for the live claim the helper holds of the path's turn.
+// withClaim runs next for the path's claim, while the helper holds it.
 func (h *agentHostHandler) withClaim(next func(http.ResponseWriter, *http.Request, directory.AgentTurnToken)) http.HandlerFunc {
 	return h.withHost(func(w http.ResponseWriter, r *http.Request, host agent.Host) {
-		claim, err := h.dir.AgentTurnClaim(r.Context(), host.ID, r.PathValue("id"))
+		id := r.PathValue("claim")
+		if !claimIDPattern.MatchString(id) {
+			h.refuse(w, invalid("a claim's id is the claim_id its turn came with"))
+			return
+		}
+		claim, err := h.dir.AgentTurnClaim(r.Context(), host.ID, leaseOwner(host.ID, id))
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			h.refuse(w, errTurnLost)
@@ -273,7 +298,9 @@ func (h *agentHostHandler) hello(w http.ResponseWriter, r *http.Request, host ag
 
 // claimedTurn is a claimed turn as its helper is told it.
 type claimedTurn struct {
-	ID          string    `json:"id"`
+	ID string `json:"id"`
+	// ClaimID names this claim of it in renew, text and finish.
+	ClaimID     string    `json:"claim_id"`
 	WorkspaceID string    `json:"workspace_id"`
 	ThreadID    string    `json:"thread_id"`
 	Runtime     string    `json:"runtime"`
@@ -290,37 +317,50 @@ type claimedTurn struct {
 }
 
 // claim waits up to claimWait for a due turn of a runtime the helper offers,
-// leases it to a claim of its own, and mints the claim's hxr_ token.
+// leases it to a claim of its own, and mints the claim's hxr_ token. The
+// helper is looked up again before each look, so one revoked while it
+// waits is refused, never handed a turn. The wait bounds only the waiting:
+// a look that found a turn opens it and answers whatever the time.
 func (h *agentHostHandler) claim(w http.ResponseWriter, r *http.Request, host agent.Host) {
 	runtimes, ok := h.seen(w, r, host)
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), claimWait)
-	defer cancel()
+	// A turn's claim, once made, is the helper's to hear of: it isn't cut
+	// off with the wait, nor by a helper that hung up (its lease runs out).
+	ctx := context.WithoutCancel(r.Context())
+	wait := time.NewTimer(claimWait)
+	defer wait.Stop()
 	ticker := time.NewTicker(claimPoll)
 	defer ticker.Stop()
 	for {
+		switch live, err := h.dir.AgentHost(ctx, host.ID); {
+		case err != nil:
+			h.failed(w, r, err)
+			return
+		case live.RevokedAt != nil:
+			h.refuse(w, errHostUnauthenticated)
+			return
+		}
 		for _, runtime := range runtimes {
-			workerID := "agent-host:" + host.ID + ":" + randomHex(4)
-			turn, err := h.turns.Claim(ctx, runtime, workerID)
+			claimID := randomHex(8)
+			turn, err := h.turns.Claim(ctx, runtime, leaseOwner(host.ID, claimID))
 			if err != nil {
-				if ctx.Err() != nil {
-					break
-				}
 				h.failed(w, r, err)
 				return
 			}
 			if turn == nil {
 				continue
 			}
-			h.claimed(w, r, host, runtime, workerID, turn)
+			h.claimed(w, r, host, runtime, claimID, turn)
 			return
 		}
 		select {
-		case <-ctx.Done():
+		case <-r.Context().Done():
+			return
+		case <-wait.C:
 			// Seen again as it leaves: it calls again at once.
-			_ = h.dir.TouchAgentHost(context.WithoutCancel(r.Context()), host.ID)
+			_ = h.dir.TouchAgentHost(ctx, host.ID)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		case <-ticker.C:
@@ -328,21 +368,30 @@ func (h *agentHostHandler) claim(w http.ResponseWriter, r *http.Request, host ag
 	}
 }
 
-// claimed mints the claim's token and tells the helper its turn. A turn
-// whose token can't be minted is left to its lease, which a claim takes
-// again.
-func (h *agentHostHandler) claimed(w http.ResponseWriter, r *http.Request, host agent.Host, runtime model.FoundryAgentRuntime, workerID string, turn *agent.HostTurn) {
+// claimed mints the claim's token and tells the helper its turn. A helper
+// revoked since it was looked up gets no token and isn't told the turn,
+// which goes back unrun (agent.Hosts.Release) for another helper.
+func (h *agentHostHandler) claimed(w http.ResponseWriter, r *http.Request, host agent.Host, runtime model.FoundryAgentRuntime, claimID string,
+	turn *agent.HostTurn) {
 	ctx := context.WithoutCancel(r.Context())
+	workerID := leaseOwner(host.ID, claimID)
 	token, err := h.dir.CreateAgentTurnToken(ctx, directory.AgentTurnToken{
 		HostID: host.ID, TurnID: turn.Turn.ID, WorkspaceID: turn.Turn.WorkspaceID, LeaseOwner: workerID, ExpiresAt: turn.Lease, Deadline: turn.Deadline,
 	})
+	if errors.Is(err, store.ErrNotFound) {
+		if err := h.turns.Release(ctx, turn.Turn.ID, workerID); err != nil && !errors.Is(err, agent.ErrLost) {
+			h.logger.Warn("agent host: give back a revoked helper's turn", "turn", turn.Turn.ID, "err", err)
+		}
+		h.refuse(w, errHostUnauthenticated)
+		return
+	}
 	if err != nil {
 		h.failed(w, r, err)
 		return
 	}
 	h.logger.Info("agent host claimed a turn", "host", host.ID, "turn", turn.Turn.ID, "runtime", runtime, "attempt", turn.Turn.Attempts)
 	writeHost(w, http.StatusOK, map[string]claimedTurn{"turn": {
-		ID: turn.Turn.ID, WorkspaceID: turn.Turn.WorkspaceID, ThreadID: turn.Turn.ThreadID, Runtime: string(runtime), Attempt: turn.Turn.Attempts,
+		ID: turn.Turn.ID, ClaimID: claimID, WorkspaceID: turn.Turn.WorkspaceID, ThreadID: turn.Turn.ThreadID, Runtime: string(runtime), Attempt: turn.Turn.Attempts,
 		Lease: turn.Lease, Deadline: turn.Deadline, MaxSteps: turn.MaxSteps, MCPToken: token,
 		System: turn.System, Prompt: turn.Prompt, Resume: turn.Resume, History: turn.History,
 	}})
@@ -460,6 +509,40 @@ func (h *agentHostHandler) finish(w http.ResponseWriter, r *http.Request, claim 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type goneRequest struct {
+	Threads []struct {
+		WorkspaceID string `json:"workspace_id"`
+		ThreadID    string `json:"thread_id"`
+	} `json:"threads"`
+}
+
+// gone says which of the threads the helper asks after are no one's now
+// (deleted, or never were): the helper deletes the CLI sessions it keeps of
+// them.
+func (h *agentHostHandler) gone(w http.ResponseWriter, r *http.Request, _ agent.Host) {
+	var req goneRequest
+	if err := decode(r, &req); err != nil || len(req.Threads) > maxGoneThreads {
+		h.refuse(w, invalid(fmt.Sprintf("the body is {threads: [{workspace_id, thread_id}]}, at most %d", maxGoneThreads)))
+		return
+	}
+	out := []string{}
+	for _, t := range req.Threads {
+		if !integration.ValidIDs([]string{t.WorkspaceID, t.ThreadID}) {
+			h.refuse(w, invalid("a thread is named by its workspace's id and its own"))
+			return
+		}
+		_, err := h.turns.DB.GetFoundryAgentThread(r.Context(), t.WorkspaceID, t.ThreadID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			out = append(out, t.ThreadID)
+		case err != nil:
+			h.failed(w, r, err)
+			return
+		}
+	}
+	writeHost(w, http.StatusOK, map[string][]string{"gone": out})
 }
 
 // over reports an error that ends a claim's turn for its helper: its lease

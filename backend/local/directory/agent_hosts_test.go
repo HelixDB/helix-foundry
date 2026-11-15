@@ -50,7 +50,8 @@ func TestAPairingCodePairsOneHelperOnce(t *testing.T) {
 	assert.Equal(t, "Ada's Mac", host.Name)
 	assert.Equal(t, []model.FoundryAgentRuntime{model.FoundryAgentRuntimeClaudeCode, model.FoundryAgentRuntimeCodex}, host.Runtimes)
 	assert.True(t, strings.HasPrefix(token, directory.HostTokenPrefix))
-	assert.True(t, host.Online(time.Now()))
+	assert.Nil(t, host.LastSeenAt, "pairing starts nothing: the helper is seen once it runs")
+	assert.False(t, host.Online(time.Now()))
 
 	_, _, err = st.PairAgentHost(ctx, code, agent.Host{Name: "Again", Runtimes: claude})
 	assert.ErrorIs(t, err, store.ErrNotFound, "a code pairs once")
@@ -69,14 +70,21 @@ func TestAPairingCodePairsOneHelperOnce(t *testing.T) {
 	fresh, _, err := st.CreateAgentPairing(ctx)
 	require.NoError(t, err)
 	for _, bad := range []agent.Host{
-		{Name: "", Runtimes: claude}, {Name: strings.Repeat("n", 129), Runtimes: claude}, {Name: "Tab\there", Runtimes: claude},
+		{Name: "", Runtimes: claude}, {Name: "  ", Runtimes: claude}, {Name: strings.Repeat("n", 129), Runtimes: claude}, {Name: "Tab\there", Runtimes: claude},
+		// A C1 control, a bidi override or isolate, and bytes that aren't
+		// UTF-8 could make the owner's settings show one helper as another.
+		{Name: "Next\u0085line", Runtimes: claude}, {Name: "Ada\u202esoM", Runtimes: claude}, {Name: "Ada\u2066Mac", Runtimes: claude},
+		{Name: "Bad\xffbyte", Runtimes: claude},
 		{Name: "Api", Runtimes: []model.FoundryAgentRuntime{model.FoundryAgentRuntimeAPI}}, {Name: "V", Version: strings.Repeat("v", 65), Runtimes: claude},
+		// A version and platform are printable ASCII.
+		{Name: "V", Version: "0.1.0\u202e", Runtimes: claude}, {Name: "P", Platform: "darwin-ärm64", Runtimes: claude},
 	} {
 		_, _, err := st.PairAgentHost(ctx, fresh, bad)
 		assert.ErrorIs(t, err, directory.ErrInvalidAgentHost, "%+v", bad)
 	}
-	_, _, err = st.PairAgentHost(ctx, fresh, agent.Host{Name: "Valid", Runtimes: claude})
-	require.NoError(t, err, "a refused pairing spends no code")
+	named, _, err := st.PairAgentHost(ctx, fresh, agent.Host{Name: "Café の Mac", Runtimes: claude})
+	require.NoError(t, err, "a refused pairing spends no code, and a name may be any language's")
+	assert.Equal(t, "Café の Mac", named.Name)
 
 	got, err := st.AgentHostByToken(ctx, token)
 	require.NoError(t, err)
@@ -101,7 +109,11 @@ func TestAHelpersRuntimesAndPresence(t *testing.T) {
 	host, _ := pair(t, st, "Ada's Mac")
 	online, err = st.AgentRuntimeOnline(ctx, model.FoundryAgentRuntimeClaudeCode)
 	require.NoError(t, err)
-	assert.True(t, online)
+	assert.False(t, online, "a helper that only paired runs nothing yet")
+	require.NoError(t, st.TouchAgentHost(ctx, host.ID))
+	online, err = st.AgentRuntimeOnline(ctx, model.FoundryAgentRuntimeClaudeCode)
+	require.NoError(t, err)
+	assert.True(t, online, "a helper that called is online")
 	online, err = st.AgentRuntimeOnline(ctx, model.FoundryAgentRuntimeCodex)
 	require.NoError(t, err)
 	assert.False(t, online, "it offers Claude Code only")
@@ -126,10 +138,12 @@ func TestAHelpersRuntimesAndPresence(t *testing.T) {
 		"a runtime twice": {
 			{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn},
 			{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedOut}},
-		"an unknown state":                   {{Runtime: model.FoundryAgentRuntimeCodex, State: "maybe"}},
-		"a subscription while signed out":    {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedOut, Subscription: "pro"}},
-		"a subscription past 32 bytes":       {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: strings.Repeat("x", 33)}},
-		"a subscription with a control byte": {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "pro\n"}},
+		"an unknown state":                    {{Runtime: model.FoundryAgentRuntimeCodex, State: "maybe"}},
+		"a subscription while signed out":     {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedOut, Subscription: "pro"}},
+		"a subscription past 32 bytes":        {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: strings.Repeat("x", 33)}},
+		"a subscription with a control byte":  {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "pro\n"}},
+		"a subscription with a bidi override": {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "max\u202e"}},
+		"a subscription past ASCII":           {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "plüs"}},
 	} {
 		assert.ErrorIs(t, st.SeeAgentHost(ctx, host.ID, codex, "0.2.1", accounts), directory.ErrInvalidAgentHost, name)
 	}
@@ -188,10 +202,21 @@ func TestATurnsTokenWorksForItsClaimAlone(t *testing.T) {
 	assert.Equal(t, claim.LeaseOwner, got.LeaseOwner)
 	_, err = st.AgentTurnToken(ctx, hostToken)
 	assert.ErrorIs(t, err, store.ErrNotFound, "a helper's own token calls no tool")
-	byClaim, err := st.AgentTurnClaim(ctx, host.ID, "turn-1")
+	byClaim, err := st.AgentTurnClaim(ctx, host.ID, claim.LeaseOwner)
 	require.NoError(t, err)
-	assert.Equal(t, claim.LeaseOwner, byClaim.LeaseOwner)
-	_, err = st.AgentTurnClaim(ctx, "another-host", "turn-1")
+	assert.Equal(t, "turn-1", byClaim.TurnID)
+	_, err = st.AgentTurnClaim(ctx, "another-host", claim.LeaseOwner)
+	assert.ErrorIs(t, err, store.ErrNotFound)
+	// Another claim of the same turn by the same helper (a slot that took it
+	// again after this one's lease lapsed) is its own.
+	again := claim
+	again.LeaseOwner = "agent-host:" + host.ID + ":bb"
+	_, err = st.CreateAgentTurnToken(ctx, again)
+	require.NoError(t, err)
+	byClaim, err = st.AgentTurnClaim(ctx, host.ID, claim.LeaseOwner)
+	require.NoError(t, err)
+	assert.Equal(t, claim.LeaseOwner, byClaim.LeaseOwner, "a claim reads its own token, not the newest of its turn")
+	_, err = st.AgentTurnClaim(ctx, host.ID, "agent-host:"+host.ID+":cc")
 	assert.ErrorIs(t, err, store.ErrNotFound)
 
 	// Calls and questions are counted, up to the turn's.
@@ -232,6 +257,7 @@ func TestRevokingAHelperStopsItAndItsTurns(t *testing.T) {
 	ctx := context.Background()
 	host, hostToken := pair(t, st, "Ada's Mac")
 	other, _ := pair(t, st, "Old laptop")
+	require.NoError(t, st.TouchAgentHost(ctx, other.ID))
 	turnToken, err := st.CreateAgentTurnToken(ctx, directory.AgentTurnToken{HostID: host.ID, TurnID: "turn-1", WorkspaceID: "ws-1",
 		LeaseOwner: "agent-host:x", ExpiresAt: time.Now().Add(time.Minute), Deadline: time.Now().Add(time.Minute)})
 	require.NoError(t, err)
@@ -255,6 +281,12 @@ func TestRevokingAHelperStopsItAndItsTurns(t *testing.T) {
 	assert.ErrorIs(t, err, store.ErrNotFound)
 	_, err = st.AgentTurnToken(ctx, turnToken)
 	assert.ErrorIs(t, err, store.ErrNotFound)
+	_, err = st.CreateAgentTurnToken(ctx, directory.AgentTurnToken{HostID: host.ID, TurnID: "turn-2", WorkspaceID: "ws-1",
+		LeaseOwner: "agent-host:y", ExpiresAt: time.Now().Add(time.Minute), Deadline: time.Now().Add(time.Minute)})
+	assert.ErrorIs(t, err, store.ErrNotFound, "a revoked helper's claim gets no token")
+	var minted int
+	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_local_agent_turn_tokens WHERE turn_id = 'turn-2'`).Scan(&minted))
+	assert.Zero(t, minted)
 	online, err := st.AgentRuntimeOnline(ctx, model.FoundryAgentRuntimeClaudeCode)
 	require.NoError(t, err)
 	assert.True(t, online, "the other helper is still online")

@@ -1316,6 +1316,11 @@ func (u Unimplemented) SetFoundryAgentThreadSession(context.Context, string, str
 	return nil
 }
 
+func (u Unimplemented) EndUnclaimedFoundryAgentTurns(context.Context, model.FoundryAgentRuntime, time.Time, string) (int64, error) {
+	u.unimplemented("EndUnclaimedFoundryAgentTurns")
+	return 0, nil
+}
+
 func (u Unimplemented) RecordFoundryAgentAction(context.Context, string, *model.FoundryAgentAction, int, func(*model.FoundryAgentAction) (json.RawMessage, error)) (*model.FoundryAgentAction, error) {
 	u.unimplemented("RecordFoundryAgentAction")
 	return nil, nil

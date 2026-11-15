@@ -660,3 +660,56 @@ VALUES (?, ?, ?, ?, 'api', 'message', 'x', 'queued', 0)`, f.turnID(3), f.workspa
 VALUES (?, ?, ?, ?, 'codex', 'message', 'x', 'queued', 5)`, f.turnID(4), f.workspaceID, f.threadID(8), agentUser)
 	assert.Error(t, err)
 }
+
+func TestFoundryAgentUnclaimedHelperTurnsEnd(t *testing.T) {
+	ctx := context.Background()
+	f := newAgentFixture(t, "unclaimed")
+	sendOn := func(n int, runtime model.FoundryAgentRuntime) {
+		t.Helper()
+		turn := &model.FoundryAgentTurn{ID: f.turnID(n), WorkspaceID: f.workspaceID, ThreadID: f.threadID(n), UserID: agentUser,
+			Kind: model.FoundryAgentTurnMessage, Input: "hi", MaxUSDMicros: 500_000}
+		require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, turn, &model.FoundryAgentThread{ID: f.threadID(n), WorkspaceID: f.workspaceID,
+			UserID: agentUser, Title: "hi", Runtime: runtime}, f.limits()))
+	}
+	// 1 waited long, 2 just now, 3 is Codex's, 4 the worker's; 5 ran, and
+	// its helper stopped long ago; 6 runs under a live lease.
+	for n, runtime := range map[int]model.FoundryAgentRuntime{1: model.FoundryAgentRuntimeClaudeCode, 2: model.FoundryAgentRuntimeClaudeCode,
+		3: model.FoundryAgentRuntimeCodex, 4: model.FoundryAgentRuntimeAPI, 5: model.FoundryAgentRuntimeClaudeCode, 6: model.FoundryAgentRuntimeClaudeCode} {
+		sendOn(n, runtime)
+	}
+	long := time.Now().UTC().Add(-10 * time.Minute)
+	for _, n := range []int{1, 3, 4} {
+		_, err := testDB.Exec(`UPDATE foundry_agent_turns SET next_attempt_at=? WHERE id=?`, long, f.turnID(n))
+		require.NoError(t, err)
+	}
+	_, err := testDB.Exec(`UPDATE foundry_agent_turns SET status='running', lease_owner='gone', lease_until=? WHERE id=?`, long, f.turnID(5))
+	require.NoError(t, err)
+	_, err = testDB.Exec(`UPDATE foundry_agent_turns SET status='running', lease_owner='live', lease_until=? WHERE id=?`,
+		time.Now().UTC().Add(time.Minute), f.turnID(6))
+	require.NoError(t, err)
+
+	_, err = f.db.EndUnclaimedFoundryAgentTurns(ctx, model.FoundryAgentRuntimeAPI, time.Now(), "x")
+	assert.Error(t, err, "the worker claims its own")
+	_, err = f.db.EndUnclaimedFoundryAgentTurns(ctx, model.FoundryAgentRuntimeClaudeCode, time.Now(), "")
+	assert.Error(t, err, "an end says why")
+
+	ended, err := f.db.EndUnclaimedFoundryAgentTurns(ctx, model.FoundryAgentRuntimeClaudeCode, time.Now().Add(-3*time.Minute), "No helper picked this up.")
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, ended)
+	for n, want := range map[int]model.FoundryAgentTurnStatus{1: model.FoundryAgentTurnFailed, 2: model.FoundryAgentTurnQueued,
+		3: model.FoundryAgentTurnQueued, 4: model.FoundryAgentTurnQueued, 5: model.FoundryAgentTurnFailed, 6: model.FoundryAgentTurnRunning} {
+		got, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, f.turnID(n))
+		require.NoError(t, err)
+		assert.Equal(t, want, got.Status, "turn %d", n)
+		if want == model.FoundryAgentTurnFailed {
+			require.NotNil(t, got.Error)
+			assert.Equal(t, "No helper picked this up.", *got.Error)
+			assert.Nil(t, got.LeaseOwner)
+			assert.NotNil(t, got.FinishedAt)
+		}
+	}
+	// Its thread takes a message again.
+	again := &model.FoundryAgentTurn{ID: f.turnID(7), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), UserID: agentUser,
+		Kind: model.FoundryAgentTurnMessage, Input: "again", MaxUSDMicros: 500_000}
+	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, again, nil, f.limits()))
+}

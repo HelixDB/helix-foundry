@@ -12,7 +12,7 @@
     },
     {
       "url": "http://localhost:8081",
-      "description": "A local install, once local/compose.mcp.yaml publishes it. FOUNDRY_MCP_PORT moves the port."
+      "description": "A local install: local/compose.yaml publishes it on loopback. FOUNDRY_MCP_PORT moves the port."
     }
   ],
   "security": [

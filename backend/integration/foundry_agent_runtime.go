@@ -27,10 +27,12 @@ type AssistantHostOutput struct {
 	// Name is the machine's, as the helper gave it.
 	Name string `json:"name"`
 	// Runtimes is what it offers: claude_code, codex.
-	Runtimes   []string `json:"runtimes"`
-	Version    string   `json:"version,omitempty"`
-	Platform   string   `json:"platform,omitempty"`
-	LastSeenAt string   `json:"last_seen_at"`
+	Runtimes []string `json:"runtimes"`
+	Version  string   `json:"version,omitempty"`
+	Platform string   `json:"platform,omitempty"`
+	// LastSeenAt is its last call; empty until its first after pairing,
+	// which starts nothing.
+	LastSeenAt string `json:"last_seen_at,omitempty"`
 	// Online is whether it called in the last 30 seconds.
 	Online bool `json:"online"`
 	// Accounts is what its CLIs are signed in to, as it last found them.
@@ -92,7 +94,10 @@ func (s *Service) GetAssistantRuntime(
 
 func assistantHost(h *foundryv1.FoundryAgentHost) AssistantHostOutput {
 	out := AssistantHostOutput{ID: h.GetId(), Name: h.GetName(), Runtimes: h.GetRuntimes(), Version: h.GetVersion(), Platform: h.GetPlatform(),
-		LastSeenAt: h.GetLastSeenAt().AsTime().UTC().Format(time.RFC3339), Online: h.GetOnline()}
+		Online: h.GetOnline()}
+	if h.GetLastSeenAt() != nil {
+		out.LastSeenAt = h.GetLastSeenAt().AsTime().UTC().Format(time.RFC3339)
+	}
 	if out.Runtimes == nil {
 		out.Runtimes = []string{}
 	}

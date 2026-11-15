@@ -69,10 +69,12 @@ type Host struct {
 	ID, Name, Version, Platform string
 	// Runtimes is what it offers, and Accounts what their CLIs are signed in
 	// to, as of its last call.
-	Runtimes   []model.FoundryAgentRuntime
-	Accounts   []HostAccount
-	CreatedAt  time.Time
-	LastSeenAt time.Time
+	Runtimes  []model.FoundryAgentRuntime
+	Accounts  []HostAccount
+	CreatedAt time.Time
+	// LastSeenAt is its last call; nil until it calls after pairing, which
+	// only pairs: it runs nothing until started.
+	LastSeenAt *time.Time
 	RevokedAt  *time.Time
 }
 
@@ -117,17 +119,25 @@ func ValidHostAccounts(accounts []HostAccount, runtimes []model.FoundryAgentRunt
 			return fmt.Errorf("an account's state is signed_in, signed_out or unknown, not %q", a.State)
 		case a.Subscription != "" && a.State != AccountSignedIn:
 			return errors.New("only a signed-in account names a subscription")
-		case len(a.Subscription) > maxSubscriptionBytes || strings.ContainsFunc(a.Subscription, func(r rune) bool { return r < 0x20 || r == 0x7f }):
-			return fmt.Errorf("a subscription is at most %d printable bytes", maxSubscriptionBytes)
+		case len(a.Subscription) > maxSubscriptionBytes || !PrintableASCII(a.Subscription):
+			return fmt.Errorf("a subscription is at most %d printable ASCII bytes", maxSubscriptionBytes)
 		}
 		seen = append(seen, a.Runtime)
 	}
 	return nil
 }
 
-// Online reports a helper seen within HostOnlineFor of now.
+// PrintableASCII reports s made of printable ASCII alone (0x20 to 0x7e):
+// what a helper's subscription, version and platform are, so none can carry
+// a control, a bidi override or a look-alike into the owner's settings.
+func PrintableASCII(s string) bool {
+	return !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r > 0x7e })
+}
+
+// Online reports a helper seen within HostOnlineFor of now: one that paired
+// but hasn't called since isn't.
 func (h Host) Online(now time.Time) bool {
-	return h.RevokedAt == nil && now.Sub(h.LastSeenAt) < HostOnlineFor
+	return h.RevokedAt == nil && h.LastSeenAt != nil && now.Sub(*h.LastSeenAt) < HostOnlineFor
 }
 
 // HostRegistry is a standalone install's helpers, and where each workspace's
@@ -155,9 +165,24 @@ type HostRegistry interface {
 // pairs with.
 const HelperPackage = "@helixdb/foundry-agent-host@0.1.0"
 
+// DefaultHelperFoundry is where a helper reaches the install unless its pair
+// command names another: the integration listener as local/compose.yaml
+// publishes it by default.
+const DefaultHelperFoundry = "http://127.0.0.1:8081"
+
 // PairCommand is the command that pairs a helper with code, on the owner's
-// machine.
-func PairCommand(code string) string { return "npx -y " + HelperPackage + " pair " + code }
+// machine, reaching the install at foundry (empty, or
+// DefaultHelperFoundry, for the helper's default).
+//
+//	PairCommand("hxp_x", "")                      // npx -y @helixdb/foundry-agent-host@0.1.0 pair hxp_x
+//	PairCommand("hxp_x", "http://127.0.0.1:8090") // ... pair hxp_x --foundry http://127.0.0.1:8090
+func PairCommand(code, foundry string) string {
+	command := "npx -y " + HelperPackage + " pair " + code
+	if foundry != "" && foundry != DefaultHelperFoundry {
+		command += " --foundry " + foundry
+	}
+	return command
+}
 
 // HostStore is what a helper's turn reads and records of Foundry's store;
 // store.Store is it.
@@ -170,6 +195,7 @@ type HostStore interface {
 	RenewFoundryAgentTurnLease(ctx context.Context, id, workerID string, lease time.Duration) error
 	SettleFoundryAgentTurn(ctx context.Context, id, workerID string, outcome model.FoundryAgentTurnOutcome) error
 	SetFoundryAgentThreadSession(ctx context.Context, turnID, workerID, sessionID string) error
+	EndUnclaimedFoundryAgentTurns(ctx context.Context, runtime model.FoundryAgentRuntime, before time.Time, why string) (int64, error)
 }
 
 const (
@@ -213,9 +239,10 @@ You run inside a command-line agent on the person's computer, on their own subsc
 var labels = map[model.FoundryAgentRuntime]string{model.FoundryAgentRuntimeClaudeCode: "Claude Code", model.FoundryAgentRuntimeCodex: "Codex"}
 
 // Claim leases the oldest due turn of runtime to workerID, the helper's
-// claim, and opens it; nil when none is due. A turn past its attempts, or one
-// an earlier claim had shown something of, ends here, and the next is
-// looked at.
+// claim, and opens it; nil when none is due. A turn past its wall time
+// (counted from its first claim: a lease that ran out gives it no more),
+// past its attempts, or one an earlier claim had shown something of, ends
+// here, and the next is looked at.
 func (h *Hosts) Claim(ctx context.Context, runtime model.FoundryAgentRuntime, workerID string) (*HostTurn, error) {
 	if !runtime.Subscription() {
 		return nil, fmt.Errorf("agent: helpers run claude_code or codex, not %q", runtime)
@@ -230,6 +257,18 @@ func (h *Hosts) Claim(ctx context.Context, runtime model.FoundryAgentRuntime, wo
 			return nil, err
 		}
 		claimed := h.Now().UTC()
+		deadline := claimed
+		if turn.StartedAt != nil {
+			deadline = *turn.StartedAt
+		}
+		deadline = deadline.Add(time.Duration(h.Cfg.MaxWallSecs) * time.Second)
+		if !claimed.Before(deadline) {
+			if err := h.end(ctx, turn, workerID, 0, Finished{Status: string(model.FoundryAgentTurnDone), Reason: StopWallTime}); err != nil &&
+				!errors.Is(err, ErrLost) {
+				return nil, err
+			}
+			continue
+		}
 		why, err := h.spent(ctx, turn)
 		if err != nil {
 			return nil, err
@@ -256,10 +295,57 @@ func (h *Hosts) Claim(ctx context.Context, runtime model.FoundryAgentRuntime, wo
 			return nil, err
 		}
 		opened.Lease = claimed.Add(h.Cfg.Lease)
-		opened.Deadline = claimed.Add(time.Duration(h.Cfg.MaxWallSecs) * time.Second)
+		opened.Deadline = deadline
 		return opened, nil
 	}
 	return nil, nil
+}
+
+// Release gives a claimed turn back unrun, its attempt uncounted: its
+// helper can't be told it (revoked as it claimed). The next claim opens it
+// again; what this one showed (its start) doesn't stop that.
+func (h *Hosts) Release(ctx context.Context, turnID, workerID string) error {
+	now := h.Now().UTC()
+	err := h.DB.SettleFoundryAgentTurn(ctx, turnID, workerID, model.FoundryAgentTurnOutcome{
+		Status: model.FoundryAgentTurnQueued, RetryAt: &now, Uncounted: true,
+	})
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		return ErrLost
+	}
+	return err
+}
+
+// HostWaitFor is how long a helper's turn waits for one to claim it, or to
+// claim it again after its lease ran out, while no helper that runs it is
+// online: then it fails (EndUnclaimed), and its thread can be sent to again.
+const HostWaitFor = 3 * time.Minute
+
+// unclaimedText is what a turn no helper took tells the person.
+func unclaimedText(runtime model.FoundryAgentRuntime) string {
+	return fmt.Sprintf("No helper running %s picked this up within %d minutes. Start the helper on your computer (or pair one in Settings › AI models), then send your message again.",
+		labels[runtime], int(HostWaitFor/time.Minute))
+}
+
+// EndUnclaimed fails every helper's turn that waited HostWaitFor for a
+// claim while no helper offering its runtime is online (hosts, the
+// install's): queued and never claimed, or left by a helper that stopped.
+// A turn waiting while one is online is left to it: the Assistant's caps
+// may be holding it back.
+func (h *Hosts) EndUnclaimed(ctx context.Context, hosts HostRegistry) error {
+	before := h.Now().UTC().Add(-HostWaitFor)
+	for _, runtime := range []model.FoundryAgentRuntime{model.FoundryAgentRuntimeClaudeCode, model.FoundryAgentRuntimeCodex} {
+		online, err := hosts.AgentRuntimeOnline(ctx, runtime)
+		if err != nil {
+			return err
+		}
+		if online {
+			continue
+		}
+		if _, err := h.DB.EndUnclaimedFoundryAgentTurns(ctx, runtime, before, unclaimedText(runtime)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // spent is why a claimed turn can't run again: its attempts are spent, or

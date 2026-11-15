@@ -83,6 +83,10 @@ type LocalConfig struct {
 	S3 local.S3 `koanf:"s3"`
 	// Listen is where the install serves.
 	Listen ListenConfig `koanf:"listen"`
+	// MCPPort is the port this machine reaches the REST listener on, as
+	// local/compose.yaml publishes it on loopback (FOUNDRY_MCP_PORT): the
+	// Assistant's helper's pair command names it when it isn't 8081.
+	MCPPort int `koanf:"mcp_port"`
 	// SecretsDir, when set, is the directory `foundry init-secrets` wrote
 	// the install's secrets to: the site token, the store's secret, the
 	// database's password (for a db.dsn without one) and the connector key
@@ -110,8 +114,9 @@ func defaults() Config {
 		Foundry: f.Foundry,
 		Backend: BackendConfig{FoundryRead: f.Read},
 		AWS:     AWSConfig{Region: "us-east-1"},
-		Local:   LocalConfig{SiteOrigin: "http://localhost:3000", Listen: ListenConfig{REST: ":8081", GRPC: "127.0.0.1:50061", Health: "127.0.0.1:8083"}},
-		Log:     LogConfig{Format: "json", Level: "info"},
+		Local: LocalConfig{SiteOrigin: "http://localhost:3000", Listen: ListenConfig{REST: ":8081", GRPC: "127.0.0.1:50061", Health: "127.0.0.1:8083"},
+			MCPPort: 8081},
+		Log: LogConfig{Format: "json", Level: "info"},
 	}
 	c.Billing.Autumn.Foundry = f.Billing
 	return c
@@ -210,6 +215,9 @@ func (c *Config) validate() error {
 			strings.TrimSuffix(u.Path, "/") != "" || u.RawQuery != "" || u.Fragment != "" {
 			return fmt.Errorf("%s must be an http(s) origin, got %q", endpoint.name, endpoint.raw)
 		}
+	}
+	if c.Local.MCPPort < 1 || c.Local.MCPPort > 65535 {
+		return fmt.Errorf("local.mcp_port is a port, 1 to 65535, got %d", c.Local.MCPPort)
 	}
 	if c.Local.S3.AccessKeyID == "" || c.Local.S3.SecretAccessKey == "" {
 		return errors.New("local.s3.access_key_id and local.s3.secret_access_key are required")

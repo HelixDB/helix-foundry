@@ -15,7 +15,8 @@ CREATE TABLE foundry_local_agent_hosts (
   version      VARCHAR(64)                 NOT NULL DEFAULT '',
   platform     VARCHAR(64)                 NOT NULL DEFAULT '',
   created_at   DATETIME(6)                 NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  last_seen_at DATETIME(6)                 NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  -- Its last call: NULL until its first after pairing, which starts nothing.
+  last_seen_at DATETIME(6)                 NULL,
   revoked_at   DATETIME(6)                 NULL,
   UNIQUE KEY foundry_local_agent_hosts_token_uq (token_hash)
 );
@@ -46,7 +47,7 @@ CREATE TABLE foundry_local_agent_turn_tokens (
   calls        INT         NOT NULL DEFAULT 0,
   asks         INT         NOT NULL DEFAULT 0,
   KEY foundry_local_agent_turn_tokens_turn (turn_id),
-  KEY foundry_local_agent_turn_tokens_host (host_id),
+  KEY foundry_local_agent_turn_tokens_host (host_id, lease_owner),
   KEY foundry_local_agent_turn_tokens_expiry (expires_at),
   CONSTRAINT foundry_local_agent_turn_tokens_calls_chk CHECK (calls >= 0 AND asks >= 0 AND asks <= calls)
 );

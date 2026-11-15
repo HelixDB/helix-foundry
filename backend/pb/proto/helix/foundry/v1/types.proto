@@ -2464,6 +2464,8 @@ message FoundryAgentHost {
   string version = 4;
   string platform = 5;
   google.protobuf.Timestamp created_at = 6;
+  // Its last call; unset until its first after pairing, which starts
+  // nothing.
   google.protobuf.Timestamp last_seen_at = 7;
   // Seen within 30 seconds.
   bool online = 8;

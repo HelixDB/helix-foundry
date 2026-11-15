@@ -7119,7 +7119,8 @@
         },
         "lastSeenAt": {
           "type": "string",
-          "format": "date-time"
+          "format": "date-time",
+          "description": "Its last call; unset until its first after pairing, which starts\nnothing."
         },
         "online": {
           "type": "boolean",

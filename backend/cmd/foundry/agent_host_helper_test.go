@@ -42,9 +42,14 @@ func TestFrontWithTheHelper(t *testing.T) {
 	require.NoError(t, err, string(out))
 
 	require.Equal(t, 200, call(t, "PATCH", agentURL+"/runtime", siteToken, map[string]any{"runtime": "claude_code"}, nil))
-	var sent struct{ Turn map[string]any }
-	require.Equal(t, 200, call(t, "POST", agentURL+"/turns", siteToken, map[string]any{"text": "Which ontologies do I have?", "clientToken": "c-1"}, &sent))
-	turnID := sent.Turn["id"].(string)
+	var runtime struct {
+		Runtime struct {
+			Online []string
+			Hosts  []map[string]any
+		}
+	}
+	require.Equal(t, 200, call(t, "GET", agentURL+"/runtime", siteToken, nil, &runtime))
+	assert.Empty(t, runtime.Runtime.Online, "paired, it runs nothing until started")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -54,6 +59,14 @@ func TestFrontWithTheHelper(t *testing.T) {
 	run.Stdout, run.Stderr = &logs, &logs
 	require.NoError(t, run.Start())
 	defer func() { cancel(); _ = run.Wait() }()
+	for deadline := time.Now().Add(30 * time.Second); len(runtime.Runtime.Online) == 0 && time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		require.Equal(t, 200, call(t, "GET", agentURL+"/runtime", siteToken, nil, &runtime))
+	}
+	require.Equal(t, []string{"claude_code"}, runtime.Runtime.Online, logs.String())
+
+	var sent struct{ Turn map[string]any }
+	require.Equal(t, 200, call(t, "POST", agentURL+"/turns", siteToken, map[string]any{"text": "Which ontologies do I have?", "clientToken": "c-1"}, &sent))
+	turnID := sent.Turn["id"].(string)
 
 	var events struct {
 		Status string
@@ -84,9 +97,6 @@ func TestFrontWithTheHelper(t *testing.T) {
 	assert.Equal(t, "claude_code", thread.Thread["runtime"])
 
 	// The owner sees what its Claude Code is signed in to, as it said.
-	var runtime struct {
-		Runtime struct{ Hosts []map[string]any }
-	}
 	require.Equal(t, 200, call(t, "GET", agentURL+"/runtime", siteToken, nil, &runtime))
 	require.Len(t, runtime.Runtime.Hosts, 1)
 	assert.Equal(t, []any{map[string]any{"runtime": "claude_code", "state": "signed_in", "subscription": "max"}}, runtime.Runtime.Hosts[0]["accounts"])

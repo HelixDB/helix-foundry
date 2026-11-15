@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -31,6 +32,19 @@ type hostMem struct {
 	settled  []model.FoundryAgentTurnOutcome
 	session  string
 	renewals int
+	// unclaimed is what EndUnclaimedFoundryAgentTurns was asked to end.
+	unclaimed []unclaimedCall
+}
+
+type unclaimedCall struct {
+	runtime model.FoundryAgentRuntime
+	before  time.Time
+	why     string
+}
+
+func (s *hostMem) EndUnclaimedFoundryAgentTurns(_ context.Context, runtime model.FoundryAgentRuntime, before time.Time, why string) (int64, error) {
+	s.unclaimed = append(s.unclaimed, unclaimedCall{runtime, before, why})
+	return 1, nil
 }
 
 func (s *hostMem) GetFoundryAgentThread(_ context.Context, _, id string) (*model.FoundryAgentThread, error) {
@@ -64,6 +78,10 @@ func (s *hostMem) ClaimFoundryAgentTurn(_ context.Context, _ string, claim model
 	turn := s.due[0]
 	s.due = s.due[1:]
 	turn.Attempts++
+	if turn.StartedAt == nil {
+		now := time.Now()
+		turn.StartedAt = &now
+	}
 	return turn, nil
 }
 
@@ -471,4 +489,95 @@ func TestTheAssistantPreparesARuntimeChangeAsACard(t *testing.T) {
 		text, ok := c.(*mcp.TextContent)
 		return ok && strings.Contains(text.Text, "no helper")
 	}))
+}
+
+func TestAHelpersTurnKeepsItsFirstStartsWallTime(t *testing.T) {
+	hosts, db, _ := newHosts(t)
+	wall := time.Duration(hosts.Cfg.MaxWallSecs) * time.Second
+	// Its first claim's helper stopped: the next has what is left of its
+	// time, not a fresh wall time.
+	started := time.Now().Add(-wall / 2)
+	resumed := message("go on")
+	resumed.ID, resumed.Runtime, resumed.Attempts, resumed.StartedAt = "turn-resumed", model.FoundryAgentRuntimeClaudeCode, 1, &started
+	db.due = []*model.FoundryAgentTurn{resumed}
+	claimed, err := hosts.Claim(context.Background(), model.FoundryAgentRuntimeClaudeCode, "host:2")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assert.WithinDuration(t, started.Add(wall), claimed.Deadline, time.Second)
+
+	// One past its wall time ends at it, as Renew would have ended it, and
+	// the claim takes the next.
+	db.events = nil
+	late := time.Now().Add(-wall - time.Second)
+	over := message("long answer")
+	over.ID, over.Runtime, over.Attempts, over.StartedAt = "turn-over", model.FoundryAgentRuntimeClaudeCode, 1, &late
+	db.due = []*model.FoundryAgentTurn{over}
+	claimed, err = hosts.Claim(context.Background(), model.FoundryAgentRuntimeClaudeCode, "host:3")
+	require.NoError(t, err)
+	assert.Nil(t, claimed)
+	require.Len(t, db.settled, 1)
+	assert.Equal(t, model.FoundryAgentTurnDone, db.settled[0].Status)
+	assert.Equal(t, string(StopWallTime), db.lastEvent(t)["reason"])
+	assert.Equal(t, []string{"finished"}, db.eventTypes(), "it doesn't start again")
+}
+
+func TestAHelperGivesBackATurnItCantBeTold(t *testing.T) {
+	hosts, db, _ := newHosts(t)
+	require.NoError(t, hosts.Release(context.Background(), "turn1", "host:1"))
+	require.Len(t, db.settled, 1)
+	got := db.settled[0]
+	assert.Equal(t, model.FoundryAgentTurnQueued, got.Status)
+	require.NotNil(t, got.RetryAt)
+	assert.WithinDuration(t, time.Now(), *got.RetryAt, 5*time.Second, "due at once, for another helper")
+	assert.True(t, got.Uncounted, "the attempt isn't counted")
+	db.lost = true
+	assert.ErrorIs(t, hosts.Release(context.Background(), "turn1", "host:1"), ErrLost)
+}
+
+// onlineHosts is a registry whose helpers run the runtimes online says.
+type onlineHosts struct {
+	HostRegistry
+	online map[model.FoundryAgentRuntime]bool
+	err    error
+}
+
+func (h onlineHosts) AgentRuntimeOnline(_ context.Context, r model.FoundryAgentRuntime) (bool, error) {
+	return h.online[r], h.err
+}
+
+func TestAHelpersTurnNoneTakesEnds(t *testing.T) {
+	hosts, db, _ := newHosts(t)
+	before := time.Now()
+	require.NoError(t, hosts.EndUnclaimed(context.Background(), onlineHosts{online: map[model.FoundryAgentRuntime]bool{model.FoundryAgentRuntimeClaudeCode: true}}))
+	require.Len(t, db.unclaimed, 1, "Claude Code's helper is online: its turns wait for it")
+	got := db.unclaimed[0]
+	assert.Equal(t, model.FoundryAgentRuntimeCodex, got.runtime)
+	assert.WithinDuration(t, before.Add(-HostWaitFor), got.before, 5*time.Second)
+	assert.Contains(t, got.why, "No helper running Codex picked this up within 3 minutes")
+	assert.Contains(t, got.why, "Settings › AI models", "the dock links it")
+
+	db.unclaimed = nil
+	require.NoError(t, hosts.EndUnclaimed(context.Background(), onlineHosts{}))
+	assert.Len(t, db.unclaimed, 2)
+	assert.Error(t, hosts.EndUnclaimed(context.Background(), onlineHosts{err: errors.New("down")}))
+}
+
+func TestAHelpersSubscriptionIsPrintableASCII(t *testing.T) {
+	claude := []model.FoundryAgentRuntime{model.FoundryAgentRuntimeClaudeCode}
+	ok := func(sub string) error {
+		return ValidHostAccounts([]HostAccount{{Runtime: model.FoundryAgentRuntimeClaudeCode, State: AccountSignedIn, Subscription: sub}}, claude)
+	}
+	require.NoError(t, ok("max"))
+	require.NoError(t, ok("claude_max_20x"))
+	for _, bad := range []string{"max\u202e", "max\u0085", "plüs", "pro\n", strings.Repeat("x", 33)} {
+		assert.Error(t, ok(bad), "%q", bad)
+	}
+	assert.True(t, PrintableASCII("darwin-arm64 0.1.0 ~"))
+	assert.False(t, PrintableASCII("darwin\u2066"))
+}
+
+func TestAPairCommandNamesAMovedPort(t *testing.T) {
+	assert.Equal(t, "npx -y "+HelperPackage+" pair hxp_x", PairCommand("hxp_x", ""))
+	assert.Equal(t, "npx -y "+HelperPackage+" pair hxp_x", PairCommand("hxp_x", DefaultHelperFoundry))
+	assert.Equal(t, "npx -y "+HelperPackage+" pair hxp_x --foundry http://127.0.0.1:8090", PairCommand("hxp_x", "http://127.0.0.1:8090"))
 }
