@@ -865,7 +865,8 @@ test("shows another member its steps and how far a run went, never what it found
   await expect(live(alan)).toHaveAccessibleDescription(
     "Only its owner, or an owner or admin, pauses it",
   );
-  await live(alan).click();
+  // Playwright waits for an enabled element; a person's tap doesn't.
+  await live(alan).click({ force: true });
   await expect(live(alan)).toBeChecked();
   await expect(
     alan.getByRole("status").filter({
