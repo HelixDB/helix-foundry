@@ -6792,9 +6792,13 @@
       "properties": {
         "runtime": {
           "type": "string"
+        },
+        "confirmCodex": {
+          "type": "boolean",
+          "description": "The owner confirms what codex runs with (Settings › AI models shows it):\nkept, so it is asked once."
         }
       },
-      "description": "UpdateFoundryAgentRuntimeRequest sets the runtime the workspace's new\nthreads take (a thread keeps its own): api or claude_code. codex is\nFAILED_PRECONDITION (reason FOUNDRY_AGENT_RUNTIME_UNAVAILABLE): no\nconfiguration of its app-server gives it Foundry's tools alone yet. A\nhelper need not be online to choose one; sending in its thread then is\nFAILED_PRECONDITION (reason FOUNDRY_AGENT_HOST_OFFLINE) until it is."
+      "description": "UpdateFoundryAgentRuntimeRequest sets the runtime the workspace's new\nthreads take (a thread keeps its own): api, claude_code or codex. codex\nruns with the owner's own Codex setup, so it needs their confirmation,\nonce (confirm_codex, kept as FoundryAgentRuntime.codex_confirmed_at):\nwithout it, codex is FAILED_PRECONDITION (reason\nFOUNDRY_AGENT_CODEX_UNCONFIRMED). A helper need not be online to choose\none; sending in its thread then is FAILED_PRECONDITION (reason\nFOUNDRY_AGENT_HOST_OFFLINE) until it is."
     },
     "FoundryServiceUpdateFoundryAutomationBody": {
       "type": "object",
@@ -8282,7 +8286,7 @@
           "items": {
             "type": "string"
           },
-          "description": "What it offers, as of its last call: claude_code, codex."
+          "description": "What it runs, as of its last call: claude_code, codex. A Codex older\nthan FoundryAgentRuntime.codex_min_version isn't run (its account says\noutdated)."
         },
         "version": {
           "type": "string",
@@ -8333,7 +8337,15 @@
         },
         "subscription": {
           "type": "string",
-          "description": "The subscription's plan as the CLI names it (pro, max, team, ...), only\nwhen signed in on one; empty for a CLI signed in some other way, whose\nturns don't bill a subscription."
+          "description": "The subscription's plan as the CLI names it (pro, max, team, plus, ...),\nonly when signed in on one; empty for a CLI signed in some other way,\nwhose turns don't bill a subscription."
+        },
+        "version": {
+          "type": "string",
+          "description": "The CLI's version as it says it (Codex's), when the helper read it."
+        },
+        "outdated": {
+          "type": "boolean",
+          "description": "A Codex older than Foundry runs (FoundryAgentRuntime.codex_min_version),\nor of no version the helper could read: no turn runs on it until it is\nupdated."
         }
       },
       "description": "FoundryAgentHostAccount is what one of a helper's CLIs is signed in to, as\nthe helper last found it."
@@ -8399,7 +8411,16 @@
           "items": {
             "type": "string"
           },
-          "description": "The helper runtimes a host online offers now (seen within 30 seconds):\na thread of one not listed can't be sent to."
+          "description": "The helper runtimes a host online runs now (seen within 30 seconds): a\nthread of one not listed can't be sent to."
+        },
+        "codexConfirmedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the owner confirmed, once, that the Assistant runs on their own\nCodex setup (its MCP servers and plugins included), with its shell off\nand every command or file change it asks for declined, on their ChatGPT\nplan; unset until then. codex can't be chosen before it."
+        },
+        "codexMinVersion": {
+          "type": "string",
+          "description": "The oldest Codex a helper runs it on (x.y.z): one older is outdated."
         }
       },
       "description": "FoundryAgentRuntime is where a local install's Assistant runs a\nworkspace's new threads, and the helpers that can run them."

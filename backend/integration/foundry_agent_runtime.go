@@ -40,12 +40,15 @@ type AssistantHostOutput struct {
 }
 
 // AssistantHostAccount is what one of a helper's CLIs is signed in to:
-// State signed_in, signed_out or unknown, and Subscription the plan when
-// signed in on one.
+// State signed_in, signed_out or unknown, Subscription the plan when signed
+// in on one, Version the CLI's (Codex's), and Outdated a Codex older than
+// Foundry runs, which runs no turn until updated.
 type AssistantHostAccount struct {
 	Runtime      string `json:"runtime"`
 	State        string `json:"state"`
 	Subscription string `json:"subscription,omitempty"`
+	Version      string `json:"version,omitempty"`
+	Outdated     bool   `json:"outdated,omitempty"`
 }
 
 type GetAssistantRuntimeOutput struct {
@@ -55,10 +58,16 @@ type GetAssistantRuntimeOutput struct {
 	// helix_foundry_get_ai_settings), claude_code or codex (a helper, on the
 	// owner's subscription). A thread keeps the runtime it started with.
 	Runtime string `json:"runtime"`
-	// Online is the helper runtimes a helper online offers now: a thread of
+	// Online is the helper runtimes a helper online runs now: a thread of
 	// one not listed can't be sent to until its helper runs.
 	Online []string              `json:"online"`
 	Hosts  []AssistantHostOutput `json:"hosts"`
+	// CodexConfirmed is whether the owner confirmed, in Settings › AI
+	// models, what codex runs with (their own Codex setup, its shell off, on
+	// their ChatGPT plan): codex can't be set before.
+	CodexConfirmed bool `json:"codex_confirmed"`
+	// CodexMinVersion is the oldest Codex a helper runs it on.
+	CodexMinVersion string `json:"codex_min_version,omitempty"`
 	// SettingsURL opens Settings › AI models, where the owner chooses it too.
 	SettingsURL string `json:"settings_url,omitempty"`
 }
@@ -79,7 +88,8 @@ func (s *Service) GetAssistantRuntime(
 		return GetAssistantRuntimeOutput{}, 0, FoundryError(err)
 	}
 	r := response.GetRuntime()
-	out := GetAssistantRuntimeOutput{ContentTrust: contentTrustUntrusted, Runtime: r.GetRuntime(), Online: r.GetOnline(), Hosts: []AssistantHostOutput{}}
+	out := GetAssistantRuntimeOutput{ContentTrust: contentTrustUntrusted, Runtime: r.GetRuntime(), Online: r.GetOnline(), Hosts: []AssistantHostOutput{},
+		CodexConfirmed: r.GetCodexConfirmedAt() != nil, CodexMinVersion: r.GetCodexMinVersion()}
 	if out.Online == nil {
 		out.Online = []string{}
 	}
@@ -103,7 +113,8 @@ func assistantHost(h *foundryv1.FoundryAgentHost) AssistantHostOutput {
 	}
 	out.Accounts = []AssistantHostAccount{}
 	for _, a := range h.GetAccounts() {
-		out.Accounts = append(out.Accounts, AssistantHostAccount{Runtime: a.GetRuntime(), State: a.GetState(), Subscription: a.GetSubscription()})
+		out.Accounts = append(out.Accounts, AssistantHostAccount{Runtime: a.GetRuntime(), State: a.GetState(), Subscription: a.GetSubscription(),
+			Version: a.GetVersion(), Outdated: a.GetOutdated()})
 	}
 	return out
 }
@@ -189,11 +200,25 @@ func (s *Service) validateAssistantOperation(ctx context.Context, identity *Iden
 	switch input.Operation {
 	case "set_assistant_runtime":
 		var payload SetAssistantRuntimePayload
-		if decodeStrict(raw, &payload) != nil || !model.FoundryAgentRuntime(payload.Runtime).Offered() {
-			return nil, true, invalid("set_assistant_runtime takes payload {runtime}: api or claude_code")
+		if decodeStrict(raw, &payload) != nil || !model.FoundryAgentRuntime(payload.Runtime).Valid() {
+			return nil, true, invalid("set_assistant_runtime takes payload {runtime}: api, claude_code or codex")
 		}
 		req := &foundryv1.UpdateFoundryAgentRuntimeRequest{WorkspaceId: workspaceID, Runtime: payload.Runtime}
-		return SetAssistantRuntimeOperation{payload: payload, req: req}, true, s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "UpdateFoundryAgentRuntime")
+		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "UpdateFoundryAgentRuntime"); err != nil {
+			return nil, true, err
+		}
+		if payload.Runtime == string(model.FoundryAgentRuntimeCodex) {
+			// What codex runs with is confirmed in Settings, never through a card.
+			current, err := s.Foundry.GetFoundryAgentRuntime(ctx, &foundryv1.GetFoundryAgentRuntimeRequest{WorkspaceId: workspaceID})
+			if err != nil {
+				return nil, true, FoundryError(err)
+			}
+			if current.GetRuntime().GetCodexConfirmedAt() == nil {
+				return nil, true, detailedToolError{code: errCodeFailedPrecondition,
+					message: "codex runs with the owner's own Codex setup, on their ChatGPT plan: they choose it first in Settings › AI models, where they confirm that"}
+			}
+		}
+		return SetAssistantRuntimeOperation{payload: payload, req: req}, true, nil
 	case "pair_assistant_helper":
 		if len(input.Payload) != 0 {
 			return nil, true, invalid("pair_assistant_helper takes an empty payload")

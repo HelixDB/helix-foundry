@@ -84,6 +84,14 @@ func TestFrontRunsAHelpersTurns(t *testing.T) {
 	assert.Equal(t, 400, call(t, "POST", rest+"/agent-host/hello", paired.Token, map[string]any{"runtimes": []string{"claude_code"}, "version": "0.1.0",
 		"accounts": []map[string]any{{"runtime": "codex", "state": "signed_in"}}}, &refused), "an account is a runtime's it offers")
 	assert.Equal(t, "invalid_arguments", refused.Error.Code)
+	// An outdated Codex is said, but not run: no helper runs codex.
+	outdated := []map[string]any{{"runtime": "codex", "state": "signed_in", "subscription": "plus", "version": "0.150.0"}}
+	require.Equal(t, 200, call(t, "POST", rest+"/agent-host/hello", paired.Token, map[string]any{"runtimes": []string{"codex"}, "version": "0.1.0", "accounts": outdated}, &me))
+	require.Equal(t, 200, call(t, "GET", agentURL+"/runtime", siteToken, nil, &runtime))
+	assert.Empty(t, runtime.Runtime.Online, "an outdated Codex runs nothing")
+	assert.Equal(t, []any{map[string]any{"runtime": "codex", "state": "signed_in", "subscription": "plus", "version": "0.150.0", "outdated": true}},
+		runtime.Runtime.Hosts[0]["accounts"])
+	require.Equal(t, 200, call(t, "POST", rest+"/agent-host/hello", paired.Token, map[string]any{"runtimes": []string{"claude_code"}, "version": "0.1.0", "accounts": signedIn}, &me))
 
 	// The site token doesn't claim, and a helper's token doesn't reach the API.
 	assert.Equal(t, 401, call(t, "POST", rest+"/agent-host/claim", siteToken, map[string]any{"runtimes": []string{"claude_code"}}, &refused))
@@ -97,7 +105,7 @@ func TestFrontRunsAHelpersTurns(t *testing.T) {
 	assert.Equal(t, []string{"claude_code"}, runtime.Runtime.Online)
 	require.Len(t, runtime.Runtime.Hosts, 1)
 	assert.Equal(t, "Ada's Mac", runtime.Runtime.Hosts[0]["name"])
-	assert.Equal(t, []any{map[string]any{"runtime": "claude_code", "state": "signed_in", "subscription": "max"}}, runtime.Runtime.Hosts[0]["accounts"],
+	assert.Equal(t, []any{map[string]any{"runtime": "claude_code", "state": "signed_in", "subscription": "max", "version": "", "outdated": false}}, runtime.Runtime.Hosts[0]["accounts"],
 		"the owner sees what its CLI is signed in to")
 
 	var sent struct {

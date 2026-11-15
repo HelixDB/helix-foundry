@@ -2172,14 +2172,19 @@ message GetFoundryAgentRuntimeRequest {
   string workspace_id = 1;
 }
 // UpdateFoundryAgentRuntimeRequest sets the runtime the workspace's new
-// threads take (a thread keeps its own): api or claude_code. codex is
-// FAILED_PRECONDITION (reason FOUNDRY_AGENT_RUNTIME_UNAVAILABLE): no
-// configuration of its app-server gives it Foundry's tools alone yet. A
-// helper need not be online to choose one; sending in its thread then is
-// FAILED_PRECONDITION (reason FOUNDRY_AGENT_HOST_OFFLINE) until it is.
+// threads take (a thread keeps its own): api, claude_code or codex. codex
+// runs with the owner's own Codex setup, so it needs their confirmation,
+// once (confirm_codex, kept as FoundryAgentRuntime.codex_confirmed_at):
+// without it, codex is FAILED_PRECONDITION (reason
+// FOUNDRY_AGENT_CODEX_UNCONFIRMED). A helper need not be online to choose
+// one; sending in its thread then is FAILED_PRECONDITION (reason
+// FOUNDRY_AGENT_HOST_OFFLINE) until it is.
 message UpdateFoundryAgentRuntimeRequest {
   string workspace_id = 1;
   string runtime = 2;
+  // The owner confirms what codex runs with (Settings › AI models shows it):
+  // kept, so it is asked once.
+  bool confirm_codex = 3;
 }
 message FoundryAgentRuntimeResponse {
   FoundryAgentRuntime runtime = 1;
