@@ -624,23 +624,23 @@ func TestFoundryAgentSubscriptionTurns(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, none)
 	claim.Runtime = model.FoundryAgentRuntimeClaudeCode
-	claimed, err := f.db.ClaimFoundryAgentTurn(ctx, "host-1", claim)
+	claimed, err := f.db.ClaimFoundryAgentTurn(ctx, "w1", claim)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	assert.Zero(t, claimed.ReservedMicros)
 
 	// The session is kept only under the lease.
-	assert.ErrorIs(t, f.db.SetFoundryAgentThreadSession(ctx, claimed.ID, "host-2", "s-1"), store.ErrNotFound)
-	require.NoError(t, f.db.SetFoundryAgentThreadSession(ctx, claimed.ID, "host-1", "s-1"))
+	assert.ErrorIs(t, f.db.SetFoundryAgentThreadSession(ctx, claimed.ID, "w2", "s-1"), store.ErrNotFound)
+	require.NoError(t, f.db.SetFoundryAgentThreadSession(ctx, claimed.ID, "w1", "s-1"))
 	got, err := f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(1))
 	require.NoError(t, err)
 	assert.Equal(t, "s-1", got.RuntimeSessionID)
-	assert.Error(t, f.db.SetFoundryAgentThreadSession(ctx, claimed.ID, "host-1", strings.Repeat("s", 129)))
+	assert.Error(t, f.db.SetFoundryAgentThreadSession(ctx, claimed.ID, "w1", strings.Repeat("s", 129)))
 
 	// Its action's continuation is a $0 turn too.
 	a, err := f.prepare(claimed, 1, time.Now().Add(time.Minute))
 	require.NoError(t, err)
-	require.NoError(t, f.db.SettleFoundryAgentTurn(ctx, claimed.ID, "host-1", model.FoundryAgentTurnOutcome{Status: model.FoundryAgentTurnDone, Steps: 1}))
+	require.NoError(t, f.db.SettleFoundryAgentTurn(ctx, claimed.ID, "w1", model.FoundryAgentTurnOutcome{Status: model.FoundryAgentTurnDone, Steps: 1}))
 	_, err = f.db.ClaimFoundryAgentAction(ctx, f.workspaceID, agentUser, a.ID, a.PayloadHash)
 	require.NoError(t, err)
 	next := &model.FoundryAgentTurn{ID: f.turnID(2), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), UserID: agentUser,

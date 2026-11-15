@@ -355,7 +355,9 @@ func (h *agentHostHandler) renew(w http.ResponseWriter, r *http.Request, claim d
 		err = h.dir.ExtendAgentTurnTokens(r.Context(), claim.TurnID, claim.LeaseOwner, lease)
 	}
 	if err != nil {
-		h.endTokens(r, claim, err)
+		if over(err) {
+			h.endTokens(r, claim)
+		}
 		h.failed(w, r, err)
 		return
 	}
@@ -387,7 +389,9 @@ func (h *agentHostHandler) text(w http.ResponseWriter, r *http.Request, claim di
 		return
 	}
 	if err != nil {
-		h.endTokens(r, claim, err)
+		if over(err) {
+			h.endTokens(r, claim)
+		}
 		h.failed(w, r, err)
 		return
 	}
@@ -442,23 +446,24 @@ func (h *agentHostHandler) finish(w http.ResponseWriter, r *http.Request, claim 
 		h.refuse(w, invalid(refusal))
 		return
 	}
-	if err == nil {
-		// The turn ended: its CLI calls nothing more.
-		err = agent.ErrLost
-		h.endTokens(r, claim, err)
-		w.WriteHeader(http.StatusNoContent)
+	if err == nil || over(err) {
+		// The turn ended, or is no longer this claim's.
+		h.endTokens(r, claim)
+	}
+	if err != nil {
+		h.failed(w, r, err)
 		return
 	}
-	h.endTokens(r, claim, err)
-	h.failed(w, r, err)
+	w.WriteHeader(http.StatusNoContent)
 }
 
-// endTokens deletes the claim's tokens once its turn is lost or over (err
-// is agent.ErrLost or agent.ErrWallTime): its CLI calls nothing more.
-func (h *agentHostHandler) endTokens(r *http.Request, claim directory.AgentTurnToken, err error) {
-	if !errors.Is(err, agent.ErrLost) && !errors.Is(err, agent.ErrWallTime) {
-		return
-	}
+// over reports an error that ends a claim's turn for its helper: its lease
+// was lost, or Foundry ended the turn at its wall time.
+func over(err error) bool { return errors.Is(err, agent.ErrLost) || errors.Is(err, agent.ErrWallTime) }
+
+// endTokens deletes the tokens of a claim whose turn ended or was lost: its
+// CLI calls nothing more.
+func (h *agentHostHandler) endTokens(r *http.Request, claim directory.AgentTurnToken) {
 	if err := h.dir.EndAgentTurnTokens(context.WithoutCancel(r.Context()), claim.TurnID); err != nil {
 		h.logger.Warn("agent host: end a turn's tokens", "turn", claim.TurnID, "err", err)
 	}
