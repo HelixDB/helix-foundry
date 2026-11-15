@@ -68,7 +68,10 @@ async function create(spec: AutomationSpec, userId = "usr_ada") {
   expect(r.status, JSON.stringify(r.body)).toBe(200);
   return r.body.automation;
 }
-async function approve(a: { id: string; revision: string }, userId = "usr_ada") {
+async function approve(
+  a: { id: string; revision: string },
+  userId = "usr_ada",
+) {
   const r = await call(
     "POST",
     `${A}/${a.id}:approve`,
@@ -120,12 +123,22 @@ describe("approval", () => {
       "FOUNDRY_AUTOMATION_CHANGED",
     );
     const on = (await approve(a)).body.automation;
-    expect(on).toMatchObject({ status: "active", approvedSpecRevision: "1", canRun: true });
+    expect(on).toMatchObject({
+      status: "active",
+      approvedSpecRevision: "1",
+      canRun: true,
+    });
     // Approving it again changes nothing.
     expect((await approve(on)).body.automation.revision).toBe(on.revision);
     // Another member sees it, and may do nothing to it.
-    const seen = (await call("GET", `${A}/${a.id}`, undefined, "usr_alan")).body.automation;
-    expect(seen).toMatchObject({ canEdit: false, canRun: false, canPause: false, canDelete: false });
+    const seen = (await call("GET", `${A}/${a.id}`, undefined, "usr_alan")).body
+      .automation;
+    expect(seen).toMatchObject({
+      canEdit: false,
+      canRun: false,
+      canPause: false,
+      canDelete: false,
+    });
   });
 
   it("keeps its approval when only its steps' places move, and waits again otherwise", async () => {
@@ -136,41 +149,78 @@ describe("approval", () => {
       expectedRevision: read.revision,
       specJson: canonicalJson(moveNode(spec, "tell", { x: 200, y: 300 })),
     });
-    expect(moved.body.automation).toMatchObject({ status: "active", specRevision: "2" });
+    expect(moved.body.automation).toMatchObject({
+      status: "active",
+      specRevision: "2",
+    });
     const changed = await call("PATCH", `${A}/${a.id}`, {
       expectedRevision: moved.body.automation.revision,
-      specJson: canonicalJson(chain(manual, node("tell", "notify", { message: "Other" }))),
+      specJson: canonicalJson(
+        chain(manual, node("tell", "notify", { message: "Other" })),
+      ),
     });
-    expect(changed.body.automation).toMatchObject({ status: "needs_approval", nextRunAt: null });
+    expect(changed.body.automation).toMatchObject({
+      status: "needs_approval",
+      nextRunAt: null,
+    });
     // Renamed by someone else, or at a revision passed: refused.
     expect(
-      (await call("PATCH", `${A}/${a.id}`, { expectedRevision: changed.body.automation.revision, name: "x" }, "usr_alan")).body.code,
+      (
+        await call(
+          "PATCH",
+          `${A}/${a.id}`,
+          { expectedRevision: changed.body.automation.revision, name: "x" },
+          "usr_alan",
+        )
+      ).body.code,
     ).toBe(7);
-    expect(reason(await call("PATCH", `${A}/${a.id}`, { expectedRevision: "1", name: "x" }))).toBe(
-      "FOUNDRY_AUTOMATION_CHANGED",
-    );
-    expect((await call("PATCH", `${A}/${a.id}`, { expectedRevision: "3" })).status).toBe(400);
+    expect(
+      reason(
+        await call("PATCH", `${A}/${a.id}`, {
+          expectedRevision: "1",
+          name: "x",
+        }),
+      ),
+    ).toBe("FOUNDRY_AUTOMATION_CHANGED");
+    expect(
+      (await call("PATCH", `${A}/${a.id}`, { expectedRevision: "3" })).status,
+    ).toBe(400);
   });
 
   it("refuses a spec that doesn't read, or names what the workspace hasn't", async () => {
-    const bad = await call("POST", A, { name: "x", specJson: "{}", clientToken: "b" });
+    const bad = await call("POST", A, {
+      name: "x",
+      specJson: "{}",
+      clientToken: "b",
+    });
     expect(bad.body.message).toMatch(/^spec_json: /);
     const other = await call("POST", A, {
       name: "x",
       clientToken: "o",
       specJson: JSON.stringify(
-        chain(manual, node("sync", "action", { operation: "sync_connector", connector_id: "conn_other" })),
+        chain(
+          manual,
+          node("sync", "action", {
+            operation: "sync_connector",
+            connector_id: "conn_other",
+          }),
+        ),
       ),
     });
     expect(other.body.message).toBe(
       "spec_json names the connector conn_other, which this workspace hasn't",
     );
-    expect((await call("POST", A, { name: " ", specJson: "{}", clientToken: "n" })).body.message).toBe(
-      "name is 1 to 120 characters",
-    );
+    expect(
+      (await call("POST", A, { name: " ", specJson: "{}", clientToken: "n" }))
+        .body.message,
+    ).toBe("name is 1 to 120 characters");
     // The same client token returns the one made.
     const a = await create(chain(manual, tell));
-    const again = await call("POST", A, { name: "Test", specJson: "{}", clientToken: `c${token}` });
+    const again = await call("POST", A, {
+      name: "Test",
+      specJson: "{}",
+      clientToken: `c${token}`,
+    });
     expect(again.body.automation.id).toBe(a.id);
   });
 
@@ -187,29 +237,55 @@ describe("approval", () => {
 
 describe("runs", () => {
   it("walks a run a step at a time, its findings its owner's to read", async () => {
-    const a = await active(chain(manual, node("ask", "assistant", { instruction: "How many ontologies? Answer yes or no." }), tell));
+    const a = await active(
+      chain(
+        manual,
+        node("ask", "assistant", {
+          instruction: "How many ontologies? Answer yes or no.",
+        }),
+        tell,
+      ),
+    );
     const queued = await runNow(a.id);
-    expect(queued.body.run).toMatchObject({ status: "queued", canCancel: true });
+    expect(queued.body.run).toMatchObject({
+      status: "queued",
+      canCancel: true,
+    });
     expect(reason(await runNow(a.id))).toBe("FOUNDRY_AUTOMATION_BUSY");
     expect((await runNow(a.id, "usr_alan")).body.code).toBe(7);
     const done = await ran(a.id, queued.body.run.id);
     expect(done.status).toBe("succeeded");
     const steps = Object.fromEntries(done.nodes.map((n: any) => [n.nodeId, n]));
-    expect(JSON.parse(steps.start.outputJson)).toEqual({ summary: "Run by hand." });
-    expect(JSON.parse(steps.ask.outputJson)).toMatchObject({ answer: true, count: 3 });
+    expect(JSON.parse(steps.start.outputJson)).toEqual({
+      summary: "Run by hand.",
+    });
+    expect(JSON.parse(steps.ask.outputJson)).toMatchObject({
+      answer: true,
+      count: 3,
+    });
     expect(steps.ask.turnId).toBeTruthy();
-    expect(JSON.parse(steps.tell.outputJson)).toEqual({ summary: "Emailed its owner." });
+    expect(JSON.parse(steps.tell.outputJson)).toEqual({
+      summary: "Emailed its owner.",
+    });
     expect(done.threadId).toBeTruthy();
     // Another member sees how far it went, not what it found.
     const theirs = await getRun(a.id, done.id, "usr_alan");
-    expect(theirs.nodes.every((n: any) => !n.outputJson && !n.turnId)).toBe(true);
+    expect(theirs.nodes.every((n: any) => !n.outputJson && !n.turnId)).toBe(
+      true,
+    );
     expect(theirs.threadId).toBeUndefined();
     // The run's thread is out of its owner's list of threads.
-    const threads = await call("GET", "/v1/workspaces/ws_acme/foundry/agent/threads");
+    const threads = await call(
+      "GET",
+      "/v1/workspaces/ws_acme/foundry/agent/threads",
+    );
     expect(threads.body.threads).toEqual([]);
     const list = (await call("GET", A)).body;
     expect(list).toMatchObject({ canCreate: true, email: true });
-    expect(list.automations[0].lastRun).toMatchObject({ id: done.id, status: "succeeded" });
+    expect(list.automations[0].lastRun).toMatchObject({
+      id: done.id,
+      status: "succeeded",
+    });
   });
 
   it("takes a condition's branch, and skips the other", async () => {
@@ -218,7 +294,9 @@ describe("runs", () => {
       v: 1,
       nodes: [
         manual,
-        node("ask", "assistant", { instruction: "Is anything overdue? Answer yes or no." }),
+        node("ask", "assistant", {
+          instruction: "Is anything overdue? Answer yes or no.",
+        }),
         node("if", "condition", { check: "answer", equals: "yes" }),
         tell,
         node("other", "notify", { message: "Nothing" }),
@@ -232,41 +310,91 @@ describe("runs", () => {
     };
     const a = await active(spec);
     const done = await ran(a.id, (await runNow(a.id)).body.run.id);
-    const status = Object.fromEntries(done.nodes.map((n: any) => [n.nodeId, n.status]));
-    expect(status).toEqual({ start: "succeeded", ask: "succeeded", if: "succeeded", tell: "skipped", other: "succeeded" });
+    const status = Object.fromEntries(
+      done.nodes.map((n: any) => [n.nodeId, n.status]),
+    );
+    expect(status).toEqual({
+      start: "succeeded",
+      ask: "succeeded",
+      if: "succeeded",
+      tell: "skipped",
+      other: "succeeded",
+    });
   });
 
   it("runs an Assistant step's approved load at once, and leaves another as a card", async () => {
-    const load = { operation: "create_load", ontology_id: "ont_acme_contracts" };
+    const load = {
+      operation: "create_load",
+      ontology_id: "ont_acme_contracts",
+    };
     const allowed = await active(
-      chain(manual, node("ask", "assistant", { instruction: "Load Customer contracts.", allow: [load] })),
+      chain(
+        manual,
+        node("ask", "assistant", {
+          instruction: "Load Customer contracts.",
+          allow: [load],
+        }),
+      ),
     );
     const done = await ran(allowed.id, (await runNow(allowed.id)).body.run.id);
     expect(done.status).toBe("succeeded");
-    const thread = await call("GET", `/v1/workspaces/ws_acme/foundry/agent/threads/${done.threadId}`);
-    expect(thread.body.actions.map((x: any) => x.status)).toEqual(["succeeded"]);
-    const asked = await active(chain(manual, node("ask", "assistant", { instruction: "Load Customer contracts." })));
+    const thread = await call(
+      "GET",
+      `/v1/workspaces/ws_acme/foundry/agent/threads/${done.threadId}`,
+    );
+    expect(thread.body.actions.map((x: any) => x.status)).toEqual([
+      "succeeded",
+    ]);
+    const asked = await active(
+      chain(
+        manual,
+        node("ask", "assistant", { instruction: "Load Customer contracts." }),
+      ),
+    );
     const waits = await ran(asked.id, (await runNow(asked.id)).body.run.id);
     expect(JSON.parse(waits.nodes[1].outputJson)).toMatchObject({ pending: 1 });
-    const cards = await call("GET", `/v1/workspaces/ws_acme/foundry/agent/threads/${waits.threadId}`);
+    const cards = await call(
+      "GET",
+      `/v1/workspaces/ws_acme/foundry/agent/threads/${waits.threadId}`,
+    );
     expect(cards.body.actions.map((x: any) => x.status)).toEqual(["prepared"]);
   });
 
   it("stops at a failed step, holds the next run back, and pauses at the third", async () => {
     Object.assign(config, { agentOutcome: "fail" });
-    const a = await active(chain(manual, node("ask", "assistant", { instruction: "Summarise." }), tell));
+    const a = await active(
+      chain(
+        manual,
+        node("ask", "assistant", { instruction: "Summarise." }),
+        tell,
+      ),
+    );
     for (let i = 1; i <= 3; i++) {
       const done = await ran(a.id, (await runNow(a.id)).body.run.id);
       expect(done.status).toBe("failed");
-      expect(done.error).toBe('The assistant step "ask" failed: The model failed: overloaded.');
-      expect(done.nodes.find((n: any) => n.nodeId === "tell").status).toBe("blocked");
+      expect(done.error).toBe(
+        'The assistant step "ask" failed: The model failed: overloaded.',
+      );
+      expect(done.nodes.find((n: any) => n.nodeId === "tell").status).toBe(
+        "blocked",
+      );
       const after = (await call("GET", `${A}/${a.id}`)).body.automation;
       expect(after.failures).toBe(i);
-      if (i < 3) expect(after).toMatchObject({ status: "active", backoffUntil: expect.any(String) });
-      else expect(after).toMatchObject({ status: "paused", pausedReason: "failures", canResume: true });
+      if (i < 3)
+        expect(after).toMatchObject({
+          status: "active",
+          backoffUntil: expect.any(String),
+        });
+      else
+        expect(after).toMatchObject({
+          status: "paused",
+          pausedReason: "failures",
+          canResume: true,
+        });
     }
     // Another member doesn't read why.
-    const runs = (await call("GET", `${A}/${a.id}/runs`, undefined, "usr_alan")).body.runs;
+    const runs = (await call("GET", `${A}/${a.id}/runs`, undefined, "usr_alan"))
+      .body.runs;
     expect(runs).toHaveLength(3);
     expect(runs[0].error).toBeUndefined();
     // Turned on again, it starts afresh.
@@ -275,17 +403,31 @@ describe("runs", () => {
   });
 
   it("cancels a live run, its owner's or a manager's call", async () => {
-    const a = await active(chain(manual, node("ask", "assistant", { instruction: "Summarise." })));
+    const a = await active(
+      chain(manual, node("ask", "assistant", { instruction: "Summarise." })),
+    );
     const run = (await runNow(a.id)).body.run;
-    expect((await call("POST", `${A}/${a.id}/runs/${run.id}:cancel`, {}, "usr_alan")).body.code).toBe(7);
-    const cancelled = await call("POST", `${A}/${a.id}/runs/${run.id}:cancel`, {});
-    expect(cancelled.body.run).toMatchObject({ status: "cancelled", error: "Cancelled by a person." });
-    expect((await call("POST", `${A}/${a.id}/runs/${run.id}:cancel`, {})).status).toBe(200);
+    expect(
+      (await call("POST", `${A}/${a.id}/runs/${run.id}:cancel`, {}, "usr_alan"))
+        .body.code,
+    ).toBe(7);
+    const cancelled = await call(
+      "POST",
+      `${A}/${a.id}/runs/${run.id}:cancel`,
+      {},
+    );
+    expect(cancelled.body.run).toMatchObject({
+      status: "cancelled",
+      error: "Cancelled by a person.",
+    });
+    expect(
+      (await call("POST", `${A}/${a.id}/runs/${run.id}:cancel`, {})).status,
+    ).toBe(200);
     const other = (await runNow(a.id)).body.run;
     await ran(a.id, other.id);
-    expect(reason(await call("POST", `${A}/${a.id}/runs/${other.id}:cancel`, {}))).toBe(
-      "FOUNDRY_AUTOMATION_RUN_ENDED",
-    );
+    expect(
+      reason(await call("POST", `${A}/${a.id}/runs/${other.id}:cancel`, {})),
+    ).toBe("FOUNDRY_AUTOMATION_RUN_ENDED");
   });
 
   it("refuses past the workspace's runs of the day", async () => {
@@ -299,7 +441,15 @@ describe("runs", () => {
 describe("triggers", () => {
   it("fires a schedule once when its time came, and once again at the next", async () => {
     const a = await active(
-      chain(node("start", "trigger", { kind: "schedule", every: "day", at: "09:00", time_zone: "UTC" }), tell),
+      chain(
+        node("start", "trigger", {
+          kind: "schedule",
+          every: "day",
+          at: "09:00",
+          time_zone: "UTC",
+        }),
+        tell,
+      ),
     );
     expect(a.nextRunAt).toBe("2026-11-16T09:00:00.000Z");
     expect((await call("GET", `${A}/${a.id}/runs`)).body.runs).toEqual([]);
@@ -310,14 +460,22 @@ describe("triggers", () => {
     expect(read.nextRunAt).toBe("2026-11-18T09:00:00.000Z");
     const runs = (await call("GET", `${A}/${a.id}/runs`)).body.runs;
     expect(runs).toHaveLength(1);
-    expect(JSON.parse(runs[0].triggerEventJson)).toMatchObject({ kind: "schedule", at: "2026-11-16T09:00:00.000Z" });
+    expect(JSON.parse(runs[0].triggerEventJson)).toMatchObject({
+      kind: "schedule",
+      at: "2026-11-16T09:00:00.000Z",
+    });
     expect((await call("GET", `${A}/${a.id}/runs`)).body.runs).toHaveLength(1);
   });
 
   it("records a skipped run when its schedule fires while one is live", async () => {
     const a = await active(
       chain(
-        node("start", "trigger", { kind: "schedule", every: "hour", minute: 30, time_zone: "UTC" }),
+        node("start", "trigger", {
+          kind: "schedule",
+          every: "hour",
+          minute: 30,
+          time_zone: "UTC",
+        }),
         node("ask", "assistant", { instruction: "Summarise." }),
       ),
     );
@@ -332,37 +490,61 @@ describe("triggers", () => {
   it("fires after a sync of its connector ends as it listens for", async () => {
     const a = await active(
       chain(
-        node("start", "trigger", { kind: "sync_finished", connector_id: "conn_acme_stripe", outcome: "succeeded" }),
+        node("start", "trigger", {
+          kind: "sync_finished",
+          connector_id: "conn_acme_stripe",
+          outcome: "succeeded",
+        }),
         node("if", "condition", { check: "count", op: "at_least", value: 1 }),
       ),
     );
     // A sync that ended before it was on fires nothing.
     expect((await call("GET", `${A}/${a.id}/runs`)).body.runs).toEqual([]);
-    const sync = await call("POST", "/v1/workspaces/ws_acme/foundry/connectors/conn_acme_stripe:sync", {});
+    const sync = await call(
+      "POST",
+      "/v1/workspaces/ws_acme/foundry/connectors/conn_acme_stripe:sync",
+      {},
+    );
     expect(sync.status).toBe(200);
     later(5_000);
     const runs = (await call("GET", `${A}/${a.id}/runs`)).body.runs;
     expect(runs).toHaveLength(1);
     const event = JSON.parse(runs[0].triggerEventJson);
-    expect(event).toMatchObject({ kind: "sync_finished", outcome: "succeeded", sync_id: sync.body.sync.id });
+    expect(event).toMatchObject({
+      kind: "sync_finished",
+      outcome: "succeeded",
+      sync_id: sync.body.sync.id,
+    });
     const done = await ran(a.id, runs[0].id);
     expect(done.status).toBe("succeeded");
-    expect(JSON.parse(done.nodes.find((n: any) => n.nodeId === "if").outputJson)).toEqual({ branch: true });
+    expect(
+      JSON.parse(done.nodes.find((n: any) => n.nodeId === "if").outputJson),
+    ).toEqual({ branch: true });
     // Read again, the same sync fires nothing more.
     expect((await call("GET", `${A}/${a.id}/runs`)).body.runs).toHaveLength(1);
   });
 
   it("lets an owner or admin pause and delete another's", async () => {
     const mine = await create(chain(manual, tell), "usr_alan");
-    expect((await approve(mine, "usr_alan")).body.automation.status).toBe("active");
-    expect((await call("POST", `${A}/${mine.id}:pause`, {})).body.automation).toMatchObject({
+    expect((await approve(mine, "usr_alan")).body.automation.status).toBe(
+      "active",
+    );
+    expect(
+      (await call("POST", `${A}/${mine.id}:pause`, {})).body.automation,
+    ).toMatchObject({
       status: "paused",
       pausedReason: "person",
       pausedByUserId: "usr_ada",
     });
-    expect(reason(await call("POST", `${A}/${(await create(chain(manual, tell))).id}:pause`, {}))).toBe(
-      "FOUNDRY_AUTOMATION_NOT_ACTIVE",
-    );
+    expect(
+      reason(
+        await call(
+          "POST",
+          `${A}/${(await create(chain(manual, tell))).id}:pause`,
+          {},
+        ),
+      ),
+    ).toBe("FOUNDRY_AUTOMATION_NOT_ACTIVE");
     expect((await call("DELETE", `${A}/${mine.id}`)).status).toBe(200);
     expect((await call("GET", `${A}/${mine.id}`)).status).toBe(404);
   });

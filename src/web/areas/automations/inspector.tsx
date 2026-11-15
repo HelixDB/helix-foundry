@@ -14,7 +14,7 @@ import {
   type SelectOption,
 } from "../../kit";
 import {
-  KIND_LABELS,
+  KIND_HEADS,
   LIMITS,
   WEEKDAYS,
   actionText,
@@ -95,7 +95,7 @@ export function Inspector({
     <div className="au-inspector">
       <div className="au-inspector-head">
         <Icon size={15} aria-hidden />
-        <h2>{KIND_LABELS[node.kind]}</h2>
+        <h2>{KIND_HEADS[node.kind]}</h2>
       </div>
       <p className="au-inspector-sum">{stepTitle(node, lists.names, email)}</p>
       {node.kind === "trigger" && (
@@ -279,10 +279,9 @@ function TriggerFields({
             <Select
               label="Time zone"
               value={t.time_zone}
-              options={ZONES.map((z) => ({
-                value: z,
-                label: z.replaceAll("_", " "),
-              }))}
+              options={[...new Set([t.time_zone, here(), ...ZONES])].map(
+                (z) => ({ value: z, label: z.replaceAll("_", " ") }),
+              )}
               onChange={(time_zone) => onChange({ ...t, time_zone })}
             />
           </label>

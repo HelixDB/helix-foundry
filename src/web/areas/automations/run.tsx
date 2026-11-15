@@ -30,6 +30,7 @@ import {
   runUsd,
   stepStates,
   triggerOf,
+  usdText,
   type Names,
   type StepState,
 } from "./model";
@@ -153,7 +154,7 @@ export function RunPage() {
           },
           {
             label: "Cost",
-            value: `$${runUsd(run.usdMicros).toFixed(2)}`,
+            value: usdText(run.usdMicros),
             hint: "What its Assistant steps spent.",
           },
         ]}
@@ -306,7 +307,9 @@ function StepOutcome({
       {step.error && (
         <p className="au-run-step-error">{asSentence(step.error)}</p>
       )}
-      {usd > 0 && <p className="au-run-step-fact">Cost: ${usd.toFixed(2)}</p>}
+      {usd > 0 && (
+        <p className="au-run-step-fact">Cost: {usdText(step.usdMicros)}</p>
+      )}
       {node.kind === "assistant" && run.threadId && step.turnId && (
         <Waiting threadId={run.threadId} turnId={step.turnId} />
       )}

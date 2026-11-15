@@ -59,6 +59,7 @@ const configure = (config: {
     online?: boolean;
     account?: { state: string; subscription?: string } | null;
   }[];
+  automationStepMs?: number;
 }) =>
   fetch(`${MOCK}/__mock/config`, {
     method: "POST",
@@ -1456,4 +1457,35 @@ test("makes dashboards, with no public link", async ({ page }) => {
   // Nor does it serve a public page.
   const shared = await page.request.get("/share/hxd_" + "a".repeat(43));
   expect(shared.status()).toBe(404);
+});
+
+test("runs an automation, which notes what it found where it can't email", async ({
+  page,
+}) => {
+  await configure({ agentStepMs: 60, automationStepMs: 100 });
+  await page.goto("/automations");
+  await page.getByRole("link", { name: /^Start from scratch/ }).click();
+  await page.getByLabel("Name").fill("Count the ontologies");
+  await page
+    .getByLabel("What should it do?")
+    .fill("How many ontologies are there?");
+  await page
+    .getByRole("group", { name: "Add a step" })
+    .getByRole("button", { name: "Email me" })
+    .click();
+  await expect(page.locator(".au-sentence")).toHaveText(
+    "When you run it, ask the Assistant: “How many ontologies are there?”, then note what it found in the run (this Foundry sends no email).",
+  );
+  await page.getByRole("button", { name: "Review and save" }).click();
+  await page.getByRole("button", { name: "Save and turn on" }).click();
+  const main = page.getByRole("main");
+  await main.getByRole("button", { name: "Run now" }).click();
+  await expect(
+    main.locator(".hf-page-header").getByText("Succeeded", { exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+  const steps = page.getByRole("list", { name: "What each step did" });
+  await expect(steps.getByRole("listitem").nth(1)).toContainText("Count: 3");
+  await expect(steps.getByRole("listitem").nth(2)).toContainText(
+    "Not emailed: this install sends no email.",
+  );
 });

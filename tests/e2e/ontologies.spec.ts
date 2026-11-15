@@ -382,7 +382,7 @@ test("on a phone, shows the rail and the ontologies in the drawer", async ({
   await page.getByRole("button", { name: "Open navigation" }).click();
   const drawer = page.getByRole("dialog", { name: "Navigation" });
   const rail = drawer.getByRole("navigation", { name: "Main navigation" });
-  await expect(rail.getByRole("link")).toHaveCount(5);
+  await expect(rail.getByRole("link")).toHaveCount(6);
   await expect(rail.getByRole("link", { name: "Ontologies" })).toHaveAttribute(
     "aria-current",
     "page",

@@ -8,6 +8,7 @@ import {
   loadVersion3,
   makeContractsCurrent,
   mock,
+  postToWfe,
   signIn,
   test,
   uploadInData,
@@ -214,6 +215,60 @@ test("every main page in both themes", async ({ page }, info) => {
   await settle(page);
   await shoot("assistant");
   await page.keyboard.press("ControlOrMeta+j");
+
+  // Automations: the list and its templates, the builder, one with a run.
+  await mock.configure({ automationStepMs: 100, agentStepMs: 60 });
+  await visit("automations-empty", "/automations");
+  await visit("automation-new", "/automations/new?template=check-documents");
+  const A = "/v1/workspaces/ws_acme/foundry/automations";
+  const made = (
+    await postToWfe(page, A, {
+      name: "Morning summary",
+      clientToken: "theme",
+      specJson: JSON.stringify({
+        v: 1,
+        nodes: [
+          {
+            id: "start",
+            kind: "trigger",
+            config: { kind: "manual" },
+            position: { x: 0, y: 0 },
+          },
+          {
+            id: "ask",
+            kind: "assistant",
+            config: { instruction: "Summarise overdue invoices." },
+            position: { x: 0, y: 150 },
+          },
+          {
+            id: "tell",
+            kind: "notify",
+            config: { message: "Summary" },
+            position: { x: 0, y: 300 },
+          },
+        ],
+        edges: [
+          { from: "start", to: "ask" },
+          { from: "ask", to: "tell" },
+        ],
+      }),
+    })
+  ).automation;
+  await visit("automation-unapproved", `/automations/${made.id}`);
+  await postToWfe(page, `${A}/${made.id}:approve`, {
+    expectedRevision: made.revision,
+  });
+  const ran = (
+    await postToWfe(page, `${A}/${made.id}:run`, { clientToken: "theme" })
+  ).run;
+  await page.goto(`/automations/${made.id}/runs/${ran.id}`);
+  await expect(
+    page.getByRole("main").getByText("Succeeded", { exact: true }).first(),
+  ).toBeVisible({ timeout: 20_000 });
+  await settle(page);
+  await shoot("automation-run");
+  await visit("automation", `/automations/${made.id}`);
+  await visit("automations", "/automations");
 
   await visit("settings", "/settings");
   await visit("members", "/settings/members");

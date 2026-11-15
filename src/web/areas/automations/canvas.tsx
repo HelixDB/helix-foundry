@@ -20,7 +20,7 @@ import type { AutomationNode, AutomationSpec } from "../../../shared/wfe";
 import { StatusDot, cx } from "../../kit";
 import { useCurrentTheme } from "../../shell/theme";
 import {
-  KIND_LABELS,
+  KIND_HEADS,
   cannotConnect,
   connect,
   disconnect,
@@ -70,7 +70,7 @@ const StepCard = memo(function StepCard({
       )}
       <div className="au-node-head">
         <Icon size={13} aria-hidden />
-        <span>{KIND_LABELS[node.kind]}</span>
+        <span>{KIND_HEADS[node.kind]}</span>
         {state && (
           <StatusDot
             status={STEP_STATUS[state].status}
@@ -125,7 +125,7 @@ function Canvas({
         position: n.position,
         selected: n.id === selected,
         deletable: editable && n.kind !== "trigger",
-        ariaLabel: `${KIND_LABELS[n.kind]}: ${stepTitle(n, names, email)}`,
+        ariaLabel: `${KIND_HEADS[n.kind]}: ${stepTitle(n, names, email)}`,
         data: {
           node: n,
           title: stepTitle(n, names, email),

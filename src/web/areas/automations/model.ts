@@ -804,7 +804,7 @@ export function actionText(a: AutomationAction, names: Names) {
     case "sync_connector":
       return `sync ${quoted(names.connector(a.connector_id), "a connection")}`;
     case "create_load":
-      return `load ${quoted(names.ontology(a.ontology_id), "an ontology")}’s current version`;
+      return `load the current version of ${quoted(names.ontology(a.ontology_id), "an ontology")}`;
     case "publish_dashboard":
       return `refresh the public snapshot of ${quoted(names.dashboard(a.dashboard_id), "a dashboard")}`;
   }
@@ -823,13 +823,21 @@ export function conditionText(
   return `the count is ${op} ${c.value}`;
 }
 
-/** Each kind's name, as the palette and the steps' heads say it. */
+/** Each kind's name, as the builder offers a new step of it. */
 export const KIND_LABELS: Record<Kind, string> = {
-  trigger: "When",
+  trigger: "Start",
   assistant: "Ask the Assistant",
-  action: "Do",
-  condition: "If",
+  action: "Sync, load or refresh",
+  condition: "Check an answer or a count",
   notify: "Email me",
+};
+/** Each kind's name, as a step's head says it. */
+export const KIND_HEADS: Record<Kind, string> = {
+  trigger: "When",
+  assistant: "Assistant",
+  action: "Action",
+  condition: "If",
+  notify: "Email",
 };
 
 /**
@@ -1022,7 +1030,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "sync-and-summarise",
     title: "Sync, then summarise",
     description:
-      "Every weekday morning, sync a connection, then have the Assistant email you a summary.",
+      "Every morning, sync a connection, then have the Assistant email you a summary.",
     needs: ["connector"],
     build: (c) => ({
       name: `Morning ${c.connector?.name || "sync"}`,
@@ -1560,6 +1568,17 @@ export const isLiveRun = (r?: FoundryAutomationRun | null) =>
 
 /** A run's spend in dollars, from its int64 millionths. */
 export const runUsd = (micros?: string) => Number(micros || 0) / 1e6;
+/**
+ * A spend in words: dollars and cents, or under a cent.
+ *
+ * @example
+ * usdText("1500000"); // "$1.50"
+ * usdText("1200"); // "under $0.01"
+ */
+export const usdText = (micros?: string) => {
+  const usd = runUsd(micros);
+  return usd > 0 && usd < 0.005 ? "under $0.01" : `$${usd.toFixed(2)}`;
+};
 
 // ---------------------------------------------------------------- automations
 

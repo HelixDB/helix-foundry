@@ -231,7 +231,7 @@ function Builder({
     setSelected(added.id);
   };
   return (
-    <Page width="full" className="au-builder-page">
+    <Page width="wide" className="au-builder-page">
       {header}
       <div className="au-builder-fields">
         <label className="hf-field">

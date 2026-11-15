@@ -52,6 +52,7 @@ import {
   stoppedText,
   triggerOf,
   triggerText,
+  usdText,
   type Names,
 } from "./model";
 import { RUN_STATUS, StepsPreview, automationStatus, here } from "./parts";
@@ -408,7 +409,7 @@ export function AutomationPage() {
                   type: "number",
                   width: 90,
                   sortValue: (r) => runUsd(r.usdMicros),
-                  render: (r) => `$${runUsd(r.usdMicros).toFixed(2)}`,
+                  render: (r) => usdText(r.usdMicros),
                 },
               ]}
             />

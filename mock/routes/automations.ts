@@ -919,7 +919,9 @@ function activate(a: StoredAutomation, approved: boolean) {
     failures: 0,
     backoffUntil: null,
     nextFireAt: firstFire(a.spec, clock()),
-    cursor: triggerSpec(a).kind === "schedule" ? null : clock(),
+    // Work ends on the real clock: its cursor is now, however far ahead
+    // the schedules' clock was moved.
+    cursor: triggerSpec(a).kind === "schedule" ? null : Date.now(),
     updatedAt: now(),
     ...(approved && {
       approvedSpecRevision: a.specRevision,

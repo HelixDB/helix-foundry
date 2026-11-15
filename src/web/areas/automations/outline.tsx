@@ -14,6 +14,7 @@ import {
   cx,
 } from "../../kit";
 import {
+  KIND_HEADS,
   KIND_LABELS,
   addStep,
   cannotConnect,
@@ -65,6 +66,11 @@ export function Outline({
     const n = byId.get(id);
     return n ? stepTitle(n, names, email) : id;
   };
+  // A step another names, cut short.
+  const short = (id: string) => {
+    const t = [...title(id)];
+    return t.length > 60 ? t.slice(0, 59).join("").trimEnd() + "…" : t.join("");
+  };
   const via = (branch?: string) =>
     branch === "true" ? " (yes)" : branch === "false" ? " (no)" : "";
   return (
@@ -93,7 +99,7 @@ export function Outline({
                 <Icon size={14} />
               </span>
               <span className="au-outline-text">
-                <span className="au-outline-kind">{KIND_LABELS[n.kind]}</span>
+                <span className="au-outline-kind">{KIND_HEADS[n.kind]}</span>
                 <span>{title(id)}</span>
                 {problem && (
                   <span className="au-outline-problem">
@@ -103,14 +109,14 @@ export function Outline({
                 {n.kind !== "trigger" && (
                   <span className="au-outline-links">
                     {into.length
-                      ? `After: ${into.map((e) => title(e.from) + via(e.branch)).join("; ")}`
+                      ? `After: ${into.map((e) => short(e.from) + via(e.branch)).join("; ")}`
                       : "Not joined to any step before it"}
                   </span>
                 )}
                 {!!outOf.length && (
                   <span className="au-outline-links">
                     Then:{" "}
-                    {outOf.map((e) => title(e.to) + via(e.branch)).join("; ")}
+                    {outOf.map((e) => short(e.to) + via(e.branch)).join("; ")}
                   </span>
                 )}
               </span>

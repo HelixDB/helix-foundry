@@ -169,7 +169,7 @@ function AutomationsPage() {
               key: "status",
               label: "State",
               type: "string",
-              width: 190,
+              width: 170,
               sortValue: (a) => automationStatus(a).label,
               render: (a) => {
                 const s = automationStatus(a);
@@ -180,7 +180,7 @@ function AutomationsPage() {
               key: "lastRun",
               label: "Last run",
               type: "timestamp",
-              width: 200,
+              width: 180,
               sortValue: (a) => a.lastRun?.createdAt || "",
               render: (a) =>
                 a.lastRun ? (
