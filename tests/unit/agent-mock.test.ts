@@ -1522,9 +1522,9 @@ describe("operations", () => {
     const ontologyId = step1.result.id;
     const step2 = await runCard(step1.next);
     const threadId = step2.next.threadId as string;
-    const asking = (await call("GET", `${A}/threads/${threadId}`)).body.turns.at(
-      -1,
-    );
+    const asking = (
+      await call("GET", `${A}/threads/${threadId}`)
+    ).body.turns.at(-1);
     const generationId = asking.asked.generation.generationId;
     // Answered on its page meanwhile.
     const onPage = await call(

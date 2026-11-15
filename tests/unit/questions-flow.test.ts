@@ -348,9 +348,9 @@ describe("reduceFlow", () => {
     });
     expect(opened.drafts.q4).toEqual({ kind: "own", text: " " });
     expect(run(all, [{ type: "own" }], opened).drafts.q4).toBeUndefined();
-    expect(canReview(all.slice(3), run(all, [{ type: "own" }], opened).drafts)).toBe(
-      true,
-    );
+    expect(
+      canReview(all.slice(3), run(all, [{ type: "own" }], opened).drafts),
+    ).toBe(true);
     // A choice of several opens a box beside its options, and closes it.
     const at = { ...startFlow(), step: 1 };
     s = run(

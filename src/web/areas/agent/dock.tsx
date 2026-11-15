@@ -856,9 +856,8 @@ function AskedBlock({
                 {agentRefusal(error) === "FOUNDRY_AGENT_QUESTIONS_CLOSED" ? (
                   relayed ? (
                     <>
-                      These questions are closed: the draft no longer waits
-                      on them (answered on its page, or it moved on).{" "}
-                      {draftLink}
+                      These questions are closed: the draft no longer waits on
+                      them (answered on its page, or it moved on). {draftLink}
                     </>
                   ) : (
                     "These questions are closed: they were answered, or the conversation went on."

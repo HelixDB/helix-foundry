@@ -351,7 +351,9 @@ test("asks a draft's questions one at a time in the dock, and sends the answers 
   const sent = page.waitForRequest(
     (r) => r.url().endsWith("/agent/turns") && r.method() === "POST",
   );
-  await asked.getByRole("button", { name: "Send answers to the draft" }).click();
+  await asked
+    .getByRole("button", { name: "Send answers to the draft" })
+    .click();
   expect((await sent).postDataJSON()).toMatchObject({
     answers: {
       answers: [
@@ -474,12 +476,10 @@ test("closes a draft's relayed questions once its page answered them", async ({
     .getAttribute("href");
   const other = await context.newPage();
   await other.goto(href!);
-  await expect(
-    other.getByText("Question 1 of 4", { exact: true }),
-  ).toBeVisible({ timeout: 15_000 });
-  await other
-    .getByRole("radio", { name: /^The company that pays/ })
-    .click();
+  await expect(other.getByText("Question 1 of 4", { exact: true })).toBeVisible(
+    { timeout: 15_000 },
+  );
+  await other.getByRole("radio", { name: /^The company that pays/ }).click();
   await other.getByRole("checkbox", { name: /^Unpaid invoices/ }).click();
   await other.getByRole("button", { name: "Next", exact: true }).click();
   await other.getByRole("button", { name: "Use “90 days”" }).click();
@@ -506,7 +506,9 @@ test("closes a draft's relayed questions once its page answered them", async ({
   await asked.getByRole("textbox").fill("60 days");
   await asked.getByRole("button", { name: "Next", exact: true }).click();
   await asked.getByRole("button", { name: "Skip", exact: true }).click();
-  await asked.getByRole("button", { name: "Send answers to the draft" }).click();
+  await asked
+    .getByRole("button", { name: "Send answers to the draft" })
+    .click();
   await expect(
     dock.getByText(/the draft no longer waits on them/).first(),
   ).toBeVisible();

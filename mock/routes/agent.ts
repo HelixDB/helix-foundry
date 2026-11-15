@@ -1393,51 +1393,53 @@ function messageScript(a: Ask, manager: boolean): Step[] {
   const automated = automationAsk(a.ws, t);
   const intent: AgentOperation | "connect" | "relay_questions" | undefined =
     automated
-    ? automated.kind
-    : /\bdashboard\b/i.test(t) && /\b(build|make|create)\b/i.test(t)
-      ? "create_dashboard"
-      : asked
-        ? asked.operation
-        : /\banswers?\b.*\bquestions?\b|\buse (?:the|its) (?:defaults|suggestions)\b/i.test(
-              t,
-            )
-          ? "relay_questions"
-          : /\brevoke\b.*\bhelper\b/i.test(t)
-            ? "revoke_assistant_helper"
-            : /\b(run|switch|move)\b.*\b(subscription|claude code|foundry['’]s model)\b/i.test(
-                  t,
-                )
-              ? "set_assistant_runtime"
-              : /\bconnect\b/i.test(t)
-                ? "connect"
-                : /\bcreate\b.*\bontology\b/i.test(t)
-                  ? "create_ontology"
-                  : /\b(settle|resolve)\b.*\breview\b|\breview about\b/i.test(t)
-                    ? "settle_review"
-                    : /\bsync\b/i.test(t)
-                      ? "sync_connector"
-                      : /\bsample\b/i.test(t)
-                        ? "add_sample_data"
-                        : /\bmove\b/i.test(t)
-                          ? "move_document"
-                          : /\b(rename|describe)\b.*\bset\b/i.test(t)
-                            ? "update_document_set"
-                            : /\b(create|make|add)\b.*\bset\b/i.test(t)
-                              ? "create_document_set"
-                              : /\b(revise|preview)\b/i.test(t)
-                                ? "revise_version"
-                                : /\b(generate|draft)\b/i.test(t)
-                                  ? "generate_ontology"
-                                  : /\bload\b.*\bcurrent\b/i.test(t)
-                                    ? "set_current_load"
-                                    : /\bcurrent\b/i.test(t)
-                                      ? "set_current_version"
-                                      : /\b(re)?load\b/i.test(t) &&
-                                          !/\b(how many|which|what|when|why)\b/i.test(
-                                            t,
-                                          )
-                                        ? "create_load"
-                                        : undefined;
+      ? automated.kind
+      : /\bdashboard\b/i.test(t) && /\b(build|make|create)\b/i.test(t)
+        ? "create_dashboard"
+        : asked
+          ? asked.operation
+          : /\banswers?\b.*\bquestions?\b|\buse (?:the|its) (?:defaults|suggestions)\b/i.test(
+                t,
+              )
+            ? "relay_questions"
+            : /\brevoke\b.*\bhelper\b/i.test(t)
+              ? "revoke_assistant_helper"
+              : /\b(run|switch|move)\b.*\b(subscription|claude code|foundry['’]s model)\b/i.test(
+                    t,
+                  )
+                ? "set_assistant_runtime"
+                : /\bconnect\b/i.test(t)
+                  ? "connect"
+                  : /\bcreate\b.*\bontology\b/i.test(t)
+                    ? "create_ontology"
+                    : /\b(settle|resolve)\b.*\breview\b|\breview about\b/i.test(
+                          t,
+                        )
+                      ? "settle_review"
+                      : /\bsync\b/i.test(t)
+                        ? "sync_connector"
+                        : /\bsample\b/i.test(t)
+                          ? "add_sample_data"
+                          : /\bmove\b/i.test(t)
+                            ? "move_document"
+                            : /\b(rename|describe)\b.*\bset\b/i.test(t)
+                              ? "update_document_set"
+                              : /\b(create|make|add)\b.*\bset\b/i.test(t)
+                                ? "create_document_set"
+                                : /\b(revise|preview)\b/i.test(t)
+                                  ? "revise_version"
+                                  : /\b(generate|draft)\b/i.test(t)
+                                    ? "generate_ontology"
+                                    : /\bload\b.*\bcurrent\b/i.test(t)
+                                      ? "set_current_load"
+                                      : /\bcurrent\b/i.test(t)
+                                        ? "set_current_version"
+                                        : /\b(re)?load\b/i.test(t) &&
+                                            !/\b(how many|which|what|when|why)\b/i.test(
+                                              t,
+                                            )
+                                          ? "create_load"
+                                          : undefined;
   if (intent && !manager && !MEMBER_OPERATIONS.includes(intent))
     return [
       started,
@@ -1450,8 +1452,8 @@ function messageScript(a: Ask, manager: boolean): Step[] {
               : intent === "relay_questions"
                 ? "answer a draft's questions"
                 : intent === "create_load" && named(a.ws, t)
-                ? `load ${named(a.ws, t)!.name}`
-                : VERBS[intent]
+                  ? `load ${named(a.ws, t)!.name}`
+                  : VERBS[intent]
           }, so I can't prepare that for you.`,
       ),
     ];

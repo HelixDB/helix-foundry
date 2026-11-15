@@ -76,7 +76,8 @@ func TestOntologyGenerationQuestions(t *testing.T) {
 		assert.Equal(t, questions, listed[0].Questions.Asked, "lists carry the questions")
 		assert.Nil(t, listed[0].TurnState)
 
-		answers := []agentquestion.Answer{{QuestionID: "q1", Options: []string{}, Text: "Yes"}, {QuestionID: "q2", Options: []string{"Monthly", "Yearly"}, Text: "and weekly"}}
+		// A question left to the agent is kept as such, never as words.
+		answers := []agentquestion.Answer{{QuestionID: "q1", Options: []string{}, Text: "Yes"}, {QuestionID: "q2", Left: true}}
 		assert.ErrorIs(t, db.AnswerOntologyGeneration(ctx, ontologyID, gen.ID, 2, answers), store.ErrNotFound, "answers to another revision")
 		assert.ErrorIs(t, db.AnswerOntologyGeneration(ctx, id26("GQ-OTHER"), gen.ID, 3, answers), store.ErrNotFound, "another ontology's")
 		require.NoError(t, db.AnswerOntologyGeneration(ctx, ontologyID, gen.ID, 3, answers))
