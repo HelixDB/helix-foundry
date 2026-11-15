@@ -387,8 +387,11 @@ export function Transcript({
       if (stick.current) el.scrollTop = el.scrollHeight;
     };
     follow();
+    // The turns growing, and the log itself shrinking (the composer above
+    // the keyboard, or the page it sends coming and going).
     const observer = new ResizeObserver(follow);
     observer.observe(inner);
+    observer.observe(el);
     return () => observer.disconnect();
   }, [threadId]);
   // A turn starts with what the person did (a message, a card run, answers),

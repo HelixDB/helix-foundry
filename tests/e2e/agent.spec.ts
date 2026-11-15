@@ -144,7 +144,9 @@ test("stays where its reader scrolled up to, until they send again", async ({
     .toBeLessThan(48);
   // Read back up: it stays there.
   await log.evaluate((el) => el.scrollTo({ top: 0 }));
-  await expect(dock.getByText("Load Customer contracts")).toBeInViewport();
+  await expect(
+    log.getByText("Load Customer contracts", { exact: true }),
+  ).toBeInViewport();
   // Sending again follows the end, the answer in view.
   await dock
     .getByRole("textbox", { name: "Message" })
