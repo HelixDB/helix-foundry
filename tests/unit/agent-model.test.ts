@@ -1015,8 +1015,46 @@ describe("where the Assistant runs", () => {
     expect(threadRuntime(undefined, setting)).toEqual({
       runtime: "codex",
       state: "outdated",
-      outdated: { host: "Ada's Mac", version: "0.150.0", min: "0.169.0" },
+      helper: { host: "Ada's Mac", version: "0.150.0", min: "0.169.0" },
     });
+    // A Codex that didn't start says no version: it isn't old, it didn't run.
+    const unstarted = {
+      ...setting,
+      hosts: [
+        {
+          ...setting.hosts[0]!,
+          accounts: [{ runtime: "codex" as const, state: "unknown" as const }],
+        },
+      ],
+    };
+    expect(threadRuntime(undefined, unstarted)).toEqual({
+      runtime: "codex",
+      state: "unstarted",
+      helper: { host: "Ada's Mac", version: undefined, min: "0.169.0" },
+    });
+    expect(
+      threadRuntime("codex", {
+        ...unstarted,
+        hosts: [{ ...unstarted.hosts[0]!, online: false }],
+      }).state,
+    ).toBe("stopped");
+    // Claude Code that didn't start still runs: no floor, nothing to block.
+    expect(
+      threadRuntime("claude_code", {
+        ...unstarted,
+        runtime: "claude_code" as const,
+        online: [],
+        hosts: [
+          {
+            ...unstarted.hosts[0]!,
+            runtimes: [],
+            accounts: [
+              { runtime: "claude_code" as const, state: "unknown" as const },
+            ],
+          },
+        ],
+      }).state,
+    ).toBe("unpaired");
     // Not running, it is to be started (it may run an updated Codex then).
     const stopped = {
       ...setting,

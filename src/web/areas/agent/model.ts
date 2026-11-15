@@ -2097,16 +2097,23 @@ export function accountText(
  * Foundry's worker, or a helper's runtime with a helper running it;
  * `stopped` a helper's with one paired that runs it but none running (start
  * it); `outdated` a helper's whose helper runs but with a Codex too old
- * (update it); `unpaired` a helper's that no paired helper runs (pair one
- * first: starting one would fail).
+ * (update it); `unstarted` a helper's whose helper runs but whose Codex
+ * didn't start, so said no version (see why on that computer); `unpaired` a
+ * helper's that no paired helper runs (pair one first: starting one would
+ * fail).
  */
-export type RuntimeState = "ready" | "stopped" | "outdated" | "unpaired";
+export type RuntimeState =
+  | "ready"
+  | "stopped"
+  | "outdated"
+  | "unstarted"
+  | "unpaired";
 
-/** Where a thread runs, whether it can be sent to, and, when its CLI is too old, which helper's and how old. */
+/** Where a thread runs, whether it can be sent to, and, when its CLI is too old or didn't start, which helper's (and how old). */
 export type ThreadRuntime = {
   runtime: AgentRuntime;
   state: RuntimeState;
-  outdated?: { host: string; version?: string; min: string };
+  helper?: { host: string; version?: string; min: string };
 };
 
 /**
@@ -2133,27 +2140,30 @@ export function threadRuntime(
   if (runtime === "api" || !setting || (setting.online || []).includes(runtime))
     return { runtime, state: "ready" };
   const hosts = setting.hosts || [];
-  // A helper running whose CLI is too old: updating it is what's wanted.
-  const old = hosts.find(
-    (h) => h.online && helperAccount(h, runtime).kind === "outdated",
-  );
-  if (old)
+  // A helper running whose Codex is too old (updating it is what's
+  // wanted), or didn't start and said no version (Foundry runs neither).
+  const blocked = (h: FoundryAgentHost) => {
+    const a = helperAccount(h, runtime);
+    return a.kind === "outdated"
+      ? "outdated"
+      : runtime === "codex" && a.kind === "unknown" && !a.version
+        ? "unstarted"
+        : undefined;
+  };
+  const stuck = hosts.find((h) => h.online && blocked(h));
+  if (stuck)
     return {
       runtime,
-      state: "outdated",
-      outdated: {
-        host: old.name || "your computer",
-        version: helperAccount(old, runtime).version,
+      state: blocked(stuck)!,
+      helper: {
+        host: stuck.name || "your computer",
+        version: helperAccount(stuck, runtime).version,
         min: setting.codexMinVersion || "",
       },
     };
   return {
     runtime,
-    state: hosts.some(
-      (h) =>
-        (h.runtimes || []).includes(runtime) ||
-        helperAccount(h, runtime).kind === "outdated",
-    )
+    state: hosts.some((h) => (h.runtimes || []).includes(runtime) || blocked(h))
       ? "stopped"
       : "unpaired",
   };

@@ -32,7 +32,8 @@ import { foundryPrecondition as refused } from "./ai";
 //   "max"}, "codexVersion": "0.169.0"}]}` pairs some (account defaults to a
 //   Max subscription for Claude Code and a Plus plan for Codex; null is a
 //   helper that hasn't said yet; online false was last seen an hour ago;
-//   codexVersion, CODEX_MIN by default, is its Codex's);
+//   codexVersion, CODEX_MIN by default, is its Codex's, "" a Codex that
+//   didn't start and said no version, which runs nothing either);
 // - POST /__mock/agent-host/pair {code, name?, runtimes?, account?,
 //   codexVersion?} spends a pairing code as a helper's pair command does
 //   (once, within ten minutes): the helper it pairs offers runtimes (Claude
@@ -122,21 +123,24 @@ function accountsOf(
       ? {
           runtime,
           ...(a ?? PLUS_PLAN),
-          version: codexVersion,
-          outdated: !versionAtLeast(codexVersion, CODEX_MIN),
+          ...(codexVersion && {
+            version: codexVersion,
+            outdated: !versionAtLeast(codexVersion, CODEX_MIN),
+          }),
         }
       : { runtime, ...(a ?? MAX_SUBSCRIPTION) },
   );
 }
 
-/** What a helper runs of what it offers: not an outdated Codex, nor one it said nothing of. */
+/** What a helper runs of what it offers: not an outdated Codex, nor one of no version or it said nothing of. */
 const runnable = (
   runtimes: AgentHelperRuntime[],
   accounts: FoundryAgentHostAccount[],
 ) =>
   runtimes.filter(
     (r) =>
-      r !== "codex" || accounts.some((a) => a.runtime === r && !a.outdated),
+      r !== "codex" ||
+      accounts.some((a) => a.runtime === r && a.version && !a.outdated),
   );
 
 /** The helpers paired and not revoked, newest first, with stable ids. */
@@ -206,18 +210,23 @@ export function hostOffline(
 ): MockReply | undefined {
   if (runtime === "api") return undefined;
   if (LOCAL_TOKEN && helperOnline(runtime)) return undefined;
-  const old = hosts().find(
-    (h) =>
-      h.online && h.accounts!.some((a) => a.runtime === runtime && a.outdated),
-  );
+  const online = hosts().filter((h) => h.online);
+  const codex = (h: FoundryAgentHost) =>
+    runtime === "codex"
+      ? h.accounts!.find((a) => a.runtime === runtime)
+      : undefined;
+  const old = online.find((h) => codex(h)?.outdated);
+  const unstarted = online.find((h) => codex(h) && !codex(h)!.version);
   return refused(
     ws,
     "FOUNDRY_AGENT_HOST_OFFLINE",
     !LOCAL_TOKEN
       ? "no helper runs this thread here"
       : old
-        ? `the Codex on ${old.name} is older than ${CODEX_MIN}, the oldest Foundry runs the Assistant on: update it there, then send again`
-        : `no helper running ${runtime} has been seen in the last 30 seconds: start it on your computer, then send again`,
+        ? `the Codex on ${old.name} is older than ${CODEX_MIN}, the oldest Foundry runs the Assistant on: update it there, then send again in a minute`
+        : unstarted
+          ? `the Codex on ${unstarted.name} didn't start: run codex --version there to see why, then send again in a minute`
+          : `no helper running ${runtime} has been seen in the last 30 seconds: start it on your computer, then send again`,
   );
 }
 

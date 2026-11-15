@@ -74,7 +74,7 @@ const DESCRIPTIONS: Record<AgentRuntime, string> = {
 /** What Codex runs with, as the owner confirms it and the settings say it after. */
 const CODEX_TERMS = [
   "Codex runs with your own Codex setup, including your MCP servers, plugins and apps. A tool of theirs that asks for approval is declined; one that doesn’t ask can run in the Assistant’s turns.",
-  "Foundry turns off Codex’s shell, web search and image viewer, and declines any command or file change it asks for. The Assistant reads your documents and synced rows, which could carry instructions meant to mislead it: this is what keeps them from reaching your computer.",
+  "Foundry turns off Codex’s shell, sub-agents, web search and image viewer, and declines any command or file change it asks for. The Assistant reads your documents and synced rows, which could carry instructions meant to mislead it: this keeps them from running commands or changing files on your computer. A tool of your own setup that doesn’t ask can still be called if a document tells the model to, and can read or send whatever it reaches.",
   "The Assistant’s turns count against your ChatGPT plan’s Codex limits. Check that your plan’s terms allow it.",
 ] as const;
 
@@ -314,7 +314,9 @@ function Helpers({
         !(data.online || []).includes(runtime) &&
         !pairing &&
         hosts.length > 0 &&
-        (threadRuntime(undefined, data).state === "outdated" ? (
+        (["outdated", "unstarted"].includes(
+          threadRuntime(undefined, data).state,
+        ) ? (
           <UpdateCodex where={threadRuntime(undefined, data)} />
         ) : (
           <StartHelper runtime={runtime} />
@@ -438,18 +440,26 @@ function StartHelper({ runtime }: { runtime: AgentHelperRuntime }) {
   );
 }
 
-/** What to do when the chosen runtime's helper runs a Codex too old to run turns on. */
+/** What to do when the chosen runtime's helper runs a Codex too old to run turns on, or one that didn't start. */
 function UpdateCodex({ where }: { where: ThreadRuntime }) {
-  const o = where.outdated;
-  return (
+  const o = where.helper;
+  return where.state === "unstarted" ? (
+    <div className="ag-pairing" role="status">
+      <p className="ag-pairing-step">
+        The Codex on {o?.host ?? "your computer"} didn’t start, so new threads
+        can’t be sent. To see why, run this there; the helper tries it again
+        every 30 seconds:
+      </p>
+      <Command text="codex --version" label="check command" />
+    </div>
+  ) : (
     <div className="ag-pairing" role="status">
       <p className="ag-pairing-step">
         The Codex on {o?.host ?? "your computer"}
         {o?.version ? ` is ${o.version},` : ""} older than{" "}
         {o?.min || "Foundry runs"}
         {o?.min ? ", the oldest Foundry runs" : ""}, so new threads can’t be
-        sent. Update it there, and the helper runs it within 10 minutes (or at
-        once when restarted):
+        sent. Update it there, and the helper runs it within a minute:
       </p>
       <Command text={CODEX_UPDATE} label="update command" />
     </div>
@@ -495,9 +505,9 @@ function HelperRow({ host, min }: { host: FoundryAgentHost; min?: string }) {
   const runtimes = [
     ...new Set([
       ...(host.runtimes || []),
-      ...(host.accounts || [])
-        .filter((a) => a.outdated && a.runtime)
-        .map((a) => a.runtime!),
+      // An account is one of a runtime it offers: one it doesn't run (an
+      // outdated Codex, or one that didn't start) still says why.
+      ...(host.accounts || []).flatMap((a) => (a.runtime ? [a.runtime] : [])),
     ]),
   ];
   const accounts = runtimes.map((r) =>

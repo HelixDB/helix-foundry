@@ -1363,7 +1363,10 @@ test("runs new Assistant threads on the owner's Codex once they confirm what it 
     "Codex runs with your own Codex setup, including your MCP servers, plugins and apps.",
   );
   await expect(confirm).toContainText(
-    "Foundry turns off Codex’s shell, web search and image viewer, and declines any command or file change it asks for.",
+    "Foundry turns off Codex’s shell, sub-agents, web search and image viewer, and declines any command or file change it asks for.",
+  );
+  await expect(confirm).toContainText(
+    "A tool of your own setup that doesn’t ask can still be called if a document tells the model to, and can read or send whatever it reaches.",
   );
   await expect(confirm).toContainText(
     "The Assistant’s turns count against your ChatGPT plan’s Codex limits.",
@@ -1463,7 +1466,7 @@ test("says when a helper's Codex is too old to run the Assistant", async ({
   await openDock(page);
   const dock = dockOf(page);
   await expect(dock).toContainText(
-    "The Codex on Old laptop is 0.150.0, older than 0.169.0, so new threads can’t be sent. Update it there:",
+    "The Codex on Old laptop is 0.150.0, older than 0.169.0, so new threads can’t be sent. Update it there, then send again in a minute:",
   );
   await expect(
     dock.getByRole("figure", { name: "update command" }),
@@ -1471,7 +1474,7 @@ test("says when a helper's Codex is too old to run the Assistant", async ({
   await dock.getByRole("textbox", { name: "Message" }).fill("Hello");
   await dock.getByRole("button", { name: "Send", exact: true }).click();
   await expect(dock.getByRole("alert")).toHaveText(
-    "Its helper’s Codex is too old: update it with npm i -g @openai/codex@latest, then send again.",
+    "Its helper’s Codex is too old: update it with npm i -g @openai/codex@latest, then send again in a minute.",
   );
 
   // Updated, the helper says so at its next check, and the message sends.
@@ -1483,6 +1486,55 @@ test("says when a helper's Codex is too old to run the Assistant", async ({
   );
   await dock.getByRole("button", { name: "Send", exact: true }).click();
   await expect(dock.getByText(/^This workspace has \d+ ontolog/)).toBeVisible();
+});
+
+test("says when a helper's Codex didn't start, not that it is too old", async ({
+  page,
+}) => {
+  await configure({
+    agentHosts: [
+      {
+        name: "Old laptop",
+        runtimes: ["codex"],
+        account: { state: "unknown" },
+        codexVersion: "",
+      },
+    ],
+  });
+  await page.goto("/settings/ai");
+  const panel = assistantPanel(page);
+  await panel
+    .getByRole("radio", { name: "My ChatGPT subscription (Codex)" })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Run the Assistant on your Codex?" })
+    .getByRole("button", { name: "Use Codex" })
+    .click();
+  const row = panel.getByRole("listitem", { name: "Old laptop" });
+  await expect(row).toContainText(
+    "Codex didn’t start, so its sign-in is unknown",
+  );
+  await expect(row).not.toContainText("older than");
+  await expect(
+    panel.getByText(
+      "The Codex on Old laptop didn’t start, so new threads can’t be sent.",
+      { exact: false },
+    ),
+  ).toBeVisible();
+  await expect(panel.getByRole("figure", { name: "check command" })).toHaveText(
+    /codex --version/,
+  );
+
+  await openDock(page);
+  const dock = dockOf(page);
+  await expect(dock).toContainText(
+    "The Codex on Old laptop didn’t start, so new threads can’t be sent. To see why, run this there:",
+  );
+  await dock.getByRole("textbox", { name: "Message" }).fill("Hello");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(dock.getByRole("alert")).toHaveText(
+    "Its helper’s Codex didn’t start: run codex --version on that computer to see why, then send again in a minute.",
+  );
 });
 
 test("shows nothing of where the Assistant runs while it is off", async ({

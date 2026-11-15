@@ -198,7 +198,7 @@ Foundry's Assistant runs on the install's AI provider. It can instead run on the
 2. `npx -y @helixdb/foundry-agent-host@0.1.0 install` keeps it running, now and at every login (a launchd agent on macOS, a systemd user unit on Linux), or `… run` runs it in a terminal. `… doctor` says what stands in the way.
 3. New threads of that workspace run on that CLI from then on; a thread keeps where it started. While no helper has called Foundry for 30 seconds, or its Codex is older than 0.169.0, the Assistant says so instead of sending.
 
-Claude Code can call nothing but Foundry's tools. Codex runs with your own setup, its shell, web search and image viewer off, read-only, and the helper declines every command or file change it asks for, and any tool call of your servers that asks for approval; one that doesn't ask can run. [The helper's README](../agent-host/README.md#codex) says exactly what holds, and how it was tested.
+Claude Code can call nothing but Foundry's tools. Codex runs with your own setup, its shell, sub-agents, web search and image viewer off, read-only, and the helper declines every command or file change it asks for, and any tool call of your servers that asks for approval; one that doesn't ask can run. A managed Codex configuration that turns any of that back on stops its turns. [The helper's README](../agent-host/README.md#codex) says exactly what holds, and how it was tested.
 
 The helper reaches Foundry at `http://127.0.0.1:8081`, or the port `FOUNDRY_MCP_PORT` sets, which the pair command Foundry shows names (`--foundry`). Revoke it in Settings › AI models: its token, and those of the turns it runs, stop at once, and it deletes the sessions it kept.
 

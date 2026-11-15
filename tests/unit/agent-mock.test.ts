@@ -768,6 +768,31 @@ describe("where the Assistant runs", () => {
     expect(old.body.message).toContain(
       "the Codex on Old laptop is older than 0.169.0",
     );
+
+    // A Codex that didn't start (no version) runs nothing either, and isn't called old.
+    Object.assign(local.config, {
+      agentHosts: [
+        {
+          name: "Old laptop",
+          runtimes: ["codex"],
+          account: { state: "unknown" },
+          codexVersion: "",
+        },
+      ],
+    });
+    const none = (await at("GET", `${A}/runtime`)).body.runtime;
+    expect(none.online).toEqual([]);
+    expect(none.hosts[0].accounts).toEqual([
+      { runtime: "codex", state: "unknown" },
+    ]);
+    const unstarted = await at("POST", `${A}/turns`, {
+      text: "And now?",
+      clientToken: "cx-3",
+    });
+    expect(reason(unstarted)).toBe("FOUNDRY_AGENT_HOST_OFFLINE");
+    expect(unstarted.body.message).toContain(
+      "the Codex on Old laptop didn't start",
+    );
   });
 
   /** The mock as a local install's API, with its helper's pair stand-in. */
