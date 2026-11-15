@@ -32,6 +32,7 @@ import (
 // The routes, JSON in and out, each with the helper's hxh_ bearer but pair:
 //
 //	POST /agent-host/pair                {code, name, runtimes, version, platform} → {host_id, token}
+//	POST /agent-host/hello               {runtimes, version} → {host_id, name}
 //	POST /agent-host/claim               {runtimes, version} → {turn} within 25 s, or 204
 //	POST /agent-host/turns/{id}/renew    {} → {lease_expires_at}
 //	POST /agent-host/turns/{id}/text     {step, text, final} → 204
@@ -64,6 +65,7 @@ type agentHostHandler struct {
 func newAgentHostHandler(dir *directory.Store, turns *agent.Hosts, logger *slog.Logger) *agentHostHandler {
 	h := &agentHostHandler{dir: dir, turns: turns, logger: logger, mux: http.NewServeMux()}
 	h.mux.HandleFunc("POST /agent-host/pair", h.pair)
+	h.mux.HandleFunc("POST /agent-host/hello", h.withHost(h.hello))
 	h.mux.HandleFunc("POST /agent-host/claim", h.withHost(h.claim))
 	h.mux.HandleFunc("POST /agent-host/turns/{id}/renew", h.withClaim(h.renew))
 	h.mux.HandleFunc("POST /agent-host/turns/{id}/text", h.withClaim(h.text))
@@ -233,6 +235,37 @@ type claimRequest struct {
 	Version  string   `json:"version"`
 }
 
+// seen records what a live helper says it offers now, and returns it; false
+// once it was refused.
+func (h *agentHostHandler) seen(w http.ResponseWriter, r *http.Request, host agent.Host) ([]model.FoundryAgentRuntime, bool) {
+	var req claimRequest
+	if err := decode(r, &req); err != nil {
+		h.refuse(w, invalid("the body is {runtimes, version}"))
+		return nil, false
+	}
+	runtimes, ok := hostRuntimes(req.Runtimes)
+	if !ok || len(runtimes) == 0 {
+		h.refuse(w, invalid("runtimes are claude_code and codex, at least one"))
+		return nil, false
+	}
+	switch err := h.dir.SeeAgentHost(r.Context(), host.ID, runtimes, req.Version); {
+	case errors.Is(err, directory.ErrInvalidAgentHost):
+		h.refuse(w, invalid(err.Error()))
+		return nil, false
+	case err != nil:
+		h.failed(w, r, err)
+		return nil, false
+	}
+	return runtimes, true
+}
+
+// hello is a helper starting, or its doctor: it is seen, and told who it is.
+func (h *agentHostHandler) hello(w http.ResponseWriter, r *http.Request, host agent.Host) {
+	if _, ok := h.seen(w, r, host); ok {
+		writeHost(w, http.StatusOK, map[string]string{"host_id": host.ID, "name": host.Name})
+	}
+}
+
 // claimedTurn is a claimed turn as its helper is told it.
 type claimedTurn struct {
 	ID          string    `json:"id"`
@@ -254,22 +287,8 @@ type claimedTurn struct {
 // claim waits up to claimWait for a due turn of a runtime the helper offers,
 // leases it to a claim of its own, and mints the claim's hxr_ token.
 func (h *agentHostHandler) claim(w http.ResponseWriter, r *http.Request, host agent.Host) {
-	var req claimRequest
-	if err := decode(r, &req); err != nil {
-		h.refuse(w, invalid("the body is {runtimes, version}"))
-		return
-	}
-	runtimes, ok := hostRuntimes(req.Runtimes)
-	if !ok || len(runtimes) == 0 {
-		h.refuse(w, invalid("runtimes are claude_code and codex, at least one"))
-		return
-	}
-	switch err := h.dir.SeeAgentHost(r.Context(), host.ID, runtimes, req.Version); {
-	case errors.Is(err, directory.ErrInvalidAgentHost):
-		h.refuse(w, invalid(err.Error()))
-		return
-	case err != nil:
-		h.failed(w, r, err)
+	runtimes, ok := h.seen(w, r, host)
+	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), claimWait)

@@ -1,0 +1,55 @@
+# The Assistant's helper (agent-host/): its typecheck, tests (against a fake
+# Claude Code and a fake Foundry) and build, then the built helper against
+# the real backend's front end (cmd/foundry TestFrontWithTheHelper).
+name: Agent host
+on:
+  push:
+    paths:
+      - agent-host/**
+      - backend/agent/**
+      - backend/local/**
+      - backend/cmd/foundry/**
+      - .github/workflows/agent-host.yml
+  pull_request:
+    paths:
+      - agent-host/**
+      - backend/agent/**
+      - backend/local/**
+      - backend/cmd/foundry/**
+      - .github/workflows/agent-host.yml
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+defaults:
+  run:
+    working-directory: agent-host
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          package_json_file: agent-host/package.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: agent-host/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: docker compose -f compose.test.yaml up -d --wait mysql
+        working-directory: backend
+      - run: go test -run 'TestFrontWithTheHelper|TestFrontRunsAHelpersTurns' -v ./cmd/foundry/
+        working-directory: backend
+        env:
+          HELIX_TEST_ROOT_DSN: root:helix@tcp(127.0.0.1:3307)/
+          FOUNDRY_HELPER_E2E: ${{ github.workspace }}/agent-host

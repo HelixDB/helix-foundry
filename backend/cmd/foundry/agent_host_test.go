@@ -61,6 +61,11 @@ func TestFrontRunsAHelpersTurns(t *testing.T) {
 	hello["code"], hello["extra"] = pairing.Code, true
 	assert.Equal(t, 400, call(t, "POST", rest+"/agent-host/pair", "", hello, &refused), "fields are checked")
 
+	var me map[string]string
+	require.Equal(t, 200, call(t, "POST", rest+"/agent-host/hello", paired.Token, map[string]any{"runtimes": []string{"claude_code"}, "version": "0.1.0"}, &me))
+	assert.Equal(t, map[string]string{"host_id": paired.HostID, "name": "Ada's Mac"}, me)
+	assert.Equal(t, 400, call(t, "POST", rest+"/agent-host/hello", paired.Token, map[string]any{"runtimes": []string{"api"}}, &refused))
+
 	// The site token doesn't claim, and a helper's token doesn't reach the API.
 	assert.Equal(t, 401, call(t, "POST", rest+"/agent-host/claim", siteToken, map[string]any{"runtimes": []string{"claude_code"}}, &refused))
 	assert.Equal(t, 401, call(t, "GET", rest+"/v1/whoami", paired.Token, nil, nil))
