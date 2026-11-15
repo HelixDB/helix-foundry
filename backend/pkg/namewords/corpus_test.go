@@ -94,8 +94,8 @@ func TestReadsTheEngineWords(t *testing.T) {
 
 // What Words read of a text holds whatever the text: normalizing twice is
 // normalizing once, so a stored name reads the same words normalized again
-// or not, and every run of a text's words, as a name, is written there and
-// keyed among its keys.
+// or not, and every run of a text's words, as a name that reads as those
+// words, is written there and keyed among its keys.
 func FuzzWords(f *testing.F) {
 	for _, e := range corpus(f) {
 		f.Add(e.Text)
@@ -107,8 +107,9 @@ func FuzzWords(f *testing.F) {
 		text := namewords.NewText(s)
 		keys := text.Keys()
 		require.LessOrEqual(t, len(keys), namewords.KeyWords*len(words))
+		// Runs up to two words past a key's, so a long input stays linear.
 		for i := range words {
-			for j := i + 1; j <= len(words); j++ {
+			for j := i + 1; j <= min(len(words), i+namewords.KeyWords+2); j++ {
 				name := strings.Join(words[i:j], " ")
 				if !slices.Equal(namewords.Words(name), words[i:j]) {
 					continue

@@ -97,9 +97,11 @@ func spacedWord(c rune) bool {
 // fold is the engine's fold: NFKC, Turkish İ as I, lowercase, final ς as σ,
 // then NFC. Rust's char::to_lowercase maps one character to several only
 // for İ, which goes first, so Go's one-to-one unicode.ToLower is the same.
+// Bytes that are no UTF-8 become U+FFFD first, as a Rust string holds them
+// (norm leaves what follows them unnormalized), which separates words.
 func fold(s string) string {
 	var b strings.Builder
-	for _, c := range norm.NFKC.String(s) {
+	for _, c := range norm.NFKC.String(strings.ToValidUTF8(s, "\uFFFD")) {
 		if c == 'İ' {
 			c = 'I'
 		}
@@ -208,12 +210,14 @@ func engineWords(s string) []string {
 			flush()
 			continue
 		}
-		folded := strings.ToLower(cluster)
-		if !isASCII(cluster) {
+		var folded string
+		if isASCII(cluster) {
+			folded = strings.ToLower(cluster)
+		} else {
 			folded = foldCluster(cluster)
 		}
 		// A letter of a script written without spaces is a word with its marks.
-		if first, _ := utf8.DecodeRuneInString(folded); folded != "" && !spacedWord(first) {
+		if lead, _ := utf8.DecodeRuneInString(folded); folded != "" && !spacedWord(lead) {
 			flush()
 			words = append(words, folded)
 			continue
