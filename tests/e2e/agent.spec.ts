@@ -305,7 +305,7 @@ test("builds an ontology card by card: create, draft, make current, load", async
   await expect(page).toHaveURL(/\/ontology\/ont_[^/]+\/loads\/load_/);
 });
 
-test("asks a draft's questions in the chat, and sends the person's answers from a card", async ({
+test("asks a draft's questions one at a time in the dock, and sends the answers from a card", async ({
   page,
 }) => {
   await mock.configure({
@@ -321,38 +321,69 @@ test("asks a draft's questions in the chat, and sends the person's answers from 
   );
   await run(page, "Create the ontology “Orders graph”", "Create");
   await run(page, "Draft a new version of “Orders graph”", "Generate");
-  // The draft waits on its agent's questions: the Assistant asks them, its
-  // markup shown as text, and prepares nothing until the person answers.
+  // The draft waits on its agent's questions: the Assistant asks them in
+  // the dock, as its agent wrote them, its markup shown as text.
   const dock = dockOf(page);
+  const asked = dock.getByRole("region", { name: "Questions for you" });
+  await expect(asked).toBeVisible({ timeout: 20_000 });
+  await expect(asked).toContainText("The ontology agent asks about");
   await expect(
-    dock.getByText(
-      /The draft of Orders graph waits for answers to 3 questions only you can answer/,
-    ),
-  ).toBeVisible({ timeout: 20_000 });
-  await expect(
-    dock
-      .getByText(/Should orders whose status is <b>cancelled<\/b> stay/)
-      .filter({ visible: true }),
+    asked.getByText("Question 1 of 4", { exact: true }),
   ).toBeVisible();
+  await asked
+    .getByRole("radiogroup", { name: /^Is a customer/ })
+    .getByRole("radio", { name: /^Each person who signs in/ })
+    .click();
+  const signals = asked.getByRole("group", {
+    name: "Which signals should mark a renewal as at risk?",
+  });
+  await signals.getByRole("checkbox", { name: /^Unpaid invoices/ }).click();
+  await signals.getByRole("checkbox", { name: /^Falling usage/ }).click();
+  await asked.getByRole("button", { name: "Next", exact: true }).click();
+  await asked.getByRole("textbox").fill("60 days");
+  await asked.getByRole("button", { name: "Next", exact: true }).click();
   await expect(
-    cardOf(page, "Answer the draft’s questions for “Orders graph”"),
-  ).toHaveCount(0);
-  await say(
-    page,
-    "Answer the Orders graph questions: Each person who signs in, and use the defaults for the rest",
+    asked.getByText(
+      "Should orders whose status is <b>cancelled</b> stay in the ontology?",
+    ),
+  ).toBeVisible();
+  await asked.getByRole("button", { name: "Skip", exact: true }).click();
+  const sent = page.waitForRequest(
+    (r) => r.url().endsWith("/agent/turns") && r.method() === "POST",
   );
+  await asked.getByRole("button", { name: "Send answers" }).click();
+  expect((await sent).postDataJSON()).toMatchObject({
+    answers: {
+      answers: [
+        { questionId: "Q1", options: ["Each person who signs in"] },
+        { questionId: "Q2", options: ["Unpaid invoices", "Falling usage"] },
+        { questionId: "Q3", options: [], text: "60 days" },
+      ],
+    },
+  });
+  // Sent, the questions fold to a line, and the answers show as the
+  // person's, each beside its question.
+  await expect(asked).toHaveCount(0);
+  await expect(
+    dock.getByText(/Asked you the ontology agent’s questions about/),
+  ).toBeVisible();
+  const mine = dock.getByLabel("Your answers");
+  await expect(mine).toContainText("Each person who signs in");
+  await expect(mine).toContainText("Unpaid invoices, Falling usage");
+  await expect(mine).toContainText("Left to the Assistant");
+  // Its card shows each question beside its answer.
   const answers = cardOf(
     page,
     "Answer the draft’s questions for “Orders graph”",
   );
-  await expect(
-    answers.getByText(
-      "Is a customer the company that pays, or each person who signs in? Your answer: “Each person who signs in”.",
-    ),
-  ).toBeVisible();
-  await expect(
-    answers.getByText(/The agent’s default: “90 days”\./),
-  ).toBeVisible();
+  await expect(answers).toBeVisible({ timeout: 20_000 });
+  const qa = answers.getByLabel("Questions and answers");
+  await expect(qa).toContainText("Customers");
+  await expect(qa).toContainText("Each person who signs in");
+  await expect(qa).toContainText("“60 days”");
+  await expect(qa).toContainText(
+    "Left to the agent: “No preference: decide from the data and the goal.”",
+  );
   // The card links the draft, whose page asks the same questions.
   await expect(answers.getByRole("link").first()).toHaveAttribute(
     "href",
@@ -369,6 +400,75 @@ test("asks a draft's questions in the chat, and sends the person's answers from 
   });
   await answers.getByRole("link", { name: "Open the draft" }).click();
   await expect(page).toHaveURL(/\/ontology\/ont_[^/]+\/generations\/gen_/);
+});
+
+test("asks its own questions from the keyboard, then reads the answers back", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 100 });
+  await signIn(page);
+  await shortcut(page);
+  await say(page, "Help me set up an ontology");
+  const dock = dockOf(page);
+  const asked = dock.getByRole("region", { name: "Questions for you" });
+  await expect(asked).toBeVisible({ timeout: 20_000 });
+  // Its tool's step stays out of the way.
+  await expect(dock.getByText("Asked you", { exact: true })).toHaveCount(0);
+  const goal = asked.getByRole("radiogroup", {
+    name: "What should the new ontology answer first?",
+  });
+  await expect(goal.getByRole("radio").first()).toContainText("Recommended");
+  await goal.getByRole("radio").first().focus();
+  // A number picks its row, and a choice of one goes on.
+  await page.keyboard.press("2");
+  await expect(
+    asked.getByText("Question 2 of 3", { exact: true }),
+  ).toBeVisible();
+  const data = asked.getByRole("group", {
+    name: "Which of your data should it read?",
+  });
+  await expect(data.getByRole("checkbox").first()).toBeFocused();
+  await page.keyboard.press(" ");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press(" ");
+  await expect(data.getByRole("checkbox", { checked: true })).toHaveCount(2);
+  await page.keyboard.press("Enter");
+  // The optional one, left to the Assistant.
+  await expect(
+    asked.getByText("Question 3 of 3", { exact: true }),
+  ).toBeVisible();
+  const rest = asked.getByRole("button", {
+    name: "Let the Assistant decide the rest",
+  });
+  await rest.focus();
+  await page.keyboard.press("Enter");
+  await asked.getByRole("button", { name: "Send answers" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(asked).toHaveCount(0);
+  await expect(dock.getByLabel("Your answers")).toContainText(
+    "Revenue and renewals",
+  );
+  await expect(
+    dock.getByText(/an ontology for Revenue and renewals, reading/),
+  ).toBeVisible({ timeout: 20_000 });
+});
+
+test("closes questions the conversation went past", async ({ page }) => {
+  await mock.configure({ agentStepMs: 100 });
+  await signIn(page);
+  await shortcut(page);
+  await say(page, "Help me set up an ontology");
+  const dock = dockOf(page);
+  await expect(
+    dock.getByRole("region", { name: "Questions for you" }),
+  ).toBeVisible({ timeout: 20_000 });
+  await say(page, "Never mind, what ontologies do I have?");
+  await expect(
+    dock.getByText("Asked you 3 questions, which went unanswered."),
+  ).toBeVisible();
+  await expect(
+    dock.getByRole("region", { name: "Questions for you" }),
+  ).toHaveCount(0);
 });
 
 test("settles a review from a card", async ({ page }) => {

@@ -2,7 +2,7 @@ import { parse } from "smol-toml";
 import type {
   AgentBundleDefinition,
   AgentDraftItem,
-  AgentQuestion,
+  AgentDraftQuestion,
   AgentRuleCounts,
   AgentTurnStatus,
   Connector,
@@ -17,10 +17,8 @@ import type {
   FoundryLoadEnrichment,
   GraphJob,
   JobPhase,
-  AnswerOntologyGenerationRequest,
   OntologyGeneration,
   OntologyGenerationDocument,
-  OntologyGenerationQuestion,
   OntologyVersion,
   Project,
   Tenant,
@@ -1341,7 +1339,7 @@ export type Gap = { id: string; description: string };
 export type AgentBundle = {
   status?: AgentTurnStatus;
   summary: string;
-  questions: AgentQuestion[];
+  questions: AgentDraftQuestion[];
   usage: NonNullable<AgentBundleDefinition["usage"]>;
   ontologyToml: string;
   mappingsToml: string;
@@ -1382,7 +1380,22 @@ export function readAgentBundle(
       id: text(q.id),
       items: texts(q.items),
       text: text(q.text),
-      options: texts(q.options),
+      header: text(q.header) || null,
+      // Options are {label, description}; a version from before 4.24.0
+      // has bare labels.
+      options: (Array.isArray(q.options) ? q.options : [])
+        .map((o) =>
+          typeof o === "string"
+            ? { label: o, description: null }
+            : isRecord(o)
+              ? {
+                  label: text(o.label),
+                  description: text(o.description) || null,
+                }
+              : { label: "", description: null },
+        )
+        .filter((o) => o.label),
+      multiple: q.multiple === true,
       default: text(q.default) || null,
       blocking: q.blocking === true,
     }));
@@ -3355,100 +3368,6 @@ export function draftWizard(
   const choices = choiceSteps(draft, facts);
   const { done, ...at } = walk(DRAFT_STEPS, choices.steps, requested);
   return { ...at, request: done ? choices.generate : null };
-}
-
-// ---------------------------------------------------------------- Generation questions
-
-/** At most this many characters in one answer, once trimmed (the WFE's). */
-export const MAX_ANSWER = 2000;
-
-/**
- * How one of the agent's questions is answered: not yet (a question that
- * blocks the draft, with no default, starts so), with one of its options
- * (by index: the options are the model's words, and two may read the
- * same), in the person's own words, or left to the agent, which takes its
- * default (or, with none, decides from the data and the goal).
- */
-export type QuestionAnswer =
-  | { kind: "unset" }
-  | { kind: "option"; index: number }
-  | { kind: "own"; text: string }
-  | { kind: "agent" };
-
-/**
- * Where a question's answer starts: on the agent's default when it is one
- * of its options; unanswered when it blocks the draft and the agent offered
- * no default, since only a person can answer it; else left to the agent
- * (its default, or its own choice).
- *
- * @example
- * startingAnswer({ id: "q1", options: ["A", "B"], defaultAnswer: "B" }); // { kind: "option", index: 1 }
- * startingAnswer({ id: "q2", options: [], defaultAnswer: "Monthly" }); // { kind: "agent" }
- * startingAnswer({ id: "q3", options: ["A"], blocking: true }); // { kind: "unset" }
- * startingAnswer({ id: "q4" }); // { kind: "agent" }
- */
-export const startingAnswer = (
-  q: OntologyGenerationQuestion,
-): QuestionAnswer => {
-  const index = q.defaultAnswer
-    ? (q.options || []).indexOf(q.defaultAnswer)
-    : -1;
-  if (index >= 0) return { kind: "option", index };
-  return q.blocking && !q.defaultAnswer ? { kind: "unset" } : { kind: "agent" };
-};
-
-/**
- * The request answering a generation's questions, or why it can't be sent:
- * every question needs a choice, and an answer in the person's own words
- * must be 1 to MAX_ANSWER characters once trimmed. A question left to the
- * agent is left out, with `useDefaults`, so the WFE takes its default for
- * it; every other question is answered, so a blocking one is never left
- * unanswered.
- *
- * @example
- * answersRequest([{ id: "q1", options: ["A"] }, { id: "q2" }], {
- *   q1: { kind: "option", index: 0 },
- *   q2: { kind: "agent" },
- * });
- * // { ok: true, request: { answers: [{ questionId: "q1", text: "A" }], useDefaults: true } }
- * answersRequest([{ id: "q1" }], { q1: { kind: "own", text: "  " } });
- * // { ok: false, questionId: "q1", reason: "Write an answer, or choose another." }
- * answersRequest([{ id: "q1", blocking: true }], {});
- * // { ok: false, questionId: "q1", reason: "Choose an answer." }
- */
-export function answersRequest(
-  questions: readonly OntologyGenerationQuestion[],
-  answers: Readonly<Record<string, QuestionAnswer>>,
-):
-  | { ok: true; request: AnswerOntologyGenerationRequest }
-  | { ok: false; questionId: string; reason: string } {
-  const request: AnswerOntologyGenerationRequest = { answers: [] };
-  for (const q of questions) {
-    const a = answers[q.id] ?? startingAnswer(q);
-    if (a.kind === "agent") {
-      request.useDefaults = true;
-      continue;
-    }
-    if (a.kind === "unset")
-      return { ok: false, questionId: q.id, reason: "Choose an answer." };
-    const text =
-      a.kind === "option" ? (q.options?.[a.index] ?? "") : a.text.trim();
-    const chars = [...text].length;
-    if (!chars)
-      return {
-        ok: false,
-        questionId: q.id,
-        reason: "Write an answer, or choose another.",
-      };
-    if (chars > MAX_ANSWER)
-      return {
-        ok: false,
-        questionId: q.id,
-        reason: `${formatNumber(chars - MAX_ANSWER)} characters too long.`,
-      };
-    request.answers.push({ questionId: q.id, text });
-  }
-  return { ok: true, request };
 }
 
 // ---------------------------------------------------------------- Setup

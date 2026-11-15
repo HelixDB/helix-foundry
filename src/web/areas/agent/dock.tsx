@@ -14,6 +14,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
   ChevronDown,
+  CircleHelp,
   CircleAlert,
   TriangleAlert,
   ExternalLink,
@@ -61,8 +62,11 @@ import {
 } from "../workspace/ai-gate";
 import { aiQuery, assistantCheckText, inForce } from "../workspace/ai-api";
 import { ActionCard } from "./cards";
+import { AnswerSummary, QuestionFlow } from "../../questions/flow";
+import { answerText, questionName, readQuestions } from "../../questions/model";
 import { Command } from "./runtime-settings";
 import {
+  ASK_PERSON,
   EMPTY_STREAM,
   HELPER_COMMANDS,
   RUNTIMES,
@@ -402,6 +406,20 @@ function Transcript({
               scroller={log}
               actions={actions}
               busy={busy}
+              asked={
+                !t.asked
+                  ? "no"
+                  : i === all.length - 1 && t.status === "done"
+                    ? "open"
+                    : all.some((x) => x.answers?.turnId === t.id)
+                      ? "answered"
+                      : "passed"
+              }
+              asking={
+                t.answers
+                  ? all.find((x) => x.id === t.answers!.turnId)
+                  : undefined
+              }
               onNavigate={onNavigate}
             />
           ))
@@ -494,9 +512,17 @@ function TurnView({
   scroller,
   actions,
   busy,
+  asked,
+  asking,
   onNavigate,
 }: {
   turn: FoundryAgentTurn;
+  // Whether it asked its person, and how that stands: open (the thread's
+  // newest turn, done: answered here), answered by a later turn, or passed
+  // (the conversation went on).
+  asked: AskedState;
+  // An answers turn's: the turn whose questions it answers.
+  asking?: FoundryAgentTurn;
   // Its thread runs on a helper: a queued turn waits for one to take it.
   helper: boolean;
   // One of the thread's newest: read as it opens.
@@ -522,11 +548,18 @@ function TurnView({
       : null;
   return (
     <>
-      {turn.kind !== "action_result" && (
+      {turn.kind === "answers" ? (
         <div className="ag-msg ag-msg--person">
-          <span className="ag-who">You</span>
-          <p className="ag-text">{turn.text}</p>
+          <span className="ag-who">You answered</span>
+          <AnswersOf turn={turn} asking={asking} />
         </div>
+      ) : (
+        turn.kind !== "action_result" && (
+          <div className="ag-msg ag-msg--person">
+            <span className="ag-who">You</span>
+            <p className="ag-text">{turn.text}</p>
+          </div>
+        )
       )}
       <div
         ref={answer}
@@ -543,15 +576,26 @@ function TurnView({
             </Button>
           </p>
         )}
-        {stream.blocks.map((b, i) => (
-          <Block
-            key={i}
-            block={b}
-            actions={actions}
-            busy={busy}
-            onNavigate={onNavigate}
-          />
-        ))}
+        {stream.blocks.map((b, i) =>
+          b.kind === "asked" ? (
+            <AskedBlock
+              key={i}
+              block={b}
+              turn={turn}
+              state={asked}
+              busy={busy}
+              onNavigate={onNavigate}
+            />
+          ) : (
+            <Block
+              key={i}
+              block={b}
+              actions={actions}
+              busy={busy}
+              onNavigate={onNavigate}
+            />
+          ),
+        )}
         {stream.live && (
           <LiveText key={stream.live.step} text={stream.live.text} />
         )}
@@ -605,6 +649,8 @@ function Block({
       const s = block.step,
         analyst = analystLink(s),
         connect = connectLink(s);
+      // Asking shows as its questions; only a refusal shows as a step.
+      if (s.name === ASK_PERSON && s.result?.kind !== "failed") return null;
       return (
         <>
           <details className="ag-step">
@@ -702,7 +748,148 @@ function Block({
       );
     case "retry":
       return <p className="ag-note">Trying again (attempt {block.attempt}).</p>;
+    case "asked":
+      // Shown by TurnView, which knows how the questions stand.
+      return null;
   }
+}
+
+/** How a turn's questions stand: see TurnView's `asked`. */
+type AskedState = "no" | "open" | "answered" | "passed";
+
+/**
+ * The questions a turn asked its person: while they are open, the
+ * question-by-question flow, whose answers go as the thread's next turn;
+ * after, a line saying so (the answers show as the person's message).
+ */
+function AskedBlock({
+  block,
+  turn,
+  state,
+  busy,
+  onNavigate,
+}: {
+  block: Extract<AgentBlock, { kind: "asked" }>;
+  turn: FoundryAgentTurn;
+  state: AskedState;
+  busy: boolean;
+  onNavigate?: () => void;
+}) {
+  const { id: ws } = useWorkspace(),
+    location = useLocation(),
+    qc = useQueryClient();
+  const [pending, setPending] = useState(false),
+    [error, setError] = useState<unknown>(null),
+    [token] = useState(() => crypto.randomUUID());
+  // The turn's own record, once read, else what its event showed.
+  const questions = readQuestions(turn.asked?.questions ?? block.questions);
+  const what = block.generation
+    ? `the ontology agent’s questions about ${block.generation}`
+    : questions?.length === 1
+      ? "a question"
+      : `${questions?.length ?? "some"} questions`;
+  if (!questions)
+    return (
+      <p className="ag-note">
+        The Assistant asked questions this page can’t show. Reload to update
+        Foundry.
+      </p>
+    );
+  if (state !== "open")
+    return (
+      <p className="ag-ran">
+        <CircleHelp size={13} aria-hidden /> Asked you {what}
+        {state === "answered" ? "." : ", which went unanswered."}
+      </p>
+    );
+  return (
+    <section className="ag-asked" aria-label="Questions for you">
+      <p className="ag-asked-title">
+        <CircleHelp size={15} aria-hidden />
+        {block.generation
+          ? `The ontology agent asks about ${block.generation}`
+          : "Questions for you"}
+      </p>
+      <QuestionFlow
+        questions={questions}
+        storageKey={`agent:${turn.id}`}
+        agent={block.generation ? "the agent" : "the Assistant"}
+        pending={pending}
+        disabled={busy}
+        error={
+          !!error && (
+            <p className="ag-card-error" role="alert">
+              <span>
+                {agentRefusal(error) === "FOUNDRY_AGENT_QUESTIONS_CLOSED" ? (
+                  "These questions are closed: they were answered, or the conversation went on."
+                ) : (
+                  <SettingsLinked
+                    text={sentence((error as Error).message)}
+                    onNavigate={onNavigate}
+                  />
+                )}
+              </span>
+            </p>
+          )
+        }
+        onSend={async (answers) => {
+          setPending(true);
+          setError(null);
+          try {
+            await sendAgentMessage(
+              ws,
+              {
+                threadId: turn.threadId || "",
+                answers: { turnId: turn.id, answers },
+                clientToken: token,
+              },
+              activeSection(location.pathname) ?? "none",
+            );
+            return true;
+          } catch (e) {
+            setError(e);
+            return false;
+          } finally {
+            setPending(false);
+            await qc.invalidateQueries({
+              queryKey: [ws, "agent", "thread", turn.threadId],
+            });
+          }
+        }}
+      />
+    </section>
+  );
+}
+
+/**
+ * An answers turn's answers, each beside its question as the asking turn
+ * asked it; a question left out was left to the Assistant.
+ */
+function AnswersOf({
+  turn,
+  asking,
+}: {
+  turn: FoundryAgentTurn;
+  asking?: FoundryAgentTurn;
+}) {
+  const given = turn.answers?.answers ?? [],
+    questions = readQuestions(asking?.asked?.questions) ?? [];
+  const rows = questions.length
+    ? questions.map((q, i) => {
+        const a = given.find((x) => x.questionId === q.id);
+        return {
+          name: questionName(q, i),
+          question: q.text,
+          answer: a ? answerText(a) : "Left to the Assistant",
+          left: !a,
+        };
+      })
+    : given.map((a, i) => ({
+        name: `Question ${i + 1}`,
+        question: "",
+        answer: answerText(a),
+      }));
+  return <AnswerSummary rows={rows} label="Your answers" />;
 }
 
 /**

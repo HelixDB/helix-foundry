@@ -216,12 +216,18 @@ describe("custom events of API calls", () => {
   it("reports how a generation's questions were answered, and carries its end on", async () => {
     await answerGeneration("ws", "o", "g1", {
       answers: [{ questionId: "q1", text: "x" }],
+      round: 1,
     });
     await answerGeneration("ws", "o", "g1", {
-      answers: [{ questionId: "q1", text: "x" }],
+      answers: [{ questionId: "q1", options: ["A"] }],
       useDefaults: true,
+      round: 1,
     });
-    await answerGeneration("ws", "o", "g1", { answers: [], useDefaults: true });
+    await answerGeneration("ws", "o", "g1", {
+      answers: [],
+      useDefaults: true,
+      round: 1,
+    });
     expect(vi.mocked(trackEvent).mock.calls).toEqual([
       ["generation_answered", { with: "answers" }],
       ["generation_answered", { with: "some_defaults" }],
@@ -238,7 +244,11 @@ describe("custom events of API calls", () => {
   it("reports why answers were refused, and carries nothing on", async () => {
     call.mockRejectedValueOnce(new ApiError("not waiting", 400));
     await expect(
-      answerGeneration("ws", "o", "g1", { answers: [], useDefaults: true }),
+      answerGeneration("ws", "o", "g1", {
+        answers: [],
+        useDefaults: true,
+        round: 1,
+      }),
     ).rejects.toThrow("not waiting");
     expect(vi.mocked(trackEvent).mock.calls).toEqual([
       ["generation_answer_refused", { reason: "refused" }],

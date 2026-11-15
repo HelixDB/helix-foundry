@@ -1091,27 +1091,63 @@ export type OntologyGenerationStatus =
   // Cancelled (:cancel) before it stored a draft.
   | "ONTOLOGY_GENERATION_STATUS_CANCELLED";
 
+/** v1AgentQuestionOption: one answer a question offers. */
+export type AgentQuestionOption = {
+  label: string;
+  // One line on what choosing it means; may be empty.
+  description?: string;
+};
+
 /**
- * v1OntologyGenerationQuestion: a question the agent asked about its draft.
- * Its text, options and default are the model's words and may quote the
- * data: plain text only, never markup.
+ * v1AgentQuestion: a question an agent asks the person: the ontology agent
+ * of a generation that needs input, or the Assistant (FoundryAgentAsked).
+ * With no options it takes an answer in words; with options (2 to 20,
+ * labels unique) the person picks one, or one or more when `multiple`, and
+ * may always answer in their own words instead (one) or as well (multiple).
+ * Its header, text, options and recommended answer are the agent's words
+ * and may quote the data: plain text only, never markup.
  */
-export type OntologyGenerationQuestion = {
+export type AgentQuestion = {
   id: string;
+  // A few words naming it, for a progress strip; may be empty.
+  header?: string;
   text?: string;
+  // Empty for an answer in words.
+  options?: AgentQuestionOption[];
+  // The person may pick several options; false without options.
+  multiple?: boolean;
+  // The answer the agent recommends, which a question left to it takes: an
+  // option's label (shown first, marked), or, without options, its words;
+  // empty for none.
+  recommended?: string;
+  // A blocking question needs an answer; another may be left to the agent.
+  blocking?: boolean;
+};
+
+/**
+ * v1AgentQuestionAnswer: the person's answer to an AgentQuestion: the
+ * labels of the options chosen and their own words, at least one of the
+ * two. To a question without options, text alone; to one of one option,
+ * one option or text, not both; to one of several, one or more options
+ * with text or without, or text alone. Text is 1 to 2000 characters once
+ * trimmed. Anything else is INVALID_ARGUMENT.
+ */
+export type AgentQuestionAnswer = {
+  questionId: string;
+  options?: string[];
+  text?: string;
+};
+
+/**
+ * v1OntologyGenerationQuestion: a question the ontology agent asked about
+ * its draft, the draft items it is about, and its answer once given (one
+ * left to the agent with no recommended answer reads "No preference: decide
+ * from the data and the goal.").
+ */
+export type OntologyGenerationQuestion = AgentQuestion & {
   // The draft items it is about ("type.Customer"); may be empty.
   items?: string[];
-  // Answers the agent suggests; empty for a free answer. An answer may be
-  // any text, one of these or not.
-  options?: string[];
-  // The agent's default, one of options when it has any; unset when it
-  // offers none.
-  defaultAnswer?: string;
-  // The generation can't carry on until a blocking question is answered;
-  // another may be left open.
-  blocking?: boolean;
-  // The answer it was given, once answered; unset while it waits.
-  answer?: string;
+  answer?: AgentQuestionAnswer | null;
 };
 
 /** v1OntologyGenerationTable: one synced table a generation drafts from. */
@@ -1167,6 +1203,9 @@ export type OntologyGeneration = {
   // answers. Empty when it asked nothing. A draft's own non-blocking
   // questions are in its version's definition.
   questions?: OntologyGenerationQuestion[];
+  // Which round of questions they are, from 1: an answer names it, since
+  // the agent may ask again (reusing ids) once answered.
+  questionRound?: number;
   // When they were asked; unset without questions.
   askedAt?: string | null;
   // While needs_input: when Helix answers each with the agent's default
@@ -1263,25 +1302,24 @@ export type GenerateOntologyRequest = {
   loadWhenReady?: boolean;
 };
 
-/** v1OntologyGenerationAnswer: an answer to one question, 1 to 2000 characters once trimmed. */
-export type OntologyGenerationAnswer = { questionId: string; text: string };
-
 /**
  * FoundryServiceAnswerOntologyGenerationBody: POST
- * .../generations/{id}:answer answers the questions a needs_input
+ * .../generations/{id}:answer answers the round of questions a needs_input
  * generation waits on and queues it to carry on. Each answer names a
- * question asked, at most once. With useDefaults, every question left out
- * takes the agent's default (with none, the agent decides); without, every
- * blocking question must be answered (INVALID_ARGUMENT), and one that isn't
- * may be left open. A generation not waiting is FAILED_PRECONDITION. It
- * needs what :generate needs (managing the ontology, an AI provider).
- * POST .../generations/{id}:cancel (body `{}`) ends a queued, running or
- * waiting generation as cancelled; one that ended is FAILED_PRECONDITION.
- * Both answer OntologyGenerationResponse.
+ * question asked, at most once, as AgentQuestionAnswer says. With
+ * useDefaults, every question left out takes its recommended answer (with
+ * none, the agent decides); without, every blocking question must be
+ * answered, and one that isn't may be left open (INVALID_ARGUMENT
+ * otherwise). A generation not waiting, or waiting on another round than
+ * `round`, is FAILED_PRECONDITION. It needs what :generate needs (managing
+ * the ontology, an AI provider). POST .../generations/{id}:cancel (body
+ * `{}`) ends a queued, running or waiting generation as cancelled; one that
+ * ended is FAILED_PRECONDITION. Both answer OntologyGenerationResponse.
  */
 export type AnswerOntologyGenerationRequest = {
-  answers: OntologyGenerationAnswer[];
+  answers: AgentQuestionAnswer[];
   useDefaults?: boolean;
+  round: number;
 };
 
 /**
@@ -1372,15 +1410,22 @@ export type FoundryDefinition = {
 /** How an agent turn ended (ontology-agent TurnResult status). */
 export type AgentTurnStatus = "done" | "needs_input" | "budget_exhausted";
 
-/** A question the agent asked about its draft. */
-export type AgentQuestion = {
+/**
+ * A question the agent asked about its draft (turn_result's Question): no
+ * options for an answer in words, else 2 or more, one or (`multiple`)
+ * several chosen; `default` is the answer it recommends, an option's label
+ * or, without options, its words.
+ */
+export type AgentDraftQuestion = {
   id: string;
   // Draft items it is about: "type.Order", "mapping.orders"...
-  items?: string[];
+  items: string[];
   text: string;
-  options?: string[];
+  header?: string | null;
+  options?: { label: string; description?: string | null }[];
+  multiple?: boolean;
   default?: string | null;
-  blocking?: boolean;
+  blocking: boolean;
 };
 
 /** The engine's EvidenceCard (ontology-agent turn_result schema); source text is untrusted. */
@@ -1451,7 +1496,7 @@ export type AgentDraftView = {
     base_version?: string | null;
     items?: Record<string, AgentDraftItem>;
     left_out?: { what: string; reason: string }[];
-    questions?: AgentQuestion[];
+    questions?: AgentDraftQuestion[];
   };
 };
 
@@ -1467,7 +1512,7 @@ export type AgentBundleDefinition = {
   ontology_toml?: string;
   mappings_toml?: string;
   draft?: AgentDraftView;
-  questions?: AgentQuestion[];
+  questions?: AgentDraftQuestion[];
   summary?: string | null;
   usage?: {
     input?: number;
@@ -2655,9 +2700,10 @@ export type FoundryAgentTurn = {
   id: string;
   threadId?: string;
   // automation: an automation's Assistant step, in its run's thread (a
-  // thread of the run's owner's, out of their list of threads).
-  kind?: "message" | "action_result" | "automation";
-  // The person's text; empty for an action_result and an automation's step.
+  // thread of the run's owner's, out of their list of threads); answers:
+  // the person's answers to the questions the turn before asked.
+  kind?: "message" | "action_result" | "answers" | "automation";
+  // The person's text; empty for any turn but a message.
   text?: string;
   // The action an action_result turn goes on from.
   actionId?: string;
@@ -2673,6 +2719,41 @@ export type FoundryAgentTurn = {
   createdAt?: string | null;
   startedAt?: string | null;
   finishedAt?: string | null;
+  // What the turn asked its person (helix_foundry_ask_person), which it
+  // ended waiting on; unset when it asked nothing. Answerable (send with
+  // answers) while it is the thread's newest turn and done.
+  asked?: FoundryAgentAsked | null;
+  // An answers turn's: the turn it answers, and the person's answers.
+  answers?: FoundryAgentAnswers | null;
+};
+
+/**
+ * v1FoundryAgentAsked: what a turn asked its person: 1 to 4 questions of
+ * the Assistant's own (ids q1, q2, ...), or a generation's waiting round,
+ * relayed as its agent wrote it, under its own ids (`generation` set).
+ */
+export type FoundryAgentAsked = {
+  questions?: AgentQuestion[];
+  generation?: FoundryAgentAskedGeneration | null;
+};
+/**
+ * v1FoundryAgentAskedGeneration: the generation whose round of questions a
+ * turn relayed: the answers turn prepares answer_generation_questions with
+ * the person's answers, unchanged, as a card they run.
+ */
+export type FoundryAgentAskedGeneration = {
+  ontologyId?: string;
+  generationId?: string;
+  round?: number;
+};
+/**
+ * v1FoundryAgentAnswers: the person's answers to the questions `turnId`
+ * asked, one per question at most; a question left out (only one that isn't
+ * blocking) is left to the Assistant.
+ */
+export type FoundryAgentAnswers = {
+  turnId: string;
+  answers: AgentQuestionAnswer[];
 };
 
 /** v1FoundryAgentAction: what the agent prepared, which only its person runs. */
@@ -2812,6 +2893,8 @@ export type AgentActionDisplays = {
   answer_generation_questions: {
     ontology: AgentRef;
     generation: AgentRef;
+    // The round of its questions the answers are for.
+    round: number;
     answers: AgentAnswer[];
     use_defaults: boolean;
     defaulted?: AgentAnswer[];
@@ -2907,11 +2990,18 @@ export type AgentActionDisplays = {
   delete_automation: { automation: AgentAutomationRef };
   run_automation: { automation: AgentAutomationRef };
 };
-/** One of a generation's questions and its answer. */
+/**
+ * One of a generation's questions, by its header and text, and its answer:
+ * the labels of the options chosen and the person's own words (or, for a
+ * question left to the agent, its recommended answer, else "No preference:
+ * decide from the data and the goal.").
+ */
 export type AgentAnswer = {
   question_id: string;
+  header?: string;
   question: string;
-  answer: string;
+  options: string[];
+  text?: string;
 };
 /** An automation as it was when the action was prepared, with its status. */
 export type AgentAutomationRef = AgentRef & { status?: AutomationStatus };
@@ -2996,16 +3086,28 @@ export type FoundryAgentHostPairingResponse = {
 /** POST .../agent/hosts/{id}:revoke */
 export type FoundryAgentHostResponse = { host?: FoundryAgentHost };
 
-/** POST .../agent/turns */
+/**
+ * POST .../agent/turns: a message (in a new thread when `threadId` is
+ * empty), or the person's answers to the questions their thread's newest
+ * turn asked: that turn must be done, having asked, with nothing after it
+ * (FAILED_PRECONDITION, FOUNDRY_AGENT_QUESTIONS_CLOSED, otherwise); the
+ * answers are checked as AgentQuestionAnswer says, every blocking question
+ * answered (INVALID_ARGUMENT otherwise).
+ */
 export type SendAgentMessageRequest = {
-  // Empty: a new thread.
-  threadId?: string;
-  // At most 4,000 characters.
-  text: string;
   pageContext?: AgentPageContext;
   // At most 64 characters: the same token returns the turn it queued.
   clientToken: string;
-};
+} & (
+  | {
+      // Empty: a new thread.
+      threadId?: string;
+      // At most 4,000 characters.
+      text: string;
+      answers?: never;
+    }
+  | { threadId: string; answers: FoundryAgentAnswers; text?: never }
+);
 /** v1FoundryAgentTurnResponse: POST turns and turns/{id}:cancel. */
 export type AgentTurnResponse = {
   turn: FoundryAgentTurn;
@@ -3070,16 +3172,20 @@ export const AGENT_REFUSALS = [
   // A runtime no workspace may choose yet: codex (no configuration of its
   // app-server gives it Foundry's tools alone).
   "FOUNDRY_AGENT_RUNTIME_UNAVAILABLE",
+  // Answers to questions no longer open: answered already, or the
+  // conversation went on.
+  "FOUNDRY_AGENT_QUESTIONS_CLOSED",
 ] as const;
 export type AgentRefusalReason = (typeof AGENT_REFUSALS)[number];
 
 /**
- * Why a turn ended (backend/agent StopReason): the model finished, a cap
- * (steps, wall time, budget, its answer's length, its window), it declined,
- * or it failed.
+ * Why a turn ended (backend/agent StopReason): the model finished, it asked
+ * its person (their answers come as the next turn), a cap (steps, wall
+ * time, budget, its answer's length, its window), it declined, or it failed.
  */
 export type AgentStopReason =
   | "answered"
+  | "asked"
   | "max_steps"
   | "wall_time"
   | "budget"
@@ -3091,10 +3197,16 @@ export type AgentStopReason =
 /**
  * Why a call the model wrote never ran (agent.NotRunReason): a reply's
  * calls past its first 8, a turn's asks past its 3, a call after the turn's
- * time ran out, one the reply was writing at its length limit, or one whose
- * input isn't JSON.
+ * time ran out, one the reply was writing at its length limit, one whose
+ * input isn't JSON, or one after the turn asked its person.
  */
-export type AgentNotRunReason = "calls" | "asks" | "time" | "length" | "input";
+export type AgentNotRunReason =
+  | "calls"
+  | "asks"
+  | "time"
+  | "length"
+  | "input"
+  | "asked";
 /**
  * A turn's events (FoundryAgentEvent.eventJson), each with its `type`: a
  * closed set the page parses without trust. Text is the model's, shown as
@@ -3147,6 +3259,26 @@ export type AgentEvent =
       status: AgentActionStatus;
       result?: unknown;
       error?: string;
+    }
+  | {
+      // The questions the turn asks its person (helix_foundry_ask_person),
+      // which it ends waiting on: the Assistant's own, or a generation's
+      // round, relayed as its agent wrote it (`generation` set).
+      type: "questions";
+      questions: AgentQuestion[];
+      generation?: {
+        ontology_id: string;
+        ontology_name: string;
+        generation_id: string;
+        generation_title?: string;
+        round: number;
+      };
+    }
+  | {
+      // The first event of an answers turn: the person's answers, as checked.
+      type: "answers";
+      turn_id: string;
+      answers: { question_id: string; options: string[]; text?: string }[];
     }
   | {
       // An automation's step's report (its newest is the step's output):

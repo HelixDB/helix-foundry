@@ -486,19 +486,29 @@ const DISPLAYS: [string, string, unknown][] = [
     {
       ontology: ONT,
       generation: { id: "gen1", name: "Track renewals" },
+      round: 1,
       answers: [
         {
-          question_id: "q1",
+          question_id: "Q1",
+          header: "Customers",
           question: "Is a customer the company that pays?",
-          answer: "Each person",
+          options: ["Each person"],
+        },
+        {
+          question_id: "Q2",
+          question: "Which signals?",
+          options: ["Unpaid invoices", "Falling usage"],
+          text: "and churned seats",
         },
       ],
       use_defaults: true,
       defaulted: [
         {
-          question_id: "q2",
+          question_id: "Q3",
+          header: "Cancelled",
           question: "Keep <b>cancelled</b> orders?",
-          answer: "Keep them",
+          options: [],
+          text: "No preference: decide from the data and the goal.",
         },
       ],
     },
@@ -509,7 +519,8 @@ const DISPLAYS: [string, string, unknown][] = [
     {
       ontology: ONT,
       generation: { id: "gen1" },
-      answers: [{ question_id: "q1", question: "", answer: "Yes" }],
+      round: 2,
+      answers: [{ question_id: "q1", question: "", options: [], text: "Yes" }],
       use_defaults: false,
     },
   ],
@@ -1105,20 +1116,32 @@ describe("cardView", () => {
           { text: "Track renewals", to: "/ontology/ont1/generations/gen1" },
         ],
       },
+    ]);
+    expect(v.answers).toEqual([
       {
-        label: "Question 1",
-        value:
-          "Is a customer the company that pays? Your answer: “Each person”.",
+        name: "Customers",
+        question: "Is a customer the company that pays?",
+        answer: "Each person",
       },
       {
-        label: "Question 2",
-        value:
-          "Keep <b>cancelled</b> orders? The agent’s default: “Keep them”.",
+        name: "Question 2",
+        question: "Which signals?",
+        answer: "Unpaid invoices, Falling usage, and “and churned seats”",
+      },
+      {
+        name: "Cancelled",
+        question: "Keep <b>cancelled</b> orders?",
+        answer:
+          "Left to the agent: “No preference: decide from the data and the goal.”",
+        left: true,
       },
     ]);
-    expect(v.does).toContain("take the agent’s default");
+    expect(v.does).toContain("take the agent’s recommended answer");
     const bare = of("a draft's questions answered without defaults");
-    expect(bare.does).not.toContain("default");
+    expect(bare.does).not.toContain("recommended");
+    expect(bare.answers).toEqual([
+      { name: "Question 1", question: "", answer: "“Yes”" },
+    ]);
     expect(bare.facts[1]).toEqual({
       label: "Draft",
       entities: [{ text: "The draft", to: "/ontology/ont1/generations/gen1" }],
@@ -1134,12 +1157,27 @@ describe("cardView", () => {
       {
         ontology: ONT,
         generation: { id: "gen1" },
-        answers: [{ question_id: "q1", question: "Q", answer: "" }],
+        round: 1,
+        answers: [{ question_id: "q1", question: "Q", options: [] }],
         use_defaults: false,
       },
       {
         ontology: ONT,
+        generation: { id: "gen1" },
+        round: 1,
+        answers: [{ question_id: "q1", question: "Q", options: "A" }],
+        use_defaults: false,
+      },
+      {
+        ontology: ONT,
+        generation: { id: "gen1" },
+        answers: [],
+        use_defaults: true,
+      },
+      {
+        ontology: ONT,
         generation: { id: "../x" },
+        round: 1,
         answers: [],
         use_defaults: true,
       },
@@ -1816,7 +1854,7 @@ describe("calls a limit kept from running", () => {
 
   it("words each reason for the person, never as the model was told", () => {
     expect(Object.keys(NOT_RUN_TEXT).sort()).toEqual(
-      ["asks", "calls", "input", "length", "time"].sort(),
+      ["asked", "asks", "calls", "input", "length", "time"].sort(),
     );
     for (const text of Object.values(NOT_RUN_TEXT)) {
       expect(text).toMatch(/\.$/);

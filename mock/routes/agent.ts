@@ -16,7 +16,6 @@ import type {
   AgentActionDisplays,
   AgentActionResponse,
   AgentActionStatus,
-  AgentAnswer,
   AgentDecision,
   AgentEvent,
   AgentLoadRef,
@@ -33,6 +32,10 @@ import type {
   ConnectorKind,
   FoundryAgentTurnStatus,
   FoundryAgentAction,
+  FoundryAgentAnswers,
+  FoundryAgentAsked,
+  AgentQuestion,
+  AgentQuestionAnswer,
   FoundryAgentEvent,
   FoundryAgentThread,
   FoundryAgentTurn,
@@ -46,7 +49,6 @@ import type {
   ListAgentTurnEventsResponse,
   OntologyGeneration,
   Project,
-  SendAgentMessageRequest,
   Tenant,
 } from "../../src/shared/wfe";
 import {
@@ -66,6 +68,7 @@ import {
   membership,
   onReset,
 } from "../state";
+import { answerWords, checkAnswers, defaultAnswer } from "../agent-questions";
 import {
   aiAssistantFailure,
   aiModel,
@@ -137,13 +140,17 @@ import { manages } from "./workspaces";
 // - "generate" or "draft" (generate_ontology: the connections and sets the
 //   message names, else every connection; "documents only" reads none; a
 //   quoted text is the goal);
+// - "help me set up an ontology" asks the person three questions of its
+//   own through helix_foundry_ask_person (the goal, a choice of one; the
+//   data, a choice of several from the workspace's connections; what to
+//   leave out, in words, optional), ending the turn; their answers (an
+//   answers turn) it reads back as a plan;
 // - a draft that waits on its agent's questions (needs_input, the mock's
-//   `ontologyQuestions`) is said in the agent's words, each question with
-//   its options and default, and nothing is prepared; then "answer the
-//   draft's questions: …" (answer_generation_questions, after
-//   helix_foundry_get_generation: each question takes the option the
-//   message names, or a quoted answer the first blocking one; "use the
-//   defaults" for the rest, else it asks for them);
+//   `ontologyQuestions`), once its generate or answers card ran, or asked
+//   to "answer the draft's questions", is relayed through
+//   helix_foundry_ask_person as its agent wrote it; the person's answers
+//   become its answer_generation_questions card unchanged (use_defaults
+//   for a question left out), the only way it answers a draft;
 // - "make v3 current" (set_current_version: else the newest finished draft);
 // - "load" (create_load: the current version if it loads, else the newest
 //   finished draft); "make the previous load current" (set_current_load);
@@ -271,9 +278,12 @@ type StoredTurn = {
   threadId: string;
   workspaceId: string;
   userId: string;
-  kind: "message" | "action_result" | "automation";
+  kind: "message" | "action_result" | "answers" | "automation";
   text: string;
   actionId: string;
+  // What it asked its person (a questions event), and an answers turn's answers.
+  asked: FoundryAgentAsked | null;
+  answers: FoundryAgentAnswers | null;
   pageContext: AgentPageContext | null;
   clientToken: string;
   status: FoundryAgentTurnStatus;
@@ -456,6 +466,17 @@ function advance(t: StoredTurn) {
     }
     write(t, event);
     t.next += t.stepMs;
+    if (event.type === "questions")
+      t.asked = {
+        questions: event.questions,
+        ...(event.generation && {
+          generation: {
+            ontologyId: event.generation.ontology_id,
+            generationId: event.generation.generation_id,
+            round: event.generation.round,
+          },
+        }),
+      };
     if (event.type === "finished") {
       t.status = event.status;
       t.error = event.error || "";
@@ -489,6 +510,8 @@ const toTurn = (t: StoredTurn): FoundryAgentTurn => ({
   createdAt: t.createdAt,
   startedAt: t.startedAt,
   finishedAt: t.finishedAt,
+  ...(t.asked && { asked: structuredClone(t.asked) }),
+  ...(t.answers && { answers: structuredClone(t.answers) }),
 });
 const toAction = (a: StoredAction): FoundryAgentAction => ({
   id: a.id,
@@ -1360,6 +1383,9 @@ function messageScript(a: Ask, manager: boolean): Step[] {
       ? storedDashboard(a.ws, a.page.dashboardId)
       : undefined,
     asked = board && dashboardAsk(t);
+  // What the Assistant needs to know first, asked in the dock.
+  if (manager && /\bset ?up\b.*\bontolog|\bhelp me\b.*\bontolog/i.test(t))
+    return [started, ...list, ...setupQuestions(a)];
   const automated = automationAsk(a.ws, t);
   const intent: AgentOperation | "connect" | undefined = automated
     ? automated.kind
@@ -1576,7 +1602,7 @@ function operationOf(
     n ? ontologyVersions(o.id).find((v) => String(v.version) === n) : undefined;
   switch (intent) {
     case "answer_generation_questions":
-      return answerQuestions(a, o, named);
+      return relayQuestions(a, o);
     case "generate_ontology":
       return [
         call("tu_connectors", CONNECTORS, { workspace_id: a.ws }),
@@ -2234,112 +2260,284 @@ function dashboardOutput(ws: string, d: FoundryDashboard) {
 
 // ---------------------------------------------------------------- questions
 
-// The backend's ontologygen.NoPreference: a default-less question's answer
-// when the defaults are taken.
-const NO_PREFERENCE = "No preference: decide from the data and the goal.";
+const ASK_PERSON = "helix_foundry_ask_person",
+  // What the tool tells the model once it asked (agent.askedThen).
+  ASKED_THEN =
+    "The person sees the questions now, one at a time. End your turn: write nothing more. Their answers come as the next message.";
 
-/** A waiting generation's questions in the agent's words, for the person to answer. */
-function questionsText(o: StoredOntology, g: OntologyGeneration) {
-  const asked = (g.questions || []).map(
-    (q, i) =>
-      `${i + 1}. ${q.text || "(no text)"}${q.options?.length ? ` Options: ${q.options.join("; ")}.` : ""}${q.defaultAnswer ? ` It suggests: ${q.defaultAnswer}.` : ""}${q.blocking ? "" : " It can decide this one itself."}`,
-  );
+/**
+ * Asks the person through helix_foundry_ask_person and ends the turn
+ * waiting for their answers (finished, reason asked), as the backend's
+ * asker does: the call, the questions it shows, its result. `ask` decides
+ * when the step comes: null asks nothing (the steps after it go on).
+ */
+function askPerson(
+  input: (c: Context) => unknown,
+  ask: (c: Context) => Extract<Scripted, { type: "questions" }> | null,
+): Step[] {
+  const asked = new Map<string, ReturnType<typeof ask>>();
+  const of = (c: Context) => {
+    if (!asked.has(c.turn.id)) asked.set(c.turn.id, ask(c));
+    return asked.get(c.turn.id)!;
+  };
   return [
-    `The draft of ${o.name} waits for answers to ${asked.length === 1 ? "a question" : `${asked.length} questions`} only you can answer:`,
-    ...asked,
-    `Tell me your answers, or to use its suggestions, and I'll send them. You can also answer on the draft's page: /ontology/${o.id}/generations/${g.id}`,
-  ].join("\n");
+    (c) => (of(c) ? call("tu_ask", ASK_PERSON, input(c))(c) : null),
+    (c) => of(c),
+    (c) =>
+      of(c)
+        ? result("tu_ask", ASK_PERSON, () => ({
+            asked: of(c)!.questions.length,
+            then: ASKED_THEN,
+          }))(c)
+        : null,
+    (c) =>
+      of(c) ? { type: "finished", status: "done", reason: "asked" } : null,
+  ];
+}
+
+/** The questions a waiting generation of `o` asks, relayed as its agent wrote them. */
+function relayed(
+  o: StoredOntology,
+  g: OntologyGeneration | undefined,
+): Extract<Scripted, { type: "questions" }> | null {
+  if (g?.status !== "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT") return null;
+  return {
+    type: "questions",
+    questions: (g.questions || []).map(
+      ({ items: _items, answer: _answer, ...q }) => q,
+    ),
+    generation: {
+      ontology_id: o.id,
+      ontology_name: o.name,
+      generation_id: g.id,
+      ...(g.title && { generation_title: g.title }),
+      round: g.questionRound || 1,
+    },
+  };
 }
 
 /**
- * Answers the newest generation of `o` that waits on its questions: each
- * question takes the option the message names, or the first blocking one a
- * quoted answer; "use the defaults" answers the rest with the agent's
- * defaults, else the agent asks for them.
+ * Relays the questions the newest generation of `o` waits on: read with
+ * helix_foundry_get_generation, then asked (the person answers in the dock,
+ * and the answers turn prepares them as a card); none waiting, it says so.
  */
-function answerQuestions(a: Ask, o: StoredOntology, named: boolean): Step[] {
+function relayQuestions(a: Ask, o: StoredOntology): Step[] {
   let read: OntologyGeneration | undefined;
-  const waiting = () =>
-    (read ??= (
+  const waiting = () => {
+    if (read) return read;
+    const g = (
       wfe(a.userId, "GET", `${ONT(a.ws, o.id)}/generations`).body
         ?.generations as OntologyGeneration[] | undefined
-    )?.find((g) => g.status === "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT"));
+    )?.find((x) => x.status === "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT");
+    // The list leaves the questions out: read the generation itself.
+    return (read =
+      g &&
+      (wfe(a.userId, "GET", `${ONT(a.ws, o.id)}/generations/${g.id}`).body
+        ?.generation as OntologyGeneration | undefined));
+  };
   return [
     call("tu_generation", GET_GENERATION, { ontology_id: o.id }),
     result("tu_generation", GET_GENERATION, () => ({
+      generation: snake(waiting() ?? null),
+    })),
+    ...askPerson(
+      () => ({
+        generation: { ontology_id: o.id, generation_id: waiting()?.id },
+      }),
+      () => relayed(o, waiting()),
+    ),
+    said(() => `No draft of ${o.name} is waiting for answers.`),
+  ];
+}
+
+/**
+ * "Help me set up an ontology": the Assistant asks what it needs to know
+ * first (its own questions: the goal, a choice of one; the data, a choice of
+ * several from the workspace's connections; what to leave out, in words,
+ * optional).
+ */
+function setupQuestions(a: Ask): Step[] {
+  const connectors = workspaceConnectors(a.ws).slice(0, 6);
+  const data =
+    connectors.length >= 2
+      ? connectors.map((c) => ({
+          label: c.name || c.id,
+          description: `${(c.kind || "").charAt(0).toUpperCase()}${(c.kind || "").slice(1)} connection`,
+        }))
+      : [
+          {
+            label: "Connected databases and apps",
+            description: "What Data syncs.",
+          },
+          {
+            label: "Uploaded documents",
+            description: "Contracts, notes and other files.",
+          },
+        ];
+  const questions: AgentQuestion[] = [
+    {
+      id: "q1",
+      header: "Goal",
+      text: "What should the new ontology answer first?",
+      options: [
+        {
+          label: "Customer health",
+          description: "Who pays, how much, and who is at risk of leaving.",
+        },
+        {
+          label: "Revenue and renewals",
+          description: "Invoices, contracts and when they renew.",
+        },
+        {
+          label: "Support load",
+          description: "Tickets, who raises them and how fast they close.",
+        },
+      ],
+      multiple: false,
+      recommended: "Customer health",
+      blocking: true,
+    },
+    {
+      id: "q2",
+      header: "Data",
+      text: "Which of your data should it read?",
+      options: data,
+      multiple: true,
+      recommended: data[0]!.label,
+      blocking: true,
+    },
+    {
+      id: "q3",
+      header: "Leave out",
+      text: "Is there anything it should leave out?",
+      options: [],
+      multiple: false,
+      recommended: "",
+      blocking: false,
+    },
+  ];
+  return [
+    call("tu_connectors", CONNECTORS, { workspace_id: a.ws }),
+    result("tu_connectors", CONNECTORS, () => ({
+      connectors: workspaceConnectors(a.ws).map((c) => ({
+        id: c.id,
+        name: c.name,
+        kind: c.kind,
+      })),
+    })),
+    said(() => "A few questions first, so the draft fits what you need."),
+    ...askPerson(
+      () => ({
+        questions: questions.map((q) => ({
+          header: q.header,
+          text: q.text,
+          ...(q.options?.length && { options: q.options }),
+          ...(q.multiple && { multiple: true }),
+          ...(q.recommended && { recommended: q.recommended }),
+          ...(!q.blocking && { optional: true }),
+        })),
+      }),
+      () => ({ type: "questions", questions }),
+    ),
+  ];
+}
+
+/**
+ * An answers turn: the person's answers to the questions `asking` asked.
+ * A relayed generation's become its answer_generation_questions card,
+ * unchanged (use_defaults when a question was left out); the Assistant's
+ * own it reads back as the plan they make.
+ */
+function answersScript(
+  a: Ask,
+  asking: StoredTurn,
+  answers: AgentQuestionAnswer[],
+): Step[] {
+  const asked = asking.asked!,
+    g = asked.generation;
+  const words = (q: AgentQuestion) => {
+    const x = answers.find((y) => y.questionId === q.id);
+    return x ? answerWords(x) : "";
+  };
+  if (!g) {
+    const [goal, data, leave] = (asked.questions || []).map(words);
+    return [
+      started,
+      said(
+        () =>
+          `Here's what I'll set up: an ontology for ${goal || "what you asked"}, reading ${data || "your data"}${leave ? `, leaving out ${leave}` : ""}. Tell me its name and database, and I'll prepare it: for example, "create an ontology called Customer health on database orders".`,
+      ),
+    ];
+  }
+  const o = ontologyById(g.ontologyId || "");
+  if (!o)
+    return [
+      started,
+      said(() => "That ontology is gone, so there is nothing to answer."),
+    ];
+  return [
+    started,
+    call("tu_generation", GET_GENERATION, {
+      ontology_id: o.id,
+      generation_id: g.generationId,
+    }),
+    result("tu_generation", GET_GENERATION, () => ({
       generation: snake(
-        waiting() &&
-          wfe(
-            a.userId,
-            "GET",
-            `${ONT(a.ws, o.id)}/generations/${waiting()!.id}`,
-          ).body?.generation,
+        wfe(a.userId, "GET", `${ONT(a.ws, o.id)}/generations/${g.generationId}`)
+          .body?.generation ?? null,
       ),
     })),
     ...prepare(() => {
-      const g = waiting();
-      if (!g) return `No draft of ${o.name} is waiting for answers.`;
-      // The list leaves the questions out: read the generation itself.
-      const asked =
-        (
-          wfe(a.userId, "GET", `${ONT(a.ws, o.id)}/generations/${g.id}`).body
-            ?.generation as OntologyGeneration | undefined
-        )?.questions || [];
-      const quoted = quotedText(a.text);
-      const answers: AgentAnswer[] = [];
-      for (const q of asked) {
-        const option = q.options?.find((x) => says(a.text, x));
-        const text =
-          option ??
-          (quoted && q.blocking && !answers.length ? quoted : undefined);
-        if (text)
-          answers.push({
-            question_id: q.id,
-            question: q.text || "",
-            answer: text,
-          });
-      }
-      const defaults = /\b(defaults|suggestions)\b/i.test(a.text),
-        open = asked.filter(
-          (q) => !answers.some((x) => x.question_id === q.id),
+      const read = wfe(
+        a.userId,
+        "GET",
+        `${ONT(a.ws, o.id)}/generations/${g.generationId}`,
+      ).body?.generation as OntologyGeneration | undefined;
+      if (
+        read?.status !== "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT" ||
+        read.questionRound !== g.round
+      )
+        return "The draft isn't waiting for those answers any more: read it again on its page.";
+      const questions = read.questions || [],
+        left = questions.filter(
+          (q) => !answers.some((x) => x.questionId === q.id),
         );
-      if (!defaults && open.some((q) => q.blocking))
-        return `${questionsText(o, { ...g, questions: asked })}\nI still need an answer to ${open
-          .filter((q) => q.blocking)
-          .map((q) => `“${q.text}”`)
-          .join(" and ")}, or say to use its suggestions.`;
-      if (!answers.length && !defaults)
-        return "Tell me your answers, or to use its suggestions.";
+      const shown = (q: AgentQuestion, x: AgentQuestionAnswer) => ({
+        question_id: q.id,
+        ...(q.header && { header: q.header }),
+        question: q.text || "",
+        options: x.options || [],
+        ...(x.text && { text: x.text }),
+      });
       return onOntology(
         a.ws,
         o,
-        named,
+        true,
         "answer_generation_questions",
         {
-          generation_id: g.id,
-          ...(answers.length && {
-            answers: answers.map((x) => ({
-              question_id: x.question_id,
-              text: x.answer,
-            })),
-          }),
-          ...(defaults && { use_defaults: true }),
+          generation_id: read.id,
+          round: g.round,
+          answers: answers.map((x) => ({
+            question_id: x.questionId,
+            options: x.options || [],
+            ...(x.text && { text: x.text }),
+          })),
+          ...(left.length && { use_defaults: true }),
         },
         {
           ontology: ref(o),
-          generation: { id: g.id, ...(g.title && { name: g.title }) },
-          answers,
-          use_defaults: defaults,
-          ...(defaults &&
-            open.length && {
-              defaulted: open.map((q) => ({
-                question_id: q.id,
-                question: q.text || "",
-                answer: q.defaultAnswer || NO_PREFERENCE,
-              })),
-            }),
+          generation: { id: read.id, ...(read.title && { name: read.title }) },
+          round: g.round!,
+          answers: questions.flatMap((q) => {
+            const x = answers.find((y) => y.questionId === q.id);
+            return x ? [shown(q, x)] : [];
+          }),
+          use_defaults: left.length > 0,
+          ...(left.length && {
+            defaulted: left.map((q) => shown(q, defaultAnswer(q))),
+          }),
         },
-        `I've prepared your answers to the draft's ${asked.length === 1 ? "question" : "questions"}${defaults ? ", with its suggestions for the rest" : ""}. Send them from the card, and the draft carries on.`,
+        `I've prepared your answers to the draft's ${questions.length === 1 ? "question" : "questions"}${left.length ? ", its recommended answers for the ones you left" : ""}. Send them from the card, and the draft carries on.`,
       );
     }),
   ];
@@ -2902,13 +3100,20 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
                 generation: snake(read),
               }))(c)
             : undefined,
+        // A draft that waits on its agent's questions: asked in the dock.
+        ...(o
+          ? askPerson(
+              () => ({
+                generation: { ontology_id: o.id, generation_id: g },
+              }),
+              () => relayed(o, read),
+            )
+          : []),
         ...prepare(() => {
           const v = read?.resultVersionId;
           if (!o) return "The ontology is gone.";
           if (read?.status === "ONTOLOGY_GENERATION_STATUS_FAILED")
             return `The draft failed: ${read.error || "the agent gave no reason"}. Ask me to try again.`;
-          if (read?.status === "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT")
-            return questionsText(o, read);
           if (!v)
             return `The draft of ${o.name} is still being written. Ask me to make it current once it's done: /ontology/${o.id}/generations/${g}`;
           return currentPlan(a.workspaceId, o, true, v);
@@ -3154,11 +3359,13 @@ function run(a: StoredAction, userId: string): MockReply {
         `${at}/generations/${p.generation_id}:answer`,
         {
           answers: (p.answers || []).map(
-            (x: { question_id: string; text: string }) => ({
+            (x: { question_id: string; options: string[]; text?: string }) => ({
               questionId: x.question_id,
-              text: x.text,
+              options: x.options,
+              ...(x.text && { text: x.text }),
             }),
           ),
+          round: p.round,
           ...(p.use_defaults && { useDefaults: true }),
         },
       );
@@ -3383,12 +3590,15 @@ function queueTurn(
   turn: Pick<
     StoredTurn,
     "kind" | "text" | "actionId" | "pageContext" | "clientToken" | "script"
-  >,
+  > &
+    Partial<Pick<StoredTurn, "answers">>,
   first?: AgentEvent,
 ) {
   const at = Date.now(),
     stepMs = knobs.agentStepMs ?? STEP_MS;
   const t: StoredTurn = {
+    asked: null,
+    answers: null,
     ...turn,
     id: id("turn"),
     threadId: thread.id,
@@ -3575,22 +3785,58 @@ export const agentRoutes: MockRoute[] = [
       const p = person(req);
       if (!isPerson(p)) return p;
       const ws = req.params.workspaceId!;
-      const body = (req.body || {}) as Partial<SendAgentMessageRequest>;
+      const body = (req.body || {}) as Partial<
+        Record<"threadId" | "text" | "clientToken", string> & {
+          answers: Partial<FoundryAgentAnswers>;
+          pageContext: AgentPageContext;
+        }
+      >;
       const text = (body.text || "").trim(),
         token = body.clientToken || "",
-        page = body.pageContext;
+        page = body.pageContext,
+        replying = body.answers !== undefined;
       if (!token || token.length > MAX_TOKEN)
         return fail(
           "INVALID_ARGUMENT",
           `client_token is required, at most ${MAX_TOKEN} characters`,
         );
-      if (!text || [...text].length > MAX_TEXT)
+      if (body.threadId && !ID.test(body.threadId))
+        return fail("INVALID_ARGUMENT", "thread_id is malformed");
+      if (replying && body.text !== undefined)
+        return fail("INVALID_ARGUMENT", "text or answers, not both");
+      if (!replying && (!text || [...text].length > MAX_TEXT))
         return fail(
           "INVALID_ARGUMENT",
           `text is required, at most ${MAX_TEXT} characters`,
         );
-      if (body.threadId && !ID.test(body.threadId))
-        return fail("INVALID_ARGUMENT", "thread_id is malformed");
+      // Answers: to the questions a turn of the thread asked, checked
+      // against them (agentquestion.Check, blocking ones required).
+      let reply: { asking: StoredTurn; answers: AgentQuestionAnswer[] } | null =
+        null;
+      if (replying) {
+        if (!body.threadId)
+          return fail(
+            "INVALID_ARGUMENT",
+            "thread_id is required with answers: the thread of the turn they answer",
+          );
+        const asking = turnOf(ws, p.userId, String(body.answers?.turnId || ""));
+        if (!asking || asking.threadId !== body.threadId)
+          return fail("NOT_FOUND", "turn not found");
+        if (!asking.asked)
+          return refused(
+            ws,
+            "FOUNDRY_AGENT_QUESTIONS_CLOSED",
+            "that turn asked you nothing",
+          );
+        const checked = checkAnswers(
+          asking.asked.questions || [],
+          body.answers?.answers ?? [],
+          false,
+        );
+        if (typeof checked === "string")
+          return fail("INVALID_ARGUMENT", checked);
+        reply = { asking, answers: checked };
+      }
       if (
         (page?.ontologyId && !ID.test(page.ontologyId)) ||
         (page?.loadId && (!ID.test(page.loadId) || !page.ontologyId)) ||
@@ -3607,7 +3853,16 @@ export const agentRoutes: MockRoute[] = [
           t.clientToken === token,
       );
       if (again) {
-        if (again.text !== text)
+        if (
+          again.kind !== (reply ? "answers" : "message") ||
+          again.text !== (reply ? "" : text) ||
+          JSON.stringify(again.answers) !==
+            JSON.stringify(
+              reply
+                ? { turnId: reply.asking.id, answers: reply.answers }
+                : null,
+            )
+        )
           return fail(
             "INVALID_ARGUMENT",
             "client_token was already used for another message",
@@ -3623,7 +3878,7 @@ export const agentRoutes: MockRoute[] = [
           (t) =>
             t.workspaceId === ws &&
             t.userId === p.userId &&
-            t.kind === "message" &&
+            (t.kind === "message" || t.kind === "answers") &&
             t.at >= hourAgo,
         ).length;
       if (sent >= PER_HOUR)
@@ -3646,6 +3901,19 @@ export const agentRoutes: MockRoute[] = [
       if (thread) {
         const busyWhy = busy(thread);
         if (busyWhy) return refused(ws, "FOUNDRY_AGENT_THREAD_BUSY", busyWhy);
+        // Answerable while the asking turn is the thread's newest, done.
+        const newest = state.turns
+          .filter((t) => t.threadId === thread!.id)
+          .at(-1);
+        if (
+          reply &&
+          (newest !== reply.asking || reply.asking.status !== "done")
+        )
+          return refused(
+            ws,
+            "FOUNDRY_AGENT_QUESTIONS_CLOSED",
+            "these questions are closed: they were answered, or the conversation went on",
+          );
       } else {
         const line = text.split("\n")[0]!.trim();
         thread = {
@@ -3675,14 +3943,31 @@ export const agentRoutes: MockRoute[] = [
               ...(page.dashboardId && { dashboardId: page.dashboardId }),
             }
           : null;
-      const turn = queueTurn(thread, {
-        kind: "message",
-        text,
-        actionId: "",
-        pageContext,
-        clientToken: token,
-        script: [],
-      });
+      const turn = queueTurn(
+        thread,
+        {
+          kind: reply ? "answers" : "message",
+          text: reply ? "" : text,
+          actionId: "",
+          pageContext,
+          clientToken: token,
+          script: [],
+          ...(reply && {
+            answers: { turnId: reply.asking.id, answers: reply.answers },
+          }),
+        },
+        reply
+          ? {
+              type: "answers",
+              turn_id: reply.asking.id,
+              answers: reply.answers.map((x) => ({
+                question_id: x.questionId,
+                options: x.options || [],
+                ...(x.text && { text: x.text }),
+              })),
+            }
+          : undefined,
+      );
       // The worker runs on every provider kind, but not on a setting whose
       // tool check failed: it fails the turn for good, before it starts,
       // in its words (agent.checkFailure).
@@ -3697,18 +3982,32 @@ export const agentRoutes: MockRoute[] = [
               error: unusable,
             }),
           ]
-        : ending(
-            messageScript(
-              {
-                ws,
-                userId: p.userId,
-                threadId: thread.id,
-                text,
-                page: pageContext,
-              },
-              manages(p.m),
-            ),
-          );
+        : reply
+          ? ending(
+              answersScript(
+                {
+                  ws,
+                  userId: p.userId,
+                  threadId: thread.id,
+                  text: "",
+                  page: pageContext,
+                },
+                reply.asking,
+                reply.answers,
+              ),
+            )
+          : ending(
+              messageScript(
+                {
+                  ws,
+                  userId: p.userId,
+                  threadId: thread.id,
+                  text,
+                  page: pageContext,
+                },
+                manages(p.m),
+              ),
+            );
       return ok({
         turn: toTurn(turn),
         thread: toThread(thread),

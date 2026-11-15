@@ -47,6 +47,8 @@ const configure = (config: {
   freshInstall?: boolean;
   aiProbeMs?: number;
   ontologyStepMs?: number;
+  // A new generation's agent asks before it drafts.
+  ontologyQuestions?: boolean;
   loadStepMs?: number;
   askStepMs?: number;
   agentStepMs?: number;
@@ -1335,6 +1337,39 @@ test("pairs a helper and runs new Assistant threads on the owner's Claude subscr
   await expect(dock.getByRole("alert")).toHaveText(
     "No helper is paired to run it: pair one in Settings › AI models, start it, then send again.",
   );
+});
+
+test("asks the Assistant's questions one at a time in the dock, and a draft's on its page", async ({
+  page,
+}) => {
+  await configure({
+    agentStepMs: 100,
+    ontologyStepMs: 300,
+    ontologyQuestions: true,
+  });
+  await page.goto("/");
+  await openDock(page);
+  const dock = dockOf(page);
+  await dock
+    .getByRole("textbox", { name: "Message" })
+    .fill("Help me set up an ontology");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  const asked = dock.getByRole("region", { name: "Questions for you" });
+  await expect(asked).toBeVisible({ timeout: 20_000 });
+  await asked.getByRole("radio", { name: /^Customer health/ }).click();
+  await asked.getByRole("checkbox").first().click();
+  await asked.getByRole("button", { name: "Next", exact: true }).click();
+  await asked.getByRole("button", { name: "Skip", exact: true }).click();
+  await asked.getByRole("button", { name: "Send answers" }).click();
+  await expect(
+    dock.getByText(/an ontology for Customer health, reading/),
+  ).toBeVisible({ timeout: 20_000 });
+  // A draft's questions, on its page, as hosted.
+  await page.goto("/ontology/ont_acme_contracts/generate");
+  await page.getByRole("button", { name: "Generate", exact: true }).click();
+  await expect(
+    page.getByRole("radiogroup", { name: /^Is a customer/ }),
+  ).toBeVisible({ timeout: 15_000 });
 });
 
 test("shows nothing of where the Assistant runs while it is off", async ({

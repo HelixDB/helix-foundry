@@ -302,6 +302,58 @@ describe("parseAgentEvent", () => {
       { type: "finished", status: "failed", reason: "failed", error: "x" },
       { type: "finished", status: "failed", reason: "failed", error: "x" },
     ],
+    [
+      { type: "finished", status: "done", reason: "asked" },
+      { type: "finished", status: "done", reason: "asked" },
+    ],
+    [
+      {
+        type: "questions",
+        questions: [{ id: "q1", text: "Which?" }],
+        generation: {
+          ontology_id: "o",
+          ontology_name: "Sales",
+          generation_id: "g",
+          generation_title: "Renewals",
+          round: 2,
+        },
+      },
+      {
+        type: "questions",
+        questions: [{ id: "q1", text: "Which?" }],
+        generation: {
+          ontology_id: "o",
+          ontology_name: "Sales",
+          generation_id: "g",
+          generation_title: "Renewals",
+          round: 2,
+        },
+      },
+    ],
+    [
+      // A generation it can't read: the Assistant's own questions.
+      { type: "questions", questions: [], generation: { ontology_id: "o" } },
+      { type: "questions", questions: [] },
+    ],
+    [
+      {
+        type: "answers",
+        turn_id: "t",
+        answers: [
+          { question_id: "q1", options: ["A", 3], text: "x" },
+          { question_id: "q2" },
+          "nope",
+        ],
+      },
+      {
+        type: "answers",
+        turn_id: "t",
+        answers: [
+          { question_id: "q1", options: ["A"], text: "x" },
+          { question_id: "q2", options: [] },
+        ],
+      },
+    ],
   ])("reads %j", (input, parsed) => {
     expect(parseAgentEvent(JSON.stringify(input))).toEqual(parsed);
   });
@@ -327,6 +379,10 @@ describe("parseAgentEvent", () => {
       '{"type":"action_result","action_id":"a","status":"maybe"}',
     ],
     ["a report without its summary", '{"type":"automation_report"}'],
+    ["questions that aren't a list", '{"type":"questions","questions":{}}'],
+    ["questions that aren't objects", '{"type":"questions","questions":["q"]}'],
+    ["answers without their turn", '{"type":"answers","answers":[]}'],
+    ["answers that aren't a list", '{"type":"answers","turn_id":"t"}'],
     [
       "an end of no known reason",
       '{"type":"finished","status":"done","reason":"bored"}',
@@ -341,6 +397,71 @@ describe("parseAgentEvent", () => {
 });
 
 describe("reduceTurnEvents", () => {
+  it("folds a turn's questions where they show, and an answers turn's answers into nothing", () => {
+    const q = { id: "q1", text: "Which?" };
+    const s = reduceTurnEvents(EMPTY_STREAM, {
+      events: [
+        event(1, {
+          type: "answers",
+          turn_id: "t0",
+          answers: [{ question_id: "q0", options: ["A"] }],
+        }),
+        event(2, { type: "text", step: 1, text: "First:" }),
+        event(3, { type: "questions", questions: [q] }),
+        event(4, {
+          type: "questions",
+          questions: [q],
+          generation: {
+            ontology_id: "o",
+            ontology_name: "Sales",
+            generation_id: "g",
+            round: 1,
+          },
+        }),
+        event(5, {
+          type: "questions",
+          questions: [q],
+          generation: {
+            ontology_id: "o",
+            ontology_name: "",
+            generation_id: "g",
+            generation_title: "Renewals",
+            round: 1,
+          },
+        }),
+        event(6, { type: "finished", status: "done", reason: "asked" }),
+      ],
+      status: "done",
+      lastSeq: 6,
+    });
+    expect(s.blocks).toEqual([
+      { kind: "text", text: "First:" },
+      { kind: "asked", questions: [q] },
+      { kind: "asked", questions: [q], generation: "the draft of Sales" },
+      { kind: "asked", questions: [q], generation: "Renewals" },
+    ]);
+    expect(STOP_TEXT[s.ended!.reason]).toBeNull();
+    const nameless = reduceTurnEvents(EMPTY_STREAM, {
+      events: [
+        event(1, {
+          type: "questions",
+          questions: [q],
+          generation: {
+            ontology_id: "o",
+            ontology_name: "",
+            generation_id: "g",
+            round: 1,
+          },
+        }),
+      ],
+      status: "done",
+      lastSeq: 1,
+    });
+    expect(nameless.blocks).toEqual([
+      { kind: "asked", questions: [q], generation: "the draft of an ontology" },
+    ]);
+  });
+
   const call = {
     type: "tool_call",
     tool_use_id: "t1",

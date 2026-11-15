@@ -975,6 +975,9 @@ describe("onboardingPrompt for an ontology under way", () => {
     expect(steps(text)[0]).toBe("Generate a draft");
     expect(text).toContain("Never answer for me.");
     expect(text).toContain("`answer_generation_questions`, target");
+    expect(text).toContain(
+      '"round": <its question_round>, "answers": [{"question_id": "<id>", "options": ["<each label I chose>"]',
+    );
     expect(text).not.toContain("`generate_ontology`, target");
   });
 

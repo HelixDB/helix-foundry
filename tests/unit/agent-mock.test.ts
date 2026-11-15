@@ -1322,7 +1322,7 @@ describe("operations", () => {
     expect(step4.said).toContain(`/ontology/${ontologyId}/loads/`);
   });
 
-  it("says a draft's questions, sends the person's answers, and goes on from the draft", async () => {
+  it("relays a draft's questions, takes the person's answers, and prepares them unchanged", async () => {
     Object.assign(config, { ontologyQuestions: true, ontologyStepMs: 300 });
     const created = await card(
       "Create an ontology called Orders graph on database orders, goal: Which customers order the most",
@@ -1330,7 +1330,8 @@ describe("operations", () => {
     const step1 = await runCard(created.action);
     const ontologyId = step1.result.id;
     const step2 = await runCard(step1.next);
-    // The draft waits on its agent's questions: said, and nothing prepared.
+    // The draft waits on its agent's questions: asked through the tool,
+    // which ends the turn; nothing prepared.
     const read = step2.events.find(
       (e) =>
         e.type === "tool_result" && e.name === "helix_foundry_get_generation",
@@ -1339,71 +1340,280 @@ describe("operations", () => {
       "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT",
     );
     const generationId = read.output.generation.id;
-    expect(step2.said).toContain(
-      "The draft of Orders graph waits for answers to 3 questions only you can answer:",
-    );
-    expect(step2.said).toContain(
-      "1. Is a customer the company that pays, or each person who signs in? Options: The company that pays; Each person who signs in. It suggests: The company that pays.",
-    );
-    expect(step2.said).toContain("It can decide this one itself.");
-    expect(step2.said).toContain(
-      `/ontology/${ontologyId}/generations/${generationId}`,
-    );
+    const types = step2.events.map((e) => e.type);
+    expect(types.slice(-4)).toEqual([
+      "tool_call",
+      "questions",
+      "tool_result",
+      "finished",
+    ]);
+    expect(step2.events.at(-1)).toEqual({
+      type: "finished",
+      status: "done",
+      reason: "asked",
+    });
+    const asked = step2.events.find((e) => e.type === "questions") as Extract<
+      AgentEvent,
+      { type: "questions" }
+    >;
+    expect(asked.generation).toEqual({
+      ontology_id: ontologyId,
+      ontology_name: "Orders graph",
+      generation_id: generationId,
+      generation_title: expect.any(String),
+      round: 1,
+    });
+    expect(
+      asked.questions.map((q) => [q.id, q.multiple, q.recommended]),
+    ).toEqual([
+      ["Q1", false, "The company that pays"],
+      ["Q2", true, "Unpaid invoices"],
+      ["Q3", false, "90 days"],
+      ["Q4", false, ""],
+    ]);
     expect(step2.next.operation).toBe("generate_ontology");
+    const threadId = step2.next.threadId as string;
+    const thread = await call("GET", `${A}/threads/${threadId}`);
+    const asking = thread.body.turns.at(-1);
+    expect(asking.asked).toEqual({
+      questions: asked.questions,
+      generation: { ontologyId, generationId, round: 1 },
+    });
 
-    // A blocking question left open: it asks for it, and prepares nothing.
-    const partial = await card(
-      "Answer the Orders graph questions: Each person who signs in",
-    );
-    expect(partial.action).toBeUndefined();
-    expect(partial.said).toContain(
-      "I still need an answer to “How many days before a contract ends does its renewal count as at risk?”",
-    );
+    // Answers are checked against the questions, as the backend checks them.
+    const answer = (answers: unknown, extra: object = {}) =>
+      call("POST", `${A}/turns`, {
+        threadId,
+        answers: { turnId: asking.id, answers },
+        clientToken: `a${++token}`,
+        ...extra,
+      });
+    const given = [
+      { questionId: "Q1", options: ["Each person who signs in"] },
+      {
+        questionId: "Q2",
+        options: ["Falling usage", "Unpaid invoices"],
+        text: " and churned seats ",
+      },
+      { questionId: "Q3", text: "60 days" },
+    ];
+    for (const [bad, why] of [
+      [[{ questionId: "Q1", options: ["Nope"] }], "offers no option"],
+      [
+        [{ questionId: "Q1", options: ["The company that pays"], text: "x" }],
+        "not both",
+      ],
+      [
+        [
+          {
+            questionId: "Q1",
+            options: ["The company that pays", "Each person who signs in"],
+          },
+        ],
+        "takes one option, not 2",
+      ],
+      [[{ questionId: "Q3", options: ["60"] }], "takes an answer in words"],
+      [[{ questionId: "Q3", text: "  " }], "1 to 2000 characters"],
+      [[...given, given[0]], "answered twice"],
+      [[{ questionId: "Q9", text: "x" }], 'no question "Q9"'],
+      [given.slice(0, 2), "question Q3 needs an answer"],
+    ] as const) {
+      const r = await answer(bad);
+      expect(r.status).toBe(400);
+      expect(r.body.message).toContain(why);
+    }
+    const noThread = await call("POST", `${A}/turns`, {
+      answers: { turnId: asking.id, answers: given },
+      clientToken: "x1",
+    });
+    expect(noThread.status).toBe(400);
+    expect((await answer(given, { threadId: "thr_nope" })).status).toBe(404);
+    const askedNothing = await call("POST", `${A}/turns`, {
+      threadId,
+      answers: { turnId: created.sent.body.turn.id, answers: given },
+      clientToken: "x2",
+    });
+    expect(reason(askedNothing)).toBe("FOUNDRY_AGENT_QUESTIONS_CLOSED");
 
-    const answered = await card(
-      "Answer the Orders graph questions: Each person who signs in, and use the defaults for the rest",
-    );
-    expect(answered.action).toMatchObject({
+    const sent = await call("POST", `${A}/turns`, {
+      threadId,
+      answers: { turnId: asking.id, answers: given },
+      clientToken: "answers-1",
+    });
+    expect(sent.status).toBe(200);
+    expect(sent.body.turn).toMatchObject({
+      kind: "answers",
+      text: "",
+      answers: {
+        turnId: asking.id,
+        answers: [
+          { questionId: "Q1", options: ["Each person who signs in"] },
+          {
+            questionId: "Q2",
+            options: ["Unpaid invoices", "Falling usage"],
+            text: "and churned seats",
+          },
+          { questionId: "Q3", options: [], text: "60 days" },
+        ],
+      },
+    });
+    // The same click again is the same turn; answered, they are closed.
+    const again = await call("POST", `${A}/turns`, {
+      threadId,
+      answers: { turnId: asking.id, answers: given },
+      clientToken: "answers-1",
+    });
+    expect(again.body.turn.id).toBe(sent.body.turn.id);
+    const { events: evs } = await events(sent.body.turn.id);
+    expect(evs[0]).toEqual({
+      type: "answers",
+      turn_id: asking.id,
+      answers: [
+        { question_id: "Q1", options: ["Each person who signs in"] },
+        {
+          question_id: "Q2",
+          options: ["Unpaid invoices", "Falling usage"],
+          text: "and churned seats",
+        },
+        { question_id: "Q3", options: [], text: "60 days" },
+      ],
+    });
+    expect(reason(await answer(given))).toBe("FOUNDRY_AGENT_QUESTIONS_CLOSED");
+
+    // Prepared as the card, unchanged, Q4 left: its recommended answer.
+    const after = await call("GET", `${A}/threads/${threadId}`);
+    const action = after.body.actions.at(-1);
+    expect(action).toMatchObject({
       operation: "answer_generation_questions",
       target: `ontology:ws_acme/${ontologyId}`,
       targetNamedByUser: true,
     });
-    expect(JSON.parse(answered.action.payloadJson)).toEqual({
+    expect(JSON.parse(action.payloadJson)).toEqual({
       generation_id: generationId,
-      answers: [{ question_id: "q1", text: "Each person who signs in" }],
+      round: 1,
+      answers: [
+        { question_id: "Q1", options: ["Each person who signs in"] },
+        {
+          question_id: "Q2",
+          options: ["Unpaid invoices", "Falling usage"],
+          text: "and churned seats",
+        },
+        { question_id: "Q3", options: [], text: "60 days" },
+      ],
       use_defaults: true,
     });
-    expect(answered.display).toMatchObject({
+    expect(display(action)).toMatchObject({
       ontology: { id: ontologyId, name: "Orders graph" },
       generation: { id: generationId },
+      round: 1,
       answers: [
         {
-          question_id: "q1",
+          question_id: "Q1",
+          header: "Customers",
           question:
             "Is a customer the company that pays, or each person who signs in?",
-          answer: "Each person who signs in",
+          options: ["Each person who signs in"],
         },
+        { question_id: "Q2" },
+        { question_id: "Q3", text: "60 days" },
       ],
       use_defaults: true,
       defaulted: [
-        { question_id: "q2", answer: "90 days" },
         {
-          question_id: "q3",
-          answer: "No preference: decide from the data and the goal.",
+          question_id: "Q4",
+          options: [],
+          text: "No preference: decide from the data and the goal.",
         },
       ],
     });
     // Sent, the draft goes on from the answers, and is offered as current.
-    const step3 = await runCard(answered.action);
+    const step3 = await runCard(action);
     expect(step3.ran.status).toBe("succeeded");
     expect(step3.next.operation).toBe("set_current_version");
     const got = await call(
       "GET",
       `${WS}/ontologies/${ontologyId}/generations/${generationId}`,
     );
-    expect(got.body.generation.questions[0].answer).toBe(
-      "Each person who signs in",
+    expect(got.body.generation.questions.map((q: any) => q.answer)).toEqual([
+      { questionId: "Q1", options: ["Each person who signs in"] },
+      {
+        questionId: "Q2",
+        options: ["Unpaid invoices", "Falling usage"],
+        text: "and churned seats",
+      },
+      { questionId: "Q3", options: [], text: "60 days" },
+      {
+        questionId: "Q4",
+        options: [],
+        text: "No preference: decide from the data and the goal.",
+      },
+    ]);
+  });
+
+  it("asks its own questions to set up an ontology, and reads the answers back", async () => {
+    const c = await card("Help me set up an ontology");
+    expect(c.action).toBeUndefined();
+    expect(c.events.at(-1)).toEqual({
+      type: "finished",
+      status: "done",
+      reason: "asked",
+    });
+    const asked = c.events.find((e) => e.type === "questions") as Extract<
+      AgentEvent,
+      { type: "questions" }
+    >;
+    expect(asked.generation).toBeUndefined();
+    expect(
+      asked.questions.map((q) => [q.id, q.header, q.multiple, q.blocking]),
+    ).toEqual([
+      ["q1", "Goal", false, true],
+      ["q2", "Data", true, true],
+      ["q3", "Leave out", false, false],
+    ]);
+    // Its data options are the workspace's connections.
+    const labels = asked.questions[1]!.options!.map((o) => o.label);
+    expect(labels.length).toBeGreaterThanOrEqual(2);
+    const threadId = c.sent.body.thread.id,
+      turnId = c.sent.body.turn.id;
+    const r = await call("POST", `${A}/turns`, {
+      threadId,
+      answers: {
+        turnId,
+        answers: [
+          { questionId: "q1", options: ["Revenue and renewals"] },
+          { questionId: "q2", options: labels.slice(0, 2) },
+        ],
+      },
+      clientToken: "setup-1",
+    });
+    expect(r.status).toBe(200);
+    const { events: evs } = await events(r.body.turn.id);
+    const said = evs
+      .filter((e) => e.type === "text")
+      .map((e) => (e as { text: string }).text)
+      .join(" ");
+    expect(said).toContain(
+      `an ontology for Revenue and renewals, reading ${labels[0]}; ${labels[1]}.`,
     );
+  });
+
+  it("closes the questions once the conversation goes on", async () => {
+    const c = await card("Help me set up an ontology");
+    const threadId = c.sent.body.thread.id;
+    expect((await send("Never mind", { threadId })).status).toBe(200);
+    await events(c.sent.body.turn.id);
+    const r = await call("POST", `${A}/turns`, {
+      threadId,
+      answers: {
+        turnId: c.sent.body.turn.id,
+        answers: [
+          { questionId: "q1", options: ["Customer health"] },
+          { questionId: "q2", text: "Everything" },
+        ],
+      },
+      clientToken: "late",
+    });
+    expect(reason(r)).toBe("FOUNDRY_AGENT_QUESTIONS_CLOSED");
   });
 
   it("answers a draft's questions only for an owner or admin", async () => {

@@ -9,6 +9,7 @@ import type {
   AgentDecisionValue,
   AgentLoadRef,
   AgentNotRunReason,
+  AgentQuestion,
   AgentOperation,
   AgentRef,
   AgentReview,
@@ -41,6 +42,7 @@ import { entityId } from "../explore/model";
 import { LOAD_LIMITS } from "../ontology/model";
 import { ontologyPaths } from "../ontology/paths";
 import { workspacePaths } from "../workspace/paths";
+import { answerText } from "../../questions/model";
 
 export type { AgentOperation };
 
@@ -274,6 +276,42 @@ export function parseAgentEvent(eventJson: string): AgentEvent | undefined {
           }
         : undefined;
     }
+    case "questions": {
+      const g = isRecord(x.generation) ? x.generation : null;
+      return Array.isArray(x.questions) && x.questions.every(isRecord)
+        ? {
+            type: "questions",
+            // Read by the flow, which trusts none of it.
+            questions: x.questions as AgentQuestion[],
+            ...(g &&
+              str(g.ontology_id) &&
+              str(g.generation_id) &&
+              Number.isSafeInteger(g.round) && {
+                generation: {
+                  ontology_id: g.ontology_id as string,
+                  ontology_name: str(g.ontology_name) || "",
+                  generation_id: g.generation_id as string,
+                  ...opt("generation_title", str(g.generation_title)),
+                  round: g.round as number,
+                },
+              }),
+          }
+        : undefined;
+    }
+    case "answers":
+      return str(x.turn_id) && Array.isArray(x.answers)
+        ? {
+            type: "answers",
+            turn_id: x.turn_id as string,
+            answers: x.answers.filter(isRecord).map((a) => ({
+              question_id: str(a.question_id) || "",
+              options: Array.isArray(a.options)
+                ? a.options.filter((o): o is string => typeof o === "string")
+                : [],
+              ...opt("text", str(a.text)),
+            })),
+          }
+        : undefined;
     case "automation_report":
       return typeof x.summary === "string"
         ? {
@@ -313,6 +351,8 @@ const actionStatus = (x: unknown) => ACTION_STATUSES.find((s) => s === x);
 /** What a turn ended with, in words; none for an answer. */
 export const STOP_TEXT: Record<AgentStopReason, string | null> = {
   answered: null,
+  // Its questions show, waiting for the person's answers.
+  asked: null,
   max_steps: "It stopped at its step limit. Ask it to go on.",
   wall_time: "It stopped at its time limit. Ask it to go on.",
   budget: "It stopped at this message’s spending cap.",
@@ -331,6 +371,7 @@ export const NOT_RUN_TEXT: Record<AgentNotRunReason, string> = {
   time: "The Assistant ran out of time for this message.",
   length: "The reply reached its length limit while writing it.",
   input: "The model wrote its input in a form Foundry can’t read.",
+  asked: "It came after the turn’s questions, which end the turn.",
 };
 const NOT_RUN = Object.keys(NOT_RUN_TEXT) as AgentNotRunReason[];
 
@@ -360,6 +401,9 @@ export type AgentBlock =
       status: AgentActionStatus;
       error?: string;
     }
+  // The questions the turn asks its person (the agents' words, unread):
+  // where they show in the reply.
+  | { kind: "asked"; questions: AgentQuestion[]; generation?: string }
   // An automation's step reported what it found (untrusted, the model's).
   | { kind: "report"; summary: string; answer?: boolean; count?: number }
   // A later attempt went on from what the first committed.
@@ -500,6 +544,20 @@ export function reduceTurnEvents(
             status: ev.status,
             ...(ev.error && { error: ev.error }),
           });
+        case "questions":
+          return add({
+            kind: "asked",
+            questions: ev.questions,
+            ...opt(
+              "generation",
+              ev.generation &&
+                (ev.generation.generation_title ||
+                  `the draft of ${ev.generation.ontology_name || "an ontology"}`),
+            ),
+          });
+        case "answers":
+          // The person's answers show as their message (the turn's own).
+          return at;
         case "automation_report":
           return add({
             kind: "report",
@@ -543,6 +601,9 @@ export const STARTS_WORK: ReadonlySet<string> = new Set([
   "run_automation",
 ]);
 
+/** The tool the Assistant asks its person with: shown as its questions, not a step. */
+export const ASK_PERSON = "helix_foundry_ask_person";
+
 /** A tool's step, as the dock names it; the tool's own name for another. */
 export const TOOL_LABELS: Record<string, string> = {
   helix_foundry_list_ontologies: "Listed the ontologies",
@@ -575,6 +636,7 @@ export const TOOL_LABELS: Record<string, string> = {
   helix_foundry_list_automation_runs: "Listed an automation’s runs",
   helix_foundry_get_automation_run: "Read an automation’s run",
   helix_foundry_automation_report: "Reported to its automation",
+  [ASK_PERSON]: "Asked you",
 };
 
 /** The Analyst page an ask step's question is on, when its input names an ontology. */
@@ -678,9 +740,16 @@ function answer(x: unknown): AgentAnswer | undefined {
   if (!isRecord(x)) return undefined;
   const id = str(x.question_id),
     question = str(x.question),
-    text = str(x.answer);
-  return id && question !== undefined && text
-    ? { question_id: id, question, answer: text }
+    options = list(x.options ?? [], str),
+    text = str(x.text);
+  return id && question !== undefined && options && (options.length || text)
+    ? {
+        question_id: id,
+        ...opt("header", str(x.header) || undefined),
+        question,
+        options,
+        ...opt("text", text || undefined),
+      }
     : undefined;
 }
 function specDisplay(x: unknown): AgentSpecDisplay | undefined {
@@ -877,12 +946,14 @@ const DISPLAYS: {
       !generation ||
       !answers ||
       !defaulted ||
+      !Number.isSafeInteger(d.round) ||
       typeof d.use_defaults !== "boolean"
     )
       return undefined;
     return {
       ontology,
       generation,
+      round: d.round as number,
       answers,
       use_defaults: d.use_defaults,
       ...opt("defaulted", defaulted.length ? defaulted : undefined),
@@ -1114,6 +1185,14 @@ export type CardView = {
   )[];
   // The document's words a review was read from: untrusted.
   quote?: string;
+  // Questions and their answers (the agents' words and the person's), each
+  // shown beside its answer.
+  answers?: {
+    name: string;
+    question: string;
+    answer: string;
+    left?: boolean;
+  }[];
   does: string;
   cost?: string;
   // What to check before running it, beyond the "not named by you" warning.
@@ -1327,14 +1406,21 @@ const VIEWS: {
           },
         ],
       },
-      ...[
-        ...d.answers.map((a) => `${a.question} Your answer: “${a.answer}”.`),
-        ...(d.defaulted ?? []).map(
-          (a) => `${a.question} The agent’s default: “${a.answer}”.`,
-        ),
-      ].map((value, i) => ({ label: `Question ${i + 1}`, value })),
     ],
-    does: `Sends these answers to the agent drafting this version, which carries on from them.${d.use_defaults ? " Questions you didn’t answer take the agent’s default." : ""} The questions are the agent’s own words; the draft’s page shows them too.`,
+    answers: [
+      ...d.answers.map((a, i) => ({
+        name: a.header || `Question ${i + 1}`,
+        question: a.question,
+        answer: answerText(a),
+      })),
+      ...(d.defaulted ?? []).map((a, i) => ({
+        name: a.header || `Question ${d.answers.length + i + 1}`,
+        question: a.question,
+        answer: `Left to the agent: ${answerText(a)}`,
+        left: true,
+      })),
+    ],
+    does: `Sends these answers to the agent drafting this version, which carries on from them.${d.use_defaults ? " Questions you left take the agent’s recommended answer." : ""} The questions are the agent’s own words; the draft’s page shows them too.`,
     run: "Send answers",
     target: nameOf(d.ontology),
   }),

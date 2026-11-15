@@ -13,7 +13,10 @@ import {
   Unlink,
   UserSearch,
 } from "lucide-react";
-import type { AgentQuestion, FoundryDocumentSet } from "../../../shared/wfe";
+import type {
+  AgentDraftQuestion,
+  FoundryDocumentSet,
+} from "../../../shared/wfe";
 import {
   Button,
   ButtonLink,
@@ -781,30 +784,39 @@ const itemText = (item: string) => {
   const [kind, ...rest] = item.split(".");
   return `${rest.join(".")} (${kind})`;
 };
-function Question({ q }: { q: AgentQuestion }) {
+function Question({ q }: { q: AgentDraftQuestion }) {
+  const options = q.options || [];
   return (
     <li className="on-question">
       <div className="on-question-head">
         <span className="on-question-id">{q.id}</span>
+        {q.header && <strong>{q.header}</strong>}
         {q.blocking && <Tag tone="warning">Blocks approval</Tag>}
+        {q.multiple && <span className="on-muted">Any that apply</span>}
       </div>
       <p>{q.text}</p>
-      {(q.options?.length || 0) > 0 && (
+      {options.length > 0 && (
         <ul className="on-options" aria-label="Options">
-          {q.options!.map((o) => (
-            <li key={o} className={o === q.default ? "is-default" : undefined}>
-              {o}
-              {o === q.default && <Tag tone="accent">Suggested</Tag>}
+          {options.map((o) => (
+            <li
+              key={o.label}
+              className={o.label === q.default ? "is-default" : undefined}
+            >
+              {o.label}
+              {o.label === q.default && <Tag tone="accent">Recommended</Tag>}
+              {o.description && (
+                <span className="on-muted">{o.description}</span>
+              )}
             </li>
           ))}
         </ul>
       )}
-      {!q.options?.length && q.default && (
+      {!options.length && q.default && (
         // The agent's suggestion, which no one has decided on.
         <p className="on-muted">Suggested answer: {q.default}</p>
       )}
-      {(q.items?.length || 0) > 0 && (
-        <p className="on-muted">About {q.items!.map(itemText).join(", ")}</p>
+      {q.items.length > 0 && (
+        <p className="on-muted">About {q.items.map(itemText).join(", ")}</p>
       )}
     </li>
   );

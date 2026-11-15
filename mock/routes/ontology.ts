@@ -7,7 +7,7 @@ import type {
   ListOntologyGenerationsResponse,
   ListOntologyVersionsResponse,
   OntologyGeneration,
-  OntologyGenerationQuestion,
+  AgentQuestionAnswer,
   OntologyGenerationResponse,
   OntologyVersion,
   OntologyVersionResponse,
@@ -96,22 +96,28 @@ import {
 // is refused for its budget (./ontology-revise.ts).
 //
 // `ontologyQuestions: true` has the agent ask before it drafts, as the
-// engine's blocking ask_user does (QUESTIONS): once it has run, a new
-// generation waits (needs_input) with no draft, still the ontology's one
-// live generation, until :answer queues it again (checked as the backend's
-// ontologygen.Answers checks, words included) to run and draft as before
-// from then, or :cancel ends it. Answers due `answersDueAt` (askedAt plus
+// engine's blocking ask_user does (ENGINE_QUESTIONS, as the WFE gives
+// them): once it has run, a new generation waits (needs_input) with no
+// draft, still the ontology's one live generation, on round 1 of its
+// questions, until :answer for that round queues it again (checked as the
+// backend's agentquestion.Check checks, words included, ../agent-questions)
+// to run and draft as before from then, or :cancel ends it. Answers due `answersDueAt` (askedAt plus
 // ANSWER_DAYS) are given the agent's defaults on the next read, as the
 // worker does.
 
 import { aiModel, aiRefusal, draftFailure } from "./ai";
 import { currentLoadVersionId, liveJob, queueLoad } from "./loads";
 import { comparableSchema, reviseDefinition } from "./ontology-revise";
+import { checkAnswers } from "../agent-questions";
+import {
+  ENGINE_QUESTIONS,
+  wfeQuestion,
+} from "../fixtures/generation-questions";
 
 type Outcome = "succeed" | "fail" | "retry" | "auth";
 type Knobs = {
   ontologyDatabaseHidden?: boolean;
-  // A new generation asks QUESTIONS before it drafts.
+  // A new generation asks ENGINE_QUESTIONS before it drafts.
   ontologyQuestions?: boolean;
   ontologyStepMs?: number;
   ontologyOutcome?: Outcome;
@@ -128,42 +134,10 @@ const STEP_MS = 1500,
   MAX_TABLES = 50,
   MAX_SETS = 20,
   MAX_GOAL = 2000,
-  MAX_ANSWER = 2000,
   ANSWER_DAYS = 7,
-  // The backend's ontologygen.NoPreference.
-  NO_PREFERENCE = "No preference: decide from the data and the goal.",
   LIVE_GENERATION =
     "an ontology generation is already queued, running or waiting for answers: answer or cancel it first",
   MODEL = "claude-opus-5-5";
-
-// What the mock's agent asks when `ontologyQuestions` is on: an option
-// it defaults to, a free answer with a default, and a question it may
-// decide itself, whose text looks like markup (the page shows it as text).
-const QUESTIONS: OntologyGenerationQuestion[] = [
-  {
-    id: "q1",
-    text: "Is a customer the company that pays, or each person who signs in?",
-    items: ["type.Customer"],
-    options: ["The company that pays", "Each person who signs in"],
-    defaultAnswer: "The company that pays",
-    blocking: true,
-  },
-  {
-    id: "q2",
-    text: "How many days before a contract ends does its renewal count as at risk?",
-    items: ["rule.renewal_at_risk"],
-    options: [],
-    defaultAnswer: "90 days",
-    blocking: true,
-  },
-  {
-    id: "q3",
-    text: "Should orders whose status is <b>cancelled</b> stay in the ontology?",
-    items: [],
-    options: ["Keep them", "Leave them out"],
-    blocking: false,
-  },
-];
 
 /** When a waiting generation's questions take the agent's defaults. */
 const answersDue = (g: OntologyGeneration) =>
@@ -182,7 +156,7 @@ type StoredGeneration = OntologyGeneration & { ontologyId: string };
 type Plan = {
   stepMs: number;
   outcome: Outcome;
-  // It asks QUESTIONS once it has run, until answered.
+  // It asks ENGINE_QUESTIONS once it has run, until answered.
   asks?: boolean;
   // When its run is timed from: its creation, else when it was answered.
   from?: number;
@@ -611,44 +585,12 @@ function sampleDraft(
   return JSON.parse(text);
 }
 
-/**
- * The answers to the questions a generation asked, checked as the backend's
- * ontologygen.Answers checks them, or why they can't be taken, for the
- * person.
- */
-function checkAnswers(
-  asked: readonly OntologyGenerationQuestion[],
-  given: readonly { questionId?: unknown; text?: unknown }[],
-  useDefaults: boolean,
-): Map<string, string> | string {
-  const byId = new Map<string, string>();
-  for (const a of given) {
-    const qid = String(a.questionId ?? ""),
-      text = String(a.text ?? "").trim();
-    if (!asked.some((q) => q.id === qid))
-      return `the generation asked no question ${JSON.stringify(qid)}`;
-    if (byId.has(qid)) return `question ${qid} is answered twice`;
-    if (!text || [...text].length > MAX_ANSWER)
-      return `the answer to question ${qid} must be 1 to ${MAX_ANSWER} characters`;
-    byId.set(qid, text);
-  }
-  const answers = new Map<string, string>();
-  for (const q of asked) {
-    const text =
-      byId.get(q.id) ??
-      (useDefaults ? q.defaultAnswer?.trim() || NO_PREFERENCE : undefined);
-    if (text !== undefined) answers.set(q.id, text);
-    else if (q.blocking)
-      return `question ${q.id} needs an answer, or use the agent's defaults`;
-  }
-  return answers;
-}
-
 /** Keeps a waiting generation's answers and queues it to draft on from now. */
-function resume(g: StoredGeneration, answers: Map<string, string>) {
-  g.questions = (g.questions || []).map((q) =>
-    answers.has(q.id) ? { ...q, answer: answers.get(q.id)! } : q,
-  );
+function resume(g: StoredGeneration, answers: AgentQuestionAnswer[]) {
+  g.questions = (g.questions || []).map((q) => {
+    const answer = answers.find((a) => a.questionId === q.id);
+    return answer ? { ...q, answer } : q;
+  });
   Object.assign(g, {
     status: "ONTOLOGY_GENERATION_STATUS_QUEUED",
     attempts: 0,
@@ -710,7 +652,8 @@ function advance(g: StoredGeneration) {
   if (plan.asks) {
     Object.assign(g, {
       status: "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT",
-      questions: structuredClone(QUESTIONS),
+      questions: ENGINE_QUESTIONS.map(wfeQuestion),
+      questionRound: (g.questionRound || 0) + 1,
       askedAt: finishedAt,
     });
     return;
@@ -941,7 +884,8 @@ const generationOut = (
   startedAt: g.startedAt || null,
   finishedAt: g.finishedAt || null,
   nextAttemptAt: g.nextAttemptAt || null,
-  questions: (g.questions || []).map((q) => ({ ...q })),
+  questions: structuredClone(g.questions || []),
+  questionRound: g.questionRound || 0,
   askedAt: g.askedAt || null,
   answersDueAt:
     g.status === "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT"
@@ -1395,15 +1339,12 @@ export const ontologyRoutes: MockRoute[] = [
           "this generation isn't waiting for answers",
         );
       const body = (req.body || {}) as Partial<AnswerOntologyGenerationRequest>;
-      const given = body.answers ?? [];
-      if (
-        !Array.isArray(given) ||
-        given.some((a) => !a || typeof a !== "object")
-      )
+      if (body.round !== g.questionRound)
         return fail(
-          "INVALID_ARGUMENT",
-          "answers is a list of {questionId, text}",
+          "FAILED_PRECONDITION",
+          `these answers are for round ${body.round ?? 0} of the agent's questions, and it waits on round ${g.questionRound}: read its questions again`,
         );
+      const given = body.answers ?? [];
       // The answers, then an AI provider, as the backend checks them.
       const answers = checkAnswers(
         g.questions || [],

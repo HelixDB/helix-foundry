@@ -193,6 +193,33 @@
 }
 
 /* An action the agent prepared: set apart from its words. */
+/* Questions the Assistant asks: the question-by-question flow, in a box
+   like a card's. */
+.ag-asked {
+  display: grid;
+  gap: var(--hf-space-15);
+  padding: var(--hf-space-15);
+  border: 1px solid var(--hf-accent-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-1);
+}
+.ag-asked-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+}
+.ag-asked-title svg {
+  flex: none;
+  color: var(--hf-accent-text);
+}
+.ag-msg--person .qf-summary {
+  min-width: 0;
+}
 .ag-card {
   display: grid;
   gap: var(--hf-space-1);
