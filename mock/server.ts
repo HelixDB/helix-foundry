@@ -62,10 +62,11 @@ import { handleWorkos } from "./workos";
 // SendFoundryEvents answers. The WFE has no route that sends pieces, so
 // neither has the app.
 //
-// POST /__mock/agent-host/pair { code, name?, account? } spends a pairing
-// code as the Assistant's helper's pair command does
-// (./routes/agent-hosts.ts): the helper it pairs offers Claude Code, and
-// runs once POST /__mock/agent-host/hello { host_id } starts it.
+// POST /__mock/agent-host/pair { code, name?, runtimes?, account?,
+// codexVersion? } spends a pairing code as the Assistant's helper's pair
+// command does (./routes/agent-hosts.ts): the helper it pairs offers
+// runtimes (Claude Code by default), and runs once
+// POST /__mock/agent-host/hello { host_id } starts it.
 //
 // /__mock/agent/v1/... calls the WFE route /v1/... as Ada's agent does
 // through the Helix MCP, with no token: starting and finishing a workflow's

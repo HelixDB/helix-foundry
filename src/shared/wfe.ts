@@ -2945,10 +2945,15 @@ export type FoundryAgentHostAccount = {
   // signed_in; signed_out (its turns fail until the person signs in); or
   // unknown (the CLI didn't start).
   state?: "signed_in" | "signed_out" | "unknown";
-  // The plan as the CLI names it (pro, max, team, ...), only when signed in
-  // on a subscription; missing for a CLI signed in some other way, whose
-  // turns don't bill a subscription.
+  // The plan as the CLI names it (pro, max, team, plus, ...), only when
+  // signed in on a subscription; missing for a CLI signed in some other way,
+  // whose turns don't bill a subscription.
   subscription?: string;
+  // The CLI's version as it says it (Codex's).
+  version?: string;
+  // A Codex older than FoundryAgentRuntime.codexMinVersion (or of no version
+  // the helper could read): it runs no turn until updated.
+  outdated?: boolean;
 };
 
 /** v1FoundryAgentHost: a helper paired with the install (install-wide, not per workspace). */
@@ -2956,7 +2961,8 @@ export type FoundryAgentHost = {
   id: string;
   // The machine's name, as the helper gave it.
   name?: string;
-  // What it offers, as of its last call.
+  // What it runs, as of its last call: an outdated Codex isn't listed (its
+  // account says outdated).
   runtimes?: AgentHelperRuntime[];
   // What their CLIs are signed in to, as of its last call; empty until its
   // first call after pairing.
@@ -2978,13 +2984,26 @@ export type FoundryAgentRuntime = {
   runtime?: AgentRuntime;
   // Not revoked, newest first.
   hosts?: FoundryAgentHost[];
-  // The helper runtimes an online helper offers now, sorted.
+  // The helper runtimes an online helper runs now, sorted.
   online?: AgentHelperRuntime[];
+  // When the owner confirmed, once, what codex runs with: their own Codex
+  // setup (its MCP servers and plugins), its shell off and every command or
+  // file change declined, on their ChatGPT plan. Missing until then.
+  codexConfirmedAt?: string | null;
+  // The oldest Codex a helper runs it on (x.y.z).
+  codexMinVersion?: string;
 };
 /** GET and PATCH .../agent/runtime */
 export type FoundryAgentRuntimeResponse = { runtime?: FoundryAgentRuntime };
-/** PATCH .../agent/runtime: a helper need not be online to be chosen. */
-export type UpdateFoundryAgentRuntimeRequest = { runtime: AgentRuntime };
+/**
+ * PATCH .../agent/runtime: a helper need not be online to be chosen. codex
+ * needs confirmCodex once (it is kept), else FAILED_PRECONDITION, reason
+ * FOUNDRY_AGENT_CODEX_UNCONFIRMED.
+ */
+export type UpdateFoundryAgentRuntimeRequest = {
+  runtime: AgentRuntime;
+  confirmCodex?: boolean;
+};
 /** POST .../agent/host-pairings: a one-time code, ten minutes, shown once. */
 export type FoundryAgentHostPairingResponse = {
   // hxp_ and 43 characters.
@@ -3067,9 +3086,8 @@ export const AGENT_REFUSALS = [
   "FOUNDRY_AGENT_HOST_OFFLINE",
   // The runtime routes on a host without helpers (hosted Helix).
   "FOUNDRY_AGENT_HOSTS_LOCAL_ONLY",
-  // A runtime no workspace may choose yet: codex (no configuration of its
-  // app-server gives it Foundry's tools alone).
-  "FOUNDRY_AGENT_RUNTIME_UNAVAILABLE",
+  // codex, chosen before the owner confirmed what it runs with.
+  "FOUNDRY_AGENT_CODEX_UNCONFIRMED",
 ] as const;
 export type AgentRefusalReason = (typeof AGENT_REFUSALS)[number];
 

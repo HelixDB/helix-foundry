@@ -55,9 +55,11 @@ const configure = (config: {
   // The Assistant's helpers (mock/routes/agent-hosts.ts).
   agentHosts?: {
     name: string;
-    runtimes: ["claude_code"];
+    runtimes: ("claude_code" | "codex")[];
     online?: boolean;
     account?: { state: string; subscription?: string } | null;
+    // Its Codex's version: the oldest Foundry runs (0.169.0) by default.
+    codexVersion?: string;
   }[];
   automationStepMs?: number;
 }) =>
@@ -1233,7 +1235,7 @@ test("pairs a helper and runs new Assistant threads on the owner's Claude subscr
   ).toBeChecked();
   await expect(
     panel.getByRole("radio", { name: "My ChatGPT subscription (Codex)" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   // Chosen from the keyboard: the choice saves, and the focus stays on it.
   await panel.getByRole("radio", { name: "Foundry’s AI model" }).focus();
   await page.keyboard.press("ArrowDown");
@@ -1335,6 +1337,152 @@ test("pairs a helper and runs new Assistant threads on the owner's Claude subscr
   await expect(dock.getByRole("alert")).toHaveText(
     "No helper is paired to run it: pair one in Settings › AI models, start it, then send again.",
   );
+});
+
+test("runs new Assistant threads on the owner's Codex once they confirm what it runs with", async ({
+  page,
+}) => {
+  await configure({ agentStepMs: 100 });
+  await page.goto("/settings/ai");
+  const panel = assistantPanel(page);
+  const codex = panel.getByRole("radio", {
+    name: "My ChatGPT subscription (Codex)",
+  });
+  await expect(
+    panel.getByText(/It runs with your own Codex setup/),
+  ).toBeVisible();
+
+  // Chosen the first time, it says what Codex runs with, to confirm; a
+  // cancel chooses nothing. (Clicked, not checked: it stays unchecked until
+  // confirmed.)
+  await codex.click();
+  const confirm = page.getByRole("dialog", {
+    name: "Run the Assistant on your Codex?",
+  });
+  await expect(confirm).toContainText(
+    "Codex runs with your own Codex setup, including your MCP servers, plugins and apps.",
+  );
+  await expect(confirm).toContainText(
+    "Foundry turns off Codex’s shell, web search and image viewer, and declines any command or file change it asks for.",
+  );
+  await expect(confirm).toContainText(
+    "The Assistant’s turns count against your ChatGPT plan’s Codex limits.",
+  );
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(
+    panel.getByRole("radio", { name: "Foundry’s AI model" }),
+  ).toBeChecked();
+  await codex.click();
+  await confirm.getByRole("button", { name: "Use Codex" }).click();
+  await expect(
+    page.getByText("New Assistant threads run on your ChatGPT subscription."),
+  ).toBeVisible();
+  await expect(codex).toBeChecked();
+  const terms = panel.getByRole("region", { name: "What Codex runs with" });
+  await expect(terms).toContainText("You confirmed this");
+
+  // A helper of Codex pairs and runs: the owner sees its plan and version.
+  await panel.getByRole("button", { name: "Pair a helper" }).click();
+  await expect(
+    panel.getByText(/On the computer where Claude Code or Codex is signed in/),
+  ).toBeVisible();
+  const command = panel.getByRole("figure", { name: "pair command" });
+  const code = /pair (hxp_\S+)/.exec(await command.innerText())![1];
+  const paired = await fetch(`${MOCK}/__mock/agent-host/pair`, {
+    method: "POST",
+    body: JSON.stringify({ code, name: "Ada's Mac", runtimes: ["codex"] }),
+  });
+  await fetch(`${MOCK}/__mock/agent-host/hello`, {
+    method: "POST",
+    body: JSON.stringify({ host_id: (await paired.json()).host_id }),
+  });
+  const row = panel.getByRole("listitem", { name: "Ada's Mac" });
+  await expect(row).toContainText("Running");
+  await expect(row).toContainText(
+    "Codex 0.169.0 is signed in on a ChatGPT Plus plan",
+  );
+  await expect(page.getByText(/hxh_|hxr_/)).toHaveCount(0);
+
+  // The dock runs a new thread on it.
+  await openDock(page);
+  const dock = dockOf(page);
+  await expect(dock).toContainText(
+    "New threads run on your ChatGPT subscription, through Codex on your computer.",
+  );
+  await dock
+    .getByRole("textbox", { name: "Message" })
+    .fill("What ontologies do I have?");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(dock.getByText(/^This workspace has \d+ ontolog/)).toBeVisible();
+  await expect(dock).toContainText(
+    "This thread runs on your ChatGPT subscription, through Codex on your computer.",
+  );
+
+  // Confirmed once: choosing Codex again asks nothing.
+  await panel.getByRole("radio", { name: "Foundry’s AI model" }).check();
+  await expect(
+    page.getByText("New Assistant threads run on the workspace’s AI model."),
+  ).toBeVisible();
+  await codex.check();
+  await expect(confirm).toHaveCount(0);
+  await expect(codex).toBeChecked();
+});
+
+test("says when a helper's Codex is too old to run the Assistant", async ({
+  page,
+}) => {
+  await configure({
+    agentStepMs: 100,
+    agentHosts: [
+      { name: "Old laptop", runtimes: ["codex"], codexVersion: "0.150.0" },
+    ],
+  });
+  await page.goto("/settings/ai");
+  const panel = assistantPanel(page);
+  await panel
+    .getByRole("radio", { name: "My ChatGPT subscription (Codex)" })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Run the Assistant on your Codex?" })
+    .getByRole("button", { name: "Use Codex" })
+    .click();
+  const row = panel.getByRole("listitem", { name: "Old laptop" });
+  await expect(row).toContainText(
+    "Codex 0.150.0 is older than 0.169.0, the oldest Foundry runs: on that computer, update it (npm i -g @openai/codex@latest).",
+  );
+  await expect(
+    panel.getByText(
+      /The Codex on Old laptop is 0\.150\.0, older than 0\.169\.0, the oldest Foundry runs, so new threads can’t be sent\./,
+    ),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("figure", { name: "update command" }),
+  ).toHaveText(/npm i -g @openai\/codex@latest/);
+
+  await openDock(page);
+  const dock = dockOf(page);
+  await expect(dock).toContainText(
+    "The Codex on Old laptop is 0.150.0, older than 0.169.0, so new threads can’t be sent. Update it there:",
+  );
+  await expect(
+    dock.getByRole("figure", { name: "update command" }),
+  ).toBeVisible();
+  await dock.getByRole("textbox", { name: "Message" }).fill("Hello");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(dock.getByRole("alert")).toHaveText(
+    "Its helper’s Codex is too old: update it with npm i -g @openai/codex@latest, then send again.",
+  );
+
+  // Updated, the helper says so at its next check, and the message sends.
+  await configure({
+    agentHosts: [{ name: "Old laptop", runtimes: ["codex"] }],
+  });
+  await expect(dock).toContainText(
+    "New threads run on your ChatGPT subscription, through Codex on your computer.",
+  );
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(dock.getByText(/^This workspace has \d+ ontolog/)).toBeVisible();
 });
 
 test("shows nothing of where the Assistant runs while it is off", async ({

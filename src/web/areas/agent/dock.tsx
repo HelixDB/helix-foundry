@@ -63,6 +63,7 @@ import { aiQuery, assistantCheckText, inForce } from "../workspace/ai-api";
 import { ActionCard } from "./cards";
 import { Command } from "./runtime-settings";
 import {
+  CODEX_UPDATE,
   EMPTY_STREAM,
   HELPER_COMMANDS,
   RUNTIMES,
@@ -81,6 +82,7 @@ import {
   threadKey,
   threadRuntime,
   type RuntimeState,
+  type ThreadRuntime,
   type AgentBlock,
   type TurnStream,
 } from "./model";
@@ -220,6 +222,7 @@ export function AgentDock({
             <RuntimeLine
               runtime={where.runtime}
               state={where.state}
+              outdated={where.outdated}
               thread={!!threadId}
               onNavigate={onNavigate}
             />
@@ -275,11 +278,13 @@ export function AgentDock({
 function RuntimeLine({
   runtime,
   state,
+  outdated,
   thread,
   onNavigate,
 }: {
   runtime: Exclude<AgentRuntime, "api">;
   state: RuntimeState;
+  outdated?: ThreadRuntime["outdated"];
   // An open thread's, not the workspace's for a new one.
   thread: boolean;
   onNavigate?: () => void;
@@ -304,6 +309,8 @@ function RuntimeLine({
             `${thread ? "This thread runs" : "New threads run"} on ${r.on}, through ${r.cli} on your computer.`
           ) : state === "stopped" ? (
             `${r.cli}’s helper isn’t running, so ${which} can’t be sent. Start it on your computer:`
+          ) : state === "outdated" ? (
+            `The ${r.cli} on ${outdated?.host ?? "your computer"}${outdated?.version ? ` is ${outdated.version},` : " is"} older than ${outdated?.min || "Foundry runs"}, so ${which} can’t be sent. Update it there:`
           ) : (
             <SettingsLinked
               text={`No helper running ${r.cli} is paired, so ${which} can’t be sent. Pair one in Settings › AI models, then start it.`}
@@ -312,6 +319,9 @@ function RuntimeLine({
           )}
         </span>
       </p>
+      {state === "outdated" && (
+        <Command text={CODEX_UPDATE} label="update command" />
+      )}
       {state === "stopped" && (
         <>
           <Command text={HELPER_COMMANDS.run} label="run command" />
@@ -952,6 +962,8 @@ function Composer({
                 text="No helper is paired to run it: pair one in Settings › AI models, start it, then send again."
                 onNavigate={onNavigate}
               />
+            ) : hostState === "outdated" ? (
+              `Its helper’s Codex is too old: update it with ${CODEX_UPDATE}, then send again.`
             ) : (
               `Its helper isn’t running on your computer: start it with ${HELPER_COMMANDS.run}, then send again.`
             )}
