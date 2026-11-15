@@ -6066,14 +6066,19 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/v1OntologyGenerationAnswer"
+            "$ref": "#/definitions/v1AgentQuestionAnswer"
           }
         },
         "useDefaults": {
           "type": "boolean"
+        },
+        "round": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The generation's question_round the answers are for."
         }
       },
-      "description": "AnswerOntologyGenerationRequest answers the questions a generation waits\non (status needs_input) and queues it to carry on from where the agent\nasked. Each answer names one of its questions, at most once, with 1 to 2000\ncharacters of text. With use_defaults, every question left out takes the\nagent's default (or, with none, is left for the agent to decide);\nwithout, every blocking question must be answered, and a non-blocking one\nleft out stays open in the draft. INVALID_ARGUMENT otherwise; a\ngeneration that isn't waiting is FAILED_PRECONDITION. It needs what\nGenerateOntology needs: managing the ontology, and an AI provider."
+      "description": "AnswerOntologyGenerationRequest answers the round of questions a\ngeneration waits on (status needs_input) and queues it to carry on from\nwhere the agent asked. Each answer names one of its questions, at most\nonce, and answers it as AgentQuestionAnswer says. With use_defaults, every\nquestion left out takes its recommended option (or, with none, is left for\nthe agent to decide); without, every blocking question must be answered,\nand a non-blocking one left out stays open in the draft. INVALID_ARGUMENT\notherwise. A generation that isn't waiting, or waits on another round\nthan round (the questions were answered, and the agent asked again), is\nFAILED_PRECONDITION. It needs what GenerateOntology needs: managing the\nontology, and an AI provider."
     },
     "FoundryServiceApproveFoundryAutomationBody": {
       "type": "object",
@@ -6941,6 +6946,36 @@
             "type": "object",
             "$ref": "#/definitions/protobufAny"
           }
+        }
+      }
+    },
+    "v1AgentQuestionAnswer": {
+      "type": "object",
+      "properties": {
+        "questionId": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "description": "The person's answer to an AgentQuestion: the labels of the options chosen\n(in the question's order once checked) and their own words, at least one\nof the two. To a question without options, text alone; to one of one\noption, one option or text, not both; to one of several, one or more\noptions with text or without, or text alone. Text is 1 to 2000\ncharacters once trimmed."
+    },
+    "v1AgentQuestionOption": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string",
+          "description": "One line on what choosing it means; may be empty."
         }
       }
     },
@@ -12263,20 +12298,14 @@
           "type": "string",
           "format": "date-time",
           "description": "While status is needs_input: when Helix answers every question with the\nagent's default and carries on (foundry.ontology.answer_days after\nasked_at)."
+        },
+        "questionRound": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Which round of questions questions are, from 1 (0 without questions):\neach answer lets the agent ask again. AnswerOntologyGeneration names it."
         }
       },
       "description": "OntologyGeneration is one request to draft a version of an ontology."
-    },
-    "v1OntologyGenerationAnswer": {
-      "type": "object",
-      "properties": {
-        "questionId": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        }
-      }
     },
     "v1OntologyGenerationDocument": {
       "type": "object",
@@ -12296,8 +12325,29 @@
         "id": {
           "type": "string"
         },
+        "header": {
+          "type": "string"
+        },
         "text": {
           "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1AgentQuestionOption"
+          }
+        },
+        "multiple": {
+          "type": "boolean"
+        },
+        "recommended": {
+          "type": "string",
+          "description": "use_defaults answers with it; a question without one is left to the agent."
+        },
+        "blocking": {
+          "type": "boolean",
+          "description": "The generation can't carry on until a blocking question is answered;\nanother may be left for the agent to decide."
         },
         "items": {
           "type": "array",
@@ -12306,27 +12356,12 @@
           },
           "description": "The draft items it is about, such as type.Customer; may be empty."
         },
-        "options": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "The answers the agent suggests; empty for a free answer. An answer may be\nany text, one of these or not."
-        },
-        "defaultAnswer": {
-          "type": "string",
-          "description": "The agent's default, one of options when it has any; unset when it\noffers none. use_defaults answers with it."
-        },
-        "blocking": {
-          "type": "boolean",
-          "description": "The generation can't carry on until a blocking question is answered;\nanother may be left for the agent to decide."
-        },
         "answer": {
-          "type": "string",
-          "description": "The answer it was given, once answered; unset while it waits. A\nquestion answered with no default says the agent may decide."
+          "$ref": "#/definitions/v1AgentQuestionAnswer",
+          "title": "The answer it was given, once answered; unset while it waits. One the\nagent was left to decide, with no recommended option, is the text\n\"No preference: decide from the data and the goal.\""
         }
       },
-      "description": "A question the ontology agent asked about its draft. The text, options and\ndefault are the model's words and may quote the data: show them as plain\ntext, never as markup."
+      "description": "A question the ontology agent asked about its draft (AgentQuestion's\nfields), the draft items it is about, and its answer once given."
     },
     "v1OntologyGenerationResponse": {
       "type": "object",

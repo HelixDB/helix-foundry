@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/sample"
@@ -83,7 +84,7 @@ func TestDiscoverFoundryOntologyQuestions(t *testing.T) {
 	}
 	asked := func(rev uint64) model.OntologyGenerationOutcome {
 		return model.OntologyGenerationOutcome{Status: model.OntologyGenerationNeedsInput, Asked: &model.OntologyGenerationAsked{
-			State: json.RawMessage(`{}`), DraftRev: rev, Questions: []model.OntologyQuestion{{ID: "q1", Items: []string{}, Text: "Which?", Options: []string{}, Blocking: true}}}}
+			State: json.RawMessage(`{}`), DraftRev: rev, Questions: []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q1", Text: "Which?", Blocking: true}, Items: []string{}}}}}
 	}
 	f := newFoundryFixture(t, "NQ1")
 	gen := startedGeneration(t, f.db, firstDraft(f, "1"))
@@ -96,7 +97,7 @@ func TestDiscoverFoundryOntologyQuestions(t *testing.T) {
 	}}, notifications(t))
 
 	// A second round sends no second email.
-	require.NoError(t, f.db.AnswerOntologyGeneration(ctx, f.ontology.ID, gen.ID, 2, []model.OntologyAnswer{{QuestionID: "q1", Text: "That one"}}))
+	require.NoError(t, f.db.AnswerOntologyGeneration(ctx, f.ontology.ID, gen.ID, 2, []agentquestion.Answer{{QuestionID: "q1", Text: "That one"}}))
 	assert.Zero(t, discover(t, f.db, time.Now().Add(-time.Hour)), "an answered generation waits no longer")
 	claimed, err := f.db.ClaimOntologyGeneration(ctx, "worker-1", time.Minute)
 	require.NoError(t, err)

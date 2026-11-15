@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -25,10 +26,11 @@ func TestOntologyGenerationQuestions(t *testing.T) {
 			Input: model.OntologyGenerationInput{Tables: []model.OntologyGenerationTable{{ConnectorID: id26("GQ-CONN"), Table: "customers"}}}}
 		return startedGeneration(t, db, gen)
 	}
-	fallback := "Monthly"
 	questions := []model.OntologyQuestion{
-		{ID: "q1", Items: []string{"type.Customer"}, Text: "Is a customer an account?", Options: []string{}, Blocking: true},
-		{ID: "q2", Items: []string{}, Text: "How often do they renew?", Options: []string{"Monthly", "Yearly"}, Default: &fallback},
+		{Question: agentquestion.Question{ID: "q1", Text: "Is a customer an account?", Blocking: true}, Items: []string{"type.Customer"}},
+		{Question: agentquestion.Question{ID: "q2", Header: "Renewals", Text: "How often do they renew?", Choice: &agentquestion.Choice{
+			Options: []agentquestion.Option{{Label: "Monthly", Description: "Every month"}, {Label: "Yearly"}}, Multiple: true, Recommended: "Monthly"}},
+			Items: []string{}},
 	}
 	state := json.RawMessage(`{"draft":{"rev":3},"excerpt":"Acme Corp"}`)
 	asked := model.OntologyGenerationOutcome{Status: model.OntologyGenerationNeedsInput, Model: "claude-opus-5-5", InputTokens: 100, OutputTokens: 10,
@@ -74,7 +76,7 @@ func TestOntologyGenerationQuestions(t *testing.T) {
 		assert.Equal(t, questions, listed[0].Questions.Asked, "lists carry the questions")
 		assert.Nil(t, listed[0].TurnState)
 
-		answers := []model.OntologyAnswer{{QuestionID: "q1", Text: "Yes"}, {QuestionID: "q2", Text: "Monthly"}}
+		answers := []agentquestion.Answer{{QuestionID: "q1", Options: []string{}, Text: "Yes"}, {QuestionID: "q2", Options: []string{"Monthly", "Yearly"}, Text: "and weekly"}}
 		assert.ErrorIs(t, db.AnswerOntologyGeneration(ctx, ontologyID, gen.ID, 2, answers), store.ErrNotFound, "answers to another revision")
 		assert.ErrorIs(t, db.AnswerOntologyGeneration(ctx, id26("GQ-OTHER"), gen.ID, 3, answers), store.ErrNotFound, "another ontology's")
 		require.NoError(t, db.AnswerOntologyGeneration(ctx, ontologyID, gen.ID, 3, answers))
@@ -108,7 +110,7 @@ func TestOntologyGenerationQuestions(t *testing.T) {
 		db, ontologyID := newStore(t)
 		gen := queue(t, db, ontologyID, "A")
 		require.NoError(t, db.FinishOntologyGeneration(ctx, gen.ID, "worker-1", asked))
-		require.NoError(t, db.AnswerOntologyGeneration(ctx, ontologyID, gen.ID, 3, []model.OntologyAnswer{{QuestionID: "q1", Text: "Yes"}}))
+		require.NoError(t, db.AnswerOntologyGeneration(ctx, ontologyID, gen.ID, 3, []agentquestion.Answer{{QuestionID: "q1", Text: "Yes"}}))
 		claimed, err := db.ClaimOntologyGeneration(ctx, "worker-1", time.Minute)
 		require.NoError(t, err)
 		due := time.Now().Add(-time.Minute)
@@ -122,7 +124,7 @@ func TestOntologyGenerationQuestions(t *testing.T) {
 
 		again := asked
 		again.Asked = &model.OntologyGenerationAsked{State: json.RawMessage(`{"draft":{"rev":5}}`), DraftRev: 5,
-			Questions: []model.OntologyQuestion{{ID: "q3", Items: []string{}, Text: "Which currency?", Options: []string{}, Blocking: true}}}
+			Questions: []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q3", Text: "Which currency?", Blocking: true}, Items: []string{}}}}
 		require.NoError(t, db.FinishOntologyGeneration(ctx, retried.ID, "worker-1", again))
 		waiting, err := db.GetOntologyGeneration(ctx, ontologyID, gen.ID)
 		require.NoError(t, err)
@@ -202,7 +204,7 @@ func TestOntologyGenerationQuestions(t *testing.T) {
 		db, ontologyID := newStore(t)
 		gen := queue(t, db, ontologyID, "A")
 		require.NoError(t, db.FinishOntologyGeneration(ctx, gen.ID, "worker-1", asked))
-		require.NoError(t, db.AnswerOntologyGeneration(ctx, ontologyID, gen.ID, 3, []model.OntologyAnswer{{QuestionID: "q1", Text: "Yes"}}))
+		require.NoError(t, db.AnswerOntologyGeneration(ctx, ontologyID, gen.ID, 3, []agentquestion.Answer{{QuestionID: "q1", Text: "Yes"}}))
 		_, err := testDB.Exec(`UPDATE foundry_ontology_generations SET status='failed', error='old', active_key=NULL, finished_at=NOW(6) WHERE id=?`, gen.ID)
 		require.NoError(t, err)
 		assert.NotNil(t, storedState(t, gen.ID))

@@ -3611,25 +3611,29 @@ func (x *ListOntologyGenerationsResponse) GetGenerations() []*OntologyGeneration
 	return nil
 }
 
-// AnswerOntologyGenerationRequest answers the questions a generation waits
-// on (status needs_input) and queues it to carry on from where the agent
-// asked. Each answer names one of its questions, at most once, with 1 to 2000
-// characters of text. With use_defaults, every question left out takes the
-// agent's default (or, with none, is left for the agent to decide);
-// without, every blocking question must be answered, and a non-blocking one
-// left out stays open in the draft. INVALID_ARGUMENT otherwise; a
-// generation that isn't waiting is FAILED_PRECONDITION. It needs what
-// GenerateOntology needs: managing the ontology, and an AI provider.
+// AnswerOntologyGenerationRequest answers the round of questions a
+// generation waits on (status needs_input) and queues it to carry on from
+// where the agent asked. Each answer names one of its questions, at most
+// once, and answers it as AgentQuestionAnswer says. With use_defaults, every
+// question left out takes its recommended option (or, with none, is left for
+// the agent to decide); without, every blocking question must be answered,
+// and a non-blocking one left out stays open in the draft. INVALID_ARGUMENT
+// otherwise. A generation that isn't waiting, or waits on another round
+// than round (the questions were answered, and the agent asked again), is
+// FAILED_PRECONDITION. It needs what GenerateOntology needs: managing the
+// ontology, and an AI provider.
 type AnswerOntologyGenerationRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	WorkspaceId string                      `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	OntologyId  string                      `protobuf:"bytes,2,opt,name=ontology_id,json=ontologyId,proto3" json:"ontology_id,omitempty"`
-	Id          string                      `protobuf:"bytes,3,opt,name=id,proto3" json:"id,omitempty"`
-	Answers     []*OntologyGenerationAnswer `protobuf:"bytes,4,rep,name=answers,proto3" json:"answers,omitempty"`
-	UseDefaults bool                        `protobuf:"varint,5,opt,name=use_defaults,json=useDefaults,proto3" json:"use_defaults,omitempty"`
+	WorkspaceId string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	OntologyId  string                 `protobuf:"bytes,2,opt,name=ontology_id,json=ontologyId,proto3" json:"ontology_id,omitempty"`
+	Id          string                 `protobuf:"bytes,3,opt,name=id,proto3" json:"id,omitempty"`
+	Answers     []*AgentQuestionAnswer `protobuf:"bytes,4,rep,name=answers,proto3" json:"answers,omitempty"`
+	UseDefaults bool                   `protobuf:"varint,5,opt,name=use_defaults,json=useDefaults,proto3" json:"use_defaults,omitempty"`
+	// The generation's question_round the answers are for.
+	Round int32 `protobuf:"varint,6,opt,name=round,proto3" json:"round,omitempty"`
 }
 
 func (x *AnswerOntologyGenerationRequest) Reset() {
@@ -3683,7 +3687,7 @@ func (x *AnswerOntologyGenerationRequest) GetId() string {
 	return ""
 }
 
-func (x *AnswerOntologyGenerationRequest) GetAnswers() []*OntologyGenerationAnswer {
+func (x *AnswerOntologyGenerationRequest) GetAnswers() []*AgentQuestionAnswer {
 	if x != nil {
 		return x.Answers
 	}
@@ -3697,57 +3701,11 @@ func (x *AnswerOntologyGenerationRequest) GetUseDefaults() bool {
 	return false
 }
 
-type OntologyGenerationAnswer struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	QuestionId string `protobuf:"bytes,1,opt,name=question_id,json=questionId,proto3" json:"question_id,omitempty"`
-	Text       string `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
-}
-
-func (x *OntologyGenerationAnswer) Reset() {
-	*x = OntologyGenerationAnswer{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[64]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *OntologyGenerationAnswer) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*OntologyGenerationAnswer) ProtoMessage() {}
-
-func (x *OntologyGenerationAnswer) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[64]
+func (x *AnswerOntologyGenerationRequest) GetRound() int32 {
 	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
+		return x.Round
 	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use OntologyGenerationAnswer.ProtoReflect.Descriptor instead.
-func (*OntologyGenerationAnswer) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{64}
-}
-
-func (x *OntologyGenerationAnswer) GetQuestionId() string {
-	if x != nil {
-		return x.QuestionId
-	}
-	return ""
-}
-
-func (x *OntologyGenerationAnswer) GetText() string {
-	if x != nil {
-		return x.Text
-	}
-	return ""
+	return 0
 }
 
 // CancelOntologyGenerationRequest ends a generation that is queued, running
@@ -3766,7 +3724,7 @@ type CancelOntologyGenerationRequest struct {
 
 func (x *CancelOntologyGenerationRequest) Reset() {
 	*x = CancelOntologyGenerationRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[65]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3778,7 +3736,7 @@ func (x *CancelOntologyGenerationRequest) String() string {
 func (*CancelOntologyGenerationRequest) ProtoMessage() {}
 
 func (x *CancelOntologyGenerationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[65]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3791,7 +3749,7 @@ func (x *CancelOntologyGenerationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelOntologyGenerationRequest.ProtoReflect.Descriptor instead.
 func (*CancelOntologyGenerationRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{65}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *CancelOntologyGenerationRequest) GetWorkspaceId() string {
@@ -3832,7 +3790,7 @@ type CreateFoundryOntologyRequest struct {
 
 func (x *CreateFoundryOntologyRequest) Reset() {
 	*x = CreateFoundryOntologyRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[66]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3844,7 +3802,7 @@ func (x *CreateFoundryOntologyRequest) String() string {
 func (*CreateFoundryOntologyRequest) ProtoMessage() {}
 
 func (x *CreateFoundryOntologyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[66]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3857,7 +3815,7 @@ func (x *CreateFoundryOntologyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFoundryOntologyRequest.ProtoReflect.Descriptor instead.
 func (*CreateFoundryOntologyRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{66}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *CreateFoundryOntologyRequest) GetWorkspaceId() string {
@@ -3898,7 +3856,7 @@ type FoundryOntologyResponse struct {
 
 func (x *FoundryOntologyResponse) Reset() {
 	*x = FoundryOntologyResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[67]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3910,7 +3868,7 @@ func (x *FoundryOntologyResponse) String() string {
 func (*FoundryOntologyResponse) ProtoMessage() {}
 
 func (x *FoundryOntologyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[67]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3923,7 +3881,7 @@ func (x *FoundryOntologyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryOntologyResponse.ProtoReflect.Descriptor instead.
 func (*FoundryOntologyResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{67}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *FoundryOntologyResponse) GetOntology() *FoundryOntology {
@@ -3944,7 +3902,7 @@ type ListFoundryOntologiesRequest struct {
 
 func (x *ListFoundryOntologiesRequest) Reset() {
 	*x = ListFoundryOntologiesRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[68]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3956,7 +3914,7 @@ func (x *ListFoundryOntologiesRequest) String() string {
 func (*ListFoundryOntologiesRequest) ProtoMessage() {}
 
 func (x *ListFoundryOntologiesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[68]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3969,7 +3927,7 @@ func (x *ListFoundryOntologiesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryOntologiesRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryOntologiesRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{68}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *ListFoundryOntologiesRequest) GetWorkspaceId() string {
@@ -3997,7 +3955,7 @@ type ListFoundryOntologiesResponse struct {
 
 func (x *ListFoundryOntologiesResponse) Reset() {
 	*x = ListFoundryOntologiesResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[69]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4009,7 +3967,7 @@ func (x *ListFoundryOntologiesResponse) String() string {
 func (*ListFoundryOntologiesResponse) ProtoMessage() {}
 
 func (x *ListFoundryOntologiesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[69]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4022,7 +3980,7 @@ func (x *ListFoundryOntologiesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryOntologiesResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryOntologiesResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{69}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *ListFoundryOntologiesResponse) GetOntologies() []*FoundryOntology {
@@ -4050,7 +4008,7 @@ type GetFoundryOntologyRequest struct {
 
 func (x *GetFoundryOntologyRequest) Reset() {
 	*x = GetFoundryOntologyRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[70]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4062,7 +4020,7 @@ func (x *GetFoundryOntologyRequest) String() string {
 func (*GetFoundryOntologyRequest) ProtoMessage() {}
 
 func (x *GetFoundryOntologyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[70]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4075,7 +4033,7 @@ func (x *GetFoundryOntologyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryOntologyRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryOntologyRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{70}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *GetFoundryOntologyRequest) GetWorkspaceId() string {
@@ -4103,7 +4061,7 @@ type DeleteFoundryOntologyRequest struct {
 
 func (x *DeleteFoundryOntologyRequest) Reset() {
 	*x = DeleteFoundryOntologyRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[71]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4115,7 +4073,7 @@ func (x *DeleteFoundryOntologyRequest) String() string {
 func (*DeleteFoundryOntologyRequest) ProtoMessage() {}
 
 func (x *DeleteFoundryOntologyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[71]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4128,7 +4086,7 @@ func (x *DeleteFoundryOntologyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFoundryOntologyRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryOntologyRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{71}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *DeleteFoundryOntologyRequest) GetWorkspaceId() string {
@@ -4158,7 +4116,7 @@ type UpdateFoundryOntologyRequest struct {
 
 func (x *UpdateFoundryOntologyRequest) Reset() {
 	*x = UpdateFoundryOntologyRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[72]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4170,7 +4128,7 @@ func (x *UpdateFoundryOntologyRequest) String() string {
 func (*UpdateFoundryOntologyRequest) ProtoMessage() {}
 
 func (x *UpdateFoundryOntologyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[72]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4183,7 +4141,7 @@ func (x *UpdateFoundryOntologyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateFoundryOntologyRequest.ProtoReflect.Descriptor instead.
 func (*UpdateFoundryOntologyRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{72}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *UpdateFoundryOntologyRequest) GetWorkspaceId() string {
@@ -4231,7 +4189,7 @@ type CreateFoundryDocumentRequest struct {
 
 func (x *CreateFoundryDocumentRequest) Reset() {
 	*x = CreateFoundryDocumentRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[73]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4243,7 +4201,7 @@ func (x *CreateFoundryDocumentRequest) String() string {
 func (*CreateFoundryDocumentRequest) ProtoMessage() {}
 
 func (x *CreateFoundryDocumentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[73]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4256,7 +4214,7 @@ func (x *CreateFoundryDocumentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFoundryDocumentRequest.ProtoReflect.Descriptor instead.
 func (*CreateFoundryDocumentRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{73}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *CreateFoundryDocumentRequest) GetWorkspaceId() string {
@@ -4324,7 +4282,7 @@ type CreateFoundryDocumentResponse struct {
 
 func (x *CreateFoundryDocumentResponse) Reset() {
 	*x = CreateFoundryDocumentResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[74]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4336,7 +4294,7 @@ func (x *CreateFoundryDocumentResponse) String() string {
 func (*CreateFoundryDocumentResponse) ProtoMessage() {}
 
 func (x *CreateFoundryDocumentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[74]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4349,7 +4307,7 @@ func (x *CreateFoundryDocumentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFoundryDocumentResponse.ProtoReflect.Descriptor instead.
 func (*CreateFoundryDocumentResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{74}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *CreateFoundryDocumentResponse) GetDocument() *FoundryDocument {
@@ -4388,7 +4346,7 @@ type CompleteFoundryDocumentUploadRequest struct {
 
 func (x *CompleteFoundryDocumentUploadRequest) Reset() {
 	*x = CompleteFoundryDocumentUploadRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[75]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4400,7 +4358,7 @@ func (x *CompleteFoundryDocumentUploadRequest) String() string {
 func (*CompleteFoundryDocumentUploadRequest) ProtoMessage() {}
 
 func (x *CompleteFoundryDocumentUploadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[75]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4413,7 +4371,7 @@ func (x *CompleteFoundryDocumentUploadRequest) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use CompleteFoundryDocumentUploadRequest.ProtoReflect.Descriptor instead.
 func (*CompleteFoundryDocumentUploadRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{75}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *CompleteFoundryDocumentUploadRequest) GetWorkspaceId() string {
@@ -4440,7 +4398,7 @@ type FoundryDocumentResponse struct {
 
 func (x *FoundryDocumentResponse) Reset() {
 	*x = FoundryDocumentResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[76]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4452,7 +4410,7 @@ func (x *FoundryDocumentResponse) String() string {
 func (*FoundryDocumentResponse) ProtoMessage() {}
 
 func (x *FoundryDocumentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[76]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4465,7 +4423,7 @@ func (x *FoundryDocumentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryDocumentResponse.ProtoReflect.Descriptor instead.
 func (*FoundryDocumentResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{76}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *FoundryDocumentResponse) GetDocument() *FoundryDocument {
@@ -4487,7 +4445,7 @@ type FoundryDocumentReadsResponse struct {
 
 func (x *FoundryDocumentReadsResponse) Reset() {
 	*x = FoundryDocumentReadsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[77]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4499,7 +4457,7 @@ func (x *FoundryDocumentReadsResponse) String() string {
 func (*FoundryDocumentReadsResponse) ProtoMessage() {}
 
 func (x *FoundryDocumentReadsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[77]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4512,7 +4470,7 @@ func (x *FoundryDocumentReadsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryDocumentReadsResponse.ProtoReflect.Descriptor instead.
 func (*FoundryDocumentReadsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{77}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *FoundryDocumentReadsResponse) GetDocument() *FoundryDocument {
@@ -4551,7 +4509,7 @@ type ListFoundryDocumentsRequest struct {
 
 func (x *ListFoundryDocumentsRequest) Reset() {
 	*x = ListFoundryDocumentsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[78]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4563,7 +4521,7 @@ func (x *ListFoundryDocumentsRequest) String() string {
 func (*ListFoundryDocumentsRequest) ProtoMessage() {}
 
 func (x *ListFoundryDocumentsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[78]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4576,7 +4534,7 @@ func (x *ListFoundryDocumentsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryDocumentsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryDocumentsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{78}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *ListFoundryDocumentsRequest) GetWorkspaceId() string {
@@ -4618,7 +4576,7 @@ type ListFoundryDocumentsResponse struct {
 
 func (x *ListFoundryDocumentsResponse) Reset() {
 	*x = ListFoundryDocumentsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[79]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4630,7 +4588,7 @@ func (x *ListFoundryDocumentsResponse) String() string {
 func (*ListFoundryDocumentsResponse) ProtoMessage() {}
 
 func (x *ListFoundryDocumentsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[79]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4643,7 +4601,7 @@ func (x *ListFoundryDocumentsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryDocumentsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryDocumentsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{79}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *ListFoundryDocumentsResponse) GetDocuments() []*FoundryDocument {
@@ -4673,7 +4631,7 @@ type GetFoundryDocumentRequest struct {
 
 func (x *GetFoundryDocumentRequest) Reset() {
 	*x = GetFoundryDocumentRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[80]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4685,7 +4643,7 @@ func (x *GetFoundryDocumentRequest) String() string {
 func (*GetFoundryDocumentRequest) ProtoMessage() {}
 
 func (x *GetFoundryDocumentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[80]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4698,7 +4656,7 @@ func (x *GetFoundryDocumentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryDocumentRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryDocumentRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{80}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *GetFoundryDocumentRequest) GetWorkspaceId() string {
@@ -4730,7 +4688,7 @@ type UpdateFoundryDocumentRequest struct {
 
 func (x *UpdateFoundryDocumentRequest) Reset() {
 	*x = UpdateFoundryDocumentRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[81]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4742,7 +4700,7 @@ func (x *UpdateFoundryDocumentRequest) String() string {
 func (*UpdateFoundryDocumentRequest) ProtoMessage() {}
 
 func (x *UpdateFoundryDocumentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[81]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4755,7 +4713,7 @@ func (x *UpdateFoundryDocumentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateFoundryDocumentRequest.ProtoReflect.Descriptor instead.
 func (*UpdateFoundryDocumentRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{81}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *UpdateFoundryDocumentRequest) GetWorkspaceId() string {
@@ -4792,7 +4750,7 @@ type DeleteFoundryDocumentRequest struct {
 
 func (x *DeleteFoundryDocumentRequest) Reset() {
 	*x = DeleteFoundryDocumentRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[82]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4804,7 +4762,7 @@ func (x *DeleteFoundryDocumentRequest) String() string {
 func (*DeleteFoundryDocumentRequest) ProtoMessage() {}
 
 func (x *DeleteFoundryDocumentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[82]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4817,7 +4775,7 @@ func (x *DeleteFoundryDocumentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFoundryDocumentRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryDocumentRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{82}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *DeleteFoundryDocumentRequest) GetWorkspaceId() string {
@@ -4850,7 +4808,7 @@ type GetFoundryDocumentContentRequest struct {
 
 func (x *GetFoundryDocumentContentRequest) Reset() {
 	*x = GetFoundryDocumentContentRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[83]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4862,7 +4820,7 @@ func (x *GetFoundryDocumentContentRequest) String() string {
 func (*GetFoundryDocumentContentRequest) ProtoMessage() {}
 
 func (x *GetFoundryDocumentContentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[83]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4875,7 +4833,7 @@ func (x *GetFoundryDocumentContentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryDocumentContentRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryDocumentContentRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{83}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *GetFoundryDocumentContentRequest) GetWorkspaceId() string {
@@ -4905,7 +4863,7 @@ type GetFoundryDocumentContentResponse struct {
 
 func (x *GetFoundryDocumentContentResponse) Reset() {
 	*x = GetFoundryDocumentContentResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[84]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4917,7 +4875,7 @@ func (x *GetFoundryDocumentContentResponse) String() string {
 func (*GetFoundryDocumentContentResponse) ProtoMessage() {}
 
 func (x *GetFoundryDocumentContentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[84]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4930,7 +4888,7 @@ func (x *GetFoundryDocumentContentResponse) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use GetFoundryDocumentContentResponse.ProtoReflect.Descriptor instead.
 func (*GetFoundryDocumentContentResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{84}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *GetFoundryDocumentContentResponse) GetText() string {
@@ -4953,7 +4911,7 @@ type GetFoundryDocumentBytesRequest struct {
 
 func (x *GetFoundryDocumentBytesRequest) Reset() {
 	*x = GetFoundryDocumentBytesRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[85]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4965,7 +4923,7 @@ func (x *GetFoundryDocumentBytesRequest) String() string {
 func (*GetFoundryDocumentBytesRequest) ProtoMessage() {}
 
 func (x *GetFoundryDocumentBytesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[85]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4978,7 +4936,7 @@ func (x *GetFoundryDocumentBytesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryDocumentBytesRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryDocumentBytesRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{85}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *GetFoundryDocumentBytesRequest) GetWorkspaceId() string {
@@ -5009,7 +4967,7 @@ type GetFoundryDocumentBytesResponse struct {
 
 func (x *GetFoundryDocumentBytesResponse) Reset() {
 	*x = GetFoundryDocumentBytesResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[86]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5021,7 +4979,7 @@ func (x *GetFoundryDocumentBytesResponse) String() string {
 func (*GetFoundryDocumentBytesResponse) ProtoMessage() {}
 
 func (x *GetFoundryDocumentBytesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[86]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5034,7 +4992,7 @@ func (x *GetFoundryDocumentBytesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryDocumentBytesResponse.ProtoReflect.Descriptor instead.
 func (*GetFoundryDocumentBytesResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{86}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *GetFoundryDocumentBytesResponse) GetMediaType() string {
@@ -5066,7 +5024,7 @@ type MoveFoundryDocumentRequest struct {
 
 func (x *MoveFoundryDocumentRequest) Reset() {
 	*x = MoveFoundryDocumentRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[87]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5078,7 +5036,7 @@ func (x *MoveFoundryDocumentRequest) String() string {
 func (*MoveFoundryDocumentRequest) ProtoMessage() {}
 
 func (x *MoveFoundryDocumentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[87]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5091,7 +5049,7 @@ func (x *MoveFoundryDocumentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MoveFoundryDocumentRequest.ProtoReflect.Descriptor instead.
 func (*MoveFoundryDocumentRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{87}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *MoveFoundryDocumentRequest) GetWorkspaceId() string {
@@ -5135,7 +5093,7 @@ type ListFoundryOntologyDocumentsRequest struct {
 
 func (x *ListFoundryOntologyDocumentsRequest) Reset() {
 	*x = ListFoundryOntologyDocumentsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[88]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5147,7 +5105,7 @@ func (x *ListFoundryOntologyDocumentsRequest) String() string {
 func (*ListFoundryOntologyDocumentsRequest) ProtoMessage() {}
 
 func (x *ListFoundryOntologyDocumentsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[88]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5160,7 +5118,7 @@ func (x *ListFoundryOntologyDocumentsRequest) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use ListFoundryOntologyDocumentsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryOntologyDocumentsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{88}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *ListFoundryOntologyDocumentsRequest) GetWorkspaceId() string {
@@ -5206,7 +5164,7 @@ type GetFoundryOntologyDocumentRequest struct {
 
 func (x *GetFoundryOntologyDocumentRequest) Reset() {
 	*x = GetFoundryOntologyDocumentRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[89]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5218,7 +5176,7 @@ func (x *GetFoundryOntologyDocumentRequest) String() string {
 func (*GetFoundryOntologyDocumentRequest) ProtoMessage() {}
 
 func (x *GetFoundryOntologyDocumentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[89]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5231,7 +5189,7 @@ func (x *GetFoundryOntologyDocumentRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use GetFoundryOntologyDocumentRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryOntologyDocumentRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{89}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *GetFoundryOntologyDocumentRequest) GetWorkspaceId() string {
@@ -5271,7 +5229,7 @@ type CreateFoundryDocumentSetRequest struct {
 
 func (x *CreateFoundryDocumentSetRequest) Reset() {
 	*x = CreateFoundryDocumentSetRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[90]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5283,7 +5241,7 @@ func (x *CreateFoundryDocumentSetRequest) String() string {
 func (*CreateFoundryDocumentSetRequest) ProtoMessage() {}
 
 func (x *CreateFoundryDocumentSetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[90]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5296,7 +5254,7 @@ func (x *CreateFoundryDocumentSetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFoundryDocumentSetRequest.ProtoReflect.Descriptor instead.
 func (*CreateFoundryDocumentSetRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{90}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *CreateFoundryDocumentSetRequest) GetWorkspaceId() string {
@@ -5330,7 +5288,7 @@ type FoundryDocumentSetResponse struct {
 
 func (x *FoundryDocumentSetResponse) Reset() {
 	*x = FoundryDocumentSetResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[91]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5342,7 +5300,7 @@ func (x *FoundryDocumentSetResponse) String() string {
 func (*FoundryDocumentSetResponse) ProtoMessage() {}
 
 func (x *FoundryDocumentSetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[91]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5355,7 +5313,7 @@ func (x *FoundryDocumentSetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryDocumentSetResponse.ProtoReflect.Descriptor instead.
 func (*FoundryDocumentSetResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{91}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *FoundryDocumentSetResponse) GetSet() *FoundryDocumentSet {
@@ -5375,7 +5333,7 @@ type ListFoundryDocumentSetsRequest struct {
 
 func (x *ListFoundryDocumentSetsRequest) Reset() {
 	*x = ListFoundryDocumentSetsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[92]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5387,7 +5345,7 @@ func (x *ListFoundryDocumentSetsRequest) String() string {
 func (*ListFoundryDocumentSetsRequest) ProtoMessage() {}
 
 func (x *ListFoundryDocumentSetsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[92]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5400,7 +5358,7 @@ func (x *ListFoundryDocumentSetsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryDocumentSetsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryDocumentSetsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{92}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{91}
 }
 
 func (x *ListFoundryDocumentSetsRequest) GetWorkspaceId() string {
@@ -5421,7 +5379,7 @@ type ListFoundryDocumentSetsResponse struct {
 
 func (x *ListFoundryDocumentSetsResponse) Reset() {
 	*x = ListFoundryDocumentSetsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[93]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5433,7 +5391,7 @@ func (x *ListFoundryDocumentSetsResponse) String() string {
 func (*ListFoundryDocumentSetsResponse) ProtoMessage() {}
 
 func (x *ListFoundryDocumentSetsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[93]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5446,7 +5404,7 @@ func (x *ListFoundryDocumentSetsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryDocumentSetsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryDocumentSetsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{93}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *ListFoundryDocumentSetsResponse) GetSets() []*FoundryDocumentSet {
@@ -5470,7 +5428,7 @@ type UpdateFoundryDocumentSetRequest struct {
 
 func (x *UpdateFoundryDocumentSetRequest) Reset() {
 	*x = UpdateFoundryDocumentSetRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[94]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5482,7 +5440,7 @@ func (x *UpdateFoundryDocumentSetRequest) String() string {
 func (*UpdateFoundryDocumentSetRequest) ProtoMessage() {}
 
 func (x *UpdateFoundryDocumentSetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[94]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5495,7 +5453,7 @@ func (x *UpdateFoundryDocumentSetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateFoundryDocumentSetRequest.ProtoReflect.Descriptor instead.
 func (*UpdateFoundryDocumentSetRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{94}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{93}
 }
 
 func (x *UpdateFoundryDocumentSetRequest) GetWorkspaceId() string {
@@ -5539,7 +5497,7 @@ type DeleteFoundryDocumentSetRequest struct {
 
 func (x *DeleteFoundryDocumentSetRequest) Reset() {
 	*x = DeleteFoundryDocumentSetRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[95]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5551,7 +5509,7 @@ func (x *DeleteFoundryDocumentSetRequest) String() string {
 func (*DeleteFoundryDocumentSetRequest) ProtoMessage() {}
 
 func (x *DeleteFoundryDocumentSetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[95]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5564,7 +5522,7 @@ func (x *DeleteFoundryDocumentSetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFoundryDocumentSetRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryDocumentSetRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{95}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *DeleteFoundryDocumentSetRequest) GetWorkspaceId() string {
@@ -5589,7 +5547,7 @@ type DeleteFoundryDocumentSetResponse struct {
 
 func (x *DeleteFoundryDocumentSetResponse) Reset() {
 	*x = DeleteFoundryDocumentSetResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[96]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5601,7 +5559,7 @@ func (x *DeleteFoundryDocumentSetResponse) String() string {
 func (*DeleteFoundryDocumentSetResponse) ProtoMessage() {}
 
 func (x *DeleteFoundryDocumentSetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[96]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5614,7 +5572,7 @@ func (x *DeleteFoundryDocumentSetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFoundryDocumentSetResponse.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryDocumentSetResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{96}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{95}
 }
 
 // The ontology-scoped aliases' requests (until release 2 of workspace
@@ -5638,7 +5596,7 @@ type CreateFoundryOntologyDocumentRequest struct {
 
 func (x *CreateFoundryOntologyDocumentRequest) Reset() {
 	*x = CreateFoundryOntologyDocumentRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[97]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5650,7 +5608,7 @@ func (x *CreateFoundryOntologyDocumentRequest) String() string {
 func (*CreateFoundryOntologyDocumentRequest) ProtoMessage() {}
 
 func (x *CreateFoundryOntologyDocumentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[97]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5663,7 +5621,7 @@ func (x *CreateFoundryOntologyDocumentRequest) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use CreateFoundryOntologyDocumentRequest.ProtoReflect.Descriptor instead.
 func (*CreateFoundryOntologyDocumentRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{97}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{96}
 }
 
 func (x *CreateFoundryOntologyDocumentRequest) GetWorkspaceId() string {
@@ -5738,7 +5696,7 @@ type CreateFoundryOntologyDocumentResponse struct {
 
 func (x *CreateFoundryOntologyDocumentResponse) Reset() {
 	*x = CreateFoundryOntologyDocumentResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[98]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5750,7 +5708,7 @@ func (x *CreateFoundryOntologyDocumentResponse) String() string {
 func (*CreateFoundryOntologyDocumentResponse) ProtoMessage() {}
 
 func (x *CreateFoundryOntologyDocumentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[98]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5763,7 +5721,7 @@ func (x *CreateFoundryOntologyDocumentResponse) ProtoReflect() protoreflect.Mess
 
 // Deprecated: Use CreateFoundryOntologyDocumentResponse.ProtoReflect.Descriptor instead.
 func (*CreateFoundryOntologyDocumentResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{98}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *CreateFoundryOntologyDocumentResponse) GetDocument() *FoundryDocument {
@@ -5809,7 +5767,7 @@ type CompleteFoundryOntologyDocumentUploadRequest struct {
 
 func (x *CompleteFoundryOntologyDocumentUploadRequest) Reset() {
 	*x = CompleteFoundryOntologyDocumentUploadRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[99]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5821,7 +5779,7 @@ func (x *CompleteFoundryOntologyDocumentUploadRequest) String() string {
 func (*CompleteFoundryOntologyDocumentUploadRequest) ProtoMessage() {}
 
 func (x *CompleteFoundryOntologyDocumentUploadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[99]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5834,7 +5792,7 @@ func (x *CompleteFoundryOntologyDocumentUploadRequest) ProtoReflect() protorefle
 
 // Deprecated: Use CompleteFoundryOntologyDocumentUploadRequest.ProtoReflect.Descriptor instead.
 func (*CompleteFoundryOntologyDocumentUploadRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{99}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{98}
 }
 
 func (x *CompleteFoundryOntologyDocumentUploadRequest) GetWorkspaceId() string {
@@ -5877,7 +5835,7 @@ type DeleteFoundryOntologyDocumentRequest struct {
 
 func (x *DeleteFoundryOntologyDocumentRequest) Reset() {
 	*x = DeleteFoundryOntologyDocumentRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[100]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5889,7 +5847,7 @@ func (x *DeleteFoundryOntologyDocumentRequest) String() string {
 func (*DeleteFoundryOntologyDocumentRequest) ProtoMessage() {}
 
 func (x *DeleteFoundryOntologyDocumentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[100]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5902,7 +5860,7 @@ func (x *DeleteFoundryOntologyDocumentRequest) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use DeleteFoundryOntologyDocumentRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryOntologyDocumentRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{100}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *DeleteFoundryOntologyDocumentRequest) GetWorkspaceId() string {
@@ -5939,7 +5897,7 @@ type MoveFoundryOntologyDocumentRequest struct {
 
 func (x *MoveFoundryOntologyDocumentRequest) Reset() {
 	*x = MoveFoundryOntologyDocumentRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[101]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5951,7 +5909,7 @@ func (x *MoveFoundryOntologyDocumentRequest) String() string {
 func (*MoveFoundryOntologyDocumentRequest) ProtoMessage() {}
 
 func (x *MoveFoundryOntologyDocumentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[101]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5964,7 +5922,7 @@ func (x *MoveFoundryOntologyDocumentRequest) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use MoveFoundryOntologyDocumentRequest.ProtoReflect.Descriptor instead.
 func (*MoveFoundryOntologyDocumentRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{101}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{100}
 }
 
 func (x *MoveFoundryOntologyDocumentRequest) GetWorkspaceId() string {
@@ -6006,7 +5964,7 @@ type ListFoundryOntologyDocumentSetsRequest struct {
 
 func (x *ListFoundryOntologyDocumentSetsRequest) Reset() {
 	*x = ListFoundryOntologyDocumentSetsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[102]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6018,7 +5976,7 @@ func (x *ListFoundryOntologyDocumentSetsRequest) String() string {
 func (*ListFoundryOntologyDocumentSetsRequest) ProtoMessage() {}
 
 func (x *ListFoundryOntologyDocumentSetsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[102]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6031,7 +5989,7 @@ func (x *ListFoundryOntologyDocumentSetsRequest) ProtoReflect() protoreflect.Mes
 
 // Deprecated: Use ListFoundryOntologyDocumentSetsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryOntologyDocumentSetsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{102}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{101}
 }
 
 func (x *ListFoundryOntologyDocumentSetsRequest) GetWorkspaceId() string {
@@ -6061,7 +6019,7 @@ type CreateFoundryOntologyDocumentSetRequest struct {
 
 func (x *CreateFoundryOntologyDocumentSetRequest) Reset() {
 	*x = CreateFoundryOntologyDocumentSetRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[103]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6073,7 +6031,7 @@ func (x *CreateFoundryOntologyDocumentSetRequest) String() string {
 func (*CreateFoundryOntologyDocumentSetRequest) ProtoMessage() {}
 
 func (x *CreateFoundryOntologyDocumentSetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[103]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6086,7 +6044,7 @@ func (x *CreateFoundryOntologyDocumentSetRequest) ProtoReflect() protoreflect.Me
 
 // Deprecated: Use CreateFoundryOntologyDocumentSetRequest.ProtoReflect.Descriptor instead.
 func (*CreateFoundryOntologyDocumentSetRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{103}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{102}
 }
 
 func (x *CreateFoundryOntologyDocumentSetRequest) GetWorkspaceId() string {
@@ -6131,7 +6089,7 @@ type UpdateFoundryOntologyDocumentSetRequest struct {
 
 func (x *UpdateFoundryOntologyDocumentSetRequest) Reset() {
 	*x = UpdateFoundryOntologyDocumentSetRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[104]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6143,7 +6101,7 @@ func (x *UpdateFoundryOntologyDocumentSetRequest) String() string {
 func (*UpdateFoundryOntologyDocumentSetRequest) ProtoMessage() {}
 
 func (x *UpdateFoundryOntologyDocumentSetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[104]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6156,7 +6114,7 @@ func (x *UpdateFoundryOntologyDocumentSetRequest) ProtoReflect() protoreflect.Me
 
 // Deprecated: Use UpdateFoundryOntologyDocumentSetRequest.ProtoReflect.Descriptor instead.
 func (*UpdateFoundryOntologyDocumentSetRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{104}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *UpdateFoundryOntologyDocumentSetRequest) GetWorkspaceId() string {
@@ -6206,7 +6164,7 @@ type DeleteFoundryOntologyDocumentSetRequest struct {
 
 func (x *DeleteFoundryOntologyDocumentSetRequest) Reset() {
 	*x = DeleteFoundryOntologyDocumentSetRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[105]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6218,7 +6176,7 @@ func (x *DeleteFoundryOntologyDocumentSetRequest) String() string {
 func (*DeleteFoundryOntologyDocumentSetRequest) ProtoMessage() {}
 
 func (x *DeleteFoundryOntologyDocumentSetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[105]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6231,7 +6189,7 @@ func (x *DeleteFoundryOntologyDocumentSetRequest) ProtoReflect() protoreflect.Me
 
 // Deprecated: Use DeleteFoundryOntologyDocumentSetRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryOntologyDocumentSetRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{105}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{104}
 }
 
 func (x *DeleteFoundryOntologyDocumentSetRequest) GetWorkspaceId() string {
@@ -6265,7 +6223,7 @@ type GetFoundryDataLayoutRequest struct {
 
 func (x *GetFoundryDataLayoutRequest) Reset() {
 	*x = GetFoundryDataLayoutRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[106]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6277,7 +6235,7 @@ func (x *GetFoundryDataLayoutRequest) String() string {
 func (*GetFoundryDataLayoutRequest) ProtoMessage() {}
 
 func (x *GetFoundryDataLayoutRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[106]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6290,7 +6248,7 @@ func (x *GetFoundryDataLayoutRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryDataLayoutRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryDataLayoutRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{106}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{105}
 }
 
 func (x *GetFoundryDataLayoutRequest) GetWorkspaceId() string {
@@ -6316,7 +6274,7 @@ type PutFoundryDataLayoutRequest struct {
 
 func (x *PutFoundryDataLayoutRequest) Reset() {
 	*x = PutFoundryDataLayoutRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[107]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6328,7 +6286,7 @@ func (x *PutFoundryDataLayoutRequest) String() string {
 func (*PutFoundryDataLayoutRequest) ProtoMessage() {}
 
 func (x *PutFoundryDataLayoutRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[107]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6341,7 +6299,7 @@ func (x *PutFoundryDataLayoutRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutFoundryDataLayoutRequest.ProtoReflect.Descriptor instead.
 func (*PutFoundryDataLayoutRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{107}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{106}
 }
 
 func (x *PutFoundryDataLayoutRequest) GetWorkspaceId() string {
@@ -6379,7 +6337,7 @@ type FoundryDataLayoutResponse struct {
 
 func (x *FoundryDataLayoutResponse) Reset() {
 	*x = FoundryDataLayoutResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[108]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6391,7 +6349,7 @@ func (x *FoundryDataLayoutResponse) String() string {
 func (*FoundryDataLayoutResponse) ProtoMessage() {}
 
 func (x *FoundryDataLayoutResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[108]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6404,7 +6362,7 @@ func (x *FoundryDataLayoutResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryDataLayoutResponse.ProtoReflect.Descriptor instead.
 func (*FoundryDataLayoutResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{108}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{107}
 }
 
 func (x *FoundryDataLayoutResponse) GetLayout() *structpb.Struct {
@@ -6438,7 +6396,7 @@ type CreateFoundryLoadRequest struct {
 
 func (x *CreateFoundryLoadRequest) Reset() {
 	*x = CreateFoundryLoadRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[109]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[108]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6450,7 +6408,7 @@ func (x *CreateFoundryLoadRequest) String() string {
 func (*CreateFoundryLoadRequest) ProtoMessage() {}
 
 func (x *CreateFoundryLoadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[109]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[108]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6463,7 +6421,7 @@ func (x *CreateFoundryLoadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFoundryLoadRequest.ProtoReflect.Descriptor instead.
 func (*CreateFoundryLoadRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{109}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{108}
 }
 
 func (x *CreateFoundryLoadRequest) GetWorkspaceId() string {
@@ -6504,7 +6462,7 @@ type FoundryLoadResponse struct {
 
 func (x *FoundryLoadResponse) Reset() {
 	*x = FoundryLoadResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[110]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[109]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6516,7 +6474,7 @@ func (x *FoundryLoadResponse) String() string {
 func (*FoundryLoadResponse) ProtoMessage() {}
 
 func (x *FoundryLoadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[110]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[109]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6529,7 +6487,7 @@ func (x *FoundryLoadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryLoadResponse.ProtoReflect.Descriptor instead.
 func (*FoundryLoadResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{110}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{109}
 }
 
 func (x *FoundryLoadResponse) GetLoad() *FoundryLoad {
@@ -6551,7 +6509,7 @@ type ListFoundryLoadsRequest struct {
 
 func (x *ListFoundryLoadsRequest) Reset() {
 	*x = ListFoundryLoadsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[111]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[110]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6563,7 +6521,7 @@ func (x *ListFoundryLoadsRequest) String() string {
 func (*ListFoundryLoadsRequest) ProtoMessage() {}
 
 func (x *ListFoundryLoadsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[111]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[110]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6576,7 +6534,7 @@ func (x *ListFoundryLoadsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryLoadsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryLoadsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{111}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{110}
 }
 
 func (x *ListFoundryLoadsRequest) GetWorkspaceId() string {
@@ -6603,7 +6561,7 @@ type ListFoundryLoadsResponse struct {
 
 func (x *ListFoundryLoadsResponse) Reset() {
 	*x = ListFoundryLoadsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[112]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[111]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6615,7 +6573,7 @@ func (x *ListFoundryLoadsResponse) String() string {
 func (*ListFoundryLoadsResponse) ProtoMessage() {}
 
 func (x *ListFoundryLoadsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[112]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[111]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6628,7 +6586,7 @@ func (x *ListFoundryLoadsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryLoadsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryLoadsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{112}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{111}
 }
 
 func (x *ListFoundryLoadsResponse) GetLoads() []*FoundryLoad {
@@ -6651,7 +6609,7 @@ type GetFoundryLoadRequest struct {
 
 func (x *GetFoundryLoadRequest) Reset() {
 	*x = GetFoundryLoadRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[113]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[112]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6663,7 +6621,7 @@ func (x *GetFoundryLoadRequest) String() string {
 func (*GetFoundryLoadRequest) ProtoMessage() {}
 
 func (x *GetFoundryLoadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[113]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[112]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6676,7 +6634,7 @@ func (x *GetFoundryLoadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryLoadRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryLoadRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{113}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{112}
 }
 
 func (x *GetFoundryLoadRequest) GetWorkspaceId() string {
@@ -6715,7 +6673,7 @@ type SetCurrentFoundryLoadRequest struct {
 
 func (x *SetCurrentFoundryLoadRequest) Reset() {
 	*x = SetCurrentFoundryLoadRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[114]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[113]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6727,7 +6685,7 @@ func (x *SetCurrentFoundryLoadRequest) String() string {
 func (*SetCurrentFoundryLoadRequest) ProtoMessage() {}
 
 func (x *SetCurrentFoundryLoadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[114]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[113]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6740,7 +6698,7 @@ func (x *SetCurrentFoundryLoadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetCurrentFoundryLoadRequest.ProtoReflect.Descriptor instead.
 func (*SetCurrentFoundryLoadRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{114}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{113}
 }
 
 func (x *SetCurrentFoundryLoadRequest) GetWorkspaceId() string {
@@ -6794,7 +6752,7 @@ type AskFoundryQuestionRequest struct {
 
 func (x *AskFoundryQuestionRequest) Reset() {
 	*x = AskFoundryQuestionRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[115]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[114]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6806,7 +6764,7 @@ func (x *AskFoundryQuestionRequest) String() string {
 func (*AskFoundryQuestionRequest) ProtoMessage() {}
 
 func (x *AskFoundryQuestionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[115]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[114]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6819,7 +6777,7 @@ func (x *AskFoundryQuestionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AskFoundryQuestionRequest.ProtoReflect.Descriptor instead.
 func (*AskFoundryQuestionRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{115}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{114}
 }
 
 func (x *AskFoundryQuestionRequest) GetWorkspaceId() string {
@@ -6888,7 +6846,7 @@ type FoundryQuestionResponse struct {
 
 func (x *FoundryQuestionResponse) Reset() {
 	*x = FoundryQuestionResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[116]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[115]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6900,7 +6858,7 @@ func (x *FoundryQuestionResponse) String() string {
 func (*FoundryQuestionResponse) ProtoMessage() {}
 
 func (x *FoundryQuestionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[116]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[115]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6913,7 +6871,7 @@ func (x *FoundryQuestionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryQuestionResponse.ProtoReflect.Descriptor instead.
 func (*FoundryQuestionResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{116}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{115}
 }
 
 func (x *FoundryQuestionResponse) GetQuestion() *FoundryQuestion {
@@ -6935,7 +6893,7 @@ type GetFoundryQuestionRequest struct {
 
 func (x *GetFoundryQuestionRequest) Reset() {
 	*x = GetFoundryQuestionRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[117]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[116]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6947,7 +6905,7 @@ func (x *GetFoundryQuestionRequest) String() string {
 func (*GetFoundryQuestionRequest) ProtoMessage() {}
 
 func (x *GetFoundryQuestionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[117]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[116]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6960,7 +6918,7 @@ func (x *GetFoundryQuestionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryQuestionRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryQuestionRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{117}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{116}
 }
 
 func (x *GetFoundryQuestionRequest) GetWorkspaceId() string {
@@ -7000,7 +6958,7 @@ type ListFoundryQuestionsRequest struct {
 
 func (x *ListFoundryQuestionsRequest) Reset() {
 	*x = ListFoundryQuestionsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[118]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[117]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7012,7 +6970,7 @@ func (x *ListFoundryQuestionsRequest) String() string {
 func (*ListFoundryQuestionsRequest) ProtoMessage() {}
 
 func (x *ListFoundryQuestionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[118]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[117]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7025,7 +6983,7 @@ func (x *ListFoundryQuestionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryQuestionsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryQuestionsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{118}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{117}
 }
 
 func (x *ListFoundryQuestionsRequest) GetWorkspaceId() string {
@@ -7069,7 +7027,7 @@ type ListFoundryQuestionsResponse struct {
 
 func (x *ListFoundryQuestionsResponse) Reset() {
 	*x = ListFoundryQuestionsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[119]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[118]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7081,7 +7039,7 @@ func (x *ListFoundryQuestionsResponse) String() string {
 func (*ListFoundryQuestionsResponse) ProtoMessage() {}
 
 func (x *ListFoundryQuestionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[119]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[118]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7094,7 +7052,7 @@ func (x *ListFoundryQuestionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryQuestionsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryQuestionsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{119}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{118}
 }
 
 func (x *ListFoundryQuestionsResponse) GetQuestions() []*FoundryQuestion {
@@ -7132,7 +7090,7 @@ type ListFoundryQuestionEventsRequest struct {
 
 func (x *ListFoundryQuestionEventsRequest) Reset() {
 	*x = ListFoundryQuestionEventsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[120]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[119]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7144,7 +7102,7 @@ func (x *ListFoundryQuestionEventsRequest) String() string {
 func (*ListFoundryQuestionEventsRequest) ProtoMessage() {}
 
 func (x *ListFoundryQuestionEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[120]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[119]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7157,7 +7115,7 @@ func (x *ListFoundryQuestionEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryQuestionEventsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryQuestionEventsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{120}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{119}
 }
 
 func (x *ListFoundryQuestionEventsRequest) GetWorkspaceId() string {
@@ -7202,7 +7160,7 @@ type ListFoundryQuestionEventsResponse struct {
 
 func (x *ListFoundryQuestionEventsResponse) Reset() {
 	*x = ListFoundryQuestionEventsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[121]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[120]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7214,7 +7172,7 @@ func (x *ListFoundryQuestionEventsResponse) String() string {
 func (*ListFoundryQuestionEventsResponse) ProtoMessage() {}
 
 func (x *ListFoundryQuestionEventsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[121]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[120]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7227,7 +7185,7 @@ func (x *ListFoundryQuestionEventsResponse) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use ListFoundryQuestionEventsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryQuestionEventsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{121}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{120}
 }
 
 func (x *ListFoundryQuestionEventsResponse) GetEvents() []*FoundryQuestionEvent {
@@ -7266,7 +7224,7 @@ type CancelFoundryQuestionRequest struct {
 
 func (x *CancelFoundryQuestionRequest) Reset() {
 	*x = CancelFoundryQuestionRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[122]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[121]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7278,7 +7236,7 @@ func (x *CancelFoundryQuestionRequest) String() string {
 func (*CancelFoundryQuestionRequest) ProtoMessage() {}
 
 func (x *CancelFoundryQuestionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[122]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[121]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7291,7 +7249,7 @@ func (x *CancelFoundryQuestionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelFoundryQuestionRequest.ProtoReflect.Descriptor instead.
 func (*CancelFoundryQuestionRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{122}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{121}
 }
 
 func (x *CancelFoundryQuestionRequest) GetWorkspaceId() string {
@@ -7331,7 +7289,7 @@ type DeleteFoundryLoadRequest struct {
 
 func (x *DeleteFoundryLoadRequest) Reset() {
 	*x = DeleteFoundryLoadRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[123]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[122]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7343,7 +7301,7 @@ func (x *DeleteFoundryLoadRequest) String() string {
 func (*DeleteFoundryLoadRequest) ProtoMessage() {}
 
 func (x *DeleteFoundryLoadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[123]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[122]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7356,7 +7314,7 @@ func (x *DeleteFoundryLoadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFoundryLoadRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryLoadRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{123}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{122}
 }
 
 func (x *DeleteFoundryLoadRequest) GetWorkspaceId() string {
@@ -7404,7 +7362,7 @@ type ReadFoundryGraphRequest struct {
 
 func (x *ReadFoundryGraphRequest) Reset() {
 	*x = ReadFoundryGraphRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[124]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[123]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7416,7 +7374,7 @@ func (x *ReadFoundryGraphRequest) String() string {
 func (*ReadFoundryGraphRequest) ProtoMessage() {}
 
 func (x *ReadFoundryGraphRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[124]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[123]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7429,7 +7387,7 @@ func (x *ReadFoundryGraphRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFoundryGraphRequest.ProtoReflect.Descriptor instead.
 func (*ReadFoundryGraphRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{124}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{123}
 }
 
 func (x *ReadFoundryGraphRequest) GetWorkspaceId() string {
@@ -7479,7 +7437,7 @@ type ReadFoundryGraphResponse struct {
 
 func (x *ReadFoundryGraphResponse) Reset() {
 	*x = ReadFoundryGraphResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[125]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[124]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7491,7 +7449,7 @@ func (x *ReadFoundryGraphResponse) String() string {
 func (*ReadFoundryGraphResponse) ProtoMessage() {}
 
 func (x *ReadFoundryGraphResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[125]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[124]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7504,7 +7462,7 @@ func (x *ReadFoundryGraphResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFoundryGraphResponse.ProtoReflect.Descriptor instead.
 func (*ReadFoundryGraphResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{125}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{124}
 }
 
 func (x *ReadFoundryGraphResponse) GetResultJson() string {
@@ -7537,7 +7495,7 @@ type SettleFoundryReviewRequest struct {
 
 func (x *SettleFoundryReviewRequest) Reset() {
 	*x = SettleFoundryReviewRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[126]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[125]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7549,7 +7507,7 @@ func (x *SettleFoundryReviewRequest) String() string {
 func (*SettleFoundryReviewRequest) ProtoMessage() {}
 
 func (x *SettleFoundryReviewRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[126]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[125]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7562,7 +7520,7 @@ func (x *SettleFoundryReviewRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettleFoundryReviewRequest.ProtoReflect.Descriptor instead.
 func (*SettleFoundryReviewRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{126}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{125}
 }
 
 func (x *SettleFoundryReviewRequest) GetWorkspaceId() string {
@@ -7610,7 +7568,7 @@ type FoundryReviewDecisionResponse struct {
 
 func (x *FoundryReviewDecisionResponse) Reset() {
 	*x = FoundryReviewDecisionResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[127]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[126]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7622,7 +7580,7 @@ func (x *FoundryReviewDecisionResponse) String() string {
 func (*FoundryReviewDecisionResponse) ProtoMessage() {}
 
 func (x *FoundryReviewDecisionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[127]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[126]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7635,7 +7593,7 @@ func (x *FoundryReviewDecisionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryReviewDecisionResponse.ProtoReflect.Descriptor instead.
 func (*FoundryReviewDecisionResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{127}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{126}
 }
 
 func (x *FoundryReviewDecisionResponse) GetDecision() *FoundryReviewDecision {
@@ -7662,7 +7620,7 @@ type ListFoundryReviewsRequest struct {
 
 func (x *ListFoundryReviewsRequest) Reset() {
 	*x = ListFoundryReviewsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[128]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7674,7 +7632,7 @@ func (x *ListFoundryReviewsRequest) String() string {
 func (*ListFoundryReviewsRequest) ProtoMessage() {}
 
 func (x *ListFoundryReviewsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[128]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7687,7 +7645,7 @@ func (x *ListFoundryReviewsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryReviewsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryReviewsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{128}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{127}
 }
 
 func (x *ListFoundryReviewsRequest) GetWorkspaceId() string {
@@ -7732,7 +7690,7 @@ type ListFoundryReviewsResponse struct {
 
 func (x *ListFoundryReviewsResponse) Reset() {
 	*x = ListFoundryReviewsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[129]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7744,7 +7702,7 @@ func (x *ListFoundryReviewsResponse) String() string {
 func (*ListFoundryReviewsResponse) ProtoMessage() {}
 
 func (x *ListFoundryReviewsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[129]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7757,7 +7715,7 @@ func (x *ListFoundryReviewsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryReviewsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryReviewsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{129}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{128}
 }
 
 func (x *ListFoundryReviewsResponse) GetLoadId() string {
@@ -7798,7 +7756,7 @@ type ListFoundryReviewDecisionsRequest struct {
 
 func (x *ListFoundryReviewDecisionsRequest) Reset() {
 	*x = ListFoundryReviewDecisionsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[130]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7810,7 +7768,7 @@ func (x *ListFoundryReviewDecisionsRequest) String() string {
 func (*ListFoundryReviewDecisionsRequest) ProtoMessage() {}
 
 func (x *ListFoundryReviewDecisionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[130]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7823,7 +7781,7 @@ func (x *ListFoundryReviewDecisionsRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use ListFoundryReviewDecisionsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryReviewDecisionsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{130}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{129}
 }
 
 func (x *ListFoundryReviewDecisionsRequest) GetWorkspaceId() string {
@@ -7865,7 +7823,7 @@ type ListFoundryReviewDecisionsResponse struct {
 
 func (x *ListFoundryReviewDecisionsResponse) Reset() {
 	*x = ListFoundryReviewDecisionsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[131]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7877,7 +7835,7 @@ func (x *ListFoundryReviewDecisionsResponse) String() string {
 func (*ListFoundryReviewDecisionsResponse) ProtoMessage() {}
 
 func (x *ListFoundryReviewDecisionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[131]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7890,7 +7848,7 @@ func (x *ListFoundryReviewDecisionsResponse) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use ListFoundryReviewDecisionsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryReviewDecisionsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{131}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{130}
 }
 
 func (x *ListFoundryReviewDecisionsResponse) GetDecisions() []*FoundryReviewDecision {
@@ -7924,7 +7882,7 @@ type DeleteFoundryReviewDecisionRequest struct {
 
 func (x *DeleteFoundryReviewDecisionRequest) Reset() {
 	*x = DeleteFoundryReviewDecisionRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[132]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7936,7 +7894,7 @@ func (x *DeleteFoundryReviewDecisionRequest) String() string {
 func (*DeleteFoundryReviewDecisionRequest) ProtoMessage() {}
 
 func (x *DeleteFoundryReviewDecisionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[132]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7949,7 +7907,7 @@ func (x *DeleteFoundryReviewDecisionRequest) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use DeleteFoundryReviewDecisionRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryReviewDecisionRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{132}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{131}
 }
 
 func (x *DeleteFoundryReviewDecisionRequest) GetWorkspaceId() string {
@@ -7981,7 +7939,7 @@ type DeleteFoundryReviewDecisionResponse struct {
 
 func (x *DeleteFoundryReviewDecisionResponse) Reset() {
 	*x = DeleteFoundryReviewDecisionResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[133]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7993,7 +7951,7 @@ func (x *DeleteFoundryReviewDecisionResponse) String() string {
 func (*DeleteFoundryReviewDecisionResponse) ProtoMessage() {}
 
 func (x *DeleteFoundryReviewDecisionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[133]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8006,7 +7964,7 @@ func (x *DeleteFoundryReviewDecisionResponse) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use DeleteFoundryReviewDecisionResponse.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryReviewDecisionResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{133}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{132}
 }
 
 // A label of a claim at its place, drawn at random (`fact`, a fact's quote
@@ -8038,7 +7996,7 @@ type SettleFoundryReviewLabelRequest struct {
 
 func (x *SettleFoundryReviewLabelRequest) Reset() {
 	*x = SettleFoundryReviewLabelRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[134]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8050,7 +8008,7 @@ func (x *SettleFoundryReviewLabelRequest) String() string {
 func (*SettleFoundryReviewLabelRequest) ProtoMessage() {}
 
 func (x *SettleFoundryReviewLabelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[134]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8063,7 +8021,7 @@ func (x *SettleFoundryReviewLabelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettleFoundryReviewLabelRequest.ProtoReflect.Descriptor instead.
 func (*SettleFoundryReviewLabelRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{134}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{133}
 }
 
 func (x *SettleFoundryReviewLabelRequest) GetWorkspaceId() string {
@@ -8173,7 +8131,7 @@ type FoundryLabelFact struct {
 
 func (x *FoundryLabelFact) Reset() {
 	*x = FoundryLabelFact{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[135]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8185,7 +8143,7 @@ func (x *FoundryLabelFact) String() string {
 func (*FoundryLabelFact) ProtoMessage() {}
 
 func (x *FoundryLabelFact) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[135]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8198,7 +8156,7 @@ func (x *FoundryLabelFact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryLabelFact.ProtoReflect.Descriptor instead.
 func (*FoundryLabelFact) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{135}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{134}
 }
 
 func (x *FoundryLabelFact) GetDocId() string {
@@ -8246,7 +8204,7 @@ type FoundryReviewLabelResponse struct {
 
 func (x *FoundryReviewLabelResponse) Reset() {
 	*x = FoundryReviewLabelResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[136]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[135]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8258,7 +8216,7 @@ func (x *FoundryReviewLabelResponse) String() string {
 func (*FoundryReviewLabelResponse) ProtoMessage() {}
 
 func (x *FoundryReviewLabelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[136]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[135]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8271,7 +8229,7 @@ func (x *FoundryReviewLabelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryReviewLabelResponse.ProtoReflect.Descriptor instead.
 func (*FoundryReviewLabelResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{136}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{135}
 }
 
 func (x *FoundryReviewLabelResponse) GetLabel() *FoundryReviewLabel {
@@ -8294,7 +8252,7 @@ type ListFoundryReviewLabelsRequest struct {
 
 func (x *ListFoundryReviewLabelsRequest) Reset() {
 	*x = ListFoundryReviewLabelsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[137]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[136]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8306,7 +8264,7 @@ func (x *ListFoundryReviewLabelsRequest) String() string {
 func (*ListFoundryReviewLabelsRequest) ProtoMessage() {}
 
 func (x *ListFoundryReviewLabelsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[137]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[136]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8319,7 +8277,7 @@ func (x *ListFoundryReviewLabelsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryReviewLabelsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryReviewLabelsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{137}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{136}
 }
 
 func (x *ListFoundryReviewLabelsRequest) GetWorkspaceId() string {
@@ -8354,7 +8312,7 @@ type ListFoundryReviewLabelsResponse struct {
 
 func (x *ListFoundryReviewLabelsResponse) Reset() {
 	*x = ListFoundryReviewLabelsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[138]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[137]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8366,7 +8324,7 @@ func (x *ListFoundryReviewLabelsResponse) String() string {
 func (*ListFoundryReviewLabelsResponse) ProtoMessage() {}
 
 func (x *ListFoundryReviewLabelsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[138]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[137]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8379,7 +8337,7 @@ func (x *ListFoundryReviewLabelsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryReviewLabelsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryReviewLabelsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{138}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{137}
 }
 
 func (x *ListFoundryReviewLabelsResponse) GetLabels() []*FoundryReviewLabel {
@@ -8407,7 +8365,7 @@ type ListFoundryAccessRequest struct {
 
 func (x *ListFoundryAccessRequest) Reset() {
 	*x = ListFoundryAccessRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[139]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[138]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8419,7 +8377,7 @@ func (x *ListFoundryAccessRequest) String() string {
 func (*ListFoundryAccessRequest) ProtoMessage() {}
 
 func (x *ListFoundryAccessRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[139]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[138]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8432,7 +8390,7 @@ func (x *ListFoundryAccessRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryAccessRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryAccessRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{139}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{138}
 }
 
 func (x *ListFoundryAccessRequest) GetWorkspaceId() string {
@@ -8464,7 +8422,7 @@ type ListFoundryAccessResponse struct {
 
 func (x *ListFoundryAccessResponse) Reset() {
 	*x = ListFoundryAccessResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[140]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[139]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8476,7 +8434,7 @@ func (x *ListFoundryAccessResponse) String() string {
 func (*ListFoundryAccessResponse) ProtoMessage() {}
 
 func (x *ListFoundryAccessResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[140]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[139]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8489,7 +8447,7 @@ func (x *ListFoundryAccessResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryAccessResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryAccessResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{140}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{139}
 }
 
 func (x *ListFoundryAccessResponse) GetGrants() []*FoundryAccessGrant {
@@ -8547,7 +8505,7 @@ type SetFoundryAccessGrantsRequest struct {
 
 func (x *SetFoundryAccessGrantsRequest) Reset() {
 	*x = SetFoundryAccessGrantsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[141]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[140]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8559,7 +8517,7 @@ func (x *SetFoundryAccessGrantsRequest) String() string {
 func (*SetFoundryAccessGrantsRequest) ProtoMessage() {}
 
 func (x *SetFoundryAccessGrantsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[141]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[140]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8572,7 +8530,7 @@ func (x *SetFoundryAccessGrantsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetFoundryAccessGrantsRequest.ProtoReflect.Descriptor instead.
 func (*SetFoundryAccessGrantsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{141}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{140}
 }
 
 func (x *SetFoundryAccessGrantsRequest) GetWorkspaceId() string {
@@ -8616,7 +8574,7 @@ type SetFoundryAccessGrantsResponse struct {
 
 func (x *SetFoundryAccessGrantsResponse) Reset() {
 	*x = SetFoundryAccessGrantsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[142]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[141]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8628,7 +8586,7 @@ func (x *SetFoundryAccessGrantsResponse) String() string {
 func (*SetFoundryAccessGrantsResponse) ProtoMessage() {}
 
 func (x *SetFoundryAccessGrantsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[142]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[141]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8641,7 +8599,7 @@ func (x *SetFoundryAccessGrantsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetFoundryAccessGrantsResponse.ProtoReflect.Descriptor instead.
 func (*SetFoundryAccessGrantsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{142}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{141}
 }
 
 func (x *SetFoundryAccessGrantsResponse) GetGrants() []*FoundryAccessGrant {
@@ -8670,7 +8628,7 @@ type PreviewFoundryAccessChangeRequest struct {
 
 func (x *PreviewFoundryAccessChangeRequest) Reset() {
 	*x = PreviewFoundryAccessChangeRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[143]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[142]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8682,7 +8640,7 @@ func (x *PreviewFoundryAccessChangeRequest) String() string {
 func (*PreviewFoundryAccessChangeRequest) ProtoMessage() {}
 
 func (x *PreviewFoundryAccessChangeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[143]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[142]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8695,7 +8653,7 @@ func (x *PreviewFoundryAccessChangeRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use PreviewFoundryAccessChangeRequest.ProtoReflect.Descriptor instead.
 func (*PreviewFoundryAccessChangeRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{143}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{142}
 }
 
 func (x *PreviewFoundryAccessChangeRequest) GetWorkspaceId() string {
@@ -8728,7 +8686,7 @@ type FoundryAccessChange struct {
 
 func (x *FoundryAccessChange) Reset() {
 	*x = FoundryAccessChange{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[144]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[143]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8740,7 +8698,7 @@ func (x *FoundryAccessChange) String() string {
 func (*FoundryAccessChange) ProtoMessage() {}
 
 func (x *FoundryAccessChange) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[144]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[143]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8753,7 +8711,7 @@ func (x *FoundryAccessChange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAccessChange.ProtoReflect.Descriptor instead.
 func (*FoundryAccessChange) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{144}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{143}
 }
 
 func (m *FoundryAccessChange) GetChange() isFoundryAccessChange_Change {
@@ -8818,7 +8776,7 @@ type PreviewFoundryAccessChangeResponse struct {
 
 func (x *PreviewFoundryAccessChangeResponse) Reset() {
 	*x = PreviewFoundryAccessChangeResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[145]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[144]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8830,7 +8788,7 @@ func (x *PreviewFoundryAccessChangeResponse) String() string {
 func (*PreviewFoundryAccessChangeResponse) ProtoMessage() {}
 
 func (x *PreviewFoundryAccessChangeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[145]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[144]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8843,7 +8801,7 @@ func (x *PreviewFoundryAccessChangeResponse) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use PreviewFoundryAccessChangeResponse.ProtoReflect.Descriptor instead.
 func (*PreviewFoundryAccessChangeResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{145}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{144}
 }
 
 func (x *PreviewFoundryAccessChangeResponse) GetLosses() []*FoundryAccessLoss {
@@ -8864,7 +8822,7 @@ type GetMyFoundryAccessRequest struct {
 
 func (x *GetMyFoundryAccessRequest) Reset() {
 	*x = GetMyFoundryAccessRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[146]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[145]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8876,7 +8834,7 @@ func (x *GetMyFoundryAccessRequest) String() string {
 func (*GetMyFoundryAccessRequest) ProtoMessage() {}
 
 func (x *GetMyFoundryAccessRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[146]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[145]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8889,7 +8847,7 @@ func (x *GetMyFoundryAccessRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMyFoundryAccessRequest.ProtoReflect.Descriptor instead.
 func (*GetMyFoundryAccessRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{146}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{145}
 }
 
 func (x *GetMyFoundryAccessRequest) GetWorkspaceId() string {
@@ -8920,7 +8878,7 @@ type GetMyFoundryAccessResponse struct {
 
 func (x *GetMyFoundryAccessResponse) Reset() {
 	*x = GetMyFoundryAccessResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[147]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[146]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8932,7 +8890,7 @@ func (x *GetMyFoundryAccessResponse) String() string {
 func (*GetMyFoundryAccessResponse) ProtoMessage() {}
 
 func (x *GetMyFoundryAccessResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[147]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[146]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8945,7 +8903,7 @@ func (x *GetMyFoundryAccessResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMyFoundryAccessResponse.ProtoReflect.Descriptor instead.
 func (*GetMyFoundryAccessResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{147}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{146}
 }
 
 func (x *GetMyFoundryAccessResponse) GetGrantee() bool {
@@ -8996,7 +8954,7 @@ type SetFoundryMemberRestrictedRequest struct {
 
 func (x *SetFoundryMemberRestrictedRequest) Reset() {
 	*x = SetFoundryMemberRestrictedRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[148]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[147]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9008,7 +8966,7 @@ func (x *SetFoundryMemberRestrictedRequest) String() string {
 func (*SetFoundryMemberRestrictedRequest) ProtoMessage() {}
 
 func (x *SetFoundryMemberRestrictedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[148]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[147]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9021,7 +8979,7 @@ func (x *SetFoundryMemberRestrictedRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use SetFoundryMemberRestrictedRequest.ProtoReflect.Descriptor instead.
 func (*SetFoundryMemberRestrictedRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{148}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{147}
 }
 
 func (x *SetFoundryMemberRestrictedRequest) GetWorkspaceId() string {
@@ -9055,7 +9013,7 @@ type SetFoundryMemberRestrictedResponse struct {
 
 func (x *SetFoundryMemberRestrictedResponse) Reset() {
 	*x = SetFoundryMemberRestrictedResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[149]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[148]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9067,7 +9025,7 @@ func (x *SetFoundryMemberRestrictedResponse) String() string {
 func (*SetFoundryMemberRestrictedResponse) ProtoMessage() {}
 
 func (x *SetFoundryMemberRestrictedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[149]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[148]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9080,7 +9038,7 @@ func (x *SetFoundryMemberRestrictedResponse) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use SetFoundryMemberRestrictedResponse.ProtoReflect.Descriptor instead.
 func (*SetFoundryMemberRestrictedResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{149}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{148}
 }
 
 func (x *SetFoundryMemberRestrictedResponse) GetRestricted() bool {
@@ -9104,7 +9062,7 @@ type CreateFoundryTeamRequest struct {
 
 func (x *CreateFoundryTeamRequest) Reset() {
 	*x = CreateFoundryTeamRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[150]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[149]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9116,7 +9074,7 @@ func (x *CreateFoundryTeamRequest) String() string {
 func (*CreateFoundryTeamRequest) ProtoMessage() {}
 
 func (x *CreateFoundryTeamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[150]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[149]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9129,7 +9087,7 @@ func (x *CreateFoundryTeamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFoundryTeamRequest.ProtoReflect.Descriptor instead.
 func (*CreateFoundryTeamRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{150}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{149}
 }
 
 func (x *CreateFoundryTeamRequest) GetWorkspaceId() string {
@@ -9166,7 +9124,7 @@ type UpdateFoundryTeamRequest struct {
 
 func (x *UpdateFoundryTeamRequest) Reset() {
 	*x = UpdateFoundryTeamRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[151]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[150]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9178,7 +9136,7 @@ func (x *UpdateFoundryTeamRequest) String() string {
 func (*UpdateFoundryTeamRequest) ProtoMessage() {}
 
 func (x *UpdateFoundryTeamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[151]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[150]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9191,7 +9149,7 @@ func (x *UpdateFoundryTeamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateFoundryTeamRequest.ProtoReflect.Descriptor instead.
 func (*UpdateFoundryTeamRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{151}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{150}
 }
 
 func (x *UpdateFoundryTeamRequest) GetWorkspaceId() string {
@@ -9233,7 +9191,7 @@ type DeleteFoundryTeamRequest struct {
 
 func (x *DeleteFoundryTeamRequest) Reset() {
 	*x = DeleteFoundryTeamRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[152]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[151]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9245,7 +9203,7 @@ func (x *DeleteFoundryTeamRequest) String() string {
 func (*DeleteFoundryTeamRequest) ProtoMessage() {}
 
 func (x *DeleteFoundryTeamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[152]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[151]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9258,7 +9216,7 @@ func (x *DeleteFoundryTeamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFoundryTeamRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryTeamRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{152}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{151}
 }
 
 func (x *DeleteFoundryTeamRequest) GetWorkspaceId() string {
@@ -9285,7 +9243,7 @@ type FoundryTeamResponse struct {
 
 func (x *FoundryTeamResponse) Reset() {
 	*x = FoundryTeamResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[153]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[152]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9297,7 +9255,7 @@ func (x *FoundryTeamResponse) String() string {
 func (*FoundryTeamResponse) ProtoMessage() {}
 
 func (x *FoundryTeamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[153]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[152]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9310,7 +9268,7 @@ func (x *FoundryTeamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryTeamResponse.ProtoReflect.Descriptor instead.
 func (*FoundryTeamResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{153}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{152}
 }
 
 func (x *FoundryTeamResponse) GetTeam() *FoundryTeam {
@@ -9335,7 +9293,7 @@ type ListFoundryHealFindingsRequest struct {
 
 func (x *ListFoundryHealFindingsRequest) Reset() {
 	*x = ListFoundryHealFindingsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[154]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[153]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9347,7 +9305,7 @@ func (x *ListFoundryHealFindingsRequest) String() string {
 func (*ListFoundryHealFindingsRequest) ProtoMessage() {}
 
 func (x *ListFoundryHealFindingsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[154]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[153]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9360,7 +9318,7 @@ func (x *ListFoundryHealFindingsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryHealFindingsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryHealFindingsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{154}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{153}
 }
 
 func (x *ListFoundryHealFindingsRequest) GetWorkspaceId() string {
@@ -9395,7 +9353,7 @@ type ListFoundryHealFindingsResponse struct {
 
 func (x *ListFoundryHealFindingsResponse) Reset() {
 	*x = ListFoundryHealFindingsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[155]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[154]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9407,7 +9365,7 @@ func (x *ListFoundryHealFindingsResponse) String() string {
 func (*ListFoundryHealFindingsResponse) ProtoMessage() {}
 
 func (x *ListFoundryHealFindingsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[155]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[154]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9420,7 +9378,7 @@ func (x *ListFoundryHealFindingsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryHealFindingsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryHealFindingsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{155}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{154}
 }
 
 func (x *ListFoundryHealFindingsResponse) GetFindings() []*FoundryHealFinding {
@@ -9467,7 +9425,7 @@ type DismissFoundryHealFindingRequest struct {
 
 func (x *DismissFoundryHealFindingRequest) Reset() {
 	*x = DismissFoundryHealFindingRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[156]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[155]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9479,7 +9437,7 @@ func (x *DismissFoundryHealFindingRequest) String() string {
 func (*DismissFoundryHealFindingRequest) ProtoMessage() {}
 
 func (x *DismissFoundryHealFindingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[156]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[155]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9492,7 +9450,7 @@ func (x *DismissFoundryHealFindingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DismissFoundryHealFindingRequest.ProtoReflect.Descriptor instead.
 func (*DismissFoundryHealFindingRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{156}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{155}
 }
 
 func (x *DismissFoundryHealFindingRequest) GetWorkspaceId() string {
@@ -9526,7 +9484,7 @@ type FoundryHealFindingResponse struct {
 
 func (x *FoundryHealFindingResponse) Reset() {
 	*x = FoundryHealFindingResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[157]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[156]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9538,7 +9496,7 @@ func (x *FoundryHealFindingResponse) String() string {
 func (*FoundryHealFindingResponse) ProtoMessage() {}
 
 func (x *FoundryHealFindingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[157]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[156]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9551,7 +9509,7 @@ func (x *FoundryHealFindingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryHealFindingResponse.ProtoReflect.Descriptor instead.
 func (*FoundryHealFindingResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{157}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{156}
 }
 
 func (x *FoundryHealFindingResponse) GetFinding() *FoundryHealFinding {
@@ -9580,7 +9538,7 @@ type CreateFoundryWorkflowRequest struct {
 
 func (x *CreateFoundryWorkflowRequest) Reset() {
 	*x = CreateFoundryWorkflowRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[158]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[157]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9592,7 +9550,7 @@ func (x *CreateFoundryWorkflowRequest) String() string {
 func (*CreateFoundryWorkflowRequest) ProtoMessage() {}
 
 func (x *CreateFoundryWorkflowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[158]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[157]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9605,7 +9563,7 @@ func (x *CreateFoundryWorkflowRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFoundryWorkflowRequest.ProtoReflect.Descriptor instead.
 func (*CreateFoundryWorkflowRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{158}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{157}
 }
 
 func (x *CreateFoundryWorkflowRequest) GetWorkspaceId() string {
@@ -9653,7 +9611,7 @@ type FoundryWorkflowResponse struct {
 
 func (x *FoundryWorkflowResponse) Reset() {
 	*x = FoundryWorkflowResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[159]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[158]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9665,7 +9623,7 @@ func (x *FoundryWorkflowResponse) String() string {
 func (*FoundryWorkflowResponse) ProtoMessage() {}
 
 func (x *FoundryWorkflowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[159]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[158]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9678,7 +9636,7 @@ func (x *FoundryWorkflowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowResponse.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{159}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{158}
 }
 
 func (x *FoundryWorkflowResponse) GetWorkflow() *FoundryWorkflow {
@@ -9702,7 +9660,7 @@ type ListFoundryWorkflowsRequest struct {
 
 func (x *ListFoundryWorkflowsRequest) Reset() {
 	*x = ListFoundryWorkflowsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[160]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[159]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9714,7 +9672,7 @@ func (x *ListFoundryWorkflowsRequest) String() string {
 func (*ListFoundryWorkflowsRequest) ProtoMessage() {}
 
 func (x *ListFoundryWorkflowsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[160]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[159]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9727,7 +9685,7 @@ func (x *ListFoundryWorkflowsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryWorkflowsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryWorkflowsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{160}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{159}
 }
 
 func (x *ListFoundryWorkflowsRequest) GetWorkspaceId() string {
@@ -9762,7 +9720,7 @@ type ListFoundryWorkflowsResponse struct {
 
 func (x *ListFoundryWorkflowsResponse) Reset() {
 	*x = ListFoundryWorkflowsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[161]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[160]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9774,7 +9732,7 @@ func (x *ListFoundryWorkflowsResponse) String() string {
 func (*ListFoundryWorkflowsResponse) ProtoMessage() {}
 
 func (x *ListFoundryWorkflowsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[161]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[160]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9787,7 +9745,7 @@ func (x *ListFoundryWorkflowsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryWorkflowsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryWorkflowsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{161}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{160}
 }
 
 func (x *ListFoundryWorkflowsResponse) GetWorkflows() []*FoundryWorkflow {
@@ -9816,7 +9774,7 @@ type GetFoundryWorkflowRequest struct {
 
 func (x *GetFoundryWorkflowRequest) Reset() {
 	*x = GetFoundryWorkflowRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[162]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[161]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9828,7 +9786,7 @@ func (x *GetFoundryWorkflowRequest) String() string {
 func (*GetFoundryWorkflowRequest) ProtoMessage() {}
 
 func (x *GetFoundryWorkflowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[162]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[161]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9841,7 +9799,7 @@ func (x *GetFoundryWorkflowRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryWorkflowRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryWorkflowRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{162}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{161}
 }
 
 func (x *GetFoundryWorkflowRequest) GetWorkspaceId() string {
@@ -9879,7 +9837,7 @@ type DeleteFoundryWorkflowRequest struct {
 
 func (x *DeleteFoundryWorkflowRequest) Reset() {
 	*x = DeleteFoundryWorkflowRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[163]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[162]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9891,7 +9849,7 @@ func (x *DeleteFoundryWorkflowRequest) String() string {
 func (*DeleteFoundryWorkflowRequest) ProtoMessage() {}
 
 func (x *DeleteFoundryWorkflowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[163]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[162]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9904,7 +9862,7 @@ func (x *DeleteFoundryWorkflowRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFoundryWorkflowRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryWorkflowRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{163}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{162}
 }
 
 func (x *DeleteFoundryWorkflowRequest) GetWorkspaceId() string {
@@ -9948,7 +9906,7 @@ type StartFoundryWorkflowRunRequest struct {
 
 func (x *StartFoundryWorkflowRunRequest) Reset() {
 	*x = StartFoundryWorkflowRunRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[164]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[163]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9960,7 +9918,7 @@ func (x *StartFoundryWorkflowRunRequest) String() string {
 func (*StartFoundryWorkflowRunRequest) ProtoMessage() {}
 
 func (x *StartFoundryWorkflowRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[164]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[163]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9973,7 +9931,7 @@ func (x *StartFoundryWorkflowRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartFoundryWorkflowRunRequest.ProtoReflect.Descriptor instead.
 func (*StartFoundryWorkflowRunRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{164}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{163}
 }
 
 func (x *StartFoundryWorkflowRunRequest) GetWorkspaceId() string {
@@ -10021,7 +9979,7 @@ type FoundryWorkflowRunResponse struct {
 
 func (x *FoundryWorkflowRunResponse) Reset() {
 	*x = FoundryWorkflowRunResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[165]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[164]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10033,7 +9991,7 @@ func (x *FoundryWorkflowRunResponse) String() string {
 func (*FoundryWorkflowRunResponse) ProtoMessage() {}
 
 func (x *FoundryWorkflowRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[165]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[164]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10046,7 +10004,7 @@ func (x *FoundryWorkflowRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowRunResponse.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowRunResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{165}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{164}
 }
 
 func (x *FoundryWorkflowRunResponse) GetRun() *FoundryWorkflowRun {
@@ -10075,7 +10033,7 @@ type GetFoundryWorkflowInsightsRequest struct {
 
 func (x *GetFoundryWorkflowInsightsRequest) Reset() {
 	*x = GetFoundryWorkflowInsightsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[166]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[165]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10087,7 +10045,7 @@ func (x *GetFoundryWorkflowInsightsRequest) String() string {
 func (*GetFoundryWorkflowInsightsRequest) ProtoMessage() {}
 
 func (x *GetFoundryWorkflowInsightsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[166]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[165]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10100,7 +10058,7 @@ func (x *GetFoundryWorkflowInsightsRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use GetFoundryWorkflowInsightsRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryWorkflowInsightsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{166}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{165}
 }
 
 func (x *GetFoundryWorkflowInsightsRequest) GetWorkspaceId() string {
@@ -10154,7 +10112,7 @@ type ListFoundryWorkflowRunsRequest struct {
 
 func (x *ListFoundryWorkflowRunsRequest) Reset() {
 	*x = ListFoundryWorkflowRunsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[167]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[166]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10166,7 +10124,7 @@ func (x *ListFoundryWorkflowRunsRequest) String() string {
 func (*ListFoundryWorkflowRunsRequest) ProtoMessage() {}
 
 func (x *ListFoundryWorkflowRunsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[167]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[166]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10179,7 +10137,7 @@ func (x *ListFoundryWorkflowRunsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryWorkflowRunsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryWorkflowRunsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{167}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{166}
 }
 
 func (x *ListFoundryWorkflowRunsRequest) GetWorkspaceId() string {
@@ -10221,7 +10179,7 @@ type ListFoundryWorkflowRunsResponse struct {
 
 func (x *ListFoundryWorkflowRunsResponse) Reset() {
 	*x = ListFoundryWorkflowRunsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[168]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[167]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10233,7 +10191,7 @@ func (x *ListFoundryWorkflowRunsResponse) String() string {
 func (*ListFoundryWorkflowRunsResponse) ProtoMessage() {}
 
 func (x *ListFoundryWorkflowRunsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[168]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[167]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10246,7 +10204,7 @@ func (x *ListFoundryWorkflowRunsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryWorkflowRunsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryWorkflowRunsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{168}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{167}
 }
 
 func (x *ListFoundryWorkflowRunsResponse) GetRuns() []*FoundryWorkflowRun {
@@ -10276,7 +10234,7 @@ type GetFoundryWorkflowRunRequest struct {
 
 func (x *GetFoundryWorkflowRunRequest) Reset() {
 	*x = GetFoundryWorkflowRunRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[169]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[168]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10288,7 +10246,7 @@ func (x *GetFoundryWorkflowRunRequest) String() string {
 func (*GetFoundryWorkflowRunRequest) ProtoMessage() {}
 
 func (x *GetFoundryWorkflowRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[169]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[168]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10301,7 +10259,7 @@ func (x *GetFoundryWorkflowRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryWorkflowRunRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryWorkflowRunRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{169}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{168}
 }
 
 func (x *GetFoundryWorkflowRunRequest) GetWorkspaceId() string {
@@ -10353,7 +10311,7 @@ type FinishFoundryWorkflowRunRequest struct {
 
 func (x *FinishFoundryWorkflowRunRequest) Reset() {
 	*x = FinishFoundryWorkflowRunRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[170]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[169]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10365,7 +10323,7 @@ func (x *FinishFoundryWorkflowRunRequest) String() string {
 func (*FinishFoundryWorkflowRunRequest) ProtoMessage() {}
 
 func (x *FinishFoundryWorkflowRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[170]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[169]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10378,7 +10336,7 @@ func (x *FinishFoundryWorkflowRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinishFoundryWorkflowRunRequest.ProtoReflect.Descriptor instead.
 func (*FinishFoundryWorkflowRunRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{170}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{169}
 }
 
 func (x *FinishFoundryWorkflowRunRequest) GetWorkspaceId() string {
@@ -10440,7 +10398,7 @@ type ListFoundryWorkflowRunAccessesRequest struct {
 
 func (x *ListFoundryWorkflowRunAccessesRequest) Reset() {
 	*x = ListFoundryWorkflowRunAccessesRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[171]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[170]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10452,7 +10410,7 @@ func (x *ListFoundryWorkflowRunAccessesRequest) String() string {
 func (*ListFoundryWorkflowRunAccessesRequest) ProtoMessage() {}
 
 func (x *ListFoundryWorkflowRunAccessesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[171]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[170]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10465,7 +10423,7 @@ func (x *ListFoundryWorkflowRunAccessesRequest) ProtoReflect() protoreflect.Mess
 
 // Deprecated: Use ListFoundryWorkflowRunAccessesRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryWorkflowRunAccessesRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{171}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{170}
 }
 
 func (x *ListFoundryWorkflowRunAccessesRequest) GetWorkspaceId() string {
@@ -10515,7 +10473,7 @@ type ListFoundryWorkflowRunAccessesResponse struct {
 
 func (x *ListFoundryWorkflowRunAccessesResponse) Reset() {
 	*x = ListFoundryWorkflowRunAccessesResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[172]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[171]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10527,7 +10485,7 @@ func (x *ListFoundryWorkflowRunAccessesResponse) String() string {
 func (*ListFoundryWorkflowRunAccessesResponse) ProtoMessage() {}
 
 func (x *ListFoundryWorkflowRunAccessesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[172]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[171]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10540,7 +10498,7 @@ func (x *ListFoundryWorkflowRunAccessesResponse) ProtoReflect() protoreflect.Mes
 
 // Deprecated: Use ListFoundryWorkflowRunAccessesResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryWorkflowRunAccessesResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{172}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{171}
 }
 
 func (x *ListFoundryWorkflowRunAccessesResponse) GetAccesses() []*FoundryWorkflowAccess {
@@ -10573,7 +10531,7 @@ type AssessFoundryWorkflowRunRequest struct {
 
 func (x *AssessFoundryWorkflowRunRequest) Reset() {
 	*x = AssessFoundryWorkflowRunRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[173]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[172]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10585,7 +10543,7 @@ func (x *AssessFoundryWorkflowRunRequest) String() string {
 func (*AssessFoundryWorkflowRunRequest) ProtoMessage() {}
 
 func (x *AssessFoundryWorkflowRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[173]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[172]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10598,7 +10556,7 @@ func (x *AssessFoundryWorkflowRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssessFoundryWorkflowRunRequest.ProtoReflect.Descriptor instead.
 func (*AssessFoundryWorkflowRunRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{173}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{172}
 }
 
 func (x *AssessFoundryWorkflowRunRequest) GetWorkspaceId() string {
@@ -10650,7 +10608,7 @@ type SendFoundryAgentMessageRequest struct {
 
 func (x *SendFoundryAgentMessageRequest) Reset() {
 	*x = SendFoundryAgentMessageRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[174]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[173]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10662,7 +10620,7 @@ func (x *SendFoundryAgentMessageRequest) String() string {
 func (*SendFoundryAgentMessageRequest) ProtoMessage() {}
 
 func (x *SendFoundryAgentMessageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[174]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[173]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10675,7 +10633,7 @@ func (x *SendFoundryAgentMessageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendFoundryAgentMessageRequest.ProtoReflect.Descriptor instead.
 func (*SendFoundryAgentMessageRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{174}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{173}
 }
 
 func (x *SendFoundryAgentMessageRequest) GetWorkspaceId() string {
@@ -10724,7 +10682,7 @@ type FoundryAgentTurnResponse struct {
 
 func (x *FoundryAgentTurnResponse) Reset() {
 	*x = FoundryAgentTurnResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[175]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[174]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10736,7 +10694,7 @@ func (x *FoundryAgentTurnResponse) String() string {
 func (*FoundryAgentTurnResponse) ProtoMessage() {}
 
 func (x *FoundryAgentTurnResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[175]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[174]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10749,7 +10707,7 @@ func (x *FoundryAgentTurnResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentTurnResponse.ProtoReflect.Descriptor instead.
 func (*FoundryAgentTurnResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{175}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{174}
 }
 
 func (x *FoundryAgentTurnResponse) GetTurn() *FoundryAgentTurn {
@@ -10779,7 +10737,7 @@ type ListFoundryAgentThreadsRequest struct {
 
 func (x *ListFoundryAgentThreadsRequest) Reset() {
 	*x = ListFoundryAgentThreadsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[176]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[175]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10791,7 +10749,7 @@ func (x *ListFoundryAgentThreadsRequest) String() string {
 func (*ListFoundryAgentThreadsRequest) ProtoMessage() {}
 
 func (x *ListFoundryAgentThreadsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[176]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[175]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10804,7 +10762,7 @@ func (x *ListFoundryAgentThreadsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryAgentThreadsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryAgentThreadsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{176}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{175}
 }
 
 func (x *ListFoundryAgentThreadsRequest) GetWorkspaceId() string {
@@ -10832,7 +10790,7 @@ type ListFoundryAgentThreadsResponse struct {
 
 func (x *ListFoundryAgentThreadsResponse) Reset() {
 	*x = ListFoundryAgentThreadsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[177]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[176]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10844,7 +10802,7 @@ func (x *ListFoundryAgentThreadsResponse) String() string {
 func (*ListFoundryAgentThreadsResponse) ProtoMessage() {}
 
 func (x *ListFoundryAgentThreadsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[177]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[176]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10857,7 +10815,7 @@ func (x *ListFoundryAgentThreadsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryAgentThreadsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryAgentThreadsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{177}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{176}
 }
 
 func (x *ListFoundryAgentThreadsResponse) GetThreads() []*FoundryAgentThread {
@@ -10885,7 +10843,7 @@ type GetFoundryAgentThreadRequest struct {
 
 func (x *GetFoundryAgentThreadRequest) Reset() {
 	*x = GetFoundryAgentThreadRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[178]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[177]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10897,7 +10855,7 @@ func (x *GetFoundryAgentThreadRequest) String() string {
 func (*GetFoundryAgentThreadRequest) ProtoMessage() {}
 
 func (x *GetFoundryAgentThreadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[178]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[177]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10910,7 +10868,7 @@ func (x *GetFoundryAgentThreadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryAgentThreadRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryAgentThreadRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{178}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{177}
 }
 
 func (x *GetFoundryAgentThreadRequest) GetWorkspaceId() string {
@@ -10941,7 +10899,7 @@ type FoundryAgentThreadResponse struct {
 
 func (x *FoundryAgentThreadResponse) Reset() {
 	*x = FoundryAgentThreadResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[179]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[178]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10953,7 +10911,7 @@ func (x *FoundryAgentThreadResponse) String() string {
 func (*FoundryAgentThreadResponse) ProtoMessage() {}
 
 func (x *FoundryAgentThreadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[179]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[178]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10966,7 +10924,7 @@ func (x *FoundryAgentThreadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentThreadResponse.ProtoReflect.Descriptor instead.
 func (*FoundryAgentThreadResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{179}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{178}
 }
 
 func (x *FoundryAgentThreadResponse) GetThread() *FoundryAgentThread {
@@ -11003,7 +10961,7 @@ type DeleteFoundryAgentThreadRequest struct {
 
 func (x *DeleteFoundryAgentThreadRequest) Reset() {
 	*x = DeleteFoundryAgentThreadRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[180]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[179]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11015,7 +10973,7 @@ func (x *DeleteFoundryAgentThreadRequest) String() string {
 func (*DeleteFoundryAgentThreadRequest) ProtoMessage() {}
 
 func (x *DeleteFoundryAgentThreadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[180]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[179]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11028,7 +10986,7 @@ func (x *DeleteFoundryAgentThreadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFoundryAgentThreadRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryAgentThreadRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{180}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{179}
 }
 
 func (x *DeleteFoundryAgentThreadRequest) GetWorkspaceId() string {
@@ -11058,7 +11016,7 @@ type ListFoundryAgentTurnEventsRequest struct {
 
 func (x *ListFoundryAgentTurnEventsRequest) Reset() {
 	*x = ListFoundryAgentTurnEventsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[181]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[180]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11070,7 +11028,7 @@ func (x *ListFoundryAgentTurnEventsRequest) String() string {
 func (*ListFoundryAgentTurnEventsRequest) ProtoMessage() {}
 
 func (x *ListFoundryAgentTurnEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[181]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[180]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11083,7 +11041,7 @@ func (x *ListFoundryAgentTurnEventsRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use ListFoundryAgentTurnEventsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryAgentTurnEventsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{181}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{180}
 }
 
 func (x *ListFoundryAgentTurnEventsRequest) GetWorkspaceId() string {
@@ -11121,7 +11079,7 @@ type ListFoundryAgentTurnEventsResponse struct {
 
 func (x *ListFoundryAgentTurnEventsResponse) Reset() {
 	*x = ListFoundryAgentTurnEventsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[182]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[181]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11133,7 +11091,7 @@ func (x *ListFoundryAgentTurnEventsResponse) String() string {
 func (*ListFoundryAgentTurnEventsResponse) ProtoMessage() {}
 
 func (x *ListFoundryAgentTurnEventsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[182]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[181]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11146,7 +11104,7 @@ func (x *ListFoundryAgentTurnEventsResponse) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use ListFoundryAgentTurnEventsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryAgentTurnEventsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{182}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{181}
 }
 
 func (x *ListFoundryAgentTurnEventsResponse) GetEvents() []*FoundryAgentEvent {
@@ -11183,7 +11141,7 @@ type CancelFoundryAgentTurnRequest struct {
 
 func (x *CancelFoundryAgentTurnRequest) Reset() {
 	*x = CancelFoundryAgentTurnRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[183]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[182]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11195,7 +11153,7 @@ func (x *CancelFoundryAgentTurnRequest) String() string {
 func (*CancelFoundryAgentTurnRequest) ProtoMessage() {}
 
 func (x *CancelFoundryAgentTurnRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[183]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[182]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11208,7 +11166,7 @@ func (x *CancelFoundryAgentTurnRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelFoundryAgentTurnRequest.ProtoReflect.Descriptor instead.
 func (*CancelFoundryAgentTurnRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{183}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{182}
 }
 
 func (x *CancelFoundryAgentTurnRequest) GetWorkspaceId() string {
@@ -11246,7 +11204,7 @@ type ExecuteFoundryAgentActionRequest struct {
 
 func (x *ExecuteFoundryAgentActionRequest) Reset() {
 	*x = ExecuteFoundryAgentActionRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[184]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[183]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11258,7 +11216,7 @@ func (x *ExecuteFoundryAgentActionRequest) String() string {
 func (*ExecuteFoundryAgentActionRequest) ProtoMessage() {}
 
 func (x *ExecuteFoundryAgentActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[184]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[183]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11271,7 +11229,7 @@ func (x *ExecuteFoundryAgentActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteFoundryAgentActionRequest.ProtoReflect.Descriptor instead.
 func (*ExecuteFoundryAgentActionRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{184}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{183}
 }
 
 func (x *ExecuteFoundryAgentActionRequest) GetWorkspaceId() string {
@@ -11308,7 +11266,7 @@ type RefreshFoundryAgentActionRequest struct {
 
 func (x *RefreshFoundryAgentActionRequest) Reset() {
 	*x = RefreshFoundryAgentActionRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[185]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[184]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11320,7 +11278,7 @@ func (x *RefreshFoundryAgentActionRequest) String() string {
 func (*RefreshFoundryAgentActionRequest) ProtoMessage() {}
 
 func (x *RefreshFoundryAgentActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[185]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[184]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11333,7 +11291,7 @@ func (x *RefreshFoundryAgentActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefreshFoundryAgentActionRequest.ProtoReflect.Descriptor instead.
 func (*RefreshFoundryAgentActionRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{185}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{184}
 }
 
 func (x *RefreshFoundryAgentActionRequest) GetWorkspaceId() string {
@@ -11362,7 +11320,7 @@ type DismissFoundryAgentActionRequest struct {
 
 func (x *DismissFoundryAgentActionRequest) Reset() {
 	*x = DismissFoundryAgentActionRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[186]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[185]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11374,7 +11332,7 @@ func (x *DismissFoundryAgentActionRequest) String() string {
 func (*DismissFoundryAgentActionRequest) ProtoMessage() {}
 
 func (x *DismissFoundryAgentActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[186]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[185]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11387,7 +11345,7 @@ func (x *DismissFoundryAgentActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DismissFoundryAgentActionRequest.ProtoReflect.Descriptor instead.
 func (*DismissFoundryAgentActionRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{186}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{185}
 }
 
 func (x *DismissFoundryAgentActionRequest) GetWorkspaceId() string {
@@ -11416,7 +11374,7 @@ type FoundryAgentActionResponse struct {
 
 func (x *FoundryAgentActionResponse) Reset() {
 	*x = FoundryAgentActionResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[187]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[186]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11428,7 +11386,7 @@ func (x *FoundryAgentActionResponse) String() string {
 func (*FoundryAgentActionResponse) ProtoMessage() {}
 
 func (x *FoundryAgentActionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[187]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[186]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11441,7 +11399,7 @@ func (x *FoundryAgentActionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentActionResponse.ProtoReflect.Descriptor instead.
 func (*FoundryAgentActionResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{187}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{186}
 }
 
 func (x *FoundryAgentActionResponse) GetAction() *FoundryAgentAction {
@@ -11468,7 +11426,7 @@ type GetFoundryAgentRuntimeRequest struct {
 
 func (x *GetFoundryAgentRuntimeRequest) Reset() {
 	*x = GetFoundryAgentRuntimeRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[188]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[187]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11480,7 +11438,7 @@ func (x *GetFoundryAgentRuntimeRequest) String() string {
 func (*GetFoundryAgentRuntimeRequest) ProtoMessage() {}
 
 func (x *GetFoundryAgentRuntimeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[188]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[187]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11493,7 +11451,7 @@ func (x *GetFoundryAgentRuntimeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryAgentRuntimeRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryAgentRuntimeRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{188}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{187}
 }
 
 func (x *GetFoundryAgentRuntimeRequest) GetWorkspaceId() string {
@@ -11520,7 +11478,7 @@ type UpdateFoundryAgentRuntimeRequest struct {
 
 func (x *UpdateFoundryAgentRuntimeRequest) Reset() {
 	*x = UpdateFoundryAgentRuntimeRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[189]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[188]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11532,7 +11490,7 @@ func (x *UpdateFoundryAgentRuntimeRequest) String() string {
 func (*UpdateFoundryAgentRuntimeRequest) ProtoMessage() {}
 
 func (x *UpdateFoundryAgentRuntimeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[189]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[188]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11545,7 +11503,7 @@ func (x *UpdateFoundryAgentRuntimeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateFoundryAgentRuntimeRequest.ProtoReflect.Descriptor instead.
 func (*UpdateFoundryAgentRuntimeRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{189}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{188}
 }
 
 func (x *UpdateFoundryAgentRuntimeRequest) GetWorkspaceId() string {
@@ -11572,7 +11530,7 @@ type FoundryAgentRuntimeResponse struct {
 
 func (x *FoundryAgentRuntimeResponse) Reset() {
 	*x = FoundryAgentRuntimeResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[190]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[189]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11584,7 +11542,7 @@ func (x *FoundryAgentRuntimeResponse) String() string {
 func (*FoundryAgentRuntimeResponse) ProtoMessage() {}
 
 func (x *FoundryAgentRuntimeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[190]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[189]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11597,7 +11555,7 @@ func (x *FoundryAgentRuntimeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentRuntimeResponse.ProtoReflect.Descriptor instead.
 func (*FoundryAgentRuntimeResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{190}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{189}
 }
 
 func (x *FoundryAgentRuntimeResponse) GetRuntime() *FoundryAgentRuntime {
@@ -11620,7 +11578,7 @@ type CreateFoundryAgentHostPairingRequest struct {
 
 func (x *CreateFoundryAgentHostPairingRequest) Reset() {
 	*x = CreateFoundryAgentHostPairingRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[191]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[190]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11632,7 +11590,7 @@ func (x *CreateFoundryAgentHostPairingRequest) String() string {
 func (*CreateFoundryAgentHostPairingRequest) ProtoMessage() {}
 
 func (x *CreateFoundryAgentHostPairingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[191]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[190]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11645,7 +11603,7 @@ func (x *CreateFoundryAgentHostPairingRequest) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use CreateFoundryAgentHostPairingRequest.ProtoReflect.Descriptor instead.
 func (*CreateFoundryAgentHostPairingRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{191}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{190}
 }
 
 func (x *CreateFoundryAgentHostPairingRequest) GetWorkspaceId() string {
@@ -11669,7 +11627,7 @@ type FoundryAgentHostPairingResponse struct {
 
 func (x *FoundryAgentHostPairingResponse) Reset() {
 	*x = FoundryAgentHostPairingResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[192]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[191]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11681,7 +11639,7 @@ func (x *FoundryAgentHostPairingResponse) String() string {
 func (*FoundryAgentHostPairingResponse) ProtoMessage() {}
 
 func (x *FoundryAgentHostPairingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[192]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[191]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11694,7 +11652,7 @@ func (x *FoundryAgentHostPairingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentHostPairingResponse.ProtoReflect.Descriptor instead.
 func (*FoundryAgentHostPairingResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{192}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{191}
 }
 
 func (x *FoundryAgentHostPairingResponse) GetCode() string {
@@ -11732,7 +11690,7 @@ type RevokeFoundryAgentHostRequest struct {
 
 func (x *RevokeFoundryAgentHostRequest) Reset() {
 	*x = RevokeFoundryAgentHostRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[193]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[192]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11744,7 +11702,7 @@ func (x *RevokeFoundryAgentHostRequest) String() string {
 func (*RevokeFoundryAgentHostRequest) ProtoMessage() {}
 
 func (x *RevokeFoundryAgentHostRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[193]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[192]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11757,7 +11715,7 @@ func (x *RevokeFoundryAgentHostRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeFoundryAgentHostRequest.ProtoReflect.Descriptor instead.
 func (*RevokeFoundryAgentHostRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{193}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{192}
 }
 
 func (x *RevokeFoundryAgentHostRequest) GetWorkspaceId() string {
@@ -11784,7 +11742,7 @@ type FoundryAgentHostResponse struct {
 
 func (x *FoundryAgentHostResponse) Reset() {
 	*x = FoundryAgentHostResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[194]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[193]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11796,7 +11754,7 @@ func (x *FoundryAgentHostResponse) String() string {
 func (*FoundryAgentHostResponse) ProtoMessage() {}
 
 func (x *FoundryAgentHostResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[194]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[193]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11809,7 +11767,7 @@ func (x *FoundryAgentHostResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentHostResponse.ProtoReflect.Descriptor instead.
 func (*FoundryAgentHostResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{194}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{193}
 }
 
 func (x *FoundryAgentHostResponse) GetHost() *FoundryAgentHost {
@@ -11832,7 +11790,7 @@ type ListFoundryDashboardsRequest struct {
 
 func (x *ListFoundryDashboardsRequest) Reset() {
 	*x = ListFoundryDashboardsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[195]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[194]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11844,7 +11802,7 @@ func (x *ListFoundryDashboardsRequest) String() string {
 func (*ListFoundryDashboardsRequest) ProtoMessage() {}
 
 func (x *ListFoundryDashboardsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[195]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[194]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11857,7 +11815,7 @@ func (x *ListFoundryDashboardsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryDashboardsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryDashboardsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{195}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{194}
 }
 
 func (x *ListFoundryDashboardsRequest) GetWorkspaceId() string {
@@ -11879,7 +11837,7 @@ type ListFoundryDashboardsResponse struct {
 
 func (x *ListFoundryDashboardsResponse) Reset() {
 	*x = ListFoundryDashboardsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[196]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[195]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11891,7 +11849,7 @@ func (x *ListFoundryDashboardsResponse) String() string {
 func (*ListFoundryDashboardsResponse) ProtoMessage() {}
 
 func (x *ListFoundryDashboardsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[196]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[195]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11904,7 +11862,7 @@ func (x *ListFoundryDashboardsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryDashboardsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryDashboardsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{196}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{195}
 }
 
 func (x *ListFoundryDashboardsResponse) GetDashboards() []*FoundryDashboard {
@@ -11932,7 +11890,7 @@ type GetFoundryDashboardRequest struct {
 
 func (x *GetFoundryDashboardRequest) Reset() {
 	*x = GetFoundryDashboardRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[197]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[196]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11944,7 +11902,7 @@ func (x *GetFoundryDashboardRequest) String() string {
 func (*GetFoundryDashboardRequest) ProtoMessage() {}
 
 func (x *GetFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[197]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[196]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11957,7 +11915,7 @@ func (x *GetFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryDashboardRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryDashboardRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{197}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{196}
 }
 
 func (x *GetFoundryDashboardRequest) GetWorkspaceId() string {
@@ -11984,7 +11942,7 @@ type FoundryDashboardResponse struct {
 
 func (x *FoundryDashboardResponse) Reset() {
 	*x = FoundryDashboardResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[198]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[197]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11996,7 +11954,7 @@ func (x *FoundryDashboardResponse) String() string {
 func (*FoundryDashboardResponse) ProtoMessage() {}
 
 func (x *FoundryDashboardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[198]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[197]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12009,7 +11967,7 @@ func (x *FoundryDashboardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryDashboardResponse.ProtoReflect.Descriptor instead.
 func (*FoundryDashboardResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{198}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{197}
 }
 
 func (x *FoundryDashboardResponse) GetDashboard() *FoundryDashboard {
@@ -12042,7 +12000,7 @@ type CreateFoundryDashboardRequest struct {
 
 func (x *CreateFoundryDashboardRequest) Reset() {
 	*x = CreateFoundryDashboardRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[199]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[198]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12054,7 +12012,7 @@ func (x *CreateFoundryDashboardRequest) String() string {
 func (*CreateFoundryDashboardRequest) ProtoMessage() {}
 
 func (x *CreateFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[199]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[198]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12067,7 +12025,7 @@ func (x *CreateFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFoundryDashboardRequest.ProtoReflect.Descriptor instead.
 func (*CreateFoundryDashboardRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{199}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{198}
 }
 
 func (x *CreateFoundryDashboardRequest) GetWorkspaceId() string {
@@ -12124,7 +12082,7 @@ type UpdateFoundryDashboardRequest struct {
 
 func (x *UpdateFoundryDashboardRequest) Reset() {
 	*x = UpdateFoundryDashboardRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[200]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[199]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12136,7 +12094,7 @@ func (x *UpdateFoundryDashboardRequest) String() string {
 func (*UpdateFoundryDashboardRequest) ProtoMessage() {}
 
 func (x *UpdateFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[200]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[199]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12149,7 +12107,7 @@ func (x *UpdateFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateFoundryDashboardRequest.ProtoReflect.Descriptor instead.
 func (*UpdateFoundryDashboardRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{200}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{199}
 }
 
 func (x *UpdateFoundryDashboardRequest) GetWorkspaceId() string {
@@ -12205,7 +12163,7 @@ type DeleteFoundryDashboardRequest struct {
 
 func (x *DeleteFoundryDashboardRequest) Reset() {
 	*x = DeleteFoundryDashboardRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[201]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[200]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12217,7 +12175,7 @@ func (x *DeleteFoundryDashboardRequest) String() string {
 func (*DeleteFoundryDashboardRequest) ProtoMessage() {}
 
 func (x *DeleteFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[201]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[200]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12230,7 +12188,7 @@ func (x *DeleteFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFoundryDashboardRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryDashboardRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{201}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{200}
 }
 
 func (x *DeleteFoundryDashboardRequest) GetWorkspaceId() string {
@@ -12265,7 +12223,7 @@ type PinFoundryDashboardRequest struct {
 
 func (x *PinFoundryDashboardRequest) Reset() {
 	*x = PinFoundryDashboardRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[202]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[201]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12277,7 +12235,7 @@ func (x *PinFoundryDashboardRequest) String() string {
 func (*PinFoundryDashboardRequest) ProtoMessage() {}
 
 func (x *PinFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[202]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[201]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12290,7 +12248,7 @@ func (x *PinFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PinFoundryDashboardRequest.ProtoReflect.Descriptor instead.
 func (*PinFoundryDashboardRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{202}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{201}
 }
 
 func (x *PinFoundryDashboardRequest) GetWorkspaceId() string {
@@ -12344,7 +12302,7 @@ type AddFoundryDashboardQuestionVisualRequest struct {
 
 func (x *AddFoundryDashboardQuestionVisualRequest) Reset() {
 	*x = AddFoundryDashboardQuestionVisualRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[203]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[202]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12356,7 +12314,7 @@ func (x *AddFoundryDashboardQuestionVisualRequest) String() string {
 func (*AddFoundryDashboardQuestionVisualRequest) ProtoMessage() {}
 
 func (x *AddFoundryDashboardQuestionVisualRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[203]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[202]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12369,7 +12327,7 @@ func (x *AddFoundryDashboardQuestionVisualRequest) ProtoReflect() protoreflect.M
 
 // Deprecated: Use AddFoundryDashboardQuestionVisualRequest.ProtoReflect.Descriptor instead.
 func (*AddFoundryDashboardQuestionVisualRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{203}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{202}
 }
 
 func (x *AddFoundryDashboardQuestionVisualRequest) GetWorkspaceId() string {
@@ -12434,7 +12392,7 @@ type PreviewFoundryDashboardTileRequest struct {
 
 func (x *PreviewFoundryDashboardTileRequest) Reset() {
 	*x = PreviewFoundryDashboardTileRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[204]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[203]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12446,7 +12404,7 @@ func (x *PreviewFoundryDashboardTileRequest) String() string {
 func (*PreviewFoundryDashboardTileRequest) ProtoMessage() {}
 
 func (x *PreviewFoundryDashboardTileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[204]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[203]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12459,7 +12417,7 @@ func (x *PreviewFoundryDashboardTileRequest) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use PreviewFoundryDashboardTileRequest.ProtoReflect.Descriptor instead.
 func (*PreviewFoundryDashboardTileRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{204}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{203}
 }
 
 func (x *PreviewFoundryDashboardTileRequest) GetWorkspaceId() string {
@@ -12493,7 +12451,7 @@ type PreviewFoundryDashboardTileResponse struct {
 
 func (x *PreviewFoundryDashboardTileResponse) Reset() {
 	*x = PreviewFoundryDashboardTileResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[205]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[204]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12505,7 +12463,7 @@ func (x *PreviewFoundryDashboardTileResponse) String() string {
 func (*PreviewFoundryDashboardTileResponse) ProtoMessage() {}
 
 func (x *PreviewFoundryDashboardTileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[205]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[204]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12518,7 +12476,7 @@ func (x *PreviewFoundryDashboardTileResponse) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use PreviewFoundryDashboardTileResponse.ProtoReflect.Descriptor instead.
 func (*PreviewFoundryDashboardTileResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{205}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{204}
 }
 
 func (x *PreviewFoundryDashboardTileResponse) GetTileJson() string {
@@ -12570,7 +12528,7 @@ type PublishFoundryDashboardRequest struct {
 
 func (x *PublishFoundryDashboardRequest) Reset() {
 	*x = PublishFoundryDashboardRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[206]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[205]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12582,7 +12540,7 @@ func (x *PublishFoundryDashboardRequest) String() string {
 func (*PublishFoundryDashboardRequest) ProtoMessage() {}
 
 func (x *PublishFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[206]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[205]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12595,7 +12553,7 @@ func (x *PublishFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishFoundryDashboardRequest.ProtoReflect.Descriptor instead.
 func (*PublishFoundryDashboardRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{206}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{205}
 }
 
 func (x *PublishFoundryDashboardRequest) GetWorkspaceId() string {
@@ -12633,7 +12591,7 @@ type UnpublishFoundryDashboardRequest struct {
 
 func (x *UnpublishFoundryDashboardRequest) Reset() {
 	*x = UnpublishFoundryDashboardRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[207]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[206]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12645,7 +12603,7 @@ func (x *UnpublishFoundryDashboardRequest) String() string {
 func (*UnpublishFoundryDashboardRequest) ProtoMessage() {}
 
 func (x *UnpublishFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[207]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[206]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12658,7 +12616,7 @@ func (x *UnpublishFoundryDashboardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnpublishFoundryDashboardRequest.ProtoReflect.Descriptor instead.
 func (*UnpublishFoundryDashboardRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{207}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{206}
 }
 
 func (x *UnpublishFoundryDashboardRequest) GetWorkspaceId() string {
@@ -12688,7 +12646,7 @@ type ListFoundryAutomationsRequest struct {
 
 func (x *ListFoundryAutomationsRequest) Reset() {
 	*x = ListFoundryAutomationsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[208]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[207]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12700,7 +12658,7 @@ func (x *ListFoundryAutomationsRequest) String() string {
 func (*ListFoundryAutomationsRequest) ProtoMessage() {}
 
 func (x *ListFoundryAutomationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[208]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[207]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12713,7 +12671,7 @@ func (x *ListFoundryAutomationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryAutomationsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryAutomationsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{208}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{207}
 }
 
 func (x *ListFoundryAutomationsRequest) GetWorkspaceId() string {
@@ -12738,7 +12696,7 @@ type ListFoundryAutomationsResponse struct {
 
 func (x *ListFoundryAutomationsResponse) Reset() {
 	*x = ListFoundryAutomationsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[209]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[208]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12750,7 +12708,7 @@ func (x *ListFoundryAutomationsResponse) String() string {
 func (*ListFoundryAutomationsResponse) ProtoMessage() {}
 
 func (x *ListFoundryAutomationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[209]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[208]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12763,7 +12721,7 @@ func (x *ListFoundryAutomationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryAutomationsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryAutomationsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{209}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{208}
 }
 
 func (x *ListFoundryAutomationsResponse) GetAutomations() []*FoundryAutomation {
@@ -12798,7 +12756,7 @@ type GetFoundryAutomationRequest struct {
 
 func (x *GetFoundryAutomationRequest) Reset() {
 	*x = GetFoundryAutomationRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[210]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[209]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12810,7 +12768,7 @@ func (x *GetFoundryAutomationRequest) String() string {
 func (*GetFoundryAutomationRequest) ProtoMessage() {}
 
 func (x *GetFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[210]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[209]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12823,7 +12781,7 @@ func (x *GetFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryAutomationRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryAutomationRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{210}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{209}
 }
 
 func (x *GetFoundryAutomationRequest) GetWorkspaceId() string {
@@ -12850,7 +12808,7 @@ type FoundryAutomationResponse struct {
 
 func (x *FoundryAutomationResponse) Reset() {
 	*x = FoundryAutomationResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[211]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[210]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12862,7 +12820,7 @@ func (x *FoundryAutomationResponse) String() string {
 func (*FoundryAutomationResponse) ProtoMessage() {}
 
 func (x *FoundryAutomationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[211]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[210]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12875,7 +12833,7 @@ func (x *FoundryAutomationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAutomationResponse.ProtoReflect.Descriptor instead.
 func (*FoundryAutomationResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{211}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{210}
 }
 
 func (x *FoundryAutomationResponse) GetAutomation() *FoundryAutomation {
@@ -12910,7 +12868,7 @@ type CreateFoundryAutomationRequest struct {
 
 func (x *CreateFoundryAutomationRequest) Reset() {
 	*x = CreateFoundryAutomationRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[212]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[211]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12922,7 +12880,7 @@ func (x *CreateFoundryAutomationRequest) String() string {
 func (*CreateFoundryAutomationRequest) ProtoMessage() {}
 
 func (x *CreateFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[212]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[211]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12935,7 +12893,7 @@ func (x *CreateFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFoundryAutomationRequest.ProtoReflect.Descriptor instead.
 func (*CreateFoundryAutomationRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{212}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{211}
 }
 
 func (x *CreateFoundryAutomationRequest) GetWorkspaceId() string {
@@ -12994,7 +12952,7 @@ type UpdateFoundryAutomationRequest struct {
 
 func (x *UpdateFoundryAutomationRequest) Reset() {
 	*x = UpdateFoundryAutomationRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[213]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[212]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13006,7 +12964,7 @@ func (x *UpdateFoundryAutomationRequest) String() string {
 func (*UpdateFoundryAutomationRequest) ProtoMessage() {}
 
 func (x *UpdateFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[213]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[212]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13019,7 +12977,7 @@ func (x *UpdateFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateFoundryAutomationRequest.ProtoReflect.Descriptor instead.
 func (*UpdateFoundryAutomationRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{213}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{212}
 }
 
 func (x *UpdateFoundryAutomationRequest) GetWorkspaceId() string {
@@ -13077,7 +13035,7 @@ type DeleteFoundryAutomationRequest struct {
 
 func (x *DeleteFoundryAutomationRequest) Reset() {
 	*x = DeleteFoundryAutomationRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[214]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[213]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13089,7 +13047,7 @@ func (x *DeleteFoundryAutomationRequest) String() string {
 func (*DeleteFoundryAutomationRequest) ProtoMessage() {}
 
 func (x *DeleteFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[214]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[213]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13102,7 +13060,7 @@ func (x *DeleteFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFoundryAutomationRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFoundryAutomationRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{214}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{213}
 }
 
 func (x *DeleteFoundryAutomationRequest) GetWorkspaceId() string {
@@ -13138,7 +13096,7 @@ type ApproveFoundryAutomationRequest struct {
 
 func (x *ApproveFoundryAutomationRequest) Reset() {
 	*x = ApproveFoundryAutomationRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[215]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[214]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13150,7 +13108,7 @@ func (x *ApproveFoundryAutomationRequest) String() string {
 func (*ApproveFoundryAutomationRequest) ProtoMessage() {}
 
 func (x *ApproveFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[215]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[214]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13163,7 +13121,7 @@ func (x *ApproveFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApproveFoundryAutomationRequest.ProtoReflect.Descriptor instead.
 func (*ApproveFoundryAutomationRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{215}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{214}
 }
 
 func (x *ApproveFoundryAutomationRequest) GetWorkspaceId() string {
@@ -13201,7 +13159,7 @@ type PauseFoundryAutomationRequest struct {
 
 func (x *PauseFoundryAutomationRequest) Reset() {
 	*x = PauseFoundryAutomationRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[216]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[215]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13213,7 +13171,7 @@ func (x *PauseFoundryAutomationRequest) String() string {
 func (*PauseFoundryAutomationRequest) ProtoMessage() {}
 
 func (x *PauseFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[216]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[215]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13226,7 +13184,7 @@ func (x *PauseFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PauseFoundryAutomationRequest.ProtoReflect.Descriptor instead.
 func (*PauseFoundryAutomationRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{216}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{215}
 }
 
 func (x *PauseFoundryAutomationRequest) GetWorkspaceId() string {
@@ -13257,7 +13215,7 @@ type ResumeFoundryAutomationRequest struct {
 
 func (x *ResumeFoundryAutomationRequest) Reset() {
 	*x = ResumeFoundryAutomationRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[217]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[216]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13269,7 +13227,7 @@ func (x *ResumeFoundryAutomationRequest) String() string {
 func (*ResumeFoundryAutomationRequest) ProtoMessage() {}
 
 func (x *ResumeFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[217]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[216]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13282,7 +13240,7 @@ func (x *ResumeFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeFoundryAutomationRequest.ProtoReflect.Descriptor instead.
 func (*ResumeFoundryAutomationRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{217}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{216}
 }
 
 func (x *ResumeFoundryAutomationRequest) GetWorkspaceId() string {
@@ -13318,7 +13276,7 @@ type RunFoundryAutomationRequest struct {
 
 func (x *RunFoundryAutomationRequest) Reset() {
 	*x = RunFoundryAutomationRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[218]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[217]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13330,7 +13288,7 @@ func (x *RunFoundryAutomationRequest) String() string {
 func (*RunFoundryAutomationRequest) ProtoMessage() {}
 
 func (x *RunFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[218]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[217]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13343,7 +13301,7 @@ func (x *RunFoundryAutomationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunFoundryAutomationRequest.ProtoReflect.Descriptor instead.
 func (*RunFoundryAutomationRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{218}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{217}
 }
 
 func (x *RunFoundryAutomationRequest) GetWorkspaceId() string {
@@ -13381,7 +13339,7 @@ type ListFoundryAutomationRunsRequest struct {
 
 func (x *ListFoundryAutomationRunsRequest) Reset() {
 	*x = ListFoundryAutomationRunsRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[219]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[218]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13393,7 +13351,7 @@ func (x *ListFoundryAutomationRunsRequest) String() string {
 func (*ListFoundryAutomationRunsRequest) ProtoMessage() {}
 
 func (x *ListFoundryAutomationRunsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[219]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[218]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13406,7 +13364,7 @@ func (x *ListFoundryAutomationRunsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFoundryAutomationRunsRequest.ProtoReflect.Descriptor instead.
 func (*ListFoundryAutomationRunsRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{219}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{218}
 }
 
 func (x *ListFoundryAutomationRunsRequest) GetWorkspaceId() string {
@@ -13441,7 +13399,7 @@ type ListFoundryAutomationRunsResponse struct {
 
 func (x *ListFoundryAutomationRunsResponse) Reset() {
 	*x = ListFoundryAutomationRunsResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[220]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[219]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13453,7 +13411,7 @@ func (x *ListFoundryAutomationRunsResponse) String() string {
 func (*ListFoundryAutomationRunsResponse) ProtoMessage() {}
 
 func (x *ListFoundryAutomationRunsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[220]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[219]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13466,7 +13424,7 @@ func (x *ListFoundryAutomationRunsResponse) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use ListFoundryAutomationRunsResponse.ProtoReflect.Descriptor instead.
 func (*ListFoundryAutomationRunsResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{220}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{219}
 }
 
 func (x *ListFoundryAutomationRunsResponse) GetRuns() []*FoundryAutomationRun {
@@ -13497,7 +13455,7 @@ type GetFoundryAutomationRunRequest struct {
 
 func (x *GetFoundryAutomationRunRequest) Reset() {
 	*x = GetFoundryAutomationRunRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[221]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[220]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13509,7 +13467,7 @@ func (x *GetFoundryAutomationRunRequest) String() string {
 func (*GetFoundryAutomationRunRequest) ProtoMessage() {}
 
 func (x *GetFoundryAutomationRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[221]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[220]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13522,7 +13480,7 @@ func (x *GetFoundryAutomationRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFoundryAutomationRunRequest.ProtoReflect.Descriptor instead.
 func (*GetFoundryAutomationRunRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{221}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{220}
 }
 
 func (x *GetFoundryAutomationRunRequest) GetWorkspaceId() string {
@@ -13561,7 +13519,7 @@ type CancelFoundryAutomationRunRequest struct {
 
 func (x *CancelFoundryAutomationRunRequest) Reset() {
 	*x = CancelFoundryAutomationRunRequest{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[222]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[221]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13573,7 +13531,7 @@ func (x *CancelFoundryAutomationRunRequest) String() string {
 func (*CancelFoundryAutomationRunRequest) ProtoMessage() {}
 
 func (x *CancelFoundryAutomationRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[222]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[221]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13586,7 +13544,7 @@ func (x *CancelFoundryAutomationRunRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use CancelFoundryAutomationRunRequest.ProtoReflect.Descriptor instead.
 func (*CancelFoundryAutomationRunRequest) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{222}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{221}
 }
 
 func (x *CancelFoundryAutomationRunRequest) GetWorkspaceId() string {
@@ -13620,7 +13578,7 @@ type FoundryAutomationRunResponse struct {
 
 func (x *FoundryAutomationRunResponse) Reset() {
 	*x = FoundryAutomationRunResponse{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[223]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[222]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13632,7 +13590,7 @@ func (x *FoundryAutomationRunResponse) String() string {
 func (*FoundryAutomationRunResponse) ProtoMessage() {}
 
 func (x *FoundryAutomationRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[223]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[222]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13645,7 +13603,7 @@ func (x *FoundryAutomationRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAutomationRunResponse.ProtoReflect.Descriptor instead.
 func (*FoundryAutomationRunResponse) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{223}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{222}
 }
 
 func (x *FoundryAutomationRunResponse) GetRun() *FoundryAutomationRun {
@@ -13667,7 +13625,7 @@ type FoundryAccessChange_LoadVersion struct {
 
 func (x *FoundryAccessChange_LoadVersion) Reset() {
 	*x = FoundryAccessChange_LoadVersion{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[224]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[223]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13679,7 +13637,7 @@ func (x *FoundryAccessChange_LoadVersion) String() string {
 func (*FoundryAccessChange_LoadVersion) ProtoMessage() {}
 
 func (x *FoundryAccessChange_LoadVersion) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[224]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[223]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13692,7 +13650,7 @@ func (x *FoundryAccessChange_LoadVersion) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAccessChange_LoadVersion.ProtoReflect.Descriptor instead.
 func (*FoundryAccessChange_LoadVersion) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{144, 0}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{143, 0}
 }
 
 func (x *FoundryAccessChange_LoadVersion) GetOntologyId() string {
@@ -13721,7 +13679,7 @@ type FoundryAccessChange_MoveDocument struct {
 
 func (x *FoundryAccessChange_MoveDocument) Reset() {
 	*x = FoundryAccessChange_MoveDocument{}
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[225]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[224]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13733,7 +13691,7 @@ func (x *FoundryAccessChange_MoveDocument) String() string {
 func (*FoundryAccessChange_MoveDocument) ProtoMessage() {}
 
 func (x *FoundryAccessChange_MoveDocument) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[225]
+	mi := &file_helix_foundry_v1_foundry_proto_msgTypes[224]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13746,7 +13704,7 @@ func (x *FoundryAccessChange_MoveDocument) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAccessChange_MoveDocument.ProtoReflect.Descriptor instead.
 func (*FoundryAccessChange_MoveDocument) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{144, 1}
+	return file_helix_foundry_v1_foundry_proto_rawDescGZIP(), []int{143, 1}
 }
 
 func (x *FoundryAccessChange_MoveDocument) GetDocumentId() string {
@@ -14241,7 +14199,7 @@ var file_helix_foundry_v1_foundry_proto_rawDesc = []byte{
 	0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x24, 0x2e, 0x68, 0x65, 0x6c, 0x69, 0x78, 0x2e,
 	0x66, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x6e, 0x74, 0x6f, 0x6c,
 	0x6f, 0x67, 0x79, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x0b, 0x67,
-	0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x22, 0xde, 0x01, 0x0a, 0x1f, 0x41,
+	0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x22, 0xef, 0x01, 0x0a, 0x1f, 0x41,
 	0x6e, 0x73, 0x77, 0x65, 0x72, 0x4f, 0x6e, 0x74, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x47, 0x65, 0x6e,
 	0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x21,
 	0x0a, 0x0c, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x70, 0x61, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x01,
@@ -14249,18 +14207,14 @@ var file_helix_foundry_v1_foundry_proto_rawDesc = []byte{
 	0x64, 0x12, 0x1f, 0x0a, 0x0b, 0x6f, 0x6e, 0x74, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x5f, 0x69, 0x64,
 	0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x6f, 0x6e, 0x74, 0x6f, 0x6c, 0x6f, 0x67, 0x79,
 	0x49, 0x64, 0x12, 0x0e, 0x0a, 0x02, 0x69, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x02,
-	0x69, 0x64, 0x12, 0x44, 0x0a, 0x07, 0x61, 0x6e, 0x73, 0x77, 0x65, 0x72, 0x73, 0x18, 0x04, 0x20,
-	0x03, 0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x68, 0x65, 0x6c, 0x69, 0x78, 0x2e, 0x66, 0x6f, 0x75, 0x6e,
-	0x64, 0x72, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x4f, 0x6e, 0x74, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x47,
-	0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x41, 0x6e, 0x73, 0x77, 0x65, 0x72, 0x52,
-	0x07, 0x61, 0x6e, 0x73, 0x77, 0x65, 0x72, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x75, 0x73, 0x65, 0x5f,
-	0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x73, 0x18, 0x05, 0x20, 0x01, 0x28, 0x08, 0x52, 0x0b,
-	0x75, 0x73, 0x65, 0x44, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x73, 0x22, 0x4f, 0x0a, 0x18, 0x4f,
-	0x6e, 0x74, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f,
-	0x6e, 0x41, 0x6e, 0x73, 0x77, 0x65, 0x72, 0x12, 0x1f, 0x0a, 0x0b, 0x71, 0x75, 0x65, 0x73, 0x74,
-	0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x71, 0x75,
-	0x65, 0x73, 0x74, 0x69, 0x6f, 0x6e, 0x49, 0x64, 0x12, 0x12, 0x0a, 0x04, 0x74, 0x65, 0x78, 0x74,
-	0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x74, 0x65, 0x78, 0x74, 0x22, 0x75, 0x0a, 0x1f,
+	0x69, 0x64, 0x12, 0x3f, 0x0a, 0x07, 0x61, 0x6e, 0x73, 0x77, 0x65, 0x72, 0x73, 0x18, 0x04, 0x20,
+	0x03, 0x28, 0x0b, 0x32, 0x25, 0x2e, 0x68, 0x65, 0x6c, 0x69, 0x78, 0x2e, 0x66, 0x6f, 0x75, 0x6e,
+	0x64, 0x72, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x41, 0x67, 0x65, 0x6e, 0x74, 0x51, 0x75, 0x65, 0x73,
+	0x74, 0x69, 0x6f, 0x6e, 0x41, 0x6e, 0x73, 0x77, 0x65, 0x72, 0x52, 0x07, 0x61, 0x6e, 0x73, 0x77,
+	0x65, 0x72, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x75, 0x73, 0x65, 0x5f, 0x64, 0x65, 0x66, 0x61, 0x75,
+	0x6c, 0x74, 0x73, 0x18, 0x05, 0x20, 0x01, 0x28, 0x08, 0x52, 0x0b, 0x75, 0x73, 0x65, 0x44, 0x65,
+	0x66, 0x61, 0x75, 0x6c, 0x74, 0x73, 0x12, 0x14, 0x0a, 0x05, 0x72, 0x6f, 0x75, 0x6e, 0x64, 0x18,
+	0x06, 0x20, 0x01, 0x28, 0x05, 0x52, 0x05, 0x72, 0x6f, 0x75, 0x6e, 0x64, 0x22, 0x75, 0x0a, 0x1f,
 	0x43, 0x61, 0x6e, 0x63, 0x65, 0x6c, 0x4f, 0x6e, 0x74, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x47, 0x65,
 	0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12,
 	0x21, 0x0a, 0x0c, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x70, 0x61, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18,
@@ -17409,7 +17363,7 @@ func file_helix_foundry_v1_foundry_proto_rawDescGZIP() []byte {
 	return file_helix_foundry_v1_foundry_proto_rawDescData
 }
 
-var file_helix_foundry_v1_foundry_proto_msgTypes = make([]protoimpl.MessageInfo, 226)
+var file_helix_foundry_v1_foundry_proto_msgTypes = make([]protoimpl.MessageInfo, 225)
 var file_helix_foundry_v1_foundry_proto_goTypes = []any{
 	(*GetFoundryUsageRequest)(nil),                       // 0: helix.foundry.v1.GetFoundryUsageRequest
 	(*FoundryUsageResponse)(nil),                         // 1: helix.foundry.v1.FoundryUsageResponse
@@ -17475,192 +17429,192 @@ var file_helix_foundry_v1_foundry_proto_goTypes = []any{
 	(*ListOntologyGenerationsRequest)(nil),               // 61: helix.foundry.v1.ListOntologyGenerationsRequest
 	(*ListOntologyGenerationsResponse)(nil),              // 62: helix.foundry.v1.ListOntologyGenerationsResponse
 	(*AnswerOntologyGenerationRequest)(nil),              // 63: helix.foundry.v1.AnswerOntologyGenerationRequest
-	(*OntologyGenerationAnswer)(nil),                     // 64: helix.foundry.v1.OntologyGenerationAnswer
-	(*CancelOntologyGenerationRequest)(nil),              // 65: helix.foundry.v1.CancelOntologyGenerationRequest
-	(*CreateFoundryOntologyRequest)(nil),                 // 66: helix.foundry.v1.CreateFoundryOntologyRequest
-	(*FoundryOntologyResponse)(nil),                      // 67: helix.foundry.v1.FoundryOntologyResponse
-	(*ListFoundryOntologiesRequest)(nil),                 // 68: helix.foundry.v1.ListFoundryOntologiesRequest
-	(*ListFoundryOntologiesResponse)(nil),                // 69: helix.foundry.v1.ListFoundryOntologiesResponse
-	(*GetFoundryOntologyRequest)(nil),                    // 70: helix.foundry.v1.GetFoundryOntologyRequest
-	(*DeleteFoundryOntologyRequest)(nil),                 // 71: helix.foundry.v1.DeleteFoundryOntologyRequest
-	(*UpdateFoundryOntologyRequest)(nil),                 // 72: helix.foundry.v1.UpdateFoundryOntologyRequest
-	(*CreateFoundryDocumentRequest)(nil),                 // 73: helix.foundry.v1.CreateFoundryDocumentRequest
-	(*CreateFoundryDocumentResponse)(nil),                // 74: helix.foundry.v1.CreateFoundryDocumentResponse
-	(*CompleteFoundryDocumentUploadRequest)(nil),         // 75: helix.foundry.v1.CompleteFoundryDocumentUploadRequest
-	(*FoundryDocumentResponse)(nil),                      // 76: helix.foundry.v1.FoundryDocumentResponse
-	(*FoundryDocumentReadsResponse)(nil),                 // 77: helix.foundry.v1.FoundryDocumentReadsResponse
-	(*ListFoundryDocumentsRequest)(nil),                  // 78: helix.foundry.v1.ListFoundryDocumentsRequest
-	(*ListFoundryDocumentsResponse)(nil),                 // 79: helix.foundry.v1.ListFoundryDocumentsResponse
-	(*GetFoundryDocumentRequest)(nil),                    // 80: helix.foundry.v1.GetFoundryDocumentRequest
-	(*UpdateFoundryDocumentRequest)(nil),                 // 81: helix.foundry.v1.UpdateFoundryDocumentRequest
-	(*DeleteFoundryDocumentRequest)(nil),                 // 82: helix.foundry.v1.DeleteFoundryDocumentRequest
-	(*GetFoundryDocumentContentRequest)(nil),             // 83: helix.foundry.v1.GetFoundryDocumentContentRequest
-	(*GetFoundryDocumentContentResponse)(nil),            // 84: helix.foundry.v1.GetFoundryDocumentContentResponse
-	(*GetFoundryDocumentBytesRequest)(nil),               // 85: helix.foundry.v1.GetFoundryDocumentBytesRequest
-	(*GetFoundryDocumentBytesResponse)(nil),              // 86: helix.foundry.v1.GetFoundryDocumentBytesResponse
-	(*MoveFoundryDocumentRequest)(nil),                   // 87: helix.foundry.v1.MoveFoundryDocumentRequest
-	(*ListFoundryOntologyDocumentsRequest)(nil),          // 88: helix.foundry.v1.ListFoundryOntologyDocumentsRequest
-	(*GetFoundryOntologyDocumentRequest)(nil),            // 89: helix.foundry.v1.GetFoundryOntologyDocumentRequest
-	(*CreateFoundryDocumentSetRequest)(nil),              // 90: helix.foundry.v1.CreateFoundryDocumentSetRequest
-	(*FoundryDocumentSetResponse)(nil),                   // 91: helix.foundry.v1.FoundryDocumentSetResponse
-	(*ListFoundryDocumentSetsRequest)(nil),               // 92: helix.foundry.v1.ListFoundryDocumentSetsRequest
-	(*ListFoundryDocumentSetsResponse)(nil),              // 93: helix.foundry.v1.ListFoundryDocumentSetsResponse
-	(*UpdateFoundryDocumentSetRequest)(nil),              // 94: helix.foundry.v1.UpdateFoundryDocumentSetRequest
-	(*DeleteFoundryDocumentSetRequest)(nil),              // 95: helix.foundry.v1.DeleteFoundryDocumentSetRequest
-	(*DeleteFoundryDocumentSetResponse)(nil),             // 96: helix.foundry.v1.DeleteFoundryDocumentSetResponse
-	(*CreateFoundryOntologyDocumentRequest)(nil),         // 97: helix.foundry.v1.CreateFoundryOntologyDocumentRequest
-	(*CreateFoundryOntologyDocumentResponse)(nil),        // 98: helix.foundry.v1.CreateFoundryOntologyDocumentResponse
-	(*CompleteFoundryOntologyDocumentUploadRequest)(nil), // 99: helix.foundry.v1.CompleteFoundryOntologyDocumentUploadRequest
-	(*DeleteFoundryOntologyDocumentRequest)(nil),         // 100: helix.foundry.v1.DeleteFoundryOntologyDocumentRequest
-	(*MoveFoundryOntologyDocumentRequest)(nil),           // 101: helix.foundry.v1.MoveFoundryOntologyDocumentRequest
-	(*ListFoundryOntologyDocumentSetsRequest)(nil),       // 102: helix.foundry.v1.ListFoundryOntologyDocumentSetsRequest
-	(*CreateFoundryOntologyDocumentSetRequest)(nil),      // 103: helix.foundry.v1.CreateFoundryOntologyDocumentSetRequest
-	(*UpdateFoundryOntologyDocumentSetRequest)(nil),      // 104: helix.foundry.v1.UpdateFoundryOntologyDocumentSetRequest
-	(*DeleteFoundryOntologyDocumentSetRequest)(nil),      // 105: helix.foundry.v1.DeleteFoundryOntologyDocumentSetRequest
-	(*GetFoundryDataLayoutRequest)(nil),                  // 106: helix.foundry.v1.GetFoundryDataLayoutRequest
-	(*PutFoundryDataLayoutRequest)(nil),                  // 107: helix.foundry.v1.PutFoundryDataLayoutRequest
-	(*FoundryDataLayoutResponse)(nil),                    // 108: helix.foundry.v1.FoundryDataLayoutResponse
-	(*CreateFoundryLoadRequest)(nil),                     // 109: helix.foundry.v1.CreateFoundryLoadRequest
-	(*FoundryLoadResponse)(nil),                          // 110: helix.foundry.v1.FoundryLoadResponse
-	(*ListFoundryLoadsRequest)(nil),                      // 111: helix.foundry.v1.ListFoundryLoadsRequest
-	(*ListFoundryLoadsResponse)(nil),                     // 112: helix.foundry.v1.ListFoundryLoadsResponse
-	(*GetFoundryLoadRequest)(nil),                        // 113: helix.foundry.v1.GetFoundryLoadRequest
-	(*SetCurrentFoundryLoadRequest)(nil),                 // 114: helix.foundry.v1.SetCurrentFoundryLoadRequest
-	(*AskFoundryQuestionRequest)(nil),                    // 115: helix.foundry.v1.AskFoundryQuestionRequest
-	(*FoundryQuestionResponse)(nil),                      // 116: helix.foundry.v1.FoundryQuestionResponse
-	(*GetFoundryQuestionRequest)(nil),                    // 117: helix.foundry.v1.GetFoundryQuestionRequest
-	(*ListFoundryQuestionsRequest)(nil),                  // 118: helix.foundry.v1.ListFoundryQuestionsRequest
-	(*ListFoundryQuestionsResponse)(nil),                 // 119: helix.foundry.v1.ListFoundryQuestionsResponse
-	(*ListFoundryQuestionEventsRequest)(nil),             // 120: helix.foundry.v1.ListFoundryQuestionEventsRequest
-	(*ListFoundryQuestionEventsResponse)(nil),            // 121: helix.foundry.v1.ListFoundryQuestionEventsResponse
-	(*CancelFoundryQuestionRequest)(nil),                 // 122: helix.foundry.v1.CancelFoundryQuestionRequest
-	(*DeleteFoundryLoadRequest)(nil),                     // 123: helix.foundry.v1.DeleteFoundryLoadRequest
-	(*ReadFoundryGraphRequest)(nil),                      // 124: helix.foundry.v1.ReadFoundryGraphRequest
-	(*ReadFoundryGraphResponse)(nil),                     // 125: helix.foundry.v1.ReadFoundryGraphResponse
-	(*SettleFoundryReviewRequest)(nil),                   // 126: helix.foundry.v1.SettleFoundryReviewRequest
-	(*FoundryReviewDecisionResponse)(nil),                // 127: helix.foundry.v1.FoundryReviewDecisionResponse
-	(*ListFoundryReviewsRequest)(nil),                    // 128: helix.foundry.v1.ListFoundryReviewsRequest
-	(*ListFoundryReviewsResponse)(nil),                   // 129: helix.foundry.v1.ListFoundryReviewsResponse
-	(*ListFoundryReviewDecisionsRequest)(nil),            // 130: helix.foundry.v1.ListFoundryReviewDecisionsRequest
-	(*ListFoundryReviewDecisionsResponse)(nil),           // 131: helix.foundry.v1.ListFoundryReviewDecisionsResponse
-	(*DeleteFoundryReviewDecisionRequest)(nil),           // 132: helix.foundry.v1.DeleteFoundryReviewDecisionRequest
-	(*DeleteFoundryReviewDecisionResponse)(nil),          // 133: helix.foundry.v1.DeleteFoundryReviewDecisionResponse
-	(*SettleFoundryReviewLabelRequest)(nil),              // 134: helix.foundry.v1.SettleFoundryReviewLabelRequest
-	(*FoundryLabelFact)(nil),                             // 135: helix.foundry.v1.FoundryLabelFact
-	(*FoundryReviewLabelResponse)(nil),                   // 136: helix.foundry.v1.FoundryReviewLabelResponse
-	(*ListFoundryReviewLabelsRequest)(nil),               // 137: helix.foundry.v1.ListFoundryReviewLabelsRequest
-	(*ListFoundryReviewLabelsResponse)(nil),              // 138: helix.foundry.v1.ListFoundryReviewLabelsResponse
-	(*ListFoundryAccessRequest)(nil),                     // 139: helix.foundry.v1.ListFoundryAccessRequest
-	(*ListFoundryAccessResponse)(nil),                    // 140: helix.foundry.v1.ListFoundryAccessResponse
-	(*SetFoundryAccessGrantsRequest)(nil),                // 141: helix.foundry.v1.SetFoundryAccessGrantsRequest
-	(*SetFoundryAccessGrantsResponse)(nil),               // 142: helix.foundry.v1.SetFoundryAccessGrantsResponse
-	(*PreviewFoundryAccessChangeRequest)(nil),            // 143: helix.foundry.v1.PreviewFoundryAccessChangeRequest
-	(*FoundryAccessChange)(nil),                          // 144: helix.foundry.v1.FoundryAccessChange
-	(*PreviewFoundryAccessChangeResponse)(nil),           // 145: helix.foundry.v1.PreviewFoundryAccessChangeResponse
-	(*GetMyFoundryAccessRequest)(nil),                    // 146: helix.foundry.v1.GetMyFoundryAccessRequest
-	(*GetMyFoundryAccessResponse)(nil),                   // 147: helix.foundry.v1.GetMyFoundryAccessResponse
-	(*SetFoundryMemberRestrictedRequest)(nil),            // 148: helix.foundry.v1.SetFoundryMemberRestrictedRequest
-	(*SetFoundryMemberRestrictedResponse)(nil),           // 149: helix.foundry.v1.SetFoundryMemberRestrictedResponse
-	(*CreateFoundryTeamRequest)(nil),                     // 150: helix.foundry.v1.CreateFoundryTeamRequest
-	(*UpdateFoundryTeamRequest)(nil),                     // 151: helix.foundry.v1.UpdateFoundryTeamRequest
-	(*DeleteFoundryTeamRequest)(nil),                     // 152: helix.foundry.v1.DeleteFoundryTeamRequest
-	(*FoundryTeamResponse)(nil),                          // 153: helix.foundry.v1.FoundryTeamResponse
-	(*ListFoundryHealFindingsRequest)(nil),               // 154: helix.foundry.v1.ListFoundryHealFindingsRequest
-	(*ListFoundryHealFindingsResponse)(nil),              // 155: helix.foundry.v1.ListFoundryHealFindingsResponse
-	(*DismissFoundryHealFindingRequest)(nil),             // 156: helix.foundry.v1.DismissFoundryHealFindingRequest
-	(*FoundryHealFindingResponse)(nil),                   // 157: helix.foundry.v1.FoundryHealFindingResponse
-	(*CreateFoundryWorkflowRequest)(nil),                 // 158: helix.foundry.v1.CreateFoundryWorkflowRequest
-	(*FoundryWorkflowResponse)(nil),                      // 159: helix.foundry.v1.FoundryWorkflowResponse
-	(*ListFoundryWorkflowsRequest)(nil),                  // 160: helix.foundry.v1.ListFoundryWorkflowsRequest
-	(*ListFoundryWorkflowsResponse)(nil),                 // 161: helix.foundry.v1.ListFoundryWorkflowsResponse
-	(*GetFoundryWorkflowRequest)(nil),                    // 162: helix.foundry.v1.GetFoundryWorkflowRequest
-	(*DeleteFoundryWorkflowRequest)(nil),                 // 163: helix.foundry.v1.DeleteFoundryWorkflowRequest
-	(*StartFoundryWorkflowRunRequest)(nil),               // 164: helix.foundry.v1.StartFoundryWorkflowRunRequest
-	(*FoundryWorkflowRunResponse)(nil),                   // 165: helix.foundry.v1.FoundryWorkflowRunResponse
-	(*GetFoundryWorkflowInsightsRequest)(nil),            // 166: helix.foundry.v1.GetFoundryWorkflowInsightsRequest
-	(*ListFoundryWorkflowRunsRequest)(nil),               // 167: helix.foundry.v1.ListFoundryWorkflowRunsRequest
-	(*ListFoundryWorkflowRunsResponse)(nil),              // 168: helix.foundry.v1.ListFoundryWorkflowRunsResponse
-	(*GetFoundryWorkflowRunRequest)(nil),                 // 169: helix.foundry.v1.GetFoundryWorkflowRunRequest
-	(*FinishFoundryWorkflowRunRequest)(nil),              // 170: helix.foundry.v1.FinishFoundryWorkflowRunRequest
-	(*ListFoundryWorkflowRunAccessesRequest)(nil),        // 171: helix.foundry.v1.ListFoundryWorkflowRunAccessesRequest
-	(*ListFoundryWorkflowRunAccessesResponse)(nil),       // 172: helix.foundry.v1.ListFoundryWorkflowRunAccessesResponse
-	(*AssessFoundryWorkflowRunRequest)(nil),              // 173: helix.foundry.v1.AssessFoundryWorkflowRunRequest
-	(*SendFoundryAgentMessageRequest)(nil),               // 174: helix.foundry.v1.SendFoundryAgentMessageRequest
-	(*FoundryAgentTurnResponse)(nil),                     // 175: helix.foundry.v1.FoundryAgentTurnResponse
-	(*ListFoundryAgentThreadsRequest)(nil),               // 176: helix.foundry.v1.ListFoundryAgentThreadsRequest
-	(*ListFoundryAgentThreadsResponse)(nil),              // 177: helix.foundry.v1.ListFoundryAgentThreadsResponse
-	(*GetFoundryAgentThreadRequest)(nil),                 // 178: helix.foundry.v1.GetFoundryAgentThreadRequest
-	(*FoundryAgentThreadResponse)(nil),                   // 179: helix.foundry.v1.FoundryAgentThreadResponse
-	(*DeleteFoundryAgentThreadRequest)(nil),              // 180: helix.foundry.v1.DeleteFoundryAgentThreadRequest
-	(*ListFoundryAgentTurnEventsRequest)(nil),            // 181: helix.foundry.v1.ListFoundryAgentTurnEventsRequest
-	(*ListFoundryAgentTurnEventsResponse)(nil),           // 182: helix.foundry.v1.ListFoundryAgentTurnEventsResponse
-	(*CancelFoundryAgentTurnRequest)(nil),                // 183: helix.foundry.v1.CancelFoundryAgentTurnRequest
-	(*ExecuteFoundryAgentActionRequest)(nil),             // 184: helix.foundry.v1.ExecuteFoundryAgentActionRequest
-	(*RefreshFoundryAgentActionRequest)(nil),             // 185: helix.foundry.v1.RefreshFoundryAgentActionRequest
-	(*DismissFoundryAgentActionRequest)(nil),             // 186: helix.foundry.v1.DismissFoundryAgentActionRequest
-	(*FoundryAgentActionResponse)(nil),                   // 187: helix.foundry.v1.FoundryAgentActionResponse
-	(*GetFoundryAgentRuntimeRequest)(nil),                // 188: helix.foundry.v1.GetFoundryAgentRuntimeRequest
-	(*UpdateFoundryAgentRuntimeRequest)(nil),             // 189: helix.foundry.v1.UpdateFoundryAgentRuntimeRequest
-	(*FoundryAgentRuntimeResponse)(nil),                  // 190: helix.foundry.v1.FoundryAgentRuntimeResponse
-	(*CreateFoundryAgentHostPairingRequest)(nil),         // 191: helix.foundry.v1.CreateFoundryAgentHostPairingRequest
-	(*FoundryAgentHostPairingResponse)(nil),              // 192: helix.foundry.v1.FoundryAgentHostPairingResponse
-	(*RevokeFoundryAgentHostRequest)(nil),                // 193: helix.foundry.v1.RevokeFoundryAgentHostRequest
-	(*FoundryAgentHostResponse)(nil),                     // 194: helix.foundry.v1.FoundryAgentHostResponse
-	(*ListFoundryDashboardsRequest)(nil),                 // 195: helix.foundry.v1.ListFoundryDashboardsRequest
-	(*ListFoundryDashboardsResponse)(nil),                // 196: helix.foundry.v1.ListFoundryDashboardsResponse
-	(*GetFoundryDashboardRequest)(nil),                   // 197: helix.foundry.v1.GetFoundryDashboardRequest
-	(*FoundryDashboardResponse)(nil),                     // 198: helix.foundry.v1.FoundryDashboardResponse
-	(*CreateFoundryDashboardRequest)(nil),                // 199: helix.foundry.v1.CreateFoundryDashboardRequest
-	(*UpdateFoundryDashboardRequest)(nil),                // 200: helix.foundry.v1.UpdateFoundryDashboardRequest
-	(*DeleteFoundryDashboardRequest)(nil),                // 201: helix.foundry.v1.DeleteFoundryDashboardRequest
-	(*PinFoundryDashboardRequest)(nil),                   // 202: helix.foundry.v1.PinFoundryDashboardRequest
-	(*AddFoundryDashboardQuestionVisualRequest)(nil),     // 203: helix.foundry.v1.AddFoundryDashboardQuestionVisualRequest
-	(*PreviewFoundryDashboardTileRequest)(nil),           // 204: helix.foundry.v1.PreviewFoundryDashboardTileRequest
-	(*PreviewFoundryDashboardTileResponse)(nil),          // 205: helix.foundry.v1.PreviewFoundryDashboardTileResponse
-	(*PublishFoundryDashboardRequest)(nil),               // 206: helix.foundry.v1.PublishFoundryDashboardRequest
-	(*UnpublishFoundryDashboardRequest)(nil),             // 207: helix.foundry.v1.UnpublishFoundryDashboardRequest
-	(*ListFoundryAutomationsRequest)(nil),                // 208: helix.foundry.v1.ListFoundryAutomationsRequest
-	(*ListFoundryAutomationsResponse)(nil),               // 209: helix.foundry.v1.ListFoundryAutomationsResponse
-	(*GetFoundryAutomationRequest)(nil),                  // 210: helix.foundry.v1.GetFoundryAutomationRequest
-	(*FoundryAutomationResponse)(nil),                    // 211: helix.foundry.v1.FoundryAutomationResponse
-	(*CreateFoundryAutomationRequest)(nil),               // 212: helix.foundry.v1.CreateFoundryAutomationRequest
-	(*UpdateFoundryAutomationRequest)(nil),               // 213: helix.foundry.v1.UpdateFoundryAutomationRequest
-	(*DeleteFoundryAutomationRequest)(nil),               // 214: helix.foundry.v1.DeleteFoundryAutomationRequest
-	(*ApproveFoundryAutomationRequest)(nil),              // 215: helix.foundry.v1.ApproveFoundryAutomationRequest
-	(*PauseFoundryAutomationRequest)(nil),                // 216: helix.foundry.v1.PauseFoundryAutomationRequest
-	(*ResumeFoundryAutomationRequest)(nil),               // 217: helix.foundry.v1.ResumeFoundryAutomationRequest
-	(*RunFoundryAutomationRequest)(nil),                  // 218: helix.foundry.v1.RunFoundryAutomationRequest
-	(*ListFoundryAutomationRunsRequest)(nil),             // 219: helix.foundry.v1.ListFoundryAutomationRunsRequest
-	(*ListFoundryAutomationRunsResponse)(nil),            // 220: helix.foundry.v1.ListFoundryAutomationRunsResponse
-	(*GetFoundryAutomationRunRequest)(nil),               // 221: helix.foundry.v1.GetFoundryAutomationRunRequest
-	(*CancelFoundryAutomationRunRequest)(nil),            // 222: helix.foundry.v1.CancelFoundryAutomationRunRequest
-	(*FoundryAutomationRunResponse)(nil),                 // 223: helix.foundry.v1.FoundryAutomationRunResponse
-	(*FoundryAccessChange_LoadVersion)(nil),              // 224: helix.foundry.v1.FoundryAccessChange.LoadVersion
-	(*FoundryAccessChange_MoveDocument)(nil),             // 225: helix.foundry.v1.FoundryAccessChange.MoveDocument
-	(*FoundryUsage)(nil),                                 // 226: helix.foundry.v1.FoundryUsage
-	(*FoundryEnrichment)(nil),                            // 227: helix.foundry.v1.FoundryEnrichment
-	(*emptypb.Empty)(nil),                                // 228: google.protobuf.Empty
-	(*FoundryAIProvider)(nil),                            // 229: helix.foundry.v1.FoundryAIProvider
-	(*FoundryAIModels)(nil),                              // 230: helix.foundry.v1.FoundryAIModels
-	(*FoundryAI)(nil),                                    // 231: helix.foundry.v1.FoundryAI
-	(*FoundryOllamaServer)(nil),                          // 232: helix.foundry.v1.FoundryOllamaServer
-	(*FoundryPlan)(nil),                                  // 233: helix.foundry.v1.FoundryPlan
-	(FoundryTier)(0),                                     // 234: helix.foundry.v1.FoundryTier
-	(*FoundryCatalogPlan)(nil),                           // 235: helix.foundry.v1.FoundryCatalogPlan
-	(*ConnectorKind)(nil),                                // 236: helix.foundry.v1.ConnectorKind
-	(*ConnectorConfig)(nil),                              // 237: helix.foundry.v1.ConnectorConfig
-	(*ConnectorDiscovery)(nil),                           // 238: helix.foundry.v1.ConnectorDiscovery
-	(*Connector)(nil),                                    // 239: helix.foundry.v1.Connector
-	(*ConnectorSignIn)(nil),                              // 240: helix.foundry.v1.ConnectorSignIn
-	(*ConnectorSync)(nil),                                // 241: helix.foundry.v1.ConnectorSync
-	(*FoundryEventSourceToken)(nil),                      // 242: helix.foundry.v1.FoundryEventSourceToken
-	(*FoundryEventBatch)(nil),                            // 243: helix.foundry.v1.FoundryEventBatch
-	(*EventSourceCapacity)(nil),                          // 244: helix.foundry.v1.EventSourceCapacity
-	(*OntologyVersion)(nil),                              // 245: helix.foundry.v1.OntologyVersion
-	(*structpb.Struct)(nil),                              // 246: google.protobuf.Struct
-	(*OntologyEdit)(nil),                                 // 247: helix.foundry.v1.OntologyEdit
-	(*FoundryEventSourcePick)(nil),                       // 248: helix.foundry.v1.FoundryEventSourcePick
-	(*OntologyGeneration)(nil),                           // 249: helix.foundry.v1.OntologyGeneration
+	(*CancelOntologyGenerationRequest)(nil),              // 64: helix.foundry.v1.CancelOntologyGenerationRequest
+	(*CreateFoundryOntologyRequest)(nil),                 // 65: helix.foundry.v1.CreateFoundryOntologyRequest
+	(*FoundryOntologyResponse)(nil),                      // 66: helix.foundry.v1.FoundryOntologyResponse
+	(*ListFoundryOntologiesRequest)(nil),                 // 67: helix.foundry.v1.ListFoundryOntologiesRequest
+	(*ListFoundryOntologiesResponse)(nil),                // 68: helix.foundry.v1.ListFoundryOntologiesResponse
+	(*GetFoundryOntologyRequest)(nil),                    // 69: helix.foundry.v1.GetFoundryOntologyRequest
+	(*DeleteFoundryOntologyRequest)(nil),                 // 70: helix.foundry.v1.DeleteFoundryOntologyRequest
+	(*UpdateFoundryOntologyRequest)(nil),                 // 71: helix.foundry.v1.UpdateFoundryOntologyRequest
+	(*CreateFoundryDocumentRequest)(nil),                 // 72: helix.foundry.v1.CreateFoundryDocumentRequest
+	(*CreateFoundryDocumentResponse)(nil),                // 73: helix.foundry.v1.CreateFoundryDocumentResponse
+	(*CompleteFoundryDocumentUploadRequest)(nil),         // 74: helix.foundry.v1.CompleteFoundryDocumentUploadRequest
+	(*FoundryDocumentResponse)(nil),                      // 75: helix.foundry.v1.FoundryDocumentResponse
+	(*FoundryDocumentReadsResponse)(nil),                 // 76: helix.foundry.v1.FoundryDocumentReadsResponse
+	(*ListFoundryDocumentsRequest)(nil),                  // 77: helix.foundry.v1.ListFoundryDocumentsRequest
+	(*ListFoundryDocumentsResponse)(nil),                 // 78: helix.foundry.v1.ListFoundryDocumentsResponse
+	(*GetFoundryDocumentRequest)(nil),                    // 79: helix.foundry.v1.GetFoundryDocumentRequest
+	(*UpdateFoundryDocumentRequest)(nil),                 // 80: helix.foundry.v1.UpdateFoundryDocumentRequest
+	(*DeleteFoundryDocumentRequest)(nil),                 // 81: helix.foundry.v1.DeleteFoundryDocumentRequest
+	(*GetFoundryDocumentContentRequest)(nil),             // 82: helix.foundry.v1.GetFoundryDocumentContentRequest
+	(*GetFoundryDocumentContentResponse)(nil),            // 83: helix.foundry.v1.GetFoundryDocumentContentResponse
+	(*GetFoundryDocumentBytesRequest)(nil),               // 84: helix.foundry.v1.GetFoundryDocumentBytesRequest
+	(*GetFoundryDocumentBytesResponse)(nil),              // 85: helix.foundry.v1.GetFoundryDocumentBytesResponse
+	(*MoveFoundryDocumentRequest)(nil),                   // 86: helix.foundry.v1.MoveFoundryDocumentRequest
+	(*ListFoundryOntologyDocumentsRequest)(nil),          // 87: helix.foundry.v1.ListFoundryOntologyDocumentsRequest
+	(*GetFoundryOntologyDocumentRequest)(nil),            // 88: helix.foundry.v1.GetFoundryOntologyDocumentRequest
+	(*CreateFoundryDocumentSetRequest)(nil),              // 89: helix.foundry.v1.CreateFoundryDocumentSetRequest
+	(*FoundryDocumentSetResponse)(nil),                   // 90: helix.foundry.v1.FoundryDocumentSetResponse
+	(*ListFoundryDocumentSetsRequest)(nil),               // 91: helix.foundry.v1.ListFoundryDocumentSetsRequest
+	(*ListFoundryDocumentSetsResponse)(nil),              // 92: helix.foundry.v1.ListFoundryDocumentSetsResponse
+	(*UpdateFoundryDocumentSetRequest)(nil),              // 93: helix.foundry.v1.UpdateFoundryDocumentSetRequest
+	(*DeleteFoundryDocumentSetRequest)(nil),              // 94: helix.foundry.v1.DeleteFoundryDocumentSetRequest
+	(*DeleteFoundryDocumentSetResponse)(nil),             // 95: helix.foundry.v1.DeleteFoundryDocumentSetResponse
+	(*CreateFoundryOntologyDocumentRequest)(nil),         // 96: helix.foundry.v1.CreateFoundryOntologyDocumentRequest
+	(*CreateFoundryOntologyDocumentResponse)(nil),        // 97: helix.foundry.v1.CreateFoundryOntologyDocumentResponse
+	(*CompleteFoundryOntologyDocumentUploadRequest)(nil), // 98: helix.foundry.v1.CompleteFoundryOntologyDocumentUploadRequest
+	(*DeleteFoundryOntologyDocumentRequest)(nil),         // 99: helix.foundry.v1.DeleteFoundryOntologyDocumentRequest
+	(*MoveFoundryOntologyDocumentRequest)(nil),           // 100: helix.foundry.v1.MoveFoundryOntologyDocumentRequest
+	(*ListFoundryOntologyDocumentSetsRequest)(nil),       // 101: helix.foundry.v1.ListFoundryOntologyDocumentSetsRequest
+	(*CreateFoundryOntologyDocumentSetRequest)(nil),      // 102: helix.foundry.v1.CreateFoundryOntologyDocumentSetRequest
+	(*UpdateFoundryOntologyDocumentSetRequest)(nil),      // 103: helix.foundry.v1.UpdateFoundryOntologyDocumentSetRequest
+	(*DeleteFoundryOntologyDocumentSetRequest)(nil),      // 104: helix.foundry.v1.DeleteFoundryOntologyDocumentSetRequest
+	(*GetFoundryDataLayoutRequest)(nil),                  // 105: helix.foundry.v1.GetFoundryDataLayoutRequest
+	(*PutFoundryDataLayoutRequest)(nil),                  // 106: helix.foundry.v1.PutFoundryDataLayoutRequest
+	(*FoundryDataLayoutResponse)(nil),                    // 107: helix.foundry.v1.FoundryDataLayoutResponse
+	(*CreateFoundryLoadRequest)(nil),                     // 108: helix.foundry.v1.CreateFoundryLoadRequest
+	(*FoundryLoadResponse)(nil),                          // 109: helix.foundry.v1.FoundryLoadResponse
+	(*ListFoundryLoadsRequest)(nil),                      // 110: helix.foundry.v1.ListFoundryLoadsRequest
+	(*ListFoundryLoadsResponse)(nil),                     // 111: helix.foundry.v1.ListFoundryLoadsResponse
+	(*GetFoundryLoadRequest)(nil),                        // 112: helix.foundry.v1.GetFoundryLoadRequest
+	(*SetCurrentFoundryLoadRequest)(nil),                 // 113: helix.foundry.v1.SetCurrentFoundryLoadRequest
+	(*AskFoundryQuestionRequest)(nil),                    // 114: helix.foundry.v1.AskFoundryQuestionRequest
+	(*FoundryQuestionResponse)(nil),                      // 115: helix.foundry.v1.FoundryQuestionResponse
+	(*GetFoundryQuestionRequest)(nil),                    // 116: helix.foundry.v1.GetFoundryQuestionRequest
+	(*ListFoundryQuestionsRequest)(nil),                  // 117: helix.foundry.v1.ListFoundryQuestionsRequest
+	(*ListFoundryQuestionsResponse)(nil),                 // 118: helix.foundry.v1.ListFoundryQuestionsResponse
+	(*ListFoundryQuestionEventsRequest)(nil),             // 119: helix.foundry.v1.ListFoundryQuestionEventsRequest
+	(*ListFoundryQuestionEventsResponse)(nil),            // 120: helix.foundry.v1.ListFoundryQuestionEventsResponse
+	(*CancelFoundryQuestionRequest)(nil),                 // 121: helix.foundry.v1.CancelFoundryQuestionRequest
+	(*DeleteFoundryLoadRequest)(nil),                     // 122: helix.foundry.v1.DeleteFoundryLoadRequest
+	(*ReadFoundryGraphRequest)(nil),                      // 123: helix.foundry.v1.ReadFoundryGraphRequest
+	(*ReadFoundryGraphResponse)(nil),                     // 124: helix.foundry.v1.ReadFoundryGraphResponse
+	(*SettleFoundryReviewRequest)(nil),                   // 125: helix.foundry.v1.SettleFoundryReviewRequest
+	(*FoundryReviewDecisionResponse)(nil),                // 126: helix.foundry.v1.FoundryReviewDecisionResponse
+	(*ListFoundryReviewsRequest)(nil),                    // 127: helix.foundry.v1.ListFoundryReviewsRequest
+	(*ListFoundryReviewsResponse)(nil),                   // 128: helix.foundry.v1.ListFoundryReviewsResponse
+	(*ListFoundryReviewDecisionsRequest)(nil),            // 129: helix.foundry.v1.ListFoundryReviewDecisionsRequest
+	(*ListFoundryReviewDecisionsResponse)(nil),           // 130: helix.foundry.v1.ListFoundryReviewDecisionsResponse
+	(*DeleteFoundryReviewDecisionRequest)(nil),           // 131: helix.foundry.v1.DeleteFoundryReviewDecisionRequest
+	(*DeleteFoundryReviewDecisionResponse)(nil),          // 132: helix.foundry.v1.DeleteFoundryReviewDecisionResponse
+	(*SettleFoundryReviewLabelRequest)(nil),              // 133: helix.foundry.v1.SettleFoundryReviewLabelRequest
+	(*FoundryLabelFact)(nil),                             // 134: helix.foundry.v1.FoundryLabelFact
+	(*FoundryReviewLabelResponse)(nil),                   // 135: helix.foundry.v1.FoundryReviewLabelResponse
+	(*ListFoundryReviewLabelsRequest)(nil),               // 136: helix.foundry.v1.ListFoundryReviewLabelsRequest
+	(*ListFoundryReviewLabelsResponse)(nil),              // 137: helix.foundry.v1.ListFoundryReviewLabelsResponse
+	(*ListFoundryAccessRequest)(nil),                     // 138: helix.foundry.v1.ListFoundryAccessRequest
+	(*ListFoundryAccessResponse)(nil),                    // 139: helix.foundry.v1.ListFoundryAccessResponse
+	(*SetFoundryAccessGrantsRequest)(nil),                // 140: helix.foundry.v1.SetFoundryAccessGrantsRequest
+	(*SetFoundryAccessGrantsResponse)(nil),               // 141: helix.foundry.v1.SetFoundryAccessGrantsResponse
+	(*PreviewFoundryAccessChangeRequest)(nil),            // 142: helix.foundry.v1.PreviewFoundryAccessChangeRequest
+	(*FoundryAccessChange)(nil),                          // 143: helix.foundry.v1.FoundryAccessChange
+	(*PreviewFoundryAccessChangeResponse)(nil),           // 144: helix.foundry.v1.PreviewFoundryAccessChangeResponse
+	(*GetMyFoundryAccessRequest)(nil),                    // 145: helix.foundry.v1.GetMyFoundryAccessRequest
+	(*GetMyFoundryAccessResponse)(nil),                   // 146: helix.foundry.v1.GetMyFoundryAccessResponse
+	(*SetFoundryMemberRestrictedRequest)(nil),            // 147: helix.foundry.v1.SetFoundryMemberRestrictedRequest
+	(*SetFoundryMemberRestrictedResponse)(nil),           // 148: helix.foundry.v1.SetFoundryMemberRestrictedResponse
+	(*CreateFoundryTeamRequest)(nil),                     // 149: helix.foundry.v1.CreateFoundryTeamRequest
+	(*UpdateFoundryTeamRequest)(nil),                     // 150: helix.foundry.v1.UpdateFoundryTeamRequest
+	(*DeleteFoundryTeamRequest)(nil),                     // 151: helix.foundry.v1.DeleteFoundryTeamRequest
+	(*FoundryTeamResponse)(nil),                          // 152: helix.foundry.v1.FoundryTeamResponse
+	(*ListFoundryHealFindingsRequest)(nil),               // 153: helix.foundry.v1.ListFoundryHealFindingsRequest
+	(*ListFoundryHealFindingsResponse)(nil),              // 154: helix.foundry.v1.ListFoundryHealFindingsResponse
+	(*DismissFoundryHealFindingRequest)(nil),             // 155: helix.foundry.v1.DismissFoundryHealFindingRequest
+	(*FoundryHealFindingResponse)(nil),                   // 156: helix.foundry.v1.FoundryHealFindingResponse
+	(*CreateFoundryWorkflowRequest)(nil),                 // 157: helix.foundry.v1.CreateFoundryWorkflowRequest
+	(*FoundryWorkflowResponse)(nil),                      // 158: helix.foundry.v1.FoundryWorkflowResponse
+	(*ListFoundryWorkflowsRequest)(nil),                  // 159: helix.foundry.v1.ListFoundryWorkflowsRequest
+	(*ListFoundryWorkflowsResponse)(nil),                 // 160: helix.foundry.v1.ListFoundryWorkflowsResponse
+	(*GetFoundryWorkflowRequest)(nil),                    // 161: helix.foundry.v1.GetFoundryWorkflowRequest
+	(*DeleteFoundryWorkflowRequest)(nil),                 // 162: helix.foundry.v1.DeleteFoundryWorkflowRequest
+	(*StartFoundryWorkflowRunRequest)(nil),               // 163: helix.foundry.v1.StartFoundryWorkflowRunRequest
+	(*FoundryWorkflowRunResponse)(nil),                   // 164: helix.foundry.v1.FoundryWorkflowRunResponse
+	(*GetFoundryWorkflowInsightsRequest)(nil),            // 165: helix.foundry.v1.GetFoundryWorkflowInsightsRequest
+	(*ListFoundryWorkflowRunsRequest)(nil),               // 166: helix.foundry.v1.ListFoundryWorkflowRunsRequest
+	(*ListFoundryWorkflowRunsResponse)(nil),              // 167: helix.foundry.v1.ListFoundryWorkflowRunsResponse
+	(*GetFoundryWorkflowRunRequest)(nil),                 // 168: helix.foundry.v1.GetFoundryWorkflowRunRequest
+	(*FinishFoundryWorkflowRunRequest)(nil),              // 169: helix.foundry.v1.FinishFoundryWorkflowRunRequest
+	(*ListFoundryWorkflowRunAccessesRequest)(nil),        // 170: helix.foundry.v1.ListFoundryWorkflowRunAccessesRequest
+	(*ListFoundryWorkflowRunAccessesResponse)(nil),       // 171: helix.foundry.v1.ListFoundryWorkflowRunAccessesResponse
+	(*AssessFoundryWorkflowRunRequest)(nil),              // 172: helix.foundry.v1.AssessFoundryWorkflowRunRequest
+	(*SendFoundryAgentMessageRequest)(nil),               // 173: helix.foundry.v1.SendFoundryAgentMessageRequest
+	(*FoundryAgentTurnResponse)(nil),                     // 174: helix.foundry.v1.FoundryAgentTurnResponse
+	(*ListFoundryAgentThreadsRequest)(nil),               // 175: helix.foundry.v1.ListFoundryAgentThreadsRequest
+	(*ListFoundryAgentThreadsResponse)(nil),              // 176: helix.foundry.v1.ListFoundryAgentThreadsResponse
+	(*GetFoundryAgentThreadRequest)(nil),                 // 177: helix.foundry.v1.GetFoundryAgentThreadRequest
+	(*FoundryAgentThreadResponse)(nil),                   // 178: helix.foundry.v1.FoundryAgentThreadResponse
+	(*DeleteFoundryAgentThreadRequest)(nil),              // 179: helix.foundry.v1.DeleteFoundryAgentThreadRequest
+	(*ListFoundryAgentTurnEventsRequest)(nil),            // 180: helix.foundry.v1.ListFoundryAgentTurnEventsRequest
+	(*ListFoundryAgentTurnEventsResponse)(nil),           // 181: helix.foundry.v1.ListFoundryAgentTurnEventsResponse
+	(*CancelFoundryAgentTurnRequest)(nil),                // 182: helix.foundry.v1.CancelFoundryAgentTurnRequest
+	(*ExecuteFoundryAgentActionRequest)(nil),             // 183: helix.foundry.v1.ExecuteFoundryAgentActionRequest
+	(*RefreshFoundryAgentActionRequest)(nil),             // 184: helix.foundry.v1.RefreshFoundryAgentActionRequest
+	(*DismissFoundryAgentActionRequest)(nil),             // 185: helix.foundry.v1.DismissFoundryAgentActionRequest
+	(*FoundryAgentActionResponse)(nil),                   // 186: helix.foundry.v1.FoundryAgentActionResponse
+	(*GetFoundryAgentRuntimeRequest)(nil),                // 187: helix.foundry.v1.GetFoundryAgentRuntimeRequest
+	(*UpdateFoundryAgentRuntimeRequest)(nil),             // 188: helix.foundry.v1.UpdateFoundryAgentRuntimeRequest
+	(*FoundryAgentRuntimeResponse)(nil),                  // 189: helix.foundry.v1.FoundryAgentRuntimeResponse
+	(*CreateFoundryAgentHostPairingRequest)(nil),         // 190: helix.foundry.v1.CreateFoundryAgentHostPairingRequest
+	(*FoundryAgentHostPairingResponse)(nil),              // 191: helix.foundry.v1.FoundryAgentHostPairingResponse
+	(*RevokeFoundryAgentHostRequest)(nil),                // 192: helix.foundry.v1.RevokeFoundryAgentHostRequest
+	(*FoundryAgentHostResponse)(nil),                     // 193: helix.foundry.v1.FoundryAgentHostResponse
+	(*ListFoundryDashboardsRequest)(nil),                 // 194: helix.foundry.v1.ListFoundryDashboardsRequest
+	(*ListFoundryDashboardsResponse)(nil),                // 195: helix.foundry.v1.ListFoundryDashboardsResponse
+	(*GetFoundryDashboardRequest)(nil),                   // 196: helix.foundry.v1.GetFoundryDashboardRequest
+	(*FoundryDashboardResponse)(nil),                     // 197: helix.foundry.v1.FoundryDashboardResponse
+	(*CreateFoundryDashboardRequest)(nil),                // 198: helix.foundry.v1.CreateFoundryDashboardRequest
+	(*UpdateFoundryDashboardRequest)(nil),                // 199: helix.foundry.v1.UpdateFoundryDashboardRequest
+	(*DeleteFoundryDashboardRequest)(nil),                // 200: helix.foundry.v1.DeleteFoundryDashboardRequest
+	(*PinFoundryDashboardRequest)(nil),                   // 201: helix.foundry.v1.PinFoundryDashboardRequest
+	(*AddFoundryDashboardQuestionVisualRequest)(nil),     // 202: helix.foundry.v1.AddFoundryDashboardQuestionVisualRequest
+	(*PreviewFoundryDashboardTileRequest)(nil),           // 203: helix.foundry.v1.PreviewFoundryDashboardTileRequest
+	(*PreviewFoundryDashboardTileResponse)(nil),          // 204: helix.foundry.v1.PreviewFoundryDashboardTileResponse
+	(*PublishFoundryDashboardRequest)(nil),               // 205: helix.foundry.v1.PublishFoundryDashboardRequest
+	(*UnpublishFoundryDashboardRequest)(nil),             // 206: helix.foundry.v1.UnpublishFoundryDashboardRequest
+	(*ListFoundryAutomationsRequest)(nil),                // 207: helix.foundry.v1.ListFoundryAutomationsRequest
+	(*ListFoundryAutomationsResponse)(nil),               // 208: helix.foundry.v1.ListFoundryAutomationsResponse
+	(*GetFoundryAutomationRequest)(nil),                  // 209: helix.foundry.v1.GetFoundryAutomationRequest
+	(*FoundryAutomationResponse)(nil),                    // 210: helix.foundry.v1.FoundryAutomationResponse
+	(*CreateFoundryAutomationRequest)(nil),               // 211: helix.foundry.v1.CreateFoundryAutomationRequest
+	(*UpdateFoundryAutomationRequest)(nil),               // 212: helix.foundry.v1.UpdateFoundryAutomationRequest
+	(*DeleteFoundryAutomationRequest)(nil),               // 213: helix.foundry.v1.DeleteFoundryAutomationRequest
+	(*ApproveFoundryAutomationRequest)(nil),              // 214: helix.foundry.v1.ApproveFoundryAutomationRequest
+	(*PauseFoundryAutomationRequest)(nil),                // 215: helix.foundry.v1.PauseFoundryAutomationRequest
+	(*ResumeFoundryAutomationRequest)(nil),               // 216: helix.foundry.v1.ResumeFoundryAutomationRequest
+	(*RunFoundryAutomationRequest)(nil),                  // 217: helix.foundry.v1.RunFoundryAutomationRequest
+	(*ListFoundryAutomationRunsRequest)(nil),             // 218: helix.foundry.v1.ListFoundryAutomationRunsRequest
+	(*ListFoundryAutomationRunsResponse)(nil),            // 219: helix.foundry.v1.ListFoundryAutomationRunsResponse
+	(*GetFoundryAutomationRunRequest)(nil),               // 220: helix.foundry.v1.GetFoundryAutomationRunRequest
+	(*CancelFoundryAutomationRunRequest)(nil),            // 221: helix.foundry.v1.CancelFoundryAutomationRunRequest
+	(*FoundryAutomationRunResponse)(nil),                 // 222: helix.foundry.v1.FoundryAutomationRunResponse
+	(*FoundryAccessChange_LoadVersion)(nil),              // 223: helix.foundry.v1.FoundryAccessChange.LoadVersion
+	(*FoundryAccessChange_MoveDocument)(nil),             // 224: helix.foundry.v1.FoundryAccessChange.MoveDocument
+	(*FoundryUsage)(nil),                                 // 225: helix.foundry.v1.FoundryUsage
+	(*FoundryEnrichment)(nil),                            // 226: helix.foundry.v1.FoundryEnrichment
+	(*emptypb.Empty)(nil),                                // 227: google.protobuf.Empty
+	(*FoundryAIProvider)(nil),                            // 228: helix.foundry.v1.FoundryAIProvider
+	(*FoundryAIModels)(nil),                              // 229: helix.foundry.v1.FoundryAIModels
+	(*FoundryAI)(nil),                                    // 230: helix.foundry.v1.FoundryAI
+	(*FoundryOllamaServer)(nil),                          // 231: helix.foundry.v1.FoundryOllamaServer
+	(*FoundryPlan)(nil),                                  // 232: helix.foundry.v1.FoundryPlan
+	(FoundryTier)(0),                                     // 233: helix.foundry.v1.FoundryTier
+	(*FoundryCatalogPlan)(nil),                           // 234: helix.foundry.v1.FoundryCatalogPlan
+	(*ConnectorKind)(nil),                                // 235: helix.foundry.v1.ConnectorKind
+	(*ConnectorConfig)(nil),                              // 236: helix.foundry.v1.ConnectorConfig
+	(*ConnectorDiscovery)(nil),                           // 237: helix.foundry.v1.ConnectorDiscovery
+	(*Connector)(nil),                                    // 238: helix.foundry.v1.Connector
+	(*ConnectorSignIn)(nil),                              // 239: helix.foundry.v1.ConnectorSignIn
+	(*ConnectorSync)(nil),                                // 240: helix.foundry.v1.ConnectorSync
+	(*FoundryEventSourceToken)(nil),                      // 241: helix.foundry.v1.FoundryEventSourceToken
+	(*FoundryEventBatch)(nil),                            // 242: helix.foundry.v1.FoundryEventBatch
+	(*EventSourceCapacity)(nil),                          // 243: helix.foundry.v1.EventSourceCapacity
+	(*OntologyVersion)(nil),                              // 244: helix.foundry.v1.OntologyVersion
+	(*structpb.Struct)(nil),                              // 245: google.protobuf.Struct
+	(*OntologyEdit)(nil),                                 // 246: helix.foundry.v1.OntologyEdit
+	(*FoundryEventSourcePick)(nil),                       // 247: helix.foundry.v1.FoundryEventSourcePick
+	(*OntologyGeneration)(nil),                           // 248: helix.foundry.v1.OntologyGeneration
+	(*AgentQuestionAnswer)(nil),                          // 249: helix.foundry.v1.AgentQuestionAnswer
 	(*FoundryOntology)(nil),                              // 250: helix.foundry.v1.FoundryOntology
 	(*FoundryDocument)(nil),                              // 251: helix.foundry.v1.FoundryDocument
 	(*FoundryDocumentUpload)(nil),                        // 252: helix.foundry.v1.FoundryDocumentUpload
@@ -17699,43 +17653,43 @@ var file_helix_foundry_v1_foundry_proto_goTypes = []any{
 	(*FoundryWorkflowInsights)(nil),                      // 285: helix.foundry.v1.FoundryWorkflowInsights
 }
 var file_helix_foundry_v1_foundry_proto_depIdxs = []int32{
-	226, // 0: helix.foundry.v1.FoundryUsageResponse.usage:type_name -> helix.foundry.v1.FoundryUsage
-	227, // 1: helix.foundry.v1.FoundryEnrichmentResponse.enrichment:type_name -> helix.foundry.v1.FoundryEnrichment
-	228, // 2: helix.foundry.v1.UpdateFoundryAIRequest.use_default:type_name -> google.protobuf.Empty
-	229, // 3: helix.foundry.v1.UpdateFoundryAIRequest.provider:type_name -> helix.foundry.v1.FoundryAIProvider
-	230, // 4: helix.foundry.v1.UpdateFoundryAIRequest.models:type_name -> helix.foundry.v1.FoundryAIModels
-	231, // 5: helix.foundry.v1.FoundryAIResponse.ai:type_name -> helix.foundry.v1.FoundryAI
-	232, // 6: helix.foundry.v1.ListFoundryOllamaModelsResponse.server:type_name -> helix.foundry.v1.FoundryOllamaServer
-	233, // 7: helix.foundry.v1.FoundryPlanResponse.plan:type_name -> helix.foundry.v1.FoundryPlan
-	234, // 8: helix.foundry.v1.CreateFoundryProCheckoutRequest.tier:type_name -> helix.foundry.v1.FoundryTier
-	235, // 9: helix.foundry.v1.ListFoundryPlansResponse.plans:type_name -> helix.foundry.v1.FoundryCatalogPlan
-	233, // 10: helix.foundry.v1.CreateFoundryProCheckoutResponse.plan:type_name -> helix.foundry.v1.FoundryPlan
-	236, // 11: helix.foundry.v1.ListConnectorKindsResponse.kinds:type_name -> helix.foundry.v1.ConnectorKind
-	237, // 12: helix.foundry.v1.TestConnectorRequest.config:type_name -> helix.foundry.v1.ConnectorConfig
-	238, // 13: helix.foundry.v1.TestConnectorResponse.discovery:type_name -> helix.foundry.v1.ConnectorDiscovery
-	237, // 14: helix.foundry.v1.TestConnectorResponse.config:type_name -> helix.foundry.v1.ConnectorConfig
-	237, // 15: helix.foundry.v1.CreateConnectorRequest.config:type_name -> helix.foundry.v1.ConnectorConfig
-	239, // 16: helix.foundry.v1.ConnectorResponse.connector:type_name -> helix.foundry.v1.Connector
-	238, // 17: helix.foundry.v1.ConnectorResponse.discovery:type_name -> helix.foundry.v1.ConnectorDiscovery
-	237, // 18: helix.foundry.v1.StartConnectorSignInRequest.config:type_name -> helix.foundry.v1.ConnectorConfig
-	240, // 19: helix.foundry.v1.ConnectorSignInResponse.sign_in:type_name -> helix.foundry.v1.ConnectorSignIn
-	239, // 20: helix.foundry.v1.ListConnectorsResponse.connectors:type_name -> helix.foundry.v1.Connector
-	237, // 21: helix.foundry.v1.UpdateConnectorRequest.config:type_name -> helix.foundry.v1.ConnectorConfig
-	241, // 22: helix.foundry.v1.ConnectorSyncResponse.sync:type_name -> helix.foundry.v1.ConnectorSync
-	241, // 23: helix.foundry.v1.ListConnectorSyncsResponse.syncs:type_name -> helix.foundry.v1.ConnectorSync
-	242, // 24: helix.foundry.v1.CreateFoundryEventSourceTokenResponse.token:type_name -> helix.foundry.v1.FoundryEventSourceToken
-	242, // 25: helix.foundry.v1.ListFoundryEventSourceTokensResponse.tokens:type_name -> helix.foundry.v1.FoundryEventSourceToken
-	242, // 26: helix.foundry.v1.FoundryEventSourceTokenResponse.token:type_name -> helix.foundry.v1.FoundryEventSourceToken
-	243, // 27: helix.foundry.v1.ListFoundryEventBatchesResponse.batches:type_name -> helix.foundry.v1.FoundryEventBatch
-	244, // 28: helix.foundry.v1.ListFoundryEventBatchesResponse.capacity:type_name -> helix.foundry.v1.EventSourceCapacity
-	245, // 29: helix.foundry.v1.OntologyVersionResponse.version:type_name -> helix.foundry.v1.OntologyVersion
-	245, // 30: helix.foundry.v1.ListOntologyVersionsResponse.versions:type_name -> helix.foundry.v1.OntologyVersion
-	246, // 31: helix.foundry.v1.CreateOntologyVersionRequest.definition:type_name -> google.protobuf.Struct
-	247, // 32: helix.foundry.v1.ReviseOntologyVersionRequest.edits:type_name -> helix.foundry.v1.OntologyEdit
-	248, // 33: helix.foundry.v1.GenerateOntologyRequest.event_sources:type_name -> helix.foundry.v1.FoundryEventSourcePick
-	249, // 34: helix.foundry.v1.OntologyGenerationResponse.generation:type_name -> helix.foundry.v1.OntologyGeneration
-	249, // 35: helix.foundry.v1.ListOntologyGenerationsResponse.generations:type_name -> helix.foundry.v1.OntologyGeneration
-	64,  // 36: helix.foundry.v1.AnswerOntologyGenerationRequest.answers:type_name -> helix.foundry.v1.OntologyGenerationAnswer
+	225, // 0: helix.foundry.v1.FoundryUsageResponse.usage:type_name -> helix.foundry.v1.FoundryUsage
+	226, // 1: helix.foundry.v1.FoundryEnrichmentResponse.enrichment:type_name -> helix.foundry.v1.FoundryEnrichment
+	227, // 2: helix.foundry.v1.UpdateFoundryAIRequest.use_default:type_name -> google.protobuf.Empty
+	228, // 3: helix.foundry.v1.UpdateFoundryAIRequest.provider:type_name -> helix.foundry.v1.FoundryAIProvider
+	229, // 4: helix.foundry.v1.UpdateFoundryAIRequest.models:type_name -> helix.foundry.v1.FoundryAIModels
+	230, // 5: helix.foundry.v1.FoundryAIResponse.ai:type_name -> helix.foundry.v1.FoundryAI
+	231, // 6: helix.foundry.v1.ListFoundryOllamaModelsResponse.server:type_name -> helix.foundry.v1.FoundryOllamaServer
+	232, // 7: helix.foundry.v1.FoundryPlanResponse.plan:type_name -> helix.foundry.v1.FoundryPlan
+	233, // 8: helix.foundry.v1.CreateFoundryProCheckoutRequest.tier:type_name -> helix.foundry.v1.FoundryTier
+	234, // 9: helix.foundry.v1.ListFoundryPlansResponse.plans:type_name -> helix.foundry.v1.FoundryCatalogPlan
+	232, // 10: helix.foundry.v1.CreateFoundryProCheckoutResponse.plan:type_name -> helix.foundry.v1.FoundryPlan
+	235, // 11: helix.foundry.v1.ListConnectorKindsResponse.kinds:type_name -> helix.foundry.v1.ConnectorKind
+	236, // 12: helix.foundry.v1.TestConnectorRequest.config:type_name -> helix.foundry.v1.ConnectorConfig
+	237, // 13: helix.foundry.v1.TestConnectorResponse.discovery:type_name -> helix.foundry.v1.ConnectorDiscovery
+	236, // 14: helix.foundry.v1.TestConnectorResponse.config:type_name -> helix.foundry.v1.ConnectorConfig
+	236, // 15: helix.foundry.v1.CreateConnectorRequest.config:type_name -> helix.foundry.v1.ConnectorConfig
+	238, // 16: helix.foundry.v1.ConnectorResponse.connector:type_name -> helix.foundry.v1.Connector
+	237, // 17: helix.foundry.v1.ConnectorResponse.discovery:type_name -> helix.foundry.v1.ConnectorDiscovery
+	236, // 18: helix.foundry.v1.StartConnectorSignInRequest.config:type_name -> helix.foundry.v1.ConnectorConfig
+	239, // 19: helix.foundry.v1.ConnectorSignInResponse.sign_in:type_name -> helix.foundry.v1.ConnectorSignIn
+	238, // 20: helix.foundry.v1.ListConnectorsResponse.connectors:type_name -> helix.foundry.v1.Connector
+	236, // 21: helix.foundry.v1.UpdateConnectorRequest.config:type_name -> helix.foundry.v1.ConnectorConfig
+	240, // 22: helix.foundry.v1.ConnectorSyncResponse.sync:type_name -> helix.foundry.v1.ConnectorSync
+	240, // 23: helix.foundry.v1.ListConnectorSyncsResponse.syncs:type_name -> helix.foundry.v1.ConnectorSync
+	241, // 24: helix.foundry.v1.CreateFoundryEventSourceTokenResponse.token:type_name -> helix.foundry.v1.FoundryEventSourceToken
+	241, // 25: helix.foundry.v1.ListFoundryEventSourceTokensResponse.tokens:type_name -> helix.foundry.v1.FoundryEventSourceToken
+	241, // 26: helix.foundry.v1.FoundryEventSourceTokenResponse.token:type_name -> helix.foundry.v1.FoundryEventSourceToken
+	242, // 27: helix.foundry.v1.ListFoundryEventBatchesResponse.batches:type_name -> helix.foundry.v1.FoundryEventBatch
+	243, // 28: helix.foundry.v1.ListFoundryEventBatchesResponse.capacity:type_name -> helix.foundry.v1.EventSourceCapacity
+	244, // 29: helix.foundry.v1.OntologyVersionResponse.version:type_name -> helix.foundry.v1.OntologyVersion
+	244, // 30: helix.foundry.v1.ListOntologyVersionsResponse.versions:type_name -> helix.foundry.v1.OntologyVersion
+	245, // 31: helix.foundry.v1.CreateOntologyVersionRequest.definition:type_name -> google.protobuf.Struct
+	246, // 32: helix.foundry.v1.ReviseOntologyVersionRequest.edits:type_name -> helix.foundry.v1.OntologyEdit
+	247, // 33: helix.foundry.v1.GenerateOntologyRequest.event_sources:type_name -> helix.foundry.v1.FoundryEventSourcePick
+	248, // 34: helix.foundry.v1.OntologyGenerationResponse.generation:type_name -> helix.foundry.v1.OntologyGeneration
+	248, // 35: helix.foundry.v1.ListOntologyGenerationsResponse.generations:type_name -> helix.foundry.v1.OntologyGeneration
+	249, // 36: helix.foundry.v1.AnswerOntologyGenerationRequest.answers:type_name -> helix.foundry.v1.AgentQuestionAnswer
 	250, // 37: helix.foundry.v1.FoundryOntologyResponse.ontology:type_name -> helix.foundry.v1.FoundryOntology
 	250, // 38: helix.foundry.v1.ListFoundryOntologiesResponse.ontologies:type_name -> helix.foundry.v1.FoundryOntology
 	251, // 39: helix.foundry.v1.CreateFoundryDocumentResponse.document:type_name -> helix.foundry.v1.FoundryDocument
@@ -17748,8 +17702,8 @@ var file_helix_foundry_v1_foundry_proto_depIdxs = []int32{
 	254, // 46: helix.foundry.v1.ListFoundryDocumentSetsResponse.sets:type_name -> helix.foundry.v1.FoundryDocumentSet
 	251, // 47: helix.foundry.v1.CreateFoundryOntologyDocumentResponse.document:type_name -> helix.foundry.v1.FoundryDocument
 	252, // 48: helix.foundry.v1.CreateFoundryOntologyDocumentResponse.upload:type_name -> helix.foundry.v1.FoundryDocumentUpload
-	246, // 49: helix.foundry.v1.PutFoundryDataLayoutRequest.layout:type_name -> google.protobuf.Struct
-	246, // 50: helix.foundry.v1.FoundryDataLayoutResponse.layout:type_name -> google.protobuf.Struct
+	245, // 49: helix.foundry.v1.PutFoundryDataLayoutRequest.layout:type_name -> google.protobuf.Struct
+	245, // 50: helix.foundry.v1.FoundryDataLayoutResponse.layout:type_name -> google.protobuf.Struct
 	255, // 51: helix.foundry.v1.FoundryLoadResponse.load:type_name -> helix.foundry.v1.FoundryLoad
 	255, // 52: helix.foundry.v1.ListFoundryLoadsResponse.loads:type_name -> helix.foundry.v1.FoundryLoad
 	256, // 53: helix.foundry.v1.FoundryQuestionResponse.question:type_name -> helix.foundry.v1.FoundryQuestion
@@ -17760,7 +17714,7 @@ var file_helix_foundry_v1_foundry_proto_depIdxs = []int32{
 	260, // 58: helix.foundry.v1.FoundryReviewDecisionResponse.decision:type_name -> helix.foundry.v1.FoundryReviewDecision
 	261, // 59: helix.foundry.v1.ListFoundryReviewsResponse.reviews:type_name -> helix.foundry.v1.FoundryReview
 	260, // 60: helix.foundry.v1.ListFoundryReviewDecisionsResponse.decisions:type_name -> helix.foundry.v1.FoundryReviewDecision
-	135, // 61: helix.foundry.v1.SettleFoundryReviewLabelRequest.fact:type_name -> helix.foundry.v1.FoundryLabelFact
+	134, // 61: helix.foundry.v1.SettleFoundryReviewLabelRequest.fact:type_name -> helix.foundry.v1.FoundryLabelFact
 	262, // 62: helix.foundry.v1.FoundryReviewLabelResponse.label:type_name -> helix.foundry.v1.FoundryReviewLabel
 	262, // 63: helix.foundry.v1.ListFoundryReviewLabelsResponse.labels:type_name -> helix.foundry.v1.FoundryReviewLabel
 	263, // 64: helix.foundry.v1.ListFoundryAccessResponse.grants:type_name -> helix.foundry.v1.FoundryAccessGrant
@@ -17770,9 +17724,9 @@ var file_helix_foundry_v1_foundry_proto_depIdxs = []int32{
 	266, // 68: helix.foundry.v1.SetFoundryAccessGrantsRequest.principal:type_name -> helix.foundry.v1.FoundryPrincipal
 	267, // 69: helix.foundry.v1.SetFoundryAccessGrantsRequest.targets:type_name -> helix.foundry.v1.FoundryAccessTarget
 	263, // 70: helix.foundry.v1.SetFoundryAccessGrantsResponse.grants:type_name -> helix.foundry.v1.FoundryAccessGrant
-	144, // 71: helix.foundry.v1.PreviewFoundryAccessChangeRequest.change:type_name -> helix.foundry.v1.FoundryAccessChange
-	224, // 72: helix.foundry.v1.FoundryAccessChange.load_version:type_name -> helix.foundry.v1.FoundryAccessChange.LoadVersion
-	225, // 73: helix.foundry.v1.FoundryAccessChange.move_document:type_name -> helix.foundry.v1.FoundryAccessChange.MoveDocument
+	143, // 71: helix.foundry.v1.PreviewFoundryAccessChangeRequest.change:type_name -> helix.foundry.v1.FoundryAccessChange
+	223, // 72: helix.foundry.v1.FoundryAccessChange.load_version:type_name -> helix.foundry.v1.FoundryAccessChange.LoadVersion
+	224, // 73: helix.foundry.v1.FoundryAccessChange.move_document:type_name -> helix.foundry.v1.FoundryAccessChange.MoveDocument
 	268, // 74: helix.foundry.v1.PreviewFoundryAccessChangeResponse.losses:type_name -> helix.foundry.v1.FoundryAccessLoss
 	265, // 75: helix.foundry.v1.FoundryTeamResponse.team:type_name -> helix.foundry.v1.FoundryTeam
 	269, // 76: helix.foundry.v1.ListFoundryHealFindingsResponse.findings:type_name -> helix.foundry.v1.FoundryHealFinding
@@ -17827,34 +17781,34 @@ var file_helix_foundry_v1_foundry_proto_depIdxs = []int32{
 	44,  // 125: helix.foundry.v1.FoundryService.ListFoundryEventSourceTokens:input_type -> helix.foundry.v1.ListFoundryEventSourceTokensRequest
 	46,  // 126: helix.foundry.v1.FoundryService.RevokeFoundryEventSourceToken:input_type -> helix.foundry.v1.RevokeFoundryEventSourceTokenRequest
 	48,  // 127: helix.foundry.v1.FoundryService.ListFoundryEventBatches:input_type -> helix.foundry.v1.ListFoundryEventBatchesRequest
-	78,  // 128: helix.foundry.v1.FoundryService.ListFoundryDocuments:input_type -> helix.foundry.v1.ListFoundryDocumentsRequest
-	73,  // 129: helix.foundry.v1.FoundryService.CreateFoundryDocument:input_type -> helix.foundry.v1.CreateFoundryDocumentRequest
-	80,  // 130: helix.foundry.v1.FoundryService.GetFoundryDocument:input_type -> helix.foundry.v1.GetFoundryDocumentRequest
-	81,  // 131: helix.foundry.v1.FoundryService.UpdateFoundryDocument:input_type -> helix.foundry.v1.UpdateFoundryDocumentRequest
-	82,  // 132: helix.foundry.v1.FoundryService.DeleteFoundryDocument:input_type -> helix.foundry.v1.DeleteFoundryDocumentRequest
-	83,  // 133: helix.foundry.v1.FoundryService.GetFoundryDocumentContent:input_type -> helix.foundry.v1.GetFoundryDocumentContentRequest
-	85,  // 134: helix.foundry.v1.FoundryService.GetFoundryDocumentBytes:input_type -> helix.foundry.v1.GetFoundryDocumentBytesRequest
-	75,  // 135: helix.foundry.v1.FoundryService.CompleteFoundryDocumentUpload:input_type -> helix.foundry.v1.CompleteFoundryDocumentUploadRequest
-	87,  // 136: helix.foundry.v1.FoundryService.MoveFoundryDocument:input_type -> helix.foundry.v1.MoveFoundryDocumentRequest
-	92,  // 137: helix.foundry.v1.FoundryService.ListFoundryDocumentSets:input_type -> helix.foundry.v1.ListFoundryDocumentSetsRequest
-	90,  // 138: helix.foundry.v1.FoundryService.CreateFoundryDocumentSet:input_type -> helix.foundry.v1.CreateFoundryDocumentSetRequest
-	94,  // 139: helix.foundry.v1.FoundryService.UpdateFoundryDocumentSet:input_type -> helix.foundry.v1.UpdateFoundryDocumentSetRequest
-	95,  // 140: helix.foundry.v1.FoundryService.DeleteFoundryDocumentSet:input_type -> helix.foundry.v1.DeleteFoundryDocumentSetRequest
-	97,  // 141: helix.foundry.v1.FoundryService.CreateFoundryOntologyDocument:input_type -> helix.foundry.v1.CreateFoundryOntologyDocumentRequest
-	100, // 142: helix.foundry.v1.FoundryService.DeleteFoundryOntologyDocument:input_type -> helix.foundry.v1.DeleteFoundryOntologyDocumentRequest
-	99,  // 143: helix.foundry.v1.FoundryService.CompleteFoundryOntologyDocumentUpload:input_type -> helix.foundry.v1.CompleteFoundryOntologyDocumentUploadRequest
-	101, // 144: helix.foundry.v1.FoundryService.MoveFoundryOntologyDocument:input_type -> helix.foundry.v1.MoveFoundryOntologyDocumentRequest
-	102, // 145: helix.foundry.v1.FoundryService.ListFoundryOntologyDocumentSets:input_type -> helix.foundry.v1.ListFoundryOntologyDocumentSetsRequest
-	103, // 146: helix.foundry.v1.FoundryService.CreateFoundryOntologyDocumentSet:input_type -> helix.foundry.v1.CreateFoundryOntologyDocumentSetRequest
-	104, // 147: helix.foundry.v1.FoundryService.UpdateFoundryOntologyDocumentSet:input_type -> helix.foundry.v1.UpdateFoundryOntologyDocumentSetRequest
-	105, // 148: helix.foundry.v1.FoundryService.DeleteFoundryOntologyDocumentSet:input_type -> helix.foundry.v1.DeleteFoundryOntologyDocumentSetRequest
-	106, // 149: helix.foundry.v1.FoundryService.GetFoundryDataLayout:input_type -> helix.foundry.v1.GetFoundryDataLayoutRequest
-	107, // 150: helix.foundry.v1.FoundryService.PutFoundryDataLayout:input_type -> helix.foundry.v1.PutFoundryDataLayoutRequest
-	66,  // 151: helix.foundry.v1.FoundryService.CreateFoundryOntology:input_type -> helix.foundry.v1.CreateFoundryOntologyRequest
-	68,  // 152: helix.foundry.v1.FoundryService.ListFoundryOntologies:input_type -> helix.foundry.v1.ListFoundryOntologiesRequest
-	70,  // 153: helix.foundry.v1.FoundryService.GetFoundryOntology:input_type -> helix.foundry.v1.GetFoundryOntologyRequest
-	71,  // 154: helix.foundry.v1.FoundryService.DeleteFoundryOntology:input_type -> helix.foundry.v1.DeleteFoundryOntologyRequest
-	72,  // 155: helix.foundry.v1.FoundryService.UpdateFoundryOntology:input_type -> helix.foundry.v1.UpdateFoundryOntologyRequest
+	77,  // 128: helix.foundry.v1.FoundryService.ListFoundryDocuments:input_type -> helix.foundry.v1.ListFoundryDocumentsRequest
+	72,  // 129: helix.foundry.v1.FoundryService.CreateFoundryDocument:input_type -> helix.foundry.v1.CreateFoundryDocumentRequest
+	79,  // 130: helix.foundry.v1.FoundryService.GetFoundryDocument:input_type -> helix.foundry.v1.GetFoundryDocumentRequest
+	80,  // 131: helix.foundry.v1.FoundryService.UpdateFoundryDocument:input_type -> helix.foundry.v1.UpdateFoundryDocumentRequest
+	81,  // 132: helix.foundry.v1.FoundryService.DeleteFoundryDocument:input_type -> helix.foundry.v1.DeleteFoundryDocumentRequest
+	82,  // 133: helix.foundry.v1.FoundryService.GetFoundryDocumentContent:input_type -> helix.foundry.v1.GetFoundryDocumentContentRequest
+	84,  // 134: helix.foundry.v1.FoundryService.GetFoundryDocumentBytes:input_type -> helix.foundry.v1.GetFoundryDocumentBytesRequest
+	74,  // 135: helix.foundry.v1.FoundryService.CompleteFoundryDocumentUpload:input_type -> helix.foundry.v1.CompleteFoundryDocumentUploadRequest
+	86,  // 136: helix.foundry.v1.FoundryService.MoveFoundryDocument:input_type -> helix.foundry.v1.MoveFoundryDocumentRequest
+	91,  // 137: helix.foundry.v1.FoundryService.ListFoundryDocumentSets:input_type -> helix.foundry.v1.ListFoundryDocumentSetsRequest
+	89,  // 138: helix.foundry.v1.FoundryService.CreateFoundryDocumentSet:input_type -> helix.foundry.v1.CreateFoundryDocumentSetRequest
+	93,  // 139: helix.foundry.v1.FoundryService.UpdateFoundryDocumentSet:input_type -> helix.foundry.v1.UpdateFoundryDocumentSetRequest
+	94,  // 140: helix.foundry.v1.FoundryService.DeleteFoundryDocumentSet:input_type -> helix.foundry.v1.DeleteFoundryDocumentSetRequest
+	96,  // 141: helix.foundry.v1.FoundryService.CreateFoundryOntologyDocument:input_type -> helix.foundry.v1.CreateFoundryOntologyDocumentRequest
+	99,  // 142: helix.foundry.v1.FoundryService.DeleteFoundryOntologyDocument:input_type -> helix.foundry.v1.DeleteFoundryOntologyDocumentRequest
+	98,  // 143: helix.foundry.v1.FoundryService.CompleteFoundryOntologyDocumentUpload:input_type -> helix.foundry.v1.CompleteFoundryOntologyDocumentUploadRequest
+	100, // 144: helix.foundry.v1.FoundryService.MoveFoundryOntologyDocument:input_type -> helix.foundry.v1.MoveFoundryOntologyDocumentRequest
+	101, // 145: helix.foundry.v1.FoundryService.ListFoundryOntologyDocumentSets:input_type -> helix.foundry.v1.ListFoundryOntologyDocumentSetsRequest
+	102, // 146: helix.foundry.v1.FoundryService.CreateFoundryOntologyDocumentSet:input_type -> helix.foundry.v1.CreateFoundryOntologyDocumentSetRequest
+	103, // 147: helix.foundry.v1.FoundryService.UpdateFoundryOntologyDocumentSet:input_type -> helix.foundry.v1.UpdateFoundryOntologyDocumentSetRequest
+	104, // 148: helix.foundry.v1.FoundryService.DeleteFoundryOntologyDocumentSet:input_type -> helix.foundry.v1.DeleteFoundryOntologyDocumentSetRequest
+	105, // 149: helix.foundry.v1.FoundryService.GetFoundryDataLayout:input_type -> helix.foundry.v1.GetFoundryDataLayoutRequest
+	106, // 150: helix.foundry.v1.FoundryService.PutFoundryDataLayout:input_type -> helix.foundry.v1.PutFoundryDataLayoutRequest
+	65,  // 151: helix.foundry.v1.FoundryService.CreateFoundryOntology:input_type -> helix.foundry.v1.CreateFoundryOntologyRequest
+	67,  // 152: helix.foundry.v1.FoundryService.ListFoundryOntologies:input_type -> helix.foundry.v1.ListFoundryOntologiesRequest
+	69,  // 153: helix.foundry.v1.FoundryService.GetFoundryOntology:input_type -> helix.foundry.v1.GetFoundryOntologyRequest
+	70,  // 154: helix.foundry.v1.FoundryService.DeleteFoundryOntology:input_type -> helix.foundry.v1.DeleteFoundryOntologyRequest
+	71,  // 155: helix.foundry.v1.FoundryService.UpdateFoundryOntology:input_type -> helix.foundry.v1.UpdateFoundryOntologyRequest
 	50,  // 156: helix.foundry.v1.FoundryService.GetCurrentOntologyVersion:input_type -> helix.foundry.v1.GetCurrentOntologyVersionRequest
 	52,  // 157: helix.foundry.v1.FoundryService.ListOntologyVersions:input_type -> helix.foundry.v1.ListOntologyVersionsRequest
 	54,  // 158: helix.foundry.v1.FoundryService.GetOntologyVersion:input_type -> helix.foundry.v1.GetOntologyVersionRequest
@@ -17865,75 +17819,75 @@ var file_helix_foundry_v1_foundry_proto_depIdxs = []int32{
 	60,  // 163: helix.foundry.v1.FoundryService.GetOntologyGeneration:input_type -> helix.foundry.v1.GetOntologyGenerationRequest
 	61,  // 164: helix.foundry.v1.FoundryService.ListOntologyGenerations:input_type -> helix.foundry.v1.ListOntologyGenerationsRequest
 	63,  // 165: helix.foundry.v1.FoundryService.AnswerOntologyGeneration:input_type -> helix.foundry.v1.AnswerOntologyGenerationRequest
-	65,  // 166: helix.foundry.v1.FoundryService.CancelOntologyGeneration:input_type -> helix.foundry.v1.CancelOntologyGenerationRequest
-	126, // 167: helix.foundry.v1.FoundryService.SettleFoundryReview:input_type -> helix.foundry.v1.SettleFoundryReviewRequest
-	128, // 168: helix.foundry.v1.FoundryService.ListFoundryReviews:input_type -> helix.foundry.v1.ListFoundryReviewsRequest
-	130, // 169: helix.foundry.v1.FoundryService.ListFoundryReviewDecisions:input_type -> helix.foundry.v1.ListFoundryReviewDecisionsRequest
-	132, // 170: helix.foundry.v1.FoundryService.DeleteFoundryReviewDecision:input_type -> helix.foundry.v1.DeleteFoundryReviewDecisionRequest
-	134, // 171: helix.foundry.v1.FoundryService.SettleFoundryReviewLabel:input_type -> helix.foundry.v1.SettleFoundryReviewLabelRequest
-	137, // 172: helix.foundry.v1.FoundryService.ListFoundryReviewLabels:input_type -> helix.foundry.v1.ListFoundryReviewLabelsRequest
-	154, // 173: helix.foundry.v1.FoundryService.ListFoundryHealFindings:input_type -> helix.foundry.v1.ListFoundryHealFindingsRequest
-	156, // 174: helix.foundry.v1.FoundryService.DismissFoundryHealFinding:input_type -> helix.foundry.v1.DismissFoundryHealFindingRequest
-	158, // 175: helix.foundry.v1.FoundryService.CreateFoundryWorkflow:input_type -> helix.foundry.v1.CreateFoundryWorkflowRequest
-	160, // 176: helix.foundry.v1.FoundryService.ListFoundryWorkflows:input_type -> helix.foundry.v1.ListFoundryWorkflowsRequest
-	162, // 177: helix.foundry.v1.FoundryService.GetFoundryWorkflow:input_type -> helix.foundry.v1.GetFoundryWorkflowRequest
-	163, // 178: helix.foundry.v1.FoundryService.DeleteFoundryWorkflow:input_type -> helix.foundry.v1.DeleteFoundryWorkflowRequest
-	164, // 179: helix.foundry.v1.FoundryService.StartFoundryWorkflowRun:input_type -> helix.foundry.v1.StartFoundryWorkflowRunRequest
-	166, // 180: helix.foundry.v1.FoundryService.GetFoundryWorkflowInsights:input_type -> helix.foundry.v1.GetFoundryWorkflowInsightsRequest
-	167, // 181: helix.foundry.v1.FoundryService.ListFoundryWorkflowRuns:input_type -> helix.foundry.v1.ListFoundryWorkflowRunsRequest
-	169, // 182: helix.foundry.v1.FoundryService.GetFoundryWorkflowRun:input_type -> helix.foundry.v1.GetFoundryWorkflowRunRequest
-	170, // 183: helix.foundry.v1.FoundryService.FinishFoundryWorkflowRun:input_type -> helix.foundry.v1.FinishFoundryWorkflowRunRequest
-	173, // 184: helix.foundry.v1.FoundryService.AssessFoundryWorkflowRun:input_type -> helix.foundry.v1.AssessFoundryWorkflowRunRequest
-	171, // 185: helix.foundry.v1.FoundryService.ListFoundryWorkflowRunAccesses:input_type -> helix.foundry.v1.ListFoundryWorkflowRunAccessesRequest
-	88,  // 186: helix.foundry.v1.FoundryService.ListFoundryOntologyDocuments:input_type -> helix.foundry.v1.ListFoundryOntologyDocumentsRequest
-	89,  // 187: helix.foundry.v1.FoundryService.GetFoundryOntologyDocument:input_type -> helix.foundry.v1.GetFoundryOntologyDocumentRequest
-	109, // 188: helix.foundry.v1.FoundryService.CreateFoundryLoad:input_type -> helix.foundry.v1.CreateFoundryLoadRequest
-	111, // 189: helix.foundry.v1.FoundryService.ListFoundryLoads:input_type -> helix.foundry.v1.ListFoundryLoadsRequest
-	113, // 190: helix.foundry.v1.FoundryService.GetFoundryLoad:input_type -> helix.foundry.v1.GetFoundryLoadRequest
-	114, // 191: helix.foundry.v1.FoundryService.SetCurrentFoundryLoad:input_type -> helix.foundry.v1.SetCurrentFoundryLoadRequest
-	123, // 192: helix.foundry.v1.FoundryService.DeleteFoundryLoad:input_type -> helix.foundry.v1.DeleteFoundryLoadRequest
-	124, // 193: helix.foundry.v1.FoundryService.ReadFoundryGraph:input_type -> helix.foundry.v1.ReadFoundryGraphRequest
-	115, // 194: helix.foundry.v1.FoundryService.AskFoundryQuestion:input_type -> helix.foundry.v1.AskFoundryQuestionRequest
-	117, // 195: helix.foundry.v1.FoundryService.GetFoundryQuestion:input_type -> helix.foundry.v1.GetFoundryQuestionRequest
-	118, // 196: helix.foundry.v1.FoundryService.ListFoundryQuestions:input_type -> helix.foundry.v1.ListFoundryQuestionsRequest
-	120, // 197: helix.foundry.v1.FoundryService.ListFoundryQuestionEvents:input_type -> helix.foundry.v1.ListFoundryQuestionEventsRequest
-	122, // 198: helix.foundry.v1.FoundryService.CancelFoundryQuestion:input_type -> helix.foundry.v1.CancelFoundryQuestionRequest
+	64,  // 166: helix.foundry.v1.FoundryService.CancelOntologyGeneration:input_type -> helix.foundry.v1.CancelOntologyGenerationRequest
+	125, // 167: helix.foundry.v1.FoundryService.SettleFoundryReview:input_type -> helix.foundry.v1.SettleFoundryReviewRequest
+	127, // 168: helix.foundry.v1.FoundryService.ListFoundryReviews:input_type -> helix.foundry.v1.ListFoundryReviewsRequest
+	129, // 169: helix.foundry.v1.FoundryService.ListFoundryReviewDecisions:input_type -> helix.foundry.v1.ListFoundryReviewDecisionsRequest
+	131, // 170: helix.foundry.v1.FoundryService.DeleteFoundryReviewDecision:input_type -> helix.foundry.v1.DeleteFoundryReviewDecisionRequest
+	133, // 171: helix.foundry.v1.FoundryService.SettleFoundryReviewLabel:input_type -> helix.foundry.v1.SettleFoundryReviewLabelRequest
+	136, // 172: helix.foundry.v1.FoundryService.ListFoundryReviewLabels:input_type -> helix.foundry.v1.ListFoundryReviewLabelsRequest
+	153, // 173: helix.foundry.v1.FoundryService.ListFoundryHealFindings:input_type -> helix.foundry.v1.ListFoundryHealFindingsRequest
+	155, // 174: helix.foundry.v1.FoundryService.DismissFoundryHealFinding:input_type -> helix.foundry.v1.DismissFoundryHealFindingRequest
+	157, // 175: helix.foundry.v1.FoundryService.CreateFoundryWorkflow:input_type -> helix.foundry.v1.CreateFoundryWorkflowRequest
+	159, // 176: helix.foundry.v1.FoundryService.ListFoundryWorkflows:input_type -> helix.foundry.v1.ListFoundryWorkflowsRequest
+	161, // 177: helix.foundry.v1.FoundryService.GetFoundryWorkflow:input_type -> helix.foundry.v1.GetFoundryWorkflowRequest
+	162, // 178: helix.foundry.v1.FoundryService.DeleteFoundryWorkflow:input_type -> helix.foundry.v1.DeleteFoundryWorkflowRequest
+	163, // 179: helix.foundry.v1.FoundryService.StartFoundryWorkflowRun:input_type -> helix.foundry.v1.StartFoundryWorkflowRunRequest
+	165, // 180: helix.foundry.v1.FoundryService.GetFoundryWorkflowInsights:input_type -> helix.foundry.v1.GetFoundryWorkflowInsightsRequest
+	166, // 181: helix.foundry.v1.FoundryService.ListFoundryWorkflowRuns:input_type -> helix.foundry.v1.ListFoundryWorkflowRunsRequest
+	168, // 182: helix.foundry.v1.FoundryService.GetFoundryWorkflowRun:input_type -> helix.foundry.v1.GetFoundryWorkflowRunRequest
+	169, // 183: helix.foundry.v1.FoundryService.FinishFoundryWorkflowRun:input_type -> helix.foundry.v1.FinishFoundryWorkflowRunRequest
+	172, // 184: helix.foundry.v1.FoundryService.AssessFoundryWorkflowRun:input_type -> helix.foundry.v1.AssessFoundryWorkflowRunRequest
+	170, // 185: helix.foundry.v1.FoundryService.ListFoundryWorkflowRunAccesses:input_type -> helix.foundry.v1.ListFoundryWorkflowRunAccessesRequest
+	87,  // 186: helix.foundry.v1.FoundryService.ListFoundryOntologyDocuments:input_type -> helix.foundry.v1.ListFoundryOntologyDocumentsRequest
+	88,  // 187: helix.foundry.v1.FoundryService.GetFoundryOntologyDocument:input_type -> helix.foundry.v1.GetFoundryOntologyDocumentRequest
+	108, // 188: helix.foundry.v1.FoundryService.CreateFoundryLoad:input_type -> helix.foundry.v1.CreateFoundryLoadRequest
+	110, // 189: helix.foundry.v1.FoundryService.ListFoundryLoads:input_type -> helix.foundry.v1.ListFoundryLoadsRequest
+	112, // 190: helix.foundry.v1.FoundryService.GetFoundryLoad:input_type -> helix.foundry.v1.GetFoundryLoadRequest
+	113, // 191: helix.foundry.v1.FoundryService.SetCurrentFoundryLoad:input_type -> helix.foundry.v1.SetCurrentFoundryLoadRequest
+	122, // 192: helix.foundry.v1.FoundryService.DeleteFoundryLoad:input_type -> helix.foundry.v1.DeleteFoundryLoadRequest
+	123, // 193: helix.foundry.v1.FoundryService.ReadFoundryGraph:input_type -> helix.foundry.v1.ReadFoundryGraphRequest
+	114, // 194: helix.foundry.v1.FoundryService.AskFoundryQuestion:input_type -> helix.foundry.v1.AskFoundryQuestionRequest
+	116, // 195: helix.foundry.v1.FoundryService.GetFoundryQuestion:input_type -> helix.foundry.v1.GetFoundryQuestionRequest
+	117, // 196: helix.foundry.v1.FoundryService.ListFoundryQuestions:input_type -> helix.foundry.v1.ListFoundryQuestionsRequest
+	119, // 197: helix.foundry.v1.FoundryService.ListFoundryQuestionEvents:input_type -> helix.foundry.v1.ListFoundryQuestionEventsRequest
+	121, // 198: helix.foundry.v1.FoundryService.CancelFoundryQuestion:input_type -> helix.foundry.v1.CancelFoundryQuestionRequest
 	5,   // 199: helix.foundry.v1.FoundryService.StopFoundryLoadEnrichment:input_type -> helix.foundry.v1.StopFoundryLoadEnrichmentRequest
-	174, // 200: helix.foundry.v1.FoundryService.SendFoundryAgentMessage:input_type -> helix.foundry.v1.SendFoundryAgentMessageRequest
-	176, // 201: helix.foundry.v1.FoundryService.ListFoundryAgentThreads:input_type -> helix.foundry.v1.ListFoundryAgentThreadsRequest
-	178, // 202: helix.foundry.v1.FoundryService.GetFoundryAgentThread:input_type -> helix.foundry.v1.GetFoundryAgentThreadRequest
-	180, // 203: helix.foundry.v1.FoundryService.DeleteFoundryAgentThread:input_type -> helix.foundry.v1.DeleteFoundryAgentThreadRequest
-	181, // 204: helix.foundry.v1.FoundryService.ListFoundryAgentTurnEvents:input_type -> helix.foundry.v1.ListFoundryAgentTurnEventsRequest
-	183, // 205: helix.foundry.v1.FoundryService.CancelFoundryAgentTurn:input_type -> helix.foundry.v1.CancelFoundryAgentTurnRequest
-	184, // 206: helix.foundry.v1.FoundryService.ExecuteFoundryAgentAction:input_type -> helix.foundry.v1.ExecuteFoundryAgentActionRequest
-	185, // 207: helix.foundry.v1.FoundryService.RefreshFoundryAgentAction:input_type -> helix.foundry.v1.RefreshFoundryAgentActionRequest
-	186, // 208: helix.foundry.v1.FoundryService.DismissFoundryAgentAction:input_type -> helix.foundry.v1.DismissFoundryAgentActionRequest
-	188, // 209: helix.foundry.v1.FoundryService.GetFoundryAgentRuntime:input_type -> helix.foundry.v1.GetFoundryAgentRuntimeRequest
-	189, // 210: helix.foundry.v1.FoundryService.UpdateFoundryAgentRuntime:input_type -> helix.foundry.v1.UpdateFoundryAgentRuntimeRequest
-	191, // 211: helix.foundry.v1.FoundryService.CreateFoundryAgentHostPairing:input_type -> helix.foundry.v1.CreateFoundryAgentHostPairingRequest
-	193, // 212: helix.foundry.v1.FoundryService.RevokeFoundryAgentHost:input_type -> helix.foundry.v1.RevokeFoundryAgentHostRequest
-	195, // 213: helix.foundry.v1.FoundryService.ListFoundryDashboards:input_type -> helix.foundry.v1.ListFoundryDashboardsRequest
-	197, // 214: helix.foundry.v1.FoundryService.GetFoundryDashboard:input_type -> helix.foundry.v1.GetFoundryDashboardRequest
-	199, // 215: helix.foundry.v1.FoundryService.CreateFoundryDashboard:input_type -> helix.foundry.v1.CreateFoundryDashboardRequest
-	200, // 216: helix.foundry.v1.FoundryService.UpdateFoundryDashboard:input_type -> helix.foundry.v1.UpdateFoundryDashboardRequest
-	201, // 217: helix.foundry.v1.FoundryService.DeleteFoundryDashboard:input_type -> helix.foundry.v1.DeleteFoundryDashboardRequest
-	202, // 218: helix.foundry.v1.FoundryService.PinFoundryDashboard:input_type -> helix.foundry.v1.PinFoundryDashboardRequest
-	203, // 219: helix.foundry.v1.FoundryService.AddFoundryDashboardQuestionVisual:input_type -> helix.foundry.v1.AddFoundryDashboardQuestionVisualRequest
-	204, // 220: helix.foundry.v1.FoundryService.PreviewFoundryDashboardTile:input_type -> helix.foundry.v1.PreviewFoundryDashboardTileRequest
-	206, // 221: helix.foundry.v1.FoundryService.PublishFoundryDashboard:input_type -> helix.foundry.v1.PublishFoundryDashboardRequest
-	207, // 222: helix.foundry.v1.FoundryService.UnpublishFoundryDashboard:input_type -> helix.foundry.v1.UnpublishFoundryDashboardRequest
-	208, // 223: helix.foundry.v1.FoundryService.ListFoundryAutomations:input_type -> helix.foundry.v1.ListFoundryAutomationsRequest
-	210, // 224: helix.foundry.v1.FoundryService.GetFoundryAutomation:input_type -> helix.foundry.v1.GetFoundryAutomationRequest
-	212, // 225: helix.foundry.v1.FoundryService.CreateFoundryAutomation:input_type -> helix.foundry.v1.CreateFoundryAutomationRequest
-	213, // 226: helix.foundry.v1.FoundryService.UpdateFoundryAutomation:input_type -> helix.foundry.v1.UpdateFoundryAutomationRequest
-	214, // 227: helix.foundry.v1.FoundryService.DeleteFoundryAutomation:input_type -> helix.foundry.v1.DeleteFoundryAutomationRequest
-	215, // 228: helix.foundry.v1.FoundryService.ApproveFoundryAutomation:input_type -> helix.foundry.v1.ApproveFoundryAutomationRequest
-	216, // 229: helix.foundry.v1.FoundryService.PauseFoundryAutomation:input_type -> helix.foundry.v1.PauseFoundryAutomationRequest
-	217, // 230: helix.foundry.v1.FoundryService.ResumeFoundryAutomation:input_type -> helix.foundry.v1.ResumeFoundryAutomationRequest
-	218, // 231: helix.foundry.v1.FoundryService.RunFoundryAutomation:input_type -> helix.foundry.v1.RunFoundryAutomationRequest
-	219, // 232: helix.foundry.v1.FoundryService.ListFoundryAutomationRuns:input_type -> helix.foundry.v1.ListFoundryAutomationRunsRequest
-	221, // 233: helix.foundry.v1.FoundryService.GetFoundryAutomationRun:input_type -> helix.foundry.v1.GetFoundryAutomationRunRequest
-	222, // 234: helix.foundry.v1.FoundryService.CancelFoundryAutomationRun:input_type -> helix.foundry.v1.CancelFoundryAutomationRunRequest
+	173, // 200: helix.foundry.v1.FoundryService.SendFoundryAgentMessage:input_type -> helix.foundry.v1.SendFoundryAgentMessageRequest
+	175, // 201: helix.foundry.v1.FoundryService.ListFoundryAgentThreads:input_type -> helix.foundry.v1.ListFoundryAgentThreadsRequest
+	177, // 202: helix.foundry.v1.FoundryService.GetFoundryAgentThread:input_type -> helix.foundry.v1.GetFoundryAgentThreadRequest
+	179, // 203: helix.foundry.v1.FoundryService.DeleteFoundryAgentThread:input_type -> helix.foundry.v1.DeleteFoundryAgentThreadRequest
+	180, // 204: helix.foundry.v1.FoundryService.ListFoundryAgentTurnEvents:input_type -> helix.foundry.v1.ListFoundryAgentTurnEventsRequest
+	182, // 205: helix.foundry.v1.FoundryService.CancelFoundryAgentTurn:input_type -> helix.foundry.v1.CancelFoundryAgentTurnRequest
+	183, // 206: helix.foundry.v1.FoundryService.ExecuteFoundryAgentAction:input_type -> helix.foundry.v1.ExecuteFoundryAgentActionRequest
+	184, // 207: helix.foundry.v1.FoundryService.RefreshFoundryAgentAction:input_type -> helix.foundry.v1.RefreshFoundryAgentActionRequest
+	185, // 208: helix.foundry.v1.FoundryService.DismissFoundryAgentAction:input_type -> helix.foundry.v1.DismissFoundryAgentActionRequest
+	187, // 209: helix.foundry.v1.FoundryService.GetFoundryAgentRuntime:input_type -> helix.foundry.v1.GetFoundryAgentRuntimeRequest
+	188, // 210: helix.foundry.v1.FoundryService.UpdateFoundryAgentRuntime:input_type -> helix.foundry.v1.UpdateFoundryAgentRuntimeRequest
+	190, // 211: helix.foundry.v1.FoundryService.CreateFoundryAgentHostPairing:input_type -> helix.foundry.v1.CreateFoundryAgentHostPairingRequest
+	192, // 212: helix.foundry.v1.FoundryService.RevokeFoundryAgentHost:input_type -> helix.foundry.v1.RevokeFoundryAgentHostRequest
+	194, // 213: helix.foundry.v1.FoundryService.ListFoundryDashboards:input_type -> helix.foundry.v1.ListFoundryDashboardsRequest
+	196, // 214: helix.foundry.v1.FoundryService.GetFoundryDashboard:input_type -> helix.foundry.v1.GetFoundryDashboardRequest
+	198, // 215: helix.foundry.v1.FoundryService.CreateFoundryDashboard:input_type -> helix.foundry.v1.CreateFoundryDashboardRequest
+	199, // 216: helix.foundry.v1.FoundryService.UpdateFoundryDashboard:input_type -> helix.foundry.v1.UpdateFoundryDashboardRequest
+	200, // 217: helix.foundry.v1.FoundryService.DeleteFoundryDashboard:input_type -> helix.foundry.v1.DeleteFoundryDashboardRequest
+	201, // 218: helix.foundry.v1.FoundryService.PinFoundryDashboard:input_type -> helix.foundry.v1.PinFoundryDashboardRequest
+	202, // 219: helix.foundry.v1.FoundryService.AddFoundryDashboardQuestionVisual:input_type -> helix.foundry.v1.AddFoundryDashboardQuestionVisualRequest
+	203, // 220: helix.foundry.v1.FoundryService.PreviewFoundryDashboardTile:input_type -> helix.foundry.v1.PreviewFoundryDashboardTileRequest
+	205, // 221: helix.foundry.v1.FoundryService.PublishFoundryDashboard:input_type -> helix.foundry.v1.PublishFoundryDashboardRequest
+	206, // 222: helix.foundry.v1.FoundryService.UnpublishFoundryDashboard:input_type -> helix.foundry.v1.UnpublishFoundryDashboardRequest
+	207, // 223: helix.foundry.v1.FoundryService.ListFoundryAutomations:input_type -> helix.foundry.v1.ListFoundryAutomationsRequest
+	209, // 224: helix.foundry.v1.FoundryService.GetFoundryAutomation:input_type -> helix.foundry.v1.GetFoundryAutomationRequest
+	211, // 225: helix.foundry.v1.FoundryService.CreateFoundryAutomation:input_type -> helix.foundry.v1.CreateFoundryAutomationRequest
+	212, // 226: helix.foundry.v1.FoundryService.UpdateFoundryAutomation:input_type -> helix.foundry.v1.UpdateFoundryAutomationRequest
+	213, // 227: helix.foundry.v1.FoundryService.DeleteFoundryAutomation:input_type -> helix.foundry.v1.DeleteFoundryAutomationRequest
+	214, // 228: helix.foundry.v1.FoundryService.ApproveFoundryAutomation:input_type -> helix.foundry.v1.ApproveFoundryAutomationRequest
+	215, // 229: helix.foundry.v1.FoundryService.PauseFoundryAutomation:input_type -> helix.foundry.v1.PauseFoundryAutomationRequest
+	216, // 230: helix.foundry.v1.FoundryService.ResumeFoundryAutomation:input_type -> helix.foundry.v1.ResumeFoundryAutomationRequest
+	217, // 231: helix.foundry.v1.FoundryService.RunFoundryAutomation:input_type -> helix.foundry.v1.RunFoundryAutomationRequest
+	218, // 232: helix.foundry.v1.FoundryService.ListFoundryAutomationRuns:input_type -> helix.foundry.v1.ListFoundryAutomationRunsRequest
+	220, // 233: helix.foundry.v1.FoundryService.GetFoundryAutomationRun:input_type -> helix.foundry.v1.GetFoundryAutomationRunRequest
+	221, // 234: helix.foundry.v1.FoundryService.CancelFoundryAutomationRun:input_type -> helix.foundry.v1.CancelFoundryAutomationRunRequest
 	0,   // 235: helix.foundry.v1.FoundryService.GetFoundryUsage:input_type -> helix.foundry.v1.GetFoundryUsageRequest
 	2,   // 236: helix.foundry.v1.FoundryService.GetFoundryEnrichment:input_type -> helix.foundry.v1.GetFoundryEnrichmentRequest
 	3,   // 237: helix.foundry.v1.FoundryService.UpdateFoundryEnrichment:input_type -> helix.foundry.v1.UpdateFoundryEnrichmentRequest
@@ -17941,14 +17895,14 @@ var file_helix_foundry_v1_foundry_proto_depIdxs = []int32{
 	7,   // 239: helix.foundry.v1.FoundryService.UpdateFoundryAI:input_type -> helix.foundry.v1.UpdateFoundryAIRequest
 	9,   // 240: helix.foundry.v1.FoundryService.DetectFoundryAIDefault:input_type -> helix.foundry.v1.DetectFoundryAIDefaultRequest
 	10,  // 241: helix.foundry.v1.FoundryService.ListFoundryOllamaModels:input_type -> helix.foundry.v1.ListFoundryOllamaModelsRequest
-	139, // 242: helix.foundry.v1.FoundryService.ListFoundryAccess:input_type -> helix.foundry.v1.ListFoundryAccessRequest
-	141, // 243: helix.foundry.v1.FoundryService.SetFoundryAccessGrants:input_type -> helix.foundry.v1.SetFoundryAccessGrantsRequest
-	143, // 244: helix.foundry.v1.FoundryService.PreviewFoundryAccessChange:input_type -> helix.foundry.v1.PreviewFoundryAccessChangeRequest
-	146, // 245: helix.foundry.v1.FoundryService.GetMyFoundryAccess:input_type -> helix.foundry.v1.GetMyFoundryAccessRequest
-	148, // 246: helix.foundry.v1.FoundryService.SetFoundryMemberRestricted:input_type -> helix.foundry.v1.SetFoundryMemberRestrictedRequest
-	150, // 247: helix.foundry.v1.FoundryService.CreateFoundryTeam:input_type -> helix.foundry.v1.CreateFoundryTeamRequest
-	151, // 248: helix.foundry.v1.FoundryService.UpdateFoundryTeam:input_type -> helix.foundry.v1.UpdateFoundryTeamRequest
-	152, // 249: helix.foundry.v1.FoundryService.DeleteFoundryTeam:input_type -> helix.foundry.v1.DeleteFoundryTeamRequest
+	138, // 242: helix.foundry.v1.FoundryService.ListFoundryAccess:input_type -> helix.foundry.v1.ListFoundryAccessRequest
+	140, // 243: helix.foundry.v1.FoundryService.SetFoundryAccessGrants:input_type -> helix.foundry.v1.SetFoundryAccessGrantsRequest
+	142, // 244: helix.foundry.v1.FoundryService.PreviewFoundryAccessChange:input_type -> helix.foundry.v1.PreviewFoundryAccessChangeRequest
+	145, // 245: helix.foundry.v1.FoundryService.GetMyFoundryAccess:input_type -> helix.foundry.v1.GetMyFoundryAccessRequest
+	147, // 246: helix.foundry.v1.FoundryService.SetFoundryMemberRestricted:input_type -> helix.foundry.v1.SetFoundryMemberRestrictedRequest
+	149, // 247: helix.foundry.v1.FoundryService.CreateFoundryTeam:input_type -> helix.foundry.v1.CreateFoundryTeamRequest
+	150, // 248: helix.foundry.v1.FoundryService.UpdateFoundryTeam:input_type -> helix.foundry.v1.UpdateFoundryTeamRequest
+	151, // 249: helix.foundry.v1.FoundryService.DeleteFoundryTeam:input_type -> helix.foundry.v1.DeleteFoundryTeamRequest
 	13,  // 250: helix.foundry.v1.FoundryService.GetFoundryPlan:output_type -> helix.foundry.v1.FoundryPlanResponse
 	17,  // 251: helix.foundry.v1.FoundryService.CreateFoundryProCheckout:output_type -> helix.foundry.v1.CreateFoundryProCheckoutResponse
 	13,  // 252: helix.foundry.v1.FoundryService.CancelFoundryPro:output_type -> helix.foundry.v1.FoundryPlanResponse
@@ -17960,7 +17914,7 @@ var file_helix_foundry_v1_foundry_proto_depIdxs = []int32{
 	33,  // 258: helix.foundry.v1.FoundryService.ListConnectors:output_type -> helix.foundry.v1.ListConnectorsResponse
 	25,  // 259: helix.foundry.v1.FoundryService.GetConnector:output_type -> helix.foundry.v1.ConnectorResponse
 	25,  // 260: helix.foundry.v1.FoundryService.UpdateConnector:output_type -> helix.foundry.v1.ConnectorResponse
-	228, // 261: helix.foundry.v1.FoundryService.DeleteConnector:output_type -> google.protobuf.Empty
+	227, // 261: helix.foundry.v1.FoundryService.DeleteConnector:output_type -> google.protobuf.Empty
 	38,  // 262: helix.foundry.v1.FoundryService.SyncConnector:output_type -> helix.foundry.v1.ConnectorSyncResponse
 	38,  // 263: helix.foundry.v1.FoundryService.GetConnectorSync:output_type -> helix.foundry.v1.ConnectorSyncResponse
 	41,  // 264: helix.foundry.v1.FoundryService.ListConnectorSyncs:output_type -> helix.foundry.v1.ListConnectorSyncsResponse
@@ -17972,34 +17926,34 @@ var file_helix_foundry_v1_foundry_proto_depIdxs = []int32{
 	45,  // 270: helix.foundry.v1.FoundryService.ListFoundryEventSourceTokens:output_type -> helix.foundry.v1.ListFoundryEventSourceTokensResponse
 	47,  // 271: helix.foundry.v1.FoundryService.RevokeFoundryEventSourceToken:output_type -> helix.foundry.v1.FoundryEventSourceTokenResponse
 	49,  // 272: helix.foundry.v1.FoundryService.ListFoundryEventBatches:output_type -> helix.foundry.v1.ListFoundryEventBatchesResponse
-	79,  // 273: helix.foundry.v1.FoundryService.ListFoundryDocuments:output_type -> helix.foundry.v1.ListFoundryDocumentsResponse
-	74,  // 274: helix.foundry.v1.FoundryService.CreateFoundryDocument:output_type -> helix.foundry.v1.CreateFoundryDocumentResponse
-	76,  // 275: helix.foundry.v1.FoundryService.GetFoundryDocument:output_type -> helix.foundry.v1.FoundryDocumentResponse
-	76,  // 276: helix.foundry.v1.FoundryService.UpdateFoundryDocument:output_type -> helix.foundry.v1.FoundryDocumentResponse
-	76,  // 277: helix.foundry.v1.FoundryService.DeleteFoundryDocument:output_type -> helix.foundry.v1.FoundryDocumentResponse
-	84,  // 278: helix.foundry.v1.FoundryService.GetFoundryDocumentContent:output_type -> helix.foundry.v1.GetFoundryDocumentContentResponse
-	86,  // 279: helix.foundry.v1.FoundryService.GetFoundryDocumentBytes:output_type -> helix.foundry.v1.GetFoundryDocumentBytesResponse
-	77,  // 280: helix.foundry.v1.FoundryService.CompleteFoundryDocumentUpload:output_type -> helix.foundry.v1.FoundryDocumentReadsResponse
-	77,  // 281: helix.foundry.v1.FoundryService.MoveFoundryDocument:output_type -> helix.foundry.v1.FoundryDocumentReadsResponse
-	93,  // 282: helix.foundry.v1.FoundryService.ListFoundryDocumentSets:output_type -> helix.foundry.v1.ListFoundryDocumentSetsResponse
-	91,  // 283: helix.foundry.v1.FoundryService.CreateFoundryDocumentSet:output_type -> helix.foundry.v1.FoundryDocumentSetResponse
-	91,  // 284: helix.foundry.v1.FoundryService.UpdateFoundryDocumentSet:output_type -> helix.foundry.v1.FoundryDocumentSetResponse
-	96,  // 285: helix.foundry.v1.FoundryService.DeleteFoundryDocumentSet:output_type -> helix.foundry.v1.DeleteFoundryDocumentSetResponse
-	98,  // 286: helix.foundry.v1.FoundryService.CreateFoundryOntologyDocument:output_type -> helix.foundry.v1.CreateFoundryOntologyDocumentResponse
-	76,  // 287: helix.foundry.v1.FoundryService.DeleteFoundryOntologyDocument:output_type -> helix.foundry.v1.FoundryDocumentResponse
-	77,  // 288: helix.foundry.v1.FoundryService.CompleteFoundryOntologyDocumentUpload:output_type -> helix.foundry.v1.FoundryDocumentReadsResponse
-	77,  // 289: helix.foundry.v1.FoundryService.MoveFoundryOntologyDocument:output_type -> helix.foundry.v1.FoundryDocumentReadsResponse
-	93,  // 290: helix.foundry.v1.FoundryService.ListFoundryOntologyDocumentSets:output_type -> helix.foundry.v1.ListFoundryDocumentSetsResponse
-	91,  // 291: helix.foundry.v1.FoundryService.CreateFoundryOntologyDocumentSet:output_type -> helix.foundry.v1.FoundryDocumentSetResponse
-	91,  // 292: helix.foundry.v1.FoundryService.UpdateFoundryOntologyDocumentSet:output_type -> helix.foundry.v1.FoundryDocumentSetResponse
-	96,  // 293: helix.foundry.v1.FoundryService.DeleteFoundryOntologyDocumentSet:output_type -> helix.foundry.v1.DeleteFoundryDocumentSetResponse
-	108, // 294: helix.foundry.v1.FoundryService.GetFoundryDataLayout:output_type -> helix.foundry.v1.FoundryDataLayoutResponse
-	108, // 295: helix.foundry.v1.FoundryService.PutFoundryDataLayout:output_type -> helix.foundry.v1.FoundryDataLayoutResponse
-	67,  // 296: helix.foundry.v1.FoundryService.CreateFoundryOntology:output_type -> helix.foundry.v1.FoundryOntologyResponse
-	69,  // 297: helix.foundry.v1.FoundryService.ListFoundryOntologies:output_type -> helix.foundry.v1.ListFoundryOntologiesResponse
-	67,  // 298: helix.foundry.v1.FoundryService.GetFoundryOntology:output_type -> helix.foundry.v1.FoundryOntologyResponse
-	67,  // 299: helix.foundry.v1.FoundryService.DeleteFoundryOntology:output_type -> helix.foundry.v1.FoundryOntologyResponse
-	67,  // 300: helix.foundry.v1.FoundryService.UpdateFoundryOntology:output_type -> helix.foundry.v1.FoundryOntologyResponse
+	78,  // 273: helix.foundry.v1.FoundryService.ListFoundryDocuments:output_type -> helix.foundry.v1.ListFoundryDocumentsResponse
+	73,  // 274: helix.foundry.v1.FoundryService.CreateFoundryDocument:output_type -> helix.foundry.v1.CreateFoundryDocumentResponse
+	75,  // 275: helix.foundry.v1.FoundryService.GetFoundryDocument:output_type -> helix.foundry.v1.FoundryDocumentResponse
+	75,  // 276: helix.foundry.v1.FoundryService.UpdateFoundryDocument:output_type -> helix.foundry.v1.FoundryDocumentResponse
+	75,  // 277: helix.foundry.v1.FoundryService.DeleteFoundryDocument:output_type -> helix.foundry.v1.FoundryDocumentResponse
+	83,  // 278: helix.foundry.v1.FoundryService.GetFoundryDocumentContent:output_type -> helix.foundry.v1.GetFoundryDocumentContentResponse
+	85,  // 279: helix.foundry.v1.FoundryService.GetFoundryDocumentBytes:output_type -> helix.foundry.v1.GetFoundryDocumentBytesResponse
+	76,  // 280: helix.foundry.v1.FoundryService.CompleteFoundryDocumentUpload:output_type -> helix.foundry.v1.FoundryDocumentReadsResponse
+	76,  // 281: helix.foundry.v1.FoundryService.MoveFoundryDocument:output_type -> helix.foundry.v1.FoundryDocumentReadsResponse
+	92,  // 282: helix.foundry.v1.FoundryService.ListFoundryDocumentSets:output_type -> helix.foundry.v1.ListFoundryDocumentSetsResponse
+	90,  // 283: helix.foundry.v1.FoundryService.CreateFoundryDocumentSet:output_type -> helix.foundry.v1.FoundryDocumentSetResponse
+	90,  // 284: helix.foundry.v1.FoundryService.UpdateFoundryDocumentSet:output_type -> helix.foundry.v1.FoundryDocumentSetResponse
+	95,  // 285: helix.foundry.v1.FoundryService.DeleteFoundryDocumentSet:output_type -> helix.foundry.v1.DeleteFoundryDocumentSetResponse
+	97,  // 286: helix.foundry.v1.FoundryService.CreateFoundryOntologyDocument:output_type -> helix.foundry.v1.CreateFoundryOntologyDocumentResponse
+	75,  // 287: helix.foundry.v1.FoundryService.DeleteFoundryOntologyDocument:output_type -> helix.foundry.v1.FoundryDocumentResponse
+	76,  // 288: helix.foundry.v1.FoundryService.CompleteFoundryOntologyDocumentUpload:output_type -> helix.foundry.v1.FoundryDocumentReadsResponse
+	76,  // 289: helix.foundry.v1.FoundryService.MoveFoundryOntologyDocument:output_type -> helix.foundry.v1.FoundryDocumentReadsResponse
+	92,  // 290: helix.foundry.v1.FoundryService.ListFoundryOntologyDocumentSets:output_type -> helix.foundry.v1.ListFoundryDocumentSetsResponse
+	90,  // 291: helix.foundry.v1.FoundryService.CreateFoundryOntologyDocumentSet:output_type -> helix.foundry.v1.FoundryDocumentSetResponse
+	90,  // 292: helix.foundry.v1.FoundryService.UpdateFoundryOntologyDocumentSet:output_type -> helix.foundry.v1.FoundryDocumentSetResponse
+	95,  // 293: helix.foundry.v1.FoundryService.DeleteFoundryOntologyDocumentSet:output_type -> helix.foundry.v1.DeleteFoundryDocumentSetResponse
+	107, // 294: helix.foundry.v1.FoundryService.GetFoundryDataLayout:output_type -> helix.foundry.v1.FoundryDataLayoutResponse
+	107, // 295: helix.foundry.v1.FoundryService.PutFoundryDataLayout:output_type -> helix.foundry.v1.FoundryDataLayoutResponse
+	66,  // 296: helix.foundry.v1.FoundryService.CreateFoundryOntology:output_type -> helix.foundry.v1.FoundryOntologyResponse
+	68,  // 297: helix.foundry.v1.FoundryService.ListFoundryOntologies:output_type -> helix.foundry.v1.ListFoundryOntologiesResponse
+	66,  // 298: helix.foundry.v1.FoundryService.GetFoundryOntology:output_type -> helix.foundry.v1.FoundryOntologyResponse
+	66,  // 299: helix.foundry.v1.FoundryService.DeleteFoundryOntology:output_type -> helix.foundry.v1.FoundryOntologyResponse
+	66,  // 300: helix.foundry.v1.FoundryService.UpdateFoundryOntology:output_type -> helix.foundry.v1.FoundryOntologyResponse
 	51,  // 301: helix.foundry.v1.FoundryService.GetCurrentOntologyVersion:output_type -> helix.foundry.v1.OntologyVersionResponse
 	53,  // 302: helix.foundry.v1.FoundryService.ListOntologyVersions:output_type -> helix.foundry.v1.ListOntologyVersionsResponse
 	51,  // 303: helix.foundry.v1.FoundryService.GetOntologyVersion:output_type -> helix.foundry.v1.OntologyVersionResponse
@@ -18011,74 +17965,74 @@ var file_helix_foundry_v1_foundry_proto_depIdxs = []int32{
 	62,  // 309: helix.foundry.v1.FoundryService.ListOntologyGenerations:output_type -> helix.foundry.v1.ListOntologyGenerationsResponse
 	59,  // 310: helix.foundry.v1.FoundryService.AnswerOntologyGeneration:output_type -> helix.foundry.v1.OntologyGenerationResponse
 	59,  // 311: helix.foundry.v1.FoundryService.CancelOntologyGeneration:output_type -> helix.foundry.v1.OntologyGenerationResponse
-	127, // 312: helix.foundry.v1.FoundryService.SettleFoundryReview:output_type -> helix.foundry.v1.FoundryReviewDecisionResponse
-	129, // 313: helix.foundry.v1.FoundryService.ListFoundryReviews:output_type -> helix.foundry.v1.ListFoundryReviewsResponse
-	131, // 314: helix.foundry.v1.FoundryService.ListFoundryReviewDecisions:output_type -> helix.foundry.v1.ListFoundryReviewDecisionsResponse
-	133, // 315: helix.foundry.v1.FoundryService.DeleteFoundryReviewDecision:output_type -> helix.foundry.v1.DeleteFoundryReviewDecisionResponse
-	136, // 316: helix.foundry.v1.FoundryService.SettleFoundryReviewLabel:output_type -> helix.foundry.v1.FoundryReviewLabelResponse
-	138, // 317: helix.foundry.v1.FoundryService.ListFoundryReviewLabels:output_type -> helix.foundry.v1.ListFoundryReviewLabelsResponse
-	155, // 318: helix.foundry.v1.FoundryService.ListFoundryHealFindings:output_type -> helix.foundry.v1.ListFoundryHealFindingsResponse
-	157, // 319: helix.foundry.v1.FoundryService.DismissFoundryHealFinding:output_type -> helix.foundry.v1.FoundryHealFindingResponse
-	159, // 320: helix.foundry.v1.FoundryService.CreateFoundryWorkflow:output_type -> helix.foundry.v1.FoundryWorkflowResponse
-	161, // 321: helix.foundry.v1.FoundryService.ListFoundryWorkflows:output_type -> helix.foundry.v1.ListFoundryWorkflowsResponse
-	159, // 322: helix.foundry.v1.FoundryService.GetFoundryWorkflow:output_type -> helix.foundry.v1.FoundryWorkflowResponse
-	228, // 323: helix.foundry.v1.FoundryService.DeleteFoundryWorkflow:output_type -> google.protobuf.Empty
-	165, // 324: helix.foundry.v1.FoundryService.StartFoundryWorkflowRun:output_type -> helix.foundry.v1.FoundryWorkflowRunResponse
+	126, // 312: helix.foundry.v1.FoundryService.SettleFoundryReview:output_type -> helix.foundry.v1.FoundryReviewDecisionResponse
+	128, // 313: helix.foundry.v1.FoundryService.ListFoundryReviews:output_type -> helix.foundry.v1.ListFoundryReviewsResponse
+	130, // 314: helix.foundry.v1.FoundryService.ListFoundryReviewDecisions:output_type -> helix.foundry.v1.ListFoundryReviewDecisionsResponse
+	132, // 315: helix.foundry.v1.FoundryService.DeleteFoundryReviewDecision:output_type -> helix.foundry.v1.DeleteFoundryReviewDecisionResponse
+	135, // 316: helix.foundry.v1.FoundryService.SettleFoundryReviewLabel:output_type -> helix.foundry.v1.FoundryReviewLabelResponse
+	137, // 317: helix.foundry.v1.FoundryService.ListFoundryReviewLabels:output_type -> helix.foundry.v1.ListFoundryReviewLabelsResponse
+	154, // 318: helix.foundry.v1.FoundryService.ListFoundryHealFindings:output_type -> helix.foundry.v1.ListFoundryHealFindingsResponse
+	156, // 319: helix.foundry.v1.FoundryService.DismissFoundryHealFinding:output_type -> helix.foundry.v1.FoundryHealFindingResponse
+	158, // 320: helix.foundry.v1.FoundryService.CreateFoundryWorkflow:output_type -> helix.foundry.v1.FoundryWorkflowResponse
+	160, // 321: helix.foundry.v1.FoundryService.ListFoundryWorkflows:output_type -> helix.foundry.v1.ListFoundryWorkflowsResponse
+	158, // 322: helix.foundry.v1.FoundryService.GetFoundryWorkflow:output_type -> helix.foundry.v1.FoundryWorkflowResponse
+	227, // 323: helix.foundry.v1.FoundryService.DeleteFoundryWorkflow:output_type -> google.protobuf.Empty
+	164, // 324: helix.foundry.v1.FoundryService.StartFoundryWorkflowRun:output_type -> helix.foundry.v1.FoundryWorkflowRunResponse
 	285, // 325: helix.foundry.v1.FoundryService.GetFoundryWorkflowInsights:output_type -> helix.foundry.v1.FoundryWorkflowInsights
-	168, // 326: helix.foundry.v1.FoundryService.ListFoundryWorkflowRuns:output_type -> helix.foundry.v1.ListFoundryWorkflowRunsResponse
-	165, // 327: helix.foundry.v1.FoundryService.GetFoundryWorkflowRun:output_type -> helix.foundry.v1.FoundryWorkflowRunResponse
-	165, // 328: helix.foundry.v1.FoundryService.FinishFoundryWorkflowRun:output_type -> helix.foundry.v1.FoundryWorkflowRunResponse
-	165, // 329: helix.foundry.v1.FoundryService.AssessFoundryWorkflowRun:output_type -> helix.foundry.v1.FoundryWorkflowRunResponse
-	172, // 330: helix.foundry.v1.FoundryService.ListFoundryWorkflowRunAccesses:output_type -> helix.foundry.v1.ListFoundryWorkflowRunAccessesResponse
-	79,  // 331: helix.foundry.v1.FoundryService.ListFoundryOntologyDocuments:output_type -> helix.foundry.v1.ListFoundryDocumentsResponse
-	76,  // 332: helix.foundry.v1.FoundryService.GetFoundryOntologyDocument:output_type -> helix.foundry.v1.FoundryDocumentResponse
-	110, // 333: helix.foundry.v1.FoundryService.CreateFoundryLoad:output_type -> helix.foundry.v1.FoundryLoadResponse
-	112, // 334: helix.foundry.v1.FoundryService.ListFoundryLoads:output_type -> helix.foundry.v1.ListFoundryLoadsResponse
-	110, // 335: helix.foundry.v1.FoundryService.GetFoundryLoad:output_type -> helix.foundry.v1.FoundryLoadResponse
-	110, // 336: helix.foundry.v1.FoundryService.SetCurrentFoundryLoad:output_type -> helix.foundry.v1.FoundryLoadResponse
-	110, // 337: helix.foundry.v1.FoundryService.DeleteFoundryLoad:output_type -> helix.foundry.v1.FoundryLoadResponse
-	125, // 338: helix.foundry.v1.FoundryService.ReadFoundryGraph:output_type -> helix.foundry.v1.ReadFoundryGraphResponse
-	116, // 339: helix.foundry.v1.FoundryService.AskFoundryQuestion:output_type -> helix.foundry.v1.FoundryQuestionResponse
-	116, // 340: helix.foundry.v1.FoundryService.GetFoundryQuestion:output_type -> helix.foundry.v1.FoundryQuestionResponse
-	119, // 341: helix.foundry.v1.FoundryService.ListFoundryQuestions:output_type -> helix.foundry.v1.ListFoundryQuestionsResponse
-	121, // 342: helix.foundry.v1.FoundryService.ListFoundryQuestionEvents:output_type -> helix.foundry.v1.ListFoundryQuestionEventsResponse
-	116, // 343: helix.foundry.v1.FoundryService.CancelFoundryQuestion:output_type -> helix.foundry.v1.FoundryQuestionResponse
-	110, // 344: helix.foundry.v1.FoundryService.StopFoundryLoadEnrichment:output_type -> helix.foundry.v1.FoundryLoadResponse
-	175, // 345: helix.foundry.v1.FoundryService.SendFoundryAgentMessage:output_type -> helix.foundry.v1.FoundryAgentTurnResponse
-	177, // 346: helix.foundry.v1.FoundryService.ListFoundryAgentThreads:output_type -> helix.foundry.v1.ListFoundryAgentThreadsResponse
-	179, // 347: helix.foundry.v1.FoundryService.GetFoundryAgentThread:output_type -> helix.foundry.v1.FoundryAgentThreadResponse
-	228, // 348: helix.foundry.v1.FoundryService.DeleteFoundryAgentThread:output_type -> google.protobuf.Empty
-	182, // 349: helix.foundry.v1.FoundryService.ListFoundryAgentTurnEvents:output_type -> helix.foundry.v1.ListFoundryAgentTurnEventsResponse
-	175, // 350: helix.foundry.v1.FoundryService.CancelFoundryAgentTurn:output_type -> helix.foundry.v1.FoundryAgentTurnResponse
-	187, // 351: helix.foundry.v1.FoundryService.ExecuteFoundryAgentAction:output_type -> helix.foundry.v1.FoundryAgentActionResponse
-	187, // 352: helix.foundry.v1.FoundryService.RefreshFoundryAgentAction:output_type -> helix.foundry.v1.FoundryAgentActionResponse
-	187, // 353: helix.foundry.v1.FoundryService.DismissFoundryAgentAction:output_type -> helix.foundry.v1.FoundryAgentActionResponse
-	190, // 354: helix.foundry.v1.FoundryService.GetFoundryAgentRuntime:output_type -> helix.foundry.v1.FoundryAgentRuntimeResponse
-	190, // 355: helix.foundry.v1.FoundryService.UpdateFoundryAgentRuntime:output_type -> helix.foundry.v1.FoundryAgentRuntimeResponse
-	192, // 356: helix.foundry.v1.FoundryService.CreateFoundryAgentHostPairing:output_type -> helix.foundry.v1.FoundryAgentHostPairingResponse
-	194, // 357: helix.foundry.v1.FoundryService.RevokeFoundryAgentHost:output_type -> helix.foundry.v1.FoundryAgentHostResponse
-	196, // 358: helix.foundry.v1.FoundryService.ListFoundryDashboards:output_type -> helix.foundry.v1.ListFoundryDashboardsResponse
-	198, // 359: helix.foundry.v1.FoundryService.GetFoundryDashboard:output_type -> helix.foundry.v1.FoundryDashboardResponse
-	198, // 360: helix.foundry.v1.FoundryService.CreateFoundryDashboard:output_type -> helix.foundry.v1.FoundryDashboardResponse
-	198, // 361: helix.foundry.v1.FoundryService.UpdateFoundryDashboard:output_type -> helix.foundry.v1.FoundryDashboardResponse
-	228, // 362: helix.foundry.v1.FoundryService.DeleteFoundryDashboard:output_type -> google.protobuf.Empty
-	198, // 363: helix.foundry.v1.FoundryService.PinFoundryDashboard:output_type -> helix.foundry.v1.FoundryDashboardResponse
-	198, // 364: helix.foundry.v1.FoundryService.AddFoundryDashboardQuestionVisual:output_type -> helix.foundry.v1.FoundryDashboardResponse
-	205, // 365: helix.foundry.v1.FoundryService.PreviewFoundryDashboardTile:output_type -> helix.foundry.v1.PreviewFoundryDashboardTileResponse
-	198, // 366: helix.foundry.v1.FoundryService.PublishFoundryDashboard:output_type -> helix.foundry.v1.FoundryDashboardResponse
-	198, // 367: helix.foundry.v1.FoundryService.UnpublishFoundryDashboard:output_type -> helix.foundry.v1.FoundryDashboardResponse
-	209, // 368: helix.foundry.v1.FoundryService.ListFoundryAutomations:output_type -> helix.foundry.v1.ListFoundryAutomationsResponse
-	211, // 369: helix.foundry.v1.FoundryService.GetFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationResponse
-	211, // 370: helix.foundry.v1.FoundryService.CreateFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationResponse
-	211, // 371: helix.foundry.v1.FoundryService.UpdateFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationResponse
-	228, // 372: helix.foundry.v1.FoundryService.DeleteFoundryAutomation:output_type -> google.protobuf.Empty
-	211, // 373: helix.foundry.v1.FoundryService.ApproveFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationResponse
-	211, // 374: helix.foundry.v1.FoundryService.PauseFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationResponse
-	211, // 375: helix.foundry.v1.FoundryService.ResumeFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationResponse
-	223, // 376: helix.foundry.v1.FoundryService.RunFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationRunResponse
-	220, // 377: helix.foundry.v1.FoundryService.ListFoundryAutomationRuns:output_type -> helix.foundry.v1.ListFoundryAutomationRunsResponse
-	223, // 378: helix.foundry.v1.FoundryService.GetFoundryAutomationRun:output_type -> helix.foundry.v1.FoundryAutomationRunResponse
-	223, // 379: helix.foundry.v1.FoundryService.CancelFoundryAutomationRun:output_type -> helix.foundry.v1.FoundryAutomationRunResponse
+	167, // 326: helix.foundry.v1.FoundryService.ListFoundryWorkflowRuns:output_type -> helix.foundry.v1.ListFoundryWorkflowRunsResponse
+	164, // 327: helix.foundry.v1.FoundryService.GetFoundryWorkflowRun:output_type -> helix.foundry.v1.FoundryWorkflowRunResponse
+	164, // 328: helix.foundry.v1.FoundryService.FinishFoundryWorkflowRun:output_type -> helix.foundry.v1.FoundryWorkflowRunResponse
+	164, // 329: helix.foundry.v1.FoundryService.AssessFoundryWorkflowRun:output_type -> helix.foundry.v1.FoundryWorkflowRunResponse
+	171, // 330: helix.foundry.v1.FoundryService.ListFoundryWorkflowRunAccesses:output_type -> helix.foundry.v1.ListFoundryWorkflowRunAccessesResponse
+	78,  // 331: helix.foundry.v1.FoundryService.ListFoundryOntologyDocuments:output_type -> helix.foundry.v1.ListFoundryDocumentsResponse
+	75,  // 332: helix.foundry.v1.FoundryService.GetFoundryOntologyDocument:output_type -> helix.foundry.v1.FoundryDocumentResponse
+	109, // 333: helix.foundry.v1.FoundryService.CreateFoundryLoad:output_type -> helix.foundry.v1.FoundryLoadResponse
+	111, // 334: helix.foundry.v1.FoundryService.ListFoundryLoads:output_type -> helix.foundry.v1.ListFoundryLoadsResponse
+	109, // 335: helix.foundry.v1.FoundryService.GetFoundryLoad:output_type -> helix.foundry.v1.FoundryLoadResponse
+	109, // 336: helix.foundry.v1.FoundryService.SetCurrentFoundryLoad:output_type -> helix.foundry.v1.FoundryLoadResponse
+	109, // 337: helix.foundry.v1.FoundryService.DeleteFoundryLoad:output_type -> helix.foundry.v1.FoundryLoadResponse
+	124, // 338: helix.foundry.v1.FoundryService.ReadFoundryGraph:output_type -> helix.foundry.v1.ReadFoundryGraphResponse
+	115, // 339: helix.foundry.v1.FoundryService.AskFoundryQuestion:output_type -> helix.foundry.v1.FoundryQuestionResponse
+	115, // 340: helix.foundry.v1.FoundryService.GetFoundryQuestion:output_type -> helix.foundry.v1.FoundryQuestionResponse
+	118, // 341: helix.foundry.v1.FoundryService.ListFoundryQuestions:output_type -> helix.foundry.v1.ListFoundryQuestionsResponse
+	120, // 342: helix.foundry.v1.FoundryService.ListFoundryQuestionEvents:output_type -> helix.foundry.v1.ListFoundryQuestionEventsResponse
+	115, // 343: helix.foundry.v1.FoundryService.CancelFoundryQuestion:output_type -> helix.foundry.v1.FoundryQuestionResponse
+	109, // 344: helix.foundry.v1.FoundryService.StopFoundryLoadEnrichment:output_type -> helix.foundry.v1.FoundryLoadResponse
+	174, // 345: helix.foundry.v1.FoundryService.SendFoundryAgentMessage:output_type -> helix.foundry.v1.FoundryAgentTurnResponse
+	176, // 346: helix.foundry.v1.FoundryService.ListFoundryAgentThreads:output_type -> helix.foundry.v1.ListFoundryAgentThreadsResponse
+	178, // 347: helix.foundry.v1.FoundryService.GetFoundryAgentThread:output_type -> helix.foundry.v1.FoundryAgentThreadResponse
+	227, // 348: helix.foundry.v1.FoundryService.DeleteFoundryAgentThread:output_type -> google.protobuf.Empty
+	181, // 349: helix.foundry.v1.FoundryService.ListFoundryAgentTurnEvents:output_type -> helix.foundry.v1.ListFoundryAgentTurnEventsResponse
+	174, // 350: helix.foundry.v1.FoundryService.CancelFoundryAgentTurn:output_type -> helix.foundry.v1.FoundryAgentTurnResponse
+	186, // 351: helix.foundry.v1.FoundryService.ExecuteFoundryAgentAction:output_type -> helix.foundry.v1.FoundryAgentActionResponse
+	186, // 352: helix.foundry.v1.FoundryService.RefreshFoundryAgentAction:output_type -> helix.foundry.v1.FoundryAgentActionResponse
+	186, // 353: helix.foundry.v1.FoundryService.DismissFoundryAgentAction:output_type -> helix.foundry.v1.FoundryAgentActionResponse
+	189, // 354: helix.foundry.v1.FoundryService.GetFoundryAgentRuntime:output_type -> helix.foundry.v1.FoundryAgentRuntimeResponse
+	189, // 355: helix.foundry.v1.FoundryService.UpdateFoundryAgentRuntime:output_type -> helix.foundry.v1.FoundryAgentRuntimeResponse
+	191, // 356: helix.foundry.v1.FoundryService.CreateFoundryAgentHostPairing:output_type -> helix.foundry.v1.FoundryAgentHostPairingResponse
+	193, // 357: helix.foundry.v1.FoundryService.RevokeFoundryAgentHost:output_type -> helix.foundry.v1.FoundryAgentHostResponse
+	195, // 358: helix.foundry.v1.FoundryService.ListFoundryDashboards:output_type -> helix.foundry.v1.ListFoundryDashboardsResponse
+	197, // 359: helix.foundry.v1.FoundryService.GetFoundryDashboard:output_type -> helix.foundry.v1.FoundryDashboardResponse
+	197, // 360: helix.foundry.v1.FoundryService.CreateFoundryDashboard:output_type -> helix.foundry.v1.FoundryDashboardResponse
+	197, // 361: helix.foundry.v1.FoundryService.UpdateFoundryDashboard:output_type -> helix.foundry.v1.FoundryDashboardResponse
+	227, // 362: helix.foundry.v1.FoundryService.DeleteFoundryDashboard:output_type -> google.protobuf.Empty
+	197, // 363: helix.foundry.v1.FoundryService.PinFoundryDashboard:output_type -> helix.foundry.v1.FoundryDashboardResponse
+	197, // 364: helix.foundry.v1.FoundryService.AddFoundryDashboardQuestionVisual:output_type -> helix.foundry.v1.FoundryDashboardResponse
+	204, // 365: helix.foundry.v1.FoundryService.PreviewFoundryDashboardTile:output_type -> helix.foundry.v1.PreviewFoundryDashboardTileResponse
+	197, // 366: helix.foundry.v1.FoundryService.PublishFoundryDashboard:output_type -> helix.foundry.v1.FoundryDashboardResponse
+	197, // 367: helix.foundry.v1.FoundryService.UnpublishFoundryDashboard:output_type -> helix.foundry.v1.FoundryDashboardResponse
+	208, // 368: helix.foundry.v1.FoundryService.ListFoundryAutomations:output_type -> helix.foundry.v1.ListFoundryAutomationsResponse
+	210, // 369: helix.foundry.v1.FoundryService.GetFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationResponse
+	210, // 370: helix.foundry.v1.FoundryService.CreateFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationResponse
+	210, // 371: helix.foundry.v1.FoundryService.UpdateFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationResponse
+	227, // 372: helix.foundry.v1.FoundryService.DeleteFoundryAutomation:output_type -> google.protobuf.Empty
+	210, // 373: helix.foundry.v1.FoundryService.ApproveFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationResponse
+	210, // 374: helix.foundry.v1.FoundryService.PauseFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationResponse
+	210, // 375: helix.foundry.v1.FoundryService.ResumeFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationResponse
+	222, // 376: helix.foundry.v1.FoundryService.RunFoundryAutomation:output_type -> helix.foundry.v1.FoundryAutomationRunResponse
+	219, // 377: helix.foundry.v1.FoundryService.ListFoundryAutomationRuns:output_type -> helix.foundry.v1.ListFoundryAutomationRunsResponse
+	222, // 378: helix.foundry.v1.FoundryService.GetFoundryAutomationRun:output_type -> helix.foundry.v1.FoundryAutomationRunResponse
+	222, // 379: helix.foundry.v1.FoundryService.CancelFoundryAutomationRun:output_type -> helix.foundry.v1.FoundryAutomationRunResponse
 	1,   // 380: helix.foundry.v1.FoundryService.GetFoundryUsage:output_type -> helix.foundry.v1.FoundryUsageResponse
 	4,   // 381: helix.foundry.v1.FoundryService.GetFoundryEnrichment:output_type -> helix.foundry.v1.FoundryEnrichmentResponse
 	4,   // 382: helix.foundry.v1.FoundryService.UpdateFoundryEnrichment:output_type -> helix.foundry.v1.FoundryEnrichmentResponse
@@ -18086,14 +18040,14 @@ var file_helix_foundry_v1_foundry_proto_depIdxs = []int32{
 	8,   // 384: helix.foundry.v1.FoundryService.UpdateFoundryAI:output_type -> helix.foundry.v1.FoundryAIResponse
 	8,   // 385: helix.foundry.v1.FoundryService.DetectFoundryAIDefault:output_type -> helix.foundry.v1.FoundryAIResponse
 	11,  // 386: helix.foundry.v1.FoundryService.ListFoundryOllamaModels:output_type -> helix.foundry.v1.ListFoundryOllamaModelsResponse
-	140, // 387: helix.foundry.v1.FoundryService.ListFoundryAccess:output_type -> helix.foundry.v1.ListFoundryAccessResponse
-	142, // 388: helix.foundry.v1.FoundryService.SetFoundryAccessGrants:output_type -> helix.foundry.v1.SetFoundryAccessGrantsResponse
-	145, // 389: helix.foundry.v1.FoundryService.PreviewFoundryAccessChange:output_type -> helix.foundry.v1.PreviewFoundryAccessChangeResponse
-	147, // 390: helix.foundry.v1.FoundryService.GetMyFoundryAccess:output_type -> helix.foundry.v1.GetMyFoundryAccessResponse
-	149, // 391: helix.foundry.v1.FoundryService.SetFoundryMemberRestricted:output_type -> helix.foundry.v1.SetFoundryMemberRestrictedResponse
-	153, // 392: helix.foundry.v1.FoundryService.CreateFoundryTeam:output_type -> helix.foundry.v1.FoundryTeamResponse
-	153, // 393: helix.foundry.v1.FoundryService.UpdateFoundryTeam:output_type -> helix.foundry.v1.FoundryTeamResponse
-	228, // 394: helix.foundry.v1.FoundryService.DeleteFoundryTeam:output_type -> google.protobuf.Empty
+	139, // 387: helix.foundry.v1.FoundryService.ListFoundryAccess:output_type -> helix.foundry.v1.ListFoundryAccessResponse
+	141, // 388: helix.foundry.v1.FoundryService.SetFoundryAccessGrants:output_type -> helix.foundry.v1.SetFoundryAccessGrantsResponse
+	144, // 389: helix.foundry.v1.FoundryService.PreviewFoundryAccessChange:output_type -> helix.foundry.v1.PreviewFoundryAccessChangeResponse
+	146, // 390: helix.foundry.v1.FoundryService.GetMyFoundryAccess:output_type -> helix.foundry.v1.GetMyFoundryAccessResponse
+	148, // 391: helix.foundry.v1.FoundryService.SetFoundryMemberRestricted:output_type -> helix.foundry.v1.SetFoundryMemberRestrictedResponse
+	152, // 392: helix.foundry.v1.FoundryService.CreateFoundryTeam:output_type -> helix.foundry.v1.FoundryTeamResponse
+	152, // 393: helix.foundry.v1.FoundryService.UpdateFoundryTeam:output_type -> helix.foundry.v1.FoundryTeamResponse
+	227, // 394: helix.foundry.v1.FoundryService.DeleteFoundryTeam:output_type -> google.protobuf.Empty
 	250, // [250:395] is the sub-list for method output_type
 	105, // [105:250] is the sub-list for method input_type
 	105, // [105:105] is the sub-list for extension type_name
@@ -18112,31 +18066,31 @@ func file_helix_foundry_v1_foundry_proto_init() {
 		(*UpdateFoundryAIRequest_Provider)(nil),
 	}
 	file_helix_foundry_v1_foundry_proto_msgTypes[35].OneofWrappers = []any{}
-	file_helix_foundry_v1_foundry_proto_msgTypes[72].OneofWrappers = []any{}
-	file_helix_foundry_v1_foundry_proto_msgTypes[94].OneofWrappers = []any{}
-	file_helix_foundry_v1_foundry_proto_msgTypes[104].OneofWrappers = []any{}
-	file_helix_foundry_v1_foundry_proto_msgTypes[134].OneofWrappers = []any{
+	file_helix_foundry_v1_foundry_proto_msgTypes[71].OneofWrappers = []any{}
+	file_helix_foundry_v1_foundry_proto_msgTypes[93].OneofWrappers = []any{}
+	file_helix_foundry_v1_foundry_proto_msgTypes[103].OneofWrappers = []any{}
+	file_helix_foundry_v1_foundry_proto_msgTypes[133].OneofWrappers = []any{
 		(*SettleFoundryReviewLabelRequest_Fact)(nil),
 		(*SettleFoundryReviewLabelRequest_DecisionId)(nil),
 		(*SettleFoundryReviewLabelRequest_ReviewId)(nil),
 		(*SettleFoundryReviewLabelRequest_LabelId)(nil),
 	}
-	file_helix_foundry_v1_foundry_proto_msgTypes[141].OneofWrappers = []any{}
-	file_helix_foundry_v1_foundry_proto_msgTypes[144].OneofWrappers = []any{
+	file_helix_foundry_v1_foundry_proto_msgTypes[140].OneofWrappers = []any{}
+	file_helix_foundry_v1_foundry_proto_msgTypes[143].OneofWrappers = []any{
 		(*FoundryAccessChange_LoadVersion_)(nil),
 		(*FoundryAccessChange_DeleteConnector)(nil),
 		(*FoundryAccessChange_MoveDocument_)(nil),
 	}
-	file_helix_foundry_v1_foundry_proto_msgTypes[155].OneofWrappers = []any{}
-	file_helix_foundry_v1_foundry_proto_msgTypes[200].OneofWrappers = []any{}
-	file_helix_foundry_v1_foundry_proto_msgTypes[213].OneofWrappers = []any{}
+	file_helix_foundry_v1_foundry_proto_msgTypes[154].OneofWrappers = []any{}
+	file_helix_foundry_v1_foundry_proto_msgTypes[199].OneofWrappers = []any{}
+	file_helix_foundry_v1_foundry_proto_msgTypes[212].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_helix_foundry_v1_foundry_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   226,
+			NumMessages:   225,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

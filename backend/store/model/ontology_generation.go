@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 )
 
 // OntologyGenerationStatus is where a generation is in its run.
@@ -59,22 +61,48 @@ type OntologyGeneration struct {
 }
 
 // OntologyQuestion is a question the agent asked about its draft, as the
-// turn's draft has it (schema/turn_result.json Question). Its text,
-// options and default are the model's words and may quote the data.
+// turn's draft has it (schema/turn_result.json Question): the shape every
+// agent's questions have (agentquestion), and the draft items it is about.
+// Its text, header and options are the model's words and may quote the data.
 type OntologyQuestion struct {
-	ID      string   `json:"id"`
-	Items   []string `json:"items"`
-	Text    string   `json:"text"`
-	Options []string `json:"options"`
-	// Default is one of Options when it has any; nil for none.
-	Default  *string `json:"default"`
-	Blocking bool    `json:"blocking"`
+	agentquestion.Question
+	// Items are the draft items it is about, such as type.Customer; may be empty.
+	Items []string
 }
 
-// OntologyAnswer answers one question, as the agent's feedback sends it.
-type OntologyAnswer struct {
-	QuestionID string `json:"question_id"`
-	Text       string `json:"text"`
+// MarshalJSON writes the question's JSON with its "items".
+func (q OntologyQuestion) MarshalJSON() ([]byte, error) {
+	question, err := json.Marshal(q.Question)
+	if err != nil {
+		return nil, err
+	}
+	items := q.Items
+	if items == nil {
+		items = []string{}
+	}
+	listed, err := json.Marshal(items)
+	if err != nil {
+		return nil, err
+	}
+	// The question's object, its closing brace replaced by the items and one of its own.
+	return append(append(question[:len(question)-1], `,"items":`...), append(listed, '}')...), nil
+}
+
+// UnmarshalJSON reads a question's JSON with its "items", refusing one
+// agentquestion refuses.
+func (q *OntologyQuestion) UnmarshalJSON(data []byte) error {
+	var question agentquestion.Question
+	if err := json.Unmarshal(data, &question); err != nil {
+		return err
+	}
+	var items struct {
+		Items []string `json:"items"`
+	}
+	if err := json.Unmarshal(data, &items); err != nil {
+		return err
+	}
+	*q = OntologyQuestion{Question: question, Items: items.Items}
+	return nil
 }
 
 // OntologyQuestions are the questions a turn asked and, once given, their
@@ -90,8 +118,18 @@ type OntologyQuestions struct {
 	Asked    []OntologyQuestion
 	AskedAt  time.Time
 	// Answers are nil while the generation waits; once given, at most one
-	// per question asked, every blocking one answered.
-	Answers []OntologyAnswer
+	// per question asked, every blocking one answered (agentquestion.Check).
+	Answers []agentquestion.Answer
+}
+
+// Questions are the questions asked, without their items: what
+// agentquestion.Check checks answers against.
+func (q *OntologyQuestions) Questions() []agentquestion.Question {
+	out := make([]agentquestion.Question, 0, len(q.Asked))
+	for _, asked := range q.Asked {
+		out = append(out, asked.Question)
+	}
+	return out
 }
 
 // OntologyGenerationAsked is a turn that ended asking questions

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -263,12 +264,12 @@ SET status='succeeded', error=NULL, result_version_id=?, revise_result=CAST(? AS
 // (needs_input) with answers to the questions it asked of draft revision
 // draftRev, for its next attempt to carry on from its session state. The
 // answering turn is a new one, so its attempts start again. Checking the
-// answers is the caller's (ontologygen.Answers). ErrNotFound means it is not
+// answers is the caller's (agentquestion.Check). ErrNotFound means it is not
 // waiting on that revision: answered, cancelled, ended or deleted
 // meanwhile, or never asked.
-func (s *mysqlDB) AnswerOntologyGeneration(ctx context.Context, ontologyID, id string, draftRev uint64, answers []model.OntologyAnswer) error {
+func (s *mysqlDB) AnswerOntologyGeneration(ctx context.Context, ontologyID, id string, draftRev uint64, answers []agentquestion.Answer) error {
 	if answers == nil {
-		answers = []model.OntologyAnswer{}
+		answers = []agentquestion.Answer{}
 	}
 	encoded, err := json.Marshal(answers)
 	if err != nil {

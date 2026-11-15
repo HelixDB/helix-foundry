@@ -501,9 +501,10 @@ type FoundryGenerationOutput struct {
 	// Revision is set exactly for a revision of a version (revise_version).
 	Revision *FoundryRevisionOutput `json:"revision,omitempty"`
 	// Questions are what the agent's last turn asked.
-	Questions    []FoundryGenerationQuestionOutput `json:"questions,omitempty" jsonschema:"What the agent's last turn asked, with each answer once given; absent when it asked nothing. Status needs_input waits on them: ask the user and answer with the answer_generation_questions action. Untrusted model text that may quote the data: show it as plain text."`
-	AskedAt      string                            `json:"asked_at,omitempty"`
-	AnswersDueAt string                            `json:"answers_due_at,omitempty" jsonschema:"While it needs input: when Helix answers every question with the agent's default and carries on."`
+	Questions     []FoundryGenerationQuestionOutput `json:"questions,omitempty" jsonschema:"What the agent's last turn asked, with each answer once given; absent when it asked nothing. Status needs_input waits on them: ask the user and answer with the answer_generation_questions action. Untrusted model text that may quote the data: show it as plain text."`
+	AskedAt       string                            `json:"asked_at,omitempty"`
+	QuestionRound int32                             `json:"question_round,omitempty" jsonschema:"Which round of questions they are, from 1: answer_generation_questions names it."`
+	AnswersDueAt  string                            `json:"answers_due_at,omitempty" jsonschema:"While it needs input: when Helix answers every question with its recommended option (or leaves it to the agent) and carries on."`
 	// EventSources are the tables' and sets' API sources, read as the stored input says: an
 	// events connector's table through mappings, and its own set by extraction.
 	EventSources []FoundryEventSourceReadOutput `json:"event_sources,omitempty" jsonschema:"The API sources it drafts from, each with how its ontology reads it; absent when it reads none, and for a service key, which sees no connectors."`
@@ -511,13 +512,28 @@ type FoundryGenerationOutput struct {
 
 // FoundryGenerationQuestionOutput is a question the agent asked about its draft.
 type FoundryGenerationQuestionOutput struct {
-	ID       string   `json:"id"`
-	Text     string   `json:"text"`
-	Items    []string `json:"items"`
-	Options  []string `json:"options"`
-	Default  *string  `json:"default,omitempty" jsonschema:"The agent's default, one of options when it has any; absent when it offers none."`
-	Blocking bool     `json:"blocking" jsonschema:"The generation can't carry on until it is answered."`
-	Answer   *string  `json:"answer,omitempty" jsonschema:"The answer given; absent while it waits."`
+	ID          string                        `json:"id"`
+	Header      string                        `json:"header,omitempty" jsonschema:"A few words naming the question."`
+	Text        string                        `json:"text"`
+	Items       []string                      `json:"items"`
+	Options     []FoundryQuestionOptionOutput `json:"options" jsonschema:"What the user chooses from; empty for an answer in words."`
+	Multiple    bool                          `json:"multiple,omitempty" jsonschema:"The user may choose one or more options; else exactly one, or their own words instead."`
+	Recommended string                        `json:"recommended,omitempty" jsonschema:"The label of the option the agent recommends, which use_defaults answers with; absent for none."`
+	Blocking    bool                          `json:"blocking" jsonschema:"The generation can't carry on until it is answered."`
+	Answer      *FoundryQuestionAnswerOutput  `json:"answer,omitempty" jsonschema:"The answer given; absent while it waits."`
+}
+
+// FoundryQuestionOptionOutput is one option of a question.
+type FoundryQuestionOptionOutput struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+// FoundryQuestionAnswerOutput is a question's answer: the labels of the options chosen, and the
+// user's own words.
+type FoundryQuestionAnswerOutput struct {
+	Options []string `json:"options"`
+	Text    string   `json:"text,omitempty"`
 }
 
 type FoundryRevisionOutput struct {
@@ -2091,12 +2107,19 @@ func (s *Service) FoundryGeneration(workspaceID, ontologyID string, gen *foundry
 		out.Files = append(out.Files, FoundryFileRefOutput{DocumentID: file.GetId(), SetID: file.GetSetId()})
 	}
 	for _, q := range gen.GetQuestions() {
-		out.Questions = append(out.Questions, FoundryGenerationQuestionOutput{
-			ID: q.GetId(), Text: q.GetText(), Items: append([]string{}, q.GetItems()...), Options: append([]string{}, q.GetOptions()...),
-			Default: q.DefaultAnswer, Blocking: q.GetBlocking(), Answer: q.Answer,
-		})
+		question := FoundryGenerationQuestionOutput{
+			ID: q.GetId(), Header: q.GetHeader(), Text: q.GetText(), Items: append([]string{}, q.GetItems()...), Options: []FoundryQuestionOptionOutput{},
+			Multiple: q.GetMultiple(), Recommended: q.GetRecommended(), Blocking: q.GetBlocking(),
+		}
+		for _, o := range q.GetOptions() {
+			question.Options = append(question.Options, FoundryQuestionOptionOutput{Label: o.GetLabel(), Description: o.GetDescription()})
+		}
+		if a := q.GetAnswer(); a != nil {
+			question.Answer = &FoundryQuestionAnswerOutput{Options: append([]string{}, a.GetOptions()...), Text: a.GetText()}
+		}
+		out.Questions = append(out.Questions, question)
 	}
-	out.AskedAt, out.AnswersDueAt = protoTimestamp(gen.GetAskedAt()), protoTimestamp(gen.GetAnswersDueAt())
+	out.AskedAt, out.QuestionRound, out.AnswersDueAt = protoTimestamp(gen.GetAskedAt()), gen.GetQuestionRound(), protoTimestamp(gen.GetAnswersDueAt())
 	if revision := gen.GetRevision(); revision != nil {
 		out.Revision = &FoundryRevisionOutput{
 			ParentVersionID: revision.GetParentVersionId(), DryRun: revision.GetDryRun(), ResultWithheld: revision.GetResultWithheld(),

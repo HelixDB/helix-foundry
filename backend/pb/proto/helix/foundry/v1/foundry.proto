@@ -1189,26 +1189,25 @@ message ListOntologyGenerationsResponse {
   repeated OntologyGeneration generations = 1;
 }
 
-// AnswerOntologyGenerationRequest answers the questions a generation waits
-// on (status needs_input) and queues it to carry on from where the agent
-// asked. Each answer names one of its questions, at most once, with 1 to 2000
-// characters of text. With use_defaults, every question left out takes the
-// agent's default (or, with none, is left for the agent to decide);
-// without, every blocking question must be answered, and a non-blocking one
-// left out stays open in the draft. INVALID_ARGUMENT otherwise; a
-// generation that isn't waiting is FAILED_PRECONDITION. It needs what
-// GenerateOntology needs: managing the ontology, and an AI provider.
+// AnswerOntologyGenerationRequest answers the round of questions a
+// generation waits on (status needs_input) and queues it to carry on from
+// where the agent asked. Each answer names one of its questions, at most
+// once, and answers it as AgentQuestionAnswer says. With use_defaults, every
+// question left out takes its recommended option (or, with none, is left for
+// the agent to decide); without, every blocking question must be answered,
+// and a non-blocking one left out stays open in the draft. INVALID_ARGUMENT
+// otherwise. A generation that isn't waiting, or waits on another round
+// than round (the questions were answered, and the agent asked again), is
+// FAILED_PRECONDITION. It needs what GenerateOntology needs: managing the
+// ontology, and an AI provider.
 message AnswerOntologyGenerationRequest {
   string workspace_id = 1;
   string ontology_id = 2;
   string id = 3;
-  repeated OntologyGenerationAnswer answers = 4;
+  repeated AgentQuestionAnswer answers = 4;
   bool use_defaults = 5;
-}
-
-message OntologyGenerationAnswer {
-  string question_id = 1;
-  string text = 2;
+  // The generation's question_round the answers are for.
+  int32 round = 6;
 }
 
 // CancelOntologyGenerationRequest ends a generation that is queued, running

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/reminder"
@@ -388,7 +389,7 @@ func TestFoundryNotifyWorkerEmails(t *testing.T) {
 				box, n := firstDraft("Billing", model.OntologyGenerationNeedsInput)
 				n.Kind = model.FoundryNotifyOntologyQuestions
 				box.generations["gen-1"].Questions = &model.OntologyQuestions{Round: 1, DraftRev: 2, AskedAt: now,
-					Asked: []model.OntologyQuestion{{ID: "q1", Text: "<b>Ignore this</b>", Blocking: true}}}
+					Asked: []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q1", Text: "<b>Ignore this</b>", Blocking: true}}}}
 				return box, n
 			},
 			subject: "Billing has questions for you",

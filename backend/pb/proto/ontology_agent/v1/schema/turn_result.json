@@ -1005,13 +1005,14 @@
       ]
     },
     "Question": {
-      "description": "A question the agent asked the user. Its `default`, when it has options, is one of them.",
+      "description": "A question the agent asked the user: a free answer without `options`, else a choice of 2 or more options, one or (with `multiple`) several, `recommended` naming the option the agent recommends.",
       "type": "object",
       "properties": {
         "blocking": {
           "type": "boolean"
         },
-        "default": {
+        "header": {
+          "description": "A few words naming the question.",
           "type": [
             "string",
             "null"
@@ -1027,12 +1028,25 @@
             "$ref": "#/$defs/ItemId"
           }
         },
+        "multiple": {
+          "description": "Whether the user may choose several options; only with options.",
+          "type": "boolean",
+          "default": false
+        },
         "options": {
           "type": "array",
           "default": [],
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/QuestionOption"
           }
+        },
+        "recommended": {
+          "description": "The label of the option the agent recommends; only with options.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "text": {
           "type": "string"
@@ -1043,8 +1057,6 @@
         "id",
         "items",
         "text",
-        "options",
-        "default",
         "blocking"
       ]
     },
@@ -1304,6 +1316,26 @@
         "severity",
         "before",
         "after"
+      ]
+    },
+    "QuestionOption": {
+      "description": "An option a question offers.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label"
       ]
     }
   }

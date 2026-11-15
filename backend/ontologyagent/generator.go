@@ -330,8 +330,15 @@ func (g *Generator) Run(ctx context.Context, gen *model.OntologyGeneration) (ont
 	switch turn.Status.Kind {
 	case StatusDone, StatusBudgetExhausted:
 	case StatusNeedsInput:
+		// Each question is read as agentquestion takes it, its ids unique.
 		var questions []model.OntologyQuestion
-		switch err := json.Unmarshal(turn.Questions, &questions); {
+		err := json.Unmarshal(turn.Questions, &questions)
+		for i, q := range questions {
+			if err == nil && slices.ContainsFunc(questions[:i], func(p model.OntologyQuestion) bool { return p.ID == q.ID }) {
+				err = fmt.Errorf("question %s is asked twice", q.ID)
+			}
+		}
+		switch {
 		case err != nil:
 			return result, &ontologygen.Failure{Message: "the ontology agent returned a result Helix can't read", Permanent: true, Err: err}
 		case !slices.ContainsFunc(questions, func(q model.OntologyQuestion) bool { return q.Blocking }):

@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
 
 	"google.golang.org/grpc/codes"
@@ -15,7 +16,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/helixdb/helix-foundry/backend/connector"
-	"github.com/helixdb/helix-foundry/backend/ontologygen"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
@@ -320,15 +320,16 @@ func (s *Service) ListOntologyGenerations(ctx context.Context, req *foundryv1.Li
 	return resp, nil
 }
 
-// AnswerOntologyGeneration answers the questions a generation waits on
-// (needs_input), checked by ontologygen.Answers, and queues it to carry on
+// AnswerOntologyGeneration answers the round of questions a generation
+// waits on (needs_input), checked by agentquestion.Check, and queues it to carry on
 // from the agent's session where it asked. It is authorized as
 // GenerateOntology is: a first draft that loads once ready
 // (load_when_ready) writes the ontology's database, so answering it needs
 // the actor's query_write scope too. As it runs the model, it needs an AI
 // provider (FOUNDRY_AI_NOT_CONFIGURED). One that isn't waiting, or stopped waiting
 // as it was answered (answered, cancelled or answered with defaults
-// meanwhile), is FAILED_PRECONDITION.
+// meanwhile), or waits on another round than the request's, is
+// FAILED_PRECONDITION.
 func (s *Service) AnswerOntologyGeneration(ctx context.Context, req *foundryv1.AnswerOntologyGenerationRequest) (*foundryv1.OntologyGenerationResponse, error) {
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
@@ -344,18 +345,22 @@ func (s *Service) AnswerOntologyGeneration(ctx context.Context, req *foundryv1.A
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get ontology generation: %v", err)
 	}
-	if gen.Status != foundrymodel.OntologyGenerationNeedsInput {
+	switch {
+	case gen.Status != foundrymodel.OntologyGenerationNeedsInput:
 		return nil, status.Error(codes.FailedPrecondition, "this generation isn't waiting for answers")
+	case int(req.GetRound()) != gen.Questions.Round:
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"these answers are for round %d of the agent's questions, and it waits on round %d: read its questions again", req.GetRound(), gen.Questions.Round)
 	}
 	if _, write := actor(ctx).Scope(o.WorkspaceID); gen.Input.LoadWhenReady && !write.Allows(o.ProjectID) {
 		return nil, status.Error(codes.PermissionDenied,
 			"this first draft is loaded into the ontology's database once drafted, which you can't write: ask someone who can to answer, or cancel it")
 	}
-	given := make([]foundrymodel.OntologyAnswer, 0, len(req.GetAnswers()))
+	given := make([]agentquestion.Answer, 0, len(req.GetAnswers()))
 	for _, a := range req.GetAnswers() {
-		given = append(given, foundrymodel.OntologyAnswer{QuestionID: a.GetQuestionId(), Text: a.GetText()})
+		given = append(given, agentquestion.Answer{QuestionID: a.GetQuestionId(), Options: a.GetOptions(), Text: a.GetText()})
 	}
-	answers, err := ontologygen.Answers(gen.Questions.Asked, given, req.GetUseDefaults())
+	answers, err := agentquestion.Check(gen.Questions.Questions(), given, req.GetUseDefaults())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -468,18 +473,37 @@ func ontologyGenerationToProto(gen *foundrymodel.OntologyGeneration, evidence bo
 	if asked == nil {
 		return out
 	}
-	out.AskedAt = timestamppb.New(asked.AskedAt)
+	out.AskedAt, out.QuestionRound = timestamppb.New(asked.AskedAt), int32(asked.Round)
 	if gen.Status == foundrymodel.OntologyGenerationNeedsInput {
 		out.AnswersDueAt = timestamppb.New(asked.AskedAt.Add(answerWait))
 	}
 	for _, q := range asked.Asked {
+		shown := agentQuestionToProto(q.Question)
 		question := &foundryv1.OntologyGenerationQuestion{
-			Id: q.ID, Text: q.Text, Items: q.Items, Options: q.Options, DefaultAnswer: q.Default, Blocking: q.Blocking,
+			Id: shown.GetId(), Header: shown.GetHeader(), Text: shown.GetText(), Options: shown.GetOptions(), Multiple: shown.GetMultiple(),
+			Recommended: shown.GetRecommended(), Blocking: shown.GetBlocking(), Items: q.Items,
 		}
-		if i := slices.IndexFunc(asked.Answers, func(a foundrymodel.OntologyAnswer) bool { return a.QuestionID == q.ID }); i >= 0 {
-			question.Answer = &asked.Answers[i].Text
+		if i := slices.IndexFunc(asked.Answers, func(a agentquestion.Answer) bool { return a.QuestionID == q.ID }); i >= 0 {
+			question.Answer = agentAnswerToProto(asked.Answers[i])
 		}
 		out.Questions = append(out.Questions, question)
 	}
 	return out
+}
+
+// agentQuestionToProto is a question an agent asked, as the API shows it.
+func agentQuestionToProto(q agentquestion.Question) *foundryv1.AgentQuestion {
+	out := &foundryv1.AgentQuestion{Id: q.ID, Header: q.Header, Text: q.Text, Blocking: q.Blocking}
+	if c := q.Choice; c != nil {
+		out.Multiple, out.Recommended = c.Multiple, c.Recommended
+		for _, o := range c.Options {
+			out.Options = append(out.Options, &foundryv1.AgentQuestionOption{Label: o.Label, Description: o.Description})
+		}
+	}
+	return out
+}
+
+// agentAnswerToProto is a person's answer, as the API shows it.
+func agentAnswerToProto(a agentquestion.Answer) *foundryv1.AgentQuestionAnswer {
+	return &foundryv1.AgentQuestionAnswer{QuestionId: a.QuestionID, Options: a.Options, Text: a.Text}
 }

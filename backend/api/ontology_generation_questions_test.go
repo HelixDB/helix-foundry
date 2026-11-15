@@ -2,14 +2,16 @@ package api
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
-	"github.com/helixdb/helix-foundry/backend/ontologygen"
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
@@ -18,7 +20,7 @@ import (
 
 // AnswerOntologyGeneration queues a generation waiting on draftRev with
 // answers, as the store's conditional update does.
-func (s *generationStore) AnswerOntologyGeneration(_ context.Context, ontologyID, id string, draftRev uint64, answers []foundrymodel.OntologyAnswer) error {
+func (s *generationStore) AnswerOntologyGeneration(_ context.Context, ontologyID, id string, draftRev uint64, answers []agentquestion.Answer) error {
 	for _, g := range s.generations {
 		if g.ID == id && g.OntologyID == ontologyID && g.Status == foundrymodel.OntologyGenerationNeedsInput && g.Questions.DraftRev == draftRev {
 			g.Status, g.Questions.Answers, g.Attempts = foundrymodel.OntologyGenerationQueued, answers, 0
@@ -41,18 +43,18 @@ func (s *generationStore) CancelOntologyGeneration(_ context.Context, ontologyID
 func TestOntologyGenerationQuestionRPCs(t *testing.T) {
 	ctx := ports.WithActor(context.Background(), person)
 	askedAt := time.Date(2026, time.November, 10, 9, 0, 0, 0, time.UTC)
-	monthly := "Monthly"
-	// waiting is a service whose ontology ont-1 has gen-1 waiting on two
-	// questions of draft revision 3, one blocking.
+	// waiting is a service whose ontology ont-1 has gen-1 waiting on its
+	// first round of two questions, of draft revision 3, one blocking.
 	waiting := func(t *testing.T) (*Service, *generationStore) {
 		s, store := generationService(t, 50)
 		s.deps.Cfg.Foundry.Ontology.AnswerDays = 7
 		store.generations = append(store.generations, &foundrymodel.OntologyGeneration{
 			ID: "gen-1", WorkspaceID: "ws-1", OntologyID: "ont-1", Status: foundrymodel.OntologyGenerationNeedsInput, Attempts: 2,
 			TurnState: []byte(`{"secret":"Acme Corp's excerpt"}`),
-			Questions: &foundrymodel.OntologyQuestions{DraftRev: 3, AskedAt: askedAt, Asked: []foundrymodel.OntologyQuestion{
-				{ID: "q1", Items: []string{"type.Customer"}, Text: "Is a customer an account? <b>bold</b>", Options: []string{}, Blocking: true},
-				{ID: "q2", Items: []string{}, Text: "How often do they renew?", Options: []string{"Monthly", "Yearly"}, Default: &monthly},
+			Questions: &foundrymodel.OntologyQuestions{Round: 1, DraftRev: 3, AskedAt: askedAt, Asked: []foundrymodel.OntologyQuestion{
+				{Question: agentquestion.Question{ID: "q1", Text: "Is a customer an account? <b>bold</b>", Blocking: true}, Items: []string{"type.Customer"}},
+				{Question: agentquestion.Question{ID: "q2", Header: "Renewals", Text: "How often do they renew?", Choice: &agentquestion.Choice{
+					Options: []agentquestion.Option{{Label: "Monthly", Description: "Every month"}, {Label: "Yearly"}}, Recommended: "Monthly"}}},
 			}},
 		})
 		return s, store
@@ -60,6 +62,9 @@ func TestOntologyGenerationQuestionRPCs(t *testing.T) {
 	answer := func(s *Service, req *foundryv1.AnswerOntologyGenerationRequest) (*foundryv1.OntologyGeneration, error) {
 		if req.WorkspaceId == "" {
 			req.WorkspaceId, req.OntologyId, req.Id = "ws-1", "ont-1", "gen-1"
+		}
+		if req.Round == 0 {
+			req.Round = 1
 		}
 		resp, err := s.AnswerOntologyGeneration(ctx, req)
 		return resp.GetGeneration(), err
@@ -75,13 +80,18 @@ func TestOntologyGenerationQuestionRPCs(t *testing.T) {
 		}
 		gen := resp.GetGeneration()
 		if gen.GetStatus() != foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT || !gen.GetAskedAt().AsTime().Equal(askedAt) ||
-			!gen.GetAnswersDueAt().AsTime().Equal(askedAt.Add(7*24*time.Hour)) || len(gen.GetQuestions()) != 2 {
+			!gen.GetAnswersDueAt().AsTime().Equal(askedAt.Add(7*24*time.Hour)) || len(gen.GetQuestions()) != 2 || gen.GetQuestionRound() != 1 {
 			t.Fatalf("generation = %+v", gen)
 		}
-		q1, q2 := gen.GetQuestions()[0], gen.GetQuestions()[1]
-		if q1.GetId() != "q1" || q1.GetText() != "Is a customer an account? <b>bold</b>" || !q1.GetBlocking() || q1.DefaultAnswer != nil || q1.Answer != nil ||
-			q2.GetDefaultAnswer() != "Monthly" || strings.Join(q2.GetOptions(), ",") != "Monthly,Yearly" || q2.GetBlocking() {
-			t.Fatalf("questions = %+v", gen.GetQuestions())
+		want := []*foundryv1.OntologyGenerationQuestion{
+			{Id: "q1", Text: "Is a customer an account? <b>bold</b>", Blocking: true, Items: []string{"type.Customer"}},
+			{Id: "q2", Header: "Renewals", Text: "How often do they renew?", Recommended: "Monthly",
+				Options: []*foundryv1.AgentQuestionOption{{Label: "Monthly", Description: "Every month"}, {Label: "Yearly"}}},
+		}
+		for i, q := range gen.GetQuestions() {
+			if !proto.Equal(q, want[i]) {
+				t.Errorf("question %d = %+v, want %+v", i, q, want[i])
+			}
 		}
 		if strings.Contains(gen.String(), "Acme Corp") {
 			t.Fatalf("the session state left the backend: %s", gen)
@@ -95,19 +105,18 @@ func TestOntologyGenerationQuestionRPCs(t *testing.T) {
 	t.Run("queues the generation with the answers", func(t *testing.T) {
 		s, store := waiting(t)
 		gen, err := answer(s, &foundryv1.AnswerOntologyGenerationRequest{
-			Answers: []*foundryv1.OntologyGenerationAnswer{{QuestionId: "q1", Text: " Yes, one account each "}}, UseDefaults: true,
+			Answers: []*foundryv1.AgentQuestionAnswer{{QuestionId: "q1", Text: " Yes, one account each "}}, UseDefaults: true,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		stored := store.generations[0]
-		want := []foundrymodel.OntologyAnswer{{QuestionID: "q1", Text: "Yes, one account each"}, {QuestionID: "q2", Text: "Monthly"}}
-		if stored.Status != foundrymodel.OntologyGenerationQueued || len(stored.Questions.Answers) != 2 || stored.Questions.Answers[0] != want[0] ||
-			stored.Questions.Answers[1] != want[1] {
+		want := []agentquestion.Answer{{QuestionID: "q1", Options: []string{}, Text: "Yes, one account each"}, {QuestionID: "q2", Options: []string{"Monthly"}}}
+		if stored.Status != foundrymodel.OntologyGenerationQueued || !reflect.DeepEqual(stored.Questions.Answers, want) {
 			t.Fatalf("stored = %+v, answers %+v", stored, stored.Questions.Answers)
 		}
 		if gen.GetStatus() != foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_QUEUED || gen.AnswersDueAt != nil ||
-			gen.GetQuestions()[0].GetAnswer() != "Yes, one account each" || gen.GetQuestions()[1].GetAnswer() != "Monthly" {
+			gen.GetQuestions()[0].GetAnswer().GetText() != "Yes, one account each" || strings.Join(gen.GetQuestions()[1].GetAnswer().GetOptions(), ",") != "Monthly" {
 			t.Fatalf("answered generation = %+v", gen)
 		}
 		if _, err := answer(s, &foundryv1.AnswerOntologyGenerationRequest{UseDefaults: true}); status.Code(err) != codes.FailedPrecondition {
@@ -122,16 +131,44 @@ func TestOntologyGenerationQuestionRPCs(t *testing.T) {
 		if _, err := answer(s, &foundryv1.AnswerOntologyGenerationRequest{UseDefaults: true}); err != nil {
 			t.Fatal(err)
 		}
-		if got := store.generations[0].Questions.Answers; len(got) != 2 || got[0].Text != ontologygen.NoPreference || got[1].Text != "Monthly" {
+		if got := store.generations[0].Questions.Answers; len(got) != 2 || got[0].Text != agentquestion.NoPreference || got[1].Options[0] != "Monthly" {
 			t.Fatalf("answers = %+v", got)
+		}
+	})
+
+	t.Run("takes an option, or the person's own words", func(t *testing.T) {
+		for _, a := range []*foundryv1.AgentQuestionAnswer{{QuestionId: "q2", Options: []string{"Yearly"}}, {QuestionId: "q2", Text: "Every two years"}} {
+			s, store := waiting(t)
+			if _, err := answer(s, &foundryv1.AnswerOntologyGenerationRequest{
+				Answers: []*foundryv1.AgentQuestionAnswer{{QuestionId: "q1", Text: "Yes"}, a}}); err != nil {
+				t.Fatal(err)
+			}
+			if got := store.generations[0].Questions.Answers[1]; !reflect.DeepEqual(got.Options, append([]string{}, a.GetOptions()...)) || got.Text != a.GetText() {
+				t.Errorf("stored %+v for %+v", got, a)
+			}
+		}
+	})
+
+	// A stale page's answers name the round they answer: once the agent asks
+	// again, the same question ids may mean other questions.
+	t.Run("refuses answers for another round", func(t *testing.T) {
+		s, store := waiting(t)
+		_, err := answer(s, &foundryv1.AnswerOntologyGenerationRequest{Round: 2, UseDefaults: true})
+		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(status.Convert(err).Message(), "round 2") ||
+			store.generations[0].Status != foundrymodel.OntologyGenerationNeedsInput {
+			t.Fatalf("another round: %v", err)
 		}
 	})
 
 	t.Run("refuses answers the agent can't take", func(t *testing.T) {
 		for name, req := range map[string]*foundryv1.AnswerOntologyGenerationRequest{
-			"a blocking question left out": {Answers: []*foundryv1.OntologyGenerationAnswer{{QuestionId: "q2", Text: "Yearly"}}},
-			"a question not asked":         {Answers: []*foundryv1.OntologyGenerationAnswer{{QuestionId: "q9", Text: "x"}}, UseDefaults: true},
-			"a blank answer":               {Answers: []*foundryv1.OntologyGenerationAnswer{{QuestionId: "q1", Text: "  "}}},
+			"a blocking question left out": {Answers: []*foundryv1.AgentQuestionAnswer{{QuestionId: "q2", Options: []string{"Yearly"}}}},
+			"a question not asked":         {Answers: []*foundryv1.AgentQuestionAnswer{{QuestionId: "q9", Text: "x"}}, UseDefaults: true},
+			"a blank answer":               {Answers: []*foundryv1.AgentQuestionAnswer{{QuestionId: "q1", Text: "  "}}},
+			"an option not offered":        {Answers: []*foundryv1.AgentQuestionAnswer{{QuestionId: "q1", Text: "Yes"}, {QuestionId: "q2", Options: []string{"Weekly"}}}},
+			"two options of one":           {Answers: []*foundryv1.AgentQuestionAnswer{{QuestionId: "q1", Text: "Yes"}, {QuestionId: "q2", Options: []string{"Monthly", "Yearly"}}}},
+			"an option and words of one":   {Answers: []*foundryv1.AgentQuestionAnswer{{QuestionId: "q1", Text: "Yes"}, {QuestionId: "q2", Options: []string{"Monthly"}, Text: "x"}}},
+			"an option to a free one":      {Answers: []*foundryv1.AgentQuestionAnswer{{QuestionId: "q1", Options: []string{"Monthly"}}}},
 			"no id":                        {WorkspaceId: "ws-1", OntologyId: "ont-1", UseDefaults: true},
 		} {
 			s, store := waiting(t)
@@ -173,7 +210,7 @@ func TestOntologyGenerationQuestionRPCs(t *testing.T) {
 			s, store := waiting(t)
 			store.generations[0].Input.LoadWhenReady = true
 			_, err := s.AnswerOntologyGeneration(ports.WithActor(context.Background(), *as), &foundryv1.AnswerOntologyGenerationRequest{
-				WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "gen-1", UseDefaults: true})
+				WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "gen-1", Round: 1, UseDefaults: true})
 			if status.Code(err) != want || (want == codes.OK) != (store.generations[0].Status == foundrymodel.OntologyGenerationQueued) {
 				t.Errorf("as %+v: err = %v, status %s", *as, err, store.generations[0].Status)
 			}
@@ -225,6 +262,6 @@ func TestOntologyGenerationQuestionRPCs(t *testing.T) {
 // defaults between the handler's read and its write.
 type racingStore struct{ *generationStore }
 
-func (s *racingStore) AnswerOntologyGeneration(context.Context, string, string, uint64, []foundrymodel.OntologyAnswer) error {
+func (s *racingStore) AnswerOntologyGeneration(context.Context, string, string, uint64, []agentquestion.Answer) error {
 	return foundrystore.ErrNotFound
 }

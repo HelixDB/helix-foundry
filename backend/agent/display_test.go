@@ -15,8 +15,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/integration"
-	"github.com/helixdb/helix-foundry/backend/ontologygen"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -473,16 +473,18 @@ func TestAnAPISourceIsMadeInItsForm(t *testing.T) {
 	assert.Contains(t, kinds.Content, "helix_foundry_connect links it")
 }
 
-// asking is a generation of the Sales graph waiting for answers to three
-// questions: one with options and a default, one free with a default, and
-// one it may decide itself.
+// asking is a generation of the Sales graph waiting for its first round of
+// answers to three questions: a choice of one with a recommended option, a
+// free one, and a choice of several it may decide itself.
 func asking() *model.OntologyGeneration {
-	title, def, days := "Track renewals", "The company that pays", "90 days"
+	title := "Track renewals"
 	return &model.OntologyGeneration{ID: "gen1", OntologyID: ontology, Status: model.OntologyGenerationNeedsInput, Title: &title,
 		Questions: &model.OntologyQuestions{Round: 1, Asked: []model.OntologyQuestion{
-			{ID: "q1", Text: "Is a customer the company that pays?", Options: []string{"The company that pays", "Each person"}, Default: &def, Blocking: true},
-			{ID: "q2", Text: "How many days before renewal is at risk?", Default: &days, Blocking: true},
-			{ID: "q3", Text: "Keep <b>cancelled</b> orders?", Options: []string{"Keep them", "Leave them out"}},
+			{Question: agentquestion.Question{ID: "q1", Header: "Customers", Text: "Is a customer the company that pays?", Blocking: true,
+				Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "The company that pays"}, {Label: "Each person"}}, Recommended: "The company that pays"}}},
+			{Question: agentquestion.Question{ID: "q2", Text: "How many days before renewal is at risk?", Blocking: true}},
+			{Question: agentquestion.Question{ID: "q3", Text: "Keep <b>cancelled</b> orders?",
+				Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "Active"}, {Label: "Cancelled"}}, Multiple: true}}},
 		}}}
 }
 
@@ -492,12 +494,12 @@ func TestAGenerationsAnswersAreACard(t *testing.T) {
 	h := workspaceHarness(t)
 	h.db.generations = []*model.OntologyGeneration{asking()}
 	a, result := prepared(t, h, "Answer the Sales graph's questions: a customer is each person, and use the defaults for the rest", "answer_generation_questions",
-		"ontology:ws1/ont1", `{"generation_id":"gen1","answers":[{"question_id":"q1","text":"Each person"}],"use_defaults":true}`)
+		"ontology:ws1/ont1", `{"generation_id":"gen1","round":1,"answers":[{"question_id":"q1","options":["Each person"]},{"question_id":"q2","text":"90 days"}],"use_defaults":true}`)
 	require.NotNil(t, a, result.Content)
-	assert.JSONEq(t, `{"ontology":{"id":"ont1","name":"Sales graph"},"generation":{"id":"gen1","name":"Track renewals"},
-		"answers":[{"question_id":"q1","question":"Is a customer the company that pays?","answer":"Each person"}],"use_defaults":true,
-		"defaulted":[{"question_id":"q2","question":"How many days before renewal is at risk?","answer":"90 days"},
-		  {"question_id":"q3","question":"Keep <b>cancelled</b> orders?","answer":"`+ontologygen.NoPreference+`"}]}`, string(a.Display))
+	assert.JSONEq(t, `{"ontology":{"id":"ont1","name":"Sales graph"},"generation":{"id":"gen1","name":"Track renewals"},"round":1,
+		"answers":[{"question_id":"q1","header":"Customers","question":"Is a customer the company that pays?","options":["Each person"]},
+		  {"question_id":"q2","question":"How many days before renewal is at risk?","options":[],"text":"90 days"}],"use_defaults":true,
+		"defaulted":[{"question_id":"q3","question":"Keep <b>cancelled</b> orders?","options":[],"text":"`+agentquestion.NoPreference+`"}]}`, string(a.Display))
 	assert.True(t, a.TargetNamedByUser)
 	assert.Zero(t, h.backend.loads, "preparing answers nothing")
 	assert.True(t, Operations["answer_generation_questions"])
@@ -512,12 +514,15 @@ func TestAGenerationsAnswersAreRefused(t *testing.T) {
 		payload    string
 		want       string
 	}{
-		"a generation that isn't waiting": {done, `{"generation_id":"gen1","use_defaults":true}`, "isn't waiting for answers: it is succeeded"},
-		"a generation of no ontology":     {nil, `{"generation_id":"gen1","use_defaults":true}`, "has no generation gen1"},
-		"a question it didn't ask": {asking(), `{"generation_id":"gen1","answers":[{"question_id":"q9","text":"Yes"}],"use_defaults":true}`,
-			"asked no question q9"},
-		"a blocking question left open": {asking(), `{"generation_id":"gen1","answers":[{"question_id":"q1","text":"Yes"}]}`,
-			"question q2 blocks the draft"},
+		"a generation that isn't waiting": {done, `{"generation_id":"gen1","round":1,"use_defaults":true}`, "isn't waiting for answers: it is succeeded"},
+		"a generation of no ontology":     {nil, `{"generation_id":"gen1","round":1,"use_defaults":true}`, "has no generation gen1"},
+		"another round":                   {asking(), `{"generation_id":"gen1","round":2,"use_defaults":true}`, "waits on round 1 of its questions, not 2"},
+		"a question it didn't ask": {asking(), `{"generation_id":"gen1","round":1,"answers":[{"question_id":"q9","text":"Yes"}],"use_defaults":true}`,
+			`no question "q9" was asked`},
+		"an option it doesn't offer": {asking(), `{"generation_id":"gen1","round":1,"answers":[{"question_id":"q1","options":["Both"]}],"use_defaults":true}`,
+			`offers no option "Both"`},
+		"a blocking question left open": {asking(), `{"generation_id":"gen1","round":1,"answers":[{"question_id":"q1","text":"Yes"}]}`,
+			"question q2 needs an answer"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := workspaceHarness(t)

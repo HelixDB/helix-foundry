@@ -192,19 +192,30 @@
             "answer": {
               "type": "object",
               "properties": {
+                "options": {
+                  "description": "The labels of the options the user chose.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
                 "question_id": {
                   "description": "The question.",
                   "type": "string"
                 },
                 "text": {
-                  "description": "The answer.",
-                  "type": "string"
+                  "description": "The user's own words, if any.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
                 }
               },
               "additionalProperties": false,
               "required": [
                 "question_id",
-                "text"
+                "options"
               ]
             }
           },

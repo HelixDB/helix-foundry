@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/helixdb/helix-foundry/backend/store/model"
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 )
 
 // ContractVersion is the contract the vendored schemas describe, the first
@@ -267,7 +267,7 @@ type Start struct {
 // (stale_draft).
 type Feedback struct {
 	DraftRev uint64
-	Answers  []model.OntologyAnswer
+	Answers  []agentquestion.Answer
 }
 
 func (Start) input()    {}
@@ -282,10 +282,11 @@ func (s Start) MarshalJSON() ([]byte, error) {
 }
 
 // MarshalJSON writes {"feedback": {"draft_rev": ..., "actions": [{"answer":
-// {"question_id": ..., "text": ...}}, ...]}}.
+// {"question_id": ..., "options": [...], "text": ...}}, ...]}}: the labels of
+// the options chosen, and the person's own words when they gave any.
 func (f Feedback) MarshalJSON() ([]byte, error) {
 	type answer struct {
-		Answer model.OntologyAnswer `json:"answer"`
+		Answer agentquestion.Answer `json:"answer"`
 	}
 	type feedback struct {
 		DraftRev uint64   `json:"draft_rev"`

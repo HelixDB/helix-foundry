@@ -11,9 +11,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/dashboard"
 	"github.com/helixdb/helix-foundry/backend/integration"
-	"github.com/helixdb/helix-foundry/backend/ontologygen"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -96,23 +96,27 @@ type GenerateDisplay struct {
 }
 
 // AnswersDisplay is answer_generation_questions's: the generation, by its
-// title, and each of its questions the answers answer, as the agent asked
-// it (the model's words), with the person's answer; with use_defaults, the
-// rest with the agent's default (ontologygen.NoPreference for none: it
-// decides itself).
+// title, the round of its questions, and each question the answers answer,
+// as the agent asked it (the model's words), with the person's answer; with
+// use_defaults, the rest with their recommended option
+// (agentquestion.NoPreference for none: the agent decides itself).
 type AnswersDisplay struct {
 	Ontology    Ref             `json:"ontology"`
 	Generation  Ref             `json:"generation"`
+	Round       int32           `json:"round"`
 	Answers     []AnswerDisplay `json:"answers"`
 	UseDefaults bool            `json:"use_defaults"`
 	Defaulted   []AnswerDisplay `json:"defaulted,omitempty"`
 }
 
-// AnswerDisplay is one question and its answer.
+// AnswerDisplay is one question, by its header and text, and its answer:
+// the labels of the options chosen, and the person's own words.
 type AnswerDisplay struct {
-	QuestionID string `json:"question_id"`
-	Question   string `json:"question"`
-	Answer     string `json:"answer"`
+	QuestionID string   `json:"question_id"`
+	Header     string   `json:"header,omitempty"`
+	Question   string   `json:"question"`
+	Options    []string `json:"options"`
+	Text       string   `json:"text,omitempty"`
 }
 
 // EventSourceDisplay is an API source a generation reads, and how.
@@ -685,8 +689,9 @@ func (c Cards) specDisplay(ctx context.Context, raw json.RawMessage) (SpecDispla
 }
 
 // describeAnswers reads the generation answer_generation_questions answers,
-// refusing one that isn't waiting for answers, or answers to a question it
-// didn't ask, before its person sees the card.
+// refusing one that isn't waiting for answers, or for another round, or
+// answers its questions don't take (agentquestion.Check), before its person
+// sees the card.
 func (c Cards) describeAnswers(ctx context.Context, ontology Ref, p integration.AnswerGenerationQuestionsPayload) (any, error) {
 	refuse := func(why string) error { return status.Error(codes.FailedPrecondition, why) }
 	g, err := c.DB.GetOntologyGeneration(ctx, ontology.ID, p.GenerationID)
@@ -697,31 +702,28 @@ func (c Cards) describeAnswers(ctx context.Context, ontology Ref, p integration.
 		return nil, err
 	case g.Status != model.OntologyGenerationNeedsInput || g.Questions == nil:
 		return nil, refuse("this generation isn't waiting for answers: it is " + string(g.Status) + ". Read it again with helix_foundry_get_generation")
+	case int(p.Round) != g.Questions.Round:
+		return nil, refuse(fmt.Sprintf("the generation waits on round %d of its questions, not %d: read them again with helix_foundry_get_generation", g.Questions.Round, p.Round))
 	}
-	out := AnswersDisplay{Ontology: ontology, Generation: Ref{ID: g.ID}, Answers: []AnswerDisplay{}, UseDefaults: p.UseDefaults}
+	given := make([]agentquestion.Answer, 0, len(p.Answers))
+	for _, a := range p.Answers {
+		given = append(given, agentquestion.Answer{QuestionID: a.QuestionID, Options: a.Options, Text: a.Text})
+	}
+	answers, err := agentquestion.Check(g.Questions.Questions(), given, p.UseDefaults)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error()+": read the questions again with helix_foundry_get_generation")
+	}
+	out := AnswersDisplay{Ontology: ontology, Generation: Ref{ID: g.ID}, Round: p.Round, Answers: []AnswerDisplay{}, UseDefaults: p.UseDefaults}
 	if g.Title != nil {
 		out.Generation.Name = *g.Title
 	}
-	answered := map[string]bool{}
-	for _, a := range p.Answers {
-		i := slices.IndexFunc(g.Questions.Asked, func(q model.OntologyQuestion) bool { return q.ID == a.QuestionID })
-		if i < 0 {
-			return nil, refuse("the generation asked no question " + a.QuestionID + ": read its questions again with helix_foundry_get_generation")
-		}
-		answered[a.QuestionID] = true
-		out.Answers = append(out.Answers, AnswerDisplay{QuestionID: a.QuestionID, Question: g.Questions.Asked[i].Text, Answer: a.Text})
-	}
-	for _, q := range g.Questions.Asked {
-		switch {
-		case answered[q.ID]:
-		case p.UseDefaults:
-			d := AnswerDisplay{QuestionID: q.ID, Question: q.Text, Answer: ontologygen.NoPreference}
-			if q.Default != nil {
-				d.Answer = *q.Default
-			}
-			out.Defaulted = append(out.Defaulted, d)
-		case q.Blocking:
-			return nil, refuse("question " + q.ID + " blocks the draft: answer it, or set use_defaults to take the agent's default")
+	for _, a := range answers {
+		q := g.Questions.Asked[slices.IndexFunc(g.Questions.Asked, func(q model.OntologyQuestion) bool { return q.ID == a.QuestionID })]
+		shown := AnswerDisplay{QuestionID: q.ID, Header: q.Header, Question: q.Text, Options: a.Options, Text: a.Text}
+		if slices.ContainsFunc(p.Answers, func(given integration.GenerationAnswerPayload) bool { return given.QuestionID == a.QuestionID }) {
+			out.Answers = append(out.Answers, shown)
+		} else {
+			out.Defaulted = append(out.Defaulted, shown)
 		}
 	}
 	return out, nil

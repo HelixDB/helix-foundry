@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/document"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent/contracttest"
 	"github.com/helixdb/helix-foundry/backend/ontologygen"
@@ -628,7 +629,9 @@ func TestGenerator(t *testing.T) {
 		if result.Definition != nil || result.Asked == nil || result.InputTokens != 1500 {
 			t.Fatalf("result = %+v", result)
 		}
-		want := []model.OntologyQuestion{{ID: "q1", Items: []string{"type.Customer"}, Text: "Is a customer an account?", Options: []string{}, Blocking: true}}
+		want := []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q1", Header: "Customers", Text: "Is a customer an account?", Blocking: true,
+			Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "An account", Description: "One customer per billing account"}, {Label: "A person"}},
+				Recommended: "An account"}}, Items: []string{"type.Customer"}}}
 		if result.Asked.DraftRev != 4 || string(result.Asked.State) != `{"draft_rev":4,"opaque":[1,2,3]}` || !reflect.DeepEqual(result.Asked.Questions, want) {
 			t.Fatalf("asked = %+v", result.Asked)
 		}
@@ -639,8 +642,12 @@ func TestGenerator(t *testing.T) {
 			result string
 			want   string
 		}{
-			"no blocking question": {testResult(`"needs_input"`, 1), "without a question"},
-			"unreadable questions": {strings.Replace(testResult(`"needs_input"`, 1), `"questions":[{`, `"questions":[7,{`, 1), "can't read"},
+			"no blocking question":              {testResult(`"needs_input"`, 1), "without a question"},
+			"unreadable questions":              {strings.Replace(testResult(`"needs_input"`, 1), `"questions":[{`, `"questions":[7,{`, 1), "can't read"},
+			"a recommendation it doesn't offer": {strings.Replace(asking(1), `"recommended":"An account"`, `"recommended":"A team"`, 1), "can't read"},
+			"one option":                        {strings.Replace(asking(1), `,{"label":"A person"}`, ``, 1), "can't read"},
+			"a question twice": {strings.Replace(asking(1), `"blocking":true}]`,
+				`"blocking":true},{"id":"q1","items":[],"text":"Again?","blocking":true}]`, 1), "can't read"},
 			"too large a session": {strings.Replace(asking(1), `"opaque":[1,2,3]`, `"opaque":"`+strings.Repeat("x", maxStateBytes)+`"`, 1),
 				"keeps sessions of up to 4 MiB"},
 		} {
@@ -658,8 +665,8 @@ func TestGenerator(t *testing.T) {
 		h := newHarness(t, respond(`"done"`))
 		gen := generation()
 		gen.TurnState = json.RawMessage(`{"draft_rev":4,"opaque":[1,2,3]}`)
-		gen.Questions = &model.OntologyQuestions{DraftRev: 4, Asked: []model.OntologyQuestion{{ID: "q1", Blocking: true}},
-			Answers: []model.OntologyAnswer{{QuestionID: "q1", Text: "Yes, one account per customer"}}}
+		gen.Questions = &model.OntologyQuestions{DraftRev: 4, Asked: []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q1", Text: "?", Blocking: true}}},
+			Answers: []agentquestion.Answer{{QuestionID: "q1", Options: []string{"An account"}, Text: "one per customer"}}}
 		result, err := h.generator.Run(ctx, gen)
 		if err != nil || result.Definition == nil || result.Asked != nil {
 			t.Fatalf("result = (%+v, %v)", result, err)
@@ -679,7 +686,7 @@ func TestGenerator(t *testing.T) {
 			t.Fatal(err)
 		}
 		if req.SessionID != "gen-1" || req.RequestID != "gen-1.4" || string(req.State) != `{"draft_rev":4,"opaque":[1,2,3]}` || len(req.Sources) != 1 ||
-			string(req.Input) != `{"feedback":{"draft_rev":4,"actions":[{"answer":{"question_id":"q1","text":"Yes, one account per customer"}}]}}` {
+			string(req.Input) != `{"feedback":{"draft_rev":4,"actions":[{"answer":{"question_id":"q1","options":["An account"],"text":"one per customer"}}]}}` {
 			t.Fatalf("request = %s", request)
 		}
 
@@ -696,7 +703,7 @@ func TestGenerator(t *testing.T) {
 		h := newHarness(t, respond(`"stale_draft"`))
 		gen := generation()
 		gen.TurnState = json.RawMessage(`{}`)
-		gen.Questions = &model.OntologyQuestions{DraftRev: 2, Answers: []model.OntologyAnswer{}}
+		gen.Questions = &model.OntologyQuestions{DraftRev: 2, Answers: []agentquestion.Answer{}}
 		if f := asFailure(t, func() error { _, err := h.generator.Run(ctx, gen); return err }()); !f.Permanent || !strings.Contains(f.Message, "earlier draft") {
 			t.Fatalf("failure %+v", f)
 		}

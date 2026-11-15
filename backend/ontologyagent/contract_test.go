@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent/contracttest"
-	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
 // testResult is a TurnResult the agent could send: status is its JSON, and an
@@ -25,7 +25,9 @@ func testResult(status string, rev uint64) string {
 	return fmt.Sprintf(`{"status":%s,"state":{"draft_rev":%d,"opaque":[1,2,3]},
 		"draft":{"ontology_toml":"version = \"draft\"\n","mappings_toml":"ontology = \"draft\"\n","draft":{"rev":%d,
 			"base_version":null,"items":{},"left_out":[],"acknowledged":[],"lint":[],
-			"questions":[{"id":"q1","items":["type.Customer"],"text":"Is a customer an account?","options":[],"default":null,"blocking":false}]}},
+			"questions":[{"id":"q1","items":["type.Customer"],"header":"Customers","text":"Is a customer an account?",
+				"options":[{"label":"An account","description":"One customer per billing account"},{"label":"A person"}],"multiple":false,
+				"recommended":"An account","blocking":false}]}},
 		"bundle":%s,"summary":"built a draft","usage":{"input":1000,"cache_read":200,"cache_write":300,"output":400,"usd":1.25}}`,
 		status, rev, rev, bundle)
 }
@@ -74,7 +76,7 @@ func TestContract(t *testing.T) {
 		}{
 			"a start with goals":    {Start{Workflow: "We bill customers monthly.", Goals: []string{"Which customers churn?"}}, nil},
 			"a start without goals": {Start{Workflow: "We bill customers monthly.", Goals: []string{}}, nil},
-			"answers": {Feedback{DraftRev: 3, Answers: []model.OntologyAnswer{{QuestionID: "q1", Text: "Yes"}, {QuestionID: "q2", Text: "Monthly"}}},
+			"answers": {Feedback{DraftRev: 3, Answers: []agentquestion.Answer{{QuestionID: "q1", Text: "Yes"}, {QuestionID: "q2", Options: []string{"Monthly", "Yearly"}, Text: "and weekly"}}},
 				state},
 			"no answers": {Feedback{DraftRev: 3}, state},
 		} {
@@ -210,11 +212,11 @@ func ExampleSource_MarshalJSON() {
 func ExampleFeedback_MarshalJSON() {
 	start, _ := json.Marshal(Start{Workflow: "We bill customers monthly.", Goals: []string{}})
 	fmt.Println(string(start))
-	answers, _ := json.Marshal(Feedback{DraftRev: 3, Answers: []model.OntologyAnswer{{QuestionID: "q1", Text: "Yes"}}})
+	answers, _ := json.Marshal(Feedback{DraftRev: 3, Answers: []agentquestion.Answer{{QuestionID: "q1", Text: "Yes"}, {QuestionID: "q2", Options: []string{"Monthly"}}}})
 	fmt.Println(string(answers))
 	// Output:
 	// {"start":{"workflow":"We bill customers monthly.","goals":[]}}
-	// {"feedback":{"draft_rev":3,"actions":[{"answer":{"question_id":"q1","text":"Yes"}}]}}
+	// {"feedback":{"draft_rev":3,"actions":[{"answer":{"question_id":"q1","options":[],"text":"Yes"}},{"answer":{"question_id":"q2","options":["Monthly"]}}]}}
 }
 
 func TestTurnRuleCounts(t *testing.T) {

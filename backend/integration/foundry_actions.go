@@ -15,6 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 
 	"github.com/helixdb/helix-foundry/backend/document"
@@ -57,11 +58,9 @@ const (
 	maxFoundryEditItemBytes  = 256
 	maxFoundryEditTOMLBytes  = 1 << 20
 	maxFoundryReviewIDBytes  = 256
-	// A generation's answers: at most one per question, each 1 to 2000 characters, as
-	// ontologygen.Answers takes them.
-	maxFoundryAnswers         = 100
-	maxFoundryAnswerChars     = 2000
-	maxFoundryQuestionIDBytes = 256
+	// A generation's answers: at most one per question, each naming options by label and
+	// words of 1 to 2000 characters, as agentquestion.Check takes them.
+	maxFoundryAnswers = 100
 	// maxFoundrySlugChars is the longest slug the website gives a database or project, inside
 	// the backend's 64.
 	maxFoundrySlugChars = 63
@@ -539,22 +538,32 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 		return GenerateOntologyOperation{payload: payload, req: req}, nil
 	case "answer_generation_questions":
 		var payload AnswerGenerationQuestionsPayload
-		malformed := invalid(fmt.Sprintf("answer_generation_questions takes payload {generation_id, answers, use_defaults}: up to %d answers, each {question_id, text} "+
-			"naming a question once with 1 to %d characters of text; use_defaults answers every question left out with the agent's default", maxFoundryAnswers, maxFoundryAnswerChars))
-		if decodeStrict(raw, &payload) != nil || !ValidIDs([]string{payload.GenerationID}) || len(payload.Answers) > maxFoundryAnswers ||
+		malformed := invalid(fmt.Sprintf("answer_generation_questions takes payload {generation_id, round, answers, use_defaults}: the generation's question_round, "+
+			"and up to %d answers, each {question_id, options, text} naming a question once with the labels of the options chosen and the user's own words "+
+			"(1 to %d characters), at least one of the two; use_defaults answers every question left out with its recommended option", maxFoundryAnswers, agentquestion.MaxAnswerChars))
+		if decodeStrict(raw, &payload) != nil || !ValidIDs([]string{payload.GenerationID}) || payload.Round < 1 || len(payload.Answers) > maxFoundryAnswers ||
 			len(payload.Answers) == 0 && !payload.UseDefaults {
 			return nil, malformed
 		}
-		req := &foundryv1.AnswerOntologyGenerationRequest{WorkspaceId: workspaceID, OntologyId: ontologyID, Id: payload.GenerationID, UseDefaults: payload.UseDefaults}
+		req := &foundryv1.AnswerOntologyGenerationRequest{WorkspaceId: workspaceID, OntologyId: ontologyID, Id: payload.GenerationID,
+			Round: payload.Round, UseDefaults: payload.UseDefaults}
 		for i, a := range payload.Answers {
+			// Its shape: which options the question offers is the backend's to check.
 			text := strings.TrimSpace(a.Text)
-			if a.QuestionID == "" || len(a.QuestionID) > maxFoundryQuestionIDBytes || strings.ContainsFunc(a.QuestionID, unicode.IsControl) ||
-				len(a.Text) > 4*maxFoundryAnswerChars || text == "" || utf8.RuneCountInString(text) > maxFoundryAnswerChars ||
-				slices.ContainsFunc(req.Answers, func(given *foundryv1.OntologyGenerationAnswer) bool { return given.GetQuestionId() == a.QuestionID }) {
+			labels := slices.Clone(a.Options)
+			slices.Sort(labels)
+			if a.QuestionID == "" || len(a.QuestionID) > agentquestion.MaxIDBytes || strings.ContainsFunc(a.QuestionID, unicode.IsControl) ||
+				len(a.Text) > 4*agentquestion.MaxAnswerChars || a.Text != "" && text == "" || utf8.RuneCountInString(text) > agentquestion.MaxAnswerChars ||
+				len(a.Options) == 0 && text == "" || len(a.Options) > agentquestion.MaxOptions || len(slices.Compact(labels)) < len(a.Options) ||
+				slices.ContainsFunc(a.Options, func(label string) bool { return strings.TrimSpace(label) == "" || !utf8.ValidString(label) }) ||
+				slices.ContainsFunc(req.Answers, func(given *foundryv1.AgentQuestionAnswer) bool { return given.GetQuestionId() == a.QuestionID }) {
 				return nil, malformed
 			}
 			payload.Answers[i].Text = text
-			req.Answers = append(req.Answers, &foundryv1.OntologyGenerationAnswer{QuestionId: a.QuestionID, Text: text})
+			if payload.Answers[i].Options == nil {
+				payload.Answers[i].Options = []string{}
+			}
+			req.Answers = append(req.Answers, &foundryv1.AgentQuestionAnswer{QuestionId: a.QuestionID, Options: a.Options, Text: text})
 		}
 		// The answers are a person's, as the goal they carry on is.
 		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "AnswerOntologyGeneration"); err != nil {
@@ -1094,13 +1103,17 @@ func (o ReviseVersionOperation) Execute(ctx context.Context, s *Service, _ *Iden
 
 type AnswerGenerationQuestionsPayload struct {
 	GenerationID string                    `json:"generation_id"`
+	Round        int32                     `json:"round"`
 	Answers      []GenerationAnswerPayload `json:"answers,omitempty"`
 	UseDefaults  bool                      `json:"use_defaults,omitempty"`
 }
 
+// GenerationAnswerPayload is one answer: the labels of the options chosen, and the user's own
+// words (agentquestion.Answer).
 type GenerationAnswerPayload struct {
-	QuestionID string `json:"question_id"`
-	Text       string `json:"text"`
+	QuestionID string   `json:"question_id"`
+	Options    []string `json:"options"`
+	Text       string   `json:"text,omitempty"`
 }
 
 type AnswerGenerationQuestionsOperation struct {

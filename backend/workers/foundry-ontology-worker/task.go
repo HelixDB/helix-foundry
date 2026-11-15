@@ -14,6 +14,7 @@ import (
 	"go.uber.org/dig"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/document"
@@ -58,7 +59,7 @@ type generationQueue interface {
 	// ListOntologyGenerationsAskedBefore and AnswerOntologyGeneration answer
 	// questions no one answered in time (answerOverdue).
 	ListOntologyGenerationsAskedBefore(ctx context.Context, asked time.Time, limit int) ([]*model.OntologyGeneration, error)
-	AnswerOntologyGeneration(ctx context.Context, ontologyID, id string, draftRev uint64, answers []model.OntologyAnswer) error
+	AnswerOntologyGeneration(ctx context.Context, ontologyID, id string, draftRev uint64, answers []agentquestion.Answer) error
 	// SumFoundryGraphJobSpend is what a first draft's load checks the
 	// month's budget with, as CreateFoundryLoad does.
 	SumFoundryGraphJobSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
@@ -170,7 +171,7 @@ func (t *Task) drain(ctx context.Context) {
 }
 
 // answerOverdue answers, with the agent's defaults
-// (ontologygen.Answers), the questions of each generation that has waited
+// (agentquestion.Check), the questions of each generation that has waited
 // longer than foundry.ontology.answer_days, and queues it to carry on, so
 // questions no one answers never hold an ontology. One answered or
 // cancelled meanwhile is left as it is.
@@ -181,7 +182,7 @@ func (t *Task) answerOverdue(ctx context.Context) {
 		return
 	}
 	for _, gen := range overdue {
-		answers, err := ontologygen.Answers(gen.Questions.Asked, nil, true)
+		answers, err := agentquestion.Check(gen.Questions.Questions(), nil, true)
 		if err == nil {
 			err = t.queue.AnswerOntologyGeneration(ctx, gen.OntologyID, gen.ID, gen.Questions.DraftRev, answers)
 		}

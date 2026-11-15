@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	"github.com/helixdb/helix-foundry/backend/ontologygen"
@@ -40,7 +41,7 @@ type queue struct {
 	// waiting are the generations waiting for answers, answered what each
 	// was answered with, and answerErr what answering fails with.
 	waiting   []*model.OntologyGeneration
-	answered  map[string][]model.OntologyAnswer
+	answered  map[string][]agentquestion.Answer
 	answerErr error
 	// askedBefore is the time the last listing of overdue ones was cut at.
 	askedBefore time.Time
@@ -59,14 +60,14 @@ func (q *queue) ListOntologyGenerationsAskedBefore(_ context.Context, asked time
 	return out, nil
 }
 
-func (q *queue) AnswerOntologyGeneration(_ context.Context, _, id string, draftRev uint64, answers []model.OntologyAnswer) error {
+func (q *queue) AnswerOntologyGeneration(_ context.Context, _, id string, draftRev uint64, answers []agentquestion.Answer) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.answerErr != nil {
 		return q.answerErr
 	}
 	if q.answered == nil {
-		q.answered = map[string][]model.OntologyAnswer{}
+		q.answered = map[string][]agentquestion.Answer{}
 	}
 	for _, gen := range q.waiting {
 		if gen.ID == id && gen.Questions.DraftRev == draftRev {
@@ -144,7 +145,7 @@ func TestFoundryOntologyWorker(t *testing.T) {
 	// answers, with the state to carry on from.
 	t.Run("leaves a generation that asked waiting for answers", func(t *testing.T) {
 		asked := &model.OntologyGenerationAsked{State: []byte(`{"draft":{"rev":2}}`), DraftRev: 2,
-			Questions: []model.OntologyQuestion{{ID: "q1", Text: "Is a customer an account?", Blocking: true}}}
+			Questions: []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q1", Text: "Is a customer an account?", Blocking: true}}}}
 		q := newQueue(&model.OntologyGeneration{ID: "g1", WorkspaceID: "ws-1", OntologyID: "ont-1", Attempts: 1,
 			Input: model.OntologyGenerationInput{LoadWhenReady: true}})
 		newTask(q, func(context.Context, *model.OntologyGeneration) (ontologygen.Result, error) {
@@ -161,10 +162,10 @@ func TestFoundryOntologyWorker(t *testing.T) {
 	// fails the generation, and asking before it waits again.
 	t.Run("fails a generation that asks past its rounds of questions", func(t *testing.T) {
 		asked := &model.OntologyGenerationAsked{State: []byte(`{}`), DraftRev: 9,
-			Questions: []model.OntologyQuestion{{ID: "q9", Text: "And now?", Blocking: true}}}
+			Questions: []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q9", Text: "And now?", Blocking: true}}}}
 		for round, want := range map[int]model.OntologyGenerationStatus{2: model.OntologyGenerationNeedsInput, 3: model.OntologyGenerationFailed} {
 			q := newQueue(&model.OntologyGeneration{ID: "g1", WorkspaceID: "ws-1", OntologyID: "ont-1", Attempts: 1,
-				Questions: &model.OntologyQuestions{Round: round, DraftRev: 8, Answers: []model.OntologyAnswer{{QuestionID: "q8", Text: "Yes"}}}})
+				Questions: &model.OntologyQuestions{Round: round, DraftRev: 8, Answers: []agentquestion.Answer{{QuestionID: "q8", Text: "Yes"}}}})
 			newTask(q, func(context.Context, *model.OntologyGeneration) (ontologygen.Result, error) {
 				return ontologygen.Result{Asked: asked, InputTokens: 50}, nil
 			}).drain(context.Background())
@@ -178,12 +179,12 @@ func TestFoundryOntologyWorker(t *testing.T) {
 	// Questions no one answers in foundry.ontology.answer_days take the
 	// agent's defaults, so they never hold the ontology.
 	t.Run("answers overdue questions with the agent's defaults", func(t *testing.T) {
-		monthly := "Monthly"
 		overdue := func(id string, askedAt time.Time) *model.OntologyGeneration {
 			return &model.OntologyGeneration{ID: id, OntologyID: "ont-1", Status: model.OntologyGenerationNeedsInput,
 				Questions: &model.OntologyQuestions{DraftRev: 3, AskedAt: askedAt, Asked: []model.OntologyQuestion{
-					{ID: "q1", Text: "Is a customer an account?", Blocking: true},
-					{ID: "q2", Text: "How often?", Options: []string{"Monthly", "Yearly"}, Default: &monthly},
+					{Question: agentquestion.Question{ID: "q1", Text: "Is a customer an account?", Blocking: true}},
+					{Question: agentquestion.Question{ID: "q2", Text: "How often?", Choice: &agentquestion.Choice{
+						Options: []agentquestion.Option{{Label: "Monthly"}, {Label: "Yearly"}}, Multiple: true, Recommended: "Monthly"}}},
 				}}}
 		}
 		q := newQueue()
@@ -192,7 +193,7 @@ func TestFoundryOntologyWorker(t *testing.T) {
 		if !q.askedBefore.Equal(now.Add(-7 * 24 * time.Hour)) {
 			t.Fatalf("listed those asked before %s", q.askedBefore)
 		}
-		want := []model.OntologyAnswer{{QuestionID: "q1", Text: ontologygen.NoPreference}, {QuestionID: "q2", Text: "Monthly"}}
+		want := []agentquestion.Answer{{QuestionID: "q1", Options: []string{}, Text: agentquestion.NoPreference}, {QuestionID: "q2", Options: []string{"Monthly"}}}
 		if len(q.answered) != 1 || fmt.Sprint(q.answered["g-old"]) != fmt.Sprint(want) {
 			t.Fatalf("answered = %v", q.answered)
 		}

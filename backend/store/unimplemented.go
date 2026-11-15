@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/access"
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/events"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -469,7 +470,7 @@ func (u Unimplemented) FinishOntologyGeneration(context.Context, string, string,
 	u.unimplemented("FinishOntologyGeneration")
 	return nil
 }
-func (u Unimplemented) AnswerOntologyGeneration(context.Context, string, string, uint64, []model.OntologyAnswer) error {
+func (u Unimplemented) AnswerOntologyGeneration(context.Context, string, string, uint64, []agentquestion.Answer) error {
 	u.unimplemented("AnswerOntologyGeneration")
 	return nil
 }
