@@ -715,6 +715,106 @@ func (f automationFixture) endedRuns(t *testing.T, automation string, n int, fin
 	return ids
 }
 
+// The list reads each automation's newest run and newest failure, and the
+// stats count the workspace's runs since a time: by automation and status,
+// by quarter hour, and the actions their Assistant steps left waiting.
+func TestFoundryAutomationListAndRunStats(t *testing.T) {
+	f := newAutomationFixture(t, "stats")
+	ctx := context.Background()
+	a, b := f.active(t, 1, "manual", nil), f.active(t, 2, "manual", nil)
+	c, never := f.create(t, 3, "manual", nil), f.create(t, 4, "manual", nil)
+	hour := time.Now().UTC().Truncate(time.Hour)
+	insert := func(id, automation, status string, at time.Time, usd int64) {
+		t.Helper()
+		spec, finished, why := any(`{}`), any(at), any(nil)
+		switch status {
+		case "queued", "running":
+			finished = nil
+		case "skipped":
+			spec, why = nil, "it was busy"
+		case "failed", "cancelled":
+			why = "it failed"
+		}
+		_, err := testDB.Exec(`INSERT INTO foundry_automation_runs (id, automation_id, workspace_id, owner_user_id, spec, spec_revision, trigger_key,
+  trigger_event, status, error, usd_micros, created_at, finished_at) VALUES (?, ?, ?, ?, ?, 1, ?, '{}', ?, ?, ?, ?, ?)`,
+			id, automation, f.workspaceID, automationOwner, spec, "manual:"+id, status, why, usd, at, finished)
+		require.NoError(t, err)
+	}
+	insert(id26("SR1"), a.ID, "succeeded", hour.Add(-40*24*time.Hour), 9)
+	insert(id26("SR2"), a.ID, "failed", hour.Add(-48*time.Hour+5*time.Minute), 1000)
+	insert(id26("SR3"), a.ID, "succeeded", hour.Add(-40*time.Minute), 2000)
+	insert(id26("SR4"), b.ID, "failed", hour.Add(-10*24*time.Hour), 0)
+	insert(id26("SR5"), b.ID, "skipped", hour.Add(-3*time.Hour), 0)
+	insert(id26("SR6"), b.ID, "running", hour.Add(-10*time.Minute), 0)
+	// Two runs made in the same microsecond: the newest is the greater id.
+	insert(id26("SR7A"), c.ID, "succeeded", hour.Add(-30*time.Minute), 0)
+	insert(id26("SR7B"), c.ID, "succeeded", hour.Add(-30*time.Minute), 0)
+
+	// SR3's Assistant step left one action waiting and one dismissed.
+	turn := id26("STURN")
+	_, err := testDB.Exec(`INSERT INTO foundry_automation_run_nodes (run_id, node_id, status, turn_id, finished_at) VALUES (?, 'ask', 'succeeded', ?, NOW(6))`,
+		id26("SR3"), turn)
+	require.NoError(t, err)
+	for i, status := range []string{"prepared", "dismissed"} {
+		decided := any(nil)
+		if status != "prepared" {
+			decided = time.Now().UTC()
+		}
+		_, err := testDB.Exec(`INSERT INTO foundry_agent_actions (id, turn_id, thread_id, workspace_id, user_id, operation, target, payload,
+  payload_hash, display, target_named_by_user, confirmation_id, confirmation_token_sealed, confirmation_key_id, status, expires_at, decided_at)
+VALUES (?, ?, ?, ?, ?, 'create_load', 'ontology:x', '{}', ?, '{}', FALSE, 'c', 'sealed', 'k', ?, NOW(6), ?)`,
+			id26(fmt.Sprintf("SACT%d", i)), turn, id26("STHREAD"), f.workspaceID, automationOwner, strings.Repeat(fmt.Sprint(i), 64), status, decided)
+		require.NoError(t, err)
+	}
+
+	list, err := f.db.ListFoundryAutomations(ctx, f.workspaceID)
+	require.NoError(t, err)
+	byID := map[string]*model.FoundryAutomation{}
+	for _, x := range list {
+		byID[x.ID] = x
+	}
+	require.Len(t, byID, 4)
+	require.Equal(t, id26("SR3"), byID[a.ID].LastRun.ID)
+	require.Nil(t, byID[a.ID].LastRun.Spec, "a list's run has no spec")
+	require.Equal(t, hour.Add(-48*time.Hour+5*time.Minute), byID[a.ID].LastFailedAt.UTC())
+	require.Equal(t, id26("SR6"), byID[b.ID].LastRun.ID)
+	require.Equal(t, hour.Add(-10*24*time.Hour), byID[b.ID].LastFailedAt.UTC(), "a failure however old")
+	require.Equal(t, id26("SR7B"), byID[c.ID].LastRun.ID)
+	require.Nil(t, byID[c.ID].LastFailedAt)
+	require.Nil(t, byID[never.ID].LastRun)
+	require.Nil(t, byID[never.ID].LastFailedAt)
+	got, err := f.db.GetFoundryAutomation(ctx, f.workspaceID, c.ID)
+	require.NoError(t, err)
+	require.Equal(t, id26("SR7B"), got.LastRun.ID, "the list and a get agree")
+
+	stats, err := f.db.FoundryAutomationRunStats(ctx, f.workspaceID, hour.Add(-7*24*time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, map[string]model.FoundryAutomationRunCounts{
+		a.ID: {Runs: 2, Succeeded: 1, Failed: 1, USDMicros: 3000, Waiting: 1},
+		b.ID: {Runs: 2},
+		c.ID: {Runs: 2, Succeeded: 2},
+	}, stats.ByAutomation)
+	slots := map[string]int{}
+	for _, s := range stats.Slots {
+		slots[s.At.UTC().Format(time.RFC3339)+" "+string(s.Status)] += s.Runs
+	}
+	require.Equal(t, map[string]int{
+		hour.Add(-48*time.Hour).Format(time.RFC3339) + " failed":      1,
+		hour.Add(-45*time.Minute).Format(time.RFC3339) + " succeeded": 1,
+		hour.Add(-3*time.Hour).Format(time.RFC3339) + " skipped":      1,
+		hour.Add(-15*time.Minute).Format(time.RFC3339) + " running":   1,
+		hour.Add(-30*time.Minute).Format(time.RFC3339) + " succeeded": 2,
+	}, slots)
+
+	other, err := f.db.FoundryAutomationRunStats(ctx, id26("UWS-other"), hour.Add(-7*24*time.Hour))
+	require.NoError(t, err)
+	require.Empty(t, other.ByAutomation, "another workspace's runs aren't counted")
+	require.Empty(t, other.Slots)
+	none, err := f.db.ListFoundryAutomations(ctx, id26("UWS-other"))
+	require.NoError(t, err)
+	require.Empty(t, none)
+}
+
 // Runs that ended before the retention go a batch at a time, with their
 // steps and threads; newer ones and live ones stay.
 func TestFoundryAutomationRunsArePruned(t *testing.T) {

@@ -365,6 +365,7 @@ func page(ctx context.Context, db Reads, turn *model.FoundryAgentTurn) *shownPag
 			out.DashboardID, out.DashboardName = d.ID, d.Name
 		}
 	}
+	out.CreatingAutomation = p.NewAutomation
 	if out == (shownPage{}) {
 		return nil
 	}

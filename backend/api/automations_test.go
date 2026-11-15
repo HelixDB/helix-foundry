@@ -35,6 +35,9 @@ type automationStore struct {
 	nowRun       *foundrymodel.FoundryAutomationRun
 	triggerNode  string
 	lastUpdate   foundrymodel.FoundryAutomationUpdate
+	// stats is what FoundryAutomationRunStats answers, and statsSince what it was asked.
+	stats      *foundrymodel.FoundryAutomationRunStats
+	statsSince time.Time
 }
 
 func newAutomationStore() *automationStore {
@@ -110,6 +113,14 @@ func (s *automationStore) ListFoundryAutomations(_ context.Context, ws string) (
 		}
 	}
 	return out, nil
+}
+
+func (s *automationStore) FoundryAutomationRunStats(_ context.Context, ws string, since time.Time) (*foundrymodel.FoundryAutomationRunStats, error) {
+	s.statsSince = since
+	if s.stats == nil {
+		return &foundrymodel.FoundryAutomationRunStats{ByAutomation: map[string]foundrymodel.FoundryAutomationRunCounts{}}, nil
+	}
+	return s.stats, nil
 }
 
 func (s *automationStore) UpdateFoundryAutomation(_ context.Context, ws, id, owner string, expected int64, u foundrymodel.FoundryAutomationUpdate) (
@@ -515,6 +526,83 @@ func TestRunAutomationNowAndItsRuns(t *testing.T) {
 	list, err = s.ListFoundryAutomations(site("user-ada"), &foundryv1.ListFoundryAutomationsRequest{WorkspaceId: "ws-1"})
 	require.NoError(t, err)
 	require.False(t, list.GetEmail(), "an install sends no email")
+}
+
+// A list counts each automation's runs of the days asked, by the days of
+// the time zone asked, today the last; without stats_days it counts none.
+func TestListAutomationsCountsTheirRuns(t *testing.T) {
+	s, store := automationService(t)
+	a := createAutomation(t, s, site("user-ada"), weeklyAutomation)
+	failed := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	store.automations[a.GetId()].LastFailedAt = &failed
+
+	list, err := s.ListFoundryAutomations(site("user-ada"), &foundryv1.ListFoundryAutomationsRequest{WorkspaceId: "ws-1"})
+	require.NoError(t, err)
+	require.Nil(t, list.GetSummary(), "no days, no counts")
+	require.Nil(t, list.GetAutomations()[0].GetStats())
+	require.Equal(t, failed, list.GetAutomations()[0].GetLastFailedAt().AsTime())
+
+	for name, req := range map[string]*foundryv1.ListFoundryAutomationsRequest{
+		"too many days": {WorkspaceId: "ws-1", StatsDays: 31},
+		"negative":      {WorkspaceId: "ws-1", StatsDays: -1},
+		"no zone":       {WorkspaceId: "ws-1", StatsDays: 7, TimeZone: "Mars/Olympus"},
+		"local":         {WorkspaceId: "ws-1", StatsDays: 7, TimeZone: "Local"},
+		"zone, no days": {WorkspaceId: "ws-1", TimeZone: "UTC"},
+	} {
+		_, err := s.ListFoundryAutomations(site("user-ada"), req)
+		require.Equal(t, codes.InvalidArgument, status.Code(err), name)
+	}
+
+	store.stats = &foundrymodel.FoundryAutomationRunStats{ByAutomation: map[string]foundrymodel.FoundryAutomationRunCounts{
+		a.GetId(): {Runs: 4, Succeeded: 2, Failed: 1, USDMicros: 1500, Waiting: 1},
+		"gone":    {Runs: 1, Succeeded: 1},
+	}}
+	list, err = s.ListFoundryAutomations(site("user-alan"), &foundryv1.ListFoundryAutomationsRequest{WorkspaceId: "ws-1", StatsDays: 7})
+	require.NoError(t, err)
+	require.Equal(t, &foundryv1.FoundryAutomationRunCounts{Runs: 4, Succeeded: 2, Failed: 1, UsdMicros: 1500, Waiting: 1},
+		list.GetAutomations()[0].GetStats(), "every member reads the counts")
+	summary := list.GetSummary()
+	require.Equal(t, int32(7), summary.GetDays())
+	require.Equal(t, &foundryv1.FoundryAutomationRunCounts{Runs: 5, Succeeded: 3, Failed: 1, UsdMicros: 1500, Waiting: 1}, summary.GetTotals())
+	require.Len(t, summary.GetByDay(), 7)
+	require.Equal(t, time.Now().UTC().Format(time.DateOnly), summary.GetByDay()[6].GetDate(), "today is the last day")
+	require.Equal(t, statsFrom(time.Now(), time.UTC, 7), store.statsSince)
+}
+
+// The days begin at the time zone's midnights: a run counts on the day it
+// started there, however the zone's offset falls on the quarter hour.
+func TestRunSummaryCountsByTheZonesDays(t *testing.T) {
+	kathmandu, err := time.LoadLocation("Asia/Kathmandu") // UTC+05:45
+	require.NoError(t, err)
+	now := time.Date(2026, 11, 15, 12, 0, 0, 0, kathmandu)
+	from := statsFrom(now, kathmandu, 3)
+	require.Equal(t, time.Date(2026, 11, 13, 0, 0, 0, 0, kathmandu), from)
+	slot := func(at time.Time, status foundrymodel.FoundryAutomationRunStatus, n int) foundrymodel.FoundryAutomationRunSlot {
+		return foundrymodel.FoundryAutomationRunSlot{At: at.UTC(), Status: status, Runs: n}
+	}
+	summary := runSummary(&foundrymodel.FoundryAutomationRunStats{Slots: []foundrymodel.FoundryAutomationRunSlot{
+		slot(time.Date(2026, 11, 13, 0, 0, 0, 0, kathmandu), foundrymodel.FoundryAutomationRunSucceeded, 2),
+		slot(time.Date(2026, 11, 13, 23, 45, 0, 0, kathmandu), foundrymodel.FoundryAutomationRunFailed, 1),
+		slot(time.Date(2026, 11, 14, 0, 0, 0, 0, kathmandu), foundrymodel.FoundryAutomationRunSkipped, 3),
+		slot(time.Date(2026, 11, 15, 11, 30, 0, 0, kathmandu), foundrymodel.FoundryAutomationRunRunning, 1),
+	}}, from, kathmandu, 3)
+	require.Equal(t, []*foundryv1.FoundryAutomationRunDay{
+		{Date: "2026-11-13", Succeeded: 2, Failed: 1},
+		{Date: "2026-11-14", Other: 3},
+		{Date: "2026-11-15", Other: 1},
+	}, summary.GetByDay())
+	require.Equal(t, &foundryv1.FoundryAutomationRunCounts{}, summary.GetTotals(), "the totals are the automations' counts")
+
+	// A change of daylight saving keeps each day whole: London's day after
+	// the clocks went back is 25 hours long.
+	london, err := time.LoadLocation("Europe/London")
+	require.NoError(t, err)
+	from = statsFrom(time.Date(2026, 10, 26, 9, 0, 0, 0, london), london, 2)
+	summary = runSummary(&foundrymodel.FoundryAutomationRunStats{Slots: []foundrymodel.FoundryAutomationRunSlot{
+		slot(time.Date(2026, 10, 25, 23, 45, 0, 0, london), foundrymodel.FoundryAutomationRunSucceeded, 1),
+	}}, from, london, 2)
+	require.Equal(t, "2026-10-25", summary.GetByDay()[0].GetDate())
+	require.Equal(t, int32(1), summary.GetByDay()[0].GetSucceeded())
 }
 
 // The person's Run on an Assistant's card approves the automation it saved:

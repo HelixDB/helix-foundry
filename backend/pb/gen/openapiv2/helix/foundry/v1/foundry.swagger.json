@@ -1161,6 +1161,19 @@
             "in": "path",
             "required": true,
             "type": "string"
+          },
+          {
+            "name": "statsDays",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "timeZone",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -8255,6 +8268,10 @@
         "dashboardId": {
           "type": "string",
           "description": "The dashboard open, if any."
+        },
+        "newAutomation": {
+          "type": "boolean",
+          "description": "The person is on the page that starts a new automation."
         }
       },
       "description": "FoundryAgentPageContext is what the person was looking at as they sent a\nmessage: ids only, each checked to be the workspace's before the agent is\ntold of it."
@@ -8519,6 +8536,15 @@
         },
         "canDelete": {
           "type": "boolean"
+        },
+        "lastFailedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When its newest failed run started; unset when none failed."
+        },
+        "stats": {
+          "$ref": "#/definitions/v1FoundryAutomationRunCounts",
+          "description": "Its runs of the days a list asked for (stats_days); unset otherwise."
         }
       },
       "description": "FoundryAutomation is an automation: its spec, whether it runs, and what the\ncaller may do with it."
@@ -8600,6 +8626,53 @@
       },
       "description": "FoundryAutomationRun is one run of an automation."
     },
+    "v1FoundryAutomationRunCounts": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "succeeded": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "failed": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "usdMicros": {
+          "type": "string",
+          "format": "int64"
+        },
+        "waiting": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "FoundryAutomationRunCounts counts runs started within some days: every\none (queued, running, cancelled and skipped too), those that succeeded and\nfailed, what their Assistant steps spent, and the actions those steps\nprepared that still wait for the automation's owner."
+    },
+    "v1FoundryAutomationRunDay": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "succeeded": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "failed": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "other": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "FoundryAutomationRunDay is one day's runs, by the list's time zone: date\nis YYYY-MM-DD; other counts every run that neither succeeded nor failed."
+    },
     "v1FoundryAutomationRunNode": {
       "type": "object",
       "properties": {
@@ -8643,6 +8716,26 @@
           "$ref": "#/definitions/v1FoundryAutomationRun"
         }
       }
+    },
+    "v1FoundryAutomationRunSummary": {
+      "type": "object",
+      "properties": {
+        "days": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "totals": {
+          "$ref": "#/definitions/v1FoundryAutomationRunCounts"
+        },
+        "byDay": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAutomationRunDay"
+          }
+        }
+      },
+      "description": "FoundryAutomationRunSummary is a workspace's runs of the last days: their\ncounts, and each day's, oldest first, every day of them listed."
     },
     "v1FoundryCatalogPlan": {
       "type": "object",
@@ -11686,6 +11779,10 @@
         "email": {
           "type": "boolean",
           "description": "Whether a notify step emails here: false on a standalone install, which\nsends no email and records the step as skipped."
+        },
+        "summary": {
+          "$ref": "#/definitions/v1FoundryAutomationRunSummary",
+          "description": "The workspace's runs of the days asked for; unset without stats_days."
         }
       }
     },

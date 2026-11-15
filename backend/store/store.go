@@ -250,6 +250,7 @@ type ReadStore interface {
 	GetFoundryAutomation(ctx context.Context, workspaceID, id string) (*model.FoundryAutomation, error)
 	GetFoundryAutomationByClientToken(ctx context.Context, workspaceID, ownerUserID, clientToken string) (*model.FoundryAutomation, error)
 	ListFoundryAutomations(ctx context.Context, workspaceID string) ([]*model.FoundryAutomation, error)
+	FoundryAutomationRunStats(ctx context.Context, workspaceID string, since time.Time) (*model.FoundryAutomationRunStats, error)
 	GetFoundryAutomationRun(ctx context.Context, workspaceID, id string) (*model.FoundryAutomationRun, error)
 	ListFoundryAutomationRuns(ctx context.Context, automationID, pageToken string, limit int) ([]*model.FoundryAutomationRun, string, error)
 	ListFoundryAutomationRunNodes(ctx context.Context, runID string) ([]*model.FoundryAutomationRunNode, error)

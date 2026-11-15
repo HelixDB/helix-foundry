@@ -516,6 +516,15 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 		assert.Equal(t, "dash-1", resp.GetTurn().GetPageContext().GetDashboardId())
 		assert.JSONEq(t, `{"dashboard_id":"dash-1"}`, string(f.store.turns[resp.GetTurn().GetId()].PageContext))
 	})
+	t.Run("the page that starts a new automation", func(t *testing.T) {
+		f := newAgentFixture(t)
+		resp, err := send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) {
+			r.PageContext = &foundryv1.FoundryAgentPageContext{NewAutomation: true}
+		})
+		require.NoError(t, err)
+		assert.True(t, resp.GetTurn().GetPageContext().GetNewAutomation())
+		assert.JSONEq(t, `{"new_automation":true}`, string(f.store.turns[resp.GetTurn().GetId()].PageContext))
+	})
 	t.Run("another user's thread isn't found", func(t *testing.T) {
 		f := newAgentFixture(t)
 		f.store.threads["th-eve"] = &foundrymodel.FoundryAgentThread{ID: "th-eve", WorkspaceID: "ws-1", UserID: "user-eve"}

@@ -177,6 +177,17 @@ func (s *Service) ListFoundryAutomations(ctx context.Context, req *foundryv1.Lis
 	if err != nil {
 		return nil, err
 	}
+	days, zone := req.GetStatsDays(), time.UTC
+	switch {
+	case days == 0 && req.GetTimeZone() != "":
+		return nil, status.Error(codes.InvalidArgument, "time_zone goes with stats_days")
+	case days < 0 || days > maxAutomationStatsDays:
+		return nil, status.Errorf(codes.InvalidArgument, "stats_days is 1 to %d", maxAutomationStatsDays)
+	case req.GetTimeZone() != "":
+		if zone, err = automation.Zone(req.GetTimeZone()); err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+	}
 	list, err := s.deps.DB.ListFoundryAutomations(ctx, req.GetWorkspaceId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list automations: %v", err)
@@ -186,7 +197,68 @@ func (s *Service) ListFoundryAutomations(ctx context.Context, req *foundryv1.Lis
 	for _, a := range list {
 		out.Automations = append(out.Automations, automationToProto(a, c, false))
 	}
+	if days == 0 {
+		return out, nil
+	}
+	from := statsFrom(time.Now(), zone, int(days))
+	stats, err := s.deps.DB.FoundryAutomationRunStats(ctx, req.GetWorkspaceId(), from)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "count the automations' runs: %v", err)
+	}
+	for _, a := range out.Automations {
+		a.Stats = runCountsToProto(stats.ByAutomation[a.Id])
+	}
+	out.Summary = runSummary(stats, from, zone, int(days))
 	return out, nil
+}
+
+// maxAutomationStatsDays is the most days a list counts runs of.
+const maxAutomationStatsDays = 30
+
+// statsFrom is when the last days days begin in zone: the start of the day
+// days-1 before now's, so today is the last of them.
+func statsFrom(now time.Time, zone *time.Location, days int) time.Time {
+	y, m, d := now.In(zone).Date()
+	return time.Date(y, m, d-(days-1), 0, 0, 0, 0, zone)
+}
+
+func runCountsToProto(c foundrymodel.FoundryAutomationRunCounts) *foundryv1.FoundryAutomationRunCounts {
+	return &foundryv1.FoundryAutomationRunCounts{Runs: int32(c.Runs), Succeeded: int32(c.Succeeded), Failed: int32(c.Failed),
+		UsdMicros: c.USDMicros, Waiting: int32(c.Waiting)}
+}
+
+// runSummary sums stats, the runs since from, and counts them by the days
+// of zone from from's, days of them, oldest first, each listed.
+func runSummary(stats *foundrymodel.FoundryAutomationRunStats, from time.Time, zone *time.Location, days int) *foundryv1.FoundryAutomationRunSummary {
+	var total foundrymodel.FoundryAutomationRunCounts
+	for _, c := range stats.ByAutomation {
+		total = total.Add(c)
+	}
+	out := &foundryv1.FoundryAutomationRunSummary{Days: int32(days), Totals: runCountsToProto(total)}
+	byDate := make(map[string]*foundryv1.FoundryAutomationRunDay, days)
+	y, m, d := from.Date()
+	for i := range days {
+		day := &foundryv1.FoundryAutomationRunDay{Date: time.Date(y, m, d+i, 0, 0, 0, 0, zone).Format(time.DateOnly)}
+		byDate[day.Date] = day
+		out.ByDay = append(out.ByDay, day)
+	}
+	for _, slot := range stats.Slots {
+		day, ok := byDate[slot.At.In(zone).Format(time.DateOnly)]
+		if !ok {
+			// A quarter hour that began before from: its runs did not.
+			day = out.ByDay[0]
+		}
+		n := int32(slot.Runs)
+		switch slot.Status {
+		case foundrymodel.FoundryAutomationRunSucceeded:
+			day.Succeeded += n
+		case foundrymodel.FoundryAutomationRunFailed:
+			day.Failed += n
+		default:
+			day.Other += n
+		}
+	}
+	return out
 }
 
 // automationOf is the workspace's automation, NotFound for none.
@@ -545,7 +617,8 @@ func automationToProto(a *foundrymodel.FoundryAutomation, c automationCaller, wi
 	for _, t := range []struct {
 		src *time.Time
 		dst **timestamppb.Timestamp
-	}{{a.PausedAt, &out.PausedAt}, {a.ApprovedAt, &out.ApprovedAt}, {a.NextFireAt, &out.NextRunAt}, {a.BackoffUntil, &out.BackoffUntil}} {
+	}{{a.PausedAt, &out.PausedAt}, {a.ApprovedAt, &out.ApprovedAt}, {a.NextFireAt, &out.NextRunAt}, {a.BackoffUntil, &out.BackoffUntil},
+		{a.LastFailedAt, &out.LastFailedAt}} {
 		if t.src != nil {
 			*t.dst = timestamppb.New(*t.src)
 		}

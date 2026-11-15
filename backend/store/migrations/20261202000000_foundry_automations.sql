@@ -84,6 +84,9 @@ CREATE TABLE foundry_automations (
 -- to the queue until next_attempt_at. thread_id is the owner's Assistant
 -- thread its Assistant steps run in; usd_micros what they spent. The
 -- worker deletes runs that ended long ago (finished_at), a batch at a time.
+-- The list of automations reads each one's newest run (history_idx) and
+-- newest failure (outcome_idx), and the workspace's runs of the last days
+-- (day_idx).
 CREATE TABLE foundry_automation_runs (
   id              CHAR(26)    NOT NULL PRIMARY KEY,
   automation_id   CHAR(26)    NOT NULL,
@@ -109,6 +112,7 @@ CREATE TABLE foundry_automation_runs (
   UNIQUE KEY foundry_automation_runs_trigger_uq (automation_id, trigger_key),
   INDEX foundry_automation_runs_claim_idx (status, next_attempt_at),
   INDEX foundry_automation_runs_history_idx (automation_id, created_at, id),
+  INDEX foundry_automation_runs_outcome_idx (automation_id, status, created_at),
   INDEX foundry_automation_runs_day_idx (workspace_id, created_at),
   INDEX foundry_automation_runs_ended_idx (finished_at),
   CONSTRAINT foundry_automation_runs_status_chk CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'skipped')),
