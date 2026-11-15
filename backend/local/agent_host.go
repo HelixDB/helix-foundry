@@ -474,7 +474,7 @@ func invalidArgument(err error) (string, bool) {
 
 // serveMCP serves the Assistant's tools to the CLI of the turn whose hxr_
 // token this is, as that turn's person, in its workspace alone, while its
-// claim holds the lease: each call counted against the turn's, and shown to
+// claim holds the lease and the turn has time left: each call counted against the turn's, and shown to
 // the person (agent.Hosts.Server). Any other path, or a token that stopped
 // working, is refused.
 func (h *agentHostHandler) serveMCP(w http.ResponseWriter, r *http.Request, token string) {
@@ -492,7 +492,8 @@ func (h *agentHostHandler) serveMCP(w http.ResponseWriter, r *http.Request, toke
 		return
 	}
 	turn, err := h.turns.DB.GetFoundryAgentTurn(r.Context(), claim.WorkspaceID, claim.TurnID)
-	if err != nil || turn.Status != model.FoundryAgentTurnRunning || turn.LeaseOwner == nil || *turn.LeaseOwner != claim.LeaseOwner {
+	if err != nil || turn.Status != model.FoundryAgentTurnRunning || turn.LeaseOwner == nil || *turn.LeaseOwner != claim.LeaseOwner ||
+		!time.Now().Before(claim.Deadline) {
 		writeHost(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "unauthenticated", "message": "the turn's token stopped working"}})
 		return
 	}
