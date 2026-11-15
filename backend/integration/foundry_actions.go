@@ -15,6 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 
 	"github.com/helixdb/helix-foundry/backend/document"
@@ -27,6 +28,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // Foundry's actions take the same two calls as every MCP mutation: prepare returns a five-minute,
@@ -56,6 +58,9 @@ const (
 	maxFoundryEditItemBytes  = 256
 	maxFoundryEditTOMLBytes  = 1 << 20
 	maxFoundryReviewIDBytes  = 256
+	// A generation's answers: at most one per question, each naming options by label and
+	// words of 1 to 2000 characters, as agentquestion.Check takes them.
+	maxFoundryAnswers = 100
 	// maxFoundrySlugChars is the longest slug the website gives a database or project, inside
 	// the backend's 64.
 	maxFoundrySlugChars = 63
@@ -84,6 +89,8 @@ func FoundryNoHelixSubscription(lapse string) string {
 // foundrySlugPattern is a slug as the website makes one: lowercase letters and digits in runs
 // joined by single dashes.
 var (
+	// foundrySHA256Pattern is a statement hash as the backend takes it: 64 lowercase hex digits.
+	foundrySHA256Pattern  = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	foundrySlugPattern    = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 	foundrySlugSeparators = regexp.MustCompile(`[^a-z0-9]+`)
 )
@@ -104,6 +111,7 @@ type FoundryActionAPI interface {
 	CreateFoundryLoad(context.Context, *foundryv1.CreateFoundryLoadRequest, ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error)
 	SetCurrentFoundryLoad(context.Context, *foundryv1.SetCurrentFoundryLoadRequest, ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error)
 	ReviseOntologyVersion(context.Context, *foundryv1.ReviseOntologyVersionRequest, ...grpc.CallOption) (*foundryv1.OntologyGenerationResponse, error)
+	AnswerOntologyGeneration(context.Context, *foundryv1.AnswerOntologyGenerationRequest, ...grpc.CallOption) (*foundryv1.OntologyGenerationResponse, error)
 	// The document and set writes go through their ontology-scoped routes: each tool names the
 	// ontology, which they find live in the Workspace before acting on its documents and sets.
 	CreateFoundryOntologyDocument(context.Context, *foundryv1.CreateFoundryOntologyDocumentRequest, ...grpc.CallOption) (
@@ -117,10 +125,29 @@ type FoundryActionAPI interface {
 	MoveFoundryOntologyDocument(context.Context, *foundryv1.MoveFoundryOntologyDocumentRequest, ...grpc.CallOption) (
 		*foundryv1.FoundryDocumentReadsResponse, error)
 	SettleFoundryReview(context.Context, *foundryv1.SettleFoundryReviewRequest, ...grpc.CallOption) (*foundryv1.FoundryReviewDecisionResponse, error)
+	// Where a local install's Assistant runs, and its helpers (Service.AgentHosts).
+	UpdateFoundryAgentRuntime(context.Context, *foundryv1.UpdateFoundryAgentRuntimeRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentRuntimeResponse, error)
+	CreateFoundryAgentHostPairing(context.Context, *foundryv1.CreateFoundryAgentHostPairingRequest, ...grpc.CallOption) (
+		*foundryv1.FoundryAgentHostPairingResponse, error)
+	RevokeFoundryAgentHost(context.Context, *foundryv1.RevokeFoundryAgentHostRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentHostResponse, error)
 	CancelFoundryQuestion(context.Context, *foundryv1.CancelFoundryQuestionRequest, ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error)
 	// An event source, made by create_event_source, and the pieces helix_foundry_send_pieces sends it.
 	CreateConnector(context.Context, *foundryv1.CreateConnectorRequest, ...grpc.CallOption) (*foundryv1.ConnectorResponse, error)
 	SendFoundryEvents(context.Context, *foundryv1.SendFoundryEventsRequest, ...grpc.CallOption) (*foundryv1.SendFoundryEventsResponse, error)
+	// Dashboards (foundry_dashboards.go).
+	CreateFoundryDashboard(context.Context, *foundryv1.CreateFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
+	UpdateFoundryDashboard(context.Context, *foundryv1.UpdateFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
+	DeleteFoundryDashboard(context.Context, *foundryv1.DeleteFoundryDashboardRequest, ...grpc.CallOption) (*emptypb.Empty, error)
+	PinFoundryDashboard(context.Context, *foundryv1.PinFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
+	PublishFoundryDashboard(context.Context, *foundryv1.PublishFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
+	UnpublishFoundryDashboard(context.Context, *foundryv1.UnpublishFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
+	// Automations (foundry_automations.go). None approves one: its owner does, in Foundry.
+	CreateFoundryAutomation(context.Context, *foundryv1.CreateFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
+	UpdateFoundryAutomation(context.Context, *foundryv1.UpdateFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
+	DeleteFoundryAutomation(context.Context, *foundryv1.DeleteFoundryAutomationRequest, ...grpc.CallOption) (*emptypb.Empty, error)
+	PauseFoundryAutomation(context.Context, *foundryv1.PauseFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
+	ResumeFoundryAutomation(context.Context, *foundryv1.ResumeFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
+	RunFoundryAutomation(context.Context, *foundryv1.RunFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationRunResponse, error)
 }
 
 // FoundryOperationInput is described by foundryOperationSchema, which says an API source's parts
@@ -182,8 +209,11 @@ type FoundryOperation interface {
 }
 
 // AddFoundryActionTools registers prepare and Execute for a user who may manage connectors or
-// ontologies, and for a service key with database.query.write on some project.
+// ontologies, for a service key with database.query.write on some project, and, offering only
+// memberOperations, for a user who may read the workspace.
 func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) {
+	// offered is what the caller may prepare: every operation the host offers, or a member's.
+	offered, member := everyOperation, false
 	switch {
 	case identity.Agent:
 		return
@@ -191,26 +221,55 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 		if !identity.HasPermission(PermissionDatabaseQueryWrite) {
 			return
 		}
-	case !identity.HasPermission(PermissionWorkspaceConnectorsManage) && !identity.HasPermission(PermissionWorkspaceOntologyManage):
-		return
+	case !managesFoundry(identity):
+		// A member makes dashboards, and changes their own, as in the site.
+		if !identity.HasPermission(PermissionWorkspaceRead) {
+			return
+		}
+		offered, member = memberOperation, true
 	}
 	no, yes := false, true
+	if person, ok := identity.Confirm.(ConfirmByPerson); ok {
+		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
+			Description: "Check a Foundry action and put it before the person you work for as a card, which they run, or not, with a click. " +
+				"Preparing changes nothing, and you can't run it: you are told its result if they do. " +
+				"An action they approved beforehand (an automation's step) runs at once, and you get its outcome.",
+			InputSchema: foundryOperationSchema(s, func(op string) bool { return offered(op) && person.Sink.Allows(op) }),
+			Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
+		}, func(ctx context.Context, identity *Identity, call *Call, input FoundryOperationInput) (PreparedForPersonOutput, int, error) {
+			recorded, err := s.prepareForPerson(ctx, identity, call, input, person.Sink)
+			if err != nil {
+				return PreparedForPersonOutput{}, 0, err
+			}
+			return preparedForPerson(recorded), 1, nil
+		})
+		return
+	}
 	// Preparing changes nothing: only executing is destructive.
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
 		Description: "Check a Foundry action and return a one-time confirmation for exactly that action, valid for five minutes; " +
 			toolExecuteFoundry + " runs it. Preparing changes nothing. A create_ontology on workspace:<id> makes the ontology's database first, and its project when new.",
-		InputSchema: foundryOperationSchema(s.Events),
+		InputSchema: foundryOperationSchema(s, offered),
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.PrepareFoundryOperation)
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolExecuteFoundry,
 		Description: "Run the Foundry action " + toolPrepareFoundry + " prepared: the same operation, target and payload, with its confirmation. A confirmation runs once, and the action is never retried.",
-		InputSchema: executeOperationSchema(s.Events),
+		InputSchema: executeOperationSchema(s, offered),
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &yes, OpenWorldHint: &no},
 	}, s.ExecuteFoundryOperation)
+	if member {
+		return
+	}
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryCompleteUpload,
 		Description: "After an upload_document action, once its bytes are PUT to the upload URL: check them and add the document to its document set, which every ontology whose current version reads the set then reads (reads says how). Completing twice is no error.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.CompleteFoundryUpload)
+}
+
+// managesFoundry reports whether a user manages any of the workspace's Foundry: its connectors
+// or its ontologies. One who doesn't prepares only memberOperations.
+func managesFoundry(identity *Identity) bool {
+	return identity.HasPermission(PermissionWorkspaceConnectorsManage) || identity.HasPermission(PermissionWorkspaceOntologyManage)
 }
 
 func (s *Service) CompleteFoundryUpload(
@@ -268,15 +327,28 @@ func (s *Service) PrepareFoundryOperation(
 func (s *Service) ExecuteFoundryOperation(
 	ctx context.Context, identity *Identity, call *Call, input ExecuteFoundryInput,
 ) (FoundryOperationOutput, int, error) {
+	out, count, _, err := s.executeFoundry(ctx, identity, call, input)
+	return out, count, err
+}
+
+// executeFoundry runs a prepared action, and says whether it spent the
+// confirmation: after that, a failure may follow a change the backend made.
+// An identity whose person confirms never executes: its person's click does.
+func (s *Service) executeFoundry(
+	ctx context.Context, identity *Identity, call *Call, input ExecuteFoundryInput,
+) (FoundryOperationOutput, int, bool, error) {
 	call.ResourceKind, call.ResourceID = TargetKind(input.Target), input.Target
+	if _, person := identity.Confirm.(ConfirmByPerson); person {
+		return FoundryOperationOutput{}, 0, false, detailedToolError{code: errCodeFailedPrecondition, message: "only the person runs a prepared action, from Foundry"}
+	}
 	operation, err := s.ValidateFoundryOperation(ctx, identity, FoundryOperationInput{
 		Operation: input.Operation, Target: input.Target, Payload: input.Payload,
 	})
 	if err != nil {
-		return FoundryOperationOutput{}, 0, err
+		return FoundryOperationOutput{}, 0, false, err
 	}
 	if input.ConfirmationID == "" || input.ConfirmationToken == "" {
-		return FoundryOperationOutput{}, 0, detailedToolError{code: errCodeInvalidArguments, message: "confirmation_id and confirmation_token are required"}
+		return FoundryOperationOutput{}, 0, false, detailedToolError{code: errCodeInvalidArguments, message: "confirmation_id and confirmation_token are required"}
 	}
 	err = s.Confirmations.Consume(ctx, ConfirmationBinding{
 		ID: input.ConfirmationID, Token: input.ConfirmationToken, Operation: foundryOperationPrefix + input.Operation,
@@ -284,28 +356,38 @@ func (s *Service) ExecuteFoundryOperation(
 		PayloadHash: confirmationPayloadHash(foundryOperationPrefix+input.Operation, input.Target, operation.CanonicalPayload()),
 	})
 	if err != nil {
-		return FoundryOperationOutput{}, 0, FoundryError(err)
+		return FoundryOperationOutput{}, 0, false, FoundryError(err)
 	}
 	result, err := operation.Execute(ctx, s, identity, input.ConfirmationID)
 	if err != nil {
-		return FoundryOperationOutput{}, 0, FoundryError(err)
+		return FoundryOperationOutput{}, 0, true, FoundryError(err)
 	}
-	return FoundryOperationOutput{ContentTrust: contentTrustUntrusted, Operation: input.Operation, Target: input.Target, Result: result}, 1, nil
+	return FoundryOperationOutput{ContentTrust: contentTrustUntrusted, Operation: input.Operation, Target: input.Target, Result: result}, 1, true, nil
 }
 
 // ValidateFoundryOperation parses an action's target and strict payload, then authorizes the
 // caller for it: a user by the WFE method's registry entry, a key by its grant on the project
 // of the ontology's database. create_ontology, create_event_source, add_sample_data, sync_connector,
-// generate_ontology and settle_review are user-only. create_event_source is the one connector
+// generate_ontology, answer_generation_questions and settle_review are user-only. create_event_source is the one connector
 // an agent may make: an event source has no credential to pass through it. A create_ontology
 // on a new database is authorized for every call the website's wizard makes: CreateProject
 // when it makes the project, CreateTenant and CreateFoundryOntology; and it needs the Helix
-// subscription CreateTenant's gate requires.
+// subscription CreateTenant's gate requires. A user who manages nothing of the workspace
+// (managesFoundry) prepares only memberOperations: any other is not found.
 func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identity, input FoundryOperationInput) (FoundryOperation, error) {
 	invalid := func(message string) error { return detailedToolError{code: errCodeInvalidArguments, message: message} }
+	if identity.User && !identity.ServiceKey && !managesFoundry(identity) && !memberOperations[input.Operation] {
+		return nil, errCodeNotFound
+	}
 	raw, err := json.Marshal(input.Payload)
 	if input.Payload == nil || err != nil {
 		return nil, invalid("operation, target and a payload object are required")
+	}
+	if operation, ok, err := s.validateAssistantOperation(ctx, identity, input, raw); ok {
+		if err != nil {
+			return nil, err
+		}
+		return operation, nil
 	}
 	writeGrant := QueryWrite
 	switch input.Operation {
@@ -379,6 +461,10 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 			return nil, err
 		}
 		return CreateEventSourceOperation{payload: payload, req: req}, nil
+	case "create_dashboard", "update_dashboard", "delete_dashboard", "pin_dashboard", "publish_dashboard", "unpublish_dashboard":
+		return s.validateDashboardOperation(ctx, identity, input, raw)
+	case "create_automation", "update_automation", "pause_automation", "resume_automation", "delete_automation", "run_automation":
+		return s.validateAutomationOperation(ctx, identity, input, raw)
 	case "sync_connector":
 		workspaceID, connectorID, ok := CutFoundryTarget(input.Target, "connector")
 		if !ok || len(input.Payload) != 0 {
@@ -450,6 +536,40 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 			return nil, err
 		}
 		return GenerateOntologyOperation{payload: payload, req: req}, nil
+	case "answer_generation_questions":
+		var payload AnswerGenerationQuestionsPayload
+		malformed := invalid(fmt.Sprintf("answer_generation_questions takes payload {generation_id, round, answers, use_defaults}: the generation's question_round, "+
+			"and up to %d answers, each {question_id, options, text} naming a question once with the labels of the options chosen and the user's own words "+
+			"(1 to %d characters), at least one of the two; use_defaults leaves every question left out to the agent, which takes its recommended answer or decides, as its own choice", maxFoundryAnswers, agentquestion.MaxAnswerChars))
+		if decodeStrict(raw, &payload) != nil || !ValidIDs([]string{payload.GenerationID}) || payload.Round < 1 || len(payload.Answers) > maxFoundryAnswers ||
+			len(payload.Answers) == 0 && !payload.UseDefaults {
+			return nil, malformed
+		}
+		req := &foundryv1.AnswerOntologyGenerationRequest{WorkspaceId: workspaceID, OntologyId: ontologyID, Id: payload.GenerationID,
+			Round: payload.Round, UseDefaults: payload.UseDefaults}
+		for i, a := range payload.Answers {
+			// Its shape: which options the question offers is the backend's to check.
+			text := strings.TrimSpace(a.Text)
+			labels := slices.Clone(a.Options)
+			slices.Sort(labels)
+			if a.QuestionID == "" || len(a.QuestionID) > agentquestion.MaxIDBytes || strings.ContainsFunc(a.QuestionID, unicode.IsControl) ||
+				len(a.Text) > 4*agentquestion.MaxAnswerChars || a.Text != "" && text == "" || utf8.RuneCountInString(text) > agentquestion.MaxAnswerChars ||
+				len(a.Options) == 0 && text == "" || len(a.Options) > agentquestion.MaxOptions || len(slices.Compact(labels)) < len(a.Options) ||
+				slices.ContainsFunc(a.Options, func(label string) bool { return strings.TrimSpace(label) == "" || !utf8.ValidString(label) }) ||
+				slices.ContainsFunc(req.Answers, func(given *foundryv1.AgentQuestionAnswer) bool { return given.GetQuestionId() == a.QuestionID }) {
+				return nil, malformed
+			}
+			payload.Answers[i].Text = text
+			if payload.Answers[i].Options == nil {
+				payload.Answers[i].Options = []string{}
+			}
+			req.Answers = append(req.Answers, &foundryv1.AgentQuestionAnswer{QuestionId: a.QuestionID, Options: a.Options, Text: text})
+		}
+		// The answers are a person's, as the goal they carry on is.
+		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "AnswerOntologyGeneration"); err != nil {
+			return nil, err
+		}
+		return AnswerGenerationQuestionsOperation{payload: payload, req: req}, nil
 	case "set_current_version":
 		var payload SetCurrentVersionPayload
 		if decodeStrict(raw, &payload) != nil || !ValidIDs([]string{payload.VersionID}, payload.ExpectedCurrentVersionID) {
@@ -602,13 +722,29 @@ func OntologyEdits(edits []OntologyEditPayload) ([]*foundryv1.OntologyEdit, erro
 	return out, nil
 }
 
-// ReviewChoice is the one decision a review takes: resolve to an entity or to none, or set
-// or remove the property.
+// ReviewChoice is the one decision a review takes: resolve to an entity or to none, set or
+// remove the property, or release or reject the statement read, by its hash.
 func ReviewChoice(decision ReviewDecisionPayload) (*foundryv1.FoundryReviewChoice, error) {
-	wrong := errors.New("decision is {resolve: {entity_key}}, {resolve: {not_in_data: true}} or {prop: {text|integer|number|boolean|null: value}}")
-	resolve, prop := decision.Resolve, decision.Prop
+	wrong := errors.New("decision is {resolve: {entity_key}}, {resolve: {not_in_data: true}}, {prop: {text|integer|number|boolean|null: value}}, " +
+		"{release: {statement_hash}} or {reject: {statement_hash}}, with the review's statement_hash")
+	resolve, prop, release, reject := decision.Resolve, decision.Prop, decision.Release, decision.Reject
+	given := 0
+	for _, set := range []bool{resolve != nil, prop != nil, release != nil, reject != nil} {
+		if set {
+			given++
+		}
+	}
+	if given != 1 {
+		return nil, wrong
+	}
 	switch {
-	case resolve != nil && prop == nil:
+	case release != nil && foundrySHA256Pattern.MatchString(release.StatementHash):
+		return &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Release{
+			Release: &foundryv1.FoundryReleaseChoice{StatementHash: release.StatementHash}}}, nil
+	case reject != nil && foundrySHA256Pattern.MatchString(reject.StatementHash):
+		return &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Reject{
+			Reject: &foundryv1.FoundryRejectChoice{StatementHash: reject.StatementHash}}}, nil
+	case resolve != nil:
 		switch {
 		case resolve.EntityKey != "" && !resolve.NotInData:
 			return &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Resolve{
@@ -617,7 +753,7 @@ func ReviewChoice(decision ReviewDecisionPayload) (*foundryv1.FoundryReviewChoic
 			return &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Resolve{
 				Resolve: &foundryv1.FoundryResolveChoice{Target: &foundryv1.FoundryResolveChoice_NotInData{NotInData: true}}}}, nil
 		}
-	case prop != nil && resolve == nil:
+	case prop != nil:
 		var value *foundryv1.FoundryPropValue
 		set := 0
 		if prop.Null {
@@ -627,9 +763,11 @@ func ReviewChoice(decision ReviewDecisionPayload) (*foundryv1.FoundryReviewChoic
 			set, value = set+1, &foundryv1.FoundryPropValue{Value: &foundryv1.FoundryPropValue_Text{Text: *prop.Text}}
 		}
 		if prop.Integer != nil {
+			// As JSON writes it, so the card and the decision read the same digits: no plus sign or
+			// leading zero.
 			n, err := strconv.ParseInt(*prop.Integer, 10, 64)
-			if err != nil {
-				return nil, errors.New("an integer is a string of digits within int64")
+			if err != nil || strconv.FormatInt(n, 10) != *prop.Integer {
+				return nil, errors.New("an integer is a string of its digits within int64, as JSON writes it: no plus sign or leading zeros")
 			}
 			set, value = set+1, &foundryv1.FoundryPropValue{Value: &foundryv1.FoundryPropValue_Integer{Integer: n}}
 		}
@@ -670,7 +808,7 @@ func CutFoundryTarget(target, kind string) (string, string, bool) {
 // TargetKind is the audit resource kind of a target, or empty for one that doesn't parse.
 func TargetKind(target string) string {
 	kind, _, ok := strings.Cut(target, ":")
-	if !ok || (kind != "tenant" && kind != "workspace" && kind != "connector" && kind != "ontology") {
+	if !ok || (kind != "tenant" && kind != "workspace" && kind != "connector" && kind != "ontology" && kind != "dashboard" && kind != "automation") {
 		return ""
 	}
 	return kind
@@ -963,6 +1101,40 @@ func (o ReviseVersionOperation) Execute(ctx context.Context, s *Service, _ *Iden
 	return s.FoundryGeneration(o.req.GetWorkspaceId(), o.req.GetOntologyId(), response.GetGeneration()), nil
 }
 
+type AnswerGenerationQuestionsPayload struct {
+	GenerationID string                    `json:"generation_id"`
+	Round        int32                     `json:"round"`
+	Answers      []GenerationAnswerPayload `json:"answers,omitempty"`
+	UseDefaults  bool                      `json:"use_defaults,omitempty"`
+}
+
+// GenerationAnswerPayload is one answer: the labels of the options chosen, and the user's own
+// words (agentquestion.Answer).
+type GenerationAnswerPayload struct {
+	QuestionID string   `json:"question_id"`
+	Options    []string `json:"options"`
+	Text       string   `json:"text,omitempty"`
+}
+
+type AnswerGenerationQuestionsOperation struct {
+	payload AnswerGenerationQuestionsPayload
+	req     *foundryv1.AnswerOntologyGenerationRequest
+}
+
+func (o AnswerGenerationQuestionsOperation) CanonicalPayload() []byte {
+	return mustCanonical(o.payload)
+}
+
+// Execute answers with the caller's write scope (Identity.WithScope): answering a first draft
+// that loads once ready writes the ontology's database, which the backend checks.
+func (o AnswerGenerationQuestionsOperation) Execute(ctx context.Context, s *Service, identity *Identity, _ string) (any, error) {
+	response, err := s.Actions.AnswerOntologyGeneration(identity.WithScope(ctx, o.req.GetWorkspaceId(), true), o.req)
+	if err != nil {
+		return nil, err
+	}
+	return s.FoundryGeneration(o.req.GetWorkspaceId(), o.req.GetOntologyId(), response.GetGeneration()), nil
+}
+
 type UploadDocumentPayload struct {
 	SetID     string `json:"set_id"`
 	Name      string `json:"name"`
@@ -1094,6 +1266,14 @@ type PropValuePayload struct {
 type ReviewDecisionPayload struct {
 	Resolve *ReviewResolvePayload `json:"resolve,omitempty"`
 	Prop    *PropValuePayload     `json:"prop,omitempty"`
+	// Release approves the statement a review holds back, Reject says it is wrong: each names
+	// the statement read by its hash (helix_foundry_list_reviews' statement_hash).
+	Release *StatementPayload `json:"release,omitempty"`
+	Reject  *StatementPayload `json:"reject,omitempty"`
+}
+
+type StatementPayload struct {
+	StatementHash string `json:"statement_hash"`
 }
 
 type SettleReviewPayload struct {

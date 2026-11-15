@@ -1,10 +1,12 @@
 import {
   Cable,
+  LayoutDashboard,
   Rocket,
   Settings,
   Shapes,
   Sparkles,
   Waypoints,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import type {
@@ -15,6 +17,8 @@ import type {
   SectionPanel,
   SidebarSection,
 } from "./types";
+import { automationsShell } from "../areas/automations/shell";
+import { dashboardsShell } from "../areas/dashboards/shell";
 import { dataShell } from "../areas/data/shell";
 import { ontologyShell } from "../areas/ontology/shell";
 import { workspaceShell } from "../areas/workspace/shell";
@@ -29,7 +33,13 @@ export type NavItem = {
   // The section's sub-pages while `pathname` is open.
   children: (pathname: string) => NavChild[];
 };
-const areas: AreaShell[] = [dataShell, ontologyShell, workspaceShell];
+const areas: AreaShell[] = [
+  dataShell,
+  ontologyShell,
+  dashboardsShell,
+  automationsShell,
+  workspaceShell,
+];
 const childrenOf = (id: SectionId) => (pathname: string) =>
   areas.flatMap((a) => {
     const sub = a.subnav?.[id];
@@ -48,15 +58,26 @@ export const primaryNav: NavItem[] = [
   // the database itself: each opens the ontology last opened, and picks
   // another in its header.
   item("ask", "/ask", "Analyst", Sparkles, ["/ask"]),
+  // Tiles of queries over ontologies' loads, pinned ones first.
+  item("dashboards", "/dashboards", "Dashboards", LayoutDashboard, [
+    "/dashboards",
+  ]),
+  // Steps Foundry runs for a person when a schedule or an event fires.
+  item("automations", "/automations", "Automations", Zap, ["/automations"]),
   item("ontology", "/ontology", "Ontologies", Shapes, ["/ontology"]),
   item("explore", "/explore", "Explorer", Waypoints, ["/explore"]),
   item("data", "/data", "Connectors", Cable, ["/data"]),
 ];
 // A grantee's sections (a member restricted to what source grants give):
-// Analyst, the ontologies its grants cover, and the Explorer, whose Records
-// read their shared loads (there is no graph for it).
+// Analyst, the pinned dashboards, the ontologies its grants cover, and the
+// Explorer, whose Records read their shared loads (there is no graph for it).
+// Automations are people's: a grantee has none.
 export const granteeNav: NavItem[] = primaryNav.filter(
-  (n) => n.id === "ask" || n.id === "ontology" || n.id === "explore",
+  (n) =>
+    n.id === "ask" ||
+    n.id === "dashboards" ||
+    n.id === "ontology" ||
+    n.id === "explore",
 );
 // While the workspace is onboarding, its one section: the wizard, so Settings
 // (where an AI provider is chosen) has a way back.

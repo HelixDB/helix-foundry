@@ -693,6 +693,9 @@ describe("a page's picks across the round trip", () => {
       eventSources: [],
       setIds: null,
     });
+    // A goal the page hadn't read yet comes back unknown, to be read again.
+    expect(readPicks({ ...PICKS, goal: null })?.goal).toBeNull();
+    expect(readPicks({ ...PICKS, goal: 7 })).toBeUndefined();
   });
 
   it("adds the connector a sign-in made to a choice of some", () => {

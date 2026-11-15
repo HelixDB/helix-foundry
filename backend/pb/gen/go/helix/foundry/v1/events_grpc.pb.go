@@ -23,6 +23,7 @@ const (
 	FoundryEventsService_ValidateFoundryEventSourceToken_FullMethodName = "/helix.foundry.v1.FoundryEventsService/ValidateFoundryEventSourceToken"
 	FoundryEventsService_CreateFoundryReminder_FullMethodName           = "/helix.foundry.v1.FoundryEventsService/CreateFoundryReminder"
 	FoundryEventsService_StopFoundryReminders_FullMethodName            = "/helix.foundry.v1.FoundryEventsService/StopFoundryReminders"
+	FoundryEventsService_GetSharedFoundryDashboard_FullMethodName       = "/helix.foundry.v1.FoundryEventsService/GetSharedFoundryDashboard"
 )
 
 // FoundryEventsServiceClient is the client API for FoundryEventsService service.
@@ -43,6 +44,11 @@ type FoundryEventsServiceClient interface {
 	// foundry.reminders.secret_sha256. The foundry-notify-worker sends them.
 	CreateFoundryReminder(ctx context.Context, in *CreateFoundryReminderRequest, opts ...grpc.CallOption) (*CreateFoundryReminderResponse, error)
 	StopFoundryReminders(ctx context.Context, in *StopFoundryRemindersRequest, opts ...grpc.CallOption) (*StopFoundryRemindersResponse, error)
+	// A dashboard's public snapshot, for anyone holding its link: the door
+	// passes the link token's SHA-256, never the token. NotFound for a token of
+	// no snapshot, an unpublished one, a deleted workspace's, or wherever
+	// public links are off.
+	GetSharedFoundryDashboard(ctx context.Context, in *GetSharedFoundryDashboardRequest, opts ...grpc.CallOption) (*GetSharedFoundryDashboardResponse, error)
 }
 
 type foundryEventsServiceClient struct {
@@ -93,6 +99,16 @@ func (c *foundryEventsServiceClient) StopFoundryReminders(ctx context.Context, i
 	return out, nil
 }
 
+func (c *foundryEventsServiceClient) GetSharedFoundryDashboard(ctx context.Context, in *GetSharedFoundryDashboardRequest, opts ...grpc.CallOption) (*GetSharedFoundryDashboardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetSharedFoundryDashboardResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_GetSharedFoundryDashboard_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FoundryEventsServiceServer is the server API for FoundryEventsService service.
 // All implementations should embed UnimplementedFoundryEventsServiceServer
 // for forward compatibility.
@@ -111,6 +127,11 @@ type FoundryEventsServiceServer interface {
 	// foundry.reminders.secret_sha256. The foundry-notify-worker sends them.
 	CreateFoundryReminder(context.Context, *CreateFoundryReminderRequest) (*CreateFoundryReminderResponse, error)
 	StopFoundryReminders(context.Context, *StopFoundryRemindersRequest) (*StopFoundryRemindersResponse, error)
+	// A dashboard's public snapshot, for anyone holding its link: the door
+	// passes the link token's SHA-256, never the token. NotFound for a token of
+	// no snapshot, an unpublished one, a deleted workspace's, or wherever
+	// public links are off.
+	GetSharedFoundryDashboard(context.Context, *GetSharedFoundryDashboardRequest) (*GetSharedFoundryDashboardResponse, error)
 }
 
 // UnimplementedFoundryEventsServiceServer should be embedded to have
@@ -131,6 +152,9 @@ func (UnimplementedFoundryEventsServiceServer) CreateFoundryReminder(context.Con
 }
 func (UnimplementedFoundryEventsServiceServer) StopFoundryReminders(context.Context, *StopFoundryRemindersRequest) (*StopFoundryRemindersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method StopFoundryReminders not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) GetSharedFoundryDashboard(context.Context, *GetSharedFoundryDashboardRequest) (*GetSharedFoundryDashboardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetSharedFoundryDashboard not implemented")
 }
 func (UnimplementedFoundryEventsServiceServer) testEmbeddedByValue() {}
 
@@ -224,6 +248,24 @@ func _FoundryEventsService_StopFoundryReminders_Handler(srv interface{}, ctx con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryEventsService_GetSharedFoundryDashboard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSharedFoundryDashboardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).GetSharedFoundryDashboard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_GetSharedFoundryDashboard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).GetSharedFoundryDashboard(ctx, req.(*GetSharedFoundryDashboardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // FoundryEventsService_ServiceDesc is the grpc.ServiceDesc for FoundryEventsService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -246,6 +288,10 @@ var FoundryEventsService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "StopFoundryReminders",
 			Handler:    _FoundryEventsService_StopFoundryReminders_Handler,
+		},
+		{
+			MethodName: "GetSharedFoundryDashboard",
+			Handler:    _FoundryEventsService_GetSharedFoundryDashboard_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

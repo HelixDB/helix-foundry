@@ -18,6 +18,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/access"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/events"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -230,6 +231,36 @@ type ReadStore interface {
 	ListFoundryWorkflowRunAssessments(ctx context.Context, runIDs []string) (map[string]*model.FoundryWorkflowAssessment, error)
 	CountFoundryWorkflowVerdicts(ctx context.Context, workflowIDs []string) (map[string]map[string]int64, error)
 	SumFoundryWorkflowAssessmentSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
+
+	// The Assistant (foundry_agent.go)
+	GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error)
+	ListFoundryAgentThreads(ctx context.Context, workspaceID, userID, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error)
+	GetFoundryAgentTurn(ctx context.Context, workspaceID, id string) (*model.FoundryAgentTurn, error)
+	GetFoundryAgentTurnByClientToken(ctx context.Context, workspaceID, userID, clientToken string) (*model.FoundryAgentTurn, error)
+	ListFoundryAgentTurns(ctx context.Context, threadID string, limit int) ([]*model.FoundryAgentTurn, error)
+	ListFoundryAgentEvents(ctx context.Context, turnID string, afterSeq, limit int) ([]model.FoundryAgentEvent, error)
+	ListFoundryAgentMessages(ctx context.Context, threadID string) ([]model.FoundryAgentMessage, error)
+	GetFoundryAgentAction(ctx context.Context, workspaceID, id string) (*model.FoundryAgentAction, error)
+	GetFoundryAgentActionByPayload(ctx context.Context, turnID, payloadHash string) (*model.FoundryAgentAction, error)
+	ListFoundryAgentActions(ctx context.Context, threadID string) ([]*model.FoundryAgentAction, error)
+
+	// Dashboards and their public snapshots (foundry_dashboards.go)
+	GetFoundryDashboard(ctx context.Context, workspaceID, id string) (*model.FoundryDashboard, error)
+	GetFoundryDashboardByClientToken(ctx context.Context, workspaceID, userID, clientToken string) (*model.FoundryDashboard, error)
+	ListFoundryDashboards(ctx context.Context, workspaceID string, pinnedOnly bool) ([]*model.FoundryDashboard, error)
+	GetSharedFoundryDashboard(ctx context.Context, tokenSHA256 string) (*model.FoundryDashboardShare, error)
+
+	// Automations and their runs (foundry_automations.go)
+	GetFoundryAutomation(ctx context.Context, workspaceID, id string) (*model.FoundryAutomation, error)
+	GetFoundryAutomationByClientToken(ctx context.Context, workspaceID, ownerUserID, clientToken string) (*model.FoundryAutomation, error)
+	ListFoundryAutomations(ctx context.Context, workspaceID string) ([]*model.FoundryAutomation, error)
+	GetFoundryAutomationRun(ctx context.Context, workspaceID, id string) (*model.FoundryAutomationRun, error)
+	ListFoundryAutomationRuns(ctx context.Context, automationID, pageToken string, limit int) ([]*model.FoundryAutomationRun, string, error)
+	ListFoundryAutomationRunNodes(ctx context.Context, runID string) ([]*model.FoundryAutomationRunNode, error)
+	GetFoundryAutomationNotice(ctx context.Context, n *model.FoundryNotification) (*model.FoundryAutomationNotice, error)
+	DueFoundryAutomationSchedules(ctx context.Context, limit int) ([]*model.FoundryAutomation, error)
+	WatchedFoundryAutomations(ctx context.Context, every time.Duration, limit int) ([]*model.FoundryAutomation, error)
+	FindFoundryAutomationEnded(ctx context.Context, a *model.FoundryAutomation, settle time.Duration, limit int) ([]model.FoundryAutomationEnded, error)
 }
 
 // Store is ReadStore plus every write.
@@ -302,6 +333,9 @@ type Store interface {
 	ClaimOntologyGeneration(ctx context.Context, workerID string, lease time.Duration) (*model.OntologyGeneration, error)
 	RenewOntologyGenerationLease(ctx context.Context, id, workerID string, lease time.Duration) error
 	FinishOntologyGeneration(ctx context.Context, id, workerID string, outcome model.OntologyGenerationOutcome) error
+	AnswerOntologyGeneration(ctx context.Context, ontologyID, id string, draftRev uint64, answers []agentquestion.Answer) error
+	CancelOntologyGeneration(ctx context.Context, ontologyID, id string) error
+	ListOntologyGenerationsAskedBefore(ctx context.Context, asked time.Time, limit int) ([]*model.OntologyGeneration, error)
 	SettleFoundryReviewDecision(ctx context.Context, workspaceID string, decision *model.FoundryReviewDecision) error
 	SettleFoundryReleases(ctx context.Context, workspaceID, loadID string, decisions []*model.FoundryReviewDecision,
 		resend *model.FoundryGraphJob) (queued bool, err error)
@@ -395,6 +429,7 @@ type Store interface {
 	// Foundry notifications: the emails the foundry-notify-worker finds,
 	// claims and sends (foundry_notifications.go)
 	DiscoverFoundryOntologyReady(ctx context.Context, since time.Time, limit int, newID func() string) (int, error)
+	DiscoverFoundryOntologyQuestions(ctx context.Context, since time.Time, limit int, newID func() string) (int, error)
 	DiscoverFoundrySampleFollowUps(ctx context.Context, from, to time.Time, limit int, newID func() string) (int, error)
 	ClaimFoundryNotification(ctx context.Context, token string, lease time.Duration) (*model.FoundryNotification, error)
 	FinishFoundryNotification(ctx context.Context, id, token string, outcome model.FoundryNotificationOutcome) error
@@ -426,6 +461,70 @@ type Store interface {
 	ClaimFoundryWorkflowRunAssessment(ctx context.Context, owner string, lease time.Duration) (*model.FoundryWorkflowAssessment, error)
 	RenewFoundryWorkflowRunAssessment(ctx context.Context, runID, owner string, lease time.Duration) error
 	FinishFoundryWorkflowRunAssessment(ctx context.Context, runID, owner string, o model.FoundryWorkflowAssessmentOutcome) error
+
+	// The Assistant: a person's sends and clicks, and the
+	// foundry-agent-worker's turns (foundry_agent.go)
+	CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAgentTurn, thread *model.FoundryAgentThread, limits model.FoundryAgentLimits, first json.RawMessage) error
+	AskFoundryAgentQuestions(ctx context.Context, turnID, workerID string, asked *model.FoundryAgentAsked, event json.RawMessage) error
+	DeleteFoundryAgentThread(ctx context.Context, workspaceID, userID, id string) error
+	CancelFoundryAgentTurn(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentTurn, error)
+	ClaimFoundryAgentTurn(ctx context.Context, workerID string, claim model.FoundryAgentClaim) (*model.FoundryAgentTurn, error)
+	RenewFoundryAgentTurnLease(ctx context.Context, id, workerID string, lease time.Duration) error
+	AppendFoundryAgentEvents(ctx context.Context, id, workerID string, events []json.RawMessage) error
+	// FinishFoundryAgentText stores a model call's final text events and
+	// drops the call's text_delta events they supersede, under the lease.
+	FinishFoundryAgentText(ctx context.Context, id, workerID string, step int, events []json.RawMessage) error
+	AppendFoundryAgentMessages(ctx context.Context, turnID, workerID string, messages []model.FoundryAgentMessage, keep int) error
+	SettleFoundryAgentTurn(ctx context.Context, id, workerID string, outcome model.FoundryAgentTurnOutcome) error
+	// SetFoundryAgentThreadSession keeps the helper's CLI session that the
+	// turn's thread's next turn resumes, under the turn's lease.
+	SetFoundryAgentThreadSession(ctx context.Context, turnID, workerID, sessionID string) error
+	// EndUnclaimedFoundryAgentTurns fails a helper runtime's turns that have
+	// waited for a claim since before: how many.
+	EndUnclaimedFoundryAgentTurns(ctx context.Context, runtime model.FoundryAgentRuntime, before time.Time, why string) (int64, error)
+	RecordFoundryAgentAction(ctx context.Context, workerID string, a *model.FoundryAgentAction, maxPending int,
+		card func(*model.FoundryAgentAction) (json.RawMessage, error)) (*model.FoundryAgentAction, error)
+	ClaimFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string) (*model.FoundryAgentAction, error)
+	FinishFoundryAgentAction(ctx context.Context, id string, end model.FoundryAgentActionEnd, continuation *model.FoundryAgentTurn, firstEvent json.RawMessage) error
+	DismissFoundryAgentAction(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentAction, error)
+	RefreshFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string, display json.RawMessage, confirmationID string,
+		sealed []byte, keyID string, expiresAt time.Time) (*model.FoundryAgentAction, error)
+
+	// Dashboards and their public snapshots (foundry_dashboards.go)
+	CreateFoundryDashboard(ctx context.Context, d *model.FoundryDashboard, max int) error
+	UpdateFoundryDashboard(ctx context.Context, workspaceID, id string, editor model.FoundryDashboardEditor, expected int64,
+		u model.FoundryDashboardUpdate) error
+	SetFoundryDashboardPinned(ctx context.Context, workspaceID, id, userID string, expected int64, pinned bool, maxPinned int) error
+	DeleteFoundryDashboard(ctx context.Context, workspaceID, id string, editor model.FoundryDashboardEditor) error
+	PublishFoundryDashboard(ctx context.Context, share *model.FoundryDashboardShare) (*model.FoundryDashboardShare, error)
+	UnpublishFoundryDashboard(ctx context.Context, workspaceID, id string) error
+
+	// Automations: people's edits, approvals and runs by hand, and the
+	// foundry-automation-worker's fires and runs (foundry_automations.go)
+	CreateFoundryAutomation(ctx context.Context, a *model.FoundryAutomation, max int) error
+	UpdateFoundryAutomation(ctx context.Context, workspaceID, id, ownerUserID string, expected int64, u model.FoundryAutomationUpdate) (*model.FoundryAutomation, error)
+	ApproveFoundryAutomation(ctx context.Context, workspaceID, id, ownerUserID string, expected int64, next *time.Time) (*model.FoundryAutomation, error)
+	PauseFoundryAutomation(ctx context.Context, workspaceID, id string, by model.FoundryAutomationActor) (*model.FoundryAutomation, error)
+	ResumeFoundryAutomation(ctx context.Context, workspaceID, id, ownerUserID string, next *time.Time) (*model.FoundryAutomation, error)
+	DeleteFoundryAutomation(ctx context.Context, workspaceID, id string, by model.FoundryAutomationActor) error
+	RunFoundryAutomationNow(ctx context.Context, run *model.FoundryAutomationRun, triggerNodeID string, triggerOutput json.RawMessage,
+		limits model.FoundryAutomationLimits) (*model.FoundryAutomationRun, error)
+	CancelFoundryAutomationRun(ctx context.Context, workspaceID, id string, by model.FoundryAutomationActor) (*model.FoundryAutomationRun, error)
+	// PauseFoundryAutomationsOf pauses the member's automations as their
+	// owner's who lost access; its host calls it in the transaction that
+	// removes the member.
+	PauseFoundryAutomationsOf(ctx context.Context, workspaceID, userID string) error
+	TouchFoundryAutomation(ctx context.Context, id string) error
+	FireFoundryAutomation(ctx context.Context, f model.FoundryAutomationFire, limits model.FoundryAutomationLimits) (model.FoundryAutomationFired, error)
+	ClaimFoundryAutomationRun(ctx context.Context, workerID string, lease time.Duration) (*model.FoundryAutomationRun, error)
+	RenewFoundryAutomationRunLease(ctx context.Context, id, workerID string, lease time.Duration) error
+	StartFoundryAutomationNode(ctx context.Context, runID, workerID, nodeID string, status model.FoundryAutomationNodeStatus) error
+	StartFoundryAutomationAssistant(ctx context.Context, runID, workerID, nodeID string, thread *model.FoundryAgentThread, turn *model.FoundryAgentTurn) error
+	EndFoundryAutomationNode(ctx context.Context, runID, workerID, nodeID string, end model.FoundryAutomationNodeEnd) error
+	YieldFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time) error
+	RetryFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time, why string) error
+	FinishFoundryAutomationRun(ctx context.Context, id, workerID string, end model.FoundryAutomationRunEnd) error
+	PruneFoundryAutomationRuns(ctx context.Context, before time.Time) (int, error)
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

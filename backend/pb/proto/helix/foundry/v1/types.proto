@@ -631,6 +631,84 @@ enum OntologyGenerationStatus {
   ONTOLOGY_GENERATION_STATUS_RUNNING = 2;
   ONTOLOGY_GENERATION_STATUS_SUCCEEDED = 3;
   ONTOLOGY_GENERATION_STATUS_FAILED = 4;
+  // The ontology agent asked questions only the user can answer: the
+  // generation waits, still the ontology's live one, until they are answered
+  // (AnswerOntologyGeneration), it is cancelled (CancelOntologyGeneration),
+  // or answers_due_at passes and Helix answers each with the agent's
+  // default. questions lists them.
+  ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT = 5;
+  // Cancelled (CancelOntologyGeneration) before it stored a draft.
+  ONTOLOGY_GENERATION_STATUS_CANCELLED = 6;
+}
+
+// A question an agent asks the person: the ontology agent of a generation
+// that needs input (OntologyGenerationQuestion), or the Assistant
+// (FoundryAgentAsked). With no options it takes an answer in words; with
+// options (2 to 20, labels unique) the person picks one, or one or more when
+// multiple, and may always answer in their own words instead (one) or as
+// well (multiple). Its header, text, options and recommended answer are the
+// agent's words and may quote the data: show them as plain text, never as
+// markup. The site shows such questions one at a time, the recommended
+// option first.
+message AgentQuestion {
+  string id = 1;
+  // A few words naming the question, for a progress strip; may be empty.
+  string header = 2;
+  string text = 3;
+  // Empty for an answer in words.
+  repeated AgentQuestionOption options = 4;
+  // Whether the person may pick several options; false without options.
+  bool multiple = 5;
+  // The answer the agent recommends, which it takes as its own choice for a
+  // question left to it: the label of one of its options (shown first,
+  // marked), or, without options, the words it suggests; empty for none.
+  string recommended = 6;
+  // A blocking question needs an answer; another may be left to the agent
+  // (its recommended answer, or the agent decides).
+  bool blocking = 7;
+}
+
+message AgentQuestionOption {
+  string label = 1;
+  // One line on what choosing it means; may be empty.
+  string description = 2;
+}
+
+// The person's answer to an AgentQuestion: the labels of the options chosen
+// (in the question's order once checked) and their own words, at least one
+// of the two. To a question without options, text alone; to one of one
+// option, one option or text, not both; to one of several, one or more
+// options with text or without, or text alone. Text is 1 to 2000
+// characters once trimmed.
+message AgentQuestionAnswer {
+  string question_id = 1;
+  repeated string options = 2;
+  string text = 3;
+}
+
+// A question the ontology agent asked about its draft (AgentQuestion's
+// fields), the draft items it is about, and its answer once given.
+message OntologyGenerationQuestion {
+  string id = 1;
+  string header = 2;
+  string text = 3;
+  repeated AgentQuestionOption options = 4;
+  bool multiple = 5;
+  // As AgentQuestion's: the ontology agent's default, which it takes for a
+  // question left to it (use_defaults), or decides without one.
+  string recommended = 6;
+  // The generation can't carry on until a blocking question is answered;
+  // another may be left for the agent to decide.
+  bool blocking = 7;
+  // The draft items it is about, such as type.Customer; may be empty.
+  repeated string items = 8;
+  // The answer it was given, once answered; unset while it waits, or when
+  // it was left to the agent.
+  AgentQuestionAnswer answer = 9;
+  // The person (or the automatic answers once due) left it to the agent,
+  // which took its recommended answer, or decided, as its own choice, never
+  // as the person's words. Never set beside answer.
+  bool left_to_agent = 10;
 }
 
 // One edit of a version's draft: put an item, or remove one.
@@ -718,6 +796,20 @@ message OntologyGeneration {
   // requester emailed when that load ends
   // (GenerateOntologyRequest.load_when_ready).
   bool load_when_ready = 22;
+  // The questions the agent's last turn asked, in its order: the ones status
+  // needs_input waits on, then, once answered, with their answers. Empty for
+  // a generation the agent asked nothing of. A draft's own non-blocking
+  // questions are in its version's definition.
+  repeated OntologyGenerationQuestion questions = 23;
+  // When the questions were asked; unset without questions.
+  google.protobuf.Timestamp asked_at = 24;
+  // While status is needs_input: when Helix answers every question with the
+  // agent's default and carries on (foundry.ontology.answer_days after
+  // asked_at).
+  google.protobuf.Timestamp answers_due_at = 25;
+  // Which round of questions questions are, from 1 (0 without questions):
+  // each answer lets the agent ask again. AnswerOntologyGeneration names it.
+  int32 question_round = 26;
 }
 
 message OntologyGenerationTable {
@@ -1465,6 +1557,88 @@ message FoundryGraphJobProgress {
   int32 documents_total = 3;
 }
 
+// What settles a review (SettleFoundryReview's decision).
+enum FoundryReviewSettle {
+  // No decision settles it: a conflict on a link that holds many values, or
+  // a reason the backend doesn't settle.
+  FOUNDRY_REVIEW_SETTLE_UNSPECIFIED = 0;
+  // resolve: link its name to one of its candidates, or say it is not in
+  // the data.
+  FOUNDRY_REVIEW_SETTLE_RESOLVE = 1;
+  // prop: choose the property's value, or remove it.
+  FOUNDRY_REVIEW_SETTLE_PROP = 2;
+  // release or reject the statement it holds back, by its statement_hash.
+  FOUNDRY_REVIEW_SETTLE_RELEASE = 3;
+  // A reason a decision settles, on a review missing what the backend reads
+  // of it (a load from before decisions): a new load writes it again.
+  FOUNDRY_REVIEW_SETTLE_STALE = 4;
+}
+
+// A review a load holds: something its documents state that it didn't write
+// as it stands. Its text and values come from documents: untrusted.
+message FoundryReview {
+  // The review's id, which SettleFoundryReview takes as review_id.
+  string review_key = 1;
+  // Why it is held: unresolved, ambiguous, collision, identifier_conflict,
+  // adjudicated, legal_form, part_name or own_name (a name to resolve);
+  // prop_conflict (documents state a property differently); low_confidence,
+  // unverified or conflict (a statement held back); or another of the
+  // engine's.
+  string reason = 2;
+  FoundryReviewSettle settle = 3;
+  // The type its name or property is of; empty for a held statement.
+  string type = 4;
+  string doc_id = 5;
+  // The quote it was read from, and where in its document.
+  string quote = 6;
+  optional FoundryReviewSpan span = 7;
+  // A name to resolve, normalized, and the stored identities (entity keys)
+  // it may be.
+  string norm_name = 8;
+  repeated string candidates = 9;
+  // The entity and property of a prop_conflict, and the values its
+  // documents state.
+  string entity_key = 10;
+  string prop = 11;
+  repeated FoundryReviewValue values = 12;
+  // A held statement: its link, the statement as the load stores it (JSON
+  // with subject, object and props), and the hash a release or reject
+  // binds.
+  string link = 13;
+  string statement_json = 14;
+  string statement_hash = 15;
+  // The verifier's score, when it scored it.
+  optional double confidence = 16;
+  // The entities it concerns as the load holds them (FOUNDRY_CONCERNS): a
+  // name's candidates, a property's entity. Their names are untrusted.
+  repeated FoundryReviewEntity entities = 17;
+}
+
+// An entity a review concerns, by the stored identity its candidates and
+// entity_key name it by: its entity_key, or a type without a key's
+// norm_name; exactly one is set.
+message FoundryReviewEntity {
+  string type = 1;
+  string entity_key = 2;
+  string norm_name = 3;
+  // Its stored name; empty when the load stored none.
+  string name = 4;
+}
+
+message FoundryReviewSpan {
+  int64 section = 1;
+  int64 start = 2;
+  int64 end = 3;
+}
+
+// One value documents state for a prop_conflict's property.
+message FoundryReviewValue {
+  // The value as JSON, as a prop decision takes it.
+  string value_json = 1;
+  string doc_id = 2;
+  string quote = 3;
+}
+
 // A user choice. Review identity is always derived by the backend.
 message FoundryReviewChoice {
   reserved 2;
@@ -1870,6 +2044,28 @@ message FoundryAIConfig {
   string created_by_name = 11;
   // The provider as failure copy names it: "Claude", or a custom server's host.
   string label = 12;
+  // Whether the Assistant can run on it: its ask model's tool check on the
+  // Assistant's own wire, run once the probe passed while the Assistant is
+  // on. A failed check never fails the setting: the rest of Foundry's model
+  // work runs on it, and the Assistant refuses its turns, saying why.
+  FoundryAIAssistantCheck assistant_check = 13;
+}
+
+// FoundryAIAssistantCheck is what the Assistant's tool check of a setting
+// found.
+enum FoundryAIAssistantCheck {
+  // Not checked: the Assistant is off, the check couldn't run (the provider
+  // was busy), or the probe hasn't passed. The Assistant runs on it.
+  FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED = 0;
+  // The ask model called a tool: the Assistant runs on it.
+  FOUNDRY_AI_ASSISTANT_CHECK_PASSED = 1;
+  // The provider refused the key on the Assistant's calls.
+  FOUNDRY_AI_ASSISTANT_CHECK_AUTH = 2;
+  // The provider refused the Assistant's request: a model the endpoint
+  // lacks there, or tools it doesn't take.
+  FOUNDRY_AI_ASSISTANT_CHECK_REFUSED = 3;
+  // The model answered without calling the tool: it can't run the Assistant.
+  FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL = 4;
 }
 
 // FoundryAIDefault is the deployment's provider.
@@ -2366,4 +2562,329 @@ message FoundryWorkflowSend {
 message FoundryWorkflowUpload {
   string document_id = 1;
   string set_id = 2;
+}
+
+// FoundryAgentPageContext is what the person was looking at as they sent a
+// message: ids only, each checked to be the workspace's before the agent is
+// told of it.
+message FoundryAgentPageContext {
+  string ontology_id = 1;
+  string load_id = 2;
+  // The dashboard open, if any.
+  string dashboard_id = 3;
+}
+
+// FoundryAgentThread is a conversation with the Assistant, private to its user.
+message FoundryAgentThread {
+  string id = 1;
+  // The first message's start.
+  string title = 2;
+  // api (Foundry's own worker), claude_code or codex.
+  string runtime = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// FoundryAgentRuntime is where a local install's Assistant runs a
+// workspace's new threads, and the helpers that can run them.
+message FoundryAgentRuntime {
+  // api (Foundry's own worker, on the workspace's model provider),
+  // claude_code or codex (a helper, on its owner's subscription).
+  string runtime = 1;
+  // The helpers paired with the install and not revoked, newest first.
+  repeated FoundryAgentHost hosts = 2;
+  // The helper runtimes a host online offers now (seen within 30 seconds):
+  // a thread of one not listed can't be sent to.
+  repeated string online = 3;
+}
+
+// FoundryAgentHost is a helper on the owner's machine, paired with the
+// install: a process outside Docker that drives the Claude Code or Codex CLI
+// the owner signed in to, and calls back only to the install's loopback.
+message FoundryAgentHost {
+  string id = 1;
+  // The machine's name, as the helper gave it when it paired.
+  string name = 2;
+  // What it offers, as of its last call: claude_code, codex.
+  repeated string runtimes = 3;
+  // The helper's version and platform (darwin-arm64, linux-x64, ...).
+  string version = 4;
+  string platform = 5;
+  google.protobuf.Timestamp created_at = 6;
+  // Its last call; unset until its first after pairing, which starts
+  // nothing.
+  google.protobuf.Timestamp last_seen_at = 7;
+  // Seen within 30 seconds.
+  bool online = 8;
+  // Set once revoked; a revoked host is listed by nothing else.
+  google.protobuf.Timestamp revoked_at = 9;
+  // What its runtimes' CLIs are signed in to, as of its last call; empty
+  // until its first call after pairing.
+  repeated FoundryAgentHostAccount accounts = 10;
+}
+
+// FoundryAgentHostAccount is what one of a helper's CLIs is signed in to, as
+// the helper last found it.
+message FoundryAgentHostAccount {
+  // claude_code or codex: one the helper offers.
+  string runtime = 1;
+  // signed_in, signed_out (its turns fail until the person signs in) or
+  // unknown (the CLI didn't start).
+  string state = 2;
+  // The subscription's plan as the CLI names it (pro, max, team, ...), only
+  // when signed in on one; empty for a CLI signed in some other way, whose
+  // turns don't bill a subscription.
+  string subscription = 3;
+}
+
+// FoundryAgentTurn is one turn of a thread: a person's message, or the result
+// of an action they ran.
+message FoundryAgentTurn {
+  string id = 1;
+  string thread_id = 2;
+  // message, action_result, answers or automation.
+  string kind = 3;
+  // The person's text, for a message.
+  string text = 4;
+  // The action an action_result turn goes on from.
+  string action_id = 5;
+  FoundryAgentPageContext page_context = 6;
+  // queued, running, done, failed or cancelled.
+  string status = 7;
+  string error = 8;
+  int64 usd_micros = 9;
+  int32 steps = 10;
+  int32 last_seq = 11;
+  // Attempts claimed so far; a queued turn with attempts above 0 is retrying.
+  int32 attempts = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp started_at = 14;
+  google.protobuf.Timestamp finished_at = 15;
+  // What the turn asked its person (helix_foundry_ask_person), which it
+  // ended waiting on (its finished event's reason asked); unset when it asked
+  // nothing. The person answers it (SendFoundryAgentMessage with answers)
+  // while it is the thread's newest turn and done.
+  FoundryAgentAsked asked = 16;
+  // An answers turn's: the turn it answers, and the person's answers.
+  FoundryAgentAnswers answers = 17;
+}
+
+// FoundryAgentAsked is what a turn asked its person: 1 to 4 questions of the
+// Assistant's own (ids q1, q2, ...), or a generation's waiting round,
+// relayed as its agent wrote it, under its own question ids (generation
+// set). Each question is the agent's words, plain text.
+message FoundryAgentAsked {
+  repeated AgentQuestion questions = 1;
+  FoundryAgentAskedGeneration generation = 2;
+}
+
+// FoundryAgentAskedGeneration is a generation whose questions a turn relayed,
+// and their round: SendFoundryAgentMessage sends the person's answers to it,
+// as them, while it still waits on that round.
+message FoundryAgentAskedGeneration {
+  string ontology_id = 1;
+  string generation_id = 2;
+  int32 round = 3;
+}
+
+// FoundryAgentAnswers are the person's answers to the questions turn_id
+// asked: one per question at most, as AgentQuestionAnswer says; a question
+// left out (only one that isn't blocking) is left to the Assistant.
+message FoundryAgentAnswers {
+  string turn_id = 1;
+  repeated AgentQuestionAnswer answers = 2;
+}
+
+// FoundryAgentEvent is one event a turn shows, as JSON: started, text,
+// text_delta, tool_call, tool_result, action_card, action_result,
+// questions, answers, automation_report and finished.
+message FoundryAgentEvent {
+  int32 seq = 1;
+  string event_json = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+// FoundryAgentAction is an action the agent prepared, which only its person
+// runs.
+message FoundryAgentAction {
+  string id = 1;
+  string turn_id = 2;
+  string thread_id = 3;
+  // The operation and target, as the MCP's prepare names them (create_load,
+  // ontology:<workspace>/<ontology>).
+  string operation = 4;
+  string target = 5;
+  // The canonical payload, and the hash Execute must send back.
+  string payload_json = 6;
+  string payload_hash = 7;
+  // The names the server resolved for it, as JSON.
+  string display_json = 8;
+  // False when the target's ids never appeared in the person's messages or
+  // page: the card warns.
+  bool target_named_by_user = 9;
+  // prepared, executing, succeeded, failed, unknown (it ran and lost its
+  // answer: never run again), expired or dismissed.
+  string status = 10;
+  string result_json = 11;
+  string error = 12;
+  google.protobuf.Timestamp expires_at = 13;
+  string decided_by_user_id = 14;
+  google.protobuf.Timestamp decided_at = 15;
+  google.protobuf.Timestamp created_at = 16;
+}
+
+// FoundryDashboard is a dashboard of a workspace.
+message FoundryDashboard {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  // The spec, as package dashboard writes it; empty in a list.
+  string spec_json = 4;
+  // Counts its edits, from 1: an edit or a publish names the revision it was
+  // made from.
+  int64 revision = 5;
+  string created_by_user_id = 6;
+  string updated_by_user_id = 7;
+  // Pinned: in every member's sidebar.
+  bool pinned = 8;
+  google.protobuf.Timestamp pinned_at = 9;
+  string pinned_by_user_id = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+  // Its public snapshot; unset unless published.
+  FoundryDashboardShare share = 13;
+  // What the caller may do: change its name, description and tiles; pin or
+  // unpin it; publish and republish it (false wherever public links are off);
+  // delete it (an owner or admin only while it is published); and unpublish
+  // it (an owner or admin while it is published, public links on or off, so
+  // a link turned off is never revived).
+  bool can_edit = 14;
+  bool can_pin = 15;
+  bool can_publish = 16;
+  bool can_delete = 17;
+  bool can_unpublish = 18;
+}
+
+// FoundryDashboardShare is a dashboard's public snapshot.
+message FoundryDashboardShare {
+  // The link's token, for owners and admins only: the site's page for it is
+  // /share/<token>. Empty for anyone else.
+  string token = 1;
+  // The dashboard's revision it shows: older than the dashboard's after an
+  // edit, until it is published again.
+  int64 spec_revision = 2;
+  google.protobuf.Timestamp published_at = 3;
+  google.protobuf.Timestamp first_published_at = 4;
+  string published_by_user_id = 5;
+}
+
+// FoundryAutomation is an automation: its spec, whether it runs, and what the
+// caller may do with it.
+message FoundryAutomation {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  // The spec, as package automation writes it; empty in a list.
+  string spec_json = 4;
+  // Counts its edits, from 1: an edit or an approval names the revision it
+  // was made from.
+  int64 revision = 5;
+  // Counts its spec's edits.
+  int64 spec_revision = 6;
+  // The person it runs as, who alone edits, approves, resumes and runs it.
+  string owner_user_id = 7;
+  // needs_approval (its spec waits for its owner's approval: new, or
+  // changed), active (it runs when its trigger fires) or paused (it runs
+  // only by hand).
+  string status = 8;
+  // While paused: person (paused_by_user_id paused it), failures (its runs
+  // failed pause_after_failures times in a row, and its owner was emailed)
+  // or owner_lost_access (its owner can no longer act in the workspace).
+  string paused_reason = 9;
+  string paused_by_user_id = 10;
+  google.protobuf.Timestamp paused_at = 11;
+  // The spec revision its owner last approved, at approved_at; 0 never.
+  int64 approved_spec_revision = 12;
+  google.protobuf.Timestamp approved_at = 13;
+  // Its trigger's kind (schedule, sync_finished, load_ready,
+  // document_arrived, generation_finished or manual) and the connector,
+  // ontology or document set an event trigger listens to.
+  string trigger_kind = 14;
+  string trigger_target = 15;
+  // An active schedule's next time.
+  google.protobuf.Timestamp next_run_at = 16;
+  // Its runs that failed in a row, and when it may start another after them.
+  int32 failures = 17;
+  google.protobuf.Timestamp backoff_until = 18;
+  // Its newest run, without its spec or steps; unset before its first.
+  FoundryAutomationRun last_run = 19;
+  google.protobuf.Timestamp created_at = 20;
+  google.protobuf.Timestamp updated_at = 21;
+  // What the caller may do: edit it (its owner), approve it (its owner,
+  // while it needs approval), pause it (its owner, or an owner or admin,
+  // while active), resume it (its owner, while paused), run it now (its
+  // owner, unless it needs approval), delete it (its owner, or an owner or
+  // admin).
+  bool can_edit = 22;
+  bool can_approve = 23;
+  bool can_pause = 24;
+  bool can_resume = 25;
+  bool can_run = 26;
+  bool can_delete = 27;
+}
+
+// FoundryAutomationRun is one run of an automation.
+message FoundryAutomationRun {
+  string id = 1;
+  string automation_id = 2;
+  // queued, running, succeeded, failed, cancelled or skipped (never
+  // started: error says why).
+  string status = 3;
+  // Why it failed, was cancelled or skipped, or why its last attempt failed
+  // while it is queued to try again. Only its automation's owner, and owners
+  // and admins, see it; another member, how far it went and what it cost.
+  string error = 4;
+  // What fired it: {"kind": the trigger's kind or "manual", "at", and the
+  // ids of the work it found (sync_id, load_id, generation_id,
+  // document_ids), "outcome", "count", "rows", "by_user_id"}.
+  string trigger_event_json = 5;
+  // The spec revision it runs, and that spec; spec_json only when got alone,
+  // and never for a skipped run, which ran nothing.
+  int64 spec_revision = 6;
+  string spec_json = 7;
+  // The owner's Assistant thread its Assistant steps ran in, which its owner
+  // opens in the Assistant to see them, and act on the actions they left;
+  // set for its owner alone.
+  string thread_id = 8;
+  // What its Assistant steps spent, in millionths of a US dollar.
+  int64 usd_micros = 9;
+  int32 attempts = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp started_at = 12;
+  google.protobuf.Timestamp finished_at = 13;
+  // Its steps that started, in the order they did; only when got alone.
+  repeated FoundryAutomationRunNode nodes = 14;
+  // Whether the caller may cancel it: live, and theirs or the caller an
+  // owner or admin.
+  bool can_cancel = 15;
+}
+
+// FoundryAutomationRunNode is one step of a run, the spec's node node_id.
+message FoundryAutomationRunNode {
+  string node_id = 1;
+  // running, succeeded, failed, skipped (no edge into it was taken) or
+  // blocked (a step before it failed); an action whose call is in flight
+  // reads running.
+  string status = 2;
+  // {"summary", "answer" (true for yes), "count", "branch" (the branch a
+  // condition took), "result" (an action's result, untrusted), "pending"
+  // (actions an Assistant step left for the owner)}: what it gave. It and
+  // error are its automation's owner's, and owners' and admins', alone.
+  string output_json = 3;
+  string error = 4;
+  // An Assistant step's turn, in the run's thread; set for its owner alone.
+  string turn_id = 5;
+  int64 usd_micros = 6;
+  google.protobuf.Timestamp started_at = 7;
+  google.protobuf.Timestamp finished_at = 8;
 }

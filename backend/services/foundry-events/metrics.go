@@ -21,3 +21,11 @@ var reminderRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "The site's reminder requests by route (create, stop) and answer: ok, or the error's code (rate_limited, payload_too_large, " +
 		"unsupported_media_type, unauthorized, request_timeout, invalid_arguments, not_found, backend_unavailable or internal).",
 }, []string{"route", "code"})
+
+// sharedRequestsTotal counts the shared dashboards' answers by code: ok for a 200, or the error
+// body's code.
+var sharedRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_events_shared_dashboard_requests_total",
+	Help: "Requests for dashboards' public snapshots by answer: ok, or the error's code (rate_limited, not_found, " +
+		"backend_unavailable or internal).",
+}, []string{"code"})

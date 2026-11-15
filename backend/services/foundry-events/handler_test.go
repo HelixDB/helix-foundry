@@ -58,7 +58,7 @@ var (
 // token is the i-th well-formed send token.
 func token(i int) string { return fmt.Sprintf("hx_ev_%064x", i) }
 
-// fakeBackend serves the two RPCs the door calls. It is reached over gRPC behind Foundry's actor
+// fakeBackend serves the RPCs the door calls. It is reached over gRPC behind Foundry's actor
 // interceptor, so each request arrives as the backend would see it, with its Actor. live are the
 // tokens it finds by hash, and answer answers each send (a stored batch when nil).
 type fakeBackend struct {
@@ -79,6 +79,11 @@ type fakeBackend struct {
 	reminderActors []ports.Actor
 	reminderErr    error
 	reminderAgain  bool
+	// sharedHashes and sharedActors are the shared dashboards asked for;
+	// sharedErr answers each of them.
+	sharedHashes []string
+	sharedActors []ports.Actor
+	sharedErr    error
 }
 
 func (b *fakeBackend) ValidateFoundryEventSourceToken(ctx context.Context, req *foundryv1.ValidateFoundryEventSourceTokenRequest) (

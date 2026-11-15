@@ -26,6 +26,9 @@ export type PapiArea =
   | "ontology"
   | "databases"
   | "explore"
+  | "agent"
+  | "dashboards"
+  | "automations"
   | "access";
 export type PapiRoute = {
   area: PapiArea;
@@ -371,6 +374,18 @@ export const papiRoutes = [
     method: "GET",
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/generations/{id}",
   },
+  // A generation waiting on the agent's questions: answered (or with the
+  // agent's defaults), or cancelled, which any live one may be.
+  {
+    area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/generations/{id}:answer",
+  },
+  {
+    area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/generations/{id}:cancel",
+  },
   // What an ontology reads of the workspace's documents, with its current
   // load's extraction of each, and one of them. Read only: documents and
   // their sets are written in the Data area.
@@ -450,6 +465,198 @@ export const papiRoutes = [
     area: "ontology",
     method: "POST",
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/questions/{id}:cancel",
+  },
+
+  // Agent: the Assistant. A person's threads with it, their messages (turns)
+  // and turns' events, stopping a turn, and running, refreshing or
+  // dismissing an action it prepared. Only the person runs an action: the
+  // agent's own execute is never here.
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/turns",
+  },
+  {
+    area: "agent",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/threads",
+  },
+  {
+    area: "agent",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/threads/{id}",
+  },
+  {
+    area: "agent",
+    method: "DELETE",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/threads/{id}",
+  },
+  {
+    area: "agent",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/turns/{id}/events",
+  },
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/turns/{id}:cancel",
+  },
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:execute",
+  },
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:refresh",
+  },
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:dismiss",
+  },
+  // Where a local install's Assistant runs (its worker, or a helper on the
+  // owner's Claude Code or Codex subscription), pairing a helper with a
+  // one-time code, and revoking one. Hosted Helix refuses them.
+  {
+    area: "agent",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/runtime",
+  },
+  {
+    area: "agent",
+    method: "PATCH",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/runtime",
+  },
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/host-pairings",
+  },
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/hosts/{id}:revoke",
+  },
+
+  // Dashboards: tiles of typed queries over ontologies' loads, each read by
+  // the viewer through a load's :read. Listed and read by any member; made,
+  // edited, deleted, pinned and given an Analyst answer's visual; and,
+  // hosted only, published at a public link and unpublished. Trying a tile
+  // (:preview-tile) is the Helix MCP's and the Assistant's, not the site's.
+  // The public link's snapshot is the foundry-events door's, which the
+  // share page's browser asks with no session, never through here.
+  {
+    area: "dashboards",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards",
+  },
+  {
+    area: "dashboards",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards",
+  },
+  {
+    area: "dashboards",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}",
+  },
+  {
+    area: "dashboards",
+    method: "PATCH",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}",
+  },
+  {
+    area: "dashboards",
+    method: "DELETE",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}",
+  },
+  {
+    area: "dashboards",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:pin",
+  },
+  {
+    area: "dashboards",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:add-question-visual",
+  },
+  {
+    area: "dashboards",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:publish",
+  },
+  {
+    area: "dashboards",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:unpublish",
+  },
+
+  // Automations: a person's graph of steps Foundry runs as them when its
+  // trigger fires. Listed and read by every member; made by any member, then
+  // edited, approved (its owner's click here, never an agent's), run by hand
+  // and resumed by its owner; paused, deleted and a run cancelled by its
+  // owner or an owner or admin. Its runs and their steps are read here too.
+  {
+    area: "automations",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations",
+  },
+  {
+    area: "automations",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations",
+  },
+  {
+    area: "automations",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}",
+  },
+  {
+    area: "automations",
+    method: "PATCH",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}",
+  },
+  {
+    area: "automations",
+    method: "DELETE",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}",
+  },
+  {
+    area: "automations",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}:approve",
+  },
+  {
+    area: "automations",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}:pause",
+  },
+  {
+    area: "automations",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}:resume",
+  },
+  {
+    area: "automations",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{id}:run",
+  },
+  {
+    area: "automations",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{automationId}/runs",
+  },
+  {
+    area: "automations",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{automationId}/runs/{id}",
+  },
+  {
+    area: "automations",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/automations/{automationId}/runs/{id}:cancel",
   },
 
   // Ontology: decisions, applied from the next load.

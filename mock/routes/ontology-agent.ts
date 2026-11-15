@@ -3,7 +3,7 @@ import { stringify } from "smol-toml";
 import type {
   AgentBundleDefinition,
   AgentDraftItem,
-  AgentQuestion,
+  AgentDraftQuestion,
   Connector,
   SyncedTable,
 } from "../../src/shared/wfe";
@@ -174,7 +174,7 @@ export function draftFromTables(
     mappings: Record<string, Record<string, unknown>> = {},
     enrichments: Record<string, Record<string, unknown>> = {},
     items: Record<string, AgentDraftItem> = {},
-    questions: AgentQuestion[] = [],
+    questions: AgentDraftQuestion[] = [],
     leftOut: { what: string; reason: string; because?: unknown }[] = [],
     linkNames = new Set<string>();
 
@@ -239,15 +239,25 @@ export function draftFromTables(
         : `${p.name} declares no primary key; until you say which field identifies a row, a ${p.type} is known by its name.`,
       serves: keyed ? ["key"] : [],
     };
-    if (!keyed)
+    if (!keyed) {
+      // A choice needs two distinct labels; else it is asked in words.
+      const fields = [
+        ...new Set(columns.map((c) => c.name || "").filter(Boolean)),
+      ].slice(0, 3);
       questions.push({
         id: `Q${questions.length + 1}`,
         items: [`type.${p.type}`, `mapping.${p.mapping}`],
+        header: `${p.name} key`.slice(0, 40),
         text: `Which field identifies a row of ${p.name}?`,
-        options: columns.slice(0, 3).map((c) => c.name || ""),
+        options:
+          fields.length > 1
+            ? fields.map((label) => ({ label, description: null }))
+            : [],
+        multiple: false,
         default: null,
         blocking: false,
       });
+    }
 
     // The row's own entity, then one per foreign key into a chosen table.
     const own = keyed
@@ -275,8 +285,16 @@ export function draftFromTables(
         questions.push({
           id: `Q${questions.length + 1}`,
           items: [`mapping.${p.mapping}`],
+          header: `${fk.referencedTable}`.slice(0, 40),
           text: `${p.name}.${column} refers to ${fk.referencedTable}, which this draft didn’t read. Should the next draft include it?`,
-          options: ["Yes, include it", "No, leave it out"],
+          options: [
+            {
+              label: "Yes, include it",
+              description: `The next draft reads ${fk.referencedTable} too.`,
+            },
+            { label: "No, leave it out", description: null },
+          ],
+          multiple: false,
           default: "No, leave it out",
           blocking: false,
         });

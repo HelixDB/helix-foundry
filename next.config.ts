@@ -101,6 +101,10 @@ const nextConfig: NextConfig = {
           ? databuddy.clientId
           : "",
     NEXT_PUBLIC_BOTID: botid ? "1" : "",
+    // The Assistant's dock (src/web/areas/agent): a local install's and the
+    // mock's ("1"); not a hosted stamp's until its backend serves it.
+    NEXT_PUBLIC_FOUNDRY_ASSISTANT:
+      mode === "local" || (appEnv !== "dev" && appEnv !== "prod") ? "1" : "",
   },
   async headers() {
     return [
@@ -111,6 +115,17 @@ const nextConfig: NextConfig = {
           { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        ],
+      },
+      // A published dashboard's page: its address is the link's token, so it
+      // sends no referrer anywhere, and it is no page for a search engine or
+      // a cache.
+      {
+        source: "/share/:path*",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+          { key: "Cache-Control", value: "no-store" },
         ],
       },
     ];

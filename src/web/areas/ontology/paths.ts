@@ -46,8 +46,9 @@ export const ontologyPaths = {
   // versions' section.
   generation: (ontologyId: string, id: string) =>
     at(ontologyId) + "/generations/" + enc(id),
-  // The generate form, prefilled from an earlier generation's goal,
-  // connectors (none for an empty list; every synced one when left out),
+  // The generate form, prefilled from an earlier generation's goal ("" for
+  // none; the current version's generation's when left out), connectors
+  // (none for an empty list; every synced one when left out),
   // API sources with their modes (none for an empty list; the current
   // version's generation's when left out) and document sets.
   generate: (
@@ -60,7 +61,7 @@ export const ontologyPaths = {
     },
   ) => {
     const q = new URLSearchParams();
-    if (prefill?.goal) q.set("goal", prefill.goal);
+    if (prefill?.goal !== undefined) q.set("goal", prefill.goal);
     if (prefill?.connectorIds)
       q.set("connectors", prefill.connectorIds.join(","));
     if (prefill?.eventSources)

@@ -119,7 +119,8 @@ import {
 } from "./queries";
 import { AskThreads } from "./ask-threads";
 import { AskVisual } from "./ask-visual";
-import { drawable, placeVisuals } from "./ask-visuals";
+import { drawable, placeVisuals, visualPlan } from "./ask-visuals";
+import { PinVisual } from "../dashboards/pin-visual";
 import { OntologyPicker, ontologyName, useOntology } from "./scope";
 import { useSources } from "./sources";
 import { recordQuestionAsked } from "../../shell/star-prompt";
@@ -1334,6 +1335,14 @@ function Answer({
                 hint={visual}
                 href={entityHref}
                 onShowQuery={() => showStep(visual.evidence_id)}
+                actions={
+                  <PinVisual
+                    ontologyId={ctx.ontologyId}
+                    questionId={q.id}
+                    evidenceId={visual.evidence_id}
+                    title={visualPlan(d.output, d.query, visual).title}
+                  />
+                }
               />
             );
           })}

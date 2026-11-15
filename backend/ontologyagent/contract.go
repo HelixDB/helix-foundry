@@ -1,7 +1,8 @@
 // Package ontologyagent drafts Helix Foundry ontologies with the ontology
 // agent. The agent is a sidecar of the foundry-ontology-worker pod, serving
-// ontology_agent.v1.Agent on loopback; Generator runs one start turn per
-// ontology generation, on the models the workspace's AI setting resolves to.
+// ontology_agent.v1.Agent on loopback; Generator runs a generation's start
+// turn, and a feedback turn for each round of answers to the questions a
+// turn asked, on the models the workspace's AI setting resolves to.
 //
 // contract.go is the agent's JSON contract, vendored in
 // pb/proto/ontology_agent/v1/schema: the requests the worker builds, and a
@@ -13,6 +14,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 )
 
 // ContractVersion is the contract the vendored schemas describe, the first
@@ -27,8 +30,8 @@ type TurnRequest struct {
 	// same one. An agent run with a response store replays what it already
 	// paid for; Foundry's sidecar runs without one.
 	RequestID string `json:"request_id"`
-	// State is the last turn's state, sent back as it came; nil (JSON null)
-	// for a start, the only turn Foundry sends so far.
+	// State is the last turn's state, sent back as it came: nil (JSON null)
+	// for a Start, the asking turn's for the Feedback that answers it.
 	State   json.RawMessage `json:"state"`
 	Sources []Source        `json:"sources"`
 	Input   Input           `json:"input"`
@@ -241,19 +244,80 @@ type Limits struct {
 	MaxWallSecs uint64  `json:"max_wall_secs"`
 }
 
-// Input is what a turn is for. Foundry sends only starts: a first build of a
-// draft from the user's brief, with no base bundle.
-type Input struct {
-	Start Start `json:"start"`
+// Input is what a turn is for: a Start or a Feedback, nothing else, as the
+// unexported method seals it.
+type Input interface {
+	json.Marshaler
+	input()
 }
 
-// Start is a first build of a draft.
+// Start is a first build of a draft from the user's brief, with no base
+// bundle.
 type Start struct {
 	// Workflow is what the user does, in their words.
 	Workflow string `json:"workflow"`
 	// Goals are what they want the graph to answer. Never nil: the schema
 	// needs an array.
 	Goals []string `json:"goals"`
+}
+
+// Feedback answers the questions a turn asked of the draft at DraftRev,
+// sent with that turn's state. The agent refuses answers to a question the
+// draft doesn't have open (invalid_input) and feedback on another revision
+// (stale_draft).
+type Feedback struct {
+	DraftRev uint64
+	Answers  []agentquestion.Answer
+}
+
+func (Start) input()    {}
+func (Feedback) input() {}
+
+// MarshalJSON writes {"start": {"workflow": ..., "goals": [...]}}.
+func (s Start) MarshalJSON() ([]byte, error) {
+	type start Start
+	return json.Marshal(struct {
+		Start start `json:"start"`
+	}{start(s)})
+}
+
+// MarshalJSON writes {"feedback": {"draft_rev": ..., "actions": [...]}}:
+// for each answer {"answer": {"question_id", "options": [...], "text"?}},
+// the labels of the options chosen and the person's own words when they
+// gave any, or {"leave": {"question_id"}} for a question left to the agent,
+// which it then decides as its own choice, never as the person's words.
+func (f Feedback) MarshalJSON() ([]byte, error) {
+	type answer struct {
+		QuestionID string   `json:"question_id"`
+		Options    []string `json:"options"`
+		Text       string   `json:"text,omitempty"`
+	}
+	type leave struct {
+		QuestionID string `json:"question_id"`
+	}
+	type action struct {
+		Answer *answer `json:"answer,omitempty"`
+		Leave  *leave  `json:"leave,omitempty"`
+	}
+	type feedback struct {
+		DraftRev uint64   `json:"draft_rev"`
+		Actions  []action `json:"actions"`
+	}
+	actions := make([]action, 0, len(f.Answers))
+	for _, a := range f.Answers {
+		if a.Left {
+			actions = append(actions, action{Leave: &leave{a.QuestionID}})
+			continue
+		}
+		options := a.Options
+		if options == nil {
+			options = []string{}
+		}
+		actions = append(actions, action{Answer: &answer{a.QuestionID, options, a.Text}})
+	}
+	return json.Marshal(struct {
+		Feedback feedback `json:"feedback"`
+	}{feedback{DraftRev: f.DraftRev, Actions: actions}})
 }
 
 // StatusKind is how a turn ended.
@@ -345,6 +409,8 @@ type TurnResult struct {
 	// OntologyTOML and MappingsTOML are the draft's rendered files.
 	OntologyTOML string
 	MappingsTOML string
+	// DraftRev is the draft's revision, which feedback on it names.
+	DraftRev uint64
 	// Questions are the questions the agent asked the user about the draft.
 	Questions json.RawMessage
 	// Bundle is the approved bundle, set exactly when Status is approved.
@@ -375,6 +441,7 @@ func DecodeTurnResult(data []byte) (TurnResult, error) {
 		OntologyTOML *string `json:"ontology_toml"`
 		MappingsTOML *string `json:"mappings_toml"`
 		Draft        struct {
+			Rev       uint64          `json:"rev"`
 			Questions json.RawMessage `json:"questions"`
 		} `json:"draft"`
 	}
@@ -398,7 +465,7 @@ func DecodeTurnResult(data []byte) (TurnResult, error) {
 	}
 	result := TurnResult{
 		Status: *raw.Status, State: raw.State, Draft: raw.Draft, OntologyTOML: *view.OntologyTOML, MappingsTOML: *view.MappingsTOML,
-		Questions: view.Draft.Questions, Summary: raw.Summary, Rules: raw.Rules, Usage: raw.Usage,
+		DraftRev: view.Draft.Rev, Questions: view.Draft.Questions, Summary: raw.Summary, Rules: raw.Rules, Usage: raw.Usage,
 	}
 	if len(result.Questions) == 0 {
 		result.Questions = json.RawMessage(`[]`)

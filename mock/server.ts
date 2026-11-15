@@ -2,9 +2,11 @@ import { createServer, type IncomingMessage } from "node:http";
 import { compileTemplate, matchTemplate } from "../src/shared/route-template";
 import { fail, type MockReply, type Principal } from "./http";
 import { handleReminders, mockReminders } from "./reminders";
+import { handleSharedDashboard } from "./routes/dashboards";
 import { mockFeedback } from "./routes/feedback";
 import { routes } from "./routes";
 import { handleDirectoryPage } from "./routes/access";
+import { pairHelper, startHelper } from "./routes/agent-hosts";
 import { handleBillingPage } from "./routes/billing";
 import { handleDocumentUpload } from "./routes/documents";
 import { sendPieces } from "./routes/event-sources";
@@ -30,7 +32,8 @@ import { handleWorkos } from "./workos";
 //
 // Test hooks: POST /__mock/reset, GET /__mock/stats, and POST /__mock/config
 // with { refuseLocalToken, accessTokenTtlSeconds, allowedRegions, checkoutCardOnFile,
-// allowedEmails, ontologyStepMs, ontologyOutcome, documentUploadFailures,
+// allowedEmails, ontologyStepMs, ontologyOutcome, agentStepMs, agentOutcome,
+// agentActionTtlMs, agentHosts, documentUploadFailures,
 // loadStepMs, loadOutcome, documentOutcome, helixSubscription,
 // ontologyDatabaseHidden, startingQueries, indexesPending, readErrors,
 // s3RoleAccess, legacyDocumentSets, dataLayoutConflicts, enrichmentStepMs,
@@ -41,7 +44,9 @@ import { handleWorkos } from "./workos";
 // healRowsMeasured, freshInstall, signIn, signInsRunOut, accountBroken,
 // githubInstalled, directoryTeams, directoryEntitled, directoryIssues,
 // directorySyncMs, remindersPerHour, remindersPerClientPerHour, assessEnabled,
-// assessMs, assessOutcome }.
+// assessMs, assessOutcome, automationClockMs, automationStepMs,
+// automationRunsPerDay, automationsDisabled, automationAnswer,
+// automationCount }.
 //
 // POST /v1/reminders and /v1/reminders/stop are Foundry's door's, not the
 // WFE's: the landing page's reminders (./reminders.ts), which the site's
@@ -60,6 +65,11 @@ import { handleWorkos } from "./workos";
 // [{ id, occurredAt?, data }], workflowRunId? }, answered as
 // SendFoundryEvents answers. The WFE has no route that sends pieces, so
 // neither has the app.
+//
+// POST /__mock/agent-host/pair { code, name?, account? } spends a pairing
+// code as the Assistant's helper's pair command does
+// (./routes/agent-hosts.ts): the helper it pairs offers Claude Code, and
+// runs once POST /__mock/agent-host/hello { host_id } starts it.
 //
 // /__mock/agent/v1/... calls the WFE route /v1/... as Ada's agent does
 // through the Helix MCP, with no token: starting and finishing a workflow's
@@ -157,6 +167,20 @@ const server = createServer(async (req, res) => {
         res.end(JSON.stringify(reply.body));
         return;
       }
+      if (
+        (url.pathname === "/__mock/agent-host/pair" ||
+          url.pathname === "/__mock/agent-host/hello") &&
+        req.method === "POST"
+      ) {
+        const body = JSON.parse(raw || "{}");
+        const reply =
+          url.pathname === "/__mock/agent-host/pair"
+            ? pairHelper(body)
+            : startHelper(body);
+        res.writeHead(reply.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(reply.body));
+        return;
+      }
       if (url.pathname === "/__mock/feedback" && req.method === "GET") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ feedback: mockFeedback() }));
@@ -192,6 +216,8 @@ const server = createServer(async (req, res) => {
     if (handleDirectoryPage(req, res, url)) return;
     // Foundry's door's reminder routes (ingest.helix-db.com), not the WFE's.
     if (handleReminders(req, res, url, raw)) return;
+    // And its dashboards' public snapshots.
+    if (handleSharedDashboard(req, res, url)) return;
     const reply = url.pathname.startsWith("/v1/")
       ? await wfe(req, url, raw)
       : fail("NOT_FOUND", "Not Found");

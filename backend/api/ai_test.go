@@ -347,6 +347,32 @@ func TestGetFoundryAI(t *testing.T) {
 		}
 	})
 
+	// Whether the Assistant can run on a setting is its probe report's
+	// tool check; a report that doesn't read fails the read.
+	t.Run("shows the Assistant's tool check", func(t *testing.T) {
+		s, store := aiService(t, aiConfig(modeCloud, false), "pro")
+		keys := s.deps.ConnectorKeys
+		for report, want := range map[string]foundryv1.FoundryAIAssistantCheck{
+			``:                                         foundryv1.FoundryAIAssistantCheck_FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED,
+			`{"checks":[]}`:                            foundryv1.FoundryAIAssistantCheck_FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED,
+			`{"checks":[],"assistant":"passed"}`:       foundryv1.FoundryAIAssistantCheck_FOUNDRY_AI_ASSISTANT_CHECK_PASSED,
+			`{"checks":[],"assistant":"auth"}`:         foundryv1.FoundryAIAssistantCheck_FOUNDRY_AI_ASSISTANT_CHECK_AUTH,
+			`{"checks":[],"assistant":"refused"}`:      foundryv1.FoundryAIAssistantCheck_FOUNDRY_AI_ASSISTANT_CHECK_REFUSED,
+			`{"checks":[],"assistant":"no_tool_call"}`: foundryv1.FoundryAIAssistantCheck_FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL,
+		} {
+			store.view.Active = savedClaude(t, keys, "cfg-1", ownKey)
+			store.view.Active.ProbeReport = json.RawMessage(report)
+			out, err := s.GetFoundryAI(ctx, &foundryv1.GetFoundryAIRequest{WorkspaceId: "ws-1"})
+			if err != nil || out.GetAi().GetActive().GetAssistantCheck() != want {
+				t.Fatalf("%s: active = %v, %v", report, out.GetAi().GetActive(), err)
+			}
+		}
+		store.view.Active.ProbeReport = json.RawMessage(`[`)
+		if _, err := s.GetFoundryAI(ctx, &foundryv1.GetFoundryAIRequest{WorkspaceId: "ws-1"}); status.Code(err) != codes.Internal {
+			t.Fatalf("an unreadable report: %v", err)
+		}
+	})
+
 	// A local install with no default says so, and allows endpoints on the
 	// same machine.
 	t.Run("shows a local install with no provider", func(t *testing.T) {

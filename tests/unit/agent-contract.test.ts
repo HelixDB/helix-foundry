@@ -3,6 +3,9 @@ import {
   AGENT_CONTRACT_VERSION,
   contractErrors,
 } from "../../mock/agent-contract";
+import agentBundle from "../../mock/fixtures/agent-bundle.json";
+import { ENGINE_QUESTIONS } from "../../mock/fixtures/generation-questions";
+import { draftFromTables } from "../../mock/routes/ontology-agent";
 
 // The ontology agent's Read and Ask JSON, held to the schemas vendored in
 // contract/ontology_agent, and its Probe result, whose
@@ -72,5 +75,48 @@ describe("the reads the SPA sends", () => {
     expect(sent).toHaveLength(3);
     for (const read of sent)
       expect(contractErrors("read_request#/$defs/ReadItem", read)).toEqual([]);
+  });
+});
+
+describe("the questions the mock's ontology agent asks", () => {
+  it("fit turn_result.json's Question: before a draft, in drafts, in the fixture", () => {
+    const drafted = draftFromTables(
+      [
+        {
+          connector: { id: "con_1", name: "Shop" },
+          table: {
+            name: "orders",
+            columns: [
+              { name: "number", type: "text" },
+              { name: "status", type: "text" },
+              { name: "customer_id", type: "text" },
+            ],
+            foreignKeys: [
+              {
+                column: "customer_id",
+                referencedTable: "customers",
+                referencedColumn: "id",
+              },
+            ],
+          },
+        },
+        {
+          connector: { id: "con_1", name: "Shop" },
+          table: { name: "notes", columns: [{ name: "body", type: "text" }] },
+        },
+      ],
+      "Orders",
+    );
+    const questions = [
+      ...ENGINE_QUESTIONS,
+      ...(drafted.questions || []),
+      ...agentBundle.questions,
+    ];
+    // A keyless table with columns to choose from, a key into a table the
+    // draft didn't read, and a keyless table of one column (asked in words).
+    expect(drafted.questions?.map((q) => q.options?.length)).toEqual([3, 2, 0]);
+    expect(questions.length).toBeGreaterThan(ENGINE_QUESTIONS.length + 3);
+    for (const q of questions)
+      expect(contractErrors("turn_result#/$defs/Question", q)).toEqual([]);
   });
 });

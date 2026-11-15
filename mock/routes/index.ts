@@ -1,9 +1,13 @@
 import type { MockRoute } from "../http";
 import { accessRoutes, directoryRoutes, guarded } from "./access";
+import { agentRoutes, whileOn } from "./agent";
+import { agentHostRoutes } from "./agent-hosts";
 import { aiRoutes } from "./ai";
 import { authRoutes } from "./auth";
+import { automationRoutes } from "./automations";
 import { billingRoutes } from "./billing";
 import { dataRoutes } from "./data";
+import { dashboardRoutes } from "./dashboards";
 import { dataLayoutRoutes } from "./data-layout";
 import { databaseRoutes } from "./databases";
 import { documentRoutes } from "./documents";
@@ -45,6 +49,9 @@ export const routes: MockRoute[] = [
   ...enrichmentRoutes,
   ...aiRoutes,
   ...questionRoutes,
+  ...whileOn([...agentRoutes, ...agentHostRoutes]),
+  ...dashboardRoutes,
+  ...automationRoutes,
   ...databaseRoutes,
   ...accessRoutes,
   ...directoryRoutes,

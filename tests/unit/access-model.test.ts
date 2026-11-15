@@ -626,6 +626,8 @@ describe("restricted mode", () => {
       "/settings/access",
       "/ontology/new",
       "/ontology/sample",
+      "/automations",
+      "/automations/a/runs/r",
     ])
       expect(granteeRedirect(path), path).toBe("/ask");
     expect(granteeRedirect("/ontology/o/loads/l")).toBe("/ontology/o");

@@ -16,6 +16,7 @@ package foundrynotifyworker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 
 	"go.uber.org/dig"
 
+	"github.com/helixdb/helix-foundry/backend/automation"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
@@ -72,6 +74,7 @@ type Deps struct {
 // read.
 type outbox interface {
 	DiscoverFoundryOntologyReady(ctx context.Context, since time.Time, limit int, newID func() string) (int, error)
+	DiscoverFoundryOntologyQuestions(ctx context.Context, since time.Time, limit int, newID func() string) (int, error)
 	DiscoverFoundrySampleFollowUps(ctx context.Context, from, to time.Time, limit int, newID func() string) (int, error)
 	ClaimFoundryNotification(ctx context.Context, token string, lease time.Duration) (*model.FoundryNotification, error)
 	FinishFoundryNotification(ctx context.Context, id, token string, outcome model.FoundryNotificationOutcome) error
@@ -80,6 +83,7 @@ type outbox interface {
 	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
 	GetFoundryGraphJobByClientToken(ctx context.Context, ontologyID, clientToken string) (*model.FoundryGraphJob, error)
 	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
+	GetFoundryAutomationNotice(ctx context.Context, n *model.FoundryNotification) (*model.FoundryAutomationNotice, error)
 	ClaimFoundryReminder(ctx context.Context, token string, lease time.Duration) (*model.FoundryReminder, error)
 	FinishFoundryReminder(ctx context.Context, id, token string, outcome model.FoundryReminderOutcome) error
 }
@@ -91,11 +95,14 @@ type Task struct {
 	// reminders is foundry.reminders: its gaps schedule each address's next
 	// reminder.
 	reminders config.RemindersConfig
-	box       outbox
-	mail      ports.Mail
-	site      site
-	now       func() time.Time
-	worker    tasks.Worker
+	// answerWait is foundry.ontology.answer_days: when a first draft's
+	// questions take the agent's defaults, which its email says.
+	answerWait time.Duration
+	box        outbox
+	mail       ports.Mail
+	site       site
+	now        func() time.Time
+	worker     tasks.Worker
 }
 
 // New is the worker on d's store and mail, which it needs both of, and
@@ -112,7 +119,8 @@ func New(d Deps) (*Task, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("foundry-notify-worker: %w", err)
 	}
-	return &Task{deps: d, cfg: cfg, reminders: d.Cfg.Foundry.Reminders, box: d.DB, mail: d.Mail, site: site(cfg.SiteURL), now: time.Now}, nil
+	return &Task{deps: d, cfg: cfg, reminders: d.Cfg.Foundry.Reminders, answerWait: d.Cfg.Foundry.Ontology.AnswerWait(), box: d.DB, mail: d.Mail,
+		site: site(cfg.SiteURL), now: time.Now}, nil
 }
 
 func (t *Task) Name() string { return Name }
@@ -130,7 +138,8 @@ func (t *Task) Stop(ctx context.Context) error { return t.worker.Stop(ctx) }
 
 // tick finds the emails due, then sends every one due until none is left,
 // then every reminder due. A first draft's email is found while it ended
-// within follow_up_window; a sample run's follow-up once it ended
+// within follow_up_window, and its questions' while they were asked within
+// it; a sample run's follow-up once it ended
 // follow_up_after ago, and no longer past the window.
 func (t *Task) tick(ctx context.Context) {
 	t.sendNotifications(ctx)
@@ -148,6 +157,9 @@ func (t *Task) sendNotifications(ctx context.Context) {
 	}{
 		{model.FoundryNotifyOntologyReady, func() (int, error) {
 			return t.box.DiscoverFoundryOntologyReady(ctx, window, discoverBatch, id.New)
+		}},
+		{model.FoundryNotifyOntologyQuestions, func() (int, error) {
+			return t.box.DiscoverFoundryOntologyQuestions(ctx, window, discoverBatch, id.New)
 		}},
 		{model.FoundryNotifySampleFollowUp, func() (int, error) {
 			return t.box.DiscoverFoundrySampleFollowUps(ctx, window, now.Add(-t.cfg.FollowUpAfter), discoverBatch, id.New)
@@ -347,10 +359,42 @@ func (t *Task) compose(ctx context.Context, n *model.FoundryNotification) (_ mes
 	switch n.Kind {
 	case model.FoundryNotifyOntologyReady:
 		return t.ontologyReady(ctx, n)
+	case model.FoundryNotifyOntologyQuestions:
+		return t.ontologyQuestions(ctx, n)
 	case model.FoundryNotifySampleFollowUp:
 		return sampleFollowUp(t.site.connect(n.WorkspaceID)), "", nil
+	case model.FoundryNotifyAutomationRun, model.FoundryNotifyAutomationPaused:
+		return t.automationNotice(ctx, n)
 	}
 	return message{}, fmt.Sprintf("Foundry sends no email of kind %q", n.Kind), nil
+}
+
+// ontologyQuestions is the email of a first draft whose agent asked
+// questions it waits on, and when they take the agent's defaults. It says
+// nothing of the questions, which are the model's words. One answered,
+// cancelled or ended since has nothing left to ask.
+func (t *Task) ontologyQuestions(ctx context.Context, n *model.FoundryNotification) (_ message, skip string, _ error) {
+	if n.OntologyID == nil {
+		return message{}, "the email names no ontology", nil
+	}
+	o, err := t.box.GetFoundryOntology(ctx, n.WorkspaceID, *n.OntologyID)
+	switch {
+	case errors.Is(err, store.ErrNotFound) || err == nil && o.DeletedAt != nil:
+		return message{}, "the ontology is gone", nil
+	case err != nil:
+		return message{}, "", fmt.Errorf("read the ontology: %w", err)
+	}
+	gen, err := t.box.GetOntologyGeneration(ctx, o.ID, n.SubjectID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return message{}, "the generation is gone", nil
+	case err != nil:
+		return message{}, "", fmt.Errorf("read the generation: %w", err)
+	case gen.Status != model.OntologyGenerationNeedsInput || gen.Questions == nil:
+		return message{}, fmt.Sprintf("the generation is %s, no longer waiting for answers", gen.Status), nil
+	}
+	name, start := ontologyName(o.Name)
+	return draftQuestions(name, start, gen.Questions.AskedAt.Add(t.answerWait), t.site.overview(o.WorkspaceID, o.ID)), "", nil
 }
 
 // ontologyReady is the email of how a first draft ended, which its
@@ -416,4 +460,56 @@ func (t *Task) ontologyReady(ctx context.Context, n *model.FoundryNotification) 
 		return loadFailed(name, start, failure, overview), "", nil
 	}
 	return message{}, fmt.Sprintf("the first draft's load is %s", load.Status), nil
+}
+
+// automationNotice is an automation's email: a notify step's, telling what
+// its run did, or the one that says it paused itself. An automation, run or
+// step gone has nothing left to tell; nor has one its owner no longer owns.
+func (t *Task) automationNotice(ctx context.Context, n *model.FoundryNotification) (_ message, skip string, _ error) {
+	notice, err := t.box.GetFoundryAutomationNotice(ctx, n)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return message{}, "the automation is gone", nil
+	case err != nil:
+		return message{}, "", fmt.Errorf("read the automation: %w", err)
+	case notice.Automation.OwnerUserID != n.UserID:
+		return message{}, "the automation's owner changed", nil
+	}
+	a := notice.Automation
+	name := automationNoticeName(a.Name)
+	if n.Kind == model.FoundryNotifyAutomationPaused {
+		why := ""
+		if a.LastRun != nil && a.LastRun.Error != nil {
+			why = *a.LastRun.Error
+		}
+		return automationPausedEmail(name, a.Failures, why, t.site.automation(a.WorkspaceID, a.ID)), "", nil
+	}
+	spec, err := automation.ParseSpec(notice.Run.Spec)
+	if err != nil {
+		return message{}, "the run's spec can't be read", nil
+	}
+	var note string
+	if node, ok := spec.Node(notice.Node.NodeID); ok {
+		if notify, ok := node.Config.(automation.NotifyNode); ok {
+			note = notify.Message
+		}
+	}
+	// What the Assistant steps before it said, in the order the spec runs them.
+	ancestors := spec.Ancestors(notice.Node.NodeID)
+	var said []string
+	pending := 0
+	for _, id := range ancestors {
+		for _, earlier := range notice.Earlier {
+			node, _ := spec.Node(id)
+			if earlier.NodeID != id || earlier.Status != model.FoundryAutomationNodeSucceeded || node.Kind() != automation.KindAssistant {
+				continue
+			}
+			var out automation.Output
+			if json.Unmarshal(earlier.Output, &out) == nil {
+				said = append(said, out.Summary)
+				pending += out.Pending
+			}
+		}
+	}
+	return automationRunEmail(name, note, said, pending, t.site.automationRun(a.WorkspaceID, a.ID, notice.Run.ID)), "", nil
 }

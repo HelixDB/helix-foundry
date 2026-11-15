@@ -1190,6 +1190,59 @@ describe("a failed test", () => {
   });
 });
 
+describe("the Assistant's tool check", () => {
+  const config = (
+    assistantCheck?: wfe.FoundryAiAssistantCheck,
+    ask = "gpt-x",
+  ): wfe.FoundryAiConfig => ({
+    id: "c",
+    label: "OpenAI",
+    models: { ...(ask && { ask: { name: ask } }) },
+    ...(assistantCheck && { assistantCheck }),
+  });
+
+  it("says why the Assistant can't run on a setting whose check failed, which still runs the rest", () => {
+    expect(
+      AI.assistantCheckText(config("FOUNDRY_AI_ASSISTANT_CHECK_AUTH")),
+    ).toBe(
+      "The Assistant can’t run on this setting: OpenAI refused the key on the Assistant’s calls. Drafts, loads and the Analyst still run on it. Check the key to use the Assistant.",
+    );
+    expect(
+      AI.assistantCheckText(config("FOUNDRY_AI_ASSISTANT_CHECK_REFUSED")),
+    ).toBe(
+      "The Assistant can’t run on gpt-x: OpenAI refused the Assistant’s calls to it. Drafts, loads and the Analyst still run on it. Choose another model for questions to use the Assistant.",
+    );
+    expect(
+      AI.assistantCheckText(config("FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL")),
+    ).toBe(
+      "The Assistant can’t run on gpt-x: it answered the Assistant’s test without calling a tool. Drafts, loads and the Analyst still run on it. Choose a model for questions that calls tools to use the Assistant.",
+    );
+    expect(
+      AI.assistantCheckText({
+        id: "c",
+        assistantCheck: "FOUNDRY_AI_ASSISTANT_CHECK_REFUSED",
+      }),
+    ).toBe(
+      "The Assistant can’t run on the Questions model: the provider refused the Assistant’s calls to it. Drafts, loads and the Analyst still run on it. Choose another model for questions to use the Assistant.",
+    );
+  });
+
+  it("says nothing while the Assistant runs on it: passed, not checked, or a check this site doesn't know", () => {
+    expect(
+      AI.assistantCheckText(config("FOUNDRY_AI_ASSISTANT_CHECK_PASSED")),
+    ).toBeUndefined();
+    expect(
+      AI.assistantCheckText(config("FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED")),
+    ).toBeUndefined();
+    expect(AI.assistantCheckText(config())).toBeUndefined();
+    expect(
+      AI.assistantCheckText(
+        config("FOUNDRY_AI_ASSISTANT_CHECK_NEW" as wfe.FoundryAiAssistantCheck),
+      ),
+    ).toBeUndefined();
+  });
+});
+
 describe("the setting", () => {
   const house: wfe.FoundryAi = {
     default: {

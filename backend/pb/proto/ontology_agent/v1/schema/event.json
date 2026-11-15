@@ -473,13 +473,22 @@
       ]
     },
     "Question": {
-      "description": "A question the agent asked the user. Its `default`, when it has options, is one of them.",
+      "description": "A question the agent asked the user. Its `default`, when it has options, is the label of\nthe one it recommends; `multiple` says whether the user may choose several of them.",
       "type": "object",
       "properties": {
         "blocking": {
           "type": "boolean"
         },
         "default": {
+          "description": "The label of the option the agent recommends, or, without options, the answer it takes\nuntil the user answers.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "header": {
+          "description": "A few words naming the question, for a list of questions: at most 40 characters.",
           "type": [
             "string",
             "null"
@@ -495,11 +504,17 @@
             "$ref": "#/$defs/ItemId"
           }
         },
+        "multiple": {
+          "description": "Whether the user may choose several options; false without options.",
+          "type": "boolean",
+          "default": false
+        },
         "options": {
+          "description": "The answers offered, at least two; none for an answer in the user's words.",
           "type": "array",
           "default": [],
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/QuestionOption"
           }
         },
         "text": {
@@ -511,9 +526,32 @@
         "id",
         "items",
         "text",
+        "header",
         "options",
+        "multiple",
         "default",
         "blocking"
+      ]
+    },
+    "QuestionOption": {
+      "description": "One answer a question offers.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "One line on what picking it means, when the label alone doesn't say.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "description": "What the user picks: a few words, unique among the question's options.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label"
       ]
     },
     "Status": {

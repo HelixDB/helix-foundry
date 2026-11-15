@@ -1,0 +1,386 @@
+/* The question-by-question flow (flow.tsx): a strip of the questions and
+   Review, one question at a time, its options a list. Its own width decides
+   its layout (a page's panel, the Assistant's dock, a phone). */
+
+.qf {
+  container-type: inline-size;
+  display: grid;
+  gap: var(--hf-space-3);
+  min-width: 0;
+}
+
+/* The strip: a step per question, then Review. */
+.qf-strip ol {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.qf-strip li {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.qf-strip li:last-child {
+  flex: 0 0 auto;
+}
+.qf-strip-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-surface);
+  color: var(--hf-text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--hf-duration) var(--hf-ease),
+    background var(--hf-duration) var(--hf-ease);
+}
+.qf-strip-step:hover:not(:disabled) {
+  background: var(--hf-hover);
+}
+.qf-strip-step:disabled {
+  color: var(--hf-faint);
+  cursor: default;
+}
+.qf-strip-step[aria-current="step"] {
+  border-color: var(--hf-accent-border);
+  background: var(--hf-accent-soft);
+  color: var(--hf-text);
+}
+.qf-strip-step:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 1px;
+}
+.qf-strip-mark {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-sunken);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.qf-strip-step.is-answered .qf-strip-mark {
+  background: var(--hf-accent);
+  color: var(--hf-on-accent);
+}
+.qf-strip-text {
+  display: grid;
+  min-width: 0;
+}
+.qf-strip-name {
+  overflow: hidden;
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qf-strip-answer {
+  overflow: hidden;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One question. */
+.qf-step,
+.qf-review {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.qf-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.qf-text {
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.qf-about {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  overflow-wrap: anywhere;
+}
+.qf-options {
+  display: grid;
+  gap: 6px;
+}
+.qf-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  align-items: start;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-surface);
+  color: var(--hf-text-2);
+  cursor: pointer;
+  transition:
+    border-color var(--hf-duration) var(--hf-ease),
+    background var(--hf-duration) var(--hf-ease);
+}
+.qf-option:hover {
+  background: var(--hf-hover);
+}
+.qf-option:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 1px;
+}
+.qf-option.is-checked {
+  border-color: var(--hf-accent-border);
+  background: var(--hf-accent-soft);
+  color: var(--hf-text);
+}
+.qf-key {
+  display: inline-grid;
+  place-items: center;
+  height: 18px;
+  margin-top: 1px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-sm);
+  color: var(--hf-muted);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+}
+.qf-option-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.qf-option-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--hf-text-base);
+  overflow-wrap: anywhere;
+}
+.qf-option-desc {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  overflow-wrap: anywhere;
+}
+.qf-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  /* The ring says the choice is open: 3:1 in dark. */
+  border: 1.5px solid var(--hf-faint);
+  background: var(--hf-field);
+  color: var(--hf-on-accent);
+}
+/* A radio is round, as the app's choice cards draw theirs. */
+.qf-mark.is-dot {
+  border-radius: 50%;
+}
+.qf-mark.is-box {
+  border-radius: 4px;
+}
+.qf-option.is-checked .qf-mark.is-box {
+  border-color: var(--hf-accent);
+  background: var(--hf-accent);
+}
+.qf-option.is-checked .qf-mark.is-dot {
+  border: 5px solid var(--hf-accent);
+}
+.qf-own textarea {
+  resize: vertical;
+}
+.qf-suggest {
+  justify-self: start;
+}
+.qf-hint {
+  min-height: 1em;
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.qf-hint.is-error {
+  color: var(--hf-danger-text);
+}
+.qf-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.qf-nav-end {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* Review, and the compact summaries (answered questions, a card). */
+.qf-review-title {
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+}
+.qf-review-title:focus {
+  outline: none;
+}
+.qf-review-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.qf-review-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--hf-border);
+}
+.qf-review-list li:first-child {
+  border-top: 0;
+}
+.qf-review-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.qf-review-name {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.qf-review-q {
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  overflow-wrap: anywhere;
+}
+.qf-review-a {
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.qf-review-a.is-left,
+.qf-summary dd.is-left {
+  color: var(--hf-muted);
+  font-weight: 400;
+}
+.qf-summary {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.qf-summary-row {
+  display: grid;
+  gap: 2px;
+}
+.qf-summary dt {
+  display: grid;
+  gap: 1px;
+}
+.qf-summary dd {
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-sm);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+/* A member's view: the questions to read. */
+.qf-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.qf-list-item {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+}
+.qf-list-options {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.qf-list-options li {
+  display: grid;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  color: var(--hf-text-2);
+}
+
+/* Narrow (the dock, a phone): the strip is its marks, the current step
+   named with its answer. Each step's label and title still name it and
+   its answer (flow.tsx). */
+@container (max-width: 520px) {
+  .qf-strip li {
+    flex: 0 0 auto;
+  }
+  .qf-strip-step {
+    align-items: center;
+    padding: 5px 8px;
+  }
+  .qf-strip-step:not([aria-current="step"]) .qf-strip-text {
+    display: none;
+  }
+  .qf-strip li:has([aria-current="step"]) {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .qf-option {
+    padding: 8px 10px;
+  }
+}
+/* A phone: no keys to press. */
+@container (max-width: 380px) {
+  .qf-key {
+    display: none;
+  }
+  .qf-option {
+    grid-template-columns: minmax(0, 1fr) 18px;
+  }
+  .qf-hint:not(.is-error) {
+    display: none;
+  }
+}

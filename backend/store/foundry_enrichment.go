@@ -94,7 +94,9 @@ ORDER BY c.created_at, c.id LIMIT 1`, workspaceID).
 // load applies them; and queues a purge for each live ontology with a load,
 // current or not, that applied profiles: the purge's clean load becomes
 // current and the others are deleted. A load still writing counts, so
-// profiles it chose just before are removed once it ends.
+// profiles it chose just before are removed once it ends. The public
+// snapshots of dashboards that read an ontology whose loads ever applied
+// profiles are deleted at once, their links with them.
 func (s *mysqlDB) SetFoundryEnrichmentConsent(ctx context.Context, c *model.FoundryEnrichmentConsent) error {
 	if c.ID == "" || c.WorkspaceID == "" || c.UserID == "" || c.NoticeVersion == "" || c.MonthlyCreditCap < 0 {
 		return fmt.Errorf("invalid foundry enrichment consent")
@@ -124,7 +126,10 @@ SELECT DISTINCT o.id, o.workspace_id FROM foundry_ontologies o
 JOIN foundry_load_enrichments e ON e.ontology_id = o.id JOIN foundry_loads l ON l.id = e.load_id
 WHERE o.workspace_id=? AND o.deleted_at IS NULL AND e.applied_key <> '' AND l.status NOT IN ('deleting', 'deleted')
 ON DUPLICATE KEY UPDATE requested_at=NOW(6), attempts=0, last_load_id=NULL, done_at=NULL`, c.WorkspaceID)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.deleteFoundryEnrichedShares(ctx, c.WorkspaceID)
 	})
 }
 
@@ -136,7 +141,8 @@ ON DUPLICATE KEY UPDATE requested_at=NOW(6), attempts=0, last_load_id=NULL, done
 // cancelled, preparing and running ones are asked to cancel, and every step
 // is purged, so its files are swept; its pending purges end, as its
 // databases go with it; and its model providers drop their keys, a pending
-// one superseded.
+// one superseded; its automations pause and their live runs are cancelled;
+// and its dashboards' public snapshots are deleted.
 func (s *mysqlDB) CancelWorkspaceFoundryWork(ctx context.Context, workspaceID string) error {
 	ontologies, err := s.lockWorkspaceFoundryOntologies(ctx, workspaceID)
 	if err != nil {
@@ -156,6 +162,26 @@ WHERE ontology_id=? AND status='writing'`, ontologyID); err != nil {
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_enrichment_purges SET done_at=NOW(6) WHERE workspace_id=? AND done_at IS NULL`,
 		workspaceID); err != nil {
+		return err
+	}
+	// Its automations stop, and their live runs end with the Assistant turns
+	// they wait on.
+	if err := s.cancelFoundryAutomationTurns(ctx, `SELECT id FROM foundry_automation_runs WHERE workspace_id=? AND status IN ('queued', 'running')`,
+		workspaceID, "the workspace was deleted"); err != nil {
+		return err
+	}
+	for _, q := range []string{
+		`UPDATE foundry_automation_runs SET status='cancelled', error='The workspace was deleted.', lease_owner=NULL, lease_until=NULL, finished_at=NOW(6)
+WHERE workspace_id=? AND status IN ('queued', 'running')`,
+		`UPDATE foundry_automations SET status='paused', paused_reason='owner_lost_access', paused_by_user_id=NULL, paused_at=NOW(6),
+    next_fire_at=NULL, cursor_at=NULL, cursor_id='' WHERE workspace_id=? AND status='active'`,
+	} {
+		if _, err := s.db.ExecContext(ctx, q, workspaceID); err != nil {
+			return err
+		}
+	}
+	// Its dashboards' public links stop at once.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_dashboard_shares WHERE workspace_id=?`, workspaceID); err != nil {
 		return err
 	}
 	return s.dropFoundryAIConfigs(ctx, workspaceID)

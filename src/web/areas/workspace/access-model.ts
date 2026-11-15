@@ -602,8 +602,8 @@ export function restrictedHoldingNothing(
  * of `pathname`, or undefined where it may stay: Ask, its ontologies'
  * overviews, the read-only pages of their shared loads (Records, an
  * entity's page and a document's view) and, with its Workflows permission
- * (`workflows`), their workflows. Connectors, Settings and making an
- * ontology open Ask; the Explorer's graph opens Records, and an ontology's
+ * (`workflows`), their workflows. Connectors, Settings, automations
+ * (people's alone) and making an ontology open Ask; the Explorer's graph opens Records, and an ontology's
  * other pages its overview.
  *
  *     granteeRedirect("/data/connections/c") // "/ask"
@@ -637,6 +637,7 @@ export function granteeRedirect(
         : `/explore/${second}/records`;
     case "data":
     case "settings":
+    case "automations":
       return "/ask";
     default:
       return undefined;

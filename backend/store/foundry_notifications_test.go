@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/sample"
@@ -69,6 +70,47 @@ func finishedAgo(t *testing.T, generationID string, ago time.Duration) {
 	_, err := testDB.Exec(`UPDATE foundry_ontology_generations SET finished_at=NOW(6) - INTERVAL ? MICROSECOND WHERE id=?`,
 		ago.Microseconds(), generationID)
 	require.NoError(t, err)
+}
+
+// A first draft whose agent asked is emailed once, at its first round,
+// while it waits: its requester left the page.
+func TestDiscoverFoundryOntologyQuestions(t *testing.T) {
+	ctx := context.Background()
+	discover := func(t *testing.T, db store.Store, since time.Time) int {
+		t.Helper()
+		n, err := db.DiscoverFoundryOntologyQuestions(ctx, since, 100, notificationID)
+		require.NoError(t, err)
+		return n
+	}
+	asked := func(rev uint64) model.OntologyGenerationOutcome {
+		return model.OntologyGenerationOutcome{Status: model.OntologyGenerationNeedsInput, Asked: &model.OntologyGenerationAsked{
+			State: json.RawMessage(`{}`), DraftRev: rev, Questions: []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q1", Text: "Which?", Blocking: true}, Items: []string{}}}}}
+	}
+	f := newFoundryFixture(t, "NQ1")
+	gen := startedGeneration(t, f.db, firstDraft(f, "1"))
+	require.NoError(t, f.db.FinishOntologyGeneration(ctx, gen.ID, "worker-1", asked(2)))
+	assert.Zero(t, discover(t, f.db, time.Now().Add(time.Minute)), "asked before the window")
+	assert.Equal(t, 1, discover(t, f.db, time.Now().Add(-time.Hour)))
+	assert.Equal(t, []storedNotification{{
+		Kind: "ontology_questions", SubjectID: gen.ID, WorkspaceID: f.ontology.WorkspaceID, UserID: firstDraftUser, Status: "pending",
+		OntologyID: &f.ontology.ID,
+	}}, notifications(t))
+
+	// A second round sends no second email.
+	require.NoError(t, f.db.AnswerOntologyGeneration(ctx, f.ontology.ID, gen.ID, 2, []agentquestion.Answer{{QuestionID: "q1", Text: "That one"}}))
+	assert.Zero(t, discover(t, f.db, time.Now().Add(-time.Hour)), "an answered generation waits no longer")
+	claimed, err := f.db.ClaimOntologyGeneration(ctx, "worker-1", time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, f.db.FinishOntologyGeneration(ctx, claimed.ID, "worker-1", asked(4)))
+	assert.Zero(t, discover(t, f.db, time.Now().Add(-time.Hour)), "a generation has one email")
+
+	// Only a first draft a person asked for is emailed.
+	g := newFoundryFixture(t, "NQ2")
+	plain := firstDraft(g, "1")
+	plain.Input.LoadWhenReady = false
+	plain = startedGeneration(t, g.db, plain)
+	require.NoError(t, g.db.FinishOntologyGeneration(ctx, plain.ID, "worker-1", asked(2)))
+	assert.Zero(t, discover(t, g.db, time.Now().Add(-time.Hour)), "a draft no one asked to load")
 }
 
 func TestDiscoverFoundryOntologyReady(t *testing.T) {

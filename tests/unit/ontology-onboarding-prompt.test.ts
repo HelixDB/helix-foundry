@@ -962,6 +962,28 @@ describe("onboardingPrompt for an ontology under way", () => {
     expect(text).not.toContain("`generate_ontology`, target");
   });
 
+  it("has the agent ask me the questions a draft waits on, never answering them", () => {
+    const text = onboardingPrompt(
+      input({
+        ontology: ontology({
+          step: "draft",
+          state: "waiting",
+          generation: generation(),
+        }),
+      }),
+    );
+    expect(text).toContain(
+      "asked questions about its first draft, generation `g1`, and waits for my answers.",
+    );
+    expect(steps(text)[0]).toBe("Generate a draft");
+    expect(text).toContain("Never answer for me.");
+    expect(text).toContain("`answer_generation_questions`, target");
+    expect(text).toContain(
+      '"round": <its question_round>, "answers": [{"question_id": "<id>", "options": ["<each label I chose>"]',
+    );
+    expect(text).not.toContain("`generate_ontology`, target");
+  });
+
   it("says why the last draft failed, and starts over at the data", () => {
     const failed = (error?: string) =>
       onboardingPrompt(
@@ -1090,9 +1112,8 @@ describe("local onboarding through MCP", () => {
   });
   it("says what the local tools answer and where a moved MCP is", () => {
     expect(text).toContain("FOUNDRY_MCP_PORT");
-    expect(text).toContain(
-      "docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait",
-    );
+    expect(text).toContain("git pull and then docker compose up -d --wait");
+    expect(text).not.toContain("compose.mcp.yaml");
     expect(text).toContain("helix_foundry_list_connectors");
     expect(text).toContain(
       "fails with failed_precondition: prepare it again with the same operation, target and payload",
@@ -1114,16 +1135,16 @@ describe("the landing prompt's Run it on my computer", () => {
     expect(section).toContain(
       "docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp",
     );
-    expect(section).toContain("If it does: publish it");
     expect(section).toContain(
-      "docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait",
+      "If it does: it is published on this computer at `http://localhost:8081/mcp`",
     );
-    expect(section).toContain("connect to it");
+    expect(section).not.toContain("compose.mcp.yaml");
+    expect(section).toContain("Connect to it");
     expect(section).toContain("If not: I do the setup in Foundry’s pages");
   });
   it("says what to do when the MCP's port is taken, which only it needs", () => {
     expect(section).toContain("FOUNDRY_MCP_PORT");
-    expect(section).toContain("ports 3000 and 8333 are free");
+    expect(section).toContain("ports 3000, 8333 and 8081 are free");
   });
   it("asks for a star once, when the ontology is handed back", () => {
     expect(text.split(STAR_ASK)).toHaveLength(2);

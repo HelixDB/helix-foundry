@@ -47,8 +47,21 @@ const configure = (config: {
   freshInstall?: boolean;
   aiProbeMs?: number;
   ontologyStepMs?: number;
+  // A new generation's agent asks before it drafts.
+  ontologyQuestions?: boolean;
   loadStepMs?: number;
   askStepMs?: number;
+  agentStepMs?: number;
+  // false: the Assistant is off (foundry.agent.enabled).
+  agentEnabled?: boolean;
+  // The Assistant's helpers (mock/routes/agent-hosts.ts).
+  agentHosts?: {
+    name: string;
+    runtimes: ["claude_code"];
+    online?: boolean;
+    account?: { state: string; subscription?: string } | null;
+  }[];
+  automationStepMs?: number;
 }) =>
   fetch(`${MOCK}/__mock/config`, {
     method: "POST",
@@ -1229,4 +1242,326 @@ test("stars on GitHub in place with the install's token, else opens it", async (
   await expect(await opened).toHaveURL(REPOSITORY);
   await expect(prompt).toBeHidden();
   expect(await done()).toBe("1");
+});
+
+// The Assistant on the owner's own subscription (Settings › AI models): new
+// threads run on Claude Code through a helper paired with a one-time code,
+// whose command the page shows; the dock says where its thread runs, and,
+// while no helper runs it, how to start one.
+
+const dockOf = (page: Page) =>
+  page.getByRole("complementary", { name: "Assistant" });
+const assistantPanel = (page: Page) =>
+  page
+    .locator(".hf-panel")
+    .filter({ hasText: "Where new Assistant threads run" });
+
+async function openDock(page: Page) {
+  await page
+    .getByRole("button", { name: "Assistant", exact: true })
+    .filter({ visible: true })
+    .first()
+    .click();
+  await expect(dockOf(page)).toBeVisible();
+}
+
+test("pairs a helper and runs new Assistant threads on the owner's Claude subscription", async ({
+  page,
+}) => {
+  await configure({ agentStepMs: 100 });
+  await page.goto("/settings/ai");
+  const panel = assistantPanel(page);
+  await expect(
+    panel.getByRole("radio", { name: "Foundry’s AI model" }),
+  ).toBeChecked();
+  await expect(
+    panel.getByRole("radio", { name: "My ChatGPT subscription (Codex)" }),
+  ).toBeDisabled();
+  // Chosen from the keyboard: the choice saves, and the focus stays on it.
+  await panel.getByRole("radio", { name: "Foundry’s AI model" }).focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.getByText("New Assistant threads run on your Claude subscription."),
+  ).toBeVisible();
+  const claude = panel.getByRole("radio", { name: "My Claude subscription" });
+  await expect(claude).toBeChecked();
+  await expect(claude).toBeFocused();
+  await expect(panel.getByText("No helper is paired yet.")).toBeVisible();
+
+  // A one-time code, shown as the command that spends it.
+  await panel.getByRole("button", { name: "Pair a helper" }).click();
+  const command = panel.getByRole("figure", { name: "pair command" });
+  await expect(command).toContainText(
+    "npx -y @helixdb/foundry-agent-host@0.1.0 pair hxp_",
+  );
+  await expect(
+    panel.getByRole("figure", { name: "install command" }),
+  ).toHaveText(/npx -y @helixdb\/foundry-agent-host@0\.1\.0 install/);
+  await expect(panel.getByText(/in the next 10 minutes/)).toBeVisible();
+  await expect(
+    panel.getByText("Waiting for the helper to pair…"),
+  ).toBeVisible();
+  const code = /pair (hxp_\S+)/.exec(await command.innerText())![1];
+  // The helper spends it on the owner's computer; the page sees it paired.
+  const paired = await fetch(`${MOCK}/__mock/agent-host/pair`, {
+    method: "POST",
+    body: JSON.stringify({ code, name: "Ada's Mac" }),
+  });
+  expect(paired.status).toBe(200);
+  await expect(
+    page.getByText("Paired Ada's Mac.", { exact: true }),
+  ).toBeVisible();
+  await expect(command).toHaveCount(0);
+  // Pairing starts nothing: the page says how to start it, until it runs.
+  const row = panel.getByRole("listitem", { name: "Ada's Mac" });
+  await expect(row).toContainText("Not started");
+  await expect(
+    panel.getByText("Paired Ada's Mac. Now start it on that computer."),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("figure", { name: "install command" }),
+  ).toHaveText(/npx -y @helixdb\/foundry-agent-host@0\.1\.0 install/);
+  await expect(panel.getByRole("figure", { name: "run command" })).toHaveText(
+    /npx -y @helixdb\/foundry-agent-host@0\.1\.0 run/,
+  );
+  const started = await fetch(`${MOCK}/__mock/agent-host/hello`, {
+    method: "POST",
+    body: JSON.stringify({ host_id: (await paired.json()).host_id }),
+  });
+  expect(started.status).toBe(200);
+  await expect(page.getByText("Ada's Mac is running.")).toBeVisible();
+  await expect(
+    panel.getByText("Paired Ada's Mac. Now start it on that computer."),
+  ).toHaveCount(0);
+  await expect(row).toContainText("Running");
+  await expect(row).toContainText(
+    "Claude Code is signed in on a Max subscription",
+  );
+  // Never a helper's token.
+  await expect(page.getByText(/hxh_|hxr_/)).toHaveCount(0);
+
+  // The dock says where a new thread runs, and runs it there.
+  await openDock(page);
+  const dock = dockOf(page);
+  await expect(dock).toContainText(
+    "New threads run on your Claude subscription, through Claude Code on your computer.",
+  );
+  await dock
+    .getByRole("textbox", { name: "Message" })
+    .fill("What ontologies do I have?");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(dock.getByText(/^This workspace has \d+ ontolog/)).toBeVisible();
+  await expect(dock).toContainText(
+    "This thread runs on your Claude subscription, through Claude Code on your computer.",
+  );
+
+  // Revoked, it runs nothing, and no helper is paired: the thread says to
+  // pair one (starting it would fail), linking where.
+  await row.getByRole("button", { name: "Revoke Ada's Mac" }).click();
+  await page
+    .getByRole("dialog", { name: "Revoke Ada's Mac?" })
+    .getByRole("button", { name: "Revoke" })
+    .click();
+  await expect(page.getByText("Revoked Ada's Mac.")).toBeVisible();
+  await expect(row).toHaveCount(0);
+  await expect(dock).toContainText(
+    "No helper running Claude Code is paired, so this thread can’t be sent. Pair one in Settings › AI models, then start it.",
+  );
+  await expect(dock.getByRole("figure", { name: "run command" })).toHaveCount(
+    0,
+  );
+  await expect(
+    dock.getByRole("link", { name: "Settings › AI models" }),
+  ).toHaveAttribute("href", /\/settings\/ai/);
+  await dock.getByRole("textbox", { name: "Message" }).fill("And now?");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(dock.getByRole("alert")).toHaveText(
+    "No helper is paired to run it: pair one in Settings › AI models, start it, then send again.",
+  );
+});
+
+test("asks the Assistant's questions one at a time in the dock, and a draft's on its page", async ({
+  page,
+}) => {
+  await configure({
+    agentStepMs: 100,
+    ontologyStepMs: 300,
+    ontologyQuestions: true,
+  });
+  await page.goto("/");
+  await openDock(page);
+  const dock = dockOf(page);
+  await dock
+    .getByRole("textbox", { name: "Message" })
+    .fill("Help me set up an ontology");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  const asked = dock.getByRole("region", { name: "Questions for you" });
+  await expect(asked).toBeVisible({ timeout: 20_000 });
+  await asked.getByRole("radio", { name: /^Customer health/ }).click();
+  await asked.getByRole("checkbox").first().click();
+  await asked.getByRole("button", { name: "Next", exact: true }).click();
+  await asked.getByRole("button", { name: "Skip", exact: true }).click();
+  await asked.getByRole("button", { name: "Send answers" }).click();
+  await expect(
+    dock.getByText(/an ontology for Customer health, reading/),
+  ).toBeVisible({ timeout: 20_000 });
+  // A draft's questions, on its page, as hosted.
+  await page.goto("/ontology/ont_acme_contracts/generate");
+  await page.getByRole("button", { name: "Generate", exact: true }).click();
+  await expect(
+    page.getByRole("radiogroup", { name: /^Is a customer/ }),
+  ).toBeVisible({ timeout: 15_000 });
+});
+
+test("shows nothing of where the Assistant runs while it is off", async ({
+  page,
+}) => {
+  await configure({ agentEnabled: false });
+  const refused = page.waitForResponse(
+    (r) => r.url().includes("/foundry/agent/runtime") && r.status() === 400,
+  );
+  await page.goto("/settings/ai");
+  await refused;
+  await expect(
+    page.getByRole("heading", { name: "Choose where AI runs" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "The Assistant", exact: true }),
+  ).toHaveCount(0);
+  await expect(assistantPanel(page)).toHaveCount(0);
+  await expect(
+    page.getByText("Couldn’t read where the Assistant runs"),
+  ).toHaveCount(0);
+});
+
+test("says how to start a helper that isn't running, and when its Claude Code is signed out", async ({
+  page,
+}) => {
+  await configure({
+    agentStepMs: 100,
+    agentHosts: [
+      { name: "Ada's Mac", runtimes: ["claude_code"], online: false },
+      {
+        name: "Build box",
+        runtimes: ["claude_code"],
+        online: false,
+        account: { state: "signed_out" },
+      },
+    ],
+  });
+  await page.goto("/settings/ai");
+  const panel = assistantPanel(page);
+  // Helpers show while the workspace's model runs its threads, once paired.
+  await expect(
+    panel.getByRole("listitem", { name: "Ada's Mac" }),
+  ).toContainText("Not running");
+  await panel.getByRole("radio", { name: "My Claude subscription" }).check();
+  await expect(
+    panel.getByText(
+      "No helper running Claude Code is online, so new threads can’t be sent. Start it on its computer:",
+    ),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("figure", { name: "run command" }),
+  ).toBeVisible();
+  const mac = panel.getByRole("listitem", { name: "Ada's Mac" });
+  await expect(mac).toContainText("last seen 1h ago");
+  await expect(
+    panel.getByRole("listitem", { name: "Build box" }),
+  ).toContainText(
+    "Claude Code isn’t signed in: on that computer, run claude, then /login.",
+  );
+
+  // The dock says so too, and a send is refused with what to run.
+  await openDock(page);
+  const dock = dockOf(page);
+  await expect(dock).toContainText(
+    "Claude Code’s helper isn’t running, so new threads can’t be sent.",
+  );
+  await dock.getByRole("textbox", { name: "Message" }).fill("Hello");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(dock.getByRole("alert")).toHaveText(
+    "Its helper isn’t running on your computer: start it with npx -y @helixdb/foundry-agent-host@0.1.0 run, then send again.",
+  );
+  await expect(dock.getByRole("textbox", { name: "Message" })).toHaveValue(
+    "Hello",
+  );
+
+  // Started: the dock sees it within a few seconds, and the message sends;
+  // a helper whose Claude Code is signed out fails the turn in Foundry's words.
+  await configure({
+    agentHosts: [
+      {
+        name: "Build box",
+        runtimes: ["claude_code"],
+        account: { state: "signed_out" },
+      },
+    ],
+  });
+  await expect(dock).toContainText(
+    "New threads run on your Claude subscription, through Claude Code on your computer.",
+  );
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(dock).toContainText(
+    "Claude Code isn't signed in on the computer running the helper. Run claude, then /login there, then send your message again.",
+  );
+});
+
+test("makes dashboards, with no public link", async ({ page }) => {
+  await page.goto("/dashboards");
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "New dashboard" })
+    .click();
+  const create = page.getByRole("dialog", { name: "New dashboard" });
+  await create.getByLabel("Name").fill("Revenue");
+  await create.getByRole("button", { name: "Create dashboard" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Revenue" }),
+  ).toBeVisible();
+  // The owner edits, pins and deletes it; a local build publishes nothing.
+  await expect(
+    page.getByRole("button", { name: "Edit", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Publish", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "More actions" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Pin for everyone" }),
+  ).toBeVisible();
+  // Nor does it serve a public page.
+  const shared = await page.request.get("/share/hxd_" + "a".repeat(43));
+  expect(shared.status()).toBe(404);
+});
+
+test("runs an automation, which notes what it found where it can't email", async ({
+  page,
+}) => {
+  await configure({ agentStepMs: 60, automationStepMs: 100 });
+  await page.goto("/automations");
+  await page.getByRole("link", { name: /^Start from scratch/ }).click();
+  await page.getByLabel("Name").fill("Count the ontologies");
+  await page
+    .getByLabel("What should it do?")
+    .fill("How many ontologies are there?");
+  await page
+    .getByRole("group", { name: "Add a step" })
+    .getByRole("button", { name: "Email me" })
+    .click();
+  await expect(page.locator(".au-sentence")).toHaveText(
+    "When you run it, ask the Assistant: “How many ontologies are there?”, then note what it found in the run (this Foundry sends no email).",
+  );
+  await page.getByRole("button", { name: "Review and save" }).click();
+  await page.getByRole("button", { name: "Save and turn on" }).click();
+  const main = page.getByRole("main");
+  await main.getByRole("button", { name: "Run now" }).click();
+  await expect(
+    main.locator(".hf-page-header").getByText("Succeeded", { exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+  const steps = page.getByRole("list", { name: "What each step did" });
+  await expect(steps.getByRole("listitem").nth(1)).toContainText("Count: 3");
+  await expect(steps.getByRole("listitem").nth(2)).toContainText(
+    "Not emailed: this install sends no email.",
+  );
 });
