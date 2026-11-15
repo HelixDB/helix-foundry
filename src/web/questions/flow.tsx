@@ -106,12 +106,6 @@ export function QuestionFlow({
     toOwn.current = a.type === "own";
     dispatch(a);
   };
-  // "Something else" opened: its box takes the focus.
-  useEffect(() => {
-    if (!toOwn.current || !ownBox.current) return;
-    toOwn.current = false;
-    ownBox.current.focus();
-  });
   useEffect(() => {
     if (!acted.current || toOwn.current) return;
     const el = root.current;
@@ -120,6 +114,13 @@ export function QuestionFlow({
       el?.querySelector<HTMLElement>("[data-step-focus]");
     if (target && !target.contains(document.activeElement)) target.focus();
   }, [s.step, s.cursor]);
+  // "Something else" opened: its box takes the focus (after the effect
+  // above, which leaves it alone).
+  useEffect(() => {
+    if (!toOwn.current || !ownBox.current) return;
+    toOwn.current = false;
+    ownBox.current.focus();
+  });
   const send = async () => {
     const out = answersOf(questions, s.drafts);
     if (!out || pending || disabled) return;
@@ -487,7 +488,11 @@ function Step({
             disabled={!canLeave(q, draft)}
             onClick={next}
           >
-            {c.kind === "unanswered" ? "Skip" : last ? "Review" : "Next"}
+            {c.kind === "unanswered" && !q.blocking
+              ? "Skip"
+              : last
+                ? "Review"
+                : "Next"}
           </Button>
         </span>
       </div>

@@ -369,8 +369,8 @@ test("asks a draft's questions one at a time in the dock, and sends the answers 
   ).toBeVisible();
   const mine = dock.getByLabel("Your answers");
   await expect(mine).toContainText("Each person who signs in");
-  await expect(mine).toContainText("Unpaid invoices, Falling usage");
-  await expect(mine).toContainText("Left to the Assistant");
+  await expect(mine).toContainText("Unpaid invoices and Falling usage");
+  await expect(mine).toContainText("Left to the agent");
   // Its card shows each question beside its answer.
   const answers = cardOf(
     page,

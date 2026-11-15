@@ -880,7 +880,9 @@ function AnswersOf({
         return {
           name: questionName(q, i),
           question: q.text,
-          answer: a ? answerText(a) : "Left to the Assistant",
+          answer: a
+            ? answerText(a)
+            : `Left to ${asking?.asked?.generation ? "the agent" : "the Assistant"}`,
           left: !a,
         };
       })

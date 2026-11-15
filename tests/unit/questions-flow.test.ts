@@ -537,6 +537,9 @@ describe("what it sends and says", () => {
     expect(
       answerText({ options: ["Monthly", "Yearly"], text: "and quarterly" }),
     ).toBe("Monthly, Yearly, and “and quarterly”");
+    expect(answerText({ options: ["Monthly"], text: "yearly" })).toBe(
+      "Monthly and “yearly”",
+    );
     expect(answerText({ options: [], text: "60 days" })).toBe("“60 days”");
     expect(answerText({ options: ["A"] })).toBe("A");
     expect(answerText({})).toBe("");

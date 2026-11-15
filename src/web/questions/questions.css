@@ -192,12 +192,14 @@
   width: 16px;
   height: 16px;
   margin-top: 2px;
-  border: 1.5px solid var(--hf-border-strong);
-  background: var(--hf-surface);
+  /* The ring says the choice is open: 3:1 in dark. */
+  border: 1.5px solid var(--hf-faint);
+  background: var(--hf-field);
   color: var(--hf-on-accent);
 }
+/* A radio is round, as the app's choice cards draw theirs. */
 .qf-mark.is-dot {
-  border-radius: var(--hf-radius-pill);
+  border-radius: 50%;
 }
 .qf-mark.is-box {
   border-radius: 4px;

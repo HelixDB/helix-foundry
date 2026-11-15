@@ -498,14 +498,14 @@ export function answersOf(
  *
  * @example
  * answerText({ options: ["Monthly", "Yearly"], text: "and quarterly" }); // "Monthly, Yearly, and “and quarterly”"
+ * answerText({ options: ["Monthly"], text: "yearly" }); // "Monthly and “yearly”"
  * answerText({ options: [], text: "60 days" }); // "“60 days”"
  */
 export function answerText(a: { options?: readonly string[]; text?: string }) {
   const parts = [...(a.options ?? [])];
   if (a.text) parts.push(`“${a.text}”`);
-  return parts.length > 1
-    ? `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`
-    : (parts[0] ?? "");
+  if (parts.length < 3) return parts.join(" and ");
+  return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
 
 /** What a question left to `agent` takes, in words. */

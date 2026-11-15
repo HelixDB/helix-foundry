@@ -153,7 +153,7 @@ export function GenerationPage({ generationId }: { generationId: string }) {
   // The agent asked questions, and they were answered: it carries on from
   // where it asked.
   const asked = (g.questions || []).length > 0,
-    answered = (g.questions || []).some((q) => typeof q.answer === "string");
+    answered = (g.questions || []).some((q) => !!q.answer);
   // A first ontology's draft (loadWhenReady) was made current and its load
   // queued as it was stored, unless a version was current by then.
   const loading =

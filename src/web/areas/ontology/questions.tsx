@@ -120,6 +120,8 @@ export function GenerationQuestions({
           ready={aiReady}
         >
           <QuestionFlow
+            // A new round starts afresh.
+            key={round}
             questions={questions}
             storageKey={`generation:${g.id}:${round}`}
             pending={pending === "answers"}
