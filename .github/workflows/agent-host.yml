@@ -41,6 +41,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      # The isolation, against the Claude Code the pinned Agent SDK bundles.
+      - run: node --test test/real-claude.test.ts
+        env:
+          REAL_CLAUDE: ${{ github.workspace }}/agent-host/node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-linux-x64@0.3.321/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude
       - run: pnpm build
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:

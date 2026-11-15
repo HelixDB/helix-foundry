@@ -49,3 +49,5 @@ pnpm build       # dist/, which the package ships
 ```
 
 `backend/cmd/foundry`'s `TestFrontWithTheHelper` runs the built helper against Foundry's real front end, with `FOUNDRY_HELPER_E2E` set to this directory.
+
+`test/real-claude.test.ts` checks the isolation against a real Claude Code, `REAL_CLAUDE` (CI uses the one the pinned Agent SDK bundles), talking to a stand-in for Anthropic's API with your own MCP server, hooks and permissions planted in its `HOME`: the model is offered Foundry's tools alone (and Claude Code's inert `DeferredToolPlaceholder`), and Bash and Read are refused. Run it when you bump the SDK.
