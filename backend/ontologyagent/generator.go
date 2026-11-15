@@ -40,6 +40,12 @@ const (
 	// maxDefinitionBytes bounds a stored draft below gRPC's 4 MiB default,
 	// which the backend's and WFE's clients keep, with room for the response.
 	maxDefinitionBytes = 3 << 20
+	// maxStateBytes bounds the session state a generation waiting for
+	// answers keeps: the agent bounds it at about 1 MB.
+	maxStateBytes = 4 << 20
+	// maxNamedSources is how many new sources a start's brief names
+	// (NewSourcesBrief); it says how many more there are.
+	maxNamedSources = 20
 	// MaxSetDocuments is how many of a document set's newest uploaded
 	// documents that read as text (Markdown, MDX, plain text, and PDFs whose
 	// text was read) a generation shows the agent: enough to see what the set
@@ -49,6 +55,11 @@ const (
 
 type store interface {
 	WorkspaceDeleting(ctx context.Context, id string) (bool, error)
+	// GetOntologyVersion and GetOntologyGeneration find what the
+	// ontology's current version was drafted from, so a start names the
+	// sources new since (NewSources).
+	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
+	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
 	// GetFoundryEnrichmentConsent is the workspace's People enrichment
 	// setting; foundrystore.ErrNotFound means never set, which is off.
 	GetFoundryEnrichmentConsent(ctx context.Context, workspaceID string) (*model.FoundryEnrichmentConsent, error)
@@ -99,8 +110,9 @@ type DocumentStore interface {
 	Open(ctx context.Context, key string) (io.ReadCloser, error)
 }
 
-// Generator drafts a generation's ontology with one start turn of the agent,
-// for the foundry-ontology-worker, which runs one generation at a time.
+// Generator drafts a generation's ontology with the agent, a turn per
+// attempt, for the foundry-ontology-worker, which runs one generation at a
+// time.
 type Generator struct {
 	DB        store
 	Snapshots snapshot.Store
@@ -123,17 +135,19 @@ type Generator struct {
 }
 
 // Definition is what an agent generation stores as its version, in format
-// agent_bundle: the draft the start turn built, as the agent rendered it.
+// agent_bundle: the draft its last turn built, as the agent rendered it.
 type Definition struct {
 	// Format is always "agent_bundle", so a reader of the JSON alone knows it.
 	Format          string `json:"format"`
 	ParentVersionID string `json:"parent_version_id,omitempty"`
-	// Status is how the turn ended: done, needs_input or budget_exhausted.
+	// Status is how the turn ended: done or budget_exhausted. A turn that
+	// needs input stores no version: its generation waits for answers.
+	// Versions stored before that may say needs_input.
 	Status       StatusKind `json:"status"`
 	OntologyTOML string     `json:"ontology_toml"`
 	MappingsTOML string     `json:"mappings_toml"`
 	// Draft is the agent's DraftView without its questions, which are
-	// Questions. The session state is not kept, so a draft can't be continued.
+	// Questions: those left open, none of which blocks a finished draft.
 	Draft     json.RawMessage `json:"draft"`
 	Questions json.RawMessage `json:"questions"`
 	Summary   *string         `json:"summary"`
@@ -193,13 +207,22 @@ func LoadRefusal(v *model.OntologyVersion) (string, error) {
 //     With the enrichment flag on and the workspace's consent, People
 //     enrichment's profiles are a source too: a zero-byte file the turn
 //     never reads, so the draft may propose an [enrichments] item.
-//  3. Run a start turn on those models, the key in the call's metadata: the
-//     goal is the brief, the generation's id is both the session and the
-//     request id. The call ends at the agent's wall-time cap plus TurnTail. A
-//     retry sends the same request and pays again. The result records the
-//     model the turn started on, and its provider.
-//  4. Store the draft as an agent_bundle Definition of at most 3 MiB, with
-//     the turn's rule counts.
+//  3. Run a turn on those models, the key in the call's metadata, with the
+//     generation's id as the session. A generation the agent has asked
+//     nothing of sends a start: the goal is the brief, with the sources the
+//     ontology's current version wasn't drafted from named (NewSources),
+//     and the request id is the generation's. One whose questions were
+//     answered (gen.Questions.Answers) sends the asking turn's state
+//     (gen.TurnState) and feedback on the draft revision asked of, with the
+//     answers, as request id "<generation>.<revision>". The call ends at the
+//     agent's wall-time cap plus TurnTail. A retry sends the same request
+//     and pays again. The result records the model the turn started on, and
+//     its provider.
+//  4. A turn that asked questions (needs_input) returns them with its state
+//     and draft revision in Result.Asked, at least one blocking, and no
+//     version. A finished turn (done, or budget_exhausted) stores the draft
+//     as an agent_bundle Definition of at most 3 MiB, with the turn's rule
+//     counts.
 //
 // Every failure is an ontologygen.Failure; tokens are set even then, from the
 // agent's last usage event.
@@ -251,13 +274,24 @@ func (g *Generator) Run(ctx context.Context, gen *model.OntologyGeneration) (ont
 		return result, err
 	}
 	sources = append(sources, profiles...)
-	start := Start{Workflow: defaultWorkflow, Goals: []string{}}
-	if gen.Goal != nil && *gen.Goal != "" {
-		start = Start{Workflow: *gen.Goal, Goals: []string{*gen.Goal}}
+	request := TurnRequest{SessionID: gen.ID, RequestID: gen.ID, Sources: sources, Limits: g.Limits, Models: draft.Models}
+	if asked := gen.Questions; asked != nil && asked.Answers != nil {
+		if len(gen.TurnState) == 0 {
+			return result, &ontologygen.Failure{Permanent: true, Message: "the ontology agent's session for these answers was lost; generate again"}
+		}
+		request.RequestID = fmt.Sprintf("%s.%d", gen.ID, asked.DraftRev)
+		request.State, request.Input = gen.TurnState, Feedback{DraftRev: asked.DraftRev, Answers: asked.Answers}
+	} else {
+		start := Start{Workflow: defaultWorkflow, Goals: []string{}}
+		if gen.Goal != nil && *gen.Goal != "" {
+			start = Start{Workflow: *gen.Goal, Goals: []string{*gen.Goal}}
+		}
+		if drafted, ok := g.draftedFrom(ctx, gen); ok {
+			start.Workflow += NewSourcesBrief(NewSources(sources, drafted))
+		}
+		request.Input = start
 	}
-	body, err := json.Marshal(TurnRequest{
-		SessionID: gen.ID, RequestID: gen.ID, Sources: sources, Input: Input{Start: start}, Limits: g.Limits, Models: draft.Models,
-	})
+	body, err := json.Marshal(request)
 	if err != nil {
 		return result, fmt.Errorf("encode turn request: %w", err)
 	}
@@ -294,7 +328,22 @@ func (g *Generator) Run(ctx context.Context, gen *model.OntologyGeneration) (ont
 	}
 	tokens(&result, turn.Usage)
 	switch turn.Status.Kind {
-	case StatusDone, StatusNeedsInput, StatusBudgetExhausted:
+	case StatusDone, StatusBudgetExhausted:
+	case StatusNeedsInput:
+		var questions []model.OntologyQuestion
+		switch err := json.Unmarshal(turn.Questions, &questions); {
+		case err != nil:
+			return result, &ontologygen.Failure{Message: "the ontology agent returned a result Helix can't read", Permanent: true, Err: err}
+		case !slices.ContainsFunc(questions, func(q model.OntologyQuestion) bool { return q.Blocking }):
+			return result, &ontologygen.Failure{Message: "the ontology agent asked for input without a question", Permanent: true}
+		case len(turn.State) > maxStateBytes:
+			return result, &ontologygen.Failure{Permanent: true,
+				Message: fmt.Sprintf("the ontology agent's session is %d KiB; Helix keeps sessions of up to %d MiB", len(turn.State)>>10, maxStateBytes>>20)}
+		}
+		result.Asked = &model.OntologyGenerationAsked{State: turn.State, DraftRev: turn.DraftRev, Questions: questions}
+		return result, nil
+	case StatusStaleDraft:
+		return result, &ontologygen.Failure{Message: "the answers were for an earlier draft of the ontology agent's; generate again", Permanent: true}
 	case StatusModelFailed:
 		return result, draft.Failure(ctx, turn.Status.Failure)
 	case StatusSourceUnavailable:
@@ -306,7 +355,7 @@ func (g *Generator) Run(ctx context.Context, gen *model.OntologyGeneration) (ont
 	case StatusInvalidInput:
 		return result, &ontologygen.Failure{Message: "the ontology agent refused the request", Permanent: true}
 	default:
-		return result, &ontologygen.Failure{Message: "the ontology agent ended a first build as " + string(turn.Status.Kind), Permanent: true}
+		return result, &ontologygen.Failure{Message: "the ontology agent ended a draft's turn as " + string(turn.Status.Kind), Permanent: true}
 	}
 	// The website reads the questions at the top level, so the draft's own copy goes.
 	var view, inner map[string]json.RawMessage
@@ -337,6 +386,74 @@ func (g *Generator) Run(ctx context.Context, gen *model.OntologyGeneration) (ont
 	}
 	result.Definition = definition
 	return result, nil
+}
+
+// NewSources are those of a start's sources that drafted, the input of the
+// generation that drafted the ontology's current version, didn't read: a
+// table by its source id, a table file by its document id, a document set by
+// its id. People enrichment's profiles are never new.
+func NewSources(sources []Source, drafted model.OntologyGenerationInput) []Source {
+	known := map[string]bool{EnrichmentSourceID: true}
+	for _, t := range drafted.Tables {
+		known[TableSourceID(t.ConnectorID, t.Table)] = true
+	}
+	for _, d := range drafted.Documents {
+		known[d.ID] = true
+	}
+	for _, id := range drafted.DocumentSetIDs {
+		known[id] = true
+	}
+	return slices.DeleteFunc(slices.Clone(sources), func(s Source) bool { return known[s.ID] })
+}
+
+// NewSourcesBrief follows the workflow of a start drafting a new version of
+// an ontology whose current version was drafted without fresh, so the agent
+// asks what it must about those: "" for none. It names them by their source
+// ids alone, at most maxNamedSources: their names are the connections',
+// sets' and files', which members and synced sources choose, and the
+// workflow is the user's own words to the agent, so a name there could
+// pass for an instruction. The agent reads each name beside its id among
+// the sources, as data.
+func NewSourcesBrief(fresh []Source) string {
+	if len(fresh) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, min(len(fresh), maxNamedSources))
+	for _, s := range fresh[:min(len(fresh), maxNamedSources)] {
+		ids = append(ids, s.ID)
+	}
+	more := ""
+	if n := len(fresh) - len(ids); n > 0 {
+		more = fmt.Sprintf(" and %d more", n)
+	}
+	return fmt.Sprintf("\n\nThe ontology's current version was drafted without these sources, which are new (by source id): %s%s. "+
+		"Fit them into the ontology; if how they relate to the rest is unclear from the data and this brief, ask about them first.",
+		strings.Join(ids, ", "), more)
+}
+
+// draftedFrom is the input of the generation that drafted gen's base
+// version, the ontology's current version when gen was requested; false
+// for a first draft, a version no generation drafted, and one that can't be
+// read, whose start names no source as new.
+func (g *Generator) draftedFrom(ctx context.Context, gen *model.OntologyGeneration) (model.OntologyGenerationInput, bool) {
+	if gen.Input.BaseVersionID == "" {
+		return model.OntologyGenerationInput{}, false
+	}
+	base, err := g.DB.GetOntologyVersion(ctx, gen.OntologyID, gen.Input.BaseVersionID)
+	if err != nil || base.GenerationID == nil {
+		if err != nil && !errors.Is(err, foundrystore.ErrNotFound) {
+			log.From(ctx).Warn("read the current version failed; the brief names no new source", "generation", gen.ID, "err", err)
+		}
+		return model.OntologyGenerationInput{}, false
+	}
+	drafted, err := g.DB.GetOntologyGeneration(ctx, gen.OntologyID, *base.GenerationID)
+	if err != nil {
+		if !errors.Is(err, foundrystore.ErrNotFound) {
+			log.From(ctx).Warn("read the current version's generation failed; the brief names no new source", "generation", gen.ID, "err", err)
+		}
+		return model.OntologyGenerationInput{}, false
+	}
+	return drafted.Input, true
 }
 
 // stageDocumentSets writes the newest MaxSetDocuments uploaded documents

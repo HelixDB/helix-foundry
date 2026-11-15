@@ -80,6 +80,8 @@ const (
 	FoundryService_GenerateOntology_FullMethodName                      = "/helix.foundry.v1.FoundryService/GenerateOntology"
 	FoundryService_GetOntologyGeneration_FullMethodName                 = "/helix.foundry.v1.FoundryService/GetOntologyGeneration"
 	FoundryService_ListOntologyGenerations_FullMethodName               = "/helix.foundry.v1.FoundryService/ListOntologyGenerations"
+	FoundryService_AnswerOntologyGeneration_FullMethodName              = "/helix.foundry.v1.FoundryService/AnswerOntologyGeneration"
+	FoundryService_CancelOntologyGeneration_FullMethodName              = "/helix.foundry.v1.FoundryService/CancelOntologyGeneration"
 	FoundryService_SettleFoundryReview_FullMethodName                   = "/helix.foundry.v1.FoundryService/SettleFoundryReview"
 	FoundryService_ListFoundryReviews_FullMethodName                    = "/helix.foundry.v1.FoundryService/ListFoundryReviews"
 	FoundryService_ListFoundryReviewDecisions_FullMethodName            = "/helix.foundry.v1.FoundryService/ListFoundryReviewDecisions"
@@ -251,6 +253,8 @@ type FoundryServiceClient interface {
 	GenerateOntology(ctx context.Context, in *GenerateOntologyRequest, opts ...grpc.CallOption) (*OntologyGenerationResponse, error)
 	GetOntologyGeneration(ctx context.Context, in *GetOntologyGenerationRequest, opts ...grpc.CallOption) (*OntologyGenerationResponse, error)
 	ListOntologyGenerations(ctx context.Context, in *ListOntologyGenerationsRequest, opts ...grpc.CallOption) (*ListOntologyGenerationsResponse, error)
+	AnswerOntologyGeneration(ctx context.Context, in *AnswerOntologyGenerationRequest, opts ...grpc.CallOption) (*OntologyGenerationResponse, error)
+	CancelOntologyGeneration(ctx context.Context, in *CancelOntologyGenerationRequest, opts ...grpc.CallOption) (*OntologyGenerationResponse, error)
 	SettleFoundryReview(ctx context.Context, in *SettleFoundryReviewRequest, opts ...grpc.CallOption) (*FoundryReviewDecisionResponse, error)
 	// The reviews the ontology's current load holds, as SettleFoundryReview
 	// reads them: each with what settles it. Read from the load's database as
@@ -1031,6 +1035,26 @@ func (c *foundryServiceClient) ListOntologyGenerations(ctx context.Context, in *
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListOntologyGenerationsResponse)
 	err := c.cc.Invoke(ctx, FoundryService_ListOntologyGenerations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) AnswerOntologyGeneration(ctx context.Context, in *AnswerOntologyGenerationRequest, opts ...grpc.CallOption) (*OntologyGenerationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OntologyGenerationResponse)
+	err := c.cc.Invoke(ctx, FoundryService_AnswerOntologyGeneration_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) CancelOntologyGeneration(ctx context.Context, in *CancelOntologyGenerationRequest, opts ...grpc.CallOption) (*OntologyGenerationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OntologyGenerationResponse)
+	err := c.cc.Invoke(ctx, FoundryService_CancelOntologyGeneration_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1953,6 +1977,8 @@ type FoundryServiceServer interface {
 	GenerateOntology(context.Context, *GenerateOntologyRequest) (*OntologyGenerationResponse, error)
 	GetOntologyGeneration(context.Context, *GetOntologyGenerationRequest) (*OntologyGenerationResponse, error)
 	ListOntologyGenerations(context.Context, *ListOntologyGenerationsRequest) (*ListOntologyGenerationsResponse, error)
+	AnswerOntologyGeneration(context.Context, *AnswerOntologyGenerationRequest) (*OntologyGenerationResponse, error)
+	CancelOntologyGeneration(context.Context, *CancelOntologyGenerationRequest) (*OntologyGenerationResponse, error)
 	SettleFoundryReview(context.Context, *SettleFoundryReviewRequest) (*FoundryReviewDecisionResponse, error)
 	// The reviews the ontology's current load holds, as SettleFoundryReview
 	// reads them: each with what settles it. Read from the load's database as
@@ -2317,6 +2343,12 @@ func (UnimplementedFoundryServiceServer) GetOntologyGeneration(context.Context, 
 }
 func (UnimplementedFoundryServiceServer) ListOntologyGenerations(context.Context, *ListOntologyGenerationsRequest) (*ListOntologyGenerationsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListOntologyGenerations not implemented")
+}
+func (UnimplementedFoundryServiceServer) AnswerOntologyGeneration(context.Context, *AnswerOntologyGenerationRequest) (*OntologyGenerationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AnswerOntologyGeneration not implemented")
+}
+func (UnimplementedFoundryServiceServer) CancelOntologyGeneration(context.Context, *CancelOntologyGenerationRequest) (*OntologyGenerationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelOntologyGeneration not implemented")
 }
 func (UnimplementedFoundryServiceServer) SettleFoundryReview(context.Context, *SettleFoundryReviewRequest) (*FoundryReviewDecisionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SettleFoundryReview not implemented")
@@ -3663,6 +3695,42 @@ func _FoundryService_ListOntologyGenerations_Handler(srv interface{}, ctx contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(FoundryServiceServer).ListOntologyGenerations(ctx, req.(*ListOntologyGenerationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_AnswerOntologyGeneration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AnswerOntologyGenerationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).AnswerOntologyGeneration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_AnswerOntologyGeneration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).AnswerOntologyGeneration(ctx, req.(*AnswerOntologyGenerationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_CancelOntologyGeneration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelOntologyGenerationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).CancelOntologyGeneration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_CancelOntologyGeneration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).CancelOntologyGeneration(ctx, req.(*CancelOntologyGenerationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -5407,6 +5475,14 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListOntologyGenerations",
 			Handler:    _FoundryService_ListOntologyGenerations_Handler,
+		},
+		{
+			MethodName: "AnswerOntologyGeneration",
+			Handler:    _FoundryService_AnswerOntologyGeneration_Handler,
+		},
+		{
+			MethodName: "CancelOntologyGeneration",
+			Handler:    _FoundryService_CancelOntologyGeneration_Handler,
 		},
 		{
 			MethodName: "SettleFoundryReview",

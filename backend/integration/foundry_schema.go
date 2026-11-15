@@ -57,6 +57,10 @@ var foundryOperationDocs = []foundryOperationDoc{
 			"Mode extraction reads the source's newest 500 pieces as Markdown documents of its own set (one of the 20 sets; document_set_ids never names it), extracted as they arrive, about 1 cent a piece for each ontology that reads it; " +
 			"work no one started spends at most $5 a month on a source, within a share for all the workspace's API sources, and past that new pieces wait for next month or a load a person starts. " +
 			"It needs the source's text_field and a piece synced as a document (list_connectors' extraction.documents above 0)."},
+	{name: "answer_generation_questions",
+		doc: "{generation_id, answers, use_defaults}: answers a generation that needs_input (helix_foundry_get_generation lists its questions) and carries it on from where the agent asked. " +
+			"answers are {question_id, text}, each question once, 1 to 2000 characters, in the user's own words: ask the user, never answer for them. Every blocking question needs an answer unless use_defaults, " +
+			"which answers each question left out with the agent's default (or leaves it to the agent); questions no one answers take the defaults at the generation's answers_due_at."},
 	{name: "set_current_version", doc: "{version_id, expected_current_version_id}: the current version as you read it, empty when there is none."},
 	{name: "create_load", doc: "{version_id}."},
 	{name: "set_current_load", doc: "{load_id}."},

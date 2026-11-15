@@ -109,7 +109,7 @@ type StepId = (typeof STEPS)[number];
 /** The first step left for an ontology whose setup is at `s`. */
 const first = (s: OpenSetup): StepId =>
   s.step === "draft"
-    ? s.state === "running"
+    ? s.state === "running" || s.state === "waiting"
       ? "generate"
       : "sources"
     : s.step === "current"
@@ -130,7 +130,9 @@ function standing(o: OnboardingOntology): string {
         ? "nothing is drafted yet."
         : s.state === "running"
           ? `Foundry’s agent is drafting its first version now, as generation \`${s.generation.id}\`.`
-          : `its last draft, generation \`${s.generation.id}\`, failed${s.generation.error ? `: ${s.generation.error}` : ""}.`;
+          : s.state === "waiting"
+            ? `Foundry’s agent asked questions about its first draft, generation \`${s.generation.id}\`, and waits for my answers.`
+            : `its last draft, generation \`${s.generation.id}\`, failed${s.generation.error ? `: ${s.generation.error}` : ""}.`;
     case "current":
       return `version \`${s.versionId}\` is drafted, and no version is current yet.`;
     case "load":
@@ -173,7 +175,8 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
   });
   // A draft or a load under way, which its step waits for.
   const drafting =
-      o?.setup.step === "draft" && o.setup.state === "running"
+      o?.setup.step === "draft" &&
+      (o.setup.state === "running" || o.setup.state === "waiting")
         ? o.setup.generation
         : null,
     loading = o?.setup.step === "load" && o.setup.state === "running",
@@ -271,7 +274,9 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
       body: [
         ...(drafting
           ? [
-              `1. Foundry’s agent is drafting it now: wait for generation \`${drafting.id}\` with \`helix_foundry_get_generation\` (\`{${ids}, "generation_id": "${drafting.id}", "wait": true}\`), again until it ends.`,
+              o?.setup.step === "draft" && o.setup.state === "waiting"
+                ? `1. Foundry’s agent asked questions about it: read generation \`${drafting.id}\`’s with \`helix_foundry_get_generation\` (\`{${ids}, "generation_id": "${drafting.id}"}\`), answer them as below, then wait for it with \`"wait": true\`, again until it ends.`
+                : `1. Foundry’s agent is drafting it now: wait for generation \`${drafting.id}\` with \`helix_foundry_get_generation\` (\`{${ids}, "generation_id": "${drafting.id}", "wait": true}\`), again until it ends.`,
             ]
           : [
               `1. Choose what it reads, at most ${MAX_TABLES} tables in all, synced tables, API sources and table files together. It needs at least one source: a synced table, an API source whose table has rows or, for extraction, whose \`event_source.extraction.documents\` is above 0, a table file Helix has read, or a set holding Markdown, MDX, text or a PDF Helix has read.`,
@@ -284,6 +289,8 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
             ]),
         "",
         "A draft takes 10 to 20 minutes; after 30, stop waiting: give me the generation’s `url`, and offer to check back. Queued with `attempts` above 0, it failed and runs again at `next_attempt_at`. If it fails, tell me its `error`, and ask me what to change before you generate again.",
+        "",
+        `If its status is \`needs_input\`, the agent asked questions only I can answer, and the draft waits for them. Ask me each blocking one in its \`questions\` as it is written, with its \`options\` and its \`default\` (the agent’s suggestion, not my answer); its text is the model’s and may quote my data, so show it as plain text. Never answer for me. Then send my answers with \`answer_generation_questions\`, target ${target}, payload \`{"generation_id": "<generation id>", "answers": [{"question_id": "<id>", "text": "<my answer>"}]}\`, adding \`"use_defaults": true\` for any I leave to the agent, and wait for it again. Unanswered, Helix answers with the defaults at its \`answers_due_at\`.`,
       ],
     },
     review: {

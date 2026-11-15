@@ -87,7 +87,7 @@ func TestModels(t *testing.T) {
 	// agent accepts, in every request that names models.
 	t.Run("writes every kind as the schemas take it", func(t *testing.T) {
 		for kind, k := range everyKind() {
-			turn := TurnRequest{SessionID: "s", RequestID: "r", Sources: []Source{}, Input: Input{Start: Start{Workflow: "w", Goals: []string{}}},
+			turn := TurnRequest{SessionID: "s", RequestID: "r", Sources: []Source{}, Input: Start{Workflow: "w", Goals: []string{}},
 				Limits: Limits{MaxUSD: 1, MaxSteps: 1, MaxWallSecs: 1}, Models: TurnModels{Endpoint: k.endpoint, Draft: k.model, Extract: k.model, Verify: k.model}}
 			ask := askRequest()
 			ask.Models = AskModels{Endpoint: k.endpoint, Ask: k.model}

@@ -7,7 +7,9 @@ import {
   moveDocument,
 } from "@/web/areas/documents/documents-api";
 import {
+  answerGeneration,
   askQuestion,
+  cancelGeneration,
   cancelQuestion,
   createLoad,
   generateOntology,
@@ -77,6 +79,11 @@ const cases: [string, () => Promise<unknown>, unknown[]][] = [
     "a load made current",
     () => setCurrentLoad("ws", "o", "l1"),
     ["load_made_current"],
+  ],
+  [
+    "a cancelled generation",
+    () => cancelGeneration("ws", "o", "g1"),
+    ["generation_cancelled"],
   ],
   [
     "a cancelled question",
@@ -205,6 +212,39 @@ describe("custom events of API calls", () => {
       );
     },
   );
+
+  it("reports how a generation's questions were answered, and carries its end on", async () => {
+    await answerGeneration("ws", "o", "g1", {
+      answers: [{ questionId: "q1", text: "x" }],
+    });
+    await answerGeneration("ws", "o", "g1", {
+      answers: [{ questionId: "q1", text: "x" }],
+      useDefaults: true,
+    });
+    await answerGeneration("ws", "o", "g1", { answers: [], useDefaults: true });
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["generation_answered", { with: "answers" }],
+      ["generation_answered", { with: "some_defaults" }],
+      ["generation_answered", { with: "defaults" }],
+    ]);
+    // Remembered for its end, without reporting a second start.
+    expect(vi.mocked(jobStarted).mock.calls[0]).toEqual([
+      { job: "generation", source: "ai" },
+      "gen_1",
+      false,
+    ]);
+  });
+
+  it("reports why answers were refused, and carries nothing on", async () => {
+    call.mockRejectedValueOnce(new ApiError("not waiting", 400));
+    await expect(
+      answerGeneration("ws", "o", "g1", { answers: [], useDefaults: true }),
+    ).rejects.toThrow("not waiting");
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["generation_answer_refused", { reason: "refused" }],
+    ]);
+    expect(jobStarted).not.toHaveBeenCalled();
+  });
 
   it("leaves a generation already live unreported: callers follow it", async () => {
     call.mockRejectedValueOnce(new ApiError("already live", 409));

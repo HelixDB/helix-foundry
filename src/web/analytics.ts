@@ -194,6 +194,13 @@ export type AnalyticsEvents = {
   generation_succeeded: { source: GenerationSource };
   generation_failed: { source: GenerationSource };
   generation_refused: { reason: Refusal };
+  // The agent asked questions only a person answers: the generation waits
+  // (seen like an end), then is answered (`with` its answers, some or all
+  // of the agent's defaults) or cancelled.
+  generation_needs_input: { source: GenerationSource };
+  generation_answered: { with: "answers" | "some_defaults" | "defaults" };
+  generation_answer_refused: { reason: Refusal };
+  generation_cancelled: undefined;
   load_started: undefined;
   load_ready: { status: "ready" | "partial" };
   load_failed: { reason: "budget" | "sources_changed" | "error" };
@@ -720,12 +727,17 @@ const ENDS: {
       trackEvent("generation_succeeded", { source: sourceOf(p) }),
     ONTOLOGY_GENERATION_STATUS_FAILED: (p) =>
       trackEvent("generation_failed", { source: sourceOf(p) }),
+    // Answering it starts reporting it again (answerGeneration).
+    ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT: (p) =>
+      trackEvent("generation_needs_input", { source: sourceOf(p) }),
+    ONTOLOGY_GENERATION_STATUS_CANCELLED: null,
   },
   revision: {
     ONTOLOGY_GENERATION_STATUS_SUCCEEDED: (p) =>
       trackEvent("revision_succeeded", { mode: modeOf(p) }),
     ONTOLOGY_GENERATION_STATUS_FAILED: (p) =>
       trackEvent("revision_failed", { mode: modeOf(p) }),
+    ONTOLOGY_GENERATION_STATUS_CANCELLED: null,
   },
   sync: {
     CONNECTOR_SYNC_STATUS_SUCCEEDED: (_, s) =>
@@ -826,15 +838,20 @@ function writePending(pending: Record<string, Pending>) {
 
 /**
  * A job started here: reports its start once per job (a retry with the same
- * client token returns the same one) and remembers it for jobSeen. Nothing
- * is kept without a client id.
+ * client token returns the same one) and remembers it for jobSeen. A job
+ * carried on (`report` false: a generation answered) is only remembered.
+ * Nothing is kept without a client id.
  */
-export function jobStarted(started: Started, id: string | undefined) {
+export function jobStarted(
+  started: Started,
+  id: string | undefined,
+  report = true,
+) {
   if (!sending() || !id) return;
   const pending = readPending();
   if (pending[id]) return;
   writePending({ ...pending, [id]: { ...started, at: Date.now() } });
-  reportStart(started);
+  if (report) reportStart(started);
 }
 
 /**

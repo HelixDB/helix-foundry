@@ -57,6 +57,11 @@ const (
 	maxFoundryEditItemBytes  = 256
 	maxFoundryEditTOMLBytes  = 1 << 20
 	maxFoundryReviewIDBytes  = 256
+	// A generation's answers: at most one per question, each 1 to 2000 characters, as
+	// ontologygen.Answers takes them.
+	maxFoundryAnswers         = 100
+	maxFoundryAnswerChars     = 2000
+	maxFoundryQuestionIDBytes = 256
 	// maxFoundrySlugChars is the longest slug the website gives a database or project, inside
 	// the backend's 64.
 	maxFoundrySlugChars = 63
@@ -107,6 +112,7 @@ type FoundryActionAPI interface {
 	CreateFoundryLoad(context.Context, *foundryv1.CreateFoundryLoadRequest, ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error)
 	SetCurrentFoundryLoad(context.Context, *foundryv1.SetCurrentFoundryLoadRequest, ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error)
 	ReviseOntologyVersion(context.Context, *foundryv1.ReviseOntologyVersionRequest, ...grpc.CallOption) (*foundryv1.OntologyGenerationResponse, error)
+	AnswerOntologyGeneration(context.Context, *foundryv1.AnswerOntologyGenerationRequest, ...grpc.CallOption) (*foundryv1.OntologyGenerationResponse, error)
 	// The document and set writes go through their ontology-scoped routes: each tool names the
 	// ontology, which they find live in the Workspace before acting on its documents and sets.
 	CreateFoundryOntologyDocument(context.Context, *foundryv1.CreateFoundryOntologyDocumentRequest, ...grpc.CallOption) (
@@ -363,7 +369,7 @@ func (s *Service) executeFoundry(
 // ValidateFoundryOperation parses an action's target and strict payload, then authorizes the
 // caller for it: a user by the WFE method's registry entry, a key by its grant on the project
 // of the ontology's database. create_ontology, create_event_source, add_sample_data, sync_connector,
-// generate_ontology and settle_review are user-only. create_event_source is the one connector
+// generate_ontology, answer_generation_questions and settle_review are user-only. create_event_source is the one connector
 // an agent may make: an event source has no credential to pass through it. A create_ontology
 // on a new database is authorized for every call the website's wizard makes: CreateProject
 // when it makes the project, CreateTenant and CreateFoundryOntology; and it needs the Helix
@@ -531,6 +537,30 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 			return nil, err
 		}
 		return GenerateOntologyOperation{payload: payload, req: req}, nil
+	case "answer_generation_questions":
+		var payload AnswerGenerationQuestionsPayload
+		malformed := invalid(fmt.Sprintf("answer_generation_questions takes payload {generation_id, answers, use_defaults}: up to %d answers, each {question_id, text} "+
+			"naming a question once with 1 to %d characters of text; use_defaults answers every question left out with the agent's default", maxFoundryAnswers, maxFoundryAnswerChars))
+		if decodeStrict(raw, &payload) != nil || !ValidIDs([]string{payload.GenerationID}) || len(payload.Answers) > maxFoundryAnswers ||
+			len(payload.Answers) == 0 && !payload.UseDefaults {
+			return nil, malformed
+		}
+		req := &foundryv1.AnswerOntologyGenerationRequest{WorkspaceId: workspaceID, OntologyId: ontologyID, Id: payload.GenerationID, UseDefaults: payload.UseDefaults}
+		for i, a := range payload.Answers {
+			text := strings.TrimSpace(a.Text)
+			if a.QuestionID == "" || len(a.QuestionID) > maxFoundryQuestionIDBytes || strings.ContainsFunc(a.QuestionID, unicode.IsControl) ||
+				len(a.Text) > 4*maxFoundryAnswerChars || text == "" || utf8.RuneCountInString(text) > maxFoundryAnswerChars ||
+				slices.ContainsFunc(req.Answers, func(given *foundryv1.OntologyGenerationAnswer) bool { return given.GetQuestionId() == a.QuestionID }) {
+				return nil, malformed
+			}
+			payload.Answers[i].Text = text
+			req.Answers = append(req.Answers, &foundryv1.OntologyGenerationAnswer{QuestionId: a.QuestionID, Text: text})
+		}
+		// The answers are a person's, as the goal they carry on is.
+		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "AnswerOntologyGeneration"); err != nil {
+			return nil, err
+		}
+		return AnswerGenerationQuestionsOperation{payload: payload, req: req}, nil
 	case "set_current_version":
 		var payload SetCurrentVersionPayload
 		if decodeStrict(raw, &payload) != nil || !ValidIDs([]string{payload.VersionID}, payload.ExpectedCurrentVersionID) {
@@ -1056,6 +1086,36 @@ type ReviseVersionOperation struct {
 func (o ReviseVersionOperation) CanonicalPayload() []byte { return mustCanonical(o.payload) }
 func (o ReviseVersionOperation) Execute(ctx context.Context, s *Service, _ *Identity, _ string) (any, error) {
 	response, err := s.Actions.ReviseOntologyVersion(ctx, o.req)
+	if err != nil {
+		return nil, err
+	}
+	return s.FoundryGeneration(o.req.GetWorkspaceId(), o.req.GetOntologyId(), response.GetGeneration()), nil
+}
+
+type AnswerGenerationQuestionsPayload struct {
+	GenerationID string                    `json:"generation_id"`
+	Answers      []GenerationAnswerPayload `json:"answers,omitempty"`
+	UseDefaults  bool                      `json:"use_defaults,omitempty"`
+}
+
+type GenerationAnswerPayload struct {
+	QuestionID string `json:"question_id"`
+	Text       string `json:"text"`
+}
+
+type AnswerGenerationQuestionsOperation struct {
+	payload AnswerGenerationQuestionsPayload
+	req     *foundryv1.AnswerOntologyGenerationRequest
+}
+
+func (o AnswerGenerationQuestionsOperation) CanonicalPayload() []byte {
+	return mustCanonical(o.payload)
+}
+
+// Execute answers with the caller's write scope (Identity.WithScope): answering a first draft
+// that loads once ready writes the ontology's database, which the backend checks.
+func (o AnswerGenerationQuestionsOperation) Execute(ctx context.Context, s *Service, identity *Identity, _ string) (any, error) {
+	response, err := s.Actions.AnswerOntologyGeneration(identity.WithScope(ctx, o.req.GetWorkspaceId(), true), o.req)
 	if err != nil {
 		return nil, err
 	}

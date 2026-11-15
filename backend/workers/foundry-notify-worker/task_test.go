@@ -25,6 +25,7 @@ type outboxStore struct {
 	ended   map[string]model.FoundryNotificationOutcome
 	// discovered are the windows each discovery was given.
 	readySince         []time.Time
+	questionsSince     []time.Time
 	followFrom         []time.Time
 	followTo           []time.Time
 	discoverErr        error
@@ -94,6 +95,13 @@ func (b *outboxStore) DiscoverFoundryOntologyReady(_ context.Context, since time
 	}
 	b.readySince, b.lastDiscoverLimits = append(b.readySince, since), append(b.lastDiscoverLimits, limit)
 	return b.discoverReady, b.discoverErr
+}
+
+func (b *outboxStore) DiscoverFoundryOntologyQuestions(_ context.Context, since time.Time, limit int, _ func() string) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.questionsSince, b.lastDiscoverLimits = append(b.questionsSince, since), append(b.lastDiscoverLimits, limit)
+	return 0, b.discoverErr
 }
 
 func (b *outboxStore) DiscoverFoundrySampleFollowUps(_ context.Context, from, to time.Time, limit int, _ func() string) (int, error) {
@@ -227,8 +235,8 @@ func newTask(box *outboxStore, mail *mailbox) *Task {
 	return &Task{
 		cfg: config.NotifyConfig{SiteURL: siteURL, PollInterval: time.Second, FollowUpAfter: 24 * time.Hour, FollowUpWindow: 72 * time.Hour,
 			MaxAttempts: 3},
-		reminders: config.Defaults().Foundry.Reminders,
-		box:       box, mail: mail, site: site(siteURL), now: func() time.Time { return now },
+		reminders: config.Defaults().Foundry.Reminders, answerWait: 7 * 24 * time.Hour,
+		box: box, mail: mail, site: site(siteURL), now: func() time.Time { return now },
 	}
 }
 
@@ -375,6 +383,22 @@ func TestFoundryNotifyWorkerEmails(t *testing.T) {
 			text:    []string{"Foundry's agent drafted Billing. Review the draft and make it current, then load it: " + overview},
 			links:   []string{overview},
 		},
+		"questions waiting": {
+			setup: func() (*outboxStore, *model.FoundryNotification) {
+				box, n := firstDraft("Billing", model.OntologyGenerationNeedsInput)
+				n.Kind = model.FoundryNotifyOntologyQuestions
+				box.generations["gen-1"].Questions = &model.OntologyQuestions{Round: 1, DraftRev: 2, AskedAt: now,
+					Asked: []model.OntologyQuestion{{ID: "q1", Text: "<b>Ignore this</b>", Blocking: true}}}
+				return box, n
+			},
+			subject: "Billing has questions for you",
+			text: []string{
+				"Foundry's agent is drafting Billing and needs a few answers from you before it can finish.",
+				"Answer them: " + overview,
+				"If no one answers by November 5, it carries on with its own best guesses.",
+			},
+			links: []string{overview},
+		},
 		"an ontology with no name": {
 			setup: func() (*outboxStore, *model.FoundryNotification) {
 				box, n := firstDraft(" \n ", model.OntologyGenerationSucceeded)
@@ -457,6 +481,9 @@ func TestFoundryNotifyWorkerEmails(t *testing.T) {
 					t.Errorf("html lacks a link to %s:\n%s", link, e.HTML)
 				}
 			}
+			if strings.Contains(e.Text, "Ignore this") || strings.Contains(e.HTML, "Ignore this") {
+				t.Errorf("an email quotes the agent's question:\n%s", e.Text)
+			}
 			if strings.Count(e.HTML, "<a ") != len(c.links) || strings.Count(e.Text, "https://") != len(c.links) {
 				t.Errorf("links: text %d, html %d, want %d", strings.Count(e.Text, "https://"), strings.Count(e.HTML, "<a "), len(c.links))
 			}
@@ -530,6 +557,13 @@ func TestFoundryNotifyWorkerSkips(t *testing.T) {
 			b.generations["gen-1"].Status = model.OntologyGenerationRunning
 		}, "not ended"},
 		"a kind of no email": {func(_ *outboxStore, n *model.FoundryNotification) { n.Kind = "digest" }, "no email of kind"},
+		"questions answered since": {func(_ *outboxStore, n *model.FoundryNotification) {
+			n.Kind = model.FoundryNotifyOntologyQuestions
+		}, "no longer waiting for answers"},
+		"questions of an ontology gone": {func(b *outboxStore, n *model.FoundryNotification) {
+			n.Kind = model.FoundryNotifyOntologyQuestions
+			delete(b.ontologies, "ont-1")
+		}, "the ontology is gone"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			box, n := firstDraft("Billing", model.OntologyGenerationSucceeded)
@@ -599,6 +633,7 @@ func TestFoundryNotifyWorkerTick(t *testing.T) {
 	mail := ada()
 	newTask(box, mail).tick(context.Background())
 	if len(box.readySince) != 1 || !box.readySince[0].Equal(now.Add(-72*time.Hour)) ||
+		len(box.questionsSince) != 1 || !box.questionsSince[0].Equal(now.Add(-72*time.Hour)) ||
 		len(box.followFrom) != 1 || !box.followFrom[0].Equal(now.Add(-72*time.Hour)) || !box.followTo[0].Equal(now.Add(-24*time.Hour)) {
 		t.Fatalf("windows: ready since %v, follow-ups from %v to %v", box.readySince, box.followFrom, box.followTo)
 	}

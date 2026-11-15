@@ -1254,7 +1254,10 @@ describe("mock document sets", () => {
           documentSetIds: all,
         }),
       ),
-    ).toEqual([409, "an ontology generation is already queued or running"]);
+    ).toEqual([
+      409,
+      "an ontology generation is already queued, running or waiting for answers: answer or cancel it first",
+    ]);
   });
 
   it("keeps in a version's scope only the sets that are live when it is stored", async () => {

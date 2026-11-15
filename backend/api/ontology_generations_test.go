@@ -84,7 +84,8 @@ func (s *generationStore) ListFoundryDocumentSets(_ context.Context, workspaceID
 
 func (s *generationStore) live(ontologyID string) *foundrymodel.OntologyGeneration {
 	for _, g := range s.generations {
-		if g.OntologyID == ontologyID && (g.Status == foundrymodel.OntologyGenerationQueued || g.Status == foundrymodel.OntologyGenerationRunning) {
+		if g.OntologyID == ontologyID && (g.Status == foundrymodel.OntologyGenerationQueued || g.Status == foundrymodel.OntologyGenerationRunning ||
+			g.Status == foundrymodel.OntologyGenerationNeedsInput) {
 			return g
 		}
 	}
@@ -950,7 +951,7 @@ func TestOntologyGenerationTitleJSON(t *testing.T) {
 		title *string
 		want  any
 	}{{&title, title}, {nil, nil}} {
-		encoded, err := protojson.Marshal(ontologyGenerationToProto(&foundrymodel.OntologyGeneration{ID: "gen-1", Title: tc.title}, false))
+		encoded, err := protojson.Marshal(ontologyGenerationToProto(&foundrymodel.OntologyGeneration{ID: "gen-1", Title: tc.title}, false, 0))
 		if err != nil {
 			t.Fatal(err)
 		}

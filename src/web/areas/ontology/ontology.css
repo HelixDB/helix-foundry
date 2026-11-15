@@ -658,6 +658,53 @@
   background: var(--hf-accent-soft);
   color: var(--hf-accent-text);
 }
+/* A generation's questions, answered: a radio per choice, then a field for
+   an answer in one's own words. */
+.on-asked-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.on-answer {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+.on-answer-choice {
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+}
+.on-answer-choice:has(input:checked) {
+  border-color: var(--hf-text-2);
+  color: var(--hf-text);
+}
+.on-answer-choice > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.on-answer-own textarea {
+  resize: vertical;
+}
+/* Inside the setup card, flat as its other callouts. */
+.on-setup .on-asked {
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.on-setup .on-asked > .hf-panel-head,
+.on-setup .on-asked > .hf-panel-body {
+  padding-inline: 0;
+}
+.on-setup .on-asked > .hf-panel-head,
+.on-setup .on-asked > .hf-panel-head:hover {
+  border-radius: 0;
+  background: none;
+  cursor: auto;
+}
 .on-cqs li {
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr);
@@ -820,6 +867,9 @@
 .on-generate-foot .hf-form-error,
 .on-generate-foot .hf-form-actions {
   margin-top: 0;
+}
+.on-generate-foot .hf-form-actions {
+  flex-wrap: wrap;
 }
 
 /* New ontology, and an unfinished ontology's overview: its steps, a

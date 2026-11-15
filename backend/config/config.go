@@ -902,8 +902,23 @@ type OntologyConfig struct {
 	MaxTables int `koanf:"max_tables"`
 	// PerHour caps the generations a workspace may start in an hour; the
 	// backend checks it when one is requested.
-	PerHour int         `koanf:"per_hour"`
-	Agent   AgentConfig `koanf:"agent"`
+	PerHour int `koanf:"per_hour"`
+	// AnswerDays is how long a generation waits for answers to the agent's
+	// questions: after it, the worker answers each with the agent's default
+	// and carries on, so an ontology is never held by questions no one
+	// answers. The API says when (answers_due_at).
+	AnswerDays int `koanf:"answer_days"`
+	// MaxQuestionRounds caps the rounds of questions one generation may
+	// ask: each answer pays for another turn, which counts toward no hourly
+	// cap, so a turn that asks once the generation has had this many fails
+	// it.
+	MaxQuestionRounds int         `koanf:"max_question_rounds"`
+	Agent             AgentConfig `koanf:"agent"`
+}
+
+// AnswerWait is AnswerDays as a duration.
+func (o OntologyConfig) AnswerWait() time.Duration {
+	return time.Duration(o.AnswerDays) * 24 * time.Hour
 }
 
 // AgentConfig is the ontology agent the worker drafts with: a
@@ -1883,6 +1898,12 @@ func (c *Config) validateRoles(roles Roles) error {
 	if roles.API && f.Ontology.PerHour < 1 {
 		return fmt.Errorf("foundry.ontology.per_hour must be positive")
 	}
+	if (roles.API || roles.OntologyWorker || roles.NotifyWorker) && f.Ontology.AnswerDays < 1 {
+		return fmt.Errorf("foundry.ontology.answer_days must be positive")
+	}
+	if roles.OntologyWorker && f.Ontology.MaxQuestionRounds < 1 {
+		return fmt.Errorf("foundry.ontology.max_question_rounds must be positive")
+	}
 	if roles.EnrichmentWorker {
 		if f.Sync.DataBucket == "" {
 			return fmt.Errorf("foundry.sync.data_bucket must be set when 'foundry-enrichment-worker' is in tasks")
@@ -1964,6 +1985,10 @@ func Defaults() Config {
 		MaxAttempts:  3,
 		MaxTables:    50,
 		PerHour:      10,
+		AnswerDays:   7,
+		// MaxQuestionRounds is 3: a draft rarely needs more, and a fourth
+		// ask means the goal is too thin to draft from.
+		MaxQuestionRounds: 3,
 		// Limits fit the 15m timeout with AgentAttemptMargin to spare; a
 		// deployment that lets turns run longer raises both.
 		Agent: AgentConfig{

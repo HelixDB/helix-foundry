@@ -469,6 +469,18 @@ func (u Unimplemented) FinishOntologyGeneration(context.Context, string, string,
 	u.unimplemented("FinishOntologyGeneration")
 	return nil
 }
+func (u Unimplemented) AnswerOntologyGeneration(context.Context, string, string, uint64, []model.OntologyAnswer) error {
+	u.unimplemented("AnswerOntologyGeneration")
+	return nil
+}
+func (u Unimplemented) CancelOntologyGeneration(context.Context, string, string) error {
+	u.unimplemented("CancelOntologyGeneration")
+	return nil
+}
+func (u Unimplemented) ListOntologyGenerationsAskedBefore(context.Context, time.Time, int) ([]*model.OntologyGeneration, error) {
+	u.unimplemented("ListOntologyGenerationsAskedBefore")
+	return nil, nil
+}
 func (u Unimplemented) GetFoundryOntology(context.Context, string, string) (*model.FoundryOntology, error) {
 	u.unimplemented("GetFoundryOntology")
 	return nil, nil
@@ -929,6 +941,10 @@ func (u Unimplemented) ActivateFoundryAIDefault(context.Context, string, string)
 }
 func (u Unimplemented) DiscoverFoundryOntologyReady(context.Context, time.Time, int, func() string) (int, error) {
 	u.unimplemented("DiscoverFoundryOntologyReady")
+	return 0, nil
+}
+func (u Unimplemented) DiscoverFoundryOntologyQuestions(context.Context, time.Time, int, func() string) (int, error) {
+	u.unimplemented("DiscoverFoundryOntologyQuestions")
 	return 0, nil
 }
 func (u Unimplemented) DiscoverFoundrySampleFollowUps(context.Context, time.Time, time.Time, int, func() string) (int, error) {

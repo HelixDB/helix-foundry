@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -188,6 +189,16 @@ func draftFailed(name, start, failure, overview string) message {
 func draftOnly(name, start, overview string) message {
 	return message{subject: start + "'s first draft is ready", paragraphs: []paragraph{
 		{Text: "Foundry's agent drafted " + name + ". Review the draft and make it current, then load it:", Link: overview},
+	}}
+}
+
+// draftQuestions is a first draft's email once its agent asked questions
+// the draft waits on, which take the agent's defaults at due (UTC).
+func draftQuestions(name, start string, due time.Time, overview string) message {
+	return message{subject: start + " has questions for you", paragraphs: []paragraph{
+		{Text: "Foundry's agent is drafting " + name + " and needs a few answers from you before it can finish."},
+		{Text: "Answer them:", Link: overview},
+		{Text: "If no one answers by " + due.UTC().Format("January 2") + ", it carries on with its own best guesses."},
 	}}
 }
 

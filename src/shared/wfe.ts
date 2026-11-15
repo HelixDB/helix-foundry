@@ -1082,7 +1082,37 @@ export type OntologyGenerationStatus =
   | "ONTOLOGY_GENERATION_STATUS_QUEUED"
   | "ONTOLOGY_GENERATION_STATUS_RUNNING"
   | "ONTOLOGY_GENERATION_STATUS_SUCCEEDED"
-  | "ONTOLOGY_GENERATION_STATUS_FAILED";
+  | "ONTOLOGY_GENERATION_STATUS_FAILED"
+  // The agent asked questions only a person can answer: the generation
+  // waits, still the ontology's one live generation, until they are
+  // answered (:answer), it is cancelled (:cancel), or answersDueAt passes
+  // and Helix answers each with the agent's default.
+  | "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT"
+  // Cancelled (:cancel) before it stored a draft.
+  | "ONTOLOGY_GENERATION_STATUS_CANCELLED";
+
+/**
+ * v1OntologyGenerationQuestion: a question the agent asked about its draft.
+ * Its text, options and default are the model's words and may quote the
+ * data: plain text only, never markup.
+ */
+export type OntologyGenerationQuestion = {
+  id: string;
+  text?: string;
+  // The draft items it is about ("type.Customer"); may be empty.
+  items?: string[];
+  // Answers the agent suggests; empty for a free answer. An answer may be
+  // any text, one of these or not.
+  options?: string[];
+  // The agent's default, one of options when it has any; unset when it
+  // offers none.
+  defaultAnswer?: string;
+  // The generation can't carry on until a blocking question is answered;
+  // another may be left open.
+  blocking?: boolean;
+  // The answer it was given, once answered; unset while it waits.
+  answer?: string;
+};
 
 /** v1OntologyGenerationTable: one synced table a generation drafts from. */
 export type OntologyGenerationTable = { connectorId?: string; table?: string };
@@ -1132,6 +1162,17 @@ export type OntologyGeneration = {
   // Asked for with GenerateOntologyRequest's loadWhenReady: its draft is
   // made current and loaded once stored, if no version is current by then.
   loadWhenReady?: boolean;
+  // The questions the agent's last turn asked, in its order: those a
+  // needs_input generation waits on, then, once answered, with their
+  // answers. Empty when it asked nothing. A draft's own non-blocking
+  // questions are in its version's definition.
+  questions?: OntologyGenerationQuestion[];
+  // When they were asked; unset without questions.
+  askedAt?: string | null;
+  // While needs_input: when Helix answers each with the agent's default
+  // and carries on (foundry.ontology.answer_days after askedAt, 7 days by
+  // default).
+  answersDueAt?: string | null;
 };
 
 /**
@@ -1220,6 +1261,27 @@ export type GenerateOntologyRequest = {
   // would, and email the requester when that load ends. The new-ontology
   // wizard's first ontology sets it. Not with `sample`.
   loadWhenReady?: boolean;
+};
+
+/** v1OntologyGenerationAnswer: an answer to one question, 1 to 2000 characters once trimmed. */
+export type OntologyGenerationAnswer = { questionId: string; text: string };
+
+/**
+ * FoundryServiceAnswerOntologyGenerationBody: POST
+ * .../generations/{id}:answer answers the questions a needs_input
+ * generation waits on and queues it to carry on. Each answer names a
+ * question asked, at most once. With useDefaults, every question left out
+ * takes the agent's default (with none, the agent decides); without, every
+ * blocking question must be answered (INVALID_ARGUMENT), and one that isn't
+ * may be left open. A generation not waiting is FAILED_PRECONDITION. It
+ * needs what :generate needs (managing the ontology, an AI provider).
+ * POST .../generations/{id}:cancel (body `{}`) ends a queued, running or
+ * waiting generation as cancelled; one that ended is FAILED_PRECONDITION.
+ * Both answer OntologyGenerationResponse.
+ */
+export type AnswerOntologyGenerationRequest = {
+  answers: OntologyGenerationAnswer[];
+  useDefaults?: boolean;
 };
 
 /**

@@ -144,7 +144,9 @@ export function GoalPanel({
   chosenSets,
   keepSample = false,
 }: {
-  goal: string;
+  // null while the goal it starts from is read: the field waits, so what
+  // is typed never races it.
+  goal: string | null;
   setGoal: (goal: string) => void;
   // Its name; "" while it has none.
   ontology: string;
@@ -157,7 +159,7 @@ export function GoalPanel({
   const connectors = useQuery(connectorsQuery(id)),
     sets = useQuery(documentSetQueries.list(id)),
     documents = useQuery(documentQueries.workspace(id));
-  const chars = [...goal.trim()].length,
+  const chars = [...(goal ?? "").trim()].length,
     list = (connectors.data?.connectors || []).filter(
       (c) => keepSample || !isSampleConnector(c),
     );
@@ -167,7 +169,7 @@ export function GoalPanel({
         goalPrompt({
           workspace: name,
           ontology,
-          goal,
+          goal: goal ?? "",
           connectors: list
             .filter((c) => !isEventSource(c.kind))
             .map((c) => ({
@@ -225,7 +227,9 @@ export function GoalPanel({
         <textarea
           rows={4}
           placeholder="e.g. Trace each order from the customer through its shipments and returns"
-          value={goal}
+          value={goal ?? ""}
+          disabled={goal === null}
+          aria-busy={goal === null || undefined}
           onChange={(e) => setGoal(e.target.value)}
           aria-describedby="on-goal-hint"
         />

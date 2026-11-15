@@ -1,4 +1,5 @@
 import type {
+  AnswerOntologyGenerationRequest,
   AskQuestionRequest,
   ReviseOntologyVersionRequest,
   CreateLoadRequest,
@@ -34,10 +35,28 @@ const base = (ws: string) => `/v1/workspaces/${enc(ws)}/foundry/ontologies`;
 const at = (ws: string, o: string) => `${base(ws)}/${enc(o)}`;
 // A generation or a load is polled this often while it is live.
 export const POLL_MS = 1500;
+/** How often a generation waiting for answers is read again. */
+export const WAITING_POLL_MS = 30_000;
 
 export const isLive = (g?: OntologyGeneration | null) =>
   g?.status === "ONTOLOGY_GENERATION_STATUS_QUEUED" ||
   g?.status === "ONTOLOGY_GENERATION_STATUS_RUNNING";
+
+/**
+ * Waiting for answers to the agent's questions: nothing runs, so it is
+ * polled slowly (WAITING_POLL_MS), for answers given in another tab or the
+ * defaults Helix takes once they are due; it is still the ontology's one
+ * live generation.
+ */
+export const isWaiting = (g?: OntologyGeneration | null) =>
+  g?.status === "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT";
+
+/**
+ * The ontology's one live generation, in the WFE's sense: queued, running
+ * or waiting for answers. Another is refused (409) until it ends.
+ */
+export const isUnderWay = (g?: OntologyGeneration | null) =>
+  isLive(g) || isWaiting(g);
 
 /** A queued generation that has run before: an attempt failed and Helix retries it. */
 export const isRetrying = (g?: OntologyGeneration | null) =>
@@ -139,7 +158,12 @@ export const ontologyQueries = {
     },
     refetchInterval: (q: {
       state: { data?: ListOntologyGenerationsResponse };
-    }) => (q.state.data?.generations?.some(isLive) ? POLL_MS : false),
+    }) =>
+      q.state.data?.generations?.some(isLive)
+        ? POLL_MS
+        : q.state.data?.generations?.some(isWaiting)
+          ? WAITING_POLL_MS
+          : false,
   }),
   generation: (ws: string, o: string, id: string) => ({
     queryKey: [ws, "ontology", o, "generation", id],
@@ -151,9 +175,14 @@ export const ontologyQueries = {
       jobSeen("revision", [r.generation]);
       return r;
     },
-    // Only while it is live: a refused read (gone, or no access) stops.
+    // Only while it is live, slowly while it waits for answers: a refused
+    // read (gone, or no access) stops.
     refetchInterval: (q: { state: { data?: OntologyGenerationResponse } }) =>
-      isLive(q.state.data?.generation) ? POLL_MS : false,
+      isLive(q.state.data?.generation)
+        ? POLL_MS
+        : isWaiting(q.state.data?.generation)
+          ? WAITING_POLL_MS
+          : false,
   }),
   // Every load not deleted yet, newest first, with its jobs: retention keeps
   // a handful, so there is one page. Polled while one is written or deleted.
@@ -210,6 +239,45 @@ export const generateOntology = async (
     { job: "generation", source: body.sample ? "sample" : "ai" },
     r.generation?.id,
   );
+  return r;
+};
+
+/**
+ * Answers the questions a generation waits on and queues it to carry on;
+ * `useDefaults` takes the agent's default for every question left out.
+ */
+export const answerGeneration = async (
+  ws: string,
+  o: string,
+  g: string,
+  body: AnswerOntologyGenerationRequest,
+) => {
+  const r = await api<OntologyGenerationResponse>(
+    `${at(ws, o)}/generations/${enc(g)}:answer`,
+    body,
+  ).catch((e: unknown) => {
+    trackEvent("generation_answer_refused", { reason: refusalOf(e) });
+    throw e;
+  });
+  trackEvent("generation_answered", {
+    with: !body.useDefaults
+      ? "answers"
+      : body.answers.length
+        ? "some_defaults"
+        : "defaults",
+  });
+  // Its end is this browser's to report from now on.
+  jobStarted({ job: "generation", source: "ai" }, r.generation?.id, false);
+  return r;
+};
+
+/** Ends a queued, running or waiting generation without a draft. */
+export const cancelGeneration = async (ws: string, o: string, g: string) => {
+  const r = await api<OntologyGenerationResponse>(
+    `${at(ws, o)}/generations/${enc(g)}:cancel`,
+    {},
+  );
+  trackEvent("generation_cancelled");
   return r;
 };
 

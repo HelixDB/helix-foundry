@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"time"
 	"unicode/utf8"
 
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/helixdb/helix-foundry/backend/connector"
+	"github.com/helixdb/helix-foundry/backend/ontologygen"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
@@ -22,6 +24,9 @@ import (
 )
 
 const maxOntologyGoalChars = 2000
+
+// generationLive refuses a generation while the ontology has a live one.
+const generationLive = "an ontology generation is already queued, running or waiting for answers: answer or cancel it first"
 
 // GenerateOntology queues a draft of a version of the ontology for the
 // foundry-ontology-worker, from the synced tables of the chosen connectors
@@ -99,7 +104,7 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 	// Refused before the tables are read; Enqueue still refuses one that races in.
 	switch _, err := s.deps.DB.GetActiveOntologyGeneration(ctx, o.ID); {
 	case err == nil:
-		return nil, status.Error(codes.AlreadyExists, "an ontology generation is already queued or running")
+		return nil, status.Error(codes.AlreadyExists, generationLive)
 	case !errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Errorf(codes.Internal, "get live ontology generation: %v", err)
 	}
@@ -255,7 +260,7 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 	err = s.deps.DB.EnqueueOntologyGeneration(ctx, gen, perHour)
 	switch {
 	case errors.Is(err, foundrystore.ErrConflict):
-		return nil, status.Error(codes.AlreadyExists, "an ontology generation is already queued or running")
+		return nil, status.Error(codes.AlreadyExists, generationLive)
 	case errors.Is(err, foundrystore.ErrLimitExceeded):
 		return nil, status.Errorf(codes.ResourceExhausted, "a workspace may start %d ontology generations an hour; try again later", perHour)
 	case errors.Is(err, foundrystore.ErrNotFound):
@@ -310,9 +315,87 @@ func (s *Service) ListOntologyGenerations(ctx context.Context, req *foundryv1.Li
 	resp := &foundryv1.ListOntologyGenerationsResponse{}
 	for _, gen := range gens {
 		// Lists read no revision's result.
-		resp.Generations = append(resp.Generations, ontologyGenerationToProto(gen, false))
+		resp.Generations = append(resp.Generations, ontologyGenerationToProto(gen, false, s.deps.Cfg.Foundry.Ontology.AnswerWait()))
 	}
 	return resp, nil
+}
+
+// AnswerOntologyGeneration answers the questions a generation waits on
+// (needs_input), checked by ontologygen.Answers, and queues it to carry on
+// from the agent's session where it asked. It is authorized as
+// GenerateOntology is: a first draft that loads once ready
+// (load_when_ready) writes the ontology's database, so answering it needs
+// the actor's query_write scope too. As it runs the model, it needs an AI
+// provider (FOUNDRY_AI_NOT_CONFIGURED). One that isn't waiting, or stopped waiting
+// as it was answered (answered, cancelled or answered with defaults
+// meanwhile), is FAILED_PRECONDITION.
+func (s *Service) AnswerOntologyGeneration(ctx context.Context, req *foundryv1.AnswerOntologyGenerationRequest) (*foundryv1.OntologyGenerationResponse, error) {
+	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
+	if err != nil {
+		return nil, err
+	}
+	if req.GetId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "id is required")
+	}
+	gen, err := s.deps.DB.GetOntologyGeneration(ctx, o.ID, req.GetId())
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		return nil, status.Error(codes.NotFound, "ontology generation not found")
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get ontology generation: %v", err)
+	}
+	if gen.Status != foundrymodel.OntologyGenerationNeedsInput {
+		return nil, status.Error(codes.FailedPrecondition, "this generation isn't waiting for answers")
+	}
+	if _, write := actor(ctx).Scope(o.WorkspaceID); gen.Input.LoadWhenReady && !write.Allows(o.ProjectID) {
+		return nil, status.Error(codes.PermissionDenied,
+			"this first draft is loaded into the ontology's database once drafted, which you can't write: ask someone who can to answer, or cancel it")
+	}
+	given := make([]foundrymodel.OntologyAnswer, 0, len(req.GetAnswers()))
+	for _, a := range req.GetAnswers() {
+		given = append(given, foundrymodel.OntologyAnswer{QuestionID: a.GetQuestionId(), Text: a.GetText()})
+	}
+	answers, err := ontologygen.Answers(gen.Questions.Asked, given, req.GetUseDefaults())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if err := s.requireAI(ctx, o.WorkspaceID); err != nil {
+		return nil, err
+	}
+	err = s.deps.DB.AnswerOntologyGeneration(ctx, o.ID, gen.ID, gen.Questions.DraftRev, answers)
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		return nil, status.Error(codes.FailedPrecondition, "this generation stopped waiting for answers: it was answered or cancelled meanwhile")
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "answer ontology generation: %v", err)
+	}
+	return s.ontologyGenerationResponse(ctx, o.ID, gen.ID, loadEvidence(ctx, o))
+}
+
+// CancelOntologyGeneration ends a live generation (queued, running or
+// waiting for answers) without a draft, so the ontology may generate again.
+// It is authorized as GenerateOntology is. One that ended is
+// FAILED_PRECONDITION.
+func (s *Service) CancelOntologyGeneration(ctx context.Context, req *foundryv1.CancelOntologyGenerationRequest) (*foundryv1.OntologyGenerationResponse, error) {
+	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
+	if err != nil {
+		return nil, err
+	}
+	if req.GetId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "id is required")
+	}
+	err = s.deps.DB.CancelOntologyGeneration(ctx, o.ID, req.GetId())
+	if err != nil && !errors.Is(err, foundrystore.ErrNotFound) {
+		return nil, status.Errorf(codes.Internal, "cancel ontology generation: %v", err)
+	}
+	response, readErr := s.ontologyGenerationResponse(ctx, o.ID, req.GetId(), loadEvidence(ctx, o))
+	if readErr != nil {
+		return nil, readErr
+	}
+	if err != nil {
+		return nil, status.Error(codes.FailedPrecondition, "this generation already ended")
+	}
+	return response, nil
 }
 
 func (s *Service) ontologyGenerationResponse(ctx context.Context, ontologyID, generationID string, evidence bool) (*foundryv1.OntologyGenerationResponse, error) {
@@ -323,19 +406,24 @@ func (s *Service) ontologyGenerationResponse(ctx context.Context, ontologyID, ge
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get ontology generation: %v", err)
 	}
-	return &foundryv1.OntologyGenerationResponse{Generation: ontologyGenerationToProto(gen, evidence)}, nil
+	return &foundryv1.OntologyGenerationResponse{Generation: ontologyGenerationToProto(gen, evidence, s.deps.Cfg.Foundry.Ontology.AnswerWait())}, nil
 }
 
 var generationStatusToProto = map[foundrymodel.OntologyGenerationStatus]foundryv1.OntologyGenerationStatus{
-	foundrymodel.OntologyGenerationQueued:    foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_QUEUED,
-	foundrymodel.OntologyGenerationRunning:   foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_RUNNING,
-	foundrymodel.OntologyGenerationSucceeded: foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_SUCCEEDED,
-	foundrymodel.OntologyGenerationFailed:    foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_FAILED,
+	foundrymodel.OntologyGenerationQueued:     foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_QUEUED,
+	foundrymodel.OntologyGenerationRunning:    foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_RUNNING,
+	foundrymodel.OntologyGenerationSucceeded:  foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_SUCCEEDED,
+	foundrymodel.OntologyGenerationFailed:     foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_FAILED,
+	foundrymodel.OntologyGenerationNeedsInput: foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT,
+	foundrymodel.OntologyGenerationCancelled:  foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_CANCELLED,
 }
 
 // ontologyGenerationToProto answers gen; without evidence (see loadEvidence),
-// a revision's result is withheld, as it measures the ontology's load.
-func ontologyGenerationToProto(gen *foundrymodel.OntologyGeneration, evidence bool) *foundryv1.OntologyGeneration {
+// a revision's result is withheld, as it measures the ontology's load. Its
+// questions carry their answers once given; one waiting for them is
+// answered with defaults answerWait after they were asked. The agent's
+// session state never leaves.
+func ontologyGenerationToProto(gen *foundrymodel.OntologyGeneration, evidence bool, answerWait time.Duration) *foundryv1.OntologyGeneration {
 	out := &foundryv1.OntologyGeneration{
 		Id: gen.ID, WorkspaceId: gen.WorkspaceID, OntologyId: gen.OntologyID, Status: generationStatusToProto[gen.Status],
 		Attempts:      int32(gen.Attempts),
@@ -375,6 +463,23 @@ func ontologyGenerationToProto(gen *foundrymodel.OntologyGeneration, evidence bo
 	}
 	if gen.FinishedAt != nil {
 		out.FinishedAt = timestamppb.New(*gen.FinishedAt)
+	}
+	asked := gen.Questions
+	if asked == nil {
+		return out
+	}
+	out.AskedAt = timestamppb.New(asked.AskedAt)
+	if gen.Status == foundrymodel.OntologyGenerationNeedsInput {
+		out.AnswersDueAt = timestamppb.New(asked.AskedAt.Add(answerWait))
+	}
+	for _, q := range asked.Asked {
+		question := &foundryv1.OntologyGenerationQuestion{
+			Id: q.ID, Text: q.Text, Items: q.Items, Options: q.Options, DefaultAnswer: q.Default, Blocking: q.Blocking,
+		}
+		if i := slices.IndexFunc(asked.Answers, func(a foundrymodel.OntologyAnswer) bool { return a.QuestionID == q.ID }); i >= 0 {
+			question.Answer = &asked.Answers[i].Text
+		}
+		out.Questions = append(out.Questions, question)
 	}
 	return out
 }

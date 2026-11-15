@@ -69,6 +69,8 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_SetCurrentOntologyVersion_FullMethodName: Deny,
 	foundryv1.FoundryService_ReviseOntologyVersion_FullMethodName:     Deny,
 	foundryv1.FoundryService_GenerateOntology_FullMethodName:          Deny,
+	foundryv1.FoundryService_AnswerOntologyGeneration_FullMethodName:  Deny,
+	foundryv1.FoundryService_CancelOntologyGeneration_FullMethodName:  Deny,
 	foundryv1.FoundryService_GetOntologyGeneration_FullMethodName:     Deny,
 	foundryv1.FoundryService_ListOntologyGenerations_FullMethodName:   Deny,
 	foundryv1.FoundryService_CreateFoundryLoad_FullMethodName:         Deny,
