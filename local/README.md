@@ -165,15 +165,9 @@ The site must stay on `http://localhost:3000` and the store on `http://localhost
 
 ## Connect your agent
 
-These need `foundry` 0.1.2 and `foundry-site` 0.1.3 or newer, the images `docker compose up` pulls: older ones have no MCP and no **Set up with your agent**. `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 where the MCP is served, and 404 where it isn't: don't publish the port for an image that prints 404, which serves its probes and metrics there without a token.
+These need `foundry` 0.1.2 and `foundry-site` 0.1.3 or newer, the images `docker compose up` pulls: older ones have no MCP and no **Set up with your agent**. `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 where the MCP is served, and 404 where it isn't: don't run an image that prints 404 with this compose file, which publishes that port, where such an image serves its probes and metrics without a token.
 
-The MCP and HTTP Ask aren't published until you ask, so a port taken here never stops the app. From `local/`:
-
-```sh
-docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait
-```
-
-This restarts the containers and keeps the data. To keep it on, set `COMPOSE_FILE=compose.yaml:compose.mcp.yaml` in `local/.env` and run Compose from `local/`. If `127.0.0.1:8081` is taken, set `FOUNDRY_MCP_PORT` in `local/.env` to a free port, and use that port wherever an agent's setup or this page says 8081: the site's prompt names 8081, fixed when its image is built, and says this too.
+Foundry's MCP and HTTP Ask are published on this computer's loopback, `127.0.0.1:8081`, and nowhere else. If 8081 is taken here, set `FOUNDRY_MCP_PORT` in `local/.env` to a free port before `docker compose up -d --wait`, and use that port wherever an agent's setup or this page says 8081: the site's prompt names 8081, fixed when its image is built, and says this too.
 
 The local MCP is `http://localhost:8081/mcp`. It and HTTP Ask answer only for `localhost`, `127.0.0.1`, `::1`, `host.docker.internal` and the host of `HELIX_LOCAL__SITE_ORIGIN`. It supports the Foundry workflow: discovery, connectors, documents, ontology generation and revision, loading, graph reads and Ask. API sources and cloud administration are unavailable locally. The site’s **Set up with your agent** prompt carries your workspace and current setup into the agent.
 
@@ -186,6 +180,23 @@ export FOUNDRY_LOCAL_TOKEN="$(docker compose exec -T foundry cat /secrets/site-t
 Configure the MCP client to read `FOUNDRY_LOCAL_TOKEN` and send `Authorization: Bearer <token>`. The token acts as the owner of every local workspace. Keep it in the client’s environment, out of prompts and browser code. No OAuth sign-in is required. The API port is published only on loopback; tools run on this computer.
 
 Changes use `helix_foundry_prepare_operation` followed by `helix_foundry_execute_operation` after confirmation. The confirmation lasts five minutes, binds the exact operation and payload, and can be consumed once: one that has expired or doesn't match fails with `failed_precondition`, so prepare it again. After a lost response or an already-consumed confirmation, read the current state before retrying: token consumption does not prove the operation finished.
+
+## The Assistant on your Claude subscription
+
+Foundry's Assistant runs on the install's AI provider. It can instead run on the Claude Code you're signed in to on this computer, on your Claude subscription, at no cost to the install: a small helper, outside Docker (the Keychain and Claude Code's login are this computer's), takes each turn and drives your own `claude`, which can call nothing but Foundry's tools, with a token for that turn alone.
+
+1. In Foundry, Settings › AI models, choose your Claude subscription. It shows a one-time code, good for ten minutes, and the command that pairs a helper with it:
+
+   ```sh
+   npx -y @helixdb/foundry-agent-host@0.1.0 pair hxp_…
+   ```
+
+   Run it here, with Node 24 and Claude Code installed and signed in (`claude`, then `/login`). The helper keeps its token in `~/.config/helix-foundry/agent-host.json`, readable by you alone; Foundry keeps only its hash.
+
+2. `npx -y @helixdb/foundry-agent-host@0.1.0 install` keeps it running, now and at every login (a launchd agent on macOS, a systemd user unit on Linux), or `… run` runs it in a terminal. `… doctor` says what stands in the way.
+3. New threads of that workspace run on Claude Code from then on; a thread keeps where it started. While no helper has called Foundry for 30 seconds, the Assistant says so instead of sending.
+
+The helper reaches Foundry at `http://127.0.0.1:8081` (`--foundry` on `pair` for another port). Revoke it in Settings › AI models: its token, and those of the turns it runs, stop at once. Codex isn't offered yet: [the helper's README](../agent-host/README.md#codex) says why. Your plan's terms decide whether you may use your subscription this way.
 
 ## Ask over HTTP
 
