@@ -21,6 +21,7 @@ import type {
   AgentLoadRef,
   AgentOperation,
   AgentPageContext,
+  AgentRuntime,
   AgentReview,
   AgentReviewEntity,
   AgentThreadResponse,
@@ -58,6 +59,7 @@ import {
   aiRefusal,
   foundryPrecondition as refused,
 } from "./ai";
+import { hostOffline, workspaceRuntime } from "./agent-hosts";
 import { dataRoutes, workspaceConnectors } from "./data";
 import { databaseRoutes, tenantGraph } from "./databases";
 import { documentRoutes } from "./documents";
@@ -186,6 +188,7 @@ type StoredThread = {
   workspaceId: string;
   userId: string;
   title: string;
+  runtime: AgentRuntime;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -376,7 +379,7 @@ const advanceThread = (threadId: string) =>
 const toThread = (t: StoredThread): FoundryAgentThread => ({
   id: t.id,
   title: t.title,
-  runtime: "api",
+  runtime: t.runtime,
   createdAt: t.createdAt,
   updatedAt: t.updatedAt,
 });
@@ -2242,8 +2245,6 @@ export const agentRoutes: MockRoute[] = [
           "INVALID_ARGUMENT",
           "page_context names a load of an ontology, by their ids",
         );
-      const ai = aiRefusal(ws);
-      if (ai) return ai;
       const again = state.turns.find(
         (t) =>
           t.workspaceId === ws &&
@@ -2280,6 +2281,13 @@ export const agentRoutes: MockRoute[] = [
         : undefined;
       if (body.threadId && !thread)
         return fail("NOT_FOUND", "thread not found");
+      // A thread keeps its runtime; a new one takes the workspace's. A
+      // helper's runs on its owner's subscription, not the workspace's model.
+      const runtime = thread?.runtime ?? workspaceRuntime(ws);
+      const offline = hostOffline(ws, runtime);
+      if (offline) return offline;
+      const ai = runtime === "api" ? aiRefusal(ws) : undefined;
+      if (ai) return ai;
       if (thread) {
         const busyWhy = busy(thread);
         if (busyWhy) return refused(ws, "FOUNDRY_AGENT_THREAD_BUSY", busyWhy);
@@ -2296,6 +2304,7 @@ export const agentRoutes: MockRoute[] = [
                   .slice(0, TITLE_CHARS - 1)
                   .join("")
                   .trim() + "…",
+          runtime,
           createdAt: now(),
           updatedAt: now(),
           deletedAt: null,

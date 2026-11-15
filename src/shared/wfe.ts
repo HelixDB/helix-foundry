@@ -2565,13 +2565,20 @@ export type AgentActionStatus =
 /** v1FoundryAgentPageContext: what the person was looking at, ids only. */
 export type AgentPageContext = { ontologyId?: string; loadId?: string };
 
+/**
+ * Who runs a thread's turns: Foundry's own worker on the workspace's model
+ * (api), or a helper on a local install's owner's computer driving the
+ * Claude Code or Codex CLI they signed in to, on their subscription, at no
+ * cost to the workspace. A thread keeps the runtime it started with.
+ */
+export type AgentRuntime = "api" | "claude_code" | "codex";
+
 /** v1FoundryAgentThread */
 export type FoundryAgentThread = {
   id: string;
   // The first message's start.
   title?: string;
-  // api (Foundry's own worker), claude_code or codex.
-  runtime?: string;
+  runtime?: AgentRuntime;
   createdAt?: string | null;
   updatedAt?: string | null;
 };
@@ -2779,6 +2786,52 @@ export type AgentActionDisplays = {
 /** The operations the Assistant may prepare (backend agent.Operations). */
 export type AgentOperation = keyof AgentActionDisplays;
 
+// Where a local install's Assistant runs, and its helpers: GET and PATCH
+// .../agent/runtime, POST .../agent/host-pairings and
+// .../agent/hosts/{id}:revoke. The owner's only (PERMISSION_DENIED
+// otherwise); hosted Helix answers FAILED_PRECONDITION, reason
+// FOUNDRY_AGENT_HOSTS_LOCAL_ONLY.
+
+/** v1FoundryAgentHost: a helper paired with the install (install-wide, not per workspace). */
+export type FoundryAgentHost = {
+  id: string;
+  // The machine's name, as the helper gave it.
+  name?: string;
+  // What it offers, as of its last call.
+  runtimes?: Exclude<AgentRuntime, "api">[];
+  version?: string;
+  // darwin-arm64, linux-x64, ...
+  platform?: string;
+  createdAt?: string | null;
+  lastSeenAt?: string | null;
+  // Seen within 30 seconds.
+  online?: boolean;
+  revokedAt?: string | null;
+};
+/** v1FoundryAgentRuntime */
+export type FoundryAgentRuntime = {
+  // Where the workspace's new threads run.
+  runtime?: AgentRuntime;
+  // Not revoked, newest first.
+  hosts?: FoundryAgentHost[];
+  // The helper runtimes an online helper offers now, sorted.
+  online?: Exclude<AgentRuntime, "api">[];
+};
+/** GET and PATCH .../agent/runtime */
+export type FoundryAgentRuntimeResponse = { runtime?: FoundryAgentRuntime };
+/** PATCH .../agent/runtime: a helper need not be online to be chosen. */
+export type UpdateFoundryAgentRuntimeRequest = { runtime: AgentRuntime };
+/** POST .../agent/host-pairings: a one-time code, ten minutes, shown once. */
+export type FoundryAgentHostPairingResponse = {
+  // hxp_ and 43 characters.
+  code?: string;
+  expiresAt?: string | null;
+  // npx -y @helixdb/foundry-agent-host@<version> pair <code>
+  command?: string;
+};
+/** POST .../agent/hosts/{id}:revoke */
+export type FoundryAgentHostResponse = { host?: FoundryAgentHost };
+
 /** POST .../agent/turns */
 export type SendAgentMessageRequest = {
   // Empty: a new thread.
@@ -2845,6 +2898,11 @@ export const AGENT_REFUSALS = [
   "FOUNDRY_AGENT_ACTION_CHANGED",
   // The confirmation expired: refresh it.
   "FOUNDRY_AGENT_ACTION_EXPIRED",
+  // A thread a helper runs (claude_code, codex) while no helper that runs
+  // it has called in the last 30 seconds: nothing is queued.
+  "FOUNDRY_AGENT_HOST_OFFLINE",
+  // The runtime routes on a host without helpers (hosted Helix).
+  "FOUNDRY_AGENT_HOSTS_LOCAL_ONLY",
 ] as const;
 export type AgentRefusalReason = (typeof AGENT_REFUSALS)[number];
 

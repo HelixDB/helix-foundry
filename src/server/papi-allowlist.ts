@@ -499,6 +499,29 @@ export const papiRoutes = [
     method: "POST",
     path: "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:dismiss",
   },
+  // Where a local install's Assistant runs (its worker, or a helper on the
+  // owner's Claude Code or Codex subscription), pairing a helper with a
+  // one-time code, and revoking one. Hosted Helix refuses them.
+  {
+    area: "agent",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/runtime",
+  },
+  {
+    area: "agent",
+    method: "PATCH",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/runtime",
+  },
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/host-pairings",
+  },
+  {
+    area: "agent",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/agent/hosts/{id}:revoke",
+  },
 
   // Ontology: decisions, applied from the next load.
   {
