@@ -1466,9 +1466,6 @@ export function triggerOfKind(
   }
 }
 
-/** Every action an Assistant step may be allowed, from the workspace's targets. */
-export type ActionChoice = { action: AutomationAction; label: string };
-
 // ---------------------------------------------------------------- runs
 
 /**

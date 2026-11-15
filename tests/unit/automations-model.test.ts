@@ -535,6 +535,29 @@ describe("canonicalJson and sameSteps", () => {
     );
   });
 
+  it("writes an action step and the empty names as they are", () => {
+    const act = spec(
+      [
+        manual,
+        node("do", "action", {
+          dashboard_id: "d1",
+          operation: "publish_dashboard",
+        }),
+      ],
+      [{ from: "start", to: "do" }],
+    );
+    expect(JSON.parse(canonicalJson(act)).nodes[1].config).toEqual({
+      operation: "publish_dashboard",
+      dashboard_id: "d1",
+    });
+    expect([
+      NO_NAMES.connector("c"),
+      NO_NAMES.ontology("o"),
+      NO_NAMES.set("s"),
+      NO_NAMES.dashboard("d"),
+    ]).toEqual([undefined, undefined, undefined, undefined]);
+  });
+
   it("sees a move as no change to the steps, and anything else as one", () => {
     expect(sameSteps(simple, moveNode(simple, "tell", { x: 300, y: 40 }))).toBe(
       true,
@@ -820,6 +843,10 @@ describe("edits", () => {
     const alone = addStep(withAsk, "action");
     expect(alone.spec.edges).toEqual(withAsk.edges);
     expect(alone.spec.nodes.at(-1)!.position.y).toBe(150);
+    expect(blankConfig("assistant")).toEqual({
+      kind: "assistant",
+      config: { instruction: "" },
+    });
     expect(blankConfig("action")).toEqual({
       kind: "action",
       config: { operation: "sync_connector", connector_id: "" },
@@ -899,6 +926,24 @@ describe("edits", () => {
       newNodeId(s, "notify"),
     );
     expect(full).toBeDefined();
+    const both = connect(connect(s, "if", "tell"), "if", "ask");
+    expect(cannotConnect(both, "if", "tell")).toBe("They are joined already");
+    const two = node("two", "notify", { message: "" });
+    const full2 = connect(
+      connect({ ...s, nodes: [...s.nodes, two] }, "if", "tell"),
+      "if",
+      "two",
+    );
+    expect(
+      cannotConnect(
+        {
+          ...full2,
+          nodes: [...full2.nodes, node("three", "notify", { message: "" })],
+        },
+        "if",
+        "three",
+      ),
+    ).toBe("Both of its branches lead somewhere already");
     expect(reaches(s, "start", "if")).toBe(true);
     expect(reaches(s, "if", "start")).toBe(false);
   });
