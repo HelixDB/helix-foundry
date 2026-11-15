@@ -75,8 +75,10 @@ export async function signedIn(
  * claudeAccount({}); // { runtime: "claude_code", state: "signed_out" }
  */
 export function claudeAccount(info: AccountInfo): Account {
-  const plan = (info.subscriptionType ?? "")
-    .replace(/[\x00-\x1f\x7f]/g, "")
+  const plan = [...(info.subscriptionType ?? "")]
+    // Printable ASCII, so 32 characters are at most Foundry's 32 bytes.
+    .filter((c) => c >= " " && c <= "~")
+    .join("")
     .slice(0, MAX_SUBSCRIPTION);
   if (plan)
     return { runtime: "claude_code", state: "signed_in", subscription: plan };

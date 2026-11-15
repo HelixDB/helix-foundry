@@ -52,7 +52,8 @@ const RUNTIMES: Runtime[] = ["claude_code"];
  */
 export async function serve(opts: RunOptions): Promise<void> {
   const log = opts.log ?? (() => {});
-  const ask = () => checkAccount(opts.claude, opts.env ?? process.env, opts.query);
+  const ask = () =>
+    checkAccount(opts.claude, opts.env ?? process.env, opts.query);
   const accounts: Account[] = [await ask()];
   const me = await opts.foundry.hello(RUNTIMES, opts.version, accounts);
   log(
