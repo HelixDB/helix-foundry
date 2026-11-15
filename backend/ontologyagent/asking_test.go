@@ -27,7 +27,7 @@ func ExampleAskingDocuments() {
 }
 
 // The read names the load, the review label, the type and the name, each as
-// a string constant, and reads 4 × AskingDocumentsMax reviews at most.
+// a string constant, and reads AskingReviewsMax reviews at most.
 func TestAskingQuery(t *testing.T) {
 	body, err := AskingQuery("load-1", "Customer", `acme "corp"`)
 	if err != nil {
@@ -40,7 +40,7 @@ func TestAskingQuery(t *testing.T) {
 	want := `{"request_type":"read","query":{"read":{"entries":[{"query":{"name":"items","root":{"value_map":{"input":{"limit":{
 	  "input":{"nodes_where":{"predicate":{"and":{"predicates":[` + eq("foundry_load", "load-1") + `,` + eq("$label", "FoundryReview") + `,` +
 		eq("type", "Customer") + `,` + eq("norm_name", `acme "corp"`) + `]}}}},
-	  "count":{"literal":40000}}},"properties":["doc_id","reason","entity_key"]}}}}],"returns":["items"]}}}`
+	  "count":{"literal":100000}}},"properties":["doc_id","reason","entity_key"]}}}}],"returns":["items"]}}}`
 	var got, wanted any
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatal(err)
@@ -53,26 +53,27 @@ func TestAskingQuery(t *testing.T) {
 	}
 }
 
-// Past what is kept: a read that fills its limit, or more documents than one
-// name sends, keeps AskingDocumentsMax and says so. An answer that isn't
-// JSON is an error.
-func TestAskingDocumentsPastTheCap(t *testing.T) {
+// Every document that asks is kept, however many (the engine indexes
+// reviews by name from contract 4.24.0): only a read that fills
+// AskingReviewsMax says some may be left out. An answer that isn't JSON is
+// an error.
+func TestAskingDocumentsPastTheBound(t *testing.T) {
 	item := func(i int) string { return `{"doc_id":"doc-` + strconv.Itoa(i) + `","reason":"unresolved"}` }
 	var many []string
-	for i := range AskingDocumentsMax + 1 {
+	for i := range 50000 {
 		many = append(many, item(i))
 	}
 	docs, past, err := AskingDocuments([]byte(`{"items":[` + strings.Join(many, ",") + `]}`))
-	if err != nil || !past || len(docs) != AskingDocumentsMax || docs[0] != "doc-0" {
+	if err != nil || past || len(docs) != 50000 || docs[0] != "doc-0" || docs[49999] != "doc-49999" {
 		t.Fatalf("%d docs, past %v, %v", len(docs), past, err)
 	}
-	full := make([]string, 4*AskingDocumentsMax)
+	full := make([]string, AskingReviewsMax)
 	for i := range full {
-		full[i] = item(0)
+		full[i] = item(i % 7)
 	}
 	docs, past, err = AskingDocuments([]byte(`{"items":[` + strings.Join(full, ",") + `]}`))
-	if err != nil || !past || len(docs) != 1 {
-		t.Fatalf("a full read: %v, past %v, %v", docs, past, err)
+	if err != nil || !past || len(docs) != 7 {
+		t.Fatalf("a full read: %d docs, past %v, %v", len(docs), past, err)
 	}
 	if _, _, err := AskingDocuments([]byte(`<html>`)); err == nil {
 		t.Fatal("not JSON")

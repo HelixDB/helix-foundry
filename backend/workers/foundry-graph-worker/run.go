@@ -1208,15 +1208,16 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 // carriedAliasesPerJob is the most aliases carried to a load whose asking
 // documents one resend job owes (oweAskingDocuments), and
 // askingDocumentsPerJob how many documents it owes them before it stops
-// reading names: each distinct name is a read that filters the load's
-// reviews, and each document it owes is sent with its saved work, so a load
-// that became current with many is worked through by job after job, each
-// queued as the last ends (their documents' requests stay owed), rather than
-// holding one job back for every read before it sends anything. A job owes at
-// most askingDocumentsPerJob + ontologyagent.AskingDocumentsMax - 1.
+// reading names: each document it owes is sent with its saved work, so a
+// load that became current with many is worked through by job after job,
+// each queued as the last ends (their documents' requests stay owed), rather
+// than holding one job back for all of them. Each name's read is one lookup
+// of the engine's index of reviews by name (contract 4.24.0), and owes every
+// document that asks, so a job owes at most askingDocumentsPerJob - 1 plus
+// one name's documents.
 const (
 	carriedAliasesPerJob  = 100
-	askingDocumentsPerJob = ontologyagent.AskingDocumentsMax
+	askingDocumentsPerJob = 10000
 )
 
 // oweAskingDocuments owes the job's load, for a name
@@ -1227,19 +1228,19 @@ const (
 // SettleFoundryResolve owes them for one settled against the load; the
 // store, in its transaction, has no Helix to read them from. One read of the
 // load's reviews a type and name (ontologyagent.AskingQuery, the read the
-// API makes), at most ontologyagent.AskingDocumentsMax documents each; the
-// engine keeps no index of reviews by name, so each read filters the load's
-// reviews. They are owed under the ontology's lock while the load is current
-// (store OweFoundryAskingResends), so the documents are this load's and the
-// job reads them next, with the aliases' own documents; with the load no
-// longer current none is owed, and the aliases wait, their documents' names
-// held back, until a resend of the load owes them when it is current again.
+// API makes, one lookup of the engine's index of reviews by name), every
+// document that asks. They are owed under the ontology's lock while the load
+// is current (store OweFoundryAskingResends), so the documents are this
+// load's and the job reads them next, with the aliases' own documents; with
+// the load no longer current none is owed, and the aliases wait, their
+// documents' names held back, until a resend of the load owes them when it
+// is current again.
 // Owing a document again is harmless: a send whose reviews no longer ask
 // about the name writes nothing (not_asked).
 //
 // A read that fails (an error, a status other than 200, an answer it can't
 // read) leaves its aliases carried and their documents held back, and reads
-// no other name: each filters the same reviews, and would fail the same way.
+// no other name: each goes to the same graph, and would fail the same way.
 // The job goes on and sends what else is owed, so approvals and values never
 // wait on a name's read, and unread says the attempt is retried once it has
 // (Task.outcome's backoff); the store's failFoundryResends leaves an alias
@@ -1289,8 +1290,8 @@ func (r *runner) oweAskingDocuments(ctx context.Context, job *model.FoundryGraph
 			return retry("could not read which documents ask about a name; Helix will retry", err), nil
 		}
 		if past {
-			log.From(ctx).Warn("graph job: a carried name asks more documents than a resend sends again; the rest wait for the next load",
-				"job", job.ID, "documents", len(docs))
+			log.From(ctx).Warn("graph job: a carried name has more reviews in the load than one read returns; the rest of its documents wait for the next load",
+				"job", job.ID, "documents", len(docs), "reviews", ontologyagent.AskingReviewsMax)
 		}
 		owed, err := r.db.OweFoundryAskingResends(ctx, job, r.workerID, copies[name], docs)
 		if errors.Is(err, foundrystore.ErrNotFound) {
