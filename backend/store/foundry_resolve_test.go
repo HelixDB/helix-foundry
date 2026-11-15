@@ -41,6 +41,33 @@ func (f resendFixture) owedFor(t *testing.T) map[string]int {
 	return out
 }
 
+// Every document that asks about the name is owed, however many (the engine
+// indexes reviews by name from contract 4.24.0, so the read finds them all):
+// more than one statement's placeholders take, in the settle's transaction,
+// each once (one listed twice too), and settling again owes each again.
+func TestSettleFoundryResolveOwesEveryAskingDocument(t *testing.T) {
+	f := newResendFixture(t, "RSM")
+	acme := "acme"
+	asking := make([]string, 30000)
+	for i := range asking {
+		asking[i] = id26(fmt.Sprintf("ASK%06d", i))
+	}
+	d := f.resolveOf("1", f.a, "acme corp", &acme)
+	f.settleName(t, "1", d, append(asking, asking[:3]...)...)
+	owed := func() (rows, requests int) {
+		require.NoError(t, testDB.QueryRow(`SELECT COUNT(*), SUM(requests) FROM foundry_load_resends
+WHERE load_id=? AND reason='name' AND status='owed'`, f.load).Scan(&rows, &requests))
+		return rows, requests
+	}
+	rows, requests := owed()
+	assert.Equal(t, 30001, rows, "its own document and every one that asks, each once")
+	assert.Equal(t, 30001, requests, "a document listed twice is owed once")
+	f.settleName(t, "1b", f.resolveOf("1b", f.a, "acme corp", &acme), asking...)
+	rows, requests = owed()
+	assert.Equal(t, 30001, rows)
+	assert.Equal(t, 60002, requests, "settled again, each is owed again")
+}
+
 // A person's resolve joins the current load's list at once, pending, with
 // its name's key, and queues a resend of its document and of the documents
 // whose reviews ask about the name, owed for a name. The engine's word on

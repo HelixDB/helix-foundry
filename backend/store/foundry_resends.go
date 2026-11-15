@@ -64,21 +64,30 @@ import (
 // says what it did (withdrawn, not_written, or refused). A copy the load
 // never wrote is only deleted, as before: there is nothing to take back.
 
+// foundryResendsPerInsert is the most documents one statement of
+// oweFoundryResends owes: three placeholders each, well under MySQL's 65,535
+// a statement, as every document that asks about a name (a read the engine
+// indexes from contract 4.24.0) may be owed at once.
+const foundryResendsPerInsert = 5000
+
 // oweFoundryResends owes each of documentIDs a resend into loadID for reason,
 // or owes it again: a request a running job hasn't read stays owed when that
-// job ends the one it did read. The caller holds the ontology's lock.
+// job ends the one it did read. One statement for each
+// foundryResendsPerInsert of them, in the caller's transaction. The caller
+// holds the ontology's lock.
 func (s *mysqlDB) oweFoundryResends(ctx context.Context, loadID string, reason model.FoundryResendReason, documentIDs []string) error {
-	if len(documentIDs) == 0 {
-		return nil
+	for part := range slices.Chunk(documentIDs, foundryResendsPerInsert) {
+		args := make([]any, 0, 3*len(part))
+		for _, doc := range part {
+			args = append(args, loadID, doc, string(reason))
+		}
+		rows := strings.TrimSuffix(strings.Repeat("(?, ?, ?), ", len(part)), ", ")
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_resends (load_id, document_id, reason) VALUES `+rows+`
+ON DUPLICATE KEY UPDATE status='owed', requests=requests+1, requested_at=NOW(6), ended_at=NULL, job_id=NULL`, args...); err != nil {
+			return err
+		}
 	}
-	args := make([]any, 0, 3*len(documentIDs))
-	for _, doc := range documentIDs {
-		args = append(args, loadID, doc, string(reason))
-	}
-	rows := strings.TrimSuffix(strings.Repeat("(?, ?, ?), ", len(documentIDs)), ", ")
-	_, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_resends (load_id, document_id, reason) VALUES `+rows+`
-ON DUPLICATE KEY UPDATE status='owed', requests=requests+1, requested_at=NOW(6), ended_at=NULL, job_id=NULL`, args...)
-	return err
+	return nil
 }
 
 // foundryMayHaveWritten is the SQL condition that a load's copy (alias t) of

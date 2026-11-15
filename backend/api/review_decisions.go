@@ -267,11 +267,11 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 // documentsAsking are the documents of load whose reviews still ask about
 // name ty/name, which an alias of that name settles in place when they are
 // sent again (contract 4.22.0): one read of the load's reviews of that type
-// and name (ontologyagent.AskingQuery), each document once, at most
-// ontologyagent.AskingDocumentsMax. The engine keeps no index of reviews by
-// name, so the read filters the load's reviews; a person's settle makes it,
-// not an Extract. A document sent that no longer asks costs nothing: the
-// engine says not_asked and writes nothing.
+// and name (ontologyagent.AskingQuery), each document once, every one of
+// them. The engine indexes reviews by name (contract 4.24.0), so the read is
+// one lookup; a person's settle makes it, not an Extract. A document sent
+// that no longer asks costs nothing: the engine says not_asked and writes
+// nothing.
 func (s *Service) documentsAsking(ctx context.Context, o *foundrymodel.FoundryOntology, load, ty, name string) ([]string, error) {
 	body, err := ontologyagent.AskingQuery(load, ty, name)
 	if err != nil {
@@ -292,8 +292,8 @@ func (s *Service) documentsAsking(ctx context.Context, o *foundrymodel.FoundryOn
 		return nil, status.Error(codes.Internal, "read review graph response")
 	}
 	if past {
-		log.From(ctx).Warn("settle: a name asks more documents than a settle sends again; the rest wait for the next load",
-			"ontology", o.ID, "documents", len(docs))
+		log.From(ctx).Warn("settle: a name has more reviews in the load than one read returns; the rest of its documents wait for the next load",
+			"ontology", o.ID, "documents", len(docs), "reviews", ontologyagent.AskingReviewsMax)
 	}
 	return docs, nil
 }

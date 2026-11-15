@@ -1074,7 +1074,7 @@ func TestResendSettlesNames(t *testing.T) {
 // alias's own document waits with it, so the alias is read when the load is
 // current again. One job reads at most carriedAliasesPerJob aliases, and no
 // more names once it owes askingDocumentsPerJob documents; the documents of
-// the rest wait for the next.
+// the rest wait for the next. Each name is owed every document that asks.
 func TestResendOwesWhatACarriedAliasAsks(t *testing.T) {
 	setup := func(t *testing.T) *harness {
 		h := newHarness(t)
@@ -1168,11 +1168,14 @@ func TestResendOwesWhatACarriedAliasAsks(t *testing.T) {
 			t.Fatalf("%d extracts, ended %+v: the document went before its last alias was read", len(calls), h.store.ended)
 		}
 	})
+	// A name is owed whole, every document that asks (the engine indexes
+	// reviews by name), and no name is read after it once the job owes
+	// askingDocumentsPerJob.
 	t.Run("documents past what a job owes", func(t *testing.T) {
 		h := setup(t)
 		globex := "globex"
 		h.store.carried = append(h.store.carried, linked("r3", "doc-a", "globex", &globex, settledAt))
-		items := make([]string, askingDocumentsPerJob)
+		items := make([]string, 2*askingDocumentsPerJob+5)
 		for i := range items {
 			items[i] = fmt.Sprintf(`{"doc_id":"doc-%05d","reason":"unresolved"}`, i)
 		}
@@ -1183,7 +1186,7 @@ func TestResendOwesWhatACarriedAliasAsks(t *testing.T) {
 		if !slices.Equal(h.gateway.asks, []string{"load-0/Customer/acme corp"}) {
 			t.Fatalf("read %v", h.gateway.asks)
 		}
-		if len(h.store.asked) != askingDocumentsPerJob || len(h.store.carried) != 1 || h.store.carried[0].ID != "r3" {
+		if len(h.store.asked) != 2*askingDocumentsPerJob+5 || len(h.store.carried) != 1 || h.store.carried[0].ID != "r3" {
 			t.Fatalf("owed %d, carried %v", len(h.store.asked), h.store.carried)
 		}
 	})
