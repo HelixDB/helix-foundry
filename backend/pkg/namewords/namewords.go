@@ -10,24 +10,29 @@
 // below: grapheme clusters, a letter of a script written without spaces a
 // word with its marks, a cluster that folds to more than one word split from
 // the words beside it), and only then folds each word by itself (coarse):
-// decomposed (NFKD) with every mark dropped, and a word of a script written
-// without spaces read as one word for each letter left, as this package read
-// them before it followed the engine's words, so a name's Key is what it was
-// unless the engine's words of it changed it. The fold of a word depends on
-// that word alone, so Words of any string are the engine's words of it, each
-// folded: wherever the engine finds a name's words in a row in a text,
-// Text.Writes finds the folded ones in a row too, and the name's Key is among
-// the text's Keys. Folding further may find more than the engine (a name with
-// a mark where the text has none), which costs only an alias the engine then
-// ignores; it never finds less, which would leave a name a person settled
-// unapplied.
+// decomposed (NFKD) with every mark dropped, a word of marks alone dropped
+// with them, and a word of a script written without spaces read as one word
+// for each letter left, as this package read them before it followed the
+// engine's words, so a name's Key is what it was unless the engine's letters
+// of it changed. The fold of a word depends on that word alone, so Words of
+// any string are the engine's words of it, each folded: wherever the engine
+// finds a name's words in a row in a text, Text.Writes finds the folded ones
+// in a row too, and the name's Key is among the text's Keys. Folding further
+// may find more than the engine (a name with a mark where the text has none),
+// which costs only an alias the engine then ignores; it never finds less,
+// which would leave a name a person settled unapplied, with one exception: a
+// name of marks alone has no word here, so no key, and is never found, as
+// before.
 //
 // What is left between the two is their Unicode tables. Go's (package
 // unicode, golang.org/x/text/unicode/norm before Go 1.27, rivo/uniseg) are
 // Unicode 15.0; the engine's (Rust's char, unicode-normalization,
 // unicode-segmentation) are Unicode 17.0. The one rule of grapheme clusters
 // added since that changes words (GB9c, conjoined) is applied here from the
-// engine's own tables (incb.go). A character first assigned after 15.0 is no
+// engine's own tables (incb.go), and the one letter whose cluster value moved
+// (U+11A3A, a prefix to uniseg) is cut from what follows it as the engine
+// cuts it; the tests compare uniseg's values with the engine's (gcb_test.go)
+// for every character Go knows. A character first assigned after 15.0 is no
 // letter here, so it separates where the engine reads a letter, and a word
 // holding one splits here; it splits on both sides, text and name, so the
 // name is still found unless that character is all it is. A character added
@@ -195,6 +200,17 @@ func engineWords(s string) []string {
 	state := -1
 	for at := 0; at < len(s); {
 		first, _, _, st := uniseg.FirstGraphemeClusterInString(s[at:], state)
+		// U+11A3A is a prefix to uniseg (Unicode 15.0) and a letter like any
+		// other to the engine (since 15.1): its cluster is it and what joins
+		// any letter, as uniseg joins it to an "a" put in its place. What
+		// joins it is in uniseg's cluster of it, which takes the next cluster
+		// whole; cut there, the next cluster starts afresh, as after a letter.
+		if c, size := utf8.DecodeRuneInString(first); c == 0x11A3A {
+			as, _, _, _ := uniseg.FirstGraphemeClusterInString("a"+first[size:], -1)
+			if cut := size + len(as) - 1; cut < len(first) {
+				first, st = first[:cut], -1
+			}
+		}
 		end := at + len(first)
 		state = st
 		for end < len(s) {
@@ -283,10 +299,18 @@ func isASCII(s string) bool {
 }
 
 // coarse folds one engine word further, into the words Words reads of it:
-// decomposed (NFKD) with every mark dropped, or the word as it is if that
-// leaves nothing, so no word is lost; and a word of a script written without
-// spaces (one letter with its marks, a Hangul syllable) is one word for each
-// character that leaves, as a syllable's jamo.
+// decomposed (NFKD) with every mark dropped, none if that leaves nothing (a
+// word of marks alone, as a Thai mark on a Latin letter is to the engine);
+// and a word of a script written without spaces (one letter with its marks,
+// a Hangul syllable) is one word for each character that leaves, as a
+// syllable's jamo.
+//
+// Dropping every mark makes the order and place of marks not matter: Go's
+// normalization writes a combining grapheme joiner (U+034F, itself a mark)
+// after 30 marks in a row (the Stream-Safe Text Format), where the engine's
+// writes none, and orders no mark across it, so past 30 marks the engine and
+// Go can place a mark on either side of others, or a word of marks between
+// other words; the letters of every other word are the same.
 func coarse(word string) []string {
 	if isASCII(word) {
 		return []string{word}
@@ -297,10 +321,10 @@ func coarse(word string) []string {
 		}
 		return c
 	}, norm.NFKD.String(word))
-	if folded == "" {
-		folded = word
-	}
-	if first, _ := utf8.DecodeRuneInString(word); spacedWord(first) {
+	switch first, _ := utf8.DecodeRuneInString(word); {
+	case folded == "":
+		return nil
+	case spacedWord(first):
 		return []string{folded}
 	}
 	return strings.Split(folded, "")
@@ -310,18 +334,10 @@ func coarse(word string) []string {
 // own (see the package comment). Of a name, s is the name as the engine
 // normalizes it (norm_name); a document's are those of its normalized text,
 // which NewText reads.
-//
-// Go's normalization writes a combining grapheme joiner (U+034F) after every
-// 30 marks in a row (the Stream-Safe Text Format) and the engine's doesn't,
-// so a joiner is left out of every word here, and a word of joiners alone
-// with it: on both sides, text and name, so a run of the engine's words is
-// still a run here.
 func Words(s string) []string {
 	var words []string
 	for _, w := range engineWords(s) {
-		if w = strings.ReplaceAll(w, "\u034F", ""); w != "" {
-			words = append(words, coarse(w)...)
-		}
+		words = append(words, coarse(w)...)
 	}
 	return words
 }

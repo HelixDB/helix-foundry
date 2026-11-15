@@ -6,7 +6,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
 
+	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	"github.com/helixdb/helix-foundry/backend/pkg/namewords"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +22,16 @@ type entry struct {
 	Words     []string `json:"words"`
 	Written   []string `json:"written"`
 	Unwritten []string `json:"unwritten"`
+}
+
+// The corpus is the one the engine wrote at the contract Foundry pins, so a
+// contract change, which may change the engine's words, copies it again
+// (testdata/README.md).
+func TestCorpusIsThePinnedContracts(t *testing.T) {
+	copied, err := os.ReadFile("testdata/CONTRACT")
+	require.NoError(t, err)
+	assert.Equal(t, ontologyagent.ContractVersion, strings.TrimSpace(string(copied)),
+		"testdata/word_corpus.json is the engine's of another contract: copy it again (testdata/README.md)")
 }
 
 func corpus(t testing.TB) []entry {
@@ -46,14 +58,26 @@ func joinerless(words []string) []string {
 
 // Every name the engine writes in a text, Text.Writes finds there, and its
 // Key is among the text's Keys: what Foundry needs, as it sends an Extract
-// only the aliases found so.
+// only the aliases found so. A name of marks alone, every word of it to the
+// engine a mark or marks, has no word here, so no key, and is the one kind
+// never found.
 func TestWritesWhatTheEngineWrites(t *testing.T) {
-	names, more := 0, 0
+	names, more, marks := 0, 0, 0
 	for _, e := range corpus(t) {
 		text := namewords.NewText(e.Text)
 		keys := text.Keys()
 		for _, name := range e.Written {
 			names++
+			if len(namewords.Words(name)) == 0 {
+				marks++
+				for _, w := range namewords.EngineWords(name) {
+					assert.False(t, strings.ContainsFunc(w, func(c rune) bool { return !unicode.In(c, unicode.M) }),
+						"%q, a name with no word, is marks alone", name)
+				}
+				_, ok := namewords.Key(name)
+				assert.False(t, ok, "%q has no key", name)
+				continue
+			}
 			assert.True(t, text.Writes(name), "%q writes %q", e.Text, name)
 			key, ok := namewords.Key(name)
 			if assert.True(t, ok, "%q has a key", name) {
@@ -66,7 +90,7 @@ func TestWritesWhatTheEngineWrites(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("%d names the engine writes; %d of those it doesn't write found as well", names, more)
+	t.Logf("%d names the engine writes, %d of them marks alone; %d of those it doesn't write found as well", names, marks, more)
 }
 
 // The words here are exactly the engine's, each folded on its own (Coarse):
