@@ -1,5 +1,6 @@
 // What stands between this computer and running Foundry's Assistant on its
-// Claude Code: each check in a line, and what to do about one that fails.
+// Claude Code or Codex: each check in a line, and what to do about one that
+// fails.
 
 import { execFile } from "node:child_process";
 import { stat } from "node:fs/promises";
@@ -9,8 +10,9 @@ import type { AccountInfo } from "@anthropic-ai/claude-agent-sdk";
 
 import { claudeAccount, signedIn } from "./account.ts";
 import { cliEnv, type Query } from "./claude.ts";
+import { MIN_CODEX, atLeast, checkCodex } from "./codex.ts";
 import { configPath, loadPaired } from "./config.ts";
-import { findClaude } from "./find.ts";
+import { findCli } from "./find.ts";
 import { Foundry, type Account } from "./foundry.ts";
 import { VERSION } from "./version.ts";
 
@@ -19,11 +21,16 @@ export type Check = { ok: boolean; what: string; fix?: string };
 const run = promisify(execFile);
 
 /**
- * Every check, in order; a later one may depend on an earlier. Claude Code
- * is asked first, so Foundry's hello says what it is signed in to.
+ * Every check, in order; a later one may depend on an earlier. The CLIs are
+ * asked first, so Foundry's hello says what they are signed in to.
  */
 export async function doctor(
-  opts: { claude?: string; env?: NodeJS.ProcessEnv; query?: Query } = {},
+  opts: {
+    claude?: string;
+    codex?: string;
+    env?: NodeJS.ProcessEnv;
+    query?: Query;
+  } = {},
 ): Promise<Check[]> {
   const env = opts.env ?? process.env;
   const checks: Check[] = [];
@@ -33,7 +40,23 @@ export async function doctor(
     what: `Node ${process.versions.node}`,
     fix: "Install Node 24 or later.",
   });
-  const cli = await claudeChecks(opts.claude, env, opts.query);
+  const claude = await findCli("claude", opts.claude, env);
+  const codex = await findCli("codex", opts.codex, env);
+  // A CLI is checked once found, or once named: one named but not found is a problem.
+  const clis = [
+    ...(claude || opts.claude
+      ? [{ found: !!claude, ...(await claudeChecks(claude, env, opts.query)) }]
+      : []),
+    ...(codex || opts.codex
+      ? [{ found: !!codex, ...(await codexChecks(codex, env)) }]
+      : []),
+  ];
+  if (clis.length === 0)
+    checks.push({
+      ok: false,
+      what: "Claude Code or Codex installed",
+      fix: "Install Claude Code (https://claude.com/claude-code) or Codex (npm i -g @openai/codex), or name one with --claude <path> or --codex <path>.",
+    });
 
   const path = configPath(env);
   const paired = await loadPaired(path).catch((e: Error) => e);
@@ -54,10 +77,11 @@ export async function doctor(
       fix: `chmod 600 ${path}`,
     });
     try {
+      const found = clis.filter((c) => c.found);
       const me = await new Foundry(paired.foundry, paired.token).hello(
-        ["claude_code"],
+        found.length ? found.map((c) => c.account.runtime) : ["claude_code"],
         VERSION,
-        [cli.account],
+        found.map((c) => c.account),
       );
       checks.push({
         ok: true,
@@ -71,17 +95,16 @@ export async function doctor(
       });
     }
   }
-  return [...checks, ...cli.checks];
+  return [...checks, ...clis.flatMap((c) => c.checks)];
 }
 
 /** Claude Code's checks, and its account as Foundry is told it. */
 async function claudeChecks(
-  path: string | undefined,
+  claude: string | undefined,
   env: NodeJS.ProcessEnv,
   query?: Query,
 ): Promise<{ checks: Check[]; account: Account }> {
   const unknown: Account = { runtime: "claude_code", state: "unknown" };
-  const claude = await findClaude(path, env);
   if (!claude)
     return {
       account: unknown,
@@ -134,6 +157,68 @@ async function claudeChecks(
               : "Signed in to a Claude subscription",
           fix: "Run claude, then /login, and sign in with your Claude account.",
         },
+  );
+  return { checks, account };
+}
+
+/** Codex's checks, and its account as Foundry is told it. */
+async function codexChecks(
+  codex: string | undefined,
+  env: NodeJS.ProcessEnv,
+): Promise<{ checks: Check[]; account: Account }> {
+  if (!codex)
+    return {
+      account: { runtime: "codex", state: "unknown" },
+      checks: [
+        {
+          ok: false,
+          what: "Codex installed",
+          fix: "Install Codex (npm i -g @openai/codex), or name it with --codex <path>.",
+        },
+      ],
+    };
+  const account = await checkCodex(codex, env);
+  const checks: Check[] = [];
+  if (!account.version)
+    return {
+      account,
+      checks: [
+        {
+          ok: false,
+          what: `Codex at ${codex}`,
+          fix: "It didn't run: run codex --version there to see why.",
+        },
+      ],
+    };
+  checks.push(
+    atLeast(account.version, MIN_CODEX)
+      ? { ok: true, what: `Codex ${account.version} (${codex})` }
+      : {
+          ok: false,
+          what: `Codex ${account.version} is older than ${MIN_CODEX}, the oldest Foundry runs (${codex})`,
+          fix: "Update it: npm i -g @openai/codex@latest, or as you installed it.",
+        },
+  );
+  checks.push(
+    account.state === "signed_in" && account.subscription
+      ? {
+          ok: true,
+          what: `Signed in to Codex on a ChatGPT ${account.subscription} plan`,
+        }
+      : account.state === "unknown"
+        ? {
+            ok: false,
+            what: "Codex starts",
+            fix: "Its app-server didn't answer: run codex there to see why.",
+          }
+        : {
+            ok: false,
+            what:
+              account.state === "signed_in"
+                ? "Signed in to Codex, but not with a ChatGPT plan"
+                : "Signed in to Codex with a ChatGPT plan",
+            fix: "Run codex login, and sign in with ChatGPT.",
+          },
   );
   return { checks, account };
 }

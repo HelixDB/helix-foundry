@@ -1,6 +1,7 @@
 # The Assistant's helper (agent-host/): its typecheck, tests (against a fake
-# Claude Code and a fake Foundry) and build, then the built helper against
-# the real backend's front end (cmd/foundry TestFrontWithTheHelper).
+# Claude Code, a fake Codex and a fake Foundry), the isolation against the
+# real CLIs, and build, then the built helper against the real backend's
+# front end (cmd/foundry TestFrontWithTheHelper).
 name: Agent host
 on:
   push:
@@ -45,6 +46,10 @@ jobs:
       - run: node --test test/real-claude.test.ts
         env:
           REAL_CLAUDE: ${{ github.workspace }}/agent-host/node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-linux-x64@0.3.321/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude
+      # The isolation, against the Codex pinned as a dev dependency (MIN_CODEX).
+      - run: node --test test/real-codex.test.ts
+        env:
+          REAL_CODEX: ${{ github.workspace }}/agent-host/node_modules/.bin/codex
       - run: pnpm build
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
