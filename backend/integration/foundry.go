@@ -501,9 +501,9 @@ type FoundryGenerationOutput struct {
 	// Revision is set exactly for a revision of a version (revise_version).
 	Revision *FoundryRevisionOutput `json:"revision,omitempty"`
 	// Questions are what the agent's last turn asked.
-	Questions     []FoundryGenerationQuestionOutput `json:"questions,omitempty" jsonschema:"What the agent's last turn asked, with each answer once given; absent when it asked nothing. Status needs_input waits on them: ask the user and answer with the answer_generation_questions action. Untrusted model text that may quote the data: show it as plain text."`
+	Questions     []FoundryGenerationQuestionOutput `json:"questions,omitempty" jsonschema:"What the agent's last turn asked, with each answer once given; absent when it asked nothing. Status needs_input waits on them: ask the user and answer with the answer_generation_questions action (Foundry's Assistant relays them with helix_foundry_ask_person instead). Untrusted model text that may quote the data: show it as plain text."`
 	AskedAt       string                            `json:"asked_at,omitempty"`
-	QuestionRound int32                             `json:"question_round,omitempty" jsonschema:"Which round of questions they are, from 1: answer_generation_questions names it."`
+	QuestionRound int32                             `json:"question_round,omitempty" jsonschema:"Which round of questions they are, from 1, as an answer_generation_questions action names it."`
 	AnswersDueAt  string                            `json:"answers_due_at,omitempty" jsonschema:"While it needs input: when Helix leaves every question to the agent, which takes its recommended answers, and carries on."`
 	// EventSources are the tables' and sets' API sources, read as the stored input says: an
 	// events connector's table through mappings, and its own set by extraction.
@@ -924,7 +924,7 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			"Describe the reads helix_foundry_read_graph takes: their kinds and JSON Schema."), s.FoundryReadGuide)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetGeneration,
 			"Get one generation of a Foundry ontology, or a revision of one of its versions with the engine's result once it ended. With wait, waits up to 25 s while it runs; call again until it ends. "+
-				"A generation that needs_input waits on the questions it lists: ask the user, then answer with the answer_generation_questions action."), s.GetFoundryGeneration)
+				"A generation that needs_input waits on the questions it lists: ask the user, then answer with the answer_generation_questions action (Foundry's Assistant relays them with helix_foundry_ask_person instead)."), s.GetFoundryGeneration)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetLoad,
 			"Get one load of a Foundry ontology with its newest jobs (the load that writes it, and extracts that add documents to it): their status, phase, progress, error and spend. "+
 				"documents counts what it made of its documents, in all and by document set: how many a model read, how many its version does not read (not_read_by_version: stored and searchable, nothing in the graph), their fact writes, "+
