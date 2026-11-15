@@ -425,8 +425,8 @@ ORDER BY l.id`, loadID, string(model.FoundryResendName))
 // reviews ask about the name of an alias carried to it
 // (ListFoundryCarriedAliases), while workerID holds the job's lease and the
 // load is the ontology's current one: owed reports it was. A load no longer
-// current is not sent them: the carry that makes it current again owes the
-// alias's document again, whose job reads them anew. Under the ontology's
+// current is not sent them, as reads go to another load; a later load
+// applies the alias to them. Under the ontology's
 // lock, then the job's row, the order a settle takes them, so the current
 // load is the same throughout. ErrNotFound means the lease was lost or the
 // ontology is gone, and nothing was owed.

@@ -1210,8 +1210,8 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 // of reviews by name, so each read filters the load's reviews. They are owed
 // under the ontology's lock while the load is current
 // (store OweFoundryAskingResends), so the documents are this load's and the
-// job reads them next; with the load no longer current none is owed, and the
-// carry that makes it current again owes the alias's document anew. Owing
+// job reads them next; with the load no longer current none is owed, as
+// reads go to another load, and a later load applies the alias to them. Owing
 // a document again is harmless: a send whose reviews no longer ask about the
 // name writes nothing (not_asked). A read that fails retries the attempt.
 func (r *runner) oweAskingDocuments(ctx context.Context, job *model.FoundryGraphJob, binding graphproxy.Binding) error {
