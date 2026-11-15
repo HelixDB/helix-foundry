@@ -1440,8 +1440,6 @@ function messageScript(a: Ask, manager: boolean): Step[] {
     case "publish_dashboard":
     case "unpublish_dashboard":
       return [started, ...onDashboard(a, board!, asked!)];
-    // An edit of an automation is the builder's or a card's, never a message's.
-    case "update_automation":
     case undefined:
       return [started, ...list, ...describe(a)];
   }
@@ -2693,15 +2691,15 @@ const automationOutput = (ws: string, x: FoundryAutomation) => ({
 function approveOnClick(
   a: StoredAction,
   userId: string,
-  body: { automation: FoundryAutomation },
-): { body: { automation: FoundryAutomation }; error: string } {
+  body: { automation?: FoundryAutomation },
+): { body: unknown; error: string } {
   if (
     (a.operation !== "create_automation" &&
       a.operation !== "update_automation") ||
     a.payload.spec === undefined
   )
     return { body, error: "" };
-  const made = body.automation;
+  const made = body.automation!;
   const approved = wfe(
     userId,
     "POST",
@@ -3325,7 +3323,11 @@ function execute(req: MockRequest, userId: string) {
   // operation's own routes check them.
   const reply = run(a, userId);
   if (reply.status === 200) {
-    const approval = approveOnClick(a, userId, reply.body);
+    const approval = approveOnClick(
+      a,
+      userId,
+      reply.body as { automation?: FoundryAutomation },
+    );
     a.status = "succeeded";
     a.result = {
       content_trust: "untrusted",

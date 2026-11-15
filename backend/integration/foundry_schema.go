@@ -20,7 +20,7 @@ type foundryOperationDoc struct {
 	hostsOnly bool
 	// publicOnly is an operation only a host with dashboards' public links offers
 	// (Service.PublicDashboards).
-	publicOnly bool
+	publicOnly  bool
 	doc, events string
 }
 

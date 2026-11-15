@@ -170,13 +170,14 @@ func TestAnApprovedActionRunsOnceAcrossReplays(t *testing.T) {
 	assert.Contains(t, refused.Content, "already decided")
 }
 
+// Every action an automation's owner may approve for a step is one the
+// Assistant prepares.
 func TestAnAutomationAllowsWhatItsOwnerMayApprove(t *testing.T) {
 	sink := &actionSink{}
-	assert.True(t, sink.Allows("create_load"))
-	assert.False(t, sink.Allows("sync_connector"), "a person's turn prepares no sync")
-	sink.approved = []automation.Action{automation.SyncConnector{ConnectorID: "c1"}}
-	assert.True(t, sink.Allows("sync_connector"), "an automation's step may sync what its owner approved")
-	assert.False(t, sink.Allows("settle_review"))
+	for operation := range automation.Operations {
+		assert.True(t, sink.Allows(operation), operation)
+	}
+	assert.False(t, sink.Allows("upload_document"))
 }
 
 func TestReportsAreChecked(t *testing.T) {

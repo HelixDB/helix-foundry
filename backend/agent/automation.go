@@ -74,10 +74,10 @@ func (r *Runner) automationStep(ctx context.Context, turn *model.FoundryAgentTur
 // system is the turn's system prompt: the Assistant's, and an automation's
 // turn's own after it.
 func (t *turnRun) system() string {
-	if t.step == nil {
+	if t.automation == nil {
 		return system(t.turn.WorkspaceID)
 	}
-	return system(t.turn.WorkspaceID) + "\n\n" + automationPrompt(t.step)
+	return system(t.turn.WorkspaceID) + "\n\n" + automationPrompt(t.automation)
 }
 
 // automationPrompt tells an automation's turn how it runs.
@@ -119,7 +119,7 @@ type ReportOutput struct {
 // call shows the person a Reported event, the newest of which is the step's
 // output.
 func (t *turnRun) reportTool(server *mcp.Server) {
-	if t.step == nil {
+	if t.automation == nil {
 		return
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: toolReport, Title: "Report to the automation",

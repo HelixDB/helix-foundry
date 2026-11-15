@@ -294,6 +294,16 @@ func (s *memStore) GetFoundryAutomation(_ context.Context, workspaceID, id strin
 	return nil, foundrystore.ErrNotFound
 }
 
+func (s *memStore) ListFoundryAutomations(_ context.Context, workspaceID string) ([]*model.FoundryAutomation, error) {
+	var out []*model.FoundryAutomation
+	for _, a := range s.automations {
+		if a.WorkspaceID == workspaceID {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
 func (s *memStore) GetFoundryAutomationRun(_ context.Context, workspaceID, id string) (*model.FoundryAutomationRun, error) {
 	for _, r := range s.runs {
 		if r.WorkspaceID == workspaceID && r.ID == id {

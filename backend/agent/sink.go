@@ -43,11 +43,9 @@ type actionSink struct {
 
 var _ integration.ActionSink = (*actionSink)(nil)
 
-// Allows is the Assistant's operations, and for an automation's turn the
-// operations its owner may approve for a step too.
-func (s *actionSink) Allows(operation string) bool {
-	return Operations[operation] || len(s.approved) > 0 && automation.Operations[operation]
-}
+// Allows is the Assistant's operations, which hold every one an automation's
+// owner may approve for a step (automation.Operations).
+func (s *actionSink) Allows(operation string) bool { return Operations[operation] }
 
 // Record checks the action acts in the turn's workspace, names what it acts
 // on, and stores it with its card in one write. A payload the turn already

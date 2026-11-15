@@ -44,6 +44,7 @@ func (r FoundryAgentRuntime) Subscription() bool {
 func (r FoundryAgentRuntime) Offered() bool {
 	return r == FoundryAgentRuntimeAPI || r == FoundryAgentRuntimeClaudeCode
 }
+
 // FoundryAgentThreadKind is what a thread is: a closed set.
 type FoundryAgentThreadKind string
 

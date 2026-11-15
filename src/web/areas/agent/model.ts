@@ -1575,7 +1575,9 @@ const VIEWS: {
   }),
   create_automation: (d) => ({
     title: `Set up the automation “${d.name}”`,
-    facts: [{ label: "Name", value: `“${d.name}” (as the Assistant wrote it)` }],
+    facts: [
+      { label: "Name", value: `“${d.name}” (as the Assistant wrote it)` },
+    ],
     does: "Saves this automation and turns it on. You can pause or change it on its page.",
     cost: "Its Assistant steps spend the workspace’s automations budget.",
     run: "Create and turn on",
@@ -1795,7 +1797,10 @@ export function resultLink(
     case "delete_automation":
       return undefined;
     case "create_automation":
-      return on(made && automationPaths.automation(made), "Open the automation");
+      return on(
+        made && automationPaths.automation(made),
+        "Open the automation",
+      );
     case "update_automation":
     case "pause_automation":
     case "resume_automation":
@@ -1805,8 +1810,7 @@ export function resultLink(
       );
     case "run_automation":
       return on(
-        made &&
-          automationPaths.automationRun(card.display.automation.id, made),
+        made && automationPaths.automationRun(card.display.automation.id, made),
         "Open the run",
       );
   }

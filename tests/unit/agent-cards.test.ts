@@ -1530,13 +1530,11 @@ describe("resultLink", () => {
         ["pause_automation", "an automation paused"],
         ["resume_automation", "an automation turned back on"],
       ] as const
-    ).map(
-      ([op, name]): [string, FoundryAgentAction, unknown] => [
-        name,
-        ran(op, d(name), { id: "aut1" }, "automation:ws1/aut1"),
-        { to: "/automations/aut1", label: "Open the automation" },
-      ],
-    ),
+    ).map(([op, name]): [string, FoundryAgentAction, unknown] => [
+      name,
+      ran(op, d(name), { id: "aut1" }, "automation:ws1/aut1"),
+      { to: "/automations/aut1", label: "Open the automation" },
+    ]),
     [
       "an automation run now",
       ran(

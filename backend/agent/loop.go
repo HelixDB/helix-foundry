@@ -131,13 +131,13 @@ type Attempt struct {
 type turnRun struct {
 	r    *Runner
 	turn *model.FoundryAgentTurn
-	// step is an automation's turn's step; nil for a person's turn.
-	step    *automationStep
-	model   llm.Model
-	pricer  llm.Pricer
-	client  *mcp.ClientSession
-	offered map[string]*mcp.Tool
-	tools   []llm.Tool
+	// automation is an automation's turn's step; nil for a person's turn.
+	automation *automationStep
+	model      llm.Model
+	pricer     llm.Pricer
+	client     *mcp.ClientSession
+	offered    map[string]*mcp.Tool
+	tools      []llm.Tool
 	// fixedTokens is about what every call sends besides the transcript: the
 	// system prompt and the tools' definitions.
 	fixedTokens int
@@ -197,7 +197,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	}
 	// A card is drawn as its person reads the workspace.
 	sink.cards = SessionCards(r.DB, r.Databases, session, turn.WorkspaceID)
-	t := &turnRun{r: r, turn: turn, step: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out}
+	t := &turnRun{r: r, turn: turn, automation: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out}
 	client, offered, err := serve(session, t.reportTool)
 	if err != nil {
 		return out, &Failure{Message: "The Assistant's tools couldn't start; Helix will retry", Err: err}
