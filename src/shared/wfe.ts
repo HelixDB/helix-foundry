@@ -2838,6 +2838,8 @@ export type FoundryAgentHost = {
   // darwin-arm64, linux-x64, ...
   platform?: string;
   createdAt?: string | null;
+  // Its last call; missing until its first after pairing, which starts
+  // nothing (it runs once its run or install does).
   lastSeenAt?: string | null;
   // Seen within 30 seconds.
   online?: boolean;

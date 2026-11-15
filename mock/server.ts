@@ -4,7 +4,7 @@ import { fail, type MockReply, type Principal } from "./http";
 import { handleReminders, mockReminders } from "./reminders";
 import { routes } from "./routes";
 import { handleDirectoryPage } from "./routes/access";
-import { pairHelper } from "./routes/agent-hosts";
+import { pairHelper, startHelper } from "./routes/agent-hosts";
 import { handleBillingPage } from "./routes/billing";
 import { handleDocumentUpload } from "./routes/documents";
 import { sendPieces } from "./routes/event-sources";
@@ -61,7 +61,8 @@ import { handleWorkos } from "./workos";
 //
 // POST /__mock/agent-host/pair { code, name?, account? } spends a pairing
 // code as the Assistant's helper's pair command does
-// (./routes/agent-hosts.ts): the helper it pairs runs on Claude Code.
+// (./routes/agent-hosts.ts): the helper it pairs offers Claude Code, and
+// runs once POST /__mock/agent-host/hello { host_id } starts it.
 //
 // /__mock/agent/v1/... calls the WFE route /v1/... as Ada's agent does
 // through the Helix MCP, with no token: starting and finishing a workflow's
@@ -159,8 +160,16 @@ const server = createServer(async (req, res) => {
         res.end(JSON.stringify(reply.body));
         return;
       }
-      if (url.pathname === "/__mock/agent-host/pair" && req.method === "POST") {
-        const reply = pairHelper(JSON.parse(raw || "{}"));
+      if (
+        (url.pathname === "/__mock/agent-host/pair" ||
+          url.pathname === "/__mock/agent-host/hello") &&
+        req.method === "POST"
+      ) {
+        const body = JSON.parse(raw || "{}");
+        const reply =
+          url.pathname === "/__mock/agent-host/pair"
+            ? pairHelper(body)
+            : startHelper(body);
         res.writeHead(reply.status, { "Content-Type": "application/json" });
         res.end(JSON.stringify(reply.body));
         return;

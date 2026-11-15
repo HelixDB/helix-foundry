@@ -78,6 +78,7 @@ import {
   textParts,
   threadKey,
   threadRuntime,
+  type RuntimeState,
   type AgentBlock,
   type TurnStream,
 } from "./model";
@@ -143,7 +144,7 @@ export function AgentDock({
     enabled: LOCAL && role === "owner",
     retry: false,
     refetchInterval: (q) =>
-      q.state.data && !threadRuntime(runtimeNow, q.state.data).online
+      q.state.data && threadRuntime(runtimeNow, q.state.data).state !== "ready"
         ? RUNTIME_POLL_MS
         : false,
   });
@@ -216,8 +217,9 @@ export function AgentDock({
           {where && where.runtime !== "api" && (
             <RuntimeLine
               runtime={where.runtime}
-              online={where.online}
+              state={where.state}
               thread={!!threadId}
+              onNavigate={onNavigate}
             />
           )}
           <Transcript
@@ -231,6 +233,7 @@ export function AgentDock({
             threadId={threadId}
             thread={threadId ? thread.data : undefined}
             runtime={where?.runtime ?? "api"}
+            hostState={where?.state ?? "ready"}
             onNavigate={onNavigate}
             onSent={(id) => {
               if (id !== threadId) open(id);
@@ -263,38 +266,51 @@ export function AgentDock({
 
 /**
  * Where the open thread (or a new one) runs, when it is a helper's: on the
- * person's subscription, and, while no helper that runs it is online, how
- * to start one (the WFE refuses to send until then).
+ * person's subscription; while none runs it, how to start the helper paired
+ * for it, or, with none paired, to pair one in Settings (the WFE refuses to
+ * send until one runs).
  */
 function RuntimeLine({
   runtime,
-  online,
+  state,
   thread,
+  onNavigate,
 }: {
   runtime: Exclude<AgentRuntime, "api">;
-  online: boolean;
+  state: RuntimeState;
   // An open thread's, not the workspace's for a new one.
   thread: boolean;
+  onNavigate?: () => void;
 }) {
-  const r = RUNTIMES[runtime];
+  const r = RUNTIMES[runtime],
+    which = thread ? "this thread" : "new threads";
   return (
     <div
-      className={cx("ag-runtime", !online && "is-offline")}
-      role={online ? undefined : "status"}
+      className={cx("ag-runtime", state !== "ready" && "is-offline")}
+      role={state === "ready" ? undefined : "status"}
     >
       <p className="ag-runtime-line">
-        {!online ? (
+        {state !== "ready" ? (
           <TriangleAlert size={14} aria-hidden />
         ) : runtime === "codex" ? (
           <span className="ag-mark-openai" aria-hidden />
         ) : (
           <img src="/providers/claude.svg" alt="" />
         )}
-        {online
-          ? `${thread ? "This thread runs" : "New threads run"} on ${r.on}, through ${r.cli} on your computer.`
-          : `${r.cli}’s helper isn’t running, so ${thread ? "this thread" : "new threads"} can’t be sent. Start it on your computer:`}
+        <span>
+          {state === "ready" ? (
+            `${thread ? "This thread runs" : "New threads run"} on ${r.on}, through ${r.cli} on your computer.`
+          ) : state === "stopped" ? (
+            `${r.cli}’s helper isn’t running, so ${which} can’t be sent. Start it on your computer:`
+          ) : (
+            <SettingsLinked
+              text={`No helper running ${r.cli} is paired, so ${which} can’t be sent. Pair one in Settings › AI models, then start it.`}
+              onNavigate={onNavigate}
+            />
+          )}
+        </span>
       </p>
-      {!online && (
+      {state === "stopped" && (
         <>
           <Command text={HELPER_COMMANDS.run} label="run command" />
           <p className="ag-runtime-line">
@@ -379,6 +395,7 @@ function Transcript({
             <TurnView
               key={t.id}
               turn={t}
+              helper={(data.thread.runtime ?? "api") !== "api"}
               recent={all.length - i <= RECENT_TURNS}
               scroller={log}
               actions={actions}
@@ -470,6 +487,7 @@ function useTurnStream(turn: FoundryAgentTurn, enabled: boolean) {
 
 function TurnView({
   turn,
+  helper,
   recent,
   scroller,
   actions,
@@ -477,6 +495,8 @@ function TurnView({
   onNavigate,
 }: {
   turn: FoundryAgentTurn;
+  // Its thread runs on a helper: a queued turn waits for one to take it.
+  helper: boolean;
   // One of the thread's newest: read as it opens.
   recent: boolean;
   // The conversation's scrolling box.
@@ -539,7 +559,9 @@ function TurnView({
             {turn.status === "queued" && (turn.attempts || 0) > 0
               ? `Retrying${turn.error ? `: ${turn.error}` : ""}…`
               : turn.status === "queued"
-                ? "Waiting to start…"
+                ? helper
+                  ? "Waiting for the helper on your computer to take it…"
+                  : "Waiting to start…"
                 : "Working…"}
           </p>
         )}
@@ -739,6 +761,7 @@ function Composer({
   threadId,
   thread,
   runtime,
+  hostState,
   onSent,
   onNavigate,
 }: {
@@ -748,6 +771,8 @@ function Composer({
   // Where its turns run: a helper's run on its owner's subscription, so
   // the workspace's AI setting doesn't hold them back.
   runtime: AgentRuntime;
+  // Whether a helper runs them now (always ready on the worker).
+  hostState: RuntimeState;
   onSent: (threadId: string) => void;
   onNavigate?: () => void;
 }) {
@@ -905,9 +930,16 @@ function Composer({
       <AiRefusal action="The Assistant" error={error} ready={modelReady}>
         {!!error && (
           <p className="ag-card-error" role="alert">
-            {agentRefusal(error) === "FOUNDRY_AGENT_HOST_OFFLINE"
-              ? `Its helper isn’t running on your computer: start it with ${HELPER_COMMANDS.run}, then send again.`
-              : sentence((error as Error).message)}
+            {agentRefusal(error) !== "FOUNDRY_AGENT_HOST_OFFLINE" ? (
+              sentence((error as Error).message)
+            ) : hostState === "unpaired" ? (
+              <SettingsLinked
+                text="No helper is paired to run it: pair one in Settings › AI models, start it, then send again."
+                onNavigate={onNavigate}
+              />
+            ) : (
+              `Its helper isn’t running on your computer: start it with ${HELPER_COMMANDS.run}, then send again.`
+            )}
           </p>
         )}
       </AiRefusal>

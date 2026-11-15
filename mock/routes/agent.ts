@@ -2308,6 +2308,10 @@ function execute(req: MockRequest, userId: string) {
     a.status = "failed";
     a.error = why(reply);
   }
+  // A helper's thread goes on only while a helper runs it (the backend's
+  // agentContinues): a turn queued for none would only wait.
+  if (thread.runtime !== "api" && hostOffline(ws, thread.runtime))
+    return ok({ action: toAction(a) } satisfies AgentActionResponse);
   const continuation = queueTurn(
     thread,
     {

@@ -22,7 +22,13 @@ import {
 } from "../../kit";
 import { useWorkspace } from "../../ui";
 import { ChoiceCard } from "../workspace/choice-card";
-import { HELPER_COMMANDS, RUNTIMES, accountText, helperAccount } from "./model";
+import {
+  HELPER_COMMANDS,
+  RUNTIMES,
+  accountText,
+  agentRefusal,
+  helperAccount,
+} from "./model";
 import {
   RUNTIME_POLL_MS,
   agentQueries,
@@ -35,10 +41,13 @@ import {
 // workspace's new Assistant threads run (the workspace's AI model, or the
 // owner's Claude subscription through a helper on their computer; Codex is
 // shown, not offered), a one-time pairing code with the command that
-// spends it, and the install's helpers: whether each runs, what its CLI is
-// signed in to, and Revoke. The page reads them every 3 s while a code
-// waits for its helper or the chosen runtime's helper isn't running, else
-// every 30 s. No helper token is ever shown: Foundry never sends one.
+// spends it, then, once a helper paired, how to start it (pairing starts
+// nothing) until it runs, and the install's helpers: whether each runs,
+// what its CLI is signed in to, and Revoke. The page reads them every 3 s
+// while a code waits for its helper, a helper paired waits to start, or the
+// chosen runtime's helper isn't running, else every 30 s. Nothing shows
+// while the Assistant is off. No helper token is ever shown: Foundry never
+// sends one.
 
 const SLOW_POLL_MS = 30_000;
 
@@ -57,8 +66,14 @@ const DESCRIPTIONS: Record<AgentRuntime, string> = {
     "Not available yet: Codex can’t yet be limited to Foundry’s tools alone.",
 };
 
-/** A pairing code shown, with the helpers there were when it was made. */
-type Pairing = FoundryAgentHostPairingResponse & { before: string[] };
+/**
+ * Pairing, a closed set: a code shown and waiting for its helper (with the
+ * helpers there were when it was made), then the helper it paired, waiting
+ * to be started.
+ */
+type Pairing =
+  | ({ kind: "code"; before: string[] } & FoundryAgentHostPairingResponse)
+  | { kind: "paired"; hostId: string; name: string };
 
 export function AssistantRuntimePanel() {
   const { id: ws, notify } = useWorkspace(),
@@ -71,18 +86,28 @@ export function AssistantRuntimePanel() {
       pairing || waiting(q.state.data) ? RUNTIME_POLL_MS : SLOW_POLL_MS,
   });
   const data = query.data;
-  // A helper the code paired: say so, and put the code away.
+  // A helper the code paired: say so, and how to start it; once it runs
+  // (or is revoked), put that away.
   useEffect(() => {
     if (!pairing || !data) return;
-    const paired = (data.hosts || []).find(
-      (h) => !pairing.before.includes(h.id),
-    );
+    const hosts = data.hosts || [];
+    if (pairing.kind === "paired") {
+      const host = hosts.find((h) => h.id === pairing.hostId);
+      if (!host || host.online) setPairing(undefined);
+      if (host?.online) notify(`${pairing.name} is running.`);
+      return;
+    }
+    const paired = hosts.find((h) => !pairing.before.includes(h.id));
     if (!paired) return;
-    setPairing(undefined);
+    const name = paired.name || "a helper";
+    setPairing(
+      paired.online ? undefined : { kind: "paired", hostId: paired.id, name },
+    );
     trackEvent("agent_helper_paired");
-    notify(`Paired ${paired.name || "a helper"}.`);
+    notify(`Paired ${name}.`);
   }, [data, pairing]);
 
+  if (agentRefusal(query.error) === "FOUNDRY_AGENT_DISABLED") return null;
   if (query.isPending)
     return (
       <Panel title="The Assistant">
@@ -106,8 +131,10 @@ export function AssistantRuntimePanel() {
 
   const runtime = data.runtime ?? "api",
     hosts = data.hosts || [];
+  // One choice saves at a time; the radios stay focusable meanwhile (a
+  // disabled one would drop the keyboard's focus).
   const choose = async (next: AgentRuntime) => {
-    if (next === runtime) return;
+    if (next === runtime || choosing) return;
     setChoosing(next);
     try {
       qc.setQueryData(
@@ -124,7 +151,7 @@ export function AssistantRuntimePanel() {
   const pair = async () => {
     try {
       const made = await pairAgentHelper(ws);
-      setPairing({ ...made, before: hosts.map((h) => h.id) });
+      setPairing({ kind: "code", ...made, before: hosts.map((h) => h.id) });
     } catch (e) {
       notify(sentence((e as Error).message), true);
     }
@@ -136,7 +163,10 @@ export function AssistantRuntimePanel() {
       padded={false}
     >
       <div className="wk-pad wk-ai-form">
-        <fieldset className="plain-fieldset" disabled={!!choosing}>
+        <fieldset
+          className="plain-fieldset"
+          aria-busy={!!choosing || undefined}
+        >
           <legend className="hf-sr-only">Where the Assistant runs</legend>
           <div className="choice-options provider-options">
             {(["api", "claude_code", "codex"] as const).map((r) => (
@@ -209,14 +239,19 @@ function Helpers({
       </div>
       <p className="wk-note">
         A helper runs on the computer where you’re signed in to Claude Code, and
-        runs the Assistant’s turns there with Foundry’s tools alone.
+        runs the Assistant’s turns there with Foundry’s tools alone. Claude Code
+        keeps each thread’s session on that computer, with what Foundry’s tools
+        answered, until the thread is deleted or the helper revoked.
       </p>
-      {pairing && (
+      {pairing?.kind === "code" && (
         <PairingCode
           pairing={pairing}
           onAgain={() => void pair()}
           onCancel={onCancelPairing}
         />
+      )}
+      {pairing?.kind === "paired" && (
+        <StartPaired name={pairing.name} onDone={onCancelPairing} />
       )}
       {runtime !== "api" &&
         !(data.online || []).includes(runtime) &&
@@ -249,7 +284,7 @@ function PairingCode({
   onAgain,
   onCancel,
 }: {
-  pairing: Pairing;
+  pairing: Extract<Pairing, { kind: "code" }>;
   onAgain: () => void;
   onCancel: () => void;
 }) {
@@ -282,8 +317,8 @@ function PairingCode({
       </p>
       <Command text={pairing.command || ""} label="pair command" />
       <p className="ag-pairing-step">
-        <strong>2.</strong> Keep it running at every login (or run it now with{" "}
-        <code>run</code> in place of <code>install</code>):
+        <strong>2.</strong> Then start it. This keeps it running at every login
+        (or run it now with <code>run</code> in place of <code>install</code>):
       </p>
       <Command text={HELPER_COMMANDS.install} label="install command" />
       <div className="ag-pairing-actions">
@@ -293,6 +328,33 @@ function PairingCode({
         </p>
         <Button size="sm" variant="ghost" onClick={onCancel}>
           Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The helper a code just paired, until it runs: pairing starts nothing, so
+ * say how to start it.
+ */
+function StartPaired({ name, onDone }: { name: string; onDone: () => void }) {
+  return (
+    <div className="ag-pairing" role="status">
+      <p className="ag-pairing-step">
+        Paired {name}. Now start it on that computer. This keeps it running at
+        every login:
+      </p>
+      <Command text={HELPER_COMMANDS.install} label="install command" />
+      <p className="ag-pairing-step">Or run it in a terminal there:</p>
+      <Command text={HELPER_COMMANDS.run} label="run command" />
+      <div className="ag-pairing-actions">
+        <p className="ag-note">
+          <LoaderCircle size={14} className="hf-spin" aria-hidden />
+          Waiting for it to start…
+        </p>
+        <Button size="sm" variant="ghost" onClick={onDone}>
+          Close
         </Button>
       </div>
     </div>
@@ -364,7 +426,13 @@ function HelperRow({ host }: { host: FoundryAgentHost }) {
           <StatusBadge
             size="sm"
             status={host.online ? "healthy" : "paused"}
-            label={host.online ? "Running" : "Not running"}
+            label={
+              host.online
+                ? "Running"
+                : host.lastSeenAt
+                  ? "Not running"
+                  : "Not started"
+            }
           />
         </strong>
         <small>
@@ -398,7 +466,7 @@ function HelperRow({ host }: { host: FoundryAgentHost }) {
       {revoking && (
         <ConfirmDialog
           title={`Revoke ${name}?`}
-          description="It stops running the Assistant’s turns at once, and a turn it is running ends. To run more, pair it again."
+          description="It stops running the Assistant’s turns at once, and a turn it is running ends. Next time it reaches Foundry, it deletes the sessions Claude Code kept of its threads. To run more, pair it again."
           confirmLabel="Revoke"
           tone="danger"
           pending={pending}

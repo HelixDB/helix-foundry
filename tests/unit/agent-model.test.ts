@@ -896,33 +896,48 @@ describe("where the Assistant runs", () => {
     expect(planName("team-plan")).toBe("Team plan");
   });
 
-  it("knows whether a thread can be sent to now", () => {
+  it("knows whether a thread can be sent to now, and what stands in the way", () => {
     const setting = { runtime: "claude_code" as const, online: [] };
     // A thread keeps its runtime, whatever the workspace's is now.
     expect(threadRuntime("api", setting)).toEqual({
       runtime: "api",
-      online: true,
+      state: "ready",
     });
+    // No helper paired runs it: one must be paired, not started.
     expect(threadRuntime("claude_code", setting)).toEqual({
       runtime: "claude_code",
-      online: false,
+      state: "unpaired",
+    });
+    // One paired runs it, and isn't running: start it.
+    const paired = {
+      ...setting,
+      hosts: [{ id: "h1", runtimes: ["claude_code" as const] }],
+    };
+    expect(threadRuntime("claude_code", paired)).toEqual({
+      runtime: "claude_code",
+      state: "stopped",
+    });
+    // A helper of another runtime doesn't run it.
+    expect(threadRuntime("codex", paired)).toEqual({
+      runtime: "codex",
+      state: "unpaired",
     });
     expect(
       threadRuntime("claude_code", { runtime: "api", online: ["claude_code"] }),
-    ).toEqual({ runtime: "claude_code", online: true });
+    ).toEqual({ runtime: "claude_code", state: "ready" });
     // A new thread takes the workspace's.
-    expect(threadRuntime(undefined, setting)).toEqual({
+    expect(threadRuntime(undefined, paired)).toEqual({
       runtime: "claude_code",
-      online: false,
+      state: "stopped",
     });
     // Unread (hosted, or not the owner): never said to be offline.
     expect(threadRuntime("claude_code", undefined)).toEqual({
       runtime: "claude_code",
-      online: true,
+      state: "ready",
     });
     expect(threadRuntime(undefined, undefined)).toEqual({
       runtime: "api",
-      online: true,
+      state: "ready",
     });
   });
 

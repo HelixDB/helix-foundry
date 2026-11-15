@@ -1646,6 +1646,15 @@ export function accountText(
 }
 
 /**
+ * Whether a thread can be sent to where it runs: a closed set. `ready` is
+ * Foundry's worker, or a helper's runtime with a helper running it;
+ * `stopped` a helper's with one paired that runs it but none running (start
+ * it); `unpaired` a helper's that no paired helper runs (pair one first:
+ * starting one would fail).
+ */
+export type RuntimeState = "ready" | "stopped" | "unpaired";
+
+/**
  * Where a thread runs, and whether it can be sent to now: api always; a
  * helper's while a helper that runs it is online (the WFE refuses it
  * otherwise, FOUNDRY_AGENT_HOST_OFFLINE). `setting` is the workspace's,
@@ -1653,23 +1662,28 @@ export function accountText(
  *
  * @example
  * threadRuntime("claude_code", { runtime: "api", online: [] });
- * // { runtime: "claude_code", online: false }
+ * // { runtime: "claude_code", state: "unpaired" }
+ * threadRuntime("claude_code", { runtime: "api", online: [], hosts: [{ id: "h", runtimes: ["claude_code"] }] });
+ * // { runtime: "claude_code", state: "stopped" }
  * threadRuntime(undefined, { runtime: "claude_code", online: ["claude_code"] });
- * // { runtime: "claude_code", online: true }
- * threadRuntime(undefined, undefined); // { runtime: "api", online: true }
+ * // { runtime: "claude_code", state: "ready" }
+ * threadRuntime(undefined, undefined); // { runtime: "api", state: "ready" }
  */
 export function threadRuntime(
   thread: AgentRuntime | undefined,
   setting: FoundryAgentRuntime | undefined,
-): { runtime: AgentRuntime; online: boolean } {
+): { runtime: AgentRuntime; state: RuntimeState } {
   const runtime = thread ?? setting?.runtime ?? "api";
+  // Unread: not known to be offline, so the dock doesn't say it is.
+  if (runtime === "api" || !setting || (setting.online || []).includes(runtime))
+    return { runtime, state: "ready" };
   return {
     runtime,
-    online:
-      runtime === "api" ||
-      // Unread: not known to be offline, so the dock doesn't say it is.
-      !setting ||
-      (setting.online || []).includes(runtime),
+    state: (setting.hosts || []).some((h) =>
+      (h.runtimes || []).includes(runtime),
+    )
+      ? "stopped"
+      : "unpaired",
   };
 }
 

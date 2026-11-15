@@ -501,6 +501,7 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
     ).toEqual([
       "ANTHROPIC_API_KEY",
       "HELIX_DB_DSN",
+      "HELIX_LOCAL__MCP_PORT",
       "HELIX_LOCAL__SECRETS_DIR",
       "HELIX_LOCAL__SITE_ORIGIN",
       "OPENAI_API_KEY",
@@ -542,6 +543,12 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
       host_ip: "127.0.0.1",
       published: "9081",
     });
+    // foundry is told the port, which the helper's pair command names.
+    const told = (vars: Record<string, string>) =>
+      (composed(vars).services.foundry.environment as Record<string, string>)
+        .HELIX_LOCAL__MCP_PORT;
+    expect(told({})).toBe("8081");
+    expect(told({ FOUNDRY_MCP_PORT: "9081" })).toBe("9081");
     // The store stays published beside it, as uploads need, and nothing else.
     const ports = composed({}).services.pod.ports as Port[];
     expect(ports.map((port) => port.target).sort()).toEqual([8081, 8333]);

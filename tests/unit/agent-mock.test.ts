@@ -734,11 +734,25 @@ describe("where the Assistant runs", () => {
           "the pairing code is unknown, used or expired: make another in Foundry",
       },
     });
-    const listed = (await at("GET", `${A}/runtime`)).body.runtime;
+    const hostId = (paired.body as { host_id: string }).host_id;
+    // Pairing starts nothing: the helper isn't online, nor ever seen, until
+    // its run or install starts it.
+    let listed = (await at("GET", `${A}/runtime`)).body.runtime;
+    expect(listed.online).toEqual([]);
+    expect(listed.hosts).toEqual([
+      expect.objectContaining({ id: hostId, name: "Ada's Mac", online: false }),
+    ]);
+    expect(listed.hosts[0].lastSeenAt).toBeUndefined();
+    expect(hosts.startHelper({ host_id: "01JNOPE" }).status).toBe(401);
+    expect(hosts.startHelper({ host_id: hostId }).body).toEqual({
+      host_id: hostId,
+      name: "Ada's Mac",
+    });
+    listed = (await at("GET", `${A}/runtime`)).body.runtime;
     expect(listed.online).toEqual(["claude_code"]);
     expect(listed.hosts).toEqual([
       expect.objectContaining({
-        id: (paired.body as { host_id: string }).host_id,
+        id: hostId,
         name: "Ada's Mac",
         runtimes: ["claude_code"],
         accounts: [
@@ -747,6 +761,10 @@ describe("where the Assistant runs", () => {
         online: true,
       }),
     ]);
+    expect(listed.hosts[0].lastSeenAt).toBeTruthy();
+    // Revoked, it can't start again.
+    await at("POST", `${A}/hosts/${hostId}:revoke`, {});
+    expect(hosts.startHelper({ host_id: hostId }).status).toBe(401);
     // A code past its ten minutes pairs nothing.
     const late = (await at("POST", `${A}/host-pairings`, {})).body;
     later(10 * 60_000 + 1);
@@ -867,6 +885,7 @@ describe("where the Assistant runs", () => {
       { payloadHash: revoke.action.payloadHash },
     );
     expect(revoked.body.action.status).toBe("succeeded");
+    expect(revoked.body.continuation).toBeUndefined();
     expect((await at("GET", `${A}/runtime`)).body.runtime.hosts).toEqual([]);
     // No helper runs new threads now: back on the workspace's model, the
     // agent finds none to revoke.

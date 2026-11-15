@@ -29,8 +29,9 @@ import { foundryPrecondition as refused } from "./ai";
 //   "max"}}]}` pairs some (account defaults to a Max subscription; null is
 //   a helper that hasn't said yet; online false was last seen an hour ago);
 // - POST /__mock/agent-host/pair {code, name?, account?} spends a pairing
-//   code as a helper's pair command does (once, within ten minutes), and
-//   the helper it pairs runs: online, on Claude Code.
+//   code as a helper's pair command does (once, within ten minutes): the
+//   helper it pairs offers Claude Code, and isn't running, never seen, until
+//   POST /__mock/agent-host/hello {host_id} starts it (its run or install).
 
 type Account = Omit<FoundryAgentHostAccount, "runtime">;
 type Knobs = {
@@ -43,12 +44,13 @@ type Knobs = {
 };
 const knobs = config as typeof config & Knobs;
 
-/** A helper the mock's pair stand-in paired. */
+/** A helper the mock's pair stand-in paired: running once started. */
 type Paired = {
   id: string;
   name: string;
   account: Account | null;
   createdAt: string;
+  running: boolean;
 };
 
 const state = {
@@ -89,8 +91,9 @@ function hosts(): FoundryAgentHost[] {
       version: "0.1.0",
       platform: "darwin-arm64",
       createdAt: p.createdAt,
-      lastSeenAt: seen(true),
-      online: true,
+      // Pairing starts nothing: seen once it runs.
+      ...(p.running && { lastSeenAt: seen(true) }),
+      online: p.running,
       revokedAt: null,
     })),
     ...(knobs.agentHosts ?? []).map((h, i) => ({
@@ -186,8 +189,9 @@ export const helperById = (id: string) => hosts().find((h) => h.id === id);
 
 /**
  * A helper's pair command, standing in for /agent-host/pair: spends a code
- * the owner made (once, within ten minutes) on a new helper, online on
- * Claude Code. Refused as the backend's errPairingInvalid otherwise.
+ * the owner made (once, within ten minutes) on a new helper of Claude Code,
+ * not running until started (startHelper). Refused as the backend's
+ * errPairingInvalid otherwise.
  */
 export function pairHelper(body: {
   code?: string;
@@ -213,8 +217,30 @@ export function pairHelper(body: {
     name: body.name || "Ada's Mac",
     account: body.account === undefined ? MAX_SUBSCRIPTION : body.account,
     createdAt: now(),
+    running: false,
   });
   return ok({ host_id: id });
+}
+
+/**
+ * A paired helper's run or install, standing in for its hello: it runs, and
+ * is online from then on. Refused as the backend's errHostUnauthenticated
+ * for a helper unknown or revoked.
+ */
+export function startHelper(body: { host_id?: string }): MockReply {
+  const p = state.paired.find((h) => h.id === body.host_id);
+  if (!p || state.revoked.has(p.id))
+    return {
+      status: 401,
+      body: {
+        error: {
+          code: "unauthenticated",
+          message: "the helper's token is unknown or revoked: pair it again",
+        },
+      },
+    };
+  p.running = true;
+  return ok({ host_id: p.id, name: p.name });
 }
 
 /** The owner of a local install's workspace, or why not. */

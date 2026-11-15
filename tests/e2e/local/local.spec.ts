@@ -1231,10 +1231,15 @@ test("pairs a helper and runs new Assistant threads on the owner's Claude subscr
   await expect(
     panel.getByRole("radio", { name: "My ChatGPT subscription (Codex)" }),
   ).toBeDisabled();
-  await panel.getByRole("radio", { name: "My Claude subscription" }).check();
+  // Chosen from the keyboard: the choice saves, and the focus stays on it.
+  await panel.getByRole("radio", { name: "Foundry’s AI model" }).focus();
+  await page.keyboard.press("ArrowDown");
   await expect(
     page.getByText("New Assistant threads run on your Claude subscription."),
   ).toBeVisible();
+  const claude = panel.getByRole("radio", { name: "My Claude subscription" });
+  await expect(claude).toBeChecked();
+  await expect(claude).toBeFocused();
   await expect(panel.getByText("No helper is paired yet.")).toBeVisible();
 
   // A one-time code, shown as the command that spends it.
@@ -1257,9 +1262,31 @@ test("pairs a helper and runs new Assistant threads on the owner's Claude subscr
     body: JSON.stringify({ code, name: "Ada's Mac" }),
   });
   expect(paired.status).toBe(200);
-  await expect(page.getByText("Paired Ada's Mac.")).toBeVisible();
+  await expect(
+    page.getByText("Paired Ada's Mac.", { exact: true }),
+  ).toBeVisible();
   await expect(command).toHaveCount(0);
+  // Pairing starts nothing: the page says how to start it, until it runs.
   const row = panel.getByRole("listitem", { name: "Ada's Mac" });
+  await expect(row).toContainText("Not started");
+  await expect(
+    panel.getByText("Paired Ada's Mac. Now start it on that computer."),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("figure", { name: "install command" }),
+  ).toHaveText(/npx -y @helixdb\/foundry-agent-host@0\.1\.0 install/);
+  await expect(panel.getByRole("figure", { name: "run command" })).toHaveText(
+    /npx -y @helixdb\/foundry-agent-host@0\.1\.0 run/,
+  );
+  const started = await fetch(`${MOCK}/__mock/agent-host/hello`, {
+    method: "POST",
+    body: JSON.stringify({ host_id: (await paired.json()).host_id }),
+  });
+  expect(started.status).toBe(200);
+  await expect(page.getByText("Ada's Mac is running.")).toBeVisible();
+  await expect(
+    panel.getByText("Paired Ada's Mac. Now start it on that computer."),
+  ).toHaveCount(0);
   await expect(row).toContainText("Running");
   await expect(row).toContainText(
     "Claude Code is signed in on a Max subscription",
@@ -1282,7 +1309,8 @@ test("pairs a helper and runs new Assistant threads on the owner's Claude subscr
     "This thread runs on your Claude subscription, through Claude Code on your computer.",
   );
 
-  // Revoked, it runs nothing: the thread says how to start a helper.
+  // Revoked, it runs nothing, and no helper is paired: the thread says to
+  // pair one (starting it would fail), linking where.
   await row.getByRole("button", { name: "Revoke Ada's Mac" }).click();
   await page
     .getByRole("dialog", { name: "Revoke Ada's Mac?" })
@@ -1291,10 +1319,18 @@ test("pairs a helper and runs new Assistant threads on the owner's Claude subscr
   await expect(page.getByText("Revoked Ada's Mac.")).toBeVisible();
   await expect(row).toHaveCount(0);
   await expect(dock).toContainText(
-    "Claude Code’s helper isn’t running, so this thread can’t be sent. Start it on your computer:",
+    "No helper running Claude Code is paired, so this thread can’t be sent. Pair one in Settings › AI models, then start it.",
   );
-  await expect(dock.getByRole("figure", { name: "run command" })).toHaveText(
-    /npx -y @helixdb\/foundry-agent-host@0\.1\.0 run/,
+  await expect(dock.getByRole("figure", { name: "run command" })).toHaveCount(
+    0,
+  );
+  await expect(
+    dock.getByRole("link", { name: "Settings › AI models" }),
+  ).toHaveAttribute("href", /\/settings\/ai/);
+  await dock.getByRole("textbox", { name: "Message" }).fill("And now?");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(dock.getByRole("alert")).toHaveText(
+    "No helper is paired to run it: pair one in Settings › AI models, start it, then send again.",
   );
 });
 
