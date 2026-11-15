@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { claudeAccount } from "../src/account.ts";
 import { failureOf, promptText } from "../src/claude.ts";
 import {
   configPath,
@@ -147,7 +148,7 @@ describe("pairing", () => {
         e.status === 404,
     );
     await assert.rejects(
-      new Foundry("http://127.0.0.1:1").hello(["claude_code"], VERSION),
+      new Foundry("http://127.0.0.1:1").hello(["claude_code"], VERSION, []),
       (e: unknown) => e instanceof FoundryError && e.code === "unreachable",
     );
   });
@@ -352,10 +353,16 @@ describe("the helper", () => {
       await new Promise((r) => setTimeout(r, 25));
     stop.abort();
     await serving;
-    assert.equal(foundry.sent("/agent-host/hello").length, 1);
+    const max = [
+      { runtime: "claude_code", state: "signed_in", subscription: "max" },
+    ];
+    assert.deepEqual(foundry.sent("/agent-host/hello"), [
+      { runtimes: ["claude_code"], version: VERSION, accounts: max },
+    ]);
     assert.deepEqual(foundry.sent("/agent-host/claim")[0], {
       runtimes: ["claude_code"],
       version: VERSION,
+      accounts: max,
     });
     assert.equal(foundry.sent("/agent-host/turns/turn-1/finish").length, 1);
     assert.ok(lines.some((l) => l.includes("Paired as Ada's Mac")));
@@ -365,6 +372,100 @@ describe("the helper", () => {
       serve(options()),
       (e: unknown) => e instanceof FoundryError && e.code === "unauthenticated",
     );
+  });
+
+  it("says what Claude Code is signed in to, and that a turn found it signed out", async () => {
+    env.FAKE_CLAUDE_SCENARIO = "signed_out";
+    foundry.queue = [turn()];
+    const stop = new AbortController();
+    const serving = serve({ ...options(), signal: stop.signal });
+    const after = () => {
+      const i = foundry.calls.findIndex(
+        (c) => c.path === "/agent-host/turns/turn-1/finish",
+      );
+      return i < 0
+        ? []
+        : foundry.calls
+            .slice(i + 1)
+            .filter((c) => c.path === "/agent-host/claim");
+    };
+    for (let i = 0; i < 200 && !after().length; i++)
+      await new Promise((r) => setTimeout(r, 25));
+    stop.abort();
+    await serving;
+    assert.equal(
+      foundry.sent("/agent-host/claim")[0].accounts[0].state,
+      "signed_in",
+      "it starts signed in",
+    );
+    assert.deepEqual(after()[0]?.body.accounts, [
+      { runtime: "claude_code", state: "signed_out" },
+    ]);
+  });
+
+  it("says Claude Code is signed out, and asks it again on a schedule", async () => {
+    env.FAKE_CLAUDE_SCENARIO = "no_account";
+    const stop = new AbortController();
+    const lines: string[] = [];
+    const serving = serve({
+      ...options(),
+      signal: stop.signal,
+      checkMs: 50,
+      log: (l) => lines.push(l),
+    });
+    for (
+      let i = 0;
+      i < 200 && foundry.sent("/agent-host/claim").length === 0;
+      i++
+    )
+      await new Promise((r) => setTimeout(r, 25));
+    assert.deepEqual(foundry.sent("/agent-host/hello")[0].accounts, [
+      { runtime: "claude_code", state: "signed_out" },
+    ]);
+    assert.ok(lines.some((l) => l.includes("isn't signed in")));
+    // The person signs in: the next check says so.
+    env.FAKE_CLAUDE_SCENARIO = "answer";
+    const signedIn = () =>
+      foundry
+        .sent("/agent-host/claim")
+        .some((b) => b.accounts[0]?.subscription === "max");
+    for (let i = 0; i < 200 && !signedIn(); i++)
+      await new Promise((r) => setTimeout(r, 25));
+    stop.abort();
+    await serving;
+    assert.ok(signedIn());
+  });
+
+  it("tells a subscription from another sign-in, or none", () => {
+    assert.deepEqual(
+      claudeAccount({ subscriptionType: "pro", email: "ada@example.com" }),
+      { runtime: "claude_code", state: "signed_in", subscription: "pro" },
+    );
+    assert.deepEqual(
+      claudeAccount({ subscriptionType: "x\n".repeat(40) }).state,
+      "signed_in",
+    );
+    assert.equal(
+      (
+        claudeAccount({ subscriptionType: "x\n".repeat(40) }) as {
+          subscription: string;
+        }
+      ).subscription,
+      "x".repeat(32),
+      "printable, at most 32 bytes",
+    );
+    assert.deepEqual(claudeAccount({ email: "ada@example.com" }), {
+      runtime: "claude_code",
+      state: "signed_in",
+    });
+    assert.deepEqual(claudeAccount({ tokenSource: "none" }), {
+      runtime: "claude_code",
+      state: "signed_out",
+    });
+    assert.deepEqual(claudeAccount({}), {
+      runtime: "claude_code",
+      state: "signed_out",
+    });
   });
 
   it("words a CLI's failures", () => {
@@ -524,6 +625,9 @@ describe("doctor", () => {
           c.what === "Claude Code 9.9.9 (Claude Code) (" + FAKE_CLAUDE + ")",
       ),
     );
+    assert.deepEqual(foundry.sent("/agent-host/hello").at(-1)?.accounts, [
+      { runtime: "claude_code", state: "signed_in", subscription: "max" },
+    ]);
     assert.ok(
       checks.some((c) =>
         c.what.startsWith(

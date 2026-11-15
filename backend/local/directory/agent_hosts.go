@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -116,19 +117,27 @@ func validLabel(s string, maxBytes int) bool {
 	return len(s) <= maxBytes && !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
 }
 
-const agentHostColumns = `id, name, runtimes, version, platform, created_at, last_seen_at, revoked_at`
+const agentHostColumns = `id, name, runtimes, accounts, version, platform, created_at, last_seen_at, revoked_at`
 
 func scanAgentHost(row scanner) (agent.Host, error) {
 	var h agent.Host
 	var runtimes string
+	var accounts []byte
 	var revoked sql.NullTime
-	if err := row.Scan(&h.ID, &h.Name, &runtimes, &h.Version, &h.Platform, &h.CreatedAt, &h.LastSeenAt, &revoked); err != nil {
+	if err := row.Scan(&h.ID, &h.Name, &runtimes, &accounts, &h.Version, &h.Platform, &h.CreatedAt, &h.LastSeenAt, &revoked); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return agent.Host{}, store.ErrNotFound
 		}
 		return agent.Host{}, err
 	}
 	h.Runtimes = hostRuntimes(runtimes)
+	// Written by SeeAgentHost alone, checked; NULL until the helper's first
+	// call after pairing.
+	if len(accounts) > 0 {
+		if err := json.Unmarshal(accounts, &h.Accounts); err != nil {
+			return agent.Host{}, fmt.Errorf("helper %s's accounts: %w", h.ID, err)
+		}
+	}
 	if revoked.Valid {
 		h.RevokedAt = &revoked.Time
 	}
@@ -206,8 +215,10 @@ func (s *Store) AgentHostByToken(ctx context.Context, token string) (agent.Host,
 FROM foundry_local_agent_hosts WHERE token_hash=? AND revoked_at IS NULL`, tokenHash(token)))
 }
 
-// SeeAgentHost records a live helper's call, and what it offers now.
-func (s *Store) SeeAgentHost(ctx context.Context, id string, runtimes []model.FoundryAgentRuntime, version string) error {
+// SeeAgentHost records a live helper's call, what it offers now and what
+// their CLIs are signed in to (agent.ValidHostAccounts), which replace what
+// its last call said.
+func (s *Store) SeeAgentHost(ctx context.Context, id string, runtimes []model.FoundryAgentRuntime, version string, accounts []agent.HostAccount) error {
 	set, err := runtimeSet(runtimes)
 	if err != nil {
 		return err
@@ -215,8 +226,19 @@ func (s *Store) SeeAgentHost(ctx context.Context, id string, runtimes []model.Fo
 	if !validLabel(version, maxHostLabel) {
 		return fmt.Errorf("%w: its version is at most %d printable bytes", ErrInvalidAgentHost, maxHostLabel)
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE foundry_local_agent_hosts SET last_seen_at=?, runtimes=?, version=? WHERE id=? AND revoked_at IS NULL`,
-		time.Now().UTC(), set, version, id)
+	if err := agent.ValidHostAccounts(accounts, runtimes); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidAgentHost, err)
+	}
+	if accounts == nil {
+		accounts = []agent.HostAccount{}
+	}
+	// A string, not bytes: MySQL takes no JSON from a binary string.
+	encoded, err := json.Marshal(accounts)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE foundry_local_agent_hosts SET last_seen_at=?, runtimes=?, version=?, accounts=? WHERE id=? AND revoked_at IS NULL`,
+		time.Now().UTC(), set, version, string(encoded), id)
 	return err
 }
 

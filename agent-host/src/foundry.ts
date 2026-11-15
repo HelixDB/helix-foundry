@@ -6,6 +6,15 @@
 /** A runtime a helper runs. Codex isn't offered yet (README, Codex). */
 export type Runtime = "claude_code";
 
+/**
+ * What a runtime's CLI is signed in to, as the helper last found it
+ * (backend agent.HostAccount): on a subscription when it names one, or
+ * some other way; signed out; or unknown, when its CLI didn't start.
+ */
+export type Account =
+  | { runtime: Runtime; state: "signed_in"; subscription?: string }
+  | { runtime: Runtime; state: "signed_out" | "unknown" };
+
 /** A turn Foundry leased to this helper, and what its CLI is told. */
 export type Turn = {
   id: string;
@@ -140,11 +149,11 @@ export class Foundry {
     return out;
   }
 
-  /** Says this helper runs, and what it offers: who it is to Foundry. */
-  async hello(runtimes: Runtime[], version: string) {
+  /** Says this helper runs, what it offers and what its CLIs are signed in to: who it is to Foundry. */
+  async hello(runtimes: Runtime[], version: string, accounts: Account[]) {
     const out = await this.call<{ host_id: string; name: string }>(
       "/agent-host/hello",
-      { runtimes, version },
+      { runtimes, version, accounts },
     );
     if (!out)
       throw new FoundryError(
@@ -159,12 +168,13 @@ export class Foundry {
   async claim(
     runtimes: Runtime[],
     version: string,
+    accounts: Account[],
     signal?: AbortSignal,
   ): Promise<Turn | undefined> {
     return (
       await this.call<{ turn: Turn }>(
         "/agent-host/claim",
-        { runtimes, version },
+        { runtimes, version, accounts },
         signal,
       )
     )?.turn;

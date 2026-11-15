@@ -8,8 +8,10 @@ CREATE TABLE foundry_local_agent_hosts (
   id           CHAR(26)                    NOT NULL PRIMARY KEY,
   name         VARCHAR(128)                NOT NULL,
   token_hash   CHAR(64)                    NOT NULL,
-  -- What it offers, as of its last call.
+  -- What it offers, and what their CLIs are signed in to, as of its last
+  -- call: [{runtime, state, subscription}] (agent.HostAccount).
   runtimes     SET('claude_code', 'codex') NOT NULL DEFAULT '',
+  accounts     JSON                        NULL,
   version      VARCHAR(64)                 NOT NULL DEFAULT '',
   platform     VARCHAR(64)                 NOT NULL DEFAULT '',
   created_at   DATETIME(6)                 NOT NULL DEFAULT CURRENT_TIMESTAMP(6),

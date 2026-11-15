@@ -2469,6 +2469,23 @@ message FoundryAgentHost {
   bool online = 8;
   // Set once revoked; a revoked host is listed by nothing else.
   google.protobuf.Timestamp revoked_at = 9;
+  // What its runtimes' CLIs are signed in to, as of its last call; empty
+  // until its first call after pairing.
+  repeated FoundryAgentHostAccount accounts = 10;
+}
+
+// FoundryAgentHostAccount is what one of a helper's CLIs is signed in to, as
+// the helper last found it.
+message FoundryAgentHostAccount {
+  // claude_code or codex: one the helper offers.
+  string runtime = 1;
+  // signed_in, signed_out (its turns fail until the person signs in) or
+  // unknown (the CLI didn't start).
+  string state = 2;
+  // The subscription's plan as the CLI names it (pro, max, team, ...), only
+  // when signed in on one; empty for a CLI signed in some other way, whose
+  // turns don't bill a subscription.
+  string subscription = 3;
 }
 
 // FoundryAgentTurn is one turn of a thread: a person's message, or the result

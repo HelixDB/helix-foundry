@@ -33,6 +33,17 @@ type AssistantHostOutput struct {
 	LastSeenAt string   `json:"last_seen_at"`
 	// Online is whether it called in the last 30 seconds.
 	Online bool `json:"online"`
+	// Accounts is what its CLIs are signed in to, as it last found them.
+	Accounts []AssistantHostAccount `json:"accounts"`
+}
+
+// AssistantHostAccount is what one of a helper's CLIs is signed in to:
+// State signed_in, signed_out or unknown, and Subscription the plan when
+// signed in on one.
+type AssistantHostAccount struct {
+	Runtime      string `json:"runtime"`
+	State        string `json:"state"`
+	Subscription string `json:"subscription,omitempty"`
 }
 
 type GetAssistantRuntimeOutput struct {
@@ -84,6 +95,10 @@ func assistantHost(h *foundryv1.FoundryAgentHost) AssistantHostOutput {
 		LastSeenAt: h.GetLastSeenAt().AsTime().UTC().Format(time.RFC3339), Online: h.GetOnline()}
 	if out.Runtimes == nil {
 		out.Runtimes = []string{}
+	}
+	out.Accounts = []AssistantHostAccount{}
+	for _, a := range h.GetAccounts() {
+		out.Accounts = append(out.Accounts, AssistantHostAccount{Runtime: a.GetRuntime(), State: a.GetState(), Subscription: a.GetSubscription()})
 	}
 	return out
 }

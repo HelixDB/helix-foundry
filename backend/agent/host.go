@@ -67,11 +67,62 @@ const HostOnlineFor = 30 * time.Second
 // Host is a helper paired with a standalone install.
 type Host struct {
 	ID, Name, Version, Platform string
-	// Runtimes is what it offers, as of its last call.
+	// Runtimes is what it offers, and Accounts what their CLIs are signed in
+	// to, as of its last call.
 	Runtimes   []model.FoundryAgentRuntime
+	Accounts   []HostAccount
 	CreatedAt  time.Time
 	LastSeenAt time.Time
 	RevokedAt  *time.Time
+}
+
+// HostAccountState is what a helper last found one of its CLIs signed in
+// to: a closed set.
+type HostAccountState string
+
+const (
+	// AccountSignedIn is a CLI signed in: on a subscription when its
+	// HostAccount names one, else some other way (an API account), whose
+	// turns don't bill a subscription.
+	AccountSignedIn HostAccountState = "signed_in"
+	// AccountSignedOut is a CLI no one is signed in to: its turns fail until
+	// the person signs in.
+	AccountSignedOut HostAccountState = "signed_out"
+	// AccountUnknown is a CLI the helper couldn't ask: it didn't start.
+	AccountUnknown HostAccountState = "unknown"
+)
+
+// maxSubscriptionBytes bounds a subscription's name, as a CLI gives it.
+const maxSubscriptionBytes = 32
+
+// HostAccount is what one of a helper's CLIs is signed in to, as the helper
+// last found it. Subscription is the plan the CLI names (pro, max, team,
+// ...), set only when signed in on one.
+type HostAccount struct {
+	Runtime      model.FoundryAgentRuntime `json:"runtime"`
+	State        HostAccountState          `json:"state"`
+	Subscription string                    `json:"subscription,omitempty"`
+}
+
+// ValidHostAccounts checks what a helper says its CLIs are signed in to: at
+// most one account per runtime it offers, each in a known state, a
+// subscription only when signed in, and that printable and bounded.
+func ValidHostAccounts(accounts []HostAccount, runtimes []model.FoundryAgentRuntime) error {
+	seen := make([]model.FoundryAgentRuntime, 0, len(accounts))
+	for _, a := range accounts {
+		switch {
+		case !slices.Contains(runtimes, a.Runtime) || slices.Contains(seen, a.Runtime):
+			return fmt.Errorf("an account is one runtime's the helper offers, once: not %q", a.Runtime)
+		case a.State != AccountSignedIn && a.State != AccountSignedOut && a.State != AccountUnknown:
+			return fmt.Errorf("an account's state is signed_in, signed_out or unknown, not %q", a.State)
+		case a.Subscription != "" && a.State != AccountSignedIn:
+			return errors.New("only a signed-in account names a subscription")
+		case len(a.Subscription) > maxSubscriptionBytes || strings.ContainsFunc(a.Subscription, func(r rune) bool { return r < 0x20 || r == 0x7f }):
+			return fmt.Errorf("a subscription is at most %d printable bytes", maxSubscriptionBytes)
+		}
+		seen = append(seen, a.Runtime)
+	}
+	return nil
 }
 
 // Online reports a helper seen within HostOnlineFor of now.

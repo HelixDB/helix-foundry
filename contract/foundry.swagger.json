@@ -7129,9 +7129,35 @@
           "type": "string",
           "format": "date-time",
           "description": "Set once revoked; a revoked host is listed by nothing else."
+        },
+        "accounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAgentHostAccount"
+          },
+          "description": "What its runtimes' CLIs are signed in to, as of its last call; empty\nuntil its first call after pairing."
         }
       },
       "description": "FoundryAgentHost is a helper on the owner's machine, paired with the\ninstall: a process outside Docker that drives the Claude Code or Codex CLI\nthe owner signed in to, and calls back only to the install's loopback."
+    },
+    "v1FoundryAgentHostAccount": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "description": "claude_code or codex: one the helper offers."
+        },
+        "state": {
+          "type": "string",
+          "description": "signed_in, signed_out (its turns fail until the person signs in) or\nunknown (the CLI didn't start)."
+        },
+        "subscription": {
+          "type": "string",
+          "description": "The subscription's plan as the CLI names it (pro, max, team, ...), only\nwhen signed in on one; empty for a CLI signed in some other way, whose\nturns don't bill a subscription."
+        }
+      },
+      "description": "FoundryAgentHostAccount is what one of a helper's CLIs is signed in to, as\nthe helper last found it."
     },
     "v1FoundryAgentHostPairingResponse": {
       "type": "object",

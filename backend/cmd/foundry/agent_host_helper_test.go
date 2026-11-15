@@ -82,4 +82,12 @@ func TestFrontWithTheHelper(t *testing.T) {
 	var thread struct{ Thread map[string]any }
 	require.Equal(t, 200, call(t, "GET", agentURL+"/threads/"+sent.Turn["threadId"].(string), siteToken, nil, &thread))
 	assert.Equal(t, "claude_code", thread.Thread["runtime"])
+
+	// The owner sees what its Claude Code is signed in to, as it said.
+	var runtime struct {
+		Runtime struct{ Hosts []map[string]any }
+	}
+	require.Equal(t, 200, call(t, "GET", agentURL+"/runtime", siteToken, nil, &runtime))
+	require.Len(t, runtime.Runtime.Hosts, 1)
+	assert.Equal(t, []any{map[string]any{"runtime": "claude_code", "state": "signed_in", "subscription": "max"}}, runtime.Runtime.Hosts[0]["accounts"])
 }

@@ -174,6 +174,9 @@ func agentHostToProto(h foundryagent.Host, now time.Time) *foundryv1.FoundryAgen
 	for _, r := range h.Runtimes {
 		out.Runtimes = append(out.Runtimes, string(r))
 	}
+	for _, a := range h.Accounts {
+		out.Accounts = append(out.Accounts, &foundryv1.FoundryAgentHostAccount{Runtime: string(a.Runtime), State: string(a.State), Subscription: a.Subscription})
+	}
 	if h.RevokedAt != nil {
 		out.RevokedAt = timestamppb.New(*h.RevokedAt)
 	}

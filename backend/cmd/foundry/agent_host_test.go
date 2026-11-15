@@ -62,9 +62,13 @@ func TestFrontRunsAHelpersTurns(t *testing.T) {
 	assert.Equal(t, 400, call(t, "POST", rest+"/agent-host/pair", "", hello, &refused), "fields are checked")
 
 	var me map[string]string
-	require.Equal(t, 200, call(t, "POST", rest+"/agent-host/hello", paired.Token, map[string]any{"runtimes": []string{"claude_code"}, "version": "0.1.0"}, &me))
+	signedIn := []map[string]any{{"runtime": "claude_code", "state": "signed_in", "subscription": "max"}}
+	require.Equal(t, 200, call(t, "POST", rest+"/agent-host/hello", paired.Token, map[string]any{"runtimes": []string{"claude_code"}, "version": "0.1.0", "accounts": signedIn}, &me))
 	assert.Equal(t, map[string]string{"host_id": paired.HostID, "name": "Ada's Mac"}, me)
 	assert.Equal(t, 400, call(t, "POST", rest+"/agent-host/hello", paired.Token, map[string]any{"runtimes": []string{"api"}}, &refused))
+	assert.Equal(t, 400, call(t, "POST", rest+"/agent-host/hello", paired.Token, map[string]any{"runtimes": []string{"claude_code"}, "version": "0.1.0",
+		"accounts": []map[string]any{{"runtime": "codex", "state": "signed_in"}}}, &refused), "an account is a runtime's it offers")
+	assert.Equal(t, "invalid_arguments", refused.Error.Code)
 
 	// The site token doesn't claim, and a helper's token doesn't reach the API.
 	assert.Equal(t, 401, call(t, "POST", rest+"/agent-host/claim", siteToken, map[string]any{"runtimes": []string{"claude_code"}}, &refused))
@@ -85,6 +89,8 @@ func TestFrontRunsAHelpersTurns(t *testing.T) {
 	assert.Equal(t, []string{"claude_code"}, runtime.Runtime.Online)
 	require.Len(t, runtime.Runtime.Hosts, 1)
 	assert.Equal(t, "Ada's Mac", runtime.Runtime.Hosts[0]["name"])
+	assert.Equal(t, []any{map[string]any{"runtime": "claude_code", "state": "signed_in", "subscription": "max"}}, runtime.Runtime.Hosts[0]["accounts"],
+		"the owner sees what its CLI is signed in to")
 
 	var sent struct {
 		Turn   map[string]any
@@ -104,7 +110,7 @@ func TestFrontRunsAHelpersTurns(t *testing.T) {
 			Prompt   string `json:"prompt"`
 		}
 	}
-	claim := map[string]any{"runtimes": []string{"claude_code"}, "version": "0.1.0"}
+	claim := map[string]any{"runtimes": []string{"claude_code"}, "version": "0.1.0", "accounts": signedIn}
 	require.Equal(t, 200, call(t, "POST", rest+"/agent-host/claim", paired.Token, claim, &claimed))
 	assert.Equal(t, turnID, claimed.Turn.ID)
 	assert.Equal(t, "claude_code", claimed.Turn.Runtime)

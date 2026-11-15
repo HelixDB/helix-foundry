@@ -106,12 +106,48 @@ func TestAHelpersRuntimesAndPresence(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, online, "it offers Claude Code only")
 
-	require.NoError(t, st.SeeAgentHost(ctx, host.ID, []model.FoundryAgentRuntime{model.FoundryAgentRuntimeCodex}, "0.2.0"))
+	paired, err := st.AgentHost(ctx, host.ID)
+	require.NoError(t, err)
+	assert.Empty(t, paired.Accounts, "a helper says what its CLIs are signed in to once it calls")
+
+	codex := []model.FoundryAgentRuntime{model.FoundryAgentRuntimeCodex}
+	require.NoError(t, st.SeeAgentHost(ctx, host.ID, codex, "0.2.0", []agent.HostAccount{
+		{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "plus"}}))
 	seen, err := st.AgentHost(ctx, host.ID)
 	require.NoError(t, err)
-	assert.Equal(t, []model.FoundryAgentRuntime{model.FoundryAgentRuntimeCodex}, seen.Runtimes)
+	assert.Equal(t, codex, seen.Runtimes)
 	assert.Equal(t, "0.2.0", seen.Version)
-	assert.ErrorIs(t, st.SeeAgentHost(ctx, host.ID, []model.FoundryAgentRuntime{"gemini"}, "1"), directory.ErrInvalidAgentHost)
+	assert.Equal(t, []agent.HostAccount{{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "plus"}}, seen.Accounts)
+	assert.ErrorIs(t, st.SeeAgentHost(ctx, host.ID, []model.FoundryAgentRuntime{"gemini"}, "1", nil), directory.ErrInvalidAgentHost)
+	// What its CLIs are signed in to is checked as it is said, and nothing
+	// of a refused call is kept.
+	for name, accounts := range map[string][]agent.HostAccount{
+		"a runtime it doesn't offer": {{Runtime: model.FoundryAgentRuntimeClaudeCode, State: agent.AccountSignedIn}},
+		"a runtime twice": {
+			{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn},
+			{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedOut}},
+		"an unknown state":                   {{Runtime: model.FoundryAgentRuntimeCodex, State: "maybe"}},
+		"a subscription while signed out":    {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedOut, Subscription: "pro"}},
+		"a subscription past 32 bytes":       {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: strings.Repeat("x", 33)}},
+		"a subscription with a control byte": {{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedIn, Subscription: "pro\n"}},
+	} {
+		assert.ErrorIs(t, st.SeeAgentHost(ctx, host.ID, codex, "0.2.1", accounts), directory.ErrInvalidAgentHost, name)
+	}
+	kept, err := st.AgentHost(ctx, host.ID)
+	require.NoError(t, err)
+	assert.Equal(t, seen.Accounts, kept.Accounts)
+	assert.Equal(t, "0.2.0", kept.Version)
+	// A call that says nothing of its CLIs leaves none known.
+	require.NoError(t, st.SeeAgentHost(ctx, host.ID, codex, "0.2.0", nil))
+	kept, err = st.AgentHost(ctx, host.ID)
+	require.NoError(t, err)
+	assert.Empty(t, kept.Accounts)
+	require.NoError(t, st.SeeAgentHost(ctx, host.ID, codex, "0.2.0", []agent.HostAccount{
+		{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedOut}}))
+	listed, err := st.ListAgentHosts(ctx)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, []agent.HostAccount{{Runtime: model.FoundryAgentRuntimeCodex, State: agent.AccountSignedOut}}, listed[0].Accounts)
 
 	_, err = testDB.Exec(`UPDATE foundry_local_agent_hosts SET last_seen_at = ?`, time.Now().UTC().Add(-agent.HostOnlineFor-time.Second))
 	require.NoError(t, err)
@@ -226,7 +262,7 @@ func TestRevokingAHelperStopsItAndItsTurns(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
 	assert.Equal(t, other.ID, listed[0].ID)
-	require.NoError(t, st.SeeAgentHost(ctx, host.ID, claude, "0.1.0"))
+	require.NoError(t, st.SeeAgentHost(ctx, host.ID, claude, "0.1.0", nil))
 	still, err := st.AgentHost(ctx, host.ID)
 	require.NoError(t, err)
 	assert.NotNil(t, still.RevokedAt, "a revoked helper's calls see nothing")

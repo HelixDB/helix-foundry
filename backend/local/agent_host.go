@@ -32,11 +32,15 @@ import (
 // The routes, JSON in and out, each with the helper's hxh_ bearer but pair:
 //
 //	POST /agent-host/pair                {code, name, runtimes, version, platform} → {host_id, token}
-//	POST /agent-host/hello               {runtimes, version} → {host_id, name}
-//	POST /agent-host/claim               {runtimes, version} → {turn} within 25 s, or 204
+//	POST /agent-host/hello               {runtimes, version, accounts} → {host_id, name}
+//	POST /agent-host/claim               {runtimes, version, accounts} → {turn} within 25 s, or 204
 //	POST /agent-host/turns/{id}/renew    {} → {lease_expires_at}
 //	POST /agent-host/turns/{id}/text     {step, text, final} → 204
 //	POST /agent-host/turns/{id}/finish   {end, reason, failure, detail, steps, session_id} → 204
+//
+// accounts says what each runtime's CLI is signed in to, as the helper last
+// found it ([{runtime, state, subscription}], agent.HostAccount): the owner
+// sees it in Settings › AI models.
 //
 // Refusals are {"error": {code, message}}: unauthenticated (401: the token
 // is unknown or its helper revoked: pair again), pairing_invalid (404),
@@ -231,8 +235,9 @@ func (h *agentHostHandler) withClaim(next func(http.ResponseWriter, *http.Reques
 }
 
 type claimRequest struct {
-	Runtimes []string `json:"runtimes"`
-	Version  string   `json:"version"`
+	Runtimes []string            `json:"runtimes"`
+	Version  string              `json:"version"`
+	Accounts []agent.HostAccount `json:"accounts"`
 }
 
 // seen records what a live helper says it offers now, and returns it; false
@@ -240,7 +245,7 @@ type claimRequest struct {
 func (h *agentHostHandler) seen(w http.ResponseWriter, r *http.Request, host agent.Host) ([]model.FoundryAgentRuntime, bool) {
 	var req claimRequest
 	if err := decode(r, &req); err != nil {
-		h.refuse(w, invalid("the body is {runtimes, version}"))
+		h.refuse(w, invalid("the body is {runtimes, version, accounts}"))
 		return nil, false
 	}
 	runtimes, ok := hostRuntimes(req.Runtimes)
@@ -248,7 +253,7 @@ func (h *agentHostHandler) seen(w http.ResponseWriter, r *http.Request, host age
 		h.refuse(w, invalid("runtimes are claude_code and codex, at least one"))
 		return nil, false
 	}
-	switch err := h.dir.SeeAgentHost(r.Context(), host.ID, runtimes, req.Version); {
+	switch err := h.dir.SeeAgentHost(r.Context(), host.ID, runtimes, req.Version, req.Accounts); {
 	case errors.Is(err, directory.ErrInvalidAgentHost):
 		h.refuse(w, invalid(err.Error()))
 		return nil, false

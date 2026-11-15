@@ -4,9 +4,17 @@
 // cards. A turn whose lease Foundry took back (a cancel, a deleted thread,
 // its wall time) is stopped at once and reported no further.
 
+import { CHECK_MS, checkAccount } from "./account.ts";
 import { runClaude, type Query, type Ran } from "./claude.ts";
 import { threadDir } from "./config.ts";
-import { Foundry, FoundryError, type Runtime, type Turn } from "./foundry.ts";
+import {
+  Foundry,
+  FoundryError,
+  type Account,
+  type End,
+  type Runtime,
+  type Turn,
+} from "./foundry.ts";
 
 /** How often the lease is renewed: well inside its minute. */
 export const RENEW_MS = 15_000;
@@ -28,33 +36,68 @@ export type RunOptions = {
   signal?: AbortSignal;
   renewMs?: number;
   deltaMs?: number;
+  /** How often the CLI is asked what it is signed in to (CHECK_MS). */
+  checkMs?: number;
+  /** Told how each turn it ran ended. */
+  ended?: (end: End) => void;
 };
 
 const RUNTIMES: Runtime[] = ["claude_code"];
 
 /**
  * Runs turns until signal aborts. A token Foundry no longer knows (the
- * helper was revoked) stops the helper with that error.
+ * helper was revoked) stops the helper with that error. Every call says
+ * what the CLI is signed in to: asked as it starts and every checkMs, and
+ * signed out once a turn failed so.
  */
 export async function serve(opts: RunOptions): Promise<void> {
   const log = opts.log ?? (() => {});
-  const me = await opts.foundry.hello(RUNTIMES, opts.version);
+  const ask = () => checkAccount(opts.claude, opts.env ?? process.env, opts.query);
+  const accounts: Account[] = [await ask()];
+  const me = await opts.foundry.hello(RUNTIMES, opts.version, accounts);
   log(
     `Paired as ${me.name}: running Foundry's Assistant on Claude Code, ${opts.concurrency} turn${opts.concurrency === 1 ? "" : "s"} at a time.`,
   );
-  await Promise.all(
-    Array.from({ length: opts.concurrency }, () => slot(opts, log)),
+  if (accounts[0]!.state === "signed_out")
+    log("Claude Code isn't signed in: run claude, then /login.");
+  const checking = setInterval(
+    () => void ask().then((a) => (accounts[0] = a)),
+    opts.checkMs ?? CHECK_MS,
   );
+  const ran: RunOptions = {
+    ...opts,
+    ended(end) {
+      if (end.end === "failed" && end.failure === "signed_out")
+        accounts[0] = { runtime: "claude_code", state: "signed_out" };
+      // A turn that ran says the person signed in since: ask again.
+      else if (end.end === "answered" && accounts[0]!.state !== "signed_in")
+        void ask().then((a) => (accounts[0] = a));
+      opts.ended?.(end);
+    },
+  };
+  try {
+    await Promise.all(
+      Array.from({ length: opts.concurrency }, () => slot(ran, accounts, log)),
+    );
+  } finally {
+    clearInterval(checking);
+  }
 }
 
 async function slot(
   opts: RunOptions,
+  accounts: Account[],
   log: (line: string) => void,
 ): Promise<void> {
   while (!opts.signal?.aborted) {
     let turn: Turn | undefined;
     try {
-      turn = await opts.foundry.claim(RUNTIMES, opts.version, opts.signal);
+      turn = await opts.foundry.claim(
+        RUNTIMES,
+        opts.version,
+        accounts,
+        opts.signal,
+      );
     } catch (e) {
       if (opts.signal?.aborted) return;
       if (e instanceof FoundryError && e.code === "unauthenticated") throw e;
@@ -153,6 +196,7 @@ export async function runTurn(turn: Turn, opts: RunOptions): Promise<string> {
   }
   if (taken) return `stopped: ${taken}`;
   await opts.foundry.finish(turn.id, ran.end, ran.steps, ran.sessionId);
+  opts.ended?.(ran.end);
   return ran.end.end === "failed" ? `failed: ${ran.end.failure}` : ran.end.end;
 }
 

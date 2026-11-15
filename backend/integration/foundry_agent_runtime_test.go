@@ -27,7 +27,8 @@ func (b *runtimeBackend) GetFoundryAgentRuntime(context.Context, *foundryv1.GetF
 	b.methods = append(b.methods, "GetFoundryAgentRuntime")
 	return &foundryv1.FoundryAgentRuntimeResponse{Runtime: &foundryv1.FoundryAgentRuntime{Runtime: "api", Online: []string{"claude_code"},
 		Hosts: []*foundryv1.FoundryAgentHost{{Id: "host-1", Name: "Ada's Mac", Runtimes: []string{"claude_code"}, Version: "0.1.0", Platform: "darwin-arm64",
-			LastSeenAt: timestamppb.New(seen), Online: true}}}}, nil
+			LastSeenAt: timestamppb.New(seen), Online: true,
+			Accounts: []*foundryv1.FoundryAgentHostAccount{{Runtime: "claude_code", State: "signed_in", Subscription: "max"}}}}}}, nil
 }
 
 func (b *runtimeBackend) UpdateFoundryAgentRuntime(_ context.Context, r *foundryv1.UpdateFoundryAgentRuntimeRequest, _ ...grpc.CallOption) (*foundryv1.FoundryAgentRuntimeResponse, error) {
@@ -100,7 +101,8 @@ func TestGetAssistantRuntime(t *testing.T) {
 	hosts := out["hosts"].([]any)
 	require.Len(t, hosts, 1)
 	assert.Equal(t, map[string]any{"id": "host-1", "name": "Ada's Mac", "runtimes": []any{"claude_code"}, "version": "0.1.0", "platform": "darwin-arm64",
-		"last_seen_at": "2026-11-15T09:00:00Z", "online": true}, hosts[0])
+		"last_seen_at": "2026-11-15T09:00:00Z", "online": true,
+		"accounts": []any{map[string]any{"runtime": "claude_code", "state": "signed_in", "subscription": "max"}}}, hosts[0])
 }
 
 func TestTheRuntimesOperationsAreConfirmed(t *testing.T) {

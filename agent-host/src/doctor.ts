@@ -5,56 +5,23 @@ import { execFile } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { promisify } from "node:util";
 
-import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { AccountInfo } from "@anthropic-ai/claude-agent-sdk";
 
+import { claudeAccount, signedIn } from "./account.ts";
 import { cliEnv, type Query } from "./claude.ts";
 import { configPath, loadPaired } from "./config.ts";
 import { findClaude } from "./find.ts";
-import { Foundry } from "./foundry.ts";
+import { Foundry, type Account } from "./foundry.ts";
 import { VERSION } from "./version.ts";
 
 export type Check = { ok: boolean; what: string; fix?: string };
 
 const run = promisify(execFile);
 
-/** Whom Claude Code is signed in as: its subscription's kind, if any. */
-export async function signedIn(
-  claude: string,
-  env: NodeJS.ProcessEnv,
-  run: Query = query,
-): Promise<{ subscription?: string; email?: string }> {
-  // A prompt that never comes: the CLI starts, signs in and says who it is.
-  const never = new Promise<never>(() => {});
-  async function* prompt(): AsyncGenerator<SDKUserMessage> {
-    yield await never;
-  }
-  const q = run({
-    prompt: prompt(),
-    options: {
-      pathToClaudeCodeExecutable: claude,
-      tools: [],
-      settingSources: [],
-      strictMcpConfig: true,
-      mcpServers: {},
-      persistSession: false,
-      env: cliEnv(env),
-      stderr: () => {},
-    },
-  });
-  try {
-    const init = (await q.initializationResult()) as {
-      account?: { subscriptionType?: string; email?: string };
-    };
-    return {
-      subscription: init.account?.subscriptionType,
-      email: init.account?.email,
-    };
-  } finally {
-    q.close();
-  }
-}
-
-/** Every check, in order; a later one may depend on an earlier. */
+/**
+ * Every check, in order; a later one may depend on an earlier. Claude Code
+ * is asked first, so Foundry's hello says what it is signed in to.
+ */
 export async function doctor(
   opts: { claude?: string; env?: NodeJS.ProcessEnv; query?: Query } = {},
 ): Promise<Check[]> {
@@ -66,6 +33,7 @@ export async function doctor(
     what: `Node ${process.versions.node}`,
     fix: "Install Node 24 or later.",
   });
+  const cli = await claudeChecks(opts.claude, env, opts.query);
 
   const path = configPath(env);
   const paired = await loadPaired(path).catch((e: Error) => e);
@@ -89,6 +57,7 @@ export async function doctor(
       const me = await new Foundry(paired.foundry, paired.token).hello(
         ["claude_code"],
         VERSION,
+        [cli.account],
       );
       checks.push({
         ok: true,
@@ -102,16 +71,29 @@ export async function doctor(
       });
     }
   }
+  return [...checks, ...cli.checks];
+}
 
-  const claude = await findClaude(opts.claude, env);
-  if (!claude) {
-    checks.push({
-      ok: false,
-      what: "Claude Code installed",
-      fix: "Install Claude Code (https://claude.com/claude-code), or name it with --claude <path>.",
-    });
-    return checks;
-  }
+/** Claude Code's checks, and its account as Foundry is told it. */
+async function claudeChecks(
+  path: string | undefined,
+  env: NodeJS.ProcessEnv,
+  query?: Query,
+): Promise<{ checks: Check[]; account: Account }> {
+  const unknown: Account = { runtime: "claude_code", state: "unknown" };
+  const claude = await findClaude(path, env);
+  if (!claude)
+    return {
+      account: unknown,
+      checks: [
+        {
+          ok: false,
+          what: "Claude Code installed",
+          fix: "Install Claude Code (https://claude.com/claude-code), or name it with --claude <path>.",
+        },
+      ],
+    };
+  const checks: Check[] = [];
   try {
     const { stdout } = await run(claude, ["--version"], {
       env: cliEnv(env),
@@ -124,23 +106,34 @@ export async function doctor(
       what: `Claude Code at ${claude}`,
       fix: `It didn't run: ${(e as Error).message}`,
     });
-    return checks;
+    return { checks, account: unknown };
   }
+  let who: AccountInfo;
   try {
-    const who = await signedIn(claude, env, opts.query);
-    checks.push({
-      ok: !!who.subscription,
-      what: who.subscription
-        ? `Signed in to a Claude ${who.subscription} subscription${who.email ? ` as ${who.email}` : ""}`
-        : "Signed in to a Claude subscription",
-      fix: "Run claude, then /login, and sign in with your Claude account.",
-    });
+    who = await signedIn(claude, env, query);
   } catch (e) {
     checks.push({
       ok: false,
       what: "Claude Code starts",
       fix: (e as Error).message,
     });
+    return { checks, account: unknown };
   }
-  return checks;
+  const account = claudeAccount(who);
+  checks.push(
+    account.state === "signed_in" && account.subscription
+      ? {
+          ok: true,
+          what: `Signed in to a Claude ${account.subscription} subscription${who.email ? ` as ${who.email}` : ""}`,
+        }
+      : {
+          ok: false,
+          what:
+            account.state === "signed_in"
+              ? "Signed in to Claude Code, but not on a Claude subscription"
+              : "Signed in to a Claude subscription",
+          fix: "Run claude, then /login, and sign in with your Claude account.",
+        },
+  );
+  return { checks, account };
 }
