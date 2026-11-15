@@ -287,6 +287,35 @@ test("starts from scratch on the full canvas: adds, joins, tidies and inspects i
   await expect(title(page, "Count the ontologies")).toBeVisible();
 });
 
+test("a step added after one that leads on slots in between, and a blank Assistant step reads without quotes", async ({
+  page,
+}) => {
+  await signIn(page);
+  const id = await make(page, "Insert between", [
+    manual,
+    step("ask", "assistant", { instruction: "Summarise." }, 150),
+    step("tell", "notify", { message: "Done" }, 300),
+  ]);
+  await page.goto(`/automations/${id}`);
+  const nodes = canvas(page).locator(".react-flow__node");
+  await expect(nodes).toHaveCount(3);
+  await nodes.filter({ hasText: "Summarise." }).click();
+  await page.getByRole("button", { name: "Add step" }).click();
+  await page.getByRole("menuitem", { name: "Ask the Assistant" }).click();
+  await expect(nodes).toHaveCount(4);
+  // Joined from the step chosen and on to the one it led to: no new branch.
+  await expect(canvas(page).locator(".react-flow__edge")).toHaveCount(3);
+  const blank = nodes.filter({ hasText: "Write what the Assistant should do" });
+  await expect(blank).toHaveCount(1);
+  await expect(blank).not.toContainText("“");
+  await inspector(page)
+    .getByRole("button", { name: "Back to the summary" })
+    .click();
+  await expect(inspector(page).locator(".au-summary-text")).toContainText(
+    "ask the Assistant: “Summarise.”, then ask the Assistant, then email you “Done”",
+  );
+});
+
 test("starts from a template, runs only once approved, runs now, and colours the run on the canvas", async ({
   page,
 }) => {

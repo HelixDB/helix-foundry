@@ -374,6 +374,7 @@ export function Transcript({
   const log = useRef<HTMLDivElement>(null),
     body = useRef<HTMLDivElement>(null),
     stick = useRef(true),
+    lastTop = useRef(0),
     turnsSeen = useRef(0);
   const threadId = data?.thread.id,
     turns = data?.turns?.length ?? 0;
@@ -383,6 +384,7 @@ export function Transcript({
     if (!el || !inner || typeof ResizeObserver === "undefined") return;
     // Another thread opens at its end, wherever the last one was read.
     stick.current = true;
+    lastTop.current = 0;
     const follow = () => {
       if (stick.current) el.scrollTop = el.scrollHeight;
     };
@@ -418,7 +420,13 @@ export function Transcript({
       tabIndex={0}
       onScroll={(e) => {
         const el = e.currentTarget;
-        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+        // At the end it follows again; it stops only when its reader moves
+        // up. Turns growing after a scroll to the end is not that: the
+        // scroll's event can come after they grew, short of the new end.
+        if (el.scrollHeight - el.scrollTop - el.clientHeight < 48)
+          stick.current = true;
+        else if (el.scrollTop < lastTop.current) stick.current = false;
+        lastTop.current = el.scrollTop;
       }}
     >
       <div ref={body} className="ag-log-body">

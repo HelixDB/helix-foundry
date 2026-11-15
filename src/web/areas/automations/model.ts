@@ -907,7 +907,9 @@ export function nodeText(
         ? "only when you run it"
         : `when ${triggerText(n.config, names, here)}`;
     case "assistant":
-      return `ask the Assistant: “${n.config.instruction}”`;
+      return n.config.instruction.trim()
+        ? `ask the Assistant: “${n.config.instruction}”`
+        : "ask the Assistant";
     case "action":
       return actionText(n.config, names);
     case "condition":
@@ -923,8 +925,8 @@ export function nodeText(
 
 /**
  * The automation as one sentence: its trigger, then its steps in the order
- * a run takes them; a step a condition's false branch leads to says
- * "otherwise".
+ * a run takes them (until they can be read, top down as the canvas has
+ * them); a step a condition's false branch leads to says "otherwise".
  *
  * @example
  * sentence(spec, names, true, "UTC");
@@ -937,7 +939,14 @@ export function sentence(
   here?: string,
 ) {
   const read = parseSpec(spec);
-  const order = read.ok ? read.order : spec.nodes.map((n) => n.id);
+  // Steps that can't be read yet go as the canvas lays them out, top down.
+  const order = read.ok
+    ? read.order
+    : [...spec.nodes]
+        .sort(
+          (a, b) => a.position.y - b.position.y || a.position.x - b.position.x,
+        )
+        .map((n) => n.id);
   const t = triggerOf(spec);
   const head =
     t.config.kind === "manual"
@@ -1321,9 +1330,20 @@ export function freeBranch(
 }
 
 /**
- * The spec with a new step after `after` (connected from it, along its free
- * branch when it is a condition), placed under it; with no `after`, under
- * the lowest step, unconnected. Returns the new step's id.
+ * The spec with a new step after `after`, placed under it; with no `after`,
+ * under the lowest step, unconnected. Returns the new step's id.
+ *
+ * After a condition, it goes along the free branch (none free: unconnected).
+ * After any other step, it slots in between: it takes over the step's joins
+ * to the steps it led to, and those steps and everything after them move down
+ * a row. A join into a condition stays, since a condition checks the one step
+ * before it; a new condition takes over only a step's single join, as its
+ * true branch. With nothing to take over, it starts a branch of its own.
+ *
+ * @example
+ * // start → ask → email; a step added after ask runs between them.
+ * addStep(spec, "notify", "ask").spec.edges;
+ * // [{from: "start", to: "ask"}, {from: "ask", to: "notify-1"}, {from: "notify-1", to: "email"}]
  */
 export function addStep(
   spec: AutomationSpec,
@@ -1335,26 +1355,65 @@ export function addStep(
   const branch =
     from?.kind === "condition" ? freeBranch(spec, from.id) : undefined;
   const connects = !!from && (from.kind !== "condition" || !!branch);
+  // The joins the new step takes over: none out of a condition.
+  const outs =
+    from && from.kind !== "condition"
+      ? edgesOutOf(spec, from.id).filter(
+          (e) => nodeOf(spec, e.to)!.kind !== "condition",
+        )
+      : [];
+  const taken =
+    kind === "condition"
+      ? outs.length === 1 && edgesOutOf(spec, from!.id).length === 1
+        ? outs
+        : []
+      : outs;
   const position = from
     ? {
         x:
           from.position.x +
-          (branch === "false" ? 280 : 0) +
-          edgesOutOf(spec, from.id).filter((e) => !e.branch).length * 280,
+          (taken.length
+            ? 0
+            : (branch === "false" ? 280 : 0) +
+              edgesOutOf(spec, from.id).filter((e) => !e.branch).length * 280),
         y: from.position.y + ROW,
       }
     : {
         x: 0,
         y: Math.max(...spec.nodes.map((n) => n.position.y)) + ROW,
       };
+  // What comes after the steps taken over, which moves down a row.
+  const below = new Set<string>();
+  const visit = (n: string) => {
+    if (below.has(n)) return;
+    below.add(n);
+    edgesOutOf(spec, n).forEach((e) => visit(e.to));
+  };
+  taken.forEach((e) => visit(e.to));
   const node = { id, position, ...blankConfig(kind) } as AutomationNode;
+  const moved = taken.map((e) => ({
+    from: id,
+    to: e.to,
+    ...(kind === "condition" && { branch: "true" as const }),
+  }));
   return {
     id,
     spec: {
       ...spec,
-      nodes: [...spec.nodes, node],
+      nodes: [
+        ...spec.nodes.map((n) =>
+          below.has(n.id)
+            ? { ...n, position: { ...n.position, y: n.position.y + ROW } }
+            : n,
+        ),
+        node,
+      ],
       edges: connects
-        ? [...spec.edges, { from: from.id, to: id, ...(branch && { branch }) }]
+        ? [
+            ...spec.edges.filter((e) => !taken.includes(e)),
+            { from: from.id, to: id, ...(branch && { branch }) },
+            ...moved,
+          ]
         : spec.edges,
     },
   };
