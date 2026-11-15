@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   AutomationNode,
   AutomationSpec,
@@ -46,8 +46,13 @@ import {
   triggerText,
   usdText,
   validZone,
+  here,
   type Names,
 } from "@/web/areas/automations/model";
+import {
+  ACTIVE_POLL_MS,
+  automationQueries,
+} from "@/web/areas/automations/queries";
 
 // An automation's spec as the site reads it (src/web/areas/automations/
 // model.ts), a port of the backend's package automation: what ParseSpec
@@ -687,8 +692,31 @@ describe("schedules", () => {
       "Mars/Base",
       "Europe/ London",
       "x".repeat(65),
+      "Etc/Unknown",
+      undefined,
     ])
       expect(validZone(z), z).toBe(false);
+  });
+  it("reads the browser's time zone, else UTC", () => {
+    const real = Intl.DateTimeFormat;
+    const as = (timeZone: string | undefined) =>
+      vi.spyOn(Intl, "DateTimeFormat").mockImplementation(function () {
+        return {
+          resolvedOptions: () => ({ timeZone }),
+        } as unknown as Intl.DateTimeFormat;
+      });
+    try {
+      as("Asia/Tokyo");
+      expect(here()).toBe("Asia/Tokyo");
+      for (const z of ["Etc/Unknown", undefined, ""]) {
+        vi.restoreAllMocks();
+        as(z);
+        expect(here(), String(z)).toBe("UTC");
+      }
+    } finally {
+      vi.restoreAllMocks();
+      expect(Intl.DateTimeFormat).toBe(real);
+    }
   });
 });
 
@@ -1313,5 +1341,31 @@ describe("automations", () => {
     );
     expect(automationsUnavailable(refused)).toBe(false);
     expect(automationsUnavailable(new Error("x"))).toBe(false);
+  });
+});
+
+describe("the overview's reads", () => {
+  const poll = (automations: object[]) =>
+    automationQueries
+      .overview("ws", 7, "UTC")
+      .refetchInterval({ state: { data: { automations } as never } });
+  it("reads again while one is live or runs, at an active automation's pace", () => {
+    expect(poll([{ status: "paused" }, { status: "needs_approval" }])).toBe(
+      false,
+    );
+    expect(poll([])).toBe(false);
+    // A trigger may fire any time: its run shows without a reload.
+    expect(poll([{ status: "paused" }, { status: "active" }])).toBe(
+      ACTIVE_POLL_MS,
+    );
+    // A live run's counts are read no faster: each read counts every run.
+    expect(
+      poll([{ status: "paused", lastRun: { status: "running" } }]),
+    ).toBe(ACTIVE_POLL_MS);
+    expect(
+      automationQueries
+        .overview("ws", 7, "UTC")
+        .refetchInterval({ state: {} }),
+    ).toBe(false);
   });
 });

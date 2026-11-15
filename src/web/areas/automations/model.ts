@@ -61,14 +61,21 @@ const CLOCK = /^([01][0-9]|2[0-3]):([0-5][0-9])$/;
 
 /**
  * Whether `name` is an IANA time zone the backend reads (automation.Zone):
- * not empty, not Local, no spaces, and known.
+ * not empty, not Local, no spaces, and known; not ICU's Etc/Unknown, which
+ * a browser that can't tell its zone reports and the zone database lacks.
  *
  * @example
  * validZone("Europe/London"); // true
  * validZone("Local"); // false
  */
-export function validZone(name: string): boolean {
-  if (!name || name === "Local" || name.length > 64 || /\s/.test(name))
+export function validZone(name: string | undefined): boolean {
+  if (
+    !name ||
+    name === "Local" ||
+    name === "Etc/Unknown" ||
+    name.length > 64 ||
+    /\s/.test(name)
+  )
     return false;
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: name });
@@ -76,6 +83,17 @@ export function validZone(name: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * The browser's time zone, else UTC (a browser that can't tell reports
+ * none, or one the backend refuses): a schedule's default, left out of its
+ * words, and the days the overview counts by.
+ */
+export function here(): string {
+  const zone: string | undefined =
+    Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return validZone(zone) ? zone! : "UTC";
 }
 
 // ---------------------------------------------------------------- reading

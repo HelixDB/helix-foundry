@@ -31,9 +31,14 @@ import {
 import { RefreshFailed, useWorkspace } from "../../ui";
 import { membersQuery } from "../workspace/members";
 import { AutomationPage } from "./editor";
-import { automationsUnavailable, listTriggerText, usdText } from "./model";
+import {
+  automationsUnavailable,
+  here,
+  listTriggerText,
+  usdText,
+} from "./model";
 import { NewAutomationPage } from "./new";
-import { RUN_STATUS, Templates, automationStatus, here } from "./parts";
+import { RUN_STATUS, Templates, automationStatus } from "./parts";
 import { automationPaths as paths } from "./paths";
 import { automationQueries, useNames } from "./queries";
 
@@ -251,7 +256,11 @@ function Overview() {
             type: "string",
             render: (a) => (
               <span className="au-list-name">
-                <Link className="au-list-link" to={paths.automation(a.id)}>
+                <Link
+                  className="au-list-link"
+                  to={paths.automation(a.id)}
+                  onClick={(e) => e.stopPropagation()}
+                >
                   {a.name}
                 </Link>
                 <span className="au-muted">

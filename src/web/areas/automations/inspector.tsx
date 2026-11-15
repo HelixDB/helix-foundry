@@ -19,6 +19,7 @@ import {
   WEEKDAYS,
   actionText,
   edgesOutOf,
+  here,
   nextFire,
   sameAction,
   setConfig,
@@ -26,7 +27,7 @@ import {
   validZone,
   type Weekday,
 } from "./model";
-import { here, nodeIcon, stepTitle } from "./parts";
+import { nodeIcon, stepTitle } from "./parts";
 import type { useNames } from "./queries";
 
 // The builder's inspector: what the selected step does, in plain words and

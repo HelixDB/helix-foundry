@@ -13,8 +13,9 @@ import { calendarDate, formatNumber } from "../../kit";
 // The overview's runs by day (recharts, lazy-loaded by the overview so it
 // stays out of the main bundle): a bar a day, stacked by how its runs went,
 // those that succeeded in --hf-chart-1, failed in --hf-chart-5 and the rest
-// (live, cancelled, skipped) in a neutral token, with a tooltip of the
-// exact counts. Colours are automations.css's.
+// (live, cancelled, skipped) in a neutral token, with a legend, a tooltip of
+// the exact counts, and the same in words for screen readers (the chart is
+// an image named by them). Colours are automations.css's.
 
 type Datum = {
   date: string;
@@ -56,6 +57,35 @@ function Tip({
   );
 }
 
+const LEGEND = [
+  { key: "succeeded", label: "Succeeded" },
+  { key: "failed", label: "Failed" },
+  { key: "other", label: "Other (live, cancelled or skipped)" },
+] as const;
+
+/** The chart in words: its days, what their runs came to, and the busiest. */
+function chartText(data: Datum[]) {
+  const sum = (key: keyof Omit<Datum, "date">) =>
+    data.reduce((n, d) => n + d[key], 0);
+  const runs = (d: Datum) => d.succeeded + d.failed + d.other;
+  const busiest = data.reduce<Datum | undefined>(
+    (top, d) => (runs(d) > (top ? runs(top) : 0) ? d : top),
+    undefined,
+  );
+  const first = data[0]?.date,
+    last = data[data.length - 1]?.date;
+  return [
+    `Runs by day${first && last ? `, ${dayText(first)} to ${dayText(last)}` : ""}:`,
+    `${formatNumber(sum("succeeded") + sum("failed") + sum("other"))} runs,`,
+    `${formatNumber(sum("succeeded"))} succeeded, ${formatNumber(sum("failed"))} failed, ${formatNumber(sum("other"))} other.`,
+    busiest
+      ? `The busiest day was ${dayText(busiest.date)}, with ${formatNumber(runs(busiest))}.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export default function RunsChart({ days }: { days: AutomationRunDay[] }) {
   const data: Datum[] = days.map((d) => ({
     date: d.date || "",
@@ -65,7 +95,16 @@ export default function RunsChart({ days }: { days: AutomationRunDay[] }) {
   }));
   return (
     <div className="au-chart">
-      <ResponsiveContainer width="100%" height={168}>
+      <ul className="au-chart-legend" aria-hidden>
+        {LEGEND.map((l) => (
+          <li key={l.key}>
+            <span className={`au-chart-swatch is-${l.key}`} />
+            {l.label}
+          </li>
+        ))}
+      </ul>
+      <div role="img" aria-label={chartText(data)}>
+        <ResponsiveContainer width="100%" height={168}>
         <BarChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: 0 }}>
           <CartesianGrid vertical={false} />
           <XAxis
@@ -108,7 +147,8 @@ export default function RunsChart({ days }: { days: AutomationRunDay[] }) {
             isAnimationActive={false}
           />
         </BarChart>
-      </ResponsiveContainer>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }

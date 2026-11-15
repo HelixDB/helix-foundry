@@ -19,6 +19,7 @@ import type { Status } from "../../kit";
 import {
   actionText,
   edgesOutOf,
+  here,
   nodeText,
   parseSpec,
   type Kind,
@@ -35,8 +36,6 @@ import type { useNames } from "./queries";
 // unattended, which an owner reads before approving them (the builder's
 // review, an unapproved automation's page, the Assistant's card).
 
-/** The browser's time zone: a schedule's default, and left out of its words. */
-export const here = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 /** An automation's state, as a dot and its words. */
 export function automationStatus(a: FoundryAutomation): {

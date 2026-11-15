@@ -24,6 +24,7 @@ import { ZONES } from "./inspector";
 import {
   LIMITS,
   eventText,
+  here,
   nextFire,
   parseEvent,
   parseSpec,
@@ -36,7 +37,7 @@ import {
   validZone,
   type Names,
 } from "./model";
-import { RUN_STATUS, StepsPreview, automationStatus, here } from "./parts";
+import { RUN_STATUS, StepsPreview, automationStatus } from "./parts";
 import { automationPaths as paths } from "./paths";
 import { automationQueries, deleteAutomation, type useNames } from "./queries";
 import type { Draft } from "./review";
@@ -95,11 +96,14 @@ export function Problems({
  * The automation in plain words, with nothing selected: what it does, why
  * it isn't running (and its owner's approval, which turns it on), what runs
  * unattended, when it starts and runs next, whose it is, and its last runs.
- * A draft's says what its save waits for.
+ * A draft's says what its save waits for. What runs unattended, and when it
+ * starts, are what is saved: changes run only once saved.
  */
 export function Summary({
   automation: a,
   draft,
+  saved,
+  dirty,
   mine,
   runs,
   problems,
@@ -110,7 +114,10 @@ export function Summary({
   onRuns,
 }: {
   automation?: FoundryAutomation;
+  // The steps as they stand, and as saved (none for a new one).
   draft: Draft;
+  saved?: Draft;
+  dirty: boolean;
   mine: boolean;
   runs: FoundryAutomationRun[];
   problems: Problem[];
@@ -124,7 +131,8 @@ export function Summary({
   const status = a && automationStatus(a),
     stopped = a && stoppedText(a, mine),
     lastFailed = runs.find((r) => r.status === "failed"),
-    trigger = triggerOf(draft.spec).config;
+    runsNow = a && saved ? saved.spec : draft.spec,
+    trigger = triggerOf(runsNow).config;
   return (
     <div className="au-side-body">
       <div className="au-summary-head">
@@ -178,7 +186,12 @@ export function Summary({
         )}
       <section className="au-side-section" aria-label="What runs unattended">
         <h3>What runs unattended</h3>
-        <StepsPreview spec={draft.spec} names={lists.names} email={email} />
+        <StepsPreview spec={runsNow} names={lists.names} email={email} />
+        {a && dirty && (
+          <p className="au-hint">
+            As saved: your changes run once you save them.
+          </p>
+        )}
       </section>
       {a && (
         <KeyValue
@@ -186,7 +199,7 @@ export function Summary({
           items={[
             {
               label: "Starts",
-              value: capital(startsText(draft.spec, lists.names)),
+              value: capital(startsText(runsNow, lists.names)),
             },
             {
               label: "Next run",

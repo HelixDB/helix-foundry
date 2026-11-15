@@ -6,12 +6,13 @@ import { useWorkspace } from "../../ui";
 import {
   automationRefusal,
   canonicalJson,
+  here,
   parseSpec,
   sameSteps,
   sentence,
   type TemplateId,
 } from "./model";
-import { StepsPreview, here } from "./parts";
+import { StepsPreview } from "./parts";
 import {
   approveAutomation,
   createAutomation,

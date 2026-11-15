@@ -780,6 +780,35 @@
   border-radius: var(--hf-radius-lg);
   background: var(--hf-surface);
 }
+.au-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px var(--hf-space-2);
+  margin: 0 0 6px 8px;
+  padding: 0;
+  list-style: none;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.au-chart-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.au-chart-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.au-chart-swatch.is-succeeded {
+  background: var(--hf-chart-1);
+}
+.au-chart-swatch.is-failed {
+  background: var(--hf-chart-5);
+}
+.au-chart-swatch.is-other {
+  background: var(--hf-border-strong);
+}
 .au-chart .recharts-cartesian-grid line {
   stroke: var(--hf-border);
 }
@@ -902,6 +931,10 @@
 .au-top .au-tabs .hf-tab {
   height: 51px;
 }
+/* The Runs tab's count, in its label (a + while more runs are unread). */
+.au-tab-count {
+  margin-left: 7px;
+}
 .au-top-tools {
   display: flex;
   flex: 1 1 auto;
@@ -965,11 +998,12 @@
   outline: 2px solid var(--hf-focus);
   outline-offset: 2px;
 }
-.au-live input:disabled {
+.au-live input:disabled,
+.au-live input[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.55;
 }
-.au-live:has(input:disabled) {
+.au-live:has(input:disabled, input[aria-disabled="true"]) {
   color: var(--hf-muted);
   cursor: not-allowed;
 }

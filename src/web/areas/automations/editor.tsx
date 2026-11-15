@@ -39,6 +39,7 @@ import {
   SkeletonText,
   Tabs,
   cx,
+  formatNumber,
   useMedia,
   useStoredState,
   useTitle,
@@ -50,6 +51,7 @@ import {
   LIMITS,
   TEMPLATES,
   addStep,
+  here,
   incomplete,
   parseSpec,
   removeStep,
@@ -157,7 +159,7 @@ export function DraftPage({ templateId }: { templateId: string }) {
     () =>
       lists.ready
         ? template.build({
-            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            timeZone: here(),
             connector: lists.connectors[0],
             ontology: lists.ontologies[0],
             set: lists.sets[0],
@@ -342,6 +344,11 @@ function Editor({
     setDraft({ ...current, ...next });
   };
   const setSpec = (spec: AutomationSpec) => change({ spec });
+  // The draft as it stands now, for a call that ends after it changed.
+  const latest = useRef(draft);
+  useEffect(() => {
+    latest.current = draft;
+  }, [draft]);
   const discard = () => {
     setDraft(null);
     setBase(undefined);
@@ -431,9 +438,15 @@ function Editor({
       </Frame>
     );
 
-  // What the canvas shows: the steps as they stand, or as the run open ran
-  // them, each coloured by how it went.
-  const shownSpec = tab === "runs" && ran?.ok ? ran.spec : current.spec;
+  // What the canvas shows: the steps as they stand; on Runs, as the run
+  // open ran them, each coloured by how it went, else as saved (a draft
+  // hasn't run).
+  const shownSpec =
+    tab === "runs"
+      ? runId && ran?.ok
+        ? ran.spec
+        : (saved?.spec ?? current.spec)
+      : current.spec;
   const canEditSteps = editable && tab === "editor";
   const node = shownSpec.nodes.find((n) => n.id === selected);
 
@@ -488,10 +501,11 @@ function Editor({
         name,
       });
       keepAutomation(qc, ws, renamed);
-      // A draft goes on from the renamed automation, with its new name.
-      if (draft) {
+      // A draft made before or during the rename goes on from the renamed
+      // automation, with its new name and every change made meanwhile.
+      if (latest.current) {
         setBase(renamed);
-        setDraft({ ...draft, name });
+        setDraft((d) => d && { ...d, name });
       }
     } catch (e) {
       setError(saveRefusal(e));
@@ -525,6 +539,7 @@ function Editor({
           : a.status === "needs_approval" && a.canEdit
             ? "Approve it in Foundry to go live"
             : "Only its owner turns it on";
+  const [whyShown, setWhyShown] = useState(false);
   const flip = (on: boolean) => {
     if (!a) return;
     if (!on) return void act("pause", () => pauseAutomation(ws, a.id, true));
@@ -537,8 +552,8 @@ function Editor({
       <Crumbs name={current.name || "Untitled automation"}>
         {a ? (
           <NameInPlace
-            key={a.name}
-            name={a.name || "Automation"}
+            key={current.name}
+            name={current.name || a.name || "Automation"}
             canRename={!!a.canEdit}
             onSave={rename}
           />
@@ -563,9 +578,20 @@ function Editor({
           { id: "editor", label: "Editor" },
           {
             id: "runs",
-            label: "Runs",
+            // The runs read so far, and a + while there are more: they are
+            // read a page at a time.
+            label: (
+              <>
+                Runs
+                {a && runs.query.data && (
+                  <span className="hf-tab-count au-tab-count">
+                    {formatNumber(runs.all.length)}
+                    {runs.query.hasNextPage && "+"}
+                  </span>
+                )}
+              </>
+            ),
             disabled: !a,
-            ...(a && { count: runs.all.length }),
           },
           { id: "settings", label: "Settings" },
         ]}
@@ -621,15 +647,29 @@ function Editor({
             Outline
           </button>
         )}
+        {/* Off while it can't change, but still focusable: a tap, a key
+            or a screen reader learns why. */}
         <label className="checkbox au-live" title={liveWhy}>
           <input
             type="checkbox"
             role="switch"
             checked={live}
-            disabled={!!pending || !!liveWhy}
+            disabled={!!pending}
+            aria-disabled={!!liveWhy || undefined}
+            aria-describedby={liveWhy ? "au-live-why" : undefined}
+            onClick={(e) => {
+              if (!liveWhy) return;
+              e.preventDefault();
+              setWhyShown(true);
+            }}
             onChange={(e) => flip(e.target.checked)}
           />
           Live
+          {liveWhy && (
+            <span id="au-live-why" className="hf-sr-only">
+              {liveWhy}
+            </span>
+          )}
         </label>
         <button
           type="button"
@@ -654,6 +694,19 @@ function Editor({
 
   const notes = (
     <>
+      {whyShown && liveWhy && (
+        <p className="au-strip is-muted" role="status">
+          <span>{liveWhy}.</span>
+          <button
+            type="button"
+            className="hf-btn hf-btn--ghost hf-btn--sm hf-btn--icon"
+            aria-label="Dismiss"
+            onClick={() => setWhyShown(false)}
+          >
+            <X size={14} aria-hidden />
+          </button>
+        </p>
+      )}
       {refreshFailed && (
         <p className="au-strip is-muted" role="status">
           Couldn’t read it again: what shows may be out of date.
@@ -683,6 +736,11 @@ function Editor({
       lists={lists}
       email={email}
       editable={canEditSteps}
+      readOnly={
+        a?.canEdit
+          ? "Edit its steps in the Editor tab."
+          : "Only its owner changes its steps: it runs as them."
+      }
       onChange={setSpec}
       onRemove={() => {
         setSpec(removeStep(current.spec, node.id));
@@ -721,6 +779,8 @@ function Editor({
       <Summary
         automation={a}
         draft={current}
+        saved={saved}
+        dirty={dirty}
         mine={!a || a.ownerUserId === user.id}
         runs={runs.all}
         problems={problems}
@@ -862,6 +922,7 @@ function StepPanel({
   lists,
   email,
   editable,
+  readOnly,
   onChange,
   onRemove,
   outcome,
@@ -872,6 +933,8 @@ function StepPanel({
   lists: ReturnType<typeof useNames>;
   email: boolean;
   editable: boolean;
+  // Why it can't be changed here, said when it can't.
+  readOnly: string;
   onChange: (spec: AutomationSpec) => void;
   onRemove: () => void;
   outcome?: ReactNode;
@@ -911,11 +974,7 @@ function StepPanel({
           {editable && node.kind !== "trigger" && (
             <RemoveStep onRemove={onRemove} />
           )}
-          {!editable && (
-            <p className="au-hint">
-              Only its owner changes its steps: it runs as them.
-            </p>
-          )}
+          {!editable && <p className="au-hint">{readOnly}</p>}
         </>
       )}
     </div>

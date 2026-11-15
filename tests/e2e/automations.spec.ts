@@ -99,7 +99,15 @@ test("the overview counts the runs of the last days and lists the automations, w
   await expect(stat("Failed")).toHaveText("1");
   await expect(stat("Waiting for someone")).toHaveText("0");
   await expect(stat("Spend")).toHaveText("$0.03");
-  await expect(page.locator(".au-chart")).toBeVisible();
+  // The chart has its legend, and says the same in words.
+  await expect(page.locator(".au-chart-legend")).toContainText(
+    "SucceededFailedOther (live, cancelled or skipped)",
+  );
+  await expect(
+    page.getByRole("img", {
+      name: /^Runs by day, .+: 3 runs, 1 succeeded, 1 failed, 1 other\. The busiest day was .+, with 2\.$/,
+    }),
+  ).toBeVisible();
   await page.getByRole("radio", { name: "30 days" }).click();
   await expect(stat("Runs")).toHaveText("4");
   await expect(stat("Succeeded")).toHaveText("2");
@@ -117,6 +125,11 @@ test("the overview counts the runs of the last days and lists the automations, w
   // one, never on the overview or a new one's page.
   const list = page.getByRole("navigation", { name: "Automations" });
   await expect(list).toHaveCount(0);
+  // Its name's link opens it once: Back is the overview again.
+  await grid.getByRole("link", { name: "Morning check" }).click();
+  await expect(page).toHaveURL(new RegExp(`/automations/${morning}$`));
+  await page.goBack();
+  await expect(page).toHaveURL(/\/automations$/);
   await grid.getByRole("link", { name: "Morning check" }).click();
   await expect(page).toHaveURL(new RegExp(`/automations/${morning}$`));
   await expect(list).toContainText("Evening check");
@@ -347,6 +360,31 @@ test("starts from a template, runs only once approved, runs now, and colours the
   await expect(canvas(page)).toBeVisible();
   await expect(canvas(page).locator(".au-node--succeeded")).toHaveCount(0);
 
+  // A step added but not saved doesn't run unattended yet, and the Runs
+  // tab draws the steps as saved, which only the Editor changes.
+  await page.getByRole("button", { name: "Add step" }).click();
+  await page.getByRole("menuitem", { name: "Email me" }).click();
+  await expect(canvas(page).locator(".au-node")).toHaveCount(5);
+  await inspector(page)
+    .getByRole("button", { name: "Back to the summary" })
+    .click();
+  await expect(
+    inspector(page).getByRole("list", { name: "Steps" }).getByRole("listitem"),
+  ).toHaveCount(4);
+  await expect(
+    inspector(page).getByText("As saved: your changes run once you save them."),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: /Runs/ }).click();
+  await expect(canvas(page).locator(".au-node")).toHaveCount(4);
+  await canvas(page)
+    .locator(".react-flow__node")
+    .filter({ hasText: "Sync" })
+    .click();
+  await expect(
+    inspector(page).getByText("Edit its steps in the Editor tab."),
+  ).toBeVisible();
+  await expect(inspector(page).getByText(/^Only its owner/)).toHaveCount(0);
+
   // The overview says how it last ran.
   await page.goto("/automations");
   const row = page.getByRole("grid", { name: "Automations" }).getByRole("row", {
@@ -511,6 +549,98 @@ test("the Live switch approves a waiting automation and pauses it; spaces are no
   await expect(page.getByText("No automations yet")).toBeVisible();
 });
 
+test("a rename in the bar that ends after a change keeps the change, which then saves", async ({
+  page,
+}) => {
+  await signIn(page);
+  const tell = step("tell", "notify", { message: "Hi" }, 150);
+  const id = await make(page, "Slow name", [manual, tell]);
+  // The renames wait until the test lets them through.
+  let gate: { held: Promise<void>; open: () => void } | undefined;
+  const hold = () => {
+    let open!: () => void;
+    const held = new Promise<void>((r) => (open = r));
+    gate = { held, open };
+    return gate;
+  };
+  await page.route(`**/papi${A}/${id}`, async (route) => {
+    if (route.request().method() === "PATCH" && gate) await gate.held;
+    await route.fallback();
+  });
+  await page.goto(`/automations/${id}`);
+  const nodes = canvas(page).locator(".react-flow__node");
+  const addEmail = async () => {
+    await page.getByRole("button", { name: "Add step" }).click();
+    await page.getByRole("menuitem", { name: "Email me" }).click();
+  };
+
+  // Renamed with nothing changed, then a step added while it saves.
+  let rename = hold();
+  await page.getByRole("button", { name: "Rename Slow name" }).click();
+  await page.getByRole("textbox", { name: "Name" }).fill("Quick name");
+  await page.keyboard.press("Enter");
+  await addEmail();
+  await expect(nodes).toHaveCount(3);
+  rename.open();
+  await expect(title(page, "Quick name")).toBeVisible();
+  await expect(nodes).toHaveCount(3);
+
+  // Renamed with a change made, then another added while it saves.
+  rename = hold();
+  await page.getByRole("button", { name: "Rename Quick name" }).click();
+  await page.getByRole("textbox", { name: "Name" }).fill("Quicker name");
+  await page.keyboard.press("Enter");
+  await addEmail();
+  await expect(nodes).toHaveCount(4);
+  rename.open();
+  await expect(title(page, "Quicker name")).toBeVisible();
+  await expect(nodes).toHaveCount(4);
+  gate = undefined;
+
+  // The draft goes on from the renamed automation: its save isn't refused.
+  await page.getByRole("button", { name: "Review and save" }).click();
+  const review = page.getByRole("dialog", {
+    name: "Review what runs unattended",
+  });
+  await expect(
+    review
+      .getByRole("list", { name: "Steps that run unattended" })
+      .getByRole("listitem"),
+  ).toHaveCount(4);
+  await review.getByRole("button", { name: "Save and turn on" }).click();
+  await expect(review).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Review and save" }),
+  ).toHaveCount(0);
+  await expect(title(page, "Quicker name")).toBeVisible();
+  await expect(nodes).toHaveCount(4);
+});
+
+test("its Runs tab counts the runs read so far, and says when there are more", async ({
+  page,
+}) => {
+  await signIn(page);
+  const id = await make(page, "Busy check", [
+    manual,
+    step("tell", "notify", { message: "Hi" }, 150),
+  ]);
+  await mock.pastRuns(
+    id,
+    Array.from({ length: 51 }, (_, i) => ({
+      status: "succeeded" as const,
+      ago: (i + 1) * 60_000,
+    })),
+  );
+  await page.goto(`/automations/${id}`);
+  await expect(page.getByRole("tab", { name: /^Runs\s*50\+$/ })).toBeVisible();
+  await page.getByRole("tab", { name: /^Runs/ }).click();
+  await page.getByRole("button", { name: "Show older runs" }).click();
+  await expect(page.getByRole("tab", { name: /^Runs\s*51$/ })).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Runs" }).getByRole("listitem"),
+  ).toHaveCount(51);
+});
+
 test("fires on its schedule when the time comes", async ({ page }) => {
   await mock.configure({ automationStepMs: 100 });
   await signIn(page);
@@ -650,6 +780,7 @@ test("pauses after three failed runs in a row, and says why", async ({
 
 test("leaves an action the owner didn't approve on the run, for them to run", async ({
   page,
+  browser,
 }) => {
   await mock.configure({
     automationStepMs: 100,
@@ -672,6 +803,28 @@ test("leaves an action the owner didn't approve on the run, for them to run", as
   await expect(
     inspector(page).getByText("One action it prepared waits for you:"),
   ).toBeVisible();
+  // The overview counts it for its owner; another member counts the run
+  // only, as they don't see what it prepared.
+  const waiting = (p: Page) =>
+    p
+      .locator(".au-stat")
+      .filter({ hasText: "Waiting for someone" })
+      .locator("dd")
+      .first();
+  await page.goto("/automations");
+  await expect(waiting(page)).toHaveText("1");
+  const context = await browser.newContext();
+  const alan = await context.newPage();
+  await signIn(alan, "alan@example.com");
+  await alan.goto("/automations");
+  await expect(
+    alan.locator(".au-stat").filter({ hasText: "Runs" }).locator("dd").first(),
+  ).toHaveText("1");
+  await expect(waiting(alan)).toHaveText("0");
+  await context.close();
+  await page.goto(`/automations/${id}?tab=runs`);
+  await page.getByRole("list", { name: "Runs" }).getByRole("link").click();
+  await ended(page, "Succeeded");
   const card = inspector(page).getByRole("region", {
     name: /^Action: Load v3 of “Customer contracts”/,
   });
@@ -708,6 +861,17 @@ test("shows another member its steps and how far a run went, never what it found
   for (const name of ["Run now", "Rename Ada's summary", "Add step"])
     await expect(alan.getByRole("button", { name })).toHaveCount(0);
   await expect(live(alan)).toBeDisabled();
+  // Off, it still says why, to a screen reader and on a tap.
+  await expect(live(alan)).toHaveAccessibleDescription(
+    "Only its owner, or an owner or admin, pauses it",
+  );
+  await live(alan).click();
+  await expect(live(alan)).toBeChecked();
+  await expect(
+    alan.getByRole("status").filter({
+      hasText: "Only its owner, or an owner or admin, pauses it.",
+    }),
+  ).toBeVisible();
   await expect(inspector(alan).getByText("Another member")).toBeVisible();
   await canvas(alan)
     .locator(".react-flow__node")
