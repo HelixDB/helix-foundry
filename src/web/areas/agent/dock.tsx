@@ -825,13 +825,16 @@ function AskedBlock({
   if (state !== "open" || moved)
     return (
       <p className="ag-ran">
-        <CircleHelp size={13} aria-hidden /> Asked you {what}
-        {state === "answered"
-          ? "."
-          : moved
-            ? ": the draft no longer waits on them here (answered on its page, or it moved on). "
-            : ", which went unanswered."}
-        {moved && draftLink}
+        <CircleHelp size={13} aria-hidden />
+        <span>
+          Asked you {what}
+          {state === "answered"
+            ? ". "
+            : moved
+              ? ": the draft no longer waits on them here (answered on its page, or it moved on). "
+              : ", which went unanswered."}
+          {moved && draftLink}
+        </span>
       </p>
     );
   return (
