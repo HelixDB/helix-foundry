@@ -347,11 +347,21 @@
           ]
         },
         {
+          "not": {
+            "required": [
+              "id"
+            ]
+          },
           "required": [
             "key"
           ]
         },
         {
+          "not": {
+            "required": [
+              "id"
+            ]
+          },
           "required": [
             "name"
           ]
