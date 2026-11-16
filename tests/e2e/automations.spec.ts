@@ -303,7 +303,7 @@ test("suggestions are written for the ontology last opened, and the picker chang
   await page.goto("/automations/new");
   const suggestions = page.getByRole("list", { name: "Suggestions" }),
     message = page.getByRole("textbox", { name: "Message" }),
-    picker = page.getByRole("combobox", { name: "Ontology" });
+    picker = page.getByRole("combobox", { name: "Suggestions for" });
   await expect(suggestions.getByRole("button")).toHaveText([
     "New contacts brief",
     "Job change alert",
@@ -360,7 +360,7 @@ test("while the Assistant writes suggestions, the competency questions' or place
     { timeout: 15_000 },
   );
   // Renewals' are made from its questions meanwhile, then replaced.
-  await page.getByRole("combobox", { name: "Ontology" }).click();
+  await page.getByRole("combobox", { name: "Suggestions for" }).click();
   await page.getByRole("option", { name: "Renewals" }).click();
   await expect(suggestions.getByRole("button")).toHaveText([
     "Customers are under contract",
@@ -372,6 +372,16 @@ test("while the Assistant writes suggestions, the competency questions' or place
   await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue(
     'Every Monday, answer: "Which customers are under contract, and which contracts are they signed with?" from Renewals, and email me the answer.',
   );
+  // A chip replaced under the pointer leaves no stale preview, and a
+  // screen reader hears the chips changed.
+  const message = page.getByRole("textbox", { name: "Message" });
+  await suggestions
+    .getByRole("button", { name: "What is each customer under" })
+    .hover();
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    /^Every Monday, answer: "What /,
+  );
   await expect(suggestions.getByRole("button")).toHaveText(
     [
       "Renewal radar",
@@ -381,6 +391,13 @@ test("while the Assistant writes suggestions, the competency questions' or place
     ],
     { timeout: 15_000 },
   );
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    "Describe what should happen…",
+  );
+  await expect(
+    page.getByRole("status").filter({ hasText: "Suggestions updated" }),
+  ).toBeAttached();
 });
 
 test("without an AI provider, suggestions come from the competency questions, else the fixed four", async ({
@@ -397,7 +414,7 @@ test("without an AI provider, suggestions come from the competency questions, el
     "Contract check",
     "Churn alert",
   ]);
-  await page.getByRole("combobox", { name: "Ontology" }).click();
+  await page.getByRole("combobox", { name: "Suggestions for" }).click();
   await page.getByRole("option", { name: "Renewals" }).click();
   await expect(suggestions.getByRole("button")).toHaveText([
     "Customers are under contract",
@@ -422,7 +439,9 @@ test("someone who reads no ontology gets the fixed suggestions, with no picker",
     "Contract check",
     "Churn alert",
   ]);
-  await expect(page.getByRole("combobox", { name: "Ontology" })).toHaveCount(0);
+  await expect(
+    page.getByRole("combobox", { name: "Suggestions for" }),
+  ).toHaveCount(0);
 });
 
 test("starts from scratch on the full canvas: adds, joins, tidies and inspects its steps", async ({

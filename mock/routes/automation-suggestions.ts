@@ -4,6 +4,11 @@ import type {
   ListAutomationSuggestionsResponse,
   OntologyVersion,
 } from "../../src/shared/wfe";
+import {
+  SUGGESTION_PROMPT_MAX as MAX_PROMPT,
+  SUGGESTION_TITLE_MAX as MAX_TITLE,
+  SUGGESTIONS_MAX as MAX_SUGGESTIONS,
+} from "../../src/web/areas/automations/model";
 import { versionFormat } from "../../src/web/areas/ontology/format";
 import {
   readAgentBundle,
@@ -27,7 +32,8 @@ import { currentVersionOf, ontologyVersion } from "./ontology";
 // written `automationSuggestionsMs` (1500) after, which 0 makes the first
 // read's. The mock's "model" decides by the version's types: contracts or
 // invoices get contract suggestions, people theirs, any other its
-// competency questions. Knobs, through POST /__mock/config:
+// competency questions, and one with none fails. Knobs, through POST
+// /__mock/config:
 // `automationSuggestionsOutcome: "fail"` fails the writing (the fallback,
 // not generating); `automationSuggestionsAi: false` is a workspace without
 // an AI provider (as `aiSource` none, the local mock's `aiDefault: false`)
@@ -41,17 +47,17 @@ type Knobs = {
 };
 const knobs = config as typeof config & Knobs;
 
-// The backend's suggest constants.
-const MAX_SUGGESTIONS = 4,
-  MAX_QUESTIONS = 10,
-  MAX_TITLE = 32,
-  MAX_PROMPT = 400,
+// The backend's suggest constants; its limits are the site's (model.ts).
+const MAX_QUESTIONS = 10,
   RETRY_AFTER_MS = 3_600_000;
 const WRITE_MS = 1500;
 
 type Row = {
   status: "queued" | "ready" | "failed";
   requestedAt: number;
+  // When it turned ready or failed: a failed row is queued again an hour
+  // after, as the backend counts from its updated_at.
+  updatedAt: number;
   suggestions: FoundryAutomationSuggestion[];
 };
 const rows = new Map<string, Row>();
@@ -285,7 +291,7 @@ export const automationSuggestionRoutes: MockRoute[] = [
       let row = rows.get(key);
       if (
         !row ||
-        (row.status === "failed" && now - row.requestedAt > RETRY_AFTER_MS)
+        (row.status === "failed" && now - row.updatedAt > RETRY_AFTER_MS)
       ) {
         if (
           knobs.agentEnabled === false ||
@@ -293,23 +299,35 @@ export const automationSuggestionRoutes: MockRoute[] = [
           aiSource(ws) === "none"
         )
           return questions();
-        row = { status: "queued", requestedAt: now, suggestions: [] };
+        row = {
+          status: "queued",
+          requestedAt: now,
+          updatedAt: now,
+          suggestions: [],
+        };
         rows.set(key, row);
       }
-      // The worker writes it once its time came, read or not.
+      // The worker writes it once its time came, read or not. Ready
+      // always holds some (the backend's Parse needs one): a version with
+      // nothing to write from fails.
       if (row.status === "queued" && now - row.requestedAt >= wait) {
-        const made = written(o.name, versionLayout(version).types);
-        if (knobs.automationSuggestionsOutcome === "fail")
+        const made = written(o.name, versionLayout(version).types)?.map(
+          ([title, kind, prompt]) => ({
+            title: title!,
+            prompt: prompt!,
+            icon: icon(kind!),
+          }),
+        );
+        row.updatedAt = row.requestedAt + wait;
+        const suggestions = made ?? fallback;
+        if (
+          knobs.automationSuggestionsOutcome === "fail" ||
+          !suggestions.length
+        )
           row.status = "failed";
         else {
           row.status = "ready";
-          row.suggestions = made
-            ? made.map(([title, kind, prompt]) => ({
-                title: title!,
-                prompt: prompt!,
-                icon: icon(kind!),
-              }))
-            : fallback;
+          row.suggestions = suggestions;
         }
       }
       if (row.status === "ready") return answer(row.suggestions, "MODEL");

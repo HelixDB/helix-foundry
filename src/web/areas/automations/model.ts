@@ -1134,9 +1134,11 @@ export type ShownSuggestions =
 
 /**
  * The page's suggestions from its read of the chosen ontology's: none
- * chosen (the workspace has no ontology it reads), a failed read, or none
- * to show are the fixed AUTOMATION_SUGGESTIONS; placeholders while it is
- * read, or while the Assistant writes them with nothing to show meanwhile.
+ * chosen (the workspace has no ontology it reads), a failed read with
+ * nothing read before, or none to show are the fixed
+ * AUTOMATION_SUGGESTIONS; placeholders while it is read, or while the
+ * Assistant writes them with nothing to show meanwhile. A poll that fails
+ * keeps what was read before (`data`), so the chips don't flicker.
  *
  * @example
  * shownSuggestions({ ontology: false, pending: false, failed: false }).kind; // "chips"
@@ -1153,7 +1155,7 @@ export function shownSuggestions(q: {
     chips: AUTOMATION_SUGGESTIONS,
     generating: false,
   } as const;
-  if (!q.ontology || q.failed) return fixed;
+  if (!q.ontology || (q.failed && !q.data)) return fixed;
   if (q.pending) return { kind: "loading", generating: false };
   const chips = readSuggestions(q.data),
     generating = q.data?.generating === true;

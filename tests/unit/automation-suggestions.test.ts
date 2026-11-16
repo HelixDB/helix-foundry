@@ -13,6 +13,7 @@ import {
   fallbackSuggestions,
   questionTitle,
 } from "../../mock/routes/automation-suggestions";
+import { ontologyVersion } from "../../mock/routes/ontology";
 import { config, db, resetState } from "../../mock/state";
 
 // The new automation page's suggestions: which ontology they are for, what
@@ -115,6 +116,20 @@ describe("shownSuggestions", () => {
       }),
     ).toEqual({ kind: "loading", generating: true });
   });
+  it("keeps what was read when a later poll fails", () => {
+    expect(
+      shownSuggestions({
+        ontology: true,
+        pending: false,
+        failed: true,
+        data: { suggestions: [one], generating: true },
+      }),
+    ).toEqual({
+      kind: "chips",
+      chips: [{ title: "A", prompt: "p", icon: "watch" }],
+      generating: true,
+    });
+  });
   it("shows the fallback while better ones are written, then those", () => {
     expect(
       shownSuggestions({
@@ -206,27 +221,30 @@ describe("the fallback, as the backend writes it", () => {
 
 describe("the mock's route", () => {
   const compiled = routes.map((r) => ({ ...r, c: compileTemplate(r.path) }));
-  async function get(
-    ontologyId: string,
-    userId = "usr_ada",
-    ws = "ws_acme",
+  async function call(
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+    at = { compiled, users: db.users },
   ): Promise<MockReply & { body: any }> {
-    const url = new URL(
-      `/v1/workspaces/${ws}/foundry/automation-suggestions?ontologyId=${ontologyId}`,
-      "http://mock",
-    );
-    const r = compiled.find(
-      (r) => r.method === "GET" && matchTemplate(r.c, url.pathname),
+    const url = new URL(path, "http://mock");
+    const r = at.compiled.find(
+      (r) => r.method === method && matchTemplate(r.c, url.pathname),
     )!;
     return (await r.handle({
-      method: "GET",
+      method,
       path: url.pathname,
       params: matchTemplate(r.c, url.pathname) as Record<string, string>,
       query: url.searchParams,
-      body: undefined,
-      principal: { user: db.users.get(userId)!, sessionId: "s" },
+      body,
+      principal: { user: at.users.get("usr_ada")!, sessionId: "s" },
     })) as MockReply & { body: any };
   }
+  const get = (ontologyId: string, ws = "ws_acme") =>
+    call(
+      "GET",
+      `/v1/workspaces/${ws}/foundry/automation-suggestions?ontologyId=${ontologyId}`,
+    );
   const later = (ms: number) => vi.setSystemTime(Date.now() + ms);
   const titles = (r: { body: any }) =>
     (r.body.suggestions || []).map((x: { title: string }) => x.title);
@@ -313,6 +331,75 @@ describe("the mock's route", () => {
     },
   );
 
+  it("queues a failed one again an hour after it failed", async () => {
+    Object.assign(config, { automationSuggestionsOutcome: "fail" });
+    await get("ont_acme_renewals");
+    later(1500);
+    expect((await get("ont_acme_renewals")).body.generating).toBe(false);
+    delete (config as Record<string, unknown>).automationSuggestionsOutcome;
+    // Within the hour of its failing (not of its asking), it stays failed.
+    later(3_600_000 - 1000);
+    expect((await get("ont_acme_renewals")).body.generating).toBe(false);
+    later(1001);
+    const again = await get("ont_acme_renewals");
+    expect(again.body).toMatchObject({
+      source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS",
+      generating: true,
+    });
+    later(1500);
+    expect(titles(await get("ont_acme_renewals"))).toContain("Renewal radar");
+  });
+
+  it("fails a version with nothing to write from, never ready with none", async () => {
+    ontologyVersion("ont_acme_contracts", "ver_seed_1")!.definition = {};
+    Object.assign(config, { automationSuggestionsMs: 0 });
+    expect((await get("ont_acme_contracts")).body).toMatchObject({
+      suggestions: [],
+      source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED",
+      generating: false,
+    });
+  });
+
+  it("has none for an ontology without a current version, and writes none", async () => {
+    const made = await call(
+      "POST",
+      "/v1/workspaces/ws_acme/foundry/ontologies",
+      {
+        name: "Empty",
+        tenantId: "ten_acme_sandbox",
+        clientToken: "empty",
+      },
+    );
+    const id = made.body.ontology.id as string;
+    for (let i = 0; i < 2; i++) {
+      expect((await get(id)).body).toEqual({
+        suggestions: [],
+        source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED",
+        generating: false,
+        versionId: "",
+      });
+      later(5000);
+    }
+  });
+
+  it("has none for another workspace's ontology", async () => {
+    db.workspaces.set("ws_other", {
+      ...db.workspaces.get("ws_acme")!,
+      id: "ws_other",
+      slug: "other",
+    });
+    db.memberships.push({
+      id: "mem_ada_other",
+      workspaceId: "ws_other",
+      userId: "usr_ada",
+      role: "WORKSPACE_ROLE_OWNER",
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    const r = await get("ont_acme_renewals", "ws_other");
+    expect(r.status).toBe(404);
+    expect(r.body.code).toBe(5);
+  });
+
   it("has none to give a Definition v1 until written", async () => {
     const r = await get("ont_acme_contracts");
     expect(r.body).toMatchObject({
@@ -331,5 +418,54 @@ describe("the mock's route", () => {
     Object.assign(config, { automationsDisabled: true });
     const off = await get("ont_acme_renewals");
     expect(off.body.details?.[0]?.reason).toBe("FOUNDRY_AUTOMATIONS_DISABLED");
+  });
+});
+
+describe("the mock's route on a local install without an AI provider", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    vi.useRealTimers();
+  });
+
+  it("answers the competency questions and never writes them", async () => {
+    vi.resetModules();
+    vi.stubEnv("MOCK_LOCAL_TOKEN", "local-token");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T08:00:00Z"));
+    const local = await import("../../mock/state"),
+      { routes: localRoutes } = await import("../../mock/routes"),
+      { aiSource } = await import("../../mock/routes/ai");
+    local.resetState();
+    Object.assign(local.config, { aiDefault: false });
+    expect(aiSource("ws_acme")).toBe("none");
+    const compiled = localRoutes.map((r) => ({
+      ...r,
+      c: compileTemplate(r.path),
+    }));
+    const path =
+      "/v1/workspaces/ws_acme/foundry/automation-suggestions?ontologyId=ont_acme_renewals";
+    const url = new URL(path, "http://mock");
+    const r = compiled.find(
+      (r) => r.method === "GET" && matchTemplate(r.c, url.pathname),
+    )!;
+    const get = async () =>
+      (await r.handle({
+        method: "GET",
+        path: url.pathname,
+        params: matchTemplate(r.c, url.pathname) as Record<string, string>,
+        query: url.searchParams,
+        body: undefined,
+        principal: { user: local.db.users.get("usr_ada")!, sessionId: "s" },
+      })) as MockReply & { body: any };
+    for (let i = 0; i < 2; i++) {
+      const got = await get();
+      expect(got.body).toMatchObject({
+        source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS",
+        generating: false,
+      });
+      expect(got.body.suggestions).toHaveLength(2);
+      vi.setSystemTime(Date.now() + 5000);
+    }
   });
 });

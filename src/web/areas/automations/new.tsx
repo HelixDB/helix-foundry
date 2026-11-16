@@ -48,8 +48,9 @@ import { automationQueries, useNames } from "./queries";
 // person is making an automation. Nothing runs until they click a card:
 // once their click on the Assistant's create_automation card made it, the
 // page opens it on its canvas. The suggestions are written for one of the
-// workspace's ontologies (model.ts suggestionOntology), which a picker under
-// them changes when there are several; the fixed ones where none gives any.
+// workspace's ontologies with a current version (model.ts
+// suggestionOntology), which a picker under them changes when there are
+// several; the fixed ones where none gives any.
 
 const ICONS: Record<SuggestionIcon, LucideIcon> = {
   briefing: Newspaper,
@@ -234,8 +235,10 @@ function Suggestions({
     ws = me.id,
     described = useId();
   const list = useQuery(ontologyQueries.list(ws));
+  // Only a current version has suggestions of its own: the others would
+  // show the fixed ones as if written for them.
   const ontologies = (list.data?.ontologies || []).filter(
-    (o) => readAccess(me, o) !== "none",
+    (o) => o.currentVersionId && readAccess(me, o) !== "none",
   );
   // Per workspace, as the page may stay while the workspace changes.
   const [chosen, setChosen] = useState<Record<string, string>>({});
@@ -255,6 +258,22 @@ function Suggestions({
     data: read.data,
   });
   const generating = shown.generating;
+  // Chips replaced under the pointer or the focus (the Assistant's in
+  // place of the fallback, or another ontology's) leave no stale preview,
+  // and a screen reader hears that they changed.
+  const chipsSeen = shown.kind === "chips" ? shown.chips : undefined,
+    signature = (chipsSeen || [])
+      .map((x) => `${x.title}\n${x.prompt}`)
+      .join("\n\n"),
+    before = useRef(signature),
+    [updated, setUpdated] = useState(false);
+  useEffect(() => {
+    if (before.current === signature) return;
+    const had = before.current !== "";
+    before.current = signature;
+    onPreview("");
+    setUpdated(had && signature !== "");
+  }, [signature]);
   return (
     <>
       {shown.kind === "loading" ? (
@@ -266,11 +285,7 @@ function Suggestions({
           ))}
         </ul>
       ) : (
-        <ul
-          className="au-suggestions"
-          aria-label="Suggestions"
-          aria-busy={generating || undefined}
-        >
+        <ul className="au-suggestions" aria-label="Suggestions">
           {shown.chips.map((x, i) => {
             const Icon = ICONS[x.icon];
             return (
@@ -312,13 +327,17 @@ function Suggestions({
           ? "Writing suggestions…"
           : shown.kind === "loading"
             ? "Loading suggestions…"
-            : ""}
+            : updated
+              ? "Suggestions updated"
+              : ""}
       </span>
       {ontologyId && ontologies.length > 1 && (
         <div className="au-suggestions-for">
+          {/* The picker's name says it too (Label in Name), so a screen
+              reader hears it once. */}
           <span aria-hidden>Suggestions for</span>
           <Select
-            label="Ontology"
+            label="Suggestions for"
             value={ontologyId}
             onChange={(id) => {
               setChosen((c) => ({ ...c, [ws]: id }));
