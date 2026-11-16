@@ -1,7 +1,13 @@
 // Ontology area: route components lazy-loaded by main.tsx.
 import "./ontology.css";
 import { lazy } from "react";
-import { Route, Routes, useParams } from "react-router-dom";
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from "react-router-dom";
 import { paths } from "../../paths";
 import { NotFound } from "../../shell/ErrorBoundary";
 import { AskPage } from "./ask";
@@ -18,12 +24,12 @@ import { VersionPage } from "./version";
 
 export { OntologyHome };
 
-// An ontology's documents, its suggestions, its workflows, its database's
-// explorer and its records are areas of their own, loaded when first opened (the explorer's canvas is
-// large). The Explorer and Ask are sections of their own too (ExploreRoutes,
-// AskRoutes), still under the ontology's scope.
-const DocumentsPage = lazy(() =>
-    import("../documents").then((m) => ({ default: m.DocumentsPage })),
+// An ontology's connections and documents, its suggestions, its workflows,
+// its database's explorer and its records are loaded when first opened (the
+// explorer's canvas is large). The Explorer and Ask have route tables of
+// their own (ExploreRoutes, AskRoutes), still under the ontology's scope.
+const ConnectionsPage = lazy(() =>
+    import("./connections").then((m) => ({ default: m.ConnectionsPage })),
   ),
   DocumentPage = lazy(() =>
     import("../documents").then((m) => ({ default: m.OntologyDocumentPage })),
@@ -69,6 +75,16 @@ export function OntologyLoadPage() {
   return <LoadPage key={loadId} loadId={loadId} />;
 }
 
+// /ontology/:ontologyId/documents, the list before it was Connections:
+// old links and emails keep their query (?status=).
+function ToConnections() {
+  const { ontologyId = "" } = useParams(),
+    { search } = useLocation();
+  return (
+    <Navigate to={paths.ontologyConnections(ontologyId) + search} replace />
+  );
+}
+
 // /ontology/:ontologyId/loads/:loadId/rule-breaks
 export function OntologyLoadRuleBreaksPage() {
   const { loadId = "" } = useParams();
@@ -100,7 +116,8 @@ export function OntologyRoutes() {
           path="loads/:loadId/rule-breaks"
           element={<OntologyLoadRuleBreaksPage />}
         />
-        <Route path="documents" element={<DocumentsPage />} />
+        <Route path="connections" element={<ConnectionsPage />} />
+        <Route path="documents" element={<ToConnections />} />
         <Route path="documents/:documentId" element={<DocumentPage />} />
         <Route path="suggestions" element={<SuggestionsPage />} />
         <Route path="review" element={<ReviewQueuePage />} />
@@ -117,9 +134,10 @@ export function OntologyRoutes() {
   );
 }
 
-// /explore/*: the Explorer's route table, a section of its own: an
-// ontology's database as a graph, its records and an entity's page, inside
-// the ontology's scope. /explore opens an ontology's graph.
+// /explore/*: the Explorer's route table, opened from an ontology's row in
+// the Ontologies panel: its database as a graph, its records and an
+// entity's page, inside the ontology's scope. /explore opens an ontology's
+// graph.
 export function ExploreRoutes() {
   return (
     <Routes>

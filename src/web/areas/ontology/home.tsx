@@ -241,7 +241,7 @@ function OntologyOverview() {
         }
         actions={
           <>
-            <ButtonLink icon={FileText} to={paths.documents(o)}>
+            <ButtonLink icon={FileText} to={paths.ontologyConnections(o)}>
               {plural(ontology.counts?.documents || 0, "document")}
             </ButtonLink>
             {v && (

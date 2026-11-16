@@ -1175,33 +1175,6 @@
 .on-panel-list .hf-subnav {
   margin: 2px 0 6px 18px;
 }
-/* Documents' count, as the Data tree counts a folder's. */
-.on-panel-count {
-  margin-left: auto;
-  color: var(--hf-muted);
-  font-size: var(--hf-text-xs);
-  font-variant-numeric: tabular-nums;
-}
-/* Under an ontology's Documents in the panel: its documents as the Data
-   explorer's tree, a set's count being of its documents to review, in the
-   review dot's colour. */
-.on-docs-nested {
-  margin: 2px 0 4px;
-}
-.on-docs-nested .dx-body {
-  padding: 0;
-}
-.on-docs-nested .dx-none {
-  margin: 4px 10px;
-}
-.on-docs-nested .dx-loading {
-  padding: 4px 10px;
-}
-.on-docs-tree .dt-count {
-  color: var(--hf-warning-text);
-  font-weight: 600;
-}
-
 /* The sample's steps (./sample-tour.tsx): its database and documents, a
    line each, and the questions it suggests. */
 .on-tour-sources {

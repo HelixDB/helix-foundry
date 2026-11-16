@@ -31,7 +31,7 @@ async function setup(
   return loadVersion3(page);
 }
 async function openDocument(page: Page) {
-  await page.goto(`${O}/documents`);
+  await page.goto(`${O}/connections`);
   await page
     .getByRole("grid", { name: "Documents" })
     .getByRole("link", { name: "variant.md", exact: true })
@@ -157,7 +157,7 @@ test("carries a name's choice to other documents, and says what came of each", a
     },
   ]);
   const open = async (name: string, tab: RegExp) => {
-    await page.goto(`${O}/documents`);
+    await page.goto(`${O}/connections`);
     await page
       .getByRole("grid", { name: "Documents" })
       .getByRole("link", { name, exact: true })
@@ -1549,7 +1549,7 @@ test("keeps a table's value over a document's, and replaces it only by choice", 
   );
   await expect(review.getByLabel("Keep value")).toHaveCount(0);
   // The document's view shows the same review the same way.
-  await page.goto(`${O}/documents`);
+  await page.goto(`${O}/connections`);
   await page
     .getByRole("grid", { name: "Documents" })
     .getByRole("link", { name: "billing.md", exact: true })

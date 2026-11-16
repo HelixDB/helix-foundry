@@ -15,7 +15,6 @@ import type {
 } from "../../../shared/wfe";
 import type { Status } from "../../kit";
 import { plural } from "../../kit/util";
-import { setFolders, type SetFolder } from "../data/model";
 import type { Span } from "../explore/model";
 import { isSampleSet } from "../ontology/sample";
 import { isRecord } from "../../../shared/json";
@@ -722,72 +721,6 @@ export function extractionBadge(x: DocumentExtraction): {
   }
 }
 
-/** A document's dot in an ontology's documents explorer: one of four colours. */
-export type DocumentDot = {
-  // Orange, red, green, and grey (waiting, or not read).
-  status: Extract<
-    Status,
-    "review" | "failed" | "succeeded" | "queued" | "canceled"
-  >;
-  label: string;
-};
-
-/**
- * What an ontology's current load made of a document, as its dot in the
- * Ontologies panel's documents explorer, in the words of the documents
- * list's filters and `documentBadge`: orange when it needs review, red when
- * it couldn't be read (a PDF's says why), green when read; grey while it
- * waits (uploading, a PDF's text being read, or not read yet) and when it
- * isn't read as text (deleted, a duplicate, out of its version's scope, a
- * table file, whose rows load through mappings, or a type the WFE doesn't
- * read).
- *
- * @example
- * documentDot({ id: "d", extraction: { status: "extracted", reviews: 2 } }); // { status: "review", label: "Needs review · 2" }
- * documentDot({ id: "d", status: "uploaded", mediaType: "application/pdf", read: { state: "FOUNDRY_FILE_READ_STATE_FAILED", error: { message: "Scanned PDF: no text to read." } } }); // { status: "failed", label: "Scanned PDF: no text to read." }
- * documentDot({ id: "d", mediaType: "text/csv" }); // { status: "canceled", label: "A table file: loads read its rows through mappings" }
- */
-export function documentDot(d: FoundryDocument): DocumentDot {
-  if (d.status === "deleted") return { status: "canceled", label: "Deleted" };
-  if (d.status === "pending_upload")
-    return { status: "queued", label: "Uploading" };
-  if (readKindOf(d) === "table")
-    return {
-      status: "canceled",
-      label: "A table file: loads read its rows through mappings",
-    };
-  const x = d.extraction,
-    read = readKindOf(d) === "pdf" ? fileRead(d) : undefined;
-  if (!x)
-    return read?.state === "reading"
-      ? { status: "queued", label: "Reading its text" }
-      : read?.state === "failed"
-        ? { status: "failed", label: read.message }
-        : { status: "queued", label: "Waiting" };
-  switch (x.status) {
-    case "extracted":
-      return (x.reviews || 0) > 0
-        ? { status: "review", label: `Needs review · ${x.reviews}` }
-        : { status: "succeeded", label: "Read" };
-    case "failed": {
-      const code = x.error?.code;
-      // A PDF's read says why; the WFE doesn't read a type this page
-      // doesn't know.
-      return read && (code === "unsupported" || code === "too_large")
-        ? { status: "failed", label: failureText(x.error, d) }
-        : code === "unsupported"
-          ? { status: "canceled", label: failureText(x.error).slice(0, -1) }
-          : { status: "failed", label: "Couldn’t be read" };
-    }
-    case "duplicate":
-      return { status: "canceled", label: "Duplicate" };
-    case "out_of_scope":
-      return { status: "canceled", label: "Not read by its version" };
-    default:
-      return { status: "canceled", label: "Unknown" };
-  }
-}
-
 /**
  * Which ontologies read a set, in a sentence: those whose reading version
  * has it in scope.
@@ -890,46 +823,6 @@ export const setLabel = (s: FoundryDocumentSet) =>
   [s.connector && (s.connector.connectorName || "A connection"), s.name || s.id]
     .filter(Boolean)
     .join(" / ");
-
-/** A folder of an ontology's documents explorer, and how many of the documents it shows need review. */
-export type OntologySetFolder = SetFolder & { review: number };
-
-/**
- * An ontology's documents explorer (the Ontologies panel on its documents
- * pages): the sets ontology `o` reads (their `readBy` names it) or holds
- * documents of (its current load's, from before they moved), each with
- * what it reads of them (`documents`, its documents list), ordered and
- * filtered by a search `term` as the Data tree's documents/ (`setFolders`),
- * and how many of those shown need review.
- *
- * @example
- * ontologySetFolders(
- *   "o1",
- *   [
- *     { id: "g", name: "General", readBy: [{ ontologyId: "o1" }] },
- *     { id: "b", name: "Board" },
- *   ],
- *   [{ id: "d", setId: "g", extraction: { status: "extracted", reviews: 1 } }],
- * ).map((f) => [f.set.id, f.documents.length, f.review]);
- * // [["g", 1, 1]]
- */
-export function ontologySetFolders(
-  o: string,
-  sets: readonly FoundryDocumentSet[],
-  documents: readonly FoundryDocument[],
-  term = "",
-): OntologySetFolder[] {
-  const read = sets.filter(
-    (s) =>
-      s.readBy?.some((r) => r.ontologyId === o) ||
-      documents.some((d) => d.setId === s.id),
-  );
-  return setFolders(read, documents, term).map((f) => ({
-    ...f,
-    review: f.documents.filter((d) => documentDot(d).status === "review")
-      .length,
-  }));
-}
 
 // ---------------------------------------------------------------- Viewers
 

@@ -1927,6 +1927,98 @@ export const loadSources = (mappings: AgentMapping[]) => [
   ),
 ];
 
+/**
+ * The tables a version reads, each once: Definition v1's entities name a
+ * connector and a table, an agent bundle's mappings a source id (a synced
+ * table's hash, or a table file's document id). One that doesn't parse
+ * reads none.
+ *
+ * @example
+ * versionTables({ id: "v", definition: { entities: [{ name: "Customer", source: { connector_id: "c1", table: "customers" } }] } });
+ * // [{ kind: "table", connectorId: "c1", table: "customers" }]
+ */
+export function versionTables(v: OntologyVersion): SourceRef[] {
+  if (versionFormat(v) === "agent_bundle") {
+    const { mappings } = readAgentBundle(v.definition);
+    return mappings.ok
+      ? loadSources(mappings.value).map((sourceId) => ({
+          kind: "agent" as const,
+          sourceId,
+        }))
+      : [];
+  }
+  const pairs = readFoundry(v.definition).entities.flatMap((e) =>
+    e.source?.connector_id && e.source.table
+      ? [`${e.source.connector_id}\0${e.source.table}`]
+      : [],
+  );
+  return [...new Set(pairs)].map((pair) => {
+    const [connectorId = "", table = ""] = pair.split("\0");
+    return { kind: "table", connectorId, table };
+  });
+}
+
+/** A connection an ontology reads, with what it reads of it. */
+export type OntologyConnection = {
+  connector: Connector;
+  // Its synced tables the version maps, in the version's order.
+  tables: string[];
+  // Its own document sets the ontology reads (an API source's pieces, a
+  // Granola connection's notes), by name.
+  sets: string[];
+};
+
+/**
+ * The connections an ontology reads (its Connections page): the connectors
+ * of the synced tables its version maps (`tables`, named by `resolve`: a
+ * connector's table, null for a table file, which is a document rather than
+ * a connection, or undefined when nothing names it), and those whose own
+ * document sets it reads (`sets`, those whose `readBy` names it: an API
+ * source's pieces, a connection's notes or pages). In the workspace's
+ * connector order. `unknown` counts the tables nothing names and those of a
+ * connector deleted since.
+ *
+ * @example
+ * const stripe = { id: "c1", kind: "stripe", name: "Stripe" };
+ * ontologyConnections(
+ *   [stripe],
+ *   ["a", "b", "f"],
+ *   (id) => (id === "f" ? null : id === "a" ? { connectorId: "c1", table: "customers" } : undefined),
+ * );
+ * // { connections: [{ connector: stripe, tables: ["customers"], sets: [] }], unknown: 1 }
+ */
+export function ontologyConnections<T>(
+  connectors: readonly Connector[],
+  tables: readonly T[],
+  resolve: (
+    table: T,
+  ) => { connectorId: string; table: string } | null | undefined,
+  sets: readonly FoundryDocumentSet[] = [],
+): { connections: OntologyConnection[]; unknown: number } {
+  const named = tables.map(resolve).filter((t) => t !== null);
+  const connections = connectors.flatMap((connector): OntologyConnection[] => {
+    const own = [
+        ...new Set(
+          named.flatMap((t) =>
+            t?.connectorId === connector.id ? [t.table] : [],
+          ),
+        ),
+      ],
+      owned = sets
+        .filter((x) => x.connector?.connectorId === connector.id)
+        .map((x) => x.name || x.id);
+    return own.length || owned.length
+      ? [{ connector, tables: own, sets: owned }]
+      : [];
+  });
+  return {
+    connections,
+    unknown: named.filter(
+      (t) => !t || !connectors.some((c) => c.id === t.connectorId),
+    ).length,
+  };
+}
+
 const phases: JobPhase[] = ["provisioning", "ingest", "documents", "finishing"];
 const phaseLabels: Record<JobPhase, string> = {
   provisioning: "Preparing",

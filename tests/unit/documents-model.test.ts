@@ -15,7 +15,6 @@ import {
   defaultSetId,
   delimitedPreview,
   documentBadge,
-  documentDot,
   documentNameProblem,
   documentViewer,
   extractionBadge,
@@ -38,7 +37,6 @@ import {
   renderedLabel,
   sectionPages,
   ontologyReadText,
-  ontologySetFolders,
   readersText,
   readOutcome,
   readsText,
@@ -472,111 +470,6 @@ describe("document states", () => {
     });
   });
 
-  it("dots each document in an ontology's explorer, in four colours", () => {
-    const dot = (d: Partial<FoundryDocument>) => documentDot(doc(d));
-    // Orange, red and green: what the current load found.
-    expect(dot({ extraction: { status: "extracted", reviews: 2 } })).toEqual({
-      status: "review",
-      label: "Needs review · 2",
-    });
-    expect(
-      dot({ extraction: { status: "failed", error: { code: "model" } } }),
-    ).toEqual({ status: "failed", label: "Couldn’t be read" });
-    expect(dot({ extraction: { status: "extracted", reviews: 0 } })).toEqual({
-      status: "succeeded",
-      label: "Read",
-    });
-    expect(dot({ extraction: { status: "extracted" } })).toEqual({
-      status: "succeeded",
-      label: "Read",
-    });
-    // Grey: waiting.
-    expect(dot({})).toEqual({ status: "queued", label: "Waiting" });
-    expect(dot({ status: "pending_upload" })).toEqual({
-      status: "queued",
-      label: "Uploading",
-    });
-    // Grey: not read, whatever the reason.
-    expect(dot({ status: "deleted" })).toEqual({
-      status: "canceled",
-      label: "Deleted",
-    });
-    expect(dot({ extraction: { status: "duplicate" } })).toEqual({
-      status: "canceled",
-      label: "Duplicate",
-    });
-    expect(dot({ extraction: { status: "out_of_scope" } })).toEqual({
-      status: "canceled",
-      label: "Not read by its version",
-    });
-    expect(dot({ extraction: { status: "weird" as "failed" } })).toEqual({
-      status: "canceled",
-      label: "Unknown",
-    });
-    // A table file loads through mappings, never as text.
-    expect(dot({ mediaType: "text/csv" })).toEqual({
-      status: "canceled",
-      label: "A table file: loads read its rows through mappings",
-    });
-    // A PDF: grey while its text is read, red with why it couldn't be,
-    // before a load and after one; once read, as any text.
-    const pdf = (
-      state: FoundryFileReadState,
-      d: Partial<FoundryDocument> = {},
-    ) =>
-      dot({
-        mediaType: "application/pdf",
-        read: {
-          state,
-          error: {
-            code: "unsupported",
-            message: "Scanned PDF: no text to read.",
-          },
-        },
-        ...d,
-      });
-    expect(pdf("FOUNDRY_FILE_READ_STATE_READING")).toEqual({
-      status: "queued",
-      label: "Reading its text",
-    });
-    expect(pdf("FOUNDRY_FILE_READ_STATE_FAILED")).toEqual({
-      status: "failed",
-      label: "Scanned PDF: no text to read.",
-    });
-    expect(
-      pdf("FOUNDRY_FILE_READ_STATE_FAILED", {
-        extraction: { status: "failed", error: { code: "unsupported" } },
-      }),
-    ).toEqual({ status: "failed", label: "Scanned PDF: no text to read." });
-    expect(pdf("FOUNDRY_FILE_READ_STATE_READY")).toEqual({
-      status: "queued",
-      label: "Waiting",
-    });
-    expect(
-      pdf("FOUNDRY_FILE_READ_STATE_READY", {
-        extraction: { status: "extracted", reviews: 1 },
-      }),
-    ).toEqual({ status: "review", label: "Needs review · 1" });
-    // A model failure is as any document's.
-    expect(
-      pdf("FOUNDRY_FILE_READ_STATE_READY", {
-        extraction: { status: "failed", error: { code: "model" } },
-      }),
-    ).toEqual({ status: "failed", label: "Couldn’t be read" });
-    // The WFE says so of a type this page doesn't know.
-    expect(
-      dot({
-        mediaType: "image/png",
-        extraction: { status: "failed", error: { code: "unsupported" } },
-      }),
-    ).toEqual({
-      status: "canceled",
-      label: "Ontologies don’t read its format yet",
-    });
-    // A document ontologies read waits, even with no media type.
-    expect(dot({ mediaType: "text/markdown" }).label).toBe("Waiting");
-  });
-
   it("says what a load made of it, for each ontology", () => {
     expect(extractionBadge({ status: "extracted", reviews: 2 })).toEqual({
       status: "review",
@@ -831,49 +724,6 @@ describe("document sets", () => {
       "A connection / set_n",
     );
     expect(setLabel({ id: "set_g", name: "General" })).toBe("General");
-  });
-
-  it("shows an ontology the sets it reads or holds documents of", () => {
-    const all = [
-      { id: "s1", name: "Contracts", readBy: [{ ontologyId: "o1" }] },
-      { id: "s2", name: "Board", readBy: [{ ontologyId: "o2" }] },
-      { id: "s3", name: "Moved", readBy: [] },
-      { id: "s4", name: "Empty", readBy: [{ ontologyId: "o1" }] },
-    ];
-    const read = (id: string, setId: string, reviews = 0) => ({
-      id,
-      name: `${id}.md`,
-      setId,
-      createdAt: `2026-10-0${id.slice(1)}`,
-      extraction: { status: "extracted" as const, reviews },
-    });
-    const documents = [
-      read("d2", "s1", 3),
-      read("d1", "s1"),
-      read("d3", "s3", 1),
-      // A set the sets list doesn't name yet waits for the next read.
-      read("d4", "gone"),
-    ];
-    const shown = (term?: string) =>
-      ontologySetFolders("o1", all, documents, term).map((f) => [
-        f.set.id,
-        f.documents.map((d) => d.id),
-        f.review,
-      ]);
-    // Its sets in the workspace's order, documents oldest first; Board is
-    // another ontology's, and Moved holds a document its current load
-    // read before it moved.
-    expect(shown()).toEqual([
-      ["s1", ["d1", "d2"], 1],
-      ["s3", ["d3"], 1],
-      ["s4", [], 0],
-    ]);
-    // A search keeps a set by its name, else the documents it finds, and
-    // counts what it shows.
-    expect(shown("contr")).toEqual([["s1", ["d1", "d2"], 1]]);
-    expect(shown("D1")).toEqual([["s1", ["d1"], 0]]);
-    expect(shown("nothing")).toEqual([]);
-    expect(ontologySetFolders("o1", [], documents)).toEqual([]);
   });
 });
 
@@ -1415,40 +1265,6 @@ describe("the documents model's examples", () => {
       status: "review",
       label: "Needs review · 2",
     });
-    expect(
-      documentDot({ id: "d", extraction: { status: "extracted", reviews: 2 } }),
-    ).toEqual({ status: "review", label: "Needs review · 2" });
-    expect(
-      documentDot({
-        id: "d",
-        status: "uploaded",
-        mediaType: "application/pdf",
-        read: {
-          state: "FOUNDRY_FILE_READ_STATE_FAILED",
-          error: { message: "Scanned PDF: no text to read." },
-        },
-      }),
-    ).toEqual({ status: "failed", label: "Scanned PDF: no text to read." });
-    expect(documentDot({ id: "d", mediaType: "text/csv" })).toEqual({
-      status: "canceled",
-      label: "A table file: loads read its rows through mappings",
-    });
-    expect(
-      ontologySetFolders(
-        "o1",
-        [
-          { id: "g", name: "General", readBy: [{ ontologyId: "o1" }] },
-          { id: "b", name: "Board" },
-        ],
-        [
-          {
-            id: "d",
-            setId: "g",
-            extraction: { status: "extracted", reviews: 1 },
-          },
-        ],
-      ).map((f) => [f.set.id, f.documents.length, f.review]),
-    ).toEqual([["g", 1, 1]]);
     expect(readersText("Board", [{ ontologyId: "o1" }], () => "Renewals")).toBe(
       "Renewals reads Board.",
     );

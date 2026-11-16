@@ -764,7 +764,7 @@ test("opens a property's quote on its span; reads only its version's sets", asyn
   ).toBeVisible({ timeout: 20_000 });
 
   // The ontology's documents are its sets': not Other's.
-  await page.goto(`${O}/documents`);
+  await page.goto(`${O}/connections`);
   await expect(row(page, "contract.md")).toContainText("Needs review · 1");
   await expect(row(page, "notes.md")).toHaveCount(0);
 

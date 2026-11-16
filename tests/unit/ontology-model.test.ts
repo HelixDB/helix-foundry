@@ -24,6 +24,7 @@ import {
   loadSources,
   MAX_GENERATION_SETS,
   mappingSource,
+  ontologyConnections,
   parseAgentMappings,
   parseAgentOntology,
   parseAgentRoutes,
@@ -39,6 +40,7 @@ import {
   TITLE_MAX,
   titleFromGoal,
   versionRows,
+  versionTables,
 } from "@/web/areas/ontology/model";
 import { versionFormat } from "@/web/areas/ontology/format";
 
@@ -1115,6 +1117,90 @@ describe("sources", () => {
     expect(
       fieldText({ field: "/at", transform: ["trim"], parse: "date %Y" }),
     ).toBe("/at → trim → parse date %Y");
+  });
+});
+
+describe("an ontology's connections", () => {
+  it("lists the tables a version reads, either format, each once", () => {
+    // Definition v1: each entity's source, a pair once.
+    expect(
+      versionTables({
+        id: "v1",
+        definition: {
+          entities: [
+            { name: "A", source: { connector_id: "c1", table: "t" } },
+            { name: "B", source: { connector_id: "c1", table: "t" } },
+            { name: "C", source: { connector_id: "c2", table: "u" } },
+            { name: "D" },
+            { name: "E", source: { connector_id: "", table: "x" } },
+          ],
+        },
+      }),
+    ).toEqual([
+      { kind: "table", connectorId: "c1", table: "t" },
+      { kind: "table", connectorId: "c2", table: "u" },
+    ]);
+    // An agent bundle: its mappings' source ids.
+    const bundle = { id: "v3", definition: contractsBundle };
+    const { mappings } = readAgentBundle(contractsBundle);
+    if (!mappings.ok) throw new Error(mappings.error);
+    const ids = loadSources(mappings.value);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(versionTables(bundle)).toEqual(
+      ids.map((sourceId) => ({ kind: "agent", sourceId })),
+    );
+    // One whose mappings don't parse reads none.
+    expect(
+      versionTables({
+        id: "v",
+        definition: { format: "agent_bundle", mappings_toml: "[[" },
+      }),
+    ).toEqual([]);
+    expect(versionTables({ id: "v" })).toEqual([]);
+  });
+
+  it("groups what a version reads by connection, in the workspace's order", () => {
+    const stripe = { id: "c1", kind: "stripe", name: "Stripe" },
+      shop = { id: "c2", kind: "postgres", name: "Shop" },
+      notes = { id: "c3", kind: "granola", name: "Granola" },
+      idle = { id: "c4", kind: "github", name: "GitHub" };
+    const named: Record<string, { connectorId: string; table: string } | null> =
+      {
+        a: { connectorId: "c2", table: "orders" },
+        b: { connectorId: "c1", table: "customers" },
+        c: { connectorId: "c1", table: "invoices" },
+        d: { connectorId: "c1", table: "customers" },
+        // A table file is a document, not a connection.
+        f: null,
+        // A connector deleted since.
+        g: { connectorId: "gone", table: "x" },
+      };
+    expect(
+      ontologyConnections(
+        [stripe, shop, notes, idle],
+        ["a", "b", "c", "d", "f", "g", "unnamed"],
+        (id) => named[id],
+        [
+          {
+            id: "s1",
+            name: "Notes",
+            connector: { connectorId: "c3" },
+          },
+          { id: "s2", name: "General" },
+        ],
+      ),
+    ).toEqual({
+      connections: [
+        { connector: stripe, tables: ["customers", "invoices"], sets: [] },
+        { connector: shop, tables: ["orders"], sets: [] },
+        { connector: notes, tables: [], sets: ["Notes"] },
+      ],
+      unknown: 2,
+    });
+    expect(ontologyConnections([stripe], [], () => undefined)).toEqual({
+      connections: [],
+      unknown: 0,
+    });
   });
 });
 

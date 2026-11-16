@@ -162,7 +162,7 @@ test("every main page in both themes", async ({ page }, info) => {
   await visit("loads", `${O}#loads`);
   await visit("load", load);
 
-  await visit("documents", `${O}/documents`);
+  await visit("connections", `${O}/connections`);
   await page.getByRole("link", { name: "contract.md" }).first().click();
   await settle(page);
   await shoot("document");

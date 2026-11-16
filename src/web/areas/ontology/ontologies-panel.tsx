@@ -17,7 +17,6 @@ import { paths } from "../../paths";
 import { childActive } from "../../shell/nav";
 import type { NavChild } from "../../shell/types";
 import { RefreshFailed, canManage, useWorkspace } from "../../ui";
-import { OntologyDocumentsTree } from "../documents/explorer";
 import { suggestionQueries } from "../suggestions/api";
 import { loadVersion } from "./model";
 import { lastLoadBadge } from "./parts";
@@ -29,9 +28,7 @@ import { ontologyName } from "./scope";
 // the page open marked too. Owners and admins create one from the head. A
 // long list gets a filter, by name or database. A workspace with no ontology
 // never shows the panel (it is onboarding, ../../main.tsx), and reads the
-// same list, so only a filter leaves it empty. Under its Documents link, its
-// documents are a file system: the sets it reads and their documents
-// (../documents/explorer.tsx).
+// same list, so only a filter leaves it empty.
 //
 // It reads everything from the URL and the query cache, so it can sit
 // outside the page's routes. `onNavigate` runs on every link it follows
@@ -39,8 +36,9 @@ import { ontologyName } from "./scope";
 
 // /ontology/{ontologyId}..., but not /ontology/new or /ontology/sample.
 const ONTOLOGY_PAGE = /^\/ontology\/(?!(?:new|sample)(?:\/|$))([^/]+)/;
-// /ontology/{ontologyId}/documents, and /{documentId} under it.
-const DOCUMENTS_PAGE = /^\/ontology\/([^/]+)\/documents(?:\/([^/]+))?\/?$/;
+// /ontology/{ontologyId}/connections, and a document's page under it.
+const CONNECTIONS_PAGE =
+  /^\/ontology\/[^/]+\/(?:connections\/?$|documents\/[^/]+\/?$)/;
 // From this many ontologies, the list gets a filter.
 const LONG_LIST = 8;
 
@@ -49,10 +47,7 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
     { pathname } = useLocation(),
     manage = canManage(role);
   const match = ONTOLOGY_PAGE.exec(pathname),
-    open = match ? decodeURIComponent(match[1]!) : "",
-    // On its documents pages: the document open, if one is.
-    documents = DOCUMENTS_PAGE.exec(pathname),
-    documentId = documents?.[2] ? decodeURIComponent(documents[2]) : undefined;
+    open = match ? decodeURIComponent(match[1]!) : "";
   const list = useQuery(ontologyQueries.list(ws)),
     own = useQuery({
       ...ontologyQueries.ontology(ws, open),
@@ -77,14 +72,15 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
         (o.databaseName || "").toLowerCase().includes(term),
     );
   // Overview, which lists its schema versions and data loads (their pages,
-  // and generating, are its own), then Documents: what it reads of the
-  // workspace's documents (the Connectors area's), counted once the ontology
-  // is read, the list's page, with the documents as a file system under it;
-  // then Suggestions, what audits of its current load found it lacks, where
-  // this Foundry audits loads; then Workflows, its agents' tasks and what
-  // their runs read and wrote, for anyone but a grantee without the Workflows
-  // permission. The Explorer and
-  // Ask, which read a load, are sections of their own.
+  // and generating, are its own), then the Explorer, its database's graph
+  // and records (a page of its own, /explore, with its own panel; a
+  // grantee's is Records), then Connections: the connections and documents
+  // it reads (the Connectors area's), marked on a document's page too; then
+  // the Review queue, then Suggestions, what audits of its current load
+  // found it lacks, where this Foundry audits loads; then Workflows, its
+  // agents' tasks and what their runs read and wrote, for anyone but a
+  // grantee without the Workflows permission. Ask, which reads a load, is a
+  // section of its own.
   const overview: NavChild = {
     to: paths.ontology(open),
     label: "Overview",
@@ -94,10 +90,9 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
     ),
   };
   const onOverview = childActive(pathname, overview),
-    // Marked on its documents pages; current on the list (on a document's
-    // page, the document's row is).
-    onDocuments = !!documents && open !== "",
-    onDocumentsList = onDocuments && !documentId,
+    // Current on its page, marked on a document's.
+    onConnections = open !== "" && CONNECTIONS_PAGE.test(pathname),
+    onConnectionsList = onConnections && pathname.endsWith("/connections"),
     onSuggestions = open !== "" && pathname === paths.suggestions(open),
     onReviewQueue = open !== "" && pathname === paths.reviewQueue(open),
     onWorkflows =
@@ -185,31 +180,29 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                         <span>{overview.label}</span>
                       </Link>
                     </li>
-                    {/* A grantee reads only Analyst and the schema. */}
+                    <li>
+                      <Link
+                        to={grantee ? paths.records(open) : paths.explore(open)}
+                        onClick={onNavigate}
+                        className="hf-subnav-link"
+                      >
+                        <span>Explorer</span>
+                      </Link>
+                    </li>
+                    {/* A grantee reads only Analyst, the schema and Records. */}
                     {!grantee && (
                       <li>
                         <Link
-                          to={paths.documents(open)}
+                          to={paths.ontologyConnections(open)}
                           onClick={onNavigate}
                           className={cx(
                             "hf-subnav-link",
-                            onDocuments && "is-active",
+                            onConnections && "is-active",
                           )}
-                          aria-current={onDocumentsList ? "page" : undefined}
+                          aria-current={onConnectionsList ? "page" : undefined}
                         >
-                          <span>Documents</span>
-                          {own && (
-                            <span className="on-panel-count">
-                              {own.counts?.documents || 0}
-                            </span>
-                          )}
+                          <span>Connections</span>
                         </Link>
-                        <OntologyDocumentsTree
-                          key={open}
-                          ontologyId={open}
-                          documentId={documentId}
-                          onNavigate={onNavigate}
-                        />
                       </li>
                     )}
                     {!grantee && (
