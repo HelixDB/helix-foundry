@@ -59,7 +59,7 @@ message FoundryCatalogPlan {
 // ConnectorKind is one type of Helix Foundry data source.
 message ConnectorKind {
   // stripe, workos, posthog, github, linear, calcom, granola, slack, notion,
-  // google, postgres, mysql, s3 or events.
+  // google, databuddy, postgres, mysql, s3 or events.
   string kind = 1;
   string display_name = 2;
   bool requires_pro = 3;
@@ -233,6 +233,18 @@ message GoogleWorkspaceConnectorConfig {
   int32 event_days = 3;
 }
 
+// DatabuddyConnectorConfig reads a Databuddy organization's web analytics:
+// its websites, and per website its daily metrics, pages, referrers, custom
+// events, sessions and visitor profiles over a window of recent days.
+message DatabuddyConnectorConfig {
+  // Databuddy API key (dbdy_…) with the read:data scope; write-only.
+  string api_key = 1;
+  // The websites to read, by id; empty reads every website the key reads.
+  repeated string website_ids = 2;
+  // Days of history to keep, 1 to 365; 0 is 90.
+  int32 history_days = 3;
+}
+
 // EventsConnectorConfig is an event source: pieces of data, JSON objects
 // with an id, that people and their agents send to Foundry. It has no
 // credential.
@@ -277,6 +289,7 @@ message ConnectorConfig {
     SlackConnectorConfig slack = 14;
     NotionConnectorConfig notion = 15;
     GoogleWorkspaceConnectorConfig google = 16;
+    DatabuddyConnectorConfig databuddy = 17;
   }
 }
 

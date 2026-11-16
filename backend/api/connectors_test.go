@@ -1126,3 +1126,41 @@ func TestFoundryConnectorSchedules(t *testing.T) {
 		}
 	})
 }
+
+// Databuddy's settings store its websites and days of history, 90 unless
+// chosen; the config rebuilt from them carries no key.
+func TestDatabuddyConnectorConfig(t *testing.T) {
+	catalog := connector.NewCatalog(connector.DefaultEndpoints(), connector.Guard{}, connector.S3Options{}, connector.EventsOptions{})
+	config := func(key string, sites []string, days int32) *foundryv1.ConnectorConfig {
+		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Databuddy{Databuddy: &foundryv1.DatabuddyConnectorConfig{
+			ApiKey: key, WebsiteIds: sites, HistoryDays: days,
+		}}}
+	}
+	const key = "dbdy_0123456789abcdef"
+	for _, tc := range []struct {
+		sites, kept []string
+		days, keep  int32
+		stored      string
+	}{
+		{nil, nil, 0, 90, `{"history_days":90}`},
+		{[]string{" web_a", "web_a"}, []string{"web_a"}, 30, 30, `{"website_ids":["web_a"],"history_days":30}`},
+	} {
+		t.Run(tc.stored, func(t *testing.T) {
+			kind, src, secretless, err := sourceFromProto(catalog, config(" "+key+"\n", tc.sites, tc.days))
+			if err != nil || kind.Name() != "databuddy" || secretless || src.Secret != key {
+				t.Fatalf("source = (%v, %s, %v, %v)", kind, src.Settings, secretless, err)
+			}
+			settings, err := kind.Prepare(src)
+			if err != nil || string(settings) != tc.stored || kind.Hint(src.Secret) != "dbdy…cdef" {
+				t.Fatalf("prepare = (%s, %v), hint = %q", settings, err, kind.Hint(src.Secret))
+			}
+			got, err := configToProto("databuddy", settings)
+			if err != nil || !proto.Equal(got, config("", tc.kept, tc.keep)) {
+				t.Fatalf("config = (%v, %v)", got, err)
+			}
+		})
+	}
+	if _, err := configToProto("databuddy", json.RawMessage(`{"history_days":"x"}`)); err == nil {
+		t.Fatal("configToProto read settings Prepare never stores")
+	}
+}
