@@ -242,7 +242,7 @@ func TestPreparedForPersonSaysWhenAnActionRanBecauseItWasAskedFor(t *testing.T) 
 		assert.Equal(t, ranAutoUnsureNext, unsure.Next, outcome)
 		assert.NotContains(t, unsure.Next, "made this new dashboard", "it doesn't say it made what it may not have")
 	}
-	assert.Equal(t, ranApprovedNext, preparedForPerson(RanApproved{ActionID: "act-6", Status: "succeeded"}).Next, "an automation's stays as it was")
+	assert.Equal(t, ranApprovedNext, preparedForPerson(RanApproved{ActionID: "act-6", Status: "succeeded"}).Next, "a workflow's stays as it was")
 }
 
 func TestRunApprovedPreparesAndRunsOnce(t *testing.T) {

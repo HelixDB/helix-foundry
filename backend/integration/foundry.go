@@ -96,17 +96,17 @@ var toolTitles = map[string]string{
 	toolPrepareFoundry:              "Prepare a Foundry action",
 	toolExecuteFoundry:              "Run a prepared Foundry action",
 	toolFoundryCompleteUpload:       "Complete a document upload",
-	toolFoundryCreateWorkflow:       "Create a Foundry workflow",
-	toolFoundryListWorkflows:        "List Foundry workflows",
-	toolFoundryStartWorkflowRun:     "Start a workflow run",
-	toolFoundryFinishWorkflowRun:    "Finish a workflow run",
-	toolFoundryGetWorkflowRun:       "Get a workflow run",
+	toolFoundryCreateUseCase:        "Create a Foundry use case",
+	toolFoundryListUseCases:         "List Foundry use cases",
+	toolFoundryStartUseCaseRun:      "Start a use case run",
+	toolFoundryFinishUseCaseRun:     "Finish a use case run",
+	toolFoundryGetUseCaseRun:        "Get a use case run",
 	toolFoundryListDashboards:       "List Foundry dashboards",
 	toolFoundryGetDashboard:         "Get a Foundry dashboard",
-	toolFoundryListAutomations:      "List Foundry automations",
-	toolFoundryGetAutomation:        "Get a Foundry automation",
-	toolFoundryListAutomationRuns:   "List an automation's runs",
-	toolFoundryGetAutomationRun:     "Get an automation's run",
+	toolFoundryListWorkflows:        "List Foundry workflows",
+	toolFoundryGetWorkflow:          "Get a Foundry workflow",
+	toolFoundryListWorkflowRuns:     "List a workflow's runs",
+	toolFoundryGetWorkflowRun:       "Get a workflow's run",
 	toolFoundryPreviewDashboardTile: "Preview a dashboard tile",
 }
 
@@ -209,7 +209,7 @@ type ReadFoundryGraphInput struct {
 	OntologyInput
 	LoadID        string           `json:"load_id,omitempty" jsonschema:"Load to read; the ontology's current load when empty."`
 	Reads         []map[string]any `json:"reads" jsonschema:"1 to 20 reads, each an object with exactly one key: entity, pattern, explain, violations, evidence or query. helix_foundry_read_guide returns their schema."`
-	WorkflowRunID string           `json:"workflow_run_id,omitempty" jsonschema:"An open run of a workflow (helix_foundry_start_workflow_run) to record this call under; empty for none."`
+	WorkflowRunID string           `json:"use_case_run_id,omitempty" jsonschema:"An open run of a use case (helix_foundry_start_use_case_run) to record this call under; empty for none."`
 }
 
 type FoundryEntityInput struct {
@@ -224,7 +224,7 @@ type AskFoundryInput struct {
 	ThreadID      string              `json:"thread_id,omitempty" jsonschema:"A question's thread_id, to continue that conversation; empty starts a new one."`
 	Focus         *FoundryEntityInput `json:"focus,omitempty" jsonschema:"The entity the question is about."`
 	LoadID        string              `json:"load_id,omitempty" jsonschema:"Load to ask; the ontology's current load when empty."`
-	WorkflowRunID string              `json:"workflow_run_id,omitempty" jsonschema:"An open run of a workflow (helix_foundry_start_workflow_run) to record this call under; empty for none."`
+	WorkflowRunID string              `json:"use_case_run_id,omitempty" jsonschema:"An open run of a use case (helix_foundry_start_use_case_run) to record this call under; empty for none."`
 }
 
 type GetFoundryQuestionInput struct {
@@ -1017,7 +1017,7 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 	}
 	if s.Workflows != nil && browse {
 		// A grantee, whose reads source grants admit, gets them too: Foundry
-		// refuses its calls while its Workflows permission is off, and shows
+		// refuses its calls while its Usage permission is off, and shows
 		// it only its own runs of an ontology it holds only some of.
 		s.addFoundryWorkflowTools(server, identity, reads)
 	}
