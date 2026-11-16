@@ -24,7 +24,7 @@ import { VersionPage } from "./version";
 
 export { OntologyHome };
 
-// An ontology's connections and documents, its suggestions, its workflows,
+// An ontology's connections and documents, its Review page, its workflows,
 // its database's explorer and its records are loaded when first opened (the
 // explorer's canvas is large). The Explorer and Ask have route tables of
 // their own (ExploreRoutes, AskRoutes), still under the ontology's scope.
@@ -43,11 +43,8 @@ const ConnectionsPage = lazy(() =>
   RecordsPage = lazy(() =>
     import("../records").then((m) => ({ default: m.RecordsPage })),
   ),
-  SuggestionsPage = lazy(() =>
-    import("../suggestions").then((m) => ({ default: m.SuggestionsPage })),
-  ),
-  ReviewQueuePage = lazy(() =>
-    import("../reviews").then((m) => ({ default: m.ReviewQueuePage })),
+  ReviewPage = lazy(() =>
+    import("../reviews/page").then((m) => ({ default: m.ReviewPage })),
   ),
   WorkflowsPage = lazy(() =>
     import("../workflows").then((m) => ({ default: m.WorkflowsPage })),
@@ -85,6 +82,16 @@ function ToConnections() {
   );
 }
 
+// /ontology/:ontologyId/suggestions, before it was the Review page's
+// Ontology tab: old links keep their query.
+function ToReviewOntology() {
+  const { ontologyId = "" } = useParams(),
+    { search } = useLocation();
+  const query = new URLSearchParams(search);
+  query.set("tab", "ontology");
+  return <Navigate to={`${paths.review(ontologyId)}?${query}`} replace />;
+}
+
 // /ontology/:ontologyId/loads/:loadId/rule-breaks
 export function OntologyLoadRuleBreaksPage() {
   const { loadId = "" } = useParams();
@@ -119,8 +126,8 @@ export function OntologyRoutes() {
         <Route path="connections" element={<ConnectionsPage />} />
         <Route path="documents" element={<ToConnections />} />
         <Route path="documents/:documentId" element={<DocumentPage />} />
-        <Route path="suggestions" element={<SuggestionsPage />} />
-        <Route path="review" element={<ReviewQueuePage />} />
+        <Route path="suggestions" element={<ToReviewOntology />} />
+        <Route path="review" element={<ReviewPage />} />
         <Route path="workflows" element={<WorkflowsPage />} />
         <Route path="workflows/:workflowId" element={<WorkflowPage />} />
         <Route

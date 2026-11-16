@@ -12,11 +12,13 @@ import {
   SkeletonText,
   StatusDot,
   cx,
+  formatNumber,
 } from "../../kit";
 import { paths } from "../../paths";
 import { childActive } from "../../shell/nav";
 import type { NavChild } from "../../shell/types";
 import { RefreshFailed, canManage, useWorkspace } from "../../ui";
+import { reviewQueries } from "../reviews/api";
 import { suggestionQueries } from "../suggestions/api";
 import { loadVersion } from "./model";
 import { lastLoadBadge } from "./parts";
@@ -53,12 +55,20 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
       ...ontologyQueries.ontology(ws, open),
       enabled: !!open,
     }).data?.ontology;
-  // Suggestions are the open ontology's page only where audits run, and no
-  // grantee's.
+  // Review counts what is open on both its tabs: Facts as the Review page
+  // last counted it on the current load (reading the load's reviews is the
+  // page's, not every page's), and Ontology's suggestions where audits run.
+  // A total waits for Facts' part; no grantee reaches Review.
   const heal = useQuery({
-    ...suggestionQueries.list(ws, open),
-    enabled: !!open && !grantee,
-  });
+      ...suggestionQueries.list(ws, open),
+      enabled: !!open && !grantee,
+    }),
+    facts = useQuery(reviewQueries.openFacts(ws, open)).data;
+  const reviewOpen =
+    facts && own?.currentLoad?.id === facts.loadId
+      ? facts.open +
+        (heal.data?.enabled ? heal.data.findings?.length || 0 : 0)
+      : 0;
   // The open ontology's row, until the list names it (made in another tab).
   const listed = list.data?.ontologies || [],
     ontologies =
@@ -76,8 +86,8 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
   // and records (a page of its own, /explore, with its own panel; a
   // grantee's is Records), then Connections: the connections and documents
   // it reads (the Connectors area's), marked on a document's page too; then
-  // the Review queue, then Suggestions, what audits of its current load
-  // found it lacks, where this Foundry audits loads; then Workflows, its
+  // Review: what its current load couldn't decide (Facts) and what audits
+  // of it found the ontology lacks (Ontology); then Workflows, its
   // agents' tasks and what their runs read and wrote, for anyone but a
   // grantee without the Workflows permission. Ask, which reads a load, is a
   // section of its own.
@@ -93,8 +103,7 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
     // Current on its page, marked on a document's.
     onConnections = open !== "" && CONNECTIONS_PAGE.test(pathname),
     onConnectionsList = onConnections && pathname.endsWith("/connections"),
-    onSuggestions = open !== "" && pathname === paths.suggestions(open),
-    onReviewQueue = open !== "" && pathname === paths.reviewQueue(open),
+    onReview = open !== "" && pathname === paths.review(open),
     onWorkflows =
       open !== "" &&
       (pathname === paths.workflows(open) ||
@@ -208,30 +217,21 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                     {!grantee && (
                       <li>
                         <Link
-                          to={paths.reviewQueue(open)}
+                          to={paths.review(open)}
                           onClick={onNavigate}
                           className={cx(
                             "hf-subnav-link",
-                            onReviewQueue && "is-active",
+                            onReview && "is-active",
                           )}
-                          aria-current={onReviewQueue ? "page" : undefined}
+                          aria-current={onReview ? "page" : undefined}
                         >
-                          <span>Review queue</span>
-                        </Link>
-                      </li>
-                    )}
-                    {!grantee && heal.data?.enabled && (
-                      <li>
-                        <Link
-                          to={paths.suggestions(open)}
-                          onClick={onNavigate}
-                          className={cx(
-                            "hf-subnav-link",
-                            onSuggestions && "is-active",
+                          <span>Review</span>
+                          {reviewOpen > 0 && (
+                            <span className="hf-nav-badge">
+                              {formatNumber(reviewOpen)}
+                              <span className="hf-sr-only"> open</span>
+                            </span>
                           )}
-                          aria-current={onSuggestions ? "page" : undefined}
-                        >
-                          <span>Suggestions</span>
                         </Link>
                       </li>
                     )}
