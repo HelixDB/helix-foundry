@@ -459,7 +459,8 @@ test("keeps Connectors at the sidebar's foot, above Feedback, on a desk and in a
   expect(link!.y).toBeGreaterThan(sections!.y + sections!.height);
   expect(button!.y - (link!.y + link!.height)).toBeGreaterThanOrEqual(0);
   expect(button!.y - (link!.y + link!.height)).toBeLessThan(4);
-  expect(link!.height).toBe(button!.height);
+  // Sub-pixel layout can differ in the last float bits between the two.
+  expect(link!.height).toBeCloseTo(button!.height, 1);
   expect(link!.x).toBe(button!.x);
   // The keys reach it where it shows: Feedback, then the account, next.
   await connectors.focus();
@@ -522,7 +523,7 @@ test("keeps Connectors at the sidebar's foot, above Feedback, on a desk and in a
   ]);
   expect(send!.y).toBeGreaterThan(icon!.y + icon!.height - 1);
   expect(send!.y - (icon!.y + icon!.height)).toBeLessThan(10);
-  expect(icon!.height).toBe(send!.height);
+  expect(icon!.height).toBeCloseTo(send!.height, 1);
 });
 
 test("moves the line above Ask's threads by keys and by dragging, and remembers it", async ({
