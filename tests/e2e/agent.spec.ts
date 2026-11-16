@@ -557,10 +557,13 @@ test("closes a draft's relayed questions once its page answered them", async ({
   await main.getByRole("button", { name: "Use “90 days”" }).click();
   await main.getByRole("button", { name: "Next", exact: true }).click();
   await main.getByRole("button", { name: "Skip", exact: true }).click();
+  // Its answers reach the draft before the tab closes (closing it can drop
+  // a request still in flight).
+  const answered = other.waitForResponse(
+    (r) => r.request().method() === "POST" && r.url().endsWith(":answer"),
+  );
   await main.getByRole("button", { name: "Send answers" }).click();
-  await expect(main.getByText("Question 1 of 4")).toHaveCount(0, {
-    timeout: 15_000,
-  });
+  expect((await answered).ok()).toBe(true);
   await other.close();
   // The dock's send is refused, nothing is sent twice, and it says where
   // the draft is.
