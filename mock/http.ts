@@ -41,6 +41,10 @@ export type MockGranteeLoad = {
  */
 export type MockGrantee = {
   principal: string;
+  // When a restricted member was restricted (access.Grantee.RestrictedAt):
+  // Founder hides their threads from before it. Unset for a member the WFE
+  // sends on as a grantee without restricting them.
+  restrictedAt?: string;
   covered: Map<string, MockGranteeLoad>;
   load?: MockGranteeLoad;
   coversSet: (setId: string) => boolean;

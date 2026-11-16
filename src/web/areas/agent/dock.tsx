@@ -378,6 +378,7 @@ export function Transcript({
   onRetry: () => void;
   onNavigate?: () => void;
 }) {
+  const { grantee } = useWorkspace();
   const log = useRef<HTMLDivElement>(null),
     body = useRef<HTMLDivElement>(null),
     stick = useRef(true),
@@ -455,7 +456,11 @@ export function Transcript({
             size="sm"
             icon={Sparkles}
             title="Ask Founder"
-            text="It answers questions about your data with the Analyst’s cited answers, and works in your workspace. Changes wait as cards you click to run; a dashboard you ask for it makes at once, with Undo."
+            text={
+              grantee
+                ? "It answers questions about the data shared with you, with cited answers. It can’t change anything in this workspace."
+                : "It answers questions about your data with cited answers, and works in your workspace. Changes wait as cards you click to run; a dashboard you ask for it makes at once, with Undo."
+            }
           />
         ) : (
           data.turns.map((t, i, all) => (
@@ -1081,7 +1086,9 @@ function PlainText({
  * it runs, and while the setting's tool check failed (its turns would fail
  * at once, each a message of the hour's), saying why; Stop ends the live
  * turn. A page that holds a conversation gives its own `placeholder` and
- * may start it with `initialText` (a suggestion's prompt).
+ * may start it with `initialText` (a suggestion's prompt). A grantee's
+ * Founder only reads and asks about what its grants cover, so its default
+ * says so, and the workspace's AI setting (which it can't read) isn't read.
  */
 export function Composer({
   threadId,
@@ -1090,7 +1097,7 @@ export function Composer({
   hostState,
   onSent,
   onNavigate,
-  placeholder = "Ask about your workspace, or ask it to do something…",
+  placeholder,
   initialText = "",
 }: {
   // The open thread; empty for a new one. `thread` once it is read.
@@ -1106,7 +1113,7 @@ export function Composer({
   placeholder?: string;
   initialText?: string;
 }) {
-  const { id: ws, role } = useWorkspace(),
+  const { id: ws, role, grantee } = useWorkspace(),
     location = useLocation(),
     qc = useQueryClient();
   const page = pageContext(location.pathname, location.search),
@@ -1122,7 +1129,7 @@ export function Composer({
   const onModel = runtime === "api",
     aiReady = useAiConfigured(),
     modelReady = onModel ? aiReady : true;
-  const setting = useQuery(aiQuery(ws)).data,
+  const setting = useQuery({ ...aiQuery(ws), enabled: !grantee }).data,
     now = setting && inForce(setting),
     checkFailed =
       onModel && now?.source === "workspace" && assistantCheckText(now.config);
@@ -1226,7 +1233,12 @@ export function Composer({
           aria-describedby={caption ? hint : undefined}
           rows={2}
           value={text}
-          placeholder={placeholder}
+          placeholder={
+            placeholder ??
+            (grantee
+              ? "Ask about the data shared with you…"
+              : "Ask about your workspace, or ask it to do something…")
+          }
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (

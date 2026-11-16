@@ -739,7 +739,7 @@ export const dashboardRoutes: MockRoute[] = [
         {
           id: `t${n}`,
           title:
-            title(visual?.title || "") || title(q.question) || "Analyst answer",
+            title(visual?.title || "") || title(q.question) || "Answer",
           ontology_id: o.id,
           load: body.pinLoad
             ? { kind: "pinned", load_id: q.loadId }

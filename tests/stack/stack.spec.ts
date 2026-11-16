@@ -238,7 +238,7 @@ test("creates an ontology on a new database in the local HelixDB", async ({
       page
         .getByRole("main")
         .getByText(
-          "Nothing is loaded yet, so the Analyst can’t answer questions about the data; Founder can still help you load it.",
+          "Nothing is loaded yet, so Founder can’t answer questions about the data until it is; it can help you load it.",
         ),
     ).toBeVisible();
     return;

@@ -31,7 +31,7 @@ import {
   CircleStop,
   X,
 } from "lucide-react";
-import { LOCAL } from "../../../shared/deployment";
+import { FOUNDER, LOCAL } from "../../../shared/deployment";
 import type { EntityRef } from "../../../shared/foundry-read";
 import type { FoundryQuestion, QuestionBudget } from "../../../shared/wfe";
 import {
@@ -155,10 +155,15 @@ import { recordQuestionAsked } from "../../shell/star-prompt";
 // once with them.
 // Nothing the model writes renders as a link, an image or HTML. The entity
 // page's "Ask about this" opens the same flow in a drawer (AskDrawer).
-// Where the build has Founder, a member who isn't a grantee gets Founder's
+// Where the build has Founder, everyone (a grantee read-only) gets Founder's
 // page here instead (founder-page.tsx, which reuses ChatBar and ThreadView);
-// this page stays the grantees' and the fallback while the WFE has Founder
-// off.
+// this page is the fallback for a build without Founder, or while the WFE
+// has Founder off.
+
+// The page's name: the Analyst's on a build without Founder; on a build
+// with Founder (the WFE has it off), never the Analyst, a name people no
+// longer see there.
+const PAGE = FOUNDER ? "Questions" : "Analyst";
 
 const askable = (status?: string) => status === "ready" || status === "partial";
 // How a shortcut is written: "⌘" on Apple devices, "Ctrl+" elsewhere.
@@ -204,7 +209,7 @@ export function AskPage() {
     enabled: !!load?.versionId && list.data !== undefined && !threads.length,
   }).data?.version;
   const suggestions = useMemo(() => askSuggestions(version), [version]);
-  useTitle(view.kind === "thread" ? undefined : "Analyst");
+  useTitle(view.kind === "thread" ? undefined : PAGE);
   const setThread = (id: string) =>
     setParams(
       (p) => {
@@ -228,7 +233,7 @@ export function AskPage() {
   if (access === "none")
     return (
       <div className="ak-chat">
-        <ChatBar title="Analyst">{picker}</ChatBar>
+        <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll ak-chat--empty">
           <NotShared />
         </div>
@@ -239,7 +244,7 @@ export function AskPage() {
   if (!ontology.tenantId && access === "database")
     return (
       <div className="ak-chat">
-        <ChatBar title="Analyst">{picker}</ChatBar>
+        <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll ak-chat--empty">
           <EmptyState
             icon={Ban}
@@ -252,7 +257,7 @@ export function AskPage() {
   if (view.kind === "threads")
     return (
       <div className="ak-chat">
-        <ChatBar title="Analyst">{picker}</ChatBar>
+        <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll">
           <AskThreads />
         </div>
@@ -280,7 +285,7 @@ export function AskPage() {
     return (
       <div className="ak-chat">
         <ChatBar
-          title="Analyst"
+          title={PAGE}
           onBack={threads.length > 0 ? () => setThread("") : undefined}
         >
           {picker}
@@ -396,7 +401,7 @@ export function ThreadView({
   const { id: ws } = useWorkspace(),
     { id: o } = useOntology(),
     [params] = useSearchParams();
-  const tag = readOnly ? "Analyst" : undefined;
+  const tag = readOnly ? "Earlier question" : undefined;
   const list = useQuery(questionQueries.list(ws, o, thread));
   const questions = threadsOf(list.data?.questions || [])[0]?.questions || [];
   const first = questions[0],
@@ -519,7 +524,7 @@ export function ThreadView({
         )}
         {readOnly ? (
           <div className="ak-readonly">
-            <p>This Analyst thread is read only. Ask Founder to go on.</p>
+            <p>This earlier question is read only. Ask Founder to go on.</p>
             <ButtonLink
               size="sm"
               icon={SquarePen}

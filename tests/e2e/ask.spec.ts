@@ -239,14 +239,14 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
   await expect(
     page
       .getByRole("navigation", { name: "Threads" })
-      .getByRole("list", { name: "Analyst threads" })
+      .getByRole("list", { name: "Earlier questions" })
       .getByRole("link", { name: /^Who signed the services agreement\?/ }),
   ).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("form", { name: "Ask a follow-up" })).toHaveCount(
     0,
   );
   await expect(page.getByRole("main")).toContainText(
-    "This Analyst thread is read only. Ask Founder to go on.",
+    "This earlier question is read only. Ask Founder to go on.",
   );
 });
 

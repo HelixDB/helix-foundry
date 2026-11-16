@@ -395,7 +395,7 @@ const STOP_REASONS = Object.keys(STOP_TEXT) as AgentStopReason[];
 /** Why a call never ran, in words for the person. */
 export const NOT_RUN_TEXT: Record<AgentNotRunReason, string> = {
   calls: "One reply runs at most 8 tool calls, and this was past them.",
-  asks: "One message asks the Analyst at most 3 questions, and this was past them.",
+  asks: "One message asks at most 3 questions of the data, and this was past them.",
   time: "Founder ran out of time for this message.",
   length: "The reply reached its length limit while writing it.",
   input: "The model wrote its input in a form Foundry can’t read.",
@@ -679,8 +679,8 @@ export const TOOL_LABELS: Record<string, string> = {
   helix_foundry_list_review_decisions: "Listed review decisions",
   helix_foundry_list_reviews: "Listed the reviews to settle",
   helix_foundry_read_graph: "Read the graph",
-  helix_foundry_ask: "Asked the Analyst",
-  helix_foundry_get_question: "Read a question",
+  helix_foundry_ask: "Asked the data",
+  helix_foundry_get_question: "Read an answer",
   helix_foundry_list_questions: "Listed questions",
   helix_foundry_connect: "Made a link to connect data",
   helix_foundry_get_assistant_runtime: "Read where Founder runs",
@@ -707,7 +707,7 @@ export const TOOL_LABELS: Record<string, string> = {
  * stepLabel({ id: "t", name: "helix_foundry_prepare_operation", input: {}, result: { kind: "returned", output: { status: "ran" }, truncated: false } });
  * // "Ran an action"
  * stepLabel({ id: "t", name: "helix_foundry_ask", input: {} });
- * // "Asked the Analyst"
+ * // "Asked the data"
  */
 export function stepLabel(step: AgentStep): string {
   const out = step.result?.kind === "returned" ? step.result.output : undefined;
@@ -1508,7 +1508,7 @@ const VIEWS: {
         value: d.current ? loadText(d.current) : "None yet",
       },
     ],
-    does: "The Explorer, Records and the Analyst read this load from then on. Nothing is written or deleted.",
+    does: "The Explorer, Records and Founder read this load from then on. Nothing is written or deleted.",
     run: "Make current",
     target: nameOf(d.ontology),
   }),

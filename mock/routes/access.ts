@@ -78,14 +78,17 @@ import { manages, queryReads, rawAccess } from "./workspaces";
 //
 // Who is a grantee (`guarded`, the backend's authorize, run on every
 // Foundry route): a member restricted in the request's workspace, on every
-// Foundry call while their role is member; and a member without database
-// query access (./workspaces.ts queryReads) on the routes the WFE gates on
-// it (reading a load's graph, questions, review decisions), which the WFE
-// sends on as a grantee. A grantee gets PERMISSION_DENIED from every route
-// the rules don't admit, NOT_FOUND for an ontology its grants hold nothing of
-// (a member who is only missing query access gets the WFE's own 403, since it
-// may see the ontology), and handlers answer only what it holds (MockRequest.grantee): its
-// ontologies, their current loads and versions (as ../graph/view.ts projects
+// Foundry call while their role is member (`restrictedAt` says since when:
+// Founder hides their threads from before it); and a member without
+// database query access (./workspaces.ts queryReads) on the routes the WFE
+// gates on it (reading a load's graph, questions, review decisions), which
+// the WFE sends on as a grantee. Founder's routes aren't gated on it: the
+// WFE admits every member there, so only a restricted member talks to
+// Founder as a grantee, read only (./agent.ts). A grantee gets
+// PERMISSION_DENIED from every route the rules don't admit, NOT_FOUND for an
+// ontology its grants hold nothing of (a member who is only missing query
+// access gets the WFE's own 403, since it may see the ontology), and
+// handlers answer only what it holds (MockRequest.grantee): its ontologies, their current loads and versions (as ../graph/view.ts projects
 // them, of a load it holds only some of), its own questions, and the
 // documents those loads hold in sets it holds (their text, never their
 // bytes). The mock's agents' keys authenticate nothing, so no call comes as
@@ -147,8 +150,9 @@ type Inputs = {
 const state = {
   grants: [] as StoredGrant[],
   teams: [] as StoredTeam[],
-  // Restricted members, as `${workspaceId}\u001f${userId}`.
-  restricted: new Set<string>(),
+  // Restricted members, as `${workspaceId}\u001f${userId}`, with when they
+  // were restricted (the row's created_at: restricting again keeps it).
+  restricted: new Map<string, string>(),
   credentials: [] as StoredCredential[],
   // Principals whose Workflows permission is off, as
   // `${workspaceId}\u001f${principalKey}`; on for everyone else.
@@ -156,7 +160,10 @@ const state = {
 };
 const restrictedKey = (ws: string, userId: string) => `${ws}\u001f${userId}`;
 const restrict = (ws: string, userIds: string[]) =>
-  userIds.forEach((u) => state.restricted.add(restrictedKey(ws, u)));
+  userIds
+    .map((u) => restrictedKey(ws, u))
+    .filter((k) => !state.restricted.has(k))
+    .forEach((k) => state.restricted.set(k, now()));
 const RAW_ACCESS =
   "this member can write a project or query its databases outside Foundry; take that access away in the Helix dashboard first";
 const TEAM_RAW_ACCESS =
@@ -494,7 +501,7 @@ onReset(() => {
   portalReturns.clear();
   state.teams = [];
   state.workflowsOff = new Set();
-  state.restricted = new Set([restrictedKey("ws_acme", "usr_eve")]);
+  state.restricted = new Map([[restrictedKey("ws_acme", "usr_eve"), at]]);
   state.grants = [
     {
       id: "grant_acme_eve_general",
@@ -801,8 +808,9 @@ const W = "/v1/workspaces/{workspaceId}/foundry",
 /**
  * What each of Foundry's routes lets a grantee do (access.Rules); a route
  * not named refuses it. A grantee only reads, asks and cancels its own
- * questions, and, with its Workflows permission, reads workflows and starts
- * and finishes its own runs ("workflows": as "ontology", while the
+ * questions, talks to Founder in its own threads (Founder only reads and
+ * asks for it), and, with its Workflows permission, reads workflows and
+ * starts and finishes its own runs ("workflows": as "ontology", while the
  * permission is on).
  */
 const RULES: Record<string, Rule> = {
@@ -833,6 +841,14 @@ const RULES: Record<string, Rule> = {
   // Dashboards: a grantee sees the pinned ones (./dashboards.ts).
   [`GET ${W}/dashboards`]: "workspace",
   [`GET ${W}/dashboards/{id}`]: "workspace",
+  // Founder: a grantee's own threads, read and ask only (no cards, runtime
+  // or helpers).
+  [`POST ${W}/agent/turns`]: "workspace",
+  [`GET ${W}/agent/threads`]: "workspace",
+  [`GET ${W}/agent/threads/{id}`]: "workspace",
+  [`DELETE ${W}/agent/threads/{id}`]: "workspace",
+  [`GET ${W}/agent/turns/{id}/events`]: "workspace",
+  [`POST ${W}/agent/turns/{id}:cancel`]: "workspace",
 };
 /**
  * The Foundry routes the WFE gates on reading the ontology's database: a
@@ -877,6 +893,23 @@ function granteeMember(req: MockRequest, route: string) {
 }
 
 /**
+ * Whether a member reads only through source grants on every Foundry route:
+ * restricted in the workspace while their role is member (granteeOf's
+ * restricted case, as GetMyFoundryAccess says it).
+ */
+export function restrictedMember(workspaceId: string, userId: string) {
+  return (
+    state.restricted.has(restrictedKey(workspaceId, userId)) &&
+    db.memberships.some(
+      (x) =>
+        x.workspaceId === workspaceId &&
+        x.userId === userId &&
+        x.role === "WORKSPACE_ROLE_MEMBER",
+    )
+  );
+}
+
+/**
  * `route` with the backend's access check run first: a grantee is refused
  * a route its rule doesn't admit (PERMISSION_DENIED), an ontology its grants
  * don't cover (NOT_FOUND), and is handed on as MockRequest.grantee.
@@ -902,6 +935,9 @@ export function guarded(route: MockRoute): MockRoute {
       const targets = userTargets(m.workspaceId, m.userId);
       const grantee: MockGrantee = {
         principal: principalKey({ kind: "KIND_USER", id: m.userId }),
+        restrictedAt: state.restricted.get(
+          restrictedKey(m.workspaceId, m.userId),
+        ),
         covered: heldLoads(m.workspaceId, targets),
         coversSet: (setId) =>
           coversSet(targets, { setId, connectorId: setConnector(setId) }),
@@ -1113,7 +1149,7 @@ export const accessRoutes: MockRoute[] = [
           .filter((t) => t.workspaceId === m.workspaceId)
           .sort((a, b) => a.name.localeCompare(b.name))
           .map(teamOut),
-        restrictedUserIds: [...state.restricted]
+        restrictedUserIds: [...state.restricted.keys()]
           .map((k) => k.split("\u001f"))
           .filter(([ws]) => ws === m.workspaceId)
           .map(([, userId]) => userId!),
@@ -1368,7 +1404,7 @@ export const accessRoutes: MockRoute[] = [
       if (restricted) {
         const refused = unconfinable(m.workspaceId, userId);
         if (refused) return refused;
-        state.restricted.add(restrictedKey(m.workspaceId, userId));
+        restrict(m.workspaceId, [userId]);
       } else {
         const principals = new Set([
           principalKey({ kind: "KIND_USER", id: userId }),

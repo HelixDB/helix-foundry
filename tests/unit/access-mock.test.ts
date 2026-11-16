@@ -199,6 +199,13 @@ describe("mock source grants", () => {
       // The pinned dashboards, whose tiles it reads through its grants.
       `GET ${F}/dashboards`,
       `GET ${F}/dashboards/{id}`,
+      // Founder, read only, in its own threads: no cards, runtime or helpers.
+      `POST ${F}/agent/turns`,
+      `GET ${F}/agent/threads`,
+      `GET ${F}/agent/threads/{id}`,
+      `DELETE ${F}/agent/threads/{id}`,
+      `GET ${F}/agent/turns/{id}/events`,
+      `POST ${F}/agent/turns/{id}:cancel`,
     ]);
     const foundry = routes.filter((r) =>
       /^\/v1\/(foundry|workspaces\/\{workspaceId\}\/foundry)/.test(r.path),
@@ -1383,5 +1390,287 @@ describe("mock source grants", () => {
       (await call("GET", `${WS}/service-credentials`, undefined, "usr_alan"))
         .status,
     ).toBe(403);
+  });
+});
+
+describe("a grantee's Founder", () => {
+  const AG = `${F}/agent`,
+    LIST = "helix_foundry_list_ontologies",
+    ASK = "helix_foundry_ask",
+    GET_QUESTION = "helix_foundry_get_question",
+    READ_ONLY =
+      "Your access lets me read and ask about the data shared with you, not change anything in this workspace, so I can't do that. Someone who manages it can.";
+  let n = 0;
+  const say = (text: string, extra: object = {}, userId = "usr_eve") =>
+    call(
+      "POST",
+      `${AG}/turns`,
+      { text, clientToken: `f${++n}`, ...extra },
+      userId,
+    );
+  /**
+   * A turn's events once it has ended, read as `userId`: a question holds
+   * the turn while it runs, so time moves on until it ends.
+   */
+  async function ended(turnId: string, userId = "usr_eve") {
+    for (let i = 0; i < 6; i++) {
+      later(60_000);
+      const r = await call(
+        "GET",
+        `${AG}/turns/${turnId}/events?afterSeq=0`,
+        undefined,
+        userId,
+      );
+      const page = r.body as wfe.ListAgentTurnEventsResponse;
+      if (page.status === "queued" || page.status === "running") continue;
+      const events = (page.events || []).map(
+        (e) => JSON.parse(e.eventJson) as wfe.AgentEvent,
+      );
+      return {
+        status: page.status,
+        events,
+        tools: events.flatMap((e) => (e.type === "tool_call" ? [e.name] : [])),
+        said: events
+          .flatMap((e) => (e.type === "text" ? [e.text] : []))
+          .join(" "),
+        result: (name: string) =>
+          events.find(
+            (e): e is Extract<wfe.AgentEvent, { type: "tool_result" }> =>
+              e.type === "tool_result" && e.name === name,
+          ),
+      };
+    }
+    throw new Error(`turn ${turnId} never ended`);
+  }
+  /** A message as Eve, its turn once ended, and its thread as she reads it. */
+  async function turn(text: string, extra: object = {}, userId = "usr_eve") {
+    const sent = await say(text, extra, userId);
+    expect(sent.status).toBe(200);
+    const done = await ended(sent.body.turn.id, userId);
+    const r = await call(
+      "GET",
+      `${AG}/threads/${sent.body.thread.id}`,
+      undefined,
+      userId,
+    );
+    return { sent, ...done, thread: r.body as wfe.AgentThreadResponse };
+  }
+  /** Customer contracts loaded, all of it Eve's through her grants. */
+  async function shared() {
+    const { load } = await loaded();
+    await grant(user("usr_eve"), [general, stripe]);
+    return load;
+  }
+
+  it("says nothing is shared while Eve's grants hold no load", async () => {
+    const t = await turn("Who signed the contract?");
+    expect(t.status).toBe("done");
+    expect(t.tools).toEqual([LIST]);
+    expect(t.result(LIST)?.output).toMatchObject({ ontologies: [] });
+    expect(t.said).toBe(
+      "Nothing is shared with you yet, so there's nothing I can ask about.",
+    );
+  });
+
+  it("lists what Eve holds as she reads it, and asks her load as her", async () => {
+    const load = await shared();
+    const t = await turn("Who signed the contract?");
+    expect(t.tools).toEqual([LIST, ASK, GET_QUESTION]);
+    const output = t.result(LIST)?.output as { ontologies: object[] };
+    expect(output.ontologies).toEqual([
+      expect.objectContaining({
+        id: "ont_acme_contracts",
+        name: "Customer contracts",
+      }),
+    ]);
+    for (const hidden of ["database_name", "project_id", "tenant_id"])
+      expect(output.ontologies[0]).not.toHaveProperty(hidden);
+    // The question is Eve's, of her load, in her list and Ada's.
+    const asked = t.result(ASK)!;
+    expect(asked).toMatchObject({
+      is_error: false,
+      output: { load_id: load },
+    });
+    const qid = (asked.output as { id: string }).id;
+    const ids = async (as: "usr_ada" | "usr_eve") =>
+      (await call("GET", `${O}/questions`, undefined, as)).body.questions.map(
+        (q: wfe.FoundryQuestion) => q.id,
+      );
+    expect(await ids("usr_eve")).toEqual([qid]);
+    expect(await ids("usr_ada")).toContain(qid);
+    expect(
+      (await call("GET", `${O}/questions/${qid}`)).body.question,
+    ).toMatchObject({ askedByUserId: "usr_eve", loadId: load });
+    expect(t.result(GET_QUESTION)).toMatchObject({
+      is_error: false,
+      output: { status: "answered" },
+    });
+    expect(t.said).toBe(
+      "That's the answer, from what's shared with you of Customer contracts.",
+    );
+    expect(t.thread.actions || []).toEqual([]);
+  });
+
+  it("says the Analyst's limit on Eve's questions is its own", async () => {
+    await shared();
+    for (const i of Array.from({ length: 10 }, (_, k) => k))
+      expect(
+        (
+          await eve("POST", `${O}/questions`, {
+            question: "Who?",
+            clientToken: `q${i}`,
+          })
+        ).status,
+      ).toBe(200);
+    const t = await turn("Who signed the contract?");
+    expect(t.result(ASK)).toMatchObject({ is_error: true });
+    expect(t.tools).not.toContain(GET_QUESTION);
+    expect(t.said).toBe(
+      "Your question was refused: you have asked 10 questions in the last hour; try again later. That's the limit on your questions, not on me.",
+    );
+  });
+
+  it("prepares nothing Eve asks to change, and makes no dashboard", async () => {
+    await shared();
+    const load = await turn("Load Customer contracts");
+    expect(load.tools).toEqual([LIST]);
+    expect(load.said).toBe(READ_ONLY);
+    expect(load.events.some((e) => e.type === "action_card")).toBe(false);
+    expect(load.thread.actions || []).toEqual([]);
+    // A dashboard asked for: the Analyst asked, nothing made.
+    const board = await turn(
+      "Make a dashboard of invoices by status for Customer contracts",
+    );
+    expect(board.tools).toEqual([LIST, ASK, GET_QUESTION]);
+    expect(board.events.some((e) => e.type === "action_card")).toBe(false);
+    expect(board.said).toMatch(
+      /^That's the answer, from what's shared with you of Customer contracts\. Your access doesn't let me make dashboards, so I made none\.$/,
+    );
+    expect((await call("GET", `${F}/dashboards`)).body.dashboards).toEqual([]);
+    // Nor a draft's questions, nor a dashboard's change.
+    expect((await turn("Answer the draft's questions")).said).toBe(
+      "You can't answer a draft's questions: an owner or admin answers them on the generation's page in Foundry.",
+    );
+    expect((await turn("Pin this dashboard")).said).toBe(READ_ONLY);
+    // Cards are never Eve's to run, refresh or dismiss.
+    for (const verb of ["execute", "refresh", "dismiss"])
+      expect(
+        refusal(
+          await eve("POST", `${AG}/actions/act_x:${verb}`, {
+            payloadHash: "0".repeat(64),
+          }),
+        ),
+      ).toEqual([403, "source grants don't allow this call"]);
+  });
+
+  it("keeps only what Eve's grants hold of her page", async () => {
+    const load = await shared();
+    const elsewhere = await turn("What is this?", {
+      pageContext: { ontologyId: "ont_acme_sales" },
+    });
+    expect(elsewhere.thread.turns![0]!.pageContext).toBeNull();
+    expect(elsewhere.result(ASK)).toMatchObject({
+      output: { load_id: load },
+    });
+    const asked = elsewhere.events.find(
+      (e) => e.type === "tool_call" && e.name === ASK,
+    );
+    expect(asked).toMatchObject({
+      input: { ontology_id: "ont_acme_contracts" },
+    });
+    // Another load, an unpinned dashboard and a new automation go: what
+    // she writes is a question, not an automation.
+    const here = await turn("Who signed it?", {
+      pageContext: {
+        ontologyId: "ont_acme_contracts",
+        loadId: "load_other",
+        dashboardId: "dash_unpinned",
+        newAutomation: true,
+      },
+    });
+    expect(here.thread.turns![0]!.pageContext).toEqual({
+      ontologyId: "ont_acme_contracts",
+    });
+    expect(here.tools).toEqual([LIST, ASK, GET_QUESTION]);
+    const same = await turn("Who signed?", {
+      pageContext: { ontologyId: "ont_acme_contracts", loadId: load },
+    });
+    expect(same.thread.turns![0]!.pageContext).toEqual({
+      ontologyId: "ont_acme_contracts",
+      loadId: load,
+    });
+  });
+
+  it("hides Eve's threads from before her restriction", async () => {
+    // Unrestricted, she talks to Founder as a member.
+    await grant(user("usr_eve"), []);
+    await call("PUT", `${A}/members/usr_eve`, { restricted: false });
+    const before = await turn("What ontologies do I have?");
+    const thread = before.sent.body.thread.id,
+      turnId = before.sent.body.turn.id;
+    expect(before.tools[0]).toBe(LIST);
+    later(1_000);
+    await grant(user("usr_eve"), [general]);
+    expect((await eve("GET", `${AG}/threads`)).body.threads).toEqual([]);
+    expect(refusal(await eve("GET", `${AG}/threads/${thread}`))).toEqual([
+      404,
+      "thread not found",
+    ]);
+    expect((await eve("GET", `${AG}/turns/${turnId}/events`)).status).toBe(
+      404,
+    );
+    expect((await eve("POST", `${AG}/turns/${turnId}:cancel`, {})).status).toBe(
+      404,
+    );
+    expect((await eve("DELETE", `${AG}/threads/${thread}`)).status).toBe(404);
+    expect(refusal(await say("And now?", { threadId: thread }))).toEqual([
+      404,
+      "thread not found",
+    ]);
+    // A thread since is hers, and the only one she sees.
+    const mine = (await turn("Who signed?")).sent.body.thread.id;
+    expect(
+      (await eve("GET", `${AG}/threads`)).body.threads.map(
+        (t: wfe.FoundryAgentThread) => t.id,
+      ),
+    ).toEqual([mine]);
+    expect((await eve("DELETE", `${AG}/threads/${mine}`)).status).toBe(200);
+  });
+
+  it("refuses answers to a draft's questions once Eve is restricted again", async () => {
+    // Made an admin, she drafts, and the draft asks its questions.
+    Object.assign(config, { ontologyQuestions: true, ontologyStepMs: 300 });
+    const eveMember = db.memberships.find(
+      (m) => m.workspaceId === "ws_acme" && m.userId === "usr_eve",
+    )!;
+    eveMember.role = "WORKSPACE_ROLE_ADMIN";
+    const draft = await turn("Generate a draft of Sales graph from Stripe");
+    const card = draft.thread.actions!.at(-1)!;
+    expect(card.operation).toBe("generate_ontology");
+    const ran = await eve("POST", `${AG}/actions/${card.id}:execute`, {
+      payloadHash: card.payloadHash,
+    });
+    expect(ran.status).toBe(200);
+    const relayed = await ended(ran.body.continuation.id);
+    expect(relayed.events.some((e) => e.type === "questions")).toBe(true);
+    const asking = (
+      await eve("GET", `${AG}/threads/${draft.sent.body.thread.id}`)
+    ).body.turns.at(-1);
+    expect(asking.asked.generation).toBeDefined();
+    // A member again, restricted since before the thread: she sees it, and
+    // can't answer for the draft.
+    eveMember.role = "WORKSPACE_ROLE_MEMBER";
+    const answered = await eve("POST", `${AG}/turns`, {
+      threadId: draft.sent.body.thread.id,
+      answers: { turnId: asking.id, answers: [] },
+      clientToken: "relay",
+    });
+    expect(answered.status).toBe(400);
+    expect(answered.body.details?.[0]?.reason).toBe(
+      "FOUNDRY_AGENT_QUESTIONS_CLOSED",
+    );
+    expect(answered.body.message).toBe(
+      "a draft's questions are answered by an owner or admin, on the generation's page in Foundry",
+    );
   });
 });

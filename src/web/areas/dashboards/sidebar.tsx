@@ -2,6 +2,7 @@ import "./dashboards.css";
 import { Link, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Globe, Pin, Plus } from "lucide-react";
+import { FOUNDER } from "../../../shared/deployment";
 import type { FoundryDashboard } from "../../../shared/wfe";
 import {
   ButtonLink,
@@ -84,8 +85,9 @@ export function DashboardList({ onNavigate }: { onNavigate?: () => void }) {
           </p>
         ) : !groups.length ? (
           <p className="db-note">
-            No dashboards yet. Pin an Analyst answer’s chart, or ask Founder to
-            build one.
+            {FOUNDER
+              ? "No dashboards yet. Pin an answer’s chart, or ask Founder to build one."
+              : "No dashboards yet. Pin an Analyst answer’s chart."}
           </p>
         ) : (
           groups.map((g) => (

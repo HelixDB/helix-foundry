@@ -15,7 +15,8 @@ import {
 } from "../agent/dock";
 import { agentRefusal, threadKey } from "../agent/model";
 import { agentQueries } from "../agent/queries";
-import { useReadAccess } from "../explore/graph-reader";
+import { useReadAccess, useReadsPart } from "../explore/graph-reader";
+import { PartNote } from "../explore/part-note";
 import { AskPage, ChatBar, ThreadView } from "./ask";
 import { askSuggestions, threadsOf } from "./ask-model";
 import { founderView } from "./founder-model";
@@ -29,12 +30,12 @@ import {
 import { ontologyQueries, questionQueries } from "./queries";
 import { OntologyPicker, ontologyName, useOntology } from "./scope";
 
-// /ask/:ontologyId where the build has Founder and the user isn't a grantee:
-// Founder, full page. The Analyst page's chrome (its slim bar with the
-// thread's title and the Ontology and Load pickers, Getting into
-// production's card under it) around the dock's conversation (its turns,
-// the Analyst's cited answers inline, cards, Undo) and composer, which sends
-// this page (the ontology and the load picked) with each message. Its
+// /ask/:ontologyId where the build has Founder: Founder, full page. The
+// Analyst page's chrome (its slim bar with the thread's title and the
+// Ontology and Load pickers, Getting into production's card under it)
+// around the dock's conversation (its turns, the Analyst's cited answers
+// inline, cards, Undo) and composer, which sends this page (the ontology
+// and the load picked) with each message. Its
 // threads are the dock's, in the sidebar (founder-threads.tsx): `?chat=`
 // opens one and makes it the dock's too, so Founder holds one conversation
 // wherever it is asked; without it, the page opens the dock's thread, else a
@@ -43,13 +44,16 @@ import { OntologyPicker, ontologyName, useOntology } from "./scope";
 // know, its composer centred, with the load's competency questions as chips
 // that fill it; `?about=` (an entity page's Ask about this) starts its
 // message. The shell shows no dock here. Where the WFE has Founder off, the
-// Analyst's page.
+// Analyst's page. A grantee's Founder only reads and asks, about the load its
+// grants cover (no Load picker, no cards); where its grants don't cover the
+// ontology's current load, the page says so in place of any composer.
 
 export function FounderPage() {
-  const { id: ws } = useWorkspace(),
+  const { id: ws, grantee } = useWorkspace(),
     qc = useQueryClient(),
     { id: o, ontology } = useOntology(),
-    access = useReadAccess();
+    access = useReadAccess(),
+    part = useReadsPart();
   const [params, setParams] = useSearchParams();
   const selection = useLoadSelection();
   const load =
@@ -152,17 +156,24 @@ export function FounderPage() {
     />
   );
 
+  // Read only through grants that don't cover the current load: nothing to
+  // ask about, so no composer, whichever view the link names.
+  if (access === "none")
+    return (
+      <div className="ak-chat">
+        <ChatBar
+          title={view.kind === "analyst" ? "Earlier question" : "Founder"}
+        >
+          {picker}
+        </ChatBar>
+        <div className="ak-scroll ak-chat--empty">
+          <NotShared />
+        </div>
+      </div>
+    );
+
   if (view.kind === "analyst") {
     const asked = threadsOf(questions.data?.questions || []);
-    if (access === "none")
-      return (
-        <div className="ak-chat">
-          <ChatBar title="Analyst">{picker}</ChatBar>
-          <div className="ak-scroll ak-chat--empty">
-            <NotShared />
-          </div>
-        </div>
-      );
     return (
       <ThreadView
         key={view.id}
@@ -172,7 +183,12 @@ export function FounderPage() {
         load={load}
         budget={questions.data?.budget}
         picker={picker}
-        notice={<LoadNotice selection={selection} />}
+        notice={
+          <>
+            <PartNote />
+            <LoadNotice selection={selection} />
+          </>
+        }
         onBack={() => go({})}
       />
     );
@@ -195,6 +211,11 @@ export function FounderPage() {
           {picker}
         </ChatBar>
         <div className="fd-chat" data-replay-block>
+          {part && (
+            <div className="fd-notice">
+              <PartNote />
+            </div>
+          )}
           {runtime}
           <Transcript
             data={thread.data}
@@ -218,7 +239,7 @@ export function FounderPage() {
     );
 
   // Nothing loaded: the Analyst has nothing to answer from, but Founder can
-  // load data, or say how.
+  // load data, or say how (a grantee's can't: it only reads).
   const nothing = selection.choice.kind === "none" && !selection.pending;
   const name = ontologyName(ontology);
   return (
@@ -228,10 +249,12 @@ export function FounderPage() {
         <div className="ak-start fd-start" data-replay-block>
           <LoadNotice selection={selection} />
           <h1 className="ak-hello">What do you want to know about {name}?</h1>
+          <PartNote />
           {nothing && (
             <p className="fd-note">
-              Nothing is loaded yet, so the Analyst can’t answer questions about
-              the data; Founder can still help you load it.
+              {grantee
+                ? "Nothing shared with you is loaded yet."
+                : "Nothing is loaded yet, so Founder can’t answer questions about the data until it is; it can help you load it."}
             </p>
           )}
           {runtime}
@@ -240,7 +263,11 @@ export function FounderPage() {
             threadId=""
             runtime={where?.runtime ?? "api"}
             hostState={where?.state ?? "ready"}
-            placeholder={`Ask about ${name}, or ask Founder to do something…`}
+            placeholder={
+              grantee
+                ? "Ask about the data shared with you…"
+                : `Ask about ${name}, or ask Founder to do something…`
+            }
             initialText={seed.text}
             onSent={sent}
           />
