@@ -234,6 +234,36 @@ func TestResolve(t *testing.T) {
 		}
 	})
 
+	// A Cohere setting runs on the agent's OpenAI-compatible wire at
+	// Cohere's Compatibility API, unbounded as a cloud API is, so an agent
+	// that calls such servers serves it. Its models never send the reasoning
+	// knob, whatever a probe found, and failure copy names Cohere.
+	t.Run("resolves Cohere as an OpenAI-compatible server", func(t *testing.T) {
+		keys := keyring(t)
+		roles := every(Model{Name: "command-a-03-2025", Price: PriceRates{Input: 2500, Output: 10000}})
+		const key = "co0123456789abcdef0123456789abcdef0123"
+		r := &Resolver{DB: activeConfigs{
+			"ws-c": savedConfig(t, keys, "cfg-c", "ws-c", key, Settings{Provider: Cohere{}, Models: roles}),
+		}, Keyring: keys, Deployment: hosted, Plans: pro}
+		got, err := r.ResolveServed(ctx, "ws-c", []string{"anthropic", "openai_compatible"})
+		endpoint := ontologyagent.Endpoint{
+			Provider:        ontologyagent.OpenAICompatible{BaseURL: "https://api.cohere.ai/compatibility/v1", API: ontologyagent.CompatChatCompletions},
+			CallTimeoutSecs: got.Turn().Endpoint.CallTimeoutSecs,
+		}
+		if err != nil || got.Key.Reveal() != key || got.Label() != "Cohere" || got.Turn().Endpoint != endpoint ||
+			got.Ask().Endpoint != endpoint || got.Extract().Endpoint != endpoint || got.Title().Endpoint != endpoint {
+			t.Fatalf("Resolve(Cohere) = %+v, %v", got, err)
+		}
+		if got.Turn().Draft.Reasoning || got.Turn().Extract.Reasoning || got.Ask().Ask.Reasoning || got.Extract().Verify.Reasoning ||
+			got.Turn().Draft.Price != (ontologyagent.PriceRates{Input: 2500, Output: 10000}) {
+			t.Fatalf("Cohere's models = %+v, %+v", got.Turn(), got.Ask())
+		}
+		// The agent's GetInfo names the kind it calls, never Cohere.
+		if _, err := r.ResolveServed(ctx, "ws-c", []string{"anthropic", "cohere"}); !errors.Is(err, ErrNotServed) {
+			t.Fatalf("Cohere on an agent that calls no OpenAI-compatible server = %v", err)
+		}
+	})
+
 	// A row this backend can't read stops the run for good with copy that
 	// says how to fix it, rather than running on a guess.
 	t.Run("refuses settings it can't read", func(t *testing.T) {

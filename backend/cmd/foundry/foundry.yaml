@@ -63,7 +63,7 @@ foundry:
   # http, and a local model on a CPU is slow: a call gets half an hour and a
   # probe a quarter of an hour to pass.
   ai:
-    kinds: [ollama, anthropic, openai, azure_openai, openai_compatible, bedrock]
+    kinds: [ollama, anthropic, openai, azure_openai, openai_compatible, bedrock, cohere]
     allow_private_hosts: true
     call_timeout: "30m"
     probe: { timeout: "15m", lease: "20m" }

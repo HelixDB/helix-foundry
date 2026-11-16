@@ -21,7 +21,7 @@ type FoundryAISettingOutput struct {
 	// "workspace" (an owner's).
 	Source string `json:"source"`
 	// Kind is the provider's: anthropic, openai, azure_openai, bedrock,
-	// ollama or openai_compatible.
+	// cohere, ollama or openai_compatible.
 	Kind string `json:"kind"`
 	// Provider names it as Foundry does: "Claude", or a custom server's host.
 	Provider string                `json:"provider"`

@@ -34,6 +34,7 @@ func TestSettingsJSON(t *testing.T) {
 			{Provider: OpenAI{}, Models: every(Model{Name: "gpt-6.1", Price: PriceRates{Input: 1250, Output: 10_000, CacheRead: ptr(uint64(125))}})},
 			{Provider: AzureOpenAI{Endpoint: "https://acme.openai.azure.com/openai/v1"}, Models: every(Model{Name: "prod-gpt", Price: PriceTableAs{Model: "gpt-6.1"}})},
 			{Provider: Bedrock{Region: "eu-west-1", FIPS: true}, Models: every(Model{Name: "us.anthropic.claude-sonnet-5-5", Price: PriceTable{}})},
+			{Provider: Cohere{}, Models: every(Model{Name: "command-a-03-2025", Price: PriceRates{Input: 2500, Output: 10_000}})},
 			{Provider: Ollama{BaseURL: "http://127.0.0.1:11434", ContextTokens: 65536}, Models: every(Model{Name: "qwen3:32b", Price: PriceFree{}})},
 			{Provider: Compatible{BaseURL: "https://llm.example.com/v1", API: CompatResponses, MaxCallsInFlight: 4}, Models: every(Model{Name: "m", Price: PriceRates{Input: 0, Output: 1}})},
 		} {
@@ -141,6 +142,11 @@ func TestValidateSettings(t *testing.T) {
 		"an Azure endpoint with a port":         {valid(AzureOpenAI{Endpoint: "https://acme.openai.azure.com:8443"}, PriceTable{}), hosted, "provider.endpoint"},
 		"a Bedrock region":                      {valid(Bedrock{Region: "us-gov-west-1", FIPS: true}, PriceTable{}), hosted, ""},
 		"a Bedrock region that is a host":       {valid(Bedrock{Region: "evil.example/x"}, PriceTable{}), hosted, "provider.region"},
+		"Cohere at the owner's rates":           {valid(Cohere{}, PriceRates{Input: 2500, Output: 10000}), hosted, ""},
+		"Cohere priced by table":                {valid(Cohere{}, PriceTable{}), hosted, "models.draft.price"},
+		"Cohere priced as another model":        {valid(Cohere{}, PriceTableAs{Model: "command-a-03-2025"}), hosted, "models.draft.price"},
+		"Cohere priced free":                    {valid(Cohere{}, PriceFree{}), local, "models.draft.price"},
+		"Cohere with no output rate":            {valid(Cohere{}, PriceRates{Input: 1}), hosted, "models.draft.price.rates.output"},
 		"Ollama on this machine":                {valid(Ollama{BaseURL: "http://127.0.0.1:11434", ContextTokens: 65536}, PriceFree{}), local, ""},
 		"Ollama over http hosted":               {valid(Ollama{BaseURL: "http://ollama.example.com", ContextTokens: 65536}, PriceFree{}), hosted, "provider.base_url"},
 		"Ollama at a private literal":           {valid(Ollama{BaseURL: "https://10.0.0.5", ContextTokens: 65536}, PriceFree{}), hosted, "private"},
@@ -244,10 +250,14 @@ func TestCanReuseKey(t *testing.T) {
 		active, next Settings
 		want         bool
 	}{
-		"Claude, other models":                {Settings{Provider: Anthropic{}, Models: model("a")}, Settings{Provider: Anthropic{}, Models: model("b")}, true},
-		"OpenAI to OpenAI":                    {Settings{Provider: OpenAI{}}, Settings{Provider: OpenAI{}}, true},
-		"Bedrock in another region":           {Settings{Provider: Bedrock{Region: "us-east-1"}}, Settings{Provider: Bedrock{Region: "eu-west-1"}}, true},
-		"Claude to OpenAI":                    {Settings{Provider: Anthropic{}}, Settings{Provider: OpenAI{}}, false},
+		"Claude, other models":      {Settings{Provider: Anthropic{}, Models: model("a")}, Settings{Provider: Anthropic{}, Models: model("b")}, true},
+		"OpenAI to OpenAI":          {Settings{Provider: OpenAI{}}, Settings{Provider: OpenAI{}}, true},
+		"Bedrock in another region": {Settings{Provider: Bedrock{Region: "us-east-1"}}, Settings{Provider: Bedrock{Region: "eu-west-1"}}, true},
+		"Cohere, other models":      {Settings{Provider: Cohere{}, Models: model("a")}, Settings{Provider: Cohere{}, Models: model("b")}, true},
+		"Claude to OpenAI":          {Settings{Provider: Anthropic{}}, Settings{Provider: OpenAI{}}, false},
+		"OpenAI to Cohere":          {Settings{Provider: OpenAI{}}, Settings{Provider: Cohere{}}, false},
+		"a compatible server to Cohere": {Settings{Provider: Compatible{BaseURL: CohereBaseURL, API: CompatChatCompletions, MaxCallsInFlight: 4}},
+			Settings{Provider: Cohere{}}, false},
 		"Azure, same resource and deployment": {azure("https://a.openai.azure.com", "prod"), azure("https://A.openai.azure.com/openai/v1/", "prod"), true},
 		"Azure, another deployment":           {azure("https://a.openai.azure.com", "prod"), azure("https://a.openai.azure.com", "test"), false},
 		"Azure, other deployments but drafts": {azure("https://a.openai.azure.com", "prod"), func() Settings {

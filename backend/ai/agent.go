@@ -108,6 +108,8 @@ func (s Settings) endpoint(callTimeout time.Duration) ontologyagent.Endpoint {
 		e.Provider = ontologyagent.AzureOpenAI{Endpoint: p.Endpoint}
 	case Bedrock:
 		e.Provider = ontologyagent.Bedrock{Region: p.Region, FIPS: p.FIPS}
+	case Cohere:
+		e.Provider = ontologyagent.OpenAICompatible{BaseURL: CohereBaseURL, API: ontologyagent.CompatChatCompletions}
 	case Ollama:
 		e.Provider, e.MaxCallsInFlight = ontologyagent.Ollama{BaseURL: p.BaseURL}, 1
 	case Compatible:
@@ -118,9 +120,14 @@ func (s Settings) endpoint(callTimeout time.Duration) ontologyagent.Endpoint {
 }
 
 // spec is m as the contract writes it: Ollama's models with the server's
-// context window and, once tested, the digest revision.
+// context window and, once tested, the digest revision. Cohere's never send
+// the reasoning knob: its Compatibility API takes reasoning_effort only as
+// none or high, and the engine sends low and medium too (a question's turns,
+// a title), so a probe that passed with it would leave every question
+// refused; its models think as Cohere's own default has them.
 func (s Settings) spec(m Model, reasoning bool, revision string) ontologyagent.ModelSpec {
-	spec := ontologyagent.ModelSpec{Name: m.Name, Reasoning: reasoning}
+	_, cohere := s.Provider.(Cohere)
+	spec := ontologyagent.ModelSpec{Name: m.Name, Reasoning: reasoning && !cohere}
 	switch p := m.Price.(type) {
 	case PriceTable:
 		spec.Price = ontologyagent.PriceTable{}

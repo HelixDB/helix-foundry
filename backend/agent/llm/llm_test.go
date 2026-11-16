@@ -227,6 +227,7 @@ func TestNewBindsEveryKind(t *testing.T) {
 		{ai.Compatible{BaseURL: "https://llm.example.com/v1", API: ai.CompatResponses, MaxCallsInFlight: 4}, free, &responsesModel{}},
 		{ai.Ollama{BaseURL: "http://127.0.0.1:11434", ContextTokens: 65536}, free, &ollamaModel{}},
 		{ai.Bedrock{Region: "us-east-1"}, ai.Roles{Ask: ai.Model{Name: "global.anthropic.claude-sonnet-5-5", Price: ai.PriceTable{}}}, &converseModel{}},
+		{ai.Cohere{}, ai.Roles{Ask: ai.Model{Name: "command-a-03-2025", Price: ai.PriceRates{Input: 2500, Output: 10000}}}, &chatModel{}},
 	} {
 		b, err := New(ai.Resolved{Settings: ai.Settings{Provider: c.provider, Models: c.models}, Key: ontologyagent.NewModelKey("k")}, catalog)
 		require.NoError(t, err, "%T", c.provider)
@@ -238,6 +239,24 @@ func TestNewBindsEveryKind(t *testing.T) {
 	assert.Error(t, err, "an API no wire speaks")
 	_, err = New(ai.Resolved{Settings: ai.Settings{Provider: ai.AzureOpenAI{Endpoint: "https://example.com"}, Models: free}}, catalog)
 	assert.Error(t, err, "an endpoint that isn't Azure's")
+}
+
+// Cohere's questions never send the reasoning knob, even where a probe's
+// report would have them, as the engine's never do: its Compatibility API
+// takes reasoning_effort only as none or high.
+func TestNewSendsCohereNoReasoning(t *testing.T) {
+	catalog, err := ai.VendoredCatalog()
+	require.NoError(t, err)
+	model := ai.Model{Name: "command-a-reasoning-08-2025", Price: ai.PriceRates{Input: 2500, Output: 10000}}
+	b, err := New(ai.Resolved{Settings: ai.Settings{Provider: ai.Cohere{}, Models: ai.Roles{Draft: model, Ask: model, Extract: model, Verify: model}},
+		Report: ai.ProbeReport{Checks: []ai.ProbeCheck{{Role: "ask", Passed: true, Reasoning: true}}}}, catalog)
+	require.NoError(t, err)
+	chat := b.Model.(*chatModel)
+	assert.False(t, chat.reasoning)
+	assert.Nil(t, chat.calls, "a cloud API, bounded by no gate")
+	params, err := chat.params(Request{MaxOutput: 1000})
+	require.NoError(t, err)
+	assert.Empty(t, params.ReasoningEffort)
 }
 
 // Ollama runs in the owner's window, at most what the probe read of the

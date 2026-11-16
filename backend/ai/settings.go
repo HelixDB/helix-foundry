@@ -24,12 +24,13 @@ const (
 	KindOpenAI      Kind = "openai"
 	KindAzureOpenAI Kind = "azure_openai"
 	KindBedrock     Kind = "bedrock"
+	KindCohere      Kind = "cohere"
 	KindOllama      Kind = "ollama"
 	KindCompatible  Kind = "openai_compatible"
 )
 
 // Kinds are every kind, in the order the settings page offers them.
-var Kinds = []Kind{KindAnthropic, KindOpenAI, KindAzureOpenAI, KindBedrock, KindOllama, KindCompatible}
+var Kinds = []Kind{KindAnthropic, KindOpenAI, KindAzureOpenAI, KindBedrock, KindCohere, KindOllama, KindCompatible}
 
 // ParseKind is the kind named s.
 func ParseKind(s string) (Kind, error) {
@@ -92,6 +93,15 @@ type Bedrock struct {
 	FIPS   bool
 }
 
+// Cohere is Cohere's API under the owner's key, called through its
+// OpenAI-compatible Chat Completions (CohereBaseURL): the ontology agent and
+// the Assistant call it as they call an OpenAI-compatible server.
+type Cohere struct{}
+
+// CohereBaseURL is Cohere's Compatibility API, which serves Chat Completions
+// with tools and strict structured output.
+const CohereBaseURL = "https://api.cohere.ai/compatibility/v1"
+
 // Ollama is an Ollama server's native API at BaseURL, which takes no key.
 // ContextTokens is the context window it is asked to load models with.
 type Ollama struct {
@@ -119,6 +129,7 @@ func (Anthropic) Kind() Kind   { return KindAnthropic }
 func (OpenAI) Kind() Kind      { return KindOpenAI }
 func (AzureOpenAI) Kind() Kind { return KindAzureOpenAI }
 func (Bedrock) Kind() Kind     { return KindBedrock }
+func (Cohere) Kind() Kind      { return KindCohere }
 func (Ollama) Kind() Kind      { return KindOllama }
 func (Compatible) Kind() Kind  { return KindCompatible }
 
@@ -126,6 +137,7 @@ func (Anthropic) provider()   {}
 func (OpenAI) provider()      {}
 func (AzureOpenAI) provider() {}
 func (Bedrock) provider()     {}
+func (Cohere) provider()      {}
 func (Ollama) provider()      {}
 func (Compatible) provider()  {}
 
@@ -249,7 +261,7 @@ func DecodeSettings(raw []byte) (Settings, error) {
 func marshalProvider(p Provider) (json.RawMessage, error) {
 	var fields any
 	switch p := p.(type) {
-	case Anthropic, OpenAI:
+	case Anthropic, OpenAI, Cohere:
 		fields = struct {
 			Kind Kind `json:"kind"`
 		}{p.Kind()}
@@ -294,11 +306,11 @@ func decodeProvider(raw json.RawMessage) (Provider, error) {
 	var p Provider
 	var err error
 	switch head.Kind {
-	case KindAnthropic, KindOpenAI:
+	case KindAnthropic, KindOpenAI, KindCohere:
 		err = strict(raw, &struct {
 			Kind Kind `json:"kind"`
 		}{})
-		p = map[Kind]Provider{KindAnthropic: Anthropic{}, KindOpenAI: OpenAI{}}[head.Kind]
+		p = map[Kind]Provider{KindAnthropic: Anthropic{}, KindOpenAI: OpenAI{}, KindCohere: Cohere{}}[head.Kind]
 	case KindAzureOpenAI:
 		var f struct {
 			Kind     Kind   `json:"kind"`

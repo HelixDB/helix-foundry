@@ -69,7 +69,7 @@ func TestBakedFoundryConfig(t *testing.T) {
 		t.Fatalf("plans = %+v", plans)
 	}
 	defaults := foundryconfig.Defaults()
-	if got := f.Foundry.AI; !slices.Equal(got.Kinds, []string{"ollama", "anthropic", "openai", "azure_openai", "openai_compatible", "bedrock"}) ||
+	if got := f.Foundry.AI; !slices.Equal(got.Kinds, []string{"ollama", "anthropic", "openai", "azure_openai", "openai_compatible", "bedrock", "cohere"}) ||
 		got.Default.Provider != "" || !got.AllowPrivateHosts || got.CallTimeout != 30*time.Minute ||
 		got.Probe.Timeout != 15*time.Minute || got.Probe.Lease != 20*time.Minute || got.Probe.PerHour != 10 ||
 		got.Probe.PollInterval != defaults.Foundry.AI.Probe.PollInterval || got.Probe.MaxAttempts != 3 {

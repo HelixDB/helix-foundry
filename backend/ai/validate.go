@@ -78,6 +78,14 @@ func (s Settings) Validate(r Rules) error {
 		if !awsRegion.MatchString(p.Region) {
 			return invalid("provider.region", "must be an AWS region, like us-east-1")
 		}
+	case Cohere:
+		// Helix's price table has no Cohere rows (Cohere quotes its prices
+		// per customer): every model costs what its owner says it does.
+		for _, rm := range s.Models.Each() {
+			if _, rates := rm.Model.Price.(PriceRates); !rates {
+				return invalid("models."+string(rm.Role)+".price", "must be your own rates for a Cohere model")
+			}
+		}
 	case Ollama:
 		if _, err := OllamaURL(p.BaseURL, r); err != nil {
 			return err
