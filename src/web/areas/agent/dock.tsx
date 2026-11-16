@@ -302,12 +302,17 @@ export function useThreadRuntime(
     enabled: LOCAL && role === "owner",
     retry: false,
     refetchInterval: (q) =>
-      q.state.data && threadRuntime(runtimeNow, q.state.data).state !== "ready"
+      q.state.data &&
+      q.state.data !== "off" &&
+      threadRuntime(runtimeNow, q.state.data).state !== "ready"
         ? RUNTIME_POLL_MS
         : false,
   });
   return !threadId || thread
-    ? threadRuntime(runtimeNow, setting.data)
+    ? threadRuntime(
+        runtimeNow,
+        setting.data === "off" ? undefined : setting.data,
+      )
     : undefined;
 }
 

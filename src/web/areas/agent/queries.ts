@@ -58,12 +58,18 @@ export const RUNTIME_POLL_MS = 3000;
 
 export const agentQueries = {
   // Where the workspace's new threads run, and the install's helpers: a
-  // local install's owner's only (hosted refuses it).
+  // local install's owner's only (hosted refuses it); "off" where the WFE
+  // has Founder off, as data so it holds through a refetch (as threads).
   runtime: (ws: string) => ({
     queryKey: [ws, "agent", "runtime"],
-    queryFn: async () =>
-      (await api<FoundryAgentRuntimeResponse>(`${at(ws)}/runtime`)).runtime ??
-      {},
+    queryFn: () =>
+      api<FoundryAgentRuntimeResponse>(`${at(ws)}/runtime`)
+        .then((r) => r.runtime ?? {})
+        .catch((e: unknown) =>
+          agentRefusal(e) === "FOUNDRY_AGENT_DISABLED"
+            ? ("off" as const)
+            : Promise.reject(e),
+        ),
   }),
   // The caller's threads, newest first: the first page (50), or "off" where
   // the WFE has Founder off. The refusal is data, not an error, so it holds
