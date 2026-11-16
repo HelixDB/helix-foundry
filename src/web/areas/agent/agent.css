@@ -96,7 +96,6 @@
 .ag-working,
 .ag-note,
 .ag-ran,
-.ag-hint,
 .ag-card-muted {
   display: flex;
   flex-wrap: wrap;
@@ -115,7 +114,6 @@
   flex: 1 1 0;
   min-width: 0;
 }
-.ag-hint.is-error,
 .ag-card-error {
   display: flex;
   align-items: flex-start;
@@ -129,8 +127,7 @@
   flex: none;
   margin-top: 2px;
 }
-.ag-card-error a,
-.ag-hint a {
+.ag-card-error a {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -331,60 +328,186 @@
   gap: var(--hf-space-1);
 }
 
-/* The composer, pinned under the conversation. */
+/* The composer: one box holding the page's chip, the field and its button,
+   and a line under it saying how to send or why it can't. Founder's
+   (dock.tsx Composer) and the Analyst's (ask.tsx) everywhere they show:
+   the dock, Founder's page and a new automation's. Where it sits is its
+   page's; the dock pins it under the conversation. */
+.ag-dock-composer {
+  flex: none;
+  padding: var(--hf-space-1) var(--hf-space-2) var(--hf-space-15);
+}
 .ag-composer {
   display: grid;
-  flex: none;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
-  padding: var(--hf-space-15) var(--hf-space-2) var(--hf-space-2);
-  border-top: 1px solid var(--hf-border);
+  min-width: 0;
 }
+.ag-box {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 2px 8px;
+  min-width: 0;
+  padding: 7px 7px 7px 16px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius-xl);
+  background: var(--hf-field);
+  box-shadow: var(--hf-shadow-2);
+  cursor: text;
+  transition:
+    border-color var(--hf-duration) var(--hf-ease),
+    box-shadow var(--hf-duration) var(--hf-ease);
+}
+/* Focused as the app's other fields are (style.css input:focus). */
+.ag-box:focus-within {
+  border-color: var(--hf-faint);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--hf-focus) 14.5%, transparent),
+    var(--hf-shadow-2);
+}
+/* The page's chip, a pill over the field's first line. */
 .ag-chip {
   display: inline-flex;
+  grid-column: 1 / -1;
   align-items: center;
-  gap: 2px;
   justify-self: start;
+  gap: 2px;
   max-width: 100%;
+  margin: 2px 0 0 -6px;
+  cursor: default;
 }
 .ag-chip .hf-tag {
+  display: block;
+  min-width: 0;
   overflow: hidden;
+  line-height: 22px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ag-input-row {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--hf-space-1);
-  padding: 6px;
-  border: 1px solid var(--hf-border-strong);
-  border-radius: var(--hf-radius-lg);
-  background: var(--hf-field);
-}
-.ag-input-row:focus-within {
-  border-color: var(--hf-focus);
-}
-.ag-input {
-  flex: 1;
-  min-width: 0;
-  max-height: 160px;
-  padding: 4px;
+.ag-chip-drop {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   border: 0;
+  border-radius: var(--hf-radius-sm);
   background: none;
+  color: var(--hf-muted);
+  cursor: pointer;
+}
+.ag-chip-drop:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.ag-chip-drop:focus-visible,
+.ag-send:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 1px;
+}
+/* The field wraps its text and grows down to its most rows (PromptInput
+   sets its height), then scrolls down; it never scrolls sideways. */
+.ag-input {
+  min-width: 0;
+  margin: 0;
+  padding: 7px 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
   color: var(--hf-text);
   font: inherit;
-  font-size: var(--hf-text-base);
-  line-height: 1.45;
+  font-size: var(--hf-text-md);
+  line-height: 22px;
+  overflow-x: hidden;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
   resize: none;
-  field-sizing: content;
+  scrollbar-width: thin;
 }
-.ag-input:focus {
+.ag-input:focus,
+.ag-input:focus-visible {
+  border: 0;
   outline: none;
+}
+.ag-input::placeholder {
+  color: var(--hf-muted);
+  opacity: 1;
+}
+/* Send, and Stop in its place while a turn is live: a quiet icon in the
+   box's corner, the same size in every state. */
+.ag-send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--hf-radius-lg);
+  background: none;
+  color: var(--hf-text);
+  cursor: pointer;
+  transition:
+    background-color var(--hf-duration) var(--hf-ease),
+    color var(--hf-duration) var(--hf-ease);
+}
+@media (hover: hover) {
+  .ag-send:hover:not(:disabled) {
+    background: var(--hf-hover);
+  }
+}
+.ag-send:disabled {
+  color: var(--hf-faint);
+  cursor: default;
+}
+.ag-composer[aria-busy="true"] .ag-send {
+  color: var(--hf-text);
+  cursor: progress;
+}
+.ag-status {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  line-height: 1.4;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.ag-status.is-error {
+  color: var(--hf-danger-text);
+  font-size: var(--hf-text-sm);
+}
+.ag-status a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 @media (max-width: 800px) {
   /* iOS zooms into focused fields under 16px. */
   .ag-input {
     font-size: 16px;
   }
+  .ag-dock-composer {
+    padding-bottom: calc(var(--hf-space-15) + env(safe-area-inset-bottom));
+  }
+}
+
+/* The dotted ground Founder's full pages sit on (a new automation's,
+   Founder's page and the Analyst's). */
+.ag-dots {
+  background-color: var(--hf-sunken);
+  background-image: radial-gradient(
+    var(--hf-border-strong) 1.2px,
+    transparent 1.2px
+  );
+  background-size: 20px 20px;
+}
+/* What sits straight on the dots stands on its own ground. */
+.ag-dots .ag-msg--person {
+  border: 1px solid var(--hf-border);
+  background: var(--hf-raised);
 }
 
 /* Settings › AI models on a local install (runtime-settings.tsx): the
