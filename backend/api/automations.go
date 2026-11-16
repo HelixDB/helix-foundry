@@ -136,6 +136,8 @@ func (s *Service) automationSpec(ctx context.Context, workspaceID, raw string) (
 		return automation.Spec{}, nil, status.Error(codes.InvalidArgument, "spec_json: "+err.Error())
 	}
 	targets := spec.Targets()
+	// owners are the connectors whose syncs write the sets it names.
+	owners := map[string]string{}
 	for _, check := range []struct {
 		ids  []string
 		what string
@@ -149,7 +151,13 @@ func (s *Service) automationSpec(ctx context.Context, workspaceID, raw string) (
 			}
 			return err
 		}},
-		{targets.Sets, "document set", func(id string) error { _, err := s.deps.DB.GetFoundryDocumentSet(ctx, workspaceID, id); return err }},
+		{targets.Sets, "document set", func(id string) error {
+			set, err := s.deps.DB.GetFoundryDocumentSet(ctx, workspaceID, id)
+			if err == nil && set.Owner != nil {
+				owners[id] = set.Owner.ConnectorID
+			}
+			return err
+		}},
 		{targets.Dashboards, "dashboard", func(id string) error { _, err := s.deps.DB.GetFoundryDashboard(ctx, workspaceID, id); return err }},
 	} {
 		for _, target := range check.ids {
@@ -158,6 +166,25 @@ func (s *Service) automationSpec(ctx context.Context, workspaceID, raw string) (
 				return automation.Spec{}, nil, status.Errorf(codes.InvalidArgument, "spec_json names the %s %s, which this workspace hasn't", check.what, target)
 			case err != nil:
 				return automation.Spec{}, nil, status.Errorf(codes.Internal, "read the %s %s: %v", check.what, target, err)
+			}
+		}
+	}
+	// A sync of the connector whose documents its trigger waits on would
+	// start another run each time it ran, as ParseSpec refuses for syncs and
+	// loads; only here is the set's connector known. The worker skips what a
+	// sync another workflow started on its runs' behalf wrote all the same.
+	if arrived, ok := spec.Trigger().(automation.DocumentArrived); ok && owners[arrived.SetID] != "" {
+		for _, n := range spec.Nodes() {
+			var actions []automation.Action
+			switch c := n.Config.(type) {
+			case automation.ActionNode:
+				actions = []automation.Action{c.Action}
+			case automation.AssistantNode:
+				actions = c.Allow
+			}
+			if slices.Contains(actions, automation.Action(automation.SyncConnector{ConnectorID: owners[arrived.SetID]})) {
+				return automation.Spec{}, nil, status.Errorf(codes.InvalidArgument,
+					"spec_json: node %s syncs the connector whose documents its trigger waits on, so each run would start another: start it on a schedule instead", n.ID)
 			}
 		}
 	}

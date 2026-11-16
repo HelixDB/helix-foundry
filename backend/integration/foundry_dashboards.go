@@ -23,7 +23,7 @@ const (
 
 // dashboardSpecDoc says what a spec is, for the tools' and the operations' descriptions.
 const dashboardSpecDoc = `A spec is {"v": 1, "tiles": [...], "layout": {"rows": [["t1", "t2"], ["t3"]]}}: at most 20 tiles, each in exactly one row of 1 to 3. ` +
-	`A tile is {"id": "t1" (1 to 32 lowercase letters, digits, - or _), "title": 1 to 80 characters, "ontology_id", ` +
+	`A tile is {"id": "t1" (1 to 32 lowercase letters, digits, - or _, starting with a letter or digit), "title": 1 to 80 characters, "ontology_id", ` +
 	`"load": {"kind": "current"} (whichever load is current when it is viewed) or {"kind": "pinned", "load_id"}, ` +
 	`"query": a typed query, the query read of ` + toolFoundryReadGraph + ` (` + toolFoundryReadGuide + ` gives its schema): at most 200 rows or 100 groups, ` +
 	`"visual": {"kind": "table" | "bar" | "line" | "figure"} or {} to show it as its output suits}. ` +

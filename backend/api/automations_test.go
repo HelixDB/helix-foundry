@@ -103,11 +103,15 @@ func (s *automationStore) GetFoundryOntology(_ context.Context, ws, id string) (
 	return nil, foundrystore.ErrNotFound
 }
 
+// GetFoundryDocumentSet knows set-1, a person's, and set-notes, which con-1's syncs write.
 func (s *automationStore) GetFoundryDocumentSet(_ context.Context, ws, id string) (*foundrymodel.FoundryDocumentSet, error) {
-	if ws != "ws-1" || id != "set-1" {
-		return nil, foundrystore.ErrNotFound
+	switch {
+	case ws == "ws-1" && id == "set-1":
+		return &foundrymodel.FoundryDocumentSet{ID: id, WorkspaceID: ws}, nil
+	case ws == "ws-1" && id == "set-notes":
+		return &foundrymodel.FoundryDocumentSet{ID: id, WorkspaceID: ws, Owner: &foundrymodel.FoundryDocumentSetOwner{ConnectorID: "con-1", Stream: "notes"}}, nil
 	}
-	return &foundrymodel.FoundryDocumentSet{ID: id, WorkspaceID: ws}, nil
+	return nil, foundrystore.ErrNotFound
 }
 
 func (s *automationStore) GetFoundryDashboard(_ context.Context, ws, id string) (*foundrymodel.FoundryDashboard, error) {
@@ -362,6 +366,27 @@ func TestCreateAutomationChecksItsSpec(t *testing.T) {
 		_, err := s.CreateFoundryAutomation(site("user-ada"), req)
 		require.Equal(t, codes.InvalidArgument, status.Code(err))
 	}
+	// A sync of the connector whose syncs write the set its trigger waits on
+	// would set off another run each time, as an action step or an Assistant
+	// step's; a set a person made can't be.
+	onArrival := func(set string) string {
+		return strings.Replace(weeklyAutomation, `{"kind":"schedule","every":"week","weekday":"monday","at":"09:00","time_zone":"Europe/London"}`,
+			`{"kind":"document_arrived","set_id":"`+set+`"}`, 1)
+	}
+	assistantSyncs := strings.Replace(strings.Replace(onArrival("set-notes"), `{"operation":"sync_connector","connector_id":"con-1"}`,
+		`{"operation":"create_load","ontology_id":"ont-1"}`, 1), `"allow":[{"operation":"create_load","ontology_id":"ont-1"}]`,
+		`"allow":[{"operation":"sync_connector","connector_id":"con-1"}]`, 1)
+	for name, c := range map[string]struct{ spec, node string }{
+		"an action step":    {onArrival("set-notes"), "sync"},
+		"an Assistant step": {assistantSyncs, "ask"},
+	} {
+		_, err := s.CreateFoundryAutomation(site("user-ada"), &foundryv1.CreateFoundryAutomationRequest{WorkspaceId: "ws-1", Name: "x", SpecJson: c.spec,
+			ClientToken: "loop-" + name})
+		require.Equal(t, codes.InvalidArgument, status.Code(err), name)
+		require.Equal(t, "spec_json: node "+c.node+" syncs the connector whose documents its trigger waits on, so each run would start another: start it on a schedule instead",
+			status.Convert(err).Message(), name)
+	}
+	createAutomation(t, s, site("user-ada"), onArrival("set-1"))
 	s.deps.Cfg.Foundry.Automations.MaxPerWorkspace = 1
 	_, err = s.CreateFoundryAutomation(site("user-ada"), &foundryv1.CreateFoundryAutomationRequest{WorkspaceId: "ws-1", Name: "x",
 		SpecJson: weeklyAutomation, ClientToken: "fresh"})
