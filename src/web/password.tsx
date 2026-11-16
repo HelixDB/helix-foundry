@@ -124,7 +124,7 @@ export function PasswordSignIn({
       </p>
       <form
         className="hf-gate-body hf-gate-form"
-        aria-label="Sign in with email"
+        aria-label="Sign in"
         onSubmit={(e) => void submit(e)}
       >
         <label className="hf-field">

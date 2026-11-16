@@ -225,7 +225,7 @@ test("signs in through the company's single sign-on when it requires it", async 
 test("signs in with an email and password", async ({ page }) => {
   await page.goto("/data");
   await expect(page).toHaveURL(/\/login\?return_to=%2Fdata$/);
-  const form = page.getByRole("form", { name: "Sign in with email" }),
+  const form = page.getByRole("form", { name: "Sign in" }),
     email = form.getByLabel("Email"),
     password = form.getByLabel("Password"),
     submit = form.getByRole("button", { name: "Sign in" });
@@ -298,7 +298,7 @@ test("creates an account with a password, verifying its email", async ({
   // Verified now: signing in again asks for no code.
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login$/);
-  const form = page.getByRole("form", { name: "Sign in with email" });
+  const form = page.getByRole("form", { name: "Sign in" });
   await form.getByLabel("Email").fill("grace@example.com");
   await form.getByLabel("Password").fill("a-long-password");
   await form.getByRole("button", { name: "Sign in" }).click();
@@ -309,10 +309,13 @@ test("creates an account with a password, verifying its email", async ({
 
 test("resets a password from the emailed link", async ({ page }) => {
   await page.goto("/login");
-  const form = page.getByRole("form", { name: "Sign in with email" });
+  const form = page.getByRole("form", { name: "Sign in" });
   await form.getByLabel("Email").fill("ada@example.com");
   await page.getByRole("link", { name: "Forgot your password?" }).click();
   await expect(page).toHaveURL(/\/login\/forgot\?email=ada%40example\.com$/);
+  await expect(
+    page.getByRole("heading", { name: "Reset your password" }),
+  ).toBeVisible();
   await expect(page.getByLabel("Email")).toHaveValue("ada@example.com");
   await page.getByRole("button", { name: "Email me a link" }).click();
   await expect(
