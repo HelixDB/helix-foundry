@@ -377,15 +377,24 @@ type FoundryServiceClient interface {
 	ListFoundryAutomationRuns(ctx context.Context, in *ListFoundryAutomationRunsRequest, opts ...grpc.CallOption) (*ListFoundryAutomationRunsResponse, error)
 	GetFoundryAutomationRun(ctx context.Context, in *GetFoundryAutomationRunRequest, opts ...grpc.CallOption) (*FoundryAutomationRunResponse, error)
 	CancelFoundryAutomationRun(ctx context.Context, in *CancelFoundryAutomationRunRequest, opts ...grpc.CallOption) (*FoundryAutomationRunResponse, error)
-	// Suggestions for a new automation, written for one ontology's current
-	// version: at most 4 prompts that fill the new automation page's composer
-	// for the person to edit and send, never run. Founder writes them
-	// once per version, on the workspace's cheapest task model (the AI
-	// setting's extraction model), charged to Founder's monthly budget;
-	// until then, and where it can't (no AI provider, Founder off, its
-	// budget or the workspace's 20 writes an hour spent, a failure), they are
-	// made from the version's competency questions. The same callers as the
-	// other automation routes; an ontology the workspace hasn't is NOT_FOUND.
+	// Suggestions for Founder, written for one ontology's current version:
+	// prompts of four kinds (2 questions, 2 dashboards, 2 changes to the
+	// ontology and 4 workflows, in that order) that fill a composer for the
+	// person to edit and send, never run: Founder's new chat shows each
+	// kind's first 2 as cards, the new workflow page the workflows. Founder
+	// writes them once per version in one call, on the workspace's cheapest
+	// task model (the AI setting's extraction model), charged to its monthly
+	// budget. Each kind is filled to its count, in order, from: questions,
+	// the version's competency questions, then the model's; dashboards and
+	// workflows, the model's, then the competency questions'; changes to the
+	// ontology, its open audit findings and the connections and document sets
+	// it doesn't read, then the model's; then fixed examples. So until
+	// Founder has written them (generating), and where it can't (no AI
+	// provider, Founder off, its budget or the workspace's 20 writes an hour
+	// spent, a failure), every kind still has its count. Without a current
+	// version, every kind is fixed examples. Workflows are left out where the
+	// deployment has none. Any signed-in member may read them (a grantee may
+	// not); an ontology the workspace hasn't is NOT_FOUND.
 	ListFoundryAutomationSuggestions(ctx context.Context, in *ListFoundryAutomationSuggestionsRequest, opts ...grpc.CallOption) (*ListFoundryAutomationSuggestionsResponse, error)
 	// Helix Foundry usage: the workspace's AI spend this month, by task
 	//
@@ -2126,15 +2135,24 @@ type FoundryServiceServer interface {
 	ListFoundryAutomationRuns(context.Context, *ListFoundryAutomationRunsRequest) (*ListFoundryAutomationRunsResponse, error)
 	GetFoundryAutomationRun(context.Context, *GetFoundryAutomationRunRequest) (*FoundryAutomationRunResponse, error)
 	CancelFoundryAutomationRun(context.Context, *CancelFoundryAutomationRunRequest) (*FoundryAutomationRunResponse, error)
-	// Suggestions for a new automation, written for one ontology's current
-	// version: at most 4 prompts that fill the new automation page's composer
-	// for the person to edit and send, never run. Founder writes them
-	// once per version, on the workspace's cheapest task model (the AI
-	// setting's extraction model), charged to Founder's monthly budget;
-	// until then, and where it can't (no AI provider, Founder off, its
-	// budget or the workspace's 20 writes an hour spent, a failure), they are
-	// made from the version's competency questions. The same callers as the
-	// other automation routes; an ontology the workspace hasn't is NOT_FOUND.
+	// Suggestions for Founder, written for one ontology's current version:
+	// prompts of four kinds (2 questions, 2 dashboards, 2 changes to the
+	// ontology and 4 workflows, in that order) that fill a composer for the
+	// person to edit and send, never run: Founder's new chat shows each
+	// kind's first 2 as cards, the new workflow page the workflows. Founder
+	// writes them once per version in one call, on the workspace's cheapest
+	// task model (the AI setting's extraction model), charged to its monthly
+	// budget. Each kind is filled to its count, in order, from: questions,
+	// the version's competency questions, then the model's; dashboards and
+	// workflows, the model's, then the competency questions'; changes to the
+	// ontology, its open audit findings and the connections and document sets
+	// it doesn't read, then the model's; then fixed examples. So until
+	// Founder has written them (generating), and where it can't (no AI
+	// provider, Founder off, its budget or the workspace's 20 writes an hour
+	// spent, a failure), every kind still has its count. Without a current
+	// version, every kind is fixed examples. Workflows are left out where the
+	// deployment has none. Any signed-in member may read them (a grantee may
+	// not); an ontology the workspace hasn't is NOT_FOUND.
 	ListFoundryAutomationSuggestions(context.Context, *ListFoundryAutomationSuggestionsRequest) (*ListFoundryAutomationSuggestionsResponse, error)
 	// Helix Foundry usage: the workspace's AI spend this month, by task
 	//

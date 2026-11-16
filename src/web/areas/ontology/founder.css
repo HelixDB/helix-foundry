@@ -49,3 +49,173 @@
   line-height: 1.45;
   text-align: center;
 }
+
+/* The new chat's suggestions (founder-suggestions.tsx): the kit's tabs as
+   one segmented row of equal kinds, the chosen one tinted, then that kind's
+   cards in two columns. Both stand on the dots on their own ground. */
+.fd-suggest {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hf-space-1);
+  min-width: 0;
+  margin-top: var(--hf-space-05);
+}
+.fd-kinds {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+}
+.fd-kinds .hf-tab {
+  justify-content: center;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--hf-radius);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  transition:
+    background-color var(--hf-duration) var(--hf-ease),
+    color var(--hf-duration) var(--hf-ease);
+}
+.fd-kinds .hf-tab > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fd-kinds .hf-tab > svg {
+  flex: none;
+}
+.fd-kinds .hf-tab:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.fd-kinds .hf-tab.is-active {
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.fd-kinds .hf-tab.is-active::after {
+  display: none;
+}
+.fd-kinds .hf-tab:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: -2px;
+}
+.fd-kind-panel {
+  padding-top: 0;
+}
+.fd-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--hf-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-cards > li {
+  display: flex;
+  min-width: 0;
+}
+.fd-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--hf-space-15);
+  min-width: 0;
+  min-height: 112px;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  color: var(--hf-text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--hf-duration) var(--hf-ease),
+    background-color var(--hf-duration) var(--hf-ease),
+    color var(--hf-duration) var(--hf-ease);
+}
+.fd-card:hover {
+  border-color: var(--hf-border-strong);
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.fd-card:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 1px;
+}
+.fd-card-prompt {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: var(--hf-text-base);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+}
+.fd-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hf-space-1);
+  min-width: 0;
+}
+.fd-card-topic {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  max-width: 60%;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.fd-card-topic > svg {
+  flex: none;
+  color: var(--hf-accent-text);
+}
+.fd-card-topic > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-card-ontology {
+  min-width: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-sunken);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Where cards are still coming: their shapes, as tall as a card. */
+.fd-card-skeleton {
+  flex: 1;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+}
+/* A phone: the kinds scroll within their row, the cards stack. */
+@media (max-width: 640px) {
+  .fd-kinds {
+    grid-auto-columns: minmax(max-content, 1fr);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  .fd-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .fd-card {
+    min-height: 0;
+  }
+}

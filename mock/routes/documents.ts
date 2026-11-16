@@ -698,6 +698,10 @@ export function documentCount(workspaceId: string, ontologyId: string) {
 
 // ---------------------------------------------------------------- Shapes
 
+/** A workspace's live sets as the WFE lists them (for ./automation-suggestions.ts). */
+export const listedSets = (workspaceId: string) =>
+  documentSets(workspaceId).map(toSet);
+
 function toSet(s: StoredSet): FoundryDocumentSet {
   const allowance = allowanceOf(s);
   return {

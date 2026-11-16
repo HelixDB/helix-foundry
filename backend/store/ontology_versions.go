@@ -112,20 +112,37 @@ VALUES (?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, CAST(? AS JSON), ?)`,
 // workspace-foundry-documents step stores for it. ErrNotFound means the
 // ontology has no such version.
 func (s *mysqlDB) GetOntologyVersionScope(ctx context.Context, ontologyID, versionID string) ([]string, error) {
-	var raw sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT document_set_ids FROM foundry_ontology_versions WHERE id=? AND ontology_id=?`,
-		versionID, ontologyID).Scan(&raw); err != nil {
+	sources, err := s.GetOntologyVersionSources(ctx, ontologyID, versionID)
+	if err != nil {
+		return nil, err
+	}
+	return sources.DocumentSetIDs, nil
+}
+
+// GetOntologyVersionSources returns the generation that drafted a version
+// of the ontology and the document sets it reads (as
+// GetOntologyVersionScope), never reading its definition. ErrNotFound
+// means the ontology has no such version.
+func (s *mysqlDB) GetOntologyVersionSources(ctx context.Context, ontologyID, versionID string) (*model.OntologyVersionSources, error) {
+	var generation, raw sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT generation_id, document_set_ids FROM foundry_ontology_versions WHERE id=? AND ontology_id=?`,
+		versionID, ontologyID).Scan(&generation, &raw); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	out := &model.OntologyVersionSources{}
+	if generation.Valid {
+		out.GenerationID = &generation.String
 	}
 	stored, err := decodeDocumentSetIDs(raw)
 	if err != nil {
 		return nil, err
 	}
 	if stored != nil {
-		return *stored, nil
+		out.DocumentSetIDs = *stored
+		return out, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM foundry_document_sets WHERE ontology_id=? AND live_key=1 ORDER BY created_at, id`,
 		ontologyID)
@@ -133,15 +150,15 @@ func (s *mysqlDB) GetOntologyVersionScope(ctx context.Context, ontologyID, versi
 		return nil, err
 	}
 	defer rows.Close()
-	scope := []string{}
+	out.DocumentSetIDs = []string{}
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		scope = append(scope, id)
+		out.DocumentSetIDs = append(out.DocumentSetIDs, id)
 	}
-	return scope, rows.Err()
+	return out, rows.Err()
 }
 
 // GetOntologyVersionMappings returns an agent draft's mappings.toml without

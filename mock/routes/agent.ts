@@ -1516,6 +1516,7 @@ const INTENTS: readonly (readonly [RegExp, Intent])[] = [
  * first of INTENTS, else a load that isn't a question.
  */
 function intentOf(
+  ws: string,
   t: string,
   automated: AutomationAsk | undefined,
   asked: DashboardAsk | undefined,
@@ -1524,13 +1525,66 @@ function intentOf(
   if (/\bdashboard\b/i.test(t) && /\b(build|make|create)\b/i.test(t))
     return "create_dashboard";
   if (asked) return asked.operation;
-  const listed = INTENTS.find(([words]) => words.test(t));
+  // A question of the data may say "current" ("each contact's current
+  // title"): it isn't a make-current.
+  const listed = INTENTS.find(
+    ([words, intent]) =>
+      words.test(t) &&
+      !(intent === "set_current_version" && asksData(ws, t)),
+  );
   if (listed) return listed[1];
   return /\b(re)?load\b/i.test(t) &&
     !/\b(how many|which|what|when|why)\b/i.test(t)
     ? "create_load"
     : undefined;
 }
+
+/**
+ * Where the mock's Founder sends a message: an operation's intent, with
+ * the automation or dashboard ask it named; "setup_questions" (what it
+ * asks first); "ask_dashboard" (the Analyst asked, its answer's charts made
+ * a dashboard); "ask" (a question of the data) or "describe". messageScript
+ * runs it; the unit tests send Founder's suggestions through it
+ * (messageIntent).
+ */
+function messageRoute(a: Pick<Ask, "ws" | "text" | "page">, manager: boolean) {
+  const t = a.text;
+  const board = a.page?.dashboardId
+      ? storedDashboard(a.ws, a.page.dashboardId)
+      : undefined,
+    asked = (board && dashboardAsk(t)) || undefined;
+  // What the Assistant needs to know first, asked in the dock.
+  if (manager && /\bset ?up\b.*\bontolog|\bhelp me\b.*\bontolog/i.test(t))
+    return { intent: "setup_questions" as const };
+  const automated = automationAsk(a.ws, t, !!a.page?.newAutomation);
+  // A dashboard of what the data says (which invoices, how many, what they
+  // show): the Analyst asked first, its answer's charts made a dashboard.
+  // Asking is a read, and a member makes their own dashboards.
+  if (
+    !automated &&
+    !asked &&
+    /\bdashboards?\b/i.test(t) &&
+    /\b(which|shows?|unpaid|overdue|billed|how many)\b/i.test(t)
+  )
+    return { intent: "ask_dashboard" as const };
+  const intent = intentOf(a.ws, t, automated, asked);
+  if (intent) return { intent, automated, board, asked };
+  // A question of the data goes to the Analyst (while a load holds it);
+  // anything else is read with the read tools and answered.
+  return {
+    intent: asksData(a.ws, t) ? ("ask" as const) : ("describe" as const),
+  };
+}
+
+/**
+ * Where the mock's Founder sends a message an owner or admin writes on
+ * Founder's page of `ontologyId`: an operation it prepares (or makes, a
+ * dashboard), a question for the Analyst ("ask", or "ask_dashboard" for a
+ * dashboard of its answer), or "describe".
+ */
+export const messageIntent = (ws: string, text: string, ontologyId = "") =>
+  messageRoute({ ws, text, page: ontologyId ? { ontologyId } : null }, true)
+    .intent;
 
 /** What the agent does with a person's message. */
 function messageScript(a: Ask, who: Who): Step[] {
@@ -1543,26 +1597,23 @@ function messageScript(a: Ask, who: Who): Step[] {
     })),
   ];
   const t = a.text;
-  const board = a.page?.dashboardId
-      ? storedDashboard(a.ws, a.page.dashboardId)
-      : undefined,
-    asked = board && dashboardAsk(t);
-  // What the Assistant needs to know first, asked in the dock.
-  if (manager && /\bset ?up\b.*\bontolog|\bhelp me\b.*\bontolog/i.test(t))
+  const route = messageRoute(a, manager);
+  if (route.intent === "setup_questions")
     return [started, ...list, ...setupQuestions(a)];
-  const automated = automationAsk(a.ws, t, !!a.page?.newAutomation);
-  // A dashboard of what the data says (which invoices, how many, what they
-  // show): the Analyst asked first, its answer's charts made a dashboard.
-  // Asking is a read, and a member makes their own dashboards.
-  if (
-    !automated &&
-    !asked &&
-    /\bdashboards?\b/i.test(t) &&
-    /\b(which|shows?|unpaid|overdue|billed|how many)\b/i.test(t)
-  )
+  if (route.intent === "ask_dashboard")
     return [started, ...list, ...askDashboard(a, who)];
-  const intent = intentOf(t, automated, asked || undefined);
-  if (intent && !manager && !MEMBER_OPERATIONS.includes(intent))
+  if (route.intent === "ask" || route.intent === "describe") {
+    // A question of the data, about invoices, customers or accounts, of an
+    // ontology with a current load, goes to the Analyst.
+    const o = route.intent === "ask" ? dashboardOntology(a) : undefined;
+    return [
+      started,
+      ...list,
+      ...(o && currentLoadId(o.id) ? askData(a, o, who) : describe(a)),
+    ];
+  }
+  const { intent, automated, board, asked } = route;
+  if (!manager && !MEMBER_OPERATIONS.includes(intent))
     return [
       started,
       ...list,
@@ -1610,16 +1661,6 @@ function messageScript(a: Ask, who: Who): Step[] {
     case "publish_dashboard":
     case "unpublish_dashboard":
       return [started, ...onDashboard(a, board!, asked!)];
-    case undefined: {
-      // A question of the data, about invoices, customers or accounts, of an
-      // ontology with a current load, goes to the Analyst.
-      const o = asksData(t) ? dashboardOntology(a) : undefined;
-      return [
-        started,
-        ...list,
-        ...(o && currentLoadId(o.id) ? askData(a, o, who) : describe(a)),
-      ];
-    }
   }
   const found = ontologyFor(
     a.ws,
@@ -2638,10 +2679,18 @@ function aroundAnswer(asked: Asked, o: StoredOntology, who: Who) {
   }
 }
 
-/** Whether a message asks the data about invoices, customers or accounts. */
-const asksData = (text: string) =>
-  /\b(which|how many|what|who|show)\b/i.test(text) &&
-  /\b(invoices?|customers?|accounts?)\b/i.test(text);
+/**
+ * Whether a message asks the data: about invoices, customers, accounts,
+ * contracts or people, or a question that names one of the workspace's
+ * ontologies ("What does Renewals hold? List its types.").
+ */
+const asksData = (ws: string, text: string) =>
+  (/\b(which|how many|what|who|show)\b/i.test(text) &&
+    /\b(invoices?|customers?|accounts?|contracts?|contacts?|people|compan(?:y|ies))\b/i.test(
+      text,
+    )) ||
+  (/^\s*(which|what|who|how|when|where|are|is|do|does)\b[^]*\?/i.test(text) &&
+    !!named(ws, text));
 
 /** A question of the data: the Analyst's answer, and a sentence around it. */
 function askData(a: Ask, o: StoredOntology, who: Who): Step[] {
@@ -2676,7 +2725,7 @@ function granteeScript(a: Ask): Step[] {
   const dashboard = askedForDashboard(t),
     // What it asks of a dashboard, on its page or naming one.
     change = a.page?.dashboardId || dashboard ? dashboardAsk(t) : undefined,
-    intent = intentOf(t, automationAsk(a.ws, t, false), change);
+    intent = intentOf(a.ws, t, automationAsk(a.ws, t, false), change);
   if (intent === "relay_questions")
     return [
       started,
@@ -3194,10 +3243,15 @@ function automationAsk(
       kind: `${op as "pause" | "resume" | "delete" | "run"}_automation`,
       automation: named,
     };
-  // On the page that starts one, whatever the person writes describes it.
+  // On the page that starts one, whatever the person writes describes it;
+  // elsewhere a schedule ("Every night at 2am, …") or an event it starts on
+  // ("When new documents arrive, …") does.
   return creating ||
     /\bautomat(e|ion)\b/i.test(text) ||
-    /\bevery\s+(hour|day|morning|weekday|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(
+    /\bevery\s+(hour|day|morning|evening|night|weekday|weekend|week|month|quarter|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(
+      text,
+    ) ||
+    /^\s*(when|whenever)\b[^.?!]*\b(arrives?|(?:are|is|gets?) uploaded|(?:are|is|gets?) added|(?:are|is) ready|finish(?:es)?|ends?|fails?|succeeds?)\b/i.test(
       text,
     )
     ? { kind: "create_automation" }

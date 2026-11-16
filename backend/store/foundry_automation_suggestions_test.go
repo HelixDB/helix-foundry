@@ -16,7 +16,7 @@ import (
 )
 
 var suggestionsReady = model.FoundryAutomationSuggestionsEnd{
-	Suggestions: json.RawMessage(`[{"title":"Renewal radar","prompt":"Every Monday, list renewals.","icon":"watch"}]`),
+	Suggestions: json.RawMessage(`[{"kind":"workflow","title":"Renewal radar","prompt":"Every Monday, list renewals.","topic":"Renewals","icon":"watch"}]`),
 }
 
 // suggestionQuestions are the competency questions a row is queued with.
@@ -329,4 +329,42 @@ func TestFoundryAutomationSuggestionsGoWithTheirOntologyAndWorkspace(t *testing.
 	assert.ErrorIs(t, err, store.ErrNotFound, "deleting the workspace deletes them")
 	_, err = db.GetFoundryAutomationSuggestions(ctx, elsewhere.ID, suggestionVersion(1))
 	require.NoError(t, err, "another workspace's stay")
+}
+
+// A version's sources are the generation that drafted it and its scope,
+// read without its definition; a legacy version's scope is its ontology's
+// live sets, as GetOntologyVersionScope reads it.
+func TestFoundryOntologyVersionSources(t *testing.T) {
+	ctx := context.Background()
+	f := newFoundryFixture(t, "VSRC")
+	general := generalSetID(f.ontology.ID)
+	generation := id26("FG-VSRC")
+	v := &model.OntologyVersion{
+		ID: id26("FV-VSRC"), WorkspaceID: f.ontology.WorkspaceID, OntologyID: f.ontology.ID, Source: model.OntologySourceGenerated,
+		Format: model.OntologyFormatAgentBundle, Definition: json.RawMessage(`{"huge":true}`), GenerationID: &generation, DocumentSetIDs: &[]string{general},
+	}
+	require.NoError(t, f.db.CreateOntologyVersion(ctx, v))
+	got, err := f.db.GetOntologyVersionSources(ctx, f.ontology.ID, v.ID)
+	require.NoError(t, err)
+	assert.Equal(t, &model.OntologyVersionSources{GenerationID: &generation, DocumentSetIDs: []string{general}}, got)
+
+	manual := f.version(t, "VSRC-manual")
+	got, err = f.db.GetOntologyVersionSources(ctx, f.ontology.ID, manual)
+	require.NoError(t, err)
+	assert.Nil(t, got.GenerationID, "a version no generation drafted")
+	assert.Equal(t, []string{general}, got.DocumentSetIDs)
+
+	_, err = testDB.Exec(`UPDATE foundry_ontology_versions SET document_set_ids=NULL WHERE id=?`, manual)
+	require.NoError(t, err)
+	got, err = f.db.GetOntologyVersionSources(ctx, f.ontology.ID, manual)
+	require.NoError(t, err)
+	assert.Equal(t, []string{}, got.DocumentSetIDs, "legacy: the ontology's live sets, none here")
+	scope, err := f.db.GetOntologyVersionScope(ctx, f.ontology.ID, manual)
+	require.NoError(t, err)
+	assert.Equal(t, scope, got.DocumentSetIDs)
+
+	_, err = f.db.GetOntologyVersionSources(ctx, f.ontology.ID, id26("FV-VSRC-none"))
+	assert.ErrorIs(t, err, store.ErrNotFound)
+	_, err = f.db.GetOntologyVersionSources(ctx, id26("FO-VSRC-other"), v.ID)
+	assert.ErrorIs(t, err, store.ErrNotFound, "another ontology's version")
 }

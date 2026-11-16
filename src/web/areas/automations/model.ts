@@ -1085,13 +1085,19 @@ const ICONS: Record<FoundryAutomationSuggestionIcon, SuggestionIcon> = {
 };
 
 /**
- * A response's suggestions, read without trust (a model may have written
- * them): each with a title and a prompt within the WFE's limits once
- * trimmed, at most 4, its icon "report" when unknown.
+ * A response's workflow suggestions, read without trust (a model may have
+ * written them): those of kind WORKFLOW, or of none (a WFE before kinds,
+ * whose suggestions are all workflows; Founder's other kinds are its new
+ * chat's, founder-model.ts), and not the fixed examples the WFE fills the
+ * kind with (the page has its own, AUTOMATION_SUGGESTIONS), each with a
+ * title and a prompt within the WFE's limits once trimmed, at most 4, its
+ * icon "report" when unknown.
  *
  * @example
  * readSuggestions({ suggestions: [{ title: " Renewal radar ", prompt: "Every day…", icon: "FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH" }, { title: "", prompt: "x" }] });
  * // [{ title: "Renewal radar", prompt: "Every day…", icon: "watch" }]
+ * readSuggestions({ suggestions: [{ title: "Q", prompt: "Who renews?", kind: "FOUNDRY_AUTOMATION_SUGGESTION_KIND_QUESTION" }] });
+ * // []
  */
 export function readSuggestions(
   r?: ListAutomationSuggestionsResponse,
@@ -1102,6 +1108,13 @@ export function readSuggestions(
   return list
     .flatMap((x) => {
       if (!isRecord(x)) return [];
+      if (
+        (x.kind !== undefined &&
+          x.kind !== "FOUNDRY_AUTOMATION_SUGGESTION_KIND_UNSPECIFIED" &&
+          x.kind !== "FOUNDRY_AUTOMATION_SUGGESTION_KIND_WORKFLOW") ||
+        x.source === "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_FIXED"
+      )
+        return [];
       const title = typeof x.title === "string" ? x.title.trim() : "",
         prompt = typeof x.prompt === "string" ? x.prompt.trim() : "";
       if (

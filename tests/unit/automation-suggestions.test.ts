@@ -16,9 +16,10 @@ import {
 import { ontologyVersion } from "../../mock/routes/ontology";
 import { config, db, resetState } from "../../mock/state";
 
-// The new automation page's suggestions: which ontology they are for, what
+// The new workflow page's suggestions: which ontology they are for, what
 // shows while they come, a response read without trust, and the mock's
-// route, which answers as the backend's does.
+// route's workflows, which it answers as the backend's does (Founder's other
+// kinds: founder-suggestions.test.ts).
 
 const WATCH = "FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH";
 
@@ -253,8 +254,20 @@ describe("the mock's route", () => {
       `/v1/workspaces/${ws}/foundry/automation-suggestions?ontologyId=${ontologyId}`,
     );
   const later = (ms: number) => vi.setSystemTime(Date.now() + ms);
+  /** The workflows' titles: the route's last kind. */
   const titles = (r: { body: any }) =>
-    (r.body.suggestions || []).map((x: { title: string }) => x.title);
+    (r.body.suggestions || [])
+      .filter(
+        (x: { kind: string }) =>
+          x.kind === "FOUNDRY_AUTOMATION_SUGGESTION_KIND_WORKFLOW",
+      )
+      .map((x: { title: string }) => x.title);
+  const FIXED = [
+    "Monday brief",
+    "Fresh data daily",
+    "Load check",
+    "New documents digest",
+  ];
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -270,9 +283,11 @@ describe("the mock's route", () => {
       generating: true,
       versionId: "ver_renewals_1",
     });
+    // The competency questions', then the fixed ones to make 4.
     expect(titles(first)).toEqual([
       "Customers are under contract",
       "Each customer under contract",
+      ...FIXED.slice(0, 2),
     ]);
     later(1500);
     const ready = await get("ont_acme_renewals");
@@ -286,7 +301,7 @@ describe("the mock's route", () => {
       "Invoice watch",
       "Monday contracts brief",
     ]);
-    expect(ready.body.suggestions[0].prompt).toContain("in Renewals");
+    expect(ready.body.suggestions.at(-4).prompt).toContain("in Renewals");
   });
 
   it("writes people's for a graph of people, at once with no wait", async () => {
@@ -321,7 +336,11 @@ describe("the mock's route", () => {
       source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS",
       generating: false,
     });
-    expect(titles(r)).toHaveLength(2);
+    expect(titles(r)).toEqual([
+      "Customers are under contract",
+      "Each customer under contract",
+      ...FIXED.slice(0, 2),
+    ]);
   });
 
   it.each([[{ automationSuggestionsAi: false }], [{ agentEnabled: false }]])(
@@ -360,14 +379,15 @@ describe("the mock's route", () => {
   it("fails a version with nothing to write from, never ready with none", async () => {
     ontologyVersion("ont_acme_contracts", "ver_seed_1")!.definition = {};
     Object.assign(config, { automationSuggestionsMs: 0 });
-    expect((await get("ont_acme_contracts")).body).toMatchObject({
-      suggestions: [],
-      source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED",
+    const r = await get("ont_acme_contracts");
+    expect(r.body).toMatchObject({
+      source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_FIXED",
       generating: false,
     });
+    expect(titles(r)).toEqual(FIXED);
   });
 
-  it("has none for an ontology without a current version, and writes none", async () => {
+  it("has the fixed ones for an ontology without a current version, and writes none", async () => {
     const made = await call(
       "POST",
       "/v1/workspaces/ws_acme/foundry/ontologies",
@@ -379,12 +399,14 @@ describe("the mock's route", () => {
     );
     const id = made.body.ontology.id as string;
     for (let i = 0; i < 2; i++) {
-      expect((await get(id)).body).toEqual({
-        suggestions: [],
-        source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED",
+      const r = await get(id);
+      expect(r.body).toMatchObject({
+        source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_FIXED",
         generating: false,
         versionId: "",
       });
+      expect(titles(r)).toEqual(FIXED);
+      expect(r.body.suggestions).toHaveLength(10);
       later(5000);
     }
   });
@@ -407,24 +429,26 @@ describe("the mock's route", () => {
     expect(r.body.code).toBe(5);
   });
 
-  it("has none to give a Definition v1 until written", async () => {
+  it("has only the fixed ones to give a Definition v1 until written", async () => {
     const r = await get("ont_acme_contracts");
     expect(r.body).toMatchObject({
-      suggestions: [],
-      source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED",
+      source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_FIXED",
       generating: true,
       versionId: "ver_seed_1",
     });
+    expect(titles(r)).toEqual(FIXED);
     later(1500);
     expect(titles(await get("ont_acme_contracts"))).toContain("Invoice watch");
   });
 
-  it("refuses what the backend refuses", async () => {
+  it("refuses what the backend refuses, and leaves workflows out while they are off", async () => {
     expect((await get("")).status).toBe(400);
     expect((await get("ont_nope")).status).toBe(404);
     Object.assign(config, { automationsDisabled: true });
     const off = await get("ont_acme_renewals");
-    expect(off.body.details?.[0]?.reason).toBe("FOUNDRY_AUTOMATIONS_DISABLED");
+    expect(off.status).toBe(200);
+    expect(titles(off)).toEqual([]);
+    expect(off.body.suggestions).toHaveLength(6);
   });
 });
 
@@ -471,7 +495,7 @@ describe("the mock's route on a local install without an AI provider", () => {
         source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS",
         generating: false,
       });
-      expect(got.body.suggestions).toHaveLength(2);
+      expect(got.body.suggestions).toHaveLength(10);
       vi.setSystemTime(Date.now() + 5000);
     }
   });
