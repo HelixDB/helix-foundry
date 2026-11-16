@@ -621,6 +621,11 @@ describe("a workflow's runs list", () => {
     expect(runShown(named, q({ issue: "no health score" }))).toBe(true);
     expect(runShown(named, q({ issue: "add a health_score" }))).toBe(true);
     expect(runShown(plain, q({ issue: "no health score" }))).toBe(false);
+    // A run that never called the ontology named no gap, whatever its old
+    // assessment said, as the insights count it.
+    const silent = { ...named, counts: { accesses: 0 } };
+    expect(runShown(silent, q({ issue: "no health score" }))).toBe(false);
+    expect(runShown(silent, q({ filter: "not_called" }))).toBe(true);
     expect(starterOf(named)).toEqual(k1);
     expect(starterOf(plain)).toEqual({ kind: "KIND_USER", id: "u1" });
     expect(principalKey(k1)).toBe("KIND_SERVICE_CREDENTIAL:k1");

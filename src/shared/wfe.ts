@@ -3953,6 +3953,9 @@ export type FoundryAutomationRunOntology = {
   assessmentStatus?: string;
   // Once done: essential, helpful, marginal, unused or misleading.
   verdict?: string;
+  // Finished without a read or question of the ontology: not assessed, so
+  // no assessmentStatus or verdict.
+  neverCalled?: boolean;
 };
 
 /**
@@ -3969,6 +3972,8 @@ export type FoundryAutomationOntology = {
   // int64 as strings.
   runs?: string;
   finishedRuns?: string;
+  // Of finishedRuns, those with no read or question of it: not assessed.
+  neverCalledRuns?: string;
   lastRunAt?: string | null;
   verdicts?: FoundryWorkflowVerdictCount[];
   // What the ontology lacked, as the newest assessed run named it, at most

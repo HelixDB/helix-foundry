@@ -3072,6 +3072,10 @@ message FoundryAutomationOntology {
   string untracked = 9;
   // When the latest run went on untracked.
   google.protobuf.Timestamp untracked_at = 10;
+  // Of finished_runs, those that recorded no read or question of it (a run
+  // may use it otherwise, by loading it or publishing its dashboard): they
+  // aren't assessed.
+  int64 never_called_runs = 11;
 }
 
 // FoundryAutomationRunCounts counts runs started within some days: every
@@ -3158,6 +3162,9 @@ message FoundryAutomationRunOntology {
   string assessment_status = 6;
   // Once done: essential, helpful, marginal, unused or misleading.
   string verdict = 7;
+  // The workflow run finished without a read or question of the ontology:
+  // it isn't assessed, and has no assessment status or verdict.
+  bool never_called = 8;
 }
 
 // FoundryAutomationRunNode is one step of a run, the spec's node node_id.

@@ -1206,7 +1206,7 @@ export function WorkflowRunPage() {
 // automation's runs pass it themselves.
 const noCallsText = (automation: boolean) =>
   automation
-    ? "The workflow’s run made no call to this ontology, so it isn’t assessed and doesn’t count toward how much the ontology helped."
+    ? "The workflow’s run made no read or question of this ontology, so it isn’t assessed and doesn’t count toward how much the ontology helped. It may have used the ontology otherwise, such as by loading it."
     : "The agent made no call to the ontology with this run’s ID, so it isn’t assessed and doesn’t count toward how much the ontology helped. If it did call the ontology, check that it passes the run’s ID as use_case_run_id on each call.";
 
 function AccessItem({ view: v }: { view: AccessView }) {

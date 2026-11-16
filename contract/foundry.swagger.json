@@ -9033,6 +9033,11 @@
           "type": "string",
           "format": "date-time",
           "description": "When the latest run went on untracked."
+        },
+        "neverCalledRuns": {
+          "type": "string",
+          "format": "int64",
+          "description": "Of finished_runs, those that recorded no read or question of it (a run\nmay use it otherwise, by loading it or publishing its dashboard): they\naren't assessed."
         }
       },
       "description": "FoundryAutomationOntology is an ontology an automation's runs use: its\nworkflow of the automation's, with its runs and their verdicts, or why\nFoundry records none of them."
@@ -9231,6 +9236,10 @@
         "verdict": {
           "type": "string",
           "description": "Once done: essential, helpful, marginal, unused or misleading."
+        },
+        "neverCalled": {
+          "type": "boolean",
+          "description": "The workflow run finished without a read or question of the ontology:\nit isn't assessed, and has no assessment status or verdict."
         }
       },
       "description": "FoundryAutomationRunOntology is an ontology one run of an automation used,\nand how much it helped: the run of the automation's workflow of it."

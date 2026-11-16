@@ -154,7 +154,10 @@ func TestFoundryAutomationWorkflowRuns(t *testing.T) {
 	})
 
 	t.Run("cancelling a run finishes its workflow runs unassessed", func(t *testing.T) {
-		_, err := f.db.CancelFoundryAutomationRun(ctx, f.workspaceID, second.ID, model.FoundryAutomationActor{UserID: automationOwner})
+		// It made a call: only the cancel keeps it unassessed.
+		_, err := f.db.RecordFoundryWorkflowAccess(ctx, next.ID, &model.FoundryWorkflowQuestion{LoadID: id26("L1"), QuestionID: id26("Q2")})
+		require.NoError(t, err)
+		_, err = f.db.CancelFoundryAutomationRun(ctx, f.workspaceID, second.ID, model.FoundryAutomationActor{UserID: automationOwner})
 		require.NoError(t, err)
 		ended, err := f.db.GetFoundryAutomationWorkflowRun(ctx, second.ID, f.sales.ID)
 		require.NoError(t, err)
@@ -286,6 +289,8 @@ VALUES (?, ?, ?, ?, 'done', 'unused', '{"verdict":"unused","gaps":[{"kind":"othe
 	require.NoError(t, err)
 	require.Len(t, all[f.automation.ID], 1)
 	tracked := all[f.automation.ID][0].Tracking.(model.FoundryAutomationTracked)
+	assert.EqualValues(t, 3, tracked.Workflow.FinishedRuns)
+	assert.EqualValues(t, 1, tracked.Workflow.NeverCalledRuns, "the run that made no call")
 	assert.Equal(t, map[string]int64{"helpful": 1, "unused": 1}, tracked.Verdicts)
 	latest, err := f.db.LatestFoundryWorkflowAssessments(ctx, []string{tracked.Workflow.ID, id26("FW-NONE")})
 	require.NoError(t, err)
@@ -340,6 +345,9 @@ func TestFoundryAutomationWorkflowRunsEndWithTheWorkspace(t *testing.T) {
 	f := newAutomationWorkflowFixture(t, "AWD")
 	run := f.claim(t, 1)
 	r, err := f.use(run, f.sales)
+	require.NoError(t, err)
+	// It made a call: only the workspace's end keeps it unassessed.
+	_, err = f.db.RecordFoundryWorkflowAccess(ctx, r.ID, &model.FoundryWorkflowQuestion{LoadID: id26("L1"), QuestionID: id26("Q1")})
 	require.NoError(t, err)
 	require.NoError(t, f.db.WithTx(ctx, func(tx store.Store) error { return tx.CancelWorkspaceFoundryWork(ctx, f.workspaceID) }))
 	ended, err := f.db.GetFoundryWorkflowRun(ctx, f.sales.ID, r.ID)

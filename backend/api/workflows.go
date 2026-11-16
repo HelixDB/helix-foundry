@@ -607,7 +607,10 @@ func foundryWorkflowRunToProto(r *foundrymodel.FoundryWorkflowRun, a *foundrymod
 	case access.PrincipalServiceCredential:
 		out.StartedByServiceCredentialId = r.StartedBy.ID
 	}
-	if a != nil {
+	// A run that finished without a call to the ontology isn't assessed: an
+	// assessment of it from before such runs went unassessed says nothing
+	// of the ontology, and one skipped as it was is no news.
+	if a != nil && (r.Finished == nil || c.Accesses > 0) {
 		out.Assessment = &foundryv1.FoundryWorkflowAssessment{
 			Status: string(a.Status), Verdict: a.Verdict, AssessmentJson: string(a.Assessment), LeftOut: a.LeftOut,
 			Error: a.Error, UsdMicros: a.USDMicros, QueuedAt: timestamppb.New(a.QueuedAt),

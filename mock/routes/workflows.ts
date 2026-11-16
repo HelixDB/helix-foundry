@@ -415,8 +415,11 @@ function toRun(r: StoredRun): FoundryWorkflowRun {
   settle(r);
   const count = (k: keyof FoundryWorkflowAccess) =>
     r.accesses.filter((a) => a[k]).length;
+  // A run that never called the ontology shows no assessment (an old one).
   const assessment =
-    r.assessment && (({ startsAt: _, endsAt: __, ...a }) => a)(r.assessment);
+    r.assessment &&
+    !neverCalled(r) &&
+    (({ startsAt: _, endsAt: __, ...a }) => a)(r.assessment);
   return {
     id: r.id,
     workflowId: r.workflowId,
@@ -802,6 +805,10 @@ export function automationOntologies(
       workflowId: w.id,
       runs: shown.runs,
       finishedRuns: shown.finishedRuns,
+      neverCalledRuns: String(
+        state.runs.filter((r) => r.workflowId === w.id && neverCalled(r))
+          .length,
+      ),
       ...(shown.lastRunAt && { lastRunAt: shown.lastRunAt }),
       ...(shown.verdicts && {
         verdicts: [...shown.verdicts].sort(
@@ -844,8 +851,12 @@ export function automationRunOntologies(
           workflowId: r.workflowId,
           workflowRunId: r.id,
           status: r.status,
-          ...(r.assessment && { assessmentStatus: r.assessment.status }),
-          ...(r.assessment?.verdict && { verdict: r.assessment.verdict }),
+          ...(neverCalled(r)
+            ? { neverCalled: true }
+            : {
+                ...(r.assessment && { assessmentStatus: r.assessment.status }),
+                ...(r.assessment?.verdict && { verdict: r.assessment.verdict }),
+              }),
         },
       ];
     })

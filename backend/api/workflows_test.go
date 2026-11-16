@@ -878,6 +878,16 @@ func TestFoundryWorkflowAssessments(t *testing.T) {
 		if len(w.GetWorkflow().GetVerdicts()) != 0 {
 			t.Fatalf("verdicts = %+v", w.GetWorkflow().GetVerdicts())
 		}
+		// Nor does the run show it, read alone or listed.
+		got := must(s.GetFoundryWorkflowRun(asPerson(), &foundryv1.GetFoundryWorkflowRunRequest{
+			WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: run.GetWorkflowId(), Id: run.GetId(),
+		}))
+		listed := must(s.ListFoundryWorkflowRuns(asPerson(), &foundryv1.ListFoundryWorkflowRunsRequest{
+			WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: run.GetWorkflowId(),
+		}))
+		if got.GetRun().GetAssessment() != nil || listed.GetRuns()[0].GetAssessment() != nil {
+			t.Fatalf("run = %+v, listed = %+v", got.GetRun().GetAssessment(), listed.GetRuns()[0].GetAssessment())
+		}
 		// An open run that made none yet may still: it says so.
 		open := startRun(t, s, "open")
 		_, err = assess(s, open)
@@ -889,7 +899,10 @@ func TestFoundryWorkflowAssessments(t *testing.T) {
 	t.Run("where they are off, none is queued or asked for", func(t *testing.T) {
 		s, store := workflowService(t)
 		s.deps.Cfg.Foundry.Workflows.Assess.Enabled = false
-		run := finish(s, startRun(t, s, "q"))
+		// It made a call: only the setting keeps it unassessed.
+		run := startRun(t, s, "q")
+		must(store.RecordFoundryWorkflowAccess(context.Background(), run.GetId(), &foundrymodel.FoundryWorkflowRead{LoadID: "load-1"}))
+		run = finish(s, run)
 		if run.GetAssessment() != nil || len(store.assessments) != 0 {
 			t.Fatalf("assessment = %+v", run.GetAssessment())
 		}

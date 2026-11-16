@@ -905,7 +905,9 @@ export function runShown(r: FoundryWorkflowRun, q: RunQuery): boolean {
   }
   if (q.filter !== "all" && runBucket(r) !== q.filter) return false;
   if (!q.issue) return true;
-  const a = assessmentOf(r.assessment?.assessmentJson);
+  // A run that never called the ontology named no gap, whatever an old
+  // assessment of it said.
+  const a = neverCalled(r) ? null : assessmentOf(r.assessment?.assessmentJson);
   return (
     !!a &&
     [...a.gaps.map((g) => g.what), ...a.suggestions].some(

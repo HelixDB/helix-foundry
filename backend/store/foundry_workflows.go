@@ -27,6 +27,7 @@ var ErrAutomationWorkflow = errors.New("store: the workflow records a live autom
 const foundryWorkflowColumns = `w.id, w.workspace_id, w.ontology_id, w.name, w.description, w.client_token, w.created_by_user_id, w.created_at,
   (SELECT COUNT(*) FROM foundry_workflow_runs r WHERE r.workflow_id = w.id),
   (SELECT COUNT(*) FROM foundry_workflow_runs r WHERE r.workflow_id = w.id AND r.status = 'finished'),
+  (SELECT COUNT(*) FROM foundry_workflow_runs r WHERE r.workflow_id = w.id AND r.status = 'finished' AND r.accesses = 0),
   (SELECT MAX(r.started_at) FROM foundry_workflow_runs r WHERE r.workflow_id = w.id),
   w.automation_id, ` + foundryWorkflowAutomationLive
 
@@ -40,7 +41,7 @@ func scanFoundryWorkflow(row rowScanner) (*model.FoundryWorkflow, error) {
 	var automationID sql.NullString
 	var live bool
 	err := row.Scan(&w.ID, &w.WorkspaceID, &w.OntologyID, &w.Name, &w.Description, &w.ClientToken, &w.CreatedByUserID,
-		&w.CreatedAt, &w.Runs, &w.FinishedRuns, &last, &automationID, &live)
+		&w.CreatedAt, &w.Runs, &w.FinishedRuns, &w.NeverCalledRuns, &last, &automationID, &live)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
