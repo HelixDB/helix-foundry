@@ -303,7 +303,7 @@
   height: 11px;
   border-radius: 2px;
   background: var(--hf-text-2);
-  opacity: 0.75;
+  opacity: 0.5;
 }
 .db-mini-chart {
   display: block;
@@ -577,7 +577,11 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: var(--hf-space-3);
+  /* The global main rule (minimal.css) is the old app's: its width and
+     height aren't this page's, whose header lines up with it. */
   width: min(1200px, 100%);
+  max-width: none;
+  min-height: 0;
   margin: 0 auto;
   padding: var(--hf-space-4) var(--hf-space-3) var(--hf-space-5);
 }
