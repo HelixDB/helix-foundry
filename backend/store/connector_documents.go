@@ -98,8 +98,10 @@ func (s *mysqlDB) ReserveConnectorDocuments(ctx context.Context, workspaceID str
 //     purge row);
 //   - p.Add's reservations are claimed, each younger than p.Grace/2, or
 //     nothing is written (ErrReservationExpired);
-//   - p.Add is written uploaded, and read by every ontology that reads the
-//     set (fanOutFoundryDocuments, with p.Fan): reads holds what that did;
+//   - p.Add is written uploaded, with the sync's cause (the automation run
+//     that started it and the chain's depth, NULL for none), and read by
+//     every ontology that reads the set (fanOutFoundryDocuments, with
+//     p.Fan): reads holds what that did;
 //   - each of p.Update takes its new name, version, time and link;
 //   - when a document was removed, every ontology with refresh on whose
 //     live or current load holds it takes it out of the graph with an
@@ -120,14 +122,15 @@ func (s *mysqlDB) PublishConnectorDocuments(ctx context.Context, p model.Connect
 		return nil, fmt.Errorf("publish connector documents: adds need the sweep's grace and a whole fan-out")
 	}
 	added := make([]string, len(p.Add))
-	rows := make([]any, 0, 12*len(p.Add))
+	// 14 values a document: its own 12, then the sync's cause, read below.
+	rows := make([]any, 0, 14*len(p.Add))
 	for i, d := range p.Add {
 		if d.Source == nil || d.ClientToken != nil || d.CreatedByUserID != nil || d.WorkspaceID != p.WorkspaceID || d.SetID != p.SetID {
 			return nil, fmt.Errorf("publish connector documents: %s is not a connector's document of set %s", d.ID, p.SetID)
 		}
 		added[i] = d.ID
 		rows = append(rows, d.ID, d.WorkspaceID, d.SetID, d.Source.ExternalID, d.Source.Version, d.Source.At.UTC(), d.Source.URL,
-			d.Name, string(d.MediaType), d.SizeBytes, d.SHA256, d.S3Key)
+			d.Name, string(d.MediaType), d.SizeBytes, d.SHA256, d.S3Key, nil, nil)
 	}
 	err = s.withConnectorSyncLease(ctx, syncID, workerID, func(sqlTx *sql.Tx) error {
 		tx := &mysqlDB{db: sqlTx, workspaces: s.workspaces}
@@ -164,9 +167,20 @@ WHERE document_id IN (`+idPlaceholders(len(added))+`) AND workspace_id=? AND cre
 			if n != int64(len(added)) {
 				return ErrReservationExpired
 			}
+			// The documents carry the sync's cause, so a document_arrived
+			// trigger tells those its own automation's sync wrote.
+			var runID sql.NullString
+			var depth sql.NullInt64
+			if err := sqlTx.QueryRowContext(ctx, `SELECT started_by_automation_run_id, automation_chain_depth FROM connector_syncs WHERE id=?`, syncID).
+				Scan(&runID, &depth); err != nil {
+				return fmt.Errorf("read the cause of sync %s: %w", syncID, err)
+			}
+			for i := range p.Add {
+				rows[i*14+12], rows[i*14+13] = runID, depth
+			}
 			if _, err := sqlTx.ExecContext(ctx, `INSERT INTO foundry_documents (id, workspace_id, set_id, external_id, source_version, source_at,
-  source_url, name, media_type, size_bytes, sha256, status, s3_key, uploaded_at) VALUES `+
-				strings.TrimSuffix(strings.Repeat("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', ?, NOW(6)), ", len(p.Add)), ", "), rows...); err != nil {
+  source_url, name, media_type, size_bytes, sha256, s3_key, started_by_automation_run_id, automation_chain_depth, status, uploaded_at) VALUES `+
+				strings.TrimSuffix(strings.Repeat("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', NOW(6)), ", len(p.Add)), ", "), rows...); err != nil {
 				if isDuplicateKey(err) {
 					return ErrConflict
 				}

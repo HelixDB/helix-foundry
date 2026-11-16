@@ -109,8 +109,9 @@ type FoundryWorkflowRunOutput struct {
 	FinishedAt string                              `json:"finished_at,omitempty"`
 	Counts     *foundryv1.FoundryWorkflowRunCounts `json:"counts"`
 	Assessment *FoundryWorkflowAssessmentOutput    `json:"assessment,omitempty" jsonschema:"Its assessment, once it finished: how much what it read made its answer."`
-	// AutomationRunID is the workflow's run it records, for a run Foundry started.
-	AutomationRunID string `json:"workflow_run_id,omitempty" jsonschema:"The workflow run it records, for a run Foundry started (its use case's workflow names the workflow)."`
+	// AutomationRunID is the workflow's (the backend's automation's) run it records, for a run
+	// Foundry started: never a use_case_run_id, so it is named apart from one.
+	AutomationRunID string `json:"from_workflow_run_id,omitempty" jsonschema:"For a run Foundry started: the workflow run it records (helix_foundry_get_workflow_run's run_id; its use case's workflow names the workflow). Not a use_case_run_id: this run's own id is id."`
 	Next            string `json:"next,omitempty"`
 }
 

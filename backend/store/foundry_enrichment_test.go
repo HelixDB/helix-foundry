@@ -157,7 +157,7 @@ func TestFoundryEnrichmentConsent(t *testing.T) {
 			dashboardShare(enriched, 1, "a", f.ontology.ID), dashboardShare(unenriched, 1, "b", other.ontology.ID),
 			dashboardShare(chosen, 1, "c", writing.ontology.ID, other.ontology.ID),
 		} {
-			_, err := f.db.PublishFoundryDashboard(ctx, share)
+			_, err := f.db.PublishFoundryDashboard(ctx, share, keepExpiry)
 			require.NoError(t, err)
 		}
 
@@ -172,7 +172,7 @@ func TestFoundryEnrichmentConsent(t *testing.T) {
 		// Until its purge's clean load is current, the ontology isn't published
 		// again: its current load still holds the profiles.
 		assert.Equal(t, model.FoundryDashboardUnreadable, dashboardRefusal(t, func() error {
-			_, err := f.db.PublishFoundryDashboard(ctx, dashboardShare(enriched, 1, "d", f.ontology.ID))
+			_, err := f.db.PublishFoundryDashboard(ctx, dashboardShare(enriched, 1, "d", f.ontology.ID), keepExpiry)
 			return err
 		}()))
 

@@ -189,6 +189,8 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_PublishFoundryDashboard_FullMethodName:           Deny,
 	foundryv1.FoundryService_UnpublishFoundryDashboard_FullMethodName:         Deny,
 	foundryv1.FoundryEventsService_GetSharedFoundryDashboard_FullMethodName:   Deny,
+	foundryv1.FoundryService_GetFoundryDashboardSettings_FullMethodName:       Deny,
+	foundryv1.FoundryService_UpdateFoundryDashboardSettings_FullMethodName:    Deny,
 	// Automations are people's, run as their owners: a grantee has none.
 	foundryv1.FoundryService_ListFoundryAutomations_FullMethodName:           Deny,
 	foundryv1.FoundryService_GetFoundryAutomation_FullMethodName:             Deny,

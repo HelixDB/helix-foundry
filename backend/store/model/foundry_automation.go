@@ -315,8 +315,9 @@ type FoundryAutomationEnded struct {
 	Outcome string
 	// Rows is what a sync wrote.
 	Rows *int64
-	// Cause is the automation run that started a sync or a load; nil for
-	// work a person or Foundry itself started, and for other work.
+	// Cause is the automation run that started a sync or a load, or the
+	// sync that wrote a document; nil for work a person or Foundry itself
+	// started, and for drafts.
 	Cause *FoundryAutomationCause
 }
 

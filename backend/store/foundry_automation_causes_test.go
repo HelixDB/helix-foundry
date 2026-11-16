@@ -149,6 +149,50 @@ VALUES (?, ?, ?, 'succeeded', ?, ?, ?, 1)`, id26("CASYNC"), connector, f.workspa
 	require.Len(t, ended, 1)
 	require.Equal(t, f.id(1), ended[0].Cause.AutomationID)
 	require.Equal(t, 1, ended[0].Cause.Depth)
+
+	// A document carries the cause of the sync that wrote it; an upload has none.
+	set := id26("CASET")
+	docs := watch(4, "document_arrived", set)
+	for i, row := range []struct {
+		id    string
+		run   any
+		depth any
+	}{{id26("CADOCUP"), nil, nil}, {id26("CADOCOWN"), run.ID, 3}} {
+		_, err := testDB.Exec(`INSERT INTO foundry_documents (id, workspace_id, set_id, name, media_type, size_bytes, sha256, client_token, status, s3_key,
+  created_at, uploaded_at, started_by_automation_run_id, automation_chain_depth)
+VALUES (?, ?, ?, ?, 'text/markdown', 1, REPEAT('a', 64), ?, 'uploaded', ?, ?, ?, ?, ?)`, row.id, f.workspaceID, set, row.id+".md", row.id, "k/"+row.id,
+			docs.Cursor.At, docs.Cursor.At.Add(time.Duration(i+1)*time.Second), row.run, row.depth)
+		require.NoError(t, err)
+	}
+	ended, err = f.db.FindFoundryAutomationEnded(ctx, docs, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, ended, 2)
+	require.Nil(t, ended[0].Cause, "a person's upload")
+	require.Equal(t, &model.FoundryAutomationCause{RunID: run.ID, AutomationID: f.id(1), Chain: []string{"AUTO-B", "AUTO-C"}, Depth: 3}, ended[1].Cause)
+}
+
+// A connector's documents carry the cause of the sync that wrote them, which
+// a document_arrived trigger reads: the run that started the sync and the
+// chain's depth; a sync no automation started leaves them none.
+func TestConnectorDocumentsCarryTheirSyncsCause(t *testing.T) {
+	day := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	c := newConnectorSync(t, newFoundryFixture(t, "DCC1"), "DCC1")
+	c.published(t, c.publish("DCC1-a", []*model.FoundryDocument{c.note("dcc-1", "not_1", "1|a", day)}, nil))
+	runID, depth := causeOf(t, "foundry_documents", id26("FD-dcc-1"))
+	require.Nil(t, runID, "a person's sync")
+	require.Nil(t, depth)
+
+	run := id26("DCCRUN")
+	_, err := testDB.Exec(`UPDATE connector_syncs SET started_by_automation_run_id=?, automation_chain_depth=2 WHERE id=?`, run, c.sync.ID)
+	require.NoError(t, err)
+	c.published(t, c.publish("DCC1-b", []*model.FoundryDocument{c.note("dcc-2", "not_2", "1|a", day), c.note("dcc-3", "not_3", "1|a", day)}, nil))
+	for _, doc := range []string{"FD-dcc-2", "FD-dcc-3"} {
+		runID, depth = causeOf(t, "foundry_documents", id26(doc))
+		require.Equal(t, &run, runID, doc)
+		require.Equal(t, ptr(2), depth, doc)
+	}
+	runID, _ = causeOf(t, "foundry_documents", id26("FD-dcc-1"))
+	require.Nil(t, runID, "a document written before keeps none")
 }
 
 // Work that would loop records its run skipped, saying why, even while a run

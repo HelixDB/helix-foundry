@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,9 @@ func dashboardShare(d *model.FoundryDashboard, revision int64, token string, ont
 		TokenKeyID: "k1", Snapshot: json.RawMessage(`{"v":1,"tiles":[]}`), SpecRevision: revision, OntologyIDs: ontologies, PublishedByUserID: "user-admin",
 	}
 }
+
+// keepExpiry publishes without changing a link's expiry: a new link never ends.
+var keepExpiry = model.FoundryDashboardLinkExpiry{Keep: true}
 
 func dashboardRefusal(t *testing.T, err error) model.FoundryDashboardRefusalReason {
 	t.Helper()
@@ -205,7 +209,7 @@ func TestFoundryDashboards(t *testing.T) {
 		d := newDashboard(workspaceID, 1, dashAda)
 		require.NoError(t, db.CreateFoundryDashboard(ctx, d, 10))
 
-		stored, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a", o2.ID, o1.ID, o2.ID))
+		stored, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a", o2.ID, o1.ID, o2.ID), keepExpiry)
 		require.NoError(t, err)
 		assert.Equal(t, strings.Repeat("a", 64), stored.TokenSHA256)
 		assert.Equal(t, []string{o1.ID, o2.ID}, stored.OntologyIDs)
@@ -220,13 +224,13 @@ func TestFoundryDashboards(t *testing.T) {
 		name := "Renamed"
 		require.NoError(t, db.UpdateFoundryDashboard(ctx, workspaceID, d.ID, adaEdits, 1, model.FoundryDashboardUpdate{Name: &name}))
 		assert.Equal(t, model.FoundryDashboardChanged, dashboardRefusal(t, func() error {
-			_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "b"))
+			_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "b"), keepExpiry)
 			return err
 		}()), "a publish of a revision since edited")
 
 		again := dashboardShare(d, 2, "b", o3.ID)
 		again.Snapshot = json.RawMessage(`{"v":1,"tiles":[],"name":"Renamed"}`)
-		stored, err = db.PublishFoundryDashboard(ctx, again)
+		stored, err = db.PublishFoundryDashboard(ctx, again, keepExpiry)
 		require.NoError(t, err)
 		assert.Equal(t, strings.Repeat("a", 64), stored.TokenSHA256, "republishing keeps the link")
 		assert.Equal(t, []byte("sealed-a"), stored.TokenSealed)
@@ -249,14 +253,87 @@ func TestFoundryDashboards(t *testing.T) {
 		_, err = db.GetSharedFoundryDashboard(ctx, strings.Repeat("a", 64))
 		assert.ErrorIs(t, err, store.ErrNotFound, "unpublishing ends the link")
 
-		stored, err = db.PublishFoundryDashboard(ctx, dashboardShare(d, 2, "c"))
+		stored, err = db.PublishFoundryDashboard(ctx, dashboardShare(d, 2, "c"), keepExpiry)
 		require.NoError(t, err)
 		assert.Equal(t, strings.Repeat("c", 64), stored.TokenSHA256, "publishing again makes a new link")
 
-		_, err = db.PublishFoundryDashboard(ctx, dashboardShare(&model.FoundryDashboard{ID: id26("DB-none"), WorkspaceID: workspaceID}, 1, "d"))
+		_, err = db.PublishFoundryDashboard(ctx, dashboardShare(&model.FoundryDashboard{ID: id26("DB-none"), WorkspaceID: workspaceID}, 1, "d"), keepExpiry)
 		assert.ErrorIs(t, err, store.ErrNotFound)
-		_, err = db.PublishFoundryDashboard(ctx, &model.FoundryDashboardShare{DashboardID: d.ID})
+		_, err = db.PublishFoundryDashboard(ctx, &model.FoundryDashboardShare{DashboardID: d.ID}, keepExpiry)
 		assert.Error(t, err, "a share needs its parts")
+	})
+
+	t.Run("ends a link at its expiry, and makes a new one once it has", func(t *testing.T) {
+		db := newTestStore(t)
+		createWorkspace(t, workspaceID)
+		d := newDashboard(workspaceID, 1, dashAda)
+		require.NoError(t, db.CreateFoundryDashboard(ctx, d, 10))
+		_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a"), model.FoundryDashboardLinkExpiry{Keep: true, At: &time.Time{}})
+		assert.Error(t, err, "an expiry both kept and set")
+
+		in30 := time.Now().Add(30 * 24 * time.Hour).Truncate(time.Microsecond)
+		stored, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a"), model.FoundryDashboardLinkExpiry{At: &in30})
+		require.NoError(t, err)
+		require.NotNil(t, stored.ExpiresAt)
+		assert.True(t, in30.Equal(*stored.ExpiresAt))
+		shared, err := db.GetSharedFoundryDashboard(ctx, strings.Repeat("a", 64))
+		require.NoError(t, err)
+		require.NotNil(t, shared.ExpiresAt)
+		assert.True(t, in30.Equal(*shared.ExpiresAt))
+
+		stored, err = db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "b"), keepExpiry)
+		require.NoError(t, err)
+		assert.Equal(t, strings.Repeat("a", 64), stored.TokenSHA256)
+		require.NotNil(t, stored.ExpiresAt, "kept")
+		assert.True(t, in30.Equal(*stored.ExpiresAt))
+		stored, err = db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "b"), model.FoundryDashboardLinkExpiry{})
+		require.NoError(t, err)
+		assert.Nil(t, stored.ExpiresAt, "never, when asked")
+		assert.Equal(t, strings.Repeat("a", 64), stored.TokenSHA256, "a new expiry keeps the link")
+
+		// Once it has expired, a publish that chooses an expiry makes a new
+		// link from its own token, one that keeps it is refused, and the old
+		// link stays dead.
+		past := time.Now().Add(-time.Minute).Truncate(time.Microsecond)
+		_, err = db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "b"), model.FoundryDashboardLinkExpiry{At: &past})
+		require.NoError(t, err)
+		got, err := db.GetFoundryDashboard(ctx, workspaceID, d.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got.Share)
+		assert.True(t, got.Share.Expired(time.Now()))
+		assert.Equal(t, model.FoundryDashboardExpired, dashboardRefusal(t, func() error {
+			_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "c"), keepExpiry)
+			return err
+		}()))
+		stored, err = db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "c"), model.FoundryDashboardLinkExpiry{})
+		require.NoError(t, err)
+		assert.Equal(t, strings.Repeat("c", 64), stored.TokenSHA256)
+		assert.Nil(t, stored.ExpiresAt, "never, as chosen")
+		assert.Equal(t, stored.PublishedAt, stored.FirstPublishedAt, "first published now")
+		_, err = db.GetSharedFoundryDashboard(ctx, strings.Repeat("a", 64))
+		assert.ErrorIs(t, err, store.ErrNotFound)
+	})
+
+	t.Run("keeps a workspace's public links on until an owner turns them off", func(t *testing.T) {
+		db := newTestStore(t)
+		settings, err := db.GetFoundryDashboardSettings(ctx, workspaceID)
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundryDashboardSettings{WorkspaceID: workspaceID, PublicLinks: true}, settings, "no row: on")
+		require.NoError(t, db.SetFoundryDashboardSettings(ctx, workspaceID, dashAda, false))
+		settings, err = db.GetFoundryDashboardSettings(ctx, workspaceID)
+		require.NoError(t, err)
+		assert.False(t, settings.PublicLinks)
+		assert.Equal(t, dashAda, settings.UpdatedByUserID)
+		require.NotNil(t, settings.UpdatedAt)
+		require.NoError(t, db.SetFoundryDashboardSettings(ctx, workspaceID, dashAlan, true))
+		settings, err = db.GetFoundryDashboardSettings(ctx, workspaceID)
+		require.NoError(t, err)
+		assert.True(t, settings.PublicLinks)
+		assert.Equal(t, dashAlan, settings.UpdatedByUserID)
+		other, err := db.GetFoundryDashboardSettings(ctx, id26("DBW-other"))
+		require.NoError(t, err)
+		assert.True(t, other.PublicLinks, "each workspace's own")
+		assert.Error(t, db.SetFoundryDashboardSettings(ctx, workspaceID, "", false), "who changed it is kept")
 	})
 
 	t.Run("deletes a dashboard with its snapshot", func(t *testing.T) {
@@ -264,7 +341,7 @@ func TestFoundryDashboards(t *testing.T) {
 		createWorkspace(t, workspaceID)
 		d := newDashboard(workspaceID, 1, dashAda)
 		require.NoError(t, db.CreateFoundryDashboard(ctx, d, 10))
-		_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a"))
+		_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a"), keepExpiry)
 		require.NoError(t, err)
 		assert.Equal(t, model.FoundryDashboardNotEditable, dashboardRefusal(t, db.DeleteFoundryDashboard(ctx, workspaceID, d.ID, alanEdits)))
 		assert.Equal(t, model.FoundryDashboardNotEditable, dashboardRefusal(t, db.DeleteFoundryDashboard(ctx, workspaceID, d.ID, adaEdits)),
@@ -277,7 +354,7 @@ func TestFoundryDashboards(t *testing.T) {
 
 		d = newDashboard(workspaceID, 2, dashAda)
 		require.NoError(t, db.CreateFoundryDashboard(ctx, d, 10))
-		_, err = db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a"))
+		_, err = db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a"), keepExpiry)
 		require.NoError(t, err)
 		require.NoError(t, db.DeleteFoundryDashboard(ctx, workspaceID, d.ID, adminEdits), "an owner or admin deletes a published one")
 		_, err = db.GetSharedFoundryDashboard(ctx, strings.Repeat("a", 64))
@@ -290,9 +367,9 @@ func TestFoundryDashboards(t *testing.T) {
 		d, other := newDashboard(workspaceID, 1, dashAda), newDashboard(workspaceID, 2, dashAda)
 		require.NoError(t, db.CreateFoundryDashboard(ctx, d, 10))
 		require.NoError(t, db.CreateFoundryDashboard(ctx, other, 10))
-		_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a", o.ID, elsewhere.ID))
+		_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a", o.ID, elsewhere.ID), keepExpiry)
 		require.NoError(t, err)
-		_, err = db.PublishFoundryDashboard(ctx, dashboardShare(other, 1, "b", elsewhere.ID))
+		_, err = db.PublishFoundryDashboard(ctx, dashboardShare(other, 1, "b", elsewhere.ID), keepExpiry)
 		require.NoError(t, err)
 
 		require.NoError(t, db.DeleteFoundryOntology(ctx, workspaceID, o.ID, id26("FN-DS")))
@@ -304,11 +381,11 @@ func TestFoundryDashboards(t *testing.T) {
 		// A publish that read it before it was deleted commits after: refused,
 		// so nothing of it is left public.
 		assert.Equal(t, model.FoundryDashboardUnreadable, dashboardRefusal(t, func() error {
-			_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "c", o.ID, elsewhere.ID))
+			_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "c", o.ID, elsewhere.ID), keepExpiry)
 			return err
 		}()))
 		assert.Equal(t, model.FoundryDashboardUnreadable, dashboardRefusal(t, func() error {
-			_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "c", id26("FO-none")))
+			_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "c", id26("FO-none")), keepExpiry)
 			return err
 		}()), "an ontology the workspace never had")
 		_, err = db.GetSharedFoundryDashboard(ctx, strings.Repeat("c", 64))

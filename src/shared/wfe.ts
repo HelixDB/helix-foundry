@@ -2513,6 +2513,24 @@ export type QueryWhere = {
 };
 
 /**
+ * A number computed from two props of one entity (contract 4.26.0): days
+ * from one date or datetime to another, a difference, or a ratio. An entity
+ * missing either prop (or dividing by zero) has none.
+ */
+export type QueryExpr =
+  | { days_between: [string, string] }
+  | { diff: [string, string] }
+  | { ratio: [string, string] };
+
+/**
+ * What a column, an order or an aggregate reads of each entity: one prop,
+ * or a number computed from two (`expr`); never both.
+ */
+export type QueryMeasure =
+  | { prop: string; expr?: never }
+  | { expr: QueryExpr; prop?: never };
+
+/**
  * A typed ontology query (extraction::query::typed): the `query` tool's
  * input as the model wrote it (defaults left out), a query read, and a
  * result's `queries` (every field written, entity ids resolved).
@@ -2539,9 +2557,10 @@ export type OntologyQuery = {
   return:
     | {
         rows: {
-          // A prop (or `name`) of the entity at `at`; the entity if none.
-          columns: { at: number; prop?: string | null }[];
-          order_by?: { at: number; prop: string; desc?: boolean } | null;
+          // A prop (or `name`) of the entity at `at`, or a number computed
+          // from two of its props; the entity if neither.
+          columns: { at: number; prop?: string | null; expr?: QueryExpr }[];
+          order_by?: ({ at: number; desc?: boolean } & QueryMeasure) | null;
           limit?: number;
           // Rows, in order, to pass over first; at most 10,000.
           offset?: number;
@@ -2554,10 +2573,9 @@ export type OntologyQuery = {
         aggregate: {
           fn: "sum" | "avg" | "min" | "max";
           at: number;
-          prop: string;
           group_by?: { at: number; prop: string } | null;
           limit?: number;
-        };
+        } & QueryMeasure;
       };
 };
 
@@ -2651,12 +2669,24 @@ export type QueryOutput = (
       groups: { value: unknown; count: number }[];
       total_groups: number;
     }
-  // `value` is null for a mean, least or greatest of no values.
-  | { kind: "aggregate"; value: number | null; values: number }
+  // `value` is null for a mean, least or greatest of no values. `skipped`
+  // (contract 4.26.0) counts the entities a computed measure had no value
+  // for; left out when none were.
+  | {
+      kind: "aggregate";
+      value: number | null;
+      values: number;
+      skipped?: number;
+    }
   | {
       kind: "grouped_aggregate";
       // Greatest first, then by value, the entities without one last.
-      groups: { value: unknown; aggregate: number | null; values: number }[];
+      groups: {
+        value: unknown;
+        aggregate: number | null;
+        values: number;
+        skipped?: number;
+      }[];
       total_groups: number;
     }
 ) & { cut?: string | null };
@@ -3084,7 +3114,9 @@ export type AgentActionDisplays = {
   delete_dashboard: { dashboard: AgentDashboardRef };
   // pinned: whether it pins the dashboard (else unpins it).
   pin_dashboard: { dashboard: AgentDashboardRef; pinned: boolean };
-  publish_dashboard: { dashboard: AgentDashboardRef };
+  // expires_in_days: when the link ends, in days from the publish (0 never);
+  // missing keeps a live link's own, and a new link never ends.
+  publish_dashboard: { dashboard: AgentDashboardRef; expires_in_days?: number };
   unpublish_dashboard: { dashboard: AgentDashboardRef };
   // Its name as the Assistant wrote it; its steps are the payload's spec.
   create_workflow: { name: string };
@@ -3433,10 +3465,14 @@ export type AgentEvent =
 // (POST .../ontologies/{ontologyId}/loads/{loadId}:read, a tile's
 // `{"query": …}` as one read; the tiles of one load in one call), so it shows
 // no one more than they may read. Every member lists and reads every
-// dashboard; a grantee of source grants only the pinned ones. A member
+// dashboard, so its page (/dashboards/{id}) is how it is shared inside the
+// workspace; a grantee of source grants only the pinned ones. A member
 // creates dashboards and edits and deletes their own while unpinned; owners
 // and admins edit and delete any, pin them in every member's sidebar, and,
-// hosted only, publish a snapshot at a public link (canPublish). An edit and
+// hosted only, publish a snapshot at a public link for people outside the
+// workspace (canPublish; publishBlock says why not), which may expire and
+// which an owner may turn off for the whole workspace
+// (.../foundry/dashboard-settings). An edit and
 // a publish name the revision read (int64, as a string): another is
 // FAILED_PRECONDITION FOUNDRY_DASHBOARD_CHANGED. Refusals carry an ErrorInfo
 // reason (DASHBOARD_REFUSALS); a change the caller may not make is
@@ -3451,12 +3487,18 @@ export const DASHBOARD_REFUSALS = [
   // A tile reads the current load of an ontology that has none.
   "FOUNDRY_DASHBOARD_NOT_LOADED",
   // Publishing: a tile that can't be read (the message names it and why),
-  // a dashboard with no tile, a snapshot past 512 KiB a tile or 2 MiB in all,
-  // and a stamp or build without public links.
+  // a dashboard with no tile, a snapshot past 512 KiB a tile or 2 MiB in all.
   "FOUNDRY_DASHBOARD_TILE_FAILED",
   "FOUNDRY_DASHBOARD_EMPTY",
   "FOUNDRY_DASHBOARD_TOO_LARGE",
-  "FOUNDRY_DASHBOARDS_PUBLIC_OFF",
+  // Publishing or unpublishing as neither an owner nor an admin; publishing
+  // where the stamp or build has no public links, or in a workspace whose
+  // owner turned them off.
+  "FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY",
+  "FOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE",
+  "FOUNDRY_DASHBOARD_PUBLIC_OFF",
+  // Publishing an expired link again without choosing when the new one ends.
+  "FOUNDRY_DASHBOARD_LINK_EXPIRED",
 ] as const;
 export type DashboardRefusal = (typeof DASHBOARD_REFUSALS)[number];
 
@@ -3489,15 +3531,45 @@ export type DashboardSpec = {
   layout: { rows: string[][] };
 };
 
+/** v1FoundryDashboardShareStatus: whether a public link shows its snapshot now; only LIVE does. */
+export type DashboardShareStatus =
+  | "FOUNDRY_DASHBOARD_SHARE_STATUS_UNSPECIFIED"
+  | "FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE"
+  // Past its expiresAt: publishing again makes a new link.
+  | "FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED"
+  // An owner turned public links off for the workspace: back when turned on.
+  | "FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF"
+  // The stamp has public links off.
+  | "FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE";
+
+/** v1FoundryDashboardPublishBlock: why the caller may not publish; UNSPECIFIED when they may. */
+export type DashboardPublishBlock =
+  | "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED"
+  | "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY"
+  | "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF"
+  | "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE";
+
+/** v1FoundryDashboardLinkExpiry: when a publish ends its link; UNSPECIFIED keeps a live link's own. */
+export type DashboardLinkExpiry =
+  | "FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED"
+  | "FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER"
+  | "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7"
+  | "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_30"
+  | "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90";
+
 /** v1FoundryDashboardShare: a dashboard's public snapshot. */
 export type FoundryDashboardShare = {
-  // The link's token, for owners and admins only: the page is /share/<token>.
+  // The link's token, for owners and admins only, and not once it expired:
+  // the page is /share/<token>.
   token?: string;
   // int64: the revision it shows, older than the dashboard's after an edit.
   specRevision?: string;
   publishedAt?: string | null;
   firstPublishedAt?: string | null;
   publishedByUserId?: string;
+  // When the link stops showing the snapshot; missing: never.
+  expiresAt?: string | null;
+  status?: DashboardShareStatus;
 };
 
 /** v1FoundryDashboard */
@@ -3526,6 +3598,8 @@ export type FoundryDashboard = {
   canPublish?: boolean;
   canDelete?: boolean;
   canUnpublish?: boolean;
+  // Why the caller may not publish it; missing or UNSPECIFIED when they may.
+  publishBlock?: DashboardPublishBlock;
 };
 
 /** GET .../dashboards: every one (at most 200), pinned first, without specs. */
@@ -3582,8 +3656,32 @@ export type PreviewDashboardTileResponse = {
   outcomeJson?: string;
   asOf?: string;
 };
-/** POST .../dashboards/{id}:publish, owners and admins, hosted only. */
-export type PublishDashboardRequest = { expectedRevision: string };
+/** POST .../dashboards/{id}:publish, owners and admins, hosted only, while the workspace has public links on. */
+export type PublishDashboardRequest = {
+  expectedRevision: string;
+  // When the link ends, from now; missing keeps a live link's own (a first
+  // one never ends; one that expired is refused FOUNDRY_DASHBOARD_LINK_EXPIRED).
+  expiry?: DashboardLinkExpiry;
+};
+
+/** v1FoundryDashboardSettings: a workspace's dashboard settings. */
+export type FoundryDashboardSettings = {
+  // Whether its dashboards may be published at public links: on until an
+  // owner turns them off; off, no link of the workspace shows.
+  publicLinks?: boolean;
+  // Whether the stamp offers public links at all.
+  available?: boolean;
+  // Owners only.
+  canChange?: boolean;
+  updatedByUserId?: string;
+  updatedAt?: string | null;
+};
+/** GET and PATCH .../foundry/dashboard-settings. */
+export type FoundryDashboardSettingsResponse = {
+  settings?: FoundryDashboardSettings;
+};
+/** PATCH .../foundry/dashboard-settings, owners only. */
+export type UpdateDashboardSettingsRequest = { publicLinks: boolean };
 
 /**
  * A published dashboard as its public link shows it, from the

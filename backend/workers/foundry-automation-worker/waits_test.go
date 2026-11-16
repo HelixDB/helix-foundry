@@ -24,7 +24,7 @@ var refresh = spec(`[{"from":"start","to":"sync"},{"from":"sync","to":"load"},{"
 // Sales graph (ont1), whose current version is ver7.
 func publishing(t *testing.T) fixture {
 	f := newFixture(t)
-	f.host.service = (&integration.Service{Actions: f.actions, Confirmations: &confirmations{}, PublicDashboards: true}).ForAgent()
+	f.host.service = (&integration.Service{Foundry: dashboardReads{}, Actions: f.actions, Confirmations: &confirmations{}, PublicDashboards: true}).ForAgent()
 	current := "ver7"
 	f.db.ontologies["ont1"] = &model.FoundryOntology{ID: "ont1", WorkspaceID: ws, Name: "Sales", CurrentVersionID: &current}
 	f.db.dashboards["dash1"] = &model.FoundryDashboard{ID: "dash1", WorkspaceID: ws, Name: "Pipeline", Revision: 4,

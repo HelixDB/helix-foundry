@@ -493,6 +493,158 @@ describe("visual plans", () => {
     ).toBe("table");
   });
 
+  it("draw a computed measure's groups as bars, saying how many each skipped", () => {
+    const query: OntologyQuery = {
+      start: { type: "Ticket" },
+      return: {
+        aggregate: {
+          fn: "avg",
+          at: 0,
+          expr: { days_between: ["opened_at", "closed_at"] },
+          group_by: { at: 0, prop: "priority" },
+          limit: 20,
+        },
+      },
+    };
+    const days = output({
+      kind: "grouped_aggregate",
+      groups: [
+        {
+          value: { untrusted: "high" },
+          aggregate: 6.375,
+          values: 2,
+          skipped: 1,
+        },
+        { value: { untrusted: "low" }, aggregate: 1.5, values: 1 },
+      ],
+      total_groups: 2,
+    });
+    expect(parseOutput(days)).toEqual(days);
+    const plan = visualPlan(days, query);
+    expect(plan).toMatchObject({
+      kind: "chart",
+      title:
+        "Average of Ticket: days from opened_at to closed_at by Ticket.priority",
+    });
+    expect(chartOf(plan)).toMatchObject({
+      kind: "bar",
+      label: "Ticket.priority",
+      measure: "Average of Ticket: days from opened_at to closed_at",
+      points: [
+        {
+          label: "high",
+          value: 6.375,
+          detail: "Over 2 values · 1 without one, skipped",
+        },
+        { label: "low", value: 1.5, detail: "Over 1 value" },
+      ],
+    });
+    if (plan.kind !== "chart") return;
+    expect(plan.table.columns.map((c) => c.label)).toEqual([
+      "Ticket.priority",
+      "Average of Ticket: days from opened_at to closed_at",
+      "Values",
+      "Skipped",
+    ]);
+    expect(plan.table.rows.map((r) => r[3])).toEqual([
+      { kind: "number", value: 1 },
+      { kind: "number", value: 0 },
+    ]);
+    // Ungrouped, a figure over its values, the skipped said.
+    const one = output({
+      kind: "aggregate",
+      value: 4.2,
+      values: 28,
+      skipped: 12,
+    });
+    expect(parseOutput(one)).toEqual(one);
+    expect(
+      visualPlan(one, {
+        ...query,
+        return: {
+          aggregate: {
+            fn: "avg",
+            at: 0,
+            expr: { days_between: ["opened_at", "closed_at"] },
+          },
+        },
+      }),
+    ).toMatchObject({
+      kind: "figure",
+      detail: "Over 28 values · 12 without one, skipped",
+    });
+    // A skipped that isn't a count is no output; 0 is as if left out.
+    expect(parseOutput({ ...one, skipped: -1 })).toBe(undefined);
+    expect(parseOutput({ ...one, skipped: 0 })).toEqual({
+      kind: "aggregate",
+      value: 4.2,
+      values: 28,
+    });
+  });
+
+  it("show a computed column as its numbers, and bar it when asked", () => {
+    const query = parseQuery({
+      start: { type: "Deal" },
+      return: {
+        rows: {
+          columns: [
+            { at: 0, prop: null },
+            {
+              at: 0,
+              prop: null,
+              expr: { days_between: ["opened_on", "closed_on"] },
+            },
+          ],
+          order_by: {
+            at: 0,
+            expr: { days_between: ["opened_on", "closed_on"] },
+            desc: true,
+          },
+        },
+      },
+    })!;
+    const rows = output({
+      kind: "rows",
+      rows: [
+        {
+          cells: [{ type: "Deal", id: "d1", name: "Acme renewal" }, 41.5],
+          edges: [],
+        },
+        {
+          cells: [{ type: "Deal", id: "d3", name: "Initech" }, 12.25],
+          edges: [],
+        },
+        {
+          cells: [{ type: "Deal", id: "d2", name: "Globex" }, null],
+          edges: [],
+        },
+      ],
+      total: 3,
+    });
+    const plan = visualPlan(rows, query, { kind: "bar" });
+    expect(chartOf(plan)).toMatchObject({
+      kind: "bar",
+      label: "Deal",
+      measure: "Deal: days from opened_on to closed_on",
+      // The deal with none isn't drawn.
+      points: [
+        {
+          label: "Acme renewal",
+          value: 41.5,
+          entity: { type: "Deal", id: "d1" },
+        },
+        { label: "Initech", value: 12.25, entity: { type: "Deal", id: "d3" } },
+      ],
+    });
+    // Its table shows each, the one with none empty.
+    if (plan.kind !== "chart") return;
+    expect(plan.table.rows.map((r) => r[1])).toEqual([
+      { kind: "number", value: 41.5 },
+      { kind: "number", value: 12.25 },
+      { kind: "none" },
+    ]);
+  });
+
   it("turn bars sideways for long or many labels, and say what the bound left out", () => {
     const sums = output({
       kind: "grouped_aggregate",

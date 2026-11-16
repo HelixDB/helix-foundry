@@ -398,6 +398,15 @@ func (s *memStore) endTurn(t *testing.T, status model.FoundryAgentTurnStatus, ev
 	return nil
 }
 
+// dashboardReads answers the read a publish's prepare makes of its dashboard:
+// the caller may publish it.
+type dashboardReads struct{ integration.FoundryBackendAPI }
+
+func (dashboardReads) GetFoundryDashboard(_ context.Context, r *foundryv1.GetFoundryDashboardRequest, _ ...grpc.CallOption) (
+	*foundryv1.FoundryDashboardResponse, error) {
+	return &foundryv1.FoundryDashboardResponse{Dashboard: &foundryv1.FoundryDashboard{Id: r.GetId(), CanPublish: true}}, nil
+}
+
 // actions are Foundry's actions as the session runs them, recording each.
 type actions struct {
 	integration.FoundryActionAPI
@@ -708,7 +717,7 @@ func TestActionsResolveTheirPayloadWhenTheyRun(t *testing.T) {
 		{SpecRevision: 4}: "",
 	} {
 		f = newFixture(t)
-		f.host.service = (&integration.Service{Actions: f.actions, Confirmations: &confirmations{}, PublicDashboards: true}).ForAgent()
+		f.host.service = (&integration.Service{Foundry: dashboardReads{}, Actions: f.actions, Confirmations: &confirmations{}, PublicDashboards: true}).ForAgent()
 		f.db.dashboards["dash1"] = &model.FoundryDashboard{ID: "dash1", WorkspaceID: ws, Revision: 4, Share: share}
 		run = f.queue(publish)
 		f.task.advance(context.Background(), run)
@@ -961,7 +970,7 @@ func TestARunRecordsItsUsesOfOntologies(t *testing.T) {
 		node("pub", "action", `{"operation":"publish_dashboard","dashboard_id":"dash1"}`))
 	f := newFixture(t)
 	f.task.assess = true
-	f.host.service = (&integration.Service{Actions: f.actions, Confirmations: &confirmations{}, PublicDashboards: true}).ForAgent()
+	f.host.service = (&integration.Service{Foundry: dashboardReads{}, Actions: f.actions, Confirmations: &confirmations{}, PublicDashboards: true}).ForAgent()
 	current := "ver7"
 	f.db.ontologies["ont1"] = &model.FoundryOntology{ID: "ont1", WorkspaceID: ws, Name: "Sales", CurrentVersionID: &current}
 	f.db.ontologies["ont2"] = &model.FoundryOntology{ID: "ont2", WorkspaceID: ws, Name: "Support"}

@@ -592,6 +592,18 @@ export const papiRoutes = [
     method: "POST",
     path: "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:unpublish",
   },
+  // The workspace's dashboard settings: whether its dashboards may be
+  // published at public links. Every member reads them; owners change them.
+  {
+    area: "dashboards",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboard-settings",
+  },
+  {
+    area: "dashboards",
+    method: "PATCH",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboard-settings",
+  },
 
   // Automations: a person's graph of steps Foundry runs as them when its
   // trigger fires. Listed and read by every member; made by any member, then

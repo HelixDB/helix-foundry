@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Clock } from "lucide-react";
+import { Clock, Ellipsis, ExternalLink, Link2 } from "lucide-react";
 import type { FoundryDashboard } from "../../../shared/wfe";
-import { Tag, cx, formatDate, formatRelative } from "../../kit";
-import { useWorkspace } from "../../ui";
 import {
+  DropdownMenu,
+  MenuItem,
+  Tag,
+  cx,
+  formatDate,
+  formatRelative,
+} from "../../kit";
+import { useWorkspace } from "../../ui";
+import { useCopyLink } from "./publish";
+import {
+  linkState,
+  linkText,
   parseSpec,
   previewRows,
   type PreviewTile,
@@ -16,7 +26,8 @@ import { dashboardQueries } from "./queries";
 
 // The library's cards (/dashboards): a miniature of the dashboard's first
 // rows of tiles, cropped with a fade, then its name, when it was edited and
-// whether it is pinned or published. The list leaves specs out, so a card
+// whether it is pinned or published, and a menu to copy its link for the
+// workspace or open it. The list leaves specs out, so a card
 // reads its dashboard (GET, no tile read) once it is near the view; the
 // miniature is drawn from the spec alone, never from a tile's data, since
 // tile reads share each ontology's limiter of one read a second. The name's
@@ -140,7 +151,8 @@ export function DashboardCard({
   dashboard: FoundryDashboard;
   now: number;
 }) {
-  const { id: ws } = useWorkspace();
+  const { id: ws } = useWorkspace(),
+    copy = useCopyLink();
   const ref = useRef<HTMLElement>(null),
     near = useNear(ref);
   const read = useQuery({
@@ -155,7 +167,8 @@ export function DashboardCard({
     const parsed = parseSpec(spec);
     return parsed ? previewRows(parsed) : [];
   }, [spec, read.isError]);
-  const name = d.name || "Untitled";
+  const name = d.name || "Untitled",
+    link = linkState(d.share, (iso) => formatDate(iso, false));
   return (
     <article ref={ref} className="db-card">
       <Miniature rows={rows} />
@@ -184,7 +197,23 @@ export function DashboardCard({
             </span>
           )}
           {d.pinned && <Tag tone="accent">Pinned</Tag>}
-          {d.share && <Tag tone="info">Public link</Tag>}
+          {link && (
+            <Tag tone={link.live ? "info" : "warning"}>{linkText(link)}</Tag>
+          )}
+          <DropdownMenu
+            label={`More actions for ${name}`}
+            align="end"
+            className="db-card-menu"
+            triggerClassName="hf-btn hf-btn--ghost hf-btn--sm hf-btn--icon"
+            trigger={<Ellipsis size={15} aria-hidden />}
+          >
+            <MenuItem icon={Link2} onSelect={() => copy(d, "card")}>
+              Copy link
+            </MenuItem>
+            <MenuItem icon={ExternalLink} to={paths.dashboard(d.id)}>
+              Open
+            </MenuItem>
+          </DropdownMenu>
         </div>
       </div>
     </article>

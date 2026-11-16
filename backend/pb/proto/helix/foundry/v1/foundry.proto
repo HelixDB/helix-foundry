@@ -560,11 +560,13 @@ service FoundryService {
 
   // Dashboards: tiles of typed queries over ontologies' loads (package
   // dashboard), which every member of the workspace sees and reads as
-  // themselves through ReadFoundryGraph. A member creates dashboards and edits
+  // themselves through ReadFoundryGraph: a dashboard's page in Foundry is how
+  // it is shared inside the workspace. A member creates dashboards and edits
   // and deletes their own while unpinned; owners and admins edit and delete
   // any, pin them in every member's sidebar, and publish one's snapshot at a
-  // public link (hosted only, with foundry.dashboards.public_enabled). A
-  // grantee of source grants sees the pinned ones and changes none.
+  // public link for people outside the workspace (hosted only, with
+  // foundry.dashboards.public_enabled, while the workspace has public links
+  // on). A grantee of source grants sees the pinned ones and changes none.
   rpc ListFoundryDashboards(ListFoundryDashboardsRequest) returns (ListFoundryDashboardsResponse) {
     option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/dashboards"};
   }
@@ -613,6 +615,18 @@ service FoundryService {
   rpc UnpublishFoundryDashboard(UnpublishFoundryDashboardRequest) returns (FoundryDashboardResponse) {
     option (google.api.http) = {
       post: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}:unpublish"
+      body: "*"
+    };
+  }
+  // The workspace's dashboard settings: whether its dashboards may be
+  // published at public links. Any member reads them (a grantee doesn't);
+  // only an owner changes them.
+  rpc GetFoundryDashboardSettings(GetFoundryDashboardSettingsRequest) returns (FoundryDashboardSettingsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/dashboard-settings"};
+  }
+  rpc UpdateFoundryDashboardSettings(UpdateFoundryDashboardSettingsRequest) returns (FoundryDashboardSettingsResponse) {
+    option (google.api.http) = {
+      patch: "/v1/workspaces/{workspace_id}/foundry/dashboard-settings"
       body: "*"
     };
   }
@@ -2350,24 +2364,47 @@ message PreviewFoundryDashboardTileResponse {
 }
 // PublishFoundryDashboardRequest reads every tile as the caller, an owner or
 // admin, and keeps their outputs as the dashboard's public snapshot, at its
-// link: a new one the first time, the same one when published already. The
-// dashboard must still be at expected_revision (FOUNDRY_DASHBOARD_CHANGED) and
-// have a tile. Where public links are off it is FAILED_PRECONDITION, reason
-// FOUNDRY_DASHBOARDS_PUBLIC_OFF; a tile that can't be read, or an ontology it
-// read that was deleted meanwhile or is being purged of People enrichment's
-// profiles, FOUNDRY_DASHBOARD_TILE_FAILED, saying which and why; a snapshot
-// past its size, FOUNDRY_DASHBOARD_TOO_LARGE.
+// link: a new one the first time or once the last one expired, the same one
+// when published already. The snapshot is what the publisher reads; anyone
+// with the link sees it without signing in, and it changes only when
+// published again. The dashboard must still be at expected_revision
+// (FOUNDRY_DASHBOARD_CHANGED) and have a tile. Refusals are
+// FAILED_PRECONDITION with a reason: a caller who isn't an owner or admin,
+// FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY; a host without public links,
+// FOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE; a workspace whose owner turned them
+// off, FOUNDRY_DASHBOARD_PUBLIC_OFF; a tile that can't be read, or an
+// ontology it read that was deleted meanwhile or is being purged of People
+// enrichment's profiles, FOUNDRY_DASHBOARD_TILE_FAILED, saying which and why;
+// a snapshot past its size, FOUNDRY_DASHBOARD_TOO_LARGE; an expired link
+// published again with no expiry chosen, FOUNDRY_DASHBOARD_LINK_EXPIRED.
 message PublishFoundryDashboardRequest {
   string workspace_id = 1;
   string id = 2;
   int64 expected_revision = 3;
+  // When the link ends, from now; unset keeps a live link's own.
+  FoundryDashboardLinkExpiry expiry = 4;
 }
 // UnpublishFoundryDashboardRequest deletes the dashboard's snapshot, so its
-// link shows nothing: owners and admins only, whether or not public links are
-// on.
+// link shows nothing: owners and admins only (else
+// FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY), whether or not public links are on.
 message UnpublishFoundryDashboardRequest {
   string workspace_id = 1;
   string id = 2;
+}
+
+message GetFoundryDashboardSettingsRequest {
+  string workspace_id = 1;
+}
+// UpdateFoundryDashboardSettingsRequest turns the workspace's public
+// dashboard links on or off: owners only. Off, every link of the workspace
+// shows nothing at once; on again, the links not unpublished meanwhile, and
+// not expired, show again.
+message UpdateFoundryDashboardSettingsRequest {
+  string workspace_id = 1;
+  bool public_links = 2;
+}
+message FoundryDashboardSettingsResponse {
+  FoundryDashboardSettings settings = 1;
 }
 
 // ListFoundryAutomationsRequest lists the workspace's automations, most

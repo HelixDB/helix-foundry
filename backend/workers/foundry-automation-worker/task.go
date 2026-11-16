@@ -311,26 +311,30 @@ func (t *Task) watch(ctx context.Context) {
 }
 
 // loops says why automationID's trigger passes over ended work that would
-// loop: a sync or a load its own run started, or a run of an automation that
-// one of its runs set off (through any number of others), or that came after
-// more than maxChainDepth automation runs in a row; "" when it may fire. Work
-// a person or Foundry itself started has no cause and always may.
+// loop: a sync or a load its own run started, or a document a sync it
+// started wrote, or such work of a run of an automation that one of its runs
+// set off (through any number of others), or that came after more than
+// maxChainDepth automation runs in a row; "" when it may fire. Work a person
+// or Foundry itself started has no cause and always may.
 func loops(automationID string, trigger automation.Trigger, e model.FoundryAutomationEnded) string {
 	c := e.Cause
 	if c == nil {
 		return ""
 	}
-	what := "sync"
-	if _, load := trigger.(automation.LoadReady); load {
-		what = "load"
+	what, started := "the sync", "was started by"
+	switch trigger.(type) {
+	case automation.LoadReady:
+		what = "the load"
+	case automation.DocumentArrived:
+		what, started = "the document", "was written by a sync started by"
 	}
 	switch {
 	case c.AutomationID == automationID:
-		return "Skipped: the " + what + " was started by this workflow itself; running on it would loop."
+		return "Skipped: " + what + " " + started + " this workflow itself; running on it would loop."
 	case slices.Contains(c.Chain, automationID):
-		return "Skipped: the " + what + " was started by a workflow this one set off; running on it would loop."
+		return "Skipped: " + what + " " + started + " a workflow this one set off; running on it would loop."
 	case c.Depth > maxChainDepth:
-		return fmt.Sprintf("Skipped: the %s came from a chain of %d workflows setting each other off; a chain stops after %d.", what, c.Depth, maxChainDepth)
+		return fmt.Sprintf("Skipped: %s came from a chain of %d workflows setting each other off; a chain stops after %d.", what, c.Depth, maxChainDepth)
 	}
 	return ""
 }
@@ -954,6 +958,8 @@ func (t *Task) runAction(ctx context.Context, st *runState, nodeID string, a aut
 			return 0, err
 		case d.Share == nil:
 			return 0, t.fail(ctx, st, nodeID, "Its dashboard isn't published: publish it on its page, and the workflow refreshes its snapshot from then on.")
+		case d.Share.Expired(time.Now()):
+			return 0, t.fail(ctx, st, nodeID, "Its dashboard's public link expired: publish it again on its page, choosing when the new link ends.")
 		case d.Share.SpecRevision != d.Revision:
 			return 0, t.fail(ctx, st, nodeID, "Its dashboard was changed since it was published: publish it again on its page to put the change at its link.")
 		}

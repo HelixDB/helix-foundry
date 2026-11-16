@@ -1,13 +1,17 @@
 import type {
   AddDashboardQuestionVisualRequest,
   CreateDashboardRequest,
+  DashboardLinkExpiry,
   DashboardResponse,
   DashboardSpec,
   FoundryDashboard,
+  FoundryDashboardSettings,
+  FoundryDashboardSettingsResponse,
   ListDashboardsResponse,
   PinDashboardRequest,
   PublishDashboardRequest,
   UpdateDashboardRequest,
+  UpdateDashboardSettingsRequest,
 } from "../../../shared/wfe";
 import type { QueryClient } from "@tanstack/react-query";
 import { api, refusalOf } from "../../api";
@@ -23,8 +27,17 @@ import { tileDraw, type LoadRead, type TileDraw } from "./model";
 
 const enc = encodeURIComponent;
 const at = (ws: string) => `/v1/workspaces/${enc(ws)}/foundry/dashboards`;
+const settingsAt = (ws: string) =>
+  `/v1/workspaces/${enc(ws)}/foundry/dashboard-settings`;
 
 export const dashboardQueries = {
+  // The workspace's dashboard settings: whether public links are on.
+  settings: (ws: string) => ({
+    queryKey: [ws, "dashboard-settings"],
+    queryFn: async (): Promise<FoundryDashboardSettings> =>
+      (await api<FoundryDashboardSettingsResponse>(settingsAt(ws))).settings ||
+      {},
+  }),
   // Every dashboard the caller sees (at most 200), pinned first, without specs.
   list: (ws: string) => ({
     queryKey: [ws, "dashboards"],
@@ -167,16 +180,21 @@ export async function addQuestionVisual(
   return dashboard;
 }
 
-/** Publishes the dashboard as it is at `expectedRevision`: a snapshot at its public link. */
+/**
+ * Publishes the dashboard as it is at `expectedRevision`: a snapshot at its
+ * public link, ending as `expiry` says (none keeps a live link's own).
+ */
 export async function publishDashboard(
   ws: string,
   id: string,
   expectedRevision: string,
   first: boolean,
+  expiry?: DashboardLinkExpiry,
 ): Promise<FoundryDashboard> {
   const { dashboard } = await reported("publish", () =>
     api<DashboardResponse>(`${at(ws)}/${enc(id)}:publish`, {
       expectedRevision,
+      ...(expiry ? { expiry } : {}),
     } satisfies PublishDashboardRequest),
   );
   trackEvent("dashboard_published", { first });
@@ -193,4 +211,18 @@ export async function unpublishDashboard(
   );
   trackEvent("dashboard_unpublished");
   return dashboard;
+}
+
+/** Turns the workspace's public dashboard links on or off (owners only). */
+export async function setPublicLinks(
+  ws: string,
+  publicLinks: boolean,
+): Promise<FoundryDashboardSettings> {
+  const { settings } = await api<FoundryDashboardSettingsResponse>(
+    settingsAt(ws),
+    { publicLinks } satisfies UpdateDashboardSettingsRequest,
+    "PATCH",
+  );
+  trackEvent("dashboard_public_links_set", { on: publicLinks });
+  return settings || {};
 }

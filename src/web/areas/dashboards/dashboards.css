@@ -225,6 +225,11 @@
   color: var(--hf-muted);
   font-size: var(--hf-text-sm);
 }
+/* The card's menu sits over the name's link, which covers the card. */
+.db-card-menu {
+  position: relative;
+  z-index: 2;
+}
 .db-card-time {
   display: inline-flex;
   align-items: center;
@@ -464,6 +469,15 @@
   margin: 0;
 }
 
+/* The Share menu's trigger is a primary button: the kit's menu trigger
+   resets a button's fill and colour, so they are set again here. */
+.db-share-trigger.hf-btn--primary {
+  background: var(--hf-ink);
+  color: var(--hf-on-ink);
+}
+.db-share-trigger.hf-btn--primary:hover {
+  background: var(--hf-ink-hover);
+}
 /* Publishing: what a link shows whom, the link and what to do with it. */
 .db-share {
   display: grid;
@@ -485,6 +499,12 @@
 .db-share-warn svg {
   flex: none;
   margin-top: 3px;
+}
+.db-share-warn ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 16px;
 }
 .db-share-note {
   margin: 0;

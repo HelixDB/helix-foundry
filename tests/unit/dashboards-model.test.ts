@@ -9,15 +9,19 @@ import {
   dashboardName,
   dashboardRefusal,
   libraryDashboards,
+  linkState,
+  linkText,
   loadReads,
   movesOf,
   parseSnapshot,
   parseSpec,
   previewRows,
+  publishBlockText,
   tileDraw,
   tileGlyph,
   tileRows,
   tileTitle,
+  workspaceLink,
   type TileEdit,
 } from "@/web/areas/dashboards/model";
 import { parseQuery } from "@/web/areas/ontology/ask-model";
@@ -709,5 +713,66 @@ describe("previewRows", () => {
 describe("NEW_DASHBOARD_PROMPT", () => {
   it("leaves the caret after a colon and a space, for what to build", () => {
     expect(NEW_DASHBOARD_PROMPT).toBe("Build me a dashboard for: ");
+  });
+});
+
+describe("sharing", () => {
+  it("links a dashboard's page with its workspace", () => {
+    expect(workspaceLink("https://f.example", "ws_acme", "d/1")).toBe(
+      "https://f.example/dashboards/d%2F1?workspace=ws_acme",
+    );
+  });
+
+  it("says why a public link can't be made, unless there are none to make", () => {
+    expect(publishBlockText("FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY")).toBe(
+      "Only owners and admins make public links",
+    );
+    expect(
+      publishBlockText("FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF"),
+    ).toBe("Turned off for this workspace");
+    for (const block of [
+      "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE",
+      "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED",
+      undefined,
+    ] as const)
+      expect(publishBlockText(block)).toBeUndefined();
+  });
+
+  it("reads a public link's state as the WFE gives it", () => {
+    const day = (iso: string) => iso.slice(0, 10);
+    expect(linkState(undefined, day)).toBeUndefined();
+    expect(linkState(null, day)).toBeUndefined();
+    expect(linkState({}, day)).toEqual({ live: true });
+    expect(
+      linkState(
+        {
+          status: "FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE",
+          expiresAt: "2026-12-16T09:00:00Z",
+        },
+        day,
+      ),
+    ).toEqual({ live: true, detail: "expires 2026-12-16" });
+    expect(
+      linkState(
+        {
+          status: "FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED",
+          expiresAt: "2026-12-16T09:00:00Z",
+        },
+        day,
+      ),
+    ).toEqual({ live: false, detail: "expired" });
+    expect(
+      linkState(
+        { status: "FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF" },
+        day,
+      ),
+    ).toEqual({ live: false, detail: "turned off for this workspace" });
+    expect(
+      linkState({ status: "FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE" }, day),
+    ).toEqual({ live: false, detail: "off here" });
+    expect(linkText({ live: true })).toBe("Public link");
+    expect(linkText({ live: false, detail: "expired" })).toBe(
+      "Public link · expired",
+    );
   });
 });

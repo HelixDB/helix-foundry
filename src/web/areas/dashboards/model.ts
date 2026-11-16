@@ -1,9 +1,12 @@
 import type {
+  DashboardLinkExpiry,
+  DashboardPublishBlock,
   DashboardRefusal,
   DashboardSpec,
   DashboardTile,
   DashboardTileLoad,
   FoundryDashboard,
+  FoundryDashboardShare,
   OntologyQuery,
   QueryOutput,
   VisualKind,
@@ -16,7 +19,8 @@ import { parseOutput, parseQuery } from "../ontology/ask-model";
 // Dashboards as pure functions: a spec read without trust, the edits the
 // page offers on it (each one a closed case, each keeping the spec's
 // rules), which loads its tiles read, what a tile's read gives to draw, why
-// the WFE refused a change, and a public snapshot read without trust. The
+// the WFE refused a change, how it is shared (its in-app link, and its
+// public link's state), and a public snapshot read without trust. The
 // spec is the backend's (backend/dashboard, src/shared/wfe.ts
 // "Dashboards"): at most 20 tiles, each in exactly one row of 1 to 3.
 
@@ -387,6 +391,99 @@ export function dashboardRefusal(error: unknown): DashboardRefusal | undefined {
   }
   return undefined;
 }
+
+// ---------------------------------------------------------------- sharing
+
+/**
+ * A dashboard's page with its workspace, on `origin`: the link that shares
+ * it inside the workspace. Whoever opens it signs in and reads it live, as
+ * themselves (a grantee only through their grants); it is no snapshot.
+ *
+ * @example
+ * workspaceLink("https://f.example", "ws 1", "d_1"); // "https://f.example/dashboards/d_1?workspace=ws%201"
+ */
+export function workspaceLink(origin: string, ws: string, id: string) {
+  return `${origin}/dashboards/${encodeURIComponent(id)}?workspace=${encodeURIComponent(ws)}`;
+}
+
+/** When a publish ends its link, as the publish dialog offers it. */
+export const LINK_EXPIRIES: readonly {
+  value: DashboardLinkExpiry;
+  label: string;
+}[] = [
+  { value: "FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER", label: "Never" },
+  { value: "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7", label: "After 7 days" },
+  { value: "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_30", label: "After 30 days" },
+  { value: "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90", label: "After 90 days" },
+];
+
+/**
+ * Why the viewer can't make a public link of a dashboard, in words; undefined
+ * when they can, or when there are no public links to make (the stamp's or
+ * build's), which the page then doesn't mention at all.
+ *
+ * @example
+ * publishBlockText("FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY"); // "Only owners and admins make public links"
+ * publishBlockText("FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE"); // undefined
+ */
+export function publishBlockText(
+  block: DashboardPublishBlock | undefined,
+): string | undefined {
+  switch (block) {
+    case "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY":
+      return "Only owners and admins make public links";
+    case "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF":
+      return "Turned off for this workspace";
+    default:
+      return undefined;
+  }
+}
+
+/** A public link's state, as the page shows it. */
+export type LinkState = {
+  // Whether it shows its snapshot now.
+  live: boolean;
+  // What is said of it after "Public link": "expires 16 Dec 2026", "expired", …
+  detail?: string;
+};
+
+/**
+ * What a dashboard's public link is now, as the WFE says (`status`, which
+ * reads the expiry by the server's clock), and when it ends; undefined for
+ * one with no link.
+ *
+ * @example
+ * linkState({ status: "FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE" }, (d) => d); // { live: true }
+ * linkState({ status: "FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE", expiresAt: "2026-12-16" }, (d) => d); // { live: true, detail: "expires 2026-12-16" }
+ * linkState({ status: "FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED" }, (d) => d); // { live: false, detail: "expired" }
+ */
+export function linkState(
+  share: FoundryDashboardShare | null | undefined,
+  day: (iso: string) => string,
+): LinkState | undefined {
+  if (!share) return undefined;
+  switch (share.status) {
+    case "FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED":
+      return { live: false, detail: "expired" };
+    case "FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF":
+      return { live: false, detail: "turned off for this workspace" };
+    case "FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE":
+      return { live: false, detail: "off here" };
+    default:
+      return share.expiresAt
+        ? { live: true, detail: `expires ${day(share.expiresAt)}` }
+        : { live: true };
+  }
+}
+
+/**
+ * A link's state as one line: "Public link", "Public link · expired", …
+ *
+ * @example
+ * linkText({ live: false, detail: "expired" }); // "Public link · expired"
+ */
+export const linkText = (state: LinkState) =>
+  state.detail ? `Public link · ${state.detail}` : "Public link";
 
 // ---------------------------------------------------------------- snapshot
 
