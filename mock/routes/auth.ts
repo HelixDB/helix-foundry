@@ -1,6 +1,11 @@
 import type {
   ExchangeAuthCodeRequest,
   ExchangeAuthCodeResponse,
+  PasswordAuthResponse,
+  RequestPasswordResetRequest,
+  ResetPasswordRequest,
+  SignInWithPasswordRequest,
+  SignUpWithPasswordRequest,
   StartLoginRequest,
   StartLoginResponse,
   VerifyEmailRequest,
@@ -8,12 +13,13 @@ import type {
   WhoamiResponse,
 } from "../../src/shared/wfe";
 import { FOUNDRY_APPLICATION } from "../../src/shared/wfe";
-import { fail, now, ok, type MockReply, type MockRoute } from "../http";
+import { fail, id, now, ok, type MockReply, type MockRoute } from "../http";
 import {
   config,
   db,
   displayName,
   EMAIL_CODE,
+  PASSWORD_MIN,
   SSO_DOMAIN,
   stats,
   type MockUser,
@@ -28,6 +34,13 @@ import { projectAccess } from "./workspaces";
 // verified yet (emailVerificationRequired: verify-email takes the code,
 // EMAIL_CODE) or its company requires single sign-on (ssoRequired: a login
 // with AUTH_PROVIDER_SSO and the email), by mock/state.ts's rules.
+//
+// The password calls sign in without a page, as the WFE's do through
+// WorkOS's AuthenticateWithPassword, with an exchange's two detours: an
+// unverified address answers emailVerificationRequired with the sessionId
+// verify-email takes. A sign-up makes an unverified user; forgot keeps a
+// reset token for a known address (GET /__mock/password-resets) and
+// answers the same for any; reset sets the password once per token.
 
 const providers = new Set([
   "AUTH_PROVIDER_GITHUB",
@@ -61,6 +74,42 @@ async function signedIn(user: MockUser): Promise<MockReply> {
     refreshToken: tokens.refreshToken,
     email: user.email,
   } satisfies ExchangeAuthCodeResponse & VerifyEmailResponse);
+}
+
+const foundryOnly = (application: unknown) =>
+  application === FOUNDRY_APPLICATION
+    ? null
+    : fail("INVALID_ARGUMENT", "application must be AUTH_APPLICATION_FOUNDRY");
+
+const userByEmail = (email: string) =>
+  [...db.users.values()].find((u) => u.email === email);
+
+// WorkOS's password policy, as the WFE passes its reason on.
+const weak = (password: string) =>
+  password.length < PASSWORD_MIN
+    ? fail(
+        "INVALID_ARGUMENT",
+        `Password must be at least ${PASSWORD_MIN} characters long.`,
+      )
+    : null;
+
+/** A password sign-in's answer for `user`, once its password matched. */
+async function passwordSignedIn(user: MockUser): Promise<MockReply> {
+  if (domainOf(user.email) === SSO_DOMAIN)
+    return ok({
+      email: user.email,
+      ssoRequired: true,
+    } satisfies PasswordAuthResponse);
+  if (user.emailUnverified) {
+    const sessionId = randomToken() + randomToken();
+    db.verifications.set(sessionId, { userId: user.id });
+    return ok({
+      email: user.email,
+      emailVerificationRequired: true,
+      sessionId,
+    } satisfies PasswordAuthResponse);
+  }
+  return signedIn(user);
 }
 
 export const authRoutes: MockRoute[] = [
@@ -169,6 +218,91 @@ export const authRoutes: MockRoute[] = [
       delete user.emailUnverified;
       if (!allowed(user.email)) return refused();
       return signedIn(user);
+    },
+  },
+  {
+    method: "POST",
+    path: "/v1/auth/password:sign-in",
+    public: true,
+    handle: ({ body }) => {
+      const req = (body || {}) as Partial<SignInWithPasswordRequest>;
+      const email = (req.email || "").trim().toLowerCase();
+      if (!email.includes("@") || !req.password)
+        return fail("INVALID_ARGUMENT", "email and password are required");
+      if (!allowed(email)) return refused();
+      const wrongApp = foundryOnly(req.application);
+      if (wrongApp) return wrongApp;
+      const user = userByEmail(email);
+      if (!user?.password || user.password !== req.password)
+        return fail("UNAUTHENTICATED", "invalid email or password");
+      return passwordSignedIn(user);
+    },
+  },
+  {
+    method: "POST",
+    path: "/v1/auth/password:sign-up",
+    public: true,
+    handle: ({ body }) => {
+      const req = (body || {}) as Partial<SignUpWithPasswordRequest>;
+      const email = (req.email || "").trim().toLowerCase();
+      if (!email.includes("@") || !req.password)
+        return fail("INVALID_ARGUMENT", "email and password are required");
+      if (!allowed(email)) return refused();
+      const wrongApp = foundryOnly(req.application);
+      if (wrongApp) return wrongApp;
+      const tooWeak = weak(req.password);
+      if (tooWeak) return tooWeak;
+      if (userByEmail(email))
+        return fail(
+          "ALREADY_EXISTS",
+          "an account with this email already exists; sign in with your password or GitHub, or reset your password",
+        );
+      const user: MockUser = {
+        id: id("usr"),
+        workosId: id("user"),
+        email,
+        firstName: (req.firstName || "").trim(),
+        lastName: (req.lastName || "").trim(),
+        createdAt: now(),
+        emailUnverified: true,
+        password: req.password,
+      };
+      db.users.set(user.id, user);
+      return passwordSignedIn(user);
+    },
+  },
+  {
+    method: "POST",
+    path: "/v1/auth/password:forgot",
+    public: true,
+    handle: ({ body }) => {
+      const req = (body || {}) as Partial<RequestPasswordResetRequest>;
+      const email = (req.email || "").trim().toLowerCase();
+      if (!email.includes("@"))
+        return fail("INVALID_ARGUMENT", "a valid email is required");
+      const wrongApp = foundryOnly(req.application);
+      if (wrongApp) return wrongApp;
+      const user = userByEmail(email);
+      if (user) db.passwordResets.set(randomToken(), user.id);
+      return ok({});
+    },
+  },
+  {
+    method: "POST",
+    path: "/v1/auth/password:reset",
+    public: true,
+    handle: ({ body }) => {
+      const req = (body || {}) as Partial<ResetPasswordRequest>;
+      if (!req.token || !req.newPassword)
+        return fail("INVALID_ARGUMENT", "token and new_password are required");
+      const user = db.users.get(db.passwordResets.get(req.token) ?? "");
+      if (!user)
+        return fail("INVALID_ARGUMENT", "reset link is invalid or expired");
+      const tooWeak = weak(req.newPassword);
+      if (tooWeak) return tooWeak;
+      db.passwordResets.delete(req.token);
+      user.password = req.newPassword;
+      return ok({});
     },
   },
   {

@@ -56,7 +56,9 @@ Automations:
 - To make one, read what it acts on (its connector, ontology, document set or dashboard ids), draw its graph as helix_foundry_get_automation describes it, and prepare create_automation; to change one, read it and prepare update_automation with the whole new spec and its revision. The person's click on a card that shows the steps approves exactly those steps: say plainly what it will do, when, and which actions its Founder steps may run unasked. A new name or description alone approves nothing: one that waits for approval keeps waiting, for the person to approve on its page.
 - An automation's trigger can't wait on the work its own steps start (a sync of the connector it syncs, a load of the ontology it loads): each run would start another. Use a schedule then.
 - A Founder step runs unasked only the actions its "allow" lists, each an operation on one fixed target; list only what the person asked it to do. Anything else it prepares waits for them as a card.
-- For a schedule, use the person's own time zone; ask them for it when you can't tell.
+- A Founder step's instruction is read and edited by people: write it in plain words, naming what it acts on by its name ("the Acme Corp customers ontology"), never by an id; when it runs, it finds them by name with the tools. When two share a name, tell them apart by something else people see, such as the database's name, still with no id.
+- For a schedule, use the person's own time zone, the time_zone in <page_context> (their browser's), without asking for it. Ask only when they name a place or a zone other than that one and you can't tell which zone they mean, or when <page_context> gives no time_zone.
+- Whenever you offer time zones as options, label each in words people read, such as "London (UK time)" or "New York (US Eastern)", never as an IANA id such as America/New_York; write the IANA id into the spec yourself.
 - When <page_context> says creating_automation, the person is on the page that starts a new automation: what they write describes the automation they want. Read what it needs, ask only what you can't tell, and prepare create_automation.
 
 Trust:
@@ -84,6 +86,9 @@ type PageContext struct {
 	DashboardID string `json:"dashboard_id,omitempty"`
 	// NewAutomation: the page that starts a new automation.
 	NewAutomation bool `json:"new_automation,omitempty"`
+	// TimeZone is the IANA zone the person's browser names, checked by
+	// automation.Zone before it is kept.
+	TimeZone string `json:"time_zone,omitempty"`
 }
 
 // shownPage is a page context checked against the workspace, with the names
@@ -96,6 +101,8 @@ type shownPage struct {
 	DashboardName string `json:"dashboard_name,omitempty"`
 	// CreatingAutomation: the person is starting a new automation.
 	CreatingAutomation bool `json:"creating_automation,omitempty"`
+	// TimeZone is the person's own time zone, as their browser names it.
+	TimeZone string `json:"time_zone,omitempty"`
 }
 
 // messageText is a person's message as the model reads it: what they were

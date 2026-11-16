@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   activeSection,
   allSections,
+  footNav,
   granteeNav,
+  linkedSections,
   navSection,
   primaryNav,
   secondaryNav,
@@ -15,15 +17,26 @@ import {
 // other sections' panels beside it.
 
 describe("the sections", () => {
-  it("lists Ask first, then Dashboards, Automations, Ontologies and Connectors", () => {
+  it("lists Ask first, then Dashboards, Automations and Ontologies, with Connectors at the foot", () => {
     expect(primaryNav.map((n) => [n.label, n.to])).toEqual([
       ["Analyst", "/ask"],
       ["Dashboards", "/dashboards"],
       ["Automations", "/automations"],
       ["Ontologies", "/ontology"],
+    ]);
+    expect(footNav.map((n) => [n.label, n.to])).toEqual([
       ["Connectors", "/data"],
     ]);
     expect(secondaryNav.map((n) => n.label)).toEqual(["Settings"]);
+    // The palette and the fallback list them in the sidebar's order.
+    expect(linkedSections.map((n) => n.id)).toEqual([
+      "ask",
+      "dashboards",
+      "automations",
+      "ontology",
+      "data",
+      "settings",
+    ]);
   });
 
   it("gives a grantee Analyst, Dashboards and Ontologies", () => {

@@ -14,6 +14,7 @@ import { Button, Tag, cx } from "../kit";
 import {
   MAX_OWN,
   answerText,
+  optionText,
   answersOf,
   canLeave,
   canLeaveRest,
@@ -394,7 +395,7 @@ function Step({
                   </span>
                   <span className="qf-option-body">
                     <span className="qf-option-label">
-                      {o.label}
+                      {optionText(o.label)}
                       {o.label ===
                         (q.ask as { recommended: string | null })
                           .recommended && <Tag tone="accent">Recommended</Tag>}
@@ -541,7 +542,7 @@ export function QuestionList({ questions }: { questions: Question[] }) {
               {q.ask.options.map((o) => (
                 <li key={o.label}>
                   <span className="qf-option-label">
-                    {o.label}
+                    {optionText(o.label)}
                     {o.label ===
                       (q.ask as { recommended: string | null }).recommended && (
                       <Tag tone="accent">Recommended</Tag>

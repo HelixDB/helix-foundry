@@ -39,7 +39,7 @@ test("tour: video", async ({ browser }) => {
   await caption(page, "1. Connect and sync your data, and upload documents");
   await click(
     page
-      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("navigation", { name: "Data" })
       .getByRole("link", { name: "Connectors" }),
   );
   await page.waitForTimeout(2000);

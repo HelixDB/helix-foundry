@@ -180,6 +180,7 @@ test("a restricted member sees only what their sources cover", async ({
     "Dashboards",
     "Ontologies",
   ]);
+  await expect(as.getByRole("navigation", { name: "Data" })).toHaveCount(0);
   await expect(as.getByRole("link", { name: "Settings" })).toHaveCount(0);
   await expect(as.getByRole("button", { name: "Search" })).toHaveCount(0);
   await expect(
@@ -1119,13 +1120,12 @@ test("giving a member sources restricts them, and taking them away widens nothin
   await as.goto("/data");
   await expect(
     as.getByRole("list", { name: "Workspace" }).getByRole("link"),
-  ).toHaveText([
-    "Founder",
-    "Dashboards",
-    "Automations",
-    "Ontologies",
-    "Connectors",
-  ]);
+  ).toHaveText(["Founder", "Dashboards", "Automations", "Ontologies"]);
+  await expect(
+    as
+      .getByRole("navigation", { name: "Data" })
+      .getByRole("link", { name: "Connectors" }),
+  ).toHaveAttribute("aria-current", "page");
 });
 
 test("a member who reads databases is given no sources, on their own or by a team", async ({

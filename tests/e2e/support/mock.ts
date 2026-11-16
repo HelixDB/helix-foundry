@@ -39,6 +39,9 @@ export const mock = {
       stopReason: "signed_in" | null;
     }[]
   > => (await (await fetch(`${MOCK}/__mock/reminders`)).json()).reminders,
+  /** The reset links the mock's forgot emailed, oldest first (mock/routes/auth.ts). */
+  passwordResets: async (): Promise<{ email: string; token: string }[]> =>
+    (await (await fetch(`${MOCK}/__mock/password-resets`)).json()).resets,
   /** The feedback POST /v1/feedback took (mock/routes/feedback.ts). */
   feedback: async (): Promise<
     {
@@ -65,7 +68,7 @@ export const mock = {
     ontologyStepMs?: number;
     ontologyOutcome?: "succeed" | "fail" | "retry" | "auth";
     // A new generation's agent asks three questions before it drafts.
-    ontologyQuestions?: boolean;
+    ontologyQuestions?: boolean | "time_zone";
     // A revision measuring rules on a comparable load is over its budget.
     reviseOutcome?: "budget";
     // A load's step, how it ends, and whether reading a document fails.
@@ -319,6 +322,8 @@ export async function signIn(
   if (!new URL(page.url(), "http://x").pathname.startsWith("/login"))
     await page.goto("/login");
   await page.getByRole("button", { name: `Continue with ${provider}` }).click();
+  // The sign-in page has an Email field of its own: wait for the mock's.
+  await page.waitForURL(/\/mock\/authorize\?/);
   await page.getByLabel("Email").fill(email);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.waitForURL((url) => !url.pathname.startsWith("/login"));

@@ -4,7 +4,10 @@ import {
   contractErrors,
 } from "../../mock/agent-contract";
 import agentBundle from "../../mock/fixtures/agent-bundle.json";
-import { ENGINE_QUESTIONS } from "../../mock/fixtures/generation-questions";
+import {
+  ENGINE_QUESTIONS,
+  ZONE_QUESTIONS,
+} from "../../mock/fixtures/generation-questions";
 import { draftFromTables } from "../../mock/routes/ontology-agent";
 
 // The ontology agent's Read and Ask JSON, held to the schemas vendored in
@@ -109,6 +112,7 @@ describe("the questions the mock's ontology agent asks", () => {
     );
     const questions = [
       ...ENGINE_QUESTIONS,
+      ...ZONE_QUESTIONS,
       ...(drafted.questions || []),
       ...agentBundle.questions,
     ];

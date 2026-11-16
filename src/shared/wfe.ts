@@ -112,6 +112,53 @@ export type VerifyEmailResponse = {
   ssoRequired?: boolean;
 };
 
+/** v1SignInWithPasswordRequest: POST /v1/auth/password:sign-in */
+export type SignInWithPasswordRequest = {
+  email: string;
+  password: string;
+  application: AuthApplication;
+};
+/**
+ * v1SignUpWithPasswordRequest: POST /v1/auth/password:sign-up. WorkOS makes
+ * the user, then it signs in as SignInWithPassword does. An email with an
+ * account is ALREADY_EXISTS, a password WorkOS refuses INVALID_ARGUMENT with
+ * its reasons.
+ */
+export type SignUpWithPasswordRequest = {
+  email: string;
+  password: string;
+  firstName?: string;
+  lastName?: string;
+  application: AuthApplication;
+};
+/**
+ * v1PasswordAuthResponse, both password calls' answer: tokens, or none and
+ * one of an exchange's two detours. emailVerificationRequired comes with the
+ * `sessionId` VerifyEmail takes the emailed code under.
+ */
+export type PasswordAuthResponse = {
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  email?: string;
+  emailVerificationRequired?: boolean;
+  sessionId?: string;
+  workspaceId?: string;
+  invitationOnboarding?: boolean;
+  ssoRequired?: boolean;
+};
+/**
+ * v1RequestPasswordResetRequest: POST /v1/auth/password:forgot. WorkOS emails
+ * a link to the application's reset page (Foundry's /reset-password?token=),
+ * and answers the same for an address without an account.
+ */
+export type RequestPasswordResetRequest = {
+  email: string;
+  application: AuthApplication;
+};
+/** v1ResetPasswordRequest: POST /v1/auth/password:reset, the emailed link's token. */
+export type ResetPasswordRequest = { token: string; newPassword: string };
+
 /** v1RefreshSessionRequest: POST /v1/auth/refresh (the BFF refreshes through WorkOS). */
 export type RefreshSessionRequest = {
   refreshToken: string;
@@ -2736,6 +2783,9 @@ export type AgentPageContext = {
   dashboardId?: string;
   // The person is on the page that starts a new automation.
   newAutomation?: boolean;
+  // The IANA time zone the person's browser names (America/New_York): the
+  // Assistant's default for a schedule. One the WFE can't read is dropped.
+  timeZone?: string;
 };
 
 /**

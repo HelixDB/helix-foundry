@@ -108,6 +108,10 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	token := req.GetClientToken()
 	page := foundryagent.PageContext{OntologyID: req.GetPageContext().GetOntologyId(), LoadID: req.GetPageContext().GetLoadId(),
 		DashboardID: req.GetPageContext().GetDashboardId(), NewAutomation: req.GetPageContext().GetNewAutomation()}
+	// A browser's zone Go's database lacks is dropped: the Assistant asks then.
+	if _, err := automation.Zone(req.GetPageContext().GetTimeZone()); err == nil {
+		page.TimeZone = req.GetPageContext().GetTimeZone()
+	}
 	switch {
 	case token == "" || len(token) > maxClientTokenLength:
 		return nil, status.Errorf(codes.InvalidArgument, "client_token is required, at most %d characters", maxClientTokenLength)
@@ -249,9 +253,9 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 // granteePage is page as g may name it to Founder: an ontology whose current
 // load its grants cover, that load, and a pinned dashboard; anything else,
 // and a new automation, is dropped, so Founder never reads a name the
-// grantee can't see.
+// grantee can't see. The time zone, the person's own, stays.
 func (s *Service) granteePage(ctx context.Context, g access.Grantee, page foundryagent.PageContext) (foundryagent.PageContext, error) {
-	var out foundryagent.PageContext
+	out := foundryagent.PageContext{TimeZone: page.TimeZone}
 	if page.OntologyID != "" {
 		loads, err := s.granteeLoads(ctx, g, []string{page.OntologyID})
 		if err != nil {
@@ -763,7 +767,7 @@ func agentTurnToProto(t *foundrymodel.FoundryAgentTurn) *foundryv1.FoundryAgentT
 	var page foundryagent.PageContext
 	if len(t.PageContext) > 0 && json.Unmarshal(t.PageContext, &page) == nil {
 		out.PageContext = &foundryv1.FoundryAgentPageContext{OntologyId: page.OntologyID, LoadId: page.LoadID, DashboardId: page.DashboardID,
-			NewAutomation: page.NewAutomation}
+			NewAutomation: page.NewAutomation, TimeZone: page.TimeZone}
 	}
 	if t.Error != nil {
 		out.Error = *t.Error

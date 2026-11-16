@@ -2424,6 +2424,97 @@ describe("dashboards", () => {
   });
 });
 
+describe("an automation's time zone", () => {
+  const ULID = /\b[0-9A-HJKMNP-TV-Z]{26}\b/;
+  const spec = (c: Awaited<ReturnType<typeof card>>) =>
+    JSON.parse(c.action.payloadJson).spec;
+
+  it("schedules in the zone the browser sent, without asking", async () => {
+    const c = await card(
+      "Every Monday at 8am, give me a summary of overdue invoices from Customer contracts",
+      { pageContext: { newAutomation: true, timeZone: "America/New_York" } },
+    );
+    expect(c.events.some((e) => e.type === "questions")).toBe(false);
+    expect(spec(c).nodes[0].config).toEqual({
+      kind: "schedule",
+      every: "week",
+      weekday: "monday",
+      at: "08:00",
+      time_zone: "America/New_York",
+    });
+    expect(c.said).toContain("Every Monday at 08:00 New York time");
+    // The instruction names the ontology by its name, never its id.
+    const instruction = spec(c).nodes.find(
+      (n: { kind: string }) => n.kind === "assistant",
+    ).config.instruction;
+    expect(instruction).toContain("the Customer contracts ontology");
+    expect(instruction).not.toContain("ont_acme_contracts");
+    expect(instruction).not.toMatch(ULID);
+    expect(c.sent.body.turn.pageContext).toEqual({
+      newAutomation: true,
+      timeZone: "America/New_York",
+    });
+  });
+
+  it("drops a zone that isn't one, as the WFE does", async () => {
+    for (const timeZone of ["Mars/Olympus", "Local", "New York"]) {
+      const r = await send("Hi", { pageContext: { timeZone } });
+      expect(r.status).toBe(200);
+      expect(r.body.turn.pageContext ?? null).toBeNull();
+    }
+  });
+
+  it("asks for one in words when none was sent, and schedules in the one chosen", async () => {
+    const c = await card(
+      "Every Monday at 8am, summarise the overdue invoices",
+      {
+        pageContext: { newAutomation: true },
+      },
+    );
+    expect(c.action).toBeUndefined();
+    const asked = c.events.find((e) => e.type === "questions") as Extract<
+      AgentEvent,
+      { type: "questions" }
+    >;
+    expect(asked.questions[0]!.text).toBe(
+      "Which time zone should the Monday 08:00 run keep?",
+    );
+    expect(asked.questions[0]!.options!.map((o) => o.label)).toEqual([
+      "London (UK time)",
+      "New York (US Eastern)",
+      "Los Angeles (US Pacific)",
+      "Berlin (Central Europe)",
+    ]);
+    const r = await call("POST", `${A}/turns`, {
+      threadId: c.sent.body.thread.id,
+      answers: {
+        turnId: c.sent.body.turn.id,
+        answers: [{ questionId: "q1", options: ["Berlin (Central Europe)"] }],
+      },
+      clientToken: "zone-1",
+    });
+    expect(r.status).toBe(200);
+    await events(r.body.turn.id);
+    const thread = await call("GET", `${A}/threads/${c.sent.body.thread.id}`);
+    const prepared = thread.body.actions.at(-1);
+    expect(prepared.operation).toBe("create_automation");
+    expect(JSON.parse(prepared.payloadJson).spec.nodes[0].config).toMatchObject(
+      { every: "week", at: "08:00", time_zone: "Europe/Berlin" },
+    );
+  });
+
+  it("never asks for an hour's or an upload's", async () => {
+    const c = await card("Every hour, summarise the overdue invoices", {
+      pageContext: { newAutomation: true },
+    });
+    expect(c.events.some((e) => e.type === "questions")).toBe(false);
+    expect(spec(c).nodes[0].config).toMatchObject({
+      every: "hour",
+      time_zone: "UTC",
+    });
+  });
+});
+
 describe("the Analyst", () => {
   const D = `${WS}/dashboards`;
   const ASKED =

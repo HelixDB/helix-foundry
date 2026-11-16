@@ -507,7 +507,7 @@ test("on a phone, shows Founder's threads as the page until one is chosen, and i
   await page.getByRole("button", { name: "Open navigation" }).click();
   const drawer = page.getByRole("dialog", { name: "Navigation" });
   const sections = drawer.getByRole("navigation", { name: "Main navigation" });
-  await expect(sections.getByRole("link")).toHaveCount(5);
+  await expect(sections.getByRole("link")).toHaveCount(4);
   await expect(
     sections.getByRole("link", { name: "Founder", exact: true }),
   ).toHaveAttribute("aria-current", "page");

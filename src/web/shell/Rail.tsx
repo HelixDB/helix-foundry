@@ -7,6 +7,7 @@ import { WorkspaceSwitcher } from "../areas/workspace/switcher";
 import { useShell } from "./context";
 import {
   activeSection,
+  footNav,
   granteeNav,
   navSection,
   onboardingNav,
@@ -33,10 +34,12 @@ function HelixMark() {
  * The sidebar as a column of icons, in a phone's drawer beside the open
  * section's panel (beside the page, the sidebar has the sections' names:
  * Sidebar.tsx). The mark, search and the drawer's close button, which every
- * link presses too, a link per section, then the workspace, the account and
- * settings. While the workspace is onboarding it holds only the mark, the
- * way back to the onboarding, the workspace and the account; for a grantee,
- * no search or settings, and only Analyst, Ontologies and the Explorer.
+ * link presses too, a link per section, then the workspace, the foot's
+ * sections (Connectors), Feedback, the account and settings. While the
+ * workspace is onboarding it holds only the mark, the way back to the
+ * onboarding, the workspace and the account; for a grantee, no search,
+ * Connectors or settings, and only Analyst, Dashboards, Ontologies and the
+ * Explorer.
  */
 export function Rail({
   workspaces,
@@ -116,6 +119,26 @@ export function Rail({
           current={current}
           onSwitch={onSwitch}
         />
+        {!onboarding && !grantee && (
+          <nav aria-label="Data" className="hf-rail-foot-nav">
+            {footNav.map((n) => {
+              const active = section === n.id;
+              return (
+                <Link
+                  key={n.id}
+                  to={n.to}
+                  onClick={onClose}
+                  className={cx("hf-rail-link", active && "is-active")}
+                  aria-label={n.label}
+                  title={n.label}
+                  aria-current={active ? "page" : undefined}
+                >
+                  <n.icon size={17} aria-hidden />
+                </Link>
+              );
+            })}
+          </nav>
+        )}
         <FeedbackButton compact />
         <AccountMenu user={user} current={current} collapsed />
         {!onboarding && !grantee && <SettingsLink />}

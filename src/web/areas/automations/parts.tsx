@@ -19,7 +19,6 @@ import type { Status } from "../../kit";
 import {
   actionText,
   edgesOutOf,
-  here,
   nodeText,
   parseSpec,
   type Kind,
@@ -98,7 +97,7 @@ export const stepTitle = (
   names: Names,
   email: boolean,
 ): string => {
-  const t = nodeText(n, names, email, here());
+  const t = nodeText(n, names, email);
   return t.charAt(0).toUpperCase() + t.slice(1);
 };
 

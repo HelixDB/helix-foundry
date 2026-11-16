@@ -101,10 +101,11 @@ const nextConfig: NextConfig = {
           ? databuddy.clientId
           : "",
     NEXT_PUBLIC_BOTID: botid ? "1" : "",
-    // The Assistant's dock (src/web/areas/agent): a local install's and the
-    // mock's ("1"); not a hosted stamp's until its backend serves it.
+    // Founder (src/web/areas/agent): a local install's, the mock's and the
+    // dev stamp's, whose backend serves it ("1"); not prod's until its
+    // backend does.
     NEXT_PUBLIC_FOUNDRY_ASSISTANT:
-      mode === "local" || (appEnv !== "dev" && appEnv !== "prod") ? "1" : "",
+      mode === "local" || appEnv !== "prod" ? "1" : "",
   },
   async headers() {
     return [

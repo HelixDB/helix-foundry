@@ -13,6 +13,7 @@ import type {
   SendAgentMessageRequest,
 } from "../../../shared/wfe";
 import { api, refusalOf } from "../../api";
+import { validZone } from "../automations/model";
 import {
   jobSeen,
   jobStarted,
@@ -118,13 +119,21 @@ export async function turnEvents(
   return reduceTurnEvents(prev, page);
 }
 
-/** Sends a message: a new thread's first without `threadId`. The same client token is the same turn. */
+/**
+ * Sends a message: a new thread's first without `threadId`. The same client
+ * token is the same turn. Every turn carries the browser's time zone, when
+ * it names one, for the Assistant's schedules.
+ */
 export async function sendAgentMessage(
   ws: string,
   body: SendAgentMessageRequest,
   section: AgentSection,
 ) {
-  const r = await api<AgentTurnResponse>(`${at(ws)}/turns`, body).catch(
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const sent: SendAgentMessageRequest = validZone(zone)
+    ? { ...body, pageContext: { ...body.pageContext, timeZone: zone } }
+    : body;
+  const r = await api<AgentTurnResponse>(`${at(ws)}/turns`, sent).catch(
     (e: unknown) => {
       trackEvent("agent_turn_refused", { reason: refusalOf(e) });
       throw e;
