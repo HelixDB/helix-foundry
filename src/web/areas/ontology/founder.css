@@ -37,7 +37,14 @@
     calc(var(--hf-space-15) + env(safe-area-inset-bottom));
 }
 
-/* A new chat: the question to answer, the composer centred under it. */
+/* A new chat: the question to answer and the composer under it, pinned at a
+   fixed height from the top (not centred), so switching suggestion kinds,
+   whose cards differ in height, only grows the page downward. */
+.fd-start {
+  justify-content: flex-start;
+  padding-top: clamp(var(--hf-space-6), 24vh, 260px);
+  padding-bottom: var(--hf-space-8);
+}
 .fd-start .ag-runtime {
   border: 1px solid var(--hf-border);
   border-radius: var(--hf-radius-lg);
