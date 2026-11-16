@@ -518,20 +518,23 @@ export function refOf(n: MockNode): EntityRef {
  * a named type's or one of a keyed type's names. With a key or a name and no
  * type, among every type, as the engine finds it.
  */
-function nodeOf(m: Model, ref: unknown): MockNode | undefined {
+function lookupOf(m: Model, ref: unknown): MockNode[] {
   const r = ref as Partial<
     Record<"type" | "id" | "name", unknown> & { key: unknown }
   > | null;
-  if (!r || typeof r !== "object") return undefined;
+  if (!r || typeof r !== "object") return [];
   const held = (n: MockNode | undefined) =>
     n && isEntity(n, m.program) ? n : undefined;
-  if (typeof r.id === "string")
-    return typeof r.type === "string"
-      ? held(
-          m.g.find(r.type, "entity_key", r.id) ||
-            m.g.find(r.type, "norm_name", r.id),
-        )
-      : undefined;
+  if (typeof r.id === "string") {
+    const n =
+      typeof r.type === "string"
+        ? held(
+            m.g.find(r.type, "entity_key", r.id) ||
+              m.g.find(r.type, "norm_name", r.id),
+          )
+        : undefined;
+    return n ? [n] : [];
+  }
   const types = typeof r.type === "string" ? [r.type] : [...m.program.types];
   const found = new Set<MockNode>();
   for (const t of types) {
@@ -556,7 +559,17 @@ function nodeOf(m: Model, ref: unknown): MockNode | undefined {
       if (n) found.add(n);
     }
   }
-  return found.size === 1 ? [...found][0] : undefined;
+  return [...found];
+}
+
+/** What a read's lookups resolved to, as the reader sees them (see `answer`). */
+const resolved = new WeakMap<object, MockNode>();
+
+/** The one entity a lookup names: as the read resolved it, or if it names exactly one. */
+function nodeOf(m: Model, ref: unknown): MockNode | undefined {
+  if (ref && typeof ref === "object" && resolved.has(ref)) return resolved.get(ref);
+  const found = lookupOf(m, ref);
+  return found.length === 1 ? found[0] : undefined;
 }
 
 /**
@@ -825,9 +838,20 @@ export function answer(
     const ref = r as Partial<EntityRef>;
     if (ref.type !== undefined && !m.program.types.has(ref.type))
       return invalid(`\`${ref.type}\` is not a type`);
-    const held = nodeOf(m, ref);
-    // One the reader may not see is one the load doesn't hold, for it.
-    if (!held || (view && !entityVisible(m, view, held)))
+    // One the reader may not see is one the load doesn't hold, for it; several are refused.
+    const found = lookupOf(m, ref).filter(
+      (n) => !view || entityVisible(m, view, n),
+    );
+    if (found.length > 1)
+      return invalid(
+        `${JSON.stringify(ref)} names more than one entity, such as ${found
+          .slice(0, 5)
+          .map((n) => JSON.stringify(refOf(n)))
+          .join(", ")}; give its \`type\`, or its \`id\``,
+      );
+    const held = found[0];
+    if (held && r && typeof r === "object") resolved.set(r, held);
+    if (!held)
       return {
         error: {
           code: "unknown_entity",

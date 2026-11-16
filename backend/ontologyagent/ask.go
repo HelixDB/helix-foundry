@@ -144,6 +144,16 @@ func ParseFocus(raw string) (EntityLookup, error) {
 	if err := d.Decode(&focus); err != nil || d.More() {
 		return EntityLookup{}, errFocus
 	}
+	// A type or an id given empty is refused, as the engine refuses it, not read as left out.
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &fields) != nil {
+		return EntityLookup{}, errFocus
+	}
+	for _, field := range []string{"type", "id"} {
+		if v, ok := fields[field]; ok && string(v) == `""` {
+			return EntityLookup{}, errFocus
+		}
+	}
 	given := 0
 	for _, set := range []bool{focus.ID != "", focus.Key != nil, focus.Name != ""} {
 		if set {
