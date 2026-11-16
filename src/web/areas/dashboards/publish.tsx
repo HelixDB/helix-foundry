@@ -132,7 +132,7 @@ export function ShareMenu({
     <DropdownMenu
       label="Share"
       align="end"
-      triggerClassName="hf-btn hf-btn--primary hf-btn--md"
+      triggerClassName="hf-btn hf-btn--primary hf-btn--md db-share-trigger"
       trigger={
         <>
           <Share2 size={16} aria-hidden />

@@ -469,6 +469,15 @@
   margin: 0;
 }
 
+/* The Share menu's trigger is a primary button: the kit's menu trigger
+   resets a button's fill and colour, so they are set again here. */
+.db-share-trigger.hf-btn--primary {
+  background: var(--hf-ink);
+  color: var(--hf-on-ink);
+}
+.db-share-trigger.hf-btn--primary:hover {
+  background: var(--hf-ink-hover);
+}
 /* Publishing: what a link shows whom, the link and what to do with it. */
 .db-share {
   display: grid;
