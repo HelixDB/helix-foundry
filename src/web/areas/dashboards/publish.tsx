@@ -100,6 +100,8 @@ function publishError(e: unknown): string {
       return "An owner turned public links off for this workspace.";
     case "FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY":
       return "Only owners and admins make public links.";
+    case "FOUNDRY_DASHBOARD_LINK_EXPIRED":
+      return "The link expired meanwhile. Choose when the new link ends, then publish again.";
     case "FOUNDRY_DASHBOARD_NOT_LOADED":
     case "FOUNDRY_DASHBOARD_TILE_FAILED":
     default:
@@ -151,11 +153,14 @@ export function ShareMenu({
           <MenuHeader
             title="Public link"
             subtitle={
-              state
-                ? state.detail
-                  ? `On, ${state.detail}`
-                  : "On, with no end date"
-                : "For people outside the workspace, no sign-in"
+              !state
+                ? "For people outside the workspace, no sign-in"
+                : !state.live
+                  ? // A link that shows nothing says why, never "on".
+                    `Off: ${state.detail}`
+                  : state.detail
+                    ? `On, ${state.detail}`
+                    : "On, with no end date"
             }
           />
           {manage ? (
@@ -234,7 +239,15 @@ export function ShareDialog({
       setExpiry("FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED");
     } catch (e) {
       setError(publishError(e));
-      if (dashboardRefusal(e) === "FOUNDRY_DASHBOARD_CHANGED")
+      const refusal = dashboardRefusal(e);
+      // The link expired while the dialog was open: it now offers a new
+      // link, whose end is chosen afresh.
+      if (refusal === "FOUNDRY_DASHBOARD_LINK_EXPIRED")
+        setExpiry("FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER");
+      if (
+        refusal === "FOUNDRY_DASHBOARD_CHANGED" ||
+        refusal === "FOUNDRY_DASHBOARD_LINK_EXPIRED"
+      )
         void qc.invalidateQueries({
           queryKey: dashboardQueries.dashboard(ws, d.id).queryKey,
         });

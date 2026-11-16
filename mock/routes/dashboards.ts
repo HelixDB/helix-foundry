@@ -998,6 +998,12 @@ export const dashboardRoutes: MockRoute[] = [
       // An expired link is never revived: the publish makes a new one.
       const kept = d.share && !expired(d.share) ? d.share : null;
       const days = EXPIRY_DAYS[expiry];
+      if (d.share && !kept && days === undefined)
+        return refused(
+          ws,
+          "FOUNDRY_DASHBOARD_LINK_EXPIRED",
+          "the dashboard's public link expired: publishing again makes a new link, so choose when it ends",
+        );
       d.share = {
         token: kept?.token || "hxd_" + randomBytes(32).toString("base64url"),
         snapshot,

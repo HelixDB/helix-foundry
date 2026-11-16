@@ -2863,8 +2863,9 @@ enum FoundryDashboardShareStatus {
 
 // FoundryDashboardLinkExpiry is when a publish has its public link end.
 enum FoundryDashboardLinkExpiry {
-  // Keep the link's own: a live link keeps its expires_at, a new one never
-  // ends.
+  // Keep the link's own: a live link keeps its expires_at, a first one never
+  // ends, and one that expired is refused (FOUNDRY_DASHBOARD_LINK_EXPIRED):
+  // the new link's end is the publisher's choice.
   FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED = 0;
   FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER = 1;
   // 7, 30 or 90 days from the publish.

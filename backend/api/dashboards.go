@@ -146,6 +146,8 @@ func dashboardRefusal(workspaceID string, err error) (error, bool) {
 		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_CHANGED", r.Detail), true
 	case foundrymodel.FoundryDashboardUnreadable:
 		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_TILE_FAILED", r.Detail), true
+	case foundrymodel.FoundryDashboardExpired:
+		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_LINK_EXPIRED", r.Detail), true
 	default:
 		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_LIMIT", r.Detail), true
 	}

@@ -152,6 +152,9 @@ func (s *dashboardStore) PublishFoundryDashboard(_ context.Context, share *found
 		return nil, err
 	}
 	if d.Share != nil && d.Share.Expired(time.Now()) {
+		if expiry.Keep {
+			return nil, foundrymodel.FoundryDashboardRefusal{Reason: foundrymodel.FoundryDashboardExpired, Detail: "expired"}
+		}
 		d.Share = nil
 	}
 	stored := *share
@@ -621,10 +624,12 @@ func TestPublishingADashboard(t *testing.T) {
 		assert.Empty(t, read.GetDashboard().GetShare().GetToken())
 		assert.True(t, read.GetDashboard().GetCanUnpublish() && read.GetDashboard().GetCanPublish())
 
-		got, err = expire(foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED)
+		_, err = expire(foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED)
+		assert.Equal(t, "FOUNDRY_DASHBOARD_LINK_EXPIRED", reasonOf(err), "a new link's end is chosen, never kept from a dead one")
+		got, err = expire(foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER)
 		require.NoError(t, err)
 		assert.NotEqual(t, token, got.GetShare().GetToken(), "an expired link is never revived")
-		assert.Nil(t, got.GetShare().GetExpiresAt(), "a new link keeps no old expiry")
+		assert.Nil(t, got.GetShare().GetExpiresAt())
 		_, err = shared(f, token)
 		assert.Equal(t, codes.NotFound, status.Code(err))
 		_, err = shared(f, got.GetShare().GetToken())

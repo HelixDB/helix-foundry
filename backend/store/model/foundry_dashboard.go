@@ -75,9 +75,9 @@ func (s *FoundryDashboardShare) Expired(now time.Time) bool {
 }
 
 // FoundryDashboardLinkExpiry is what a publish does to its link's expiry:
-// Keep leaves a live link's own (a new link, or one that expired, never
-// ends); otherwise the link ends at At, or never with At nil. At is set only
-// without Keep.
+// Keep leaves a live link's own (a first link never ends; a link that
+// expired is refused, FoundryDashboardExpired); otherwise the link ends at
+// At, or never with At nil. At is set only without Keep.
 type FoundryDashboardLinkExpiry struct {
 	Keep bool
 	At   *time.Time
@@ -112,6 +112,10 @@ const (
 	// an ontology it read was deleted meanwhile, or is being purged of
 	// People enrichment's profiles.
 	FoundryDashboardUnreadable FoundryDashboardRefusalReason = "unreadable"
+	// FoundryDashboardExpired: a publish that keeps its link's expiry, of a
+	// link that has expired: a new link's expiry is a person's choice, so an
+	// unattended refresh never makes one that never ends.
+	FoundryDashboardExpired FoundryDashboardRefusalReason = "expired"
 )
 
 // FoundryDashboardRefusal is a dashboard's write the store refused, by reason.

@@ -447,7 +447,8 @@ func (c Cards) describe(ctx context.Context, a integration.PreparedAction, t tar
 	// A dashboard target is one the workspace holds (target).
 	var board DashboardRef
 	if d := t.dashboard; d != nil {
-		board = DashboardRef{Ref: Ref{ID: d.ID, Name: d.Name}, Pinned: d.PinnedAt != nil, Published: d.Share != nil}
+		// An expired link is no link: publishing makes a new one.
+		board = DashboardRef{Ref: Ref{ID: d.ID, Name: d.Name}, Pinned: d.PinnedAt != nil, Published: d.Share != nil && !d.Share.Expired(time.Now())}
 	}
 	// A workflow target is one the workspace holds (target).
 	var automation AutomationRef

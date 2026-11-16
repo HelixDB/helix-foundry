@@ -800,7 +800,7 @@ test("with public links turned off, an owner still ends a link for good", async 
   await mock.configure({ dashboardsPublic: false });
   await page.goto(`/dashboards/${id}`);
   await openPublicLink(page, "Manage public link…");
-  const dialog = page.getByRole("dialog", { name: "Make a public link?" });
+  const dialog = page.getByRole("dialog", { name: "Public link" });
   await expect(dialog).toContainText(
     "Public links are turned off here, so its link shows nothing now.",
   );
@@ -936,7 +936,7 @@ test("a public link set to expire ends then, and publishing again makes a new on
   await openPublicLink(page, "Make a public link…");
   let dialog = page.getByRole("dialog", { name: "Make a public link?" });
   await choose(
-    dialog.getByRole("button", { name: "Link ends" }),
+    dialog.getByRole("combobox", { name: "Link ends" }),
     "After 7 days",
   );
   await dialog.getByRole("button", { name: "Publish", exact: true }).click();
@@ -996,7 +996,8 @@ test("an owner turns public links off for the workspace: every link shows nothin
     name: "Allow public dashboard links",
   });
   await expect(allow).toBeChecked();
-  await allow.uncheck();
+  // The switch is the setting as saved: a click asks, and it moves once saved.
+  await allow.click();
   await page
     .getByRole("dialog", { name: "Turn off public links?" })
     .getByRole("button", { name: "Turn off" })
@@ -1030,7 +1031,7 @@ test("an owner turns public links off for the workspace: every link shows nothin
   await page.goto("/settings/sharing");
   await page
     .getByRole("switch", { name: "Allow public dashboard links" })
-    .check();
+    .click();
   await expect(page.getByText("Public links are on")).toBeVisible();
   await pub.reload();
   await expect(

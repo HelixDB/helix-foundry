@@ -230,8 +230,10 @@ func (s *mysqlDB) DeleteFoundryDashboard(ctx context.Context, workspaceID, id st
 // refusal otherwise), with its link ending as expiry says. A dashboard
 // published already keeps its token, and the first time it was published,
 // unless its link has expired: an expired link stays dead, so the publish
-// makes a new one from share's token, as a first publish does. It returns
-// the share as stored, without its snapshot.
+// makes a new one from share's token, as a first publish does, and only with
+// an expiry chosen (a Keep of it is a FoundryDashboardExpired refusal). The
+// expiry is read by the API's clock, as the links are served. It returns the
+// share as stored, without its snapshot.
 //
 // The snapshot was read before this transaction, so under the locks of the
 // ontologies it read (taken first, in id order, as deleting an ontology and
@@ -277,14 +279,20 @@ func (s *mysqlDB) PublishFoundryDashboard(ctx context.Context, share *model.Foun
 					Detail: fmt.Sprintf("People enrichment was turned off, and %s is being loaded again without its profiles: publish once that load is current", o.Name)}
 			}
 		}
-		if _, err := tx.lockFoundryDashboard(ctx, share.WorkspaceID, share.DashboardID, share.SpecRevision); err != nil {
+		d, err := tx.lockFoundryDashboard(ctx, share.WorkspaceID, share.DashboardID, share.SpecRevision)
+		if err != nil {
 			return err
 		}
 		// An expired link is never revived: its row goes, and the insert
-		// below makes a new link.
-		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_dashboard_shares WHERE dashboard_id=? AND expires_at IS NOT NULL AND expires_at <= NOW(6)`,
-			share.DashboardID); err != nil {
-			return err
+		// below makes a new link, whose expiry someone chose.
+		if now := time.Now(); d.Share != nil && d.Share.Expired(now) {
+			if expiry.Keep {
+				return model.FoundryDashboardRefusal{Reason: model.FoundryDashboardExpired,
+					Detail: "the dashboard's public link expired: publishing again makes a new link, so choose when it ends"}
+			}
+			if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_dashboard_shares WHERE dashboard_id=?`, share.DashboardID); err != nil {
+				return err
+			}
 		}
 		keep := ""
 		if !expiry.Keep {
@@ -300,8 +308,7 @@ ON DUPLICATE KEY UPDATE snapshot=VALUES(snapshot), spec_revision=VALUES(spec_rev
 			string(ontologies), share.PublishedByUserID, expiry.At); err != nil {
 			return err
 		}
-		d, err := tx.lockFoundryDashboard(ctx, share.WorkspaceID, share.DashboardID, 0)
-		if err != nil {
+		if d, err = tx.lockFoundryDashboard(ctx, share.WorkspaceID, share.DashboardID, 0); err != nil {
 			return err
 		}
 		stored = d.Share

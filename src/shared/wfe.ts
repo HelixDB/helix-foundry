@@ -3467,6 +3467,8 @@ export const DASHBOARD_REFUSALS = [
   "FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY",
   "FOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE",
   "FOUNDRY_DASHBOARD_PUBLIC_OFF",
+  // Publishing an expired link again without choosing when the new one ends.
+  "FOUNDRY_DASHBOARD_LINK_EXPIRED",
 ] as const;
 export type DashboardRefusal = (typeof DASHBOARD_REFUSALS)[number];
 
@@ -3627,7 +3629,8 @@ export type PreviewDashboardTileResponse = {
 /** POST .../dashboards/{id}:publish, owners and admins, hosted only, while the workspace has public links on. */
 export type PublishDashboardRequest = {
   expectedRevision: string;
-  // When the link ends, from now; missing keeps a live link's own (a new one never ends).
+  // When the link ends, from now; missing keeps a live link's own (a first
+  // one never ends; one that expired is refused FOUNDRY_DASHBOARD_LINK_EXPIRED).
   expiry?: DashboardLinkExpiry;
 };
 

@@ -620,7 +620,9 @@ describe("mock dashboards", () => {
       status: "FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED",
       token: "",
     });
-    const fresh = (await publish()).body.dashboard;
+    expect(reason(await publish())).toBe("FOUNDRY_DASHBOARD_LINK_EXPIRED");
+    const fresh = (await publish("FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER")).body
+      .dashboard;
     expect(fresh.share.token).not.toBe(token);
     expect(fresh.share).toMatchObject({
       status: "FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE",

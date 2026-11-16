@@ -290,8 +290,9 @@ func TestFoundryDashboards(t *testing.T) {
 		assert.Nil(t, stored.ExpiresAt, "never, when asked")
 		assert.Equal(t, strings.Repeat("a", 64), stored.TokenSHA256, "a new expiry keeps the link")
 
-		// Once it has expired, a publish makes a new link from its own token,
-		// whatever it asks of the expiry, and the old one stays dead.
+		// Once it has expired, a publish that chooses an expiry makes a new
+		// link from its own token, one that keeps it is refused, and the old
+		// link stays dead.
 		past := time.Now().Add(-time.Minute).Truncate(time.Microsecond)
 		_, err = db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "b"), model.FoundryDashboardLinkExpiry{At: &past})
 		require.NoError(t, err)
@@ -299,10 +300,14 @@ func TestFoundryDashboards(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, got.Share)
 		assert.True(t, got.Share.Expired(time.Now()))
-		stored, err = db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "c"), keepExpiry)
+		assert.Equal(t, model.FoundryDashboardExpired, dashboardRefusal(t, func() error {
+			_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "c"), keepExpiry)
+			return err
+		}()))
+		stored, err = db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "c"), model.FoundryDashboardLinkExpiry{})
 		require.NoError(t, err)
 		assert.Equal(t, strings.Repeat("c", 64), stored.TokenSHA256)
-		assert.Nil(t, stored.ExpiresAt, "a new link keeps none of the old one's expiry")
+		assert.Nil(t, stored.ExpiresAt, "never, as chosen")
 		assert.Equal(t, stored.PublishedAt, stored.FirstPublishedAt, "first published now")
 		_, err = db.GetSharedFoundryDashboard(ctx, strings.Repeat("a", 64))
 		assert.ErrorIs(t, err, store.ErrNotFound)

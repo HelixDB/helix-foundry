@@ -958,6 +958,8 @@ func (t *Task) runAction(ctx context.Context, st *runState, nodeID string, a aut
 			return 0, err
 		case d.Share == nil:
 			return 0, t.fail(ctx, st, nodeID, "Its dashboard isn't published: publish it on its page, and the workflow refreshes its snapshot from then on.")
+		case d.Share.Expired(time.Now()):
+			return 0, t.fail(ctx, st, nodeID, "Its dashboard's public link expired: publish it again on its page, choosing when the new link ends.")
 		case d.Share.SpecRevision != d.Revision:
 			return 0, t.fail(ctx, st, nodeID, "Its dashboard was changed since it was published: publish it again on its page to put the change at its link.")
 		}
