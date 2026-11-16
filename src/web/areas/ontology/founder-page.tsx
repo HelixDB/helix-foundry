@@ -64,6 +64,14 @@ export function FounderPage() {
     selection.choice.kind === "load" ? selection.choice.load : undefined;
   const threads = useQuery(agentQueries.threads(ws));
   const list = threads.data?.threads;
+  // Where the WFE has Founder off, the Analyst's page stays while the threads
+  // are read again: a refetch of a query with no data clears its error, and
+  // swapping pages would drop what is typed in the Analyst's composer. Only a
+  // read that succeeds brings Founder's page back.
+  const refused = agentRefusal(threads.error) === "FOUNDRY_AGENT_DISABLED";
+  const [offIn, setOffIn] = useState<string>();
+  if (refused && offIn !== ws) setOffIn(ws);
+  else if (threads.isSuccess && offIn !== undefined) setOffIn(undefined);
   // The thread the dock holds, which the page opens without `?chat=`.
   const [stored, setStored] = useState(() => readStorage(threadKey(ws)));
   useEffect(() => setStored(readStorage(threadKey(ws))), [ws]);
@@ -145,8 +153,7 @@ export function FounderPage() {
     setSeed((s) => ({ text: "", n: s.n + 1 }));
     if (id !== chat) go({ chat: id });
   };
-  if (agentRefusal(threads.error) === "FOUNDRY_AGENT_DISABLED")
-    return <AskPage />;
+  if (refused || offIn === ws) return <AskPage />;
   const picker = (
     <>
       <OntologyPicker ontologyId={o} to={paths.ask} />
