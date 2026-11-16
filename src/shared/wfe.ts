@@ -2672,7 +2672,12 @@ export type QueryOutput = (
   // `value` is null for a mean, least or greatest of no values. `skipped`
   // (contract 4.26.0) counts the entities a computed measure had no value
   // for; left out when none were.
-  | { kind: "aggregate"; value: number | null; values: number; skipped?: number }
+  | {
+      kind: "aggregate";
+      value: number | null;
+      values: number;
+      skipped?: number;
+    }
   | {
       kind: "grouped_aggregate";
       // Greatest first, then by value, the entities without one last.

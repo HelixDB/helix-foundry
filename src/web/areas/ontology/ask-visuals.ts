@@ -278,7 +278,9 @@ export function visualPlan(
       const value =
         output.kind === "count" ? output.count : (output.value ?? null);
       const detail =
-        output.kind === "aggregate" ? overValues(output.values, output.skipped) : "";
+        output.kind === "aggregate"
+          ? overValues(output.values, output.skipped)
+          : "";
       const skipped = output.kind === "aggregate" && !!output.skipped;
       const cell = cellOf(value);
       if (fits("figure"))

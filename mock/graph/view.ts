@@ -428,7 +428,8 @@ export function narrows(view: View, q: OntologyQuery) {
     q.return.rows.columns.some((c) =>
       (c.expr ? exprProps(c.expr) : c.prop ? [c.prop] : []).some(
         (p) =>
-          p !== "name" && view.props.get(key(positions[c.at]!, p)) === "partial",
+          p !== "name" &&
+          view.props.get(key(positions[c.at]!, p)) === "partial",
       ),
     );
   return (

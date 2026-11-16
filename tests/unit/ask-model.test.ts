@@ -1331,9 +1331,15 @@ describe("the query renderer", () => {
       { aggregate: { fn: "avg", at: 0, expr: { ratio: ["a"] } } },
       { aggregate: { fn: "avg", at: 0, expr: { ratio: ["a", 2] } } },
       {
-        aggregate: { fn: "avg", at: 0, expr: { diff: ["a", "b"], ratio: ["a", "b"] } },
+        aggregate: {
+          fn: "avg",
+          at: 0,
+          expr: { diff: ["a", "b"], ratio: ["a", "b"] },
+        },
       },
-      { aggregate: { fn: "avg", at: 0, prop: "a", expr: { diff: ["a", "b"] } } },
+      {
+        aggregate: { fn: "avg", at: 0, prop: "a", expr: { diff: ["a", "b"] } },
+      },
       { aggregate: { fn: "avg", at: 0 } },
       { rows: { columns: [{ at: 0, expr: { sum: ["a", "b"] } }] } },
       { rows: { columns: [{ at: 0, prop: "a", expr: { diff: ["a", "b"] } }] } },
@@ -1353,7 +1359,10 @@ describe("the query renderer", () => {
       parseQuery({
         start: { type: "A" },
         return: {
-          rows: { columns: [{ at: 0 }], order_by: { at: 0, expr: { diff: "a" } } },
+          rows: {
+            columns: [{ at: 0 }],
+            order_by: { at: 0, expr: { diff: "a" } },
+          },
         },
       })?.return,
     ).toEqual({ rows: { columns: [{ at: 0 }], order_by: null } });

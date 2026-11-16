@@ -1108,7 +1108,10 @@ export function exprValue(
             ? Date.parse(v)
             : null;
     const [from, to] = [time(a), time(b)];
-    return from === null || to === null || Number.isNaN(from) || Number.isNaN(to)
+    return from === null ||
+      to === null ||
+      Number.isNaN(from) ||
+      Number.isNaN(to)
       ? null
       : finite((to - from) / 86_400_000);
   }

@@ -509,7 +509,12 @@ describe("visual plans", () => {
     const days = output({
       kind: "grouped_aggregate",
       groups: [
-        { value: { untrusted: "high" }, aggregate: 6.375, values: 2, skipped: 1 },
+        {
+          value: { untrusted: "high" },
+          aggregate: 6.375,
+          values: 2,
+          skipped: 1,
+        },
         { value: { untrusted: "low" }, aggregate: 1.5, values: 1 },
       ],
       total_groups: 2,
@@ -546,13 +551,22 @@ describe("visual plans", () => {
       { kind: "number", value: 0 },
     ]);
     // Ungrouped, a figure over its values, the skipped said.
-    const one = output({ kind: "aggregate", value: 4.2, values: 28, skipped: 12 });
+    const one = output({
+      kind: "aggregate",
+      value: 4.2,
+      values: 28,
+      skipped: 12,
+    });
     expect(parseOutput(one)).toEqual(one);
     expect(
       visualPlan(one, {
         ...query,
         return: {
-          aggregate: { fn: "avg", at: 0, expr: { days_between: ["opened_at", "closed_at"] } },
+          aggregate: {
+            fn: "avg",
+            at: 0,
+            expr: { days_between: ["opened_at", "closed_at"] },
+          },
         },
       }),
     ).toMatchObject({
@@ -575,18 +589,35 @@ describe("visual plans", () => {
         rows: {
           columns: [
             { at: 0, prop: null },
-            { at: 0, prop: null, expr: { days_between: ["opened_on", "closed_on"] } },
+            {
+              at: 0,
+              prop: null,
+              expr: { days_between: ["opened_on", "closed_on"] },
+            },
           ],
-          order_by: { at: 0, expr: { days_between: ["opened_on", "closed_on"] }, desc: true },
+          order_by: {
+            at: 0,
+            expr: { days_between: ["opened_on", "closed_on"] },
+            desc: true,
+          },
         },
       },
     })!;
     const rows = output({
       kind: "rows",
       rows: [
-        { cells: [{ type: "Deal", id: "d1", name: "Acme renewal" }, 41.5], edges: [] },
-        { cells: [{ type: "Deal", id: "d3", name: "Initech" }, 12.25], edges: [] },
-        { cells: [{ type: "Deal", id: "d2", name: "Globex" }, null], edges: [] },
+        {
+          cells: [{ type: "Deal", id: "d1", name: "Acme renewal" }, 41.5],
+          edges: [],
+        },
+        {
+          cells: [{ type: "Deal", id: "d3", name: "Initech" }, 12.25],
+          edges: [],
+        },
+        {
+          cells: [{ type: "Deal", id: "d2", name: "Globex" }, null],
+          edges: [],
+        },
       ],
       total: 3,
     });
@@ -597,7 +628,11 @@ describe("visual plans", () => {
       measure: "Deal: days from opened_on to closed_on",
       // The deal with none isn't drawn.
       points: [
-        { label: "Acme renewal", value: 41.5, entity: { type: "Deal", id: "d1" } },
+        {
+          label: "Acme renewal",
+          value: 41.5,
+          entity: { type: "Deal", id: "d1" },
+        },
         { label: "Initech", value: 12.25, entity: { type: "Deal", id: "d3" } },
       ],
     });
