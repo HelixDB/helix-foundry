@@ -1529,8 +1529,7 @@ function intentOf(
   // title"): it isn't a make-current.
   const listed = INTENTS.find(
     ([words, intent]) =>
-      words.test(t) &&
-      !(intent === "set_current_version" && asksData(ws, t)),
+      words.test(t) && !(intent === "set_current_version" && asksData(ws, t)),
   );
   if (listed) return listed[1];
   return /\b(re)?load\b/i.test(t) &&
