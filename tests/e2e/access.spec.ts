@@ -363,7 +363,7 @@ test("a grantee asks Founder about what's shared, and gets no cards", async ({
     as.getByRole("combobox", { name: "Load", exact: true }),
   ).toHaveCount(0);
   await expect(
-    as.getByRole("group", { name: "Suggested questions" }),
+    as.getByRole("list", { name: "Suggested questions" }),
   ).toBeVisible();
   await expect(
     composerOf(as).getByRole("textbox", { name: "Message" }),

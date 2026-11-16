@@ -3,7 +3,6 @@ import type { FoundryAgentThread, FoundryQuestion } from "@/shared/wfe";
 import {
   choose,
   expect,
-  loadContracts,
   loadVersion3,
   makeContractsCurrent,
   mock,
@@ -62,7 +61,8 @@ test("opens / on Founder's page, where a suggestion fills the composer and the t
 }) => {
   await fast();
   await signIn(page);
-  await loadContracts(page);
+  // The contract in General gives the Analyst a quoted fact to answer from.
+  await uploadAndLoadContract(page);
   // The main page is Founder's, on the ontology last opened.
   await page.goto("/");
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts$/);
@@ -302,6 +302,10 @@ test("sends the load the picker chose with each message", async ({ page }) => {
   expect((await sent).postDataJSON().pageContext).toEqual({
     ontologyId: "ont_acme_contracts",
     loadId: first,
+    // Every turn carries the browser's time zone.
+    timeZone: await page.evaluate(
+      () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+    ),
   });
   // The thread keeps it.
   await expect(page).toHaveURL(new RegExp(`\\?load=${first}&chat=thr_\\w+$`));

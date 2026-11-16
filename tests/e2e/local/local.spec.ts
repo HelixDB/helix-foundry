@@ -255,9 +255,7 @@ test("walks a new install through the sample company, from its database to Ask",
     }),
   ).toBeVisible({ timeout: 60_000 });
   await page.getByRole("link", { name: "Ask your own question" }).click();
-  await expect(
-    page.getByRole("group", { name: "Suggested questions" }),
-  ).toBeVisible();
+  await expect(page.getByRole("tabpanel", { name: "Questions" })).toBeVisible();
 
   // Acme Corp's database is a connection in Data, like any other, and every
   // page says this is the sample, with the way on to its last step once the
@@ -691,7 +689,7 @@ test("runs AI on Ollama with no key, once a test on a window and model it can ru
   await expect(ollama).toBeChecked();
   await expect(
     page.getByRole("group", { name: "Where AI runs" }).getByRole("radio"),
-  ).toHaveCount(6);
+  ).toHaveCount(7);
   await expect(page.getByRole("combobox", { name: "Server" })).toContainText(
     "Bundled",
   );
