@@ -79,7 +79,7 @@ var foundryOperationDocs = []foundryOperationDoc{
 	{name: "update_document_set", doc: "{set_id, name, description}, name and description each optional."},
 	{name: "move_document", doc: "{document_id, set_id}."},
 	{name: "set_assistant_runtime", hostsOnly: true,
-		doc: "{runtime}: where the workspace's new Assistant threads run: api (Foundry's own worker, on the workspace's model) " +
+		doc: "{runtime}: where the workspace's new Founder threads run: api (Foundry's own worker, on the workspace's model) " +
 			"claude_code (a helper on the owner's computer, on the Claude subscription its Claude Code is signed in to) " +
 			"or codex (a helper's Codex, on the owner's ChatGPT plan, with their own Codex setup: only once the owner confirmed it in Settings › AI models, never here); " +
 			toolFoundryGetAssistantRuntime + " says which helpers run. A thread keeps the runtime it started with."},

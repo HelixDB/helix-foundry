@@ -749,7 +749,7 @@ html {
   line-height: 1.45;
 }
 
-/* The Assistant's dock (areas/agent): a column right of the page, in view as
+/* Founder's dock (areas/agent): a column right of the page, in view as
    it scrolls; below 1100px, a drawer from the right. */
 .hf-assistant {
   position: sticky;

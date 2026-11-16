@@ -201,9 +201,9 @@ test("every main page in both themes", async ({ page }, info) => {
   await settle(page);
   await shoot("ask-thread");
 
-  // The Assistant's dock, with an answer and its step opened.
+  // Founder's dock, with an answer and its step opened.
   await page.keyboard.press("ControlOrMeta+j");
-  const dock = page.getByRole("complementary", { name: "Assistant" });
+  const dock = page.getByRole("complementary", { name: "Founder" });
   await dock
     .getByRole("textbox", { name: "Message" })
     .fill("What ontologies do I have?");

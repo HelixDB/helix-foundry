@@ -84,8 +84,8 @@ export function DashboardList({ onNavigate }: { onNavigate?: () => void }) {
           </p>
         ) : !groups.length ? (
           <p className="db-note">
-            No dashboards yet. Pin an Analyst answer’s chart, or ask the
-            Assistant to build one.
+            No dashboards yet. Pin an Analyst answer’s chart, or ask Founder to
+            build one.
           </p>
         ) : (
           groups.map((g) => (

@@ -33,12 +33,12 @@ const automationSpecDoc = `A spec is a graph: {"v": 1, "nodes": [...], "edges": 
 	`{"kind": "schedule", "every": "week", "weekday": "monday" … "sunday", "at": "HH:MM", "time_zone"} (an IANA zone, such as Europe/London: the person's) | ` +
 	`{"kind": "sync_finished", "connector_id", "outcome": "succeeded" | "failed" | "any"} | {"kind": "load_ready", "ontology_id"} | ` +
 	`{"kind": "document_arrived", "set_id"} | {"kind": "generation_finished", "ontology_id", "outcome"} | {"kind": "manual"}; ` +
-	`assistant {"instruction": 1 to 2000 characters, run as an Assistant turn as the owner, "allow": up to 10 actions it may run unasked (anything else it prepares waits for the owner)}; ` +
+	`assistant {"instruction": 1 to 2000 characters, run as a Founder turn as the owner, "allow": up to 10 actions it may run unasked (anything else it prepares waits for the owner)}; ` +
 	`action {"operation": "sync_connector", "connector_id"} | {"operation": "create_load", "ontology_id"} (its current version) | ` +
 	`{"operation": "publish_dashboard", "dashboard_id"} (refresh its public snapshot); ` +
-	`condition {"check": "answer", "equals": "yes" | "no"} (of the Assistant step before it, which ends by reporting a yes or no) | ` +
-	`{"check": "count", "op": "at_least" | "at_most" | "equals", "value"} (of the documents that arrived, the rows a sync wrote, or an Assistant step's reported count), ` +
-	`with exactly one edge in and its out edges each "branch": "true" or "false"; notify {"message": at most 500 characters}: emails the owner, with what the Assistant steps before it said. ` +
+	`condition {"check": "answer", "equals": "yes" | "no"} (of the Founder step before it, which ends by reporting a yes or no) | ` +
+	`{"check": "count", "op": "at_least" | "at_most" | "equals", "value"} (of the documents that arrived, the rows a sync wrote, or a Founder step's reported count), ` +
+	`with exactly one edge in and its out edges each "branch": "true" or "false"; notify {"message": at most 500 characters}: emails the owner, with what the Founder steps before it said. ` +
 	`A step runs once every step before it ended and one of its edges in was taken; a failure stops the steps after it.`
 
 type FoundryAutomationInput struct {

@@ -1,9 +1,10 @@
-// Package agent is the Assistant: Foundry's own agent, which a person talks
-// to in the site. Each turn runs a model (package llm) over the thread's
-// transcript with a closed list of Foundry's tools (Tools), acting as the
-// person through a host's session (integration.SessionHost). It changes
-// nothing itself: what it prepares, the person runs with a click
-// (integration.ConfirmByPerson, actionSink).
+// Package agent is Founder (the Assistant in Go's names): Foundry's own
+// agent, which a person talks to in the site. Each turn runs a model
+// (package llm) over the thread's transcript with a closed list of Foundry's
+// tools (Tools), acting as the person through a host's session
+// (integration.SessionHost). It changes nothing itself: what it prepares, the
+// person runs with a click (integration.ConfirmByPerson, actionSink), but for
+// a new dashboard their message asked for, which runs at once (autoRun).
 package agent
 
 import (
@@ -186,7 +187,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	}
 	bound, err := r.Models(resolved, r.Catalog)
 	if err != nil {
-		return out, &Failure{Message: "The Assistant can't call the workspace's model; an owner can check Settings › AI models.", Permanent: true, Err: err}
+		return out, &Failure{Message: "Founder can't call the workspace's model; an owner can check Settings › AI models.", Permanent: true, Err: err}
 	}
 	sink := &actionSink{db: r.DB, keys: r.Keys, turn: turn, workerID: r.WorkerID, maxPending: r.Cfg.MaxPendingActions, sessions: r.Sessions}
 	var step *automationStep
@@ -216,7 +217,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 		asker{db: r.DB, session: session, turn: turn, workerID: r.WorkerID}.register(server)
 	})
 	if err != nil {
-		return out, &Failure{Message: "The Assistant's tools couldn't start; Helix will retry", Err: err}
+		return out, &Failure{Message: "Founder's tools couldn't start; Helix will retry", Err: err}
 	}
 	defer func() { _ = client.Close() }()
 	t.client, t.offered = client, offered
@@ -247,7 +248,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 		// server that loads the window cuts what passes it without a word.
 		room := (bound.Window-maxOutput)*3/4 - t.fixedTokens
 		if room < minContextTokens {
-			return out, &Failure{Message: fmt.Sprintf("The model's context window, %d tokens, is too small for the Assistant. An owner can choose a larger one in Settings › AI models.", bound.Window),
+			return out, &Failure{Message: fmt.Sprintf("The model's context window, %d tokens, is too small for Founder. An owner can choose a larger one in Settings › AI models.", bound.Window),
 				Permanent: true, Err: fmt.Errorf("window %d leaves %d tokens", bound.Window, room)}
 		}
 		t.budget = min(t.budget, room)
@@ -365,7 +366,7 @@ func openingText(ctx context.Context, db Store, turn *model.FoundryAgentTurn) (s
 		}
 		return actionResultText(ActionResult{ActionID: a.ID, Operation: a.Operation, Status: string(a.Status), Result: a.Result, Error: deref(a.Error)}), nil
 	}
-	return "", &Failure{Message: "The turn is of no kind the Assistant runs", Permanent: true, Err: fmt.Errorf("kind %q", turn.Kind)}
+	return "", &Failure{Message: "The turn is of no kind Founder runs", Permanent: true, Err: fmt.Errorf("kind %q", turn.Kind)}
 }
 
 // page is the turn's page context as the model is told it: each id the
@@ -493,7 +494,7 @@ func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message
 		if err != nil {
 			var refused *llm.Error
 			if errors.As(err, &refused) && !refused.Retryable() {
-				message := "The model provider refused the Assistant's call"
+				message := "The model provider refused Founder's call"
 				if refused.Kind == llm.ErrAuth {
 					message = "The model provider refused the workspace's key. An owner can check it in Settings › AI models."
 				}
@@ -585,11 +586,11 @@ func (t *turnRun) said(ctx context.Context, answer llm.Message, streamed bool) e
 func checkFailure(check ai.AssistantCheck, provider, model string) string {
 	switch check {
 	case ai.AssistantAuth:
-		return provider + " refused the workspace's key for the Assistant. An owner can check it in Settings › AI models."
+		return provider + " refused the workspace's key for Founder. An owner can check it in Settings › AI models."
 	case ai.AssistantNoToolCall:
-		return "The workspace's model, " + model + ", doesn't call tools, which the Assistant needs. An owner can choose another in Settings › AI models."
+		return "The workspace's model, " + model + ", doesn't call tools, which Founder needs. An owner can choose another in Settings › AI models."
 	default:
-		return provider + " refused the Assistant's calls to " + model + ". An owner can choose another model in Settings › AI models."
+		return provider + " refused Founder's calls to " + model + ". An owner can choose another model in Settings › AI models."
 	}
 }
 
@@ -639,10 +640,13 @@ func (t *turnRun) runTools(ctx context.Context, uses []llm.ToolUse) error {
 		shown := ToolReturned{ToolUseID: use.ID, Name: use.Name, IsError: failed}
 		if failed {
 			shown.Error = content
-		} else if raw, err := json.Marshal(output); err == nil && len(raw) <= maxResultBytes {
-			shown.Output = json.RawMessage(raw)
 		} else {
-			shown.Truncated = true
+			if raw, err := json.Marshal(output); err == nil && len(raw) <= maxResultBytes {
+				shown.Output = json.RawMessage(raw)
+			} else {
+				shown.Truncated = true
+			}
+			shown.Question = questionOf(use.Name, use.Input, output)
 		}
 		if err := t.event(ctx, shown); err != nil {
 			return err

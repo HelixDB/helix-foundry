@@ -1892,7 +1892,7 @@ func (c *Config) validateRoles(roles Roles) error {
 		}
 	}
 	if p := f.AI.Probe; roles.AskWorker && f.Agent.Enabled && p.Lease < p.Timeout+AIProbeOverhead+AIToolCheckTimeout {
-		return fmt.Errorf("foundry.ai.probe.lease %s must be at least its timeout %s plus %s, and %s for the Assistant's tool check while foundry.agent is on",
+		return fmt.Errorf("foundry.ai.probe.lease %s must be at least its timeout %s plus %s, and %s for Founder's tool check while foundry.agent is on",
 			p.Lease, p.Timeout, AIProbeOverhead, AIToolCheckTimeout)
 	}
 	if roles.API && f.Ontology.PerHour < 1 {

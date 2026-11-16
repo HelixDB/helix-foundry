@@ -817,12 +817,12 @@ function requestOf(a: StoredAutomation, r: StoredRun): string {
     step += 1;
     const text =
       n.kind === "assistant"
-        ? `Assistant step "${n.id}": ${n.config.instruction}${n.config.allow?.length ? ` (It may ${n.config.allow.map(action).join("; ")} unasked.)` : ""}`
+        ? `Founder step "${n.id}": ${n.config.instruction}${n.config.allow?.length ? ` (It may ${n.config.allow.map(action).join("; ")} unasked.)` : ""}`
         : n.kind === "action"
           ? `Action step "${n.id}": ${action(n.config)}.`
           : n.kind === "condition"
             ? `Condition "${n.id}": go on one way if ${n.config.check === "answer" ? `the step before answered ${n.config.equals}` : `the step before counted ${{ at_least: "at least", at_most: "at most", equals: "exactly" }[n.config.op]} ${n.config.value}`}, the other way if not.`
-            : `Notify step "${n.id}": email its owner${n.config.message ? ` "${n.config.message}"` : ""}, with what the Assistant steps before it said.`;
+            : `Notify step "${n.id}": email its owner${n.config.message ? ` "${n.config.message}"` : ""}, with what the Founder steps before it said.`;
     lines.push(`${step}. ${text}`);
   }
   return lines.join("\n");
@@ -902,7 +902,7 @@ function advance(r: StoredRun) {
       const n = stateOf(r, step.id)!;
       const turn = automationTurn(n.turnId);
       if (!turn) {
-        endNode(r, step.id, "failed", null, "Its Assistant turn is gone.");
+        endNode(r, step.id, "failed", null, "Its Founder turn is gone.");
         continue;
       }
       if (turn.live) {
@@ -918,7 +918,7 @@ function advance(r: StoredRun) {
           null,
           turn.error
             ? sentence(turn.error)
-            : `The Assistant's turn was ${turn.status}.`,
+            : `Founder's turn was ${turn.status}.`,
           turn.usdMicros,
         );
       else
@@ -991,7 +991,7 @@ function advance(r: StoredRun) {
             "failed",
             null,
             c.check === "answer"
-              ? "The Assistant gave no yes-or-no answer."
+              ? "Founder gave no yes-or-no answer."
               : "The step before it gave no count.",
           );
           break;

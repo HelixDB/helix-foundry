@@ -582,7 +582,7 @@ describe("what it sends and says", () => {
 
   it("says what a question left to the agent takes, and names it", () => {
     expect(leftText(one)).toBe("Left to the agent: it recommends B");
-    expect(leftText(many, "the Assistant")).toBe("Left to the Assistant");
+    expect(leftText(many, "Founder")).toBe("Left to Founder");
     expect(leftText(free)).toBe("Left to the agent: it suggests “90 days”");
     expect(leftText(readQuestion({ id: "q", text: "?" })!)).toBe(
       "Left to the agent",

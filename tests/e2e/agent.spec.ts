@@ -11,7 +11,7 @@ import {
   uploadInData,
 } from "./support/mock";
 
-// The Assistant: a dock beside every page (⌘J, the sidebar's button or the
+// Founder: a dock beside every page (⌘J, the sidebar's button or the
 // palette), kept open per browser, which sends the page the person is on
 // unless they take it off. It answers from Foundry's read tools, its steps
 // collapsed to their names; asked to load, it prepares a card that only its
@@ -21,13 +21,13 @@ import {
 // do.
 
 const dockOf = (page: Page) =>
-  page.getByRole("complementary", { name: "Assistant" });
+  page.getByRole("complementary", { name: "Founder" });
 
-// ⌘J, once the shell (whose Assistant button it presses) is on screen.
+// ⌘J, once the shell (whose Founder button it presses) is on screen.
 async function shortcut(page: Page) {
   await expect(
     page
-      .getByRole("button", { name: "Assistant", exact: true })
+      .getByRole("button", { name: "Founder", exact: true })
       .filter({ visible: true })
       .first(),
   ).toBeVisible();
@@ -79,7 +79,7 @@ test("answers a question about the page it is opened on", async ({ page }) => {
     .click();
   await expect(dockOf(page).getByText("Looking at:")).toHaveCount(0);
   await page.keyboard.press("ControlOrMeta+k");
-  await page.getByRole("option", { name: /Close the Assistant/ }).click();
+  await page.getByRole("option", { name: /Close Founder/ }).click();
   await expect(dockOf(page)).toHaveCount(0);
 });
 
@@ -88,7 +88,7 @@ test("loads an ontology from a card the person runs, and reports it", async ({
 }) => {
   await mock.configure({ agentStepMs: 100, loadStepMs: 100 });
   await signIn(page);
-  await page.getByRole("button", { name: "Assistant", exact: true }).click();
+  await page.getByRole("button", { name: "Founder", exact: true }).click();
   await say(page, "Load Customer contracts");
   const dock = dockOf(page);
   const card = dock.getByRole("region", {
@@ -124,7 +124,7 @@ test("stays where its reader scrolled up to, until they send again", async ({
   await mock.configure({ agentStepMs: 100 });
   await page.setViewportSize({ width: 1440, height: 560 });
   await signIn(page);
-  await page.getByRole("button", { name: "Assistant", exact: true }).click();
+  await page.getByRole("button", { name: "Founder", exact: true }).click();
   const dock = dockOf(page);
   const log = dock.getByRole("log", { name: "Conversation" });
   await say(page, "Load Customer contracts");
@@ -214,7 +214,7 @@ test("sends with Enter, never past what Send refuses, and gives the focus back",
 }) => {
   await mock.configure({ agentStepMs: 300 });
   await signIn(page);
-  const opener = page.getByRole("button", { name: "Assistant", exact: true });
+  const opener = page.getByRole("button", { name: "Founder", exact: true });
   await opener.click();
   const dock = dockOf(page),
     box = dock.getByRole("textbox", { name: "Message" });
@@ -238,7 +238,7 @@ test("sends with Enter, never past what Send refuses, and gives the focus back",
   await dock.getByRole("button", { name: "Stop" }).click();
   await expect(dock.getByText("Stopped.")).toBeVisible();
   // Closing the column gives the focus back to what opened it.
-  await dock.getByRole("button", { name: "Close the Assistant" }).click();
+  await dock.getByRole("button", { name: "Close Founder" }).click();
   await expect(dockOf(page)).toHaveCount(0);
   await expect(opener).toBeFocused();
 });
@@ -255,7 +255,7 @@ test("is a drawer beside a section's panel on a laptop, and on a phone", async (
     await page.setViewportSize(size);
     await page.goto("/data");
     await shortcut(page);
-    const drawer = page.getByRole("dialog", { name: "Assistant" });
+    const drawer = page.getByRole("dialog", { name: "Founder" });
     await expect(drawer).toBeVisible();
     await expect(dockOf(page)).toHaveCount(0);
     await drawer.getByRole("textbox", { name: "Message" }).fill("Hi");
@@ -287,7 +287,7 @@ test("deletes a thread, and says when the month's budget ended a turn", async ({
     .getByRole("dialog")
     .getByRole("button", { name: "Delete" })
     .click();
-  await expect(dock.getByText("Ask the Assistant")).toBeVisible();
+  await expect(dock.getByText("Ask Founder")).toBeVisible();
   await expect(dock.getByRole("button", { name: /^Threads/ })).toContainText(
     "New thread",
   );
@@ -360,7 +360,7 @@ test("asks a draft's questions one at a time in the dock, and sends the answers 
   );
   await run(page, "Create the ontology “Orders graph”", "Create");
   await run(page, "Draft a new version of “Orders graph”", "Generate");
-  // The draft waits on its agent's questions: the Assistant asks them in
+  // The draft waits on its agent's questions: Founder asks them in
   // the dock, as its agent wrote them, its markup shown as text.
   const dock = dockOf(page);
   const asked = dock.getByRole("region", { name: "Questions for you" });
@@ -451,12 +451,12 @@ test("asks its own questions from the keyboard, then reads the answers back", as
   await page.keyboard.press(" ");
   await expect(data.getByRole("checkbox", { checked: true })).toHaveCount(2);
   await page.keyboard.press("Enter");
-  // The optional one, left to the Assistant.
+  // The optional one, left to Founder.
   await expect(
     asked.getByText("Question 3 of 3", { exact: true }),
   ).toBeVisible();
   const rest = asked.getByRole("button", {
-    name: "Let the Assistant decide the rest",
+    name: "Let Founder decide the rest",
   });
   await rest.focus();
   await page.keyboard.press("Enter");
@@ -702,7 +702,7 @@ test("answers on another provider once it is the setting", async ({ page }) => {
     .click();
   await expect(page.getByText("AI models now run on OpenAI.")).toBeVisible();
   // Its tool check passed: nothing to say.
-  await expect(page.getByText(/The Assistant can’t run/)).toHaveCount(0);
+  await expect(page.getByText(/Founder can’t run/)).toHaveCount(0);
   await shortcut(page);
   // Nothing to say under the composer.
   await expect(
@@ -734,11 +734,11 @@ test("won't send on a model that doesn't call tools, and says why, with a link t
   await expect(
     page.getByText("AI models now run on llm.example.com."),
   ).toBeVisible();
-  // The setting runs everything else; its owner is told the Assistant can't.
+  // The setting runs everything else; its owner is told Founder can't.
   const why =
-    "The Assistant can’t run on qwen-notoolcall: it answered the Assistant’s test without calling a tool. Drafts, loads and the Analyst still run on it. Choose a model for questions that calls tools to use the Assistant.";
+    "Founder can’t run on qwen-notoolcall: it answered Founder’s test without calling a tool. Drafts, loads and the Analyst still run on it. Choose a model for questions that calls tools to use Founder.";
   await expect(
-    page.getByRole("note").filter({ hasText: "The Assistant can’t run" }),
+    page.getByRole("note").filter({ hasText: "Founder can’t run" }),
   ).toHaveText(why);
   // The dock says so before a message is spent on a turn that would fail.
   await page.goto("/data");
@@ -762,7 +762,7 @@ test("won't send on a model that doesn't call tools, and says why, with a link t
   // On a phone the dock is a drawer, which the link closes as it opens the setting.
   await page.setViewportSize({ width: 390, height: 844 });
   await shortcut(page);
-  const drawer = page.getByRole("dialog", { name: "Assistant" });
+  const drawer = page.getByRole("dialog", { name: "Founder" });
   await expect(drawer).toBeVisible();
   await drawer.getByRole("link", { name: "Settings › AI models" }).click();
   await expect(page).toHaveURL(/\/settings\/ai$/);
@@ -776,11 +776,11 @@ test("won't send on a model that doesn't call tools, and says why, with a link t
   await page.goto("/settings/ai");
   await expect(page.getByText(/^AI runs on llm\.example\.com/)).toBeVisible();
   await expect(
-    page.getByRole("note").filter({ hasText: "The Assistant can’t run" }),
+    page.getByRole("note").filter({ hasText: "Founder can’t run" }),
   ).toHaveCount(0);
   // The dock is still open in this browser.
   await expect(dockOf(page).locator(".ag-hint")).toHaveText(
-    "The Assistant can’t run on this workspace’s AI model. An owner can fix this in Settings › AI models.",
+    "Founder can’t run on this workspace’s AI model. An owner can fix this in Settings › AI models.",
   );
   await dockOf(page)
     .getByRole("textbox", { name: "Message" })
@@ -800,10 +800,10 @@ test("a turn sent before the setting failed its check says why, and its link clo
   // the link closes the drawer, not the route change.
   await page.goto("/settings/ai");
   await shortcut(page);
-  const drawer = page.getByRole("dialog", { name: "Assistant" });
+  const drawer = page.getByRole("dialog", { name: "Founder" });
   await expect(drawer).toBeVisible();
   // Another tab changes the setting while the dock is open, to a key the
-  // Assistant's calls are refused on.
+  // Founder's calls are refused on.
   const res = await page.request.put("/papi/v1/workspaces/ws_acme/foundry/ai", {
     data: {
       provider: { openai: {} },
@@ -829,7 +829,7 @@ test("a turn sent before the setting failed its check says why, and its link clo
   await drawer.getByRole("button", { name: "Send", exact: true }).click();
   const failure = drawer.locator(".ag-card-error");
   await expect(failure).toHaveText(
-    "OpenAI refused the workspace's key for the Assistant. An owner can check it in Settings › AI models.",
+    "OpenAI refused the workspace's key for Founder. An owner can check it in Settings › AI models.",
   );
   await failure.getByRole("link", { name: "Settings › AI models" }).click();
   await expect(page).toHaveURL(/\/settings\/ai$/);

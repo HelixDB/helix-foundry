@@ -184,7 +184,7 @@ export function ReviewDialog({
         <p className="au-review-note">
           {approved
             ? "Its steps are the ones you approved: saving keeps it as it is."
-            : "It runs as you, with what you may do when it runs. Turning it on approves exactly these steps; any change to them waits for your approval again. Its Assistant steps spend the workspace’s automations budget."}
+            : "It runs as you, with what you may do when it runs. Turning it on approves exactly these steps; any change to them waits for your approval again. Its Founder steps spend the workspace’s automations budget."}
         </p>
         {error && (
           <p role="alert" className="hf-form-error">

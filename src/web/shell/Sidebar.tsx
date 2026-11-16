@@ -363,10 +363,10 @@ export function Sidebar({
               "hf-btn hf-btn--ghost hf-btn--md hf-btn--icon hf-settings-link",
               shell.assistant.open && "is-active",
             )}
-            aria-label="Assistant"
+            aria-label="Founder"
             aria-pressed={shell.assistant.open}
             aria-keyshortcuts={ariaAssistantShortcut}
-            title={`Assistant (${assistantShortcut})`}
+            title={`Founder (${assistantShortcut})`}
             onClick={() => {
               onClose?.();
               shell.assistant.toggle("button");

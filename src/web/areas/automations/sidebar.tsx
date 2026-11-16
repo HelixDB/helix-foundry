@@ -90,8 +90,8 @@ export function AutomationList({ onNavigate }: { onNavigate?: () => void }) {
           </p>
         ) : !all.length ? (
           <p className="au-note">
-            No automations yet. Start one from a template, or ask the Assistant
-            to set one up.
+            No automations yet. Start one from a template, or ask Founder to set
+            one up.
           </p>
         ) : (
           <ul aria-label="Automations">{all.map(row)}</ul>

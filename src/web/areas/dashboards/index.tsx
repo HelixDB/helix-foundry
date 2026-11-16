@@ -118,7 +118,7 @@ function DashboardsPage() {
           title="No dashboards yet"
           text={
             canCreate
-              ? "Make one here, pin a chart or table from an Analyst answer, or ask the Assistant to build one for some data."
+              ? "Make one here, pin a chart or table from an Analyst answer, or ask Founder to build one for some data."
               : "An owner or admin pins dashboards for the workspace here."
           }
         />
@@ -181,7 +181,7 @@ function DashboardsPage() {
   );
 }
 
-/** New dashboard: a name and description; its tiles come from the Analyst or the Assistant. */
+/** New dashboard: a name and description; its tiles come from the Analyst or Founder. */
 function NewDashboardDialog({
   onClose,
   onCreated,

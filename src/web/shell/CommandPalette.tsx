@@ -132,11 +132,9 @@ export function CommandPalette({
             {
               key: "action:assistant",
               group: "Actions",
-              title: assistant.open
-                ? "Close the Assistant"
-                : "Open the Assistant",
-              subtitle: "Ask about your workspace, or have it prepare a load",
-              terms: "assistant agent chat ask help load",
+              title: assistant.open ? "Close Founder" : "Open Founder",
+              subtitle: "Ask about your data, or have it do something",
+              terms: "founder assistant agent chat ask help load dashboard",
               icon: Bot,
               run: () => {
                 onClose();

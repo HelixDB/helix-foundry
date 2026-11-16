@@ -690,13 +690,20 @@ function useSeen(ref: RefObject<Element | null>) {
  * reply: its steps, then how it ended. An ended question from a list has
  * no outputs: once it is near the view and its answer has visuals, or a
  * step's Result is opened, it is read once with them (questionQueries.answer).
+ * Shown elsewhere (Founder's dock), it may leave out what was asked
+ * (`asked`), which the conversation shows already, and the avatar
+ * (`avatar`).
  */
 export function QuestionCard({
   question: listed,
   budget,
+  asked = true,
+  avatar = true,
 }: {
   question: FoundryQuestion;
   budget?: QuestionBudget | null;
+  asked?: boolean;
+  avatar?: boolean;
 }) {
   const { id: ws, notify } = useWorkspace(),
     { id: o } = useOntology(),
@@ -753,15 +760,17 @@ export function QuestionCard({
   const [cancelling, setCancelling] = useState(false);
   const stepId = (evidence: string) => `${q.id}-${evidence}`;
   // A citation with no page opens the step that returned it, and reads the
-  // outputs its Output shows.
+  // outputs its Output shows. The step is this card's own: the same
+  // question may show twice at once (on its page and in Founder's dock).
   const showStep = (evidence: string) => {
     setLit("");
     setOpened(true);
     setTraceOpen(true);
     requestAnimationFrame(() => {
       setLit(evidence);
-      document
-        .getElementById(stepId(evidence))
+      const id = stepId(evidence);
+      [...(card.current?.querySelectorAll<HTMLElement>("[id]") ?? [])]
+        .find((el) => el.id === id)
         ?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
   };
@@ -808,16 +817,20 @@ export function QuestionCard({
       aria-label={`Question: ${q.question}`}
       ref={card}
     >
-      <div className="ak-question">
-        <span className="hf-sr-only">You asked: </span>
-        <p>{q.question}</p>
-      </div>
-      <p className="ak-question-meta">
-        {focus && `About ${focus.type} ${focus.id} · `}
-        {formatRelative(q.createdAt || "")}
-      </p>
-      <div className="ak-reply">
-        <Avatar />
+      {asked && (
+        <>
+          <div className="ak-question">
+            <span className="hf-sr-only">You asked: </span>
+            <p>{q.question}</p>
+          </div>
+          <p className="ak-question-meta">
+            {focus && `About ${focus.type} ${focus.id} · `}
+            {formatRelative(q.createdAt || "")}
+          </p>
+        </>
+      )}
+      <div className={avatar ? "ak-reply" : undefined}>
+        {avatar && <Avatar />}
         <div className="ak-reply-body">
           <section className={cx("ak-trace", `is-${trace.phase}`)}>
             <div className="ak-trace-head">

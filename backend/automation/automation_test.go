@@ -125,7 +125,7 @@ func TestParseSpecRefuses(t *testing.T) {
 		{"condition with two in", spec([]string{start, ask, cond, act},
 			`[{"from":"start","to":"ask"},{"from":"ask","to":"if"},{"from":"start","to":"if"},{"from":"if","to":"act","branch":"true"}]`),
 			"exactly one edge goes into it, not 2"},
-		{"answer of an action", spec([]string{start, act, cond}, `[{"from":"start","to":"act"},{"from":"act","to":"if"}]`), "an answer is an Assistant step's"},
+		{"answer of an action", spec([]string{start, act, cond}, `[{"from":"start","to":"act"},{"from":"act","to":"if"}]`), "an answer is a Founder step's"},
 		{"count of a manual trigger", spec([]string{start, node("if", "condition", `{"check":"count","op":"equals","value":0}`)}, `[{"from":"start","to":"if"}]`),
 			"a count is"},
 		{"cycle", spec([]string{start, ask, act}, `[{"from":"start","to":"ask"},{"from":"ask","to":"act"},{"from":"act","to":"ask"}]`), "in a cycle"},
