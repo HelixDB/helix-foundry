@@ -7,7 +7,6 @@ import {
   ArrowRight,
   ArrowUp,
   Ellipsis,
-  Globe,
   LayoutDashboard,
   Maximize2,
   Move,
@@ -54,6 +53,8 @@ import {
   applyEdit,
   dashboardName,
   dashboardRefusal,
+  linkState,
+  linkText,
   loadReads,
   movesOf,
   parseSpec,
@@ -70,7 +71,7 @@ import {
   pinDashboard,
   updateDashboard,
 } from "./queries";
-import { ShareDialog, sharing } from "./publish";
+import { ShareDialog, ShareMenu } from "./publish";
 import { Tile, type TileState } from "./tile";
 
 // /dashboards/:dashboardId: a dashboard's tiles in their rows, each read by
@@ -78,8 +79,8 @@ import { Tile, type TileState } from "./tile";
 // and what the viewer may do with it, as the WFE says (canEdit, canPin,
 // canPublish, canUnpublish, canDelete): Edit its name, description and
 // tiles (retitle, show as, arrange, remove, and see the read each makes),
-// Pin it for the whole workspace, Publish it at a public link (hosted
-// only) or end its link, and Delete it.
+// Share it (Copy link, for the workspace; or, for owners and admins, a
+// public link: publish.tsx), Pin it for the whole workspace and Delete it.
 
 /**
  * What an edit holds until it is saved: the dashboard it started from (the
@@ -320,12 +321,14 @@ export function DashboardPage() {
       setBusy(false);
     }
   };
-  const offered = sharing(d);
+  const link = linkState(d.share, (iso) => formatDate(iso, false));
 
   const meta = (
     <>
       {d.pinned && <Tag tone="accent">Pinned</Tag>}
-      {d.share && <Tag tone="info">Public link</Tag>}
+      {link && (
+        <Tag tone={link.live ? "info" : "warning"}>{linkText(link)}</Tag>
+      )}
       {d.updatedAt && (
         <span title={formatDate(d.updatedAt)}>
           Edited {formatRelative(d.updatedAt, now)}
@@ -354,15 +357,7 @@ export function DashboardPage() {
           Edit
         </Button>
       )}
-      {(offered.publish || offered.unpublish) && (
-        <Button
-          icon={Globe}
-          variant={d.share ? "secondary" : "primary"}
-          onClick={() => setShareOpen(true)}
-        >
-          {d.share ? "Public link" : "Publish"}
-        </Button>
-      )}
+      <ShareMenu dashboard={d} onPublic={() => setShareOpen(true)} />
       {(d.canPin || d.canDelete) && (
         <DropdownMenu
           label="More actions"

@@ -1243,8 +1243,11 @@ const DISPLAYS: {
       : undefined;
   },
   publish_dashboard: (d) => {
-    const dashboard = dashboardRef(d.dashboard);
-    return dashboard ? { dashboard } : undefined;
+    const dashboard = dashboardRef(d.dashboard),
+      days = num(d.expires_in_days);
+    return dashboard
+      ? { dashboard, ...opt("expires_in_days", days) }
+      : undefined;
   },
   unpublish_dashboard: (d) => {
     const dashboard = dashboardRef(d.dashboard);
@@ -1808,8 +1811,21 @@ const VIEWS: {
     title: d.dashboard.published
       ? `Refresh the public snapshot of ${quoted(d.dashboard)}`
       : `Publish the dashboard ${quoted(d.dashboard)} at a public link`,
-    facts: [{ label: "Dashboard", value: dashboardText(d.dashboard) }],
-    does: "Anyone with the link sees a snapshot of what its tiles read now, as you can read it, without signing in. Nothing else of the workspace shows. The link is on the dashboard’s page, never given to Founder.",
+    facts: [
+      { label: "Dashboard", value: dashboardText(d.dashboard) },
+      {
+        label: "Link ends",
+        value:
+          d.expires_in_days === undefined
+            ? d.dashboard.published
+              ? "As it is set now"
+              : "Never"
+            : d.expires_in_days === 0
+              ? "Never"
+              : `${d.expires_in_days} days after publishing`,
+      },
+    ],
+    does: "Anyone with the link sees a snapshot of what its tiles read now, as you can read it, without signing in, until it is published again. Nothing else of the workspace shows. The link is on the dashboard’s page, never given to Founder. To share it inside the workspace, its own page’s link is enough.",
     caution: "Anyone who has the link sees this data.",
     run: "Publish",
     target: nameOf(d.dashboard),

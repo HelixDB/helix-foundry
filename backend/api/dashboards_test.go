@@ -604,7 +604,7 @@ func TestPublishingADashboard(t *testing.T) {
 		got, err = expire(foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER)
 		require.NoError(t, err)
 		assert.Nil(t, got.GetShare().GetExpiresAt())
-		got, err = expire(foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90)
+		_, err = expire(foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90)
 		require.NoError(t, err)
 		_, err = shared(f, token)
 		require.NoError(t, err)

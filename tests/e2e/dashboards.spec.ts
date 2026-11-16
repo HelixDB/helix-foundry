@@ -16,9 +16,10 @@ import {
 // Dashboards: tiles of queries over ontologies' loads, drawn as the
 // Analyst draws an answer's visuals. Founder makes one at once when its
 // person asks for a dashboard, with Undo; an Analyst answer's chart is
-// pinned to one; owners and
-// admins edit, pin and publish them at a public link a fresh browser opens
-// with no session, until they unpublish it; a member reads them all and
+// pinned to one; anyone shares one with the workspace by its page's link
+// (Copy link); owners and admins edit, pin and publish them at a public
+// link a fresh browser opens with no session, until they unpublish it, it
+// expires or an owner turns public links off; a member reads them all and
 // changes only their own. What can't be read, saved or shown says so.
 
 const D = "/v1/workspaces/ws_acme/foundry/dashboards";
@@ -38,6 +39,12 @@ const tile = (id: string, title: string, query: object, kind?: string) => ({
   query,
   visual: kind ? { kind } : {},
 });
+
+/** Opens the dashboard's Share menu and its public link's item. */
+async function openPublicLink(page: Page, item: string) {
+  await page.getByRole("button", { name: "Share", exact: true }).click();
+  await page.getByRole("menuitem", { name: item }).click();
+}
 
 /** Makes a dashboard through the BFF, as Founder or an Analyst answer does: its id. */
 async function makeDashboard(
@@ -242,22 +249,25 @@ test("publishes a snapshot that a fresh browser opens, until it is unpublished",
   await loadContracts(page);
   const id = await makeDashboard(page, "Revenue");
   await page.goto(`/dashboards/${id}`);
-  await page.getByRole("button", { name: "Publish", exact: true }).click();
-  let dialog = page.getByRole("dialog", { name: "Publish this dashboard?" });
+  await openPublicLink(page, "Make a public link…");
+  let dialog = page.getByRole("dialog", { name: "Make a public link?" });
   await expect(dialog).toContainText(
-    "Anyone with the link sees this dashboard’s data, without signing in.",
+    "Anyone with the link can view it, without signing in.",
+  );
+  await expect(dialog).toContainText(
+    "It doesn’t change until you publish it again.",
   );
   await dialog.getByRole("button", { name: "Publish", exact: true }).click();
   await expect(page.getByText("Published at a public link.")).toBeVisible();
   dialog = page.getByRole("dialog", { name: "Public link" });
-  const link = await dialog.getByLabel("Link").inputValue();
+  const link = await dialog.getByLabel("Link", { exact: true }).inputValue();
   expect(link).toMatch(/\/share\/hxd_[A-Za-z0-9_-]{43}$/);
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await dialog.getByRole("button", { name: "Copy link" }).click();
-  await expect(page.getByText("Link copied.")).toBeVisible();
+  await expect(page.getByText("Public link copied.")).toBeVisible();
   await dialog.getByRole("button", { name: "Close" }).click();
   await expect(
-    page.getByRole("button", { name: "Public link", exact: true }),
+    page.getByRole("main").getByText("Public link", { exact: true }),
   ).toBeVisible();
 
   // A fresh browser: no session, no app, no id of the workspace's.
@@ -309,7 +319,7 @@ test("publishes a snapshot that a fresh browser opens, until it is unpublished",
   await expect(
     pub.getByRole("heading", { level: 1, name: "Revenue" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Public link", exact: true }).click();
+  await openPublicLink(page, "Manage public link…");
   dialog = page.getByRole("dialog", { name: "Public link" });
   await expect(dialog).toContainText("You’ve edited the dashboard since");
   await dialog.getByRole("button", { name: "Refresh snapshot" }).click();
@@ -319,14 +329,12 @@ test("publishes a snapshot that a fresh browser opens, until it is unpublished",
     pub.getByRole("heading", { level: 1, name: "Revenue this quarter" }),
   ).toBeVisible();
 
-  // Unpublished, the link shows nothing at once.
+  // Unpublished in one click, the link shows nothing at once.
   await dialog.getByRole("button", { name: "Unpublish" }).click();
-  await page
-    .getByRole("dialog", { name: "Unpublish this dashboard?" })
-    .getByRole("button", { name: "Unpublish" })
-    .click();
   await expect(
-    page.getByText("Unpublished: the link shows nothing now."),
+    page.getByText(
+      "Unpublished: the link shows nothing now. Publishing again makes a new link.",
+    ),
   ).toBeVisible();
   await pub.reload();
   await expect(
@@ -791,8 +799,8 @@ test("with public links turned off, an owner still ends a link for good", async 
   ).dashboard.share.token as string;
   await mock.configure({ dashboardsPublic: false });
   await page.goto(`/dashboards/${id}`);
-  await page.getByRole("button", { name: "Public link", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Public link" });
+  await openPublicLink(page, "Manage public link…");
+  const dialog = page.getByRole("dialog", { name: "Make a public link?" });
   await expect(dialog).toContainText(
     "Public links are turned off here, so its link shows nothing now.",
   );
@@ -800,17 +808,17 @@ test("with public links turned off, an owner still ends a link for good", async 
     0,
   );
   await dialog.getByRole("button", { name: "Unpublish" }).click();
-  await page
-    .getByRole("dialog", { name: "Unpublish this dashboard?" })
-    .getByRole("button", { name: "Unpublish" })
-    .click();
   await expect(
-    page.getByText("Unpublished: the link shows nothing now."),
+    page.getByText(/^Unpublished: the link shows nothing now\./),
   ).toBeVisible();
-  // Nothing left to share: no Publish while links are off.
-  await expect(
-    page.getByRole("button", { name: /^(Public link|Publish)$/ }),
-  ).toHaveCount(0);
+  // Nothing left to share publicly while links are off: only the
+  // workspace's link.
+  await page.getByRole("button", { name: "Share", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Copy link" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /public link/ })).toHaveCount(
+    0,
+  );
+  await page.keyboard.press("Escape");
   // Turned on again, the link stays down.
   await mock.configure({ dashboardsPublic: true });
   const other = await browser.newContext();
@@ -844,4 +852,190 @@ test("a member can't delete their dashboard once it is published", async ({
       0,
     );
   await context.close();
+});
+
+test("Copy link shares a dashboard's page with the workspace, from its page and its card", async ({
+  page,
+}) => {
+  await signIn(page);
+  await loadContracts(page);
+  const id = await makeDashboard(page, "Revenue");
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  const expected = `${APP_ORIGIN}/dashboards/${id}?workspace=ws_acme`;
+  await page.goto(`/dashboards/${id}`);
+  await page.getByRole("button", { name: "Share", exact: true }).click();
+  const menu = page.getByRole("menu", { name: "Share" });
+  await expect(menu).toContainText("Share in Acme");
+  await expect(menu).toContainText("Anyone in Acme who can read its data");
+  await menu.getByRole("menuitem", { name: "Copy link" }).click();
+  await expect(
+    page.getByText(
+      "Link copied. Anyone in Acme who can read its data can open it.",
+    ),
+  ).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    expected,
+  );
+  // No snapshot is made: the dashboard has no public link.
+  await expect(
+    page.getByRole("main").getByText(/^Public link/),
+  ).toHaveCount(0);
+
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  await page.goto("/dashboards");
+  await page.getByRole("button", { name: "More actions for Revenue" }).click();
+  await page.getByRole("menuitem", { name: "Copy link" }).click();
+  await expect(page.getByText(/^Link copied\./)).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    expected,
+  );
+});
+
+test("a member copies the workspace link but can't make a public link", async ({
+  page,
+  browser,
+}) => {
+  await signIn(page);
+  await loadContracts(page);
+  const context = await browser.newContext();
+  const alan = await context.newPage();
+  await signIn(alan, "alan@example.com");
+  const id = await makeDashboard(alan, "Alan’s numbers");
+  await alan.goto(`/dashboards/${id}`);
+  await alan.getByRole("button", { name: "Share", exact: true }).click();
+  await expect(
+    alan.getByRole("menuitem", { name: "Copy link" }),
+  ).toBeEnabled();
+  await expect(
+    alan.getByRole("menuitem", {
+      name: "Only owners and admins make public links",
+    }),
+  ).toBeDisabled();
+  await expect(
+    alan.getByRole("menuitem", { name: "Make a public link…" }),
+  ).toHaveCount(0);
+  // Nor can it be done by hand.
+  const refused = await alan.request.post(`/papi${D}/${id}:publish`, {
+    data: { expectedRevision: "1" },
+    headers: {
+      origin: new URL(alan.url()).origin,
+      "x-helix-csrf": await csrfToken(alan),
+    },
+  });
+  expect(refused.status()).toBe(400);
+  expect((await refused.json()).details?.[0]?.reason).toBe(
+    "FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY",
+  );
+  await context.close();
+});
+
+test("a public link set to expire ends then, and publishing again makes a new one", async ({
+  page,
+  browser,
+}) => {
+  await signIn(page);
+  await loadContracts(page);
+  const id = await makeDashboard(page, "Revenue");
+  await page.goto(`/dashboards/${id}`);
+  await openPublicLink(page, "Make a public link…");
+  let dialog = page.getByRole("dialog", { name: "Make a public link?" });
+  await choose(dialog.getByRole("button", { name: "Link ends" }), "After 7 days");
+  await dialog.getByRole("button", { name: "Publish", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "Public link" });
+  const link = await dialog.getByLabel("Link", { exact: true }).inputValue();
+  await expect(dialog).toContainText(/The link ends on /);
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(
+    page.getByRole("main").getByText(/^Public link · expires /),
+  ).toBeVisible();
+
+  const other = await browser.newContext();
+  const pub = await other.newPage();
+  await pub.goto(link);
+  await expect(
+    pub.getByRole("heading", { level: 1, name: "Revenue" }),
+  ).toBeVisible();
+
+  // Eight days on, it shows nothing, and the page says it expired.
+  await mock.configure({ dashboardClockDays: 8 });
+  await pub.reload();
+  await expect(
+    pub.getByRole("heading", { name: "There’s no dashboard at this link" }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("main").getByText("Public link · expired", { exact: true }),
+  ).toBeVisible();
+  await openPublicLink(page, "Manage public link…");
+  dialog = page.getByRole("dialog", { name: "Make a public link?" });
+  await expect(dialog).toContainText("Publishing again makes a new link.");
+  await dialog.getByRole("button", { name: "Publish a new link" }).click();
+  dialog = page.getByRole("dialog", { name: "Public link" });
+  const fresh = await dialog.getByLabel("Link", { exact: true }).inputValue();
+  expect(fresh).not.toBe(link);
+  await pub.reload();
+  await expect(
+    pub.getByRole("heading", { name: "There’s no dashboard at this link" }),
+  ).toBeVisible();
+  await other.close();
+});
+
+test("an owner turns public links off for the workspace: every link shows nothing", async ({
+  page,
+  browser,
+}) => {
+  await signIn(page);
+  await loadContracts(page);
+  const id = await makeDashboard(page, "Revenue");
+  const other = await makeDashboard(page, "Pipeline");
+  const token = (
+    await postToWfe(page, `${D}/${id}:publish`, { expectedRevision: "1" })
+  ).dashboard.share.token as string;
+
+  await page.goto("/settings/sharing");
+  const allow = page.getByRole("switch", {
+    name: "Allow public dashboard links",
+  });
+  await expect(allow).toBeChecked();
+  await allow.uncheck();
+  await page
+    .getByRole("dialog", { name: "Turn off public links?" })
+    .getByRole("button", { name: "Turn off" })
+    .click();
+  await expect(page.getByText("Public links are off")).toBeVisible();
+  await expect(allow).not.toBeChecked();
+
+  const ctx = await browser.newContext();
+  const pub = await ctx.newPage();
+  await pub.goto(`/share/${token}`);
+  await expect(
+    pub.getByRole("heading", { name: "There’s no dashboard at this link" }),
+  ).toBeVisible();
+
+  await page.goto(`/dashboards/${id}`);
+  await expect(
+    page
+      .getByRole("main")
+      .getByText("Public link · turned off for this workspace", {
+        exact: true,
+      }),
+  ).toBeVisible();
+  await page.goto(`/dashboards/${other}`);
+  await page.getByRole("button", { name: "Share", exact: true }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Turned off for this workspace" }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+
+  // On again, the link not ended meanwhile shows again.
+  await page.goto("/settings/sharing");
+  await page
+    .getByRole("switch", { name: "Allow public dashboard links" })
+    .check();
+  await expect(page.getByText("Public links are on")).toBeVisible();
+  await pub.reload();
+  await expect(
+    pub.getByRole("heading", { level: 1, name: "Revenue" }),
+  ).toBeVisible();
+  await ctx.close();
 });
