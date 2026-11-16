@@ -98,13 +98,16 @@ func automationRefusal(workspaceID string, err error) (error, bool) {
 	if !errors.As(err, &r) {
 		return nil, false
 	}
-	switch r.Reason {
-	case foundrymodel.FoundryAutomationNotOwner, foundrymodel.FoundryAutomationNotAllowed:
-		return status.Error(codes.PermissionDenied, r.Detail), true
-	case foundrymodel.FoundryAutomationRunsPerDay:
+	if r.Reason == foundrymodel.FoundryAutomationRunsPerDay {
 		return status.Error(codes.ResourceExhausted, r.Detail), true
 	}
+	// Not the owner's (or a manager's) is FAILED_PRECONDITION, saying who
+	// may, never PERMISSION_DENIED, which agents read as not found: every
+	// person of the workspace lists its workflows, and the store refuses
+	// only one it found there.
 	reason := map[foundrymodel.FoundryAutomationRefusalReason]string{
+		foundrymodel.FoundryAutomationNotOwner:   "FOUNDRY_AUTOMATION_NOT_OWNER",
+		foundrymodel.FoundryAutomationNotAllowed: "FOUNDRY_AUTOMATION_NOT_ALLOWED",
 		foundrymodel.FoundryAutomationChanged:    "FOUNDRY_AUTOMATION_CHANGED",
 		foundrymodel.FoundryAutomationLimit:      "FOUNDRY_AUTOMATION_LIMIT",
 		foundrymodel.FoundryAutomationUnapproved: "FOUNDRY_AUTOMATION_UNAPPROVED",

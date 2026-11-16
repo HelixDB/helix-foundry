@@ -417,7 +417,7 @@ func TestApproveAutomationIsTheOwnersClickInTheSite(t *testing.T) {
 	require.Equal(t, "FOUNDRY_AUTOMATION_CHANGED", reasonOf(err))
 	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotOwner, Detail: "not yours"}
 	_, err = s.ApproveFoundryAutomation(site("user-alan"), &foundryv1.ApproveFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId(), ExpectedRevision: 1})
-	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, "FOUNDRY_AUTOMATION_NOT_OWNER", reasonOf(err))
 	store.refuse = nil
 
 	// What it names is checked again: gone since it was saved, it isn't approved.
@@ -470,7 +470,10 @@ func TestUpdatePauseResumeDeleteAutomation(t *testing.T) {
 	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotOwner, Detail: "only its owner changes a workflow"}
 	_, err = s.UpdateFoundryAutomation(site("user-alan"), &foundryv1.UpdateFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId(), ExpectedRevision: 5,
 		Name: &name})
-	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	// Another member lists it, so they are told why, not that it isn't there.
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Equal(t, "FOUNDRY_AUTOMATION_NOT_OWNER", reasonOf(err))
+	require.Equal(t, "only its owner changes a workflow", status.Convert(err).Message())
 
 	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotActive, Detail: "waits"}
 	_, err = s.PauseFoundryAutomation(site("user-ada"), &foundryv1.PauseFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId()})
@@ -489,10 +492,16 @@ func TestUpdatePauseResumeDeleteAutomation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "active", resumed.GetAutomation().GetStatus())
 	require.NotNil(t, store.approvedNext)
+	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotOwner, Detail: "only its owner resumes a workflow: it runs as them"}
+	_, err = s.ResumeFoundryAutomation(site("user-alan"), &foundryv1.ResumeFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId()})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Equal(t, "only its owner resumes a workflow: it runs as them", status.Convert(err).Message())
+	store.refuse = nil
 
 	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotAllowed, Detail: "not yours"}
 	_, err = s.DeleteFoundryAutomation(site("user-alan"), &foundryv1.DeleteFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId()})
-	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Equal(t, "FOUNDRY_AUTOMATION_NOT_ALLOWED", reasonOf(err))
 	store.refuse = nil
 	_, err = s.DeleteFoundryAutomation(site("user-ada"), &foundryv1.DeleteFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId()})
 	require.NoError(t, err)
@@ -519,7 +528,7 @@ func TestRunAutomationNowAndItsRuns(t *testing.T) {
 
 	for refusal, want := range map[foundrymodel.FoundryAutomationRefusalReason]codes.Code{
 		foundrymodel.FoundryAutomationBusy: codes.FailedPrecondition, foundrymodel.FoundryAutomationUnapproved: codes.FailedPrecondition,
-		foundrymodel.FoundryAutomationRunsPerDay: codes.ResourceExhausted, foundrymodel.FoundryAutomationNotOwner: codes.PermissionDenied,
+		foundrymodel.FoundryAutomationRunsPerDay: codes.ResourceExhausted, foundrymodel.FoundryAutomationNotOwner: codes.FailedPrecondition,
 	} {
 		store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: refusal, Detail: "no"}
 		_, err := s.RunFoundryAutomation(site("user-ada"), &foundryv1.RunFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId(), ClientToken: "click-2"})
