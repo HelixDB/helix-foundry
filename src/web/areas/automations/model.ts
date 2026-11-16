@@ -17,6 +17,7 @@ import type {
 } from "../../../shared/wfe";
 import { AUTOMATION_REFUSALS } from "../../../shared/wfe";
 import { isRecord } from "../../../shared/json";
+import { zoneOffset, zoneTime } from "../../../shared/time-zone";
 import { ApiError } from "../../api";
 
 // Automations, as pure functions (backend/automation is the contract): an
@@ -771,22 +772,29 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const dayName = (d: Weekday) => cap(d);
 
 /**
- * A schedule's times in words, its zone after them unless it is `here`.
+ * A schedule's times in words, in its zone's: a day's and a week's time
+ * name the zone ("New York time"), an hour's minute only in a zone whose
+ * offset isn't whole hours, the one place the minute past differs.
  *
  * @example
- * scheduleText({ kind: "schedule", every: "week", weekday: "monday", at: "09:00", time_zone: "Europe/London" }, "Europe/London");
- * // "every Monday at 09:00"
+ * scheduleText({ kind: "schedule", every: "week", weekday: "monday", at: "09:00", time_zone: "Europe/London" });
+ * // "every Monday at 09:00 London time"
  */
-export function scheduleText(s: ScheduleTrigger, here?: string) {
-  const when =
-    s.every === "hour"
-      ? s.minute === 0
+export function scheduleText(s: ScheduleTrigger) {
+  if (s.every === "hour") {
+    const when =
+      s.minute === 0
         ? "every hour, on the hour"
-        : `every hour at ${s.minute} past`
-      : s.every === "day"
-        ? `every day at ${s.at}`
-        : `every ${dayName(s.weekday)} at ${s.at}`;
-  return s.time_zone === here ? when : `${when} (${s.time_zone})`;
+        : `every hour at ${s.minute} past`;
+    return validZone(s.time_zone) && zoneOffset(s.time_zone).includes(":")
+      ? `${when}, ${zoneTime(s.time_zone)}`
+      : when;
+  }
+  const when =
+    s.every === "day"
+      ? `every day at ${s.at}`
+      : `every ${dayName(s.weekday)} at ${s.at}`;
+  return `${when} ${zoneTime(s.time_zone)}`;
 }
 
 const OUTCOME_WORDS: Record<Outcome, string> = {
@@ -802,10 +810,10 @@ const OUTCOME_WORDS: Record<Outcome, string> = {
  * triggerText({ kind: "sync_finished", connector_id: "c1", outcome: "succeeded" }, { ...NO_NAMES, connector: () => "Stripe" });
  * // "a sync of “Stripe” succeeds"
  */
-export function triggerText(t: AutomationTrigger, names: Names, here?: string) {
+export function triggerText(t: AutomationTrigger, names: Names) {
   switch (t.kind) {
     case "schedule":
-      return scheduleText(t, here);
+      return scheduleText(t);
     case "sync_finished":
       return `a sync of ${quoted(names.connector(t.connector_id), "a connection")} ${OUTCOME_WORDS[t.outcome]}`;
     case "load_ready":
@@ -895,17 +903,12 @@ export const KIND_HEADS: Record<Kind, string> = {
  * `email` is whether a notify step emails here (false on a local build,
  * where it only notes the run).
  */
-export function nodeText(
-  n: AutomationNode,
-  names: Names,
-  email: boolean,
-  here?: string,
-) {
+export function nodeText(n: AutomationNode, names: Names, email: boolean) {
   switch (n.kind) {
     case "trigger":
       return n.config.kind === "manual"
         ? "only when you run it"
-        : `when ${triggerText(n.config, names, here)}`;
+        : `when ${triggerText(n.config, names)}`;
     case "assistant":
       return n.config.instruction.trim()
         ? `ask Founder: “${n.config.instruction}”`
@@ -929,15 +932,10 @@ export function nodeText(
  * them); a step a condition's false branch leads to says "otherwise".
  *
  * @example
- * sentence(spec, names, true, "UTC");
- * // "Every Monday at 09:00, sync “Stripe”, then ask Founder: “…”, then email you what it found."
+ * sentence(spec, names, true);
+ * // "Every Monday at 09:00 UTC, sync “Stripe”, then ask Founder: “…”, then email you what it found."
  */
-export function sentence(
-  spec: AutomationSpec,
-  names: Names,
-  email: boolean,
-  here?: string,
-) {
+export function sentence(spec: AutomationSpec, names: Names, email: boolean) {
   const read = parseSpec(spec);
   // Steps that can't be read yet go as the canvas lays them out, top down.
   const order = read.ok
@@ -952,8 +950,8 @@ export function sentence(
     t.config.kind === "manual"
       ? "When you run it"
       : t.config.kind === "schedule"
-        ? cap(triggerText(t.config, names, here))
-        : `When ${triggerText(t.config, names, here)}`;
+        ? cap(triggerText(t.config, names))
+        : `When ${triggerText(t.config, names)}`;
   const steps = order
     .map((id) => nodeOf(spec, id)!)
     .filter((n) => n.kind !== "trigger");
@@ -961,7 +959,7 @@ export function sentence(
     steps.reduce((text, n, i) => {
       const otherwise = edgesInto(spec, n.id).some((e) => e.branch === "false"),
         after = i > 0 && steps[i - 1]!.kind === "condition" ? ", " : ", then ";
-      return `${text}${i === 0 ? ", " : after}${otherwise ? "otherwise " : ""}${nodeText(n, names, email, here)}`;
+      return `${text}${i === 0 ? ", " : after}${otherwise ? "otherwise " : ""}${nodeText(n, names, email)}`;
     }, head) + "."
   );
 }

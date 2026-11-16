@@ -847,6 +847,39 @@ func TestTheNewAutomationPageIsSaid(t *testing.T) {
 	assert.Contains(t, h.model.requests[0].System, "creating_automation")
 }
 
+// The person's time zone reaches the model as data in <page_context>, and
+// the prompt tells it to use that zone without asking.
+func TestThePersonsTimeZoneIsSaid(t *testing.T) {
+	h := newHarness(t, say("Done."))
+	turn := message("Every Monday at 8, summarise the overdue invoices")
+	turn.PageContext = json.RawMessage(`{"new_automation":true,"time_zone":"America/New_York"}`)
+	_, err := h.runner.Run(context.Background(), turn)
+	require.NoError(t, err)
+	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text,
+		`<page_context>{"creating_automation":true,"time_zone":"America/New_York"}</page_context>`)
+	assert.Contains(t, h.model.requests[0].System, "the time_zone in <page_context> (their browser's), without asking for it")
+}
+
+// A zone stored before it was checked, or no zone at all, is never said.
+func TestATimeZoneThatIsntOneIsNotSaid(t *testing.T) {
+	for _, zone := range []string{"Mars/Olympus", "Local", ""} {
+		h := newHarness(t, say("Hello."))
+		turn := message("Hi")
+		turn.PageContext, _ = json.Marshal(PageContext{TimeZone: zone})
+		_, err := h.runner.Run(context.Background(), turn)
+		require.NoError(t, err)
+		assert.NotContains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, "page_context", zone)
+	}
+}
+
+// Step instructions name things, never ids; time zones offered are words.
+func TestThePromptKeepsIdsAndZoneIdsFromPeople(t *testing.T) {
+	assert.Contains(t, systemPrompt, `naming what it acts on by its name ("the Acme Corp customers ontology"), never by an id`)
+	assert.Contains(t, systemPrompt, `label each in words people read, such as "London (UK time)" or "New York (US Eastern)", never as an IANA id`)
+	assert.NotContains(t, systemPrompt, "ask them for it when you can't tell")
+	assert.Contains(t, automationPrompt(&automationStep{name: "Weekly"}), "names what it acts on by name, not id")
+}
+
 // A page context naming nothing of the workspace tells the model nothing.
 func TestAPageOfNothingIsNoPage(t *testing.T) {
 	h := newHarness(t, say("Hello."))
@@ -1004,7 +1037,7 @@ func TestPromptKeepsWhatAModelNeeds(t *testing.T) {
 func TestPromptOffersEveryRuntimeAnOwnerMayChoose(t *testing.T) {
 	// An owner who confirmed Codex asks for it: the Assistant must know it is a runtime.
 	assert.Contains(t, systemPrompt, "{runtime}: api, claude_code or codex (codex only once the owner confirmed it in Settings › AI models")
-	assert.Equal(t, "assistant-12", PromptVersion)
+	assert.Equal(t, "assistant-13", PromptVersion)
 }
 
 func TestTitle(t *testing.T) {
