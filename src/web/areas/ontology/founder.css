@@ -37,13 +37,20 @@
     calc(var(--hf-space-15) + env(safe-area-inset-bottom));
 }
 
-/* A new chat: the question to answer and the composer under it, pinned at a
-   fixed height from the top (not centred), so switching suggestion kinds,
-   whose cards differ in height, only grows the page downward. */
+/* A new chat: the question to answer and the composer under it, near the
+   middle of the page but pinned a fixed distance from the top (not centred
+   with flex), so switching suggestion kinds, whose cards differ in height,
+   only grows the page downward. */
 .fd-start {
   justify-content: flex-start;
-  padding-top: clamp(var(--hf-space-6), 24vh, 260px);
+  padding-top: clamp(var(--hf-space-6), 32vh, 360px);
   padding-bottom: var(--hf-space-8);
+}
+@media (max-width: 640px) {
+  /* A phone keeps the suggestions in view under the composer. */
+  .fd-start {
+    padding-top: clamp(var(--hf-space-4), 10vh, 96px);
+  }
 }
 .fd-start .ag-runtime {
   border: 1px solid var(--hf-border);

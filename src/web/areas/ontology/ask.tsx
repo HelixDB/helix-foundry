@@ -233,7 +233,7 @@ export function AskPage() {
   );
   if (access === "none")
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll ak-chat--empty">
           <NotShared />
@@ -244,7 +244,7 @@ export function AskPage() {
   // to name (a grantee isn't sent it).
   if (!ontology.tenantId && access === "database")
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll ak-chat--empty">
           <EmptyState
@@ -257,7 +257,7 @@ export function AskPage() {
     );
   if (view.kind === "threads")
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll">
           <AskThreads />
@@ -284,7 +284,7 @@ export function AskPage() {
     );
   if (selection.choice.kind === "none" && !selection.pending)
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar
           title={PAGE}
           onBack={threads.length > 0 ? () => setThread("") : undefined}
@@ -297,7 +297,7 @@ export function AskPage() {
       </div>
     );
   return (
-    <div className="ak-chat ag-dots">
+    <div className="ak-chat">
       <ChatBar onBack={threads.length > 0 ? () => setThread("") : undefined}>
         {picker}
       </ChatBar>
@@ -440,7 +440,7 @@ export function ThreadView({
   }, [shown]);
   if (!first || !last)
     return (
-      <div className="ak-chat ag-dots" aria-busy={list.isPending || undefined}>
+      <div className="ak-chat" aria-busy={list.isPending || undefined}>
         <ChatBar
           title={list.isPending ? title : undefined}
           tag={tag}
@@ -473,7 +473,7 @@ export function ThreadView({
       </div>
     );
   return (
-    <div className="ak-chat ag-dots">
+    <div className="ak-chat">
       <ChatBar title={first.question || "Thread"} tag={tag} onBack={onBack}>
         {picker}
       </ChatBar>
