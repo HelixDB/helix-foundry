@@ -63,6 +63,73 @@ type memStore struct {
 	full   int
 	// uses are the workflow runs that record the runs' uses of ontologies.
 	uses workflowUses
+	// syncs and loads are the work action steps started, and loadJobs the
+	// loads' jobs; causes what each was marked started by, as the store
+	// marks it from the run's event.
+	syncs    map[string]*model.ConnectorSync
+	loads    map[string]*model.FoundryLoad
+	loadJobs map[string]model.FoundryLoadJobs
+	causes   map[string]*model.FoundryAutomationCause
+	// now is when work an action step starts is queued.
+	now time.Time
+}
+
+// AwaitFoundryAutomationJob keeps the step waiting for job, which it queues
+// (as the action's call would have) and marks as the run's.
+func (s *memStore) AwaitFoundryAutomationJob(_ context.Context, runID, _, nodeID string, job model.FoundryAutomationJob, output json.RawMessage) error {
+	if s.lost {
+		return foundrystore.ErrNotFound
+	}
+	n := s.node(runID, nodeID)
+	if n == nil || n.Status != model.FoundryAutomationNodeExecuting {
+		return foundrystore.ErrConflict
+	}
+	n.Status, n.JobID, n.Output = model.FoundryAutomationNodeRunning, &job.ID, output
+	switch job.Kind {
+	case model.FoundryAutomationJobSync:
+		s.syncs[job.ID] = &model.ConnectorSync{ID: job.ID, WorkspaceID: ws, Status: model.ConnectorSyncQueued, CreatedAt: s.now}
+	case model.FoundryAutomationJobLoad:
+		s.loads[job.ID] = &model.FoundryLoad{ID: job.ID, WorkspaceID: ws, Status: model.FoundryLoadWriting, CreatedAt: s.now}
+	}
+	run := s.runs[runID]
+	var event model.FoundryAutomationEvent
+	if err := json.Unmarshal(run.TriggerEvent, &event); err != nil {
+		return err
+	}
+	s.causes[job.ID] = &model.FoundryAutomationCause{RunID: runID, AutomationID: run.AutomationID, Chain: event.CausedBy, Depth: event.ChainDepth + 1}
+	return nil
+}
+
+func (s *memStore) GetConnectorSync(_ context.Context, _, id string) (*model.ConnectorSync, error) {
+	sync, ok := s.syncs[id]
+	if !ok {
+		return nil, foundrystore.ErrNotFound
+	}
+	return sync, nil
+}
+
+func (s *memStore) GetFoundryLoad(_ context.Context, _, id string) (*model.FoundryLoad, error) {
+	load, ok := s.loads[id]
+	if !ok {
+		return nil, foundrystore.ErrNotFound
+	}
+	return load, nil
+}
+
+func (s *memStore) ListFoundryLoadJobs(_ context.Context, ids []string, _ int) (map[string]model.FoundryLoadJobs, error) {
+	out := map[string]model.FoundryLoadJobs{}
+	for _, id := range ids {
+		if jobs, ok := s.loadJobs[id]; ok {
+			out[id] = jobs
+		}
+	}
+	return out, nil
+}
+
+// endedWork is the work id, ended as outcome, as an event trigger finds it, with
+// the cause it was marked with.
+func (s *memStore) endedWork(id, outcome string, at time.Time) model.FoundryAutomationEnded {
+	return model.FoundryAutomationEnded{Cursor: model.FoundryAutomationCursor{At: at, ID: id}, Outcome: outcome, Cause: s.causes[id]}
 }
 
 func (s *memStore) GetConnector(context.Context, string, string) (*model.Connector, error) {
@@ -125,7 +192,9 @@ func newStore() *memStore {
 	return &memStore{automations: map[string]*model.FoundryAutomation{}, runs: map[string]*model.FoundryAutomationRun{},
 		nodes: map[string]map[string]*model.FoundryAutomationRunNode{}, turns: map[string]*model.FoundryAgentTurn{},
 		events: map[string][]model.FoundryAgentEvent{}, ontologies: map[string]*model.FoundryOntology{}, dashboards: map[string]*model.FoundryDashboard{},
-		yielded: map[string]time.Time{}, retried: map[string]string{}, finished: map[string]model.FoundryAutomationRunEnd{}}
+		yielded: map[string]time.Time{}, retried: map[string]string{}, finished: map[string]model.FoundryAutomationRunEnd{},
+		syncs: map[string]*model.ConnectorSync{}, loads: map[string]*model.FoundryLoad{}, loadJobs: map[string]model.FoundryLoadJobs{},
+		causes: map[string]*model.FoundryAutomationCause{}}
 }
 
 func (s *memStore) DueFoundryAutomationSchedules(context.Context, int) ([]*model.FoundryAutomation, error) {
@@ -147,8 +216,11 @@ func (s *memStore) TouchFoundryAutomation(_ context.Context, id string) error {
 
 func (s *memStore) FireFoundryAutomation(_ context.Context, f model.FoundryAutomationFire, _ model.FoundryAutomationLimits) (model.FoundryAutomationFired, error) {
 	s.fires = append(s.fires, f)
-	if f.Run == nil {
+	switch {
+	case f.Run == nil:
 		return model.FoundryAutomationFiredMoved, nil
+	case f.Skip != "":
+		return model.FoundryAutomationFiredSkipped, nil
 	}
 	return model.FoundryAutomationFiredQueued, nil
 }
@@ -333,6 +405,9 @@ type actions struct {
 	loaded       string
 	published    []int64
 	err          error
+	// noID answers a sync that names none; onSync runs while a sync's call does.
+	noID   bool
+	onSync func()
 }
 
 func (a *actions) PublishFoundryDashboard(_ context.Context, r *foundryv1.PublishFoundryDashboardRequest, _ ...grpc.CallOption) (
@@ -343,8 +418,14 @@ func (a *actions) PublishFoundryDashboard(_ context.Context, r *foundryv1.Publis
 
 func (a *actions) SyncConnector(context.Context, *foundryv1.SyncConnectorRequest, ...grpc.CallOption) (*foundryv1.ConnectorSyncResponse, error) {
 	a.syncs++
+	if a.onSync != nil {
+		a.onSync()
+	}
 	if a.err != nil {
 		return nil, a.err
+	}
+	if a.noID {
+		return &foundryv1.ConnectorSyncResponse{Sync: &foundryv1.ConnectorSync{}}, nil
 	}
 	return &foundryv1.ConnectorSyncResponse{Sync: &foundryv1.ConnectorSync{Id: "sync1"}}, nil
 }
@@ -417,9 +498,12 @@ func newFixture(t *testing.T) fixture {
 	cfg := config.Defaults().Foundry.Automations
 	cfg.Enabled = true
 	now := time.Date(2026, 11, 16, 8, 0, 0, 0, time.UTC)
+	db.now = now
 	return fixture{task: &Task{cfg: cfg, db: db, sessions: host, assistant: true, email: true, workerID: "w1", now: func() time.Time { return now }},
 		db: db, actions: acts, host: host}
 }
+
+func ptr[T any](v T) *T { return &v }
 
 func node(id, kind, config string) string {
 	return fmt.Sprintf(`{"id":%q,"kind":%q,"config":%s,"position":{"x":0,"y":0}}`, id, kind, config)
@@ -463,17 +547,51 @@ func (f fixture) output(t *testing.T, runID, nodeID string) automation.Output {
 	return out
 }
 
+// endSync ends the sync an action step started as status, with rows.
+func (f fixture) endSync(id string, status model.ConnectorSyncStatus, rows int64) {
+	sync := f.db.syncs[id]
+	sync.Status, sync.RowsSynced = status, &rows
+}
+
+// endLoad ends the load an action step started as status.
+func (f fixture) endLoad(id string, status model.FoundryLoadStatus) {
+	f.db.loads[id].Status = status
+}
+
+// synced walks the run past its sync step: it starts the sync and waits,
+// handed back; once the sync succeeded, the run walks on.
+func (f fixture) synced(t *testing.T, run *model.FoundryAutomationRun) {
+	t.Helper()
+	f.task.advance(context.Background(), run)
+	require.Equal(t, model.FoundryAutomationNodeRunning, f.status(run.ID, "sync"), "the step waits for its sync")
+	f.endSync("sync1", model.ConnectorSyncSucceeded, 42)
+	f.task.advance(context.Background(), run)
+}
+
 func TestARunWalksItsStepsAsItsOwner(t *testing.T) {
 	f := newFixture(t)
 	run := f.queue(weekly)
 	f.task.advance(context.Background(), run)
 
 	assert.Equal(t, 1, f.actions.syncs, "the approved sync ran once")
+	assert.Equal(t, model.FoundryAutomationNodeRunning, f.status(run.ID, "sync"), "it waits for its sync")
+	assert.Equal(t, "Waiting for the sync…", f.output(t, run.ID, "sync").Summary)
+	assert.Equal(t, ptr("sync1"), f.db.nodes[run.ID]["sync"].JobID)
+	assert.Empty(t, f.db.turns, "the next step waits for the sync")
+	assert.Equal(t, f.task.now().Add(f.task.cfg.StepWait), f.db.yielded[run.ID], "handed back")
+
+	f.endSync("sync1", model.ConnectorSyncSucceeded, 42)
+	delete(f.db.yielded, run.ID)
+	f.task.advance(context.Background(), run)
 	assert.Equal(t, model.FoundryAutomationNodeSucceeded, f.status(run.ID, "sync"))
-	assert.Equal(t, "Started a sync of its connector.", f.output(t, run.ID, "sync").Summary)
+	synced := f.output(t, run.ID, "sync")
+	assert.Equal(t, "Synced its connector: it wrote 42 rows.", synced.Summary)
+	assert.Equal(t, ptr(int64(42)), synced.Count)
+	assert.Contains(t, string(synced.Result), `"id":"sync1"`, "what the action returned is kept")
 	assert.Equal(t, model.FoundryAutomationNodeRunning, f.status(run.ID, "ask"), "the Assistant's turn is queued")
 	require.Contains(t, f.db.yielded, run.ID, "the run waits for it, handed back")
-	assert.Equal(t, []ports.Actor{{Source: ports.SourceUser, UserID: owner, WorkspaceID: ws}}, f.host.actors, "it acts as its owner")
+	owners := []ports.Actor{{Source: ports.SourceUser, UserID: owner, WorkspaceID: ws}, {Source: ports.SourceUser, UserID: owner, WorkspaceID: ws}}
+	assert.Equal(t, owners, f.host.actors, "it acts as its owner, each attempt")
 	require.Len(t, f.db.threads, 1)
 	assert.Equal(t, model.FoundryAgentThreadAutomation, f.db.threads[0].Kind)
 	assert.Equal(t, "Weekly invoices", f.db.threads[0].Title)
@@ -511,7 +629,7 @@ func TestARunWalksItsStepsAsItsOwner(t *testing.T) {
 func TestAConditionTakesItsBranch(t *testing.T) {
 	f := newFixture(t)
 	run := f.queue(weekly)
-	f.task.advance(context.Background(), run)
+	f.synced(t, run)
 	no := false
 	f.db.endTurn(t, model.FoundryAgentTurnDone, agent.Reported{Summary: "None are overdue.", Answer: &no})
 	f.task.advance(context.Background(), run)
@@ -523,7 +641,7 @@ func TestAConditionTakesItsBranch(t *testing.T) {
 	// An answer the Assistant never gave fails the condition, and the run.
 	f = newFixture(t)
 	run = f.queue(weekly)
-	f.task.advance(context.Background(), run)
+	f.synced(t, run)
 	f.db.endTurn(t, model.FoundryAgentTurnDone, agent.Said{Text: "I looked."})
 	f.task.advance(context.Background(), run)
 	assert.Equal(t, "I looked.", f.output(t, run.ID, "ask").Summary, "with no report, its last words")
@@ -540,7 +658,7 @@ func TestAConditionTakesItsBranch(t *testing.T) {
 func TestAFailedTurnFailsItsStep(t *testing.T) {
 	f := newFixture(t)
 	run := f.queue(weekly)
-	f.task.advance(context.Background(), run)
+	f.synced(t, run)
 	turn := f.db.endTurn(t, model.FoundryAgentTurnFailed)
 	why := "the workspace has spent this month's $20.00 of automations"
 	turn.Error = &why
@@ -558,6 +676,8 @@ func TestActionsResolveTheirPayloadWhenTheyRun(t *testing.T) {
 	run := f.queue(load)
 	f.task.advance(context.Background(), run)
 	assert.Equal(t, "ver7", f.actions.loaded, "the version current when it runs")
+	f.endLoad("load1", model.FoundryLoadReady)
+	f.task.advance(context.Background(), run)
 	assert.Equal(t, model.FoundryAutomationRunSucceeded, f.db.finished[run.ID].Status)
 
 	for name, setup := range map[string]func(f fixture){
@@ -608,7 +728,10 @@ func TestEachStepRenewsTheLease(t *testing.T) {
 	f := newFixture(t)
 	run := f.queue(weekly)
 	f.task.advance(context.Background(), run)
-	assert.Equal(t, 2, f.db.renews, "before the sync, and before the Assistant step")
+	assert.Equal(t, 1, f.db.renews, "before the sync, which it then waits for, handed back")
+	f.endSync("sync1", model.ConnectorSyncSucceeded, 1)
+	f.task.advance(context.Background(), run)
+	assert.Equal(t, 3, f.db.renews, "before reading the sync, and before the Assistant step")
 	assert.Equal(t, 1, f.actions.syncs)
 }
 
@@ -618,7 +741,7 @@ func TestAnAssistantStepWaitsForABusyThread(t *testing.T) {
 	f := newFixture(t)
 	run := f.queue(weekly)
 	f.db.busy = true
-	f.task.advance(context.Background(), run)
+	f.synced(t, run)
 	require.Contains(t, f.db.yielded, run.ID, "it waits")
 	assert.Empty(t, f.db.retried, "no failure")
 	assert.NotContains(t, f.db.finished, run.ID)
@@ -851,6 +974,8 @@ func TestARunRecordsItsUsesOfOntologies(t *testing.T) {
 	run := f.queue(load)
 	f.db.nodes[run.ID]["start"].Output = json.RawMessage(`{"summary":"Run by hand."}`)
 	f.task.advance(context.Background(), run)
+	f.endLoad("load1", model.FoundryLoadPartial)
+	f.task.advance(context.Background(), run)
 
 	require.Len(t, f.db.uses.starts, 2, "the load's ontology, and the published dashboard's other one")
 	assert.Equal(t, "ont1", f.db.uses.starts[0].OntologyID)
@@ -864,7 +989,7 @@ func TestARunRecordsItsUsesOfOntologies(t *testing.T) {
 	assert.Equal(t, model.FoundryAutomationRunSucceeded, end.Status)
 	assert.True(t, end.Assess)
 	assert.Equal(t, "The run succeeded.\nWhat its steps found:"+
-		"\n- The action step \"load\" succeeded: Started a load of its ontology's current version."+
+		"\n- The action step \"load\" succeeded: Loaded its ontology's current version: the load is partial, its tables in and some documents unread."+
 		"\n- The action step \"pub\" succeeded: Published its dashboard's snapshot again.", end.Answer)
 
 	// A run that never touched an ontology starts none.
@@ -878,7 +1003,7 @@ func TestARunRecordsItsUsesOfOntologies(t *testing.T) {
 func TestARunsAnswerSaysWhatItsStepsFound(t *testing.T) {
 	f := newFixture(t)
 	run := f.queue(weekly)
-	f.task.advance(context.Background(), run)
+	f.synced(t, run)
 	yes, three := true, int64(3)
 	f.db.endTurn(t, model.FoundryAgentTurnDone, agent.Reported{Summary: "Three are overdue.", Answer: &yes, Count: &three})
 	f.task.advance(context.Background(), run)
@@ -890,7 +1015,7 @@ func TestARunsAnswerSaysWhatItsStepsFound(t *testing.T) {
 	// A failed run leads with why.
 	f = newFixture(t)
 	run = f.queue(weekly)
-	f.task.advance(context.Background(), run)
+	f.synced(t, run)
 	f.db.endTurn(t, model.FoundryAgentTurnDone, agent.Said{Text: "I looked."})
 	f.task.advance(context.Background(), run)
 	answer = f.db.finished[run.ID].Answer
