@@ -10,6 +10,7 @@ import {
 import { Link } from "react-router-dom";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import type { EntityRef } from "../../../shared/foundry-read";
+import type { Naming } from "../explore/naming";
 import {
   Button,
   DataGrid,
@@ -151,7 +152,8 @@ function ResultTable({
  * A query's output as a figure, chart or table (visualPlan, by the visual's
  * hint in an answer or a dashboard's tile), titled. `onShowQuery`, in an
  * answer, lights the step that ran the query; `actions` sit in its head
- * (Add to dashboard, a tile's menu).
+ * (Add to dashboard, a tile's menu). `naming`, the version of the load the
+ * query read, says which props name a type's entities (columnHeadings).
  */
 export function AskVisual({
   output,
@@ -161,6 +163,7 @@ export function AskVisual({
   onShowQuery,
   untitled,
   actions,
+  naming,
 }: {
   output: QueryOutput;
   query: OntologyQuery;
@@ -172,10 +175,11 @@ export function AskVisual({
   // it to assistive technology only.
   untitled?: boolean;
   actions?: ReactNode;
+  naming?: Naming;
 }) {
   const plan = useMemo(
-    () => visualPlan(output, query, hint),
-    [output, query, hint?.kind, hint?.title],
+    () => visualPlan(output, query, hint, naming),
+    [output, query, hint?.kind, hint?.title, naming],
   );
   const [view, setView] = useState<"chart" | "table">("chart");
   const titleId = useId();

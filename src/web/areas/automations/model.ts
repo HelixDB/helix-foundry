@@ -1210,6 +1210,9 @@ export type ShownSuggestions =
       chips: readonly AutomationSuggestion[];
       // Founder is writing better ones: these are replaced.
       generating: boolean;
+      // Read for the chosen ontology (written by Founder or the backend's
+      // fallback from its questions), or the fixed ones, for none.
+      source: "ontology" | "fixed";
     };
 
 /**
@@ -1221,7 +1224,8 @@ export type ShownSuggestions =
  * keeps what was read before (`data`), so the chips don't flicker.
  *
  * @example
- * shownSuggestions({ ontology: false, pending: false, failed: false }).kind; // "chips"
+ * shownSuggestions({ ontology: false, pending: false, failed: false }); // { kind: "chips", chips: AUTOMATION_SUGGESTIONS, generating: false, source: "fixed" }
+ * shownSuggestions({ ontology: true, pending: false, failed: false, data: { suggestions: [{ title: "A", prompt: "p" }] } }); // { kind: "chips", chips: [{ title: "A", prompt: "p", icon: "report" }], generating: false, source: "ontology" }
  * shownSuggestions({ ontology: true, pending: true, failed: false }); // { kind: "loading", generating: false }
  */
 export function shownSuggestions(q: {
@@ -1234,12 +1238,14 @@ export function shownSuggestions(q: {
     kind: "chips",
     chips: AUTOMATION_SUGGESTIONS,
     generating: false,
+    source: "fixed",
   } as const;
   if (!q.ontology || (q.failed && !q.data)) return fixed;
   if (q.pending) return { kind: "loading", generating: false };
   const chips = readSuggestions(q.data),
     generating = q.data?.generating === true;
-  if (chips.length) return { kind: "chips", chips, generating };
+  if (chips.length)
+    return { kind: "chips", chips, generating, source: "ontology" };
   return generating ? { kind: "loading", generating } : fixed;
 }
 

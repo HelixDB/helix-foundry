@@ -10,7 +10,7 @@ import type {
 import { Button, Skeleton } from "../../kit";
 import { useWorkspace } from "../../ui";
 import { entityId } from "../explore/model";
-import { namingOf } from "../explore/naming";
+import { namingOf, type Naming } from "../explore/naming";
 import { AskVisual } from "../ontology/ask-visual";
 import { withLoad } from "../ontology/model";
 import { ontologyPaths } from "../ontology/paths";
@@ -40,30 +40,26 @@ export type TileState =
 
 const HEIGHT = 248;
 
-/** Whether an output names entities: only then is the load's version read to link them. */
-const namesEntities = (o: QueryOutput) =>
-  o.kind === "rows" &&
-  o.rows.some((r) =>
-    r.cells.some(
-      (c) =>
-        typeof c === "object" &&
-        c !== null &&
-        "id" in c &&
-        "type" in c &&
-        "name" in c,
-    ),
-  );
+/**
+ * Whether an output has columns of entities or their props: only then is
+ * the load's version read, to link its entities and head its columns.
+ */
+const hasColumns = (o: QueryOutput) =>
+  o.kind === "rows" ||
+  o.kind === "group_count" ||
+  o.kind === "grouped_aggregate";
 
 /**
- * Where an entity of a load opens: its page, reading that load. Its id says
- * whether the type is keyed, which the load's version tells, so the version
- * is read only for a tile whose output names entities.
+ * How a tile names what its load holds: where an entity opens (its page,
+ * reading that load; its id says whether the type is keyed) and the load's
+ * version's naming, which heads its columns. The version is read only for
+ * a tile with columns.
  */
-function useEntityHref(
+function useLoadNaming(
   ontologyId: string,
   loadId: string,
   enabled: boolean,
-): (r: EntityRef) => string | undefined {
+): { href: (r: EntityRef) => string | undefined; naming: Naming } {
   const { id: ws } = useWorkspace();
   const loads = useQuery({
     ...ontologyQueries.loads(ws, ontologyId),
@@ -76,13 +72,18 @@ function useEntityHref(
     enabled: enabled && !!versionId,
   });
   const naming = useMemo(() => namingOf(version.data?.version), [version.data]);
-  return (r) => {
-    const t = naming.types.get(r.type);
-    if (!t) return undefined;
-    const id = entityId(
-      t.key.length ? { type: r.type, key: r.id } : { type: r.type, name: r.id },
-    );
-    return withLoad(ontologyPaths.entity(ontologyId, id), loadId);
+  return {
+    naming,
+    href: (r) => {
+      const t = naming.types.get(r.type);
+      if (!t) return undefined;
+      const id = entityId(
+        t.key.length
+          ? { type: r.type, key: r.id }
+          : { type: r.type, name: r.id },
+      );
+      return withLoad(ontologyPaths.entity(ontologyId, id), loadId);
+    },
   };
 }
 
@@ -95,10 +96,10 @@ function Drawn({
   state: Extract<TileState, { kind: "drawn" }>;
   actions?: ReactNode;
 }) {
-  const href = useEntityHref(
+  const { href, naming } = useLoadNaming(
     state.ontologyId,
     state.loadId,
-    namesEntities(state.output),
+    hasColumns(state.output),
   );
   return (
     <AskVisual
@@ -106,6 +107,7 @@ function Drawn({
       query={state.query}
       hint={{ kind: tile.visual.kind, title: tile.title }}
       href={href}
+      naming={naming}
       actions={actions}
     />
   );

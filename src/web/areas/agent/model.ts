@@ -108,20 +108,33 @@ export const isLiveTurn = (t?: { status?: FoundryAgentTurnStatus } | null) =>
  * What the person is looking at, from the URL: an ontology's pages, its
  * Explorer or Analyst, and the load they read (a load's page, or `?load=`),
  * a dashboard, or the page that starts a new workflow. Ids only, never
- * names; null anywhere else.
+ * names; null anywhere else. `about`, the ontology a suggestion picked there
+ * was written for, names the ontology where the page names neither an
+ * ontology nor a dashboard (the new workflow's page; anywhere else
+ * Founder's suggestions show, the page's ontology is theirs).
  *
  * @example
  * pageContext("/ontology/ont_1/loads/load_2", ""); // { ontologyId: "ont_1", loadId: "load_2" }
  * pageContext("/explore/ont_1/records", "?load=load_3"); // { ontologyId: "ont_1", loadId: "load_3" }
  * pageContext("/dashboards/dash_1", ""); // { dashboardId: "dash_1" }
  * pageContext("/workflows/new", "?thread=thr_1"); // { newAutomation: true }
+ * pageContext("/workflows/new", "", "ont_1"); // { newAutomation: true, ontologyId: "ont_1" }
+ * pageContext("/ask/ont_1", "", "ont_2"); // { ontologyId: "ont_1" }
  * pageContext("/ontology/new", ""); // null
  * pageContext("/data", ""); // null
  */
 export function pageContext(
   pathname: string,
   search: string,
+  about?: string,
 ): AgentPageContext | null {
+  const page = urlContext(pathname, search);
+  return about && ID.test(about) && !page?.ontologyId && !page?.dashboardId
+    ? { ...page, ontologyId: about }
+    : page;
+}
+
+function urlContext(pathname: string, search: string): AgentPageContext | null {
   const [, section, ontologyId = "", sub, loadId = ""] = pathname.split("/");
   if (section === "workflows")
     return ontologyId === "new" && sub === undefined
