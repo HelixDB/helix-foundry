@@ -7252,6 +7252,9 @@
         },
         "google": {
           "$ref": "#/definitions/v1GoogleWorkspaceConnectorConfig"
+        },
+        "databuddy": {
+          "$ref": "#/definitions/v1DatabuddyConnectorConfig"
         }
       },
       "description": "ConnectorConfig is a connector's settings. Write-only fields come back empty."
@@ -7307,7 +7310,7 @@
       "properties": {
         "kind": {
           "type": "string",
-          "description": "stripe, workos, posthog, github, linear, calcom, granola, slack, notion,\ngoogle, postgres, mysql, s3 or events."
+          "description": "stripe, workos, posthog, github, linear, calcom, granola, slack, notion,\ngoogle, databuddy, postgres, mysql, s3 or events."
         },
         "displayName": {
           "type": "string"
@@ -7767,6 +7770,28 @@
           "description": "Change data capture from the database's log; plans with log capture only."
         }
       }
+    },
+    "v1DatabuddyConnectorConfig": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string",
+          "description": "Databuddy API key (dbdy_…) with the read:data scope; write-only."
+        },
+        "websiteIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The websites to read, by id; empty reads every website the key reads."
+        },
+        "historyDays": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Days of history to keep, 1 to 365; 0 is 90."
+        }
+      },
+      "description": "DatabuddyConnectorConfig reads a Databuddy organization's web analytics:\nits websites, and per website its daily metrics, pages, referrers, custom\nevents, sessions and visitor profiles over a window of recent days."
     },
     "v1DeleteFoundryDocumentSetResponse": {
       "type": "object"
