@@ -71,7 +71,7 @@ import {
   pinDashboard,
   updateDashboard,
 } from "./queries";
-import { ShareDialog, ShareMenu } from "./publish";
+import { ShareDialog, ShareMenu, sharing } from "./publish";
 import { Tile, type TileState } from "./tile";
 
 // /dashboards/:dashboardId: a dashboard's tiles in their rows, each read by
@@ -490,7 +490,7 @@ export function DashboardPage() {
           ))}
         </div>
       )}
-      {shareOpen && (offered.publish || offered.unpublish) && (
+      {shareOpen && (sharing(d).publish || sharing(d).unpublish) && (
         <ShareDialog dashboard={d} onClose={() => setShareOpen(false)} />
       )}
       {deleting && (
