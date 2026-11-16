@@ -526,14 +526,12 @@ export type TileGlyph = "figure" | "bar" | "line" | "table";
 export function tileGlyph(
   tile: Pick<DashboardTile, "query" | "visual">,
 ): TileGlyph {
-  const r = isRecord(tile.query) ? tile.query.return : undefined,
+  // Read without trust: a spec's query is kept as the spec holds it.
+  const r: unknown = isRecord(tile.query) ? tile.query.return : undefined,
     want = tile.visual.kind;
-  const one =
-    isRecord(r) &&
-    ("count" in r || (isRecord(r.aggregate) && !r.aggregate.group_by));
-  const groups =
-    isRecord(r) &&
-    ("group_count" in r || (isRecord(r.aggregate) && !!r.aggregate.group_by));
+  const agg = isRecord(r) && isRecord(r.aggregate) ? r.aggregate : undefined;
+  const one = isRecord(r) && ("count" in r || (!!agg && !agg.group_by));
+  const groups = isRecord(r) && ("group_count" in r || !!agg?.group_by);
   if (one) return want === "table" ? "table" : "figure";
   if (want === "bar" || want === "line" || want === "table") return want;
   return groups ? "bar" : "table";
