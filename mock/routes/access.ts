@@ -150,7 +150,7 @@ const state = {
   // Restricted members, as `${workspaceId}\u001f${userId}`.
   restricted: new Set<string>(),
   credentials: [] as StoredCredential[],
-  // Principals whose Workflows permission is off, as
+  // Principals whose Usage permission (workflows on the wire) is off, as
   // `${workspaceId}\u001f${principalKey}`; on for everyone else.
   workflowsOff: new Set<string>(),
 };
@@ -701,7 +701,7 @@ const teamsOf = (workspaceId: string, userId: string) =>
 
 /** The targets a user holds in the workspace: their own, then their teams'. */
 /**
- * Whether a member's Workflows permission is on: neither they nor any of
+ * Whether a member's Usage permission is on: neither they nor any of
  * their teams has it off (the backend's workflowsOn).
  */
 export function workflowsOn(workspaceId: string, userId: string) {
@@ -801,7 +801,7 @@ const W = "/v1/workspaces/{workspaceId}/foundry",
 /**
  * What each of Foundry's routes lets a grantee do (access.Rules); a route
  * not named refuses it. A grantee only reads, asks and cancels its own
- * questions, and, with its Workflows permission, reads workflows and starts
+ * questions, and, with its Usage permission, reads use cases and starts
  * and finishes its own runs ("workflows": as "ontology", while the
  * permission is on).
  */
@@ -937,9 +937,9 @@ export function guarded(route: MockRoute): MockRoute {
   };
 }
 
-/** The backend's refusal of a grantee whose Workflows permission is off. */
+/** The backend's refusal of a grantee whose Usage permission is off. */
 export const WORKFLOWS_OFF =
-  "workflows are off for this member or key: an owner or admin turns them on with its sources in Settings › Access";
+  "use cases are off for this member or key: an owner or admin turns them on with its sources in Settings › Access";
 
 // ---------------------------------------------------------------- routes
 
@@ -1545,7 +1545,7 @@ export const accessRoutes: MockRoute[] = [
       );
       if (!c) return fail("NOT_FOUND", "service credential not found");
       c.revokedAt = now();
-      // The host deletes a revoked key's grants and Workflows permission
+      // The host deletes a revoked key's grants and Usage permission
       // (DeleteFoundryAccessPrincipal).
       state.grants = state.grants.filter(
         (g) =>

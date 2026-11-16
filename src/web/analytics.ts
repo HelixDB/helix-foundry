@@ -95,7 +95,7 @@ export type DashboardAction =
   | "publish"
   | "unpublish";
 
-/** An automation call that may be refused (src/web/areas/automations/queries.ts). */
+/** A workflow (automation) call that may be refused (src/web/areas/automations/queries.ts). */
 export type AutomationCall =
   | "create"
   | "edit"
@@ -289,7 +289,8 @@ export type AnalyticsEvents = {
   dashboard_link_copied: undefined;
   dashboard_refused: { action: DashboardAction; reason: Refusal };
 
-  // Automations (src/web/areas/automations): made (from which template, or
+  // Workflows (src/web/areas/automations; the events keep their automation_
+  // names): made (from which template, or
   // the Assistant's card, which agent_action_executed reports), edited (its
   // steps, or only its name or description), approved by its owner,
   // paused, resumed, run by hand, deleted, a run cancelled, or why a call
@@ -303,8 +304,8 @@ export type AnalyticsEvents = {
   automation_deleted: undefined;
   automation_run_cancelled: undefined;
   automation_refused: { action: AutomationCall; reason: Refusal };
-  // How much an ontology helped it: its workflow opened from the
-  // automation's page, or a run's workflow run from the run's.
+  // How much an ontology helped it: its use case opened from the
+  // workflow's page, or a run's use case run from the run's.
   automation_ontology_opened: { from: "automation" | "run" };
 
   // An ontology's versions, loads and reviews.
@@ -313,7 +314,8 @@ export type AnalyticsEvents = {
   review_settled: { kind: "resolve" | "prop" | "release" | "reject" };
   review_decision_removed: undefined;
   graph_exported: undefined;
-  // Workflows: an agent's task, and the prompt that has an agent run it.
+  // Use cases (the Usage pages; the events keep their workflow_ names): an
+  // agent's task, and the prompt that has an agent run it.
   workflow_created: undefined;
   workflow_deleted: undefined;
   workflow_prompt_copied: undefined;

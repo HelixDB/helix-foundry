@@ -1,8 +1,8 @@
-// Workflows area: what a window of workflow runs came to (GET
-// .../workflows:insights), in the pieces both pages build from. The overview
-// (WorkflowsPage) answers whether the ontology pays off and what to change:
-// a sentence, the impact cards and the chosen one's trend, then the
-// workflows side by side and what to change. A workflow's page answers how
+// Workflows area (shown as Usage): what a window of use case runs came to
+// (GET .../workflows:insights), in the pieces both pages build from. The
+// Usage page (WorkflowsPage) answers whether the ontology pays off and what
+// to change: a sentence, the impact cards and the chosen one's trend, then
+// the use cases side by side and what to change. A use case's page answers how
 // its task goes and why: a strip of its numbers with where its runs went,
 // then its runs, then what to change for it. Both narrow to one who started
 // runs and a window; counts stand in for rates of too few runs (MIN_SAMPLE).
@@ -91,7 +91,7 @@ export function useInsights(workflowId?: string) {
   const [days, setDays] = useState(30),
     [metric, setMetric] = useState<InsightMetric>("helped"),
     [who, setWho] = useState<Starter>();
-  // An automation's runs are its workflow's.
+  // A workflow's runs are its use case's.
   const query = useQuery(
     workflowQueries.insights(ws, o, {
       workflowId:
@@ -542,7 +542,7 @@ export function TrendPanel({
 }
 
 /**
- * A workflow's numbers in one strip of equal cells, and under them where its
+ * A use case's numbers in one strip of equal cells, and under them where its
  * runs went: one sentence when none left on the way, else each step with
  * what left before it.
  */
@@ -642,7 +642,7 @@ function IssueList({
 /**
  * What to change: the gaps the assessments named and the changes they
  * suggested, side by side in one panel, most runs first. An owner or admin
- * ticks suggestions and drafts one version with them. On a workflow's page
+ * ticks suggestions and drafts one version with them. On a use case's page
  * (`onIssue`), an issue's runs narrow its runs list.
  */
 export function ChangesPanel({
@@ -664,8 +664,8 @@ export function ChangesPanel({
     suggestions = data.suggestions || [];
   if (!gaps.length && !suggestions.length) return null;
   const manage = canManage(role);
-  // What a gap or suggestion came to: its runs (on a workflow's page, a
-  // button narrowing the runs to them), its workflows, and the latest.
+  // What a gap or suggestion came to: its runs (on a use case's page, a
+  // button narrowing the runs to them), its use cases, and the latest.
   const meta = (s: FoundryWorkflowInsightIssue) => {
     const key = issueKey(s.text || "");
     const runs = plural(s.runs || 0, "run");
@@ -688,7 +688,7 @@ export function ChangesPanel({
         {workflowNames &&
           (s.workflowIds || []).length > 0 &&
           ` · ${(s.workflowIds || [])
-            .map((id) => workflowNames.get(id) || "A workflow")
+            .map((id) => workflowNames.get(id) || "A use case")
             .join(", ")}`}
         {s.lastAt && s.lastRunId && s.lastWorkflowId && (
           <>

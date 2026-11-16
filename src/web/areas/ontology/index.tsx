@@ -26,7 +26,7 @@ import { VersionPage } from "./version";
 
 export { OntologyHome };
 
-// An ontology's connections and documents, its Review page, its workflows,
+// An ontology's connections and documents, its Review page, its Usage pages,
 // its database's explorer and its records are loaded when first opened (the
 // explorer's canvas is large). The Explorer and Ask have route tables of
 // their own (ExploreRoutes, AskRoutes), still under the ontology's scope.
@@ -88,6 +88,23 @@ function ToConnections() {
   );
 }
 
+// /ontology/:ontologyId/workflows/*, before use cases moved to the Usage
+// page: old links (agents', the backend's before the rename) keep their
+// query and hash.
+function ToUsage() {
+  const { pathname, search, hash } = useLocation();
+  return (
+    <Navigate
+      to={
+        pathname.replace(/^(\/ontology\/[^/]+)\/workflows/, "$1/usage") +
+        search +
+        hash
+      }
+      replace
+    />
+  );
+}
+
 // /ontology/:ontologyId/suggestions, before it was the Review page's
 // Ontology tab: old links keep their query.
 function ToReviewOntology() {
@@ -134,12 +151,13 @@ export function OntologyRoutes() {
         <Route path="documents/:documentId" element={<DocumentPage />} />
         <Route path="suggestions" element={<ToReviewOntology />} />
         <Route path="review" element={<ReviewPage />} />
-        <Route path="workflows" element={<WorkflowsPage />} />
-        <Route path="workflows/:workflowId" element={<WorkflowPage />} />
+        <Route path="usage" element={<WorkflowsPage />} />
+        <Route path="usage/:workflowId" element={<WorkflowPage />} />
         <Route
-          path="workflows/:workflowId/runs/:runId"
+          path="usage/:workflowId/runs/:runId"
           element={<WorkflowRunPage />}
         />
+        <Route path="workflows/*" element={<ToUsage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="*" element={<NotFound />} />

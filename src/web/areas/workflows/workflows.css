@@ -1,4 +1,4 @@
-/* Workflows area: built from the kit and the ontology area's stack and code
+/* Workflows area (shown as Usage): built from the kit and the ontology area's stack and code
    blocks (on-stack, on-code). */
 .wf-id {
   display: inline-flex;
@@ -224,7 +224,7 @@ button.wf-card:hover {
   font-variant-numeric: tabular-nums;
 }
 
-/* A workflow's numbers: equal cells in one box, where its runs went under
+/* A use case's numbers: equal cells in one box, where its runs went under
    them. */
 .wf-strip {
   border: 1px solid var(--hf-border);
@@ -447,7 +447,7 @@ button.wf-card:hover {
   background: var(--hf-border);
 }
 
-/* The ontology's workflows, a row each, inside their panel: the panel draws
+/* The ontology's use cases, a row each, inside their panel: the panel draws
    the border, and headers are their names alone. */
 .wf-grid.hf-grid-wrap {
   border: 0;
@@ -481,7 +481,7 @@ button.wf-card:hover {
   font-variant-numeric: tabular-nums;
 }
 
-/* A workflow's runs: a row each on one grid of columns, the head's too. */
+/* A use case's runs: a row each on one grid of columns, the head's too. */
 .wf-runs-bar {
   display: flex;
   flex-wrap: wrap;
@@ -639,7 +639,7 @@ button.wf-card:hover {
   }
 }
 
-/* A workflow Foundry made for an automation: where it comes from, linking
+/* A use case Foundry made for a workflow: where it comes from, linking
    back (MadeBy). */
 .wf-origin {
   display: flex;
