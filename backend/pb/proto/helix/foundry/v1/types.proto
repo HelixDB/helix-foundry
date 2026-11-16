@@ -2597,6 +2597,10 @@ message FoundryAgentPageContext {
   string dashboard_id = 3;
   // The person is on the page that starts a new automation.
   bool new_automation = 4;
+  // The IANA time zone the person's browser names (America/New_York): the
+  // Assistant's default for a schedule. One that isn't a zone Go's database
+  // has, or longer than 64 characters, is dropped, never refused.
+  string time_zone = 5;
 }
 
 // FoundryAgentThread is a conversation with the Assistant, private to its user.

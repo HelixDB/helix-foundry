@@ -724,10 +724,12 @@ describe("schedules", () => {
 describe("words", () => {
   it("says each trigger, action and condition", () => {
     expect(
-      scheduleText(
-        { kind: "schedule", every: "hour", minute: 0, time_zone: "UTC" },
-        "UTC",
-      ),
+      scheduleText({
+        kind: "schedule",
+        every: "hour",
+        minute: 0,
+        time_zone: "America/New_York",
+      }),
     ).toBe("every hour, on the hour");
     expect(
       scheduleText({
@@ -736,13 +738,33 @@ describe("words", () => {
         minute: 5,
         time_zone: "UTC",
       }),
-    ).toBe("every hour at 5 past (UTC)");
+    ).toBe("every hour at 5 past");
+    // An hour's minute names a zone only where it isn't whole hours off.
     expect(
-      scheduleText(
-        { kind: "schedule", every: "day", at: "07:30", time_zone: "UTC" },
-        "UTC",
-      ),
-    ).toBe("every day at 07:30");
+      scheduleText({
+        kind: "schedule",
+        every: "hour",
+        minute: 5,
+        time_zone: "Asia/Kolkata",
+      }),
+    ).toBe("every hour at 5 past, Kolkata time");
+    expect(
+      scheduleText({
+        kind: "schedule",
+        every: "day",
+        at: "07:30",
+        time_zone: "UTC",
+      }),
+    ).toBe("every day at 07:30 UTC");
+    expect(
+      scheduleText({
+        kind: "schedule",
+        every: "week",
+        weekday: "monday",
+        at: "08:00",
+        time_zone: "America/New_York",
+      }),
+    ).toBe("every Monday at 08:00 New York time");
     expect(
       triggerText(
         { kind: "sync_finished", connector_id: "c1", outcome: "failed" },
@@ -821,8 +843,8 @@ describe("words", () => {
       timeZone: "Europe/London",
       connector: { id: "c1", name: "Stripe" },
     });
-    expect(sentence(weekly.spec, names, true, "Europe/London")).toBe(
-      "Every day at 08:00, sync “Stripe”, then ask Founder: “Summarise anything that needs attention today, such as overdue invoices or records that changed overnight.”, then email you “This morning’s summary”.",
+    expect(sentence(weekly.spec, names, true)).toBe(
+      "Every day at 08:00 London time, sync “Stripe”, then ask Founder: “Summarise anything that needs attention today, such as overdue invoices or records that changed overnight.”, then email you “This morning’s summary”.",
     );
     const check = TEMPLATES.find((t) => t.id === "check-documents")!.build({
       timeZone: "UTC",
@@ -836,7 +858,7 @@ describe("words", () => {
         { from: "needs", to: "other", branch: "false" as const },
       ],
     };
-    expect(sentence(both, names, true, "UTC")).toMatch(
+    expect(sentence(both, names, true)).toMatch(
       /^When documents arrive in “General”, ask Founder: .*, then if the answer is yes, email you “A new document needs your attention”, then otherwise email you what it found\.$/,
     );
     expect(sentence(simple, names, false)).toBe(

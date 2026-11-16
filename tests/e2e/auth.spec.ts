@@ -13,6 +13,9 @@ import {
 // code WorkOS emails an unverified address and a company's single sign-on,
 // the session's refresh, sign-out, and what the /papi BFF refuses.
 
+/** What the main page, Founder's, asks of a new chat on Customer contracts. */
+const HELLO = "What do you want to know about Customer contracts?";
+
 test("signs in and returns to the page it came from", async ({ page }) => {
   await page.goto("/data");
   await expect(page).toHaveURL(/\/login\?return_to=%2Fdata$/);
@@ -47,7 +50,7 @@ test("explains a sign-in that did not finish", async ({ page }) => {
   await signIn(page);
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts$/);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Analyst" }),
+    page.getByRole("heading", { level: 1, name: HELLO }),
   ).toBeVisible();
 });
 
@@ -221,7 +224,7 @@ test("refreshes an expired session once for parallel calls", async ({
   await mock.configure({ accessTokenTtlSeconds: 1 });
   await signIn(page);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Analyst" }),
+    page.getByRole("heading", { level: 1, name: HELLO }),
   ).toBeVisible();
   // Let the access token expire, then call the BFF six times at once.
   await page.waitForTimeout(2500);
@@ -244,7 +247,7 @@ test("the app takes turns to refresh an expired session", async ({ page }) => {
   await mock.configure({ accessTokenTtlSeconds: 1 });
   await signIn(page);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Analyst" }),
+    page.getByRole("heading", { level: 1, name: HELLO }),
   ).toBeVisible();
   await page.waitForTimeout(2500);
   await mock.configure({ accessTokenTtlSeconds: 300 });

@@ -222,7 +222,7 @@ test("a new automation starts as a conversation with Founder, whose card opens i
   });
   await expect(card).toBeVisible({ timeout: 20_000 });
   await expect(
-    page.getByText("When documents arrive in “General”", { exact: true }),
+    card.getByText(/documents arrive in “General”/).first(),
   ).toBeVisible();
   // Nothing is made until the person's click, which opens it.
   await expect(
@@ -581,7 +581,7 @@ test("starts from a template, runs only once approved, runs now, and colours the
   // The template's steps, its connection the workspace's first, said in
   // words and drawn on the canvas.
   await expect(inspector(page).locator(".au-summary-text")).toContainText(
-    "Every day at 08:00, sync “Stripe”, then ask Founder:",
+    /Every day at 08:00 (UTC|.+ time), sync “Stripe”, then ask Founder:/,
   );
   await expect(canvas(page).locator(".au-node")).toHaveCount(4);
   await expect(live(page)).toBeDisabled();
@@ -1274,4 +1274,61 @@ test("Founder sets one up from a card its person runs, in the dock", async ({
   await expect(
     page.getByRole("navigation", { name: "Automations" }),
   ).toContainText("Weekly summary");
+});
+
+test.describe("in the browser's time zone", () => {
+  test.use({ timezoneId: "America/New_York" });
+
+  test("the Assistant schedules a weekly one without asking for a zone, said in words", async ({
+    page,
+  }) => {
+    await mock.configure({ agentStepMs: 60 });
+    await signIn(page);
+    await page.goto("/automations/new");
+    await page
+      .getByRole("textbox", { name: "Message" })
+      .fill(
+        "Every Monday at 8am, give me a summary of overdue invoices from Customer contracts.",
+      );
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    const card = page.getByRole("region", {
+      name: /^Action: Set up the automation/,
+    });
+    await expect(card).toBeVisible({ timeout: 20_000 });
+    // No question about the zone: the browser's went with the message.
+    await expect(page.getByRole("radiogroup")).toHaveCount(0);
+    const steps = card.getByRole("list", { name: "Steps it approves" });
+    await expect(steps).toContainText(
+      "When every Monday at 08:00 New York time",
+    );
+    await expect(steps).not.toContainText("America/New_York");
+    // Its instruction names the ontology, never its id.
+    await expect(steps).toContainText("the Customer contracts ontology");
+    await expect(steps).not.toContainText(
+      /\bont_\w+|\b[0-9A-HJKMNP-TV-Z]{26}\b/,
+    );
+    await card.getByRole("button", { name: "Create and turn on" }).click();
+    await expect(page).toHaveURL(/\/automations\/aut_[^/?]+$/);
+    await expect(inspector(page).locator(".au-summary-text")).toContainText(
+      "Every Monday at 08:00 New York time",
+    );
+    // The Assistant step's inspector shows its instruction once: in its box.
+    await canvas(page)
+      .locator(".react-flow__node")
+      .filter({ hasText: /Ask Founder/ })
+      .click();
+    const instruction = inspector(page).getByLabel("What should it do?");
+    await expect(instruction).toHaveValue(
+      /^Read the current load of the Customer contracts ontology\./,
+    );
+    await expect(inspector(page).getByText(/^Ask Founder: “/)).toHaveCount(0);
+    // Its trigger's zone picker says the zone in words.
+    await canvas(page)
+      .locator(".react-flow__node")
+      .filter({ hasText: "every Monday at 08:00" })
+      .click();
+    await expect(
+      inspector(page).getByRole("combobox", { name: "Time zone" }),
+    ).toContainText(/New York · GMT−[45]/);
+  });
 });

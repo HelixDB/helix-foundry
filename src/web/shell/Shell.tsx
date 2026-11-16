@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Bot, Menu, Search } from "lucide-react";
+import { FOUNDER } from "../../shared/deployment";
 import { trackEvent } from "../analytics";
 import {
   Dialog,
@@ -31,8 +32,7 @@ import {
 import {
   ShellBanner,
   activeSection,
-  primaryNav,
-  secondaryNav,
+  linkedSections,
   sectionPanels,
 } from "./nav";
 import { Rail } from "./Rail";
@@ -42,7 +42,6 @@ import type { SectionPanel } from "./types";
 
 // Founder (areas/agent): in this build (next.config.ts), its dock
 // loaded once opened.
-const ASSISTANT = !!process.env.NEXT_PUBLIC_FOUNDRY_ASSISTANT;
 const AgentDock = lazy(() =>
   import("../areas/agent/dock").then((m) => ({ default: m.AgentDock })),
 );
@@ -99,7 +98,7 @@ function RouteAnnouncer() {
 function SidebarFallback() {
   return (
     <nav aria-label="Main navigation" className="hf-sidebar-fallback">
-      {[...primaryNav, ...secondaryNav].map((n) => (
+      {linkedSections.map((n) => (
         <Link key={n.id} to={n.to}>
           {n.label}
         </Link>
@@ -162,10 +161,11 @@ function PanelAside({
 // a wide screen, kept open per browser, else a drawer (below 1100px, or
 // 1400px beside a section's panel, so the page keeps its room). Closing the
 // column gives the focus back to what opened it. A grantee has no
-// Founder (the WFE denies it every route). While the workspace is
-// onboarding, the sidebar holds only the workspace and the account, and there
-// is no palette; a grantee has no palette either (what it lists, a grantee
-// can't read).
+// Founder (the WFE denies it every route). Founder's own page (/ask, and /,
+// which opens it) has no dock, nor a way to open one: the page is Founder.
+// While the workspace is onboarding, the sidebar holds only the workspace
+// and the account, and there is no palette; a grantee has no palette either
+// (what it lists, a grantee can't read).
 export function Shell({
   workspaces,
   current,
@@ -192,7 +192,7 @@ export function Shell({
   const [panelHidden, setPanelHidden] = useState(false),
     panelOpen = !panelHidden;
   useEffect(() => setPanelHidden(false), [section]);
-  const assistant = ASSISTANT && !grantee,
+  const assistant = FOUNDER && !grantee && section !== "ask",
     dockDrawer = useMedia(
       panel && panelOpen ? "(max-width: 1400px)" : "(max-width: 1100px)",
     ),

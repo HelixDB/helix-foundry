@@ -1954,6 +1954,20 @@ describe("isProbeRoute", () => {
   });
 });
 
+describe("Ask's path", () => {
+  it("names a Founder chat, an Analyst thread, an entity and a new chat", () => {
+    expect(ontologyPaths.ask("o")).toBe("/ask/o");
+    expect(ontologyPaths.ask("o", { chat: "thr_1" })).toBe("/ask/o?chat=thr_1");
+    expect(ontologyPaths.ask("o", { thread: "q_1" })).toBe("/ask/o?thread=q_1");
+    expect(ontologyPaths.ask("a/b", { new: true, about: "Globex & Co" })).toBe(
+      "/ask/a%2Fb?about=Globex+%26+Co&new=1",
+    );
+    expect(ontologyPaths.ask("o", { focus: "Customer:k", new: true })).toBe(
+      "/ask/o?focus=Customer%3Ak&new=1",
+    );
+  });
+});
+
 describe("the Review page's path", () => {
   it("opens Facts with no tab, and Ontology by its tab", () => {
     expect(ontologyPaths.review("o")).toBe("/ontology/o/review");

@@ -1222,7 +1222,7 @@ function AccessItem({ view: v }: { view: AccessView }) {
       {v.kind === "question" && (
         <p className="on-muted">
           <Link to={paths.ask(o, { thread: v.questionId })}>
-            Open it in Analyst
+            Open the answer
           </Link>
         </p>
       )}

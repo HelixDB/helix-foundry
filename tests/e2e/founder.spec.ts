@@ -3,7 +3,8 @@ import { expect, loadContracts, mock, signIn, test } from "./support/mock";
 
 // Founder answers questions about the data with the Analyst: the answer
 // shows in the dock as the Analyst gives it (its steps, citations, charts
-// and tables), with Open in Analyst on its thread. Asked for a dashboard,
+// and tables), with Open the full answer on its thread (Founder's page, read
+// only, founder-page.spec.ts). Asked for a dashboard,
 // it asks the Analyst first and makes the dashboard of that answer's
 // visuals at once, without a card to click; Undo deletes it.
 
@@ -120,7 +121,7 @@ test("asked for a dashboard, asks the Analyst, makes it at once and undoes it", 
   ).toBeVisible({ timeout: 15_000 });
 });
 
-test("answers a data question with the Analyst's answer, which opens in the Analyst", async ({
+test("answers a data question with the Analyst's answer, which opens in full on Founder's page", async ({
   page,
 }) => {
   const dock = await ready(page);
@@ -161,15 +162,19 @@ test("answers a data question with the Analyst's answer, which opens in the Anal
   await owing.getByRole("radio", { name: "Chart" }).click();
   await expect(bars.first()).toBeVisible();
 
-  // Open in Analyst opens its thread there.
-  await dock.getByRole("link", { name: "Open in Analyst" }).click();
+  // Open the full answer opens its thread on Founder's page, read only,
+  // where the page is Founder and there is no dock.
+  await dock.getByRole("link", { name: "Open the full answer" }).click();
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts\?thread=[\w-]+/);
-  const there = page
-    .getByRole("main")
-    .getByRole("article", { name: `Question: ${text}` });
+  const main = page.getByRole("main");
+  const there = main.getByRole("article", { name: `Question: ${text}` });
   await expect(there.getByRole("region", { name: "Answer" })).toContainText(
     "unpaid or overdue",
   );
+  await expect(main).toContainText(
+    "This Analyst thread is read only. Ask Founder to go on.",
+  );
+  await expect(dockOf(page)).toHaveCount(0);
 });
 
 test("in the dock, the Analyst's steps and queries open as on its page", async ({
