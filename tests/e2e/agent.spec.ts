@@ -11,8 +11,8 @@ import {
   uploadInData,
 } from "./support/mock";
 
-// Founder: a dock beside every page (⌘J, the sidebar's button or the
-// palette), kept open per browser, which sends the page the person is on
+// Founder: a dock beside every page but its own (⌘J, the sidebar's button or
+// the palette), kept open per browser, which sends the page the person is on
 // unless they take it off. It answers from Foundry's read tools, its steps
 // collapsed to their names; asked to load, it prepares a card that only its
 // person runs: Load starts the mock's real load and the agent reports it
@@ -22,6 +22,10 @@ import {
 
 const dockOf = (page: Page) =>
   page.getByRole("complementary", { name: "Founder" });
+// Signing in lands on Founder's own page (/ask), which has no dock: the
+// dock is opened on Customer contracts' overview, which sends the same page
+// (the ontology, no load).
+const DOCK_PAGE = "/ontology/ont_acme_contracts";
 
 // ⌘J, once the shell (whose Founder button it presses) is on screen.
 async function shortcut(page: Page) {
@@ -88,6 +92,7 @@ test("loads an ontology from a card the person runs, and reports it", async ({
 }) => {
   await mock.configure({ agentStepMs: 100, loadStepMs: 100 });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await page.getByRole("button", { name: "Founder", exact: true }).click();
   await say(page, "Load Customer contracts");
   const dock = dockOf(page);
@@ -124,6 +129,7 @@ test("stays where its reader scrolled up to, until they send again", async ({
   await mock.configure({ agentStepMs: 100 });
   await page.setViewportSize({ width: 1440, height: 560 });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await page.getByRole("button", { name: "Founder", exact: true }).click();
   const dock = dockOf(page);
   const log = dock.getByRole("log", { name: "Conversation" });
@@ -187,6 +193,7 @@ test("dismisses a card it chose itself, and refreshes an expired one", async ({
 test("a member gets no card to run", async ({ page }) => {
   await mock.configure({ agentStepMs: 100 });
   await signIn(page, "alan@example.com");
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(page, "Load Customer contracts");
   const dock = dockOf(page);
@@ -202,6 +209,7 @@ test("a member gets no card to run", async ({ page }) => {
 test("says when a turn fails", async ({ page }) => {
   await mock.configure({ agentStepMs: 100, agentOutcome: "fail" });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(page, "What ontologies do I have?");
   await expect(
@@ -214,6 +222,7 @@ test("sends with Enter, never past what Send refuses, and gives the focus back",
 }) => {
   await mock.configure({ agentStepMs: 300 });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   const opener = page.getByRole("button", { name: "Founder", exact: true });
   await opener.click();
   const dock = dockOf(page),
@@ -275,6 +284,7 @@ test("deletes a thread, and says when the month's budget ended a turn", async ({
 }) => {
   await mock.configure({ agentStepMs: 100, agentOutcome: "budget_exhausted" });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(page, "What ontologies do I have?");
   const dock = dockOf(page);
@@ -316,6 +326,7 @@ test("builds an ontology card by card: create, draft, make current, load", async
     loadStepMs: 100,
   });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(
     page,
@@ -353,6 +364,7 @@ test("asks a draft's questions one at a time in the dock, and sends the answers 
     ontologyQuestions: true,
   });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(
     page,
@@ -425,6 +437,7 @@ test("asks its own questions from the keyboard, then reads the answers back", as
 }) => {
   await mock.configure({ agentStepMs: 100 });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(page, "Help me set up an ontology");
   const dock = dockOf(page);
@@ -474,6 +487,7 @@ test("asks its own questions from the keyboard, then reads the answers back", as
 test("closes questions the conversation went past", async ({ page }) => {
   await mock.configure({ agentStepMs: 100 });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(page, "Help me set up an ontology");
   const dock = dockOf(page);
@@ -499,6 +513,7 @@ test("closes a draft's relayed questions once its page answered them", async ({
     ontologyQuestions: true,
   });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(
     page,
@@ -602,6 +617,7 @@ test("settles a review from a card", async ({ page }) => {
 test("opens the Add data form from a connect link", async ({ page }) => {
   await mock.configure({ agentStepMs: 100 });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(page, "Connect Slack");
   const dock = dockOf(page);
@@ -617,6 +633,7 @@ test("opens the Add data form from a connect link", async ({ page }) => {
 test("a member gets no card for any operation", async ({ page }) => {
   await mock.configure({ agentStepMs: 100 });
   await signIn(page, "alan@example.com");
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(page, "Sync Stripe");
   const dock = dockOf(page);
@@ -633,6 +650,7 @@ test("refreshes an expired card of another operation, then runs it", async ({
 }) => {
   await mock.configure({ agentStepMs: 100, agentActionTtlMs: 1500 });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(page, "Sync Stripe");
   const card = cardOf(page, "Sync “Stripe”");
@@ -652,6 +670,7 @@ test("refreshes an expired card of another operation, then runs it", async ({
 test("shows a call a limit kept from running as not run", async ({ page }) => {
   await mock.configure({ agentStepMs: 100, agentOutcome: "not_run" });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(page, "What ontologies do I have?");
   const step = dockOf(page).getByRole("group").filter({ hasText: "Not run" });
@@ -670,6 +689,7 @@ test("shows its answer as the model writes it, once, after a reload mid-answer t
   // A text streams about four words a delta, 1.2 s apart.
   await mock.configure({ agentStepMs: 200, agentDeltaMs: 1200 });
   await signIn(page);
+  await page.goto(DOCK_PAGE);
   await shortcut(page);
   await say(page, "What ontologies do I have?");
   const writing = () =>

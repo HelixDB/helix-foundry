@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import {
   APP_ORIGIN,
+  askAnalyst,
   choose,
   csrfToken,
   expect,
@@ -121,15 +122,9 @@ test("adds an Analyst answer's charts to a dashboard, then edits it", async ({
   await mock.configure({ loadStepMs: 200, askStepMs: 100 });
   await signIn(page);
   await uploadAndLoadContract(page);
-  await page.getByRole("link", { name: "Analyst", exact: true }).click();
-  const form = page.getByRole("form", { name: "Ask a question" });
-  await form
-    .getByRole("textbox", { name: /^Question/ })
-    .fill("How are the invoices doing?");
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
-  const answer = page
-    .getByRole("article", { name: "Question: How are the invoices doing?" })
-    .getByRole("region", { name: "Answer" });
+  // An Analyst thread, read only on Founder's page, keeps Add to dashboard.
+  const question = await askAnalyst(page, "How are the invoices doing?");
+  const answer = question.getByRole("region", { name: "Answer" });
   const byStatus = answer.getByRole("figure", { name: "Invoices by status" });
   await expect(byStatus).toBeVisible({ timeout: 15_000 });
 

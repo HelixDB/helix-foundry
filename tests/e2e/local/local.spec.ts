@@ -110,8 +110,12 @@ test("opens straight into the workspace's main page, Ask", async ({ page }) => {
   expect(home.headers().location).toBe("/ask?a=1");
   await page.goto("/");
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts$/);
+  // Founder's page: a new chat.
   await expect(
-    page.getByRole("heading", { level: 1, name: "Analyst" }),
+    page.getByRole("heading", {
+      level: 1,
+      name: "What do you want to know about Customer contracts?",
+    }),
   ).toBeVisible();
 
   // The hosted Getting into production card is not offered locally.
@@ -1043,7 +1047,13 @@ test("asks again once a provider is chosen after a refusal, and the gate goes", 
   page,
   context,
 }) => {
-  await configure({ loadStepMs: 200, askStepMs: 100, aiProbeMs: 300 });
+  // With Founder off, /ask is the Analyst's page, its composer and all.
+  await configure({
+    loadStepMs: 200,
+    askStepMs: 100,
+    aiProbeMs: 300,
+    agentEnabled: false,
+  });
   await uploadAndLoadContract(page);
   await page.goto("/ask/ont_acme_contracts");
   const first = page.getByRole("form", { name: "Ask a question" });
@@ -1173,7 +1183,9 @@ test("stars on GitHub in place with the install's token, else opens it", async (
     route.fulfill({ contentType: "text/html", body: "<title>GitHub</title>" }),
   );
   await page.clock.install();
-  await configure({ loadStepMs: 200, askStepMs: 100 });
+  // Only the Analyst's composer counts questions: Founder is off, so /ask is
+  // the Analyst's page.
+  await configure({ loadStepMs: 200, askStepMs: 100, agentEnabled: false });
   await uploadAndLoadContract(page);
   const prompt = page.getByRole("complementary", {
     name: "Star Helix Foundry",
@@ -1588,7 +1600,8 @@ test("asks Founder's questions one at a time in the dock, and a draft's on its p
     ontologyStepMs: 300,
     ontologyQuestions: true,
   });
-  await page.goto("/");
+  // Founder's own page (/ask, where / opens) has no dock.
+  await page.goto("/ontology/ont_acme_contracts");
   await openDock(page);
   const dock = dockOf(page);
   await dock
