@@ -6,10 +6,16 @@ import type {
 } from "@/shared/wfe";
 import { ApiError } from "@/web/api";
 import {
+  BRIEF_MAX,
   LIMITS,
   NO_NAMES,
   TEMPLATES,
   actionText,
+  brief,
+  edgeSides,
+  longText,
+  placeNodes,
+  placesOf,
   addStep,
   automationRefusal,
   automationsUnavailable,
@@ -845,7 +851,7 @@ describe("words", () => {
       connector: { id: "c1", name: "Stripe" },
     });
     expect(sentence(weekly.spec, names, true)).toBe(
-      "Every day at 08:00 London time, sync “Stripe”, then ask Founder: “Summarise anything that needs attention today, such as overdue invoices or records that changed overnight.”, then email you “This morning’s summary”.",
+      "Every day at 08:00 London time, sync “Stripe”, then ask Founder: “Summarise anything that needs attention today, such as overdue invoices or…”, then email you “This morning’s summary”.",
     );
     const check = TEMPLATES.find((t) => t.id === "check-documents")!.build({
       timeZone: "UTC",
@@ -865,6 +871,141 @@ describe("words", () => {
     expect(sentence(simple, names, false)).toBe(
       "When you run it, note what it found in the run (this Foundry sends no email).",
     );
+  });
+
+  it("cuts a long text to its first sentence, else 80 characters and an ellipsis", () => {
+    // Whitespace collapses; a short text is as it is.
+    expect(brief("  Short \n\t one  ")).toBe("Short one");
+    expect(brief("")).toBe("");
+    // The first sentence, when it fits, ends at . ! ? or … before a space
+    // or the end, with any closing quote or bracket.
+    expect(brief("Summarise the week. Then list anything unusual.")).toBe(
+      "Summarise the week.",
+    );
+    expect(brief("Is it late? Say so.")).toBe("Is it late?");
+    expect(brief("Wait… then go.")).toBe("Wait…");
+    expect(brief("He said “stop.” Then left.")).toBe("He said “stop.”");
+    expect(brief("Report (in brief.) Then stop.")).toBe("Report (in brief.)");
+    // A stop inside a word or a number ends no sentence.
+    expect(brief("Compare v1.2 with node.js today")).toBe(
+      "Compare v1.2 with node.js today",
+    );
+    // Exactly the most fits; one more is cut.
+    const most = "x".repeat(BRIEF_MAX);
+    expect(brief(most)).toBe(most);
+    expect(brief(most + "y")).toBe(most + "…");
+    // A first sentence too long is cut too, back to the last space in its
+    // last quarter, without trailing punctuation.
+    expect(
+      brief(
+        "Summarise anything that needs attention today, such as overdue invoices or records that changed overnight.",
+      ),
+    ).toBe(
+      "Summarise anything that needs attention today, such as overdue invoices or…",
+    );
+    expect(brief("a ".repeat(60), 10)).toBe("a a a a a…");
+    expect(brief("one, two, three, four", 10)).toBe("one, two…");
+    // No space in the last quarter: cut at the most.
+    expect(brief("abcdefgh ijklmnopqrstuvwxyz", 12)).toBe("abcdefgh ijk…");
+    // Characters are graphemes: an emoji or accented letter is whole.
+    const family = "👩‍👩‍👧‍👦";
+    expect(brief(family.repeat(10), 3)).toBe(family.repeat(3) + "…");
+    expect(brief("e\u0301".repeat(5), 2)).toBe("e\u0301e\u0301…");
+    expect(brief("Café, déjà vu! Then more.")).toBe("Café, déjà vu!");
+  });
+
+  it("says a step briefly, and knows when its text reads shorter so", () => {
+    const long = `Every Monday, review the changes. ${"More detail. ".repeat(40)}`;
+    expect(nodeText(ask(long), NO_NAMES, true, "brief")).toBe(
+      "ask Founder: “Every Monday, review the changes.”",
+    );
+    expect(nodeText(ask(long), NO_NAMES, true)).toBe(`ask Founder: “${long}”`);
+    const subject = node("tell", "notify", { message: "w".repeat(120) });
+    expect(nodeText(subject, NO_NAMES, true, "brief")).toBe(
+      `email you “${"w".repeat(BRIEF_MAX)}…”`,
+    );
+    expect(
+      nodeText(node("tell", "notify", { message: "  " }), NO_NAMES, true),
+    ).toBe("email you what it found");
+    expect(longText(ask(long))).toBe(long.trim());
+    expect(longText(subject)).toBe("w".repeat(120));
+    expect(longText(ask("Sum up."))).toBeUndefined();
+    expect(longText(ask("   "))).toBeUndefined();
+    expect(longText(tell)).toBeUndefined();
+    expect(longText(manual)).toBeUndefined();
+    // The sentence quotes each briefly: never the whole instruction.
+    const weekly = spec(
+      [
+        node("start", "trigger", {
+          kind: "schedule",
+          every: "week",
+          weekday: "monday",
+          at: "09:00",
+          time_zone: "Europe/London",
+        }),
+        ask(long),
+        node("tell", "notify", { message: "Weekly changes" }),
+      ],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "tell" },
+      ],
+    );
+    expect(sentence(weekly, NO_NAMES, true)).toBe(
+      "Every Monday at 09:00 London time, ask Founder: “Every Monday, review the changes.”, then email you “Weekly changes”.",
+    );
+  });
+
+  it("places steps anew, and joins them by the sides they face", () => {
+    const placed = placeNodes(simple, {
+      tell: { x: 300.4, y: 2e6 },
+      gone: { x: 1, y: 1 },
+    });
+    expect(placed.nodes.map((n) => n.id)).toEqual(["start", "tell"]);
+    expect(placed.nodes[0]).toBe(simple.nodes[0]);
+    expect(placed.nodes[1]!.position).toEqual({ x: 300, y: 1e6 });
+    expect(sameSteps(simple, placed)).toBe(true);
+    expect(placesOf(placed)).toEqual({
+      start: simple.nodes[0]!.position,
+      tell: { x: 300, y: 1e6 },
+    });
+    const card = (x: number, y: number) => ({ x, y, width: 248, height: 80 });
+    // Side by side: straight across, either way.
+    expect(edgeSides(card(0, 0), card(320, 10))).toEqual({
+      source: "right",
+      target: "left",
+    });
+    expect(edgeSides(card(320, 0), card(0, 30))).toEqual({
+      source: "left",
+      target: "right",
+    });
+    // As tidy() lays them out, a branch's two steps too: down.
+    expect(edgeSides(card(0, 0), card(0, 150))).toEqual({
+      source: "bottom",
+      target: "top",
+    });
+    expect(edgeSides(card(0, 0), card(140, 150))).toEqual({
+      source: "bottom",
+      target: "top",
+    });
+    expect(edgeSides(card(0, 300), card(-140, 0))).toEqual({
+      source: "top",
+      target: "bottom",
+    });
+    // Apart both ways: by the wider gap.
+    expect(edgeSides(card(0, 0), card(600, 200))).toEqual({
+      source: "right",
+      target: "left",
+    });
+    expect(edgeSides(card(0, 0), card(260, 600))).toEqual({
+      source: "bottom",
+      target: "top",
+    });
+    // Overlapping: down.
+    expect(edgeSides(card(0, 0), card(10, 10))).toEqual({
+      source: "bottom",
+      target: "top",
+    });
   });
 
   it("says what a step still needs", () => {

@@ -544,6 +544,7 @@ function AutomationProposal({ payloadJson }: { payloadJson: string }) {
             names={names}
             email={!LOCAL}
             label="Steps it approves"
+            showAll
           />
         </>
       )}
