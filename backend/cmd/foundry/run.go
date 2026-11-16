@@ -260,7 +260,7 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 	}
 	// The Assistant's tools call this front end's gRPC as the owner, as the
 	// MCP's do; its clicks run them from the API, its turns from the worker.
-	sessions := local.NewAgentSessions(auth, local.LocalService(dir, ep.GatewayConn, fcfg.Foundry.Documents, cfg.Local.SiteOrigin,
+	sessions := local.NewAgentSessions(auth, local.LocalService(dir, ep.GatewayConn, fcfg.Foundry.Documents, fcfg.Foundry.Automations.Enabled, cfg.Local.SiteOrigin,
 		logger.With("component", "agent")), directoryv1.NewDirectoryServiceClient(ep.GatewayConn), cfg.Local.SiteToken)
 	dbs := local.Databases{Directory: dir, HelixURL: cfg.Local.HelixURL}
 	foundrySvc, err := api.New(api.Deps{
@@ -298,7 +298,7 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 		turns = &foundryagent.Hosts{DB: st, Sessions: sessions, Keys: keys, Databases: dbs, Cfg: fcfg.Foundry.Agent, Now: time.Now}
 		f.turns = turns
 	}
-	integrations := local.IntegrationHandler(auth, dir, ep.GatewayConn, fcfg.Foundry.Documents, cfg.Local.SiteOrigin, turns, logger.With("component", "integration"))
+	integrations := local.IntegrationHandler(auth, dir, ep.GatewayConn, fcfg.Foundry.Documents, fcfg.Foundry.Automations.Enabled, cfg.Local.SiteOrigin, turns, logger.With("component", "integration"))
 	ep.RegisterHTTPHandler("/mcp", integrations)
 	ep.RegisterHTTPHandler("/v1/ontologies/", integrations)
 	ep.RegisterHTTPHandler("/agent-host/", integrations)

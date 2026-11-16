@@ -295,6 +295,8 @@ func TestDashboardCallers(t *testing.T) {
 	assert.False(t, got.GetCanEdit() || got.GetCanPin() || got.GetCanPublish())
 	_, err = f.s.GetFoundryDashboard(grantee, &foundryv1.GetFoundryDashboardRequest{WorkspaceId: "ws-1", Id: mine.GetId()})
 	assert.Equal(t, codes.NotFound, status.Code(err), "an unpinned dashboard is no grantee's to see")
+	_, err = f.s.DeleteFoundryDashboard(grantee, &foundryv1.DeleteFoundryDashboardRequest{WorkspaceId: "ws-1", Id: mine.GetId()})
+	assert.Equal(t, codes.NotFound, status.Code(err), "nor to be refused")
 	key := access.WithCaller(asActor(ports.Actor{Source: ports.SourceGrantee, ServiceCredentialID: "key-1", WorkspaceID: "ws-1"}),
 		access.Grantee{WorkspaceID: "ws-1", Principal: access.Principal{Kind: access.PrincipalServiceCredential, ID: "key-1"}})
 	_, err = f.s.ListFoundryDashboards(key, req)
@@ -370,9 +372,9 @@ func TestEditingDashboards(t *testing.T) {
 	_, err = update(f, dashboardMember, d.GetId(), 1, "Stale")
 	assert.Equal(t, "FOUNDRY_DASHBOARD_CHANGED", reasonOf(err))
 	_, err = update(f, dashboardOther, d.GetId(), 2, "Theirs")
-	assert.Equal(t, codes.PermissionDenied, status.Code(err), "another member's dashboard")
+	assert.Equal(t, "FOUNDRY_DASHBOARD_NOT_EDITABLE", reasonOf(err), "another member's dashboard")
 	_, err = f.s.DeleteFoundryDashboard(asActor(dashboardOther), &foundryv1.DeleteFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.Equal(t, "FOUNDRY_DASHBOARD_NOT_EDITABLE", reasonOf(err))
 
 	spec := `{"v":1,"tiles":[` + countTile + `],"layout":{"rows":[["t1"]]}}`
 	resp, err = f.s.UpdateFoundryDashboard(asActor(dashboardOwner), &foundryv1.UpdateFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(),
@@ -382,7 +384,7 @@ func TestEditingDashboards(t *testing.T) {
 	assert.NotContains(t, resp.GetDashboard().GetSpecJson(), "t2")
 
 	_, err = f.s.PinFoundryDashboard(asActor(dashboardMember), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(), Pinned: true, ExpectedRevision: 3})
-	assert.Equal(t, codes.PermissionDenied, status.Code(err), "a member pins nothing")
+	assert.Equal(t, "FOUNDRY_DASHBOARD_NOT_EDITABLE", reasonOf(err), "a member pins nothing")
 	_, err = f.s.PinFoundryDashboard(asActor(dashboardOwner), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(), Pinned: true, ExpectedRevision: 2})
 	assert.Equal(t, "FOUNDRY_DASHBOARD_CHANGED", reasonOf(err), "a pin of a revision its pinner didn't see")
 	_, err = f.s.PinFoundryDashboard(asActor(dashboardOwner), &foundryv1.PinFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(), Pinned: true})
@@ -395,7 +397,7 @@ func TestEditingDashboards(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, got.GetDashboard().GetCanEdit(), "its creator, once it is pinned")
 	_, err = update(f, dashboardMember, d.GetId(), 3, "Mine again")
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.Equal(t, "FOUNDRY_DASHBOARD_NOT_EDITABLE", reasonOf(err))
 
 	_, err = f.s.UpdateFoundryDashboard(asActor(dashboardOwner), &foundryv1.UpdateFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(), ExpectedRevision: 3})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "an edit changes something")
@@ -471,7 +473,7 @@ func TestPublishingADashboard(t *testing.T) {
 		f := newDashboardFixture(t)
 		d := f.create(t, dashboardMember, twoTiles())
 		_, err := publish(f, dashboardMember, d.GetId(), 1)
-		assert.Equal(t, codes.PermissionDenied, status.Code(err), "a member publishes nothing")
+		assert.Equal(t, "FOUNDRY_DASHBOARD_NOT_EDITABLE", reasonOf(err), "a member publishes nothing")
 
 		resp, err := publish(f, dashboardOwner, d.GetId(), 1)
 		require.NoError(t, err)
@@ -507,7 +509,7 @@ func TestPublishingADashboard(t *testing.T) {
 		assert.True(t, member.GetDashboard().GetCanEdit(), "its creator still edits it")
 		assert.False(t, member.GetDashboard().GetCanDelete() || member.GetDashboard().GetCanUnpublish(), "but takes its link down neither way")
 		_, err = f.s.DeleteFoundryDashboard(asActor(dashboardMember), &foundryv1.DeleteFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
-		assert.Equal(t, codes.PermissionDenied, status.Code(err), "a member deletes no published dashboard")
+		assert.Equal(t, "FOUNDRY_DASHBOARD_NOT_EDITABLE", reasonOf(err), "a member deletes no published dashboard")
 		assert.True(t, resp.GetDashboard().GetCanDelete() && resp.GetDashboard().GetCanUnpublish(), "an owner does both")
 
 		// Republishing reads again and keeps the link.
@@ -533,7 +535,7 @@ func TestPublishingADashboard(t *testing.T) {
 		_, err = shared(f, share.GetToken())
 		assert.Equal(t, codes.NotFound, status.Code(err))
 		_, err = f.s.UnpublishFoundryDashboard(asActor(dashboardMember), &foundryv1.UnpublishFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
-		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+		assert.Equal(t, "FOUNDRY_DASHBOARD_NOT_EDITABLE", reasonOf(err))
 	})
 
 	t.Run("refuses what it can't publish", func(t *testing.T) {
@@ -670,7 +672,7 @@ func TestAddFoundryDashboardQuestionVisual(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "a result the question didn't record")
 	_, err = f.s.AddFoundryDashboardQuestionVisual(asActor(dashboardOther), &foundryv1.AddFoundryDashboardQuestionVisualRequest{WorkspaceId: "ws-1",
 		Id: d.GetId(), ExpectedRevision: 3, OntologyId: "ont-1", QuestionId: "q-1", EvidenceId: "e2"})
-	assert.Equal(t, codes.PermissionDenied, status.Code(err), "another member's dashboard")
+	assert.Equal(t, "FOUNDRY_DASHBOARD_NOT_EDITABLE", reasonOf(err), "another member's dashboard")
 	_, err = f.s.AddFoundryDashboardQuestionVisual(asActor(dashboardMember), &foundryv1.AddFoundryDashboardQuestionVisualRequest{WorkspaceId: "ws-1",
 		Id: d.GetId(), ExpectedRevision: 3, OntologyId: "ont-1", QuestionId: "q-x", EvidenceId: "e2"})
 	assert.Equal(t, codes.NotFound, status.Code(err))

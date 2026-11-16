@@ -42,7 +42,8 @@ const generationLive = "an ontology generation is already queued, running or wai
 // together toward foundry.ontology.max_tables. A goal gets a one-line title
 // for lists. An ontology has at most one live generation, and a workspace
 // starts at most foundry.ontology.per_hour of them an hour. A local install
-// with no AI provider refuses it (FOUNDRY_AI_NOT_CONFIGURED).
+// with no AI provider refuses it (FOUNDRY_AI_NOT_CONFIGURED), except the
+// sample's, which calls no model.
 //
 // A sample generation drafts from the sample company's database (one
 // connector, each of the sample's tables synced) and its documents' set,
@@ -98,8 +99,12 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 				"this ontology already has a current version: load_when_ready is for its first draft only; generate without it, then load the draft you choose")
 		}
 	}
-	if err := s.requireAI(ctx, ws); err != nil {
-		return nil, err
+	// The sample's draft is ready-made: no model drafts or titles it, so it
+	// needs no AI provider.
+	if req.GetSample() == "" {
+		if err := s.requireAI(ctx, ws); err != nil {
+			return nil, err
+		}
 	}
 	// Refused before the tables are read; Enqueue still refuses one that races in.
 	switch _, err := s.deps.DB.GetActiveOntologyGeneration(ctx, o.ID); {

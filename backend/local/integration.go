@@ -50,9 +50,9 @@ func onlyWorkspace(dir *directory.Store) func(context.Context) string {
 // helpers' (agent_host.go): their routes under /agent-host/, and /mcp with a turn's hxr_ token,
 // each with tokens of their own, which nothing else takes. turns is nil while the Assistant is
 // off, and the helpers are then refused.
-func IntegrationHandler(auth *Authenticator, dir *directory.Store, conn *grpc.ClientConn, documents config.DocumentsConfig, siteOrigin string,
+func IntegrationHandler(auth *Authenticator, dir *directory.Store, conn *grpc.ClientConn, documents config.DocumentsConfig, automations bool, siteOrigin string,
 	turns *agent.Hosts, logger *slog.Logger) http.Handler {
-	service := LocalService(dir, conn, documents, siteOrigin, logger)
+	service := LocalService(dir, conn, documents, automations, siteOrigin, logger)
 	directoryClient := directoryv1.NewDirectoryServiceClient(conn)
 	identity := ownerIdentity(auth, onlyWorkspace(dir))
 	// One owner and one identity, so every call shares one server and its tools.
@@ -111,8 +111,10 @@ func IntegrationHandler(auth *Authenticator, dir *directory.Store, conn *grpc.Cl
 }
 
 // LocalService is the install's Foundry tools over conn, the install's own
-// gRPC, which every call reaches with the site token as the owner.
-func LocalService(dir *directory.Store, conn *grpc.ClientConn, documents config.DocumentsConfig, siteOrigin string, logger *slog.Logger) *integration.Service {
+// gRPC, which every call reaches with the site token as the owner; its
+// workflow tools only with automations (foundry.automations.enabled).
+func LocalService(dir *directory.Store, conn *grpc.ClientConn, documents config.DocumentsConfig, automations bool, siteOrigin string,
+	logger *slog.Logger) *integration.Service {
 	client := foundryv1.NewFoundryServiceClient(conn)
 	return &integration.Service{
 		Foundry:   client,
@@ -120,6 +122,7 @@ func LocalService(dir *directory.Store, conn *grpc.ClientConn, documents config.
 		Workflows: client,
 		Directory: localIntegrationDirectory{dir, directoryv1.NewDirectoryServiceClient(conn)}, Confirmations: directory.Confirmations{Store: dir},
 		Documents: documents, FoundryURL: strings.TrimRight(siteOrigin, "/"), ResourceURI: mcpAudience, Logger: logger, AgentHosts: true,
+		AutomationsOff: !automations,
 		// The sample company's tables, in the install's acme-db (local/compose.yaml), which serves no TLS.
 		SampleDatabase: &integration.SampleDatabase{Host: "acme-db", DisableTLS: true},
 	}

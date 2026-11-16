@@ -130,7 +130,10 @@ func dashboardRefusal(workspaceID string, err error) (error, bool) {
 	}
 	switch r.Reason {
 	case foundrymodel.FoundryDashboardNotEditable:
-		return status.Error(codes.PermissionDenied, r.Detail), true
+		// FAILED_PRECONDITION saying who may, never PERMISSION_DENIED, which
+		// agents read as not found: callers refuse it only of a dashboard the
+		// caller sees (visibleDashboard).
+		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_NOT_EDITABLE", r.Detail), true
 	case foundrymodel.FoundryDashboardChanged:
 		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_CHANGED", r.Detail), true
 	case foundrymodel.FoundryDashboardUnreadable:
@@ -366,8 +369,9 @@ func (s *Service) DeleteFoundryDashboard(ctx context.Context, req *foundryv1.Del
 	if err != nil {
 		return nil, err
 	}
-	if req.GetId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "id is required")
+	// One a grantee doesn't see is not found, never refused as not theirs.
+	if _, err := s.visibleDashboard(ctx, c, ws, req.GetId()); err != nil {
+		return nil, err
 	}
 	err = s.deps.DB.DeleteFoundryDashboard(ctx, ws, req.GetId(), c.editor())
 	if refused, ok := dashboardRefusal(ws, err); ok {
@@ -389,7 +393,7 @@ func (s *Service) PinFoundryDashboard(ctx context.Context, req *foundryv1.PinFou
 		return nil, err
 	}
 	if !c.manager {
-		return nil, status.Error(codes.PermissionDenied, "only an owner or admin pins a dashboard for the workspace")
+		return nil, foundryPrecondition(ws, "FOUNDRY_DASHBOARD_NOT_EDITABLE", "only an owner or admin pins a dashboard for the workspace")
 	}
 	if req.GetId() == "" || req.GetExpectedRevision() < 1 {
 		return nil, status.Error(codes.InvalidArgument, "id and expected_revision are required")
@@ -587,7 +591,7 @@ func (s *Service) PublishFoundryDashboard(ctx context.Context, req *foundryv1.Pu
 	}
 	switch {
 	case !c.manager:
-		return nil, status.Error(codes.PermissionDenied, "only an owner or admin publishes a dashboard")
+		return nil, foundryPrecondition(ws, "FOUNDRY_DASHBOARD_NOT_EDITABLE", "only an owner or admin publishes a dashboard")
 	case !s.deps.Cfg.PublicDashboards():
 		return nil, foundryPrecondition(ws, "FOUNDRY_DASHBOARDS_PUBLIC_OFF", "public dashboard links aren't available here")
 	case s.deps.ConnectorKeys == nil:
@@ -725,7 +729,7 @@ func (s *Service) UnpublishFoundryDashboard(ctx context.Context, req *foundryv1.
 		return nil, err
 	}
 	if !c.manager {
-		return nil, status.Error(codes.PermissionDenied, "only an owner or admin unpublishes a dashboard")
+		return nil, foundryPrecondition(ws, "FOUNDRY_DASHBOARD_NOT_EDITABLE", "only an owner or admin unpublishes a dashboard")
 	}
 	d, err := s.visibleDashboard(ctx, c, ws, req.GetId())
 	if err != nil {

@@ -103,11 +103,15 @@ func (s *automationStore) GetFoundryOntology(_ context.Context, ws, id string) (
 	return nil, foundrystore.ErrNotFound
 }
 
+// GetFoundryDocumentSet knows set-1, a person's, and set-notes, which con-1's syncs write.
 func (s *automationStore) GetFoundryDocumentSet(_ context.Context, ws, id string) (*foundrymodel.FoundryDocumentSet, error) {
-	if ws != "ws-1" || id != "set-1" {
-		return nil, foundrystore.ErrNotFound
+	switch {
+	case ws == "ws-1" && id == "set-1":
+		return &foundrymodel.FoundryDocumentSet{ID: id, WorkspaceID: ws}, nil
+	case ws == "ws-1" && id == "set-notes":
+		return &foundrymodel.FoundryDocumentSet{ID: id, WorkspaceID: ws, Owner: &foundrymodel.FoundryDocumentSetOwner{ConnectorID: "con-1", Stream: "notes"}}, nil
 	}
-	return &foundrymodel.FoundryDocumentSet{ID: id, WorkspaceID: ws}, nil
+	return nil, foundrystore.ErrNotFound
 }
 
 func (s *automationStore) GetFoundryDashboard(_ context.Context, ws, id string) (*foundrymodel.FoundryDashboard, error) {
@@ -207,6 +211,9 @@ func (s *automationStore) PauseFoundryAutomation(_ context.Context, ws, id strin
 }
 
 func (s *automationStore) ResumeFoundryAutomation(_ context.Context, ws, id, owner string, next *time.Time) (*foundrymodel.FoundryAutomation, error) {
+	if s.refuse != nil {
+		return nil, s.refuse
+	}
 	a := s.automations[id]
 	a.Status, a.PausedReason, s.approvedNext = foundrymodel.FoundryAutomationActive, nil, next
 	return s.GetFoundryAutomation(context.Background(), ws, id)
@@ -362,6 +369,27 @@ func TestCreateAutomationChecksItsSpec(t *testing.T) {
 		_, err := s.CreateFoundryAutomation(site("user-ada"), req)
 		require.Equal(t, codes.InvalidArgument, status.Code(err))
 	}
+	// A sync of the connector whose syncs write the set its trigger waits on
+	// would set off another run each time, as an action step or an Assistant
+	// step's; a set a person made can't be.
+	onArrival := func(set string) string {
+		return strings.Replace(weeklyAutomation, `{"kind":"schedule","every":"week","weekday":"monday","at":"09:00","time_zone":"Europe/London"}`,
+			`{"kind":"document_arrived","set_id":"`+set+`"}`, 1)
+	}
+	assistantSyncs := strings.Replace(strings.Replace(onArrival("set-notes"), `{"operation":"sync_connector","connector_id":"con-1"}`,
+		`{"operation":"create_load","ontology_id":"ont-1"}`, 1), `"allow":[{"operation":"create_load","ontology_id":"ont-1"}]`,
+		`"allow":[{"operation":"sync_connector","connector_id":"con-1"}]`, 1)
+	for name, c := range map[string]struct{ spec, node string }{
+		"an action step":    {onArrival("set-notes"), "sync"},
+		"an Assistant step": {assistantSyncs, "ask"},
+	} {
+		_, err := s.CreateFoundryAutomation(site("user-ada"), &foundryv1.CreateFoundryAutomationRequest{WorkspaceId: "ws-1", Name: "x", SpecJson: c.spec,
+			ClientToken: "loop-" + name})
+		require.Equal(t, codes.InvalidArgument, status.Code(err), name)
+		require.Equal(t, "spec_json: node "+c.node+" syncs the connector whose documents its trigger waits on, so each run would start another: start it on a schedule instead",
+			status.Convert(err).Message(), name)
+	}
+	createAutomation(t, s, site("user-ada"), onArrival("set-1"))
 	s.deps.Cfg.Foundry.Automations.MaxPerWorkspace = 1
 	_, err = s.CreateFoundryAutomation(site("user-ada"), &foundryv1.CreateFoundryAutomationRequest{WorkspaceId: "ws-1", Name: "x",
 		SpecJson: weeklyAutomation, ClientToken: "fresh"})
@@ -392,7 +420,7 @@ func TestApproveAutomationIsTheOwnersClickInTheSite(t *testing.T) {
 	require.Equal(t, "FOUNDRY_AUTOMATION_CHANGED", reasonOf(err))
 	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotOwner, Detail: "not yours"}
 	_, err = s.ApproveFoundryAutomation(site("user-alan"), &foundryv1.ApproveFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId(), ExpectedRevision: 1})
-	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, "FOUNDRY_AUTOMATION_NOT_OWNER", reasonOf(err))
 	store.refuse = nil
 
 	// What it names is checked again: gone since it was saved, it isn't approved.
@@ -445,7 +473,10 @@ func TestUpdatePauseResumeDeleteAutomation(t *testing.T) {
 	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotOwner, Detail: "only its owner changes a workflow"}
 	_, err = s.UpdateFoundryAutomation(site("user-alan"), &foundryv1.UpdateFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId(), ExpectedRevision: 5,
 		Name: &name})
-	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	// Another member lists it, so they are told why, not that it isn't there.
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Equal(t, "FOUNDRY_AUTOMATION_NOT_OWNER", reasonOf(err))
+	require.Equal(t, "only its owner changes a workflow", status.Convert(err).Message())
 
 	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotActive, Detail: "waits"}
 	_, err = s.PauseFoundryAutomation(site("user-ada"), &foundryv1.PauseFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId()})
@@ -464,10 +495,16 @@ func TestUpdatePauseResumeDeleteAutomation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "active", resumed.GetAutomation().GetStatus())
 	require.NotNil(t, store.approvedNext)
+	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotOwner, Detail: "only its owner resumes a workflow: it runs as them"}
+	_, err = s.ResumeFoundryAutomation(site("user-alan"), &foundryv1.ResumeFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId()})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Equal(t, "only its owner resumes a workflow: it runs as them", status.Convert(err).Message())
+	store.refuse = nil
 
 	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotAllowed, Detail: "not yours"}
 	_, err = s.DeleteFoundryAutomation(site("user-alan"), &foundryv1.DeleteFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId()})
-	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Equal(t, "FOUNDRY_AUTOMATION_NOT_ALLOWED", reasonOf(err))
 	store.refuse = nil
 	_, err = s.DeleteFoundryAutomation(site("user-ada"), &foundryv1.DeleteFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId()})
 	require.NoError(t, err)
@@ -494,7 +531,7 @@ func TestRunAutomationNowAndItsRuns(t *testing.T) {
 
 	for refusal, want := range map[foundrymodel.FoundryAutomationRefusalReason]codes.Code{
 		foundrymodel.FoundryAutomationBusy: codes.FailedPrecondition, foundrymodel.FoundryAutomationUnapproved: codes.FailedPrecondition,
-		foundrymodel.FoundryAutomationRunsPerDay: codes.ResourceExhausted, foundrymodel.FoundryAutomationNotOwner: codes.PermissionDenied,
+		foundrymodel.FoundryAutomationRunsPerDay: codes.ResourceExhausted, foundrymodel.FoundryAutomationNotOwner: codes.FailedPrecondition,
 	} {
 		store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: refusal, Detail: "no"}
 		_, err := s.RunFoundryAutomation(site("user-ada"), &foundryv1.RunFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId(), ClientToken: "click-2"})

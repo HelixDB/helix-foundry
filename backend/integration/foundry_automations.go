@@ -27,7 +27,7 @@ const (
 
 // automationSpecDoc says what a spec is, for the tools' and the operations' descriptions.
 const automationSpecDoc = `A spec is a graph: {"v": 1, "nodes": [...], "edges": [{"from", "to", "branch"}]}, at most 50 nodes and 100 edges. ` +
-	`A node is {"id": 1 to 32 lowercase letters, digits, - or _, "kind", "config", "position": {"x", "y"} (where the canvas draws it)}. ` +
+	`A node is {"id": 1 to 32 lowercase letters, digits, - or _, starting with a letter or digit, "kind", "config", "position": {"x", "y"} (where the canvas draws it)}. ` +
 	`Exactly one node is the trigger, with no edge in; every other node is reached from it, with no cycle. Kinds and their configs: ` +
 	`trigger {"kind": "schedule", "every": "hour", "minute": 0-59, "time_zone"} | {"kind": "schedule", "every": "day", "at": "HH:MM", "time_zone"} | ` +
 	`{"kind": "schedule", "every": "week", "weekday": "monday" … "sunday", "at": "HH:MM", "time_zone"} (an IANA zone, such as Europe/London: the person's) | ` +
@@ -39,7 +39,9 @@ const automationSpecDoc = `A spec is a graph: {"v": 1, "nodes": [...], "edges": 
 	`condition {"check": "answer", "equals": "yes" | "no"} (of the Founder step before it, which ends by reporting a yes or no) | ` +
 	`{"check": "count", "op": "at_least" | "at_most" | "equals", "value"} (of the documents that arrived, the rows a sync wrote, or a Founder step's reported count), ` +
 	`with exactly one edge in and its out edges each "branch": "true" or "false"; notify {"message": at most 500 characters}: emails the owner, with what the Founder steps before it said. ` +
-	`A step runs once every step before it ended and one of its edges in was taken; a failure stops the steps after it.`
+	`A step runs once every step before it ended and one of its edges in was taken; a failure stops the steps after it. ` +
+	`A step may not sync or load what its trigger waits on (a sync_finished trigger's connector, a load_ready trigger's ontology, or the connector whose syncs write a document_arrived trigger's set): each run would start another. ` +
+	`A trigger skips work its own workflow started (a sync, a load, or documents a sync it started wrote), directly or through other workflows, and work past a chain of 3 workflows, recording the run skipped and why.`
 
 type FoundryAutomationInput struct {
 	WorkspaceID  string `json:"workspace_id,omitempty" jsonschema:"Helix workspace identifier. May be empty when the caller has only one workspace."`

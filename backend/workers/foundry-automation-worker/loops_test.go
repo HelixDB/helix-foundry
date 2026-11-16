@@ -191,14 +191,61 @@ func TestAChainStopsAtItsDepth(t *testing.T) {
 	assert.Equal(t, 2, orphan.ChainDepth)
 }
 
-// Documents and drafts have no cause: a guard never holds them back.
-func TestOtherTriggersAreNeverSkipped(t *testing.T) {
+// A document_arrived trigger whose own sync step writes into the set it
+// watches skips the documents that sync wrote, and those past the chain's
+// depth, as sync_finished and load_ready skip their own work; a document a
+// person uploaded, with no cause, fires it.
+func TestADocumentItsOwnSyncWroteIsSkipped(t *testing.T) {
 	f := newFixture(t)
 	cursor := model.FoundryAutomationCursor{At: f.task.now().Add(-time.Hour)}
-	a := f.watching("auto1", spec(`[{"from":"start","to":"mail"}]`, node("start", "trigger", `{"kind":"document_arrived","set_id":"set1"}`),
+	a := f.watching("auto1", spec(`[{"from":"start","to":"sync"}]`, node("start", "trigger", `{"kind":"document_arrived","set_id":"set1"}`),
+		node("sync", "action", `{"operation":"sync_connector","connector_id":"granola"}`)), cursor)
+	f.db.watched = []*model.FoundryAutomation{a}
+	ctx := context.Background()
+
+	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("uploaded", "uploaded", cursor.At.Add(time.Minute))}
+	f.task.watch(ctx)
+	assert.Empty(t, f.lastFire(t).Skip, "a person's upload fires it")
+	assert.NotNil(t, f.lastFire(t).Run)
+
+	f.db.causes["own-doc"] = &model.FoundryAutomationCause{RunID: "run0", AutomationID: "auto1", Depth: 1}
+	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("own-doc", "uploaded", cursor.At.Add(2*time.Minute))}
+	f.task.watch(ctx)
+	fire := f.lastFire(t)
+	require.NotNil(t, fire.Run, "recorded, so its owner sees why it didn't run")
+	assert.Equal(t, "Skipped: the document was written by a sync started by this workflow itself; running on it would loop.", fire.Skip)
+
+	f.db.causes["chained-doc"] = &model.FoundryAutomationCause{RunID: "runB", AutomationID: "autoB", Chain: []string{"auto1"}, Depth: 2}
+	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("chained-doc", "uploaded", cursor.At.Add(3*time.Minute))}
+	f.task.watch(ctx)
+	assert.Equal(t, "Skipped: the document was written by a sync started by a workflow this one set off; running on it would loop.", f.lastFire(t).Skip)
+
+	f.db.causes["deep-doc"] = &model.FoundryAutomationCause{RunID: "runD", AutomationID: "autoD", Chain: []string{"autoA", "autoB", "autoC"}, Depth: 4}
+	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("deep-doc", "uploaded", cursor.At.Add(4*time.Minute))}
+	f.task.watch(ctx)
+	assert.Equal(t, "Skipped: the document came from a chain of 4 workflows setting each other off; a chain stops after 3.", f.lastFire(t).Skip)
+
+	// Another automation's sync, within the chain, fires it and carries the chain on.
+	f.db.causes["other-doc"] = &model.FoundryAutomationCause{RunID: "runC", AutomationID: "autoC", Depth: 1}
+	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("other-doc", "uploaded", cursor.At.Add(5*time.Minute))}
+	f.task.watch(ctx)
+	fire = f.lastFire(t)
+	assert.Empty(t, fire.Skip)
+	var event model.FoundryAutomationEvent
+	require.NoError(t, json.Unmarshal(fire.Run.TriggerEvent, &event))
+	assert.Equal(t, []string{"autoC"}, event.CausedBy)
+	assert.Equal(t, 1, event.ChainDepth)
+	assert.Zero(t, f.actions.syncs, "no run started here")
+}
+
+// Drafts have no cause: a guard never holds them back.
+func TestDraftsAreNeverSkipped(t *testing.T) {
+	f := newFixture(t)
+	cursor := model.FoundryAutomationCursor{At: f.task.now().Add(-time.Hour)}
+	a := f.watching("auto1", spec(`[{"from":"start","to":"mail"}]`, node("start", "trigger", `{"kind":"generation_finished","ontology_id":"ont1","outcome":"any"}`),
 		node("mail", "notify", `{"message":""}`)), cursor)
 	f.db.watched = []*model.FoundryAutomation{a}
-	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("doc1", "uploaded", cursor.At.Add(time.Minute))}
+	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("gen1", "succeeded", cursor.At.Add(time.Minute))}
 	f.task.watch(context.Background())
 	assert.Empty(t, f.lastFire(t).Skip)
 	assert.NotNil(t, f.lastFire(t).Run)

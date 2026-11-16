@@ -161,7 +161,7 @@ func TestWorkflowRunTools(t *testing.T) {
 
 	got := callTool(t, session, toolFoundryGetUseCaseRun, `{`+workflowIDs+`,"use_case_id":"wf-1","run_id":"run-1","after_seq":0}`)
 	assert.EqualValues(t, 5, got["next_after_seq"])
-	assert.Equal(t, "arun-1", got["run"].(map[string]any)["workflow_run_id"])
+	assert.Equal(t, "arun-1", got["run"].(map[string]any)["from_workflow_run_id"])
 	assessment := got["run"].(map[string]any)["assessment"].(map[string]any)
 	assert.Equal(t, "helpful", assessment["verdict"])
 	assert.Equal(t, "s", assessment["assessment"].(map[string]any)["summary"])
