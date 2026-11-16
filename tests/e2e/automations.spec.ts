@@ -239,6 +239,34 @@ test("a new automation starts as a conversation with the Assistant, whose card o
   ).toBeVisible();
 });
 
+test("on a phone a tap on a suggestion fills the composer, one under another", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  await signIn(page);
+  await page.goto("/automations/new");
+  const chips = page
+    .getByRole("list", { name: "Suggestions" })
+    .getByRole("button");
+  await expect(chips).toHaveCount(4);
+  const [first, second] = await Promise.all([
+    chips.nth(0).boundingBox(),
+    chips.nth(1).boundingBox(),
+  ]);
+  expect(second!.y).toBeGreaterThan(first!.y + first!.height - 1);
+  await chips.filter({ hasText: "Churn alert" }).tap();
+  await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue(
+    /^Every day, look for accounts at risk of churning/,
+  );
+  await expect(page).toHaveURL(/\/automations\/new$/);
+  await context.close();
+});
+
 test("starts from scratch on the full canvas: adds, joins, tidies and inspects its steps", async ({
   page,
 }) => {
