@@ -220,7 +220,9 @@ test("a new automation starts as a conversation with the Assistant, whose card o
     name: /^Action: Set up the automation/,
   });
   await expect(card).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText(/documents arrive in “General”/)).toBeVisible();
+  await expect(
+    card.getByText(/documents arrive in “General”/).first(),
+  ).toBeVisible();
   // Nothing is made until the person's click, which opens it.
   await expect(
     page.getByRole("navigation", { name: "Automations" }),
