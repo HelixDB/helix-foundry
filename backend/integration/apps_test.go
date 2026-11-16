@@ -52,12 +52,11 @@ func TestAskAndGetQuestionNameTheAnswerView(t *testing.T) {
 	require.NoError(t, err)
 	viewed := map[string]any{}
 	for _, tool := range tools.Tools {
-		if tool.Meta != nil {
-			viewed[tool.Name] = tool.Meta["ui"]
+		if ui, _ := tool.Meta["ui"].(map[string]any); ui["resourceUri"] != nil {
+			viewed[tool.Name] = ui["resourceUri"]
 		}
 	}
-	view := map[string]any{"resourceUri": answerAppURI}
-	assert.Equal(t, map[string]any{toolFoundryAsk: view, toolFoundryGetQuestion: view}, viewed)
+	assert.Equal(t, map[string]any{toolFoundryAsk: answerAppURI, toolFoundryGetQuestion: answerAppURI}, viewed)
 
 	resources, err := session.ListResources(ctx, nil)
 	require.NoError(t, err)
@@ -137,4 +136,28 @@ func TestOtherToolsSendNoMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, result.IsError, result.Content)
 	assert.NotContains(t, result.Meta, appMetaKey)
+}
+
+// No view calls a tool: every tool is the agent's alone, which a host with MCP Apps enforces, so a
+// script in a view can neither act through the host nor read records to send off in a link. Ask's
+// view stays named beside its visibility.
+func TestViewsCallNoTool(t *testing.T) {
+	s := &Service{FoundryURL: "https://foundry.example", Events: true, SignIn: true,
+		Workflows: struct{ FoundryWorkflowBackendAPI }{}}
+	tools, err := questionSession(t, s).ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	names := []string{}
+	for _, tool := range tools.Tools {
+		names = append(names, tool.Name)
+		ui, _ := tool.Meta["ui"].(map[string]any)
+		assert.Equal(t, []any{"model"}, ui["visibility"], "%s: only the agent may call it", tool.Name)
+		if tool.Name == toolFoundryAsk || tool.Name == toolFoundryGetQuestion {
+			assert.Equal(t, answerAppURI, ui["resourceUri"], "%s keeps its view", tool.Name)
+		}
+	}
+	// Those that act, spend or send, and those that read.
+	assert.Subset(t, names, []string{toolFoundryAsk, toolFoundryCancelQuestion, toolFoundrySendPieces,
+		toolPrepareFoundry, toolExecuteFoundry, toolFoundryCompleteUpload, toolFoundryReadGraph, toolFoundryListOntologies})
+	// The view's _meta, which ask and get_question share, is left as it was.
+	assert.Equal(t, mcp.Meta{"ui": map[string]any{"resourceUri": answerAppURI}}, answerApp)
 }

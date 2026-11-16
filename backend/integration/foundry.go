@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
 	"slices"
@@ -1042,6 +1043,20 @@ func addFoundryTool[In, Out any](
 	input, _ := t.InputSchema.(*jsonschema.Schema)
 	t.InputSchema = notNullable(cmp.Or(input, schemaFor[In]()))
 	t.Title = cmp.Or(t.Title, toolTitles[t.Name])
+	// No view calls a tool: a host with MCP Apps refuses a view's call to a tool whose visibility
+	// leaves out "app", so a script in a view, even one an answer smuggled in, can neither act
+	// through the host nor read records to send off in a link it opens. Only the agent calls them
+	// (apps.go); a view that needs one opts it in.
+	ui := map[string]any{}
+	if shown, ok := t.Meta["ui"].(map[string]any); ok {
+		maps.Copy(ui, shown)
+	}
+	ui["visibility"] = []string{"model"}
+	t.Meta = maps.Clone(t.Meta)
+	if t.Meta == nil {
+		t.Meta = mcp.Meta{}
+	}
+	t.Meta["ui"] = ui
 	mcp.AddTool(server, t, func(ctx context.Context, req *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
 		// The SDK checked the arguments and read them through float64s, which round a large integer
 		// (in a read's filter, say). Read them again, each number as written.

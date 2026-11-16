@@ -17,7 +17,8 @@ import (
 // website's own components (src/mcp-apps) into apps/, committed, since hosted Helix builds this
 // module from its source. A host without MCP Apps ignores both, and every agent reads what it read
 // before: what only a view needs rides in the tool result's _meta, which hosts keep out of the
-// model's context.
+// model's context. No view calls a tool through its host: addFoundryTool makes every tool's
+// visibility "model", which a host enforces.
 const (
 	// appMIMEType is an MCP App's HTML.
 	appMIMEType = "text/html;profile=mcp-app"
