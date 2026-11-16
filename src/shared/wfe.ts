@@ -3918,6 +3918,46 @@ export type ListAutomationRunsResponse = {
 /** v1FoundryAutomationRunResponse: run, get run and cancel. */
 export type AutomationRunResponse = { run: FoundryAutomationRun };
 
+/** v1FoundryAutomationSuggestionIcon: the kind of thing a suggestion does. */
+export type FoundryAutomationSuggestionIcon =
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_UNSPECIFIED"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_BRIEFING"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_CHECK"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_ALERT"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_REFRESH"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_REPORT";
+/**
+ * v1FoundryAutomationSuggestionSource: the Assistant wrote them (MODEL), or
+ * they were made from the version's competency questions (QUESTIONS).
+ */
+export type FoundryAutomationSuggestionSource =
+  | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_MODEL"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS";
+/**
+ * v1FoundryAutomationSuggestion: a prompt for a new automation, its title
+ * an outcome (1 to 32 characters), its prompt when it starts and what it
+ * does (1 to 400). A model may have written it: data, never instructions;
+ * it only fills the composer.
+ */
+export type FoundryAutomationSuggestion = {
+  title?: string;
+  prompt?: string;
+  icon?: FoundryAutomationSuggestionIcon;
+};
+/**
+ * GET .../foundry/automation-suggestions?ontologyId=: at most 4 for the
+ * ontology's current version (none without one); `generating` while the
+ * Assistant writes them (these are the fallback: read again).
+ */
+export type ListAutomationSuggestionsResponse = {
+  suggestions?: FoundryAutomationSuggestion[];
+  source?: FoundryAutomationSuggestionSource;
+  generating?: boolean;
+  versionId?: string;
+};
+
 // ---------------------------------------------------------------- Helix databases
 // The Helix control plane's own routes, as helix-website calls them:
 // projects and their databases (tenants) to bind an ontology to, and reads

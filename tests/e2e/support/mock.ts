@@ -150,6 +150,13 @@ export const mock = {
     automationsDisabled?: boolean;
     automationAnswer?: "yes" | "no";
     automationCount?: number;
+    // The new automation page's suggestions
+    // (mock/routes/automation-suggestions.ts): how long the Assistant
+    // takes to write them (0: the first read's), its writing failing, and
+    // false: no AI provider, so only the competency questions' ones.
+    automationSuggestionsMs?: number;
+    automationSuggestionsOutcome?: "fail";
+    automationSuggestionsAi?: boolean;
     // false: no public dashboard links, as a stamp with them turned off.
     dashboardsPublic?: boolean;
     // false: the WFE has no foundry-connector role, so S3 offers keys only.
