@@ -248,10 +248,18 @@ type UpdateDashboardDisplay struct {
 	Spec        *SpecDisplay `json:"spec,omitempty"`
 }
 
-// DashboardDisplay is delete_dashboard's, publish_dashboard's and
-// unpublish_dashboard's: the dashboard acted on.
+// DashboardDisplay is delete_dashboard's and unpublish_dashboard's: the
+// dashboard acted on.
 type DashboardDisplay struct {
 	Dashboard DashboardRef `json:"dashboard"`
+}
+
+// PublishDashboardDisplay is publish_dashboard's: the dashboard, and when its
+// link ends in days from the publish (0: never; nil: as it is now, a new
+// link never).
+type PublishDashboardDisplay struct {
+	Dashboard     DashboardRef `json:"dashboard"`
+	ExpiresInDays *int         `json:"expires_in_days,omitempty"`
 }
 
 // PinDashboardDisplay is pin_dashboard's: whether it pins the dashboard or
@@ -609,7 +617,13 @@ func (c Cards) describe(ctx context.Context, a integration.PreparedAction, t tar
 			return nil, err
 		}
 		return PinDashboardDisplay{Dashboard: board, Pinned: p.Pinned}, nil
-	case "delete_dashboard", "publish_dashboard", "unpublish_dashboard":
+	case "publish_dashboard":
+		var p integration.PublishDashboardPayload
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return PublishDashboardDisplay{Dashboard: board, ExpiresInDays: p.ExpiresInDays}, nil
+	case "delete_dashboard", "unpublish_dashboard":
 		return DashboardDisplay{Dashboard: board}, nil
 	case "create_workflow":
 		var p integration.CreateAutomationPayload

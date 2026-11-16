@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -22,7 +23,8 @@ import (
 func foundryDashboardColumns(spec string) string {
 	return `d.id, d.workspace_id, d.name, d.description, ` + spec + `, d.revision, d.created_by_user_id, d.updated_by_user_id, d.client_token,
        d.pinned_at, d.pinned_by_user_id, d.created_at, d.updated_at,
-       s.token_sha256, s.token_sealed, s.token_key_id, s.spec_revision, s.ontology_ids, s.published_by_user_id, s.published_at, s.first_published_at`
+       s.token_sha256, s.token_sealed, s.token_key_id, s.spec_revision, s.ontology_ids, s.published_by_user_id, s.published_at, s.first_published_at,
+       s.expires_at`
 }
 
 const foundryDashboardFrom = ` FROM foundry_dashboards d LEFT JOIN foundry_dashboard_shares s ON s.dashboard_id = d.id`
@@ -225,9 +227,11 @@ func (s *mysqlDB) DeleteFoundryDashboard(ctx context.Context, workspaceID, id st
 
 // PublishFoundryDashboard stores share as its dashboard's public snapshot,
 // when the dashboard is still at share.SpecRevision (a FoundryDashboardChanged
-// refusal otherwise). A dashboard published already keeps its token, and the
-// first time it was published: share's token is used only for the first
-// publish. It returns the share as stored, without its snapshot.
+// refusal otherwise), with its link ending as expiry says. A dashboard
+// published already keeps its token, and the first time it was published,
+// unless its link has expired: an expired link stays dead, so the publish
+// makes a new one from share's token, as a first publish does. It returns
+// the share as stored, without its snapshot.
 //
 // The snapshot was read before this transaction, so under the locks of the
 // ontologies it read (taken first, in id order, as deleting an ontology and
@@ -236,8 +240,11 @@ func (s *mysqlDB) DeleteFoundryDashboard(ctx context.Context, workspaceID, id st
 // queued to be purged of enrichment's profiles: either would leave data
 // public that Foundry has promised to remove. Both of those delete the
 // shares that read the ontology, so one committed after this one removes it.
-func (s *mysqlDB) PublishFoundryDashboard(ctx context.Context, share *model.FoundryDashboardShare) (*model.FoundryDashboardShare, error) {
+func (s *mysqlDB) PublishFoundryDashboard(ctx context.Context, share *model.FoundryDashboardShare, expiry model.FoundryDashboardLinkExpiry) (
+	*model.FoundryDashboardShare, error) {
 	switch {
+	case expiry.Keep && expiry.At != nil:
+		return nil, fmt.Errorf("foundry dashboard share %s both keeps its expiry and sets one", share.DashboardID)
 	case share.DashboardID == "" || share.WorkspaceID == "" || share.PublishedByUserID == "" || len(share.TokenSHA256) != 64:
 		return nil, fmt.Errorf("foundry dashboard share is missing its dashboard, publisher or token")
 	case len(share.Snapshot) == 0 || len(share.TokenSealed) == 0 || share.TokenKeyID == "" || share.SpecRevision < 1:
@@ -273,14 +280,24 @@ func (s *mysqlDB) PublishFoundryDashboard(ctx context.Context, share *model.Foun
 		if _, err := tx.lockFoundryDashboard(ctx, share.WorkspaceID, share.DashboardID, share.SpecRevision); err != nil {
 			return err
 		}
+		// An expired link is never revived: its row goes, and the insert
+		// below makes a new link.
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_dashboard_shares WHERE dashboard_id=? AND expires_at IS NOT NULL AND expires_at <= NOW(6)`,
+			share.DashboardID); err != nil {
+			return err
+		}
+		keep := ""
+		if !expiry.Keep {
+			keep = ", expires_at=VALUES(expires_at)"
+		}
 		if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_dashboard_shares
   (dashboard_id, workspace_id, token_sha256, token_sealed, token_key_id, snapshot, spec_revision, ontology_ids, published_by_user_id,
-   published_at, first_published_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6))
+   published_at, first_published_at, expires_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6), NOW(6), ?)
 ON DUPLICATE KEY UPDATE snapshot=VALUES(snapshot), spec_revision=VALUES(spec_revision), ontology_ids=VALUES(ontology_ids),
-  published_by_user_id=VALUES(published_by_user_id), published_at=VALUES(published_at)`,
+  published_by_user_id=VALUES(published_by_user_id), published_at=VALUES(published_at)`+keep,
 			share.DashboardID, share.WorkspaceID, share.TokenSHA256, share.TokenSealed, share.TokenKeyID, string(share.Snapshot), share.SpecRevision,
-			string(ontologies), share.PublishedByUserID); err != nil {
+			string(ontologies), share.PublishedByUserID, expiry.At); err != nil {
 			return err
 		}
 		d, err := tx.lockFoundryDashboard(ctx, share.WorkspaceID, share.DashboardID, 0)
@@ -301,16 +318,18 @@ func (s *mysqlDB) UnpublishFoundryDashboard(ctx context.Context, workspaceID, id
 
 // GetSharedFoundryDashboard returns the public snapshot whose token has
 // tokenSHA256, with its snapshot: ErrNotFound when there is none, or its
-// workspace is deleted or being deleted.
+// workspace is deleted or being deleted. Whether it may be shown (its
+// expiry, its workspace's settings) is the caller's to decide.
 func (s *mysqlDB) GetSharedFoundryDashboard(ctx context.Context, tokenSHA256 string) (*model.FoundryDashboardShare, error) {
 	var share model.FoundryDashboardShare
 	var snapshot, ontologies string
+	var expiresAt sql.NullTime
 	err := s.db.QueryRowContext(ctx, `SELECT s.dashboard_id, s.workspace_id, s.token_sha256, s.token_sealed, s.token_key_id, s.snapshot,
-       s.spec_revision, s.ontology_ids, s.published_by_user_id, s.published_at, s.first_published_at
+       s.spec_revision, s.ontology_ids, s.published_by_user_id, s.published_at, s.first_published_at, s.expires_at
 FROM foundry_dashboard_shares s JOIN `+s.workspaces.Table()+` w ON w.id = s.workspace_id
 WHERE s.token_sha256=? AND w.deleted_at IS NULL AND w.status NOT IN ('deleting', 'deleted')`, tokenSHA256).Scan(
 		&share.DashboardID, &share.WorkspaceID, &share.TokenSHA256, &share.TokenSealed, &share.TokenKeyID, &snapshot, &share.SpecRevision,
-		&ontologies, &share.PublishedByUserID, &share.PublishedAt, &share.FirstPublishedAt)
+		&ontologies, &share.PublishedByUserID, &share.PublishedAt, &share.FirstPublishedAt, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -318,6 +337,9 @@ WHERE s.token_sha256=? AND w.deleted_at IS NULL AND w.status NOT IN ('deleting',
 		return nil, err
 	}
 	share.Snapshot = json.RawMessage(snapshot)
+	if expiresAt.Valid {
+		share.ExpiresAt = &expiresAt.Time
+	}
 	if err := json.Unmarshal([]byte(ontologies), &share.OntologyIDs); err != nil {
 		return nil, fmt.Errorf("read share %s's ontologies: %w", share.DashboardID, err)
 	}
@@ -352,10 +374,11 @@ func scanFoundryDashboard(scanner rowScanner) (*model.FoundryDashboard, error) {
 	var tokenSHA256, tokenKeyID, ontologies, publishedBy sql.NullString
 	var tokenSealed []byte
 	var specRevision sql.NullInt64
-	var publishedAt, firstPublishedAt sql.NullTime
+	var publishedAt, firstPublishedAt, expiresAt sql.NullTime
 	if err := scanner.Scan(&d.ID, &d.WorkspaceID, &d.Name, &d.Description, &spec, &d.Revision, &d.CreatedByUserID, &d.UpdatedByUserID,
 		&clientToken, &pinnedAt, &pinnedBy, &d.CreatedAt, &d.UpdatedAt,
-		&tokenSHA256, &tokenSealed, &tokenKeyID, &specRevision, &ontologies, &publishedBy, &publishedAt, &firstPublishedAt); err != nil {
+		&tokenSHA256, &tokenSealed, &tokenKeyID, &specRevision, &ontologies, &publishedBy, &publishedAt, &firstPublishedAt,
+		&expiresAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -375,9 +398,42 @@ func scanFoundryDashboard(scanner rowScanner) (*model.FoundryDashboard, error) {
 			DashboardID: d.ID, WorkspaceID: d.WorkspaceID, TokenSHA256: tokenSHA256.String, TokenSealed: tokenSealed, TokenKeyID: tokenKeyID.String,
 			SpecRevision: specRevision.Int64, PublishedByUserID: publishedBy.String, PublishedAt: publishedAt.Time, FirstPublishedAt: firstPublishedAt.Time,
 		}
+		if expiresAt.Valid {
+			d.Share.ExpiresAt = &expiresAt.Time
+		}
 		if err := json.Unmarshal([]byte(ontologies.String), &d.Share.OntologyIDs); err != nil {
 			return nil, fmt.Errorf("read dashboard %s's share: %w", d.ID, err)
 		}
 	}
 	return &d, nil
+}
+
+// GetFoundryDashboardSettings returns the workspace's dashboard settings: with
+// no row, public links on, as an owner never changed them.
+func (s *mysqlDB) GetFoundryDashboardSettings(ctx context.Context, workspaceID string) (model.FoundryDashboardSettings, error) {
+	out := model.FoundryDashboardSettings{WorkspaceID: workspaceID, PublicLinks: true}
+	var updatedAt time.Time
+	err := s.db.QueryRowContext(ctx, `SELECT public_links, updated_by_user_id, updated_at FROM foundry_dashboard_settings WHERE workspace_id=?`,
+		workspaceID).Scan(&out.PublicLinks, &out.UpdatedByUserID, &updatedAt)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return out, nil
+	case err != nil:
+		return model.FoundryDashboardSettings{}, err
+	}
+	out.UpdatedAt = &updatedAt
+	return out, nil
+}
+
+// SetFoundryDashboardSettings records an owner's change of the workspace's
+// public links: on or off, by userID, now.
+func (s *mysqlDB) SetFoundryDashboardSettings(ctx context.Context, workspaceID, userID string, publicLinks bool) error {
+	if workspaceID == "" || userID == "" {
+		return fmt.Errorf("foundry dashboard settings need a workspace and the owner who changes them")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO foundry_dashboard_settings (workspace_id, public_links, updated_by_user_id, updated_at)
+VALUES (?, ?, ?, NOW(6))
+ON DUPLICATE KEY UPDATE public_links=VALUES(public_links), updated_by_user_id=VALUES(updated_by_user_id), updated_at=VALUES(updated_at)`,
+		workspaceID, publicLinks, userID)
+	return err
 }

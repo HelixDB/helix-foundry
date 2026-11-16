@@ -59,6 +59,8 @@ var refused = map[string]string{
 	foundry("PublishFoundryDashboard"):                                 noPublicLinks,
 	foundry("UnpublishFoundryDashboard"):                               noPublicLinks,
 	"/helix.foundry.v1.FoundryEventsService/GetSharedFoundryDashboard": noPublicLinks,
+	foundry("GetFoundryDashboardSettings"):                             noPublicLinks,
+	foundry("UpdateFoundryDashboardSettings"):                          noPublicLinks,
 
 	foundry("ListFoundryAccess"):          noGrantees,
 	foundry("SetFoundryAccessGrants"):     noGrantees,

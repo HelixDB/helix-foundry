@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"strings"
@@ -65,8 +66,9 @@ type FoundryDashboardOutput struct {
 	CanPublish   bool                         `json:"can_publish"`
 	CanDelete    bool                         `json:"can_delete"`
 	CanUnpublish bool                         `json:"can_unpublish"`
+	PublishBlock string                       `json:"publish_block,omitempty" jsonschema:"Why you may not publish it at a public link, when can_publish is false: admin_only (only owners and admins do), workspace_off (an owner turned public links off for the workspace) or unavailable (this host has none)."`
 	Share        *FoundryDashboardShareOutput `json:"share,omitempty"`
-	URL          string                       `json:"url,omitempty"`
+	URL          string                       `json:"url,omitempty" jsonschema:"Its page in Foundry: how to share it inside the workspace. Every member who opens it signs in and reads it as themselves, live."`
 }
 
 // FoundryDashboardShareOutput is a dashboard's public snapshot. Its link is never returned: a
@@ -76,6 +78,8 @@ type FoundryDashboardShareOutput struct {
 	Published    bool   `json:"published" jsonschema:"Always true: the dashboard has a public link, which its page in Foundry shows owners and admins. No tool returns the link."`
 	SpecRevision int64  `json:"spec_revision" jsonschema:"The dashboard's revision the snapshot shows: older than its revision after an edit, until it is published again."`
 	PublishedAt  string `json:"published_at"`
+	ExpiresAt    string `json:"expires_at,omitempty" jsonschema:"When the link stops showing the snapshot; left out: never."`
+	Status       string `json:"status" jsonschema:"live (the link shows the snapshot), expired (publishing again makes a new link), workspace_off (an owner turned public links off for the workspace) or unavailable (this host has none). Only live shows anything."`
 }
 
 type PreviewFoundryDashboardTileOutput struct {
@@ -173,13 +177,17 @@ func (s *Service) FoundryDashboard(workspaceID string, d *foundryv1.FoundryDashb
 	out := FoundryDashboardOutput{
 		ID: d.GetId(), WorkspaceID: workspaceID, Name: d.GetName(), Description: d.GetDescription(), Revision: d.GetRevision(), Pinned: d.GetPinned(),
 		CanEdit: d.GetCanEdit(), CanPin: d.GetCanPin(), CanPublish: d.GetCanPublish(), CanDelete: d.GetCanDelete(), CanUnpublish: d.GetCanUnpublish(),
-		URL: s.FoundryLink(workspaceID, "dashboards", d.GetId()),
+		PublishBlock: publishBlocks[d.GetPublishBlock()].name, URL: s.FoundryLink(workspaceID, "dashboards", d.GetId()),
 	}
 	if d.GetSpecJson() != "" {
 		out.Spec = UntrustedJSON(d.GetSpecJson())
 	}
 	if share := d.GetShare(); share != nil {
-		out.Share = &FoundryDashboardShareOutput{Published: true, SpecRevision: share.GetSpecRevision(), PublishedAt: protoTimestamp(share.GetPublishedAt())}
+		out.Share = &FoundryDashboardShareOutput{Published: true, SpecRevision: share.GetSpecRevision(), PublishedAt: protoTimestamp(share.GetPublishedAt()),
+			Status: cmp.Or(shareStatuses[share.GetStatus()], "live")}
+		if share.GetExpiresAt() != nil {
+			out.Share.ExpiresAt = protoTimestamp(share.GetExpiresAt())
+		}
 	}
 	return out
 }
@@ -206,8 +214,53 @@ type PinDashboardPayload struct {
 	Pinned           bool  `json:"pinned"`
 }
 
+// PublishDashboardPayload is publish_dashboard's: the revision read, and when the link ends, in
+// days from now (dashboardLinkExpiry); left out, a live link keeps its own.
 type PublishDashboardPayload struct {
 	ExpectedRevision int64 `json:"expected_revision"`
+	ExpiresInDays    *int  `json:"expires_in_days,omitempty"`
+}
+
+// publishPayloadDoc is the refusal of a publish_dashboard payload that isn't one.
+const publishPayloadDoc = "publish_dashboard takes payload {expected_revision, expires_in_days}: the revision you read, and optionally " +
+	"7, 30 or 90 for the link to end that many days from now, or 0 for never"
+
+// dashboardLinkExpiry is the expiry publish_dashboard's expires_in_days asks for: none keeps a
+// live link's own, 0 never ends, 7, 30 or 90 ends that many days from the publish.
+func dashboardLinkExpiry(days *int) (foundryv1.FoundryDashboardLinkExpiry, bool) {
+	if days == nil {
+		return foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED, true
+	}
+	switch *days {
+	case 0:
+		return foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER, true
+	case 7:
+		return foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7, true
+	case 30:
+		return foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_30, true
+	case 90:
+		return foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90, true
+	}
+	return foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED, false
+}
+
+// publishBlocks are the tools' words for each FoundryDashboardPublishBlock, and why a prepare is
+// refused for it, naming the backend's reason; none for UNSPECIFIED.
+var publishBlocks = map[foundryv1.FoundryDashboardPublishBlock]struct{ name, refusal string }{
+	foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY: {"admin_only",
+		"only an owner or admin makes a public link (FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY): to share the dashboard inside the workspace, give its url, which every member opens and reads as themselves"},
+	foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF: {"workspace_off",
+		"an owner turned public dashboard links off for this workspace (FOUNDRY_DASHBOARD_PUBLIC_OFF): to share the dashboard inside the workspace, give its url"},
+	foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE: {"unavailable",
+		"public dashboard links are not available here (FOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE): to share the dashboard inside the workspace, give its url"},
+}
+
+// shareStatuses are the tools' words for each FoundryDashboardShareStatus.
+var shareStatuses = map[foundryv1.FoundryDashboardShareStatus]string{
+	foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE:          "live",
+	foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED:       "expired",
+	foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF: "workspace_off",
+	foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE:   "unavailable",
 }
 
 // validDashboardName is a dashboard's name as the backend takes it: 1 to 120 characters once
@@ -377,11 +430,25 @@ func (s *Service) validateDashboardOperation(ctx context.Context, identity *Iden
 		}
 		var payload PublishDashboardPayload
 		if decodeStrict(raw, &payload) != nil || payload.ExpectedRevision < 1 {
-			return nil, invalid("publish_dashboard takes payload {expected_revision}: the revision you read")
+			return nil, invalid(publishPayloadDoc)
 		}
-		req := &foundryv1.PublishFoundryDashboardRequest{WorkspaceId: workspaceID, Id: dashboardID, ExpectedRevision: payload.ExpectedRevision}
+		expiry, ok := dashboardLinkExpiry(payload.ExpiresInDays)
+		if !ok {
+			return nil, invalid(publishPayloadDoc)
+		}
+		req := &foundryv1.PublishFoundryDashboardRequest{WorkspaceId: workspaceID, Id: dashboardID, ExpectedRevision: payload.ExpectedRevision,
+			Expiry: expiry}
 		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "PublishFoundryDashboard"); err != nil {
 			return nil, err
+		}
+		// Refused before a card is shown when the caller may not publish it: who may is the
+		// backend's to say, per dashboard.
+		read, err := s.Foundry.GetFoundryDashboard(ctx, &foundryv1.GetFoundryDashboardRequest{WorkspaceId: workspaceID, Id: dashboardID})
+		if err != nil {
+			return nil, FoundryError(err)
+		}
+		if block, ok := publishBlocks[read.GetDashboard().GetPublishBlock()]; ok {
+			return nil, detailedToolError{code: errCodeFailedPrecondition, message: block.refusal}
 		}
 		return dashboardOperation[*foundryv1.PublishFoundryDashboardRequest]{payload: payload, req: req, workspaceID: workspaceID,
 			call: func(ctx context.Context, s *Service, req *foundryv1.PublishFoundryDashboardRequest, _ string) (*foundryv1.FoundryDashboardResponse, error) {

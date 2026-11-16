@@ -111,9 +111,13 @@ var foundryOperationDocs = []foundryOperationDoc{
 	{name: "pin_dashboard",
 		doc: "{expected_revision, pinned}: the revision " + toolFoundryGetDashboard + " gave, and true to pin the dashboard in every member's sidebar, false to unpin it. Owners and admins only."},
 	{name: "publish_dashboard", publicOnly: true,
-		doc: "{expected_revision}: reads every tile as you and keeps their outputs as a snapshot at a public link, which anyone who has it sees with no sign-in, " +
-			"until it is unpublished; publishing again refreshes the snapshot at the same link. Owners and admins only: say plainly that anyone with the link sees the data."},
-	{name: "unpublish_dashboard", doc: "{}: deletes the public snapshot, so its link shows nothing, whether or not public links are on. Owners and admins only."},
+		doc: "{expected_revision, expires_in_days}: optional, for people outside the workspace only: to share a dashboard inside it, give its url, which every member opens and reads as themselves, live. " +
+			"Publishing reads every tile as you and keeps their outputs as a snapshot at a public link, which anyone who has it sees with no sign-in, unchanged until it is published again, " +
+			"until it is unpublished or expires; publishing again refreshes the snapshot at the same link, or makes a new link once the old one expired. " +
+			"expires_in_days 7, 30 or 90 ends the link that many days from now, 0 never; left out, a live link keeps its own and a new one never ends. " +
+			"Owners and admins only (else FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY), while the workspace has public links on (else FOUNDRY_DASHBOARD_PUBLIC_OFF): " +
+			"say plainly that anyone with the link sees the data as you see it. No tool returns the link: its page in Foundry shows owners and admins."},
+	{name: "unpublish_dashboard", doc: "{}: deletes the public snapshot, so its link shows nothing, whether or not public links are on. Owners and admins only (else FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY)."},
 	{name: "create_workflow", automationsOnly: true,
 		doc: "{name, description, spec}: a workflow of yours, run as you, which waits for you to approve it in Foundry (its url) before it ever runs: " +
 			"say so, and that its page shows each step and what it may do unasked. A name of 1 to 120 characters, a description of at most 1000. " + automationSpecDoc},

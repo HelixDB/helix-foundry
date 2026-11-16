@@ -2817,21 +2817,83 @@ message FoundryDashboard {
   // Its public snapshot; unset unless published.
   FoundryDashboardShare share = 13;
   // What the caller may do: change its name, description and tiles; pin or
-  // unpin it; publish and republish it (false wherever public links are off);
-  // delete it (an owner or admin only while it is published); and unpublish
-  // it (an owner or admin while it is published, public links on or off, so
-  // a link turned off is never revived).
+  // unpin it; publish and republish it (publish_block says why not); delete
+  // it (an owner or admin only while it is published); and unpublish it (an
+  // owner or admin while it is published, public links on or off, so a link
+  // turned off is never revived).
   bool can_edit = 14;
   bool can_pin = 15;
   bool can_publish = 16;
   bool can_delete = 17;
   bool can_unpublish = 18;
+  // Why the caller may not publish it; UNSPECIFIED when they may
+  // (can_publish).
+  FoundryDashboardPublishBlock publish_block = 19;
+}
+
+// FoundryDashboardPublishBlock is why a caller may not publish a dashboard at
+// a public link. Sharing it inside the workspace needs none of this: its page
+// in Foundry opens for every member, each reading it as themselves.
+enum FoundryDashboardPublishBlock {
+  // Nothing: the caller may publish it.
+  FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED = 0;
+  // Only an owner or admin makes, refreshes or ends a public link.
+  FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY = 1;
+  // An owner turned public links off for the workspace
+  // (FoundryDashboardSettings.public_links).
+  FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF = 2;
+  // The host offers no public links (foundry.dashboards.public_enabled off,
+  // or a standalone install).
+  FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE = 3;
+}
+
+// FoundryDashboardShareStatus is whether a public link shows its snapshot
+// now. Only LIVE does: every other link answers 404, as an unpublished one.
+enum FoundryDashboardShareStatus {
+  FOUNDRY_DASHBOARD_SHARE_STATUS_UNSPECIFIED = 0;
+  FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE = 1;
+  // Its expires_at has passed: publishing again makes a new link.
+  FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED = 2;
+  // An owner turned public links off for the workspace: it shows again if
+  // they are turned back on, unless it is unpublished meanwhile.
+  FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF = 3;
+  // The host has public links off.
+  FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE = 4;
+}
+
+// FoundryDashboardLinkExpiry is when a publish has its public link end.
+enum FoundryDashboardLinkExpiry {
+  // Keep the link's own: a live link keeps its expires_at, a new one never
+  // ends.
+  FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED = 0;
+  FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER = 1;
+  // 7, 30 or 90 days from the publish.
+  FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7 = 2;
+  FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_30 = 3;
+  FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90 = 4;
+}
+
+// FoundryDashboardSettings is a workspace's dashboard settings.
+message FoundryDashboardSettings {
+  // Whether the workspace's dashboards may be published at public links: on
+  // until an owner turns them off. Off, publishing is refused
+  // (FOUNDRY_DASHBOARD_PUBLIC_OFF) and every link of the workspace shows
+  // nothing until they are turned on again.
+  bool public_links = 1;
+  // Whether the host offers public links at all (foundry.dashboards.public_enabled,
+  // never a standalone install): without them public_links changes nothing.
+  bool available = 2;
+  // Whether the caller may change public_links: owners only.
+  bool can_change = 3;
+  // The owner who last changed it, and when; unset until one did.
+  string updated_by_user_id = 4;
+  google.protobuf.Timestamp updated_at = 5;
 }
 
 // FoundryDashboardShare is a dashboard's public snapshot.
 message FoundryDashboardShare {
   // The link's token, for owners and admins only: the site's page for it is
-  // /share/<token>. Empty for anyone else.
+  // /share/<token>. Empty for anyone else, and once the link has expired.
   string token = 1;
   // The dashboard's revision it shows: older than the dashboard's after an
   // edit, until it is published again.
@@ -2839,6 +2901,10 @@ message FoundryDashboardShare {
   google.protobuf.Timestamp published_at = 3;
   google.protobuf.Timestamp first_published_at = 4;
   string published_by_user_id = 5;
+  // When the link stops showing its snapshot; unset: never.
+  google.protobuf.Timestamp expires_at = 6;
+  // Whether the link shows its snapshot now.
+  FoundryDashboardShareStatus status = 7;
 }
 
 // FoundryAutomationSuggestion is a prompt for Founder, of one kind: a

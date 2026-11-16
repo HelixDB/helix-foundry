@@ -29,6 +29,7 @@ type dashboardStore struct {
 	snapshots  map[string]json.RawMessage
 	questions  map[string]*foundrymodel.FoundryQuestion
 	order      []string
+	settings   map[string]foundrymodel.FoundryDashboardSettings
 }
 
 func (s *dashboardStore) CreateFoundryDashboard(_ context.Context, d *foundrymodel.FoundryDashboard, max int) error {
@@ -144,14 +145,22 @@ func (s *dashboardStore) DeleteFoundryDashboard(_ context.Context, ws, id string
 	return nil
 }
 
-func (s *dashboardStore) PublishFoundryDashboard(_ context.Context, share *foundrymodel.FoundryDashboardShare) (*foundrymodel.FoundryDashboardShare, error) {
+func (s *dashboardStore) PublishFoundryDashboard(_ context.Context, share *foundrymodel.FoundryDashboardShare,
+	expiry foundrymodel.FoundryDashboardLinkExpiry) (*foundrymodel.FoundryDashboardShare, error) {
 	d, err := s.editable(share.WorkspaceID, share.DashboardID, foundrymodel.FoundryDashboardEditor{Manager: true}, share.SpecRevision)
 	if err != nil {
 		return nil, err
 	}
+	if d.Share != nil && d.Share.Expired(time.Now()) {
+		d.Share = nil
+	}
 	stored := *share
+	stored.ExpiresAt = expiry.At
 	if d.Share != nil {
 		stored.TokenSHA256, stored.TokenSealed, stored.TokenKeyID = d.Share.TokenSHA256, d.Share.TokenSealed, d.Share.TokenKeyID
+		if expiry.Keep {
+			stored.ExpiresAt = d.Share.ExpiresAt
+		}
 	}
 	s.snapshots[d.ID] = stored.Snapshot
 	stored.Snapshot = nil
@@ -180,6 +189,19 @@ func (s *dashboardStore) GetSharedFoundryDashboard(_ context.Context, hash strin
 	return nil, foundrystore.ErrNotFound
 }
 
+func (s *dashboardStore) GetFoundryDashboardSettings(_ context.Context, ws string) (foundrymodel.FoundryDashboardSettings, error) {
+	if settings, ok := s.settings[ws]; ok {
+		return settings, nil
+	}
+	return foundrymodel.FoundryDashboardSettings{WorkspaceID: ws, PublicLinks: true}, nil
+}
+
+func (s *dashboardStore) SetFoundryDashboardSettings(_ context.Context, ws, userID string, publicLinks bool) error {
+	now := time.Now()
+	s.settings[ws] = foundrymodel.FoundryDashboardSettings{WorkspaceID: ws, PublicLinks: publicLinks, UpdatedByUserID: userID, UpdatedAt: &now}
+	return nil
+}
+
 func (s *dashboardStore) GetFoundryQuestion(_ context.Context, ontologyID, id string) (*foundrymodel.FoundryQuestion, error) {
 	q, ok := s.questions[id]
 	if !ok || q.OntologyID != ontologyID {
@@ -201,6 +223,7 @@ var (
 	dashboardOwner  = ports.Actor{Source: ports.SourceUser, UserID: "user-owner", WorkspaceID: "ws-1", QueryRead: ports.AllProjects()}
 	dashboardMember = ports.Actor{Source: ports.SourceUser, UserID: "user-member", WorkspaceID: "ws-1", QueryRead: ports.AllProjects()}
 	dashboardOther  = ports.Actor{Source: ports.SourceMCP, UserID: "user-other", WorkspaceID: "ws-1", QueryRead: ports.AllProjects()}
+	dashboardAdmin  = ports.Actor{Source: ports.SourceUser, UserID: "user-admin", WorkspaceID: "ws-1", QueryRead: ports.AllProjects()}
 	dashboardDoor   = ports.Actor{Source: ports.SourceEventSource}
 )
 
@@ -230,11 +253,12 @@ func newDashboardFixture(t *testing.T) dashboardFixture {
 	current := "load-1"
 	fs.ontologies["ont-1"].CurrentLoadID = &current
 	store := &dashboardStore{foundryStore: fs, dashboards: map[string]*foundrymodel.FoundryDashboard{}, snapshots: map[string]json.RawMessage{},
-		questions: map[string]*foundrymodel.FoundryQuestion{}}
+		questions: map[string]*foundrymodel.FoundryQuestion{}, settings: map[string]foundrymodel.FoundryDashboardSettings{}}
 	reader := &fakeFoundryRead{result: `{"as_of":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `,` +
 		queryOK(`{"kind":"rows","total":1,"rows":[{"cells":[{"type":"Customer","id":"scus_1","name":"Globex"}],"edges":[]}]}`) + `]}`}
 	s.deps.DB, s.deps.FoundryRead, s.deps.ConnectorKeys = store, reader, aiKeyring(t)
-	s.deps.People = dashboardPeople{"user-owner": ports.RoleOwner, "user-member": ports.RoleMember, "user-other": ports.RoleMember}
+	s.deps.People = dashboardPeople{"user-owner": ports.RoleOwner, "user-member": ports.RoleMember, "user-other": ports.RoleMember,
+		"user-admin": ports.RoleAdmin}
 	return dashboardFixture{s: s, store: store, reader: reader}
 }
 
@@ -301,7 +325,8 @@ func TestDashboardCallers(t *testing.T) {
 		access.Grantee{WorkspaceID: "ws-1", Principal: access.Principal{Kind: access.PrincipalServiceCredential, ID: "key-1"}})
 	_, err = f.s.ListFoundryDashboards(key, req)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err), "a key, even one granted sources, has no dashboards")
-	for _, method := range []string{foundryv1.FoundryService_CreateFoundryDashboard_FullMethodName, foundryv1.FoundryService_PublishFoundryDashboard_FullMethodName} {
+	for _, method := range []string{foundryv1.FoundryService_CreateFoundryDashboard_FullMethodName, foundryv1.FoundryService_PublishFoundryDashboard_FullMethodName,
+		foundryv1.FoundryService_GetFoundryDashboardSettings_FullMethodName, foundryv1.FoundryService_UpdateFoundryDashboardSettings_FullMethodName} {
 		assert.Equal(t, access.Deny, access.RuleOf(method))
 	}
 }
@@ -473,7 +498,8 @@ func TestPublishingADashboard(t *testing.T) {
 		f := newDashboardFixture(t)
 		d := f.create(t, dashboardMember, twoTiles())
 		_, err := publish(f, dashboardMember, d.GetId(), 1)
-		assert.Equal(t, "FOUNDRY_DASHBOARD_NOT_EDITABLE", reasonOf(err), "a member publishes nothing")
+		assert.Equal(t, "FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY", reasonOf(err), "a member publishes nothing")
+		assert.Equal(t, foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY, d.GetPublishBlock())
 
 		resp, err := publish(f, dashboardOwner, d.GetId(), 1)
 		require.NoError(t, err)
@@ -482,6 +508,8 @@ func TestPublishingADashboard(t *testing.T) {
 		assert.Regexp(t, `^hxd_[A-Za-z0-9_-]{43}$`, share.GetToken())
 		assert.EqualValues(t, 1, share.GetSpecRevision())
 		assert.Equal(t, "user-owner", share.GetPublishedByUserId())
+		assert.Equal(t, foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE, share.GetStatus())
+		assert.Nil(t, share.GetExpiresAt(), "a link never ends unless asked")
 		require.Len(t, f.reader.requests, 1, "both tiles read the same load: one read")
 		assert.Equal(t, "load-1", f.reader.requests[0].GetLoadId())
 
@@ -535,7 +563,133 @@ func TestPublishingADashboard(t *testing.T) {
 		_, err = shared(f, share.GetToken())
 		assert.Equal(t, codes.NotFound, status.Code(err))
 		_, err = f.s.UnpublishFoundryDashboard(asActor(dashboardMember), &foundryv1.UnpublishFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
-		assert.Equal(t, "FOUNDRY_DASHBOARD_NOT_EDITABLE", reasonOf(err))
+		assert.Equal(t, "FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY", reasonOf(err))
+	})
+
+	t.Run("an admin publishes as an owner does", func(t *testing.T) {
+		f := newDashboardFixture(t)
+		d := f.create(t, dashboardMember, twoTiles())
+		resp, err := publish(f, dashboardAdmin, d.GetId(), 1)
+		require.NoError(t, err)
+		assert.NotEmpty(t, resp.GetDashboard().GetShare().GetToken())
+		assert.True(t, resp.GetDashboard().GetCanPublish())
+		assert.Equal(t, foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED, resp.GetDashboard().GetPublishBlock())
+	})
+
+	t.Run("a link ends when it expires, and publishing again makes a new one", func(t *testing.T) {
+		f := newDashboardFixture(t)
+		d := f.create(t, dashboardOwner, twoTiles())
+		expire := func(e foundryv1.FoundryDashboardLinkExpiry) (*foundryv1.FoundryDashboard, error) {
+			resp, err := f.s.PublishFoundryDashboard(asActor(dashboardOwner), &foundryv1.PublishFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId(),
+				ExpectedRevision: 1, Expiry: e})
+			return resp.GetDashboard(), err
+		}
+		_, err := expire(foundryv1.FoundryDashboardLinkExpiry(99))
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+
+		got, err := expire(foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_30)
+		require.NoError(t, err)
+		token := got.GetShare().GetToken()
+		require.NotNil(t, got.GetShare().GetExpiresAt())
+		assert.WithinDuration(t, time.Now().Add(30*24*time.Hour), got.GetShare().GetExpiresAt().AsTime(), time.Minute)
+
+		// Unset keeps a live link's own; another choice moves it.
+		got, err = expire(foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED)
+		require.NoError(t, err)
+		assert.WithinDuration(t, time.Now().Add(30*24*time.Hour), got.GetShare().GetExpiresAt().AsTime(), time.Minute)
+		got, err = expire(foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7)
+		require.NoError(t, err)
+		assert.WithinDuration(t, time.Now().Add(7*24*time.Hour), got.GetShare().GetExpiresAt().AsTime(), time.Minute)
+		assert.Equal(t, token, got.GetShare().GetToken(), "a new expiry keeps the link")
+		got, err = expire(foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER)
+		require.NoError(t, err)
+		assert.Nil(t, got.GetShare().GetExpiresAt())
+		got, err = expire(foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90)
+		require.NoError(t, err)
+		_, err = shared(f, token)
+		require.NoError(t, err)
+
+		// Past its expiry it is served as an unpublished link, shown as
+		// expired, and its token is no one's to copy.
+		past := time.Now().Add(-time.Second)
+		f.store.dashboards[d.GetId()].Share.ExpiresAt = &past
+		_, err = shared(f, token)
+		assert.Equal(t, codes.NotFound, status.Code(err))
+		read, err := f.s.GetFoundryDashboard(asActor(dashboardOwner), &foundryv1.GetFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
+		require.NoError(t, err)
+		assert.Equal(t, foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED, read.GetDashboard().GetShare().GetStatus())
+		assert.Empty(t, read.GetDashboard().GetShare().GetToken())
+		assert.True(t, read.GetDashboard().GetCanUnpublish() && read.GetDashboard().GetCanPublish())
+
+		got, err = expire(foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED)
+		require.NoError(t, err)
+		assert.NotEqual(t, token, got.GetShare().GetToken(), "an expired link is never revived")
+		assert.Nil(t, got.GetShare().GetExpiresAt(), "a new link keeps no old expiry")
+		_, err = shared(f, token)
+		assert.Equal(t, codes.NotFound, status.Code(err))
+		_, err = shared(f, got.GetShare().GetToken())
+		require.NoError(t, err)
+	})
+
+	t.Run("an owner turns public links off for the workspace", func(t *testing.T) {
+		f := newDashboardFixture(t)
+		d := f.create(t, dashboardOwner, twoTiles())
+		resp, err := publish(f, dashboardOwner, d.GetId(), 1)
+		require.NoError(t, err)
+		token := resp.GetDashboard().GetShare().GetToken()
+		settings := func(a ports.Actor) (*foundryv1.FoundryDashboardSettings, error) {
+			resp, err := f.s.GetFoundryDashboardSettings(asActor(a), &foundryv1.GetFoundryDashboardSettingsRequest{WorkspaceId: "ws-1"})
+			return resp.GetSettings(), err
+		}
+		turn := func(a ports.Actor, on bool) (*foundryv1.FoundryDashboardSettings, error) {
+			resp, err := f.s.UpdateFoundryDashboardSettings(asActor(a), &foundryv1.UpdateFoundryDashboardSettingsRequest{WorkspaceId: "ws-1", PublicLinks: on})
+			return resp.GetSettings(), err
+		}
+
+		got, err := settings(dashboardMember)
+		require.NoError(t, err)
+		assert.True(t, got.GetPublicLinks() && got.GetAvailable(), "on until an owner turns them off")
+		assert.False(t, got.GetCanChange(), "a member reads it")
+		assert.Empty(t, got.GetUpdatedByUserId())
+		assert.Nil(t, got.GetUpdatedAt())
+		got, err = settings(dashboardAdmin)
+		require.NoError(t, err)
+		assert.False(t, got.GetCanChange(), "an admin reads it")
+		for _, a := range []ports.Actor{dashboardMember, dashboardAdmin} {
+			_, err = turn(a, false)
+			assert.Equal(t, codes.PermissionDenied, status.Code(err), a.UserID)
+		}
+		_, err = settings(dashboardDoor)
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+		got, err = turn(dashboardOwner, false)
+		require.NoError(t, err)
+		assert.False(t, got.GetPublicLinks())
+		assert.True(t, got.GetCanChange())
+		assert.Equal(t, "user-owner", got.GetUpdatedByUserId())
+		assert.NotNil(t, got.GetUpdatedAt())
+
+		_, err = shared(f, token)
+		assert.Equal(t, codes.NotFound, status.Code(err), "off, no link of the workspace shows")
+		_, err = publish(f, dashboardOwner, d.GetId(), 1)
+		assert.Equal(t, "FOUNDRY_DASHBOARD_PUBLIC_OFF", reasonOf(err))
+		_, err = publish(f, dashboardMember, d.GetId(), 1)
+		assert.Equal(t, "FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY", reasonOf(err), "a member is told who may, before the switch")
+		read, err := f.s.GetFoundryDashboard(asActor(dashboardOwner), &foundryv1.GetFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
+		require.NoError(t, err)
+		assert.False(t, read.GetDashboard().GetCanPublish())
+		assert.Equal(t, foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF, read.GetDashboard().GetPublishBlock())
+		assert.Equal(t, foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF, read.GetDashboard().GetShare().GetStatus())
+		assert.True(t, read.GetDashboard().GetCanUnpublish(), "off, an owner still ends a link")
+		list, err := f.s.ListFoundryDashboards(asActor(dashboardOwner), &foundryv1.ListFoundryDashboardsRequest{WorkspaceId: "ws-1"})
+		require.NoError(t, err)
+		assert.Equal(t, foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF, list.GetDashboards()[0].GetShare().GetStatus())
+
+		// On again, the link not ended meanwhile shows again.
+		_, err = turn(dashboardOwner, true)
+		require.NoError(t, err)
+		_, err = shared(f, token)
+		require.NoError(t, err)
 	})
 
 	t.Run("refuses what it can't publish", func(t *testing.T) {
@@ -587,12 +741,19 @@ func TestPublishingADashboard(t *testing.T) {
 
 		f.s.deps.Cfg.Host.Local = true
 		_, err = publish(f, dashboardOwner, d.GetId(), 1)
-		assert.Equal(t, "FOUNDRY_DASHBOARDS_PUBLIC_OFF", reasonOf(err), "a standalone install never publishes")
+		assert.Equal(t, "FOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE", reasonOf(err), "a standalone install never publishes")
+		_, err = publish(f, dashboardMember, d.GetId(), 1)
+		assert.Equal(t, "FOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE", reasonOf(err), "nor sends a member to an owner")
 		_, err = shared(f, token)
 		assert.Equal(t, codes.NotFound, status.Code(err))
 		got, err := f.s.GetFoundryDashboard(asActor(dashboardOwner), &foundryv1.GetFoundryDashboardRequest{WorkspaceId: "ws-1", Id: d.GetId()})
 		require.NoError(t, err)
 		assert.False(t, got.GetDashboard().GetCanPublish())
+		assert.Equal(t, foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE, got.GetDashboard().GetPublishBlock())
+		assert.Equal(t, foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE, got.GetDashboard().GetShare().GetStatus())
+		off, err := f.s.GetFoundryDashboardSettings(asActor(dashboardOwner), &foundryv1.GetFoundryDashboardSettingsRequest{WorkspaceId: "ws-1"})
+		require.NoError(t, err)
+		assert.False(t, off.GetSettings().GetAvailable())
 
 		f.s.deps.Cfg.Host.Local = false
 		f.s.deps.Cfg.Foundry.Dashboards.PublicEnabled = false
