@@ -4,7 +4,7 @@ import type {
 } from "../../../shared/wfe";
 import { api } from "../../api";
 
-// The Suggestions page's routes: the ontology's shown findings and its
+// The Review page's Ontology tab's routes: the ontology's shown findings and its
 // latest audit, and dismissing one.
 const enc = encodeURIComponent;
 const base = (ws: string, o: string) =>

@@ -633,6 +633,9 @@ describe("restricted mode", () => {
     expect(granteeRedirect("/ontology/o/loads/l")).toBe("/ontology/o");
     expect(granteeRedirect("/ontology/o/versions/v")).toBe("/ontology/o");
     expect(granteeRedirect("/ontology/o/documents")).toBe("/ontology/o");
+    // Review, on either tab, and the old Suggestions address.
+    expect(granteeRedirect("/ontology/o/review")).toBe("/ontology/o");
+    expect(granteeRedirect("/ontology/o/suggestions")).toBe("/ontology/o");
     // The graph isn't theirs: Records is their Explorer.
     expect(granteeRedirect("/explore/o")).toBe("/explore/o/records");
     expect(granteeRedirect("/explore/o/entities")).toBe("/explore/o/records");

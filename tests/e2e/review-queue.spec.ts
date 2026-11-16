@@ -10,7 +10,7 @@ import {
   uploadAndLoadContract,
 } from "./support/mock";
 
-// The review queue (/ontology/:id/review): one list of the current load's
+// The review queue (/ontology/:id/review, the Review page's Facts tab): one list of the current load's
 // open reviews, the decisions writing the most facts first, about one card
 // in ten drawn at random from a score band, each card's evidence before
 // its score, settled by the paths a document's Needs review uses, each
@@ -28,9 +28,7 @@ async function queued(page: Page) {
   await signIn(page);
   await uploadAndLoadContract(page, [file("variant.md", HEDGED)]);
   await page.goto(`${O}/review`);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "Review queue",
-  );
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Review");
 }
 const queue = (page: Page) => page.getByRole("list", { name: "Review queue" });
 const cards = (page: Page) => queue(page).locator(":scope > li");
@@ -49,7 +47,7 @@ test("ranks one queue for the ontology: what writes facts first, evidence before
   await expect(cards(page).first()).toBeVisible();
   // It's one of the ontology's pages.
   await expect(page.locator('.hf-subnav-link[aria-current="page"]')).toHaveText(
-    "Review queue",
+    /^Review/,
   );
   await expect(page.getByRole("button", { name: /Approve all/ })).toHaveCount(
     0,
