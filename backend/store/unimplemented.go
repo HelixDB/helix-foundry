@@ -1270,7 +1270,7 @@ func (u Unimplemented) GetFoundryAgentThread(context.Context, string, string) (*
 	return nil, nil
 }
 
-func (u Unimplemented) ListFoundryAgentThreads(context.Context, string, string, bool, string, int) ([]*model.FoundryAgentThread, string, error) {
+func (u Unimplemented) ListFoundryAgentThreads(context.Context, string, string, func(*model.FoundryAgentThread) bool, string, int) ([]*model.FoundryAgentThread, string, error) {
 	u.unimplemented("ListFoundryAgentThreads")
 	return nil, "", nil
 }

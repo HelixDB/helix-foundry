@@ -632,6 +632,18 @@ function turnOf(
     ? t
     : undefined;
 }
+/**
+ * NOT_FOUND for a turn turnOf doesn't find: "thread not found" when it is
+ * the person's in a thread the grantee may not read, as the backend's
+ * agentTurn says it.
+ */
+function turnMissing(workspaceId: string, userId: string, turnId: string) {
+  const mine = state.turns.some(
+    (x) =>
+      x.id === turnId && x.workspaceId === workspaceId && x.userId === userId,
+  );
+  return fail("NOT_FOUND", mine ? "thread not found" : "turn not found");
+}
 function actionOf(workspaceId: string, userId: string, actionId: string) {
   const a = state.actions.find((x) => x.id === actionId);
   return a && threadOf(workspaceId, userId, a.threadId) ? a : undefined;
@@ -4607,7 +4619,9 @@ export const agentRoutes: MockRoute[] = [
           String(body.answers?.turnId || ""),
           p.grantee,
         );
-        if (!asking || asking.threadId !== body.threadId)
+        if (!asking)
+          return turnMissing(ws, p.userId, String(body.answers?.turnId || ""));
+        if (asking.threadId !== body.threadId)
           return fail("NOT_FOUND", "turn not found");
         if (!asking.asked)
           return refused(
@@ -4988,7 +5002,7 @@ export const agentRoutes: MockRoute[] = [
         req.params.id!,
         p.grantee,
       );
-      if (!t) return fail("NOT_FOUND", "turn not found");
+      if (!t) return turnMissing(ws, p.userId, req.params.id!);
       advance(t);
       const after = Number(req.query.get("afterSeq") || 0) || 0;
       return ok({
@@ -5006,7 +5020,7 @@ export const agentRoutes: MockRoute[] = [
       if (!isPerson(p)) return p;
       const ws = req.params.workspaceId!;
       const t = turnOf(ws, p.userId, req.params.id!, p.grantee);
-      if (!t) return fail("NOT_FOUND", "turn not found");
+      if (!t) return turnMissing(ws, p.userId, req.params.id!);
       advance(t);
       if (t.status !== "cancelled") {
         if (!live(t))

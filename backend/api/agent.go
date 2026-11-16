@@ -41,9 +41,6 @@ const (
 	agentThreadTurns = 100
 	// agentEventsPage is how many events one poll returns.
 	agentEventsPage = 200
-	// agentThreadSkips is how many store pages a restricted member's list
-	// reads before it answers, while their grants leave none of a page.
-	agentThreadSkips = 5
 )
 
 // agentIDPattern is an id a page context may name.
@@ -218,6 +215,16 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		t.PageContext, _ = json.Marshal(page) // strings only: it can't fail
 	}
 	var thread *foundrymodel.FoundryAgentThread
+	if t.ThreadID != "" && !grantee {
+		// Its turn runs with the whole view: the thread is no restricted
+		// member's from now on, even should they be one again before it runs.
+		switch err := s.deps.DB.RecordFoundryAgentThreadGrants(ctx, ws, t.ThreadID, nil); {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			return nil, status.Error(codes.NotFound, "thread not found")
+		case err != nil:
+			return nil, status.Errorf(codes.Internal, "record the thread's reach: %v", err)
+		}
+	}
 	if t.ThreadID == "" {
 		t.ThreadID = id.New()
 		thread = &foundrymodel.FoundryAgentThread{ID: t.ThreadID, WorkspaceID: ws, UserID: userID, Title: foundryagent.Title(t.Input),
@@ -341,41 +348,32 @@ func (s *Service) agentTurnResponse(ctx context.Context, t *foundrymodel.Foundry
 }
 
 // ListFoundryAgentThreads lists the caller's chats; a restricted member's
-// only as agentThread finds them: the store leaves out the whole view's, and
-// those whose grants they no longer hold are left out here, so a page of
-// theirs may be short. Store pages that leave nothing are skipped, at most
-// agentThreadSkips of them.
+// only as agentThread finds them: the threads they made whose every grant
+// they still hold.
 func (s *Service) ListFoundryAgentThreads(ctx context.Context, req *foundryv1.ListFoundryAgentThreadsRequest) (*foundryv1.ListFoundryAgentThreadsResponse, error) {
 	ws := req.GetWorkspaceId()
 	userID, err := s.agentUser(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
-	g, grantee := access.GranteeFrom(ctx)
-	var grants access.Grants
-	if grantee {
-		if grants, err = s.grantsOf(ctx, ws, g.Principals()); err != nil {
+	var keep func(*foundrymodel.FoundryAgentThread) bool
+	if g, grantee := access.GranteeFrom(ctx); grantee {
+		grants, err := s.grantsOf(ctx, ws, g.Principals())
+		if err != nil {
 			return nil, err
 		}
+		keep = func(t *foundrymodel.FoundryAgentThread) bool { return grants.Holds(t.Granted.Targets) }
 	}
-	out := &foundryv1.ListFoundryAgentThreadsResponse{NextPageToken: req.GetPageToken()}
-	for range agentThreadSkips {
-		threads, next, err := s.deps.DB.ListFoundryAgentThreads(ctx, ws, userID, grantee, out.NextPageToken, agentThreadPage)
-		switch {
-		case errors.Is(err, foundrystore.ErrInvalidPageToken):
-			return nil, status.Error(codes.InvalidArgument, "page_token is not one this list returned")
-		case err != nil:
-			return nil, status.Errorf(codes.Internal, "list threads: %v", err)
-		}
-		out.NextPageToken = next
-		for _, t := range threads {
-			if !grantee || grants.Holds(t.Granted.Targets) {
-				out.Threads = append(out.Threads, agentThreadToProto(t))
-			}
-		}
-		if len(out.Threads) > 0 || next == "" {
-			break
-		}
+	threads, next, err := s.deps.DB.ListFoundryAgentThreads(ctx, ws, userID, keep, req.GetPageToken(), agentThreadPage)
+	switch {
+	case errors.Is(err, foundrystore.ErrInvalidPageToken):
+		return nil, status.Error(codes.InvalidArgument, "page_token is not one this list returned")
+	case err != nil:
+		return nil, status.Errorf(codes.Internal, "list threads: %v", err)
+	}
+	out := &foundryv1.ListFoundryAgentThreadsResponse{NextPageToken: next}
+	for _, t := range threads {
+		out.Threads = append(out.Threads, agentThreadToProto(t))
 	}
 	return out, nil
 }

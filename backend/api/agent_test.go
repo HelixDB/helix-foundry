@@ -169,6 +169,26 @@ func (s *agentStore) GetFoundryAgentThread(_ context.Context, ws, id string) (*f
 	return nil, foundrystore.ErrNotFound
 }
 
+// RecordFoundryAgentThreadGrants records a turn's reach as the store does:
+// nil for good, else adding to a restricted member's thread.
+func (s *agentStore) RecordFoundryAgentThreadGrants(_ context.Context, ws, id string, granted *foundrymodel.FoundryAgentThreadGrants) error {
+	t, ok := s.threads[id]
+	switch {
+	case !ok || t.WorkspaceID != ws:
+		return foundrystore.ErrNotFound
+	case t.Granted == nil:
+	case granted == nil:
+		t.Granted = nil
+	default:
+		for _, target := range granted.Targets {
+			if !slices.Contains(t.Granted.Targets, target) {
+				t.Granted.Targets = append(t.Granted.Targets, target)
+			}
+		}
+	}
+	return nil
+}
+
 func (s *agentStore) ListFoundryAgentTurns(_ context.Context, threadID string, _ int) ([]*foundrymodel.FoundryAgentTurn, error) {
 	var out []*foundrymodel.FoundryAgentTurn
 	for _, t := range s.turns {

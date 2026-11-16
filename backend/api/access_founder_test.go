@@ -28,9 +28,9 @@ type founderStore struct {
 	*accessStore
 	agent      *agentStore
 	dashboards map[string]*foundrymodel.FoundryDashboard
-	// listedGranted is whether the last thread list was kept to the threads
-	// a restricted member made.
-	listedGranted bool
+	// listedKept is whether the last thread list was kept to the threads a
+	// restricted member made and still holds.
+	listedKept bool
 }
 
 // CreateFoundryAgentTurn stamps a new thread's creation, as MySQL does.
@@ -66,16 +66,20 @@ func (s *founderStore) ListFoundryAgentEvents(ctx context.Context, turnID string
 	return s.agent.ListFoundryAgentEvents(ctx, turnID, afterSeq, limit)
 }
 
-func (s *founderStore) ListFoundryAgentThreads(_ context.Context, ws, userID string, grantedOnly bool, _ string, _ int) (
+func (s *founderStore) ListFoundryAgentThreads(_ context.Context, ws, userID string, keep func(*foundrymodel.FoundryAgentThread) bool, _ string, _ int) (
 	[]*foundrymodel.FoundryAgentThread, string, error) {
-	s.listedGranted = grantedOnly
+	s.listedKept = keep != nil
 	var out []*foundrymodel.FoundryAgentThread
 	for _, t := range s.agent.threads {
-		if t.WorkspaceID == ws && t.UserID == userID && (!grantedOnly || t.Granted != nil) {
+		if t.WorkspaceID == ws && t.UserID == userID && (keep == nil || t.Granted != nil && keep(t)) {
 			out = append(out, t)
 		}
 	}
 	return out, "", nil
+}
+
+func (s *founderStore) RecordFoundryAgentThreadGrants(ctx context.Context, ws, id string, granted *foundrymodel.FoundryAgentThreadGrants) error {
+	return s.agent.RecordFoundryAgentThreadGrants(ctx, ws, id, granted)
 }
 
 func (s *founderStore) DeleteFoundryAgentThread(_ context.Context, ws, userID, id string) error {
@@ -171,7 +175,7 @@ func TestRestrictedMembersTalkToFounder(t *testing.T) {
 		}
 		assert.Len(t, ids, 3)
 		assert.NotContains(t, ids, "th-old")
-		assert.True(t, store.listedGranted, "kept to its own in the store's query")
+		assert.True(t, store.listedKept, "kept to its own in the store's query")
 
 		_, err = client.GetFoundryAgentThread(eve, &foundryv1.GetFoundryAgentThreadRequest{WorkspaceId: "ws-1", Id: "th-old"})
 		assert.Equal(t, codes.NotFound, status.Code(err))
@@ -281,7 +285,18 @@ func TestRestrictedMembersTalkToFounder(t *testing.T) {
 		assert.Equal(t, "ont-3", sent.GetTurn().GetPageContext().GetOntologyId(), "an admin's page is kept whole")
 		assert.Nil(t, store.agent.threads[sent.GetTurn().GetThreadId()].Granted)
 
+		// A thread it made as a grantee, sent into as an admin, is the whole
+		// view's from that send on.
+		th := store.agent.threads["th-asked"]
+		require.NotNil(t, th.Granted)
+		_, err = client.SendFoundryAgentMessage(eve, &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws-1", ThreadId: "th-asked",
+			ClientToken: "eve-admin-asked", Input: textInput("What about Payroll?"), PageContext: &foundryv1.FoundryAgentPageContext{OntologyId: "ont-3"}})
+		require.NoError(t, err)
+		assert.Nil(t, th.Granted)
+
 		s.deps.People = accessPeople{"user-9": {Role: ports.RoleMember}}
+		_, err = client.GetFoundryAgentThread(eve, &foundryv1.GetFoundryAgentThreadRequest{WorkspaceId: "ws-1", Id: "th-asked"})
+		assert.Equal(t, codes.NotFound, status.Code(err), "a member again, the thread it sent into as an admin is gone")
 		_, err = client.GetFoundryAgentThread(eve, &foundryv1.GetFoundryAgentThreadRequest{WorkspaceId: "ws-1", Id: sent.GetTurn().GetThreadId()})
 		assert.Equal(t, codes.NotFound, status.Code(err), "a member again, its admin thread is gone")
 		_, err = client.ListFoundryAgentTurnEvents(eve, &foundryv1.ListFoundryAgentTurnEventsRequest{WorkspaceId: "ws-1", Id: sent.GetTurn().GetId()})

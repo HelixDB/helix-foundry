@@ -180,30 +180,32 @@ func reachOf(session integration.Session, workspaceID string) (Reach, error) {
 	return ReachWorkspace, nil
 }
 
-// threadReach records the turn's Reach on its thread before anything of
-// the turn runs, as the API reads it (model.FoundryAgentThread.Granted): a
+// threadReach records the turn's Reach on its thread, as the API reads it
+// (model.FoundryAgentThread.Granted), before anything of the turn runs and
+// around each tool call of a restricted member's (turnRun.reachAround): a
 // whole view's run makes the thread no restricted member's, for good; a
 // restricted member's runs only while they hold every grant the thread ran
-// under (else its transcript holds what they may no longer read, and the
-// turn fails for good), and adds what they hold now. A read or write that
-// fails fails the attempt, to retry.
-func threadReach(ctx context.Context, db Store, turn *model.FoundryAgentTurn, reach Reach) error {
+// under (else its transcript holds what they may no longer read: it fails for
+// good) and adds what they hold now, which it returns. A thread begun with the
+// whole view fails the attempt to retry, as a role that couldn't be read
+// reads as restricted until it can; so does a read or write that fails.
+func threadReach(ctx context.Context, db Store, turn *model.FoundryAgentTurn, reach Reach) ([]access.Target, error) {
 	retry := func(err error) error {
 		return &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
 	}
 	if reach == ReachWorkspace {
 		if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID, nil); err != nil {
-			return retry(err)
+			return nil, retry(err)
 		}
-		return nil
+		return nil, nil
 	}
 	thread, err := db.GetFoundryAgentThread(ctx, turn.WorkspaceID, turn.ThreadID)
 	if err != nil {
-		return retry(err)
+		return nil, retry(err)
 	}
 	teams, err := db.FoundryTeamsOf(ctx, turn.WorkspaceID, turn.UserID)
 	if err != nil {
-		return retry(err)
+		return nil, retry(err)
 	}
 	principals := []access.Principal{{Kind: access.PrincipalUser, ID: turn.UserID}}
 	for _, team := range teams {
@@ -211,7 +213,7 @@ func threadReach(ctx context.Context, db Store, turn *model.FoundryAgentTurn, re
 	}
 	grants, err := db.ListFoundryAccessGrants(ctx, turn.WorkspaceID, principals)
 	if err != nil {
-		return retry(err)
+		return nil, retry(err)
 	}
 	targets := make([]access.Target, len(grants))
 	for i, g := range grants {
@@ -219,20 +221,57 @@ func threadReach(ctx context.Context, db Store, turn *model.FoundryAgentTurn, re
 	}
 	switch {
 	case thread.Granted == nil:
-		return &Failure{Message: "This conversation began with the workspace's whole view, which your access no longer gives: start a new one", Permanent: true}
+		return nil, &Failure{Message: "This conversation began with the workspace's whole view, which your access doesn't give now: start a new one"}
 	case !access.NewGrants(targets).Holds(thread.Granted.Targets):
-		return &Failure{Message: "This conversation holds what your access no longer lets you read: start a new one", Permanent: true}
+		return nil, &Failure{Message: "This conversation holds what your access no longer lets you read: start a new one", Permanent: true}
 	}
 	if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID, &model.FoundryAgentThreadGrants{Targets: targets}); err != nil {
-		return retry(err)
+		return nil, retry(err)
 	}
-	return nil
+	return targets, nil
+}
+
+// reachAround runs call, a restricted member's tool call, between two reads
+// of their reach and grants, each recorded on the thread (threadReach): the
+// API reads every call as they are at that moment, so a call during which
+// they were made an owner or admin, or their grants changed, may have read
+// what the thread's grants don't hold. Such a call makes the thread the whole
+// view's and fails the turn for good, before its result reaches the model or
+// the person.
+func (t *turnRun) reachAround(ctx context.Context, call func()) error {
+	read := func() (Reach, []access.Target, error) {
+		reach, err := reachOf(t.session, t.turn.WorkspaceID)
+		if err != nil {
+			return reach, nil, err
+		}
+		targets, err := threadReach(ctx, t.r.DB, t.turn, reach)
+		return reach, targets, err
+	}
+	before, held, err := read()
+	if err != nil {
+		return err
+	}
+	call()
+	after, holds, err := read()
+	if err != nil {
+		return err
+	}
+	same := before == after && access.NewGrants(held).Holds(holds) && access.NewGrants(holds).Holds(held)
+	if same {
+		return nil
+	}
+	if err := t.r.DB.RecordFoundryAgentThreadGrants(ctx, t.turn.WorkspaceID, t.turn.ThreadID, nil); err != nil {
+		return &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
+	}
+	return &Failure{Message: "Your access changed while Founder was answering: start a new conversation", Permanent: true}
 }
 
 // turnRun is one attempt's state.
 type turnRun struct {
 	r    *Runner
 	turn *model.FoundryAgentTurn
+	// session is the person's, which every tool call runs as.
+	session integration.Session
 	// reach is the turn's person's, read this attempt.
 	reach Reach
 	// automation is an automation's turn's step, and uses its run's uses of
@@ -315,14 +354,14 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 		// Its owner is now a restricted member, who runs no automation.
 		return out, &Failure{Message: "The automation's owner now reads only through source grants; an owner or admin can take it over", Permanent: true}
 	}
-	if err := threadReach(ctx, r.DB, turn, reach); err != nil {
+	if _, err := threadReach(ctx, r.DB, turn, reach); err != nil {
 		return out, err
 	}
 	// Before the tools register: the prepare tool reads what the sink allows.
 	sink.reach = reach
 	// A card is drawn as its person reads the workspace.
 	sink.cards = SessionCards(r.DB, r.Databases, session, turn.WorkspaceID)
-	t := &turnRun{r: r, turn: turn, reach: reach, automation: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out,
+	t := &turnRun{r: r, turn: turn, session: session, reach: reach, automation: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out,
 		asked: turn.Asked != nil}
 	if step != nil {
 		t.uses = NewAutomationUses(r.DB, step.run, step.name, step.spec)
@@ -754,7 +793,17 @@ func (t *turnRun) runTools(ctx context.Context, uses []llm.ToolUse) error {
 		if err := t.event(ctx, ToolCalled{ToolUseID: use.ID, Name: use.Name, Title: t.title(use.Name), Input: use.Input}); err != nil {
 			return err
 		}
-		content, output, failed := t.callTool(ctx, use, tool != nil)
+		var content string
+		var output any
+		var failed bool
+		run := func() { content, output, failed = t.callTool(ctx, use, tool != nil) }
+		if t.reach == ReachGrants && tool != nil {
+			if err := t.reachAround(ctx, run); err != nil {
+				return err
+			}
+		} else {
+			run()
+		}
 		shown := ToolReturned{ToolUseID: use.ID, Name: use.Name, IsError: failed}
 		if failed {
 			shown.Error = content

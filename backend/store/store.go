@@ -239,7 +239,7 @@ type ReadStore interface {
 
 	// The Assistant (foundry_agent.go)
 	GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error)
-	ListFoundryAgentThreads(ctx context.Context, workspaceID, userID string, grantedOnly bool, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error)
+	ListFoundryAgentThreads(ctx context.Context, workspaceID, userID string, keep func(*model.FoundryAgentThread) bool, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error)
 	GetFoundryAgentTurn(ctx context.Context, workspaceID, id string) (*model.FoundryAgentTurn, error)
 	GetFoundryAgentTurnByClientToken(ctx context.Context, workspaceID, userID, clientToken string) (*model.FoundryAgentTurn, error)
 	ListFoundryAgentTurns(ctx context.Context, threadID string, limit int) ([]*model.FoundryAgentTurn, error)

@@ -27,8 +27,8 @@ import { ontologyQueries, questionQueries } from "./queries";
 // Ask's threads in the shell's sidebar, under the sections (and, on a narrow
 // screen, Founder's page itself until a chat is chosen). Where the build has
 // Founder: New chat, Founder's threads by recency (the dock's list: one list
-// wherever Founder is asked; a grantee's only its own, from its restriction
-// on), then the open ontology's Analyst threads from before Founder (a
+// wherever Founder is asked; a grantee's only those it made whose grants it
+// still holds), then the open ontology's Analyst threads from before Founder (a
 // grantee’s own questions), each marked Earlier question and opened read only.
 // Else, and where the WFE has Founder off, the Analyst's threads
 // (ask-threads.tsx). Rendered outside the ontology's scope: it reads the

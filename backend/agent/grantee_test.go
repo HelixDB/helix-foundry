@@ -176,7 +176,7 @@ func TestAHelpersCLIOffersAGranteeGranteeToolsAlone(t *testing.T) {
 	_, err = hosts.Server(context.Background(), turn, "host:1", func(context.Context, bool) error { return nil })
 	var f *Failure
 	require.ErrorAs(t, err, &f)
-	assert.True(t, f.Permanent)
+	assert.Contains(t, f.Message, "start a new one")
 	db.thread(turn.ThreadID).Granted = &model.FoundryAgentThreadGrants{}
 
 	h.backend.accessErr = status.Error(codes.Unavailable, "the API is down")
@@ -212,26 +212,30 @@ func TestATurnRecordsItsReachOnItsThread(t *testing.T) {
 }
 
 // A restricted member's turn runs only in a thread whose every grant they
-// still hold: one begun with the whole view (before their restriction, or
-// while they were an owner or admin), or one whose grants they lost, fails
-// for good before the model reads its transcript.
+// still hold, and stops before the model reads its transcript: one whose
+// grants they lost fails for good; one begun with the whole view (before
+// their restriction, or while they were an owner or admin) fails to retry, as
+// a role that couldn't be read for a moment reads as restricted.
 func TestAGranteesTurnNeedsItsThreadsGrants(t *testing.T) {
 	stripe := access.ConnectorTarget("conn-stripe")
-	for name, granted := range map[string]*model.FoundryAgentThreadGrants{
-		"begun with the whole view": nil,
-		"its grants lost":           {Targets: []access.Target{stripe}},
+	for name, tc := range map[string]struct {
+		granted   *model.FoundryAgentThreadGrants
+		permanent bool
+	}{
+		"begun with the whole view": {nil, false},
+		"its grants lost":           {&model.FoundryAgentThreadGrants{Targets: []access.Target{stripe}}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, say("Never said."))
 			h.backend.grantee = true
-			h.db.thread("thread1").Granted = granted
+			h.db.thread("thread1").Granted = tc.granted
 			_, err := h.runner.Run(context.Background(), message("What did you read before?"))
 			var f *Failure
 			require.ErrorAs(t, err, &f)
-			assert.True(t, f.Permanent)
+			assert.Equal(t, tc.permanent, f.Permanent)
 			assert.Contains(t, f.Message, "start a new one")
 			assert.Empty(t, h.model.requests, "no model call")
-			assert.Equal(t, granted, h.db.thread("thread1").Granted, "nothing recorded")
+			assert.Equal(t, tc.granted, h.db.thread("thread1").Granted, "nothing recorded")
 		})
 	}
 	t.Run("its grants still held", func(t *testing.T) {
@@ -243,4 +247,57 @@ func TestAGranteesTurnNeedsItsThreadsGrants(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []access.Target{access.TableTarget("conn-stripe", "invoices"), stripe}, h.db.thread("thread1").Granted.Targets)
 	})
+}
+
+// Every call of a restricted member's turn is read between two reads of
+// their reach and grants, each recorded on the thread: a grant given during
+// the turn is recorded once a call may have read it, and a call during which
+// their grants or role changed makes the thread the whole view's and fails
+// the turn for good, its result reaching neither the model nor the person.
+func TestAGranteesCallsRecordWhatTheyMayRead(t *testing.T) {
+	eve := access.Principal{Kind: access.PrincipalUser, ID: user}
+	general, stripe := access.DocumentSetTarget("set-general"), access.ConnectorTarget("conn-stripe")
+	list := func() []llm.Chunk { return call("toolu_1", "helix_foundry_list_ontologies", `{"workspace_id":"ws1"}`) }
+	t.Run("a grant given between calls is recorded at the next", func(t *testing.T) {
+		h := newHarness(t, list(), call("toolu_2", "helix_foundry_list_ontologies", `{"workspace_id":"ws1"}`), say("Sales graph."))
+		h.backend.grantee = true
+		h.db.grants = []model.FoundryAccessGrant{{Principal: eve, Target: general}}
+		h.model.tick = func() {
+			if len(h.model.requests) == 2 && len(h.db.grants) == 1 {
+				h.db.grants = append(h.db.grants, model.FoundryAccessGrant{Principal: eve, Target: stripe})
+			}
+		}
+		_, err := h.runner.Run(context.Background(), message("What do I have?"))
+		require.NoError(t, err)
+		assert.Equal(t, []access.Target{general, stripe}, h.db.thread("thread1").Granted.Targets)
+	})
+	for name, tc := range map[string]struct {
+		change func(h *harness)
+		// said is what the turn fails with; whole, whether the thread is the
+		// whole view's after (a thread whose grants were taken is hidden
+		// anyway).
+		said  string
+		whole bool
+	}{
+		"a grant given during a call": {func(h *harness) {
+			h.db.grants = append(h.db.grants, model.FoundryAccessGrant{Principal: eve, Target: stripe})
+		}, "Your access changed while Founder was answering", true},
+		"made an admin during a call": {func(h *harness) { h.backend.grantee = false }, "Your access changed while Founder was answering", true},
+		"a grant taken during a call": {func(h *harness) { h.db.grants = nil }, "no longer lets you read", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, list(), say("Never said."))
+			h.backend.grantee = true
+			h.db.grants = []model.FoundryAccessGrant{{Principal: eve, Target: general}}
+			h.backend.onCall = func() { tc.change(h) }
+			_, err := h.runner.Run(context.Background(), message("What do I have?"))
+			var f *Failure
+			require.ErrorAs(t, err, &f)
+			assert.True(t, f.Permanent)
+			assert.Contains(t, f.Message, tc.said)
+			assert.Equal(t, tc.whole, h.db.thread("thread1").Granted == nil)
+			assert.Len(t, h.model.requests, 1, "the result never reached the model")
+			assert.NotContains(t, h.db.eventTypes(), "tool_result")
+		})
+	}
 }

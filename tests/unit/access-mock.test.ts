@@ -1677,7 +1677,37 @@ describe("a grantee's Founder", () => {
       answers: { turnId: asking.id, answers: [] },
       clientToken: "relay",
     });
-    expect(refusal(answered)).toEqual([404, "turn not found"]);
+    expect(refusal(answered)).toEqual([404, "thread not found"]);
+  });
+
+  it("hides a thread Eve made as a grantee once she sent in it as an admin", async () => {
+    const mine = (await turn("Who signed?")).sent.body.thread.id;
+    const eveMember = db.memberships.find(
+      (m) => m.workspaceId === "ws_acme" && m.userId === "usr_eve",
+    )!;
+    eveMember.role = "WORKSPACE_ROLE_ADMIN";
+    await turn("And who pays?", { threadId: mine });
+    eveMember.role = "WORKSPACE_ROLE_MEMBER";
+    expect(refusal(await eve("GET", `${AG}/threads/${mine}`))).toEqual([
+      404,
+      "thread not found",
+    ]);
+  });
+
+  it("keeps Eve's thread while a connector grant still holds its table, not once only another table does", async () => {
+    await grant(user("usr_eve"), [general, stripe]);
+    const thread = (await turn("Who pays?")).sent.body.thread.id;
+    expect((await eve("GET", `${AG}/threads/${thread}`)).status).toBe(200);
+    await grant(user("usr_eve"), [
+      general,
+      { kind: "KIND_TABLE", connectorId: stripe.connectorId, table: "customers" },
+    ]);
+    expect(refusal(await eve("GET", `${AG}/threads/${thread}`))).toEqual([
+      404,
+      "thread not found",
+    ]);
+    await grant(user("usr_eve"), [general, stripe]);
+    expect((await eve("GET", `${AG}/threads/${thread}`)).status).toBe(200);
   });
 
   it("hides Eve's thread once she loses a grant it ran under, until she holds it again", async () => {

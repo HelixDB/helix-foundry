@@ -794,7 +794,7 @@ func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, worker
 	if err != nil {
 		return nil, err
 	}
-	if err := threadReach(ctx, h.DB, turn, reach); err != nil {
+	if _, err := threadReach(ctx, h.DB, turn, reach); err != nil {
 		return nil, err
 	}
 	sink.reach = reach
