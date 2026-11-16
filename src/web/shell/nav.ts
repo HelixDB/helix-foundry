@@ -9,6 +9,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
+import { FOUNDER } from "../../shared/deployment";
 import type {
   AreaShell,
   NavChild,
@@ -53,11 +54,13 @@ const item = (
   match: string[],
 ): NavItem => ({ id, to, label, icon, match, children: childrenOf(id) });
 
+// Questions about an ontology's database, the main page (/ opens it): with
+// Founder in the build, Founder's page, whose answers are the Analyst's;
+// else the Analyst's. Each opens the ontology last opened, and picks another
+// in its header.
+const ask = (label: string) => item("ask", "/ask", label, Sparkles, ["/ask"]);
 export const primaryNav: NavItem[] = [
-  // Questions about an ontology's database, the main page (/ opens it), and
-  // the database itself: each opens the ontology last opened, and picks
-  // another in its header.
-  item("ask", "/ask", "Analyst", Sparkles, ["/ask"]),
+  ask(FOUNDER ? "Founder" : "Analyst"),
   // Tiles of queries over ontologies' loads, pinned ones first.
   item("dashboards", "/dashboards", "Dashboards", LayoutDashboard, [
     "/dashboards",
@@ -85,10 +88,12 @@ export const navSection = (id: SectionId | undefined) =>
 // A grantee's sections (a member restricted to what source grants give):
 // Analyst, the pinned dashboards and the ontologies its grants cover (with
 // their Explorer, whose Records read their shared loads; there is no graph
-// for it). Automations are people's: a grantee has none.
-export const granteeNav: NavItem[] = primaryNav.filter(
-  (n) => n.id === "ask" || n.id === "dashboards" || n.id === "ontology",
-);
+// for it). Automations are people's: a grantee has none, nor Founder (the
+// WFE denies it every route), so its Ask is the Analyst's.
+export const granteeNav: NavItem[] = [
+  ask("Analyst"),
+  ...primaryNav.filter((n) => n.id === "dashboards" || n.id === "ontology"),
+];
 // While the workspace is onboarding, its one section: the wizard, so Settings
 // (where an AI provider is chosen) has a way back.
 export const onboardingNav: NavItem[] = [

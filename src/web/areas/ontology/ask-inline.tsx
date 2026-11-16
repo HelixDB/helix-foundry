@@ -16,7 +16,8 @@ import { InOntology } from "./scope";
  * One Analyst question as /ask shows it, anywhere in the app (Founder's
  * dock, under the step that asked it): its steps, answer, citations and
  * visuals, without what was asked or the avatar, which the conversation
- * shows, then Open in Analyst on its thread. Read with GET of one, which
+ * shows, then Open the full answer: its thread on Founder's page, read only
+ * (founder-page.tsx `?thread=`). Read with GET of one, which
  * keeps the queries' outputs, and polled while it is live. `onNavigate`
  * runs whenever a link inside it changes the page (a citation, a source, a
  * chart's bar), so a phone's drawer closes. Default export: loaded lazily.
@@ -97,7 +98,7 @@ export default function InlineQuestion({
           o.currentLoad?.id === q.loadId ? null : q.loadId || null,
         )}
       >
-        Open in Analyst
+        Open the full answer
       </ButtonLink>
     </div>
   );

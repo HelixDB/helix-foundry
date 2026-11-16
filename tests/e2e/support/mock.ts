@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   expect,
@@ -140,6 +141,9 @@ export const mock = {
     agentDeltaMs?: number;
     agentOutcome?: "fail" | "budget_exhausted" | "not_run";
     agentActionTtlMs?: number;
+    // false: Founder is off (foundry.agent.enabled): every one of its routes
+    // refuses, so /ask is the Analyst's page, its composer and all.
+    agentEnabled?: boolean;
     // Automations (mock/routes/automations.ts): the worker's clock moved
     // this far ahead (a schedule fires without waiting), each step's time,
     // the runs a workspace starts a day, automations off on this stamp,
@@ -534,6 +538,42 @@ export async function postToWfe(page: Page, path: string, data: object) {
   });
   expect(res.status(), await res.text()).toBe(200);
   return res.json();
+}
+
+/**
+ * Asks `question` of an ontology's current load through the WFE, as the
+ * Analyst's composer did before Founder, and opens its thread on Founder's
+ * page, read only (`?thread=`): the question's article.
+ */
+export async function askAnalyst(
+  page: Page,
+  question: string,
+  ontologyId = "ont_acme_contracts",
+) {
+  const asked = await postToWfe(
+    page,
+    `/v1/workspaces/ws_acme/foundry/ontologies/${ontologyId}/questions`,
+    { question, clientToken: randomUUID() },
+  );
+  const thread: string = asked.question.threadId || asked.question.id;
+  await page.goto(`/ask/${ontologyId}?thread=${thread}`);
+  return page.getByRole("article", { name: `Question: ${question}` });
+}
+
+/**
+ * Starts one of Ada's threads with Founder through the WFE, as its composer
+ * does, sending no page: the thread's id.
+ */
+export async function startFounderThread(
+  page: Page,
+  text: string,
+): Promise<string> {
+  return (
+    await postToWfe(page, "/v1/workspaces/ws_acme/foundry/agent/turns", {
+      text,
+      clientToken: randomUUID(),
+    })
+  ).thread.id;
 }
 
 /**

@@ -137,13 +137,24 @@ export const ontologyPaths = {
   // Questions about a load: a thread, or a new one, optionally about one
   // entity (its entity id); `new` opens the new thread where a narrow screen
   // would show the threads. The page keeps `?load=` as the other views do.
+  // On Founder's page (founder-page.tsx), `chat` is one of Founder's
+  // threads, `thread` an Analyst thread read only, and `about` a name a new
+  // chat's message starts with.
   ask: (
     ontologyId: string,
-    view?: { thread?: string; focus?: string; new?: boolean },
+    view?: {
+      thread?: string;
+      chat?: string;
+      focus?: string;
+      about?: string;
+      new?: boolean;
+    },
   ) => {
     const q = new URLSearchParams();
     if (view?.thread) q.set("thread", view.thread);
+    if (view?.chat) q.set("chat", view.chat);
     if (view?.focus) q.set("focus", view.focus);
+    if (view?.about) q.set("about", view.about);
     if (view?.new) q.set("new", "1");
     return "/ask/" + enc(ontologyId) + (q.size ? "?" + q : "");
   },

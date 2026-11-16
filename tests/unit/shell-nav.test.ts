@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   activeSection,
   allSections,
@@ -52,6 +52,32 @@ describe("the sections", () => {
     expect(navSection("explore")).toBe("ontology");
     expect(navSection("data")).toBe("data");
     expect(navSection(undefined)).toBeUndefined();
+  });
+});
+
+describe("on a build with Founder", () => {
+  // The build is read as the module loads (src/shared/deployment.ts).
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("names Ask Founder, its sidebar's threads Threads, and keeps a grantee's Analyst", async () => {
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_FOUNDRY_ASSISTANT", "1");
+    const nav = await import("@/web/shell/nav");
+    expect(nav.primaryNav[0]).toMatchObject({
+      id: "ask",
+      label: "Founder",
+      to: "/ask",
+      match: ["/ask"],
+    });
+    expect(nav.granteeNav.map((n) => [n.id, n.label, n.to])).toEqual([
+      ["ask", "Analyst", "/ask"],
+      ["dashboards", "Dashboards", "/dashboards"],
+      ["ontology", "Ontologies", "/ontology"],
+    ]);
+    expect(nav.sectionSidebars.ask?.label).toBe("Threads");
   });
 });
 

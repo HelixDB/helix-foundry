@@ -1,6 +1,5 @@
-import type { Page } from "@playwright/test";
-import type { FoundryQuestion } from "@/shared/wfe";
 import {
+  askAnalyst as ask,
   expect,
   mock,
   signIn,
@@ -8,39 +7,23 @@ import {
   uploadAndLoadContract,
 } from "./support/mock";
 
-// Ask: a question about the loaded contract, its steps as they stream (each
-// input in words, the query as a readable path, and its JSON; a failed call
-// says why, a refused answer says it was corrected, the accepted one says
-// Answered), the answer as plain text with citation chips (none
-// of the model's markup renders), and chips that open the document at the
-// quoted span, the entity, the table row, the derived fact and the rule
-// break. A question the ontology can't answer drafts a new version with it,
-// a refused one says why, and an entity's page asks about it in a drawer.
-// The layout is a chat app's: the threads in the sidebar, grouped by
-// recency; a new thread's question and suggestions; the composer pinned
-// under the conversation; and on a phone, the threads as the page.
-
-const X = "/explore/ont_acme_contracts";
-
-async function ask(page: Page, question: string) {
-  await page.getByRole("link", { name: "Analyst", exact: true }).click();
-  await expect(
-    page.getByRole("heading", {
-      level: 1,
-      name: "What do you want to know about Customer contracts?",
-    }),
-  ).toBeVisible();
-  const form = page.getByRole("form", { name: "Ask a question" });
-  await form.getByRole("textbox", { name: /^Question/ }).fill(question);
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
-  await expect(page).toHaveURL(/\/ask\/ont_acme_contracts\?thread=q_/);
-  return page.getByRole("article", { name: `Question: ${question}` });
-}
+// The Analyst's answers, as Founder's page shows an Analyst thread from
+// before Founder, read only (`?thread=`; Founder asks the Analyst now,
+// founder-page.spec.ts): a question about the loaded contract, its steps as
+// they stream (each input in words, the query as a readable path, and its
+// JSON; a failed call says why, a refused answer says it was corrected, the
+// accepted one says Answered), the answer as plain text with citation chips
+// (none of the model's markup renders), and chips that open the document at
+// the quoted span, the entity, the table row, the derived fact and the rule
+// break; its query results as charts and tables. A question the ontology
+// can't answer drafts a new version with it. Each question is asked through
+// the WFE, as the Analyst's composer did.
 
 test("asks about a load: streamed steps, a plain-text answer, chips that open the span", async ({
   page,
 }) => {
-  await mock.configure({ loadStepMs: 200, askStepMs: 250, askMarkup: true });
+  // Slow enough to still be streaming once the thread's page has loaded.
+  await mock.configure({ loadStepMs: 200, askStepMs: 400, askMarkup: true });
   await signIn(page);
   await uploadAndLoadContract(page);
 
@@ -96,7 +79,7 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
   // The answer: plain text and numbered chips; the model's image, link and
   // emphasis are dropped, its words kept.
   const answer = question.getByRole("region", { name: "Answer" });
-  await expect(answer).toContainText("Globex Corporation", { timeout: 10_000 });
+  await expect(answer).toContainText("Globex Corporation", { timeout: 20_000 });
   await expect(answer).toContainText("Read more now");
   await expect(answer.locator("img, script, b, strong")).toHaveCount(0);
   await expect(answer.locator('a[href^="http"]')).toHaveCount(0);
@@ -250,22 +233,21 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
   await page.getByRole("button", { name: "From the first" }).click();
   await expect(page.getByText("1–50 of 62 breaks")).toBeVisible();
 
-  // A follow-up stays in the thread.
+  // An Analyst thread from before Founder: listed under the sidebar's
+  // Analyst threads, marked so, and read only, with the way on to Founder.
   await page.goBack();
-  await expect(page.getByRole("navigation", { name: "Threads" })).toContainText(
-    "Who signed the services agreement?",
+  await expect(
+    page
+      .getByRole("navigation", { name: "Threads" })
+      .getByRole("list", { name: "Analyst threads" })
+      .getByRole("link", { name: /^Who signed the services agreement\?/ }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("form", { name: "Ask a follow-up" })).toHaveCount(
+    0,
   );
-  const follow = page.getByRole("form", { name: "Ask a follow-up" });
-  await follow
-    .getByRole("textbox", { name: /^Question/ })
-    .fill("And what do they pay?");
-  await follow.getByRole("button", { name: "Ask", exact: true }).click();
-  await expect(
-    page.getByRole("article", { name: "Question: And what do they pay?" }),
-  ).toBeVisible();
-  await expect(
-    follow.getByRole("button", { name: "Ask", exact: true }),
-  ).toBeDisabled();
+  await expect(page.getByRole("main")).toContainText(
+    "This Analyst thread is read only. Ask Founder to go on.",
+  );
 });
 
 test("shows query results after the paragraphs that introduce them, as charts and tables", async ({
@@ -519,335 +501,6 @@ test("drafts a new version from a question the ontology can't answer", async ({
   await expect(page.getByLabel("Goal")).toHaveValue(
     /Make the ontology able to answer: “Who signed each contract for the customer\?”\nIt lacks: A signed_by link/,
   );
-});
-
-test("says why a question is refused, in the WFE's words", async ({ page }) => {
-  await mock.configure({ loadStepMs: 200, askSpentUsdMicros: 29_600_000 });
-  await signIn(page);
-  await uploadAndLoadContract(page);
-  await page.getByRole("link", { name: "Analyst", exact: true }).click();
-  const form = page.getByRole("form", { name: "Ask a question" });
-  await form.getByRole("textbox", { name: /^Question/ }).fill("Who signed it?");
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
-  await expect(form.getByRole("alert")).toHaveText(
-    "The workspace has spent this month's $30.00 of questions.",
-  );
-});
-
-test("asks about an entity from its page, in a drawer", async ({ page }) => {
-  await mock.configure({ loadStepMs: 200, askStepMs: 100 });
-  await signIn(page);
-  await uploadAndLoadContract(page);
-  await page.goto(
-    `${X}/entities/${Buffer.from("Customer\0k:cus_GLOBEX01").toString("base64url")}`,
-  );
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Globex Corporation" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Ask about this" }).click();
-  const drawer = page.getByRole("dialog", {
-    name: "Ask about Globex Corporation",
-  });
-  await expect(drawer).toContainText("About Customer cus_GLOBEX01");
-  await drawer
-    .getByRole("textbox", { name: /^Question/ })
-    .fill("What did they sign?");
-  await drawer.getByRole("button", { name: "Ask", exact: true }).click();
-  await expect(drawer.getByRole("region", { name: "Answer" })).toContainText(
-    "Globex Corporation",
-    { timeout: 10_000 },
-  );
-  await drawer.getByRole("link", { name: "Open in Analyst" }).click();
-  await expect(page).toHaveURL(/\/ask\/ont_acme_contracts\?thread=q_/);
-  await expect(
-    page.getByRole("article", { name: "Question: What did they sign?" }),
-  ).toContainText("About Customer cus_GLOBEX01");
-});
-
-test("starts a thread from a suggestion, its composer pinned under the conversation", async ({
-  page,
-}) => {
-  // Without visuals, the steps' last disclosure is in view at the end.
-  await mock.configure({ loadStepMs: 200, askStepMs: 150, askVisuals: false });
-  await signIn(page);
-  await uploadAndLoadContract(page);
-  // The load's version was read on the way: its draft's competency
-  // questions are suggestions, under a composer with nothing in it.
-  await page.getByRole("link", { name: "Analyst", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "What do you want to know about Customer contracts?",
-  );
-  const form = page.getByRole("form", { name: "Ask a question" }),
-    box = form.getByRole("textbox", { name: /^Question/ });
-  await expect(box).toHaveValue("");
-  await expect(form).toContainText(
-    // ⌘ on a Mac, Ctrl+ elsewhere (CI).
-    /Answers from the current load \(v3\) · (⌘|Ctrl\+)Enter to ask/,
-  );
-  const suggestions = form.getByRole("group", { name: "Suggested questions" });
-  await expect(suggestions.getByRole("button")).toHaveText([
-    "Which customers are under contract, and which contracts are they signed with?",
-    "What is each customer under contract billed?",
-  ]);
-  // A click asks it at once.
-  await suggestions
-    .getByRole("button", {
-      name: "What is each customer under contract billed?",
-    })
-    .click();
-  await expect(page).toHaveURL(/\?thread=q_/);
-  // Its steps open while they stream; the conversation still follows them.
-  await page.getByRole("button", { name: "Show the steps" }).click();
-  // The bar holds the thread's title; the panel lists it today.
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "What is each customer under contract billed?",
-  );
-  const threads = page
-    .getByRole("region", { name: "Analyst threads" })
-    .getByRole("navigation", { name: "Threads" });
-  await expect(threads.getByRole("heading", { level: 2 })).toHaveText([
-    "Today",
-  ]);
-  await expect(
-    threads.getByRole("link", { name: /^What is each/ }),
-  ).toHaveAttribute("aria-current", "page");
-  await expect(page.getByRole("region", { name: "Answer" })).toContainText(
-    "Globex Corporation",
-    { timeout: 10_000 },
-  );
-
-  // The conversation scrolls under the bar and the composer: it followed the
-  // answer to its end, and the composer sits at the window's foot.
-  const scroller = page.locator(".ak-scroll"),
-    follow = page.getByRole("form", { name: "Ask a follow-up" });
-  const metrics = () =>
-    scroller.evaluate((el) => ({
-      overflow: el.scrollHeight - el.clientHeight,
-      fromEnd: el.scrollHeight - el.scrollTop - el.clientHeight,
-    }));
-  expect((await metrics()).overflow).toBeGreaterThan(100);
-  await expect.poll(async () => (await metrics()).fromEnd).toBeLessThan(2);
-  const pinned = async () => {
-    const r = (await follow.boundingBox())!;
-    expect(r.y + r.height).toBeGreaterThan(900 - 80);
-    expect(r.y + r.height).toBeLessThanOrEqual(900);
-  };
-  await pinned();
-  await expect(
-    page.getByRole("button", { name: "Jump to latest" }),
-  ).toHaveCount(0);
-  // Scrolled up, it stays where the reader is and offers the way back.
-  await scroller.hover();
-  await page.mouse.wheel(0, -4000);
-  await expect(
-    page.getByRole("button", { name: "Jump to latest" }),
-  ).toBeVisible();
-  await expect.poll(async () => (await metrics()).fromEnd).toBeGreaterThan(100);
-  await pinned();
-  await page.getByRole("button", { name: "Jump to latest" }).click();
-  await expect.poll(async () => (await metrics()).fromEnd).toBeLessThan(2);
-  await expect(
-    page.getByRole("button", { name: "Jump to latest" }),
-  ).toHaveCount(0);
-  // A step opened at the end stays where it is: the conversation stops
-  // following, and offers the way back.
-  const call = page
-    .getByRole("list", { name: "Steps" })
-    .getByRole("button")
-    .last();
-  await expect(call).toBeInViewport();
-  const at = (await call.boundingBox())!.y;
-  await call.click();
-  await expect(call).toHaveAttribute("aria-expanded", "true");
-  await expect(
-    page.getByRole("button", { name: "Jump to latest" }),
-  ).toBeVisible();
-  expect((await call.boundingBox())!.y).toBeCloseTo(at, 0);
-
-  // Once something was asked, a version no page has read isn't read for
-  // suggestions: a new tab's new thread has none.
-  await page.goto("/ask/ont_acme_contracts?new=1");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "What do you want to know about Customer contracts?",
-  );
-  await expect(
-    page.getByRole("form", { name: "Ask a question" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("group", { name: "Suggested questions" }),
-  ).toHaveCount(0);
-});
-
-/** Questions the list answers with, in place of the mock's, for layout. */
-async function listQuestions(page: Page, questions: FoundryQuestion[]) {
-  await page.route(
-    (url) =>
-      url.pathname.endsWith("/ontologies/ont_acme_contracts/questions") &&
-      !url.searchParams.has("threadId"),
-    (route) =>
-      route.fulfill({
-        json: {
-          questions,
-          budget: {
-            monthlyUsdMicros: "30000000",
-            spentUsdMicros: "280000",
-            reservedUsdMicros: "0",
-            questionUsdMicros: "500000",
-          },
-        },
-      }),
-  );
-}
-const day = 86_400_000;
-const asked = (id: string, question: string, at: Date): FoundryQuestion => ({
-  id,
-  threadId: id,
-  question,
-  status: "answered",
-  createdAt: at.toISOString(),
-});
-/** Local midnight `days` days back. */
-const midnight = (days: number) => {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - days);
-};
-
-test("groups the threads by when they were last asked in", async ({ page }) => {
-  await listQuestions(page, [
-    asked("q_now", "Who signed the services agreement?", new Date()),
-    asked(
-      "q_week",
-      "Which invoices bill no customer under contract?",
-      new Date(midnight(3).getTime() + day / 2),
-    ),
-    asked(
-      "q_old",
-      "What did Globex sign last year?",
-      new Date(midnight(30).getTime() + day / 2),
-    ),
-  ]);
-  await signIn(page);
-  await page.goto("/ask/ont_acme_contracts");
-  const threads = page
-    .getByRole("region", { name: "Analyst threads" })
-    .getByRole("navigation", { name: "Threads" });
-  await expect(threads.getByRole("heading", { level: 2 })).toHaveText([
-    "Today",
-    "Previous 7 days",
-    "Older",
-  ]);
-  await expect(
-    threads.getByRole("list", { name: "Today" }).getByRole("link"),
-  ).toHaveText(["Who signed the services agreement?just now"]);
-  await expect(
-    threads.getByRole("list", { name: "Previous 7 days" }).getByRole("link"),
-  ).toHaveText([/^Which invoices bill no customer under contract\?\dd ago$/]);
-  await expect(
-    threads.getByRole("list", { name: "Older" }).getByRole("link"),
-  ).toHaveText([/^What did Globex sign last year\?/]);
-  // A new thread is the page.
-  await expect(page.getByRole("link", { name: "New thread" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-});
-
-test("on a phone, shows the threads as the page and in the drawer's sidebar", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await listQuestions(page, [
-    asked("q_now", "Who signed the services agreement?", new Date()),
-  ]);
-  await signIn(page);
-  await page.goto("/ask/ont_acme_contracts");
-  // No sidebar beside the page: the threads are the page until one is
-  // chosen.
-  await expect(
-    page.getByRole("region", { name: "Analyst threads" }),
-  ).toHaveCount(0);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Analyst");
-  const main = page.getByRole("main");
-  await expect(
-    main.getByRole("navigation", { name: "Threads" }).getByRole("link"),
-  ).toHaveText(["Who signed the services agreement?just now"]);
-  await expect(
-    main.getByRole("link", { name: "New thread" }),
-  ).not.toHaveAttribute("aria-current");
-  // New thread opens where the threads were (nothing is loaded yet, so it
-  // offers to load data), and Threads goes back.
-  await main.getByRole("link", { name: "New thread" }).click();
-  await expect(page).toHaveURL(/\/ask\/ont_acme_contracts\?new=1$/);
-  await expect(main.getByRole("link", { name: "Load data" })).toBeVisible();
-  await page.getByRole("button", { name: "Threads" }).click();
-  await expect(main.getByRole("navigation", { name: "Threads" })).toBeVisible();
-
-  // The drawer holds the sidebar, the threads under its sections; choosing
-  // a thread closes it.
-  await page.getByRole("button", { name: "Open navigation" }).click();
-  const drawer = page.getByRole("dialog", { name: "Navigation" });
-  const sections = drawer.getByRole("navigation", { name: "Main navigation" });
-  await expect(sections.getByRole("link")).toHaveCount(4);
-  await expect(sections.getByRole("link", { name: "Analyst" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  await expect(
-    drawer.getByRole("button", { name: "Close navigation" }),
-  ).toBeFocused();
-  const threads = drawer.getByRole("region", { name: "Analyst threads" });
-  await expect(threads.getByRole("link", { name: "New thread" })).toBeVisible();
-  await threads
-    .getByRole("link", { name: /^Who signed the services agreement\?/ })
-    .click();
-  await expect(drawer).toHaveCount(0);
-  await expect(page).toHaveURL(/\?thread=q_now$/);
-  // A section's link closes it too.
-  await page.getByRole("button", { name: "Open navigation" }).click();
-  await drawer
-    .getByRole("navigation", { name: "Data" })
-    .getByRole("link", { name: "Connectors" })
-    .click();
-  await expect(drawer).toHaveCount(0);
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Connectors" }),
-  ).toBeVisible();
-});
-
-test("on a phone, says why the threads couldn't be read, where they would show", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  let failing = true;
-  await page.route(
-    (url) =>
-      url.pathname.endsWith("/ontologies/ont_acme_contracts/questions") &&
-      !url.searchParams.has("threadId"),
-    (route) =>
-      failing
-        ? route.fulfill({
-            status: 503,
-            json: { code: 14, message: "the questions are unavailable" },
-          })
-        : route.continue(),
-  );
-  await signIn(page);
-  await page.goto("/ask/ont_acme_contracts");
-  const threads = page
-    .getByRole("main")
-    .getByRole("navigation", { name: "Threads" });
-  await expect(threads.getByRole("alert")).toContainText(
-    "Couldn’t read the threads",
-    { timeout: 15_000 },
-  );
-  // Read again, there are none to list: the new thread shows straight away
-  // (nothing is loaded yet, so it offers to load data).
-  failing = false;
-  await threads.getByRole("button", { name: "Retry" }).click();
-  await expect(
-    page.getByRole("main").getByRole("link", { name: "Load data" }),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Threads" })).toHaveCount(0);
 });
 
 // An interval with an end, and a malformed one, injected at the browser
