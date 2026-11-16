@@ -483,7 +483,9 @@ test("keeps Connectors at the sidebar's foot, above Feedback, on a desk and in a
   const drawer = page.getByRole("dialog", { name: "Navigation" });
   await page.getByRole("button", { name: "Open navigation" }).click();
   await expect(
-    drawer.getByRole("navigation", { name: "Main navigation" }).getByRole("link"),
+    drawer
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link"),
   ).toHaveCount(4);
   await drawer
     .getByRole("navigation", { name: "Data" })
