@@ -8,7 +8,7 @@ import (
 
 // foundryAutomationCauses adds what an automation's run started: the run and
 // chain depth on syncs and loads, and the job an action step waits for.
-const foundryAutomationCauses = 20261204000000
+const foundryAutomationCauses = 20261205000000
 
 // causeColumns are the columns the migration adds, by table.
 var causeColumns = map[string][]string{
