@@ -13,6 +13,8 @@ import type {
   OntologyVersion,
   QuestionBudget,
   QuestionStatus,
+  QueryExpr,
+  QueryMeasure,
   QueryOutput,
   QueryWhere,
   VersionOf,
@@ -288,29 +290,64 @@ export function parseQuery(x: unknown): OntologyQuery | undefined {
   };
 }
 
+/**
+ * A computed measure's expression: one of its three forms, of two prop
+ * names; undefined for anything else.
+ *
+ * @example
+ * parseExpr({ days_between: ["opened_at", "closed_at"] }); // { days_between: ["opened_at", "closed_at"] }
+ * parseExpr({ ratio: ["won"] }); // undefined
+ * parseExpr({ diff: ["a", "b"], ratio: ["a", "b"] }); // undefined
+ */
+export function parseExpr(x: unknown): QueryExpr | undefined {
+  if (!isRecord(x) || Object.keys(x).length !== 1) return undefined;
+  const [op, operands] = Object.entries(x)[0]!;
+  if (
+    !["days_between", "diff", "ratio"].includes(op) ||
+    !Array.isArray(operands) ||
+    operands.length !== 2 ||
+    !operands.every((p) => str(p))
+  )
+    return undefined;
+  return { [op]: [operands[0], operands[1]] } as QueryExpr;
+}
+
+/**
+ * What an order or an aggregate reads: its `prop` or its `expr`, exactly
+ * one of them; undefined for neither, both, or a malformed one.
+ */
+function parseMeasure(x: Record<string, unknown>): QueryMeasure | undefined {
+  if (x.expr !== undefined && x.expr !== null) {
+    const expr = parseExpr(x.expr);
+    return expr && !str(x.prop) ? { expr } : undefined;
+  }
+  return str(x.prop) ? { prop: x.prop as string } : undefined;
+}
+
 function parseReturn(x: unknown): OntologyQuery["return"] | undefined {
   if (!isRecord(x)) return undefined;
   if (isRecord(x.rows) && Array.isArray(x.rows.columns)) {
-    const columns = x.rows.columns.map((c) =>
-      isRecord(c) && position(c.at) !== undefined
-        ? {
-            at: c.at as number,
-            ...(str(c.prop) ? { prop: c.prop as string } : {}),
-          }
-        : undefined,
-    );
+    // A column is its entity, a prop, or a computed number: an `expr` it
+    // can't read, or one beside a prop, is no column.
+    const columns = x.rows.columns.map((c) => {
+      if (!isRecord(c) || position(c.at) === undefined) return undefined;
+      if (c.expr === undefined || c.expr === null)
+        return {
+          at: c.at as number,
+          ...(str(c.prop) ? { prop: c.prop as string } : {}),
+        };
+      const measure = parseMeasure(c);
+      return measure ? { at: c.at as number, ...measure } : undefined;
+    });
     if (!columns.every((c) => c)) return undefined;
     const o = x.rows.order_by;
+    const by = isRecord(o) ? parseMeasure(o) : undefined;
     return {
       rows: {
-        columns: columns as { at: number; prop?: string }[],
+        columns: columns as { at: number; prop?: string; expr?: QueryExpr }[],
         order_by:
-          isRecord(o) && position(o.at) !== undefined && str(o.prop)
-            ? {
-                at: o.at as number,
-                prop: o.prop as string,
-                desc: o.desc === true,
-              }
+          isRecord(o) && position(o.at) !== undefined && by
+            ? { at: o.at as number, ...by, desc: o.desc === true }
             : null,
         ...(num(x.rows.limit) !== undefined
           ? { limit: x.rows.limit as number }
@@ -340,18 +377,19 @@ function parseReturn(x: unknown): OntologyQuery["return"] | undefined {
       },
     };
   const a = x.aggregate;
+  const measure = isRecord(a) ? parseMeasure(a) : undefined;
   if (
     isRecord(a) &&
     ["sum", "avg", "min", "max"].includes(a.fn as string) &&
     position(a.at) !== undefined &&
-    str(a.prop)
+    measure
   ) {
     const g = a.group_by;
     return {
       aggregate: {
         fn: a.fn as "sum" | "avg" | "min" | "max",
         at: a.at as number,
-        prop: a.prop as string,
+        ...measure,
         group_by:
           isRecord(g) && position(g.at) !== undefined && str(g.prop)
             ? { at: g.at as number, prop: g.prop as string }
@@ -404,6 +442,16 @@ export function parseAskEvent(eventJson: string): AskEvent | undefined {
 const numberOrNull = (x: unknown) => (x === null ? null : num(x));
 
 /**
+ * An aggregate's `skipped` (contract 4.26.0) as it is kept: left out when
+ * absent or 0, as the engine writes it; undefined when it isn't a count.
+ */
+const skippedOf = (x: Record<string, unknown>) => {
+  if (x.skipped === undefined || x.skipped === null) return { of: {} };
+  const n = position(x.skipped);
+  return n === undefined ? undefined : { of: n > 0 ? { skipped: n } : {} };
+};
+
+/**
  * A query's recorded output (contract 3.11.0), or undefined when it isn't
  * one: the page then has no visual of it. Values stay as they came, since
  * the page shows each only as text; a row lacking its edges has none.
@@ -444,10 +492,11 @@ export function parseOutput(x: unknown): QueryOutput | undefined {
     }
     case "aggregate": {
       const value = numberOrNull(x.value),
-        values = position(x.values);
-      return value === undefined || values === undefined
+        values = position(x.values),
+        skipped = skippedOf(x);
+      return value === undefined || values === undefined || !skipped
         ? undefined
-        : { kind: "aggregate", value, values, ...cut };
+        : { kind: "aggregate", value, values, ...skipped.of, ...cut };
     }
     case "group_count":
     case "grouped_aggregate": {
@@ -466,9 +515,13 @@ export function parseOutput(x: unknown): QueryOutput | undefined {
       }
       const groups = list(x.groups, (g) => {
         const aggregate = numberOrNull(g.aggregate),
-          values = position(g.values);
-        return "value" in g && aggregate !== undefined && values !== undefined
-          ? { value: g.value, aggregate, values }
+          values = position(g.values),
+          skipped = skippedOf(g);
+        return "value" in g &&
+          aggregate !== undefined &&
+          values !== undefined &&
+          skipped
+          ? { value: g.value, aggregate, values, ...skipped.of }
           : undefined;
       });
       return (
@@ -1397,9 +1450,32 @@ export function queryNames(q: OntologyQuery) {
     if (t === undefined) return `position ${i}`;
     return types.filter((x) => x === t).length > 1 ? `${t}@${i}` : t;
   };
-  const col = (c: { at: number; prop?: string | null }) =>
-    c.prop ? `${at(c.at)}.${c.prop}` : at(c.at);
+  const col = (c: {
+    at: number;
+    prop?: string | null;
+    expr?: QueryExpr | null;
+  }) =>
+    c.expr
+      ? `${at(c.at)}: ${exprText(c.expr)}`
+      : c.prop
+        ? `${at(c.at)}.${c.prop}`
+        : at(c.at);
   return { at, col, last: types.length - 1 };
+}
+
+/**
+ * A computed measure in words.
+ *
+ * @example
+ * exprText({ days_between: ["opened_at", "closed_at"] }); // "days from opened_at to closed_at"
+ * exprText({ diff: ["revenue", "cost"] }); // "revenue − cost"
+ * exprText({ ratio: ["won", "quoted"] }); // "won ÷ quoted"
+ */
+export function exprText(e: QueryExpr): string {
+  if ("days_between" in e)
+    return `days from ${e.days_between[0]} to ${e.days_between[1]}`;
+  if ("diff" in e) return `${e.diff[0]} − ${e.diff[1]}`;
+  return `${e.ratio[0]} ÷ ${e.ratio[1]}`;
 }
 
 /** What an aggregate's function computes, at the start of a phrase. */
@@ -1462,7 +1538,7 @@ export function queryText(q: OntologyQuery): QueryText {
             (r.group_count.limit !== undefined
               ? ` · top ${r.group_count.limit}`
               : "")
-          : `${AGGREGATE_FN[r.aggregate.fn]} of ${at(r.aggregate.at)}.${r.aggregate.prop}` +
+          : `${AGGREGATE_FN[r.aggregate.fn]} of ${col(r.aggregate)}` +
             (r.aggregate.group_by ? ` by ${col(r.aggregate.group_by)}` : "");
   return { path, filters, returns };
 }
