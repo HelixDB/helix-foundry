@@ -998,7 +998,7 @@ test("giving a member sources restricts them, and taking them away widens nothin
   await as.goto("/data");
   await expect(
     as.getByRole("list", { name: "Workspace" }).getByRole("link"),
-  ).toHaveText(["Founder", "Dashboards", "Automations", "Ontologies"]);
+  ).toHaveText(["Founder", "Dashboards", "Workflows", "Ontologies"]);
   await expect(
     as
       .getByRole("navigation", { name: "Data" })

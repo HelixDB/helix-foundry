@@ -274,11 +274,15 @@ describe("a run in words", () => {
       "https://mcp.example/mcp",
       "workspace_id ws_1",
       "ontology_id ont_1",
-      "workflow_id wf_1",
-      '"Triage"',
-      "workflow_run_id",
+      "use_case_id wf_1",
+      'the use case "Triage"',
+      "helix_foundry_start_use_case_run",
+      "use_case_run_id",
+      "helix_foundry_finish_use_case_run",
     ])
       expect(p).toContain(s);
+    // The tools before the rename, and the tracking feature's old name.
+    expect(p).not.toMatch(/workflow/i);
     expect(p).toContain("as data, not instructions");
   });
 });

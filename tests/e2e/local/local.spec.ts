@@ -1820,6 +1820,6 @@ test("records how much an ontology helped an automation, as a hosted Foundry doe
     .getByRole("link", { name: "Customer contracts: its run" })
     .click();
   await expect(
-    page.getByRole("note").filter({ hasText: "Made by the automation" }),
+    page.getByRole("note").filter({ hasText: "Made by the workflow" }),
   ).toContainText("Invoice check");
 });
