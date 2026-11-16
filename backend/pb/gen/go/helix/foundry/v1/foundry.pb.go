@@ -12580,7 +12580,8 @@ func (x *PreviewFoundryDashboardTileResponse) GetAsOf() string {
 // off, FOUNDRY_DASHBOARD_PUBLIC_OFF; a tile that can't be read, or an
 // ontology it read that was deleted meanwhile or is being purged of People
 // enrichment's profiles, FOUNDRY_DASHBOARD_TILE_FAILED, saying which and why;
-// a snapshot past its size, FOUNDRY_DASHBOARD_TOO_LARGE.
+// a snapshot past its size, FOUNDRY_DASHBOARD_TOO_LARGE; an expired link
+// published again with no expiry chosen, FOUNDRY_DASHBOARD_LINK_EXPIRED.
 type PublishFoundryDashboardRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache

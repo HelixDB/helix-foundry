@@ -6640,7 +6640,7 @@
           "description": "When the link ends, from now; unset keeps a live link's own."
         }
       },
-      "description": "PublishFoundryDashboardRequest reads every tile as the caller, an owner or\nadmin, and keeps their outputs as the dashboard's public snapshot, at its\nlink: a new one the first time or once the last one expired, the same one\nwhen published already. The snapshot is what the publisher reads; anyone\nwith the link sees it without signing in, and it changes only when\npublished again. The dashboard must still be at expected_revision\n(FOUNDRY_DASHBOARD_CHANGED) and have a tile. Refusals are\nFAILED_PRECONDITION with a reason: a caller who isn't an owner or admin,\nFOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY; a host without public links,\nFOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE; a workspace whose owner turned them\noff, FOUNDRY_DASHBOARD_PUBLIC_OFF; a tile that can't be read, or an\nontology it read that was deleted meanwhile or is being purged of People\nenrichment's profiles, FOUNDRY_DASHBOARD_TILE_FAILED, saying which and why;\na snapshot past its size, FOUNDRY_DASHBOARD_TOO_LARGE."
+      "description": "PublishFoundryDashboardRequest reads every tile as the caller, an owner or\nadmin, and keeps their outputs as the dashboard's public snapshot, at its\nlink: a new one the first time or once the last one expired, the same one\nwhen published already. The snapshot is what the publisher reads; anyone\nwith the link sees it without signing in, and it changes only when\npublished again. The dashboard must still be at expected_revision\n(FOUNDRY_DASHBOARD_CHANGED) and have a tile. Refusals are\nFAILED_PRECONDITION with a reason: a caller who isn't an owner or admin,\nFOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY; a host without public links,\nFOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE; a workspace whose owner turned them\noff, FOUNDRY_DASHBOARD_PUBLIC_OFF; a tile that can't be read, or an\nontology it read that was deleted meanwhile or is being purged of People\nenrichment's profiles, FOUNDRY_DASHBOARD_TILE_FAILED, saying which and why;\na snapshot past its size, FOUNDRY_DASHBOARD_TOO_LARGE; an expired link\npublished again with no expiry chosen, FOUNDRY_DASHBOARD_LINK_EXPIRED."
     },
     "FoundryServicePutFoundryDataLayoutBody": {
       "type": "object",
@@ -9438,7 +9438,7 @@
         "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90"
       ],
       "default": "FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED",
-      "description": "FoundryDashboardLinkExpiry is when a publish has its public link end.\n\n - FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED: Keep the link's own: a live link keeps its expires_at, a new one never\nends.\n - FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7: 7, 30 or 90 days from the publish."
+      "description": "FoundryDashboardLinkExpiry is when a publish has its public link end.\n\n - FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED: Keep the link's own: a live link keeps its expires_at, a first one never\nends, and one that expired is refused (FOUNDRY_DASHBOARD_LINK_EXPIRED):\nthe new link's end is the publisher's choice.\n - FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7: 7, 30 or 90 days from the publish."
     },
     "v1FoundryDashboardPublishBlock": {
       "type": "string",

@@ -1463,8 +1463,9 @@ func (FoundryDashboardShareStatus) EnumDescriptor() ([]byte, []int) {
 type FoundryDashboardLinkExpiry int32
 
 const (
-	// Keep the link's own: a live link keeps its expires_at, a new one never
-	// ends.
+	// Keep the link's own: a live link keeps its expires_at, a first one never
+	// ends, and one that expired is refused (FOUNDRY_DASHBOARD_LINK_EXPIRED):
+	// the new link's end is the publisher's choice.
 	FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED FoundryDashboardLinkExpiry = 0
 	FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER       FoundryDashboardLinkExpiry = 1
 	// 7, 30 or 90 days from the publish.
