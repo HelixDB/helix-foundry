@@ -255,7 +255,7 @@ function WorkspaceApp({
   const list = useQuery(ontologyQueries.list(current.id)),
     access = useQuery({ ...myAccessQuery(current.id), enabled: !LOCAL });
   const grantee = !LOCAL && !!access.data?.grantee,
-    // A grantee uses workflows only with its Workflows permission.
+    // A grantee reads use cases only with its Usage permission.
     workflows = !grantee || !!access.data?.workflows,
     onboarding = !grantee && !!list.data && !list.data.ontologies?.length;
   useEffect(

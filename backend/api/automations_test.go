@@ -442,7 +442,7 @@ func TestUpdatePauseResumeDeleteAutomation(t *testing.T) {
 		SpecJson: &moved})
 	require.NoError(t, err)
 	require.False(t, store.lastUpdate.Spec.LayoutOnly, "compared with a revision it no longer has, it is a new spec")
-	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotOwner, Detail: "only its owner changes an automation"}
+	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotOwner, Detail: "only its owner changes a workflow"}
 	_, err = s.UpdateFoundryAutomation(site("user-alan"), &foundryv1.UpdateFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId(), ExpectedRevision: 5,
 		Name: &name})
 	require.Equal(t, codes.PermissionDenied, status.Code(err))

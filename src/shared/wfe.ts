@@ -5249,7 +5249,7 @@ export type ListFoundryAccessResponse = {
   ontologies?: FoundryOntologyAccess[];
   teams?: FoundryTeam[];
   restrictedUserIds?: string[];
-  // The principals whose Workflows permission is off; every other one has it
+  // The principals whose Usage permission is off; every other one has it
   // on. A member is refused it while they or any of their teams has it off.
   workflowsOff?: FoundryPrincipal[];
 };
@@ -5257,9 +5257,9 @@ export type ListFoundryAccessResponse = {
 /**
  * FoundryServiceSetFoundryAccessGrantsBody: PUT .../foundry/access/grants
  * replaces the principal's grants (none takes them all away); a connector or
- * set not in the workspace is NOT_FOUND. `workflows` sets its Workflows
+ * set not in the workspace is NOT_FOUND. `workflows` sets its Usage
  * permission (left out, it stays as it is: on unless turned off): the
- * workflows of the ontologies it reads, its own runs, and every run of one it
+ * use cases of the ontologies it reads, its own runs, and every run of one it
  * reads all of. Answers the principal's grants and permission now.
  */
 export type SetFoundryAccessGrantsRequest = {
@@ -5302,7 +5302,7 @@ export type PreviewFoundryAccessChangeResponse = {
  * `grantee`: this caller reads only through grants (a restricted member);
  * `ontologyIds`: the live ontologies whose current loads its grants hold any
  * of, `partialOntologyIds` those of them it holds only some of; `workflows`:
- * it may use those ontologies' workflows (always, for a caller that isn't a
+ * it may use those ontologies' use cases (always, for a caller that isn't a
  * grantee), seeing only the runs it started of one it holds only some of.
  */
 export type GetMyFoundryAccessResponse = {

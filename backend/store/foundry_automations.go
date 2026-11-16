@@ -70,7 +70,7 @@ func (s *mysqlDB) CreateFoundryAutomation(ctx context.Context, a *model.FoundryA
 		}
 		if count >= max {
 			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationLimit,
-				Detail: fmt.Sprintf("the workspace has %d automations, as many as it may; delete one first", count)}
+				Detail: fmt.Sprintf("the workspace has %d workflows, as many as it may; delete one first", count)}
 		}
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_automations
   (id, workspace_id, owner_user_id, name, description, spec, trigger_kind, trigger_target, status, client_token)
@@ -353,10 +353,10 @@ func (s *mysqlDB) UpdateFoundryAutomation(ctx context.Context, workspaceID, id, 
 func ownsFoundryAutomation(a *model.FoundryAutomation, ownerUserID string, expected int64) error {
 	switch {
 	case a.OwnerUserID != ownerUserID:
-		return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner changes an automation"}
+		return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner changes a workflow"}
 	case a.Revision != expected:
 		return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationChanged,
-			Detail: fmt.Sprintf("the automation is at revision %d, not %d: read it again", a.Revision, expected)}
+			Detail: fmt.Sprintf("the workflow is at revision %d, not %d: read it again", a.Revision, expected)}
 	}
 	return nil
 }
@@ -412,11 +412,11 @@ func (s *mysqlDB) PauseFoundryAutomation(ctx context.Context, workspaceID, id st
 		case err != nil:
 			return err
 		case a.OwnerUserID != by.UserID && !by.Manager:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, pauses an automation"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, pauses a workflow"}
 		case a.Status == model.FoundryAutomationPaused:
 			return nil
 		case a.Status != model.FoundryAutomationActive:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotActive, Detail: "the automation waits for its owner's approval, so it isn't running"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotActive, Detail: "the workflow waits for its owner's approval, so it isn't running"}
 		}
 		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_automations
 SET status='paused', paused_reason='person', paused_by_user_id=?, paused_at=NOW(6), next_fire_at=NULL, cursor_at=NULL, cursor_id='', updated_at=NOW(6)
@@ -441,11 +441,11 @@ func (s *mysqlDB) ResumeFoundryAutomation(ctx context.Context, workspaceID, id, 
 		case err != nil:
 			return err
 		case a.OwnerUserID != ownerUserID:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner resumes an automation: it runs as them"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner resumes a workflow: it runs as them"}
 		case a.Status == model.FoundryAutomationActive:
 			return nil
 		case a.Status == model.FoundryAutomationNeedsApproval:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationUnapproved, Detail: "the automation's changes wait for your approval: approve them to run it"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationUnapproved, Detail: "the workflow's changes wait for your approval: approve them to run it"}
 		case (next != nil) != (a.TriggerKind == "schedule"):
 			return fmt.Errorf("resume foundry automation %s: a schedule, and only a schedule, has its first time", id)
 		}
@@ -473,14 +473,14 @@ func (s *mysqlDB) DeleteFoundryAutomation(ctx context.Context, workspaceID, id s
 		case err != nil:
 			return err
 		case a.OwnerUserID != by.UserID && !by.Manager:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, deletes an automation"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, deletes a workflow"}
 		}
-		if err := tx.cancelFoundryAutomationTurns(ctx, `SELECT id FROM foundry_automation_runs WHERE live_automation=?`, id, "the automation was deleted"); err != nil {
+		if err := tx.cancelFoundryAutomationTurns(ctx, `SELECT id FROM foundry_automation_runs WHERE live_automation=?`, id, "the workflow was deleted"); err != nil {
 			return err
 		}
 		// Its workflow runs first, while live_automation still names its live run.
 		if err := tx.finishFoundryAutomationWorkflowRuns(ctx, `SELECT id FROM foundry_automation_runs WHERE live_automation=?`, id,
-			"The automation was deleted before its run finished.", false); err != nil {
+			"The workflow was deleted before its run finished.", false); err != nil {
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_automation_runs
@@ -598,11 +598,11 @@ FROM foundry_automation_runs WHERE automation_id=? AND trigger_key=?`, a.ID, run
 		}
 		switch {
 		case a.OwnerUserID != run.OwnerUserID:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner runs an automation: it runs as them"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner runs a workflow: it runs as them"}
 		case a.Status == model.FoundryAutomationNeedsApproval:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationUnapproved, Detail: "the automation's changes wait for its owner's approval"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationUnapproved, Detail: "the workflow's changes wait for its owner's approval"}
 		case a.SpecRevision != run.SpecRevision:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationChanged, Detail: "the automation's steps changed meanwhile: run it again"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationChanged, Detail: "the workflow's steps changed meanwhile: run it again"}
 		}
 		refusal, err := tx.foundryAutomationRoom(ctx, a, limits)
 		switch {
@@ -635,10 +635,10 @@ func (s *mysqlDB) foundryAutomationRoom(ctx context.Context, a *model.FoundryAut
 	}
 	switch {
 	case live > 0:
-		return &model.FoundryAutomationRefusal{Reason: model.FoundryAutomationBusy, Detail: "a run of the automation is still going"}, nil
+		return &model.FoundryAutomationRefusal{Reason: model.FoundryAutomationBusy, Detail: "a run of the workflow is still going"}, nil
 	case today >= limits.RunsPerDay:
 		return &model.FoundryAutomationRefusal{Reason: model.FoundryAutomationRunsPerDay,
-			Detail: fmt.Sprintf("the workspace's automations ran %d times in the last 24 hours, as many as they may", today)}, nil
+			Detail: fmt.Sprintf("the workspace's workflows ran %d times in the last 24 hours, as many as they may", today)}, nil
 	}
 	return nil, nil
 }
@@ -728,7 +728,7 @@ func (s *mysqlDB) CancelFoundryAutomationRun(ctx context.Context, workspaceID, i
 			return err
 		}
 		if a.OwnerUserID != by.UserID && !by.Manager {
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, cancels an automation's run"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, cancels a workflow's run"}
 		}
 		var status string
 		if err := tx.db.QueryRowContext(ctx, `SELECT status FROM foundry_automation_runs WHERE id=? FOR UPDATE`, id).Scan(&status); err != nil {
@@ -752,7 +752,7 @@ SET status='failed', error='The run was cancelled.', finished_at=NOW(6) WHERE ru
 SET status='cancelled', error='Cancelled by a person.', lease_owner=NULL, lease_until=NULL, finished_at=NOW(6) WHERE id=?`, id); err != nil {
 			return err
 		}
-		return tx.finishFoundryAutomationWorkflowRuns(ctx, `?`, id, "A person cancelled the automation's run before it finished.", false)
+		return tx.finishFoundryAutomationWorkflowRuns(ctx, `?`, id, "A person cancelled the workflow's run before it finished.", false)
 	})
 	if err != nil {
 		return nil, err
@@ -940,7 +940,7 @@ func (s *mysqlDB) FireFoundryAutomation(ctx context.Context, f model.FoundryAuto
 			fired = model.FoundryAutomationFiredSkipped
 			why := "Skipped: the run before it was still going."
 			if refusal.Reason == model.FoundryAutomationRunsPerDay {
-				why = "Skipped: the workspace's automations ran as many times as they may in 24 hours."
+				why = "Skipped: the workspace's workflows ran as many times as they may in 24 hours."
 			}
 			if err := tx.insertFoundryAutomationRun(ctx, f.Run, string(model.FoundryAutomationRunSkipped), why, "", nil); err != nil {
 				return err

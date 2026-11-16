@@ -940,7 +940,7 @@ func TestFoundryAutomationTurnsHaveTheirOwnBudget(t *testing.T) {
 	failed, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, turn2.ID)
 	require.NoError(t, err)
 	require.Equal(t, model.FoundryAgentTurnFailed, failed.Status)
-	require.Contains(t, *failed.Error, "of automations")
+	require.Contains(t, *failed.Error, "of workflows")
 }
 
 func TestFoundryAutomationWorkspaceDeletion(t *testing.T) {
