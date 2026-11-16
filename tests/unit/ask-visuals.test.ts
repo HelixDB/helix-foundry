@@ -585,17 +585,29 @@ describe("visual plans", () => {
       kind: "rows",
       rows: [
         { cells: [{ type: "Deal", id: "d1", name: "Acme renewal" }, 41.5], edges: [] },
+        { cells: [{ type: "Deal", id: "d3", name: "Initech" }, 12.25], edges: [] },
         { cells: [{ type: "Deal", id: "d2", name: "Globex" }, null], edges: [] },
       ],
-      total: 2,
+      total: 3,
     });
     const plan = visualPlan(rows, query, { kind: "bar" });
     expect(chartOf(plan)).toMatchObject({
       kind: "bar",
       label: "Deal",
       measure: "Deal: days from opened_on to closed_on",
-      points: [{ label: "Acme renewal", value: 41.5, entity: { type: "Deal", id: "d1" } }],
+      // The deal with none isn't drawn.
+      points: [
+        { label: "Acme renewal", value: 41.5, entity: { type: "Deal", id: "d1" } },
+        { label: "Initech", value: 12.25, entity: { type: "Deal", id: "d3" } },
+      ],
     });
+    // Its table shows each, the one with none empty.
+    if (plan.kind !== "chart") return;
+    expect(plan.table.rows.map((r) => r[1])).toEqual([
+      { kind: "number", value: 41.5 },
+      { kind: "number", value: 12.25 },
+      { kind: "none" },
+    ]);
   });
 
   it("turn bars sideways for long or many labels, and say what the bound left out", () => {
