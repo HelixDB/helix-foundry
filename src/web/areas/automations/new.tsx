@@ -150,7 +150,7 @@ function NewChat() {
   if (!threadId)
     return (
       <Frame bar={<Crumbs name="New workflow" />}>
-        <div className="au-new-page" data-replay-block>
+        <div className="au-new-page ag-dots" data-replay-block>
           <div className="au-new-inner">
             <span className="au-new-icon" aria-hidden>
               <Sparkles size={18} />
@@ -169,6 +169,7 @@ function NewChat() {
                 hostState={where?.state ?? "ready"}
                 placeholder={preview || "Describe what should happen…"}
                 initialText={seed.text}
+                minRows={3}
                 onSent={sent}
               />
             </div>
@@ -195,7 +196,7 @@ function NewChat() {
         </>
       }
     >
-      <div className="au-chat" data-replay-block>
+      <div className="au-chat ag-dots" data-replay-block>
         {runtime}
         <Transcript
           data={thread.data}
@@ -210,6 +211,7 @@ function NewChat() {
             runtime={where?.runtime ?? "api"}
             hostState={where?.state ?? "ready"}
             placeholder="Reply to Founder…"
+            minRows={1}
             onSent={sent}
           />
         </div>

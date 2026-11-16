@@ -3777,6 +3777,10 @@ export type AutomationTriggerEvent = {
   count?: number;
   rows?: number;
   by_user_id?: string;
+  // The automations whose runs started the work that fired it, and those that
+  // set them off; how many automation runs led to that work.
+  caused_by_automations?: string[];
+  chain_depth?: number;
 };
 
 /** v1FoundryAutomationRunNode: a step that started. */

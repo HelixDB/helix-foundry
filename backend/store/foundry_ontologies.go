@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 	"slices"
@@ -256,8 +257,11 @@ WHERE id=? AND workspace_id=? AND deleted_at IS NULL`, on, on, id, workspaceID)
 // OweFoundryRefreshes marks every live ontology of the workspace with refresh
 // on whose current load reads one of the connector's tables: its refresh is
 // due at the later of now and its last refresh's start plus refreshEvery, or
-// earlier if one was already due.
-func (s *mysqlDB) OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID string, tables []string, refreshEvery time.Duration) error {
+// earlier if one was already due. syncID is the sync that changed them (""
+// for none, as a deleted connector's): the automation run that started it,
+// if one did, is the refresh's cause while every sync that owes it shares
+// it, and the refresh load queued for it carries it (QueueFoundryRefresh).
+func (s *mysqlDB) OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID, syncID string, tables []string, refreshEvery time.Duration) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT o.id, g.input
 FROM foundry_ontologies o
 JOIN foundry_loads l ON l.id = o.current_load_id
@@ -290,16 +294,31 @@ WHERE o.workspace_id=? AND o.deleted_at IS NULL AND o.auto_refresh`, workspaceID
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("list ontologies to refresh: %w", err)
 	}
+	var cause foundryRefreshCause
+	if syncID != "" && len(marks) > 0 {
+		if err := s.db.QueryRowContext(ctx, `SELECT started_by_automation_run_id, automation_chain_depth FROM connector_syncs WHERE id=? AND workspace_id=?`,
+			syncID, workspaceID).Scan(&cause.runID, &cause.depth); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read what started sync %s: %w", syncID, err)
+		}
+	}
 	for _, id := range marks {
 		last, err := s.lastFoundryRefresh(ctx, id)
 		if err != nil {
 			return err
 		}
-		if err := s.oweFoundryRefresh(ctx, id, last, refreshEvery); err != nil {
+		if err := s.oweFoundryRefresh(ctx, id, last, refreshEvery, cause); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// foundryRefreshCause is the automation run that started the sync owing a
+// refresh, and its chain depth; invalid for a sync a person or Foundry
+// started.
+type foundryRefreshCause struct {
+	runID sql.NullString
+	depth sql.NullInt64
 }
 
 // lastFoundryRefresh is when the ontology last started a refresh, a refresh
@@ -317,15 +336,21 @@ func (s *mysqlDB) lastFoundryRefresh(ctx context.Context, ontologyID string) (sq
 
 // oweFoundryRefresh makes a live ontology with refresh on owe a refresh, due
 // at the later of now and its last refresh's start (last, if it had one)
-// plus refreshEvery, or earlier if one was already due.
-func (s *mysqlDB) oweFoundryRefresh(ctx context.Context, ontologyID string, last sql.NullTime, refreshEvery time.Duration) error {
+// plus refreshEvery, or earlier if one was already due. A refresh owed anew
+// takes cause; one owed already keeps its cause only if cause is the same
+// run, and has none once syncs of different causes owe it.
+func (s *mysqlDB) oweFoundryRefresh(ctx context.Context, ontologyID string, last sql.NullTime, refreshEvery time.Duration, cause foundryRefreshCause) error {
 	due := time.Now().UTC()
 	if last.Valid && last.Time.Add(refreshEvery).After(due) {
 		due = last.Time.Add(refreshEvery).UTC()
 	}
+	// MySQL assigns left to right, each reading the ones before: the cause
+	// reads refresh_due_at as it was, so it goes first.
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_ontologies
-SET refresh_due_at = IF(refresh_due_at IS NULL OR refresh_due_at > ?, ?, refresh_due_at)
-WHERE id=? AND auto_refresh AND deleted_at IS NULL`, due, due, ontologyID); err != nil {
+SET refresh_cause_depth = IF(refresh_due_at IS NULL, ?, IF(refresh_cause_run_id <=> ?, refresh_cause_depth, NULL)),
+    refresh_cause_run_id = IF(refresh_due_at IS NULL, ?, IF(refresh_cause_run_id <=> ?, refresh_cause_run_id, NULL)),
+    refresh_due_at = IF(refresh_due_at IS NULL OR refresh_due_at > ?, ?, refresh_due_at)
+WHERE id=? AND auto_refresh AND deleted_at IS NULL`, cause.depth, cause.runID, cause.runID, cause.runID, due, due, ontologyID); err != nil {
 		return fmt.Errorf("owe refresh of ontology %s: %w", ontologyID, err)
 	}
 	return nil

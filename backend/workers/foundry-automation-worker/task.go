@@ -20,7 +20,17 @@
 // thread, which the foundry-agent-worker runs, and the run waits for it,
 // handed back to the queue. An action step runs once: marked executing first,
 // so an attempt that dies in it leaves it to be found failed, never run
-// again. Off (foundry.automations.enabled false) it fires and walks nothing.
+// again. A sync or a load it started is recorded on the step, in the write
+// that marks the work as the run's (store.AwaitFoundryAutomationJob), and the
+// step waits for it the same way, ending as it ends: a run picked up again
+// reads the step's job and waits on, never starting another.
+//
+// Work an automation's run started never fires that automation again, nor
+// an automation whose run set that run off, however many runs between: a
+// sync or a load carries the run that started it and how many runs led to
+// it, and an event trigger records the work that would loop, or that comes
+// past maxChainDepth runs, as a skipped run saying why. Off
+// (foundry.automations.enabled false) it fires and walks nothing.
 package foundryautomationworker
 
 import (
@@ -29,6 +39,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -65,6 +76,17 @@ const (
 	// actionTimeout bounds one action step's call; a run's lease, renewed
 	// before each step, outlasts it (config.MinAutomationLease).
 	actionTimeout = config.AutomationActionTimeout
+	// syncWait and loadWait bound how long an action step waits for the sync
+	// or the load it started to end: a load may take hours, a sync seldom
+	// more than minutes. The run is handed back between reads, so no lease
+	// is held meanwhile; it reads again after a tenth of the time the work has
+	// taken so far, between foundry.automations.step_wait and jobPollMax.
+	syncWait   = time.Hour
+	loadWait   = 6 * time.Hour
+	jobPollMax = time.Minute
+	// maxChainDepth is how many automation runs in a row may each set off the
+	// next through a sync or a load it started; work past it fires nothing.
+	maxChainDepth = 3
 	// runRetention is how long a run is kept after it ended; pruneWait how
 	// long the worker waits to prune again once nothing is left to.
 	runRetention = 90 * 24 * time.Hour
@@ -101,6 +123,10 @@ type Store interface {
 	StartFoundryAutomationNode(ctx context.Context, runID, workerID, nodeID string, status model.FoundryAutomationNodeStatus) error
 	StartFoundryAutomationAssistant(ctx context.Context, runID, workerID, nodeID string, thread *model.FoundryAgentThread, turn *model.FoundryAgentTurn) error
 	EndFoundryAutomationNode(ctx context.Context, runID, workerID, nodeID string, end model.FoundryAutomationNodeEnd) error
+	AwaitFoundryAutomationJob(ctx context.Context, runID, workerID, nodeID string, job model.FoundryAutomationJob, output json.RawMessage) error
+	GetConnectorSync(ctx context.Context, workspaceID, id string) (*model.ConnectorSync, error)
+	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
+	ListFoundryLoadJobs(ctx context.Context, loadIDs []string, newest int) (map[string]model.FoundryLoadJobs, error)
 	YieldFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time) error
 	RetryFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time, why string) error
 	FinishFoundryAutomationRun(ctx context.Context, id, workerID string, end model.FoundryAutomationRunEnd) error
@@ -227,7 +253,7 @@ func (t *Task) fireSchedules(ctx context.Context) {
 		at := a.NextFireAt.UTC()
 		output := automation.Output{Summary: "Its schedule fired at " + at.In(schedule.Zone).Format("Mon 2 Jan 15:04") + " (" + schedule.ZoneName + ")."}
 		t.fire(ctx, a, spec, model.FoundryScheduleAdvance{Due: *a.NextFireAt, Next: schedule.Next(maxTime(t.now(), at))},
-			"schedule:"+at.Format(time.RFC3339Nano), model.FoundryAutomationEvent{Kind: string(automation.TriggerSchedule), At: at}, &output)
+			"schedule:"+at.Format(time.RFC3339Nano), model.FoundryAutomationEvent{Kind: string(automation.TriggerSchedule), At: at}, &output, "")
 	}
 }
 
@@ -260,14 +286,53 @@ func (t *Task) watch(ctx context.Context) {
 			continue
 		}
 		advance := model.FoundryCursorAdvance{From: *a.Cursor, To: ended[len(ended)-1].Cursor}
-		matched := matching(spec.Trigger(), ended)
-		if len(matched) == 0 {
-			t.fire(ctx, a, spec, advance, "", model.FoundryAutomationEvent{}, nil)
-			continue
+		var fired, looped []model.FoundryAutomationEnded
+		why := ""
+		for _, e := range matching(spec.Trigger(), ended) {
+			if loop := loops(a.ID, spec.Trigger(), e); loop != "" {
+				looped, why = append(looped, e), loop
+				continue
+			}
+			fired = append(fired, e)
 		}
-		event, output := eventOf(spec.Trigger(), matched)
-		t.fire(ctx, a, spec, advance, event.Kind+":"+matched[len(matched)-1].Cursor.ID, event, &output)
+		switch {
+		case len(fired) > 0:
+			// Work that would loop beside it is passed over.
+			event, output := eventOf(spec.Trigger(), fired)
+			t.fire(ctx, a, spec, advance, event.Kind+":"+fired[len(fired)-1].Cursor.ID, event, &output, "")
+		case len(looped) > 0:
+			// Recorded, so its owner sees why it didn't run.
+			event, output := eventOf(spec.Trigger(), looped)
+			t.fire(ctx, a, spec, advance, event.Kind+":"+looped[len(looped)-1].Cursor.ID, event, &output, why)
+		default:
+			t.fire(ctx, a, spec, advance, "", model.FoundryAutomationEvent{}, nil, "")
+		}
 	}
+}
+
+// loops says why automationID's trigger passes over ended work that would
+// loop: a sync or a load its own run started, or a run of an automation that
+// one of its runs set off (through any number of others), or that came after
+// more than maxChainDepth automation runs in a row; "" when it may fire. Work
+// a person or Foundry itself started has no cause and always may.
+func loops(automationID string, trigger automation.Trigger, e model.FoundryAutomationEnded) string {
+	c := e.Cause
+	if c == nil {
+		return ""
+	}
+	what := "sync"
+	if _, load := trigger.(automation.LoadReady); load {
+		what = "load"
+	}
+	switch {
+	case c.AutomationID == automationID:
+		return "Skipped: the " + what + " was started by this workflow itself; running on it would loop."
+	case slices.Contains(c.Chain, automationID):
+		return "Skipped: the " + what + " was started by a workflow this one set off; running on it would loop."
+	case c.Depth > maxChainDepth:
+		return fmt.Sprintf("Skipped: the %s came from a chain of %d workflows setting each other off; a chain stops after %d.", what, c.Depth, maxChainDepth)
+	}
+	return ""
 }
 
 // matching is the ended work trigger fires on, in order: a sync or a draft
@@ -300,6 +365,19 @@ func eventOf(trigger automation.Trigger, matched []model.FoundryAutomationEnded)
 	newest := matched[len(matched)-1]
 	event := model.FoundryAutomationEvent{Kind: string(automation.KindOf(trigger)), At: newest.Cursor.At.UTC(), Outcome: newest.Outcome,
 		Count: int64(len(matched))}
+	// The run's cause is every run that started what it found, and what set
+	// those off: the work it starts carries it on.
+	for _, e := range matched {
+		if c := e.Cause; c != nil {
+			event.CausedBy = append(event.CausedBy, c.Chain...)
+			if c.AutomationID != "" {
+				event.CausedBy = append(event.CausedBy, c.AutomationID)
+			}
+			event.ChainDepth = max(event.ChainDepth, c.Depth)
+		}
+	}
+	slices.Sort(event.CausedBy)
+	event.CausedBy = slices.Compact(event.CausedBy)
 	var out automation.Output
 	switch trigger.(type) {
 	case automation.SyncFinished:
@@ -325,10 +403,11 @@ func eventOf(trigger automation.Trigger, matched []model.FoundryAutomationEnded)
 }
 
 // fire moves a on as advance says and, with output, queues its run, which
-// trigger key names and event says the cause of.
+// trigger key names and event says the cause of; with skip, records it
+// skipped saying so.
 func (t *Task) fire(ctx context.Context, a *model.FoundryAutomation, spec automation.Spec, advance model.FoundryAutomationAdvance, key string,
-	event model.FoundryAutomationEvent, output *automation.Output) {
-	f := model.FoundryAutomationFire{AutomationID: a.ID, WorkspaceID: a.WorkspaceID, Advance: advance}
+	event model.FoundryAutomationEvent, output *automation.Output, skip string) {
+	f := model.FoundryAutomationFire{AutomationID: a.ID, WorkspaceID: a.WorkspaceID, Advance: advance, Skip: skip}
 	if output != nil {
 		rawEvent, err := json.Marshal(event)
 		if err != nil {
@@ -362,10 +441,12 @@ func maxTime(a, b time.Time) time.Time {
 // runState is an attempt of a run: its spec, its steps' states, the
 // owner's session, and the run's uses of ontologies.
 type runState struct {
-	run     *model.FoundryAutomationRun
-	spec    automation.Spec
-	states  map[string]automation.NodeState
-	turns   map[string]string
+	run    *model.FoundryAutomationRun
+	spec   automation.Spec
+	states map[string]automation.NodeState
+	turns  map[string]string
+	// jobs are the syncs and loads action steps wait for, by step.
+	jobs    map[string]string
 	session integration.Session
 	name    string
 	uses    *agent.AutomationUses
@@ -426,15 +507,15 @@ func (t *Task) advance(ctx context.Context, run *model.FoundryAutomationRun) {
 			}
 			err = t.end(ctx, st, step.ID, end)
 		case automation.WaitNode:
-			var waiting bool
-			if waiting, err = t.wait(ctx, st, step.ID); err == nil && waiting {
-				t.yield(ctx, run)
+			var pause time.Duration
+			if pause, err = t.wait(ctx, st, step.ID); err == nil && pause > 0 {
+				t.yield(ctx, run, pause)
 				return
 			}
 		case automation.RunNode:
-			var waiting bool
-			if waiting, err = t.runNode(ctx, st, step.ID); err == nil && waiting {
-				t.yield(ctx, run)
+			var pause time.Duration
+			if pause, err = t.runNode(ctx, st, step.ID); err == nil && pause > 0 {
+				t.yield(ctx, run, pause)
 				return
 			}
 		}
@@ -485,7 +566,8 @@ func (t *Task) open(ctx context.Context, run *model.FoundryAutomationRun) (*runS
 	if err != nil {
 		return nil, err
 	}
-	st := &runState{run: run, spec: spec, states: map[string]automation.NodeState{}, turns: map[string]string{}, session: session, name: a.Name,
+	st := &runState{run: run, spec: spec, states: map[string]automation.NodeState{}, turns: map[string]string{}, jobs: map[string]string{},
+		session: session, name: a.Name,
 		uses: agent.NewAutomationUses(t.db, run, a.Name, spec)}
 	for _, n := range nodes {
 		state := automation.NodeState{Status: automation.NodeStatus(n.Status)}
@@ -506,6 +588,9 @@ func (t *Task) open(ctx context.Context, run *model.FoundryAutomationRun) (*runS
 		}
 		if n.TurnID != nil {
 			st.turns[n.NodeID] = *n.TurnID
+		}
+		if n.JobID != nil {
+			st.jobs[n.NodeID] = *n.JobID
 		}
 		st.states[n.NodeID] = state
 	}
@@ -592,39 +677,40 @@ func (t *Task) fail(ctx context.Context, st *runState, nodeID, why string) error
 	return t.end(ctx, st, nodeID, model.FoundryAutomationNodeEnd{Status: model.FoundryAutomationNodeFailed, Error: why})
 }
 
-// runNode starts the step and, unless it waits (an Assistant step's turn),
-// ends it.
-func (t *Task) runNode(ctx context.Context, st *runState, nodeID string) (waiting bool, err error) {
+// runNode starts the step and, unless it waits (an Assistant step's turn,
+// an action's sync or load), ends it. pause is how long the run waits before
+// it reads the step again; 0 when it goes on.
+func (t *Task) runNode(ctx context.Context, st *runState, nodeID string) (pause time.Duration, err error) {
 	node, _ := st.spec.Node(nodeID)
 	switch c := node.Config.(type) {
 	case automation.TriggerNode:
-		return false, t.endWith(ctx, st, nodeID, automation.Output{}, 0)
+		return 0, t.endWith(ctx, st, nodeID, automation.Output{}, 0)
 	case automation.AssistantNode:
 		return t.startAssistant(ctx, st, nodeID, c)
 	case automation.ActionNode:
-		return false, t.runAction(ctx, st, nodeID, c.Action)
+		return t.runAction(ctx, st, nodeID, c.Action)
 	case automation.ConditionNode:
 		from := st.spec.In(nodeID)[0].From
 		branch, err := c.Check.Evaluate(st.states[from].Output)
 		if err != nil {
-			return false, t.fail(ctx, st, nodeID, sentence(err.Error()))
+			return 0, t.fail(ctx, st, nodeID, sentence(err.Error()))
 		}
 		summary := "It took its false branch."
 		if branch {
 			summary = "It took its true branch."
 		}
-		return false, t.endWith(ctx, st, nodeID, automation.Output{Summary: summary, Branch: &branch}, 0)
+		return 0, t.endWith(ctx, st, nodeID, automation.Output{Summary: summary, Branch: &branch}, 0)
 	case automation.NotifyNode:
-		return false, t.notify(ctx, st, nodeID)
+		return 0, t.notify(ctx, st, nodeID)
 	}
-	return false, fmt.Errorf("%w: step %s is of no kind this worker runs", errBroken, nodeID)
+	return 0, fmt.Errorf("%w: step %s is of no kind this worker runs", errBroken, nodeID)
 }
 
 // startAssistant queues the step's turn in the run's thread, as its owner,
 // and waits for it.
-func (t *Task) startAssistant(ctx context.Context, st *runState, nodeID string, step automation.AssistantNode) (bool, error) {
+func (t *Task) startAssistant(ctx context.Context, st *runState, nodeID string, step automation.AssistantNode) (time.Duration, error) {
 	if !t.assistant {
-		return false, t.fail(ctx, st, nodeID, "Founder isn't available here.")
+		return 0, t.fail(ctx, st, nodeID, "Founder isn't available here.")
 	}
 	run := st.run
 	var thread *model.FoundryAgentThread
@@ -645,19 +731,19 @@ func (t *Task) startAssistant(ctx context.Context, st *runState, nodeID string, 
 	case errors.Is(err, foundrystore.ErrThreadBusy):
 		// Its owner ran a card an earlier step left: the step starts once
 		// that turn ends.
-		return true, nil
+		return t.cfg.StepWait, nil
 	case errors.Is(err, foundrystore.ErrConflict):
-		return false, errors.New("the step had started already")
+		return 0, errors.New("the step had started already")
 	}
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if thread != nil {
 		run.ThreadID = &threadID
 	}
 	st.turns[nodeID] = turn.ID
 	st.states[nodeID] = automation.NodeState{Status: automation.NodeRunning}
-	return true, nil
+	return t.cfg.StepWait, nil
 }
 
 // instruction is an Assistant step's message: its owner's instruction, and
@@ -675,23 +761,27 @@ func title(name string) string {
 	return string([]rune(name)[:maxThreadTitle])
 }
 
-// wait reads the step's turn: still live, the run waits on; ended, the step
-// ends with it: succeeded with its report (else its last words) and spend,
-// or failed with why.
-func (t *Task) wait(ctx context.Context, st *runState, nodeID string) (bool, error) {
+// wait reads what the running step waits for: an action step's sync or
+// load (waitJob), else its Assistant turn. Still live, the run waits on, for
+// pause; ended, the step ends with it: succeeded with its report (else its
+// last words) and spend, or failed with why.
+func (t *Task) wait(ctx context.Context, st *runState, nodeID string) (pause time.Duration, err error) {
+	if jobID, ok := st.jobs[nodeID]; ok {
+		return t.waitJob(ctx, st, nodeID, jobID)
+	}
 	turnID, ok := st.turns[nodeID]
 	if !ok {
-		return false, t.fail(ctx, st, nodeID, "Its Founder turn can't be found.")
+		return 0, t.fail(ctx, st, nodeID, "Its Founder turn can't be found.")
 	}
 	turn, err := t.db.GetFoundryAgentTurn(ctx, st.run.WorkspaceID, turnID)
 	if errors.Is(err, foundrystore.ErrNotFound) {
-		return false, t.fail(ctx, st, nodeID, "Its Founder turn is gone.")
+		return 0, t.fail(ctx, st, nodeID, "Its Founder turn is gone.")
 	}
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if turn.Status.Live() {
-		return true, nil
+		return t.cfg.StepWait, nil
 	}
 	usd := turn.Spend.USDMicros
 	if turn.Status != model.FoundryAgentTurnDone {
@@ -699,22 +789,99 @@ func (t *Task) wait(ctx context.Context, st *runState, nodeID string) (bool, err
 		if turn.Error != nil {
 			why = sentence(*turn.Error)
 		}
-		return false, t.end(ctx, st, nodeID, model.FoundryAutomationNodeEnd{Status: model.FoundryAutomationNodeFailed, Error: why, USDMicros: usd})
+		return 0, t.end(ctx, st, nodeID, model.FoundryAutomationNodeEnd{Status: model.FoundryAutomationNodeFailed, Error: why, USDMicros: usd})
 	}
 	out, err := t.reported(ctx, turn)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	actions, err := t.db.ListFoundryAgentActions(ctx, turn.ThreadID)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	for _, a := range actions {
 		if a.TurnID == turn.ID && a.Status == model.FoundryAgentActionPrepared {
 			out.Pending++
 		}
 	}
-	return false, t.endWith(ctx, st, nodeID, out, usd)
+	return 0, t.endWith(ctx, st, nodeID, out, usd)
+}
+
+// waitJob reads the sync or the load (jobID) an action step started: still
+// live, the step waits on, until syncWait or loadWait after the work was
+// queued, when it fails saying so (the work goes on); ended, the step ends as
+// it did: a sync that succeeded, or a load ready or partial, succeeds; a sync
+// or a load that failed fails it, with why.
+func (t *Task) waitJob(ctx context.Context, st *runState, nodeID, jobID string) (time.Duration, error) {
+	node, _ := st.spec.Node(nodeID)
+	step, ok := node.Config.(automation.ActionNode)
+	if !ok {
+		return 0, fmt.Errorf("%w: step %s waits for work it can't have started", errBroken, nodeID)
+	}
+	started := st.states[nodeID].Output.Result
+	// pending waits on for the work, queued at created, unless it took longer than limit.
+	pending := func(what string, created time.Time, limit time.Duration, within string) (time.Duration, error) {
+		took := t.now().Sub(created)
+		if took >= limit {
+			return 0, t.fail(ctx, st, nodeID, fmt.Sprintf("Its %s didn't end within %s, so the step stopped waiting; the %s may still finish.", what, within, what))
+		}
+		return min(max(took/10, t.cfg.StepWait), jobPollMax), nil
+	}
+	ws := st.run.WorkspaceID
+	switch a := step.Action.(type) {
+	case automation.SyncConnector:
+		sync, err := t.db.GetConnectorSync(ctx, ws, jobID)
+		switch {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			return 0, t.fail(ctx, st, nodeID, "Its sync is gone.")
+		case err != nil:
+			return 0, err
+		}
+		switch sync.Status {
+		case model.ConnectorSyncSucceeded:
+			out := automation.Output{Summary: "Synced its connector.", Count: sync.RowsSynced, Result: started}
+			if sync.RowsSynced != nil {
+				out.Summary = fmt.Sprintf("Synced its connector: it wrote %d rows.", *sync.RowsSynced)
+			}
+			return 0, t.endWith(ctx, st, nodeID, out, 0)
+		case model.ConnectorSyncFailed:
+			why := "The sync failed."
+			if sync.Error != nil && strings.TrimSpace(*sync.Error) != "" {
+				why = "The sync failed: " + sentence(*sync.Error)
+			}
+			return 0, t.fail(ctx, st, nodeID, why)
+		}
+		return pending("sync", sync.CreatedAt, syncWait, "an hour")
+	case automation.CreateLoad:
+		load, err := t.db.GetFoundryLoad(ctx, a.OntologyID, jobID)
+		switch {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			return 0, t.fail(ctx, st, nodeID, "Its load is gone.")
+		case err != nil:
+			return 0, err
+		}
+		switch load.Status {
+		case model.FoundryLoadWriting:
+			return pending("load", load.CreatedAt, loadWait, "6 hours")
+		case model.FoundryLoadReady:
+			return 0, t.endWith(ctx, st, nodeID, automation.Output{Summary: "Loaded its ontology's current version: the load is ready.", Result: started}, 0)
+		case model.FoundryLoadPartial:
+			return 0, t.endWith(ctx, st, nodeID, automation.Output{
+				Summary: "Loaded its ontology's current version: the load is partial, its tables in and some documents unread.", Result: started}, 0)
+		case model.FoundryLoadFailed:
+			jobs, err := t.db.ListFoundryLoadJobs(ctx, []string{load.ID}, 1)
+			if err != nil {
+				return 0, err
+			}
+			why := "The load failed."
+			if newest := jobs[load.ID].Newest; len(newest) > 0 && newest[0].Error != nil && strings.TrimSpace(*newest[0].Error) != "" {
+				why = "The load failed: " + sentence(*newest[0].Error)
+			}
+			return 0, t.fail(ctx, st, nodeID, why)
+		}
+		return 0, t.fail(ctx, st, nodeID, "Its load was deleted before the step saw it end.")
+	}
+	return 0, fmt.Errorf("%w: step %s waits for work its action doesn't start", errBroken, nodeID)
 }
 
 // reported is a turn's step's output: its newest report, else its last words.
@@ -758,8 +925,10 @@ func (t *Task) reported(ctx context.Context, turn *model.FoundryAgentTurn) (auto
 }
 
 // runAction runs an action step once, as the owner approved it: its payload
-// resolved from what its target is now, its step marked executing first.
-func (t *Task) runAction(ctx context.Context, st *runState, nodeID string, a automation.Action) error {
+// resolved from what its target is now, its step marked executing first. A
+// sync or a load it started is recorded on the step, which then waits for it
+// (pause); a publish ends the step.
+func (t *Task) runAction(ctx context.Context, st *runState, nodeID string, a automation.Action) (pause time.Duration, err error) {
 	ws := st.run.WorkspaceID
 	payload := map[string]any{}
 	switch a := a.(type) {
@@ -767,11 +936,11 @@ func (t *Task) runAction(ctx context.Context, st *runState, nodeID string, a aut
 		o, err := t.db.GetFoundryOntology(ctx, ws, a.OntologyID)
 		switch {
 		case errors.Is(err, foundrystore.ErrNotFound) || err == nil && o.DeletedAt != nil:
-			return t.fail(ctx, st, nodeID, "Its ontology is gone.")
+			return 0, t.fail(ctx, st, nodeID, "Its ontology is gone.")
 		case err != nil:
-			return err
+			return 0, err
 		case o.CurrentVersionID == nil:
-			return t.fail(ctx, st, nodeID, "Its ontology has no current version to load.")
+			return 0, t.fail(ctx, st, nodeID, "Its ontology has no current version to load.")
 		}
 		payload["version_id"] = *o.CurrentVersionID
 	case automation.PublishDashboard:
@@ -780,13 +949,13 @@ func (t *Task) runAction(ctx context.Context, st *runState, nodeID string, a aut
 		d, err := t.db.GetFoundryDashboard(ctx, ws, a.DashboardID)
 		switch {
 		case errors.Is(err, foundrystore.ErrNotFound):
-			return t.fail(ctx, st, nodeID, "Its dashboard is gone.")
+			return 0, t.fail(ctx, st, nodeID, "Its dashboard is gone.")
 		case err != nil:
-			return err
+			return 0, err
 		case d.Share == nil:
-			return t.fail(ctx, st, nodeID, "Its dashboard isn't published: publish it on its page, and the workflow refreshes its snapshot from then on.")
+			return 0, t.fail(ctx, st, nodeID, "Its dashboard isn't published: publish it on its page, and the workflow refreshes its snapshot from then on.")
 		case d.Share.SpecRevision != d.Revision:
-			return t.fail(ctx, st, nodeID, "Its dashboard was changed since it was published: publish it again on its page to put the change at its link.")
+			return 0, t.fail(ctx, st, nodeID, "Its dashboard was changed since it was published: publish it again on its page to put the change at its link.")
 		}
 		payload["expected_revision"] = d.Revision
 	}
@@ -804,9 +973,9 @@ func (t *Task) runAction(ctx context.Context, st *runState, nodeID string, a aut
 	}
 	if err := t.db.StartFoundryAutomationNode(ctx, st.run.ID, t.workerID, nodeID, model.FoundryAutomationNodeExecuting); err != nil {
 		if errors.Is(err, foundrystore.ErrConflict) {
-			return errors.New("the step had started already")
+			return 0, errors.New("the step had started already")
 		}
-		return err
+		return 0, err
 	}
 	// The call runs to its end, or its timeout, even while the worker stops:
 	// cut short, it would be unknown.
@@ -818,27 +987,56 @@ func (t *Task) runAction(ctx context.Context, st *runState, nodeID string, a aut
 	case integration.ExecutedOK:
 		result, err := json.Marshal(done.Result.Result)
 		if err != nil {
-			return t.fail(ctx, st, nodeID, "It ran, and its result can't be read.")
+			return 0, t.fail(ctx, st, nodeID, "It ran, and its result can't be read.")
 		}
-		return t.endWith(ctx, st, nodeID, automation.Output{Summary: actionDone(a), Result: result}, 0)
+		var kind model.FoundryAutomationJobKind
+		switch a.(type) {
+		case automation.SyncConnector:
+			kind = model.FoundryAutomationJobSync
+		case automation.CreateLoad:
+			kind = model.FoundryAutomationJobLoad
+		default:
+			return 0, t.endWith(ctx, st, nodeID, automation.Output{Summary: "Published its dashboard's snapshot again.", Result: result}, 0)
+		}
+		return t.await(ctx, st, nodeID, model.FoundryAutomationJob{Kind: kind}, result)
 	case integration.ExecutedUnknown:
-		return t.fail(ctx, st, nodeID, "It may or may not have run: Foundry lost its answer ("+agent.ToolErrorText(done.Err)+").")
+		return 0, t.fail(ctx, st, nodeID, "It may or may not have run: Foundry lost its answer ("+agent.ToolErrorText(done.Err)+").")
 	case integration.ExecutedFailed:
-		return t.fail(ctx, st, nodeID, sentence(agent.ToolErrorText(done.Err)))
+		return 0, t.fail(ctx, st, nodeID, sentence(agent.ToolErrorText(done.Err)))
 	}
-	return t.fail(ctx, st, nodeID, "It ended in a way Foundry doesn't know.")
+	return 0, t.fail(ctx, st, nodeID, "It ended in a way Foundry doesn't know.")
 }
 
-// actionDone says what an action that ran did.
-func actionDone(a automation.Action) string {
-	switch a.(type) {
-	case automation.SyncConnector:
-		return "Started a sync of its connector."
-	case automation.CreateLoad:
-		return "Started a load of its ontology's current version."
-	default:
-		return "Published its dashboard's snapshot again."
+// await records that the action step started job, a sync or a load whose id
+// is result's (as Foundry's tools return it), and waits for it: the step runs
+// on, saying it waits, its job recorded with it and the work marked as the
+// run's, in one write that holds even while the worker stops. An attempt that
+// dies before it leaves the step executing, so the next fails it unknown;
+// none starts the work again.
+func (t *Task) await(ctx context.Context, st *runState, nodeID string, job model.FoundryAutomationJob, result json.RawMessage) (time.Duration, error) {
+	var started struct {
+		ID string `json:"id"`
 	}
+	if json.Unmarshal(result, &started) != nil || started.ID == "" {
+		return 0, t.fail(ctx, st, nodeID, "It started its "+string(job.Kind)+", and Foundry can't tell which one to wait for.")
+	}
+	job.ID = started.ID
+	out := automation.Output{Summary: "Waiting for the " + string(job.Kind) + "…", Result: result}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return 0, err
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+	defer cancel()
+	if err := t.db.AwaitFoundryAutomationJob(writeCtx, st.run.ID, t.workerID, nodeID, job, raw); err != nil {
+		if errors.Is(err, foundrystore.ErrConflict) {
+			return 0, errors.New("the step was no longer executing")
+		}
+		return 0, err
+	}
+	st.jobs[nodeID] = job.ID
+	st.states[nodeID] = automation.NodeState{Status: automation.NodeRunning, Output: out}
+	return t.cfg.StepWait, nil
 }
 
 // notify emails the owner what the run did, where the host sends mail: the
@@ -857,11 +1055,12 @@ func (t *Task) notify(ctx context.Context, st *runState, nodeID string) error {
 			UserID: st.run.OwnerUserID, Status: model.FoundryNotificationPending}})
 }
 
-// yield hands the run back to the queue until its waiting step is read again.
-func (t *Task) yield(ctx context.Context, run *model.FoundryAutomationRun) {
+// yield hands the run back to the queue until its waiting step is read
+// again, after pause.
+func (t *Task) yield(ctx context.Context, run *model.FoundryAutomationRun, pause time.Duration) {
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 	defer cancel()
-	if err := t.db.YieldFoundryAutomationRun(writeCtx, run.ID, t.workerID, t.now().Add(t.cfg.StepWait)); err != nil && !errors.Is(err, foundrystore.ErrNotFound) {
+	if err := t.db.YieldFoundryAutomationRun(writeCtx, run.ID, t.workerID, t.now().Add(pause)); err != nil && !errors.Is(err, foundrystore.ErrNotFound) {
 		log.From(ctx).Warn("hand an automation run back failed; its lease lapses and it is claimed again", "err", err)
 	}
 	runs.WithLabelValues("waiting").Inc()

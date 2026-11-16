@@ -379,7 +379,7 @@ type Store interface {
 	PutFoundryDataLayout(ctx context.Context, l *model.FoundryDataLayout, expectedRevision int64) error
 	CreateFoundryLoad(ctx context.Context, job *model.FoundryGraphJob) error
 	QueueFoundryRefresh(ctx context.Context, workspaceID, ontologyID string, job *model.FoundryGraphJob) (bool, error)
-	OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID string, tables []string, refreshEvery time.Duration) error
+	OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID, syncID string, tables []string, refreshEvery time.Duration) error
 	SetFoundryOntologyAutoRefresh(ctx context.Context, workspaceID, id string, on bool) error
 	SetFoundryGraphJobSources(ctx context.Context, id, workerID string, sources []model.FoundryLoadSource) error
 	SetCurrentFoundryLoad(ctx context.Context, workspaceID, ontologyID, loadID string, extract, resend *model.FoundryGraphJob,
@@ -535,6 +535,8 @@ type Store interface {
 	StartFoundryAutomationNode(ctx context.Context, runID, workerID, nodeID string, status model.FoundryAutomationNodeStatus) error
 	StartFoundryAutomationAssistant(ctx context.Context, runID, workerID, nodeID string, thread *model.FoundryAgentThread, turn *model.FoundryAgentTurn) error
 	EndFoundryAutomationNode(ctx context.Context, runID, workerID, nodeID string, end model.FoundryAutomationNodeEnd) error
+	AwaitFoundryAutomationJob(ctx context.Context, runID, workerID, nodeID string, job model.FoundryAutomationJob, output json.RawMessage) error
+	MarkFoundryAutomationCause(ctx context.Context, runID string, job model.FoundryAutomationJob) error
 	YieldFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time) error
 	RetryFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time, why string) error
 	FinishFoundryAutomationRun(ctx context.Context, id, workerID string, end model.FoundryAutomationRunEnd) error

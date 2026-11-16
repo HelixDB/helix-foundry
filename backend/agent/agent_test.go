@@ -76,6 +76,18 @@ type memStore struct {
 	// record the runs' uses of ontologies.
 	nodes map[string][]*model.FoundryAutomationRunNode
 	uses  workflowUses
+	// causes are the syncs and loads marked as an automation run's, by run.
+	causes map[string][]model.FoundryAutomationJob
+}
+
+func (s *memStore) MarkFoundryAutomationCause(_ context.Context, runID string, job model.FoundryAutomationJob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.causes == nil {
+		s.causes = map[string][]model.FoundryAutomationJob{}
+	}
+	s.causes[runID] = append(s.causes[runID], job)
+	return nil
 }
 
 func (s *memStore) ListFoundryAutomationRunNodes(_ context.Context, runID string) ([]*model.FoundryAutomationRunNode, error) {

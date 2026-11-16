@@ -24,25 +24,14 @@
 }
 .fd-composer {
   flex: none;
-  border-top: 1px solid var(--hf-border);
-  background: var(--hf-bg);
-}
-.fd-composer .ag-composer {
+  width: 100%;
   max-width: calc(var(--ak-col) + 2 * var(--ak-gutter));
   margin: 0 auto;
-  padding-right: var(--ak-gutter);
-  padding-left: var(--ak-gutter);
-  border-top: 0;
+  padding: var(--hf-space-1) var(--ak-gutter)
+    calc(var(--hf-space-15) + env(safe-area-inset-bottom));
 }
 
 /* A new chat: the question to answer, the composer centred under it. */
-.fd-start .ag-composer {
-  padding: 0;
-  border-top: 0;
-}
-.fd-start .ag-input-row {
-  box-shadow: var(--hf-shadow-2);
-}
 .fd-start .ag-runtime {
   border: 1px solid var(--hf-border);
   border-radius: var(--hf-radius-lg);

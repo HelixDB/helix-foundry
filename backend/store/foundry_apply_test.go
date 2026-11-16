@@ -29,7 +29,7 @@ func TestFoundryApply(t *testing.T) {
 	t.Run("queues an apply to the current load", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, current := refreshFixture(t, "AQ")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob("q1"))
 		require.NoError(t, err)
 		require.True(t, queued)
@@ -48,7 +48,7 @@ func TestFoundryApply(t *testing.T) {
 	t.Run("records the snapshots it applied and keeps the load current", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, current := refreshFixture(t, "AR")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		_, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob("r1"))
 		require.NoError(t, err)
 		job := f.claimed(t, "w2", id26("AJ-r1"))
@@ -76,7 +76,7 @@ func TestFoundryApply(t *testing.T) {
 	t.Run("spaces applies by the plan's interval", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, _ := refreshFixture(t, "AS")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Hour))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Hour))
 		_, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob("s1"))
 		require.NoError(t, err)
 		job := f.claimed(t, "w2", id26("AJ-s1"))
@@ -84,7 +84,7 @@ func TestFoundryApply(t *testing.T) {
 			Status: model.FoundryGraphJobSucceeded, IngestDone: true, Next: next("s1"),
 		})
 		require.NoError(t, err)
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Hour))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Hour))
 		due := f.ontologyNow(t).RefreshDueAt
 		require.NotNil(t, due)
 		assert.WithinDuration(t, time.Now().Add(time.Hour), *due, 5*time.Second)
@@ -95,7 +95,7 @@ func TestFoundryApply(t *testing.T) {
 	t.Run("hands a failed apply to a full refresh load", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, current := refreshFixture(t, "AF")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		_, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob("f1"))
 		require.NoError(t, err)
 		job := f.claimed(t, "w2", id26("AJ-f1"))
@@ -125,7 +125,7 @@ func TestFoundryApply(t *testing.T) {
 	t.Run("keeps the tables an apply brought in when its documents fail", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, current := refreshFixture(t, "AD")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		_, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob("d1"))
 		require.NoError(t, err)
 		job := f.claimed(t, "w2", id26("AJ-d1"))
@@ -147,7 +147,7 @@ func TestFoundryApply(t *testing.T) {
 	t.Run("gives way to a load the user starts", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, current := refreshFixture(t, "AP")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		_, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob("p1"))
 		require.NoError(t, err)
 		f.claimed(t, "w2", id26("AJ-p1"))
@@ -164,7 +164,7 @@ func TestFoundryApply(t *testing.T) {
 	t.Run("claims a user's job before an apply", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, _ := refreshFixture(t, "AO")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		_, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob("o1"))
 		require.NoError(t, err)
 		g := foundryFixture{db: f.db, ontology: sampleOntology(t, f.db, id26("FWS-AO2"), "AO2")}
@@ -187,7 +187,7 @@ func TestFoundryApply(t *testing.T) {
 		f, connectorID, current := refreshFixture(t, "AB")
 		_, err := testDB.ExecContext(ctx, `UPDATE foundry_loads SET finished_at = NOW(6) - INTERVAL 8 DAY WHERE id=?`, current)
 		require.NoError(t, err)
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		_, err = f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob("b1"))
 		require.NoError(t, err)
 		job := f.claimed(t, "w2", id26("AJ-b1"))
@@ -212,7 +212,7 @@ func TestFoundryApply(t *testing.T) {
 	t.Run("leaves a young load to its applies", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, _ := refreshFixture(t, "AY")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		_, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob("y1"))
 		require.NoError(t, err)
 		job := f.claimed(t, "w2", id26("AJ-y1"))
@@ -229,7 +229,7 @@ func TestFoundryApply(t *testing.T) {
 	t.Run("claims a refresh load with the load it replaces", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, current := refreshFixture(t, "AC")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		_, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob("c1"))
 		require.NoError(t, err)
 		job := f.claimed(t, "w2", id26("RJ-c1"))

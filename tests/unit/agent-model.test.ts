@@ -19,6 +19,7 @@ import {
   pageContext,
   parseAgentEvent,
   planName,
+  promptHeight,
   payloadText,
   pretty,
   questionOf,
@@ -1710,5 +1711,28 @@ describe("stepLabel", () => {
     expect(
       stepLabel({ id: "t", name: "helix_foundry_unknown", input: {} }),
     ).toBe("helix_foundry_unknown");
+  });
+});
+
+describe("promptHeight", () => {
+  const at = (content: number, minRows = 2, maxRows = 8) =>
+    promptHeight({ line: 22, padding: 14, content, minRows, maxRows });
+  it("keeps an empty or one-line field at its least rows", () => {
+    expect(at(0)).toEqual({ height: 58, scrolls: false });
+    expect(at(36)).toEqual({ height: 58, scrolls: false });
+    expect(at(36, 3)).toEqual({ height: 80, scrolls: false });
+  });
+  it("grows with its text between the bounds", () => {
+    expect(at(14 + 22 * 5)).toEqual({ height: 124, scrolls: false });
+  });
+  it("stops at its most rows, then scrolls down", () => {
+    expect(at(14 + 22 * 8)).toEqual({ height: 190, scrolls: false });
+    // A pixel's rounding past the cap shows no scrollbar.
+    expect(at(14 + 22 * 8 + 1)).toEqual({ height: 190, scrolls: false });
+    expect(at(14 + 22 * 8 + 2)).toEqual({ height: 190, scrolls: true });
+    expect(at(2000)).toEqual({ height: 190, scrolls: true });
+  });
+  it("takes one row as both bounds", () => {
+    expect(at(500, 1, 1)).toEqual({ height: 36, scrolls: true });
   });
 });
