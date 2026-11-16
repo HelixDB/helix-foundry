@@ -152,8 +152,12 @@ describe("approval", () => {
     });
     expect(moved.body.automation).toMatchObject({
       status: "active",
-      specRevision: "2",
+      specRevision: "1",
+      approvedSpecRevision: "1",
     });
+    expect(
+      JSON.parse(moved.body.automation.specJson).nodes[1].position,
+    ).toEqual({ x: 200, y: 300 });
     const changed = await call("PATCH", `${A}/${a.id}`, {
       expectedRevision: moved.body.automation.revision,
       specJson: canonicalJson(
