@@ -64,7 +64,7 @@ export const mock = {
     ontologyStepMs?: number;
     ontologyOutcome?: "succeed" | "fail" | "retry" | "auth";
     // A new generation's agent asks three questions before it drafts.
-    ontologyQuestions?: boolean;
+    ontologyQuestions?: boolean | "time_zone";
     // A revision measuring rules on a comparable load is over its budget.
     reviseOutcome?: "budget";
     // A load's step, how it ends, and whether reading a document fails.
