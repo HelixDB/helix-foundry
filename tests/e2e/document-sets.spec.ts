@@ -884,7 +884,7 @@ test("stores a document of a set its version reads but no route names", async ({
   await expect(details.getByText("0 of 1", { exact: true })).toBeVisible();
   await expect(details).toContainText("Not read by this version");
   await unread.getByRole("link", { name: "See what wasn’t read" }).click();
-  await expect(page).toHaveURL(/\/documents\?.*status=out_of_scope/);
+  await expect(page).toHaveURL(/\/connections\?.*status=out_of_scope/);
   await expect(row(page, "notes.md")).toContainText("Not read by its version");
   await row(page, "notes.md").getByRole("link", { name: "notes.md" }).click();
   await expect(

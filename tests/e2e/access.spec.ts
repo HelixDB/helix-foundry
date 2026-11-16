@@ -157,7 +157,6 @@ test("a restricted member sees only what their sources cover", async ({
     "Analyst",
     "Dashboards",
     "Ontologies",
-    "Explorer",
   ]);
   await expect(as.getByRole("link", { name: "Settings" })).toHaveCount(0);
   await expect(as.getByRole("button", { name: "Search" })).toHaveCount(0);
@@ -1001,7 +1000,6 @@ test("giving a member sources restricts them, and taking them away widens nothin
     "Dashboards",
     "Automations",
     "Ontologies",
-    "Explorer",
     "Connectors",
   ]);
 });
