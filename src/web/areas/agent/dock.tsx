@@ -409,6 +409,11 @@ export function Transcript({
     body = useRef<HTMLDivElement>(null),
     stick = useRef(true),
     lastTop = useRef(0),
+    // When its reader last moved it (wheel, touch, keys, its scrollbar).
+    // Only they stop the following: the browser moves it too, clamping it
+    // while a step's content is swapped (an answer moving under a later
+    // step), and that is no reading up.
+    readerAt = useRef(-Infinity),
     turnsSeen = useRef(0);
   const threadId = data?.thread.id,
     turns = data?.turns?.length ?? 0;
@@ -445,6 +450,9 @@ export function Transcript({
     () => new Map((data?.actions || []).map((a) => [a.id, a])),
     [data?.actions],
   );
+  const reading = () => {
+    readerAt.current = performance.now();
+  };
   return (
     <div
       ref={log}
@@ -452,6 +460,10 @@ export function Transcript({
       role="log"
       aria-label="Conversation"
       tabIndex={0}
+      onWheel={reading}
+      onTouchMove={reading}
+      onPointerDown={reading}
+      onKeyDown={reading}
       onScroll={(e) => {
         const el = e.currentTarget;
         // At the end it follows again; it stops only when its reader moves
@@ -459,7 +471,11 @@ export function Transcript({
         // scroll's event can come after they grew, short of the new end.
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 48)
           stick.current = true;
-        else if (el.scrollTop < lastTop.current) stick.current = false;
+        else if (
+          el.scrollTop < lastTop.current &&
+          performance.now() - readerAt.current < 1000
+        )
+          stick.current = false;
         lastTop.current = el.scrollTop;
       }}
     >

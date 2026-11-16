@@ -148,8 +148,9 @@ test("stays where its reader scrolled up to, until they send again", async ({
       log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
     )
     .toBeLessThan(48);
-  // Read back up: it stays there.
-  await log.evaluate((el) => el.scrollTo({ top: 0 }));
+  // Read back up (the reader's wheel, not a script): it stays there.
+  await log.hover();
+  await page.mouse.wheel(0, -5000);
   await expect(
     log.getByText("Load Customer contracts", { exact: true }),
   ).toBeInViewport();
