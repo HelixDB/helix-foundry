@@ -5,24 +5,27 @@ import { Globe, Pin, Plus } from "lucide-react";
 import { FOUNDER } from "../../../shared/deployment";
 import type { FoundryDashboard } from "../../../shared/wfe";
 import {
-  ButtonLink,
+  Button,
   SkeletonText,
   cx,
   formatRelative,
   useNow,
 } from "../../kit";
+import { useShell } from "../../shell/context";
 import { useWorkspace } from "../../ui";
+import { NEW_DASHBOARD_PROMPT } from "./model";
 import { dashboardPaths as paths } from "./paths";
 import { dashboardQueries } from "./queries";
 
 // The Dashboards section's list, in the shell's sidebar under the sections
-// while the section is open: New dashboard, then the pinned dashboards
+// while the section is open: New dashboard (Founder, prefilled), then the pinned dashboards
 // (every member's, in the order they were pinned) and the rest by recency.
 // The shell renders it outside the page's routes: it reads the open
 // dashboard from the path and the list from the query the pages share.
 
 export function DashboardList({ onNavigate }: { onNavigate?: () => void }) {
   const { id: ws } = useWorkspace(),
+    shell = useShell(),
     { pathname } = useLocation(),
     now = useNow(60_000);
   const list = useQuery(dashboardQueries.list(ws));
@@ -55,16 +58,18 @@ export function DashboardList({ onNavigate }: { onNavigate?: () => void }) {
   };
   return (
     <div className="db-panel">
-      {list.data?.canCreate && (
+      {list.data?.canCreate && shell.assistant.available && (
         <div className="db-panel-head">
-          <ButtonLink
-            to={`${paths.dashboards()}?new=1`}
+          <Button
             icon={Plus}
             className="db-new"
-            onClick={onNavigate}
+            onClick={() => {
+              onNavigate?.();
+              shell.assistant.compose(NEW_DASHBOARD_PROMPT, "new_dashboard");
+            }}
           >
             New dashboard
-          </ButtonLink>
+          </Button>
         </div>
       )}
       <nav className="db-list" aria-label="Dashboards">

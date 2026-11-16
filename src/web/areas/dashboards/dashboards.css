@@ -1,7 +1,8 @@
 /* Dashboards (prefix db-): the section's list in the sidebar, laid out as
-   the Analyst's threads are; the list page; a dashboard's tiles in rows of
-   1 to 3 (one column on a phone), each an Analyst visual (ask-visual.css);
-   editing a tile; publishing; and the public page (src/web/share). */
+   the Analyst's threads are; the library page's cards (library.tsx); a
+   dashboard's tiles in rows of 1 to 3 (one column on a phone), each an
+   Analyst visual (ask-visual.css); editing a tile; publishing; and the
+   public page (src/web/share). */
 
 /* The sidebar's list: New dashboard, then the pinned and the rest. */
 .db-panel {
@@ -121,34 +122,218 @@
   cursor: pointer;
 }
 
-/* The list page's grid. */
-.db-list-name {
+/* The library (/dashboards, library.tsx): search and filters, then a grid
+   of cards, one column on a phone. A card is a miniature of the dashboard's
+   first rows (drawn from its spec: a header line, then each tile's title
+   and a glyph for how it draws), faded out at its foot, then its name, a
+   line of description, when it was edited and its badges. Its name's link
+   covers the card. */
+.db-library-bar {
+  margin-bottom: var(--hf-space-3);
+}
+.db-cards {
   display: grid;
-  width: 100%;
+  grid-template-columns: repeat(auto-fill, minmax(min(264px, 100%), 1fr));
+  gap: var(--hf-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.db-cards > li {
+  display: grid;
   min-width: 0;
 }
-.db-list-link {
+.db-card-wait {
+  display: block;
+  border-radius: var(--hf-radius-lg);
+}
+.db-card {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-1);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s,
+    transform 0.15s;
+}
+.db-card:hover {
+  border-color: var(--hf-border-strong);
+  box-shadow: var(--hf-shadow-2);
+}
+.db-card:has(.db-card-link:focus-visible) {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .db-card:hover {
+    transform: translateY(-1px);
+  }
+}
+.db-card-body {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--hf-border);
+}
+.db-card-name {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.db-card-link {
+  display: block;
   overflow: hidden;
   color: var(--hf-text);
-  font-weight: 600;
   text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.db-list-link:hover,
-.db-list-link:focus-visible {
-  text-decoration: underline;
+.db-card-link:focus-visible {
+  outline: 0;
 }
-.db-list-muted {
+.db-card-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.db-card-desc {
+  margin: 0;
   overflow: hidden;
-  color: var(--hf-muted);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.db-list-tags {
+.db-card-meta {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 4px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.db-card-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The miniature: a sunken frame of small tiles, its foot faded out. */
+.db-mini {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  height: 148px;
+  padding: 12px 12px 0;
+  overflow: hidden;
+  background: var(--hf-sunken);
+}
+.db-mini::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 44px;
+  background: linear-gradient(to bottom, transparent, var(--hf-sunken));
+  pointer-events: none;
+}
+.db-mini-head {
+  width: 42%;
+  height: 7px;
+  margin-bottom: 2px;
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-border-strong);
+}
+.db-mini-row {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 6px;
+}
+.db-mini-tile {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  height: 62px;
+  padding: 6px 7px;
+  overflow: hidden;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-sm);
+  background: var(--hf-raised);
+}
+.db-mini-row.is-figures .db-mini-tile {
+  height: 40px;
+}
+.db-mini-tile.is-waiting {
+  height: 62px;
+  background: var(--hf-hover);
+}
+.db-mini-tile.is-empty {
+  place-content: center;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.db-mini-title {
+  overflow: hidden;
+  color: var(--hf-text-2);
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-mini-figure {
+  width: 46%;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--hf-text-2);
+  opacity: 0.75;
+}
+.db-mini-chart {
+  display: block;
+  width: 100%;
+  height: 34px;
+  overflow: visible;
+}
+.db-mini-chart rect {
+  fill: var(--hf-chart-1);
+}
+.db-mini-chart polyline {
+  fill: none;
+  stroke: var(--hf-chart-1);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+.db-mini-table {
+  display: grid;
   gap: 4px;
+  padding-top: 1px;
+}
+.db-mini-table span {
+  height: 4px;
+  border-radius: 1px;
+  background: var(--hf-border-strong);
+}
+.db-mini-table span:first-child {
+  background: var(--hf-faint);
+  opacity: 0.6;
 }
 
 /* A dashboard: its tiles in their rows, each row's tiles side by side. */
@@ -342,22 +527,64 @@
   font-size: var(--hf-text-sm);
 }
 
-/* The public page (src/web/share): no app around it, the dashboard in one
-   readable column, light or dark as the viewer's browser is. */
+/* The public page (src/web/share): no app around it, a slim header with
+   the wordmark (linking to Foundry's landing page), then the dashboard in
+   one readable column, light or dark as the viewer's browser is. The
+   column is minmax(0, 1fr) so a wide table scrolls inside its tile and the
+   page never scrolls sideways. */
 .db-public {
   min-height: 100dvh;
   background: var(--hf-bg);
   color: var(--hf-text);
   font-family: var(--hf-font-sans);
 }
+.db-public-bar {
+  border-bottom: 1px solid var(--hf-border);
+  background: var(--hf-raised);
+}
+.db-public-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(1200px, 100%);
+  min-height: 52px;
+  margin: 0 auto;
+  padding: 0 var(--hf-space-3);
+}
+.db-public-brand {
+  flex: none;
+  color: var(--hf-text);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.8px;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.db-public-brand span {
+  font-weight: 400;
+}
+.db-public-brand:hover {
+  color: var(--hf-text-2);
+}
+.db-public-bar-tag {
+  margin-left: auto;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  white-space: nowrap;
+}
 .db-public-main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--hf-space-3);
   width: min(1200px, 100%);
   margin: 0 auto;
   padding: var(--hf-space-4) var(--hf-space-3) var(--hf-space-5);
 }
 @media (max-width: 640px) {
+  .db-public-bar-inner {
+    padding: 0 16px;
+  }
   .db-public-main {
     padding: var(--hf-space-3) 16px var(--hf-space-4);
   }
@@ -365,6 +592,7 @@
 .db-public-head {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 .db-public-head h1 {
   margin: 0;
@@ -388,14 +616,37 @@
   color: var(--hf-muted);
   font-size: var(--hf-text-sm);
 }
+.db-public-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
 .db-public-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 16px;
   padding-top: var(--hf-space-2);
   border-top: 1px solid var(--hf-border);
   color: var(--hf-muted);
   font-size: var(--hf-text-sm);
+  line-height: 1.5;
 }
-.db-public-foot a {
+.db-public-foot p {
+  margin: 0;
+  max-width: 62ch;
+}
+.db-public-made {
   color: var(--hf-text-2);
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.db-public-made:hover {
+  color: var(--hf-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .db-public-state {
   display: grid;

@@ -166,24 +166,40 @@ export function DataGrid<Row extends Record<string, any>>({
     if (controlledSort === undefined) setLocalSort(next);
   };
 
-  const scroller = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null),
+    inner = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0),
-    [viewport, setViewport] = useState(maxHeight);
+    [viewport, setViewport] = useState(maxHeight),
+    // Whether columns lie past the left or right edge: a fade there says
+    // the table scrolls sideways.
+    [edges, setEdges] = useState({ left: false, right: false });
+  const readEdges = () => {
+    const el = scroller.current;
+    if (!el) return;
+    const left = el.scrollLeft > 1,
+      right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    setEdges((e) =>
+      e.left === left && e.right === right ? e : { left, right },
+    );
+  };
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const observer = new ResizeObserver(() =>
-      setViewport(el.clientHeight || maxHeight),
-    );
+    const observer = new ResizeObserver(() => {
+      setViewport(el.clientHeight || maxHeight);
+      readEdges();
+    });
     observer.observe(el);
+    if (inner.current) observer.observe(inner.current);
     return () => observer.disconnect();
   }, [maxHeight]);
   const frame = useRef(0);
   const onScroll = () => {
     cancelAnimationFrame(frame.current);
-    frame.current = requestAnimationFrame(() =>
-      setScrollTop(scroller.current?.scrollTop || 0),
-    );
+    frame.current = requestAnimationFrame(() => {
+      setScrollTop(scroller.current?.scrollTop || 0);
+      readEdges();
+    });
   };
   const start = Math.max(
       0,
@@ -206,7 +222,15 @@ export function DataGrid<Row extends Record<string, any>>({
   };
 
   return (
-    <div className={cx("hf-grid-wrap", className)}>
+    <div
+      className={cx(
+        "hf-grid-wrap",
+        edges.left && "is-scrolled-left",
+        edges.right && "is-scrolled-right",
+        className,
+      )}
+    >
+      <div className="hf-grid-view">
       <div
         ref={scroller}
         className="hf-grid"
@@ -224,7 +248,7 @@ export function DataGrid<Row extends Record<string, any>>({
         }
         onScroll={onScroll}
       >
-        <div className="hf-grid-inner" style={{ minWidth }}>
+        <div ref={inner} className="hf-grid-inner" style={{ minWidth }}>
           <div
             className="hf-grid-row hf-grid-head"
             role="row"
@@ -252,7 +276,10 @@ export function DataGrid<Row extends Record<string, any>>({
                     type="button"
                     disabled={!sortable}
                     onClick={() => toggle(c.key)}
-                    title={c.type || c.kind}
+                    // A header too long for its column shows whole on hover.
+                    title={
+                      typeof c.label === "string" ? c.label : c.type || c.kind
+                    }
                   >
                     <Icon size={12} className="hf-grid-type" aria-hidden />
                     <span>{c.label ?? c.key}</span>
@@ -344,6 +371,7 @@ export function DataGrid<Row extends Record<string, any>>({
             </>
           )}
         </div>
+      </div>
       </div>
       {footer && <div className="hf-grid-foot">{footer}</div>}
     </div>
