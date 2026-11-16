@@ -512,11 +512,17 @@ describe("mock questions", () => {
     // Stored as the canonical EntityRef the worker sends the engine.
     expect(q.focusJson).toBe('{"type":"Customer","id":"cus_GLOBEX01"}');
     expect(
-      contractErrors("ask_request#/$defs/EntityLookup", JSON.parse(q.focusJson)),
+      contractErrors(
+        "ask_request#/$defs/EntityLookup",
+        JSON.parse(q.focusJson),
+      ),
     ).toEqual([]);
     // By its key's plain value or a name, the type optional (contract 4.27.0).
     for (const [focusJson, stored] of [
-      ['{"key": "cus_GLOBEX01", "type": "Customer"}', '{"type":"Customer","key":"cus_GLOBEX01"}'],
+      [
+        '{"key": "cus_GLOBEX01", "type": "Customer"}',
+        '{"type":"Customer","key":"cus_GLOBEX01"}',
+      ],
       ['{"name": "Globex"}', '{"name":"Globex"}'],
     ]) {
       const asked = (await ask({ focusJson, clientToken: focusJson })).body

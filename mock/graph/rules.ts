@@ -546,9 +546,10 @@ function nodeOf(m: Model, ref: unknown): MockNode | undefined {
             ],
           ]
         : typeof r.name === "string"
-          ? ["norm_name", ...(m.program.names.get(t) || []).map((p) => `${p}__nn`)].map(
-              (p) => [p, normName(String(r.name))] as [string, string],
-            )
+          ? [
+              "norm_name",
+              ...(m.program.names.get(t) || []).map((p) => `${p}__nn`),
+            ].map((p) => [p, normName(String(r.name))] as [string, string])
           : [];
     for (const [prop, value] of at) {
       const n = held(m.g.find(t, prop, value));

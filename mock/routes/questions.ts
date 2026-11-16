@@ -1653,7 +1653,9 @@ function focusOf(raw: string): string | undefined {
     return undefined;
   return JSON.stringify(
     Object.fromEntries(
-      Object.entries({ type, id, key, name }).filter(([, v]) => v !== undefined),
+      Object.entries({ type, id, key, name }).filter(
+        ([, v]) => v !== undefined,
+      ),
     ),
   );
 }

@@ -726,7 +726,10 @@ key = ["deal_id"]
         start: { type: "Org", keys: ["bolt", "nope"] },
         return: { rows: { columns: [{ at: 0 }] } },
       }).result,
-    ).toMatchObject({ total: 1, rows: [{ cells: [{ type: "Org", id: "bolt" }] }] });
+    ).toMatchObject({
+      total: 1,
+      rows: [{ cells: [{ type: "Org", id: "bolt" }] }],
+    });
     // Counts, a flag, where and a text search of names.
     expect(
       ok({ start: { type: "Place" }, return: { count: {} } }).result,
@@ -756,7 +759,8 @@ key = ["deal_id"]
     ).toMatchObject({ total: 1, rows: [{ cells: [london] }] });
     // A keyed type without names is found by its key (contract 4.27.0).
     expect(
-      ok({ start: { type: "Org", text: "acme" }, return: { count: {} } }).result,
+      ok({ start: { type: "Org", text: "acme" }, return: { count: {} } })
+        .result,
     ).toEqual({ kind: "count", count: 1 });
     // What the engine refuses, with a pointer to it.
     expect(

@@ -1215,7 +1215,10 @@ describe("the query renderer", () => {
     // Keys' plain values, as the engine takes them since 4.26.0.
     expect(
       queryText({
-        start: { type: "Flight", keys: ["AA 100", { number: "BA 1", day: "2026-03-14" }] },
+        start: {
+          type: "Flight",
+          keys: ["AA 100", { number: "BA 1", day: "2026-03-14" }],
+        },
         return: { count: {} },
       }).path,
     ).toBe("Flight (AA 100, BA 1/2026-03-14)");
