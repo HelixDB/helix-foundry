@@ -4,7 +4,7 @@
    dots; an automation on its full-page canvas (the slim bar, the canvas,
    @xyflow/react restyled with the kit's tokens, its floating toolbar, the
    inspector beside it, the runs list, Settings, the outline); and the steps
-   as they run unattended (the review, the approval, the Assistant's card). */
+   as they run unattended (the review, the approval, Founder's card). */
 
 /* The sidebar's list. */
 .au-panel {
@@ -1351,7 +1351,7 @@
   padding: 0;
 }
 
-/* A new automation: the Assistant's composer over the canvas's dots. */
+/* A new automation: Founder's composer over the canvas's dots. */
 .au-new-page {
   container: au-new / inline-size;
   flex: 1;

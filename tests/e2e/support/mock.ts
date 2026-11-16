@@ -132,7 +132,7 @@ export const mock = {
     // false: answers as a 3.10.0 engine did, without outputs or visuals.
     askVisuals?: boolean;
     askSpentUsdMicros?: number;
-    // The Assistant (mock/routes/agent.ts): each event's time, how a turn
+    // Founder (mock/routes/agent.ts): each event's time, how a turn
     // ends otherwise (or a call a limit kept from running), and how long a
     // card's confirmation lives (5 minutes).
     agentStepMs?: number;
@@ -143,7 +143,7 @@ export const mock = {
     // Automations (mock/routes/automations.ts): the worker's clock moved
     // this far ahead (a schedule fires without waiting), each step's time,
     // the runs a workspace starts a day, automations off on this stamp,
-    // and what the mock Assistant answers a yes-or-no or how-many step.
+    // and what the mock Founder answers a yes-or-no or how-many step.
     automationClockMs?: number;
     automationStepMs?: number;
     automationRunsPerDay?: number;
