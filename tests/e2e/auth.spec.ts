@@ -327,24 +327,36 @@ test("resets a password from the emailed link", async ({ page }) => {
   const resets = await mock.passwordResets();
   expect(resets.map((r) => r.email)).toEqual(["ada@example.com"]);
 
-  // A link without its token, then one the mock never sent.
-  await page.goto("/reset-password");
-  await expect(
-    page.getByRole("heading", { name: "This link is incomplete" }),
-  ).toBeVisible();
+  // A link the mock never sent.
   await page.goto("/reset-password?token=forged");
+  await expect(page).toHaveURL(/\/login\/reset$/);
   await page.getByLabel("New password").fill("a-brand-new-password");
   await page.getByRole("button", { name: "Change password" }).click();
   await expect(page.getByRole("alert").filter({ hasText: /./ })).toHaveText(
     "Reset link is invalid or expired.",
   );
 
+  // The emailed one: its token never shows in the page's URL.
   await page.goto(`/reset-password?token=${resets[0]!.token}`);
+  await expect(page).toHaveURL(/\/login\/reset$/);
+  expect(
+    (await page.context().cookies()).find((c) => c.name === "foundry-reset")
+      ?.httpOnly,
+  ).toBe(true);
+  // Too short, in WorkOS's words; the token stays for another try.
+  await page.getByLabel("New password").fill("short");
+  await page.getByRole("button", { name: "Change password" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: /./ })).toHaveText(
+    "Password must be at least 10 characters long.",
+  );
   await page.getByLabel("New password").fill("a-brand-new-password");
   await page.getByRole("button", { name: "Change password" }).click();
   await expect(
     page.getByRole("heading", { name: "Password changed" }),
   ).toBeVisible();
+  expect(
+    (await page.context().cookies()).some((c) => c.name === "foundry-reset"),
+  ).toBe(false);
   await page.getByRole("link", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/login$/);
   await form.getByLabel("Email").fill("ada@example.com");

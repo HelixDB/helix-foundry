@@ -10,7 +10,12 @@ import {
 } from "@/shared/wfe";
 import type { PasswordAnswer } from "@/web/password";
 import { type AuthConfig, authConfig } from "./config";
-import { loginCookiePrefix } from "./cookies";
+import {
+  cookieOptions,
+  expireCookie,
+  loginCookiePrefix,
+  resetCookieName,
+} from "./cookies";
 import { sameOrigin } from "./csrf";
 import {
   loginCookieName,
@@ -35,10 +40,15 @@ import {
 // in a cookie as the callback keeps one, so /auth/verify-email takes it), or
 // the company's single sign-on when it requires it. forgot { email } answers
 // { sent } (WorkOS emails a link to /reset-password?token=, and says the same
-// for an address without an account); reset { token, password } { reset }.
-// Anything refused is { error } (PasswordAnswer).
+// for an address without an account). That link's GET keeps the token in a
+// cookie and opens /login/reset (resetLink), so no URL, history entry or
+// analytics beacon carries it; reset { password } sets the password with it
+// and answers { reset }. Anything refused is { error } (PasswordAnswer).
 
 export type PasswordAction = "sign-in" | "sign-up" | "forgot" | "reset";
+
+// How long an opened reset link's token is kept: WorkOS's own runs out first.
+const RESET_TTL_SECONDS = 60 * 60;
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 const MAX_BODY = 4096,
@@ -210,6 +220,29 @@ async function signedIn(
   return answer({ redirectTo: returnPath });
 }
 
+/**
+ * GET /reset-password?token=, the link WorkOS emails: keeps the token in a
+ * cookie (base64url, as it may hold any character) and opens /login/reset,
+ * whose URL never names it. A link without one keeps what an earlier link
+ * kept.
+ */
+export function resetLink(request: NextRequest): Response {
+  const response = NextResponse.redirect(new URL("/login/reset", request.url), {
+    status: 303,
+    headers: { ...NO_STORE, "Referrer-Policy": "no-referrer" },
+  });
+  const config = authConfig(),
+    token = request.nextUrl.searchParams.get("token")?.trim() ?? "";
+  if (config && token && token.length <= MAX_TOKEN)
+    response.cookies.set({
+      name: resetCookieName(config),
+      value: Buffer.from(token).toString("base64url"),
+      ...cookieOptions(config),
+      maxAge: RESET_TTL_SECONDS,
+    });
+  return response;
+}
+
 /** The /auth/password/<action> routes. */
 export async function handlePassword(
   request: NextRequest,
@@ -253,17 +286,26 @@ export async function handlePassword(
 
   if (!password) return invalid("Enter a password.");
   if (action === "reset") {
-    const token = field(form, "token", MAX_TOKEN)?.trim() ?? "";
+    const cookie = resetCookieName(config),
+      token = Buffer.from(
+        request.cookies.get(cookie)?.value ?? "",
+        "base64url",
+      ).toString("utf8");
     if (!token)
-      return invalid("This reset link is incomplete. Request a new one.");
+      return invalid(
+        "This reset link has run out. Ask for a new one, then open it in this browser.",
+      );
     const body: ResetPasswordRequest = { token, newPassword: password };
     const called = await callWfe(config, "/v1/auth/password:reset", body);
-    if (called.kind === "ok") return answer({ reset: true });
-    return refuse(
-      called.kind === "refused"
-        ? refusal(action, called.code, called.message)
-        : { error: "unavailable" },
-    );
+    if (called.kind !== "ok")
+      return refuse(
+        called.kind === "refused"
+          ? refusal(action, called.code, called.message)
+          : { error: "unavailable" },
+      );
+    const response = answer({ reset: true });
+    expireCookie(response, cookie, config);
+    return response;
   }
 
   if (!validEmail) return invalid("Enter your email.");

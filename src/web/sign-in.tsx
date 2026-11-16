@@ -11,7 +11,8 @@ import { LOCAL } from "../shared/deployment";
 import { parseReturnPath, signInPath } from "../shared/return-path";
 
 // Sign-in, outside the shell, with a provider or an email and password
-// (./password.tsx). Each provider is a full-page navigation to /auth/login, which starts the WFE-brokered WorkOS flow; WorkOS returns to
+// (./password.tsx). Each provider is a full-page navigation to /auth/login,
+// which starts the WFE-brokered WorkOS flow; WorkOS returns to
 // /login/callback, which lands back here with ?error=<reason> if it failed,
 // on /login/verify when WorkOS emailed a code to check the address first, or
 // goes through the company's single sign-on when it requires it.

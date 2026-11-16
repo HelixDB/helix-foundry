@@ -508,7 +508,7 @@ export default function FoundryApp() {
               }
             />
             <Route
-              path="/reset-password"
+              path="/login/reset"
               element={
                 LOCAL ? <Navigate to="/" replace /> : <ResetPasswordPage />
               }

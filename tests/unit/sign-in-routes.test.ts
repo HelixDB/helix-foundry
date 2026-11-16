@@ -609,12 +609,36 @@ describe("resetting a password", () => {
     ).toEqual({ error: "refused", message: "A valid email is required." });
   });
 
-  it("sets the new password from the emailed link's token", async () => {
+  const RESET = "foundry-reset",
+    kept = (token: string) =>
+      `${RESET}=${Buffer.from(token).toString("base64url")}`;
+
+  it("keeps the emailed link's token out of the page's URL", async () => {
+    const { GET } = await import("@/app/reset-password/route");
+    const res = GET(request("/reset-password?token=tok%3B1", {}));
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`${SITE}/login/reset`);
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const cookie = (res as NextResponse).cookies.get(RESET)!;
+    expect(Buffer.from(cookie.value, "base64url").toString()).toBe("tok;1");
+    expect(cookie).toMatchObject({ httpOnly: true, sameSite: "lax", path: "/" });
+
+    // A link without one, or one too long, keeps what an earlier link kept.
+    for (const q of ["", `?token=${"t".repeat(2049)}`]) {
+      const other = GET(request(`/reset-password${q}`, {}));
+      expect(other.headers.get("location")).toBe(`${SITE}/login/reset`);
+      expect(setCookie(other, RESET)).toBeUndefined();
+    }
+  });
+
+  it("sets the new password with the kept token, then forgets it", async () => {
     answers["/v1/auth/password:reset"] = () => json({});
-    const res = await password("reset", {
-      token: " tok_1 ",
-      password: "a-new-password",
-    });
+    const res = await password(
+      "reset",
+      { password: "a-new-password", token: "ignored" },
+      { cookies: kept("tok_1") },
+    );
     expect(await res.json()).toEqual({ reset: true });
     expect(calls).toEqual([
       {
@@ -622,30 +646,38 @@ describe("resetting a password", () => {
         body: { token: "tok_1", newPassword: "a-new-password" },
       },
     ]);
+    expect(setCookie(res, RESET)).toBe("");
     expect(saveSession).not.toHaveBeenCalled();
   });
 
-  it("says why a reset was refused", async () => {
+  it("says why a reset was refused, keeping the token for another try", async () => {
     answers["/v1/auth/password:reset"] = () =>
       json({ code: 3, message: "reset link is invalid or expired" }, 400);
-    const res = await password("reset", { token: "t", password: "p" });
+    const res = await password(
+      "reset",
+      { password: "p" },
+      { cookies: kept("t") },
+    );
     expect(await res.json()).toEqual({
       error: "refused",
       message: "Reset link is invalid or expired.",
     });
+    expect(setCookie(res, RESET)).toBeUndefined();
     answers["/v1/auth/password:reset"] = () => grpc(14, 503);
     expect(
-      (await password("reset", { token: "t", password: "p" })).status,
+      (await password("reset", { password: "p" }, { cookies: kept("t") }))
+        .status,
     ).toBe(503);
   });
 
-  it("refuses a link without a token, or no password, without calling the WFE", async () => {
+  it("refuses without a kept token, or no password, without calling the WFE", async () => {
     const noToken = await password("reset", { password: "a-new-password" });
     expect(await noToken.json()).toEqual({
       error: "refused",
-      message: "This reset link is incomplete. Request a new one.",
+      message:
+        "This reset link has run out. Ask for a new one, then open it in this browser.",
     });
-    const noPassword = await password("reset", { token: "t" });
+    const noPassword = await password("reset", {}, { cookies: kept("t") });
     expect(await noPassword.json()).toEqual({
       error: "refused",
       message: "Enter a password.",

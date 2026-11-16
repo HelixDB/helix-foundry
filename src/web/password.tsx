@@ -9,8 +9,8 @@ import { parseReturnPath } from "../shared/return-path";
 
 // Signing in with an email and password: the sign-in page's form, and the
 // pages to create an account (/login/sign-up), ask for a reset link
-// (/login/forgot) and choose a new password from it (/reset-password?token=,
-// where the WFE has WorkOS's email link to). Each POSTs to
+// (/login/forgot) and choose a new password from it (/login/reset, which the
+// emailed /reset-password?token= opens). Each POSTs to
 // /auth/password/<action> (src/server/password.ts), which calls the WFE.
 
 /** What /auth/password/<action> answers (src/server/password.ts). */
@@ -354,26 +354,15 @@ export function ForgotPasswordPage() {
   );
 }
 
-/** /reset-password?token=: the link WorkOS emailed, to choose a new password. */
+/**
+ * /login/reset: the link WorkOS emailed, to choose a new password. The
+ * link's token waits in a cookie (/reset-password moved it there), so it is
+ * never in this page's URL.
+ */
 export function ResetPasswordPage() {
-  const [params] = useSearchParams(),
-    token = params.get("token") ?? "";
   const [password, setPassword] = useState(""),
     [done, setDone] = useState(false);
   const form = usePasswordForm("reset");
-  if (!token)
-    return (
-      <GatePage
-        title="This link is incomplete"
-        lede="Open the link from the email again, or ask for a new one."
-      >
-        <div className="hf-gate-body">
-          <ButtonLink to="/login/forgot" variant="primary" size="lg">
-            Email me a new link
-          </ButtonLink>
-        </div>
-      </GatePage>
-    );
   if (done)
     return (
       <GatePage
@@ -389,7 +378,7 @@ export function ResetPasswordPage() {
     );
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const answer = await form.send({ token, password });
+    const answer = await form.send({ password });
     if (answer && "reset" in answer) {
       trackEvent("password_reset");
       setDone(true);
