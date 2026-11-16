@@ -95,7 +95,7 @@
           "rationale": "The goal's account with its people.",
           "serves": [],
           "status": "proposed",
-          "toml": "[cq.CQ1]\nquestion = \"Who are each account's people, and what role does each play?\"\npath = [\"Account\", \"<contact_at\", \"Contact\"]\n"
+          "toml": "[cq.CQ1]\nquestion = \"Which roles do our contacts play, and how many hold each?\"\npath = [\"Account\", \"<contact_at\", \"Contact\"]\n"
         },
         "cq.CQ2": {
           "basis": null,
@@ -104,7 +104,7 @@
           "rationale": "The goal's plan and subscription.",
           "serves": [],
           "status": "proposed",
-          "toml": "[cq.CQ2]\nquestion = \"Which subscription and plan does each account have, and when does its term end?\"\npath = [\"Account\", \"<subscription_of\", \"Subscription\", \"on_plan>\", \"Plan\"]\n"
+          "toml": "[cq.CQ2]\nquestion = \"How many active subscriptions does each plan have, and what do they bring in each month?\"\npath = [\"Account\", \"<subscription_of\", \"Subscription\", \"on_plan>\", \"Plan\"]\n"
         },
         "cq.CQ3": {
           "basis": null,
@@ -113,7 +113,7 @@
           "rationale": "The goal's invoices, and what is owed.",
           "serves": [],
           "status": "proposed",
-          "toml": "[cq.CQ3]\nquestion = \"Which invoices has each account's subscription been billed, and which are unpaid or overdue?\"\npath = [\"Account\", \"<subscription_of\", \"Subscription\", \"<invoice_for\", \"Invoice\"]\n"
+          "toml": "[cq.CQ3]\nquestion = \"Which invoices are overdue, which accounts owe them, and how much?\"\npath = [\"Account\", \"<subscription_of\", \"Subscription\", \"<invoice_for\", \"Invoice\"]\n"
         },
         "cq.CQ4": {
           "basis": null,
@@ -122,7 +122,7 @@
           "rationale": "The goal's support tickets.",
           "serves": [],
           "status": "proposed",
-          "toml": "[cq.CQ4]\nquestion = \"Which support tickets has each account opened, and who raised them?\"\npath = [\"Account\", \"<ticket_for\", \"Ticket\", \"requested_by>\", \"Contact\"]\n"
+          "toml": "[cq.CQ4]\nquestion = \"Which support tickets are still open, for which accounts, and who raised them?\"\npath = [\"Account\", \"<ticket_for\", \"Ticket\", \"requested_by>\", \"Contact\"]\n"
         },
         "cq.CQ5": {
           "basis": null,
