@@ -83,6 +83,7 @@ describe("shownSuggestions", () => {
     kind: "chips",
     chips: AUTOMATION_SUGGESTIONS,
     generating: false,
+    source: "fixed",
   };
   const one = { title: "A", prompt: "p", icon: WATCH } as const;
   it("is the fixed ones with no ontology, a failed read or nothing to show", () => {
@@ -129,6 +130,7 @@ describe("shownSuggestions", () => {
       kind: "chips",
       chips: [{ title: "A", prompt: "p", icon: "watch" }],
       generating: true,
+      source: "ontology",
     });
   });
   it("shows the fallback while better ones are written, then those", () => {
@@ -143,6 +145,7 @@ describe("shownSuggestions", () => {
       kind: "chips",
       chips: [{ title: "A", prompt: "p", icon: "watch" }],
       generating: true,
+      source: "ontology",
     });
   });
 });
