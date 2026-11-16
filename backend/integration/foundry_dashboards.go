@@ -55,8 +55,8 @@ type FoundryDashboardOutput struct {
 	WorkspaceID string `json:"workspace_id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	// Revision is what update_dashboard and publish_dashboard name as expected_revision.
-	Revision int64 `json:"revision"`
+	// Revision is what update_dashboard, pin_dashboard and publish_dashboard name as expected_revision.
+	Revision int64 `json:"revision" jsonschema:"What update_dashboard, pin_dashboard and publish_dashboard name as expected_revision."`
 	Pinned   bool  `json:"pinned"`
 	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
 	Spec         any                          `json:"spec,omitempty" jsonschema:"Untrusted dashboard spec: its tiles and layout. Left out of a list. An integer past 2^53 in a query comes as a string of its digits: write it back as a number."`

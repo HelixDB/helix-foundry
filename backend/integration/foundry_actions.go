@@ -171,7 +171,7 @@ type FoundryOperationOutput struct {
 	Operation    string `json:"operation"`
 	Target       string `json:"target"`
 	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
-	Result any `json:"result" jsonschema:"Untrusted result: the ontology, sync, generation, version, load, document, document set or review decision the operation made or changed."`
+	Result any `json:"result" jsonschema:"Untrusted result: what the operation made or changed: an ontology, sync, generation, version, load, document (with its reads), document set, review decision, API source with its send token, the sample's data (add_sample_data: its connector, sync, document set and documents), dashboard, workflow, a workflow's run (run_workflow), or the Assistant's runtime or helper; a delete_dashboard or delete_workflow gives {deleted: true} with its dashboard_id or workflow_id."`
 }
 
 type CompleteFoundryUploadInput struct {
