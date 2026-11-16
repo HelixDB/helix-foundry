@@ -1162,9 +1162,7 @@ test.describe("in the browser's time zone", () => {
     await expect(instruction).toHaveValue(
       /^Read the current load of the Customer contracts ontology\./,
     );
-    await expect(
-      inspector(page).getByText(/^Ask Founder: “/),
-    ).toHaveCount(0);
+    await expect(inspector(page).getByText(/^Ask Founder: “/)).toHaveCount(0);
     // Its trigger's zone picker says the zone in words.
     await canvas(page)
       .locator(".react-flow__node")
