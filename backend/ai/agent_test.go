@@ -23,6 +23,7 @@ func everyKind() map[Kind]Settings {
 			Models: every(Model{Name: "drafts", Price: PriceTableAs{Model: "gpt-6.1"}})},
 		KindBedrock: {Provider: Bedrock{Region: "eu-west-1", FIPS: true},
 			Models: every(Model{Name: "eu.anthropic.claude-sonnet-5-5", Price: PriceTableAs{Model: "anthropic.claude-sonnet-5-5"}})},
+		KindCohere: {Provider: Cohere{}, Models: every(Model{Name: "command-a-03-2025", Price: PriceRates{Input: 2500, Output: 10000}})},
 		KindOllama: {Provider: Ollama{BaseURL: "http://127.0.0.1:11434", ContextTokens: 65536}, Models: every(Model{Name: "qwen3:32b", Price: PriceFree{}})},
 		KindCompatible: {Provider: Compatible{BaseURL: "https://llm.example.com/v1", API: CompatResponses, MaxCallsInFlight: 6},
 			Models: every(Model{Name: "llama-4", Price: PriceFree{}})},
@@ -80,6 +81,13 @@ func TestAgentModels(t *testing.T) {
 				ontologyagent.ModelSpec{Name: "drafts", Price: ontologyagent.PriceTableAs{Model: "gpt-6.1"}}},
 			KindBedrock: {ontologyagent.Endpoint{Provider: ontologyagent.Bedrock{Region: "eu-west-1", FIPS: true}, CallTimeoutSecs: 600},
 				ontologyagent.ModelSpec{Name: "eu.anthropic.claude-sonnet-5-5", Price: ontologyagent.PriceTableAs{Model: "anthropic.claude-sonnet-5-5"}}},
+			// Cohere's Compatibility API, as an OpenAI-compatible server the
+			// agent sends no bound and no reasoning knob, under the model's
+			// output ceiling.
+			KindCohere: {ontologyagent.Endpoint{
+				Provider:        ontologyagent.OpenAICompatible{BaseURL: "https://api.cohere.ai/compatibility/v1", API: ontologyagent.CompatChatCompletions},
+				CallTimeoutSecs: 600,
+			}, ontologyagent.ModelSpec{Name: "command-a-03-2025", Price: ontologyagent.PriceRates{Input: 2500, Output: 10000}, MaxOutputTokens: 8192}},
 			KindOllama: {ontologyagent.Endpoint{Provider: ontologyagent.Ollama{BaseURL: "http://127.0.0.1:11434"}, CallTimeoutSecs: 600, MaxCallsInFlight: 1},
 				ontologyagent.ModelSpec{Name: "qwen3:32b", Price: ontologyagent.PriceFree{}, ContextTokens: 65536, Revision: "sha256:" + strings.Repeat("cd", 32)}},
 			KindCompatible: {ontologyagent.Endpoint{
@@ -96,7 +104,7 @@ func TestAgentModels(t *testing.T) {
 			}
 			turn, ask := r.Turn(), r.Ask()
 			draft, extract := want.spec, want.spec
-			draft.Reasoning, extract.Reasoning = false, true
+			draft.Reasoning, extract.Reasoning = false, kind != KindCohere
 			if turn.Endpoint != want.endpoint || !specEqual(turn.Draft, draft) || !specEqual(turn.Extract, extract) {
 				t.Errorf("%s: Turn() = %+v", kind, turn)
 			}
@@ -158,6 +166,41 @@ func TestAgentModels(t *testing.T) {
 			if roles[i] != role {
 				t.Fatalf("roles = %v", roles)
 			}
+		}
+	})
+
+	// Cohere's probe sends the reasoning knob for no role, as its runs never
+	// do: a check that passed with it would leave every question refused.
+	t.Run("probes Cohere without the reasoning knob", func(t *testing.T) {
+		probe := hosted.ProbeRequest("cfg-1", everyKind()[KindCohere], time.Minute)
+		for _, c := range probe.Checks {
+			if c.Model.Reasoning {
+				t.Errorf("check %s = %+v", c.Role, c.Model)
+			}
+		}
+		if probe.Endpoint.Provider.Kind() != ontologyagent.KindOpenAICompatible || probe.Endpoint.MaxCallsInFlight != 0 || len(probe.Checks) != len(ontologyagent.ProbeRoles) {
+			t.Fatalf("probe = %+v", probe)
+		}
+	})
+
+	// Cohere refuses a max_tokens above a model's own ceiling, which a
+	// draft's and a question's ask for: each spec carries it, a model not
+	// listed the least of them.
+	t.Run("caps Cohere's models at their output ceiling", func(t *testing.T) {
+		for model, want := range map[string]uint32{
+			"command-a-03-2025": 8192, "command-a-plus-05-2026": 64000, "command-a-reasoning-08-2025": 32768, "command-z-next": 4096,
+		} {
+			s := Settings{Provider: Cohere{}, Models: every(Model{Name: model, Price: PriceRates{Input: 1, Output: 2}})}
+			r := Resolved{Source: SourceWorkspace, Settings: s}
+			if got := r.Turn().Draft.MaxOutputTokens; got != want {
+				t.Errorf("%s: MaxOutputTokens = %d, want %d", model, got, want)
+			}
+			if got := hosted.ProbeRequest("cfg-1", s, time.Minute).Checks[0].Model.MaxOutputTokens; got != want {
+				t.Errorf("%s: the probe's MaxOutputTokens = %d", model, got)
+			}
+		}
+		if spec := (Resolved{Settings: claude}).Turn().Draft; spec.MaxOutputTokens != 0 {
+			t.Fatalf("Claude's draft spec = %+v", spec)
 		}
 	})
 

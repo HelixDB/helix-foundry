@@ -69,6 +69,7 @@ func TestNewDeployment(t *testing.T) {
 		"a base URL for Bedrock":      {local(config.AIDefault{Provider: "bedrock", APIKey: "ABSK-k", Region: "us-east-1", BaseURL: "https://bedrock.example.com", Models: models(profile)}, true), "base_url is not used by bedrock"},
 		"a session's Bedrock key":     {local(config.AIDefault{Provider: "bedrock", APIKey: "bedrock-api-key-" + strings.Repeat("Ym", 600), Region: "us-east-1", Models: models(profile)}, true), "use a long-term Bedrock API key"},
 		"a region for Claude":         {func(c *config.Config) { c.Foundry.AI.Default.Region = "us-east-1" }, "region is not used by anthropic"},
+		"a Cohere default":            {local(config.AIDefault{Provider: "cohere", APIKey: "co-k", Models: models("command-a-03-2025")}, true), "cohere can't be a default"},
 		"http without private hosts":  {local(config.AIDefault{Provider: "openai_compatible", BaseURL: "http://127.0.0.1:8000/v1", Models: models("m")}, false), "provider.base_url"},
 		"an unknown API for a server": {local(config.AIDefault{Provider: "openai_compatible", BaseURL: "https://llm.example.com/v1", API: "messages", Models: models("m")}, true), "provider.api"},
 	} {

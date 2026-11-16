@@ -114,8 +114,9 @@ describe("hosted", () => {
       },
     });
     // Layer 5's kinds: Claude, OpenAI and Bedrock with suggested models,
-    // Azure OpenAI and custom servers with none (their owner names each
-    // deployment or model), a custom server's key optional.
+    // Azure OpenAI, custom servers and Cohere with none (their owner names
+    // each deployment or model, and prices Cohere's), a custom server's key
+    // optional.
     expect(ai.offered).toEqual([
       expect.objectContaining({
         kind: "FOUNDRY_AI_KIND_ANTHROPIC",
@@ -139,6 +140,7 @@ describe("hosted", () => {
         key: "FOUNDRY_AI_KEY_REQUIRED",
         suggested: BEDROCK_SUGGESTED,
       },
+      { kind: "FOUNDRY_AI_KIND_COHERE", key: "FOUNDRY_AI_KEY_REQUIRED" },
     ]);
     expect(ai.privateHostsAllowed).toBe(false);
     // Acme is on Pro.
@@ -700,7 +702,7 @@ describe("OpenAI and Azure OpenAI", () => {
       );
     await refuse(
       { verify: { name: "gpt-x", free: {} } },
-      "models.verify.price can be free only for Ollama and OpenAI-compatible servers",
+      "models.verify.price can be free only for Ollama and custom OpenAI-compatible servers",
     );
     const unpriced = await refuse(
       { extract: { name: "gpt-unknown", table: {} } },
@@ -1124,7 +1126,7 @@ describe("Amazon Bedrock", () => {
     );
     await refuse(
       { draft: { name: SONNET, free: {} } },
-      "models.draft.price can be free only for Ollama and OpenAI-compatible servers",
+      "models.draft.price can be free only for Ollama and custom OpenAI-compatible servers",
     );
     for (const name of [BEDROCK_KEY, "bedrock-api-key-YmVkcm9jaw"])
       await refuse(
@@ -1222,6 +1224,115 @@ describe("Amazon Bedrock", () => {
   });
 });
 
+describe("Cohere", () => {
+  const COHERE_KEY = "sentinelCohereKey0123456789abcdefWXYZ";
+  const RATES = { inputUsdPerMtok: "2.5", outputUsdPerMtok: "10" };
+  const cohere = (models: object, apiKey?: string) => ({
+    provider: { cohere: {} },
+    models,
+    ...(apiKey && { apiKey }),
+  });
+
+  it("runs on the owner's models at their rates once the key passes its test", async () => {
+    const { call, read, ai } = await load();
+    const models = each({ name: "command-a-03-2025", rates: RATES });
+    const put = await call("PUT", AI_PATH, cohere(models, COHERE_KEY));
+    expect(put.status).toBe(200);
+    expect(put.body.ai.pending).toMatchObject({
+      kind: "FOUNDRY_AI_KIND_COHERE",
+      provider: { cohere: {} },
+      models,
+      keyHint: "…WXYZ",
+      label: "Cohere",
+    });
+    expect(JSON.stringify(put.body)).not.toContain("sentinel");
+    tested();
+    expect((await read()).active?.kind).toBe("FOUNDRY_AI_KIND_COHERE");
+    expect(ai.aiLabel("ws_acme")).toBe("Cohere");
+    // The agent calls it as an OpenAI-compatible server.
+    expect(ai.aiProvider("ws_acme")).toBe("openai_compatible");
+    expect(ai.draftFailure("ws_acme", "auth")).toBe(
+      "Cohere refused the API key. An owner can enter a new one in Settings › AI models.",
+    );
+  });
+
+  it("prices its models only at the owner's rates, and names each one", async () => {
+    const { call } = await load();
+    for (const [price, message] of [
+      [
+        { table: {} },
+        "models.draft.price must be your own rates for a Cohere model",
+      ],
+      [
+        { free: {} },
+        "models.draft.price can be free only for Ollama and custom OpenAI-compatible servers",
+      ],
+      [
+        { tableAs: "command-a-03-2025" },
+        "models.draft.price can be another model's only for an Azure deployment or a Bedrock inference profile",
+      ],
+    ] as const) {
+      const r = await call(
+        "PUT",
+        AI_PATH,
+        cohere(each({ name: "command-a-03-2025", ...price }), COHERE_KEY),
+      );
+      expect(r.status, JSON.stringify(price)).toBe(400);
+      expect(r.body.message).toBe(message);
+    }
+    const none = await call("PUT", AI_PATH, {
+      provider: { cohere: {} },
+      apiKey: COHERE_KEY,
+    });
+    expect(none.body.message).toBe("models.draft is required");
+    // Cohere reports all input as cached, so input has one price.
+    const cached = await call(
+      "PUT",
+      AI_PATH,
+      cohere(
+        each({
+          name: "command-a-03-2025",
+          rates: { ...RATES, cachedInputUsdPerMtok: "0.25" },
+        }),
+        COHERE_KEY,
+      ),
+    );
+    expect(cached.body.message).toBe(
+      "models.draft.price.rates.cache_read must be left out for a Cohere model, whose cached input costs what input does",
+    );
+  });
+
+  it("keeps a key across models, but for Cohere alone", async () => {
+    const { call, read } = await load();
+    await call(
+      "PUT",
+      AI_PATH,
+      cohere(each({ name: "command-a-03-2025", rates: RATES }), COHERE_KEY),
+    );
+    tested();
+    const kept = await call(
+      "PUT",
+      AI_PATH,
+      cohere(each({ name: "command-a-plus-05-2026", rates: RATES })),
+    );
+    expect(kept.status).toBe(200);
+    expect(kept.body.ai.pending.keyHint).toBe("…WXYZ");
+    tested();
+    expect((await read()).active?.hasKey).toBe(true);
+    // A custom server at Cohere's own address is another endpoint's key.
+    const elsewhere = await call("PUT", AI_PATH, {
+      provider: server("https://api.cohere.ai/compatibility/v1"),
+      models: each({ name: "command-a-03-2025", rates: RATES }),
+    });
+    expect(elsewhere.status).toBe(200);
+    expect(elsewhere.body.ai.pending.hasKey).toBeFalsy();
+    expect(
+      (await call("PUT", AI_PATH, { provider: { anthropic: {} } })).body
+        .message,
+    ).toBe("Enter the API key for this endpoint.");
+  });
+});
+
 describe("a local API", () => {
   it("starts on the install's default, allowing private hosts and keys without a plan", async () => {
     const { read, call } = await load(true);
@@ -1230,8 +1341,8 @@ describe("a local API", () => {
     expect(ai.privateHostsAllowed).toBe(true);
     expect(ai.proRequired).toBe(false);
     expect((await call("PUT", AI_PATH, CLAUDE)).status).toBe(200);
-    // OpenAI, Azure OpenAI, custom servers and Amazon Bedrock too, with no
-    // plan, and Ollama.
+    // OpenAI, Azure OpenAI, custom servers, Amazon Bedrock and Cohere too,
+    // with no plan, and Ollama.
     expect(ai.offered?.map((o) => o.kind)).toEqual([
       "FOUNDRY_AI_KIND_ANTHROPIC",
       "FOUNDRY_AI_KIND_OPENAI",
@@ -1239,6 +1350,7 @@ describe("a local API", () => {
       "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE",
       "FOUNDRY_AI_KIND_OLLAMA",
       "FOUNDRY_AI_KIND_BEDROCK",
+      "FOUNDRY_AI_KIND_COHERE",
     ]);
     expect((await call("PUT", AI_PATH, bedrock("ap-southeast-2"))).status).toBe(
       200,

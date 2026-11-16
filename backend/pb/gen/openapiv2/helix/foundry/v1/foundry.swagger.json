@@ -7975,6 +7975,10 @@
       },
       "description": "Amazon Bedrock, called with a Bedrock API key."
     },
+    "v1FoundryAICohere": {
+      "type": "object",
+      "description": "Cohere's API, called through its OpenAI-compatible Chat Completions; its\nmodels are priced at the owner's own rates."
+    },
     "v1FoundryAICompatAPI": {
       "type": "string",
       "enum": [
@@ -8103,7 +8107,8 @@
         "FOUNDRY_AI_KIND_AZURE_OPENAI",
         "FOUNDRY_AI_KIND_BEDROCK",
         "FOUNDRY_AI_KIND_OLLAMA",
-        "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE"
+        "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE",
+        "FOUNDRY_AI_KIND_COHERE"
       ],
       "default": "FOUNDRY_AI_KIND_UNSPECIFIED",
       "description": "FoundryAIKind is a model provider kind. Every kind is declared; a\ndeployment offers those its agent implements (FoundryAI.offered)."
@@ -8220,6 +8225,9 @@
         },
         "openaiCompatible": {
           "$ref": "#/definitions/v1FoundryAICompatible"
+        },
+        "cohere": {
+          "$ref": "#/definitions/v1FoundryAICohere"
         }
       },
       "description": "FoundryAIProvider is where a workspace's model calls go: one message per\nkind, holding that kind's endpoint settings and never a key."

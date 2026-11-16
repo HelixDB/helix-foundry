@@ -75,7 +75,7 @@ See the [local setup guide](local/README.md) for what runs, where data lives, AI
 - **Loads into HelixDB** that keep where every value came from: a table row, or a quote in a document. Values documents disagree on wait for your review.
 - **The Explorer:** the graph and its records, each entity's page, and two loads compared side by side.
 - **The Analyst:** questions answered from a load, with charts, the queries it ran and a source for every claim.
-- **Your choice of AI:** on Helix Cloud, Helix's Claude or, on Foundry Pro, your own key; on your computer, Claude, OpenAI, Azure OpenAI, Amazon Bedrock, Ollama, LM Studio or any OpenAI-compatible server.
+- **Your choice of AI:** on Helix Cloud, Helix's Claude or, on Foundry Pro, your own key; on your computer, Claude, OpenAI, Azure OpenAI, Amazon Bedrock, Cohere, Ollama, LM Studio or any OpenAI-compatible server.
 
 ## Everyday commands
 

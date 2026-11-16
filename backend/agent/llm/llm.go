@@ -10,6 +10,9 @@
 //     its resource's v1 API with the api-key header (responses.go);
 //   - ai.Compatible: Chat Completions (chat.go) or Responses, as its owner
 //     chose, at most the setting's MaxCallsInFlight calls at once;
+//   - ai.Cohere: Chat Completions (chat.go) at Cohere's Compatibility API,
+//     never with the reasoning knob (ai.Kind.Reasons), as the engine calls
+//     it;
 //   - ai.Ollama: the native /api/chat (ollama.go), whose options set the
 //     context window: Ollama's OpenAI-compatible /v1 has no way to, and
 //     would load the model in the server's default window and cut the
@@ -225,7 +228,7 @@ func NewFor(r ai.Resolved, catalog *ai.Catalog, role ai.Role) (Binding, error) {
 		return Binding{}, err
 	}
 	key, client := r.Key.Reveal(), guarded(r.Rules)
-	reasoning := role == ai.RoleAsk && r.Report.Reasoning(ai.RoleAsk)
+	reasoning := role == ai.RoleAsk && r.Report.Reasoning(ai.RoleAsk) && r.Settings.Provider.Kind().Reasons()
 	out := Binding{Pricer: pricer}
 	switch p := r.Settings.Provider.(type) {
 	case ai.Anthropic:
@@ -248,6 +251,8 @@ func NewFor(r ai.Resolved, catalog *ai.Catalog, role ai.Role) (Binding, error) {
 		default:
 			return Binding{}, fmt.Errorf("llm: unknown API %q of an OpenAI-compatible server", p.API)
 		}
+	case ai.Cohere:
+		out.Model = newChat(ai.CohereBaseURL, key, m.Name, reasoning, r.CallTimeout, client, nil)
 	case ai.Ollama:
 		// The window the engine loads the model with: the owner's, at most
 		// what the probe read of the model.
