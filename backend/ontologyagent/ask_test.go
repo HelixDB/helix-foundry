@@ -710,6 +710,52 @@ func TestWithoutOutputs(t *testing.T) {
 	})
 }
 
+func TestVisualOutputs(t *testing.T) {
+	// A view gets the outputs the answer's visuals show, as stored, and no
+	// other: e5's output and e7, which recorded none, stay out.
+	t.Run("keeps the outputs the visuals show", func(t *testing.T) {
+		got := VisualOutputs(json.RawMessage(withOutputs(everyVisual)))
+		want := map[string]string{}
+		for _, o := range recordedOutputs {
+			if o.evidence != "e5" {
+				want[o.evidence] = o.output
+			}
+		}
+		have := map[string]string{}
+		for id, output := range got {
+			have[id] = string(output)
+		}
+		if !reflect.DeepEqual(have, want) {
+			t.Fatalf("outputs = %v, want %v", have, want)
+		}
+	})
+
+	// A visual of a query with no output, a result with no visuals, a
+	// question that didn't answer and anything that isn't a result give none.
+	t.Run("has none where nothing shows one", func(t *testing.T) {
+		for _, raw := range []string{
+			withOutputs(`{"evidence_id":"e7"}`),
+			withOutputs(""),
+			answered(citeEveryTarget),
+			`{"status":"cannot_answer","reason":"r","gap":"g","queries":[],` + askUsage + `}`,
+			`not json`,
+			``,
+		} {
+			if got := VisualOutputs(json.RawMessage(raw)); got != nil {
+				t.Errorf("%s gave %v", raw, got)
+			}
+		}
+	})
+}
+
+// A visual of e2 gets e2's output; e3, which no visual shows, stays out.
+func ExampleVisualOutputs() {
+	outputs := VisualOutputs(json.RawMessage(`{"answer":{"visuals":[{"evidence_id":"e2"}]},` +
+		`"queries":[{"evidence_id":"e2","output":{"kind":"count","count":3}},{"evidence_id":"e3","output":{"kind":"count","count":4}}]}`))
+	fmt.Println(len(outputs), string(outputs["e2"]))
+	// Output: 1 {"kind":"count","count":3}
+}
+
 func TestDecodeAskEvent(t *testing.T) {
 	failed := "no type `Planet`"
 	// Each event the agent streams decodes. A tool result carries the

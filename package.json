@@ -24,6 +24,7 @@
     "docs:media": "playwright test -c playwright.docs.config.ts",
     "docs:media:upload": "sh scripts/docs-media-upload.sh",
     "contract:sync": "sh scripts/sync-contract.sh",
+    "mcp-apps": "tsx scripts/mcp-apps.ts",
     "test:coverage": "vitest run --coverage --coverage.include=src/server --coverage.include=src/shared --coverage.include=src/web/api.ts --coverage.include=src/web/feedback.ts --coverage.include=src/web/workspaces.ts --coverage.include='src/web/areas/*/model.ts' --coverage.include=src/web/areas/data/layout.ts --coverage.include=src/web/areas/data/sign-ins.ts --coverage.include=src/web/areas/data/github-install.ts --coverage.include=src/web/areas/explore/naming.ts --coverage.include=src/web/areas/workspace/plan.ts --coverage.include=src/web/areas/workspace/enrichment-api.ts --coverage.include=src/web/areas/workspace/ai-api.ts --coverage.include=src/web/areas/workspace/usage.ts --coverage.include=src/web/areas/reviews/api.ts --coverage.include=src/web/areas/ontology/edit-model.ts --coverage.include=src/web/areas/ontology/goal-prompt.ts --coverage.include=src/web/areas/ontology/ask-visuals.ts --coverage.include=src/web/areas/ontology/onboarding-prompt.ts --coverage.include=src/web/areas/ontology/production-prompt.ts --coverage.include=src/web/areas/ontology/production-model.ts --coverage.include=src/web/areas/explore/typed-reads.ts --coverage.include=src/web/areas/workspace/access-model.ts --coverage.include=src/web/areas/workspace/directory-model.ts --coverage.include=src/web/areas/ontology/sample.ts --coverage.include=src/web/areas/ontology/progress.ts --coverage.include=src/web/areas/ontology/watched-jobs.ts --coverage.include=src/web/questions/model.ts"
   },
   "dependencies": {
@@ -57,6 +58,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
+    "@modelcontextprotocol/client": "2.4.0",
+    "@modelcontextprotocol/ext-apps": "2.0.4",
     "@next/eslint-plugin-next": "16.3.8",
     "@playwright/test": "1.62.0",
     "@tailwindcss/postcss": "4.3.3",
@@ -69,6 +72,7 @@
     "@vitest/coverage-v8": "4.1.11",
     "ajv": "8.20.0",
     "concurrently": "9.2.5",
+    "esbuild": "0.28.2",
     "eslint": "^9.39.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "jose": "5.10.0",

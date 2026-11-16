@@ -811,6 +811,42 @@ func AnswerText(result json.RawMessage) string {
 	return strings.Join(blocks, "\n\n")
 }
 
+// VisualOutputs are the outputs a stored result's visuals show, by evidence id,
+// as stored: what a view draws its charts and tables from beside the result
+// WithoutOutputs leaves (ExampleVisualOutputs). A visual whose query recorded
+// no output, a result without visuals, and anything that isn't a result have
+// none (nil).
+func VisualOutputs(result json.RawMessage) map[string]json.RawMessage {
+	var doc struct {
+		Answer struct {
+			Visuals []struct {
+				EvidenceID string `json:"evidence_id"`
+			} `json:"visuals"`
+		} `json:"answer"`
+		Queries []struct {
+			EvidenceID string          `json:"evidence_id"`
+			Output     json.RawMessage `json:"output"`
+		} `json:"queries"`
+	}
+	if json.Unmarshal(result, &doc) != nil {
+		return nil
+	}
+	shown := make(map[string]bool, len(doc.Answer.Visuals))
+	for _, v := range doc.Answer.Visuals {
+		shown[v.EvidenceID] = true
+	}
+	outputs := map[string]json.RawMessage{}
+	for _, q := range doc.Queries {
+		if shown[q.EvidenceID] && len(q.Output) > 0 && string(q.Output) != "null" {
+			outputs[q.EvidenceID] = q.Output
+		}
+	}
+	if len(outputs) == 0 {
+		return nil
+	}
+	return outputs
+}
+
 // WithoutOutputs is a stored result with its queries' outputs left out, for a
 // list of questions: an output is up to 512 KiB of rows, and a list page holds
 // many answers. The rest is kept, visuals too: a listed answer's visuals name

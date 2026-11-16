@@ -1,0 +1,56 @@
+/* The answer view's frame: one card the host sizes to its content (the view
+   reports its height). Its parts are the Analyst's (ask.css, ask-visual.css,
+   ontology.css's callouts), with the website's tokens. */
+html,
+body {
+  margin: 0;
+  font-family: var(--hf-font-sans);
+  font-size: var(--hf-text-md);
+  -webkit-font-smoothing: antialiased;
+}
+.mx-card {
+  display: grid;
+  gap: var(--hf-space-15);
+  padding: 16px 18px;
+}
+.mx-card :focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+}
+.mx-head {
+  display: grid;
+  gap: 4px;
+}
+.mx-eyebrow {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  font-weight: 500;
+}
+.mx-question {
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-lg);
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.mx-stack {
+  display: grid;
+  gap: 10px;
+}
+.mx-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hf-border);
+}
+.mx-meta {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.mx-foot > :only-child {
+  margin-left: auto;
+}
