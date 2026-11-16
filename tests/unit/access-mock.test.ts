@@ -1616,9 +1616,7 @@ describe("a grantee's Founder", () => {
       404,
       "thread not found",
     ]);
-    expect((await eve("GET", `${AG}/turns/${turnId}/events`)).status).toBe(
-      404,
-    );
+    expect((await eve("GET", `${AG}/turns/${turnId}/events`)).status).toBe(404);
     expect((await eve("POST", `${AG}/turns/${turnId}:cancel`, {})).status).toBe(
       404,
     );
@@ -1685,9 +1683,7 @@ describe("a grantee's Founder", () => {
   it("hides Eve's thread once she loses a grant it ran under, until she holds it again", async () => {
     const first = await turn("Who signed?");
     const thread = first.sent.body.thread.id;
-    expect(
-      (await eve("GET", `${AG}/threads/${thread}`)).status,
-    ).toBe(200);
+    expect((await eve("GET", `${AG}/threads/${thread}`)).status).toBe(200);
     // Narrowed: General taken away, the thread and its turn are gone.
     await grant(user("usr_eve"), []);
     expect(refusal(await eve("GET", `${AG}/threads/${thread}`))).toEqual([

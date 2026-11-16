@@ -46,9 +46,7 @@ test("asked for a dashboard, asks the Analyst, makes it at once and undoes it", 
   await say(page, ASKED);
   // It asked the Analyst, whose answer shows in the dock: its words with
   // their citations, and its two visuals.
-  await expect(
-    dock.getByText("Asked the data", { exact: true }),
-  ).toBeVisible();
+  await expect(dock.getByText("Asked the data", { exact: true })).toBeVisible();
   const question = dock.getByRole("article", { name: `Question: ${ASKED}` });
   const answer = question.getByRole("region", { name: "Answer" });
   await expect(answer).toContainText("unpaid or overdue", { timeout: 20_000 });

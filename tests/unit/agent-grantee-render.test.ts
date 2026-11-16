@@ -65,9 +65,7 @@ function render(grantee: boolean) {
 describe("Founder for a grantee", () => {
   it("asks about the data shared with it, and says it can't change anything", () => {
     const { html } = render(true);
-    expect(html).toContain(
-      'placeholder="Ask about the data shared with you…"',
-    );
+    expect(html).toContain('placeholder="Ask about the data shared with you…"');
     expect(html).toContain(
       "It answers questions about the data shared with you, with cited answers. It can’t change anything in this workspace.",
     );

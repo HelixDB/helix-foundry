@@ -245,9 +245,7 @@ test("opens an Analyst thread from before Founder read only, from the sidebar", 
   await expect(
     main.getByRole("heading", { level: 1, name: question }),
   ).toBeVisible();
-  await expect(main.locator(".ak-bar .hf-tag")).toHaveText(
-    "Earlier question",
-  );
+  await expect(main.locator(".ak-bar .hf-tag")).toHaveText("Earlier question");
   const answer = main
     .getByRole("article", { name: `Question: ${question}` })
     .getByRole("region", { name: "Answer" });

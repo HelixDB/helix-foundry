@@ -2696,8 +2696,7 @@ function granteeScript(a: Ask): Step[] {
     ...list,
     ...steps,
     said(
-      () =>
-        `${aroundAnswer(asked, o, "grantee")}${dashboard ? MADE_NONE : ""}`,
+      () => `${aroundAnswer(asked, o, "grantee")}${dashboard ? MADE_NONE : ""}`,
     ),
   ];
 }
