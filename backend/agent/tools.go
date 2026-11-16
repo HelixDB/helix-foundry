@@ -61,8 +61,9 @@ var Tools = map[string]bool{
 }
 
 const (
-	toolPrepare = "helix_foundry_prepare_operation"
-	toolAsk     = "helix_foundry_ask"
+	toolPrepare     = "helix_foundry_prepare_operation"
+	toolAsk         = "helix_foundry_ask"
+	toolGetQuestion = "helix_foundry_get_question"
 )
 
 // Operations are the actions the Assistant may prepare, each drawn as a card

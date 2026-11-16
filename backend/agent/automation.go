@@ -69,7 +69,7 @@ func (r *Runner) automationStep(ctx context.Context, turn *model.FoundryAgentTur
 	node, ok := spec.Node(*turn.AutomationNodeID)
 	step, assistant := node.Config.(automation.AssistantNode)
 	if !ok || !assistant {
-		return nil, gone("The automation's step is no Assistant step", nil)
+		return nil, gone("The automation's step is no Founder step", nil)
 	}
 	return &automationStep{name: a.Name, allow: step.Allow, run: run, spec: spec}, nil
 }

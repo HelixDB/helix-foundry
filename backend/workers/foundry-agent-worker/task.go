@@ -179,7 +179,7 @@ func (t *Task) process(ctx context.Context, turn *model.FoundryAgentTurn) {
 	logger := log.From(ctx).With("turn", turn.ID, "attempt", turn.Attempts)
 	ctx = log.Into(ctx, logger)
 	if turn.Attempts > t.cfg.MaxAttempts {
-		t.end(ctx, turn, model.FoundryAgentTurnOutcome{}, fmt.Sprintf("The Assistant stopped without finishing %d times; send your message again.", turn.Attempts-1))
+		t.end(ctx, turn, model.FoundryAgentTurnOutcome{}, fmt.Sprintf("Founder stopped without finishing %d times; send your message again.", turn.Attempts-1))
 		return
 	}
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), t.cfg.AttemptTimeout())
@@ -211,7 +211,7 @@ func (t *Task) process(ctx context.Context, turn *model.FoundryAgentTurn) {
 func (t *Task) fail(ctx context.Context, turn *model.FoundryAgentTurn, spent model.FoundryAgentTurnOutcome, err error, stopping bool) {
 	var f *agent.Failure
 	if !errors.As(err, &f) {
-		f = &agent.Failure{Message: "The Assistant couldn't finish; Helix will retry", Err: err}
+		f = &agent.Failure{Message: "Founder couldn't finish; Helix will retry", Err: err}
 	}
 	log.From(ctx).Warn("agent turn attempt failed", "permanent", f.Permanent, "stopping", stopping, "err", err)
 	retryAt := t.now().Add(t.cfg.RetryBackoff)
