@@ -4,8 +4,11 @@ import type {
   ListAutomationSuggestionsResponse,
   OntologyVersion,
 } from "../../src/shared/wfe";
-import { askSuggestions } from "../../src/web/areas/ontology/ask-model";
-import { versionLayout } from "../../src/web/areas/ontology/model";
+import { versionFormat } from "../../src/web/areas/ontology/format";
+import {
+  readAgentBundle,
+  versionLayout,
+} from "../../src/web/areas/ontology/model";
 import { fail, ok, type MockRoute } from "../http";
 import { config, onReset } from "../state";
 import { aiSource } from "./ai";
@@ -40,6 +43,7 @@ const knobs = config as typeof config & Knobs;
 
 // The backend's suggest constants.
 const MAX_SUGGESTIONS = 4,
+  MAX_QUESTIONS = 10,
   MAX_TITLE = 32,
   MAX_PROMPT = 400,
   RETRY_AFTER_MS = 3_600_000;
@@ -169,6 +173,22 @@ export function fallbackSuggestions(
   return out;
 }
 
+/**
+ * The backend's suggest.Questions as the API reads them for the fallback:
+ * an agent bundle's competency questions in order, each once, the first 10,
+ * so the fallback reads past questions whose titles repeat.
+ */
+function versionQuestions(v: OntologyVersion): string[] {
+  if (versionFormat(v) !== "agent_bundle") return [];
+  return [
+    ...new Set(
+      readAgentBundle(v.definition)
+        .competency.map((c) => c.question.trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, MAX_QUESTIONS);
+}
+
 /** What the mock's Assistant writes for a version: by its types, for the ontology named. */
 function written(name: string, types: readonly string[]) {
   const has = (t: string) => types.includes(t);
@@ -252,7 +272,7 @@ export const automationSuggestionRoutes: MockRoute[] = [
         format: v.format,
         definition: v.definition,
       } as OntologyVersion;
-      const fallback = fallbackSuggestions(o.name, askSuggestions(version)),
+      const fallback = fallbackSuggestions(o.name, versionQuestions(version)),
         questions = (generating = false) =>
           answer(
             fallback,
