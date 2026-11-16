@@ -720,7 +720,9 @@ describe("mock questions", () => {
     const failed = await end("failed");
     await fitsContract(failed.id);
     expect(failed.status).toBe("failed");
-    expect(failed.error).toBe("the model provider is busy; try again in a minute");
+    expect(failed.error).toBe(
+      "the model provider is busy; try again in a minute",
+    );
     expect(parseAskResult(failed.resultJson)).toMatchObject({
       status: "failed",
       reason: "model_failed",
