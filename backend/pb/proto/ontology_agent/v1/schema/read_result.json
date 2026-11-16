@@ -62,7 +62,7 @@
       },
       "oneOf": [
         {
-          "description": "A property (or `name`, for a column or an order).",
+          "description": "A property.",
           "type": "object",
           "properties": {
             "prop": {
@@ -74,7 +74,7 @@
           ]
         },
         {
-          "description": "A value computed from two of the entity's properties.",
+          "description": "A number from two properties.",
           "type": "object",
           "properties": {
             "expr": {
@@ -501,7 +501,7 @@
       ]
     },
     "Column": {
-      "description": "One column of rows: the entity at a position, one of its properties, or a value computed\nfrom two of them.",
+      "description": "One column of rows: a position's entity, a property of it (`prop`), or a number from two\n(`expr`).",
       "type": "object",
       "properties": {
         "at": {
@@ -511,7 +511,7 @@
           "minimum": 0
         },
         "expr": {
-          "description": "A value computed from two of the entity's properties (see `Expr`).",
+          "description": "A number from two properties.",
           "anyOf": [
             {
               "$ref": "#/$defs/Expr"
@@ -522,7 +522,7 @@
           ]
         },
         "prop": {
-          "description": "A property, or `name`; the entity itself if `null` and no `expr`.",
+          "description": "A property, or `name`; the entity if neither.",
           "type": [
             "string",
             "null"
@@ -531,6 +531,20 @@
         }
       },
       "additionalProperties": false,
+      "not": {
+        "properties": {
+          "expr": {
+            "type": "object"
+          },
+          "prop": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "prop",
+          "expr"
+        ]
+      },
       "required": [
         "at",
         "prop"
@@ -772,10 +786,10 @@
       ]
     },
     "Expr": {
-      "description": "A number computed from two properties of one entity, each named by its property. An entity\nhas none where either property has no value, a date isn't to the day, or the result isn't a\nfinite number (a ratio's second is zero, an integer difference overflows): a column shows\n`null`, an order puts it with the absent, and an aggregate skips it and says how many it\nskipped.",
+      "description": "A number from two properties of the entity: none where either has none, a date isn't to the\nday, or it isn't finite (a ratio by zero). A column shows none as `null`, an order puts it\nwith the absent, and an aggregate skips it and counts it in `skipped`.",
       "oneOf": [
         {
-          "description": "Days from the first date or datetime to the second, negative if the second is earlier:\nwhole days between two dates, fractional where either is a datetime (a date counts from\nits midnight UTC). A date to the year or the month only has no day: no value.",
+          "description": "Days from the first date or datetime to the second (a date from its midnight UTC).",
           "type": "object",
           "properties": {
             "days_between": {
@@ -793,7 +807,7 @@
           ]
         },
         {
-          "description": "The first number minus the second: an integer of two integers, a float otherwise.",
+          "description": "The first minus the second: an integer of two integers, else a float.",
           "type": "object",
           "properties": {
             "diff": {
@@ -811,7 +825,7 @@
           ]
         },
         {
-          "description": "The first number divided by the second, a float: no value where the second is zero.",
+          "description": "The first divided by the second.",
           "type": "object",
           "properties": {
             "ratio": {
@@ -1259,7 +1273,7 @@
       },
       "oneOf": [
         {
-          "description": "A property (or `name`, for a column or an order).",
+          "description": "A property.",
           "type": "object",
           "properties": {
             "prop": {
@@ -1271,7 +1285,7 @@
           ]
         },
         {
-          "description": "A value computed from two of the entity's properties.",
+          "description": "A number from two properties.",
           "type": "object",
           "properties": {
             "expr": {

@@ -22,7 +22,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("the vendored agent contract", () => {
   it("is 4.26.0, the engine whose queries compute from two props", () => {
-    expect(AGENT_CONTRACT_VERSION).toBe("4.26.0 sha256:e3e5d59e0ff8ae10");
+    expect(AGENT_CONTRACT_VERSION).toBe("4.26.0 sha256:7a9e8a1e70d8cf49");
   });
 
   it("checks a value against a schema or one of its definitions", () => {
