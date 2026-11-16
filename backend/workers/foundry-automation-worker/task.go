@@ -664,7 +664,7 @@ func (t *Task) startAssistant(ctx context.Context, st *runState, nodeID string, 
 // what fired the run, as data.
 func instruction(text string, run *model.FoundryAutomationRun) string {
 	about, _ := json.Marshal(map[string]json.RawMessage{"trigger": run.TriggerEvent}) // JSON already: it can't fail
-	return text + "\n\n<automation_context>" + string(about) + "</automation_context>"
+	return text + "\n\n<workflow_context>" + string(about) + "</workflow_context>"
 }
 
 // title is a run's thread's title: its automation's name.
@@ -784,7 +784,7 @@ func (t *Task) runAction(ctx context.Context, st *runState, nodeID string, a aut
 		case err != nil:
 			return err
 		case d.Share == nil:
-			return t.fail(ctx, st, nodeID, "Its dashboard isn't published: publish it on its page, and the automation refreshes its snapshot from then on.")
+			return t.fail(ctx, st, nodeID, "Its dashboard isn't published: publish it on its page, and the workflow refreshes its snapshot from then on.")
 		case d.Share.SpecRevision != d.Revision:
 			return t.fail(ctx, st, nodeID, "Its dashboard was changed since it was published: publish it again on its page to put the change at its link.")
 		}

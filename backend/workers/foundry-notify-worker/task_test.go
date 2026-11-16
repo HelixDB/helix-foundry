@@ -420,9 +420,9 @@ func TestFoundryNotifyWorkerEmails(t *testing.T) {
 				"Overdue invoices this week",
 				"Founder: Three invoices are overdue, from Globex. See [link removed] for more.",
 				"One action waits for you: open the run to see it and run it, or not.",
-				"See every step of the run: " + siteURL + "/automations/auto-1/runs/run-1?workspace=ws-1",
+				"See every step of the run: " + siteURL + "/workflows/auto-1/runs/run-1?workspace=ws-1",
 			},
-			links: []string{siteURL + "/automations/auto-1/runs/run-1?workspace=ws-1"},
+			links: []string{siteURL + "/workflows/auto-1/runs/run-1?workspace=ws-1"},
 		},
 		"an automation that paused itself": {
 			setup: func() (*outboxStore, *model.FoundryNotification) {
@@ -430,10 +430,10 @@ func TestFoundryNotifyWorkerEmails(t *testing.T) {
 			},
 			subject: "Weekly invoices paused after failing",
 			text: []string{
-				"Your automation Weekly invoices failed 3 times in a row, so Foundry paused it. Its last run said: The action step \"sync\" failed: the connector is gone.",
-				"Fix what it needs, then resume it from its page: " + siteURL + "/automations/auto-1?workspace=ws-1",
+				"Your workflow Weekly invoices failed 3 times in a row, so Foundry paused it. Its last run said: The action step \"sync\" failed: the connector is gone.",
+				"Fix what it needs, then resume it from its page: " + siteURL + "/workflows/auto-1?workspace=ws-1",
 			},
-			links: []string{siteURL + "/automations/auto-1?workspace=ws-1"},
+			links: []string{siteURL + "/workflows/auto-1?workspace=ws-1"},
 		},
 		"the sample's follow-up": {
 			setup: func() (*outboxStore, *model.FoundryNotification) {
@@ -894,13 +894,13 @@ func TestFoundryNotifyWorkerSkipsAutomationsGone(t *testing.T) {
 	box, n := automationNotice(model.FoundryNotifyAutomationRun)
 	box.notices = nil
 	newTask(box, ada()).tick(context.Background())
-	if skip, ok := box.ended[n.ID].(model.FoundryNotificationSkip); !ok || skip.Reason != "the automation is gone" {
+	if skip, ok := box.ended[n.ID].(model.FoundryNotificationSkip); !ok || skip.Reason != "the workflow is gone" {
 		t.Fatalf("ended %#v", box.ended[n.ID])
 	}
 	box, n = automationNotice(model.FoundryNotifyAutomationRun)
 	box.notices["subject-1"].Automation.OwnerUserID = "user-alan"
 	newTask(box, ada()).tick(context.Background())
-	if skip, ok := box.ended[n.ID].(model.FoundryNotificationSkip); !ok || skip.Reason != "the automation's owner changed" {
+	if skip, ok := box.ended[n.ID].(model.FoundryNotificationSkip); !ok || skip.Reason != "the workflow's owner changed" {
 		t.Fatalf("ended %#v", box.ended[n.ID])
 	}
 }
