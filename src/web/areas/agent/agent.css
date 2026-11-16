@@ -359,10 +359,11 @@
     border-color var(--hf-duration) var(--hf-ease),
     box-shadow var(--hf-duration) var(--hf-ease);
 }
+/* Focused as the app's other fields are (style.css input:focus). */
 .ag-box:focus-within {
-  border-color: var(--hf-accent);
+  border-color: var(--hf-faint);
   box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--hf-accent) 18%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--hf-focus) 14.5%, transparent),
     var(--hf-shadow-2);
 }
 /* The page's chip, a pill over the field's first line. */
@@ -454,8 +455,10 @@
     background-color var(--hf-duration) var(--hf-ease),
     color var(--hf-duration) var(--hf-ease);
 }
-.ag-send:hover:not(:disabled) {
-  background: var(--hf-hover);
+@media (hover: hover) {
+  .ag-send:hover:not(:disabled) {
+    background: var(--hf-hover);
+  }
 }
 .ag-send:disabled {
   color: var(--hf-faint);
