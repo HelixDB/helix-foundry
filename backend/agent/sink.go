@@ -17,6 +17,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/automation"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -135,6 +136,7 @@ func (s *actionSink) runApproved(ctx context.Context, a *model.FoundryAgentActio
 	if err := s.db.FinishFoundryAgentAction(ctx, a.ID, end, nil, nil); err != nil {
 		return nil, fmt.Errorf("record the approved action's end: %w", err)
 	}
+	s.markCause(ctx, a, end)
 	event, err := MarshalEvent(ActionResult{ActionID: a.ID, Operation: a.Operation, Status: string(end.Status), Result: end.Result, Error: end.Error})
 	if err != nil {
 		return nil, err
@@ -145,6 +147,38 @@ func (s *actionSink) runApproved(ctx context.Context, a *model.FoundryAgentActio
 		return nil, err
 	}
 	return integration.RanApproved{ActionID: a.ID, Status: string(end.Status), Result: end.Result, Error: end.Error}, nil
+}
+
+// markCause marks the sync or the load an automation's approved action
+// started as its run's (store.MarkFoundryAutomationCause), so the run's
+// automation, and those it sets off, never fire on it. It already ran, so a
+// mark that fails is logged and the turn goes on: the work then counts as a
+// person's, and may fire one run more.
+func (s *actionSink) markCause(ctx context.Context, a *model.FoundryAgentAction, end model.FoundryAgentActionEnd) {
+	if s.turn.AutomationRunID == nil || end.Status != model.FoundryAgentActionSucceeded {
+		return
+	}
+	var kind model.FoundryAutomationJobKind
+	switch a.Operation {
+	case (automation.SyncConnector{}).Operation():
+		kind = model.FoundryAutomationJobSync
+	case (automation.CreateLoad{}).Operation():
+		kind = model.FoundryAutomationJobLoad
+	default:
+		return
+	}
+	var ran struct {
+		Result struct {
+			ID string `json:"id"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(end.Result, &ran); err != nil || ran.Result.ID == "" {
+		log.From(ctx).Warn("automation loops: an approved action's work can't be told", "turn", s.turn.ID, "action", a.ID, "err", err)
+		return
+	}
+	if err := s.db.MarkFoundryAutomationCause(ctx, *s.turn.AutomationRunID, model.FoundryAutomationJob{Kind: kind, ID: ran.Result.ID}); err != nil {
+		log.From(ctx).Warn("automation loops: an approved action's work went unmarked", "turn", s.turn.ID, "action", a.ID, "err", err)
+	}
 }
 
 // record draws a's card and stores it as actionID, with its card's event:
