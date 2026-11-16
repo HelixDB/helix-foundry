@@ -1,0 +1,266 @@
+package foundryagentworker
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/helixdb/helix-foundry/backend/agent/llm"
+	"github.com/helixdb/helix-foundry/backend/ai"
+	"github.com/helixdb/helix-foundry/backend/automation/suggest"
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
+	foundrystore "github.com/helixdb/helix-foundry/backend/store"
+	"github.com/helixdb/helix-foundry/backend/store/model"
+)
+
+const (
+	// suggestionLease is a write's lease: longer than its calls
+	// (suggest.Timeout) and the store's reads and writes around them.
+	suggestionLease = suggest.StaleAfter
+	// suggestionAttempts is how many times a write is claimed before it
+	// fails: a lease lost to a crash counts.
+	suggestionAttempts = 3
+	// suggestionCalls is the most calls one write makes: one, and two more
+	// for an answer that doesn't read or a provider's passing refusal.
+	suggestionCalls = 3
+	// charsPerToken estimates a prompt's tokens from its length, on the
+	// generous side, for a write's worst case against the budget.
+	charsPerToken = 3
+)
+
+// suggestionStore is what a write of suggestions reads and writes.
+type suggestionStore interface {
+	ClaimFoundryAutomationSuggestions(ctx context.Context, workerID string, lease time.Duration) (*model.FoundryAutomationSuggestions, error)
+	FinishFoundryAutomationSuggestions(ctx context.Context, ontologyID, versionID, workerID string, end model.FoundryAutomationSuggestionsEnd) error
+	SumFoundryAssistantSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
+	GetFoundryOntology(ctx context.Context, workspaceID, id string) (*model.FoundryOntology, error)
+	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
+	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
+	GetOntologyVersionScope(ctx context.Context, ontologyID, versionID string) ([]string, error)
+	ListConnectors(ctx context.Context, workspaceID string) ([]*model.Connector, error)
+	ListFoundryDocumentSets(ctx context.Context, workspaceID string) ([]*model.FoundryDocumentSet, error)
+}
+
+// resolver is the workspace's model provider; *ai.Resolver.
+type resolver interface {
+	Resolve(ctx context.Context, workspaceID string) (ai.Resolved, error)
+}
+
+// suggester writes suggestions for a new automation, one version at a time,
+// on each workspace's extraction model, its cheapest task model, charged to
+// the Assistant's monthly budget (package suggest).
+type suggester struct {
+	db       suggestionStore
+	ai       resolver
+	models   func(r ai.Resolved, catalog *ai.Catalog, role ai.Role) (llm.Binding, error)
+	catalog  *ai.Catalog
+	monthly  int64
+	workerID string
+	now      func() time.Time
+}
+
+// drain writes due suggestions one at a time until none is due.
+func (s *suggester) drain(ctx context.Context) {
+	for ctx.Err() == nil {
+		row, err := s.db.ClaimFoundryAutomationSuggestions(ctx, s.workerID, suggestionLease)
+		if err != nil {
+			log.From(ctx).Error("claim automation suggestions failed", "err", err)
+			return
+		}
+		if row == nil {
+			return
+		}
+		s.write(ctx, row)
+	}
+}
+
+// write writes a claimed row's suggestions and ends it: ready with what
+// Parse kept, or failed saying why, with what every call spent. A store
+// read that fails leaves it to its lease, to be claimed again.
+func (s *suggester) write(ctx context.Context, row *model.FoundryAutomationSuggestions) {
+	logger := log.From(ctx).With("ontology", row.OntologyID, "version", row.VersionID, "attempt", row.Attempts)
+	ctx = log.Into(ctx, logger)
+	if row.Attempts > suggestionAttempts {
+		s.finish(ctx, row, model.FoundryAutomationSuggestionsEnd{Failure: fmt.Sprintf("stopped without finishing %d times", row.Attempts-1)})
+		return
+	}
+	in, err := s.input(ctx, row)
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		s.finish(ctx, row, model.FoundryAutomationSuggestionsEnd{Failure: "the ontology or its version is gone"})
+		return
+	}
+	if err != nil {
+		logger.Warn("read what automation suggestions are written from failed; the lease lapses and it is claimed again", "err", err)
+		return
+	}
+	resolved, err := s.ai.Resolve(ctx, row.WorkspaceID)
+	var binding llm.Binding
+	if err == nil {
+		binding, err = s.models(resolved, s.catalog, ai.RoleExtract)
+	}
+	if err != nil {
+		logger.Info("automation suggestions: no usable model", "err", err)
+		s.finish(ctx, row, model.FoundryAutomationSuggestionsEnd{Failure: "no usable model"})
+		return
+	}
+	system, user := suggest.Prompt(in)
+	req := llm.Request{
+		System: system, MaxOutput: suggest.MaxOutputTokens,
+		Messages: []llm.Message{{Role: llm.User, Content: []llm.Block{llm.Text{Text: user}}}},
+		Tools:    []llm.Tool{{Name: suggest.ToolName, Description: suggest.ToolDescription, InputSchema: suggest.ToolSchema}},
+	}
+	now := s.now().UTC()
+	spent, err := s.db.SumFoundryAssistantSpend(ctx, row.WorkspaceID, time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		logger.Warn("read the Assistant's spend failed; the lease lapses and it is claimed again", "err", err)
+		return
+	}
+	prompt := int64((len(system)+len(user)+len(suggest.ToolSchema))/charsPerToken + 1)
+	worst := suggestionCalls * binding.Pricer.Micros(llm.Usage{In: prompt, Out: suggest.MaxOutputTokens})
+	if spent+worst > s.monthly {
+		s.finish(ctx, row, model.FoundryAutomationSuggestionsEnd{Failure: "the Assistant's monthly budget is spent"})
+		return
+	}
+	s.finish(ctx, row, s.call(ctx, binding, req))
+}
+
+// call makes the write's calls within suggest.Timeout: one, and up to two
+// more after an answer Parse keeps nothing of, or a refusal a retry may
+// pass. It returns the end to record, with what every call cost.
+func (s *suggester) call(ctx context.Context, b llm.Binding, req llm.Request) model.FoundryAutomationSuggestionsEnd {
+	ctx, cancel := context.WithTimeout(ctx, suggest.Timeout)
+	defer cancel()
+	var cost int64
+	why := ""
+	for range suggestionCalls {
+		var input json.RawMessage
+		var failed error
+		for chunk, err := range b.Model.Stream(ctx, req) {
+			if err != nil {
+				failed = err
+				break
+			}
+			switch c := chunk.(type) {
+			case llm.ToolUse:
+				if c.Name == suggest.ToolName && input == nil {
+					input = c.Input
+				}
+			case llm.Usage:
+				cost += b.Pricer.Micros(c)
+			}
+		}
+		var refused *llm.Error
+		switch {
+		case failed != nil && errors.As(failed, &refused) && refused.Retryable():
+			why = "the model provider couldn't answer: " + string(refused.Kind)
+			continue
+		case failed != nil && errors.As(failed, &refused):
+			return model.FoundryAutomationSuggestionsEnd{Failure: "the model provider refused: " + string(refused.Kind), USDMicros: cost}
+		case failed != nil && ctx.Err() != nil:
+			return model.FoundryAutomationSuggestionsEnd{Failure: "the model took too long", USDMicros: cost}
+		case failed != nil:
+			return model.FoundryAutomationSuggestionsEnd{Failure: "the model call failed", USDMicros: cost}
+		}
+		kept, err := suggest.Parse(input)
+		if err != nil {
+			why = "the model's answer wasn't usable"
+			log.From(ctx).Info("automation suggestions: an answer Parse kept nothing of", "err", err)
+			continue
+		}
+		raw, err := json.Marshal(kept)
+		if err != nil {
+			return model.FoundryAutomationSuggestionsEnd{Failure: "the suggestions couldn't be stored", USDMicros: cost}
+		}
+		return model.FoundryAutomationSuggestionsEnd{Suggestions: raw, USDMicros: cost}
+	}
+	return model.FoundryAutomationSuggestionsEnd{Failure: why, USDMicros: cost}
+}
+
+// finish records end, with a bound of its own; a lost lease records
+// nothing.
+func (s *suggester) finish(ctx context.Context, row *model.FoundryAutomationSuggestions, end model.FoundryAutomationSuggestionsEnd) {
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	defer cancel()
+	err := s.db.FinishFoundryAutomationSuggestions(finishCtx, row.OntologyID, row.VersionID, s.workerID, end)
+	suggestionSpend.Add(float64(end.USDMicros))
+	switch {
+	case errors.Is(err, foundrystore.ErrNotFound):
+		suggestionWrites.WithLabelValues("lost").Inc()
+	case err != nil:
+		log.From(ctx).Warn("finish automation suggestions failed; the lease lapses and it is claimed again", "err", err)
+	default:
+		suggestionWrites.WithLabelValues(string(end.Status())).Inc()
+	}
+}
+
+// input is what the row's prompt is made of: its ontology, the version's
+// schema and questions, the goal and connections of the generation that
+// drafted it, and the document sets it reads. ErrNotFound means the
+// ontology or its version is gone.
+func (s *suggester) input(ctx context.Context, row *model.FoundryAutomationSuggestions) (suggest.Input, error) {
+	o, err := s.db.GetFoundryOntology(ctx, row.WorkspaceID, row.OntologyID)
+	switch {
+	case err != nil:
+		return suggest.Input{}, err
+	case o.DeletedAt != nil:
+		return suggest.Input{}, foundrystore.ErrNotFound
+	}
+	v, err := s.db.GetOntologyVersion(ctx, row.OntologyID, row.VersionID)
+	if err != nil {
+		return suggest.Input{}, err
+	}
+	in := suggest.Input{Ontology: o.Name, Version: suggest.VersionOf(v.Format, v.Definition)}
+	var connectorIDs []string
+	if v.GenerationID != nil {
+		g, err := s.db.GetOntologyGeneration(ctx, row.OntologyID, *v.GenerationID)
+		switch {
+		case errors.Is(err, foundrystore.ErrNotFound):
+		case err != nil:
+			return suggest.Input{}, err
+		default:
+			in.Goal, in.Title = deref(g.Goal), deref(g.Title)
+			for _, table := range g.Input.Tables {
+				if !slices.Contains(connectorIDs, table.ConnectorID) {
+					connectorIDs = append(connectorIDs, table.ConnectorID)
+				}
+			}
+		}
+	}
+	if len(connectorIDs) > 0 {
+		connectors, err := s.db.ListConnectors(ctx, row.WorkspaceID)
+		if err != nil {
+			return suggest.Input{}, err
+		}
+		for _, c := range connectors {
+			if slices.Contains(connectorIDs, c.ID) {
+				in.Connectors = append(in.Connectors, suggest.Connector{Name: c.Name, Kind: c.Kind})
+			}
+		}
+	}
+	scope, err := s.db.GetOntologyVersionScope(ctx, row.OntologyID, row.VersionID)
+	if err != nil {
+		return suggest.Input{}, err
+	}
+	if len(scope) > 0 {
+		sets, err := s.db.ListFoundryDocumentSets(ctx, row.WorkspaceID)
+		if err != nil {
+			return suggest.Input{}, err
+		}
+		for _, set := range sets {
+			if slices.Contains(scope, set.ID) {
+				in.Sets = append(in.Sets, set.DisplayName())
+			}
+		}
+	}
+	return in, nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
