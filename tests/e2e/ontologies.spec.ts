@@ -118,13 +118,12 @@ test("creates an ontology on an existing database and explores what it holds", a
     "true",
   );
   // Its Overview, then its Explorer, then Connections, what it reads, then
-  // the Review queue, Suggestions and Workflows.
+  // Review and Workflows.
   await expect(list.locator(".hf-subnav-link")).toHaveText([
     "Overview",
     "Explorer",
     "Connections",
-    "Review queue",
-    "Suggestions",
+    "Review",
     "Workflows",
   ]);
   await list.getByRole("link", { name: "Explorer" }).click();
@@ -172,17 +171,10 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
     /^(Loaded|Not loaded|Failed|Loading|Queued)$/,
   );
   // Only the open one's pages show, the page open marked: its Overview,
-  // Explorer, Connections, the Review queue, Suggestions and Workflows; no
+  // Explorer, Connections, Review and Workflows; no
   // documents under Connections.
   const pages = list.locator(".hf-subnav-link"),
-    names = [
-      "Overview",
-      "Explorer",
-      "Connections",
-      "Review queue",
-      "Suggestions",
-      "Workflows",
-    ];
+    names = ["Overview", "Explorer", "Connections", "Review", "Workflows"];
   await expect(pages).toHaveText(names);
   await expect(list.getByRole("tree")).toHaveCount(0);
   const current = list.locator('.hf-subnav-link[aria-current="page"]');
