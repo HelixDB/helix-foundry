@@ -87,8 +87,12 @@ export const reviewQueries = {
     staleTime: Infinity,
     enabled: false,
     queryFn: ({ client }: { client: QueryClient }) =>
-      client.getQueryData<OpenFacts>([ws, "ontology", o, "review-open-facts"]) ??
-      null,
+      client.getQueryData<OpenFacts>([
+        ws,
+        "ontology",
+        o,
+        "review-open-facts",
+      ]) ?? null,
   }),
 };
 

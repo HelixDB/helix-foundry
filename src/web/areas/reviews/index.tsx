@@ -353,24 +353,22 @@ export function FactsReview({ queue: q }: { queue: ReviewQueue }) {
       />
     );
   if (!queue)
-    return (
-      failed && !count.isFetching ? (
-        <EmptyState
-          icon={ListChecks}
-          title="Couldn’t read the reviews"
-          text={failed.message}
-          action={<Button onClick={retry}>Retry</Button>}
-        />
-      ) : (
-        <>
-          {pages > 1 && (
-            <p role="status" className="on-muted">
-              Reading the load’s reviews: {reviewPages.read} of {pages} pages.
-            </p>
-          )}
-          <SkeletonText lines={6} />
-        </>
-      )
+    return failed && !count.isFetching ? (
+      <EmptyState
+        icon={ListChecks}
+        title="Couldn’t read the reviews"
+        text={failed.message}
+        action={<Button onClick={retry}>Retry</Button>}
+      />
+    ) : (
+      <>
+        {pages > 1 && (
+          <p role="status" className="on-muted">
+            Reading the load’s reviews: {reviewPages.read} of {pages} pages.
+          </p>
+        )}
+        <SkeletonText lines={6} />
+      </>
     );
   const manage = canManage(role);
   return (

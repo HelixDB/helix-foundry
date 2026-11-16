@@ -174,13 +174,7 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
   // Explorer, Connections, Review and Workflows; no
   // documents under Connections.
   const pages = list.locator(".hf-subnav-link"),
-    names = [
-      "Overview",
-      "Explorer",
-      "Connections",
-      "Review",
-      "Workflows",
-    ];
+    names = ["Overview", "Explorer", "Connections", "Review", "Workflows"];
   await expect(pages).toHaveText(names);
   await expect(list.getByRole("tree")).toHaveCount(0);
   const current = list.locator('.hf-subnav-link[aria-current="page"]');

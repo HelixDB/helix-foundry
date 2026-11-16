@@ -66,8 +66,7 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
     facts = useQuery(reviewQueries.openFacts(ws, open)).data;
   const reviewOpen =
     facts && own?.currentLoad?.id === facts.loadId
-      ? facts.open +
-        (heal.data?.enabled ? heal.data.findings?.length || 0 : 0)
+      ? facts.open + (heal.data?.enabled ? heal.data.findings?.length || 0 : 0)
       : 0;
   // The open ontology's row, until the list names it (made in another tab).
   const listed = list.data?.ontologies || [],
