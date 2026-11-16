@@ -69,7 +69,7 @@ var (
 // Catalog.Unpriced's to check.
 func (s Settings) Validate(r Rules) error {
 	switch p := s.Provider.(type) {
-	case Anthropic, OpenAI:
+	case Anthropic, OpenAI, Cohere:
 	case AzureOpenAI:
 		if _, err := AzureEndpoint(p.Endpoint); err != nil {
 			return err
@@ -77,14 +77,6 @@ func (s Settings) Validate(r Rules) error {
 	case Bedrock:
 		if !awsRegion.MatchString(p.Region) {
 			return invalid("provider.region", "must be an AWS region, like us-east-1")
-		}
-	case Cohere:
-		// Helix's price table has no Cohere rows (Cohere quotes its prices
-		// per customer): every model costs what its owner says it does.
-		for _, rm := range s.Models.Each() {
-			if _, rates := rm.Model.Price.(PriceRates); !rates {
-				return invalid("models."+string(rm.Role)+".price", "must be your own rates for a Cohere model")
-			}
 		}
 	case Ollama:
 		if _, err := OllamaURL(p.BaseURL, r); err != nil {
@@ -123,6 +115,11 @@ func (s Settings) Validate(r Rules) error {
 		}
 		switch p := rm.Model.Price.(type) {
 		case PriceTable:
+			// Helix's price table has no Cohere rows (Cohere quotes its
+			// prices per account): its models cost what their owner says.
+			if kind == KindCohere {
+				return invalid(field+".price", "must be your own rates for a Cohere model")
+			}
 		case PriceTableAs:
 			if kind != KindAzureOpenAI && kind != KindBedrock {
 				return invalid(field+".price", "can be another model's only for an Azure deployment or a Bedrock inference profile")

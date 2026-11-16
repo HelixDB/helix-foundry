@@ -22,7 +22,8 @@ import {
 // optional key kept only for its base URL. Amazon Bedrock runs in a region,
 // FIPS where AWS has it, on model or inference profile IDs priced from
 // Helix's table (a profile as its model) or by hand, its key kept across
-// regions and models. A new workspace on Free needs Foundry Pro to bring a
+// regions and models. Cohere runs on Command A at the owner's prices, which
+// Helix's table has none of. A new workspace on Free needs Foundry Pro to bring a
 // key; Ollama is never offered. The mock's test passes unless the key holds
 // "bad" or a model "missing" or "notools"; its DNS makes ".internal" names
 // private (mock/routes/ai.ts).
@@ -397,6 +398,7 @@ test("needs Foundry Pro to bring a key on Free", async ({ page }) => {
     "Azure OpenAI",
     "Custom (OpenAI-compatible)",
     "Amazon Bedrock",
+    "Cohere",
   ]) {
     await radio(page, card).check();
     const gate = page.getByRole("note").filter({
@@ -1157,4 +1159,48 @@ test("keeps the default when a Bedrock key fails its test", async ({
   );
   await page.reload();
   await expect(radio(page, "Default")).toBeChecked();
+});
+
+const COHERE_KEY = "e2e-cohere-key-0123456789abcdefWXYZ";
+
+test("runs on Cohere at the owner's prices", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/settings/ai");
+  await expect(
+    page.getByText("Sent to Cohere under your API key."),
+  ).toBeVisible();
+  await radio(page, "Cohere").check();
+  await expect(page.getByLabel("API key")).toHaveAttribute(
+    "placeholder",
+    "A production API key",
+  );
+  // Every task starts on Command A, at prices only the owner knows.
+  const model = page.getByRole("group", { name: "Model" });
+  await expect(model.getByLabel("Model")).toHaveValue("command-a-03-2025");
+  await page.getByLabel("API key").fill(COHERE_KEY);
+  const save = page.getByRole("button", { name: "Test and save" });
+  await expect(save).toBeDisabled();
+  await model.getByLabel("Input", { exact: true }).fill("2.5");
+  await model.getByLabel("Output", { exact: true }).fill("10");
+
+  const put = page.waitForRequest(
+    (r) => r.method() === "PUT" && r.url().endsWith("/foundry/ai"),
+  );
+  await confirmSwitch(page, "Cohere");
+  const command = {
+    name: "command-a-03-2025",
+    rates: { inputUsdPerMtok: "2.5", outputUsdPerMtok: "10" },
+  };
+  expect((await put).postDataJSON()).toEqual({
+    provider: { cohere: {} },
+    models: { draft: command, ask: command, extract: command, verify: command },
+    apiKey: COHERE_KEY,
+  });
+  await expect(page.getByText("AI models now run on Cohere.")).toBeVisible();
+  await expect(radio(page, "Cohere")).toBeChecked();
+  await expect(model.getByLabel("Output", { exact: true })).toHaveValue("10");
+  await expect(page.getByLabel("API key")).toHaveAttribute(
+    "placeholder",
+    "Leave blank to keep …WXYZ",
+  );
 });

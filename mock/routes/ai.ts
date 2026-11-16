@@ -64,7 +64,8 @@ import { isFoundryPro, proRequired } from "./billing";
 // hosted, the plan has own keys), every model has a name that isn't a key
 // and a price the kind takes (rates in dollars with at most three decimals,
 // output above 0; another model's row only for an Azure deployment or a
-// Bedrock model; no cost only for Ollama and custom servers), the endpoint
+// Bedrock model; no cost only for Ollama and custom servers; for Cohere,
+// whose models Helix's table doesn't price, rates only), the endpoint
 // passes the deployment's URL rules (an Azure OpenAI resource's https
 // endpoint, normalized to .../openai/v1; an AWS region for Bedrock, FIPS
 // kept only when on), a key is given or kept (canReuseKey) or not needed,
@@ -114,8 +115,8 @@ import { isFoundryPro, proRequired } from "./billing";
 // given, or a model pulled, since the install started; unset, it finds
 // what it found), `ollamaBundled: false` (the bundled Ollama isn't
 // running) and `aiKinds`, the kinds offered (Claude, OpenAI, Azure OpenAI,
-// custom OpenAI-compatible servers and Amazon Bedrock, and in a local API
-// Ollama, which is never offered hosted).
+// custom OpenAI-compatible servers, Amazon Bedrock and Cohere, and in a
+// local API Ollama, which is never offered hosted).
 // Ollama servers, by base URL: the bundled one has qwen3.5:4b, which
 // Foundry runs, then embeddinggemma and qwen2.5:0.5b, which it can't; the
 // one on this computer also qwen3.5:9b (first, the most capable), gemma3:4b
@@ -215,6 +216,7 @@ const KEY: Record<FoundryAiProviderKind, FoundryAiKey> = {
   FOUNDRY_AI_KIND_OPENAI: "FOUNDRY_AI_KEY_REQUIRED",
   FOUNDRY_AI_KIND_AZURE_OPENAI: "FOUNDRY_AI_KEY_REQUIRED",
   FOUNDRY_AI_KIND_BEDROCK: "FOUNDRY_AI_KEY_REQUIRED",
+  FOUNDRY_AI_KIND_COHERE: "FOUNDRY_AI_KEY_REQUIRED",
   FOUNDRY_AI_KIND_OLLAMA: "FOUNDRY_AI_KEY_NONE",
   FOUNDRY_AI_KIND_OPENAI_COMPATIBLE: "FOUNDRY_AI_KEY_OPTIONAL",
 };
@@ -514,6 +516,7 @@ const offered = (): FoundryAiProviderKind[] =>
     // would have to be public.
     ...(LOCAL_TOKEN ? ["FOUNDRY_AI_KIND_OLLAMA" as const] : []),
     "FOUNDRY_AI_KIND_BEDROCK",
+    "FOUNDRY_AI_KIND_COHERE",
   ];
 
 function view(ws: string, owner = true): FoundryAi {
@@ -792,7 +795,12 @@ function save(
           `models.${role}.price can be another model's only for an Azure deployment or a Bedrock inference profile`,
         );
       models[role] = { name, tableAs: given.tableAs.trim() };
-    } else models[role] = { name, table: {} };
+    } else if (kind === "FOUNDRY_AI_KIND_COHERE")
+      return fail(
+        "INVALID_ARGUMENT",
+        `models.${role}.price must be your own rates for a Cohere model`,
+      );
+    else models[role] = { name, table: {} };
   }
   const endpoint =
     body.provider.azureOpenai?.endpoint ??

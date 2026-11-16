@@ -68,11 +68,13 @@ const FORMS: Partial<
   FOUNDRY_AI_KIND_BEDROCK: (_, { bedrock: { region, fips } }) => ({
     bedrock: AI.bedrockProvider(region, fips),
   }),
+  FOUNDRY_AI_KIND_COHERE: () => ({ cohere: {} }),
 };
 const AZURE = "FOUNDRY_AI_KIND_AZURE_OPENAI",
   COMPAT = "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE",
   OLLAMA = "FOUNDRY_AI_KIND_OLLAMA",
-  BEDROCK = "FOUNDRY_AI_KIND_BEDROCK";
+  BEDROCK = "FOUNDRY_AI_KIND_BEDROCK",
+  COHERE = "FOUNDRY_AI_KIND_COHERE";
 // A custom server's fields before any are typed.
 const NO_SERVER = AI.compatFields();
 // An Ollama server as its card edits it: one it names, or the address typed
@@ -280,10 +282,11 @@ function OwnerForm({
       : undefined;
   // What a kind starts from when the WFE suggests models: those, else its
   // first priced model for every task; nothing for Azure or a custom server,
-  // whose owner names each deployment or model, or Ollama, whose owner names
-  // a model the server has.
+  // whose owner names each deployment or model, Ollama, whose owner names a
+  // model the server has, or Cohere, which Helix's table doesn't price.
   const suggestedFor = (kind: FoundryAiProviderKind): Picks | undefined => {
-    if (kind === AZURE || kind === COMPAT || kind === OLLAMA) return undefined;
+    if (kind === AZURE || kind === COMPAT || kind === OLLAMA || kind === COHERE)
+      return undefined;
     const s = AI.rolePicks(offers.find((o) => o.kind === kind)?.suggested),
       first = AI.pricedModels(kind)[0]?.model || "";
     return Object.fromEntries(
@@ -295,9 +298,9 @@ function OwnerForm({
   };
   // A kind starts from the setting's models when it is the setting's kind,
   // else from what the WFE suggests; an Azure deployment from the first model
-  // Helix prices for it, a custom server's model with no cost counted, and
+  // Helix prices for it, a custom server's model with no cost counted,
   // Ollama from the WFE's draft model, else the one a local install pulls,
-  // at no cost.
+  // at no cost, and Cohere from its Command model, at prices to enter.
   const startFor = (kind: FoundryAiProviderKind): Picks =>
     kind === activeKind && now.source === "workspace"
       ? AI.rolePicks(now.config.models)
@@ -305,7 +308,9 @@ function OwnerForm({
         all(
           kind === COMPAT
             ? { name: "", free: {} }
-            : kind === OLLAMA
+            : kind === COHERE
+              ? { name: AI.COHERE_MODEL, rates: {} }
+              : kind === OLLAMA
               ? {
                   name:
                     offers.find((o) => o.kind === OLLAMA)?.suggested?.draft
@@ -759,6 +764,8 @@ function OwnerForm({
                     onChange={(e) => setApiKey(e.target.value)}
                   />
                   <small>
+                    {kind === COHERE &&
+                      "Use a production key: a trial key allows 1,000 calls a month. "}
                     {kind === COMPAT &&
                       (keptElsewhere
                         ? `The saved key is sent only to ${keptElsewhere}; enter it again if this server needs one. `
@@ -913,7 +920,8 @@ function Region({
 /**
  * A kind's models: one for every task (or, where the WFE suggests them, the
  * recommended one per task), or one chosen per task. Azure OpenAI's are
- * deployments; Amazon Bedrock's are model or inference profile IDs.
+ * deployments; Amazon Bedrock's are model or inference profile IDs;
+ * Cohere's are its model names at the owner's prices.
  */
 function Models({
   kind,
@@ -946,7 +954,9 @@ function Models({
           ? OllamaModel
           : kind === BEDROCK
             ? BedrockModel
-            : CatalogModel;
+            : kind === COHERE
+              ? CohereModel
+              : CatalogModel;
   return (
     <>
       {/* Ollama's fields start afresh for another server. */}
@@ -1684,6 +1694,48 @@ function BedrockModel({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * A Cohere model: its name and what Cohere bills for it, since Helix's
+ * price table has no Cohere models (Cohere quotes its prices per account).
+ */
+function CohereModel({
+  kind,
+  title,
+  pick,
+  every,
+  disabled,
+  onPick,
+}: FieldProps) {
+  const p =
+    pick && "rates" in pick ? pick : { name: pick?.name ?? "", rates: {} };
+  const named = p.name.trim() ? AI.nameProblem(kind, p.name) : undefined;
+  return (
+    <div role="group" aria-label={title} className="wk-ai-model">
+      <label className="hf-field">
+        <span>{every ? "Model" : `${title} model`}</span>
+        <input
+          autoComplete="off"
+          spellCheck={false}
+          disabled={disabled}
+          placeholder={AI.COHERE_MODEL}
+          value={p.name}
+          aria-invalid={!!named}
+          onChange={(e) => onPick({ ...p, name: e.target.value })}
+        />
+        <small>
+          {named ?? "A Command model that calls tools and answers in JSON."}
+        </small>
+      </label>
+      <Rates
+        pick={p}
+        problem={AI.ratesProblem(p.rates)}
+        disabled={disabled}
+        onPick={onPick}
+      />
     </div>
   );
 }
