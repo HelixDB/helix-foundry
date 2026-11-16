@@ -409,10 +409,13 @@ export function Transcript({
     body = useRef<HTMLDivElement>(null),
     stick = useRef(true),
     lastTop = useRef(0),
-    // When its reader last moved it (wheel, touch, keys, its scrollbar).
-    // Only they stop the following: the browser moves it too, clamping it
-    // while a step's content is swapped (an answer moving under a later
+    // Its height at the last scroll, and when its reader last moved it
+    // (wheel, touch, keys, a pointer): a move up is the reader's when they
+    // just moved it, or when nothing changed size since (find in page, a
+    // screen reader, the scrollbar). The browser moves it up too, clamping
+    // it while a step's content is swapped (an answer moving under a later
     // step), and that is no reading up.
+    lastHeight = useRef(0),
     readerAt = useRef(-Infinity),
     turnsSeen = useRef(0);
   const threadId = data?.thread.id,
@@ -424,6 +427,7 @@ export function Transcript({
     // Another thread opens at its end, wherever the last one was read.
     stick.current = true;
     lastTop.current = 0;
+    lastHeight.current = 0;
     const follow = () => {
       if (stick.current) el.scrollTop = el.scrollHeight;
     };
@@ -473,10 +477,12 @@ export function Transcript({
           stick.current = true;
         else if (
           el.scrollTop < lastTop.current &&
-          performance.now() - readerAt.current < 1000
+          (el.scrollHeight === lastHeight.current ||
+            performance.now() - readerAt.current < 1000)
         )
           stick.current = false;
         lastTop.current = el.scrollTop;
+        lastHeight.current = el.scrollHeight;
       }}
     >
       <div ref={body} className="ag-log-body">
