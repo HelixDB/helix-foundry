@@ -21,7 +21,7 @@ const STATUS: Record<string, string> = {
 export const automationsShell: AreaShell = {
   sidebar: {
     automations: {
-      label: "Automations",
+      label: "Workflows",
       component: AutomationList,
       shows: (pathname) => !!openAutomation(pathname),
     },
@@ -29,7 +29,7 @@ export const automationsShell: AreaShell = {
   palette: [
     {
       id: "automations",
-      label: "Automations",
+      label: "Workflows",
       icon: Zap,
       load: async (ws) =>
         ((await automationQueries.list(ws).queryFn()).automations || []).map(

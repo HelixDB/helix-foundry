@@ -119,12 +119,12 @@ function Overview() {
   const query = useQuery(automationQueries.overview(ws, days, here()));
   const header = (
     <PageHeader
-      title="Automations"
+      title="Workflows"
       subtitle="Steps Foundry runs for you on a schedule, or when a sync, a load or new documents arrive: syncs, loads, Founder’s checks, and emails."
       actions={
         query.data?.canCreate && (
           <ButtonLink to={paths.newAutomation()} variant="primary" icon={Plus}>
-            New automation
+            New workflow
           </ButtonLink>
         )
       }
@@ -144,13 +144,13 @@ function Overview() {
         {automationsUnavailable(query.error) ? (
           <EmptyState
             icon={Zap}
-            title="Automations aren’t available here"
+            title="Workflows aren’t available here"
             text="They are off for this Foundry."
           />
         ) : (
           <EmptyState
             icon={Zap}
-            title="Couldn’t load the automations"
+            title="Couldn’t load the workflows"
             text={query.error?.message}
             action={<Button onClick={() => void query.refetch()}>Retry</Button>}
           />
@@ -166,7 +166,7 @@ function Overview() {
         {header}
         <EmptyState
           icon={Zap}
-          title="No automations yet"
+          title="No workflows yet"
           text="Describe what should happen and Founder sets it up, or start from a template. Nothing runs until you approve it."
           action={
             query.data.canCreate && (
@@ -175,7 +175,7 @@ function Overview() {
                 variant="primary"
                 icon={Plus}
               >
-                New automation
+                New workflow
               </ButtonLink>
             )
           }
@@ -244,7 +244,7 @@ function Overview() {
       </section>
       <DataGrid<FoundryAutomation>
         className="au-grid"
-        label="Automations"
+        label="Workflows"
         rows={automations}
         getRowKey={(a) => a.id}
         onRowClick={(a) => navigate(paths.automation(a.id))}
@@ -252,7 +252,7 @@ function Overview() {
         columns={[
           {
             key: "name",
-            label: "Automation",
+            label: "Workflow",
             type: "string",
             render: (a) => (
               <span className="au-list-name">

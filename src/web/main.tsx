@@ -93,7 +93,8 @@ const data = () => import("./areas/data"),
   automations = () => import("./areas/automations"),
   workspace = () => import("./areas/workspace");
 const SettingsRoutes = area(workspace, "SettingsRoutes");
-// Data, Ontology, Dashboards and Automations own their whole URL prefix, and the
+// Data, Ontology, Dashboards and Automations (Workflows, at /workflows) own
+// their whole URL prefix, and the
 // Ontology area also the Explorer's and Ask's: each *Routes component holds
 // its nested route table.
 const DataRoutes = area(data, "DataRoutes"),
@@ -139,6 +140,22 @@ function ToOnboarding() {
     <Navigate to={paths.newOntology() + (q.size ? "?" + q : "")} replace />
   );
 }
+// /automations/*, before automations became workflows: old links (notify
+// emails, agents', the backend's before the rename) keep their query and
+// hash.
+function ToWorkflows() {
+  const { pathname, search, hash } = useLocation();
+  return (
+    <Navigate
+      to={{
+        pathname: pathname.replace(/^\/automations(?=\/|$)/, "/workflows"),
+        search,
+        hash,
+      }}
+      replace
+    />
+  );
+}
 // / is Ask, on the ontology last opened (else the newest); a link's query
 // goes with it. While the workspace has no ontology (`onboarding`), it
 // offers only the new-ontology wizard, which connects data and uploads
@@ -175,7 +192,8 @@ function WorkspaceRoutes({
       <Route path="/explore/*" element={offered(<ExploreRoutes />)} />
       <Route path="/ask/*" element={offered(<AskRoutes />)} />
       <Route path="/dashboards/*" element={offered(<DashboardsRoutes />)} />
-      <Route path="/automations/*" element={offered(<AutomationsRoutes />)} />
+      <Route path="/workflows/*" element={offered(<AutomationsRoutes />)} />
+      <Route path="/automations/*" element={<ToWorkflows />} />
       <Route path="/settings/*" element={<SettingsRoutes />} />
       <Route path="/connect/callback" element={<ConnectCallback />} />
       <Route path="/connect/github" element={<ConnectGitHub />} />

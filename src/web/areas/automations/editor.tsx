@@ -115,7 +115,7 @@ export function AutomationPage() {
   const a = query.data?.automation;
   if (!a)
     return (
-      <Frame bar={<Crumbs name={query.isPending ? "Automation" : "Gone"} />}>
+      <Frame bar={<Crumbs name={query.isPending ? "Workflow" : "Gone"} />}>
         <div className="au-frame">
           {query.isPending ? (
             <SkeletonText lines={6} />
@@ -123,13 +123,13 @@ export function AutomationPage() {
             <EmptyState
               title={
                 query.error instanceof ApiError && query.error.status === 404
-                  ? "This automation is gone"
-                  : "Couldn’t load the automation"
+                  ? "This workflow is gone"
+                  : "Couldn’t load the workflow"
               }
               text={query.error?.message}
               action={
                 <ButtonLink to={paths.automations()}>
-                  All automations
+                  All workflows
                 </ButtonLink>
               }
             />
@@ -170,7 +170,7 @@ export function DraftPage({ templateId }: { templateId: string }) {
   );
   if (!start)
     return (
-      <Frame bar={<Crumbs name="New automation" />}>
+      <Frame bar={<Crumbs name="New workflow" />}>
         <div className="au-frame">
           <SkeletonText lines={6} />
         </div>
@@ -207,7 +207,7 @@ export function Crumbs({
   return (
     <nav className="au-crumbs" aria-label="Breadcrumbs">
       <Link to={paths.automations()} className="au-crumb">
-        Automations
+        Workflows
       </Link>
       <ChevronRight size={14} aria-hidden className="au-crumb-sep" />
       {children ?? <h1 className="au-crumb-name">{name}</h1>}
@@ -431,7 +431,7 @@ function Editor({
 
   if (!current)
     return (
-      <Frame bar={<Crumbs name={a?.name || "Automation"} />}>
+      <Frame bar={<Crumbs name={a?.name || "Workflow"} />}>
         <div className="au-frame">
           <EmptyState
             title="Its steps can’t be read"
@@ -551,11 +551,11 @@ function Editor({
 
   const bar = (
     <>
-      <Crumbs name={current.name || "Untitled automation"}>
+      <Crumbs name={current.name || "Untitled workflow"}>
         {a ? (
           <NameInPlace
             key={current.name}
-            name={current.name || a.name || "Automation"}
+            name={current.name || a.name || "Workflow"}
             canRename={!!a.canEdit}
             onSave={rename}
           />
@@ -571,7 +571,7 @@ function Editor({
         )}
       </Crumbs>
       <Tabs
-        label="Automation"
+        label="Workflow"
         idPrefix="au"
         className="au-tabs"
         value={tab}
@@ -874,7 +874,7 @@ function Editor({
       </div>
       {phone && sheet && (
         <Dialog
-          title={node ? "Step" : current.name || "Automation"}
+          title={node ? "Step" : current.name || "Workflow"}
           variant="drawer"
           onClose={() => setSheet(false)}
         >

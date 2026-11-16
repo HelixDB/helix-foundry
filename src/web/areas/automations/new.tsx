@@ -97,7 +97,7 @@ function NewChat() {
   const seen = useRef(new Map<string, string>());
   useEffect(() => {
     for (const x of thread.data?.actions || []) {
-      if (x.operation !== "create_automation") continue;
+      if (x.operation !== "create_workflow") continue;
       const before = seen.current.get(x.id);
       seen.current.set(x.id, x.status || "");
       const to = resultLink(x)?.to;
@@ -134,7 +134,7 @@ function NewChat() {
 
   if (disabled)
     return (
-      <Frame bar={<Crumbs name="New automation" />}>
+      <Frame bar={<Crumbs name="New workflow" />}>
         <div className="au-frame">
           <Section
             title="Start from a template"
@@ -149,7 +149,7 @@ function NewChat() {
 
   if (!threadId)
     return (
-      <Frame bar={<Crumbs name="New automation" />}>
+      <Frame bar={<Crumbs name="New workflow" />}>
         <div className="au-new-page" data-replay-block>
           <div className="au-new-inner">
             <span className="au-new-icon" aria-hidden>
@@ -190,7 +190,7 @@ function NewChat() {
     <Frame
       bar={
         <>
-          <Crumbs name={thread.data?.thread.title || "New automation"} />
+          <Crumbs name={thread.data?.thread.title || "New workflow"} />
           <div className="au-top-tools">{scratch}</div>
         </>
       }
