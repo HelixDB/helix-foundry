@@ -135,7 +135,10 @@ test("navigates the shell", async ({ page }) => {
     "aria-current",
     "page",
   );
-  await nav.getByRole("link", { name: "Connectors" }).click();
+  await page
+    .getByRole("navigation", { name: "Data" })
+    .getByRole("link", { name: "Connectors" })
+    .click();
   await expect(
     page.getByRole("heading", { level: 1, name: "Connectors" }),
   ).toBeVisible();
@@ -196,13 +199,7 @@ test("opens the Explorer and Ask on the ontology last opened", async ({
     picker = page.getByRole("combobox", { name: "Ontology" });
   await expect
     .poll(() => sectionNames(nav))
-    .toEqual([
-      "Founder",
-      "Dashboards",
-      "Automations",
-      "Ontologies",
-      "Connectors",
-    ]);
+    .toEqual(["Founder", "Dashboards", "Automations", "Ontologies"]);
   // None opened yet: the list's first, now Orders.
   await expect(page).toHaveURL(new RegExp(`/ask/${orders}$`));
 
@@ -308,6 +305,7 @@ test("offers a new workspace only its switcher and account until it has an ontol
   // No search, no Settings link and one section, Get started, back to the
   // onboarding: the sidebar holds it, the workspace and the account.
   await expect(nav.getByRole("link")).toHaveText(["Get started"]);
+  await expect(page.getByRole("navigation", { name: "Data" })).toHaveCount(0);
   await expect(search).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Settings" })).toHaveCount(0);
   await expect(
@@ -333,7 +331,11 @@ test("offers a new workspace only its switcher and account until it has an ontol
 
   // Its first ontology brings the sections, search and Settings.
   await createFirstOntology(page);
-  await expect(nav.getByRole("link", { name: "Connectors" })).toBeVisible();
+  await expect(
+    page
+      .getByRole("navigation", { name: "Data" })
+      .getByRole("link", { name: "Connectors" }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
   await search.click();
   await expect(palette).toBeVisible();
@@ -349,13 +351,7 @@ test("shows the labelled sidebar on every page, Ask's threads under its sections
   // The main page is Ask, the sidebar's first section: each section a link
   // with its name, the open one current, and Ask's threads under them, in
   // the sidebar itself. Nothing collapses or hides it.
-  const sections = [
-    "Founder",
-    "Dashboards",
-    "Automations",
-    "Ontologies",
-    "Connectors",
-  ];
+  const sections = ["Founder", "Dashboards", "Automations", "Ontologies"];
   await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}$`));
   await expect.poll(() => sectionNames(nav)).toEqual(sections);
   await expect(nav.locator('[aria-current="page"]')).toHaveText("Founder");
@@ -394,12 +390,16 @@ test("shows the labelled sidebar on every page, Ask's threads under its sections
 
   // A section with a panel shows it beside the sidebar: the Connectors
   // explorer, and the Ontologies panel. The threads stay Ask's.
-  await nav.getByRole("link", { name: "Connectors" }).click();
+  const connectors = page
+    .getByRole("navigation", { name: "Data" })
+    .getByRole("link", { name: "Connectors" });
+  await connectors.click();
   await expect(
     page.getByRole("complementary", { name: "Connectors explorer" }),
   ).toBeVisible();
   await expect.poll(() => sectionNames(nav)).toEqual(sections);
-  await expect(nav.locator('[aria-current="page"]')).toHaveText("Connectors");
+  await expect(connectors).toHaveAttribute("aria-current", "page");
+  await expect(nav.locator('[aria-current="page"]')).toHaveCount(0);
   await expect(threads).toHaveCount(0);
   await nav.getByRole("link", { name: "Ontologies" }).click();
   await expect(
@@ -435,6 +435,94 @@ test("shows the labelled sidebar on every page, Ask's threads under its sections
   await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}$`));
   await expect(nav.locator('[aria-current="page"]')).toHaveText("Founder");
   await expect(threads.getByRole("link", { name: "New chat" })).toBeVisible();
+});
+
+test("keeps Connectors at the sidebar's foot, above Feedback, on a desk and in a phone's drawer", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await signIn(page);
+  await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}$`));
+  const nav = page.getByRole("navigation", { name: "Main navigation" }),
+    foot = page.getByRole("navigation", { name: "Data" }),
+    connectors = foot.getByRole("link", { name: "Connectors" }),
+    feedback = page.getByRole("button", { name: "Feedback", exact: true });
+  // Not among the sections: right above Feedback, as tall as it.
+  await expect(nav.getByRole("link", { name: "Connectors" })).toHaveCount(0);
+  await expect(foot.getByRole("link")).toHaveText(["Connectors"]);
+  await expect(connectors).not.toHaveAttribute("aria-current");
+  const [link, button, sections] = await Promise.all([
+    connectors.boundingBox(),
+    feedback.boundingBox(),
+    nav.boundingBox(),
+  ]);
+  expect(link!.y).toBeGreaterThan(sections!.y + sections!.height);
+  expect(button!.y - (link!.y + link!.height)).toBeGreaterThanOrEqual(0);
+  expect(button!.y - (link!.y + link!.height)).toBeLessThan(4);
+  expect(link!.height).toBe(button!.height);
+  expect(link!.x).toBe(button!.x);
+  // The keys reach it where it shows: Feedback, then the account, next.
+  await connectors.focus();
+  await page.keyboard.press("Tab");
+  await expect(feedback).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(connectors).toBeFocused();
+
+  // Its section is unchanged: current on /data, with its explorer beside the
+  // sidebar.
+  await connectors.click();
+  await expect(page).toHaveURL(/\/data$/);
+  await expect(connectors).toHaveAttribute("aria-current", "page");
+  await expect(nav.locator('[aria-current="page"]')).toHaveCount(0);
+  await expect(
+    page.getByRole("complementary", { name: "Connectors explorer" }),
+  ).toBeVisible();
+  await page.goto("/data/connections/conn_acme_stripe");
+  await expect(connectors).toHaveAttribute("aria-current", "page");
+
+  // On a phone, Ask's drawer holds the sidebar, Connectors at its foot; it
+  // closes the drawer and opens the section.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/ask");
+  await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}`));
+  const drawer = page.getByRole("dialog", { name: "Navigation" });
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  await expect(
+    drawer
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link"),
+  ).toHaveCount(4);
+  await drawer
+    .getByRole("navigation", { name: "Data" })
+    .getByRole("link", { name: "Connectors" })
+    .click();
+  await expect(drawer).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Connectors" }),
+  ).toBeVisible();
+  // There the drawer is the rail beside the explorer: Connectors current in
+  // the rail's foot, right above Feedback.
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  const rail = drawer.locator(".hf-rail"),
+    railLink = rail
+      .getByRole("navigation", { name: "Data" })
+      .getByRole("link", { name: "Connectors" });
+  await expect(railLink).toHaveAttribute("aria-current", "page");
+  await expect(
+    rail
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: "Connectors" }),
+  ).toHaveCount(0);
+  await expect(
+    drawer.getByRole("complementary", { name: "Connectors explorer" }),
+  ).toBeVisible();
+  const [icon, send] = await Promise.all([
+    railLink.boundingBox(),
+    rail.getByRole("button", { name: "Send feedback" }).boundingBox(),
+  ]);
+  expect(send!.y).toBeGreaterThan(icon!.y + icon!.height - 1);
+  expect(send!.y - (icon!.y + icon!.height)).toBeLessThan(10);
+  expect(icon!.height).toBe(send!.height);
 });
 
 test("moves the line above Ask's threads by keys and by dragging, and remembers it", async ({
