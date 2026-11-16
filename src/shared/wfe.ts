@@ -2736,6 +2736,9 @@ export type AgentPageContext = {
   dashboardId?: string;
   // The person is on the page that starts a new automation.
   newAutomation?: boolean;
+  // The IANA time zone the person's browser names (America/New_York): the
+  // Assistant's default for a schedule. One the WFE can't read is dropped.
+  timeZone?: string;
 };
 
 /**

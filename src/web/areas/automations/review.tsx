@@ -6,7 +6,6 @@ import { useWorkspace } from "../../ui";
 import {
   automationRefusal,
   canonicalJson,
-  here,
   parseSpec,
   sameSteps,
   sentence,
@@ -173,7 +172,7 @@ export function ReviewDialog({
     >
       <div className="au-review">
         <p className="au-sentence">
-          {sentence(draft.spec, lists.names, email, here())}
+          {sentence(draft.spec, lists.names, email)}
         </p>
         <StepsPreview
           spec={draft.spec}
@@ -254,7 +253,7 @@ export function ApproveDialog({
     >
       <div className="au-review">
         <p className="au-sentence">
-          {sentence(spec, lists.names, email, here())}
+          {sentence(spec, lists.names, email)}
         </p>
         <StepsPreview
           spec={spec}

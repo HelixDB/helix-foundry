@@ -86,6 +86,7 @@ import {
 import {
   WEEKDAYS,
   sentence as automationSentence,
+  validZone,
   type Weekday,
 } from "../../src/web/areas/automations/model";
 import { automationRoutes, workspaceAutomations } from "./automations";
@@ -2494,6 +2495,21 @@ function answersScript(
     const x = answers.find((y) => y.questionId === q.id);
     return x ? answerWords(x) : "";
   };
+  // The time zone the mock asked for: the automation the asking turn's
+  // message described, in the zone the label names.
+  if (!g && asked.questions?.[0]?.header === ZONE_HEADER) {
+    const label = answers[0]?.options?.[0] ?? "";
+    const zone =
+      ZONE_CHOICES.find((z) => z.label === label)?.zone ??
+      (validZone(answers[0]?.text) ? answers[0]!.text! : "UTC");
+    return [
+      started,
+      ...automationCreate(
+        { ...a, text: asking.text, page: asking.pageContext },
+        zone,
+      ),
+    ];
+  }
   if (!g) {
     const [goal, data, leave] = (asked.questions || []).map(words);
     return [
@@ -2558,14 +2574,33 @@ const aref = (x: ReturnType<typeof workspaceAutomations>[number]) => ({
 });
 
 /**
- * Sets up what the person asked for as an automation's spec: a schedule
- * (UTC: the mock doesn't know the person's zone), or, when documents are
- * uploaded, their arrival in the workspace's first set of its own; a sync
- * of the connection named (else the first, when asked to sync), the
- * Assistant's summary of what they asked about, and an email; then
- * prepares create_automation.
+ * The time zones the mock offers when it has to ask for one: labels in
+ * words, as the prompt has the Assistant write them, and the IANA id it
+ * writes into the spec itself.
  */
-function automationCreate(a: Ask): Step[] {
+const ZONE_CHOICES: readonly { label: string; zone: string }[] = [
+  { label: "London (UK time)", zone: "Europe/London" },
+  { label: "New York (US Eastern)", zone: "America/New_York" },
+  { label: "Los Angeles (US Pacific)", zone: "America/Los_Angeles" },
+  { label: "Berlin (Central Europe)", zone: "Europe/Berlin" },
+];
+
+/** The question the mock asks when no time zone came with the message. */
+const ZONE_HEADER = "Time zone";
+
+/**
+ * Sets up what the person asked for as an automation's spec: a schedule
+ * in the person's time zone (the page context's, as the browser sent it;
+ * `zone` once they chose one), or, when documents are uploaded, their
+ * arrival in the workspace's first set of its own; a sync of the
+ * connection named (else the first, when asked to sync), the Assistant's
+ * summary of what they asked about, an instruction naming the ontology it
+ * reads by name and never by id, and an email; then prepares
+ * create_automation. A day's or a week's schedule with no zone known asks
+ * for one first, its options in words.
+ */
+function automationCreate(a: Ask, chosen?: string): Step[] {
+  const zone = chosen || a.page?.timeZone || "";
   const text = a.text,
     connectors = workspaceConnectors(a.ws).filter((c) => c.kind !== "events"),
     connector =
@@ -2585,24 +2620,45 @@ function automationCreate(a: Ask): Step[] {
   const uploaded = /\bwhen\b[^.]*\b(uploaded|arrives?)\b/i.test(text)
     ? sets(a.ws, a.userId).find((s) => !s.connector)
     : undefined;
+  const hourly = /\bevery\s+hour\b/i.test(text);
+  if (!uploaded && !hourly && !zone) {
+    const when = weekday || /\bevery\s+week\b/i.test(text) ? `${(weekday ?? "monday").replace(/^./, (c) => c.toUpperCase())} ` : "";
+    const questions: AgentQuestion[] = [
+      {
+        id: "q1",
+        header: ZONE_HEADER,
+        text: `Which time zone should the ${when}${at} run keep?`,
+        options: ZONE_CHOICES.map((z) => ({ label: z.label, description: "" })),
+        multiple: false,
+        recommended: "",
+        blocking: true,
+      },
+    ];
+    return askPerson(
+      () => ({
+        questions: questions.map((q) => ({
+          header: q.header,
+          text: q.text,
+          options: q.options,
+        })),
+      }),
+      () => ({ type: "questions", questions }),
+    );
+  }
+  const time_zone = zone || "UTC";
   const trigger = uploaded
     ? ({ kind: "document_arrived", set_id: uploaded.id } as const)
-    : /\bevery\s+hour\b/i.test(text)
-      ? ({
-          kind: "schedule",
-          every: "hour",
-          minute: 0,
-          time_zone: "UTC",
-        } as const)
+    : hourly
+      ? ({ kind: "schedule", every: "hour", minute: 0, time_zone } as const)
       : weekday || /\bevery\s+week\b/i.test(text)
         ? ({
             kind: "schedule",
             every: "week",
             weekday: (weekday ?? "monday") as Weekday,
             at,
-            time_zone: "UTC",
+            time_zone,
           } as const)
-        : ({ kind: "schedule", every: "day", at, time_zone: "UTC" } as const);
+        : ({ kind: "schedule", every: "day", at, time_zone } as const);
   const about = /\b(?:summary|report)\s+of\s+(.+?)(?:[.!?]|$)/i.exec(text)?.[1];
   const nodes: AutomationSpec["nodes"] = [
     { id: "start", kind: "trigger", config: trigger, position: { x: 0, y: 0 } },
@@ -2618,13 +2674,18 @@ function automationCreate(a: Ask): Step[] {
       kind: "action",
       config: { operation: "sync_connector", connector_id: connector.id },
     });
+  // The ontology the person named, by its name: people read and edit the
+  // instruction, and the step finds it by name when it runs.
+  const reads = named(a.ws, text);
   add({
     id: "summarise",
     kind: "assistant",
     config: {
-      instruction: about
-        ? `Summarise ${about.trim()}, in a few plain sentences.`
-        : `Do what was asked: ${text.trim()}`,
+      instruction:
+        (reads ? `Read the current load of the ${reads.name} ontology. ` : "") +
+        (about
+          ? `Summarise ${about.trim()}, in a few plain sentences.`
+          : `Do what was asked: ${text.trim()}`),
     },
   });
   if (/\b(e-?mails?|mail)\b/i.test(text))
@@ -2647,7 +2708,6 @@ function automationCreate(a: Ask): Step[] {
       dashboard: () => undefined,
     },
     !LOCAL_TOKEN,
-    "UTC",
   );
   return [
     call("tu_connectors", CONNECTORS, { workspace_id: a.ws }),
@@ -2665,7 +2725,7 @@ function automationCreate(a: Ask): Step[] {
       display: { name },
       named: namedByPerson(a.threadId, [name]),
       ontologyId: "",
-      said: `I've prepared “${name}”: ${words} Its times are in UTC. Nothing runs until you click Create and turn on, which approves these steps to run as you.`,
+      said: `I've prepared “${name}”: ${words} Nothing runs until you click Create and turn on, which approves these steps to run as you.`,
     })),
   ];
 }
@@ -4075,13 +4135,19 @@ export const agentRoutes: MockRoute[] = [
         };
         state.threads.push(thread);
       }
+      // A zone that isn't one is dropped, never refused, as the WFE does.
+      const zone =
+        typeof page?.timeZone === "string" && validZone(page.timeZone)
+          ? page.timeZone
+          : "";
       const pageContext =
-        page?.ontologyId || page?.dashboardId || page?.newAutomation
+        page?.ontologyId || page?.dashboardId || page?.newAutomation || zone
           ? {
-              ...(page.ontologyId && { ontologyId: page.ontologyId }),
-              ...(page.loadId && { loadId: page.loadId }),
-              ...(page.dashboardId && { dashboardId: page.dashboardId }),
-              ...(page.newAutomation && { newAutomation: true }),
+              ...(page?.ontologyId && { ontologyId: page.ontologyId }),
+              ...(page?.loadId && { loadId: page.loadId }),
+              ...(page?.dashboardId && { dashboardId: page.dashboardId }),
+              ...(page?.newAutomation && { newAutomation: true }),
+              ...(zone && { timeZone: zone }),
             }
           : null;
       const turn = queueTurn(

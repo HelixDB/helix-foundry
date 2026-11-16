@@ -73,6 +73,27 @@ export const ENGINE_QUESTIONS: AgentDraftQuestion[] = [
   },
 ];
 
+// What it asks with `ontologyQuestions: "time_zone"`: one choice whose
+// labels are IANA time zone ids, as the engine may write them; the pages
+// show them in words and send the id back.
+export const ZONE_QUESTIONS: AgentDraftQuestion[] = [
+  {
+    id: "Q1",
+    items: [],
+    header: "Dates",
+    text: "Which time zone are the dates in your invoices written in?",
+    options: [
+      { label: "Europe/London", description: null },
+      { label: "America/New_York", description: null },
+      { label: "America/Los_Angeles", description: null },
+      { label: "UTC", description: null },
+    ],
+    multiple: false,
+    default: "America/New_York",
+    blocking: true,
+  },
+];
+
 /**
  * A question of the engine's as the WFE gives it
  * (model.OntologyQuestion): its `default` is the recommended answer.

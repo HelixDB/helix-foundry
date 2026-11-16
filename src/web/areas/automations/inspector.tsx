@@ -28,6 +28,7 @@ import {
   type Weekday,
 } from "./model";
 import { nodeIcon, stepTitle } from "./parts";
+import { zoneCity, zoneLabel } from "../../../shared/time-zone";
 import type { useNames } from "./queries";
 
 // The builder's inspector: what the selected step does, in plain words and
@@ -58,12 +59,33 @@ const DAYS: SelectOption<Weekday>[] = WEEKDAYS.map((d) => ({
   value: d,
   label: d.charAt(0).toUpperCase() + d.slice(1),
 }));
-export const ZONES: string[] = (() => {
+const ZONES: string[] = (() => {
   const all = (
     Intl as { supportedValuesOf?: (key: "timeZone") => string[] }
   ).supportedValuesOf?.("timeZone");
   return all?.length ? all : ["UTC"];
 })();
+let zoneChoices: SelectOption[] | undefined;
+
+/**
+ * A time zone picker's options: `current`, the browser's, then every zone
+ * this runtime names, each by its city and offset now ("New York ·
+ * GMT−5"); the id is the value. Every zone's label is worked out once.
+ */
+export function zoneOptions(current: string): SelectOption[] {
+  zoneChoices ??= ZONES.map((z) => ({
+    value: z,
+    label: zoneLabel(z) ?? zoneCity(z),
+  }));
+  const first = [...new Set([current, here()])].map((z) => ({
+    value: z,
+    label: zoneLabel(z) ?? zoneCity(z),
+  }));
+  return [
+    ...first,
+    ...zoneChoices.filter((o) => !first.some((f) => f.value === o.value)),
+  ];
+}
 
 /** A target's picker: the workspace's of its kind, by name; one gone shows as gone. */
 function targets(
@@ -98,7 +120,6 @@ export function Inspector({
         <Icon size={15} aria-hidden />
         <h2>{KIND_HEADS[node.kind]}</h2>
       </div>
-      <p className="au-inspector-sum">{stepTitle(node, lists.names, email)}</p>
       {node.kind === "trigger" && (
         <TriggerFields
           t={node.config}
@@ -280,9 +301,7 @@ function TriggerFields({
             <Select
               label="Time zone"
               value={t.time_zone}
-              options={[...new Set([t.time_zone, here(), ...ZONES])].map(
-                (z) => ({ value: z, label: z.replaceAll("_", " ") }),
-              )}
+              options={zoneOptions(t.time_zone)}
               onChange={(time_zone) => onChange({ ...t, time_zone })}
             />
           </label>
