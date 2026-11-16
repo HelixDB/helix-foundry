@@ -307,6 +307,20 @@
       "additionalProperties": false,
       "oneOf": [
         {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "key"
+                ]
+              },
+              {
+                "required": [
+                  "name"
+                ]
+              }
+            ]
+          },
           "required": [
             "type",
             "id"
