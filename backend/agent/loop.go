@@ -23,6 +23,7 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/ai"
+	"github.com/helixdb/helix-foundry/backend/automation"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
@@ -369,8 +370,8 @@ func openingText(ctx context.Context, db Store, turn *model.FoundryAgentTurn) (s
 }
 
 // page is the turn's page context as the model is told it: each id the
-// workspace's, with the ontology's and the dashboard's names; nil when it
-// names nothing that is.
+// workspace's, with the ontology's and the dashboard's names, and the
+// person's time zone when it is one; nil when it names nothing that is.
 func page(ctx context.Context, db Reads, turn *model.FoundryAgentTurn) *shownPage {
 	var p PageContext
 	if len(turn.PageContext) == 0 || json.Unmarshal(turn.PageContext, &p) != nil {
@@ -393,6 +394,9 @@ func page(ctx context.Context, db Reads, turn *model.FoundryAgentTurn) *shownPag
 		}
 	}
 	out.CreatingAutomation = p.NewAutomation
+	if _, err := automation.Zone(p.TimeZone); err == nil {
+		out.TimeZone = p.TimeZone
+	}
 	if out == (shownPage{}) {
 		return nil
 	}

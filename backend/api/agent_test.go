@@ -551,6 +551,27 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 		assert.True(t, resp.GetTurn().GetPageContext().GetNewAutomation())
 		assert.JSONEq(t, `{"new_automation":true}`, string(f.store.turns[resp.GetTurn().GetId()].PageContext))
 	})
+	t.Run("the browser's time zone", func(t *testing.T) {
+		f := newAgentFixture(t)
+		resp, err := send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) {
+			r.PageContext = &foundryv1.FoundryAgentPageContext{NewAutomation: true, TimeZone: "America/New_York"}
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "America/New_York", resp.GetTurn().GetPageContext().GetTimeZone())
+		assert.JSONEq(t, `{"new_automation":true,"time_zone":"America/New_York"}`, string(f.store.turns[resp.GetTurn().GetId()].PageContext))
+	})
+	t.Run("a time zone that isn't one is dropped, not refused", func(t *testing.T) {
+		for i, zone := range []string{"Mars/Olympus", "Local", "New York", "../../etc/passwd", strings.Repeat("A", 65), "Etc/Unknown"} {
+			f := newAgentFixture(t)
+			resp, err := send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) {
+				r.ClientToken = "tz-" + strconv.Itoa(i)
+				r.PageContext = &foundryv1.FoundryAgentPageContext{TimeZone: zone}
+			})
+			require.NoError(t, err, zone)
+			assert.Empty(t, resp.GetTurn().GetPageContext().GetTimeZone(), zone)
+			assert.Nil(t, f.store.turns[resp.GetTurn().GetId()].PageContext, "nothing else, so no page context: %s", zone)
+		}
+	})
 	t.Run("another user's thread isn't found", func(t *testing.T) {
 		f := newAgentFixture(t)
 		f.store.threads["th-eve"] = &foundrymodel.FoundryAgentThread{ID: "th-eve", WorkspaceID: "ws-1", UserID: "user-eve"}
