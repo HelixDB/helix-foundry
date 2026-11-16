@@ -123,13 +123,23 @@ export type Refusal = "rate_limit" | "refused" | "error";
  */
 export type AnalyticsEvents = {
   // Sign-in (src/web/sign-in.tsx, main.tsx).
-  sign_in_started: { method: "github" | "google" | "microsoft" };
+  sign_in_started: {
+    method: "github" | "google" | "microsoft" | "password" | "password_sign_up";
+  };
   sign_in_failed: { reason: SignInError };
   // WorkOS emailed a code before it signs the address in (/login/verify):
   // shown, a code refused or not checked, and a right one.
   email_verification_shown: undefined;
   email_verification_failed: { reason: "code" | "unavailable" };
   email_verified: undefined;
+  // Email and password (src/web/password.tsx): a form the WFE refused, and a
+  // reset link asked for and used.
+  password_refused: {
+    form: "sign-in" | "sign-up" | "forgot" | "reset";
+    reason: "credentials" | "exists" | "denied" | "unavailable" | "refused";
+  };
+  password_reset_requested: undefined;
+  password_reset: undefined;
   login_completed: { destination: "workspace" | "onboarding" };
   workspace_created: undefined;
   // A workspace with no ontology shows only the new-ontology wizard, which

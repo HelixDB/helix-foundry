@@ -5,12 +5,13 @@ import { useQuery } from "@tanstack/react-query";
 import { signInStarted, trackBeforeLeaving, trackEvent } from "./analytics";
 import { signOut } from "./api";
 import { Button, useTitle } from "./kit";
+import { PasswordSignIn } from "./password";
 import { whoamiQuery } from "./workspaces";
 import { LOCAL } from "../shared/deployment";
 import { parseReturnPath, signInPath } from "../shared/return-path";
 
-// Sign-in, outside the shell. Each provider is a full-page navigation to
-// /auth/login, which starts the WFE-brokered WorkOS flow; WorkOS returns to
+// Sign-in, outside the shell, with a provider or an email and password
+// (./password.tsx). Each provider is a full-page navigation to /auth/login, which starts the WFE-brokered WorkOS flow; WorkOS returns to
 // /login/callback, which lands back here with ?error=<reason> if it failed,
 // on /login/verify when WorkOS emailed a code to check the address first, or
 // goes through the company's single sign-on when it requires it.
@@ -25,7 +26,7 @@ const providers: Provider[] = [
 const errors = {
   request: {
     title: "Sign-in couldn’t start.",
-    text: "Choose a provider below to try again.",
+    text: "Choose a way to sign in below to try again.",
   },
   unavailable: {
     title: "Sign-in is unavailable right now.",
@@ -206,12 +207,20 @@ export function SignInPage() {
           </Button>
         ))}
       </div>
-      <p className="hf-gate-fine">
-        By continuing, you agree to the HelixDB{" "}
-        <a href="https://www.helix-db.com/terms">Terms</a> and acknowledge the{" "}
-        <a href="https://www.helix-db.com/privacy">Privacy Policy</a>.
-      </p>
+      <PasswordSignIn returnTo={returnTo} disabled={!!pending} />
+      <Terms />
     </GatePage>
+  );
+}
+
+/** The terms a new account agrees to, under the sign-in and sign-up forms. */
+export function Terms() {
+  return (
+    <p className="hf-gate-fine">
+      By continuing, you agree to the HelixDB{" "}
+      <a href="https://www.helix-db.com/terms">Terms</a> and acknowledge the{" "}
+      <a href="https://www.helix-db.com/privacy">Privacy Policy</a>.
+    </p>
   );
 }
 
