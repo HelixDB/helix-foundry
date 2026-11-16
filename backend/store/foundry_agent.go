@@ -55,7 +55,8 @@ const claimFoundryAgentTurnTries = 20
 //     a click that ran past model.FoundryAgentExecutingFor is ended unknown;
 //   - the user sent fewer than limits.PerHour messages and answers in the
 //     last hour;
-//   - what the month's turns settled, plus t's cap, is within limits.CapMicros.
+//   - what the month's people's turns and automation suggestions settled,
+//     plus t's cap, is within limits.CapMicros.
 //
 // t takes its thread's runtime. t.MaxUSDMicros is an 'api' turn's cap: a
 // helper's turn runs on its owner's subscription, and is stored with a cap
@@ -116,10 +117,11 @@ VALUES (?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread.Ti
 		}
 		var lastHour int
 		var settled int64
+		since := limits.Since.UTC()
 		if err := tx.db.QueryRowContext(ctx, `SELECT
   (SELECT COUNT(*) FROM foundry_agent_turns WHERE workspace_id=? AND user_id=? AND kind IN ('message', 'answers') AND created_at >= NOW(6) - INTERVAL 1 HOUR),
-  (SELECT COALESCE(SUM(usd_micros), 0) FROM foundry_agent_turns WHERE workspace_id=? AND charged_at >= ? AND automation_run_id IS NULL)`,
-			t.WorkspaceID, t.UserID, t.WorkspaceID, limits.Since.UTC()).Scan(&lastHour, &settled); err != nil {
+  `+foundryAssistantSettled,
+			t.WorkspaceID, t.UserID, t.WorkspaceID, since, t.WorkspaceID, since).Scan(&lastHour, &settled); err != nil {
 			return err
 		}
 		switch {
@@ -446,6 +448,15 @@ FROM foundry_agent_turns WHERE id=? AND `+dueFoundryAgentTurn+` FOR UPDATE`, can
 FROM foundry_agent_turns WHERE workspace_id=? AND id<>? AND (status='running' OR charged_at >= ?) AND (automation_run_id IS NOT NULL) = ?`,
 				l.Since.UTC(), l.Since.UTC(), t.WorkspaceID, t.ID, l.Since.UTC(), automation).Scan(&running, &settled, &reserved); err != nil {
 				return err
+			}
+			if !automation {
+				// People's pool also pays for automation suggestions.
+				var suggestions int64
+				if err := tx.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(usd_micros), 0) FROM foundry_automation_suggestions
+WHERE workspace_id=? AND charged_at >= ?`, t.WorkspaceID, l.Since.UTC()).Scan(&suggestions); err != nil {
+					return err
+				}
+				settled += suggestions
 			}
 			own := t.Spend.USDMicros + t.ReservedMicros + t.MaxUSDMicros
 			switch {

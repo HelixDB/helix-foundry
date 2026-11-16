@@ -189,6 +189,10 @@ WHERE workspace_id=? AND status IN ('queued', 'running')`,
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_dashboard_shares WHERE workspace_id=?`, workspaceID); err != nil {
 		return err
 	}
+	// No automation suggestions are written for it any more.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_automation_suggestions WHERE workspace_id=?`, workspaceID); err != nil {
+		return err
+	}
 	return s.dropFoundryAIConfigs(ctx, workspaceID)
 }
 

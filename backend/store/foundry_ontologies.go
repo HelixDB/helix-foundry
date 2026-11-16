@@ -124,7 +124,9 @@ WHERE ontology_id=? AND active_key=1`, id); err != nil {
 		}
 		// Its self-healing findings quote its documents: they go with it,
 		// and its runs. A run in flight loses its lease at its next renewal.
-		for _, table := range []string{"foundry_heal_findings", "foundry_heal_runs"} {
+		// So do its automation suggestions: a write in flight finds its row
+		// gone and records nothing.
+		for _, table := range []string{"foundry_heal_findings", "foundry_heal_runs", "foundry_automation_suggestions"} {
 			if _, err := tx.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE ontology_id=?`, id); err != nil {
 				return fmt.Errorf("delete the ontology's %s: %w", table, err)
 			}
