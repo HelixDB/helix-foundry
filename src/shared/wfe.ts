@@ -3076,18 +3076,18 @@ export type AgentActionDisplays = {
   publish_dashboard: { dashboard: AgentDashboardRef };
   unpublish_dashboard: { dashboard: AgentDashboardRef };
   // Its name as the Assistant wrote it; its steps are the payload's spec.
-  create_automation: { name: string };
+  create_workflow: { name: string };
   // steps: whether the edit carries steps (the payload's spec), which the
   // person's click approves; without, it approves nothing.
-  update_automation: {
+  update_workflow: {
     automation: AgentAutomationRef;
     name?: string;
     steps: boolean;
   };
-  pause_automation: { automation: AgentAutomationRef };
-  resume_automation: { automation: AgentAutomationRef };
-  delete_automation: { automation: AgentAutomationRef };
-  run_automation: { automation: AgentAutomationRef };
+  pause_workflow: { automation: AgentAutomationRef };
+  resume_workflow: { automation: AgentAutomationRef };
+  delete_workflow: { automation: AgentAutomationRef };
+  run_workflow: { automation: AgentAutomationRef };
 };
 /** An automation as it was when the action was prepared, with its status. */
 export type AgentAutomationRef = AgentRef & { status?: AutomationStatus };

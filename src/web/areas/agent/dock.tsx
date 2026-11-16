@@ -817,7 +817,7 @@ function Block({
     case "report":
       return (
         <p className="ag-ran">
-          Reported to its automation: {block.summary}
+          Reported to its workflow: {block.summary}
           {block.answer !== undefined &&
             ` (answer: ${block.answer ? "yes" : "no"})`}
           {block.count !== undefined && ` (count: ${block.count})`}
@@ -1309,7 +1309,7 @@ function PageChip({
   if (context.newAutomation)
     return (
       <span className="ag-chip">
-        <Tag>Making a new automation</Tag>
+        <Tag>Making a new workflow</Tag>
         <DropChip onDrop={onDrop} />
       </span>
     );

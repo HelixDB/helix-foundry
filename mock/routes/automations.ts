@@ -218,7 +218,7 @@ export function caller(req: MockRequest): Caller | MockReply {
     return refused(
       ws,
       "FOUNDRY_AUTOMATIONS_DISABLED",
-      "automations aren't available here",
+      "workflows aren't available here",
     );
   const m = membership(ws, req.principal.user.id);
   if (isReply(m)) return m;
@@ -418,7 +418,7 @@ function room(
   a: StoredAutomation,
 ): { reason: "busy" | "day"; why: string } | undefined {
   if (state.runs.some((r) => r.automationId === a.id && live(r)))
-    return { reason: "busy", why: "a run of the automation is still going" };
+    return { reason: "busy", why: "a run of the workflow is still going" };
   const today = state.runs.filter(
     (r) =>
       r.workspaceId === a.workspaceId &&
@@ -429,7 +429,7 @@ function room(
   return today >= cap
     ? {
         reason: "day",
-        why: `the workspace's automations ran ${today} times in the last 24 hours, as many as they may`,
+        why: `the workspace's workflows ran ${today} times in the last 24 hours, as many as they may`,
       }
     : undefined;
 }
@@ -505,7 +505,7 @@ function fire(
     busy &&
       (busy.reason === "busy"
         ? "Skipped: the run before it was still going."
-        : "Skipped: the workspace's automations ran as many times as they may in 24 hours."),
+        : "Skipped: the workspace's workflows ran as many times as they may in 24 hours."),
   );
   return true;
 }
@@ -733,7 +733,7 @@ function runAction(r: StoredRun, nodeId: string, a: AutomationAction) {
       // It refreshes what a person published: never an edit made since.
       if (d.publishedRevision === undefined)
         return failed(
-          "Its dashboard isn't published: publish it on its page, and the automation refreshes its snapshot from then on.",
+          "Its dashboard isn't published: publish it on its page, and the workflow refreshes its snapshot from then on.",
         );
       if (d.publishedRevision !== d.revision)
         return failed(
@@ -808,7 +808,7 @@ function requestOf(a: StoredAutomation, r: StoredRun): string {
   const fired = r.nodes.find((n) => n.nodeId === order[0])?.output?.summary;
   // What fired it first: it tells one run of an automation from another.
   const lines = [
-    `${fired ? `${fired} ` : ""}The automation "${a.name}" ran these steps, in order:`,
+    `${fired ? `${fired} ` : ""}The workflow "${a.name}" ran these steps, in order:`,
   ];
   let step = 0;
   for (const nodeId of order) {
@@ -1108,7 +1108,7 @@ const BASE = "/v1/workspaces/{workspaceId}/foundry/automations" as const;
 function found(req: MockRequest, param = "id") {
   return (
     automationOf(req.params.workspaceId!, req.params[param]!) ??
-    fail("NOT_FOUND", "automation not found")
+    fail("NOT_FOUND", "workflow not found")
   );
 }
 const isAutomation = (x: StoredAutomation | MockReply): x is StoredAutomation =>
@@ -1122,12 +1122,12 @@ function owned(
   expected: unknown,
 ): MockReply | undefined {
   if (a.ownerUserId !== c.userId)
-    return fail("PERMISSION_DENIED", "only its owner changes an automation");
+    return fail("PERMISSION_DENIED", "only its owner changes a workflow");
   if (String(expected) !== String(a.revision))
     return refused(
       ws,
       "FOUNDRY_AUTOMATION_CHANGED",
-      `the automation is at revision ${a.revision}, not ${String(expected)}: read it again`,
+      `the workflow is at revision ${a.revision}, not ${String(expected)}: read it again`,
     );
   return undefined;
 }
@@ -1249,7 +1249,7 @@ export function pastRuns(
   },
 ): { status: number; body: unknown } {
   const a = state.automations.find((x) => x.id === automationId);
-  if (!a) return { status: 404, body: { message: "automation not found" } };
+  if (!a) return { status: 404, body: { message: "workflow not found" } };
   for (const p of body.runs || []) {
     const at = iso(Date.now() - p.ago);
     state.runs.push({
@@ -1293,7 +1293,7 @@ export function pruneRun(
   const r = state.runs.find(
     (x) => x.id === runId && x.automationId === automationId,
   );
-  if (!r) return { status: 404, body: { message: "automation run not found" } };
+  if (!r) return { status: 404, body: { message: "workflow run not found" } };
   if (live(r))
     return { status: 400, body: { message: "the run hasn't ended" } };
   state.runs = state.runs.filter((x) => x !== r);
@@ -1383,7 +1383,7 @@ export const automationRoutes: MockRoute[] = [
         return refused(
           ws,
           "FOUNDRY_AUTOMATION_LIMIT",
-          `a workspace keeps at most ${MAX_PER_WORKSPACE} automations; delete one first`,
+          `a workspace keeps at most ${MAX_PER_WORKSPACE} workflows; delete one first`,
         );
       const a: StoredAutomation = {
         id: id("aut"),
@@ -1486,14 +1486,14 @@ export const automationRoutes: MockRoute[] = [
       if (a.ownerUserId !== c.userId && !c.manager)
         return fail(
           "PERMISSION_DENIED",
-          "only its owner, or an owner or admin, deletes an automation",
+          "only its owner, or an owner or admin, deletes a workflow",
         );
       for (const r of state.runs)
         if (r.automationId === a.id && live(r))
           cancelRun(
             r,
             "Deleted.",
-            "The automation was deleted before its run finished.",
+            "The workflow was deleted before its run finished.",
           );
       state.runs = state.runs.filter((r) => r.automationId !== a.id);
       state.automations = state.automations.filter((x) => x !== a);
@@ -1540,13 +1540,13 @@ export const automationRoutes: MockRoute[] = [
       if (a.ownerUserId !== c.userId && !c.manager)
         return fail(
           "PERMISSION_DENIED",
-          "only its owner, or an owner or admin, pauses an automation",
+          "only its owner, or an owner or admin, pauses a workflow",
         );
       if (a.status === "needs_approval")
         return refused(
           ws,
           "FOUNDRY_AUTOMATION_NOT_ACTIVE",
-          "the automation waits for its owner's approval: it isn't running",
+          "the workflow waits for its owner's approval: it isn't running",
         );
       if (a.status === "active") {
         a.revision += 1;
@@ -1567,13 +1567,13 @@ export const automationRoutes: MockRoute[] = [
       if (a.ownerUserId !== c.userId)
         return fail(
           "PERMISSION_DENIED",
-          "only its owner resumes an automation",
+          "only its owner resumes a workflow",
         );
       if (a.status === "needs_approval")
         return refused(
           ws,
           "FOUNDRY_AUTOMATION_UNAPPROVED",
-          "the automation waits for your approval: approve it first",
+          "the workflow waits for your approval: approve it first",
         );
       if (a.status === "paused") {
         a.revision += 1;
@@ -1606,12 +1606,12 @@ export const automationRoutes: MockRoute[] = [
           run: runOut(again, a, c, false),
         } satisfies AutomationRunResponse);
       if (a.ownerUserId !== c.userId)
-        return fail("PERMISSION_DENIED", "only its owner runs an automation");
+        return fail("PERMISSION_DENIED", "only its owner runs a workflow");
       if (a.status === "needs_approval")
         return refused(
           ws,
           "FOUNDRY_AUTOMATION_UNAPPROVED",
-          "the automation waits for your approval: approve it first",
+          "the workflow waits for your approval: approve it first",
         );
       const busy = room(a);
       if (busy?.reason === "busy")
@@ -1684,7 +1684,7 @@ export const automationRoutes: MockRoute[] = [
       if (a.ownerUserId !== c.userId && !c.manager)
         return fail(
           "PERMISSION_DENIED",
-          "only its owner, or an owner or admin, cancels an automation's run",
+          "only its owner, or an owner or admin, cancels a workflow's run",
         );
       if (r.status !== "cancelled") {
         if (!live(r))
@@ -1696,7 +1696,7 @@ export const automationRoutes: MockRoute[] = [
         cancelRun(
           r,
           "Cancelled by a person.",
-          "A person cancelled the automation's run before it finished.",
+          "A person cancelled the workflow's run before it finished.",
         );
       }
       return ok({ run: runOut(r, a, c, true) } satisfies AutomationRunResponse);

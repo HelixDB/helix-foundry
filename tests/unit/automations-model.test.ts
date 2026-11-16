@@ -140,7 +140,7 @@ describe("parseSpec", () => {
       "the spec's v is 2; this Foundry reads v 1",
     );
     expect(error({ v: 1 })).toBe(
-      "an automation has a trigger and at least one step, at most 50 nodes in all, not 0",
+      "a workflow has a trigger and at least one step, at most 50 nodes in all, not 0",
     );
     const many = Array.from({ length: 50 }, (_, i) =>
       node(`n${i}`, "notify", { message: "" }),
@@ -151,7 +151,7 @@ describe("parseSpec", () => {
       to: "tell",
     }));
     expect(error(spec([manual, tell], edges))).toBe(
-      "an automation has at most 100 edges, not 101",
+      "a workflow has at most 100 edges, not 101",
     );
     expect(parseSpec("x".repeat(LIMITS.specBytes + 1))).toEqual({
       ok: false,
@@ -358,10 +358,10 @@ describe("parseSpec", () => {
 
   it("refuses a graph that isn't one trigger with every step reached forward", () => {
     expect(error(spec([tell, ask()], [{ from: "tell", to: "ask" }]))).toBe(
-      "an automation has exactly one trigger, not 0",
+      "a workflow has exactly one trigger, not 0",
     );
     expect(error(spec([manual, { ...manual, id: "again" }]))).toBe(
-      "an automation has exactly one trigger, not 2",
+      "a workflow has exactly one trigger, not 2",
     );
     expect(error(spec([manual, tell], [{ from: "x", to: "tell" }]))).toBe(
       `an edge comes from "x", which is no node`,
@@ -373,7 +373,7 @@ describe("parseSpec", () => {
       "node tell has an edge to itself",
     );
     expect(error(spec([manual, tell], [{ from: "tell", to: "start" }]))).toBe(
-      "the trigger start starts the automation: no edge goes into it",
+      "the trigger start starts the workflow: no edge goes into it",
     );
     expect(
       error(
@@ -443,7 +443,7 @@ describe("parseSpec", () => {
           ],
         ),
       ),
-    ).toBe("node ask is in a cycle: an automation's edges go one way");
+    ).toBe("node ask is in a cycle: a workflow's edges go one way");
     expect(error(spec([manual, tell]))).toBe(
       "node tell isn't reached from the trigger: connect it",
     );
@@ -1517,7 +1517,7 @@ describe("an automation's ontologies' impact", () => {
       }),
     ).toBe("Helped 0 of the run assessed.");
     expect(impactText({ ...o, untracked: "workflows_full" })).toMatch(
-      /^Its runs aren’t recorded: the ontology holds 100 workflows/,
+      /^Its runs aren’t recorded: the ontology holds 100 use cases/,
     );
   });
 

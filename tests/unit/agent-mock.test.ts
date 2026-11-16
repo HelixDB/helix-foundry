@@ -2497,7 +2497,7 @@ describe("an automation's time zone", () => {
     await events(r.body.turn.id);
     const thread = await call("GET", `${A}/threads/${c.sent.body.thread.id}`);
     const prepared = thread.body.actions.at(-1);
-    expect(prepared.operation).toBe("create_automation");
+    expect(prepared.operation).toBe("create_workflow");
     expect(JSON.parse(prepared.payloadJson).spec.nodes[0].config).toMatchObject(
       { every: "week", at: "08:00", time_zone: "Europe/Berlin" },
     );

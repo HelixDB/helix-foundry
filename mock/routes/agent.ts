@@ -160,15 +160,15 @@ import { decisionTypes } from "../review-decisions";
 //   update_dashboard, after helix_foundry_get_dashboard);
 // - "every Monday at 9, sync Stripe and email me a summary of …" (or any
 //   "automate …", "every day …", or anything written on the page that
-//   starts a new automation, its page context's newAutomation):
-//   create_automation of a schedule (UTC), or of documents arriving in
+//   starts a new workflow, its page context's newAutomation):
+//   create_workflow of a schedule (UTC), or of documents arriving in
 //   the first set of the workspace's own ("when … uploaded"),
 //   that syncs the connection named (else the first, when asked to sync),
 //   asks the Assistant for the summary asked for and emails it, after
 //   helix_foundry_list_connectors; "run", "pause", "resume" or "delete" an
-//   automation it names (run_automation, pause_automation,
-//   resume_automation, delete_automation, after
-//   helix_foundry_get_automation);
+//   workflow it names (run_workflow, pause_workflow,
+//   resume_workflow, delete_workflow, after
+//   helix_foundry_get_workflow);
 // - "create an ontology called X on database Y" (create_ontology; "on a new
 //   database Y" makes it in the workspace's first project);
 // - "generate" or "draft" (generate_ontology: the connections and sets the
@@ -1023,7 +1023,7 @@ const LIST = "helix_foundry_list_ontologies",
   RUNTIME = "helix_foundry_get_assistant_runtime",
   PREVIEW = "helix_foundry_preview_dashboard_tile",
   GET_DASHBOARD = "helix_foundry_get_dashboard",
-  GET_AUTOMATION = "helix_foundry_get_automation",
+  GET_AUTOMATION = "helix_foundry_get_workflow",
   PREPARE = "helix_foundry_prepare_operation",
   READ = "helix_foundry_read_graph",
   ASK = "helix_foundry_ask",
@@ -1038,12 +1038,12 @@ const MEMBER_OPERATIONS: readonly (
   "create_dashboard",
   "update_dashboard",
   "delete_dashboard",
-  "create_automation",
-  "update_automation",
-  "pause_automation",
-  "resume_automation",
-  "delete_automation",
-  "run_automation",
+  "create_workflow",
+  "update_workflow",
+  "pause_workflow",
+  "resume_workflow",
+  "delete_workflow",
+  "run_workflow",
 ];
 
 /** What an owner or admin does that a member asked for, in the agent's words. */
@@ -1068,12 +1068,12 @@ const VERBS: Record<AgentOperation, string> = {
   pin_dashboard: "pin a dashboard",
   publish_dashboard: "publish a dashboard",
   unpublish_dashboard: "unpublish a dashboard",
-  create_automation: "set up an automation",
-  update_automation: "change an automation",
-  pause_automation: "pause an automation",
-  resume_automation: "resume an automation",
-  delete_automation: "delete an automation",
-  run_automation: "run an automation",
+  create_workflow: "set up a workflow",
+  update_workflow: "change a workflow",
+  pause_workflow: "pause a workflow",
+  resume_workflow: "resume a workflow",
+  delete_workflow: "delete a workflow",
+  run_workflow: "run a workflow",
 };
 
 /**
@@ -1525,12 +1525,12 @@ function messageScript(a: Ask, manager: boolean): Step[] {
       return [started, ...list, ...createOntology(a)];
     case "create_dashboard":
       return [started, ...list, ...buildDashboard(a)];
-    case "create_automation":
+    case "create_workflow":
       return [started, ...automationCreate(a)];
-    case "pause_automation":
-    case "resume_automation":
-    case "delete_automation":
-    case "run_automation":
+    case "pause_workflow":
+    case "resume_workflow":
+    case "delete_workflow":
+    case "run_workflow":
       return [
         started,
         ...automationOperation(
@@ -1677,7 +1677,7 @@ function operationOf(
         | "set_assistant_runtime"
         | "revoke_assistant_helper"
         | `${string}_dashboard`
-        | `${string}_automation`
+        | `${string}_workflow`
       >
     | "relay_questions",
   a: Ask,
@@ -3028,13 +3028,13 @@ function answersScript(
 // ---------------------------------------------------------------- automations
 
 type AutomationAsk =
-  | { kind: "create_automation" }
+  | { kind: "create_workflow" }
   | {
       kind:
-        | "pause_automation"
-        | "resume_automation"
-        | "delete_automation"
-        | "run_automation";
+        | "pause_workflow"
+        | "resume_workflow"
+        | "delete_workflow"
+        | "run_workflow";
       automation: ReturnType<typeof workspaceAutomations>[number];
     };
 
@@ -3048,7 +3048,7 @@ function automationAsk(
   const op = /\b(pause|resume|delete|run)\b/i.exec(text)?.[1]?.toLowerCase();
   if (named && op)
     return {
-      kind: `${op as "pause" | "resume" | "delete" | "run"}_automation`,
+      kind: `${op as "pause" | "resume" | "delete" | "run"}_workflow`,
       automation: named,
     };
   // On the page that starts one, whatever the person writes describes it.
@@ -3057,7 +3057,7 @@ function automationAsk(
     /\bevery\s+(hour|day|morning|weekday|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(
       text,
     )
-    ? { kind: "create_automation" }
+    ? { kind: "create_workflow" }
     : undefined;
 }
 
@@ -3091,7 +3091,7 @@ const ZONE_HEADER = "Time zone";
  * connection named (else the first, when asked to sync), the Assistant's
  * summary of what they asked about, an instruction naming the ontology it
  * reads by name and never by id, and an email; then prepares
- * create_automation. A day's or a week's schedule with no zone known asks
+ * create_workflow. A day's or a week's schedule with no zone known asks
  * for one first, its options in words.
  */
 function automationCreate(a: Ask, chosen?: string): Step[] {
@@ -3217,7 +3217,7 @@ function automationCreate(a: Ask, chosen?: string): Step[] {
       })),
     })),
     ...prepare(() => ({
-      operation: "create_automation",
+      operation: "create_workflow",
       target: `workspace:${a.ws}`,
       payload,
       display: { name },
@@ -3232,22 +3232,22 @@ function automationCreate(a: Ask, chosen?: string): Step[] {
 function automationOperation(
   a: Ask,
   operation:
-    | "pause_automation"
-    | "resume_automation"
-    | "delete_automation"
-    | "run_automation",
+    | "pause_workflow"
+    | "resume_workflow"
+    | "delete_workflow"
+    | "run_workflow",
   x: ReturnType<typeof workspaceAutomations>[number],
 ): Step[] {
   const words = {
-    run_automation: `I've prepared running “${x.name}” now, once, as you.`,
-    pause_automation: `I've prepared pausing “${x.name}”: it won't run when it fires until it is resumed.`,
-    resume_automation: `I've prepared resuming “${x.name}”: it will run whenever it fires again.`,
-    delete_automation: `I've prepared deleting “${x.name}” and its runs.`,
+    run_workflow: `I've prepared running “${x.name}” now, once, as you.`,
+    pause_workflow: `I've prepared pausing “${x.name}”: it won't run when it fires until it is resumed.`,
+    resume_workflow: `I've prepared resuming “${x.name}”: it will run whenever it fires again.`,
+    delete_workflow: `I've prepared deleting “${x.name}” and its runs.`,
   };
   return [
-    call("tu_automation", GET_AUTOMATION, { automation_id: x.id }),
+    call("tu_automation", GET_AUTOMATION, { workflow_id: x.id }),
     result("tu_automation", GET_AUTOMATION, () => ({
-      automation: {
+      workflow: {
         id: x.id,
         name: x.name,
         status: x.status,
@@ -3258,7 +3258,7 @@ function automationOperation(
       () =>
         ({
           operation,
-          target: `automation:${a.ws}/${x.id}`,
+          target: `workflow:${a.ws}/${x.id}`,
           payload: {},
           display: { automation: aref(x) },
           named: namedByPerson(a.threadId, [x.name, x.id]),
@@ -3685,8 +3685,8 @@ function approveOnClick(
   body: { automation?: FoundryAutomation },
 ): { body: unknown; error: string } {
   if (
-    (a.operation !== "create_automation" &&
-      a.operation !== "update_automation") ||
+    (a.operation !== "create_workflow" &&
+      a.operation !== "update_workflow") ||
     a.payload.spec === undefined
   )
     return { body, error: "" };
@@ -3891,16 +3891,16 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
             `${a.display.host.name || "The helper"} is revoked: it runs no more turns. Pair it again from Settings › AI models to run more.`,
         ),
       ];
-    case "create_automation":
-    case "update_automation": {
+    case "create_workflow":
+    case "update_workflow": {
       const name = String(
           out.name ||
             ("name" in a.display && a.display.name) ||
-            "the automation",
+            "the workflow",
         ),
-        link = `/automations/${String(out.id)}`,
+        link = `/workflows/${String(out.id)}`,
         on = out.status === "active";
-      const made = a.operation === "create_automation";
+      const made = a.operation === "create_workflow";
       return [
         started,
         said(() =>
@@ -3912,19 +3912,19 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
         ),
       ];
     }
-    case "pause_automation":
-    case "resume_automation":
-    case "delete_automation":
-    case "run_automation": {
+    case "pause_workflow":
+    case "resume_workflow":
+    case "delete_workflow":
+    case "run_workflow": {
       const name = String(
-          out.name || a.display.automation.name || "the automation",
+          out.name || a.display.automation.name || "the workflow",
         ),
-        link = `/automations/${a.display.automation.id}`;
+        link = `/workflows/${a.display.automation.id}`;
       const words = {
-        pause_automation: `“${name}” is paused: it runs only when it is run by hand. ${link}`,
-        resume_automation: `“${name}” is on again: ${link}`,
-        delete_automation: `“${name}” is deleted, with its runs.`,
-        run_automation: `“${name}” is running now. Follow it: ${link}/runs/${String(out.id)}`,
+        pause_workflow: `“${name}” is paused: it runs only when it is run by hand. ${link}`,
+        resume_workflow: `“${name}” is on again: ${link}`,
+        delete_workflow: `“${name}” is deleted, with its runs.`,
+        run_workflow: `“${name}” is running now. Follow it: ${link}/runs/${String(out.id)}`,
       };
       return [started, said(() => words[a.operation])];
     }
@@ -4110,14 +4110,14 @@ function run(a: StoredAction, userId: string): MockReply {
         `${WS(ws)}/agent/hosts/${p.host_id}:revoke`,
         {},
       );
-    case "create_automation":
+    case "create_workflow":
       return wfe(userId, "POST", `${WS(ws)}/automations`, {
         name: p.name,
         description: p.description ?? "",
         ...(p.spec !== undefined && { specJson: JSON.stringify(p.spec) }),
         clientToken: a.id,
       });
-    case "update_automation":
+    case "update_workflow":
       return wfe(
         userId,
         "PATCH",
@@ -4129,19 +4129,19 @@ function run(a: StoredAction, userId: string): MockReply {
           ...(p.spec !== undefined && { specJson: JSON.stringify(p.spec) }),
         },
       );
-    case "pause_automation":
-    case "resume_automation":
-    case "delete_automation":
-    case "run_automation": {
+    case "pause_workflow":
+    case "resume_workflow":
+    case "delete_workflow":
+    case "run_workflow": {
       const at = `${WS(ws)}/automations/${a.display.automation.id}`;
-      return a.operation === "delete_automation"
+      return a.operation === "delete_workflow"
         ? wfe(userId, "DELETE", at)
-        : a.operation === "run_automation"
+        : a.operation === "run_workflow"
           ? wfe(userId, "POST", `${at}:run`, { clientToken: a.id })
           : wfe(
               userId,
               "POST",
-              `${at}:${a.operation === "pause_automation" ? "pause" : "resume"}`,
+              `${at}:${a.operation === "pause_workflow" ? "pause" : "resume"}`,
               {},
             );
     }
@@ -4194,18 +4194,18 @@ function output(a: StoredAction, body: any) {
       return { runtime: body.runtime.runtime, online: body.runtime.online };
     case "delete_dashboard":
       return { deleted: true, dashboard_id: a.display.dashboard.id };
-    case "create_automation":
-    case "update_automation":
-    case "pause_automation":
-    case "resume_automation":
+    case "create_workflow":
+    case "update_workflow":
+    case "pause_workflow":
+    case "resume_workflow":
       return automationOutput(a.workspaceId, body.automation);
-    case "delete_automation":
-      return { deleted: true, automation_id: a.display.automation.id };
-    case "run_automation": {
+    case "delete_workflow":
+      return { deleted: true, workflow_id: a.display.automation.id };
+    case "run_workflow": {
       const r = body.run as FoundryAutomationRun;
       return {
         id: r.id,
-        automation_id: r.automationId,
+        workflow_id: r.automationId,
         status: r.status,
         usd_micros: 0,
         created_at: r.createdAt,
