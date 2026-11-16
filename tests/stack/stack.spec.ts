@@ -9,7 +9,7 @@ import { choose, uploadCard } from "../e2e/support/mock";
 // FOUNDRY_STACK_MODELS=1 (Claude as the install's provider, with the shell's
 // ANTHROPIC_API_KEY) PUTs a document from the browser straight to the store,
 // drafts from both, waits for the agent's draft, loads it, reads its records
-// and asks about it.
+// and asks Founder about it, whose answer is the Analyst's.
 // FOUNDRY_STACK_OLLAMA=1 (run.sh passes its model as
 // FOUNDRY_STACK_OLLAMA_MODEL) chooses Ollama in Docker in Settings › AI
 // models with no provider before, passes its test, then runs the same
@@ -222,14 +222,24 @@ test("creates an ontology on a new database in the local HelixDB", async ({
     await expect(page).toHaveURL(/\/ontology\/[^/]+$/);
     await expect(page.getByText("No AI provider is set up.")).toBeVisible();
     ontologyPath = new URL(page.url()).pathname;
-    // With an ontology the workspace opens on Ask, about it, which sends
-    // the owner to finish setting it up.
+    // With an ontology the workspace opens on Founder, about it: nothing
+    // is loaded for the Analyst to answer from, but Founder can help load
+    // it.
     await page.goto("/");
     await expect(page).toHaveURL(
       new RegExp(`${ontologyPath.replace(/^\/ontology\//, "/ask/")}$`),
     );
     await expect(
-      page.getByRole("main").getByRole("link", { name: "Finish setting up" }),
+      page
+        .getByRole("navigation", { name: "Main navigation" })
+        .getByRole("link", { name: "Founder", exact: true }),
+    ).toHaveAttribute("aria-current", "page");
+    await expect(
+      page
+        .getByRole("main")
+        .getByText(
+          "Nothing is loaded yet, so Founder can’t answer questions about the data until it is; it can help you load it.",
+        ),
     ).toBeVisible();
     return;
   }
@@ -314,6 +324,29 @@ test("queries the new database in the local HelixDB", async ({ page }) => {
   expect(JSON.parse(answer).rows ?? []).toEqual([]);
 });
 
+// Opens Founder from the new ontology's overview and sends `question` from
+// its composer: Founder's turn, on the install's model, asks the Analyst,
+// whose answer shows inline in the conversation. Founder words the
+// Analyst's question itself, so any question it asked will do: the first
+// answer whose text matches `answer`.
+async function askFounder(page: Page, question: string, answer: RegExp) {
+  await page.goto(ontologyPath);
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Founder", exact: true })
+    .click();
+  const main = page.getByRole("main"),
+    composer = main.getByRole("form", { name: "Message Founder" });
+  await composer.getByRole("textbox", { name: "Message" }).fill(question);
+  await composer.getByRole("button", { name: "Send", exact: true }).click();
+  return main
+    .getByRole("log", { name: "Conversation" })
+    .getByRole("article", { name: /^Question: / })
+    .getByRole("region", { name: "Answer" })
+    .filter({ hasText: answer })
+    .first();
+}
+
 // The rest calls Claude (FOUNDRY_STACK_MODELS=1, with ANTHROPIC_API_KEY in
 // the shell) or Ollama through the ontology agent. A draft takes up to 20
 // minutes on Claude, and up to the install's 40-minute cap on Ollama.
@@ -373,22 +406,17 @@ test.describe("with models", () => {
   });
 
   test("answers a question about the load", async ({ page }) => {
-    await page.goto(ontologyPath);
-    await page.getByRole("link", { name: "Analyst", exact: true }).click();
-    const form = page.getByRole("form", { name: "Ask a question" });
-    const question = "Which customer has placed the most orders?";
-    await form.getByRole("textbox", { name: /^Question/ }).fill(question);
-    await form.getByRole("button", { name: "Ask", exact: true }).click();
-    const answer = page
-      .getByRole("article", { name: `Question: ${question}` })
-      .getByRole("region", { name: "Answer" });
     // Customer 1, Ada Lovelace, with two orders: the answer may name her or
     // her number, as the draft names customers. A small local model's
     // answer is only read for being there.
-    await expect(answer).toContainText(
+    const answer = await askFounder(
+      page,
+      "Which customer has placed the most orders?",
       onOllama ? /\S/ : /Ada|customer (number |#)?1\b/i,
-      { timeout: (onOllama ? 15 : 5) * 60_000 },
     );
+    await expect(answer).toBeVisible({
+      timeout: (onOllama ? 15 : 5) * 60_000,
+    });
   });
 
   // Settings › AI models against the real probe: a key Anthropic refuses
@@ -435,17 +463,12 @@ test.describe("with models", () => {
       page.getByRole("radio", { name: "Claude", exact: true }),
     ).toBeChecked();
 
-    await page.goto(ontologyPath);
-    await page.getByRole("link", { name: "Analyst", exact: true }).click();
-    const form = page.getByRole("form", { name: "Ask a question" });
-    const question = "How many orders were cancelled?";
-    await form.getByRole("textbox", { name: /^Question/ }).fill(question);
-    await form.getByRole("button", { name: "Ask", exact: true }).click();
-    await expect(
-      page
-        .getByRole("article", { name: `Question: ${question}` })
-        .getByRole("region", { name: "Answer" }),
-    ).toContainText(/\b(1|one)\b/i, { timeout: 5 * 60_000 });
+    const answer = await askFounder(
+      page,
+      "How many orders were cancelled?",
+      /\b(1|one)\b/i,
+    );
+    await expect(answer).toBeVisible({ timeout: 5 * 60_000 });
 
     await page.goto("/settings/ai");
     await page

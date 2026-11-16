@@ -8,6 +8,7 @@ import {
   useLocation,
   useParams,
 } from "react-router-dom";
+import { FOUNDER } from "../../../shared/deployment";
 import { paths } from "../../paths";
 import { NotFound } from "../../shell/ErrorBoundary";
 import { AskPage } from "./ask";
@@ -24,7 +25,7 @@ import { VersionPage } from "./version";
 
 export { OntologyHome };
 
-// An ontology's connections and documents, its Review page, its workflows,
+// An ontology's connections and documents, its Review page, its Usage pages,
 // its database's explorer and its records are loaded when first opened (the
 // explorer's canvas is large). The Explorer and Ask have route tables of
 // their own (ExploreRoutes, AskRoutes), still under the ontology's scope.
@@ -54,6 +55,10 @@ const ConnectionsPage = lazy(() =>
   ),
   WorkflowRunPage = lazy(() =>
     import("../workflows").then((m) => ({ default: m.WorkflowRunPage })),
+  ),
+  // Founder's page brings the dock's conversation with it.
+  FounderPage = lazy(() =>
+    import("./founder-page").then((m) => ({ default: m.FounderPage })),
   );
 
 // /ontology/:ontologyId/versions/:versionId
@@ -79,6 +84,23 @@ function ToConnections() {
     { search } = useLocation();
   return (
     <Navigate to={paths.ontologyConnections(ontologyId) + search} replace />
+  );
+}
+
+// /ontology/:ontologyId/workflows/*, before use cases moved to the Usage
+// page: old links (agents', the backend's before the rename) keep their
+// query and hash.
+function ToUsage() {
+  const { pathname, search, hash } = useLocation();
+  return (
+    <Navigate
+      to={
+        pathname.replace(/^(\/ontology\/[^/]+)\/workflows/, "$1/usage") +
+        search +
+        hash
+      }
+      replace
+    />
   );
 }
 
@@ -128,12 +150,13 @@ export function OntologyRoutes() {
         <Route path="documents/:documentId" element={<DocumentPage />} />
         <Route path="suggestions" element={<ToReviewOntology />} />
         <Route path="review" element={<ReviewPage />} />
-        <Route path="workflows" element={<WorkflowsPage />} />
-        <Route path="workflows/:workflowId" element={<WorkflowPage />} />
+        <Route path="usage" element={<WorkflowsPage />} />
+        <Route path="usage/:workflowId" element={<WorkflowPage />} />
         <Route
-          path="workflows/:workflowId/runs/:runId"
+          path="usage/:workflowId/runs/:runId"
           element={<WorkflowRunPage />}
         />
+        <Route path="workflows/*" element={<ToUsage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="*" element={<NotFound />} />
@@ -164,16 +187,25 @@ export function ExploreRoutes() {
 }
 
 // /ask/*: Ask's route table, a section of its own: questions about an
-// ontology's load, inside its scope. /ask opens an ontology's.
+// ontology's load, inside its scope. /ask opens an ontology's, keeping the
+// link's query (a Founder thread's `?chat=`). Where the build has Founder,
+// it is Founder's page (a grantee's read-only); else the Analyst's.
 export function AskRoutes() {
   return (
     <Routes>
       <Route
         index
-        element={<OpenOntology title="Analyst" to={paths.ask} reads />}
+        element={
+          <OpenOntology
+            title={FOUNDER ? "Founder" : "Analyst"}
+            to={paths.ask}
+            reads
+            keepQuery
+          />
+        }
       />
       <Route path=":ontologyId" element={<OntologyScope explores />}>
-        <Route index element={<AskPage />} />
+        <Route index element={FOUNDER ? <FounderPage /> : <AskPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="*" element={<NotFound />} />

@@ -9,6 +9,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
+import { FOUNDER } from "../../shared/deployment";
 import type {
   AreaShell,
   NavChild,
@@ -53,18 +54,25 @@ const item = (
   match: string[],
 ): NavItem => ({ id, to, label, icon, match, children: childrenOf(id) });
 
+// Questions about an ontology's database, the main page (/ opens it): with
+// Founder in the build, Founder's page, whose answers are the Analyst's;
+// else the Analyst's. Each opens the ontology last opened, and picks another
+// in its header.
+const ask = (label: string) => item("ask", "/ask", label, Sparkles, ["/ask"]);
 export const primaryNav: NavItem[] = [
-  // Questions about an ontology's database, the main page (/ opens it), and
-  // the database itself: each opens the ontology last opened, and picks
-  // another in its header.
-  item("ask", "/ask", "Analyst", Sparkles, ["/ask"]),
+  ask(FOUNDER ? "Founder" : "Analyst"),
   // Tiles of queries over ontologies' loads, pinned ones first.
   item("dashboards", "/dashboards", "Dashboards", LayoutDashboard, [
     "/dashboards",
   ]),
   // Steps Foundry runs for a person when a schedule or an event fires.
-  item("automations", "/automations", "Automations", Zap, ["/automations"]),
+  item("automations", "/workflows", "Workflows", Zap, ["/workflows"]),
   item("ontology", "/ontology", "Ontologies", Shapes, ["/ontology"]),
+];
+// The sections at the sidebar's foot, above Feedback: where the data comes
+// from, set up once and then mostly left (a grantee and an onboarding
+// workspace have none).
+export const footNav: NavItem[] = [
   item("data", "/data", "Connectors", Cable, ["/data"]),
 ];
 // The Explorer has no link of its own: an ontology's row in the Ontologies
@@ -78,9 +86,10 @@ const shownAs: Partial<Record<SectionId, SectionId>> = { explore: "ontology" };
 export const navSection = (id: SectionId | undefined) =>
   (id && shownAs[id]) || id;
 // A grantee's sections (a member restricted to what source grants give):
-// Analyst, the pinned dashboards and the ontologies its grants cover (with
-// their Explorer, whose Records read their shared loads; there is no graph
-// for it). Automations are people's: a grantee has none.
+// Ask (Founder, read-only, with Founder in the build; else the Analyst), the
+// pinned dashboards and the ontologies its grants cover (with their
+// Explorer, whose Records read their shared loads; there is no graph for
+// it). Workflows are people's: a grantee has none.
 export const granteeNav: NavItem[] = primaryNav.filter(
   (n) => n.id === "ask" || n.id === "dashboards" || n.id === "ontology",
 );
@@ -92,12 +101,14 @@ export const onboardingNav: NavItem[] = [
 export const secondaryNav: NavItem[] = [
   item("settings", "/settings", "Settings", Settings, ["/settings"]),
 ];
-// Every section, linked or not.
-export const allSections: NavItem[] = [
+// Every linked section, in the sidebar's order.
+export const linkedSections: NavItem[] = [
   ...primaryNav,
-  explorer,
+  ...footNav,
   ...secondaryNav,
 ];
+// Every section, linked or not.
+export const allSections: NavItem[] = [...linkedSections, explorer];
 export const paletteSources: PaletteSource[] = areas.flatMap(
   (a) => a.palette || [],
 );

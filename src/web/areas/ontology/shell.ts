@@ -1,5 +1,6 @@
 import { lazy } from "react";
 import { Shapes } from "lucide-react";
+import { FOUNDER } from "../../../shared/deployment";
 import type { AreaShell } from "../../shell/types";
 import { ontologyPaths as paths } from "./paths";
 import { ontologyQueries } from "./queries";
@@ -9,14 +10,16 @@ import { ontologyQueries } from "./queries";
 // with its section: the workspace's ontologies, the open one's pages under
 // its row (its Explorer among them); the Explorer's pages, which have no
 // sidebar link (../../shell/nav.ts), fill theirs. Ask's threads sit in the
-// sidebar itself, under the sections. The sample company's banner sits
-// across the top.
+// sidebar itself, under the sections: Founder's (with the Analyst's older
+// threads under them) where the build has Founder, a grantee's included,
+// else the Analyst's (founder-threads.tsx AskSidebar decides). The sample
+// company's banner sits across the top.
 
 const OntologiesPanel = lazy(() =>
   import("./ontologies-panel").then((m) => ({ default: m.OntologiesPanel })),
 );
-const AskThreads = lazy(() =>
-  import("./ask-threads").then((m) => ({ default: m.AskThreads })),
+const AskSidebar = lazy(() =>
+  import("./founder-threads").then((m) => ({ default: m.AskSidebar })),
 );
 // The Explorer's pages fill its panel (the graph its labels, Records its
 // types); this shows the ontology and load meanwhile.
@@ -40,7 +43,13 @@ export const ontologyShell: AreaShell = {
       fallback: ExplorerContext,
     },
   },
-  sidebar: { ask: { label: "Analyst threads", component: AskThreads } },
+  // The label is fixed while the threads it names depend on the user.
+  sidebar: {
+    ask: {
+      label: FOUNDER ? "Threads" : "Analyst threads",
+      component: AskSidebar,
+    },
+  },
   banner: SampleBanner,
   palette: [
     {

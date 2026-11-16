@@ -112,6 +112,53 @@ export type VerifyEmailResponse = {
   ssoRequired?: boolean;
 };
 
+/** v1SignInWithPasswordRequest: POST /v1/auth/password:sign-in */
+export type SignInWithPasswordRequest = {
+  email: string;
+  password: string;
+  application: AuthApplication;
+};
+/**
+ * v1SignUpWithPasswordRequest: POST /v1/auth/password:sign-up. WorkOS makes
+ * the user, then it signs in as SignInWithPassword does. An email with an
+ * account is ALREADY_EXISTS, a password WorkOS refuses INVALID_ARGUMENT with
+ * its reasons.
+ */
+export type SignUpWithPasswordRequest = {
+  email: string;
+  password: string;
+  firstName?: string;
+  lastName?: string;
+  application: AuthApplication;
+};
+/**
+ * v1PasswordAuthResponse, both password calls' answer: tokens, or none and
+ * one of an exchange's two detours. emailVerificationRequired comes with the
+ * `sessionId` VerifyEmail takes the emailed code under.
+ */
+export type PasswordAuthResponse = {
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  email?: string;
+  emailVerificationRequired?: boolean;
+  sessionId?: string;
+  workspaceId?: string;
+  invitationOnboarding?: boolean;
+  ssoRequired?: boolean;
+};
+/**
+ * v1RequestPasswordResetRequest: POST /v1/auth/password:forgot. WorkOS emails
+ * a link to the application's reset page (Foundry's /reset-password?token=),
+ * and answers the same for an address without an account.
+ */
+export type RequestPasswordResetRequest = {
+  email: string;
+  application: AuthApplication;
+};
+/** v1ResetPasswordRequest: POST /v1/auth/password:reset, the emailed link's token. */
+export type ResetPasswordRequest = { token: string; newPassword: string };
+
 /** v1RefreshSessionRequest: POST /v1/auth/refresh (the BFF refreshes through WorkOS). */
 export type RefreshSessionRequest = {
   refreshToken: string;
@@ -2747,6 +2794,9 @@ export type AgentPageContext = {
   dashboardId?: string;
   // The person is on the page that starts a new automation.
   newAutomation?: boolean;
+  // The IANA time zone the person's browser names (America/New_York): the
+  // Assistant's default for a schedule. One the WFE can't read is dropped.
+  timeZone?: string;
 };
 
 /**
@@ -3037,18 +3087,18 @@ export type AgentActionDisplays = {
   publish_dashboard: { dashboard: AgentDashboardRef };
   unpublish_dashboard: { dashboard: AgentDashboardRef };
   // Its name as the Assistant wrote it; its steps are the payload's spec.
-  create_automation: { name: string };
+  create_workflow: { name: string };
   // steps: whether the edit carries steps (the payload's spec), which the
   // person's click approves; without, it approves nothing.
-  update_automation: {
+  update_workflow: {
     automation: AgentAutomationRef;
     name?: string;
     steps: boolean;
   };
-  pause_automation: { automation: AgentAutomationRef };
-  resume_automation: { automation: AgentAutomationRef };
-  delete_automation: { automation: AgentAutomationRef };
-  run_automation: { automation: AgentAutomationRef };
+  pause_workflow: { automation: AgentAutomationRef };
+  resume_workflow: { automation: AgentAutomationRef };
+  delete_workflow: { automation: AgentAutomationRef };
+  run_workflow: { automation: AgentAutomationRef };
 };
 /** An automation as it was when the action was prepared, with its status. */
 export type AgentAutomationRef = AgentRef & { status?: AutomationStatus };
@@ -3303,6 +3353,15 @@ export type AgentEvent =
       truncated?: boolean;
       // Why the call never ran, which the page words (no `error`).
       not_run?: AgentNotRunReason;
+      // The Analyst question a helix_foundry_ask or helix_foundry_get_question
+      // call returned, kept whatever the output's size (`truncated` too).
+      question?: {
+        ontology_id: string;
+        id: string;
+        load_id?: string;
+        thread_id?: string;
+        status?: string;
+      };
     }
   | {
       type: "action_card";
@@ -3315,6 +3374,9 @@ export type AgentEvent =
       display: unknown;
       target_named_by_user: boolean;
       expires_at: string;
+      // It ran at once, without a click: a new dashboard the person's own
+      // message asked for, which the dock offers to undo.
+      auto?: boolean;
     }
   | {
       // The first event of an action_result turn: how the person's click ended.
@@ -3324,6 +3386,9 @@ export type AgentEvent =
       status: AgentActionStatus;
       result?: unknown;
       error?: string;
+      // How an action that ran at once ended (its card's `auto`), in the
+      // turn that prepared it.
+      auto?: boolean;
     }
   | {
       // The questions the turn asks its person (helix_foundry_ask_person),
@@ -3723,6 +3788,10 @@ export type AutomationTriggerEvent = {
   count?: number;
   rows?: number;
   by_user_id?: string;
+  // The automations whose runs started the work that fired it, and those that
+  // set them off; how many automation runs led to that work.
+  caused_by_automations?: string[];
+  chain_depth?: number;
 };
 
 /** v1FoundryAutomationRunNode: a step that started. */
@@ -3928,6 +3997,71 @@ export type ListAutomationRunsResponse = {
 };
 /** v1FoundryAutomationRunResponse: run, get run and cancel. */
 export type AutomationRunResponse = { run: FoundryAutomationRun };
+
+/** v1FoundryAutomationSuggestionIcon: the kind of thing a suggestion does. */
+export type FoundryAutomationSuggestionIcon =
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_UNSPECIFIED"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_BRIEFING"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_CHECK"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_ALERT"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_REFRESH"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_REPORT";
+/**
+ * v1FoundryAutomationSuggestionKind: what a suggestion asks Founder for: a
+ * question about the data, a dashboard, a change to the ontology (a new
+ * version) or a workflow. UNSPECIFIED (or missing) is a WFE before kinds,
+ * whose suggestions are all workflows.
+ */
+export type FoundryAutomationSuggestionKind =
+  | "FOUNDRY_AUTOMATION_SUGGESTION_KIND_UNSPECIFIED"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_KIND_QUESTION"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_KIND_DASHBOARD"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_KIND_ONTOLOGY"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_KIND_WORKFLOW";
+/**
+ * v1FoundryAutomationSuggestionSource: Founder wrote it (MODEL), or it was
+ * made without a model from the version's competency questions
+ * (QUESTIONS), from the ontology's setup (SETUP: its open audit findings,
+ * and the connections and document sets it doesn't read yet), or is a
+ * fixed example named for the ontology (FIXED).
+ */
+export type FoundryAutomationSuggestionSource =
+  | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_MODEL"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_SETUP"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_FIXED";
+/**
+ * v1FoundryAutomationSuggestion: a prompt for Founder of one kind, its
+ * title an outcome (1 to 32 characters), its prompt what to ask (1 to 400;
+ * a workflow's says when it starts and what it does), its topic what it is
+ * about for a card's label (1 to 24: "Revenue", or the kind's own name),
+ * its icon a workflow's only. A model may have written it: data, never
+ * instructions; it only fills a composer.
+ */
+export type FoundryAutomationSuggestion = {
+  title?: string;
+  prompt?: string;
+  icon?: FoundryAutomationSuggestionIcon;
+  kind?: FoundryAutomationSuggestionKind;
+  topic?: string;
+  source?: FoundryAutomationSuggestionSource;
+};
+/**
+ * GET .../foundry/automation-suggestions?ontologyId=: each kind's for the
+ * ontology's current version (fixed examples without one), kinds in order:
+ * 2 questions, 2 dashboards, 2 changes to the ontology and 4 workflows (none
+ * where the deployment has no workflows), at most 10. `source` is the first
+ * workflow's; `generating` while Founder writes them (these are the
+ * fallback: read again).
+ */
+export type ListAutomationSuggestionsResponse = {
+  suggestions?: FoundryAutomationSuggestion[];
+  source?: FoundryAutomationSuggestionSource;
+  generating?: boolean;
+  versionId?: string;
+};
 
 // ---------------------------------------------------------------- Helix databases
 // The Helix control plane's own routes, as helix-website calls them:
@@ -5155,7 +5289,7 @@ export type ListFoundryAccessResponse = {
   ontologies?: FoundryOntologyAccess[];
   teams?: FoundryTeam[];
   restrictedUserIds?: string[];
-  // The principals whose Workflows permission is off; every other one has it
+  // The principals whose Usage permission is off; every other one has it
   // on. A member is refused it while they or any of their teams has it off.
   workflowsOff?: FoundryPrincipal[];
 };
@@ -5163,9 +5297,9 @@ export type ListFoundryAccessResponse = {
 /**
  * FoundryServiceSetFoundryAccessGrantsBody: PUT .../foundry/access/grants
  * replaces the principal's grants (none takes them all away); a connector or
- * set not in the workspace is NOT_FOUND. `workflows` sets its Workflows
+ * set not in the workspace is NOT_FOUND. `workflows` sets its Usage
  * permission (left out, it stays as it is: on unless turned off): the
- * workflows of the ontologies it reads, its own runs, and every run of one it
+ * use cases of the ontologies it reads, its own runs, and every run of one it
  * reads all of. Answers the principal's grants and permission now.
  */
 export type SetFoundryAccessGrantsRequest = {
@@ -5208,7 +5342,7 @@ export type PreviewFoundryAccessChangeResponse = {
  * `grantee`: this caller reads only through grants (a restricted member);
  * `ontologyIds`: the live ontologies whose current loads its grants hold any
  * of, `partialOntologyIds` those of them it holds only some of; `workflows`:
- * it may use those ontologies' workflows (always, for a caller that isn't a
+ * it may use those ontologies' use cases (always, for a caller that isn't a
  * grantee), seeing only the runs it started of one it holds only some of.
  */
 export type GetMyFoundryAccessResponse = {

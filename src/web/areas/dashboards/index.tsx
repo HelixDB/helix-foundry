@@ -4,35 +4,31 @@
 // sees every dashboard (a grantee only the pinned ones) and reads each tile
 // as themselves; what they may change, the WFE says per dashboard.
 import "./dashboards.css";
-import { useEffect, useState } from "react";
-import {
-  Link,
-  Route,
-  Routes,
-  useNavigate,
-  useSearchParams,
-} from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LayoutDashboard, Plus } from "lucide-react";
-import type { FoundryDashboard } from "../../../shared/wfe";
+import { useMemo, useState } from "react";
+import { Route, Routes } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { LayoutDashboard, Plus, Search, Sparkles } from "lucide-react";
 import {
   Button,
-  DataGrid,
-  Dialog,
   EmptyState,
+  FilterBar,
   Page,
   PageHeader,
-  SkeletonText,
-  Tag,
-  formatRelative,
+  Segmented,
+  Skeleton,
+  plural,
   useNow,
 } from "../../kit";
-import { sentence } from "../../api";
+import { useShell } from "../../shell/context";
 import { RefreshFailed, useWorkspace } from "../../ui";
 import { DashboardPage } from "./dashboard";
-import { MAX_DESCRIPTION, MAX_NAME, dashboardName } from "./model";
-import { dashboardPaths as paths } from "./paths";
-import { createDashboard, dashboardQueries, keepDashboard } from "./queries";
+import { DashboardCard } from "./library";
+import {
+  NEW_DASHBOARD_PROMPT,
+  libraryDashboards,
+  type LibraryFilter,
+} from "./model";
+import { dashboardQueries } from "./queries";
 
 export function DashboardsRoutes() {
   return (
@@ -43,61 +39,69 @@ export function DashboardsRoutes() {
   );
 }
 
-/** /dashboards: every dashboard the viewer sees, pinned first; `?new=1` opens New dashboard. */
+/**
+ * /dashboards: the library, every dashboard the viewer sees as a card (a
+ * miniature, its name and when it was edited), pinned first, searched by
+ * name or description and filtered to the pinned or the viewer's own. New
+ * dashboard opens Founder on a new thread that starts "Build me a dashboard
+ * for: ", where the build has Founder; a grantee can't make one.
+ */
 function DashboardsPage() {
-  const { id: ws } = useWorkspace(),
-    navigate = useNavigate(),
-    now = useNow(60_000),
-    [params, setParams] = useSearchParams();
+  const { id: ws, user } = useWorkspace(),
+    shell = useShell(),
+    now = useNow(60_000);
   const list = useQuery(dashboardQueries.list(ws));
-  const [creating, setCreating] = useState(false);
-  // The sidebar's New dashboard opens it on this page, open already or not.
-  const asked = params.get("new") === "1";
-  useEffect(() => {
-    if (!asked) return;
-    setCreating(true);
-    setParams(
-      (p) => {
-        p.delete("new");
-        return p;
-      },
-      { replace: true },
-    );
-  }, [asked, setParams]);
-  const canCreate = !!list.data?.canCreate;
+  const [query, setQuery] = useState(""),
+    [filter, setFilter] = useState<LibraryFilter>("all");
+  const dashboards = list.data?.dashboards || [];
+  const shown = useMemo(
+    () => libraryDashboards(dashboards, { query, filter, userId: user.id }),
+    [dashboards, query, filter, user.id],
+  );
+  const counts = useMemo(
+    () =>
+      Object.fromEntries(
+        (["all", "pinned", "yours"] as const).map((f) => [
+          f,
+          libraryDashboards(dashboards, {
+            query: "",
+            filter: f,
+            userId: user.id,
+          }).length,
+        ]),
+      ) as Record<LibraryFilter, number>,
+    [dashboards, user.id],
+  );
+  const canCreate = !!list.data?.canCreate && shell.assistant.available;
+  const build = () =>
+    shell.assistant.compose(NEW_DASHBOARD_PROMPT, "new_dashboard");
   const header = (
     <PageHeader
       title="Dashboards"
       subtitle="Tables and charts of your ontologies’ data, read as each viewer may read it."
       actions={
         canCreate && (
-          <Button
-            variant="primary"
-            icon={Plus}
-            onClick={() => setCreating(true)}
-          >
+          <Button variant="primary" icon={Plus} onClick={build}>
             New dashboard
           </Button>
         )
       }
     />
   );
-  const dialog = creating && canCreate && (
-    <NewDashboardDialog
-      onClose={() => setCreating(false)}
-      onCreated={(d) => navigate(paths.dashboard(d.id))}
-    />
-  );
   if (list.isPending)
     return (
-      <Page>
+      <Page width="wide">
         {header}
-        <SkeletonText lines={5} />
+        <div className="db-cards" aria-busy="true">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="db-card-wait" height={236} />
+          ))}
+        </div>
       </Page>
     );
   if (!list.data)
     return (
-      <Page>
+      <Page width="wide">
         {header}
         <EmptyState
           icon={LayoutDashboard}
@@ -107,9 +111,8 @@ function DashboardsPage() {
         />
       </Page>
     );
-  const dashboards = list.data.dashboards || [];
   return (
-    <Page>
+    <Page width="wide">
       {header}
       <RefreshFailed query={list} />
       {!dashboards.length ? (
@@ -118,150 +121,82 @@ function DashboardsPage() {
           title="No dashboards yet"
           text={
             canCreate
-              ? "Make one here, pin a chart or table from an Analyst answer, or ask the Assistant to build one for some data."
-              : "An owner or admin pins dashboards for the workspace here."
+              ? "Tell Founder what you want to see, or pin a chart or table from an answer."
+              : list.data.canCreate
+                ? "Pin a chart or table from an Analyst answer."
+                : "An owner or admin pins dashboards for the workspace here."
+          }
+          action={
+            canCreate && (
+              <Button variant="primary" icon={Sparkles} onClick={build}>
+                Build one with Founder
+              </Button>
+            )
           }
         />
       ) : (
-        <DataGrid<FoundryDashboard>
-          className="db-grid-list"
-          label="Dashboards"
-          rows={dashboards}
-          getRowKey={(d) => d.id}
-          onRowClick={(d) => navigate(paths.dashboard(d.id))}
-          rowHeight={60}
-          columns={[
-            {
-              key: "name",
-              label: "Dashboard",
-              type: "string",
-              render: (d) => (
-                <span className="db-list-name">
-                  <Link className="db-list-link" to={paths.dashboard(d.id)}>
-                    {d.name}
-                  </Link>
-                  {d.description && (
-                    <span className="db-list-muted" title={d.description}>
-                      {d.description}
-                    </span>
-                  )}
-                </span>
-              ),
-            },
-            {
-              key: "state",
-              label: "Shared",
-              type: "string",
-              width: 200,
-              sortValue: (d) => (d.pinned ? "a" : "b") + (d.share ? "a" : "b"),
-              render: (d) => (
-                <span className="db-list-tags">
-                  {d.pinned && <Tag tone="accent">Pinned</Tag>}
-                  {d.share && <Tag tone="info">Public link</Tag>}
-                  {!d.pinned && !d.share && (
-                    <span className="db-list-muted">—</span>
-                  )}
-                </span>
-              ),
-            },
-            {
-              key: "updatedAt",
-              label: "Edited",
-              type: "timestamp",
-              width: 160,
-              sortValue: (d) => d.updatedAt || "",
-              render: (d) =>
-                d.updatedAt ? formatRelative(d.updatedAt, now) : "—",
-            },
-          ]}
-        />
-      )}
-      {dialog}
-    </Page>
-  );
-}
-
-/** New dashboard: a name and description; its tiles come from the Analyst or the Assistant. */
-function NewDashboardDialog({
-  onClose,
-  onCreated,
-}: {
-  onClose: () => void;
-  onCreated: (d: FoundryDashboard) => void;
-}) {
-  const { id: ws } = useWorkspace(),
-    qc = useQueryClient();
-  const [name, setName] = useState(""),
-    [description, setDescription] = useState(""),
-    [pending, setPending] = useState(false),
-    [error, setError] = useState(""),
-    [token] = useState(() => crypto.randomUUID());
-  const valid = dashboardName(name);
-  return (
-    <Dialog title="New dashboard" size="sm" onClose={onClose}>
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (!valid) return;
-          setPending(true);
-          setError("");
-          try {
-            const d = await createDashboard(
-              ws,
-              {
-                name: valid,
-                description: description.trim(),
-                clientToken: token,
-              },
-              "page",
-            );
-            keepDashboard(qc, ws, d);
-            onCreated(d);
-          } catch (err) {
-            setError(sentence((err as Error).message));
-          } finally {
-            setPending(false);
-          }
-        }}
-      >
-        <label className="hf-field">
-          <span>Name</span>
-          <input
-            required
-            data-autofocus
-            maxLength={MAX_NAME}
-            placeholder="e.g. Revenue this quarter"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
-        <label className="hf-field">
-          <span>Description (optional)</span>
-          <textarea
-            rows={3}
-            maxLength={MAX_DESCRIPTION}
-            placeholder="e.g. What the sales team checks every Monday"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-        </label>
-        {error && (
-          <p role="alert" className="hf-form-error">
-            {error}
-          </p>
-        )}
-        <div className="hf-form-actions">
-          <Button onClick={onClose}>Cancel</Button>
-          <Button
-            type="submit"
-            variant="primary"
-            pending={pending}
-            disabled={!valid}
+        <>
+          <FilterBar
+            className="db-library-bar"
+            search={{
+              value: query,
+              onChange: setQuery,
+              placeholder: "Search dashboards…",
+            }}
+            count={
+              shown.length !== dashboards.length
+                ? `${shown.length} of ${plural(dashboards.length, "dashboard")}`
+                : undefined
+            }
           >
-            Create dashboard
-          </Button>
-        </div>
-      </form>
-    </Dialog>
+            <Segmented
+              label="Show"
+              value={filter}
+              onChange={(v) => setFilter(v as LibraryFilter)}
+              options={[
+                { value: "all", label: "All", count: counts.all },
+                { value: "pinned", label: "Pinned", count: counts.pinned },
+                { value: "yours", label: "Yours", count: counts.yours },
+              ]}
+            />
+          </FilterBar>
+          {shown.length ? (
+            <ul className="db-cards" aria-label="Dashboards">
+              {shown.map((d) => (
+                <li key={d.id}>
+                  <DashboardCard dashboard={d} now={now} />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyState
+              icon={Search}
+              title={
+                query.trim()
+                  ? `No dashboards match “${query.trim()}”`
+                  : filter === "pinned"
+                    ? "No pinned dashboards"
+                    : "You haven’t made a dashboard yet"
+              }
+              text={
+                filter === "pinned" && !query.trim()
+                  ? "An owner or admin pins dashboards for everyone in the workspace."
+                  : undefined
+              }
+              action={
+                <Button
+                  onClick={() => {
+                    setQuery("");
+                    setFilter("all");
+                  }}
+                >
+                  Show all dashboards
+                </Button>
+              }
+            />
+          )}
+        </>
+      )}
+    </Page>
   );
 }

@@ -626,6 +626,9 @@ describe("restricted mode", () => {
       "/settings/access",
       "/ontology/new",
       "/ontology/sample",
+      "/workflows",
+      "/workflows/new",
+      "/workflows/a/runs/r",
       "/automations",
       "/automations/a/runs/r",
     ])
@@ -639,10 +642,13 @@ describe("restricted mode", () => {
     // The graph isn't theirs: Records is their Explorer.
     expect(granteeRedirect("/explore/o")).toBe("/explore/o/records");
     expect(granteeRedirect("/explore/o/entities")).toBe("/explore/o/records");
-    // Workflows only with the Workflows permission.
+    // Usage only with the Usage permission, and its old /workflows
+    // addresses, which redirect there.
     for (const path of [
+      "/ontology/o/usage",
+      "/ontology/o/usage/w",
+      "/ontology/o/usage/w/runs/r",
       "/ontology/o/workflows",
-      "/ontology/o/workflows/w",
       "/ontology/o/workflows/w/runs/r",
     ]) {
       expect(granteeRedirect(path), path).toBe("/ontology/o");
@@ -651,7 +657,7 @@ describe("restricted mode", () => {
     expect(granteeRedirect("/ontology/o/loads/l", true)).toBe("/ontology/o");
   });
 
-  it("reads the Workflows permission: on unless turned off, and off through a team", () => {
+  it("reads the Usage permission: on unless turned off, and off through a team", () => {
     const access: wfe.ListFoundryAccessResponse = {
       teams: [
         { id: "t1", name: "Support", memberUserIds: ["u1"] },

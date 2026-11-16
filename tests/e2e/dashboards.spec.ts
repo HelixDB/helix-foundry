@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import {
   APP_ORIGIN,
+  askAnalyst,
   choose,
   csrfToken,
   expect,
@@ -13,8 +14,9 @@ import {
 } from "./support/mock";
 
 // Dashboards: tiles of queries over ontologies' loads, drawn as the
-// Analyst draws an answer's visuals. The Assistant builds one from a card
-// its person runs; an Analyst answer's chart is pinned to one; owners and
+// Analyst draws an answer's visuals. Founder makes one at once when its
+// person asks for a dashboard, with Undo; an Analyst answer's chart is
+// pinned to one; owners and
 // admins edit, pin and publish them at a public link a fresh browser opens
 // with no session, until they unpublish it; a member reads them all and
 // changes only their own. What can't be read, saved or shown says so.
@@ -37,7 +39,7 @@ const tile = (id: string, title: string, query: object, kind?: string) => ({
   visual: kind ? { kind } : {},
 });
 
-/** Makes a dashboard through the BFF, as its New dashboard does: its id. */
+/** Makes a dashboard through the BFF, as Founder or an Analyst answer does: its id. */
 async function makeDashboard(
   page: Page,
   name: string,
@@ -60,36 +62,41 @@ async function makeDashboard(
 }
 
 const dockOf = (page: Page) =>
-  page.getByRole("complementary", { name: "Assistant" });
+  page.getByRole("complementary", { name: "Founder" });
 
-test("builds a dashboard from the Assistant's card, which its person runs", async ({
+test("makes the dashboard its person asks Founder for at once, with Undo", async ({
   page,
 }) => {
   await mock.configure({ agentStepMs: 100 });
   await signIn(page);
   await loadContracts(page);
-  await page.getByRole("button", { name: "Assistant", exact: true }).click();
+  await page.getByRole("button", { name: "Founder", exact: true }).click();
   const dock = dockOf(page);
   await dock
     .getByRole("textbox", { name: "Message" })
     .fill("Build a dashboard of invoices by status for Customer contracts");
   await dock.getByRole("button", { name: "Send", exact: true }).click();
-  // It tried the tile before it proposed it.
+  // It tried the tile before it made it.
   await expect(dock.getByText("Tried a dashboard tile")).toBeVisible();
+  // Asked for a dashboard, it makes it without a card to click.
   const card = dock.getByRole("region", {
-    name: "Action: Make the dashboard “Invoices by status”",
+    name: "Action: Made the dashboard “Invoices by status”",
   });
   await expect(card).toBeVisible();
-  // The person named it: no warning.
-  await expect(card.getByText(/Not named by you/)).toHaveCount(0);
-  await expect(card).toContainText("“Invoices by status”");
+  await expect(card.getByText("Made", { exact: true })).toBeVisible();
+  await expect(card).toContainText(
+    "Founder made it because you asked for a dashboard.",
+  );
+  await expect(
+    dock.getByRole("button", { name: "Create", exact: true }),
+  ).toHaveCount(0);
+  await expect(dock.getByText(/You ran this action/)).toHaveCount(0);
   await card.getByText("Full request", { exact: true }).click();
   await expect(card.getByText(/"group_count"/)).toBeVisible();
-  await card.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(card.getByText("Ran", { exact: true })).toBeVisible();
   await expect(
-    dock.getByText("You ran this action: it succeeded."),
+    dock.getByText(/I made the dashboard “Invoices by status”/),
   ).toBeVisible();
+  await expect(card.getByRole("button", { name: "Undo" })).toBeEnabled();
   await card.getByRole("link", { name: "Open the dashboard" }).click();
   await expect(page).toHaveURL(/\/dashboards\/dash_/);
   await expect(
@@ -115,15 +122,9 @@ test("adds an Analyst answer's charts to a dashboard, then edits it", async ({
   await mock.configure({ loadStepMs: 200, askStepMs: 100 });
   await signIn(page);
   await uploadAndLoadContract(page);
-  await page.getByRole("link", { name: "Analyst", exact: true }).click();
-  const form = page.getByRole("form", { name: "Ask a question" });
-  await form
-    .getByRole("textbox", { name: /^Question/ })
-    .fill("How are the invoices doing?");
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
-  const answer = page
-    .getByRole("article", { name: "Question: How are the invoices doing?" })
-    .getByRole("region", { name: "Answer" });
+  // An Analyst thread, read only on Founder's page, keeps Add to dashboard.
+  const question = await askAnalyst(page, "How are the invoices doing?");
+  const answer = question.getByRole("region", { name: "Answer" });
   const byStatus = answer.getByRole("figure", { name: "Invoices by status" });
   await expect(byStatus).toBeVisible({ timeout: 15_000 });
 
@@ -268,7 +269,14 @@ test("publishes a snapshot that a fresh browser opens, until it is unpublished",
   await expect(
     pub.getByRole("heading", { level: 1, name: "Revenue" }),
   ).toBeVisible();
-  await expect(pub.getByText(/^Snapshot from /)).toBeVisible();
+  await expect(pub.getByText(/^As of /)).toBeVisible();
+  // Foundry's wordmark and footer link to its landing page, sending no
+  // referrer (the address holds the link's token).
+  for (const name of ["Helix Foundry", "Made with Helix Foundry"]) {
+    const link = pub.getByRole("link", { name, exact: true });
+    await expect(link).toHaveAttribute("href", "/");
+    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  }
   await expect(
     pub
       .getByRole("figure", { name: "Invoices by status" })
@@ -366,10 +374,10 @@ test("a member reads every dashboard and changes only their own", async ({
     );
 
   // Their own: they edit and delete it, and neither pin nor publish it.
-  await alan.getByRole("link", { name: "New dashboard" }).click();
-  const create = alan.getByRole("dialog", { name: "New dashboard" });
-  await create.getByLabel("Name").fill("Alan’s view");
-  await create.getByRole("button", { name: "Create dashboard" }).click();
+  const own = (
+    await postToWfe(alan, D, { name: "Alan’s view", clientToken: "c-alan" })
+  ).dashboard.id;
+  await alan.goto(`/dashboards/${own}`);
   await expect(
     alan.getByRole("heading", { level: 1, name: "Alan’s view" }),
   ).toBeVisible();
@@ -388,6 +396,210 @@ test("a member reads every dashboard and changes only their own", async ({
   await context.close();
 });
 
+test("the library: a card per dashboard with its miniature, searched and filtered", async ({
+  page,
+}) => {
+  await signIn(page);
+  await loadContracts(page);
+  await makeDashboard(page, "Revenue");
+  const health = await makeDashboard(page, "Invoice health", [
+    tile("n", "Invoices", {
+      start: { type: "Invoice" },
+      return: { count: {} },
+    }),
+    tile("s", "By status", BY_STATUS, "line"),
+  ]);
+  await postToWfe(page, `${D}/${health}:pin`, {
+    pinned: true,
+    expectedRevision: "1",
+  });
+  await page.goto("/dashboards");
+  // The library's list, not the sidebar's group of the same name.
+  const cards = page
+    .getByRole("main")
+    .getByRole("list", { name: "Dashboards", exact: true });
+  await expect(cards.getByRole("article")).toHaveCount(2);
+  // Pinned first, each a miniature drawn from its spec, without a tile read.
+  const first = cards.getByRole("article").first();
+  await expect(first.getByRole("link")).toHaveText("Invoice health");
+  await expect(first.getByText("Pinned", { exact: true })).toBeVisible();
+  await expect(first.locator(".db-mini-title")).toHaveText([
+    "Invoices",
+    "By status",
+  ]);
+  await expect(first.locator(".db-mini-figure")).toHaveCount(1);
+  await expect(first.locator(".db-mini-chart polyline")).toHaveCount(1);
+  const revenue = cards.getByRole("article").nth(1);
+  await expect(revenue.locator(".db-mini-chart rect")).toHaveCount(6);
+  await expect(revenue.locator(".db-mini-table")).toHaveCount(1);
+  const stats = await mock.stats();
+  expect(stats.requests.filter((r) => r.includes(":read"))).toEqual([]);
+
+  // Search by name, case and accents aside; filters for pinned and own.
+  const search = page.getByRole("searchbox", { name: "Search dashboards…" });
+  await search.fill("REVEN");
+  await expect(cards.getByRole("article")).toHaveCount(1);
+  await expect(cards.getByRole("link")).toHaveText("Revenue");
+  await expect(page.getByText("1 of 2 dashboards")).toBeVisible();
+  await search.fill("nothing like it");
+  await expect(
+    page.getByRole("heading", {
+      name: "No dashboards match “nothing like it”",
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Show all dashboards" }).click();
+  await expect(cards.getByRole("article")).toHaveCount(2);
+  await page.getByRole("radio", { name: /Pinned/ }).click();
+  await expect(cards.getByRole("link")).toHaveText(["Invoice health"]);
+  await page.getByRole("radio", { name: /Yours/ }).click();
+  await expect(cards.getByRole("article")).toHaveCount(2);
+  await page.getByRole("radio", { name: /All/ }).click();
+
+  // A card opens its dashboard.
+  await revenue.click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Revenue" }),
+  ).toBeVisible();
+
+  // One column on a phone, the page never wider than it.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/dashboards");
+  await expect(cards.getByRole("article")).toHaveCount(2);
+  const [a, b] = await cards
+    .getByRole("article")
+    .evaluateAll((els) => els.map((e) => e.getBoundingClientRect().left));
+  expect(a).toBe(b);
+  expect(
+    await page.evaluate(
+      () => document.scrollingElement!.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test("New dashboard opens Founder with its request started, the caret at its end", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/dashboards");
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "New dashboard" })
+    .click();
+  // No dialog of its own: Founder's dock, on a new thread.
+  await expect(page.getByRole("dialog", { name: "New dashboard" })).toHaveCount(
+    0,
+  );
+  const dock = dockOf(page);
+  const box = dock.getByRole("textbox", { name: "Message" });
+  await expect(box).toHaveValue("Build me a dashboard for: ");
+  await expect(box).toBeFocused();
+  expect(
+    await box.evaluate((el: HTMLTextAreaElement) => [
+      el.selectionStart,
+      el.selectionEnd,
+      el.value.length,
+    ]),
+  ).toEqual([26, 26, 26]);
+  await expect(
+    dock.getByRole("button", { name: /^Threads: New thread/ }),
+  ).toBeVisible();
+  // What is typed follows it.
+  await page.keyboard.type("invoices by status");
+  await expect(box).toHaveValue("Build me a dashboard for: invoices by status");
+
+  // The sidebar's New dashboard starts it again, on a new thread.
+  await page
+    .getByRole("complementary")
+    .filter({ has: page.getByRole("navigation", { name: "Dashboards" }) })
+    .getByRole("button", { name: "New dashboard" })
+    .click();
+  await expect(box).toHaveValue("Build me a dashboard for: ");
+
+  // On a phone, Founder's drawer.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "New dashboard" })
+    .click();
+  const drawer = page.getByRole("dialog", { name: "Founder" });
+  await expect(drawer.getByRole("textbox", { name: "Message" })).toHaveValue(
+    "Build me a dashboard for: ",
+  );
+});
+
+test("a public dashboard's wide table scrolls inside its tile, never the page", async ({
+  page,
+  browser,
+}) => {
+  await signIn(page);
+  await loadContracts(page);
+  const WIDE = {
+    start: { type: "Invoice" },
+    steps: [{ via: "billed_to", dir: "out", to: "Customer" }],
+    return: {
+      rows: {
+        columns: [
+          { at: 1, prop: "name" },
+          { at: 1, prop: "currency" },
+          { at: 1 },
+          { at: 0 },
+          { at: 0, prop: "invoice_id" },
+          { at: 0, prop: "status" },
+          { at: 0, prop: "amount_due" },
+        ],
+      },
+    },
+  };
+  const id = await makeDashboard(page, "Collections", [
+    tile("w", "Unpaid or overdue invoices by account", WIDE, "table"),
+  ]);
+  const token = (
+    await postToWfe(page, `${D}/${id}:publish`, { expectedRevision: "1" })
+  ).dashboard.share.token as string;
+  const other = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const pub = await other.newPage();
+  await pub.goto(`/share/${token}`);
+  const table = pub
+    .getByRole("figure", { name: "Unpaid or overdue invoices by account" })
+    .getByRole("grid");
+  await expect(table.getByRole("columnheader")).toHaveCount(7);
+  await expect(
+    pub.getByRole("link", { name: "Helix Foundry", exact: true }),
+  ).toBeVisible();
+  // The table is wider than its tile and scrolls; the page doesn't.
+  expect(await table.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+    true,
+  );
+  expect(
+    await pub.evaluate(
+      () => document.scrollingElement!.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  // A fade at the right says there is more; scrolled to the end, at the left.
+  const wrap = pub.locator(".hf-grid-wrap");
+  await expect(wrap).toHaveClass(/is-scrolled-right/);
+  await table.evaluate((el) => el.scrollTo({ left: el.scrollWidth }));
+  await expect(wrap).toHaveClass(/is-scrolled-left/);
+  await expect(wrap).not.toHaveClass(/is-scrolled-right/);
+  // A header cut short shows whole on hover; numbers sit right.
+  await expect(
+    table.getByRole("columnheader").last().getByRole("button"),
+  ).toHaveAttribute("title", /amount_due|Amount due/i);
+  await expect(table.getByRole("columnheader").last()).toHaveClass(/is-right/);
+
+  // On a desktop it fits or scrolls the same way, the page never sideways.
+  await pub.setViewportSize({ width: 1440, height: 1000 });
+  expect(
+    await pub.evaluate(
+      () => document.scrollingElement!.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await other.close();
+});
+
 /** A change through the BFF, as another person's tab would make it. */
 async function changeOnWfe(
   page: Page,
@@ -403,7 +615,7 @@ async function changeOnWfe(
   expect(res.status(), await res.text()).toBe(200);
 }
 
-test("on a dashboard's page, the Assistant's renames, pins and deletes show at once", async ({
+test("on a dashboard's page, Founder's renames, pins and deletes show at once", async ({
   page,
 }) => {
   await mock.configure({ agentStepMs: 50 });
@@ -413,7 +625,7 @@ test("on a dashboard's page, the Assistant's renames, pins and deletes show at o
   await expect(
     page.getByRole("heading", { level: 1, name: "Revenue" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Assistant", exact: true }).click();
+  await page.getByRole("button", { name: "Founder", exact: true }).click();
   const dock = dockOf(page);
   const run = async (text: string, card: string, button: string) => {
     await dock.getByRole("textbox", { name: "Message" }).fill(text);
@@ -558,7 +770,7 @@ test("the share page says when its link is busy or failed", async ({
   await expect(
     pub.getByRole("heading", { name: "Too many tries from here" }),
   ).toBeVisible();
-  await expect(pub.getByText("A snapshot shared from")).toHaveCount(0);
+  await expect(pub.getByText("Made with Helix Foundry")).toHaveCount(0);
   answer = 500;
   await pub.reload();
   await expect(

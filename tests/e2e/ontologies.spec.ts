@@ -118,13 +118,13 @@ test("creates an ontology on an existing database and explores what it holds", a
     "true",
   );
   // Its Overview, then its Explorer, then Connections, what it reads, then
-  // Review and Workflows.
+  // Review and Usage.
   await expect(list.locator(".hf-subnav-link")).toHaveText([
     "Overview",
     "Explorer",
     "Connections",
     "Review",
-    "Workflows",
+    "Usage",
   ]);
   await list.getByRole("link", { name: "Explorer" }).click();
   await expect(page).toHaveURL(/\/explore\/ont_\w+$/);
@@ -150,11 +150,10 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
   await nav.getByRole("link", { name: "Ontologies" }).click();
   await expect(page).toHaveURL(/\/ontology\/ont_acme_contracts$/);
   await expect(nav.locator(".hf-nav-link")).toHaveText([
-    "Analyst",
+    "Founder",
     "Dashboards",
-    "Automations",
+    "Workflows",
     "Ontologies",
-    "Connectors",
   ]);
   await expect(panel).toBeVisible();
   await expect(nav.getByRole("link", { name: "Ontologies" })).toHaveAttribute(
@@ -171,10 +170,10 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
     /^(Loaded|Not loaded|Failed|Loading|Queued)$/,
   );
   // Only the open one's pages show, the page open marked: its Overview,
-  // Explorer, Connections, Review and Workflows; no
+  // Explorer, Connections, Review and Usage; no
   // documents under Connections.
   const pages = list.locator(".hf-subnav-link"),
-    names = ["Overview", "Explorer", "Connections", "Review", "Workflows"];
+    names = ["Overview", "Explorer", "Connections", "Review", "Usage"];
   await expect(pages).toHaveText(names);
   await expect(list.getByRole("tree")).toHaveCount(0);
   const current = list.locator('.hf-subnav-link[aria-current="page"]');
@@ -374,7 +373,7 @@ test("on a phone, shows the rail and the ontologies in the drawer", async ({
   await page.getByRole("button", { name: "Open navigation" }).click();
   const drawer = page.getByRole("dialog", { name: "Navigation" });
   const rail = drawer.getByRole("navigation", { name: "Main navigation" });
-  await expect(rail.getByRole("link")).toHaveCount(5);
+  await expect(rail.getByRole("link")).toHaveCount(4);
   await expect(rail.getByRole("link", { name: "Ontologies" })).toHaveAttribute(
     "aria-current",
     "page",

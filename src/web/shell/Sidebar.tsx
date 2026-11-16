@@ -18,6 +18,7 @@ import { WorkspaceSwitcher } from "../areas/workspace/switcher";
 import {
   activeSection,
   childActive,
+  footNav,
   granteeNav,
   navSection,
   onboardingNav,
@@ -225,11 +226,12 @@ function SectionSplit({
 // The sidebar, on every page beside the page (and in a phone's drawer where
 // the open section has no panel: Rail.tsx): the mark and search, the
 // workspace, the sections with their names, what the open section shows
-// under them (Ask's threads), then the jobs this browser follows, Feedback,
-// the account and settings. While the
+// under them (Ask's threads), then the jobs this browser follows, the foot's
+// sections (Connectors), Feedback, the account and settings. While the
 // workspace is onboarding it holds only the mark, the workspace, the way
-// back to the onboarding and the account; for a grantee, no search or
-// settings, and only Analyst, Dashboards, Ontologies and the Explorer.
+// back to the onboarding and the account; for a grantee, no search,
+// Connectors or settings, and only Analyst, Dashboards, Ontologies and the
+// Explorer.
 export function Sidebar({
   workspaces,
   current,
@@ -329,6 +331,28 @@ export function Sidebar({
           </Suspense>
         </ChromeBoundary>
       )}
+      {!onboarding && !grantee && (
+        <nav aria-label="Data" className="hf-foot-nav">
+          {footNav.map((n) => {
+            const active = navSection(section) === n.id;
+            return (
+              <Link
+                key={n.id}
+                to={n.to}
+                onClick={onClose}
+                className={cx(
+                  "hf-btn hf-btn--ghost hf-btn--sm hf-foot-link",
+                  active && "is-active",
+                )}
+                aria-current={active ? "page" : undefined}
+              >
+                <n.icon size={15} aria-hidden />
+                {n.label}
+              </Link>
+            );
+          })}
+        </nav>
+      )}
       <FeedbackButton />
       <div className="hf-sidebar-foot">
         <AccountMenu user={user} current={current} collapsed={false} />
@@ -339,10 +363,10 @@ export function Sidebar({
               "hf-btn hf-btn--ghost hf-btn--md hf-btn--icon hf-settings-link",
               shell.assistant.open && "is-active",
             )}
-            aria-label="Assistant"
+            aria-label="Founder"
             aria-pressed={shell.assistant.open}
             aria-keyshortcuts={ariaAssistantShortcut}
-            title={`Assistant (${assistantShortcut})`}
+            title={`Founder (${assistantShortcut})`}
             onClick={() => {
               onClose?.();
               shell.assistant.toggle("button");

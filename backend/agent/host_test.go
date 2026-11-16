@@ -47,8 +47,15 @@ func (s *hostMem) EndUnclaimedFoundryAgentTurns(_ context.Context, runtime model
 	return 1, nil
 }
 
-func (s *hostMem) GetFoundryAgentThread(_ context.Context, _, id string) (*model.FoundryAgentThread, error) {
-	return &model.FoundryAgentThread{ID: id, WorkspaceID: ws, UserID: user, Runtime: model.FoundryAgentRuntimeClaudeCode, RuntimeSessionID: s.session}, nil
+// GetFoundryAgentThread is a helper's thread, holding what the store's says
+// of its grants (memStore.thread).
+func (s *hostMem) GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error) {
+	t, err := s.memStore.GetFoundryAgentThread(ctx, workspaceID, id)
+	if err != nil {
+		return nil, err
+	}
+	t.Runtime, t.RuntimeSessionID = model.FoundryAgentRuntimeClaudeCode, s.session
+	return t, nil
 }
 
 func (s *hostMem) ListFoundryAgentEvents(context.Context, string, int, int) ([]model.FoundryAgentEvent, error) {
@@ -390,7 +397,7 @@ func TestAHelpersCLICallsTheAssistantsToolsAsThePerson(t *testing.T) {
 	// sends, and under no workflow run it names.
 	for _, token := range []string{"a", "b"} {
 		_, err = client.CallTool(ctx, &mcp.CallToolParams{Name: toolAsk, Arguments: map[string]any{
-			"workspace_id": ws, "ontology_id": ontology, "question": "Who?", "client_token": token, "workflow_run_id": "01RUN_key"}})
+			"workspace_id": ws, "ontology_id": ontology, "question": "Who?", "client_token": token, "use_case_run_id": "01RUN_key"}})
 		require.NoError(t, err)
 	}
 	require.Len(t, h.backend.asked, 2)

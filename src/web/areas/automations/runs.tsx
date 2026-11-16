@@ -39,7 +39,7 @@ import { ACTIVE_POLL_MS, RUN_POLL_MS, automationQueries } from "./queries";
 // An automation's runs on its canvas page: the list beside the canvas
 // (newest first, 50 a page), and what the inspector says of the run open
 // and of each of its steps: what it found, failed with or cost, and, to its
-// owner, the actions an Assistant step prepared and left for them. Another
+// owner, the actions a Founder step prepared and left for them. Another
 // member sees how far a run went and what it cost; only its owner, and
 // owners and admins, read what its steps found and why it failed.
 
@@ -283,7 +283,7 @@ export function StepOutcome({
         <blockquote className="au-found">
           <span className="au-found-label">
             {node.kind === "assistant"
-              ? "What the Assistant reported"
+              ? "What Founder reported"
               : "What happened"}
           </span>
           <span className="au-found-text">{out.summary}</span>
@@ -316,7 +316,7 @@ export function StepOutcome({
 }
 
 /**
- * The actions an Assistant step prepared, as the Assistant's cards (only
+ * The actions a Founder step prepared, as Founder's cards (only
  * the automation's owner reads the run's thread): those it ran because its
  * owner approved them, and those that wait for them, which Run runs as them
  * now and Dismiss drops.

@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	foundryagent "github.com/helixdb/helix-foundry/backend/agent"
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/automation"
@@ -46,15 +47,18 @@ const (
 var agentIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 // agentUser is the user the call is for: a person signed in, never a key, an
-// agent or a grantee (whose methods' rules deny every Assistant route). Off,
-// the Assistant is FAILED_PRECONDITION, reason FOUNDRY_AGENT_DISABLED.
+// agent, or a caller the host sent on as a grantee (SourceGrantee: one the
+// host's own check refused, who may not be restricted here at all); a
+// restricted member is a user, narrowed by the access check and the turn's
+// Reach. Off, the Assistant is FAILED_PRECONDITION, reason
+// FOUNDRY_AGENT_DISABLED.
 func (s *Service) agentUser(ctx context.Context, workspaceID string) (string, error) {
 	if !s.deps.Cfg.Foundry.Agent.Enabled {
-		return "", foundryPrecondition(workspaceID, "FOUNDRY_AGENT_DISABLED", "the Assistant isn't available here")
+		return "", foundryPrecondition(workspaceID, "FOUNDRY_AGENT_DISABLED", "Founder isn't available here")
 	}
 	a := actor(ctx)
 	if a.Source != ports.SourceUser || a.UserID == "" || a.ServiceCredentialID != "" {
-		return "", status.Error(codes.PermissionDenied, "the Assistant answers people signed in to Foundry")
+		return "", status.Error(codes.PermissionDenied, "Founder answers people signed in to Foundry")
 	}
 	return a.UserID, nil
 }
@@ -91,16 +95,23 @@ func agentRefusal(workspaceID string, err error) (error, bool) {
 // (FOUNDRY_AGENT_QUESTIONS_CLOSED once it doesn't). The same client token
 // returns the turn it queued. A thread a helper runs is refused while no
 // helper that runs it is online; one Foundry's worker runs, while the
-// workspace's model can't run.
+// workspace's model can't run. A grantee's page context keeps only what its
+// grants show (granteePage), and it relays no generation's answers: an owner
+// or admin answers a draft.
 func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.SendFoundryAgentMessageRequest) (*foundryv1.FoundryAgentTurnResponse, error) {
 	ws := req.GetWorkspaceId()
 	userID, err := s.agentUser(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
+	g, grantee := access.GranteeFrom(ctx)
 	token := req.GetClientToken()
 	page := foundryagent.PageContext{OntologyID: req.GetPageContext().GetOntologyId(), LoadID: req.GetPageContext().GetLoadId(),
 		DashboardID: req.GetPageContext().GetDashboardId(), NewAutomation: req.GetPageContext().GetNewAutomation()}
+	// A browser's zone Go's database lacks is dropped: the Assistant asks then.
+	if _, err := automation.Zone(req.GetPageContext().GetTimeZone()); err == nil {
+		page.TimeZone = req.GetPageContext().GetTimeZone()
+	}
 	switch {
 	case token == "" || len(token) > maxClientTokenLength:
 		return nil, status.Errorf(codes.InvalidArgument, "client_token is required, at most %d characters", maxClientTokenLength)
@@ -109,6 +120,11 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	case page.OntologyID != "" && !agentIDPattern.MatchString(page.OntologyID), page.LoadID != "" && !agentIDPattern.MatchString(page.LoadID),
 		page.LoadID != "" && page.OntologyID == "", page.DashboardID != "" && !agentIDPattern.MatchString(page.DashboardID):
 		return nil, status.Error(codes.InvalidArgument, "page_context names a load of an ontology, or a dashboard, by their ids")
+	}
+	if grantee {
+		if page, err = s.granteePage(ctx, g, page); err != nil {
+			return nil, err
+		}
 	}
 	t := &foundrymodel.FoundryAgentTurn{
 		ID: id.New(), WorkspaceID: ws, ThreadID: req.GetThreadId(), UserID: userID, ClientToken: &token, MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
@@ -135,6 +151,9 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 			return nil, status.Error(codes.NotFound, "turn not found")
 		case asking.Asked == nil:
 			return nil, foundryPrecondition(ws, "FOUNDRY_AGENT_QUESTIONS_CLOSED", "that turn asked you nothing")
+		case grantee && asking.Asked.Generation != nil:
+			return nil, foundryPrecondition(ws, "FOUNDRY_AGENT_QUESTIONS_CLOSED",
+				"a draft's questions are answered by an owner or admin, on the generation's page in Foundry")
 		}
 		given := make([]agentquestion.Answer, 0, len(input.Answers.GetAnswers()))
 		for _, a := range input.Answers.GetAnswers() {
@@ -160,6 +179,13 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	case err == nil && !same(existing):
 		return nil, status.Error(codes.InvalidArgument, "client_token was already used for another message")
 	case err == nil:
+		// A restricted member reads again only a turn of a thread they
+		// still may (agentThread).
+		if grantee {
+			if _, err := s.agentThread(ctx, ws, userID, existing.ThreadID); err != nil {
+				return nil, err
+			}
+		}
 		return s.agentTurnResponse(ctx, existing)
 	case !errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Errorf(codes.Internal, "look up the message: %v", err)
@@ -189,16 +215,35 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		t.PageContext, _ = json.Marshal(page) // strings only: it can't fail
 	}
 	var thread *foundrymodel.FoundryAgentThread
+	if t.ThreadID != "" && !grantee {
+		// Its turn runs with the whole view: the thread is no restricted
+		// member's from now on, even should they be one again before it runs.
+		switch err := s.deps.DB.RecordFoundryAgentThreadGrants(ctx, ws, t.ThreadID, nil); {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			return nil, status.Error(codes.NotFound, "thread not found")
+		case err != nil:
+			return nil, status.Errorf(codes.Internal, "record the thread's reach: %v", err)
+		}
+	}
 	if t.ThreadID == "" {
 		t.ThreadID = id.New()
 		thread = &foundrymodel.FoundryAgentThread{ID: t.ThreadID, WorkspaceID: ws, UserID: userID, Title: foundryagent.Title(t.Input),
 			Runtime: runtime}
+		// A restricted member's thread holds what their grants give now;
+		// each of its turns adds what they hold when it runs.
+		if grantee {
+			targets, err := s.targetsOf(ctx, ws, g.Principals())
+			if err != nil {
+				return nil, err
+			}
+			thread.Granted = &foundrymodel.FoundryAgentThreadGrants{Targets: targets}
+		}
 	}
 	err = s.deps.DB.CreateFoundryAgentTurn(ctx, t, thread, s.agentLimits(), first)
 	var refusal foundrymodel.FoundryAgentRefusal
 	if sent && errors.As(err, &refusal) {
 		// The draft has the answers: only the Assistant's reply is refused.
-		refusal.Detail = "your answers reached the draft, which carries on from them, but the Assistant can't reply: " + refusal.Detail
+		refusal.Detail = "your answers reached the draft, which carries on from them, but Founder can't reply: " + refusal.Detail
 		err = refusal
 	}
 	if refused, ok := agentRefusal(ws, err); ok {
@@ -222,6 +267,36 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		return nil, status.Errorf(codes.Internal, "read the message: %v", err)
 	}
 	return s.agentTurnResponse(ctx, stored)
+}
+
+// granteePage is page as g may name it to Founder: an ontology whose current
+// load its grants cover, that load, and a pinned dashboard; anything else,
+// and a new automation, is dropped, so Founder never reads a name the
+// grantee can't see. The time zone, the person's own, stays.
+func (s *Service) granteePage(ctx context.Context, g access.Grantee, page foundryagent.PageContext) (foundryagent.PageContext, error) {
+	out := foundryagent.PageContext{TimeZone: page.TimeZone}
+	if page.OntologyID != "" {
+		loads, err := s.granteeLoads(ctx, g, []string{page.OntologyID})
+		if err != nil {
+			return out, err
+		}
+		if l, ok := loads[page.OntologyID]; ok {
+			out.OntologyID = page.OntologyID
+			if page.LoadID == l.LoadID {
+				out.LoadID = page.LoadID
+			}
+		}
+	}
+	if page.DashboardID != "" {
+		d, err := s.deps.DB.GetFoundryDashboard(ctx, g.WorkspaceID, page.DashboardID)
+		switch {
+		case err == nil && d.PinnedAt != nil:
+			out.DashboardID = page.DashboardID
+		case err != nil && !errors.Is(err, foundrystore.ErrNotFound):
+			return out, status.Errorf(codes.Internal, "read the dashboard: %v", err)
+		}
+	}
+	return out, nil
 }
 
 // sendRelayedAnswers sends a relayed generation the person's answers, as
@@ -272,12 +347,24 @@ func (s *Service) agentTurnResponse(ctx context.Context, t *foundrymodel.Foundry
 	return &foundryv1.FoundryAgentTurnResponse{Turn: agentTurnToProto(t), Thread: agentThreadToProto(thread)}, nil
 }
 
+// ListFoundryAgentThreads lists the caller's chats; a restricted member's
+// only as agentThread finds them: the threads they made whose every grant
+// they still hold.
 func (s *Service) ListFoundryAgentThreads(ctx context.Context, req *foundryv1.ListFoundryAgentThreadsRequest) (*foundryv1.ListFoundryAgentThreadsResponse, error) {
-	userID, err := s.agentUser(ctx, req.GetWorkspaceId())
+	ws := req.GetWorkspaceId()
+	userID, err := s.agentUser(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
-	threads, next, err := s.deps.DB.ListFoundryAgentThreads(ctx, req.GetWorkspaceId(), userID, req.GetPageToken(), agentThreadPage)
+	var keep func(*foundrymodel.FoundryAgentThread) bool
+	if g, grantee := access.GranteeFrom(ctx); grantee {
+		grants, err := s.grantsOf(ctx, ws, g.Principals())
+		if err != nil {
+			return nil, err
+		}
+		keep = func(t *foundrymodel.FoundryAgentThread) bool { return grants.Holds(t.Granted.Targets) }
+	}
+	threads, next, err := s.deps.DB.ListFoundryAgentThreads(ctx, ws, userID, keep, req.GetPageToken(), agentThreadPage)
 	switch {
 	case errors.Is(err, foundrystore.ErrInvalidPageToken):
 		return nil, status.Error(codes.InvalidArgument, "page_token is not one this list returned")
@@ -291,7 +378,11 @@ func (s *Service) ListFoundryAgentThreads(ctx context.Context, req *foundryv1.Li
 	return out, nil
 }
 
-// agentThread is the caller's live thread.
+// agentThread is the caller's live thread. A restricted member's is there
+// only while they hold every grant its turns ran under: one made or run with
+// the workspace's whole view (before their restriction, or while they were
+// an owner or admin) isn't, nor one whose grants they lost, as an Analyst
+// answer goes with its grants.
 func (s *Service) agentThread(ctx context.Context, workspaceID, userID, threadID string) (*foundrymodel.FoundryAgentThread, error) {
 	t, err := s.deps.DB.GetFoundryAgentThread(ctx, workspaceID, threadID)
 	switch {
@@ -299,6 +390,20 @@ func (s *Service) agentThread(ctx context.Context, workspaceID, userID, threadID
 		return nil, status.Error(codes.NotFound, "thread not found")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "read the thread: %v", err)
+	}
+	g, grantee := access.GranteeFrom(ctx)
+	if !grantee {
+		return t, nil
+	}
+	if t.Granted == nil {
+		return nil, status.Error(codes.NotFound, "thread not found")
+	}
+	grants, err := s.grantsOf(ctx, workspaceID, g.Principals())
+	if err != nil {
+		return nil, err
+	}
+	if !grants.Holds(t.Granted.Targets) {
+		return nil, status.Error(codes.NotFound, "thread not found")
 	}
 	return t, nil
 }
@@ -338,6 +443,11 @@ func (s *Service) DeleteFoundryAgentThread(ctx context.Context, req *foundryv1.D
 	if err != nil {
 		return nil, err
 	}
+	if _, grantee := access.GranteeFrom(ctx); grantee {
+		if _, err := s.agentThread(ctx, req.GetWorkspaceId(), userID, req.GetId()); err != nil {
+			return nil, err
+		}
+	}
 	switch err := s.deps.DB.DeleteFoundryAgentThread(ctx, req.GetWorkspaceId(), userID, req.GetId()); {
 	case errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "thread not found")
@@ -347,7 +457,8 @@ func (s *Service) DeleteFoundryAgentThread(ctx context.Context, req *foundryv1.D
 	return &emptypb.Empty{}, nil
 }
 
-// agentTurn is the caller's turn.
+// agentTurn is the caller's turn: a restricted member's only in a thread
+// agentThread finds for them.
 func (s *Service) agentTurn(ctx context.Context, workspaceID, userID, turnID string) (*foundrymodel.FoundryAgentTurn, error) {
 	t, err := s.deps.DB.GetFoundryAgentTurn(ctx, workspaceID, turnID)
 	switch {
@@ -355,6 +466,11 @@ func (s *Service) agentTurn(ctx context.Context, workspaceID, userID, turnID str
 		return nil, status.Error(codes.NotFound, "turn not found")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "read the turn: %v", err)
+	}
+	if _, grantee := access.GranteeFrom(ctx); grantee {
+		if _, err := s.agentThread(ctx, workspaceID, userID, t.ThreadID); err != nil {
+			return nil, err
+		}
 	}
 	return t, nil
 }
@@ -390,6 +506,11 @@ func (s *Service) CancelFoundryAgentTurn(ctx context.Context, req *foundryv1.Can
 	if err != nil {
 		return nil, err
 	}
+	if _, grantee := access.GranteeFrom(ctx); grantee {
+		if _, err := s.agentTurn(ctx, req.GetWorkspaceId(), userID, req.GetId()); err != nil {
+			return nil, err
+		}
+	}
 	t, err := s.deps.DB.CancelFoundryAgentTurn(ctx, req.GetWorkspaceId(), userID, req.GetId())
 	switch {
 	case errors.Is(err, foundrystore.ErrNotFound):
@@ -405,7 +526,7 @@ func (s *Service) CancelFoundryAgentTurn(ctx context.Context, req *foundryv1.Can
 // agentSessions is the host's session port, refusing while it has none.
 func (s *Service) agentSessions() (integration.SessionHost, error) {
 	if s.deps.AgentSessions == nil || s.deps.ConnectorKeys == nil {
-		return nil, status.Error(codes.Unavailable, "the Assistant's actions aren't available on this host")
+		return nil, status.Error(codes.Unavailable, "Founder's actions aren't available on this host")
 	}
 	return s.deps.AgentSessions, nil
 }
@@ -448,7 +569,7 @@ func (s *Service) ExecuteFoundryAgentAction(ctx context.Context, req *foundryv1.
 	runCtx, cancel := context.WithTimeout(ctx, foundrymodel.FoundryAgentExecutingFor-agentRunMargin)
 	end := foundryagent.RunAction(runCtx, sessions, s.deps.ConnectorKeys, a)
 	cancel()
-	if end.Status == foundrymodel.FoundryAgentActionSucceeded && (a.Operation == "create_automation" || a.Operation == "update_automation") {
+	if end.Status == foundrymodel.FoundryAgentActionSucceeded && (a.Operation == "create_workflow" || a.Operation == "update_workflow") {
 		end = s.approveOnClick(ctx, ws, userID, a.Payload, end)
 	}
 	continuation := &foundrymodel.FoundryAgentTurn{
@@ -689,7 +810,7 @@ func agentTurnToProto(t *foundrymodel.FoundryAgentTurn) *foundryv1.FoundryAgentT
 	var page foundryagent.PageContext
 	if len(t.PageContext) > 0 && json.Unmarshal(t.PageContext, &page) == nil {
 		out.PageContext = &foundryv1.FoundryAgentPageContext{OntologyId: page.OntologyID, LoadId: page.LoadID, DashboardId: page.DashboardID,
-			NewAutomation: page.NewAutomation}
+			NewAutomation: page.NewAutomation, TimeZone: page.TimeZone}
 	}
 	if t.Error != nil {
 		out.Error = *t.Error

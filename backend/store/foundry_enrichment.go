@@ -142,7 +142,9 @@ ON DUPLICATE KEY UPDATE requested_at=NOW(6), attempts=0, last_load_id=NULL, done
 // is purged, so its files are swept; its pending purges end, as its
 // databases go with it; and its model providers drop their keys, a pending
 // one superseded; its automations pause and their live runs are cancelled;
-// and its dashboards' public snapshots are deleted.
+// its dashboards' public snapshots are deleted; and its automation
+// suggestions are deleted, so none is written for it any more (a write in
+// flight finds its row gone and records nothing but what it spent).
 func (s *mysqlDB) CancelWorkspaceFoundryWork(ctx context.Context, workspaceID string) error {
 	ontologies, err := s.lockWorkspaceFoundryOntologies(ctx, workspaceID)
 	if err != nil {
@@ -187,6 +189,10 @@ WHERE workspace_id=? AND status IN ('queued', 'running')`,
 	}
 	// Its dashboards' public links stop at once.
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_dashboard_shares WHERE workspace_id=?`, workspaceID); err != nil {
+		return err
+	}
+	// No automation suggestions are written for it any more.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_automation_suggestions WHERE workspace_id=?`, workspaceID); err != nil {
 		return err
 	}
 	return s.dropFoundryAIConfigs(ctx, workspaceID)

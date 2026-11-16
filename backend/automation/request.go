@@ -5,15 +5,16 @@ import (
 	"strings"
 )
 
-// Request is a run of the automation named name, in words, as the workflow
-// runs that record its uses of ontologies take it for their request: what
+// Request is a run of the workflow (an automation) named name, in words, as
+// the use case runs that record its uses of ontologies take it for their
+// request: what
 // fired it (fired, its trigger's output), then each of its steps, in order.
 // names names the connectors, ontologies, document sets and dashboards its
 // steps act on, by id; an id it lacks is written as it is.
 //
 //	automation.Request("Weekly digest", "Its schedule fired.", spec, map[string]string{"01ONT": "Sales"})
-//	// Its schedule fired. The automation "Weekly digest" ran these steps, in order:
-//	// 1. Assistant step "ask": Summarise the week's deals.
+//	// Its schedule fired. The workflow "Weekly digest" ran these steps, in order:
+//	// 1. Founder step "ask": Summarise the week's deals.
 //	// 2. Action step "load": load the current version of the ontology "Sales".
 func Request(name, fired string, s Spec, names map[string]string) string {
 	named := func(what, id string) string {
@@ -38,7 +39,7 @@ func Request(name, fired string, s Spec, names map[string]string) string {
 	if fired = strings.TrimSpace(fired); fired != "" {
 		b.WriteString(fired + " ")
 	}
-	fmt.Fprintf(&b, "The automation %q ran these steps, in order:", name)
+	fmt.Fprintf(&b, "The workflow %q ran these steps, in order:", name)
 	step := 0
 	for _, id := range s.order {
 		n, _ := s.Node(id)
@@ -47,7 +48,7 @@ func Request(name, fired string, s Spec, names map[string]string) string {
 		case TriggerNode:
 			continue
 		case AssistantNode:
-			text = fmt.Sprintf("Assistant step %q: %s", id, c.Instruction)
+			text = fmt.Sprintf("Founder step %q: %s", id, c.Instruction)
 			if len(c.Allow) > 0 {
 				allowed := make([]string, len(c.Allow))
 				for i, a := range c.Allow {
@@ -64,7 +65,7 @@ func Request(name, fired string, s Spec, names map[string]string) string {
 			if c.Message != "" {
 				text += fmt.Sprintf(" %q", c.Message)
 			}
-			text += ", with what the Assistant steps before it said."
+			text += ", with what the Founder steps before it said."
 		}
 		step++
 		fmt.Fprintf(&b, "\n%d. %s", step, text)

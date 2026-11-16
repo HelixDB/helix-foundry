@@ -44,7 +44,7 @@ import { workspacePaths } from "../workspace/paths";
 
 export type { AgentOperation };
 
-// The Assistant's dock, as pure functions: what a turn's polled events show,
+// Founder's dock, as pure functions: what a turn's polled events show,
 // what an action's card offers, what page the person is on, and which links
 // in the model's text open the app. Everything the WFE sends is parsed
 // without trust: the model's text and a tool's output are shown as plain
@@ -55,6 +55,39 @@ export const threadKey = (workspaceId: string) =>
   `foundry.agent.thread:${workspaceId}`;
 /** A message's cap (SendFoundryAgentMessage). */
 export const MAX_MESSAGE = 4000;
+
+/**
+ * How tall a composer's field is: its text's height, kept between
+ * `minRows` and `maxRows` lines (plus its padding), and whether it then
+ * scrolls (down only: the field wraps, so it never scrolls sideways).
+ * `content` is the field's scrollHeight at height auto, padding included.
+ *
+ * @example
+ * promptHeight({ line: 22, padding: 14, content: 36, minRows: 2, maxRows: 8 });
+ * // { height: 58, scrolls: false }
+ */
+export function promptHeight({
+  line,
+  padding,
+  content,
+  minRows,
+  maxRows,
+}: {
+  line: number;
+  padding: number;
+  content: number;
+  minRows: number;
+  maxRows: number;
+}): { height: number; scrolls: boolean } {
+  console.assert(minRows >= 1 && maxRows >= minRows, "rows out of order");
+  const min = line * minRows + padding,
+    max = line * maxRows + padding;
+  // A pixel's rounding is no reason to show a scrollbar.
+  return {
+    height: Math.max(min, Math.min(content, max)),
+    scrolls: content > max + 1,
+  };
+}
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const str = (x: unknown) => (typeof x === "string" ? x : undefined);
@@ -74,14 +107,14 @@ export const isLiveTurn = (t?: { status?: FoundryAgentTurnStatus } | null) =>
 /**
  * What the person is looking at, from the URL: an ontology's pages, its
  * Explorer or Analyst, and the load they read (a load's page, or `?load=`),
- * a dashboard, or the page that starts a new automation. Ids only, never
+ * a dashboard, or the page that starts a new workflow. Ids only, never
  * names; null anywhere else.
  *
  * @example
  * pageContext("/ontology/ont_1/loads/load_2", ""); // { ontologyId: "ont_1", loadId: "load_2" }
  * pageContext("/explore/ont_1/records", "?load=load_3"); // { ontologyId: "ont_1", loadId: "load_3" }
  * pageContext("/dashboards/dash_1", ""); // { dashboardId: "dash_1" }
- * pageContext("/automations/new", "?thread=thr_1"); // { newAutomation: true }
+ * pageContext("/workflows/new", "?thread=thr_1"); // { newAutomation: true }
  * pageContext("/ontology/new", ""); // null
  * pageContext("/data", ""); // null
  */
@@ -90,7 +123,7 @@ export function pageContext(
   search: string,
 ): AgentPageContext | null {
   const [, section, ontologyId = "", sub, loadId = ""] = pathname.split("/");
-  if (section === "automations")
+  if (section === "workflows")
     return ontologyId === "new" && sub === undefined
       ? { newAutomation: true }
       : null;
@@ -128,11 +161,11 @@ const SEG = "(?!(?:new|sample)(?:/|$))[A-Za-z0-9_-]{1,128}";
 const LINKABLE = new RegExp(
   "^(?:" +
     [
-      `/ontology(?:/${SEG}(?:/connections|/documents(?:/${SEG})?|/(?:loads|versions|generations)/${SEG})?)?`,
+      `/ontology(?:/${SEG}(?:/connections|/documents(?:/${SEG})?|/(?:loads|versions|generations)/${SEG}|/usage(?:/${SEG}(?:/runs/${SEG})?)?)?)?`,
       `/explore(?:/${SEG}(?:/records|/entities/${SEG})?)?`,
       `/ask(?:/${SEG})?`,
       `/dashboards(?:/${SEG})?`,
-      `/automations(?:/${SEG}(?:/runs/${SEG})?)?`,
+      `/workflows(?:/${SEG}(?:/runs/${SEG})?)?`,
       `/data(?:/documents/${SEG}|/connections/${SEG})?`,
       "/settings(?:/(?:ai|members|access|billing|enrichment))?",
     ].join("|") +
@@ -141,7 +174,7 @@ const LINKABLE = new RegExp(
 // A connector kind, in the link helix_foundry_connect gives (/data?add=<kind>).
 const KIND = /^[a-z][a-z0-9_]{0,31}$/;
 const CANDIDATE =
-  /https?:\/\/[^\s<>"'`]+|(?<![\w/])\/(?:ontology|explore|ask|dashboards|automations|data|settings)(?:[/?#][^\s<>"'`]*)?/g;
+  /https?:\/\/[^\s<>"'`]+|(?<![\w/])\/(?:ontology|explore|ask|dashboards|workflows|data|settings)(?:[/?#][^\s<>"'`]*)?/g;
 const TRAILING = /[.,;:!?)\]'"]+$/;
 
 /**
@@ -251,6 +284,7 @@ export function parseAgentEvent(eventJson: string): AgentEvent | undefined {
               "not_run",
               NOT_RUN.find((r) => r === x.not_run),
             ),
+            ...opt("question", questionEvent(x.question)),
           }
         : undefined;
     case "action_card":
@@ -265,6 +299,7 @@ export function parseAgentEvent(eventJson: string): AgentEvent | undefined {
             display: x.display,
             target_named_by_user: x.target_named_by_user === true,
             expires_at: str(x.expires_at) || "",
+            ...(x.auto === true && { auto: true }),
           }
         : undefined;
     case "action_result": {
@@ -277,6 +312,7 @@ export function parseAgentEvent(eventJson: string): AgentEvent | undefined {
             status,
             ...(x.result !== undefined && { result: x.result }),
             ...(str(x.error) && { error: x.error as string }),
+            ...(x.auto === true && { auto: true }),
           }
         : undefined;
     }
@@ -341,6 +377,27 @@ export function parseAgentEvent(eventJson: string): AgentEvent | undefined {
   }
 }
 
+/**
+ * A tool_result's question, every id checked: none when its ontology or its
+ * own id isn't one; a load or thread id that isn't one is left out.
+ */
+function questionEvent(
+  x: unknown,
+): Extract<AgentEvent, { type: "tool_result" }>["question"] {
+  if (!isRecord(x)) return undefined;
+  const ontology_id = ids(x.ontology_id),
+    id = ids(x.id);
+  return ontology_id && id
+    ? {
+        ontology_id,
+        id,
+        ...opt("load_id", ids(x.load_id)),
+        ...opt("thread_id", ids(x.thread_id)),
+        ...opt("status", str(x.status) || undefined),
+      }
+    : undefined;
+}
+
 const ACTION_STATUSES: readonly AgentActionStatus[] = [
   "prepared",
   "executing",
@@ -371,13 +428,21 @@ const STOP_REASONS = Object.keys(STOP_TEXT) as AgentStopReason[];
 /** Why a call never ran, in words for the person. */
 export const NOT_RUN_TEXT: Record<AgentNotRunReason, string> = {
   calls: "One reply runs at most 8 tool calls, and this was past them.",
-  asks: "One message asks the Analyst at most 3 questions, and this was past them.",
-  time: "The Assistant ran out of time for this message.",
+  asks: "One message asks at most 3 questions of the data, and this was past them.",
+  time: "Founder ran out of time for this message.",
   length: "The reply reached its length limit while writing it.",
   input: "The model wrote its input in a form Foundry can’t read.",
   asked: "It came after the turn’s questions, which end the turn.",
 };
 const NOT_RUN = Object.keys(NOT_RUN_TEXT) as AgentNotRunReason[];
+
+/** The Analyst question an ask step's call returned: what the dock draws. */
+export type AgentQuestionRef = {
+  ontologyId: string;
+  questionId: string;
+  loadId?: string;
+  threadId?: string;
+};
 
 /** One tool call and, once it returned, what it gave. */
 export type AgentStep = {
@@ -385,7 +450,13 @@ export type AgentStep = {
   name: string;
   input: unknown;
   result?:
-    | { kind: "returned"; output: unknown; truncated: boolean }
+    | {
+        kind: "returned";
+        output: unknown;
+        truncated: boolean;
+        // The question it returned, as the event names it (any size).
+        question?: AgentQuestionRef;
+      }
     | { kind: "failed"; error: string }
     // It never ran: not the tool's failure.
     | { kind: "not_run"; reason: AgentNotRunReason };
@@ -396,7 +467,14 @@ export type AgentBlock =
   | { kind: "text"; text: string }
   | { kind: "step"; step: AgentStep }
   // An action the agent prepared: its card reads the thread's action.
-  | { kind: "card"; actionId: string; operation: string; named: boolean }
+  // `auto`: it ran at once, without a click (the card says how it ended).
+  | {
+      kind: "card";
+      actionId: string;
+      operation: string;
+      named: boolean;
+      auto: boolean;
+    }
   // How the person's click ended, opening an action_result turn.
   | {
       kind: "ran";
@@ -508,6 +586,14 @@ export function reduceTurnEvents(
                   kind: "returned",
                   output: ev.output,
                   truncated: !!ev.truncated,
+                  ...(ev.question && {
+                    question: {
+                      ontologyId: ev.question.ontology_id,
+                      questionId: ev.question.id,
+                      ...opt("loadId", ev.question.load_id),
+                      ...opt("threadId", ev.question.thread_id),
+                    },
+                  }),
                 };
           const i = s.blocks.findIndex(
             (b) =>
@@ -539,8 +625,11 @@ export function reduceTurnEvents(
                 actionId: ev.action_id,
                 operation: ev.operation,
                 named: ev.target_named_by_user,
+                auto: !!ev.auto,
               });
         case "action_result":
+          // One that ran at once ends on its card, not as a line.
+          if (ev.auto) return at;
           return add({
             kind: "ran",
             actionId: ev.action_id,
@@ -592,7 +681,7 @@ export function reduceTurnEvents(
 
 /**
  * The operations whose run starts work that goes on after it (a draft, a
- * load, a sync, an automation's run): a ran one says it started, any other
+ * load, a sync, a workflow's run): a ran one says it started, any other
  * that it succeeded.
  */
 export const STARTS_WORK: ReadonlySet<string> = new Set([
@@ -601,10 +690,10 @@ export const STARTS_WORK: ReadonlySet<string> = new Set([
   "create_load",
   "sync_connector",
   "add_sample_data",
-  "run_automation",
+  "run_workflow",
 ]);
 
-/** The tool the Assistant asks its person with: shown as its questions, not a step. */
+/** The tool Founder asks its person with: shown as its questions, not a step. */
 export const ASK_PERSON = "helix_foundry_ask_person";
 
 /** A tool's step, as the dock names it; the tool's own name for another. */
@@ -623,31 +712,107 @@ export const TOOL_LABELS: Record<string, string> = {
   helix_foundry_list_review_decisions: "Listed review decisions",
   helix_foundry_list_reviews: "Listed the reviews to settle",
   helix_foundry_read_graph: "Read the graph",
-  helix_foundry_ask: "Asked the Analyst",
-  helix_foundry_get_question: "Read a question",
+  helix_foundry_ask: "Asked the data",
+  helix_foundry_get_question: "Read an answer",
   helix_foundry_list_questions: "Listed questions",
   helix_foundry_connect: "Made a link to connect data",
-  helix_foundry_get_assistant_runtime: "Read where the Assistant runs",
+  helix_foundry_get_assistant_runtime: "Read where Founder runs",
   helix_list_projects: "Listed projects",
   helix_list_databases: "Listed databases",
   helix_foundry_prepare_operation: "Prepared an action",
   helix_foundry_list_dashboards: "Listed the dashboards",
   helix_foundry_get_dashboard: "Read a dashboard",
   helix_foundry_preview_dashboard_tile: "Tried a dashboard tile",
-  helix_foundry_list_automations: "Listed the automations",
-  helix_foundry_get_automation: "Read an automation",
-  helix_foundry_list_automation_runs: "Listed an automation’s runs",
-  helix_foundry_get_automation_run: "Read an automation’s run",
-  helix_foundry_automation_report: "Reported to its automation",
+  helix_foundry_list_workflows: "Listed the workflows",
+  helix_foundry_get_workflow: "Read a workflow",
+  helix_foundry_list_workflow_runs: "Listed a workflow’s runs",
+  helix_foundry_get_workflow_run: "Read a workflow’s run",
+  helix_foundry_workflow_report: "Reported to its workflow",
+  helix_foundry_list_use_cases: "Listed the use cases",
+  helix_foundry_create_use_case: "Made a use case",
+  helix_foundry_start_use_case_run: "Started a use case run",
+  helix_foundry_finish_use_case_run: "Finished a use case run",
+  helix_foundry_get_use_case_run: "Read a use case run",
   [ASK_PERSON]: "Asked you",
 };
 
-/** The Analyst page an ask step's question is on, when its input names an ontology. */
-export function analystLink(step: AgentStep): string | undefined {
-  if (step.name !== "helix_foundry_ask" || !isRecord(step.input))
+/**
+ * What a step's line says: its tool's label, except a prepare that ran at
+ * once (a workflow's approved action, or a dashboard the person asked
+ * for), which reads "Ran an action".
+ *
+ * @example
+ * stepLabel({ id: "t", name: "helix_foundry_prepare_operation", input: {}, result: { kind: "returned", output: { status: "ran" }, truncated: false } });
+ * // "Ran an action"
+ * stepLabel({ id: "t", name: "helix_foundry_ask", input: {} });
+ * // "Asked the data"
+ */
+export function stepLabel(step: AgentStep): string {
+  const out = step.result?.kind === "returned" ? step.result.output : undefined;
+  if (
+    step.name === "helix_foundry_prepare_operation" &&
+    isRecord(out) &&
+    out.status === "ran"
+  )
+    return "Ran an action";
+  return TOOL_LABELS[step.name] || step.name;
+}
+
+/** The tools that return an Analyst question: its answer shows under them. */
+const QUESTION_TOOLS: ReadonlySet<string> = new Set([
+  "helix_foundry_ask",
+  "helix_foundry_get_question",
+]);
+
+/**
+ * The Analyst question a returned ask or get_question step names: the
+ * event's `question` (kept however large the output), else the output's
+ * `id`, `load_id` and `thread_id` with the input's `ontology_id`, every id
+ * checked; undefined for any other step, or one that failed or never ran.
+ *
+ * @example
+ * questionOf({ id: "t", name: "helix_foundry_ask", input: { ontology_id: "ont_1" }, result: { kind: "returned", output: { id: "q_1", load_id: "load_1" }, truncated: false } });
+ * // { ontologyId: "ont_1", questionId: "q_1", loadId: "load_1" }
+ * questionOf({ id: "t", name: "helix_foundry_ask", input: { ontology_id: "../x" }, result: { kind: "returned", output: { id: "q_1" }, truncated: false } });
+ * // undefined
+ */
+export function questionOf(step: AgentStep): AgentQuestionRef | undefined {
+  if (!QUESTION_TOOLS.has(step.name) || step.result?.kind !== "returned")
     return undefined;
-  const o = str(step.input.ontology_id);
-  return o && ID.test(o) ? ontologyPaths.ask(o) : undefined;
+  if (step.result.question) return step.result.question;
+  const out = step.result.output,
+    input = step.input;
+  if (!isRecord(out) || !isRecord(input)) return undefined;
+  const ontologyId = ids(input.ontology_id),
+    questionId = ids(out.id);
+  return ontologyId && questionId
+    ? {
+        ontologyId,
+        questionId,
+        ...opt("loadId", ids(out.load_id)),
+        ...opt("threadId", ids(out.thread_id)),
+      }
+    : undefined;
+}
+
+/**
+ * Where each question's answer shows in a turn's blocks: under the last
+ * step naming it (the index of its block), so an ask and the get_question
+ * that waited on it show the answer once.
+ *
+ * @example
+ * const ask = { kind: "step" as const, step: { id: "a", name: "helix_foundry_ask", input: { ontology_id: "o" }, result: { kind: "returned" as const, output: { id: "q_1" }, truncated: false } } };
+ * answerBlocks([ask, { ...ask, step: { ...ask.step, id: "b" } }]); // Set { 1 }
+ */
+export function answerBlocks(
+  blocks: readonly AgentBlock[],
+): ReadonlySet<number> {
+  const last = new Map<string, number>();
+  blocks.forEach((b, i) => {
+    const q = b.kind === "step" ? questionOf(b.step) : undefined;
+    if (q) last.set(`${q.ontologyId}/${q.questionId}`, i);
+  });
+  return new Set(last.values());
 }
 
 /** JSON as the dock shows it: indented, or as it came when it isn't JSON. */
@@ -1085,30 +1250,30 @@ const DISPLAYS: {
     const dashboard = dashboardRef(d.dashboard);
     return dashboard ? { dashboard } : undefined;
   },
-  create_automation: (d) => {
+  create_workflow: (d) => {
     const name = str(d.name);
     return name ? { name } : undefined;
   },
-  update_automation: (d) => {
+  update_workflow: (d) => {
     const automation = automationRef(d.automation),
       name = d.name === undefined ? null : str(d.name) || undefined;
     if (!automation || name === undefined || typeof d.steps !== "boolean")
       return undefined;
     return { automation, ...opt("name", name ?? undefined), steps: d.steps };
   },
-  pause_automation: (d) => {
+  pause_workflow: (d) => {
     const automation = automationRef(d.automation);
     return automation ? { automation } : undefined;
   },
-  resume_automation: (d) => {
+  resume_workflow: (d) => {
     const automation = automationRef(d.automation);
     return automation ? { automation } : undefined;
   },
-  delete_automation: (d) => {
+  delete_workflow: (d) => {
     const automation = automationRef(d.automation);
     return automation ? { automation } : undefined;
   },
-  run_automation: (d) => {
+  run_workflow: (d) => {
     const automation = automationRef(d.automation);
     return automation ? { automation } : undefined;
   },
@@ -1381,7 +1546,7 @@ const VIEWS: {
         value: d.current ? loadText(d.current) : "None yet",
       },
     ],
-    does: "The Explorer, Records and the Analyst read this load from then on. Nothing is written or deleted.",
+    does: "The Explorer, Records and Founder read this load from then on. Nothing is written or deleted.",
     run: "Make current",
     target: nameOf(d.ontology),
   }),
@@ -1550,7 +1715,7 @@ const VIEWS: {
     };
   },
   set_assistant_runtime: (d) => ({
-    title: `Run new Assistant threads on ${RUNTIMES[d.runtime].on}`,
+    title: `Run new Founder threads on ${RUNTIMES[d.runtime].on}`,
     facts: [
       { label: "Now", value: RUNTIMES[d.current].title },
       { label: "From then on", value: RUNTIMES[d.runtime].title },
@@ -1565,7 +1730,7 @@ const VIEWS: {
     ],
     does:
       d.runtime === "api"
-        ? "New threads run on the workspace’s AI model and count toward its Assistant budget. Threads already started keep where they run."
+        ? "New threads run on the workspace’s AI model and count toward its Founder budget. Threads already started keep where they run."
         : `New threads run on ${RUNTIMES[d.runtime].on} through the helper on your computer, at no cost to the workspace. Threads already started keep where they run.`,
     ...opt(
       "caution",
@@ -1590,14 +1755,14 @@ const VIEWS: {
       },
       { label: "Status", value: d.online ? "Running" : "Not running" },
     ],
-    does: "It stops running the Assistant’s turns at once, and a turn it is running ends. To run more, pair it again from Settings › AI models.",
+    does: "It stops running Founder’s turns at once, and a turn it is running ends. To run more, pair it again from Settings › AI models.",
     run: "Revoke",
     target: nameOf(d.host),
   }),
   create_dashboard: (d) => ({
     title: `Make the dashboard “${d.name}”`,
     facts: [
-      { label: "Name", value: `“${d.name}” (as the Assistant wrote it)` },
+      { label: "Name", value: `“${d.name}” (as Founder wrote it)` },
       ...tileFacts(d.spec),
     ],
     does: "Makes a dashboard of these tiles. Everyone in the workspace sees it, and each reads its tiles as themselves.",
@@ -1644,7 +1809,7 @@ const VIEWS: {
       ? `Refresh the public snapshot of ${quoted(d.dashboard)}`
       : `Publish the dashboard ${quoted(d.dashboard)} at a public link`,
     facts: [{ label: "Dashboard", value: dashboardText(d.dashboard) }],
-    does: "Anyone with the link sees a snapshot of what its tiles read now, as you can read it, without signing in. Nothing else of the workspace shows. The link is on the dashboard’s page, never given to the Assistant.",
+    does: "Anyone with the link sees a snapshot of what its tiles read now, as you can read it, without signing in. Nothing else of the workspace shows. The link is on the dashboard’s page, never given to Founder.",
     caution: "Anyone who has the link sees this data.",
     run: "Publish",
     target: nameOf(d.dashboard),
@@ -1656,61 +1821,59 @@ const VIEWS: {
     run: "Unpublish",
     target: nameOf(d.dashboard),
   }),
-  create_automation: (d) => ({
-    title: `Set up the automation “${d.name}”`,
-    facts: [
-      { label: "Name", value: `“${d.name}” (as the Assistant wrote it)` },
-    ],
-    does: "Saves this automation and turns it on. You can pause or change it on its page.",
-    cost: "Its Assistant steps spend the workspace’s automations budget.",
+  create_workflow: (d) => ({
+    title: `Set up the workflow “${d.name}”`,
+    facts: [{ label: "Name", value: `“${d.name}” (as Founder wrote it)` }],
+    does: "Saves this workflow and turns it on. You can pause or change it on its page.",
+    cost: "Its Founder steps spend the workspace’s workflows budget.",
     run: "Create and turn on",
     target: d.name,
   }),
-  update_automation: (d) => ({
-    title: `Change the automation ${quoted(d.automation)}`,
+  update_workflow: (d) => ({
+    title: `Change the workflow ${quoted(d.automation)}`,
     facts: [
-      { label: "Automation", value: automationText(d.automation) },
+      { label: "Workflow", value: automationText(d.automation) },
       ...(d.name !== undefined
         ? [{ label: "New name", value: `“${d.name}”` }]
         : []),
     ],
     does: d.steps
-      ? "Saves these changes to the automation, and your click approves its steps."
-      : "Saves these changes to the automation. Its steps don’t change, so this approves nothing.",
+      ? "Saves these changes to the workflow, and your click approves its steps."
+      : "Saves these changes to the workflow. Its steps don’t change, so this approves nothing.",
     run: "Save",
     target: nameOf(d.automation),
   }),
-  pause_automation: (d) => ({
-    title: `Pause the automation ${quoted(d.automation)}`,
-    facts: [{ label: "Automation", value: automationText(d.automation) }],
+  pause_workflow: (d) => ({
+    title: `Pause the workflow ${quoted(d.automation)}`,
+    facts: [{ label: "Workflow", value: automationText(d.automation) }],
     does: "It stops running when it would start. A run already going finishes.",
     run: "Pause",
     target: nameOf(d.automation),
   }),
-  resume_automation: (d) => ({
-    title: `Turn the automation ${quoted(d.automation)} back on`,
-    facts: [{ label: "Automation", value: automationText(d.automation) }],
+  resume_workflow: (d) => ({
+    title: `Turn the workflow ${quoted(d.automation)} back on`,
+    facts: [{ label: "Workflow", value: automationText(d.automation) }],
     does: "It runs again each time it starts, from now on.",
     run: "Turn on",
     target: nameOf(d.automation),
   }),
-  delete_automation: (d) => ({
-    title: `Delete the automation ${quoted(d.automation)}`,
-    facts: [{ label: "Automation", value: automationText(d.automation) }],
-    does: "Deletes the automation and its runs. Nothing it already did is undone.",
+  delete_workflow: (d) => ({
+    title: `Delete the workflow ${quoted(d.automation)}`,
+    facts: [{ label: "Workflow", value: automationText(d.automation) }],
+    does: "Deletes the workflow and its runs. Nothing it already did is undone.",
     run: "Delete",
     target: nameOf(d.automation),
   }),
-  run_automation: (d) => ({
-    title: `Run the automation ${quoted(d.automation)} now`,
-    facts: [{ label: "Automation", value: automationText(d.automation) }],
+  run_workflow: (d) => ({
+    title: `Run the workflow ${quoted(d.automation)} now`,
+    facts: [{ label: "Workflow", value: automationText(d.automation) }],
     does: "Runs its approved steps once, now, as you.",
     run: "Run now",
     target: nameOf(d.automation),
   }),
 };
 
-/** An automation as a card names it, with whether it runs. */
+/** A workflow as a card names it, with whether it runs. */
 const automationText = (a: AgentAutomationRef) =>
   [
     nameOf(a),
@@ -1746,14 +1909,68 @@ const tileFacts = (spec: AgentSpecDisplay) => [
 ];
 
 /**
- * A card's words, from its operation and display.
+ * A card's words, from its operation and display; `auto` for one that ran
+ * at once, without a click (a new dashboard the person asked for), whose
+ * card says what was made.
  *
  * @example
  * cardView({ operation: "create_load", display: { ontology: { id: "o", name: "Sales" }, version: { id: "v", number: 2 } } }).title;
  * // "Load v2 of “Sales”"
+ * cardView({ operation: "create_dashboard", display: { name: "Invoices", spec: { tiles: [] } } }, true).title;
+ * // "Made the dashboard “Invoices”"
  */
-export const cardView = (card: AgentCard): CardView =>
-  (VIEWS[card.operation] as (d: unknown) => CardView)(card.display);
+export function cardView(card: AgentCard, auto = false): CardView {
+  const view = (VIEWS[card.operation] as (d: unknown) => CardView)(
+    card.display,
+  );
+  return auto && card.operation === "create_dashboard"
+    ? {
+        ...view,
+        title: `Made the dashboard “${card.display.name}”`,
+        does: "Founder made it because you asked for a dashboard. It isn’t pinned or published, and Undo deletes it.",
+      }
+    : view;
+}
+
+/**
+ * The dashboard a ran create_dashboard made, from its output; undefined
+ * for any other action, or an output that names none.
+ *
+ * @example
+ * madeDashboard({ id: "a", operation: "create_dashboard", resultJson: '{"result":{"id":"dash_1"}}' }); // "dash_1"
+ * madeDashboard({ id: "a", operation: "create_load", resultJson: '{"result":{"id":"load_1"}}' }); // undefined
+ */
+export function madeDashboard(a: FoundryAgentAction): string | undefined {
+  if (a.operation !== "create_dashboard") return undefined;
+  const out = parse(a.resultJson || "");
+  return isRecord(out) && isRecord(out.result) ? ids(out.result.id) : undefined;
+}
+
+/**
+ * How an action that ran at once stands, its card's words: making while it
+ * runs (or before its record says it ran), made, undone once what it made
+ * is `gone` (Undo, or deleted since), failed, or unknown.
+ */
+export type AutoState = "making" | "made" | "undone" | "failed" | "unknown";
+
+/**
+ * @example
+ * autoState({ id: "a", status: "executing" }, false); // "making"
+ * autoState({ id: "a", status: "succeeded" }, true); // "undone"
+ */
+export function autoState(a: FoundryAgentAction, gone: boolean): AutoState {
+  switch (actionStatus(a.status)) {
+    case "prepared":
+    case "executing":
+      return "making";
+    case "succeeded":
+      return gone ? "undone" : "made";
+    case "failed":
+      return "failed";
+    default:
+      return "unknown";
+  }
+}
 
 /**
  * What a card offers, from its action as read and this clock: Run or
@@ -1877,21 +2094,18 @@ export function resultLink(
         "Open the dashboard",
       );
     case "delete_dashboard":
-    case "delete_automation":
+    case "delete_workflow":
       return undefined;
-    case "create_automation":
-      return on(
-        made && automationPaths.automation(made),
-        "Open the automation",
-      );
-    case "update_automation":
-    case "pause_automation":
-    case "resume_automation":
+    case "create_workflow":
+      return on(made && automationPaths.automation(made), "Open the workflow");
+    case "update_workflow":
+    case "pause_workflow":
+    case "resume_workflow":
       return on(
         automationPaths.automation(card.display.automation.id),
-        "Open the automation",
+        "Open the workflow",
       );
-    case "run_automation":
+    case "run_workflow":
       return on(
         made && automationPaths.automationRun(card.display.automation.id, made),
         "Open the run",
@@ -1935,7 +2149,7 @@ export function connectLink(
 // ---------------------------------------------------------------- runtime
 
 /**
- * Where the Assistant runs a thread, as people name it: its title (a
+ * Where Founder runs a thread, as people name it: its title (a
  * setting's), what it runs "on" in a sentence, and the CLI a helper drives.
  */
 export const RUNTIMES: Record<
@@ -2178,7 +2392,7 @@ export function threadRuntime(
 // ---------------------------------------------------------------- refusals
 
 /**
- * The Assistant's reason for refusing a call (its ErrorInfo), if it gave
+ * Founder's reason for refusing a call (its ErrorInfo), if it gave
  * one of its own.
  */
 export function agentRefusal(error: unknown): AgentRefusalReason | undefined {

@@ -328,7 +328,7 @@ export type SendPiecesResponse = {
  * backend's codes and messages.
  */
 export function sendPieces(connectorId: string, body: unknown): MockReply {
-  // An agent's send for a workflow run is recorded under it, as
+  // An agent's send for a use case run is recorded under it, as
   // SendFoundryEvents records it: checked before, recorded once after.
   const runId = (body as { workflowRunId?: unknown } | undefined)
     ?.workflowRunId;

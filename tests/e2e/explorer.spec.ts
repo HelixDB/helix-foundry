@@ -48,7 +48,7 @@ test("puts the labels beside the sidebar and the overview down the right", async
   // The labels are the Explorer's panel, beside the labelled sidebar, where
   // Ontologies is current.
   const nav = page.getByRole("navigation", { name: "Main navigation" });
-  await expect(nav.locator(".hf-nav-link")).toHaveCount(5);
+  await expect(nav.locator(".hf-nav-link")).toHaveCount(4);
   await expect(nav.getByRole("link", { name: "Ontologies" })).toHaveAttribute(
     "aria-current",
     "page",

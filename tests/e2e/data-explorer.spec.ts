@@ -172,7 +172,7 @@ test("marks the row of the page open as the URL changes", async ({ page }) => {
   await expect(page).toHaveURL(/\/data\/connections\/conn_acme_shop$/);
   // Opened from the Data page's grid, its row shows again.
   await page
-    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("navigation", { name: "Data" })
     .getByRole("link", { name: "Connectors" })
     .click();
   await expect(page).toHaveURL(/\/data$/);

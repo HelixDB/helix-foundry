@@ -17,6 +17,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
+import { FOUNDER } from "../../../shared/deployment";
 import type {
   DashboardSpec,
   DashboardTile,
@@ -447,14 +448,16 @@ export function DashboardPage() {
             editing
               ? "Every tile is removed. Save to keep it empty, or Cancel to keep its tiles."
               : d.canEdit
-                ? "Pin a chart or table from an Analyst answer, or ask the Assistant to build tiles for you."
+                ? FOUNDER
+                  ? "Pin a chart or table from an answer, or ask Founder to build tiles for you."
+                  : "Pin a chart or table from an Analyst answer."
                 : "Whoever made it, or an owner or admin, adds its tiles."
           }
           action={
             !editing &&
             d.canEdit && (
               <ButtonLink to="/ask" icon={Sparkles}>
-                Open the Analyst
+                {FOUNDER ? "Open Founder" : "Open the Analyst"}
               </ButtonLink>
             )
           }

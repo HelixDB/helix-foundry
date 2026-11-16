@@ -41,7 +41,7 @@ const (
 func (s *Service) CreateFoundryWorkflow(ctx context.Context, req *foundryv1.CreateFoundryWorkflowRequest) (*foundryv1.FoundryWorkflowResponse, error) {
 	userID := actor(ctx).UserID
 	if userID == "" {
-		return nil, status.Error(codes.PermissionDenied, "a person creates workflows")
+		return nil, status.Error(codes.PermissionDenied, "a person creates use cases")
 	}
 	name := strings.TrimSpace(req.GetName())
 	description := strings.TrimSpace(req.GetDescription())
@@ -70,17 +70,17 @@ func (s *Service) CreateFoundryWorkflow(ctx context.Context, req *foundryv1.Crea
 		existing, err := s.deps.DB.GetFoundryWorkflowByClientToken(ctx, o.ID, token)
 		switch {
 		case err != nil:
-			return nil, status.Errorf(codes.Internal, "get workflow: %v", err)
+			return nil, status.Errorf(codes.Internal, "get use case: %v", err)
 		case existing.Name != name || existing.Description != description:
-			return nil, status.Error(codes.InvalidArgument, "client_token was already used for another workflow")
+			return nil, status.Error(codes.InvalidArgument, "client_token was already used for another use case")
 		}
 		w = existing
 	case errors.Is(err, foundrystore.ErrLimitExceeded):
-		return nil, status.Errorf(codes.FailedPrecondition, "an ontology holds up to %d workflows; delete one first", foundrymodel.FoundryWorkflowsMax)
+		return nil, status.Errorf(codes.FailedPrecondition, "an ontology holds up to %d use cases; delete one first", foundrymodel.FoundryWorkflowsMax)
 	case errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "ontology not found")
 	case err != nil:
-		return nil, status.Errorf(codes.Internal, "create workflow: %v", err)
+		return nil, status.Errorf(codes.Internal, "create use case: %v", err)
 	}
 	return s.foundryWorkflowResponse(ctx, o.ID, w.ID)
 }
@@ -96,7 +96,7 @@ func (s *Service) ListFoundryWorkflows(ctx context.Context, req *foundryv1.ListF
 	case errors.Is(err, foundrystore.ErrInvalidPageToken):
 		return nil, status.Error(codes.InvalidArgument, "invalid page_token")
 	case err != nil:
-		return nil, status.Errorf(codes.Internal, "list workflows: %v", err)
+		return nil, status.Errorf(codes.Internal, "list use cases: %v", err)
 	}
 	verdicts, err := s.workflowVerdicts(ctx, workflows)
 	if err != nil {
@@ -127,12 +127,12 @@ func (s *Service) DeleteFoundryWorkflow(ctx context.Context, req *foundryv1.Dele
 	}
 	switch err := s.deps.DB.DeleteFoundryWorkflow(ctx, o.ID, req.GetId()); {
 	case errors.Is(err, foundrystore.ErrNotFound):
-		return nil, status.Error(codes.NotFound, "workflow not found")
+		return nil, status.Error(codes.NotFound, "use case not found")
 	case errors.Is(err, foundrystore.ErrAutomationWorkflow):
 		return nil, foundryPrecondition(o.WorkspaceID, reasonWorkflowOfAutomation,
-			"this workflow records an automation's runs: it goes only once the automation is deleted, and stays as history after")
+			"this use case records a workflow's runs: it goes only once the workflow is deleted, and stays as history after")
 	case err != nil:
-		return nil, status.Errorf(codes.Internal, "delete workflow: %v", err)
+		return nil, status.Errorf(codes.Internal, "delete use case: %v", err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -149,7 +149,7 @@ func (s *Service) StartFoundryWorkflowRun(ctx context.Context, req *foundryv1.St
 	case a.ServiceCredentialID != "":
 		by = access.Principal{Kind: access.PrincipalServiceCredential, ID: a.ServiceCredentialID}
 	default:
-		return nil, status.Error(codes.PermissionDenied, "a person or an agent's key starts a workflow's runs")
+		return nil, status.Error(codes.PermissionDenied, "a person or an agent's key starts a use case's runs")
 	}
 	input, err := workflowRunInput(req.GetInput())
 	if err != nil {
@@ -169,7 +169,7 @@ func (s *Service) StartFoundryWorkflowRun(ctx context.Context, req *foundryv1.St
 	}
 	if w.Automation != nil {
 		return nil, foundryPrecondition(o.WorkspaceID, reasonWorkflowOfAutomation,
-			"this workflow records an automation's runs, which Foundry starts as the automation runs")
+			"this use case records a workflow's runs, which Foundry starts as the workflow runs")
 	}
 	if token == "" {
 		token = id.New()
@@ -183,15 +183,15 @@ func (s *Service) StartFoundryWorkflowRun(ctx context.Context, req *foundryv1.St
 		existing, err := s.deps.DB.GetFoundryWorkflowRunByClientToken(ctx, r.WorkflowID, token)
 		switch {
 		case err != nil:
-			return nil, status.Errorf(codes.Internal, "get workflow run: %v", err)
+			return nil, status.Errorf(codes.Internal, "get use case run: %v", err)
 		case existing.OntologyID != o.ID || !sameText(existing.Input, input):
 			return nil, status.Error(codes.InvalidArgument, "client_token was already used for another run")
 		}
 		r = existing
 	case errors.Is(err, foundrystore.ErrNotFound):
-		return nil, status.Error(codes.NotFound, "workflow not found")
+		return nil, status.Error(codes.NotFound, "use case not found")
 	case err != nil:
-		return nil, status.Errorf(codes.Internal, "start workflow run: %v", err)
+		return nil, status.Errorf(codes.Internal, "start use case run: %v", err)
 	}
 	return s.foundryWorkflowRunResponse(ctx, o.ID, r.WorkflowID, r.ID)
 }
@@ -215,7 +215,7 @@ func (s *Service) ListFoundryWorkflowRuns(ctx context.Context, req *foundryv1.Li
 	case errors.Is(err, foundrystore.ErrInvalidPageToken):
 		return nil, status.Error(codes.InvalidArgument, "invalid page_token")
 	case err != nil:
-		return nil, status.Errorf(codes.Internal, "list workflow runs: %v", err)
+		return nil, status.Errorf(codes.Internal, "list use case runs: %v", err)
 	}
 	ids := make([]string, len(runs))
 	for i, r := range runs {
@@ -267,7 +267,7 @@ func (s *Service) FinishFoundryWorkflowRun(ctx context.Context, req *foundryv1.F
 	switch {
 	case r.AutomationRunID != nil:
 		return nil, foundryPrecondition(o.WorkspaceID, reasonWorkflowOfAutomation,
-			"this run records an automation's run, which Foundry finishes when that run ends")
+			"this run records a workflow's run, which Foundry finishes when that run ends")
 	case r.Finished != nil && r.Finished.Output == output && (input == nil || sameText(r.Input, input)):
 		return s.foundryWorkflowRunResponse(ctx, o.ID, r.WorkflowID, r.ID)
 	case r.Finished != nil:
@@ -283,7 +283,7 @@ func (s *Service) FinishFoundryWorkflowRun(ctx context.Context, req *foundryv1.F
 		// is no longer open, so the retry ends before it gets here.
 		return s.FinishFoundryWorkflowRun(ctx, req)
 	case err != nil:
-		return nil, status.Errorf(codes.Internal, "finish workflow run: %v", err)
+		return nil, status.Errorf(codes.Internal, "finish use case run: %v", err)
 	}
 	return s.foundryWorkflowRunResponse(ctx, o.ID, r.WorkflowID, r.ID)
 }
@@ -301,7 +301,7 @@ func (s *Service) ListFoundryWorkflowRunAccesses(ctx context.Context, req *found
 	}
 	accesses, more, err := s.deps.DB.ListFoundryWorkflowRunAccesses(ctx, r.ID, max(req.GetAfterSeq(), 0), workflowAccessesPage)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list workflow run accesses: %v", err)
+		return nil, status.Errorf(codes.Internal, "list use case run accesses: %v", err)
 	}
 	out := &foundryv1.ListFoundryWorkflowRunAccessesResponse{More: more}
 	size := 0
@@ -344,13 +344,13 @@ func (s *Service) trackedRun(ctx context.Context, workspaceID, ontologyID, ref s
 	} else {
 		r, err = s.deps.DB.GetFoundryWorkflowRun(ctx, ontologyID, runID)
 	}
-	notFound := status.Error(codes.NotFound, "workflow run not found")
+	notFound := status.Error(codes.NotFound, "use case run not found")
 	if keyed || err == nil && r.AutomationRunID != nil {
 		switch {
 		case errors.Is(err, foundrystore.ErrNotFound):
 			return nil, notFound
 		case err != nil:
-			return nil, status.Errorf(codes.Internal, "get workflow run: %v", err)
+			return nil, status.Errorf(codes.Internal, "get use case run: %v", err)
 		case !keyed || r.AutomationRunID == nil || r.WorkspaceID != workspaceID ||
 			subtle.ConstantTimeCompare([]byte(key), []byte(r.AutomationKey)) != 1:
 			return nil, notFound
@@ -372,11 +372,11 @@ func (s *Service) trackedRun(ctx context.Context, workspaceID, ontologyID, ref s
 	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && (r.WorkspaceID != workspaceID || own && r.StartedBy != by):
 		return nil, notFound
 	case err != nil:
-		return nil, status.Errorf(codes.Internal, "get workflow run: %v", err)
+		return nil, status.Errorf(codes.Internal, "get use case run: %v", err)
 	case r.Finished != nil:
-		return nil, status.Error(codes.FailedPrecondition, "the workflow run finished: start another to record more")
+		return nil, status.Error(codes.FailedPrecondition, "the use case run finished: start another to record more")
 	case r.Counts.Accesses >= foundrymodel.FoundryWorkflowRunMaxAccesses:
-		return nil, status.Errorf(codes.ResourceExhausted, "a workflow run records up to %d calls", foundrymodel.FoundryWorkflowRunMaxAccesses)
+		return nil, status.Errorf(codes.ResourceExhausted, "a use case run records up to %d calls", foundrymodel.FoundryWorkflowRunMaxAccesses)
 	}
 	return r, nil
 }
@@ -400,9 +400,9 @@ func (s *Service) foundryWorkflow(ctx context.Context, ontologyID, workflowID st
 	w, err := s.deps.DB.GetFoundryWorkflow(ctx, ontologyID, workflowID)
 	switch {
 	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && w.Automation != nil && !seesAutomations(ctx):
-		return nil, status.Error(codes.NotFound, "workflow not found")
+		return nil, status.Error(codes.NotFound, "use case not found")
 	case err != nil:
-		return nil, status.Errorf(codes.Internal, "get workflow: %v", err)
+		return nil, status.Errorf(codes.Internal, "get use case: %v", err)
 	}
 	return w, nil
 }
@@ -478,9 +478,9 @@ func (s *Service) foundryWorkflowRun(ctx context.Context, ontologyID, workflowID
 	switch {
 	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && (r.WorkflowID != workflowID || own && r.StartedBy != by ||
 		r.AutomationRunID != nil && !seesAutomations(ctx)):
-		return nil, status.Error(codes.NotFound, "workflow run not found")
+		return nil, status.Error(codes.NotFound, "use case run not found")
 	case err != nil:
-		return nil, status.Errorf(codes.Internal, "get workflow run: %v", err)
+		return nil, status.Errorf(codes.Internal, "get use case run: %v", err)
 	}
 	return r, nil
 }

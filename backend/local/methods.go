@@ -155,6 +155,9 @@ var methods = map[string]check{
 	foundry("UpdateFoundryAgentRuntime"):     checkWorkspace,
 	foundry("CreateFoundryAgentHostPairing"): checkWorkspace,
 	foundry("RevokeFoundryAgentHost"):        checkWorkspace,
+	// The caller's source grants, which every Founder attempt reads for its
+	// Reach (agent.reachOf): the owner is never a grantee, so it answers so.
+	foundry("GetMyFoundryAccess"): checkWorkspace,
 
 	// Dashboards: each handler reads the workspace's own. An install
 	// publishes no public link (no door serves one).
@@ -168,18 +171,19 @@ var methods = map[string]check{
 	foundry("PreviewFoundryDashboardTile"):       checkWorkspace,
 	// Automations: each handler reads the workspace's own, and runs and
 	// changes only the owner's.
-	foundry("ListFoundryAutomations"):     checkWorkspace,
-	foundry("GetFoundryAutomation"):       checkWorkspace,
-	foundry("CreateFoundryAutomation"):    checkWorkspace,
-	foundry("UpdateFoundryAutomation"):    checkWorkspace,
-	foundry("DeleteFoundryAutomation"):    checkWorkspace,
-	foundry("ApproveFoundryAutomation"):   checkWorkspace,
-	foundry("PauseFoundryAutomation"):     checkWorkspace,
-	foundry("ResumeFoundryAutomation"):    checkWorkspace,
-	foundry("RunFoundryAutomation"):       checkWorkspace,
-	foundry("ListFoundryAutomationRuns"):  checkWorkspace,
-	foundry("GetFoundryAutomationRun"):    checkWorkspace,
-	foundry("CancelFoundryAutomationRun"): checkWorkspace,
+	foundry("ListFoundryAutomations"):           checkWorkspace,
+	foundry("GetFoundryAutomation"):             checkWorkspace,
+	foundry("CreateFoundryAutomation"):          checkWorkspace,
+	foundry("UpdateFoundryAutomation"):          checkWorkspace,
+	foundry("DeleteFoundryAutomation"):          checkWorkspace,
+	foundry("ApproveFoundryAutomation"):         checkWorkspace,
+	foundry("PauseFoundryAutomation"):           checkWorkspace,
+	foundry("ResumeFoundryAutomation"):          checkWorkspace,
+	foundry("RunFoundryAutomation"):             checkWorkspace,
+	foundry("ListFoundryAutomationRuns"):        checkWorkspace,
+	foundry("GetFoundryAutomationRun"):          checkWorkspace,
+	foundry("CancelFoundryAutomationRun"):       checkWorkspace,
+	foundry("ListFoundryAutomationSuggestions"): checkWorkspace,
 
 	foundry("CreateFoundryWorkflow"):          checkOntology,
 	foundry("ListFoundryWorkflows"):           checkOntology,

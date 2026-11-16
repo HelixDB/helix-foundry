@@ -658,6 +658,13 @@ export const papiRoutes = [
     method: "POST",
     path: "/v1/workspaces/{workspaceId}/foundry/automations/{automationId}/runs/{id}:cancel",
   },
+  // The new automation page's suggestions, written for an ontology's
+  // current version.
+  {
+    area: "automations",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/automation-suggestions",
+  },
 
   // Ontology: decisions, applied from the next load.
   {

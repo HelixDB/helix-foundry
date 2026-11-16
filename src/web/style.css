@@ -162,6 +162,15 @@ input::placeholder,
 textarea::placeholder {
   color: var(--hf-muted);
 }
+/* Every textarea wraps its text, a long word or link included, and grows
+   or scrolls down, never sideways (a browser's default overflow is auto on
+   both axes, which shows a horizontal scrollbar once a field is sized to
+   its text); it is resized in height only. */
+textarea {
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  resize: vertical;
+}
 input[type="checkbox"] {
   width: 16px;
   height: 16px;

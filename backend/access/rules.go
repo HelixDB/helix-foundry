@@ -25,17 +25,19 @@ const (
 
 // rules names every method of FoundryService and FoundryEventsService, so a
 // method added without a rule fails the package's tests. A grantee only
-// reads, asks and cancels its own questions, and starts and finishes its own
-// workflow runs: it changes nothing else.
+// reads, asks and cancels its own questions, talks to Founder in its own
+// threads, and starts and finishes its own workflow runs: it changes nothing
+// else.
 var rules = map[string]Rule{
-	// The Assistant: for people with the workspace's whole view, not
-	// grantees, until it narrows what its tools read to their grants.
-	foundryv1.FoundryService_SendFoundryAgentMessage_FullMethodName:    Deny,
-	foundryv1.FoundryService_ListFoundryAgentThreads_FullMethodName:    Deny,
-	foundryv1.FoundryService_GetFoundryAgentThread_FullMethodName:      Deny,
-	foundryv1.FoundryService_DeleteFoundryAgentThread_FullMethodName:   Deny,
-	foundryv1.FoundryService_ListFoundryAgentTurnEvents_FullMethodName: Deny,
-	foundryv1.FoundryService_CancelFoundryAgentTurn_FullMethodName:     Deny,
+	// Founder: a grantee talks to Founder in its own threads, from its
+	// restriction on; Founder only reads and asks for it (the turn's Reach),
+	// so a grantee's threads hold no cards to run, refresh or dismiss.
+	foundryv1.FoundryService_SendFoundryAgentMessage_FullMethodName:    Workspace,
+	foundryv1.FoundryService_ListFoundryAgentThreads_FullMethodName:    Workspace,
+	foundryv1.FoundryService_GetFoundryAgentThread_FullMethodName:      Workspace,
+	foundryv1.FoundryService_DeleteFoundryAgentThread_FullMethodName:   Workspace,
+	foundryv1.FoundryService_ListFoundryAgentTurnEvents_FullMethodName: Workspace,
+	foundryv1.FoundryService_CancelFoundryAgentTurn_FullMethodName:     Workspace,
 	foundryv1.FoundryService_ExecuteFoundryAgentAction_FullMethodName:  Deny,
 	foundryv1.FoundryService_RefreshFoundryAgentAction_FullMethodName:  Deny,
 	foundryv1.FoundryService_DismissFoundryAgentAction_FullMethodName:  Deny,
@@ -188,18 +190,19 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_UnpublishFoundryDashboard_FullMethodName:         Deny,
 	foundryv1.FoundryEventsService_GetSharedFoundryDashboard_FullMethodName:   Deny,
 	// Automations are people's, run as their owners: a grantee has none.
-	foundryv1.FoundryService_ListFoundryAutomations_FullMethodName:     Deny,
-	foundryv1.FoundryService_GetFoundryAutomation_FullMethodName:       Deny,
-	foundryv1.FoundryService_CreateFoundryAutomation_FullMethodName:    Deny,
-	foundryv1.FoundryService_UpdateFoundryAutomation_FullMethodName:    Deny,
-	foundryv1.FoundryService_DeleteFoundryAutomation_FullMethodName:    Deny,
-	foundryv1.FoundryService_ApproveFoundryAutomation_FullMethodName:   Deny,
-	foundryv1.FoundryService_PauseFoundryAutomation_FullMethodName:     Deny,
-	foundryv1.FoundryService_ResumeFoundryAutomation_FullMethodName:    Deny,
-	foundryv1.FoundryService_RunFoundryAutomation_FullMethodName:       Deny,
-	foundryv1.FoundryService_ListFoundryAutomationRuns_FullMethodName:  Deny,
-	foundryv1.FoundryService_GetFoundryAutomationRun_FullMethodName:    Deny,
-	foundryv1.FoundryService_CancelFoundryAutomationRun_FullMethodName: Deny,
+	foundryv1.FoundryService_ListFoundryAutomations_FullMethodName:           Deny,
+	foundryv1.FoundryService_GetFoundryAutomation_FullMethodName:             Deny,
+	foundryv1.FoundryService_CreateFoundryAutomation_FullMethodName:          Deny,
+	foundryv1.FoundryService_UpdateFoundryAutomation_FullMethodName:          Deny,
+	foundryv1.FoundryService_DeleteFoundryAutomation_FullMethodName:          Deny,
+	foundryv1.FoundryService_ApproveFoundryAutomation_FullMethodName:         Deny,
+	foundryv1.FoundryService_PauseFoundryAutomation_FullMethodName:           Deny,
+	foundryv1.FoundryService_ResumeFoundryAutomation_FullMethodName:          Deny,
+	foundryv1.FoundryService_RunFoundryAutomation_FullMethodName:             Deny,
+	foundryv1.FoundryService_ListFoundryAutomationRuns_FullMethodName:        Deny,
+	foundryv1.FoundryService_GetFoundryAutomationRun_FullMethodName:          Deny,
+	foundryv1.FoundryService_CancelFoundryAutomationRun_FullMethodName:       Deny,
+	foundryv1.FoundryService_ListFoundryAutomationSuggestions_FullMethodName: Deny,
 
 	// The workspace's settings, plan and spend.
 	foundryv1.FoundryService_GetFoundryAI_FullMethodName:             Deny,

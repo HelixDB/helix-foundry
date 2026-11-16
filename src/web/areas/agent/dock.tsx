@@ -1,5 +1,7 @@
 import "./agent.css";
 import {
+  Suspense,
+  lazy,
   useEffect,
   useId,
   useLayoutEffect,
@@ -8,6 +10,7 @@ import {
   useState,
   type ReactNode,
   type RefObject,
+  type TextareaHTMLAttributes,
 } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,7 +20,6 @@ import {
   CircleHelp,
   CircleAlert,
   TriangleAlert,
-  ExternalLink,
   LoaderCircle,
   Plug,
   MessageSquarePlus,
@@ -50,7 +52,9 @@ import {
   readStorage,
   writeStorage,
 } from "../../kit";
+import type { DockSeed } from "../../shell/context";
 import { activeSection } from "../../shell/nav";
+import { recordQuestionAsked } from "../../shell/star-prompt";
 import { useWorkspace } from "../../ui";
 import { loadVersion } from "../ontology/model";
 import { dashboardQueries } from "../dashboards/queries";
@@ -73,16 +77,18 @@ import {
   HELPER_COMMANDS,
   RUNTIMES,
   MAX_MESSAGE,
+  promptHeight,
   NOT_RUN_TEXT,
   STARTS_WORK,
   STOP_TEXT,
-  TOOL_LABELS,
+  stepLabel,
   agentRefusal,
-  analystLink,
+  answerBlocks,
   connectLink,
   isLiveTurn,
   pageContext,
   pretty,
+  questionOf,
   textParts,
   threadKey,
   threadRuntime,
@@ -102,8 +108,12 @@ import {
   turnEvents,
 } from "./queries";
 
+// The Analyst's answer under the step that asked it: its card and the
+// explore reads it needs load only once a thread holds one.
+const InlineQuestion = lazy(() => import("../ontology/ask-inline"));
+
 /**
- * The Assistant's dock: the person's threads with it, the open thread's
+ * Founder's dock: the person's threads with it, the open thread's
  * turns as they stream (polled), the actions it prepared as cards, and the
  * composer, which sends what page the person is on (ids only) unless they
  * take it off. Rendered by the shell outside the page's routes, so it reads
@@ -114,18 +124,28 @@ import {
 export function AgentDock({
   onClose,
   onNavigate,
+  seed,
 }: {
   onClose: () => void;
   onNavigate?: () => void;
+  // A compose (useShell().assistant.compose): a new thread whose composer
+  // starts with its text; each one remounts the composer.
+  seed?: DockSeed | null;
 }) {
   const { id: ws } = useWorkspace(),
     qc = useQueryClient();
-  const [threadId, setThreadId] = useState(() => readStorage(threadKey(ws)));
-  useEffect(() => setThreadId(readStorage(threadKey(ws))), [ws]);
+  const [threadId, setThreadId] = useState(() =>
+    seed ? "" : readStorage(threadKey(ws)),
+  );
   const open = (id: string) => {
     writeStorage(threadKey(ws), id || null);
     setThreadId(id);
   };
+  useEffect(() => setThreadId(readStorage(threadKey(ws))), [ws]);
+  const seeded = seed?.n;
+  useEffect(() => {
+    if (seeded) open("");
+  }, [seeded]);
   const threads = useQuery(agentQueries.threads(ws));
   const thread = useQuery({
     ...agentQueries.thread(ws, threadId),
@@ -147,7 +167,7 @@ export function AgentDock({
     <div className="ag-dock" data-replay-block>
       <header className="ag-head">
         <Sparkles size={16} aria-hidden className="ag-head-icon" />
-        <h2 className="ag-head-title">Assistant</h2>
+        <h2 className="ag-head-title">Founder</h2>
         <DropdownMenu
           label={`Threads: ${title}`}
           align="end"
@@ -189,8 +209,8 @@ export function AgentDock({
         <button
           type="button"
           className="hf-btn hf-btn--ghost hf-btn--sm hf-btn--icon"
-          aria-label="Close the Assistant"
-          title="Close the Assistant"
+          aria-label="Close Founder"
+          title="Close Founder"
           onClick={onClose}
         >
           <X size={16} aria-hidden />
@@ -200,7 +220,7 @@ export function AgentDock({
         <EmptyState
           size="sm"
           icon={Sparkles}
-          title="The Assistant isn’t available here"
+          title="Founder isn’t available here"
           text="It is off for this Foundry."
         />
       ) : (
@@ -221,20 +241,27 @@ export function AgentDock({
             onRetry={() => void thread.refetch()}
             onNavigate={onNavigate}
           />
-          <Composer
-            threadId={threadId}
-            thread={threadId ? thread.data : undefined}
-            runtime={where?.runtime ?? "api"}
-            hostState={where?.state ?? "ready"}
-            onNavigate={onNavigate}
-            onSent={(id) => {
-              if (id !== threadId) open(id);
-              void qc.invalidateQueries({ queryKey: [ws, "agent", "threads"] });
-              void qc.invalidateQueries({
-                queryKey: [ws, "agent", "thread", id],
-              });
-            }}
-          />
+          <div className="ag-dock-composer">
+            <Composer
+              key={seed?.n ?? 0}
+              initialText={seed?.text}
+              threadId={threadId}
+              thread={threadId ? thread.data : undefined}
+              runtime={where?.runtime ?? "api"}
+              hostState={where?.state ?? "ready"}
+              minRows={threadId ? 1 : 2}
+              onNavigate={onNavigate}
+              onSent={(id) => {
+                if (id !== threadId) open(id);
+                void qc.invalidateQueries({
+                  queryKey: [ws, "agent", "threads"],
+                });
+                void qc.invalidateQueries({
+                  queryKey: [ws, "agent", "thread", id],
+                });
+              }}
+            />
+          </div>
         </>
       )}
       {deleting && (
@@ -371,6 +398,7 @@ export function Transcript({
   onRetry: () => void;
   onNavigate?: () => void;
 }) {
+  const { grantee } = useWorkspace();
   const log = useRef<HTMLDivElement>(null),
     body = useRef<HTMLDivElement>(null),
     stick = useRef(true),
@@ -447,8 +475,12 @@ export function Transcript({
           <EmptyState
             size="sm"
             icon={Sparkles}
-            title="Ask the Assistant"
-            text="It reads your workspace with Foundry’s tools. What would change anything it prepares as a card, which runs only when you click."
+            title="Ask Founder"
+            text={
+              grantee
+                ? "It answers questions about the data shared with you, with cited answers. It can’t change anything in this workspace."
+                : "It answers questions about your data with cited answers, and works in your workspace. Changes wait as cards you click to run; a dashboard you ask for it makes at once, with Undo."
+            }
           />
         ) : (
           data.turns.map((t, i, all) => (
@@ -600,6 +632,8 @@ function TurnView({
     stream.ended && stream.ended.status === "done"
       ? STOP_TEXT[stream.ended.reason]
       : null;
+  // An Analyst question shows once, under the last step that returned it.
+  const answers = useMemo(() => answerBlocks(stream.blocks), [stream.blocks]);
   return (
     <>
       {turn.kind === "answers" ? (
@@ -620,7 +654,7 @@ function TurnView({
         className="ag-msg ag-msg--agent"
         aria-busy={live || read.loading || undefined}
       >
-        <span className="ag-who">Assistant</span>
+        <span className="ag-who">Founder</span>
         {read.loading && !stream.blocks.length && <SkeletonText lines={2} />}
         {read.failed && (
           <p className="ag-card-error">
@@ -644,6 +678,7 @@ function TurnView({
             <Block
               key={i}
               block={b}
+              answer={answers.has(i)}
               actions={actions}
               busy={busy}
               onNavigate={onNavigate}
@@ -687,11 +722,15 @@ function TurnView({
 
 function Block({
   block,
+  answer,
   actions,
   busy,
   onNavigate,
 }: {
   block: AgentBlock;
+  // A step's: the Analyst question it returned shows under it (the last
+  // step of the turn naming it).
+  answer: boolean;
   actions: ReadonlyMap<string, FoundryAgentAction>;
   busy: boolean;
   onNavigate?: () => void;
@@ -701,7 +740,7 @@ function Block({
       return <PlainText text={block.text} onNavigate={onNavigate} />;
     case "step": {
       const s = block.step,
-        analyst = analystLink(s),
+        question = answer ? questionOf(s) : undefined,
         connect = connectLink(s);
       // Asking shows as its questions; only a refusal shows as a step.
       if (s.name === ASK_PERSON && s.result?.kind !== "failed") return null;
@@ -710,7 +749,7 @@ function Block({
           <details className="ag-step">
             <summary>
               <Wrench size={13} aria-hidden />
-              <span>{TOOL_LABELS[s.name] || s.name}</span>
+              <span>{stepLabel(s)}</span>
               {!s.result && (
                 <LoaderCircle
                   size={13}
@@ -745,13 +784,17 @@ function Block({
                   )}
                 </>
               )}
-              {analyst && (
-                <Link className="ag-link" to={analyst} onClick={onNavigate}>
-                  Open in Analyst <ExternalLink size={12} aria-hidden />
-                </Link>
-              )}
             </div>
           </details>
+          {question && (
+            <Suspense fallback={<SkeletonText lines={3} />}>
+              <InlineQuestion
+                ontologyId={question.ontologyId}
+                questionId={question.questionId}
+                onNavigate={onNavigate}
+              />
+            </Suspense>
+          )}
           {connect && (
             <Link
               className="hf-btn hf-btn--secondary hf-btn--sm ag-connect"
@@ -768,7 +811,12 @@ function Block({
     case "card": {
       const action = actions.get(block.actionId);
       return action ? (
-        <ActionCard action={action} busy={busy} onNavigate={onNavigate} />
+        <ActionCard
+          action={action}
+          auto={block.auto}
+          busy={busy}
+          onNavigate={onNavigate}
+        />
       ) : (
         <div className="ag-card" aria-busy>
           <SkeletonText lines={2} />
@@ -794,7 +842,7 @@ function Block({
     case "report":
       return (
         <p className="ag-ran">
-          Reported to its automation: {block.summary}
+          Reported to its workflow: {block.summary}
           {block.answer !== undefined &&
             ` (answer: ${block.answer ? "yes" : "no"})`}
           {block.count !== undefined && ` (count: ${block.count})`}
@@ -871,8 +919,7 @@ function AskedBlock({
   if (!questions)
     return (
       <p className="ag-note">
-        The Assistant asked questions this page can’t show. Reload to update
-        Foundry.
+        Founder asked questions this page can’t show. Reload to update Foundry.
       </p>
     );
   if (state !== "open" || moved)
@@ -901,7 +948,7 @@ function AskedBlock({
       <QuestionFlow
         questions={questions}
         storageKey={`agent:${turn.id}`}
-        agent={relayed ? "the agent" : "the Assistant"}
+        agent={relayed ? "the agent" : "Founder"}
         sendLabel={relayed ? "Send answers to the draft" : "Send answers"}
         pending={pending}
         disabled={busy}
@@ -964,7 +1011,7 @@ function AskedBlock({
 
 /**
  * An answers turn's answers, each beside its question as the asking turn
- * asked it; a question left out was left to the Assistant.
+ * asked it; a question left out was left to Founder.
  */
 function AnswersOf({
   turn,
@@ -983,7 +1030,7 @@ function AnswersOf({
           question: q.text,
           answer: a
             ? answerText(a)
-            : `Left to ${asking?.asked?.generation ? "the agent" : "the Assistant"}`,
+            : `Left to ${asking?.asked?.generation ? "the agent" : "Founder"}`,
           left: !a,
         };
       })
@@ -1059,7 +1106,10 @@ function PlainText({
  * it runs, and while the setting's tool check failed (its turns would fail
  * at once, each a message of the hour's), saying why; Stop ends the live
  * turn. A page that holds a conversation gives its own `placeholder` and
- * may start it with `initialText` (a suggestion's prompt).
+ * may start it with `initialText` (a suggestion's prompt); a new
+ * conversation's box starts taller (`minRows`) than a reply's. A grantee's
+ * Founder only reads and asks about what its grants cover, so its default
+ * says so, and the workspace's AI setting (which it can't read) isn't read.
  */
 export function Composer({
   threadId,
@@ -1068,8 +1118,9 @@ export function Composer({
   hostState,
   onSent,
   onNavigate,
-  placeholder = "Ask about your workspace, or ask it to do something…",
+  placeholder,
   initialText = "",
+  minRows = 2,
 }: {
   // The open thread; empty for a new one. `thread` once it is read.
   threadId: string;
@@ -1083,8 +1134,9 @@ export function Composer({
   onNavigate?: () => void;
   placeholder?: string;
   initialText?: string;
+  minRows?: number;
 }) {
-  const { id: ws, role } = useWorkspace(),
+  const { id: ws, role, grantee } = useWorkspace(),
     location = useLocation(),
     qc = useQueryClient();
   const page = pageContext(location.pathname, location.search),
@@ -1100,7 +1152,7 @@ export function Composer({
   const onModel = runtime === "api",
     aiReady = useAiConfigured(),
     modelReady = onModel ? aiReady : true;
-  const setting = useQuery(aiQuery(ws)).data,
+  const setting = useQuery({ ...aiQuery(ws), enabled: !grantee }).data,
     now = setting && inForce(setting),
     checkFailed =
       onModel && now?.source === "workspace" && assistantCheckText(now.config);
@@ -1109,7 +1161,7 @@ export function Composer({
     sending = useRef(false);
   // The dock opens ready to write, the caret after any text it starts with
   // and that end in view: before paint, and again once the field has sized
-  // itself to its text (field-sizing), which a browser may do after.
+  // itself to its text (PromptInput), which a resize may redo after.
   useLayoutEffect(() => {
     const end = () => {
       const el = input.current;
@@ -1153,6 +1205,7 @@ export function Composer({
       );
       setText("");
       setToken(crypto.randomUUID());
+      void recordQuestionAsked();
       onSent(r.thread.id);
     } catch (e) {
       setError(e);
@@ -1173,7 +1226,7 @@ export function Composer({
         text={
           role === "owner"
             ? `${checkFailed} Open Settings › AI models.`
-            : "The Assistant can’t run on this workspace’s AI model. An owner can fix this in Settings › AI models."
+            : "Founder can’t run on this workspace’s AI model. An owner can fix this in Settings › AI models."
         }
         onNavigate={onNavigate}
       />
@@ -1181,29 +1234,42 @@ export function Composer({
   ) : tooLong ? (
     `${length - MAX_MESSAGE} characters too long.`
   ) : busy ? (
-    "You can send once the Assistant has finished."
-  ) : null;
+    "You can send once Founder has finished."
+  ) : // Nothing to say while idle; the line keeps its height so nothing jumps.
+  null;
   return (
     <form
       className="ag-composer"
-      aria-label="Message the Assistant"
+      aria-label="Message Founder"
+      aria-busy={pending || undefined}
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
       }}
     >
-      {context && (
-        <PageChip context={context} onDrop={() => setDropped(pageKey)} />
-      )}
-      <div className="ag-input-row">
-        <textarea
-          ref={input}
+      <div
+        className="ag-box"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) input.current?.focus();
+        }}
+      >
+        {context && (
+          <PageChip context={context} onDrop={() => setDropped(pageKey)} />
+        )}
+        <PromptInput
+          inputRef={input}
           className="ag-input"
           aria-label="Message"
-          aria-describedby={caption ? hint : undefined}
-          rows={2}
+          aria-describedby={hint}
+          minRows={minRows}
+          maxRows={8}
           value={text}
-          placeholder={placeholder}
+          placeholder={
+            placeholder ??
+            (grantee
+              ? "Ask about the data shared with you…"
+              : "Ask about your workspace, or ask it to do something…")
+          }
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (
@@ -1217,9 +1283,9 @@ export function Composer({
           }}
         />
         {live ? (
-          <Button
-            size="sm"
-            icon={Square}
+          <button
+            type="button"
+            className="ag-send"
             aria-label="Stop"
             title="Stop"
             onClick={async () => {
@@ -1228,31 +1294,34 @@ export function Composer({
                 queryKey: [ws, "agent", "thread", threadId],
               });
             }}
-          />
+          >
+            <Square size={13} fill="currentColor" aria-hidden />
+          </button>
         ) : (
-          <Button
+          <button
             type="submit"
-            variant="primary"
-            size="sm"
-            icon={ArrowUp}
+            className="ag-send"
             aria-label="Send"
             title="Send"
-            pending={pending}
-            disabled={blocked}
-          />
+            disabled={blocked || pending}
+          >
+            {pending ? (
+              <LoaderCircle size={17} className="hf-spin" aria-hidden />
+            ) : (
+              <ArrowUp size={17} aria-hidden />
+            )}
+          </button>
         )}
       </div>
-      {caption && (
-        <p
-          id={hint}
-          className={cx("ag-hint", (tooLong || !!checkFailed) && "is-error")}
-        >
-          {caption}
-        </p>
-      )}
-      <AiRefusal action="The Assistant" error={error} ready={modelReady}>
+      <p
+        id={hint}
+        className={cx("ag-status", (tooLong || !!checkFailed) && "is-error")}
+      >
+        {caption}
+      </p>
+      <AiRefusal action="Founder" error={error} ready={modelReady}>
         {!!error && (
-          <p className="ag-card-error" role="alert">
+          <p className="ag-status is-error" role="alert">
             {agentRefusal(error) !== "FOUNDRY_AGENT_HOST_OFFLINE" ? (
               sentence((error as Error).message)
             ) : hostState === "unpaired" ? (
@@ -1274,6 +1343,55 @@ export function Composer({
   );
 }
 
+/**
+ * A textarea that grows with its text from `minRows` to `maxRows` lines,
+ * then scrolls down, never sideways (promptHeight): Founder's composer's
+ * and the Analyst's. It sets its own height, so a long placeholder (a
+ * suggestion previewed) never moves the page.
+ */
+export function PromptInput({
+  value,
+  minRows,
+  maxRows,
+  inputRef,
+  ...rest
+}: {
+  value: string;
+  minRows: number;
+  maxRows: number;
+  inputRef: RefObject<HTMLTextAreaElement | null>;
+} & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "rows">) {
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const fit = () => {
+      const style = getComputedStyle(el);
+      el.style.height = "auto";
+      const { height, scrolls } = promptHeight({
+        line: parseFloat(style.lineHeight) || 22,
+        padding: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom),
+        content: el.scrollHeight,
+        minRows,
+        maxRows,
+      });
+      el.style.height = `${height}px`;
+      el.style.overflowY = scrolls ? "auto" : "hidden";
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    // A new width rewraps the text.
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (width === el.clientWidth) return;
+      width = el.clientWidth;
+      fit();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [value, minRows, maxRows]);
+  return <textarea {...rest} ref={inputRef} rows={minRows} value={value} />;
+}
+
 /** "Looking at: <ontology> / <load>" or "<dashboard>", named from what the app has read. */
 function PageChip({
   context,
@@ -1286,7 +1404,7 @@ function PageChip({
   if (context.newAutomation)
     return (
       <span className="ag-chip">
-        <Tag>Making a new automation</Tag>
+        <Tag>Making a new workflow</Tag>
         <DropChip onDrop={onDrop} />
       </span>
     );
@@ -1297,7 +1415,7 @@ function PageChip({
 const DropChip = ({ onDrop }: { onDrop: () => void }) => (
   <button
     type="button"
-    className="hf-btn hf-btn--ghost hf-btn--sm hf-btn--icon"
+    className="ag-chip-drop"
     aria-label="Don’t send this page"
     title="Don’t send this page"
     onClick={onDrop}

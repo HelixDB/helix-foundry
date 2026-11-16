@@ -671,7 +671,7 @@
   align-items: center;
   gap: 8px;
 }
-/* Narrow (a phone, or beside the Assistant), Cancel generation goes under
+/* Narrow (a phone, or beside Founder), Cancel generation goes under
    the title rather than squeezing it into a column. */
 .on-asked {
   container-type: inline-size;
@@ -1221,9 +1221,8 @@
 .on-tour-answer {
   margin: 4px 0 14px;
 }
-/* Ask's suggestions, left-aligned in the tour: ask.css loads after this file. */
+/* Ask's suggestions in the tour: ask.css loads after this file. */
 .ak-suggestions.on-tour-asks {
-  justify-content: flex-start;
   margin: 0 0 14px;
 }
 

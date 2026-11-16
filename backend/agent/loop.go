@@ -1,9 +1,10 @@
-// Package agent is the Assistant: Foundry's own agent, which a person talks
-// to in the site. Each turn runs a model (package llm) over the thread's
-// transcript with a closed list of Foundry's tools (Tools), acting as the
-// person through a host's session (integration.SessionHost). It changes
-// nothing itself: what it prepares, the person runs with a click
-// (integration.ConfirmByPerson, actionSink).
+// Package agent is Founder (the Assistant in Go's names): Foundry's own
+// agent, which a person talks to in the site. Each turn runs a model
+// (package llm) over the thread's transcript with a closed list of Foundry's
+// tools (Tools), acting as the person through a host's session
+// (integration.SessionHost). It changes nothing itself: what it prepares, the
+// person runs with a click (integration.ConfirmByPerson, actionSink), but for
+// a new dashboard their message asked for, which runs at once (autoRun).
 package agent
 
 import (
@@ -21,10 +22,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/ai"
+	"github.com/helixdb/helix-foundry/backend/automation"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/integration"
+	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
 	"github.com/helixdb/helix-foundry/backend/ports"
@@ -71,10 +75,17 @@ type Store interface {
 	GetFoundryAgentAction(ctx context.Context, workspaceID, id string) (*model.FoundryAgentAction, error)
 	GetFoundryAgentActionByPayload(ctx context.Context, turnID, payloadHash string) (*model.FoundryAgentAction, error)
 	FinishFoundryAgentAction(ctx context.Context, id string, end model.FoundryAgentActionEnd, continuation *model.FoundryAgentTurn, firstEvent json.RawMessage) error
+	// MarkFoundryAutomationCause marks a sync or a load an automation's
+	// Assistant step started as its run's.
+	MarkFoundryAutomationCause(ctx context.Context, runID string, job model.FoundryAutomationJob) error
 	GetFoundryAutomationRun(ctx context.Context, workspaceID, id string) (*model.FoundryAutomationRun, error)
 	ListFoundryAutomationRunNodes(ctx context.Context, runID string) ([]*model.FoundryAutomationRunNode, error)
 	GetFoundryAutomationWorkflowRun(ctx context.Context, automationRunID, ontologyID string) (*model.FoundryWorkflowRun, error)
 	StartFoundryAutomationWorkflowRun(ctx context.Context, start model.FoundryAutomationWorkflowStart) (*model.FoundryWorkflowRun, error)
+	GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error)
+	RecordFoundryAgentThreadGrants(ctx context.Context, workspaceID, id string, granted *model.FoundryAgentThreadGrants) error
+	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
+	ListFoundryAccessGrants(ctx context.Context, workspaceID string, principals []access.Principal) ([]model.FoundryAccessGrant, error)
 }
 
 // Resolver is where a workspace's model calls go; *ai.Resolver resolves it.
@@ -132,10 +143,137 @@ type Attempt struct {
 	Stop StopReason
 }
 
+// Reach is how much of its workspace a person's turn acts on, read each
+// attempt (reachOf). The zero Reach is the narrower one: a sink that never
+// learned it changes nothing.
+type Reach uint8
+
+const (
+	// ReachGrants is a restricted member's: Founder reads and asks only,
+	// with GranteeTools, and the API narrows every call to their grants.
+	ReachGrants Reach = iota
+	// ReachWorkspace is everyone else's: Tools, and cards for what the
+	// person may do.
+	ReachWorkspace
+)
+
+// tools are the tools a turn of r may offer its model.
+func (r Reach) tools() map[string]bool {
+	if r == ReachWorkspace {
+		return Tools
+	}
+	return GranteeTools
+}
+
+// reachOf is the session's person's Reach in workspaceID now: ReachGrants
+// exactly when Foundry's API reads them as a grantee there (restricted, and
+// not since made an owner or admin), so the worker and the API decide alike.
+// A read that fails fails the attempt, to retry, before any tool is offered.
+func reachOf(session integration.Session, workspaceID string) (Reach, error) {
+	mine, err := session.Service.Foundry.GetMyFoundryAccess(session.Ctx, &foundryv1.GetMyFoundryAccessRequest{WorkspaceId: workspaceID})
+	switch {
+	case err != nil:
+		return ReachGrants, &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
+	case mine.GetGrantee():
+		return ReachGrants, nil
+	}
+	return ReachWorkspace, nil
+}
+
+// threadReach records the turn's Reach on its thread, as the API reads it
+// (model.FoundryAgentThread.Granted), before anything of the turn runs and
+// around each tool call of a restricted member's (turnRun.reachAround): a
+// whole view's run makes the thread no restricted member's, for good; a
+// restricted member's runs only while they hold every grant the thread ran
+// under (else its transcript holds what they may no longer read: it fails for
+// good) and adds what they hold now, which it returns. A thread begun with the
+// whole view fails the attempt to retry, as a role that couldn't be read
+// reads as restricted until it can; so does a read or write that fails.
+func threadReach(ctx context.Context, db Store, turn *model.FoundryAgentTurn, reach Reach) ([]access.Target, error) {
+	retry := func(err error) error {
+		return &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
+	}
+	if reach == ReachWorkspace {
+		if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID, nil); err != nil {
+			return nil, retry(err)
+		}
+		return nil, nil
+	}
+	thread, err := db.GetFoundryAgentThread(ctx, turn.WorkspaceID, turn.ThreadID)
+	if err != nil {
+		return nil, retry(err)
+	}
+	teams, err := db.FoundryTeamsOf(ctx, turn.WorkspaceID, turn.UserID)
+	if err != nil {
+		return nil, retry(err)
+	}
+	principals := []access.Principal{{Kind: access.PrincipalUser, ID: turn.UserID}}
+	for _, team := range teams {
+		principals = append(principals, access.Principal{Kind: access.PrincipalTeam, ID: team})
+	}
+	grants, err := db.ListFoundryAccessGrants(ctx, turn.WorkspaceID, principals)
+	if err != nil {
+		return nil, retry(err)
+	}
+	targets := make([]access.Target, len(grants))
+	for i, g := range grants {
+		targets[i] = g.Target
+	}
+	switch {
+	case thread.Granted == nil:
+		return nil, &Failure{Message: "This conversation began with the workspace's whole view, which your access doesn't give now: start a new one"}
+	case !access.NewGrants(targets).Holds(thread.Granted.Targets):
+		return nil, &Failure{Message: "This conversation holds what your access no longer lets you read: start a new one", Permanent: true}
+	}
+	if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID, &model.FoundryAgentThreadGrants{Targets: targets}); err != nil {
+		return nil, retry(err)
+	}
+	return targets, nil
+}
+
+// reachAround runs call, a restricted member's tool call, between two reads
+// of their reach and grants, each recorded on the thread (threadReach): the
+// API reads every call as they are at that moment, so a call during which
+// they were made an owner or admin, or their grants changed, may have read
+// what the thread's grants don't hold. Such a call makes the thread the whole
+// view's and fails the turn for good, before its result reaches the model or
+// the person.
+func (t *turnRun) reachAround(ctx context.Context, call func()) error {
+	read := func() (Reach, []access.Target, error) {
+		reach, err := reachOf(t.session, t.turn.WorkspaceID)
+		if err != nil {
+			return reach, nil, err
+		}
+		targets, err := threadReach(ctx, t.r.DB, t.turn, reach)
+		return reach, targets, err
+	}
+	before, held, err := read()
+	if err != nil {
+		return err
+	}
+	call()
+	after, holds, err := read()
+	if err != nil {
+		return err
+	}
+	same := before == after && access.NewGrants(held).Holds(holds) && access.NewGrants(holds).Holds(held)
+	if same {
+		return nil
+	}
+	if err := t.r.DB.RecordFoundryAgentThreadGrants(ctx, t.turn.WorkspaceID, t.turn.ThreadID, nil); err != nil {
+		return &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
+	}
+	return &Failure{Message: "Your access changed while Founder was answering: start a new conversation", Permanent: true}
+}
+
 // turnRun is one attempt's state.
 type turnRun struct {
 	r    *Runner
 	turn *model.FoundryAgentTurn
+	// session is the person's, which every tool call runs as.
+	session integration.Session
+	// reach is the turn's person's, read this attempt.
+	reach Reach
 	// automation is an automation's turn's step, and uses its run's uses of
 	// ontologies; both nil for a person's turn.
 	automation *automationStep
@@ -162,8 +300,11 @@ type turnRun struct {
 // Run runs an attempt of turn:
 //  1. resolve the workspace's provider and its ask model, which the turn runs
 //     on, unless the setting's tool check found the Assistant can't;
-//  2. open the person's session, confirming as the person, and serve its tools
-//     to the model through an in-memory MCP client, Tools alone;
+//  2. open the person's session, confirming as the person, read their Reach,
+//     record it on the thread (threadReach), and serve its tools to the
+//     model through an in-memory MCP client,
+//     Tools alone (GranteeTools for a restricted member, whose turn only
+//     reads and asks; an automation's fails for good);
 //  3. read the thread's transcript, adding the turn's own message once;
 //  4. call the model and run the tools it calls, committing each message and
 //     its events before the next call, until it stops, or the turn reaches
@@ -186,7 +327,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	}
 	bound, err := r.Models(resolved, r.Catalog)
 	if err != nil {
-		return out, &Failure{Message: "The Assistant can't call the workspace's model; an owner can check Settings › AI models.", Permanent: true, Err: err}
+		return out, &Failure{Message: "Founder can't call the workspace's model; an owner can check Settings › AI models.", Permanent: true, Err: err}
 	}
 	sink := &actionSink{db: r.DB, keys: r.Keys, turn: turn, workerID: r.WorkerID, maxPending: r.Cfg.MaxPendingActions, sessions: r.Sessions}
 	var step *automationStep
@@ -205,18 +346,32 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	default:
 		return out, &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
 	}
+	reach, err := reachOf(session, turn.WorkspaceID)
+	if err != nil {
+		return out, err
+	}
+	if step != nil && reach == ReachGrants {
+		// Its owner is now a restricted member, who runs no automation.
+		return out, &Failure{Message: "The workflow's owner now reads only through source grants; an owner or admin can take it over", Permanent: true}
+	}
+	if _, err := threadReach(ctx, r.DB, turn, reach); err != nil {
+		return out, err
+	}
+	// Before the tools register: the prepare tool reads what the sink allows.
+	sink.reach = reach
 	// A card is drawn as its person reads the workspace.
 	sink.cards = SessionCards(r.DB, r.Databases, session, turn.WorkspaceID)
-	t := &turnRun{r: r, turn: turn, automation: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out, asked: turn.Asked != nil}
+	t := &turnRun{r: r, turn: turn, session: session, reach: reach, automation: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out,
+		asked: turn.Asked != nil}
 	if step != nil {
 		t.uses = NewAutomationUses(r.DB, step.run, step.name, step.spec)
 	}
-	client, offered, err := serve(session, func(server *mcp.Server) {
+	client, offered, err := serve(session, reach.tools(), func(server *mcp.Server) {
 		t.reportTool(server)
-		asker{db: r.DB, session: session, turn: turn, workerID: r.WorkerID}.register(server)
+		asker{db: r.DB, session: session, turn: turn, workerID: r.WorkerID, reach: reach}.register(server)
 	})
 	if err != nil {
-		return out, &Failure{Message: "The Assistant's tools couldn't start; Helix will retry", Err: err}
+		return out, &Failure{Message: "Founder's tools couldn't start; Helix will retry", Err: err}
 	}
 	defer func() { _ = client.Close() }()
 	t.client, t.offered = client, offered
@@ -247,7 +402,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 		// server that loads the window cuts what passes it without a word.
 		room := (bound.Window-maxOutput)*3/4 - t.fixedTokens
 		if room < minContextTokens {
-			return out, &Failure{Message: fmt.Sprintf("The model's context window, %d tokens, is too small for the Assistant. An owner can choose a larger one in Settings › AI models.", bound.Window),
+			return out, &Failure{Message: fmt.Sprintf("The model's context window, %d tokens, is too small for Founder. An owner can choose a larger one in Settings › AI models.", bound.Window),
 				Permanent: true, Err: fmt.Errorf("window %d leaves %d tokens", bound.Window, room)}
 		}
 		t.budget = min(t.budget, room)
@@ -266,10 +421,10 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 }
 
 // serve puts the session's tools, and own's, on a server of their own,
-// Tools alone (toolServer), and connects a client to it in memory. offered
+// allowed alone (toolServer), and connects a client to it in memory. offered
 // is what the client lists.
-func serve(session integration.Session, own func(*mcp.Server)) (*mcp.ClientSession, map[string]*mcp.Tool, error) {
-	server, offered, err := toolServer(session, own)
+func serve(session integration.Session, allowed map[string]bool, own func(*mcp.Server)) (*mcp.ClientSession, map[string]*mcp.Tool, error) {
+	server, offered, err := toolServer(session, own, allowed)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -285,9 +440,9 @@ func serve(session integration.Session, own func(*mcp.Server)) (*mcp.ClientSessi
 }
 
 // toolServer is a server of the session's tools, and own's (nil for none),
-// Tools alone, and those tools by name: every other tool the session
-// registers is removed before anyone lists them.
-func toolServer(session integration.Session, own func(*mcp.Server)) (*mcp.Server, map[string]*mcp.Tool, error) {
+// allowed alone (Tools, or GranteeTools), and those tools by name: every
+// other tool the session registers is removed before anyone lists them.
+func toolServer(session integration.Session, own func(*mcp.Server), allowed map[string]bool) (*mcp.Server, map[string]*mcp.Tool, error) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "helix-foundry-assistant", Version: PromptVersion}, nil)
 	session.Service.AddTools(server, session.Identity)
 	if session.HostTools != nil {
@@ -316,7 +471,7 @@ func toolServer(session integration.Session, own func(*mcp.Server)) (*mcp.Server
 	var outside []string
 	offered := map[string]*mcp.Tool{}
 	for _, tool := range listed.Tools {
-		if Tools[tool.Name] {
+		if allowed[tool.Name] {
 			offered[tool.Name] = tool
 		} else {
 			outside = append(outside, tool.Name)
@@ -365,12 +520,12 @@ func openingText(ctx context.Context, db Store, turn *model.FoundryAgentTurn) (s
 		}
 		return actionResultText(ActionResult{ActionID: a.ID, Operation: a.Operation, Status: string(a.Status), Result: a.Result, Error: deref(a.Error)}), nil
 	}
-	return "", &Failure{Message: "The turn is of no kind the Assistant runs", Permanent: true, Err: fmt.Errorf("kind %q", turn.Kind)}
+	return "", &Failure{Message: "The turn is of no kind Founder runs", Permanent: true, Err: fmt.Errorf("kind %q", turn.Kind)}
 }
 
 // page is the turn's page context as the model is told it: each id the
-// workspace's, with the ontology's and the dashboard's names; nil when it
-// names nothing that is.
+// workspace's, with the ontology's and the dashboard's names, and the
+// person's time zone when it is one; nil when it names nothing that is.
 func page(ctx context.Context, db Reads, turn *model.FoundryAgentTurn) *shownPage {
 	var p PageContext
 	if len(turn.PageContext) == 0 || json.Unmarshal(turn.PageContext, &p) != nil {
@@ -393,6 +548,9 @@ func page(ctx context.Context, db Reads, turn *model.FoundryAgentTurn) *shownPag
 		}
 	}
 	out.CreatingAutomation = p.NewAutomation
+	if _, err := automation.Zone(p.TimeZone); err == nil {
+		out.TimeZone = p.TimeZone
+	}
 	if out == (shownPage{}) {
 		return nil
 	}
@@ -493,7 +651,7 @@ func (t *turnRun) call(ctx context.Context, messages []llm.Message) (llm.Message
 		if err != nil {
 			var refused *llm.Error
 			if errors.As(err, &refused) && !refused.Retryable() {
-				message := "The model provider refused the Assistant's call"
+				message := "The model provider refused Founder's call"
 				if refused.Kind == llm.ErrAuth {
 					message = "The model provider refused the workspace's key. An owner can check it in Settings › AI models."
 				}
@@ -585,11 +743,11 @@ func (t *turnRun) said(ctx context.Context, answer llm.Message, streamed bool) e
 func checkFailure(check ai.AssistantCheck, provider, model string) string {
 	switch check {
 	case ai.AssistantAuth:
-		return provider + " refused the workspace's key for the Assistant. An owner can check it in Settings › AI models."
+		return provider + " refused the workspace's key for Founder. An owner can check it in Settings › AI models."
 	case ai.AssistantNoToolCall:
-		return "The workspace's model, " + model + ", doesn't call tools, which the Assistant needs. An owner can choose another in Settings › AI models."
+		return "The workspace's model, " + model + ", doesn't call tools, which Founder needs. An owner can choose another in Settings › AI models."
 	default:
-		return provider + " refused the Assistant's calls to " + model + ". An owner can choose another model in Settings › AI models."
+		return provider + " refused Founder's calls to " + model + ". An owner can choose another model in Settings › AI models."
 	}
 }
 
@@ -635,14 +793,27 @@ func (t *turnRun) runTools(ctx context.Context, uses []llm.ToolUse) error {
 		if err := t.event(ctx, ToolCalled{ToolUseID: use.ID, Name: use.Name, Title: t.title(use.Name), Input: use.Input}); err != nil {
 			return err
 		}
-		content, output, failed := t.callTool(ctx, use, tool != nil)
+		var content string
+		var output any
+		var failed bool
+		run := func() { content, output, failed = t.callTool(ctx, use, tool != nil) }
+		if t.reach == ReachGrants && tool != nil {
+			if err := t.reachAround(ctx, run); err != nil {
+				return err
+			}
+		} else {
+			run()
+		}
 		shown := ToolReturned{ToolUseID: use.ID, Name: use.Name, IsError: failed}
 		if failed {
 			shown.Error = content
-		} else if raw, err := json.Marshal(output); err == nil && len(raw) <= maxResultBytes {
-			shown.Output = json.RawMessage(raw)
 		} else {
-			shown.Truncated = true
+			if raw, err := json.Marshal(output); err == nil && len(raw) <= maxResultBytes {
+				shown.Output = json.RawMessage(raw)
+			} else {
+				shown.Truncated = true
+			}
+			shown.Question = questionOf(use.Name, use.Input, output)
 		}
 		if err := t.event(ctx, shown); err != nil {
 			return err

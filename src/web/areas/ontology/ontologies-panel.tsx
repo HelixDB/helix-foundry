@@ -86,9 +86,9 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
   // grantee's is Records), then Connections: the connections and documents
   // it reads (the Connectors area's), marked on a document's page too; then
   // Review: what its current load couldn't decide (Facts) and what audits
-  // of it found the ontology lacks (Ontology); then Workflows, its
-  // agents' tasks and what their runs read and wrote, for anyone but a
-  // grantee without the Workflows permission. Ask, which reads a load, is a
+  // of it found the ontology lacks (Ontology); then Usage, its use cases
+  // (its agents' tasks) and what their runs read and wrote, for anyone but a
+  // grantee without the Usage permission. Ask, which reads a load, is a
   // section of its own.
   const overview: NavChild = {
     to: paths.ontology(open),
@@ -249,7 +249,7 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                           )}
                           aria-current={onWorkflowsList ? "page" : undefined}
                         >
-                          <span>Workflows</span>
+                          <span>Usage</span>
                         </Link>
                       </li>
                     )}

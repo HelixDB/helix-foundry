@@ -35,7 +35,7 @@ const foundryAutomationColumns = `id, workspace_id, owner_user_id, name, descrip
 const foundryAutomationRunColumns = `id, automation_id, workspace_id, owner_user_id, spec_revision, trigger_key, trigger_event, status, error,
        thread_id, lease_owner, lease_until, attempts, next_attempt_at, usd_micros, created_at, started_at, finished_at`
 
-const foundryAutomationNodeColumns = `run_id, node_id, status, output, error, turn_id, notification_id, usd_micros, started_at, finished_at`
+const foundryAutomationNodeColumns = `run_id, node_id, status, output, error, turn_id, notification_id, job_id, usd_micros, started_at, finished_at`
 
 // foundryAutomationEventKinds are the triggers that find ended work.
 const foundryAutomationEventKinds = `('sync_finished', 'load_ready', 'document_arrived', 'generation_finished')`
@@ -70,7 +70,7 @@ func (s *mysqlDB) CreateFoundryAutomation(ctx context.Context, a *model.FoundryA
 		}
 		if count >= max {
 			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationLimit,
-				Detail: fmt.Sprintf("the workspace has %d automations, as many as it may; delete one first", count)}
+				Detail: fmt.Sprintf("the workspace has %d workflows, as many as it may; delete one first", count)}
 		}
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_automations
   (id, workspace_id, owner_user_id, name, description, spec, trigger_kind, trigger_target, status, client_token)
@@ -353,10 +353,10 @@ func (s *mysqlDB) UpdateFoundryAutomation(ctx context.Context, workspaceID, id, 
 func ownsFoundryAutomation(a *model.FoundryAutomation, ownerUserID string, expected int64) error {
 	switch {
 	case a.OwnerUserID != ownerUserID:
-		return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner changes an automation"}
+		return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner changes a workflow"}
 	case a.Revision != expected:
 		return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationChanged,
-			Detail: fmt.Sprintf("the automation is at revision %d, not %d: read it again", a.Revision, expected)}
+			Detail: fmt.Sprintf("the workflow is at revision %d, not %d: read it again", a.Revision, expected)}
 	}
 	return nil
 }
@@ -412,11 +412,11 @@ func (s *mysqlDB) PauseFoundryAutomation(ctx context.Context, workspaceID, id st
 		case err != nil:
 			return err
 		case a.OwnerUserID != by.UserID && !by.Manager:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, pauses an automation"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, pauses a workflow"}
 		case a.Status == model.FoundryAutomationPaused:
 			return nil
 		case a.Status != model.FoundryAutomationActive:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotActive, Detail: "the automation waits for its owner's approval, so it isn't running"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotActive, Detail: "the workflow waits for its owner's approval, so it isn't running"}
 		}
 		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_automations
 SET status='paused', paused_reason='person', paused_by_user_id=?, paused_at=NOW(6), next_fire_at=NULL, cursor_at=NULL, cursor_id='', updated_at=NOW(6)
@@ -441,11 +441,11 @@ func (s *mysqlDB) ResumeFoundryAutomation(ctx context.Context, workspaceID, id, 
 		case err != nil:
 			return err
 		case a.OwnerUserID != ownerUserID:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner resumes an automation: it runs as them"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner resumes a workflow: it runs as them"}
 		case a.Status == model.FoundryAutomationActive:
 			return nil
 		case a.Status == model.FoundryAutomationNeedsApproval:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationUnapproved, Detail: "the automation's changes wait for your approval: approve them to run it"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationUnapproved, Detail: "the workflow's changes wait for your approval: approve them to run it"}
 		case (next != nil) != (a.TriggerKind == "schedule"):
 			return fmt.Errorf("resume foundry automation %s: a schedule, and only a schedule, has its first time", id)
 		}
@@ -473,14 +473,14 @@ func (s *mysqlDB) DeleteFoundryAutomation(ctx context.Context, workspaceID, id s
 		case err != nil:
 			return err
 		case a.OwnerUserID != by.UserID && !by.Manager:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, deletes an automation"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, deletes a workflow"}
 		}
-		if err := tx.cancelFoundryAutomationTurns(ctx, `SELECT id FROM foundry_automation_runs WHERE live_automation=?`, id, "the automation was deleted"); err != nil {
+		if err := tx.cancelFoundryAutomationTurns(ctx, `SELECT id FROM foundry_automation_runs WHERE live_automation=?`, id, "the workflow was deleted"); err != nil {
 			return err
 		}
 		// Its workflow runs first, while live_automation still names its live run.
 		if err := tx.finishFoundryAutomationWorkflowRuns(ctx, `SELECT id FROM foundry_automation_runs WHERE live_automation=?`, id,
-			"The automation was deleted before its run finished.", false); err != nil {
+			"The workflow was deleted before its run finished.", false); err != nil {
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_automation_runs
@@ -598,11 +598,11 @@ FROM foundry_automation_runs WHERE automation_id=? AND trigger_key=?`, a.ID, run
 		}
 		switch {
 		case a.OwnerUserID != run.OwnerUserID:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner runs an automation: it runs as them"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotOwner, Detail: "only its owner runs a workflow: it runs as them"}
 		case a.Status == model.FoundryAutomationNeedsApproval:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationUnapproved, Detail: "the automation's changes wait for its owner's approval"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationUnapproved, Detail: "the workflow's changes wait for its owner's approval"}
 		case a.SpecRevision != run.SpecRevision:
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationChanged, Detail: "the automation's steps changed meanwhile: run it again"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationChanged, Detail: "the workflow's steps changed meanwhile: run it again"}
 		}
 		refusal, err := tx.foundryAutomationRoom(ctx, a, limits)
 		switch {
@@ -635,10 +635,10 @@ func (s *mysqlDB) foundryAutomationRoom(ctx context.Context, a *model.FoundryAut
 	}
 	switch {
 	case live > 0:
-		return &model.FoundryAutomationRefusal{Reason: model.FoundryAutomationBusy, Detail: "a run of the automation is still going"}, nil
+		return &model.FoundryAutomationRefusal{Reason: model.FoundryAutomationBusy, Detail: "a run of the workflow is still going"}, nil
 	case today >= limits.RunsPerDay:
 		return &model.FoundryAutomationRefusal{Reason: model.FoundryAutomationRunsPerDay,
-			Detail: fmt.Sprintf("the workspace's automations ran %d times in the last 24 hours, as many as they may", today)}, nil
+			Detail: fmt.Sprintf("the workspace's workflows ran %d times in the last 24 hours, as many as they may", today)}, nil
 	}
 	return nil, nil
 }
@@ -728,7 +728,7 @@ func (s *mysqlDB) CancelFoundryAutomationRun(ctx context.Context, workspaceID, i
 			return err
 		}
 		if a.OwnerUserID != by.UserID && !by.Manager {
-			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, cancels an automation's run"}
+			return model.FoundryAutomationRefusal{Reason: model.FoundryAutomationNotAllowed, Detail: "only its owner, or an owner or admin, cancels a workflow's run"}
 		}
 		var status string
 		if err := tx.db.QueryRowContext(ctx, `SELECT status FROM foundry_automation_runs WHERE id=? FOR UPDATE`, id).Scan(&status); err != nil {
@@ -752,7 +752,7 @@ SET status='failed', error='The run was cancelled.', finished_at=NOW(6) WHERE ru
 SET status='cancelled', error='Cancelled by a person.', lease_owner=NULL, lease_until=NULL, finished_at=NOW(6) WHERE id=?`, id); err != nil {
 			return err
 		}
-		return tx.finishFoundryAutomationWorkflowRuns(ctx, `?`, id, "A person cancelled the automation's run before it finished.", false)
+		return tx.finishFoundryAutomationWorkflowRuns(ctx, `?`, id, "A person cancelled the workflow's run before it finished.", false)
 	})
 	if err != nil {
 		return nil, err
@@ -809,33 +809,42 @@ ORDER BY checked_at IS NOT NULL, checked_at, id LIMIT ?`, every.Microseconds(), 
 // time before it commit first: the cursor then never passes a row that
 // becomes visible later with an earlier end time. Rows a fire passes without
 // a run (another outcome, a load that failed) move the cursor all the same.
+//
+// A sync or a load an automation's run started comes with that run
+// (FoundryAutomationEnded.Cause), read by its primary key, so the trigger can
+// tell work its own automation set off.
 func (s *mysqlDB) FindFoundryAutomationEnded(ctx context.Context, a *model.FoundryAutomation, settle time.Duration, limit int) ([]model.FoundryAutomationEnded, error) {
 	if a.Status != model.FoundryAutomationActive || a.Cursor == nil || a.TriggerTarget == nil {
 		return nil, fmt.Errorf("foundry automation %s watches nothing", a.ID)
 	}
+	// Work no automation starts has no cause.
+	const caused = `w.started_by_automation_run_id, w.automation_chain_depth, r.automation_id,
+  JSON_EXTRACT(r.trigger_event, '$.caused_by_automations')`
+	const causeless = `NULL, NULL, NULL, NULL`
+	const byRun = ` LEFT JOIN foundry_automation_runs r ON r.id = w.started_by_automation_run_id`
 	var q string
 	switch a.TriggerKind {
 	case "sync_finished":
-		q = `SELECT finished_at, id, status, rows_synced FROM connector_syncs
-WHERE connector_id=? AND workspace_id=? AND created_at >= ? AND status IN ('succeeded', 'failed')`
+		q = `SELECT w.finished_at, w.id, w.status, w.rows_synced, ` + caused + ` FROM connector_syncs w` + byRun + `
+WHERE w.connector_id=? AND w.workspace_id=? AND w.created_at >= ? AND w.status IN ('succeeded', 'failed')`
 	case "load_ready":
-		q = `SELECT finished_at, id, status, NULL FROM foundry_loads
-WHERE ontology_id=? AND workspace_id=? AND created_at >= ? AND finished_at IS NOT NULL`
+		q = `SELECT w.finished_at, w.id, w.status, NULL, ` + caused + ` FROM foundry_loads w` + byRun + `
+WHERE w.ontology_id=? AND w.workspace_id=? AND w.created_at >= ? AND w.finished_at IS NOT NULL`
 	case "generation_finished":
-		q = `SELECT finished_at, id, status, NULL FROM foundry_ontology_generations
-WHERE ontology_id=? AND workspace_id=? AND created_at >= ? AND status IN ('succeeded', 'failed') AND JSON_EXTRACT(input, '$.revise') IS NULL`
+		q = `SELECT w.finished_at, w.id, w.status, NULL, ` + causeless + ` FROM foundry_ontology_generations w
+WHERE w.ontology_id=? AND w.workspace_id=? AND w.created_at >= ? AND w.status IN ('succeeded', 'failed') AND JSON_EXTRACT(w.input, '$.revise') IS NULL`
 	case "document_arrived":
-		q = `SELECT uploaded_at AS finished_at, id, status, NULL FROM foundry_documents
-WHERE set_id=? AND workspace_id=? AND created_at >= ? AND status='uploaded' AND uploaded_at IS NOT NULL`
+		q = `SELECT w.uploaded_at AS finished_at, w.id, w.status, NULL, ` + causeless + ` FROM foundry_documents w
+WHERE w.set_id=? AND w.workspace_id=? AND w.created_at >= ? AND w.status='uploaded' AND w.uploaded_at IS NOT NULL`
 	default:
 		return nil, fmt.Errorf("foundry automation %s: no ended work of trigger %q", a.ID, a.TriggerKind)
 	}
-	end := "finished_at"
+	end := "w.finished_at"
 	if a.TriggerKind == "document_arrived" {
-		end = "uploaded_at"
+		end = "w.uploaded_at"
 	}
-	q += ` AND ` + end + ` <= NOW(6) - INTERVAL ? MICROSECOND AND (` + end + ` > ? OR (` + end + ` = ? AND id > ?))
-ORDER BY ` + end + `, id LIMIT ?`
+	q += ` AND ` + end + ` <= NOW(6) - INTERVAL ? MICROSECOND AND (` + end + ` > ? OR (` + end + ` = ? AND w.id > ?))
+ORDER BY ` + end + `, w.id LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, q, *a.TriggerTarget, a.WorkspaceID, a.Cursor.At.Add(-foundryAutomationLookBack), settle.Microseconds(),
 		a.Cursor.At, a.Cursor.At, a.Cursor.ID, limit)
 	if err != nil {
@@ -843,12 +852,23 @@ ORDER BY ` + end + `, id LIMIT ?`
 	}
 	return scanAll(rows, func(r rowScanner) (model.FoundryAutomationEnded, error) {
 		var e model.FoundryAutomationEnded
-		var rowsSynced sql.NullInt64
-		if err := r.Scan(&e.Cursor.At, &e.Cursor.ID, &e.Outcome, &rowsSynced); err != nil {
+		var rowsSynced, depth sql.NullInt64
+		var runID, automationID, chain sql.NullString
+		if err := r.Scan(&e.Cursor.At, &e.Cursor.ID, &e.Outcome, &rowsSynced, &runID, &depth, &automationID, &chain); err != nil {
 			return e, err
 		}
 		if rowsSynced.Valid {
 			e.Rows = &rowsSynced.Int64
+		}
+		if !runID.Valid {
+			return e, nil
+		}
+		// A run deleted since (pruned, or its automation's) leaves the depth.
+		e.Cause = &model.FoundryAutomationCause{RunID: runID.String, AutomationID: automationID.String, Depth: int(depth.Int64)}
+		if chain.Valid {
+			if err := json.Unmarshal([]byte(chain.String), &e.Cause.Chain); err != nil {
+				return e, fmt.Errorf("foundry automation run %s: its chain: %w", runID.String, err)
+			}
 		}
 		return e, nil
 	})
@@ -872,6 +892,9 @@ func (s *mysqlDB) FireFoundryAutomation(ctx context.Context, f model.FoundryAuto
 	model.FoundryAutomationFired, error) {
 	if f.Run != nil && (f.Run.ID == "" || f.Run.TriggerKey == "" || len(f.Run.TriggerEvent) == 0 || f.TriggerNodeID == "") {
 		return "", fmt.Errorf("foundry automation run is incomplete")
+	}
+	if f.Skip != "" && f.Run == nil {
+		return "", fmt.Errorf("foundry automation fire skips no run")
 	}
 	var fired model.FoundryAutomationFired
 	err := s.WithTx(ctx, func(txDB Store) error {
@@ -926,6 +949,15 @@ func (s *mysqlDB) FireFoundryAutomation(ctx context.Context, f model.FoundryAuto
 			fired = model.FoundryAutomationFiredMoved
 			return moveOn()
 		}
+		if f.Skip != "" {
+			// Work that would loop is recorded skipped at once: it never
+			// waits for a live run, nor counts toward the day's.
+			fired = model.FoundryAutomationFiredSkipped
+			if err := tx.insertFoundryAutomationRun(ctx, f.Run, string(model.FoundryAutomationRunSkipped), f.Skip, "", nil); err != nil {
+				return err
+			}
+			return moveOn()
+		}
 		refusal, err := tx.foundryAutomationRoom(ctx, a, limits)
 		if err != nil {
 			return err
@@ -940,7 +972,7 @@ func (s *mysqlDB) FireFoundryAutomation(ctx context.Context, f model.FoundryAuto
 			fired = model.FoundryAutomationFiredSkipped
 			why := "Skipped: the run before it was still going."
 			if refusal.Reason == model.FoundryAutomationRunsPerDay {
-				why = "Skipped: the workspace's automations ran as many times as they may in 24 hours."
+				why = "Skipped: the workspace's workflows ran as many times as they may in 24 hours."
 			}
 			if err := tx.insertFoundryAutomationRun(ctx, f.Run, string(model.FoundryAutomationRunSkipped), why, "", nil); err != nil {
 				return err
@@ -1111,6 +1143,53 @@ SET status=?, output=?, error=NULLIF(?, ''), notification_id=?, usd_micros=?, fi
 		_, err := tx.db.ExecContext(ctx, `UPDATE foundry_automation_runs SET usd_micros=usd_micros+? WHERE id=?`, end.USDMicros, runID)
 		return err
 	})
+}
+
+// AwaitFoundryAutomationJob records that the action step of the run
+// workerID holds, executing, started job and now waits for it: running, with
+// job's id and output (what the step shows while it waits), and job marked
+// as started by the run (MarkFoundryAutomationCause), in one write. A step
+// that isn't executing is ErrConflict.
+func (s *mysqlDB) AwaitFoundryAutomationJob(ctx context.Context, runID, workerID, nodeID string, job model.FoundryAutomationJob, output json.RawMessage) error {
+	return s.WithTx(ctx, func(txDB Store) error {
+		tx := txDB.(*mysqlDB)
+		if err := tx.ownFoundryAutomationRun(ctx, runID, workerID); err != nil {
+			return err
+		}
+		res, err := tx.db.ExecContext(ctx, `UPDATE foundry_automation_run_nodes SET status='running', job_id=?, output=?
+WHERE run_id=? AND node_id=? AND status='executing'`, job.ID, nullJSON(output), runID, nodeID)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			if err != nil {
+				return err
+			}
+			return ErrConflict
+		}
+		return tx.MarkFoundryAutomationCause(ctx, runID, job)
+	})
+}
+
+// MarkFoundryAutomationCause marks job, a sync or a load in the run's
+// workspace, as started by the automation run: the run, and a chain depth
+// one more than the run's (its trigger event's chain_depth, 0 when it has
+// none). Work already marked, or of another workspace, is left as it is.
+func (s *mysqlDB) MarkFoundryAutomationCause(ctx context.Context, runID string, job model.FoundryAutomationJob) error {
+	var table string
+	switch job.Kind {
+	case model.FoundryAutomationJobSync:
+		table = "connector_syncs"
+	case model.FoundryAutomationJobLoad:
+		table = "foundry_loads"
+	default:
+		return fmt.Errorf("mark foundry automation cause: no work of kind %q", job.Kind)
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE `+table+` w JOIN foundry_automation_runs r ON r.id=? AND r.workspace_id=w.workspace_id
+SET w.started_by_automation_run_id=r.id,
+    w.automation_chain_depth=COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(r.trigger_event, '$.chain_depth')) AS SIGNED), 0) + 1
+WHERE w.id=? AND w.started_by_automation_run_id IS NULL`, runID, job.ID)
+	return err
 }
 
 // YieldFoundryAutomationRun hands the run workerID holds back to the queue
@@ -1336,9 +1415,9 @@ func scanFoundryAutomationRun(scanner rowScanner, withSpec bool) (*model.Foundry
 func scanFoundryAutomationRunNode(scanner rowScanner) (*model.FoundryAutomationRunNode, error) {
 	var n model.FoundryAutomationRunNode
 	var status string
-	var output, errText, turn, notification sql.NullString
+	var output, errText, turn, notification, job sql.NullString
 	var finishedAt sql.NullTime
-	if err := scanner.Scan(&n.RunID, &n.NodeID, &status, &output, &errText, &turn, &notification, &n.USDMicros, &n.StartedAt, &finishedAt); err != nil {
+	if err := scanner.Scan(&n.RunID, &n.NodeID, &status, &output, &errText, &turn, &notification, &job, &n.USDMicros, &n.StartedAt, &finishedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -1351,7 +1430,7 @@ func scanFoundryAutomationRunNode(scanner rowScanner) (*model.FoundryAutomationR
 	for _, f := range []struct {
 		src sql.NullString
 		dst **string
-	}{{errText, &n.Error}, {turn, &n.TurnID}, {notification, &n.NotificationID}} {
+	}{{errText, &n.Error}, {turn, &n.TurnID}, {notification, &n.NotificationID}, {job, &n.JobID}} {
 		if f.src.Valid {
 			*f.dst = &f.src.String
 		}

@@ -272,12 +272,6 @@ describe("dashboards' events", () => {
   };
   const calls: [string, () => Promise<unknown>, unknown[], string][] = [
     [
-      "one made from its page",
-      () => createDashboard("ws", { name: "n", clientToken: "t" }, "page"),
-      ["dashboard_created", { from: "page" }],
-      "create",
-    ],
-    [
       "one made from an Analyst answer",
       () => createDashboard("ws", { name: "n", clientToken: "t" }, "analyst"),
       ["dashboard_created", { from: "analyst" }],
@@ -421,7 +415,7 @@ describe("reads that see jobs end", () => {
   });
 });
 
-describe("the Assistant's events", () => {
+describe("Founder's events", () => {
   const action = {
     id: "act_1",
     operation: "create_load",
@@ -475,7 +469,7 @@ describe("the Assistant's events", () => {
     ]);
   });
 
-  it("reports where the Assistant runs once chosen, and its helpers paired and revoked, never when refused", async () => {
+  it("reports where Founder runs once chosen, and its helpers paired and revoked, never when refused", async () => {
     call.mockResolvedValueOnce({ runtime: { runtime: "claude_code" } });
     expect(await setAgentRuntime("ws", "claude_code")).toEqual({
       runtime: "claude_code",

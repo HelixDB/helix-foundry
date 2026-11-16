@@ -423,6 +423,12 @@ func (r *routeRecorder) GetFoundryUsage(_ context.Context, req *foundryv1.GetFou
 	return &foundryv1.FoundryUsageResponse{}, nil
 }
 
+func (r *routeRecorder) ListFoundryAutomationSuggestions(_ context.Context, req *foundryv1.ListFoundryAutomationSuggestionsRequest) (
+	*foundryv1.ListFoundryAutomationSuggestionsResponse, error) {
+	r.got = "ListFoundryAutomationSuggestions " + req.GetWorkspaceId() + " " + req.GetOntologyId()
+	return &foundryv1.ListFoundryAutomationSuggestionsResponse{}, nil
+}
+
 func (r *routeRecorder) GetFoundryEnrichment(_ context.Context, req *foundryv1.GetFoundryEnrichmentRequest) (*foundryv1.FoundryEnrichmentResponse, error) {
 	r.got = "GetFoundryEnrichment " + req.GetWorkspaceId()
 	return &foundryv1.FoundryEnrichmentResponse{}, nil
@@ -553,6 +559,7 @@ func TestFoundryRoutes(t *testing.T) {
 		{http.MethodGet, o + "/ont-1/questions/q-1/events?afterSeq=7", "", "ListFoundryQuestionEvents ws-1 ont-1 q-1/7"},
 		{http.MethodPost, o + "/ont-1/questions/q-1:cancel", `{}`, "CancelFoundryQuestion ws-1 ont-1 q-1"},
 		{http.MethodPost, o + "/ont-1/loads/l-1:stop-enrichment", `{}`, "StopFoundryLoadEnrichment ws-1 ont-1 l-1"},
+		{http.MethodGet, "/v1/workspaces/ws-1/foundry/automation-suggestions?ontologyId=ont-1", "", "ListFoundryAutomationSuggestions ws-1 ont-1"},
 		{http.MethodGet, "/v1/workspaces/ws-1/foundry/usage", "", "GetFoundryUsage ws-1"},
 		{http.MethodGet, "/v1/workspaces/ws-1/foundry/enrichment", "", "GetFoundryEnrichment ws-1"},
 		{http.MethodPatch, "/v1/workspaces/ws-1/foundry/enrichment", `{"enabled":true,"monthlyCreditCap":"50000","noticeVersion":"2026-10"}`,

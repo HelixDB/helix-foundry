@@ -1190,7 +1190,7 @@ describe("a failed test", () => {
   });
 });
 
-describe("the Assistant's tool check", () => {
+describe("Founder's tool check", () => {
   const config = (
     assistantCheck?: wfe.FoundryAiAssistantCheck,
     ask = "gpt-x",
@@ -1201,21 +1201,21 @@ describe("the Assistant's tool check", () => {
     ...(assistantCheck && { assistantCheck }),
   });
 
-  it("says why the Assistant can't run on a setting whose check failed, which still runs the rest", () => {
+  it("says why Founder can't run on a setting whose check failed, which still runs the rest", () => {
     expect(
       AI.assistantCheckText(config("FOUNDRY_AI_ASSISTANT_CHECK_AUTH")),
     ).toBe(
-      "The Assistant can’t run on this setting: OpenAI refused the key on the Assistant’s calls. Drafts, loads and the Analyst still run on it. Check the key to use the Assistant.",
+      "Founder can’t run on this setting: OpenAI refused the key on Founder’s calls. Drafts, loads and questions still run on it. Check the key to use Founder.",
     );
     expect(
       AI.assistantCheckText(config("FOUNDRY_AI_ASSISTANT_CHECK_REFUSED")),
     ).toBe(
-      "The Assistant can’t run on gpt-x: OpenAI refused the Assistant’s calls to it. Drafts, loads and the Analyst still run on it. Choose another model for questions to use the Assistant.",
+      "Founder can’t run on gpt-x: OpenAI refused Founder’s calls to it. Drafts, loads and questions still run on it. Choose another model for questions to use Founder.",
     );
     expect(
       AI.assistantCheckText(config("FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL")),
     ).toBe(
-      "The Assistant can’t run on gpt-x: it answered the Assistant’s test without calling a tool. Drafts, loads and the Analyst still run on it. Choose a model for questions that calls tools to use the Assistant.",
+      "Founder can’t run on gpt-x: it answered Founder’s test without calling a tool. Drafts, loads and questions still run on it. Choose a model for questions that calls tools to use Founder.",
     );
     expect(
       AI.assistantCheckText({
@@ -1223,11 +1223,11 @@ describe("the Assistant's tool check", () => {
         assistantCheck: "FOUNDRY_AI_ASSISTANT_CHECK_REFUSED",
       }),
     ).toBe(
-      "The Assistant can’t run on the Questions model: the provider refused the Assistant’s calls to it. Drafts, loads and the Analyst still run on it. Choose another model for questions to use the Assistant.",
+      "Founder can’t run on the Questions model: the provider refused Founder’s calls to it. Drafts, loads and questions still run on it. Choose another model for questions to use Founder.",
     );
   });
 
-  it("says nothing while the Assistant runs on it: passed, not checked, or a check this site doesn't know", () => {
+  it("says nothing while Founder runs on it: passed, not checked, or a check this site doesn't know", () => {
     expect(
       AI.assistantCheckText(config("FOUNDRY_AI_ASSISTANT_CHECK_PASSED")),
     ).toBeUndefined();

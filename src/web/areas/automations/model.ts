@@ -14,9 +14,12 @@ import type {
   FoundryAutomationOntology,
   FoundryAutomationRun,
   FoundryAutomationRunOntology,
+  FoundryAutomationSuggestionIcon,
+  ListAutomationSuggestionsResponse,
 } from "../../../shared/wfe";
 import { AUTOMATION_REFUSALS } from "../../../shared/wfe";
 import { isRecord } from "../../../shared/json";
+import { zoneOffset, zoneTime } from "../../../shared/time-zone";
 import { ApiError } from "../../api";
 
 // Automations, as pure functions (backend/automation is the contract): an
@@ -267,7 +270,7 @@ function readNode(wire: {
           allow: z.array(z.unknown()).nullish(),
         })
         .safeParse(raw);
-      if (!read.success) return at("an Assistant step is {instruction, allow}");
+      if (!read.success) return at("a Founder step is {instruction, allow}");
       const instruction = read.data.instruction.trim();
       if (!textFits(instruction, 1, LIMITS.instruction))
         return at(
@@ -276,7 +279,7 @@ function readNode(wire: {
       const allow = read.data.allow || [];
       if (allow.length > LIMITS.allow)
         return at(
-          `an Assistant step runs at most ${LIMITS.allow} actions unasked, not ${allow.length}`,
+          `a Founder step runs at most ${LIMITS.allow} actions unasked, not ${allow.length}`,
         );
       const actions: AutomationAction[] = [];
       for (const a of allow) {
@@ -396,12 +399,12 @@ export function parseSpec(raw: string | unknown, name = byId): SpecResult {
   if (wn.length < 2 || wn.length > LIMITS.nodes)
     return {
       ok: false,
-      error: `an automation has a trigger and at least one step, at most ${LIMITS.nodes} nodes in all, not ${wn.length}`,
+      error: `a workflow has a trigger and at least one step, at most ${LIMITS.nodes} nodes in all, not ${wn.length}`,
     };
   if (we.length > LIMITS.edges)
     return {
       ok: false,
-      error: `an automation has at most ${LIMITS.edges} edges, not ${we.length}`,
+      error: `a workflow has at most ${LIMITS.edges} edges, not ${we.length}`,
     };
   const nodes: AutomationNode[] = [];
   for (const w of wn) {
@@ -445,7 +448,7 @@ function checkGraph(
   const triggers = spec.nodes.filter((n) => n.kind === "trigger");
   if (triggers.length !== 1)
     return {
-      error: `an automation has exactly one trigger, not ${triggers.length}`,
+      error: `a workflow has exactly one trigger, not ${triggers.length}`,
     };
   const seen = new Set<string>();
   for (const e of spec.edges) {
@@ -459,7 +462,7 @@ function checkGraph(
       return { error: `${name(e.from)} has an edge to itself`, nodeId: e.from };
     if (to.kind === "trigger")
       return {
-        error: `the trigger ${e.to} starts the automation: no edge goes into it`,
+        error: `the trigger ${e.to} starts the workflow: no edge goes into it`,
       };
     if (seen.has(e.from + "\0" + e.to))
       return {
@@ -501,8 +504,8 @@ function checkGraph(
       return {
         error: `${name(n.id)} can't check ${name(from.id)}: ${
           n.config.check === "answer"
-            ? "an answer is an Assistant step's"
-            : "a count is an Assistant step's, or a document_arrived or sync_finished trigger's"
+            ? "an answer is a Founder step's"
+            : "a count is a Founder step's, or a document_arrived or sync_finished trigger's"
         }`,
         nodeId: n.id,
       };
@@ -557,7 +560,7 @@ function checkGraph(
   const missing = spec.nodes.find((n) => !order.includes(n.id))!;
   return reaches(spec, trigger, missing.id)
     ? {
-        error: `${name(missing.id)} is in a cycle: an automation's edges go one way`,
+        error: `${name(missing.id)} is in a cycle: a workflow's edges go one way`,
         nodeId: missing.id,
       }
     : {
@@ -771,22 +774,29 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const dayName = (d: Weekday) => cap(d);
 
 /**
- * A schedule's times in words, its zone after them unless it is `here`.
+ * A schedule's times in words, in its zone's: a day's and a week's time
+ * name the zone ("New York time"), an hour's minute only in a zone whose
+ * offset isn't whole hours, the one place the minute past differs.
  *
  * @example
- * scheduleText({ kind: "schedule", every: "week", weekday: "monday", at: "09:00", time_zone: "Europe/London" }, "Europe/London");
- * // "every Monday at 09:00"
+ * scheduleText({ kind: "schedule", every: "week", weekday: "monday", at: "09:00", time_zone: "Europe/London" });
+ * // "every Monday at 09:00 London time"
  */
-export function scheduleText(s: ScheduleTrigger, here?: string) {
-  const when =
-    s.every === "hour"
-      ? s.minute === 0
+export function scheduleText(s: ScheduleTrigger) {
+  if (s.every === "hour") {
+    const when =
+      s.minute === 0
         ? "every hour, on the hour"
-        : `every hour at ${s.minute} past`
-      : s.every === "day"
-        ? `every day at ${s.at}`
-        : `every ${dayName(s.weekday)} at ${s.at}`;
-  return s.time_zone === here ? when : `${when} (${s.time_zone})`;
+        : `every hour at ${s.minute} past`;
+    return validZone(s.time_zone) && zoneOffset(s.time_zone).includes(":")
+      ? `${when}, ${zoneTime(s.time_zone)}`
+      : when;
+  }
+  const when =
+    s.every === "day"
+      ? `every day at ${s.at}`
+      : `every ${dayName(s.weekday)} at ${s.at}`;
+  return `${when} ${zoneTime(s.time_zone)}`;
 }
 
 const OUTCOME_WORDS: Record<Outcome, string> = {
@@ -802,10 +812,10 @@ const OUTCOME_WORDS: Record<Outcome, string> = {
  * triggerText({ kind: "sync_finished", connector_id: "c1", outcome: "succeeded" }, { ...NO_NAMES, connector: () => "Stripe" });
  * // "a sync of “Stripe” succeeds"
  */
-export function triggerText(t: AutomationTrigger, names: Names, here?: string) {
+export function triggerText(t: AutomationTrigger, names: Names) {
   switch (t.kind) {
     case "schedule":
-      return scheduleText(t, here);
+      return scheduleText(t);
     case "sync_finished":
       return `a sync of ${quoted(names.connector(t.connector_id), "a connection")} ${OUTCOME_WORDS[t.outcome]}`;
     case "load_ready":
@@ -876,7 +886,7 @@ export function conditionText(
 /** Each kind's name, as the builder offers a new step of it. */
 export const KIND_LABELS: Record<Kind, string> = {
   trigger: "Start",
-  assistant: "Ask the Assistant",
+  assistant: "Ask Founder",
   action: "Sync, load or refresh",
   condition: "Check an answer or a count",
   notify: "Email me",
@@ -884,7 +894,7 @@ export const KIND_LABELS: Record<Kind, string> = {
 /** Each kind's name, as a step's head says it. */
 export const KIND_HEADS: Record<Kind, string> = {
   trigger: "When",
-  assistant: "Assistant",
+  assistant: "Founder",
   action: "Action",
   condition: "If",
   notify: "Email",
@@ -895,21 +905,16 @@ export const KIND_HEADS: Record<Kind, string> = {
  * `email` is whether a notify step emails here (false on a local build,
  * where it only notes the run).
  */
-export function nodeText(
-  n: AutomationNode,
-  names: Names,
-  email: boolean,
-  here?: string,
-) {
+export function nodeText(n: AutomationNode, names: Names, email: boolean) {
   switch (n.kind) {
     case "trigger":
       return n.config.kind === "manual"
         ? "only when you run it"
-        : `when ${triggerText(n.config, names, here)}`;
+        : `when ${triggerText(n.config, names)}`;
     case "assistant":
       return n.config.instruction.trim()
-        ? `ask the Assistant: “${n.config.instruction}”`
-        : "ask the Assistant";
+        ? `ask Founder: “${n.config.instruction}”`
+        : "ask Founder";
     case "action":
       return actionText(n.config, names);
     case "condition":
@@ -929,15 +934,10 @@ export function nodeText(
  * them); a step a condition's false branch leads to says "otherwise".
  *
  * @example
- * sentence(spec, names, true, "UTC");
- * // "Every Monday at 09:00, sync “Stripe”, then ask the Assistant: “…”, then email you what it found."
+ * sentence(spec, names, true);
+ * // "Every Monday at 09:00 UTC, sync “Stripe”, then ask Founder: “…”, then email you what it found."
  */
-export function sentence(
-  spec: AutomationSpec,
-  names: Names,
-  email: boolean,
-  here?: string,
-) {
+export function sentence(spec: AutomationSpec, names: Names, email: boolean) {
   const read = parseSpec(spec);
   // Steps that can't be read yet go as the canvas lays them out, top down.
   const order = read.ok
@@ -952,8 +952,8 @@ export function sentence(
     t.config.kind === "manual"
       ? "When you run it"
       : t.config.kind === "schedule"
-        ? cap(triggerText(t.config, names, here))
-        : `When ${triggerText(t.config, names, here)}`;
+        ? cap(triggerText(t.config, names))
+        : `When ${triggerText(t.config, names)}`;
   const steps = order
     .map((id) => nodeOf(spec, id)!)
     .filter((n) => n.kind !== "trigger");
@@ -961,7 +961,7 @@ export function sentence(
     steps.reduce((text, n, i) => {
       const otherwise = edgesInto(spec, n.id).some((e) => e.branch === "false"),
         after = i > 0 && steps[i - 1]!.kind === "condition" ? ", " : ", then ";
-      return `${text}${i === 0 ? ", " : after}${otherwise ? "otherwise " : ""}${nodeText(n, names, email, here)}`;
+      return `${text}${i === 0 ? ", " : after}${otherwise ? "otherwise " : ""}${nodeText(n, names, email)}`;
     }, head) + "."
   );
 }
@@ -990,7 +990,7 @@ export function incomplete(n: AutomationNode): string | undefined {
         ? n.config.allow?.some((a) => !actionTarget(a))
           ? "Choose what each allowed action acts on"
           : undefined
-        : "Write what the Assistant should do";
+        : "Write what Founder should do";
     case "action":
       return actionTarget(n.config)
         ? undefined
@@ -1006,37 +1006,191 @@ export function incomplete(n: AutomationNode): string | undefined {
 
 // -------------------------------------------------------------- suggestions
 
+/** What a suggestion does, for its icon (FoundryAutomationSuggestionIcon). */
+export type SuggestionIcon =
+  | "briefing"
+  | "watch"
+  | "check"
+  | "alert"
+  | "refresh"
+  | "report";
+/** The hue of a suggestion's icon: `--hf-<tone>-soft` and `-text`. */
+export type SuggestionTone =
+  | "info"
+  | "accent"
+  | "warning"
+  | "danger"
+  | "success"
+  | "neutral";
+export const SUGGESTION_TONE: Record<SuggestionIcon, SuggestionTone> = {
+  briefing: "info",
+  watch: "accent",
+  check: "warning",
+  alert: "danger",
+  refresh: "success",
+  report: "neutral",
+};
+/** A suggestion as the page shows it: a prompt for Founder under its title. */
+export type AutomationSuggestion = {
+  title: string;
+  prompt: string;
+  icon: SuggestionIcon;
+};
+/** A suggestion's limits, in characters, as the WFE writes them. */
+export const SUGGESTION_TITLE_MAX = 32,
+  SUGGESTION_PROMPT_MAX = 400,
+  SUGGESTIONS_MAX = 4;
+
 /**
- * The new-automation page's suggestions: prompts for the Assistant, each an
- * outcome, under its title and the hue of its icon (`--hf-<tone>-soft` and
- * `-text`). A click puts the prompt in the composer; nothing is sent.
+ * The new-automation page's suggestions where the workspace's ontologies
+ * give none (no ontology, no current version, nothing to suggest, or the
+ * WFE couldn't be read): prompts for Founder, each an outcome. A
+ * click puts the prompt in the composer; nothing is sent.
  */
-export const AUTOMATION_SUGGESTIONS = [
+export const AUTOMATION_SUGGESTIONS: readonly AutomationSuggestion[] = [
   {
     title: "Monday briefing",
-    tone: "info",
+    icon: "briefing",
     prompt:
       "Every Monday at 9am, read my data and email me what changed last week: customers won and lost, deals that moved, and anything that needs my attention.",
   },
   {
     title: "Renewal radar",
-    tone: "accent",
+    icon: "watch",
     prompt:
       "Every morning, find customers whose contract renews in the next 30 days and email me each one with its plan, recent activity and open issues.",
   },
   {
     title: "Contract check",
-    tone: "warning",
+    icon: "check",
     prompt:
       "When new contracts are uploaded, compare each against our standard terms (length, price, auto-renewal, liability) and email me the ones that differ, quoting the clause.",
   },
   {
     title: "Churn alert",
-    tone: "danger",
+    icon: "alert",
     prompt:
       "Every day, look for accounts at risk of churning (falling usage, open escalations, missed payments) and, if there are any, email me who and why.",
   },
-] as const;
+];
+
+const ICONS: Record<FoundryAutomationSuggestionIcon, SuggestionIcon> = {
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_UNSPECIFIED: "report",
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_BRIEFING: "briefing",
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH: "watch",
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_CHECK: "check",
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_ALERT: "alert",
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_REFRESH: "refresh",
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_REPORT: "report",
+};
+
+/**
+ * A response's workflow suggestions, read without trust (a model may have
+ * written them): those of kind WORKFLOW, or of none (a WFE before kinds,
+ * whose suggestions are all workflows; Founder's other kinds are its new
+ * chat's, founder-model.ts), and not the fixed examples the WFE fills the
+ * kind with (the page has its own, AUTOMATION_SUGGESTIONS), each with a
+ * title and a prompt within the WFE's limits once trimmed, at most 4, its
+ * icon "report" when unknown.
+ *
+ * @example
+ * readSuggestions({ suggestions: [{ title: " Renewal radar ", prompt: "Every day…", icon: "FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH" }, { title: "", prompt: "x" }] });
+ * // [{ title: "Renewal radar", prompt: "Every day…", icon: "watch" }]
+ * readSuggestions({ suggestions: [{ title: "Q", prompt: "Who renews?", kind: "FOUNDRY_AUTOMATION_SUGGESTION_KIND_QUESTION" }] });
+ * // []
+ */
+export function readSuggestions(
+  r?: ListAutomationSuggestionsResponse,
+): AutomationSuggestion[] {
+  const given: unknown = r?.suggestions,
+    list: unknown[] = Array.isArray(given) ? given : [];
+  const length = (s: string) => [...s].length;
+  return list
+    .flatMap((x) => {
+      if (!isRecord(x)) return [];
+      if (
+        (x.kind !== undefined &&
+          x.kind !== "FOUNDRY_AUTOMATION_SUGGESTION_KIND_UNSPECIFIED" &&
+          x.kind !== "FOUNDRY_AUTOMATION_SUGGESTION_KIND_WORKFLOW") ||
+        x.source === "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_FIXED"
+      )
+        return [];
+      const title = typeof x.title === "string" ? x.title.trim() : "",
+        prompt = typeof x.prompt === "string" ? x.prompt.trim() : "";
+      if (
+        !title ||
+        !prompt ||
+        length(title) > SUGGESTION_TITLE_MAX ||
+        length(prompt) > SUGGESTION_PROMPT_MAX
+      )
+        return [];
+      const icon =
+        typeof x.icon === "string" && Object.hasOwn(ICONS, x.icon)
+          ? ICONS[x.icon as FoundryAutomationSuggestionIcon]
+          : "report";
+      return [{ title, prompt, icon }];
+    })
+    .slice(0, SUGGESTIONS_MAX);
+}
+
+/** What the page shows for suggestions: placeholders while they come, or chips. */
+export type ShownSuggestions =
+  | { kind: "loading"; generating: boolean }
+  | {
+      kind: "chips";
+      chips: readonly AutomationSuggestion[];
+      // Founder is writing better ones: these are replaced.
+      generating: boolean;
+    };
+
+/**
+ * The page's suggestions from its read of the chosen ontology's: none
+ * chosen (the workspace has no ontology it reads), a failed read with
+ * nothing read before, or none to show are the fixed
+ * AUTOMATION_SUGGESTIONS; placeholders while it is read, or while the
+ * Assistant writes them with nothing to show meanwhile. A poll that fails
+ * keeps what was read before (`data`), so the chips don't flicker.
+ *
+ * @example
+ * shownSuggestions({ ontology: false, pending: false, failed: false }).kind; // "chips"
+ * shownSuggestions({ ontology: true, pending: true, failed: false }); // { kind: "loading", generating: false }
+ */
+export function shownSuggestions(q: {
+  ontology: boolean;
+  pending: boolean;
+  failed: boolean;
+  data?: ListAutomationSuggestionsResponse;
+}): ShownSuggestions {
+  const fixed = {
+    kind: "chips",
+    chips: AUTOMATION_SUGGESTIONS,
+    generating: false,
+  } as const;
+  if (!q.ontology || (q.failed && !q.data)) return fixed;
+  if (q.pending) return { kind: "loading", generating: false };
+  const chips = readSuggestions(q.data),
+    generating = q.data?.generating === true;
+  if (chips.length) return { kind: "chips", chips, generating };
+  return generating ? { kind: "loading", generating } : fixed;
+}
+
+/**
+ * The ontology whose suggestions the page shows, of those the user reads
+ * (`ids`, the list's order, newest first): the one chosen here before,
+ * else the one last opened, else the first; undefined with none.
+ *
+ * @example
+ * suggestionOntology(["a", "b"], "", "b"); // "b"
+ * suggestionOntology(["a", "b"], "gone", ""); // "a"
+ * suggestionOntology([], "", "b"); // undefined
+ */
+export function suggestionOntology(
+  ids: readonly string[],
+  chosen: string,
+  last: string,
+): string | undefined {
+  return [chosen, last].find((id) => id && ids.includes(id)) ?? ids[0];
+}
 
 // ---------------------------------------------------------------- templates
 
@@ -1077,7 +1231,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "weekly-summary",
     title: "Weekly summary by email",
     description:
-      "Every Monday morning, the Assistant reads an ontology and emails you what changed.",
+      "Every Monday morning, Founder reads an ontology and emails you what changed.",
     needs: ["ontology"],
     build: (c) => ({
       name: "Weekly summary",
@@ -1123,7 +1277,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "sync-and-summarise",
     title: "Sync, then summarise",
     description:
-      "Every morning, sync a connection, then have the Assistant email you a summary.",
+      "Every morning, sync a connection, then have Founder email you a summary.",
     needs: ["connector"],
     build: (c) => ({
       name: `Morning ${c.connector?.name || "sync"}`,
@@ -1215,7 +1369,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "check-documents",
     title: "Check new documents",
     description:
-      "When documents arrive in a set, the Assistant reads them and emails you only if one needs attention.",
+      "When documents arrive in a set, Founder reads them and emails you only if one needs attention.",
     needs: ["set"],
     build: (c) => ({
       name: `Check ${c.set?.name || "new documents"}`,
@@ -1263,7 +1417,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "load-ready-report",
     title: "Report on each new load",
     description:
-      "When a load of an ontology is ready, the Assistant checks it and emails you what it found.",
+      "When a load of an ontology is ready, Founder checks it and emails you what it found.",
     needs: ["ontology"],
     build: (c) => ({
       name: `${c.ontology?.name || "Ontology"} load report`,
@@ -1306,7 +1460,7 @@ export const TEMPLATES: readonly Template[] = [
     description: "Only what starts it: choose a trigger, then add steps.",
     needs: [],
     build: () => ({
-      name: "New automation",
+      name: "New workflow",
       description: "",
       spec: {
         v: 1,
@@ -1889,7 +2043,7 @@ const HELPED = new Set(["essential", "helpful"]);
  */
 export function impactText(o: FoundryAutomationOntology): string {
   if (o.untracked === "workflows_full")
-    return "Its runs aren’t recorded: the ontology holds 100 workflows, the most it may. Delete one of its workflows and the next run is recorded.";
+    return "Its runs aren’t recorded: the ontology holds 100 use cases, the most it may. Delete one of its use cases and the next run is recorded.";
   const runs = Number(o.runs || 0),
     assessed = (o.verdicts || []).reduce((n, v) => n + Number(v.runs || 0), 0),
     helped = (o.verdicts || [])

@@ -222,6 +222,24 @@ function auditOf(ontologyId: string): Stored | undefined {
   return fresh;
 }
 
+/** The open findings the list shows, by support: two documents back, or rows. */
+const shown = (findings: readonly FoundryHealFinding[]) =>
+  findings
+    .filter(
+      (f) =>
+        f.status === "open" && (f.sources === "0" || Number(f.sources) >= 2),
+    )
+    .toSorted((x, y) => Number(y.support) - Number(x.support))
+    .slice(0, SHOWN);
+
+/**
+ * An ontology's open findings as its list shows them, by support (none
+ * while audits are off, or before its current load is audited), for
+ * Founder's suggestions (./automation-suggestions.ts).
+ */
+export const openFindings = (ontologyId: string) =>
+  knobs.healEnabled === false ? [] : shown(auditOf(ontologyId)?.findings || []);
+
 export const suggestionRoutes: MockRoute[] = [
   {
     method: "GET",
@@ -248,14 +266,7 @@ export const suggestionRoutes: MockRoute[] = [
           enabled,
           ...(held && { lastRun: held }),
         } satisfies ListHealFindingsResponse);
-      const open = a.findings
-        .filter(
-          (f) =>
-            f.status === "open" &&
-            (f.sources === "0" || Number(f.sources) >= 2),
-        )
-        .toSorted((x, y) => Number(y.support) - Number(x.support))
-        .slice(0, SHOWN);
+      const open = shown(a.findings);
       const complete = {
         id: "run_" + a.loadId,
         loadId: a.loadId,

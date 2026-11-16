@@ -199,7 +199,7 @@
 }
 .ak-log,
 .ak-start,
-.ak-dock > .ak-ask {
+.ak-dock > .ag-composer {
   width: 100%;
   max-width: calc(var(--ak-col) + 2 * var(--ak-gutter));
   margin: 0 auto;
@@ -690,29 +690,13 @@ button.ak-call-head:hover {
   margin-top: 10px;
 }
 
-/* Composer: helix-foundry's prompt box, its button inside. A thread's is
-   pinned under the conversation, which fades out behind it. */
-.ak-ask {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
-  min-width: 0;
-}
+/* The composer (../agent/agent.css .ag-composer), pinned under a thread's
+   conversation on the page's dots. */
 .ak-dock {
   position: relative;
   flex: none;
-  padding: 0 0 var(--hf-space-15);
-  background: var(--hf-bg);
-}
-.ak-dock::before {
-  content: "";
-  position: absolute;
-  right: 0;
-  bottom: 100%;
-  left: 0;
-  height: 20px;
-  background: linear-gradient(transparent, var(--hf-bg));
-  pointer-events: none;
+  padding: var(--hf-space-1) 0
+    calc(var(--hf-space-15) + env(safe-area-inset-bottom));
 }
 .ak-jump {
   position: absolute;
@@ -738,153 +722,56 @@ button.ak-call-head:hover {
 .ak-jump:hover {
   background: var(--hf-hover);
 }
-.ak-focus {
-  display: inline-flex;
-  align-items: center;
-  justify-self: start;
-  gap: 2px;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-.ak-focus-clear {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--hf-radius-sm);
-  background: none;
-  color: var(--hf-muted);
-  cursor: pointer;
-}
-.ak-focus-clear:hover {
-  background: var(--hf-hover);
-  color: var(--hf-text);
-}
-.ak-composer {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  min-width: 0;
-  padding: 7px 7px 7px 16px;
-  border: 1px solid var(--hf-border-strong);
-  border-radius: var(--hf-radius-xl);
-  background: var(--hf-field);
-  cursor: text;
-  transition:
-    border-color var(--hf-duration) var(--hf-ease),
-    box-shadow var(--hf-duration) var(--hf-ease);
-}
-.ak-chat .ak-composer {
-  box-shadow: var(--hf-shadow-2);
-}
-.ak-composer:focus-within {
-  border-color: var(--hf-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hf-accent) 18%, transparent);
-}
-.ak-chat .ak-composer:focus-within {
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--hf-accent) 18%, transparent),
-    var(--hf-shadow-2);
-}
-.ak-composer .ak-input {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 7px 0;
-  border: 0;
-  border-radius: 0;
-  outline: none;
-  background: transparent;
-  box-shadow: none;
-  color: var(--hf-text);
-  font: inherit;
-  font-size: var(--hf-text-md);
-  line-height: 22px;
-  overflow-x: hidden;
-  overflow-wrap: break-word;
-  resize: none;
-}
-.ak-composer .ak-input:focus,
-.ak-composer .ak-input:focus-visible {
-  border: 0;
-  outline: none;
-}
-.ak-composer .ak-input::placeholder {
-  color: var(--hf-muted);
-}
-.ak-send {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border: 0;
-  border-radius: var(--hf-radius-lg);
-  background: var(--hf-ink);
-  color: var(--hf-on-ink);
-  cursor: pointer;
-  transition: background var(--hf-duration) var(--hf-ease);
-}
-.ak-send:hover:not(:disabled) {
-  background: var(--hf-ink-hover);
-}
-.ak-send:disabled {
-  background: var(--hf-sunken);
-  color: var(--hf-faint);
-  cursor: default;
-}
-.ak-ask[aria-busy="true"] .ak-send {
-  background: var(--hf-ink);
-  color: var(--hf-on-ink);
-  cursor: progress;
-}
-.ak-hint {
-  margin: 0;
-  color: var(--hf-muted);
-  font-size: var(--hf-text-xs);
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-.ak-hint {
-  text-align: center;
-}
-.ak-drawer .ak-hint {
+.ak-drawer .ag-status {
   text-align: left;
 }
-.ak-hint.is-error {
-  color: var(--hf-danger-text);
-  font-size: var(--hf-text-sm);
-}
 
-/* Suggestions under a new thread's composer: helix-foundry's follow-up
-   chips. */
+/* Suggestions under a new thread's composer: a list as wide as the box,
+   one question a row, each wrapping on its own. */
 .ak-suggestions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
-  margin-top: 6px;
+  margin-top: 2px;
 }
 .ak-suggestion {
-  max-width: 100%;
-  min-height: 30px;
-  padding: 5px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 9px 14px;
   border: 1px solid var(--hf-border);
-  border-radius: var(--hf-radius-pill);
-  background: transparent;
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
   color: var(--hf-text-2);
   font: inherit;
   font-size: var(--hf-text-sm);
-  line-height: 1.4;
+  line-height: 1.45;
   text-align: left;
+  overflow-wrap: anywhere;
   cursor: pointer;
+  transition:
+    border-color var(--hf-duration) var(--hf-ease),
+    background-color var(--hf-duration) var(--hf-ease),
+    color var(--hf-duration) var(--hf-ease);
+}
+.ak-suggestion > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--hf-faint);
 }
 .ak-suggestion:hover:not(:disabled) {
   border-color: var(--hf-border-strong);
   background: var(--hf-hover);
   color: var(--hf-text);
+}
+.ak-suggestion:hover:not(:disabled) > svg {
+  color: var(--hf-accent-text);
+}
+.ak-suggestion:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 1px;
 }
 .ak-suggestion:disabled {
   cursor: default;
@@ -900,6 +787,26 @@ button.ak-call-head:hover {
 }
 .ak-open {
   justify-self: start;
+}
+/* An Analyst thread from before Founder, on Founder's page: read only, a
+   note where the composer was. */
+.ak-readonly {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--hf-space-1) var(--hf-space-15);
+  width: 100%;
+  max-width: calc(var(--ak-col) + 2 * var(--ak-gutter));
+  margin: 0 auto;
+  padding: var(--hf-space-15) var(--ak-gutter) 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+  text-align: center;
+}
+.ak-readonly p {
+  margin: 0;
 }
 
 @media (max-width: 800px) {
@@ -943,4 +850,25 @@ button.ak-call-head:hover {
 /* The step a running question is on, in the trace's closed line. */
 .ak-trace-status > .ak-call-tool {
   order: 0;
+}
+/* One question shown inline (ask-inline.tsx), in Founder's dock about
+   400px wide: no question bubble or avatar column, and tighter spacing. */
+.ak-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hf-space-15);
+  min-width: 0;
+}
+.ak-inline .ak-reply-body {
+  gap: var(--hf-space-1);
+  padding-top: 0;
+}
+.ak-inline-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--hf-space-1);
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
 }

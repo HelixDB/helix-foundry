@@ -4,7 +4,7 @@
    dots; an automation on its full-page canvas (the slim bar, the canvas,
    @xyflow/react restyled with the kit's tokens, its floating toolbar, the
    inspector beside it, the runs list, Settings, the outline); and the steps
-   as they run unattended (the review, the approval, the Assistant's card). */
+   as they run unattended (the review, the approval, Founder's card). */
 
 /* The sidebar's list. */
 .au-panel {
@@ -1351,19 +1351,13 @@
   padding: 0;
 }
 
-/* A new automation: the Assistant's composer over the canvas's dots. */
+/* A new automation: Founder's composer over the canvas's dots. */
 .au-new-page {
   container: au-new / inline-size;
   flex: 1;
   min-height: 0;
   padding: var(--hf-space-4) var(--hf-space-2);
   overflow-y: auto;
-  background-color: var(--hf-sunken);
-  background-image: radial-gradient(
-    var(--hf-border-strong) 1.2px,
-    transparent 1.2px
-  );
-  background-size: 20px 20px;
 }
 .au-new-inner {
   display: grid;
@@ -1401,21 +1395,6 @@
 .au-new-composer {
   justify-self: stretch;
   text-align: left;
-}
-.au-new-composer .ag-composer {
-  padding: 12px;
-  border: 1px solid var(--hf-border);
-  border-radius: var(--hf-radius-lg);
-  background: var(--hf-surface);
-  box-shadow: var(--hf-shadow-2);
-}
-.au-new-composer .ag-input {
-  min-height: 96px;
-}
-/* A suggestion's prompt previewed as the placeholder never moves the page
-   (the chip under the pointer with it). */
-.au-new-composer .ag-input:placeholder-shown {
-  field-sizing: fixed;
 }
 /* Four suggestions in a row under the composer; two by two, then one. */
 .au-suggestions {
@@ -1482,6 +1461,32 @@
   background: var(--hf-danger-soft);
   color: var(--hf-danger-text);
 }
+.au-suggestion-icon.is-success {
+  background: var(--hf-success-soft);
+  color: var(--hf-success-text);
+}
+.au-suggestion-icon.is-neutral {
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+}
+.au-suggestion-title {
+  min-width: 0;
+}
+/* Where suggestions are still coming: chips' shapes, as tall as a chip. */
+.au-suggestion-skeleton {
+  flex: 1;
+  border-radius: var(--hf-radius-lg);
+}
+/* The ontology the suggestions are written for, when there are several. */
+.au-suggestions-for {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
 @container au-new (max-width: 640px) {
   .au-suggestions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1503,7 +1508,6 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  background: var(--hf-surface);
 }
 .au-chat .ag-log-body {
   width: 100%;
@@ -1513,12 +1517,11 @@
 }
 .au-chat-composer {
   flex: none;
-  border-top: 1px solid var(--hf-border);
-}
-.au-chat-composer .ag-composer {
+  width: 100%;
   max-width: 760px;
   margin: 0 auto;
-  border-top: 0;
+  padding: var(--hf-space-1) var(--hf-space-2)
+    calc(var(--hf-space-15) + env(safe-area-inset-bottom));
 }
 .au-chat .ag-runtime {
   max-width: 760px;

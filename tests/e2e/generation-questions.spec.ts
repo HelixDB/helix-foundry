@@ -520,3 +520,35 @@ test.describe("on a phone", () => {
     ).toBe(true);
   });
 });
+
+test.describe("an option that is a time zone id", () => {
+  test.use({ timezoneId: "America/New_York" });
+
+  test("shows its city and offset, and sends the id back", async ({ page }) => {
+    await mock.configure({
+      ontologyStepMs: 300,
+      ontologyQuestions: "time_zone",
+    });
+    await signIn(page);
+    await page.goto(`${O}/generate`);
+    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    const zones = page.getByRole("radiogroup", {
+      name: /^Which time zone are the dates/,
+    });
+    await expect(zones).toBeVisible({ timeout: 15_000 });
+    const radios = zones.getByRole("radio");
+    // The recommended first, each in words; never an id with underscores.
+    await expect(radios.first()).toContainText(/^New York · GMT−[45]/);
+    await expect(radios.first()).toContainText("Recommended");
+    await expect(zones).toContainText(/London · GMT(\+1)?/);
+    await expect(zones).toContainText(/Los Angeles · GMT−[78]/);
+    await expect(zones).not.toContainText("_");
+    await expect(zones).not.toContainText("America/");
+    await zones.getByRole("radio", { name: /^London/ }).click();
+    const sent = page.waitForRequest(/generations\/gen_\w+:answer$/);
+    await page.getByRole("button", { name: "Send answers" }).click();
+    expect((await sent).postDataJSON().answers).toEqual([
+      { questionId: "Q1", options: ["Europe/London"] },
+    ]);
+  });
+});

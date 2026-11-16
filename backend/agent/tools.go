@@ -13,7 +13,7 @@ import (
 //
 // Left out on purpose: execute_operation and complete_document_upload (only
 // the person runs an action; uploads stay in the browser), send_pieces and
-// cancel_question (they change things without a confirmation), the workflow
+// cancel_question (they change things without a confirmation), the use case
 // tools (an outside agent's records), get_sign_in, and helix_list_workspaces
 // (a turn is of one workspace).
 var Tools = map[string]bool{
@@ -41,11 +41,11 @@ var Tools = map[string]bool{
 	"helix_foundry_list_dashboards":        true,
 	"helix_foundry_get_dashboard":          true,
 	"helix_foundry_preview_dashboard_tile": true,
-	// Automations: read, and their runs.
-	"helix_foundry_list_automations":     true,
-	"helix_foundry_get_automation":       true,
-	"helix_foundry_list_automation_runs": true,
-	"helix_foundry_get_automation_run":   true,
+	// Workflows: read, and their runs.
+	"helix_foundry_list_workflows":     true,
+	"helix_foundry_get_workflow":       true,
+	"helix_foundry_list_workflow_runs": true,
+	"helix_foundry_get_workflow_run":   true,
 	// Link-only: a session's Service offers no sign-in, so it answers with
 	// the site's /data?add=<kind>, where the person enters credentials.
 	"helix_foundry_connect": true,
@@ -54,15 +54,38 @@ var Tools = map[string]bool{
 	"helix_list_databases": true,
 	// Prepare only: its person runs what it prepares (integration.ConfirmByPerson).
 	toolPrepare: true,
-	// An automation's turn's report, registered for those turns alone.
+	// A workflow's turn's report, registered for those turns alone.
 	toolReport: true,
 	// Asks the person, for a person's turns alone, and ends the turn.
 	toolAskPerson: true,
 }
 
+// GranteeTools are the tools a restricted member's turn offers (ReachGrants),
+// within Tools: reads and asks whose every call the API narrows to their
+// grants, and toolAskPerson. Left out: documents (a grantee reads one only by
+// id), generations, syncs, connectors, the AI setting, the runtime, reviews,
+// a tile's preview, automations, connect, prepare, the report, and the host's
+// projects and databases.
+var GranteeTools = map[string]bool{
+	"helix_foundry_list_ontologies": true,
+	"helix_foundry_get_ontology":    true,
+	"helix_foundry_get_context":     true,
+	"helix_foundry_get_version":     true,
+	"helix_foundry_get_load":        true,
+	"helix_foundry_read_guide":      true,
+	"helix_foundry_read_graph":      true,
+	"helix_foundry_ask":             true,
+	"helix_foundry_get_question":    true,
+	"helix_foundry_list_questions":  true,
+	"helix_foundry_list_dashboards": true,
+	"helix_foundry_get_dashboard":   true,
+	toolAskPerson:                   true,
+}
+
 const (
-	toolPrepare = "helix_foundry_prepare_operation"
-	toolAsk     = "helix_foundry_ask"
+	toolPrepare     = "helix_foundry_prepare_operation"
+	toolAsk         = "helix_foundry_ask"
+	toolGetQuestion = "helix_foundry_get_question"
 )
 
 // Operations are the actions the Assistant may prepare, each drawn as a card
@@ -93,15 +116,15 @@ var Operations = map[string]bool{
 	"pin_dashboard":       true,
 	"publish_dashboard":   true,
 	"unpublish_dashboard": true,
-	// Automations: the person's click on a create or an edit approves the
+	// Workflows: the person's click on a create or an edit approves the
 	// spec its card showed, and nothing when it showed none (the API's
 	// ExecuteFoundryAgentAction).
-	"create_automation": true,
-	"update_automation": true,
-	"pause_automation":  true,
-	"resume_automation": true,
-	"delete_automation": true,
-	"run_automation":    true,
+	"create_workflow": true,
+	"update_workflow": true,
+	"pause_workflow":  true,
+	"resume_workflow": true,
+	"delete_workflow": true,
+	"run_workflow":    true,
 	// A local install's only (Service.AgentHosts).
 	"set_assistant_runtime":   true,
 	"revoke_assistant_helper": true,

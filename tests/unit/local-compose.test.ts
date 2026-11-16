@@ -527,7 +527,7 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
     expect(services.site.environment.HELIX_WFE_ORIGIN).toBe("http://pod:8081");
   });
 
-  // The MCP, HTTP Ask and the Assistant's helper reach foundry on this
+  // The MCP, HTTP Ask and Founder's helper reach foundry on this
   // machine's loopback alone, where FOUNDRY_MCP_PORT puts it.
   it("publishes MCP, HTTP Ask and the helper's routes on loopback only", () => {
     type Port = { host_ip: string; target: number; published: string };

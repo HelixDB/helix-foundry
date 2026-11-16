@@ -51,14 +51,14 @@ func (s site) home() string {
 	return string(s) + "/?via=email"
 }
 
-// automation is an automation's page.
+// automation is a workflow's (an automation's) page.
 func (s site) automation(workspaceID, automationID string) string {
-	return string(s) + "/automations/" + url.PathEscape(automationID) + "?workspace=" + url.QueryEscape(workspaceID)
+	return string(s) + "/workflows/" + url.PathEscape(automationID) + "?workspace=" + url.QueryEscape(workspaceID)
 }
 
-// automationRun is a run's page, its steps on the automation's canvas.
+// automationRun is a run's page, its steps on the workflow's canvas.
 func (s site) automationRun(workspaceID, automationID, runID string) string {
-	return string(s) + "/automations/" + url.PathEscape(automationID) + "/runs/" + url.PathEscape(runID) + "?workspace=" + url.QueryEscape(workspaceID)
+	return string(s) + "/workflows/" + url.PathEscape(automationID) + "/runs/" + url.PathEscape(runID) + "?workspace=" + url.QueryEscape(workspaceID)
 }
 
 // connect is where a new ontology starts from the workspace's own data.
@@ -276,12 +276,12 @@ func unlinked(text string) string {
 	return strings.TrimSpace(links.ReplaceAllString(text, "[link removed]"))
 }
 
-// automationNoticeName is how the emails call an automation: its name on one
-// line, or "your automation" without one.
+// automationNoticeName is how the emails call a workflow: its name on one
+// line, or "your workflow" without one.
 func automationNoticeName(name string) string {
 	mid, _ := ontologyName(name)
 	if mid == "your ontology" {
-		return "your automation"
+		return "your workflow"
 	}
 	return mid
 }
@@ -296,7 +296,7 @@ func automationRunEmail(name, note string, said []string, pending int, run strin
 	}
 	for _, s := range said {
 		if s = unlinked(s); s != "" {
-			m.paragraphs = append(m.paragraphs, paragraph{Text: "The Assistant: " + s})
+			m.paragraphs = append(m.paragraphs, paragraph{Text: "Founder: " + s})
 		}
 	}
 	switch {
@@ -312,7 +312,7 @@ func automationRunEmail(name, note string, said []string, pending int, run strin
 // automationPausedEmail tells an automation's owner it paused itself after
 // failures failed runs in a row, the last saying why.
 func automationPausedEmail(name string, failures int, why, page string) message {
-	first := fmt.Sprintf("Your automation %s failed %d times in a row, so Foundry paused it.", name, failures)
+	first := fmt.Sprintf("Your workflow %s failed %d times in a row, so Foundry paused it.", name, failures)
 	if why = sentence(unlinked(why)); why != "" {
 		first += " Its last run said: " + why
 	}

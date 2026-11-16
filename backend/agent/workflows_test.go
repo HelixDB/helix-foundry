@@ -24,9 +24,9 @@ func mustSpec(t *testing.T, raw json.RawMessage) automation.Spec {
 // first: Foundry names the run, whatever the model wrote.
 func TestAnAutomationsCallsAreRecordedUnderItsWorkflowRun(t *testing.T) {
 	h := newHarness(t,
-		call("toolu_1", toolAsk, `{"workspace_id":"ws1","ontology_id":"ont1","question":"Who renews?","client_token":"c","workflow_run_id":"forged"}`),
+		call("toolu_1", toolAsk, `{"workspace_id":"ws1","ontology_id":"ont1","question":"Who renews?","client_token":"c","use_case_run_id":"forged"}`),
 		call("toolu_2", toolAsk, `{"workspace_id":"ws1","ontology_id":"ont1","question":"And when?","client_token":"d"}`),
-		call("toolu_3", toolAsk, `{"workspace_id":"ws1","ontology_id":"ont9","question":"Theirs?","client_token":"e","workflow_run_id":"forged"}`),
+		call("toolu_3", toolAsk, `{"workspace_id":"ws1","ontology_id":"ont9","question":"Theirs?","client_token":"e","use_case_run_id":"forged"}`),
 		call("toolu_4", toolPrepare, `{"operation":"create_load","target":"ontology:ws1/ont1","payload":{"version_id":"ver3"}}`),
 		say("Done."))
 	turn := automationTurn(h, loadOnt1)
@@ -42,9 +42,9 @@ func TestAnAutomationsCallsAreRecordedUnderItsWorkflowRun(t *testing.T) {
 	require.Len(t, h.db.uses.starts, 1, "a run uses an ontology once; another workspace's goes untracked")
 	start := h.db.uses.starts[0]
 	assert.Equal(t, model.FoundryAutomationWorkflowStart{WorkspaceID: ws, AutomationRunID: "run1", OntologyID: ontology, Input: start.Input}, start)
-	assert.Contains(t, start.Input, `Run by hand. The automation "Nightly load" ran these steps, in order:`)
-	assert.Contains(t, start.Input, `1. Assistant step "ask": Load the Sales graph (It may load the current version of the ontology "Sales graph" unasked.)`)
-	assert.Contains(t, start.Input, `2. Notify step "mail": email its owner, with what the Assistant steps before it said.`)
+	assert.Contains(t, start.Input, `Run by hand. The workflow "Nightly load" ran these steps, in order:`)
+	assert.Contains(t, start.Input, `1. Founder step "ask": Load the Sales graph (It may load the current version of the ontology "Sales graph" unasked.)`)
+	assert.Contains(t, start.Input, `2. Notify step "mail": email its owner, with what the Founder steps before it said.`)
 	assert.Equal(t, 1, h.backend.loads, "the approved load ran")
 
 	for _, tool := range h.model.requests[0].Tools {
@@ -54,7 +54,7 @@ func TestAnAutomationsCallsAreRecordedUnderItsWorkflowRun(t *testing.T) {
 
 func TestAPersonsTurnRecordsUnderNoWorkflowRun(t *testing.T) {
 	h := newHarness(t,
-		call("toolu_1", toolAsk, `{"workspace_id":"ws1","ontology_id":"ont1","question":"Who?","client_token":"c","workflow_run_id":"someones"}`),
+		call("toolu_1", toolAsk, `{"workspace_id":"ws1","ontology_id":"ont1","question":"Who?","client_token":"c","use_case_run_id":"someones"}`),
 		say("Ada."))
 	_, err := h.runner.Run(context.Background(), message("Who?"))
 	require.NoError(t, err)
@@ -96,7 +96,7 @@ func TestUsesOfAnEndedRunAreUntracked(t *testing.T) {
 }
 
 func TestWithoutWorkflowRun(t *testing.T) {
-	schema := json.RawMessage(`{"type":"object","properties":{"ontology_id":{"type":"string"},"workflow_run_id":{"type":"string"}},"required":["ontology_id","workflow_run_id"]}`)
+	schema := json.RawMessage(`{"type":"object","properties":{"ontology_id":{"type":"string"},"use_case_run_id":{"type":"string"}},"required":["ontology_id","use_case_run_id"]}`)
 	assert.JSONEq(t, `{"type":"object","properties":{"ontology_id":{"type":"string"}},"required":["ontology_id"]}`, string(withoutWorkflowRun(schema)))
 	plain := json.RawMessage(`{"type":"object","properties":{"ontology_id":{"type":"string"}}}`)
 	assert.Equal(t, plain, withoutWorkflowRun(plain))

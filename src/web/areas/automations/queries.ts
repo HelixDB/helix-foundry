@@ -7,6 +7,7 @@ import type {
   CreateAutomationRequest,
   FoundryAutomation,
   ListAutomationRunsResponse,
+  ListAutomationSuggestionsResponse,
   ListAutomationsResponse,
   RunAutomationRequest,
   UpdateAutomationRequest,
@@ -37,6 +38,8 @@ const at = (ws: string) => `/v1/workspaces/${enc(ws)}/foundry/automations`;
 export const RUN_POLL_MS = 1500;
 /** An active automation's page, whose trigger may fire a run any time. */
 export const ACTIVE_POLL_MS = 5000;
+/** Suggestions the Assistant is writing, read again this often. */
+export const SUGGESTIONS_POLL_MS = 2500;
 
 export const automationQueries = {
   // Every automation of the workspace (at most 50), each with its newest
@@ -98,6 +101,18 @@ export const automationQueries = {
       isLiveRun(q.state.data?.run) || assessing(q.state.data?.run)
         ? RUN_POLL_MS
         : false,
+  }),
+  // The new automation page's suggestions for an ontology's current
+  // version; read again while the Assistant writes them.
+  suggestions: (ws: string, ontologyId: string) => ({
+    queryKey: [ws, "automations", "suggestions", ontologyId],
+    queryFn: () =>
+      api<ListAutomationSuggestionsResponse>(
+        `/v1/workspaces/${enc(ws)}/foundry/automation-suggestions?${new URLSearchParams({ ontologyId })}`,
+      ),
+    refetchInterval: (q: {
+      state: { data?: ListAutomationSuggestionsResponse };
+    }) => (q.state.data?.generating ? SUGGESTIONS_POLL_MS : false),
   }),
 };
 

@@ -1,26 +1,36 @@
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-/** Where the person opened the Assistant from, for analytics. */
-export type AssistantFrom = "shortcut" | "button" | "palette";
+/** Where the person opened Founder from, for analytics. */
+export type AssistantFrom = "shortcut" | "button" | "palette" | "new_dashboard";
+
+/** What a new thread's composer starts with; each compose is a new `n`. */
+export type DockSeed = { text: string; n: number };
 
 export type ShellApi = {
   openPalette: (query?: string) => void;
   // Shows or hides the open section's panel; on a phone, opens or closes
   // the drawer that holds it.
   togglePanel: () => void;
-  // The Assistant's dock: whether this build and user have it, whether it
-  // is open, and opening or closing it.
+  // Founder's dock: whether this build and user have it, whether it
+  // is open, and opening or closing it; `compose` opens it on a new thread
+  // whose composer holds `text`, focused with the caret at its end.
   assistant: {
     available: boolean;
     open: boolean;
     toggle: (from: AssistantFrom) => void;
+    compose: (text: string, from: AssistantFrom) => void;
   };
 };
 export const ShellContext = createContext<ShellApi>({
   openPalette: () => {},
   togglePanel: () => {},
-  assistant: { available: false, open: false, toggle: () => {} },
+  assistant: {
+    available: false,
+    open: false,
+    toggle: () => {},
+    compose: () => {},
+  },
 });
 // Lets any page open the command palette.
 export const useShell = () => useContext(ShellContext);

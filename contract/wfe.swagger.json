@@ -80,6 +80,136 @@
         ]
       }
     },
+    "/v1/auth/password:forgot": {
+      "post": {
+        "operationId": "WfeService_RequestPasswordReset",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1RequestPasswordResetRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/auth/password:reset": {
+      "post": {
+        "operationId": "WfeService_ResetPassword",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1ResetPasswordRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/auth/password:sign-in": {
+      "post": {
+        "operationId": "WfeService_SignInWithPassword",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PasswordAuthResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1SignInWithPasswordRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/auth/password:sign-up": {
+      "post": {
+        "operationId": "WfeService_SignUpWithPassword",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PasswordAuthResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1SignUpWithPasswordRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
     "/v1/auth/verify-email": {
       "post": {
         "operationId": "WfeService_VerifyEmail",
@@ -1338,6 +1468,45 @@
       },
       "description": "LegacyReportServiceCredentialOwner describes old multi-workspace report\ntokens. No API may mint this owner variant or expand its read-only scopes."
     },
+    "v1PasswordAuthResponse": {
+      "type": "object",
+      "properties": {
+        "accessToken": {
+          "type": "string"
+        },
+        "refreshToken": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "int64"
+        },
+        "email": {
+          "type": "string"
+        },
+        "emailVerificationRequired": {
+          "type": "boolean"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "agentSandboxDestination": {
+          "$ref": "#/definitions/v1AgentSandboxLoginDestination"
+        },
+        "invitationOnboarding": {
+          "type": "boolean",
+          "description": "True when the call completed an invitation."
+        },
+        "ssoRequired": {
+          "type": "boolean",
+          "description": "True when the email's company requires single sign-on. Tokens are empty;\nthe client starts a login with AUTH_PROVIDER_SSO and `email`."
+        }
+      },
+      "description": "Shared by SignInWithPassword and SignUpWithPassword. When\nemail_verification_required is true the tokens are empty and session_id\nmust be passed to VerifyEmail with the emailed code."
+    },
     "v1Project": {
       "type": "object",
       "properties": {
@@ -1394,6 +1563,29 @@
         }
       },
       "description": "ReportKeyScope is one grant on a report API key. An empty project_id\nmeans every project in the workspace."
+    },
+    "v1RequestPasswordResetRequest": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "application": {
+          "$ref": "#/definitions/v1AuthApplication",
+          "description": "Selects the reset page WorkOS links to."
+        }
+      }
+    },
+    "v1ResetPasswordRequest": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string"
+        },
+        "newPassword": {
+          "type": "string"
+        }
+      }
     },
     "v1ResourceScope": {
       "type": "object",
@@ -1522,6 +1714,40 @@
         "SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_WRITE"
       ],
       "default": "SERVICE_CREDENTIAL_PERMISSION_UNSPECIFIED"
+    },
+    "v1SignInWithPasswordRequest": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "application": {
+          "$ref": "#/definitions/v1AuthApplication"
+        }
+      }
+    },
+    "v1SignUpWithPasswordRequest": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "firstName": {
+          "type": "string"
+        },
+        "lastName": {
+          "type": "string"
+        },
+        "application": {
+          "$ref": "#/definitions/v1AuthApplication"
+        }
+      }
     },
     "v1StartLoginRequest": {
       "type": "object",

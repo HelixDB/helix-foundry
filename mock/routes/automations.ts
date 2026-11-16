@@ -156,6 +156,8 @@ type StoredNode = {
   output: AutomationNodeOutput | null;
   error: string;
   turnId: string;
+  // The sync or load an action step started and waits for.
+  jobId?: string;
   usdMicros: number;
   startedAt: string;
   finishedAt: string | null;
@@ -182,14 +184,32 @@ type StoredRun = {
   next: number;
 };
 
+/**
+ * The automation run that started a sync or a load: the run, its automation,
+ * the automations that set it off, and how many runs led to the work (the
+ * backend's started_by_automation_run_id and automation_chain_depth).
+ */
+type Cause = {
+  runId: string;
+  automationId: string;
+  chain: string[];
+  depth: number;
+};
+
+/** How many automation runs in a row may set each other off (maxChainDepth). */
+const MAX_CHAIN_DEPTH = 3;
+
 const state = {
   automations: [] as StoredAutomation[],
   // Newest first.
   runs: [] as StoredRun[],
+  // By the sync's or load's id.
+  causes: new Map<string, Cause>(),
 };
 onReset(() => {
   state.automations = [];
   state.runs = [];
+  state.causes = new Map();
   delete knobs.automationClockMs;
   delete knobs.automationStepMs;
   delete knobs.automationRunsPerDay;
@@ -212,20 +232,20 @@ const sentence = (text: string) => {
 type Caller = { m: Membership; userId: string; manager: boolean };
 
 /** The caller as automations answer them: a member, while automations are on. */
-function caller(req: MockRequest): Caller | MockReply {
+export function caller(req: MockRequest): Caller | MockReply {
   const ws = req.params.workspaceId!;
   if (knobs.automationsDisabled)
     return refused(
       ws,
       "FOUNDRY_AUTOMATIONS_DISABLED",
-      "automations aren't available here",
+      "workflows aren't available here",
     );
   const m = membership(ws, req.principal.user.id);
   if (isReply(m)) return m;
   work(ws);
   return { m, userId: m.userId, manager: manages(m) };
 }
-const isCaller = (x: Caller | MockReply): x is Caller => "m" in x;
+export const isCaller = (x: Caller | MockReply): x is Caller => "m" in x;
 
 /**
  * A spec of the workspace as the API checks it: its shape (the backend's
@@ -418,7 +438,7 @@ function room(
   a: StoredAutomation,
 ): { reason: "busy" | "day"; why: string } | undefined {
   if (state.runs.some((r) => r.automationId === a.id && live(r)))
-    return { reason: "busy", why: "a run of the automation is still going" };
+    return { reason: "busy", why: "a run of the workflow is still going" };
   const today = state.runs.filter(
     (r) =>
       r.workspaceId === a.workspaceId &&
@@ -429,7 +449,7 @@ function room(
   return today >= cap
     ? {
         reason: "day",
-        why: `the workspace's automations ran ${today} times in the last 24 hours, as many as they may`,
+        why: `the workspace's workflows ran ${today} times in the last 24 hours, as many as they may`,
       }
     : undefined;
 }
@@ -492,9 +512,15 @@ function fire(
   event: AutomationTriggerEvent,
   output: AutomationNodeOutput,
   scheduled: boolean,
+  loop = "",
 ): boolean {
   if (state.runs.some((r) => r.automationId === a.id && r.triggerKey === key))
     return true;
+  // Work that would loop is recorded skipped at once.
+  if (loop) {
+    insertRun(a, key, event, output, loop);
+    return true;
+  }
   const busy = room(a);
   if (busy?.reason === "busy" && !scheduled) return false;
   insertRun(
@@ -505,7 +531,7 @@ function fire(
     busy &&
       (busy.reason === "busy"
         ? "Skipped: the run before it was still going."
-        : "Skipped: the workspace's automations ran as many times as they may in 24 hours."),
+        : "Skipped: the workspace's workflows ran as many times as they may in 24 hours."),
   );
   return true;
 }
@@ -567,18 +593,45 @@ function work(ws: string) {
       a.cursor = newest.at;
       continue;
     }
-    const last = matched[matched.length - 1]!,
-      count = matched.length;
+    // Work its own runs started, directly or through automations they set
+    // off, or past MAX_CHAIN_DEPTH runs, is skipped (the backend's loops).
+    const what = t.kind === "load_ready" ? "load" : "sync";
+    const loopOf = (id: string) => {
+      const c = state.causes.get(id);
+      if (!c) return "";
+      if (c.automationId === a.id)
+        return `Skipped: the ${what} was started by this workflow itself; running on it would loop.`;
+      if (c.chain.includes(a.id))
+        return `Skipped: the ${what} was started by a workflow this one set off; running on it would loop.`;
+      if (c.depth > MAX_CHAIN_DEPTH)
+        return `Skipped: the ${what} came from a chain of ${c.depth} workflows setting each other off; a chain stops after ${MAX_CHAIN_DEPTH}.`;
+      return "";
+    };
+    const fired = matched.filter((e) => !loopOf(e.id));
+    const loop = fired.length ? "" : loopOf(matched[matched.length - 1]!.id);
+    const counted = fired.length ? fired : matched;
+    const last = counted[counted.length - 1]!,
+      count = counted.length;
+    const causes = counted.flatMap((e) => {
+      const c = state.causes.get(e.id);
+      return c ? [c] : [];
+    });
+    const chain = [
+      ...new Set(causes.flatMap((c) => [...c.chain, c.automationId])),
+    ].sort();
+    const depth = Math.max(0, ...causes.map((c) => c.depth));
     const event: AutomationTriggerEvent = {
       kind: t.kind,
       at: iso(last.at),
       outcome: last.outcome,
       count,
+      ...(chain.length && { caused_by_automations: chain }),
+      ...(depth && { chain_depth: depth }),
       ...(t.kind === "sync_finished" && { sync_id: last.id, rows: last.rows }),
       ...(t.kind === "load_ready" && { load_id: last.id }),
       ...(t.kind === "generation_finished" && { generation_id: last.id }),
       ...(t.kind === "document_arrived" && {
-        document_ids: matched.map((e) => e.id),
+        document_ids: counted.map((e) => e.id),
       }),
     };
     const output: AutomationNodeOutput =
@@ -598,7 +651,7 @@ function work(ws: string) {
                     : `${count} documents arrived in its set.`,
                 count,
               };
-    if (fire(a, `${t.kind}:${last.id}`, event, output, false))
+    if (fire(a, `${t.kind}:${last.id}`, event, output, false, loop))
       a.cursor = newest.at;
   }
   state.runs
@@ -688,11 +741,37 @@ const asOwner = (
 const message = (reply: MockReply) =>
   sentence((reply.body as { message?: string }).message || "it failed");
 
-/** Runs an action step once, as the owner approved it: the mock's real sync, load or publish. */
+/**
+ * Runs an action step once, as the owner approved it: the mock's real sync,
+ * load or publish. A sync or a load is marked as the run's, and the step
+ * waits for it (waitJob).
+ */
 function runAction(r: StoredRun, nodeId: string, a: AutomationAction) {
   const done = (summary: string, result: unknown) =>
     endNode(r, nodeId, "succeeded", { summary, result });
   const failed = (why: string) => endNode(r, nodeId, "failed", null, why);
+  const awaiting = (
+    what: "sync" | "load",
+    result: { id: string; [field: string]: unknown },
+  ) => {
+    state.causes.set(result.id, {
+      runId: r.id,
+      automationId: r.automationId,
+      chain: r.event.caused_by_automations ?? [],
+      depth: (r.event.chain_depth ?? 0) + 1,
+    });
+    r.nodes.push({
+      nodeId,
+      status: "running",
+      output: { summary: `Waiting for the ${what}…`, result },
+      error: "",
+      turnId: "",
+      jobId: result.id,
+      usdMicros: 0,
+      startedAt: now(),
+      finishedAt: null,
+    });
+  };
   switch (a.operation) {
     case "sync_connector": {
       const route = dataRoutes.find(
@@ -702,10 +781,7 @@ function runAction(r: StoredRun, nodeId: string, a: AutomationAction) {
         asOwner(r, { id: a.connector_id }, {}),
       ) as MockReply;
       return reply.status === 200
-        ? done(
-            "Started a sync of its connector.",
-            (reply.body as { sync: unknown }).sync,
-          )
+        ? awaiting("sync", (reply.body as { sync: { id: string } }).sync)
         : failed(message(reply));
     }
     case "create_load": {
@@ -720,7 +796,7 @@ function runAction(r: StoredRun, nodeId: string, a: AutomationAction) {
         return failed("Its ontology has no current version to load.");
       const queued = queueLoad(o, version, `${r.id}:${nodeId}`);
       return "clientToken" in queued
-        ? done("Started a load of its ontology's current version.", {
+        ? awaiting("load", {
             id: queued.id,
             version_id: queued.versionId,
             status: queued.status,
@@ -733,7 +809,7 @@ function runAction(r: StoredRun, nodeId: string, a: AutomationAction) {
       // It refreshes what a person published: never an edit made since.
       if (d.publishedRevision === undefined)
         return failed(
-          "Its dashboard isn't published: publish it on its page, and the automation refreshes its snapshot from then on.",
+          "Its dashboard isn't published: publish it on its page, and the workflow refreshes its snapshot from then on.",
         );
       if (d.publishedRevision !== d.revision)
         return failed(
@@ -749,6 +825,69 @@ function runAction(r: StoredRun, nodeId: string, a: AutomationAction) {
         : failed(message(reply));
     }
   }
+}
+
+/**
+ * Reads the sync or load a running action step waits for and, once it ended,
+ * ends the step as it did (the backend's waitJob); false while it runs.
+ */
+function waitJob(r: StoredRun, n: StoredNode): boolean {
+  const config = r.spec.nodes.find((x) => x.id === n.nodeId)?.config as
+    | AutomationAction
+    | undefined;
+  const result = n.output?.result;
+  if (config?.operation === "sync_connector") {
+    const sync = syncsEnded(config.connector_id).find((e) => e.id === n.jobId);
+    if (!sync) return false;
+    if (sync.outcome === "succeeded")
+      endNode(r, n.nodeId, "succeeded", {
+        summary: `Synced its connector: it wrote ${sync.rows} rows.`,
+        count: sync.rows,
+        result,
+      });
+    else
+      endNode(
+        r,
+        n.nodeId,
+        "failed",
+        null,
+        sync.error
+          ? `The sync failed: ${sentence(sync.error)}`
+          : "The sync failed.",
+      );
+    return true;
+  }
+  if (config?.operation === "create_load") {
+    const load = loadsEnded(config.ontology_id).find((e) => e.id === n.jobId);
+    if (!load) return false;
+    if (load.outcome === "ready" || load.outcome === "partial")
+      endNode(r, n.nodeId, "succeeded", {
+        summary:
+          load.outcome === "ready"
+            ? "Loaded its ontology's current version: the load is ready."
+            : "Loaded its ontology's current version: the load is partial, its tables in and some documents unread.",
+        result,
+      });
+    else
+      endNode(
+        r,
+        n.nodeId,
+        "failed",
+        null,
+        load.outcome === "failed"
+          ? "The load failed."
+          : "Its load was deleted before the step saw it end.",
+      );
+    return true;
+  }
+  endNode(
+    r,
+    n.nodeId,
+    "failed",
+    null,
+    "It waits for work it can't have started.",
+  );
+  return true;
 }
 
 /** The automation, as its workflows name it. */
@@ -808,7 +947,7 @@ function requestOf(a: StoredAutomation, r: StoredRun): string {
   const fired = r.nodes.find((n) => n.nodeId === order[0])?.output?.summary;
   // What fired it first: it tells one run of an automation from another.
   const lines = [
-    `${fired ? `${fired} ` : ""}The automation "${a.name}" ran these steps, in order:`,
+    `${fired ? `${fired} ` : ""}The workflow "${a.name}" ran these steps, in order:`,
   ];
   let step = 0;
   for (const nodeId of order) {
@@ -817,12 +956,12 @@ function requestOf(a: StoredAutomation, r: StoredRun): string {
     step += 1;
     const text =
       n.kind === "assistant"
-        ? `Assistant step "${n.id}": ${n.config.instruction}${n.config.allow?.length ? ` (It may ${n.config.allow.map(action).join("; ")} unasked.)` : ""}`
+        ? `Founder step "${n.id}": ${n.config.instruction}${n.config.allow?.length ? ` (It may ${n.config.allow.map(action).join("; ")} unasked.)` : ""}`
         : n.kind === "action"
           ? `Action step "${n.id}": ${action(n.config)}.`
           : n.kind === "condition"
             ? `Condition "${n.id}": go on one way if ${n.config.check === "answer" ? `the step before answered ${n.config.equals}` : `the step before counted ${{ at_least: "at least", at_most: "at most", equals: "exactly" }[n.config.op]} ${n.config.value}`}, the other way if not.`
-            : `Notify step "${n.id}": email its owner${n.config.message ? ` "${n.config.message}"` : ""}, with what the Assistant steps before it said.`;
+            : `Notify step "${n.id}": email its owner${n.config.message ? ` "${n.config.message}"` : ""}, with what the Founder steps before it said.`;
     lines.push(`${step}. ${text}`);
   }
   return lines.join("\n");
@@ -900,9 +1039,17 @@ function advance(r: StoredRun) {
     }
     if (step.kind === "wait") {
       const n = stateOf(r, step.id)!;
+      if (n.jobId) {
+        if (!waitJob(r, n)) {
+          // Read again once the work may have ended.
+          r.next = Date.now();
+          return;
+        }
+        continue;
+      }
       const turn = automationTurn(n.turnId);
       if (!turn) {
-        endNode(r, step.id, "failed", null, "Its Assistant turn is gone.");
+        endNode(r, step.id, "failed", null, "Its Founder turn is gone.");
         continue;
       }
       if (turn.live) {
@@ -918,7 +1065,7 @@ function advance(r: StoredRun) {
           null,
           turn.error
             ? sentence(turn.error)
-            : `The Assistant's turn was ${turn.status}.`,
+            : `Founder's turn was ${turn.status}.`,
           turn.usdMicros,
         );
       else
@@ -991,7 +1138,7 @@ function advance(r: StoredRun) {
             "failed",
             null,
             c.check === "answer"
-              ? "The Assistant gave no yes-or-no answer."
+              ? "Founder gave no yes-or-no answer."
               : "The step before it gave no count.",
           );
           break;
@@ -1108,7 +1255,7 @@ const BASE = "/v1/workspaces/{workspaceId}/foundry/automations" as const;
 function found(req: MockRequest, param = "id") {
   return (
     automationOf(req.params.workspaceId!, req.params[param]!) ??
-    fail("NOT_FOUND", "automation not found")
+    fail("NOT_FOUND", "workflow not found")
   );
 }
 const isAutomation = (x: StoredAutomation | MockReply): x is StoredAutomation =>
@@ -1122,12 +1269,12 @@ function owned(
   expected: unknown,
 ): MockReply | undefined {
   if (a.ownerUserId !== c.userId)
-    return fail("PERMISSION_DENIED", "only its owner changes an automation");
+    return fail("PERMISSION_DENIED", "only its owner changes a workflow");
   if (String(expected) !== String(a.revision))
     return refused(
       ws,
       "FOUNDRY_AUTOMATION_CHANGED",
-      `the automation is at revision ${a.revision}, not ${String(expected)}: read it again`,
+      `the workflow is at revision ${a.revision}, not ${String(expected)}: read it again`,
     );
   return undefined;
 }
@@ -1249,7 +1396,7 @@ export function pastRuns(
   },
 ): { status: number; body: unknown } {
   const a = state.automations.find((x) => x.id === automationId);
-  if (!a) return { status: 404, body: { message: "automation not found" } };
+  if (!a) return { status: 404, body: { message: "workflow not found" } };
   for (const p of body.runs || []) {
     const at = iso(Date.now() - p.ago);
     state.runs.push({
@@ -1293,7 +1440,7 @@ export function pruneRun(
   const r = state.runs.find(
     (x) => x.id === runId && x.automationId === automationId,
   );
-  if (!r) return { status: 404, body: { message: "automation run not found" } };
+  if (!r) return { status: 404, body: { message: "workflow run not found" } };
   if (live(r))
     return { status: 400, body: { message: "the run hasn't ended" } };
   state.runs = state.runs.filter((x) => x !== r);
@@ -1383,7 +1530,7 @@ export const automationRoutes: MockRoute[] = [
         return refused(
           ws,
           "FOUNDRY_AUTOMATION_LIMIT",
-          `a workspace keeps at most ${MAX_PER_WORKSPACE} automations; delete one first`,
+          `a workspace keeps at most ${MAX_PER_WORKSPACE} workflows; delete one first`,
         );
       const a: StoredAutomation = {
         id: id("aut"),
@@ -1486,14 +1633,14 @@ export const automationRoutes: MockRoute[] = [
       if (a.ownerUserId !== c.userId && !c.manager)
         return fail(
           "PERMISSION_DENIED",
-          "only its owner, or an owner or admin, deletes an automation",
+          "only its owner, or an owner or admin, deletes a workflow",
         );
       for (const r of state.runs)
         if (r.automationId === a.id && live(r))
           cancelRun(
             r,
             "Deleted.",
-            "The automation was deleted before its run finished.",
+            "The workflow was deleted before its run finished.",
           );
       state.runs = state.runs.filter((r) => r.automationId !== a.id);
       state.automations = state.automations.filter((x) => x !== a);
@@ -1540,13 +1687,13 @@ export const automationRoutes: MockRoute[] = [
       if (a.ownerUserId !== c.userId && !c.manager)
         return fail(
           "PERMISSION_DENIED",
-          "only its owner, or an owner or admin, pauses an automation",
+          "only its owner, or an owner or admin, pauses a workflow",
         );
       if (a.status === "needs_approval")
         return refused(
           ws,
           "FOUNDRY_AUTOMATION_NOT_ACTIVE",
-          "the automation waits for its owner's approval: it isn't running",
+          "the workflow waits for its owner's approval: it isn't running",
         );
       if (a.status === "active") {
         a.revision += 1;
@@ -1565,15 +1712,12 @@ export const automationRoutes: MockRoute[] = [
       const a = found(req);
       if (!isAutomation(a)) return a;
       if (a.ownerUserId !== c.userId)
-        return fail(
-          "PERMISSION_DENIED",
-          "only its owner resumes an automation",
-        );
+        return fail("PERMISSION_DENIED", "only its owner resumes a workflow");
       if (a.status === "needs_approval")
         return refused(
           ws,
           "FOUNDRY_AUTOMATION_UNAPPROVED",
-          "the automation waits for your approval: approve it first",
+          "the workflow waits for your approval: approve it first",
         );
       if (a.status === "paused") {
         a.revision += 1;
@@ -1606,12 +1750,12 @@ export const automationRoutes: MockRoute[] = [
           run: runOut(again, a, c, false),
         } satisfies AutomationRunResponse);
       if (a.ownerUserId !== c.userId)
-        return fail("PERMISSION_DENIED", "only its owner runs an automation");
+        return fail("PERMISSION_DENIED", "only its owner runs a workflow");
       if (a.status === "needs_approval")
         return refused(
           ws,
           "FOUNDRY_AUTOMATION_UNAPPROVED",
-          "the automation waits for your approval: approve it first",
+          "the workflow waits for your approval: approve it first",
         );
       const busy = room(a);
       if (busy?.reason === "busy")
@@ -1684,7 +1828,7 @@ export const automationRoutes: MockRoute[] = [
       if (a.ownerUserId !== c.userId && !c.manager)
         return fail(
           "PERMISSION_DENIED",
-          "only its owner, or an owner or admin, cancels an automation's run",
+          "only its owner, or an owner or admin, cancels a workflow's run",
         );
       if (r.status !== "cancelled") {
         if (!live(r))
@@ -1696,7 +1840,7 @@ export const automationRoutes: MockRoute[] = [
         cancelRun(
           r,
           "Cancelled by a person.",
-          "A person cancelled the automation's run before it finished.",
+          "A person cancelled the workflow's run before it finished.",
         );
       }
       return ok({ run: runOut(r, a, c, true) } satisfies AutomationRunResponse);

@@ -30,6 +30,7 @@ import type {
   AutomationSpec,
   Connector,
   ConnectorKind,
+  FoundryAccessTarget,
   FoundryAgentTurnStatus,
   FoundryAgentAction,
   FoundryAgentAnswers,
@@ -45,6 +46,8 @@ import type {
   FoundryDocument,
   FoundryDocumentSet,
   FoundryLoad,
+  FoundryOntology,
+  FoundryQuestion,
   ListAgentThreadsResponse,
   ListAgentTurnEventsResponse,
   OntologyGeneration,
@@ -56,6 +59,7 @@ import {
   id,
   now,
   ok,
+  type MockGrantee,
   type MockReply,
   type MockRequest,
   type MockRoute,
@@ -69,6 +73,7 @@ import {
   onReset,
 } from "../state";
 import { answerWords, checkAnswers } from "../agent-questions";
+import { guarded, restrictedMember } from "./access";
 import {
   aiAssistantFailure,
   aiModel,
@@ -86,10 +91,16 @@ import {
 import {
   WEEKDAYS,
   sentence as automationSentence,
+  validZone,
   type Weekday,
 } from "../../src/web/areas/automations/model";
 import { automationRoutes, workspaceAutomations } from "./automations";
-import { dashboardRoutes, publicLinks, storedDashboard } from "./dashboards";
+import {
+  VISUALS,
+  dashboardRoutes,
+  publicLinks,
+  storedDashboard,
+} from "./dashboards";
 import { connectionName, dataRoutes, workspaceConnectors } from "./data";
 import { databaseRoutes, tenantGraph } from "./databases";
 import { documentRoutes } from "./documents";
@@ -106,13 +117,20 @@ import {
   ontologyVersion,
   ontologyVersions,
 } from "./ontology";
+import {
+  askQuestion,
+  listed,
+  questionRoutes,
+  storedQuestion,
+} from "./questions";
 import { reviewRoutes } from "./reviews";
 import type { WorkflowCall } from "./workflows";
 import { manages } from "./workspaces";
 import { decisionTypes } from "../review-decisions";
 
-// The Assistant, as the backend's API and foundry-agent-worker run it
-// (backend/api/agent.go, backend/agent): a person's private threads, each
+// Founder (the Assistant in code), as the backend's API and
+// foundry-agent-worker run it (backend/api/agent.go, backend/agent): a
+// person's private threads, each
 // message a turn that is queued, claimed and streams events the dock polls
 // by afterSeq, in the backend's shapes (src/shared/wfe.ts "Agent"). The
 // mock's agent is scripted, with the read tools' outputs in their shapes.
@@ -123,7 +141,22 @@ import { decisionTypes } from "../review-decisions";
 //   (create_dashboard: tries a tile of the ontology named, else the page's,
 //   else the first with a current load, counting its invoices by status
 //   with helix_foundry_preview_dashboard_tile, the mock's real preview; a
-//   tile that can't be read, nothing loaded or no invoices, says why);
+//   tile that can't be read, nothing loaded or no invoices, says why). A
+//   new dashboard a message asks for (the word "dashboard", whole) runs at
+//   once, as the backend's auto-run rule allows (its card and result carry
+//   `auto`): unpinned and unpublished, which the dock's
+//   Undo deletes; anything else stays a card;
+// - "make a dashboard that shows which invoices are unpaid or overdue"
+//   (a dashboard and a question word: which, show, unpaid, overdue, billed,
+//   how many) asks the Analyst first (helix_foundry_ask as the person, then
+//   helix_foundry_get_question until it ends, both naming the question for
+//   the dock), then makes a dashboard of its answer's tables and charts at
+//   once, a tile each with the query it recorded; an answer with none makes
+//   nothing. A limit the Analyst keeps (30 questions an hour, the month's
+//   budget) is said to be the Analyst's;
+// - a question of the data about invoices, customers or accounts ("which
+//   customers …", "how many invoices …") goes to the Analyst the same way,
+//   with a sentence around its answer, never the answer again;
 // - on a dashboard's page, "pin" or "unpin" it, "publish" or "unpublish"
 //   it (publish only while public links are on; unpublish whenever it is
 //   published), "delete" it or "rename it to X" (pin_dashboard,
@@ -131,15 +164,15 @@ import { decisionTypes } from "../review-decisions";
 //   update_dashboard, after helix_foundry_get_dashboard);
 // - "every Monday at 9, sync Stripe and email me a summary of …" (or any
 //   "automate …", "every day …", or anything written on the page that
-//   starts a new automation, its page context's newAutomation):
-//   create_automation of a schedule (UTC), or of documents arriving in
+//   starts a new workflow, its page context's newAutomation):
+//   create_workflow of a schedule (UTC), or of documents arriving in
 //   the first set of the workspace's own ("when … uploaded"),
 //   that syncs the connection named (else the first, when asked to sync),
 //   asks the Assistant for the summary asked for and emails it, after
 //   helix_foundry_list_connectors; "run", "pause", "resume" or "delete" an
-//   automation it names (run_automation, pause_automation,
-//   resume_automation, delete_automation, after
-//   helix_foundry_get_automation);
+//   workflow it names (run_workflow, pause_workflow,
+//   resume_workflow, delete_workflow, after
+//   helix_foundry_get_workflow);
 // - "create an ontology called X on database Y" (create_ontology; "on a new
 //   database Y" makes it in the workspace's first project);
 // - "generate" or "draft" (generate_ontology: the connections and sets the
@@ -185,7 +218,14 @@ import { decisionTypes } from "../review-decisions";
 // was not named). A member gets the read tools, and prepares only their own
 // dashboards and automations (MEMBER_OPERATIONS: the backend decides at the
 // click whose automation it is), as the backend gives them: anything else,
-// connect included, the agent says an owner or admin does. An automation's
+// connect included, the agent says an owner or admin does. A grantee (a
+// restricted member: ./access.ts admits them to their own threads) gets
+// Founder read only, as the worker's ReachGrants runs it (granteeScript):
+// it lists the ontologies their grants hold, asks the Analyst about the one
+// named, the page's or the first, and prepares, makes and relays nothing;
+// their page context keeps only what their grants hold, and their threads
+// made with the workspace's whole view (before their restriction, or while
+// they were an owner or admin), or whose grants they lost, look absent. An automation's
 // Assistant step (queueAutomationTurn, for ./automations.ts) is a turn of
 // kind automation in its run's thread, out of the person's list: it reads
 // the ontologies and, asked to load one, prepares its load, which runs at
@@ -276,6 +316,11 @@ type StoredThread = {
   kind: "chat" | "automation";
   title: string;
   runtime: AgentRuntime;
+  // The grant targets a restricted member's turns of it ran under, which
+  // they must all still hold to read it; null for a thread made or run with
+  // the workspace's whole view, which no restricted member reads
+  // (model.FoundryAgentThread.Granted).
+  granted: FoundryAccessTarget[] | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -377,7 +422,7 @@ export const whileOn = (routes: MockRoute[]): MockRoute[] =>
         ? refused(
             req.params.workspaceId!,
             "FOUNDRY_AGENT_DISABLED",
-            "the Assistant is off for this Foundry",
+            "Founder is off for this Foundry",
           )
         : r.handle(req),
   }));
@@ -540,29 +585,64 @@ const toAction = (a: StoredAction): FoundryAgentAction => ({
 });
 
 /**
- * The caller as the Assistant answers them: a member of the workspace (a
- * grantee never gets here: ./access.ts denies every agent route).
+ * The caller as Founder answers them: a member of the workspace, and, for a
+ * grantee (a restricted member, admitted by ./access.ts to these routes
+ * only), what its grants hold: its threads made with the whole view, or
+ * whose grants it no longer holds, look absent, as the backend's agentThread
+ * has it.
  */
 function person(req: MockRequest) {
   const m = membership(req.params.workspaceId!, req.principal.user.id);
-  return isReply(m) ? m : { m, userId: req.principal.user.id };
+  return isReply(m)
+    ? m
+    : { m, userId: req.principal.user.id, grantee: req.grantee };
 }
 const isPerson = (
   x: ReturnType<typeof person>,
 ): x is Exclude<ReturnType<typeof person>, MockReply> => "userId" in x;
 
-function threadOf(workspaceId: string, userId: string, threadId: string) {
+/** Whether a grantee may read thread `t`: one it made, all of whose grants it holds. */
+const granteeReads = (t: StoredThread, grantee?: MockGrantee) =>
+  !grantee || (!!t.granted && grantee.holdsAll(t.granted));
+
+/** The person's thread, unless deleted or not the grantee's to read. */
+function threadOf(
+  workspaceId: string,
+  userId: string,
+  threadId: string,
+  grantee?: MockGrantee,
+) {
   return state.threads.find(
     (t) =>
       t.id === threadId &&
       t.workspaceId === workspaceId &&
       t.userId === userId &&
-      !t.deletedAt,
+      !t.deletedAt &&
+      granteeReads(t, grantee),
   );
 }
-function turnOf(workspaceId: string, userId: string, turnId: string) {
+function turnOf(
+  workspaceId: string,
+  userId: string,
+  turnId: string,
+  grantee?: MockGrantee,
+) {
   const t = state.turns.find((x) => x.id === turnId);
-  return t && threadOf(workspaceId, userId, t.threadId) ? t : undefined;
+  return t && threadOf(workspaceId, userId, t.threadId, grantee)
+    ? t
+    : undefined;
+}
+/**
+ * NOT_FOUND for a turn turnOf doesn't find: "thread not found" when it is
+ * the person's in a thread the grantee may not read, as the backend's
+ * agentTurn says it.
+ */
+function turnMissing(workspaceId: string, userId: string, turnId: string) {
+  const mine = state.turns.some(
+    (x) =>
+      x.id === turnId && x.workspaceId === workspaceId && x.userId === userId,
+  );
+  return fail("NOT_FOUND", mine ? "thread not found" : "turn not found");
 }
 function actionOf(workspaceId: string, userId: string, actionId: string) {
   const a = state.actions.find((x) => x.id === actionId);
@@ -573,7 +653,7 @@ function actionOf(workspaceId: string, userId: string, actionId: string) {
 function busy(t: StoredThread) {
   advanceThread(t.id);
   if (state.turns.some((x) => x.threadId === t.id && live(x)))
-    return "the Assistant is still answering in this thread";
+    return "Founder is still answering in this thread";
   if (
     state.actions.some((a) => a.threadId === t.id && shown(a) === "executing")
   )
@@ -587,7 +667,9 @@ let compiled: (MockRoute & { c: ReturnType<typeof compileTemplate> })[];
 /**
  * A WFE call as `userId` makes it, through the mock's own routes: how a
  * tool reads and an action runs, as the backend's do through Foundry's API.
- * Every route it calls answers at once.
+ * Each route runs the access check first (./access.ts guarded), so a
+ * grantee's calls are narrowed as the WFE narrows a tool's. Every route it
+ * calls answers at once.
  */
 function wfe(
   userId: string,
@@ -606,7 +688,11 @@ function wfe(
     ...agentHostRoutes,
     ...dashboardRoutes,
     ...automationRoutes,
-  ].map((r) => ({ ...r, c: compileTemplate(r.path) }));
+    // Reads only: asking is askQuestion's (its POST answers later).
+    ...questionRoutes,
+  ]
+    .map(guarded)
+    .map((r) => ({ ...r, c: compileTemplate(r.path) }));
   const url = new URL(path, "http://mock");
   for (const r of compiled) {
     const params = r.method === method && matchTemplate(r.c, url.pathname);
@@ -620,7 +706,7 @@ function wfe(
       principal: { user: db.users.get(userId)!, sessionId: "agent" },
     });
     if (reply instanceof Promise)
-      throw new Error(`the Assistant's ${method} ${path} answers later`);
+      throw new Error(`Founder's ${method} ${path} answers later`);
     return reply as MockReply & { body: any };
   }
   throw new Error(`no mock route for ${method} ${path}`);
@@ -992,9 +1078,11 @@ const LIST = "helix_foundry_list_ontologies",
   RUNTIME = "helix_foundry_get_assistant_runtime",
   PREVIEW = "helix_foundry_preview_dashboard_tile",
   GET_DASHBOARD = "helix_foundry_get_dashboard",
-  GET_AUTOMATION = "helix_foundry_get_automation",
+  GET_AUTOMATION = "helix_foundry_get_workflow",
   PREPARE = "helix_foundry_prepare_operation",
-  READ = "helix_foundry_read_graph";
+  READ = "helix_foundry_read_graph",
+  ASK = "helix_foundry_ask",
+  GET_QUESTION = "helix_foundry_get_question";
 
 /** What a member, who manages nothing, prepares: their own dashboards and automations (integration.memberOperations). */
 const MEMBER_OPERATIONS: readonly (
@@ -1005,12 +1093,12 @@ const MEMBER_OPERATIONS: readonly (
   "create_dashboard",
   "update_dashboard",
   "delete_dashboard",
-  "create_automation",
-  "update_automation",
-  "pause_automation",
-  "resume_automation",
-  "delete_automation",
-  "run_automation",
+  "create_workflow",
+  "update_workflow",
+  "pause_workflow",
+  "resume_workflow",
+  "delete_workflow",
+  "run_workflow",
 ];
 
 /** What an owner or admin does that a member asked for, in the agent's words. */
@@ -1027,7 +1115,7 @@ const VERBS: Record<AgentOperation, string> = {
   update_document_set: "change a document set",
   move_document: "move a document",
   settle_review: "settle a review",
-  set_assistant_runtime: "choose where the Assistant runs",
+  set_assistant_runtime: "choose where Founder runs",
   revoke_assistant_helper: "revoke a helper",
   create_dashboard: "make a dashboard",
   update_dashboard: "change a dashboard",
@@ -1035,12 +1123,12 @@ const VERBS: Record<AgentOperation, string> = {
   pin_dashboard: "pin a dashboard",
   publish_dashboard: "publish a dashboard",
   unpublish_dashboard: "unpublish a dashboard",
-  create_automation: "set up an automation",
-  update_automation: "change an automation",
-  pause_automation: "pause an automation",
-  resume_automation: "resume an automation",
-  delete_automation: "delete an automation",
-  run_automation: "run an automation",
+  create_workflow: "set up a workflow",
+  update_workflow: "change a workflow",
+  pause_workflow: "pause a workflow",
+  resume_workflow: "resume a workflow",
+  delete_workflow: "delete a workflow",
+  run_workflow: "run a workflow",
 };
 
 /**
@@ -1389,8 +1477,118 @@ const loadPlan = (
   );
 };
 
+/** Who sends a message: what Founder may prepare for them. */
+type Who = "manager" | "member" | "grantee";
+// No words ask for update_workflow: a workflow's edits are its page's.
+type Intent =
+  | Exclude<AgentOperation, "update_workflow">
+  | "connect"
+  | "relay_questions";
+
+/** What each change a message may ask for reads as, tried in order. */
+const INTENTS: readonly (readonly [RegExp, Intent])[] = [
+  [
+    /\banswers?\b.*\bquestions?\b|\buse (?:the|its) (?:defaults|suggestions)\b/i,
+    "relay_questions",
+  ],
+  [/\brevoke\b.*\bhelper\b/i, "revoke_assistant_helper"],
+  [
+    /\b(run|switch|move)\b.*\b(subscription|claude code|codex|foundry['’]s model)\b/i,
+    "set_assistant_runtime",
+  ],
+  [/\bconnect\b/i, "connect"],
+  [/\bcreate\b.*\bontology\b/i, "create_ontology"],
+  [/\b(settle|resolve)\b.*\breview\b|\breview about\b/i, "settle_review"],
+  [/\bsync\b/i, "sync_connector"],
+  [/\bsample\b/i, "add_sample_data"],
+  [/\bmove\b/i, "move_document"],
+  [/\b(rename|describe)\b.*\bset\b/i, "update_document_set"],
+  [/\b(create|make|add)\b.*\bset\b/i, "create_document_set"],
+  [/\b(revise|preview)\b/i, "revise_version"],
+  [/\b(generate|draft)\b/i, "generate_ontology"],
+  [/\bload\b.*\bcurrent\b/i, "set_current_load"],
+  [/\bcurrent\b/i, "set_current_version"],
+];
+
+/**
+ * The change a message asks for, by its words, if any: an automation's,
+ * a new dashboard, what it asks of the dashboard on the page, else the
+ * first of INTENTS, else a load that isn't a question.
+ */
+function intentOf(
+  ws: string,
+  t: string,
+  automated: AutomationAsk | undefined,
+  asked: DashboardAsk | undefined,
+): Intent | undefined {
+  if (automated) return automated.kind;
+  if (/\bdashboard\b/i.test(t) && /\b(build|make|create)\b/i.test(t))
+    return "create_dashboard";
+  if (asked) return asked.operation;
+  // A question of the data may say "current" ("each contact's current
+  // title"): it isn't a make-current.
+  const listed = INTENTS.find(
+    ([words, intent]) =>
+      words.test(t) && !(intent === "set_current_version" && asksData(ws, t)),
+  );
+  if (listed) return listed[1];
+  return /\b(re)?load\b/i.test(t) &&
+    !/\b(how many|which|what|when|why)\b/i.test(t)
+    ? "create_load"
+    : undefined;
+}
+
+/**
+ * Where the mock's Founder sends a message: an operation's intent, with
+ * the automation or dashboard ask it named; "setup_questions" (what it
+ * asks first); "ask_dashboard" (the Analyst asked, its answer's charts made
+ * a dashboard); "ask" (a question of the data) or "describe". messageScript
+ * runs it; the unit tests send Founder's suggestions through it
+ * (messageIntent).
+ */
+function messageRoute(a: Pick<Ask, "ws" | "text" | "page">, manager: boolean) {
+  const t = a.text;
+  const board = a.page?.dashboardId
+      ? storedDashboard(a.ws, a.page.dashboardId)
+      : undefined,
+    asked = (board && dashboardAsk(t)) || undefined;
+  // What the Assistant needs to know first, asked in the dock.
+  if (manager && /\bset ?up\b.*\bontolog|\bhelp me\b.*\bontolog/i.test(t))
+    return { intent: "setup_questions" as const };
+  const automated = automationAsk(a.ws, t, !!a.page?.newAutomation);
+  // A dashboard of what the data says (which invoices, how many, what they
+  // show): the Analyst asked first, its answer's charts made a dashboard.
+  // Asking is a read, and a member makes their own dashboards.
+  if (
+    !automated &&
+    !asked &&
+    /\bdashboards?\b/i.test(t) &&
+    /\b(which|shows?|unpaid|overdue|billed|how many)\b/i.test(t)
+  )
+    return { intent: "ask_dashboard" as const };
+  const intent = intentOf(a.ws, t, automated, asked);
+  if (intent) return { intent, automated, board, asked };
+  // A question of the data goes to the Analyst (while a load holds it);
+  // anything else is read with the read tools and answered.
+  return {
+    intent: asksData(a.ws, t) ? ("ask" as const) : ("describe" as const),
+  };
+}
+
+/**
+ * Where the mock's Founder sends a message an owner or admin writes on
+ * Founder's page of `ontologyId`: an operation it prepares (or makes, a
+ * dashboard), a question for the Analyst ("ask", or "ask_dashboard" for a
+ * dashboard of its answer), or "describe".
+ */
+export const messageIntent = (ws: string, text: string, ontologyId = "") =>
+  messageRoute({ ws, text, page: ontologyId ? { ontologyId } : null }, true)
+    .intent;
+
 /** What the agent does with a person's message. */
-function messageScript(a: Ask, manager: boolean): Step[] {
+function messageScript(a: Ask, who: Who): Step[] {
+  if (who === "grantee") return granteeScript(a);
+  const manager = who === "manager";
   const list = [
     call("tu_list", LIST, {}),
     result("tu_list", LIST, () => ({
@@ -1398,64 +1596,23 @@ function messageScript(a: Ask, manager: boolean): Step[] {
     })),
   ];
   const t = a.text;
-  const board = a.page?.dashboardId
-      ? storedDashboard(a.ws, a.page.dashboardId)
-      : undefined,
-    asked = board && dashboardAsk(t);
-  // What the Assistant needs to know first, asked in the dock.
-  if (manager && /\bset ?up\b.*\bontolog|\bhelp me\b.*\bontolog/i.test(t))
+  const route = messageRoute(a, manager);
+  if (route.intent === "setup_questions")
     return [started, ...list, ...setupQuestions(a)];
-  const automated = automationAsk(a.ws, t, !!a.page?.newAutomation);
-  const intent: AgentOperation | "connect" | "relay_questions" | undefined =
-    automated
-      ? automated.kind
-      : /\bdashboard\b/i.test(t) && /\b(build|make|create)\b/i.test(t)
-        ? "create_dashboard"
-        : asked
-          ? asked.operation
-          : /\banswers?\b.*\bquestions?\b|\buse (?:the|its) (?:defaults|suggestions)\b/i.test(
-                t,
-              )
-            ? "relay_questions"
-            : /\brevoke\b.*\bhelper\b/i.test(t)
-              ? "revoke_assistant_helper"
-              : /\b(run|switch|move)\b.*\b(subscription|claude code|codex|foundry['’]s model)\b/i.test(
-                    t,
-                  )
-                ? "set_assistant_runtime"
-                : /\bconnect\b/i.test(t)
-                  ? "connect"
-                  : /\bcreate\b.*\bontology\b/i.test(t)
-                    ? "create_ontology"
-                    : /\b(settle|resolve)\b.*\breview\b|\breview about\b/i.test(
-                          t,
-                        )
-                      ? "settle_review"
-                      : /\bsync\b/i.test(t)
-                        ? "sync_connector"
-                        : /\bsample\b/i.test(t)
-                          ? "add_sample_data"
-                          : /\bmove\b/i.test(t)
-                            ? "move_document"
-                            : /\b(rename|describe)\b.*\bset\b/i.test(t)
-                              ? "update_document_set"
-                              : /\b(create|make|add)\b.*\bset\b/i.test(t)
-                                ? "create_document_set"
-                                : /\b(revise|preview)\b/i.test(t)
-                                  ? "revise_version"
-                                  : /\b(generate|draft)\b/i.test(t)
-                                    ? "generate_ontology"
-                                    : /\bload\b.*\bcurrent\b/i.test(t)
-                                      ? "set_current_load"
-                                      : /\bcurrent\b/i.test(t)
-                                        ? "set_current_version"
-                                        : /\b(re)?load\b/i.test(t) &&
-                                            !/\b(how many|which|what|when|why)\b/i.test(
-                                              t,
-                                            )
-                                          ? "create_load"
-                                          : undefined;
-  if (intent && !manager && !MEMBER_OPERATIONS.includes(intent))
+  if (route.intent === "ask_dashboard")
+    return [started, ...list, ...askDashboard(a, who)];
+  if (route.intent === "ask" || route.intent === "describe") {
+    // A question of the data, about invoices, customers or accounts, of an
+    // ontology with a current load, goes to the Analyst.
+    const o = route.intent === "ask" ? dashboardOntology(a) : undefined;
+    return [
+      started,
+      ...list,
+      ...(o && currentLoadId(o.id) ? askData(a, o, who) : describe(a)),
+    ];
+  }
+  const { intent, automated, board, asked } = route;
+  if (!manager && !MEMBER_OPERATIONS.includes(intent))
     return [
       started,
       ...list,
@@ -1482,12 +1639,12 @@ function messageScript(a: Ask, manager: boolean): Step[] {
       return [started, ...list, ...createOntology(a)];
     case "create_dashboard":
       return [started, ...list, ...buildDashboard(a)];
-    case "create_automation":
+    case "create_workflow":
       return [started, ...automationCreate(a)];
-    case "pause_automation":
-    case "resume_automation":
-    case "delete_automation":
-    case "run_automation":
+    case "pause_workflow":
+    case "resume_workflow":
+    case "delete_workflow":
+    case "run_workflow":
       return [
         started,
         ...automationOperation(
@@ -1503,8 +1660,6 @@ function messageScript(a: Ask, manager: boolean): Step[] {
     case "publish_dashboard":
     case "unpublish_dashboard":
       return [started, ...onDashboard(a, board!, asked!)];
-    case undefined:
-      return [started, ...list, ...describe(a)];
   }
   const found = ontologyFor(
     a.ws,
@@ -1540,7 +1695,7 @@ function runtimeOperation(
     return [
       said(
         () =>
-          "Where the Assistant runs is chosen on a local install of Foundry only: here it runs on the workspace’s AI model.",
+          "Where Founder runs is chosen on a local install of Foundry only: here it runs on the workspace’s AI model.",
       ),
     ];
   const read = () => {
@@ -1626,7 +1781,7 @@ function operationOf(
         | "set_assistant_runtime"
         | "revoke_assistant_helper"
         | `${string}_dashboard`
-        | `${string}_automation`
+        | `${string}_workflow`
       >
     | "relay_questions",
   a: Ask,
@@ -2058,18 +2213,28 @@ const dref = (d: NonNullable<ReturnType<typeof storedDashboard>>) => ({
 });
 
 /**
- * A dashboard of an ontology's invoices by status: its tile tried as the
- * person (the mock's real preview), then create_dashboard of it, or why it
- * can't be read.
+ * The ontology a dashboard reads: the one named, else the page's, else the
+ * first with a current load, else the first.
  */
-function buildDashboard(a: Ask): Step[] {
+function dashboardOntology(a: Ask) {
   const all = workspaceOntologies(a.ws),
     page = a.page?.ontologyId ? ontologyById(a.page.ontologyId) : undefined;
-  const o =
+  return (
     named(a.ws, a.text) ??
     (page?.workspaceId === a.ws ? page : undefined) ??
     all.find((x) => currentLoadId(x.id)) ??
-    all[0];
+    all[0]
+  );
+}
+
+/**
+ * A dashboard of an ontology's invoices by status: its tile tried as the
+ * person (the mock's real preview), then create_dashboard of it, made at
+ * once since the person asked for a dashboard (autoCreateDashboard), or why
+ * it can't be read.
+ */
+function buildDashboard(a: Ask): Step[] {
+  const o = dashboardOntology(a);
   if (!o)
     return [
       said(
@@ -2134,8 +2299,8 @@ function buildDashboard(a: Ask): Step[] {
             },
           };
     },
-    // Only a tile that reads goes on a card.
-    ...prepare(() => {
+    // Only a tile that reads goes on a dashboard.
+    ...dashboardSteps(a, () => {
       const read = outcome();
       if (!read?.ok)
         return `I couldn't read invoices by status from ${o.name}: ${read ? read.error?.message || "it has no answer" : why(preview())}.`;
@@ -2152,7 +2317,529 @@ function buildDashboard(a: Ask): Step[] {
         },
         named: namedByPerson(a.threadId, [payload.name]),
         ontologyId: "",
-        said: `I've prepared a dashboard of ${o.name}'s invoices by status, as one bar chart. Create it from the card when you're ready.`,
+        said: `with one bar chart of the invoices in ${o.name} by status`,
+      };
+    }),
+  ];
+}
+
+type DashboardPlan = Extract<Plan, { operation: "create_dashboard" }>;
+/**
+ * Whether Founder makes a new dashboard without a card, as the backend's
+ * autoRun allows it: in a person's message that asks for a dashboard (the
+ * word, whole), on the workspace the turn is in (every plan here targets
+ * it). Everything else, pinning, publishing and deleting included, stays a
+ * card.
+ */
+const askedForDashboard = (text: string) => /\bdashboards?\b/i.test(text);
+
+/**
+ * A create_dashboard plan's steps: made at once when the person asked for a
+ * dashboard (autoCreateDashboard), else prepared as a card. `said` of a plan
+ * made at once is what the dashboard shows, after its name.
+ */
+function dashboardSteps(
+  a: Ask,
+  decide: (c: Context) => DashboardPlan | string,
+): Step[] {
+  return askedForDashboard(a.text)
+    ? autoCreateDashboard(a, decide)
+    : prepare((c) => {
+        const p = decide(c);
+        return typeof p === "string"
+          ? p
+          : {
+              ...p,
+              said: `I've prepared a dashboard${p.said ? ` ${p.said}` : ""}. Create it from the card when you're ready.`,
+            };
+      });
+}
+
+// What the tool tells the model of a dashboard made at once (the backend's
+// ranAutoNext).
+const RAN_AUTO_NEXT =
+  "Foundry made this new dashboard at once, because the person asked for one; it isn't pinned or published, and they can undo it from the conversation. Give them its link (/dashboards/<id>) in a sentence.";
+
+/**
+ * create_dashboard run at once, as the backend's sink runs an action its
+ * auto-run rule allows: the prepare, its card (auto), stored executing and
+ * decided by the person; then its run as the person and its result (auto);
+ * then the prepare's result and the agent's words, with the link. A new
+ * dashboard is unpinned and unpublished: only its maker sees it in their
+ * list until it's pinned, and the dock's Undo deletes it. A string is the
+ * agent's answer when there is nothing to make.
+ */
+function autoCreateDashboard(
+  a: Ask,
+  decide: (c: Context) => DashboardPlan | string,
+): Step[] {
+  let plan: DashboardPlan | string | undefined;
+  let ran: StoredAction | undefined;
+  const planned = (c: Context) => (plan ??= decide(c));
+  return [
+    (c) => {
+      const p = planned(c);
+      return typeof p === "string"
+        ? { type: "text", text: p }
+        : {
+            type: "tool_call",
+            tool_use_id: "tu_prepare",
+            name: PREPARE,
+            title: PREPARE,
+            input: {
+              operation: p.operation,
+              target: p.target,
+              payload: p.payload,
+            },
+          };
+    },
+    (c) => {
+      const p = planned(c);
+      if (typeof p === "string") return null;
+      const x: StoredAction = {
+        ...p,
+        id: id("act"),
+        turnId: c.turn.id,
+        threadId: a.threadId,
+        workspaceId: a.ws,
+        userId: c.userId,
+        payloadHash: hash(p),
+        status: "executing",
+        result: null,
+        error: "",
+        expiresAt: Date.now() + (knobs.agentActionTtlMs ?? ACTION_TTL_MS),
+        decidedByUserId: c.userId,
+        decidedAt: now(),
+        createdAt: now(),
+      };
+      state.actions.push(x);
+      ran = x;
+      return {
+        type: "action_card",
+        action_id: x.id,
+        operation: x.operation,
+        target: x.target,
+        payload: x.payload,
+        payload_hash: x.payloadHash,
+        display: x.display,
+        target_named_by_user: x.named,
+        expires_at: iso(x.expiresAt),
+        auto: true,
+      };
+    },
+    (c) => {
+      const x = ran;
+      if (!x) return null;
+      const reply = run(x, c.userId);
+      if (reply.status === 200)
+        Object.assign(x, {
+          status: "succeeded",
+          result: {
+            content_trust: "untrusted",
+            operation: x.operation,
+            target: x.target,
+            result: output(x, reply.body),
+          },
+        });
+      else Object.assign(x, { status: "failed", error: why(reply) });
+      return {
+        type: "action_result",
+        action_id: x.id,
+        operation: x.operation,
+        status: x.status,
+        ...(x.result && { result: x.result }),
+        ...(x.error && { error: x.error }),
+        auto: true,
+      };
+    },
+    () => {
+      const x = ran;
+      return x
+        ? {
+            type: "tool_result",
+            tool_use_id: "tu_prepare",
+            name: PREPARE,
+            is_error: false,
+            output: {
+              action_id: x.id,
+              status: "ran",
+              outcome: x.status,
+              ...(x.result && { result: x.result.result }),
+              ...(x.error && { error: x.error }),
+              next: RAN_AUTO_NEXT,
+            },
+          }
+        : null;
+    },
+    () => {
+      const x = ran,
+        p = plan;
+      if (!x || !p || typeof p === "string") return null;
+      const made = x.result?.result as
+        | { id?: string; name?: string }
+        | undefined;
+      const name = made?.name || p.display.name;
+      return {
+        type: "text",
+        text:
+          x.status === "succeeded" && made?.id
+            ? `I made the dashboard “${name}”${p.said ? `, ${p.said}` : ""}: /dashboards/${made.id}. It isn't pinned or published; Undo deletes it.`
+            : `The dashboard “${name}” wasn't made: ${x.error || "it failed"}.`,
+      };
+    },
+  ];
+}
+
+// ---------------------------------------------------------------- the Analyst
+
+/** What asking the Analyst came to, as the steps after it read it. */
+type Asked = {
+  // The question once asked, or the reply that refused it.
+  question?: FoundryQuestion;
+  refused?: MockReply;
+  // How it ended (empty while it runs), with its result JSON, outputs kept.
+  status: string;
+  resultJson: string;
+  error: string;
+};
+
+const QUESTION_LIVE = ["queued", "running"];
+
+/**
+ * A question as helix_foundry_ask and helix_foundry_get_question give it
+ * (integration.FoundryQuestionOutput): its result's queries without their
+ * outputs, as lists give it.
+ */
+function questionOutput(q: FoundryQuestion) {
+  const status = q.status || "queued";
+  return {
+    content_trust: "untrusted",
+    id: q.id,
+    thread_id: q.threadId || q.id,
+    load_id: q.loadId || "",
+    question: q.question || "",
+    status,
+    done: !QUESTION_LIVE.includes(status),
+    ...(q.resultJson && {
+      result: JSON.parse(listed(q.resultJson)) as unknown,
+    }),
+    ...(q.error && { error: q.error }),
+    attempts: q.attempts ?? 0,
+    usd_micros: Number(q.usdMicros || 0),
+    created_at: q.createdAt || "",
+    ...(q.finishedAt && { finished_at: q.finishedAt }),
+  };
+}
+
+/** The question a tool_result names, whatever its output's size. */
+const questionRef = (ontologyId: string, q: FoundryQuestion) => ({
+  ontology_id: ontologyId,
+  id: q.id,
+  ...(q.loadId && { load_id: q.loadId }),
+  thread_id: q.threadId || q.id,
+  ...(q.status && { status: q.status }),
+});
+
+/**
+ * What Founder says when the Analyst refused its question: a limit the
+ * Analyst keeps (30 questions an hour, the month's question budget; a
+ * grantee's own 10 an hour and month's $10) is the limit on questions,
+ * said in those words, not Founder's own. People never read the name
+ * Analyst: Founder's answers from the data are its own.
+ */
+function askRefusal(r: MockReply, o: StoredOntology, who: Who) {
+  const message = why(r).replace(/\.$/, "");
+  if (who === "grantee" && (r.status === 429 || /\bmonth\b/.test(message)))
+    return `Your question was refused: ${message}. That's the limit on your questions, not on me.`;
+  if (r.status === 429)
+    return "This workspace has asked its 30 questions of the data this hour: that limit is on questions, not on me. Ask again later.";
+  if (/\bmonth\b/.test(message))
+    return "This workspace has used the month's budget for questions of the data: that limit is on questions, not on me. It starts again next month.";
+  if (/\bno load to ask\b/.test(message))
+    return `${o.name} has nothing loaded to ask yet. Load it, and I can answer questions about it.`;
+  return `I couldn't ask that of the data: ${message}.`;
+}
+
+/**
+ * Asks the Analyst the person's message about `o`'s current load, as the
+ * person (helix_foundry_ask: the question is theirs, in the Analyst's
+ * threads), then reads it with helix_foundry_get_question until it ends,
+ * holding the turn while it runs (WAIT_MS at most). Both results name the
+ * question (`question`), which the dock shows as the Analyst answers it.
+ * What it came to is `asked`, for the steps after.
+ */
+function askSteps(a: Ask, o: StoredOntology): { steps: Step[]; asked: Asked } {
+  const asked: Asked = { status: "", resultJson: "", error: "" };
+  const input = { workspace_id: a.ws, ontology_id: o.id };
+  // Asked as the WFE's POST is, access check first: a grantee asks its
+  // grants' load, under its own limits, and the question is its own.
+  const ask = guarded({
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/questions",
+    handle: askQuestion,
+  });
+  const steps: Step[] = [
+    call("tu_ask", ASK, { ...input, question: a.text }),
+    (c) => {
+      const reply = ask.handle({
+        method: "POST",
+        path: `${ONT(a.ws, o.id)}/questions`,
+        params: { workspaceId: a.ws, ontologyId: o.id },
+        query: new URLSearchParams(),
+        body: { question: a.text, clientToken: `agent-${c.turn.id}` },
+        principal: { user: db.users.get(c.userId)!, sessionId: "agent" },
+      }) as MockReply;
+      if (reply.status !== 200) {
+        asked.refused = reply;
+        return {
+          type: "tool_result",
+          tool_use_id: "tu_ask",
+          name: ASK,
+          is_error: true,
+          error: why(reply),
+        };
+      }
+      const q = (reply.body as { question: FoundryQuestion }).question;
+      asked.question = q;
+      return {
+        type: "tool_result",
+        tool_use_id: "tu_ask",
+        name: ASK,
+        is_error: false,
+        output: questionOutput(q),
+        question: questionRef(o.id, q),
+      };
+    },
+    (c) =>
+      asked.question
+        ? call("tu_question", GET_QUESTION, {
+            ...input,
+            question_id: asked.question.id,
+          })(c)
+        : null,
+    (c) => {
+      const q = asked.question;
+      if (!q) return null;
+      const stored = storedQuestion(a.ws, o.id, q.id);
+      if (
+        stored &&
+        QUESTION_LIVE.includes(stored.status) &&
+        Date.now() - (c.turn.heldSince ?? Date.now()) <= WAIT_MS
+      )
+        return undefined;
+      const read = wfe(c.userId, "GET", `${ONT(a.ws, o.id)}/questions/${q.id}`);
+      if (read.status !== 200)
+        return {
+          type: "tool_result",
+          tool_use_id: "tu_question",
+          name: GET_QUESTION,
+          is_error: true,
+          error: why(read),
+        };
+      const got = read.body.question as FoundryQuestion;
+      Object.assign(asked, {
+        status: QUESTION_LIVE.includes(got.status || "")
+          ? ""
+          : got.status || "",
+        resultJson: got.resultJson || "",
+        error: got.error || "",
+      });
+      return {
+        type: "tool_result",
+        tool_use_id: "tu_question",
+        name: GET_QUESTION,
+        is_error: false,
+        output: questionOutput(got),
+        question: questionRef(o.id, got),
+      };
+    },
+  ];
+  return { steps, asked };
+}
+
+/** Founder's words around the Analyst's answer: never the answer again. */
+function aroundAnswer(asked: Asked, o: StoredOntology, who: Who) {
+  if (asked.refused) return askRefusal(asked.refused, o, who);
+  const from =
+    who === "grantee"
+      ? `what's shared with you of ${o.name}`
+      : `the current load of ${o.name}`;
+  switch (asked.status) {
+    case "answered":
+      return `That's the answer, from ${from}.`;
+    case "cannot_answer":
+      return `I couldn't answer that from ${from}: the reply says what's missing.`;
+    case "failed":
+      return `The question failed: ${asked.error || "it ended without an answer"}.`;
+    case "cancelled":
+      return "The question was cancelled before it was answered.";
+    default:
+      return "Still working on it: the answer shows here once it's done.";
+  }
+}
+
+/**
+ * Whether a message asks the data: about invoices, customers, accounts,
+ * contracts or people, or a question that names one of the workspace's
+ * ontologies ("What does Renewals hold? List its types.").
+ */
+const asksData = (ws: string, text: string) =>
+  (/\b(which|how many|what|who|show)\b/i.test(text) &&
+    /\b(invoices?|customers?|accounts?|contracts?|contacts?|people|compan(?:y|ies))\b/i.test(
+      text,
+    )) ||
+  (/^\s*(which|what|who|how|when|where|are|is|do|does)\b[^]*\?/i.test(text) &&
+    !!named(ws, text));
+
+/** A question of the data: the Analyst's answer, and a sentence around it. */
+function askData(a: Ask, o: StoredOntology, who: Who): Step[] {
+  const { steps, asked } = askSteps(a, o);
+  return [...steps, said(() => aroundAnswer(asked, o, who))];
+}
+
+/** What Founder says of a change a grantee asked for (granteePrompt's rule). */
+const READ_ONLY =
+  "Your access lets me read and ask about the data shared with you, not change anything in this workspace, so I can't do that. Someone who manages it can.";
+/** What follows the Analyst's answer when a grantee asked for a dashboard. */
+const MADE_NONE =
+  " Your access doesn't let me make dashboards, so I made none.";
+
+/**
+ * A grantee's message, as the worker's ReachGrants runs it: the ontologies
+ * its grants hold (helix_foundry_list_ontologies through the access check,
+ * as they read them: no database), then the Analyst asked about the one
+ * named, the page's (its page context keeps only what it holds) or the
+ * first, whatever the message. A change it asks for, a draft's questions
+ * included, Founder says it can't make; a dashboard asked for, it asks and
+ * makes none. Nothing is prepared, made or asked of the person.
+ */
+function granteeScript(a: Ask): Step[] {
+  const t = a.text;
+  const read = wfe(a.userId, "GET", `${WS(a.ws)}/ontologies`);
+  const shared: FoundryOntology[] = read.body?.ontologies || [];
+  const list = [
+    call("tu_list", LIST, {}),
+    result("tu_list", LIST, () => ({ ontologies: snake(shared) })),
+  ];
+  const dashboard = askedForDashboard(t),
+    // What it asks of a dashboard, on its page or naming one.
+    change = a.page?.dashboardId || dashboard ? dashboardAsk(t) : undefined,
+    intent = intentOf(a.ws, t, automationAsk(a.ws, t, false), change);
+  if (intent === "relay_questions")
+    return [
+      started,
+      ...list,
+      said(
+        () =>
+          "You can't answer a draft's questions: an owner or admin answers them on the generation's page in Foundry.",
+      ),
+    ];
+  if (intent && (change || intent !== "create_dashboard"))
+    return [started, ...list, said(() => READ_ONLY)];
+  const pick =
+    shared.find((o) => says(t, o.name || "") || t.includes(o.id)) ??
+    shared.find((o) => o.id === a.page?.ontologyId) ??
+    shared[0];
+  const o = pick && ontologyById(pick.id);
+  if (!o)
+    return [
+      started,
+      ...list,
+      said(
+        () =>
+          "Nothing is shared with you yet, so there's nothing I can ask about.",
+      ),
+    ];
+  const { steps, asked } = askSteps(a, o);
+  return [
+    started,
+    ...list,
+    ...steps,
+    said(
+      () => `${aroundAnswer(asked, o, "grantee")}${dashboard ? MADE_NONE : ""}`,
+    ),
+  ];
+}
+
+/**
+ * A dashboard of what the data says: asked of the Analyst first (the
+ * ontology a dashboard reads), then each table or chart of its answer made a
+ * tile, as :add-question-visual makes one (the query it recorded, its kind
+ * and title, the current load), one a row, in a dashboard made at once
+ * (autoCreateDashboard). An answer that isn't one, or shows no table or
+ * chart, makes nothing, and Founder says why.
+ */
+function askDashboard(a: Ask, who: Who): Step[] {
+  const o = dashboardOntology(a);
+  if (!o)
+    return [
+      said(
+        () =>
+          "This workspace has no ontology yet, so there is no data for a dashboard. Create one first.",
+      ),
+    ];
+  const { steps, asked } = askSteps(a, o);
+  return [
+    ...steps,
+    ...dashboardSteps(a, () => {
+      if (asked.refused) return askRefusal(asked.refused, o, who);
+      if (asked.status !== "answered")
+        return `${aroundAnswer(asked, o, who).replace(/\.$/, "")}, so I made no dashboard.`;
+      const r = JSON.parse(asked.resultJson || "{}") as {
+        answer?: {
+          visuals?: {
+            evidence_id: string;
+            kind?: string | null;
+            title?: string | null;
+          }[];
+        };
+        queries?: { evidence_id: string; query: unknown }[];
+      };
+      const tiles = (r.answer?.visuals || [])
+        .flatMap((v) => {
+          const recorded = r.queries?.find(
+            (x) => x.evidence_id === v.evidence_id,
+          );
+          return recorded ? [{ v, query: recorded.query }] : [];
+        })
+        .map(({ v, query }, i) => {
+          const visual: { kind?: string } =
+            v.kind && VISUALS.includes(v.kind) ? { kind: v.kind } : {};
+          return {
+            id: `t${i + 1}`,
+            title: v.title?.trim() || "Answer",
+            ontology_id: o.id,
+            load: { kind: "current" },
+            query,
+            visual,
+          };
+        });
+      if (!tiles.length)
+        return "The answer shows no table or chart to put on a dashboard, so I made none.";
+      const name = tiles[0]!.title,
+        description = `${o.name}: the answer, as tables and charts.`;
+      return {
+        operation: "create_dashboard",
+        target: `workspace:${a.ws}`,
+        payload: {
+          name,
+          description,
+          spec: { v: 1, tiles, layout: { rows: tiles.map((t) => [t.id]) } },
+        },
+        display: {
+          name,
+          description,
+          spec: {
+            tiles: tiles.map((t) => ({
+              title: t.title,
+              ontology: ref(o),
+              ...(t.visual.kind && { visual: t.visual.kind }),
+            })),
+          },
+        },
+        named: namedByPerson(a.threadId, [name]),
+        ontologyId: "",
+        said: "",
       };
     }),
   ];
@@ -2494,6 +3181,21 @@ function answersScript(
     const x = answers.find((y) => y.questionId === q.id);
     return x ? answerWords(x) : "";
   };
+  // The time zone the mock asked for: the automation the asking turn's
+  // message described, in the zone the label names.
+  if (!g && asked.questions?.[0]?.header === ZONE_HEADER) {
+    const label = answers[0]?.options?.[0] ?? "";
+    const zone =
+      ZONE_CHOICES.find((z) => z.label === label)?.zone ??
+      (validZone(answers[0]?.text) ? answers[0]!.text! : "UTC");
+    return [
+      started,
+      ...automationCreate(
+        { ...a, text: asking.text, page: asking.pageContext },
+        zone,
+      ),
+    ];
+  }
   if (!g) {
     const [goal, data, leave] = (asked.questions || []).map(words);
     return [
@@ -2517,13 +3219,13 @@ function answersScript(
 // ---------------------------------------------------------------- automations
 
 type AutomationAsk =
-  | { kind: "create_automation" }
+  | { kind: "create_workflow" }
   | {
       kind:
-        | "pause_automation"
-        | "resume_automation"
-        | "delete_automation"
-        | "run_automation";
+        | "pause_workflow"
+        | "resume_workflow"
+        | "delete_workflow"
+        | "run_workflow";
       automation: ReturnType<typeof workspaceAutomations>[number];
     };
 
@@ -2537,16 +3239,21 @@ function automationAsk(
   const op = /\b(pause|resume|delete|run)\b/i.exec(text)?.[1]?.toLowerCase();
   if (named && op)
     return {
-      kind: `${op as "pause" | "resume" | "delete" | "run"}_automation`,
+      kind: `${op as "pause" | "resume" | "delete" | "run"}_workflow`,
       automation: named,
     };
-  // On the page that starts one, whatever the person writes describes it.
+  // On the page that starts one, whatever the person writes describes it;
+  // elsewhere a schedule ("Every night at 2am, …") or an event it starts on
+  // ("When new documents arrive, …") does.
   return creating ||
     /\bautomat(e|ion)\b/i.test(text) ||
-    /\bevery\s+(hour|day|morning|weekday|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(
+    /\bevery\s+(hour|day|morning|evening|night|weekday|weekend|week|month|quarter|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(
+      text,
+    ) ||
+    /^\s*(when|whenever)\b[^.?!]*\b(arrives?|(?:are|is|gets?) uploaded|(?:are|is|gets?) added|(?:are|is) ready|finish(?:es)?|ends?|fails?|succeeds?)\b/i.test(
       text,
     )
-    ? { kind: "create_automation" }
+    ? { kind: "create_workflow" }
     : undefined;
 }
 
@@ -2558,14 +3265,33 @@ const aref = (x: ReturnType<typeof workspaceAutomations>[number]) => ({
 });
 
 /**
- * Sets up what the person asked for as an automation's spec: a schedule
- * (UTC: the mock doesn't know the person's zone), or, when documents are
- * uploaded, their arrival in the workspace's first set of its own; a sync
- * of the connection named (else the first, when asked to sync), the
- * Assistant's summary of what they asked about, and an email; then
- * prepares create_automation.
+ * The time zones the mock offers when it has to ask for one: labels in
+ * words, as the prompt has the Assistant write them, and the IANA id it
+ * writes into the spec itself.
  */
-function automationCreate(a: Ask): Step[] {
+const ZONE_CHOICES: readonly { label: string; zone: string }[] = [
+  { label: "London (UK time)", zone: "Europe/London" },
+  { label: "New York (US Eastern)", zone: "America/New_York" },
+  { label: "Los Angeles (US Pacific)", zone: "America/Los_Angeles" },
+  { label: "Berlin (Central Europe)", zone: "Europe/Berlin" },
+];
+
+/** The question the mock asks when no time zone came with the message. */
+const ZONE_HEADER = "Time zone";
+
+/**
+ * Sets up what the person asked for as an automation's spec: a schedule
+ * in the person's time zone (the page context's, as the browser sent it;
+ * `zone` once they chose one), or, when documents are uploaded, their
+ * arrival in the workspace's first set of its own; a sync of the
+ * connection named (else the first, when asked to sync), the Assistant's
+ * summary of what they asked about, an instruction naming the ontology it
+ * reads by name and never by id, and an email; then prepares
+ * create_workflow. A day's or a week's schedule with no zone known asks
+ * for one first, its options in words.
+ */
+function automationCreate(a: Ask, chosen?: string): Step[] {
+  const zone = chosen || a.page?.timeZone || "";
   const text = a.text,
     connectors = workspaceConnectors(a.ws).filter((c) => c.kind !== "events"),
     connector =
@@ -2585,24 +3311,48 @@ function automationCreate(a: Ask): Step[] {
   const uploaded = /\bwhen\b[^.]*\b(uploaded|arrives?)\b/i.test(text)
     ? sets(a.ws, a.userId).find((s) => !s.connector)
     : undefined;
+  const hourly = /\bevery\s+hour\b/i.test(text);
+  if (!uploaded && !hourly && !zone) {
+    const when =
+      weekday || /\bevery\s+week\b/i.test(text)
+        ? `${(weekday ?? "monday").replace(/^./, (c) => c.toUpperCase())} `
+        : "";
+    const questions: AgentQuestion[] = [
+      {
+        id: "q1",
+        header: ZONE_HEADER,
+        text: `Which time zone should the ${when}${at} run keep?`,
+        options: ZONE_CHOICES.map((z) => ({ label: z.label, description: "" })),
+        multiple: false,
+        recommended: "",
+        blocking: true,
+      },
+    ];
+    return askPerson(
+      () => ({
+        questions: questions.map((q) => ({
+          header: q.header,
+          text: q.text,
+          options: q.options,
+        })),
+      }),
+      () => ({ type: "questions", questions }),
+    );
+  }
+  const time_zone = zone || "UTC";
   const trigger = uploaded
     ? ({ kind: "document_arrived", set_id: uploaded.id } as const)
-    : /\bevery\s+hour\b/i.test(text)
-      ? ({
-          kind: "schedule",
-          every: "hour",
-          minute: 0,
-          time_zone: "UTC",
-        } as const)
+    : hourly
+      ? ({ kind: "schedule", every: "hour", minute: 0, time_zone } as const)
       : weekday || /\bevery\s+week\b/i.test(text)
         ? ({
             kind: "schedule",
             every: "week",
             weekday: (weekday ?? "monday") as Weekday,
             at,
-            time_zone: "UTC",
+            time_zone,
           } as const)
-        : ({ kind: "schedule", every: "day", at, time_zone: "UTC" } as const);
+        : ({ kind: "schedule", every: "day", at, time_zone } as const);
   const about = /\b(?:summary|report)\s+of\s+(.+?)(?:[.!?]|$)/i.exec(text)?.[1];
   const nodes: AutomationSpec["nodes"] = [
     { id: "start", kind: "trigger", config: trigger, position: { x: 0, y: 0 } },
@@ -2618,13 +3368,18 @@ function automationCreate(a: Ask): Step[] {
       kind: "action",
       config: { operation: "sync_connector", connector_id: connector.id },
     });
+  // The ontology the person named, by its name: people read and edit the
+  // instruction, and the step finds it by name when it runs.
+  const reads = named(a.ws, text);
   add({
     id: "summarise",
     kind: "assistant",
     config: {
-      instruction: about
-        ? `Summarise ${about.trim()}, in a few plain sentences.`
-        : `Do what was asked: ${text.trim()}`,
+      instruction:
+        (reads ? `Read the current load of the ${reads.name} ontology. ` : "") +
+        (about
+          ? `Summarise ${about.trim()}, in a few plain sentences.`
+          : `Do what was asked: ${text.trim()}`),
     },
   });
   if (/\b(e-?mails?|mail)\b/i.test(text))
@@ -2647,7 +3402,6 @@ function automationCreate(a: Ask): Step[] {
       dashboard: () => undefined,
     },
     !LOCAL_TOKEN,
-    "UTC",
   );
   return [
     call("tu_connectors", CONNECTORS, { workspace_id: a.ws }),
@@ -2659,13 +3413,13 @@ function automationCreate(a: Ask): Step[] {
       })),
     })),
     ...prepare(() => ({
-      operation: "create_automation",
+      operation: "create_workflow",
       target: `workspace:${a.ws}`,
       payload,
       display: { name },
       named: namedByPerson(a.threadId, [name]),
       ontologyId: "",
-      said: `I've prepared “${name}”: ${words} Its times are in UTC. Nothing runs until you click Create and turn on, which approves these steps to run as you.`,
+      said: `I've prepared “${name}”: ${words} Nothing runs until you click Create and turn on, which approves these steps to run as you.`,
     })),
   ];
 }
@@ -2674,22 +3428,22 @@ function automationCreate(a: Ask): Step[] {
 function automationOperation(
   a: Ask,
   operation:
-    | "pause_automation"
-    | "resume_automation"
-    | "delete_automation"
-    | "run_automation",
+    | "pause_workflow"
+    | "resume_workflow"
+    | "delete_workflow"
+    | "run_workflow",
   x: ReturnType<typeof workspaceAutomations>[number],
 ): Step[] {
   const words = {
-    run_automation: `I've prepared running “${x.name}” now, once, as you.`,
-    pause_automation: `I've prepared pausing “${x.name}”: it won't run when it fires until it is resumed.`,
-    resume_automation: `I've prepared resuming “${x.name}”: it will run whenever it fires again.`,
-    delete_automation: `I've prepared deleting “${x.name}” and its runs.`,
+    run_workflow: `I've prepared running “${x.name}” now, once, as you.`,
+    pause_workflow: `I've prepared pausing “${x.name}”: it won't run when it fires until it is resumed.`,
+    resume_workflow: `I've prepared resuming “${x.name}”: it will run whenever it fires again.`,
+    delete_workflow: `I've prepared deleting “${x.name}” and its runs.`,
   };
   return [
-    call("tu_automation", GET_AUTOMATION, { automation_id: x.id }),
+    call("tu_automation", GET_AUTOMATION, { workflow_id: x.id }),
     result("tu_automation", GET_AUTOMATION, () => ({
-      automation: {
+      workflow: {
         id: x.id,
         name: x.name,
         status: x.status,
@@ -2700,7 +3454,7 @@ function automationOperation(
       () =>
         ({
           operation,
-          target: `automation:${a.ws}/${x.id}`,
+          target: `workflow:${a.ws}/${x.id}`,
           payload: {},
           display: { automation: aref(x) },
           named: namedByPerson(a.threadId, [x.name, x.id]),
@@ -2971,8 +3725,9 @@ export type AutomationUse = (
  * Queues an automation's Assistant step as a turn of kind automation in its
  * run's thread (a new one, out of the person's list, for its first step),
  * as its owner, on Foundry's worker: the backend's
- * StartFoundryAutomationAssistant. A setting whose tool check failed fails
- * it at once, as it fails any turn.
+ * StartFoundryAutomationAssistant. An owner restricted to source grants
+ * since fails it for good, as the worker's ReachGrants does, and so does a
+ * setting whose tool check failed, as it fails any turn.
  */
 export function queueAutomationTurn(p: {
   workspaceId: string;
@@ -2992,6 +3747,7 @@ export function queueAutomationTurn(p: {
       kind: "automation",
       title: [...p.title].slice(0, TITLE_CHARS).join(""),
       runtime: "api",
+      granted: null,
       createdAt: now(),
       updatedAt: now(),
       deletedAt: null,
@@ -3006,7 +3762,9 @@ export function queueAutomationTurn(p: {
     clientToken: "",
     script: [],
   });
-  const unusable = aiAssistantFailure(p.workspaceId);
+  const unusable = restrictedMember(p.workspaceId, p.userId)
+    ? "The workflow's owner now reads only through source grants; an owner or admin can take it over"
+    : aiAssistantFailure(p.workspaceId);
   turn.script = unusable
     ? [
         () => ({
@@ -3127,8 +3885,7 @@ function approveOnClick(
   body: { automation?: FoundryAutomation },
 ): { body: unknown; error: string } {
   if (
-    (a.operation !== "create_automation" &&
-      a.operation !== "update_automation") ||
+    (a.operation !== "create_workflow" && a.operation !== "update_workflow") ||
     a.payload.spec === undefined
   )
     return { body, error: "" };
@@ -3333,16 +4090,14 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
             `${a.display.host.name || "The helper"} is revoked: it runs no more turns. Pair it again from Settings › AI models to run more.`,
         ),
       ];
-    case "create_automation":
-    case "update_automation": {
+    case "create_workflow":
+    case "update_workflow": {
       const name = String(
-          out.name ||
-            ("name" in a.display && a.display.name) ||
-            "the automation",
+          out.name || ("name" in a.display && a.display.name) || "the workflow",
         ),
-        link = `/automations/${String(out.id)}`,
+        link = `/workflows/${String(out.id)}`,
         on = out.status === "active";
-      const made = a.operation === "create_automation";
+      const made = a.operation === "create_workflow";
       return [
         started,
         said(() =>
@@ -3354,19 +4109,19 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
         ),
       ];
     }
-    case "pause_automation":
-    case "resume_automation":
-    case "delete_automation":
-    case "run_automation": {
+    case "pause_workflow":
+    case "resume_workflow":
+    case "delete_workflow":
+    case "run_workflow": {
       const name = String(
-          out.name || a.display.automation.name || "the automation",
+          out.name || a.display.automation.name || "the workflow",
         ),
-        link = `/automations/${a.display.automation.id}`;
+        link = `/workflows/${a.display.automation.id}`;
       const words = {
-        pause_automation: `“${name}” is paused: it runs only when it is run by hand. ${link}`,
-        resume_automation: `“${name}” is on again: ${link}`,
-        delete_automation: `“${name}” is deleted, with its runs.`,
-        run_automation: `“${name}” is running now. Follow it: ${link}/runs/${String(out.id)}`,
+        pause_workflow: `“${name}” is paused: it runs only when it is run by hand. ${link}`,
+        resume_workflow: `“${name}” is on again: ${link}`,
+        delete_workflow: `“${name}” is deleted, with its runs.`,
+        run_workflow: `“${name}” is running now. Follow it: ${link}/runs/${String(out.id)}`,
       };
       return [started, said(() => words[a.operation])];
     }
@@ -3552,14 +4307,14 @@ function run(a: StoredAction, userId: string): MockReply {
         `${WS(ws)}/agent/hosts/${p.host_id}:revoke`,
         {},
       );
-    case "create_automation":
+    case "create_workflow":
       return wfe(userId, "POST", `${WS(ws)}/automations`, {
         name: p.name,
         description: p.description ?? "",
         ...(p.spec !== undefined && { specJson: JSON.stringify(p.spec) }),
         clientToken: a.id,
       });
-    case "update_automation":
+    case "update_workflow":
       return wfe(
         userId,
         "PATCH",
@@ -3571,19 +4326,19 @@ function run(a: StoredAction, userId: string): MockReply {
           ...(p.spec !== undefined && { specJson: JSON.stringify(p.spec) }),
         },
       );
-    case "pause_automation":
-    case "resume_automation":
-    case "delete_automation":
-    case "run_automation": {
+    case "pause_workflow":
+    case "resume_workflow":
+    case "delete_workflow":
+    case "run_workflow": {
       const at = `${WS(ws)}/automations/${a.display.automation.id}`;
-      return a.operation === "delete_automation"
+      return a.operation === "delete_workflow"
         ? wfe(userId, "DELETE", at)
-        : a.operation === "run_automation"
+        : a.operation === "run_workflow"
           ? wfe(userId, "POST", `${at}:run`, { clientToken: a.id })
           : wfe(
               userId,
               "POST",
-              `${at}:${a.operation === "pause_automation" ? "pause" : "resume"}`,
+              `${at}:${a.operation === "pause_workflow" ? "pause" : "resume"}`,
               {},
             );
     }
@@ -3636,18 +4391,18 @@ function output(a: StoredAction, body: any) {
       return { runtime: body.runtime.runtime, online: body.runtime.online };
     case "delete_dashboard":
       return { deleted: true, dashboard_id: a.display.dashboard.id };
-    case "create_automation":
-    case "update_automation":
-    case "pause_automation":
-    case "resume_automation":
+    case "create_workflow":
+    case "update_workflow":
+    case "pause_workflow":
+    case "resume_workflow":
       return automationOutput(a.workspaceId, body.automation);
-    case "delete_automation":
-      return { deleted: true, automation_id: a.display.automation.id };
-    case "run_automation": {
+    case "delete_workflow":
+      return { deleted: true, workflow_id: a.display.automation.id };
+    case "run_workflow": {
       const r = body.run as FoundryAutomationRun;
       return {
         id: r.id,
-        automation_id: r.automationId,
+        workflow_id: r.automationId,
         status: r.status,
         usd_micros: 0,
         created_at: r.createdAt,
@@ -3908,14 +4663,29 @@ export const agentRoutes: MockRoute[] = [
             "INVALID_ARGUMENT",
             "thread_id is required with answers: the thread of the turn they answer",
           );
-        const asking = turnOf(ws, p.userId, String(body.answers?.turnId || ""));
-        if (!asking || asking.threadId !== body.threadId)
+        const asking = turnOf(
+          ws,
+          p.userId,
+          String(body.answers?.turnId || ""),
+          p.grantee,
+        );
+        if (!asking)
+          return turnMissing(ws, p.userId, String(body.answers?.turnId || ""));
+        if (asking.threadId !== body.threadId)
           return fail("NOT_FOUND", "turn not found");
         if (!asking.asked)
           return refused(
             ws,
             "FOUNDRY_AGENT_QUESTIONS_CLOSED",
             "that turn asked you nothing",
+          );
+        // A grantee answers no draft's questions (Founder relays none to
+        // it; one asked while it managed the workspace stays closed).
+        if (p.grantee && asking.asked.generation)
+          return refused(
+            ws,
+            "FOUNDRY_AGENT_QUESTIONS_CLOSED",
+            "a draft's questions are answered by an owner or admin, on the generation's page in Foundry",
           );
         const checked = checkAnswers(
           asking.asked.questions || [],
@@ -3943,6 +4713,8 @@ export const agentRoutes: MockRoute[] = [
           t.clientToken === token,
       );
       if (again) {
+        const was = threadOf(ws, p.userId, again.threadId, p.grantee);
+        if (!was) return fail("NOT_FOUND", "thread not found");
         if (
           again.kind !== (reply ? "answers" : "message") ||
           again.text !== (reply ? "" : text) ||
@@ -3960,11 +4732,11 @@ export const agentRoutes: MockRoute[] = [
         advance(again);
         return ok({
           turn: toTurn(again),
-          thread: toThread(threadOf(ws, p.userId, again.threadId)!),
+          thread: toThread(was),
         } satisfies AgentTurnResponse);
       }
       let thread = body.threadId
-        ? threadOf(ws, p.userId, body.threadId)
+        ? threadOf(ws, p.userId, body.threadId, p.grantee)
         : undefined;
       if (body.threadId && !thread)
         return fail("NOT_FOUND", "thread not found");
@@ -4018,7 +4790,7 @@ export const agentRoutes: MockRoute[] = [
       }
       const draftHas = (why: string) =>
         relayed
-          ? `your answers reached the draft, which carries on from them, but the Assistant can't reply: ${why}`
+          ? `your answers reached the draft, which carries on from them, but Founder can't reply: ${why}`
           : why;
       const hourAgo = Date.now() - 3_600_000,
         sent = state.turns.filter(
@@ -4069,21 +4841,53 @@ export const agentRoutes: MockRoute[] = [
                   .join("")
                   .trim() + "…",
           runtime,
+          // A restricted member's holds what their grants give now.
+          granted: p.grantee ? [...p.grantee.targets] : null,
           createdAt: now(),
           updatedAt: now(),
           deletedAt: null,
         };
         state.threads.push(thread);
       }
+
+      // A grantee's page names only what its grants hold: an ontology they
+      // hold, its load theirs cover, a pinned dashboard; it starts no
+      // automation (the backend's filter, so Founder never reads the rest).
+      const covered = p.grantee?.covered.get(page?.ontologyId || ""),
+        pinned = storedDashboard(ws, page?.dashboardId || "")?.pinned;
+      const seen: AgentPageContext | undefined = p.grantee
+        ? {
+            ontologyId: covered ? page?.ontologyId : undefined,
+            loadId: covered?.loadId === page?.loadId ? page?.loadId : undefined,
+            dashboardId: pinned ? page?.dashboardId : undefined,
+            timeZone: page?.timeZone,
+          }
+        : page;
+      // A zone that isn't one is dropped, never refused, as the WFE does.
+      const zone =
+        typeof seen?.timeZone === "string" && validZone(seen.timeZone)
+          ? seen.timeZone
+          : "";
       const pageContext =
-        page?.ontologyId || page?.dashboardId || page?.newAutomation
+        seen?.ontologyId || seen?.dashboardId || seen?.newAutomation || zone
           ? {
-              ...(page.ontologyId && { ontologyId: page.ontologyId }),
-              ...(page.loadId && { loadId: page.loadId }),
-              ...(page.dashboardId && { dashboardId: page.dashboardId }),
-              ...(page.newAutomation && { newAutomation: true }),
+              ...(seen?.ontologyId && { ontologyId: seen.ontologyId }),
+              ...(seen?.loadId && { loadId: seen.loadId }),
+              ...(seen?.dashboardId && { dashboardId: seen.dashboardId }),
+              ...(seen?.newAutomation && { newAutomation: true }),
+              ...(zone && { timeZone: zone }),
             }
           : null;
+      // Its turn runs as the person is now (the worker's threadReach): the
+      // whole view's makes the thread no grantee's, for good; a grantee's
+      // adds what it holds.
+      if (!p.grantee) thread.granted = null;
+      else if (thread.granted) {
+        const had = new Set(thread.granted.map((t) => JSON.stringify(t)));
+        thread.granted.push(
+          ...p.grantee.targets.filter((t) => !had.has(JSON.stringify(t))),
+        );
+      }
       const turn = queueTurn(
         thread,
         {
@@ -4146,7 +4950,7 @@ export const agentRoutes: MockRoute[] = [
                   text,
                   page: pageContext,
                 },
-                manages(p.m),
+                p.grantee ? "grantee" : manages(p.m) ? "manager" : "member",
               ),
             );
       return ok({
@@ -4167,7 +4971,8 @@ export const agentRoutes: MockRoute[] = [
             t.workspaceId === req.params.workspaceId &&
             t.userId === p.userId &&
             t.kind === "chat" &&
-            !t.deletedAt,
+            !t.deletedAt &&
+            granteeReads(t, p.grantee),
         )
         .sort(
           (a, b) =>
@@ -4196,7 +5001,12 @@ export const agentRoutes: MockRoute[] = [
     handle: (req) => {
       const p = person(req);
       if (!isPerson(p)) return p;
-      const t = threadOf(req.params.workspaceId!, p.userId, req.params.id!);
+      const t = threadOf(
+        req.params.workspaceId!,
+        p.userId,
+        req.params.id!,
+        p.grantee,
+      );
       if (!t) return fail("NOT_FOUND", "thread not found");
       advanceThread(t.id);
       return ok({
@@ -4215,7 +5025,12 @@ export const agentRoutes: MockRoute[] = [
     handle: (req) => {
       const p = person(req);
       if (!isPerson(p)) return p;
-      const t = threadOf(req.params.workspaceId!, p.userId, req.params.id!);
+      const t = threadOf(
+        req.params.workspaceId!,
+        p.userId,
+        req.params.id!,
+        p.grantee,
+      );
       if (!t) return fail("NOT_FOUND", "thread not found");
       advanceThread(t.id);
       for (const x of state.turns)
@@ -4231,8 +5046,14 @@ export const agentRoutes: MockRoute[] = [
     handle: (req) => {
       const p = person(req);
       if (!isPerson(p)) return p;
-      const t = turnOf(req.params.workspaceId!, p.userId, req.params.id!);
-      if (!t) return fail("NOT_FOUND", "turn not found");
+      const t = turnOf(
+        req.params.workspaceId!,
+        p.userId,
+        req.params.id!,
+        p.grantee,
+      );
+      if (!t)
+        return turnMissing(req.params.workspaceId!, p.userId, req.params.id!);
       advance(t);
       const after = Number(req.query.get("afterSeq") || 0) || 0;
       return ok({
@@ -4249,8 +5070,8 @@ export const agentRoutes: MockRoute[] = [
       const p = person(req);
       if (!isPerson(p)) return p;
       const ws = req.params.workspaceId!;
-      const t = turnOf(ws, p.userId, req.params.id!);
-      if (!t) return fail("NOT_FOUND", "turn not found");
+      const t = turnOf(ws, p.userId, req.params.id!, p.grantee);
+      if (!t) return turnMissing(ws, p.userId, req.params.id!);
       advance(t);
       if (t.status !== "cancelled") {
         if (!live(t))
@@ -4259,7 +5080,7 @@ export const agentRoutes: MockRoute[] = [
       }
       return ok({
         turn: toTurn(t),
-        thread: toThread(threadOf(ws, p.userId, t.threadId)!),
+        thread: toThread(threadOf(ws, p.userId, t.threadId, p.grantee)!),
       } satisfies AgentTurnResponse);
     },
   },

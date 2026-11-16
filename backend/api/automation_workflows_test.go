@@ -22,7 +22,7 @@ import (
 func automationWorkflow(store *workflowStore) (*foundrymodel.FoundryWorkflow, *foundrymodel.FoundryWorkflowRun) {
 	w := &foundrymodel.FoundryWorkflow{ID: "wf-auto", WorkspaceID: "ws-1", OntologyID: "ont-1", Name: "Weekly digest", ClientToken: "automation:auto-1",
 		CreatedByUserID: person.UserID, CreatedAt: time.Now(), Automation: &foundrymodel.FoundryWorkflowAutomation{ID: "auto-1", Name: "Weekly digest"}}
-	input, runID := "The automation \"Weekly digest\" ran.", "arun-1"
+	input, runID := "The workflow \"Weekly digest\" ran.", "arun-1"
 	r := &foundrymodel.FoundryWorkflowRun{ID: "wfr-auto", WorkflowID: w.ID, WorkspaceID: "ws-1", OntologyID: "ont-1", ClientToken: runID,
 		StartedBy: personPrincipal(), StartedAt: time.Now(), Input: &input, AutomationRunID: &runID, AutomationKey: "0123456789abcdef0123456789abcdef"}
 	store.workflows, store.runs = append(store.workflows, w), append(store.runs, r)
@@ -57,7 +57,7 @@ func TestAutomationWorkflowsAreFoundrys(t *testing.T) {
 	_, err = s.DeleteFoundryWorkflow(ctx, &foundryv1.DeleteFoundryWorkflowRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: w.ID})
 	wantCode(t, err, codes.FailedPrecondition)
 	require.Equal(t, reasonWorkflowOfAutomation, reasonOf(err))
-	require.Contains(t, status.Convert(err).Message(), "once the automation is deleted")
+	require.Contains(t, status.Convert(err).Message(), "once the workflow is deleted")
 
 	// Once its automation is deleted, it is history, deleted like any.
 	w.Automation.Deleted = true

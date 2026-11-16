@@ -95,7 +95,7 @@ export type DashboardAction =
   | "publish"
   | "unpublish";
 
-/** An automation call that may be refused (src/web/areas/automations/queries.ts). */
+/** A workflow (automation) call that may be refused (src/web/areas/automations/queries.ts). */
 export type AutomationCall =
   | "create"
   | "edit"
@@ -123,13 +123,23 @@ export type Refusal = "rate_limit" | "refused" | "error";
  */
 export type AnalyticsEvents = {
   // Sign-in (src/web/sign-in.tsx, main.tsx).
-  sign_in_started: { method: "github" | "google" | "microsoft" };
+  sign_in_started: {
+    method: "github" | "google" | "microsoft" | "password" | "password_sign_up";
+  };
   sign_in_failed: { reason: SignInError };
   // WorkOS emailed a code before it signs the address in (/login/verify):
   // shown, a code refused or not checked, and a right one.
   email_verification_shown: undefined;
   email_verification_failed: { reason: "code" | "unavailable" };
   email_verified: undefined;
+  // Email and password (src/web/password.tsx): a form the WFE refused, and a
+  // reset link asked for and used.
+  password_refused: {
+    form: "sign-in" | "sign-up" | "forgot" | "reset";
+    reason: "credentials" | "exists" | "denied" | "unavailable" | "refused";
+  };
+  password_reset_requested: undefined;
+  password_reset: undefined;
   login_completed: { destination: "workspace" | "onboarding" };
   workspace_created: undefined;
   // A workspace with no ontology shows only the new-ontology wizard, which
@@ -224,7 +234,9 @@ export type AnalyticsEvents = {
   // ended and its tool calls), or why it was refused; an action the agent
   // prepared, then run (how it ended), dismissed or refused, with whether
   // the person named its target. Never the text, a name or a payload.
-  agent_dock_opened: { from: "shortcut" | "button" | "palette" };
+  agent_dock_opened: {
+    from: "shortcut" | "button" | "palette" | "new_dashboard";
+  };
   agent_turn_started: { section: AgentSection };
   agent_turn_ended: {
     runtime: AgentRuntime;
@@ -247,6 +259,19 @@ export type AnalyticsEvents = {
     target_named_by_user: boolean;
   };
   agent_action_refused: { reason: Refusal };
+  // An action that ran at once, without a card's click (a new dashboard the
+  // person's message asked for), and how it ended; then the person's Undo.
+  agent_action_auto_ran: {
+    operation: AgentOperationName;
+    outcome: "succeeded" | "failed" | "unknown";
+  };
+  agent_action_undone: { operation: AgentOperationName };
+  // A suggestion card of Founder's new chat put in its composer: its kind
+  // and where it came from, never its prompt.
+  agent_suggestion_picked: {
+    kind: "question" | "dashboard" | "ontology" | "workflow";
+    source: "model" | "questions" | "setup" | "fixed";
+  };
   // Where a local install's Assistant runs (Settings › AI models): the
   // runtime chosen, a pairing code made, a helper seen paired after one, a
   // helper revoked.
@@ -261,7 +286,7 @@ export type AnalyticsEvents = {
   // visual (reading the current load or the question's), published (the
   // first time, or again for a new snapshot), unpublished, its public link
   // copied, or why a call was refused. Never a name, a title or a query.
-  dashboard_created: { from: "page" | "analyst" };
+  dashboard_created: { from: "analyst" };
   dashboard_edited: { tiles: boolean };
   dashboard_deleted: undefined;
   dashboard_pinned: undefined;
@@ -272,7 +297,8 @@ export type AnalyticsEvents = {
   dashboard_link_copied: undefined;
   dashboard_refused: { action: DashboardAction; reason: Refusal };
 
-  // Automations (src/web/areas/automations): made (from which template, or
+  // Workflows (src/web/areas/automations; the events keep their automation_
+  // names): made (from which template, or
   // the Assistant's card, which agent_action_executed reports), edited (its
   // steps, or only its name or description), approved by its owner,
   // paused, resumed, run by hand, deleted, a run cancelled, or why a call
@@ -286,8 +312,8 @@ export type AnalyticsEvents = {
   automation_deleted: undefined;
   automation_run_cancelled: undefined;
   automation_refused: { action: AutomationCall; reason: Refusal };
-  // How much an ontology helped it: its workflow opened from the
-  // automation's page, or a run's workflow run from the run's.
+  // How much an ontology helped it: its use case opened from the
+  // workflow's page, or a run's use case run from the run's.
   automation_ontology_opened: { from: "automation" | "run" };
 
   // An ontology's versions, loads and reviews.
@@ -296,7 +322,8 @@ export type AnalyticsEvents = {
   review_settled: { kind: "resolve" | "prop" | "release" | "reject" };
   review_decision_removed: undefined;
   graph_exported: undefined;
-  // Workflows: an agent's task, and the prompt that has an agent run it.
+  // Use cases (the Usage pages; the events keep their workflow_ names): an
+  // agent's task, and the prompt that has an agent run it.
   workflow_created: undefined;
   workflow_deleted: undefined;
   workflow_prompt_copied: undefined;

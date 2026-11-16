@@ -540,6 +540,35 @@
   background: var(--hf-raised);
   overflow: hidden;
 }
+/* Columns past an edge: a fade on that side of the rows says the table
+   scrolls sideways (DataGrid sets the classes as it scrolls). */
+.hf-grid-view {
+  position: relative;
+}
+.hf-grid-view::before,
+.hf-grid-view::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: var(--hf-grid-bar-h, 0px);
+  z-index: 2;
+  width: 28px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.hf-grid-view::before {
+  left: 0;
+  background: linear-gradient(to right, var(--hf-raised), transparent);
+}
+.hf-grid-view::after {
+  right: var(--hf-grid-bar-v, 0px);
+  background: linear-gradient(to left, var(--hf-raised), transparent);
+}
+.hf-grid-wrap.is-scrolled-left > .hf-grid-view::before,
+.hf-grid-wrap.is-scrolled-right > .hf-grid-view::after {
+  opacity: 1;
+}
 .hf-grid {
   overflow: auto;
   overscroll-behavior: contain;

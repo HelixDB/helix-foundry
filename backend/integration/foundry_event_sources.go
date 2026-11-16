@@ -39,7 +39,7 @@ type SendPiecesInput struct {
 	EventSourceID string           `json:"event_source_id,omitempty" jsonschema:"The API source: a connector of kind events. With a send token, optional: the token's own."`
 	ClientToken   string           `json:"client_token,omitempty" jsonschema:"A new random value for each call, 16 to 64 printable ASCII characters (a UUID). Reuse it only to retry the same call with the same pieces, such as after backend_unavailable: that stores nothing new and returns the first send. With other pieces it is refused."`
 	Pieces        []SendPieceInput `json:"pieces" jsonschema:"1 to 500 pieces, at most 1 MiB of data together (keep a call under about 800 KB: data_json is escaped inside the call)."`
-	WorkflowRunID string           `json:"workflow_run_id,omitempty" jsonschema:"An open run of a workflow (helix_foundry_start_workflow_run) to record this send under, with its pieces' ids; empty for none."`
+	WorkflowRunID string           `json:"use_case_run_id,omitempty" jsonschema:"An open run of a use case (helix_foundry_start_use_case_run) to record this send under, with its pieces' ids; empty for none."`
 }
 
 type SendPieceInput struct {

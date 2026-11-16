@@ -32,19 +32,20 @@ import { WORKFLOWS_OFF, workflowsOn } from "./access";
 import { isScope, ontologyById, ontologyOf } from "./ontologies";
 import { insights, starterOf } from "./workflow-insights";
 
-// Workflows, as the backend serves them (api/workflows.go): an agent's task
-// over one ontology. A run of one is started and finished by the agent (in
+// Use cases (the Usage pages; workflows in the API's paths and types), as
+// the backend serves them (api/workflows.go): an agent's task over one
+// ontology. A run of one is started and finished by the agent (in
 // tests, through /__mock/agent, mock/server.ts), and records every read and
 // question of the ontology made with its id (workflowRunId on
 // .../loads/{loadId}:read and .../questions, tracked() below) and every send
 // to an API source (the /__mock/event-sources stand-in's workflowRunId), with
 // the backend's caps and its once-per-question and once-per-send retries. A
-// grantee (a restricted member) reaches them with its Workflows permission
+// grantee (a restricted member) reaches them with its Usage permission
 // (./access.ts), and, holding only part of the ontology, sees and records
 // under only the runs it started (own). Finishing a run queues its assessment, which ends `assessMs` later
 // with the mock agent's assessment (mockAssessment), held to the engine's
 // assess_result.json in the unit tests; an owner or admin asks for one again
-// (:assess). Deleting the ontology leaves its workflows here, unread, as no
+// (:assess). Deleting the ontology leaves its use cases here, unread, as no
 // route reaches them.
 
 const BASE =
@@ -434,12 +435,12 @@ function toRun(r: StoredRun): FoundryWorkflowRun {
   };
 }
 
-// A workflow's page, or a run's, may be the first thing opened: each lookup
+// A use case's page, or a run's, may be the first thing opened: each lookup
 // seeds the demo, as the list and insights do.
 /**
- * Whether the caller sees the workflows Foundry made for automations, and
- * their runs: a grantee doesn't, as it sees no automation (an automation
- * runs with its owner's access).
+ * Whether the caller sees the use cases Foundry made for workflows
+ * (automations, internally), and their runs: a grantee doesn't, as it sees
+ * no workflow (a workflow runs with its owner's access).
  */
 const seesAutomations = (req: MockRequest) => !req.grantee;
 
@@ -455,7 +456,7 @@ function workflowOf(
         w.id === workflowId &&
         w.ontologyId === ontologyId &&
         (!w.automationId || seesAutomations(req)),
-    ) || fail("NOT_FOUND", "workflow not found")
+    ) || fail("NOT_FOUND", "use case not found")
   );
 }
 
@@ -474,7 +475,7 @@ function runOf(
         r.workflowId === workflowId &&
         startedBy(r, own(req)) &&
         (!r.automationRunId || seesAutomations(req)),
-    ) || fail("NOT_FOUND", "workflow run not found")
+    ) || fail("NOT_FOUND", "use case run not found")
   );
 }
 
@@ -518,7 +519,7 @@ export function openRun(
   // which name it with a key no answer shows (the mock's record directly,
   // useOntology): its id alone records nothing, whoever passes it.
   if (state.runs.some((x) => x.id === runId && x.automationRunId))
-    return fail("NOT_FOUND", "workflow run not found");
+    return fail("NOT_FOUND", "use case run not found");
   if (grantee && !workflowsOn(workspaceId, grantee.principal.split(":")[1]!))
     return fail("PERMISSION_DENIED", WORKFLOWS_OFF);
   const by =
@@ -532,16 +533,16 @@ export function openRun(
       (ontologyId === undefined || x.ontologyId === ontologyId) &&
       startedBy(x, by),
   );
-  if (!r) return fail("NOT_FOUND", "workflow run not found");
+  if (!r) return fail("NOT_FOUND", "use case run not found");
   if (r.status === "finished")
     return fail(
       "FAILED_PRECONDITION",
-      "the workflow run finished: start another to record more",
+      "the use case run finished: start another to record more",
     );
   if (r.accesses.length >= WORKFLOW_CAPS.accesses)
     return fail(
       "RESOURCE_EXHAUSTED",
-      `a workflow run records up to ${WORKFLOW_CAPS.accesses} calls`,
+      `a use case run records up to ${WORKFLOW_CAPS.accesses} calls`,
     );
   return r;
 }
@@ -603,7 +604,7 @@ export async function tracked(
   return reply;
 }
 
-// ---------------------------------------------------------------- automations' workflows
+// ---------------------------------------------------------------- workflows' use cases (automations' workflows)
 
 // Foundry's own workflows, as the backend keeps them (store/
 // foundry_automation_workflows.go): one of each ontology an automation uses,
@@ -661,7 +662,7 @@ export function automationWorkflow(
     ontologyId,
     name: automationWorkflowName(a.name),
     description:
-      "Foundry records here each run of its automation that uses this ontology: what the run read of it and what the run found, so each run's assessment says how much the ontology helped.",
+      "Foundry records here each run of its workflow that uses this ontology: what the run read of it and what the run found, so each run's assessment says how much the ontology helped.",
     // Its own token: a person's workflow's never stands in its way.
     clientToken: id("wft"),
     createdByUserId: a.ownerUserId,
@@ -866,7 +867,7 @@ export const workflowRoutes: MockRoute[] = [
             } satisfies FoundryWorkflowResponse)
           : fail(
               "INVALID_ARGUMENT",
-              "client_token was already used for another workflow",
+              "client_token was already used for another use case",
             );
       if (
         state.workflows.filter((w) => w.ontologyId === s.o.id).length >=
@@ -874,7 +875,7 @@ export const workflowRoutes: MockRoute[] = [
       )
         return fail(
           "FAILED_PRECONDITION",
-          `an ontology holds up to ${WORKFLOW_CAPS.workflows} workflows; delete one first`,
+          `an ontology holds up to ${WORKFLOW_CAPS.workflows} use cases; delete one first`,
         );
       const w: StoredWorkflow = {
         id: id("wf"),
@@ -977,7 +978,7 @@ export const workflowRoutes: MockRoute[] = [
         return foundryPrecondition(
           s.m.workspaceId,
           "FOUNDRY_WORKFLOW_OF_AUTOMATION",
-          "this workflow records an automation's runs: it goes only once the automation is deleted, and stays as history after",
+          "this use case records a workflow's runs: it goes only once the workflow is deleted, and stays as history after",
         );
       state.workflows = state.workflows.filter((x) => x !== w);
       state.runs = state.runs.filter((r) => r.workflowId !== w.id);
@@ -999,7 +1000,7 @@ export const workflowRoutes: MockRoute[] = [
         return foundryPrecondition(
           s.m.workspaceId,
           "FOUNDRY_WORKFLOW_OF_AUTOMATION",
-          "this workflow records an automation's runs, which Foundry starts as the automation runs",
+          "this use case records a workflow's runs, which Foundry starts as the workflow runs",
         );
       const clientToken = body.clientToken || id("wfrt");
       const again = state.runs.find(
@@ -1094,7 +1095,7 @@ export const workflowRoutes: MockRoute[] = [
         return foundryPrecondition(
           s.m.workspaceId,
           "FOUNDRY_WORKFLOW_OF_AUTOMATION",
-          "this run records an automation's run, which Foundry finishes when that run ends",
+          "this run records a workflow's run, which Foundry finishes when that run ends",
         );
       if (r.status === "finished") {
         return r.output === output && (input === undefined || input === r.input)

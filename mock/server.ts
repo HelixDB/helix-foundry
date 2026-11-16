@@ -47,11 +47,15 @@ import { handleWorkos } from "./workos";
 // directorySyncMs, remindersPerHour, remindersPerClientPerHour, assessEnabled,
 // assessMs, assessOutcome, automationClockMs, automationStepMs,
 // automationRunsPerDay, automationsDisabled, automationAnswer,
-// automationCount }.
+// automationCount, automationSuggestionsMs, automationSuggestionsOutcome,
+// automationSuggestionsAi }.
 //
 // POST /v1/reminders and /v1/reminders/stop are Foundry's door's, not the
 // WFE's: the landing page's reminders (./reminders.ts), which the site's
 // server calls with the mock's secret. GET /__mock/reminders lists them.
+//
+// GET /__mock/password-resets lists the reset links WorkOS would have
+// emailed, oldest first: [{ email, token }] (./routes/auth.ts).
 //
 // GET /__mock/feedback lists the feedback POST /v1/feedback took
 // (./routes/feedback.ts), which the WFE would tell Helix's team of.
@@ -68,11 +72,12 @@ import { handleWorkos } from "./workos";
 // neither has the app.
 //
 // POST /__mock/automations/{id}/past-runs { runs: [{ status, ago,
-// usdMicros? }] } records ended runs of an automation that long ago (ms),
-// for the history the automations' overview counts (./routes/automations.ts).
+// usdMicros? }] } records ended runs of a workflow (an automation) that long
+// ago (ms), for the history the workflows' overview counts
+// (./routes/automations.ts).
 //
 // POST /__mock/automations/{id}/runs/{runId}/prune drops an ended run, as the
-// backend's retention does; the workflow runs it started stay.
+// backend's retention does; the use case runs it started stay.
 //
 // POST /__mock/agent-host/pair { code, name?, runtimes?, account?,
 // codexVersion? } spends a pairing code as the Assistant's helper's pair
@@ -81,7 +86,7 @@ import { handleWorkos } from "./workos";
 // POST /__mock/agent-host/hello { host_id } starts it.
 //
 // /__mock/agent/v1/... calls the WFE route /v1/... as Ada's agent does
-// through the Helix MCP, with no token: starting and finishing a workflow's
+// through the Helix MCP, with no token: starting and finishing a use case's
 // runs, and reading and asking under one, which the app never does.
 //
 // /__uploads/ stands in for the bucket a document's presigned PUT goes to:
@@ -218,6 +223,15 @@ const server = createServer(async (req, res) => {
       if (url.pathname === "/__mock/feedback" && req.method === "GET") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ feedback: mockFeedback() }));
+        return;
+      }
+      if (url.pathname === "/__mock/password-resets" && req.method === "GET") {
+        const resets = [...db.passwordResets].map(([token, userId]) => ({
+          email: db.users.get(userId)?.email,
+          token,
+        }));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ resets }));
         return;
       }
       if (url.pathname === "/__mock/reminders" && req.method === "GET") {

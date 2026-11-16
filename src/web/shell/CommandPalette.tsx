@@ -23,7 +23,7 @@ import { cx, useMedia } from "../kit";
 import { PICKER_OPENED } from "../areas/data/paths";
 import { paths } from "../paths";
 import { useShell } from "./context";
-import { paletteSources, primaryNav, secondaryNav } from "./nav";
+import { linkedSections, paletteSources } from "./nav";
 import { readRecents, recordRecent, sectionIcon } from "./recents";
 import { shortcutKeys } from "./shortcut";
 import { themeOptions, useTheme } from "./theme";
@@ -116,7 +116,7 @@ export function CommandPalette({
           run: go(r.path),
         });
     // With no query, only the sections; typing also finds their sub-pages.
-    const pages = [...primaryNav, ...secondaryNav].flatMap((n) => [
+    const pages = linkedSections.flatMap((n) => [
       { title: n.label, to: n.to, icon: n.icon },
       ...(q ? n.children(pathname) : [])
         .filter((c) => c.to !== n.to)
@@ -132,11 +132,9 @@ export function CommandPalette({
             {
               key: "action:assistant",
               group: "Actions",
-              title: assistant.open
-                ? "Close the Assistant"
-                : "Open the Assistant",
-              subtitle: "Ask about your workspace, or have it prepare a load",
-              terms: "assistant agent chat ask help load",
+              title: assistant.open ? "Close Founder" : "Open Founder",
+              subtitle: "Ask about your data, or have it do something",
+              terms: "founder assistant agent chat ask help load dashboard",
               icon: Bot,
               run: () => {
                 onClose();

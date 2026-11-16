@@ -1,7 +1,9 @@
 // Package foundryagentworker runs the Assistant's turns (package agent): it
 // claims queued turns, reserving each one's cap against its workspace's
 // monthly Assistant budget, runs an attempt on the workspace's model provider
-// with its person's tools, renewing its lease, and settles what it spent.
+// with its person's tools, renewing its lease, and settles what it spent. It
+// also writes the suggestions for a new automation (package suggest), each
+// in one call on the workspace's extraction model, under the same budget.
 // Off (foundry.agent.enabled false) it claims nothing, so a host may list it
 // everywhere.
 package foundryagentworker
@@ -83,6 +85,8 @@ type Task struct {
 	worker      tasks.Worker
 	slots       chan struct{}
 	running     sync.WaitGroup
+	// suggestions writes suggestions for new automations, beside the turns.
+	suggestions *suggester
 }
 
 func New(d Deps) (*Task, error) {
@@ -104,6 +108,8 @@ func New(d Deps) (*Task, error) {
 		return nil, fmt.Errorf("foundry-agent-worker: %w", err)
 	}
 	t.queue = d.DB
+	t.suggestions = &suggester{db: d.DB, ai: resolver, models: llm.NewFor, catalog: catalog, monthly: cfg.MonthlyMicros(),
+		workerID: t.workerID, now: time.Now, writers: suggestionWriters, retryWait: suggestionRetryWait}
 	t.runner = &agent.Runner{
 		DB: d.DB, Sessions: d.Sessions, AI: resolver, Models: llm.New, Catalog: catalog, Keys: resolver.Keyring, Databases: d.Databases,
 		Cfg: cfg, WorkerID: t.workerID, Now: time.Now,
@@ -113,15 +119,19 @@ func New(d Deps) (*Task, error) {
 
 func (t *Task) Name() string { return Name }
 
-// Start claims turns every PollInterval while it has a free slot; off, it
-// only serves its health listener.
+// Start claims turns every PollInterval while it has a free slot, and, on
+// a tick of its own, writes due automation suggestions, a few at a time;
+// off, it only serves its health listener.
 func (t *Task) Start(ctx context.Context) error {
 	return t.worker.Run(ctx, Name, t.cfg.HTTP.Listen, t.deps.Health, t.deps.Logger, func(ctx context.Context) error {
 		if !t.cfg.Enabled {
 			<-ctx.Done()
 			return nil
 		}
+		var suggesting sync.WaitGroup
+		suggesting.Go(func() { tasks.Tick(ctx, t.cfg.PollInterval, t.suggestions.drain) })
 		tasks.Tick(ctx, t.cfg.PollInterval, t.drain)
+		suggesting.Wait()
 		t.running.Wait()
 		return nil
 	})
@@ -179,7 +189,7 @@ func (t *Task) process(ctx context.Context, turn *model.FoundryAgentTurn) {
 	logger := log.From(ctx).With("turn", turn.ID, "attempt", turn.Attempts)
 	ctx = log.Into(ctx, logger)
 	if turn.Attempts > t.cfg.MaxAttempts {
-		t.end(ctx, turn, model.FoundryAgentTurnOutcome{}, fmt.Sprintf("The Assistant stopped without finishing %d times; send your message again.", turn.Attempts-1))
+		t.end(ctx, turn, model.FoundryAgentTurnOutcome{}, fmt.Sprintf("Founder stopped without finishing %d times; send your message again.", turn.Attempts-1))
 		return
 	}
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), t.cfg.AttemptTimeout())
@@ -211,7 +221,7 @@ func (t *Task) process(ctx context.Context, turn *model.FoundryAgentTurn) {
 func (t *Task) fail(ctx context.Context, turn *model.FoundryAgentTurn, spent model.FoundryAgentTurnOutcome, err error, stopping bool) {
 	var f *agent.Failure
 	if !errors.As(err, &f) {
-		f = &agent.Failure{Message: "The Assistant couldn't finish; Helix will retry", Err: err}
+		f = &agent.Failure{Message: "Founder couldn't finish; Helix will retry", Err: err}
 	}
 	log.From(ctx).Warn("agent turn attempt failed", "permanent", f.Permanent, "stopping", stopping, "err", err)
 	retryAt := t.now().Add(t.cfg.RetryBackoff)

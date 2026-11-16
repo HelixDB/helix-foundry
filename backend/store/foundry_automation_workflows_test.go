@@ -49,7 +49,7 @@ func (f automationWorkflowFixture) claim(t *testing.T, n int) *model.FoundryAuto
 // use starts the workflow run recording run's use of ontology.
 func (f automationWorkflowFixture) use(run *model.FoundryAutomationRun, ontology *model.FoundryOntology) (*model.FoundryWorkflowRun, error) {
 	return f.db.StartFoundryAutomationWorkflowRun(context.Background(), model.FoundryAutomationWorkflowStart{WorkspaceID: f.workspaceID,
-		AutomationRunID: run.ID, OntologyID: ontology.ID, Input: "Run by hand. The automation \"Automation 1\" ran these steps, in order:"})
+		AutomationRunID: run.ID, OntologyID: ontology.ID, Input: "Run by hand. The workflow \"Automation 1\" ran these steps, in order:"})
 }
 
 func TestFoundryAutomationWorkflowRuns(t *testing.T) {
@@ -154,7 +154,7 @@ func TestFoundryAutomationWorkflowRuns(t *testing.T) {
 		ended, err := f.db.GetFoundryAutomationWorkflowRun(ctx, second.ID, f.sales.ID)
 		require.NoError(t, err)
 		require.NotNil(t, ended.Finished)
-		assert.Equal(t, "A person cancelled the automation's run before it finished.", ended.Finished.Output)
+		assert.Equal(t, "A person cancelled the workflow's run before it finished.", ended.Finished.Output)
 		_, err = f.db.GetFoundryWorkflowRunAssessment(ctx, ended.ID)
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
@@ -181,7 +181,7 @@ func TestFoundryAutomationWorkflowRuns(t *testing.T) {
 		ended, err := f.db.GetFoundryWorkflowRun(ctx, f.sales.ID, live.ID)
 		require.NoError(t, err)
 		require.NotNil(t, ended.Finished, "its live run's workflow run finished with it")
-		assert.Equal(t, "The automation was deleted before its run finished.", ended.Finished.Output)
+		assert.Equal(t, "The workflow was deleted before its run finished.", ended.Finished.Output)
 		w, err := f.db.GetFoundryWorkflow(ctx, f.sales.ID, r.WorkflowID)
 		require.NoError(t, err)
 		require.NotNil(t, w.Automation)

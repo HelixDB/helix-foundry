@@ -554,7 +554,7 @@ func TestFoundryAutomationRunSteps(t *testing.T) {
 	require.Equal(t, model.FoundryAgentTurnAutomation, queued.Kind)
 	require.Equal(t, &run.ID, queued.AutomationRunID)
 	require.Equal(t, ptr("ask"), queued.AutomationNodeID)
-	threads, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, automationOwner, "", 10)
+	threads, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, automationOwner, nil, "", 10)
 	require.NoError(t, err)
 	require.Empty(t, threads, "a run's thread is no chat")
 	got, err := f.db.GetFoundryAgentThread(ctx, f.workspaceID, thread.ID)
@@ -940,7 +940,7 @@ func TestFoundryAutomationTurnsHaveTheirOwnBudget(t *testing.T) {
 	failed, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, turn2.ID)
 	require.NoError(t, err)
 	require.Equal(t, model.FoundryAgentTurnFailed, failed.Status)
-	require.Contains(t, *failed.Error, "of automations")
+	require.Contains(t, *failed.Error, "of workflows")
 }
 
 func TestFoundryAutomationWorkspaceDeletion(t *testing.T) {

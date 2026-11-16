@@ -56,19 +56,26 @@ func TestUnknownMethodsDeny(t *testing.T) {
 }
 
 // A grantee only ever reads, apart from asking and cancelling its own
-// questions and starting and finishing its own workflow runs: no other method
-// whose name says it writes admits one, and those two need the Workflows
-// permission.
+// questions, talking to Founder in its own threads, and starting and finishing
+// its own workflow runs: no other method whose name says it writes admits
+// one, the runs need the Workflows permission, and Founder's cards stay
+// refused.
 func TestGranteesNeverWrite(t *testing.T) {
 	writes := []string{"Create", "Update", "Delete", "Set", "Settle", "Put", "Move", "Revise", "Generate", "Sync", "Test", "Complete",
-		"Revoke", "Stop", "Resume", "Detect", "Send", "Validate", "Start", "Finish", "Assess"}
+		"Revoke", "Stop", "Resume", "Detect", "Send", "Validate", "Start", "Finish", "Assess", "Execute", "Refresh", "Dismiss"}
 	runs := []string{foundryv1.FoundryService_StartFoundryWorkflowRun_FullMethodName, foundryv1.FoundryService_FinishFoundryWorkflowRun_FullMethodName}
+	threads := []string{foundryv1.FoundryService_SendFoundryAgentMessage_FullMethodName, foundryv1.FoundryService_DeleteFoundryAgentThread_FullMethodName}
 	for _, m := range methods() {
 		name := m[strings.LastIndex(m, "/")+1:]
 		for _, w := range writes {
-			if strings.HasPrefix(name, w) && access.GranteeAdmits(m) && !slices.Contains(runs, m) {
+			if strings.HasPrefix(name, w) && access.GranteeAdmits(m) && !slices.Contains(runs, m) && !slices.Contains(threads, m) {
 				t.Errorf("%s admits a grantee", m)
 			}
+		}
+	}
+	for _, m := range threads {
+		if access.RuleOf(m) != access.Workspace {
+			t.Errorf("%s: rule %v, want Workspace", m, access.RuleOf(m))
 		}
 	}
 	for _, m := range runs {

@@ -20,7 +20,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -75,6 +77,83 @@ type memStore struct {
 	// record the runs' uses of ontologies.
 	nodes map[string][]*model.FoundryAutomationRunNode
 	uses  workflowUses
+	// threads are the turns' threads by id: one a restricted member made,
+	// holding nothing, unless a test says (thread).
+	threads map[string]*model.FoundryAgentThread
+	// grants are the workspace's source grants; teams each user's teams.
+	grants []model.FoundryAccessGrant
+	teams  map[string][]string
+	// causes are the syncs and loads marked as an automation run's, by run.
+	causes map[string][]model.FoundryAutomationJob
+}
+
+// thread is the thread id, as a restricted member made it unless a test
+// stored another.
+func (s *memStore) thread(id string) *model.FoundryAgentThread {
+	if s.threads == nil {
+		s.threads = map[string]*model.FoundryAgentThread{}
+	}
+	t, ok := s.threads[id]
+	if !ok {
+		t = &model.FoundryAgentThread{ID: id, WorkspaceID: ws, UserID: user, Kind: model.FoundryAgentThreadChat, Runtime: model.FoundryAgentRuntimeAPI,
+			Granted: &model.FoundryAgentThreadGrants{}}
+		s.threads[id] = t
+	}
+	return t
+}
+
+func (s *memStore) GetFoundryAgentThread(_ context.Context, _, id string) (*model.FoundryAgentThread, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := *s.thread(id)
+	return &t, nil
+}
+
+// RecordFoundryAgentThreadGrants records a run's reach as the store does:
+// nil for good, else adding to a restricted member's thread.
+func (s *memStore) RecordFoundryAgentThreadGrants(_ context.Context, _, id string, granted *model.FoundryAgentThreadGrants) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.thread(id)
+	switch {
+	case t.Granted == nil:
+	case granted == nil:
+		t.Granted = nil
+	default:
+		merged := slices.Clone(t.Granted.Targets)
+		for _, target := range granted.Targets {
+			if !slices.Contains(merged, target) {
+				merged = append(merged, target)
+			}
+		}
+		t.Granted = &model.FoundryAgentThreadGrants{Targets: merged}
+	}
+	return nil
+}
+
+func (s *memStore) FoundryTeamsOf(_ context.Context, _, userID string) ([]string, error) {
+	return s.teams[userID], nil
+}
+
+// ListFoundryAccessGrants returns the grants of principals.
+func (s *memStore) ListFoundryAccessGrants(_ context.Context, _ string, principals []access.Principal) ([]model.FoundryAccessGrant, error) {
+	var out []model.FoundryAccessGrant
+	for _, g := range s.grants {
+		if slices.Contains(principals, g.Principal) {
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}
+
+func (s *memStore) MarkFoundryAutomationCause(_ context.Context, runID string, job model.FoundryAutomationJob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.causes == nil {
+		s.causes = map[string][]model.FoundryAutomationJob{}
+	}
+	s.causes[runID] = append(s.causes[runID], job)
+	return nil
 }
 
 func (s *memStore) ListFoundryAutomationRunNodes(_ context.Context, runID string) ([]*model.FoundryAutomationRunNode, error) {
@@ -493,6 +572,23 @@ type backend struct {
 	// answered are the generations' answers sent; answerErr refuses them.
 	answered  []*foundryv1.AnswerOntologyGenerationRequest
 	answerErr error
+	// question is what an ask and a get_question answer: q1, answered,
+	// unless a test says.
+	question *foundryv1.FoundryQuestion
+	// created are the dashboards made; deleted the ids of those deleted.
+	created []*foundryv1.CreateFoundryDashboardRequest
+	deleted []string
+	// grantee reads the person as a restricted member; accessErr refuses
+	// reading their access.
+	grantee   bool
+	accessErr error
+}
+
+func (b *backend) GetMyFoundryAccess(context.Context, *foundryv1.GetMyFoundryAccessRequest, ...grpc.CallOption) (*foundryv1.GetMyFoundryAccessResponse, error) {
+	if b.accessErr != nil {
+		return nil, b.accessErr
+	}
+	return &foundryv1.GetMyFoundryAccessResponse{Grantee: b.grantee, Workflows: true}, nil
 }
 
 func (b *backend) AnswerOntologyGeneration(_ context.Context, r *foundryv1.AnswerOntologyGenerationRequest, _ ...grpc.CallOption) (
@@ -565,7 +661,25 @@ func (b *backend) ListFoundryOntologies(context.Context, *foundryv1.ListFoundryO
 
 func (b *backend) AskFoundryQuestion(_ context.Context, r *foundryv1.AskFoundryQuestionRequest, _ ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error) {
 	b.asked = append(b.asked, r)
-	return &foundryv1.FoundryQuestionResponse{Question: &foundryv1.FoundryQuestion{Id: "q1", Status: "answered"}}, nil
+	return &foundryv1.FoundryQuestionResponse{Question: b.question}, nil
+}
+
+func (b *backend) GetFoundryQuestion(context.Context, *foundryv1.GetFoundryQuestionRequest, ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error) {
+	return &foundryv1.FoundryQuestionResponse{Question: b.question}, nil
+}
+
+// CreateFoundryDashboard makes dash<n>, unpinned and unpublished, as the
+// backend makes every new dashboard.
+func (b *backend) CreateFoundryDashboard(_ context.Context, r *foundryv1.CreateFoundryDashboardRequest, _ ...grpc.CallOption) (
+	*foundryv1.FoundryDashboardResponse, error) {
+	b.created = append(b.created, r)
+	return &foundryv1.FoundryDashboardResponse{Dashboard: &foundryv1.FoundryDashboard{Id: fmt.Sprintf("dash%d", len(b.created)), Name: r.GetName(),
+		Description: r.GetDescription(), SpecJson: r.GetSpecJson(), Revision: 1, CanEdit: true, CanDelete: true}}, nil
+}
+
+func (b *backend) DeleteFoundryDashboard(_ context.Context, r *foundryv1.DeleteFoundryDashboardRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	b.deleted = append(b.deleted, r.GetId())
+	return &emptypb.Empty{}, nil
 }
 
 func (b *backend) PublishFoundryDashboard(_ context.Context, r *foundryv1.PublishFoundryDashboardRequest, _ ...grpc.CallOption) (
@@ -670,7 +784,7 @@ func newHarness(t *testing.T, steps ...[]llm.Chunk) *harness {
 	t.Helper()
 	keys, err := secretbox.NewKeyring("k1", map[string][]byte{"k1": []byte(strings.Repeat("k", 32))})
 	require.NoError(t, err)
-	b := &backend{}
+	b := &backend{question: &foundryv1.FoundryQuestion{Id: "q1", Status: "answered"}}
 	h := &harness{db: &memStore{ontologies: []*model.FoundryOntology{{ID: ontology, WorkspaceID: ws, Name: "Sales graph"}}},
 		model: &scripted{steps: steps}, backend: b, keys: keys}
 	service := (&integration.Service{Foundry: b, Actions: integration.FoundryClients{FoundryServiceClient: b}, Confirmations: &confirmations{},
@@ -730,7 +844,7 @@ func TestToolsAreAClosedList(t *testing.T) {
 	}
 	assert.True(t, slices.IsSorted(offered), "one order, for the cache")
 	for _, name := range []string{"helix_foundry_execute_operation", "helix_foundry_complete_document_upload", "helix_foundry_send_pieces",
-		"helix_foundry_cancel_question", "helix_foundry_create_workflow", "helix_list_workspaces"} {
+		"helix_foundry_cancel_question", "helix_foundry_create_use_case", "helix_list_workspaces"} {
 		assert.NotContains(t, offered, name)
 	}
 	// Every name the list allows is a tool a full session offers, so none is
@@ -801,7 +915,9 @@ func TestTheAssistantPreparesDashboards(t *testing.T) {
 	assert.Equal(t, "update_dashboard", renamed.Operation)
 	assert.JSONEq(t, `{"dashboard":{"id":"dash1","name":"Revenue","published":true},"name":"Revenue by month"}`, string(renamed.Display))
 	assert.True(t, renamed.TargetNamedByUser, "the page the person was on named it")
+	assert.Equal(t, model.FoundryAgentActionPrepared, renamed.Status, "an edit waits for the person")
 	assert.Equal(t, "create_dashboard", h.db.actions[1].Operation)
+	assert.Equal(t, model.FoundryAgentActionSucceeded, h.db.actions[1].Status, "a new dashboard the message asked for runs at once")
 	assert.JSONEq(t, `{"name":"Pipeline","spec":{"tiles":[]}}`, string(h.db.actions[1].Display))
 	for _, op := range []string{"create_dashboard", "update_dashboard", "delete_dashboard", "pin_dashboard", "publish_dashboard", "unpublish_dashboard"} {
 		assert.True(t, Operations[op], op)
@@ -816,8 +932,41 @@ func TestTheNewAutomationPageIsSaid(t *testing.T) {
 	turn.PageContext = json.RawMessage(`{"new_automation":true}`)
 	_, err := h.runner.Run(context.Background(), turn)
 	require.NoError(t, err)
-	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, `<page_context>{"creating_automation":true}</page_context>`)
-	assert.Contains(t, h.model.requests[0].System, "creating_automation")
+	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, `<page_context>{"creating_workflow":true}</page_context>`)
+	assert.Contains(t, h.model.requests[0].System, "creating_workflow")
+}
+
+// The person's time zone reaches the model as data in <page_context>, and
+// the prompt tells it to use that zone without asking.
+func TestThePersonsTimeZoneIsSaid(t *testing.T) {
+	h := newHarness(t, say("Done."))
+	turn := message("Every Monday at 8, summarise the overdue invoices")
+	turn.PageContext = json.RawMessage(`{"new_automation":true,"time_zone":"America/New_York"}`)
+	_, err := h.runner.Run(context.Background(), turn)
+	require.NoError(t, err)
+	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text,
+		`<page_context>{"creating_workflow":true,"time_zone":"America/New_York"}</page_context>`)
+	assert.Contains(t, h.model.requests[0].System, "the time_zone in <page_context> (their browser's), without asking for it")
+}
+
+// A zone stored before it was checked, or no zone at all, is never said.
+func TestATimeZoneThatIsntOneIsNotSaid(t *testing.T) {
+	for _, zone := range []string{"Mars/Olympus", "Local", ""} {
+		h := newHarness(t, say("Hello."))
+		turn := message("Hi")
+		turn.PageContext, _ = json.Marshal(PageContext{TimeZone: zone})
+		_, err := h.runner.Run(context.Background(), turn)
+		require.NoError(t, err)
+		assert.NotContains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, "page_context", zone)
+	}
+}
+
+// Step instructions name things, never ids; time zones offered are words.
+func TestThePromptKeepsIdsAndZoneIdsFromPeople(t *testing.T) {
+	assert.Contains(t, systemPrompt, `naming what it acts on by its name ("the Acme Corp customers ontology"), never by an id`)
+	assert.Contains(t, systemPrompt, `label each in words people read, such as "London (UK time)" or "New York (US Eastern)", never as an IANA id`)
+	assert.NotContains(t, systemPrompt, "ask them for it when you can't tell")
+	assert.Contains(t, automationPrompt(&automationStep{name: "Weekly"}), "names what it acts on by name, not id")
 }
 
 // A page context naming nothing of the workspace tells the model nothing.
@@ -977,7 +1126,7 @@ func TestPromptKeepsWhatAModelNeeds(t *testing.T) {
 func TestPromptOffersEveryRuntimeAnOwnerMayChoose(t *testing.T) {
 	// An owner who confirmed Codex asks for it: the Assistant must know it is a runtime.
 	assert.Contains(t, systemPrompt, "{runtime}: api, claude_code or codex (codex only once the owner confirmed it in Settings › AI models")
-	assert.Equal(t, "assistant-11", PromptVersion)
+	assert.Equal(t, "assistant-15", PromptVersion)
 }
 
 func TestTitle(t *testing.T) {
@@ -1289,7 +1438,7 @@ func TestAFailedToolCheckRefusesTheTurn(t *testing.T) {
 	for check, words := range map[ai.AssistantCheck]string{
 		ai.AssistantNoToolCall: "claude-sonnet-5-5, doesn't call tools",
 		ai.AssistantAuth:       "Claude refused the workspace's key",
-		ai.AssistantRefused:    "Claude refused the Assistant's calls to claude-sonnet-5-5",
+		ai.AssistantRefused:    "Claude refused Founder's calls to claude-sonnet-5-5",
 	} {
 		h := newHarness(t, say("never"))
 		h.runner.AI = fixedAI{check: check}

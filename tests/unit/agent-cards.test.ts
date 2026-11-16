@@ -16,7 +16,7 @@ import {
   type AgentStep,
 } from "@/web/areas/agent/model";
 
-// The Assistant's cards (src/web/areas/agent/model.ts): each of the 27
+// Founder's cards (src/web/areas/agent/model.ts): each of the 27
 // operations' displays as the backend's display.go writes them (its
 // display_test.go's), read without trust, worded by its card, and where a
 // ran one opens; a connect step's form; a call a limit kept from running.
@@ -442,18 +442,18 @@ const DISPLAYS: [string, string, unknown][] = [
     "unpublish_dashboard",
     { dashboard: { id: "dash1", published: true } },
   ],
-  ["an automation set up", "create_automation", { name: "Weekly summary" }],
+  ["a workflow set up", "create_workflow", { name: "Weekly summary" }],
   [
-    "an automation's steps changed",
-    "update_automation",
+    "a workflow's steps changed",
+    "update_workflow",
     {
       automation: { id: "aut1", name: "Weekly", status: "active" },
       steps: true,
     },
   ],
   [
-    "an automation renamed",
-    "update_automation",
+    "a workflow renamed",
+    "update_workflow",
     {
       automation: { id: "aut1", name: "Weekly", status: "needs_approval" },
       name: "Mondays",
@@ -461,23 +461,23 @@ const DISPLAYS: [string, string, unknown][] = [
     },
   ],
   [
-    "an automation paused",
-    "pause_automation",
+    "a workflow paused",
+    "pause_workflow",
     { automation: { id: "aut1", name: "Weekly", status: "active" } },
   ],
   [
-    "an automation turned back on",
-    "resume_automation",
+    "a workflow turned back on",
+    "resume_workflow",
     { automation: { id: "aut1", name: "Weekly", status: "paused" } },
   ],
   [
-    "an automation deleted",
-    "delete_automation",
+    "a workflow deleted",
+    "delete_workflow",
     { automation: { id: "aut1", name: "Weekly" } },
   ],
   [
-    "an automation run now",
-    "run_automation",
+    "a workflow run now",
+    "run_workflow",
     { automation: { id: "aut1", name: "Weekly", status: "active" } },
   ],
 ];
@@ -917,19 +917,19 @@ describe("cardView", () => {
       ["a reject", "Reject the held statement", "Reject", "Sales graph"],
       [
         "a runtime with its helper running",
-        "Run new Assistant threads on your Claude subscription",
+        "Run new Founder threads on your Claude subscription",
         "Switch",
         "this workspace",
       ],
       [
         "a runtime whose helper isn't running",
-        "Run new Assistant threads on your Claude subscription",
+        "Run new Founder threads on your Claude subscription",
         "Switch",
         "this workspace",
       ],
       [
         "back to the workspace's model",
-        "Run new Assistant threads on the workspace’s AI model",
+        "Run new Founder threads on the workspace’s AI model",
         "Switch",
         "this workspace",
       ],
@@ -1006,80 +1006,70 @@ describe("cardView", () => {
         "dash1",
       ],
       [
-        "an automation set up",
-        "Set up the automation “Weekly summary”",
+        "a workflow set up",
+        "Set up the workflow “Weekly summary”",
         "Create and turn on",
         "Weekly summary",
       ],
       [
-        "an automation's steps changed",
-        "Change the automation “Weekly”",
+        "a workflow's steps changed",
+        "Change the workflow “Weekly”",
         "Save",
         "Weekly",
       ],
+      ["a workflow renamed", "Change the workflow “Weekly”", "Save", "Weekly"],
+      ["a workflow paused", "Pause the workflow “Weekly”", "Pause", "Weekly"],
       [
-        "an automation renamed",
-        "Change the automation “Weekly”",
-        "Save",
-        "Weekly",
-      ],
-      [
-        "an automation paused",
-        "Pause the automation “Weekly”",
-        "Pause",
-        "Weekly",
-      ],
-      [
-        "an automation turned back on",
-        "Turn the automation “Weekly” back on",
+        "a workflow turned back on",
+        "Turn the workflow “Weekly” back on",
         "Turn on",
         "Weekly",
       ],
       [
-        "an automation deleted",
-        "Delete the automation “Weekly”",
+        "a workflow deleted",
+        "Delete the workflow “Weekly”",
         "Delete",
         "Weekly",
       ],
       [
-        "an automation run now",
-        "Run the automation “Weekly” now",
+        "a workflow run now",
+        "Run the workflow “Weekly” now",
         "Run now",
         "Weekly",
       ],
     ]);
   });
 
-  it("names an automation's state, and whether an edit approves its steps", () => {
+  it("names a workflow's state, and whether an edit approves its steps", () => {
     const value = (name: string, label: string) =>
       of(name).facts.find((f) => f.label === label);
-    expect(value("an automation paused", "Automation")).toEqual({
-      label: "Automation",
+    expect(value("a workflow paused", "Workflow")).toEqual({
+      label: "Workflow",
       value: "Weekly · on",
     });
-    expect(value("an automation renamed", "Automation")).toEqual({
-      label: "Automation",
+    expect(value("a workflow renamed", "Workflow")).toEqual({
+      label: "Workflow",
       value: "Weekly · waits for approval",
     });
-    expect(value("an automation renamed", "New name")).toEqual({
+    expect(value("a workflow renamed", "New name")).toEqual({
       label: "New name",
       value: "“Mondays”",
     });
-    expect(of("an automation renamed").does).toContain("approves nothing");
-    expect(of("an automation's steps changed").does).toContain(
+    expect(of("a workflow renamed").does).toContain("approves nothing");
+    expect(of("a workflow's steps changed").does).toContain(
       "your click approves its steps",
     );
-    expect(of("an automation set up").cost).toBe(
-      "Its Assistant steps spend the workspace’s automations budget.",
+    expect(of("a workflow set up").cost).toBe(
+      "Its Founder steps spend the workspace’s workflows budget.",
     );
     // A status this page doesn't know is left out.
     expect(
       parseCard(
-        "pause_automation",
+        "pause_workflow",
         '{"automation":{"id":"aut1","status":"broken"}}',
       )?.display,
     ).toEqual({ automation: { id: "aut1" } });
-    expect(parseCard("update_automation", '{"automation":{"id":"aut1"}}')).toBe(
+    expect(parseCard("update_workflow", '{"automation":{"id":"aut1"}}')).toBe(
       undefined,
     );
   });
@@ -1090,7 +1080,7 @@ describe("cardView", () => {
         of(name).facts.map((f) => [f.label, "value" in f ? f.value : ""]),
       );
     expect(facts("a dashboard made")).toEqual({
-      Name: "“Invoices by status” (as the Assistant wrote it)",
+      Name: "“Invoices by status” (as Founder wrote it)",
       Tiles: "Invoices by status (Sales graph), Customers (gone1)",
     });
     expect(facts("a dashboard of no tiles yet").Tiles).toBe("None");
@@ -1109,6 +1099,26 @@ describe("cardView", () => {
     expect(of("a dashboard published").caution).toBe(
       "Anyone who has the link sees this data.",
     );
+  });
+
+  it("says what a dashboard made at once is, and that Undo deletes it", () => {
+    const [, op, display] = DISPLAYS.find(([n]) => n === "a dashboard made")!;
+    const card = parseCard(op, display) as AgentCard;
+    const auto = cardView(card, true);
+    expect(auto.title).toBe("Made the dashboard “Invoices by status”");
+    expect(auto.does).toBe(
+      "Founder made it because you asked for a dashboard. It isn’t pinned or published, and Undo deletes it.",
+    );
+    // Its facts, run and target stay the card's.
+    expect({ ...auto, title: "", does: "" }).toEqual({
+      ...cardView(card),
+      title: "",
+      does: "",
+    });
+    // Only a new dashboard runs at once: any other card keeps its words.
+    const other = DISPLAYS.find(([n]) => n === "a dashboard renamed")!;
+    const renamed = parseCard(other[1], other[2]) as AgentCard;
+    expect(cardView(renamed, true)).toEqual(cardView(renamed));
   });
 
   it("says where new threads run, and that a helper must run first", () => {
@@ -1130,7 +1140,7 @@ describe("cardView", () => {
       "From then on": "Foundry’s AI model",
     });
     expect(of("back to the workspace's model").does).toMatch(
-      /count toward its Assistant budget/,
+      /count toward its Founder budget/,
     );
     expect(facts("a helper revoked")).toEqual({
       Helper: "Ada's Mac",
@@ -1515,43 +1525,43 @@ describe("resultLink", () => {
       { to: "/dashboards/dash1", label: "Open the dashboard" },
     ]),
     [
-      "an automation set up",
+      "a workflow set up",
       ran(
-        "create_automation",
-        d("an automation set up"),
+        "create_workflow",
+        d("a workflow set up"),
         { id: "aut9" },
         "workspace:ws1",
       ),
-      { to: "/automations/aut9", label: "Open the automation" },
+      { to: "/workflows/aut9", label: "Open the workflow" },
     ],
     ...(
       [
-        ["update_automation", "an automation's steps changed"],
-        ["pause_automation", "an automation paused"],
-        ["resume_automation", "an automation turned back on"],
+        ["update_workflow", "a workflow's steps changed"],
+        ["pause_workflow", "a workflow paused"],
+        ["resume_workflow", "a workflow turned back on"],
       ] as const
     ).map(([op, name]): [string, FoundryAgentAction, unknown] => [
       name,
-      ran(op, d(name), { id: "aut1" }, "automation:ws1/aut1"),
-      { to: "/automations/aut1", label: "Open the automation" },
+      ran(op, d(name), { id: "aut1" }, "workflow:ws1/aut1"),
+      { to: "/workflows/aut1", label: "Open the workflow" },
     ]),
     [
-      "an automation run now",
+      "a workflow run now",
       ran(
-        "run_automation",
-        d("an automation run now"),
-        { id: "run3", automation_id: "aut1" },
-        "automation:ws1/aut1",
+        "run_workflow",
+        d("a workflow run now"),
+        { id: "run3", workflow_id: "aut1" },
+        "workflow:ws1/aut1",
       ),
-      { to: "/automations/aut1/runs/run3", label: "Open the run" },
+      { to: "/workflows/aut1/runs/run3", label: "Open the run" },
     ],
     [
-      "a deleted automation",
+      "a deleted workflow",
       ran(
-        "delete_automation",
-        d("an automation deleted"),
-        { deleted: true, automation_id: "aut1" },
-        "automation:ws1/aut1",
+        "delete_workflow",
+        d("a workflow deleted"),
+        { deleted: true, workflow_id: "aut1" },
+        "workflow:ws1/aut1",
       ),
       undefined,
     ],

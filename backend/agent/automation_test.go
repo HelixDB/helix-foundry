@@ -32,7 +32,7 @@ func automationTurn(h *harness, allow string) *model.FoundryAgentTurn {
 	h.db.runs = []*model.FoundryAutomationRun{{ID: "run1", AutomationID: "auto1", WorkspaceID: ws, Status: model.FoundryAutomationRunRunning, Spec: stepSpec(allow)}}
 	runID, node := "run1", "ask"
 	turn := &model.FoundryAgentTurn{ID: "turn1", WorkspaceID: ws, ThreadID: "thread1", UserID: user, Kind: model.FoundryAgentTurnAutomation,
-		Input: "Load the Sales graph\n\n<automation_context>{}</automation_context>", AutomationRunID: &runID, AutomationNodeID: &node, MaxUSDMicros: 500_000, Attempts: 1}
+		Input: "Load the Sales graph\n\n<workflow_context>{}</workflow_context>", AutomationRunID: &runID, AutomationNodeID: &node, MaxUSDMicros: 500_000, Attempts: 1}
 	h.db.turns = []*model.FoundryAgentTurn{turn}
 	return turn
 }
@@ -47,6 +47,8 @@ func TestAnAutomationRunsWhatItsOwnerApproved(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, StopAnswered, a.Stop)
 	assert.Equal(t, 1, h.backend.loads, "the approved action ran once, at once")
+	assert.Equal(t, map[string][]model.FoundryAutomationJob{"run1": {{Kind: model.FoundryAutomationJobLoad, ID: "load1"}}}, h.db.causes,
+		"the load names the run that started it, so its triggers don't loop")
 	require.Len(t, h.db.actions, 1)
 	action := h.db.actions[0]
 	assert.Equal(t, model.FoundryAgentActionSucceeded, action.Status)
@@ -56,10 +58,10 @@ func TestAnAutomationRunsWhatItsOwnerApproved(t *testing.T) {
 	assert.Equal(t, 2, len(h.host.actors), "a session for the turn, and one as its owner for the action")
 
 	system := h.model.requests[0].System
-	assert.Contains(t, system, `automation "Nightly load"`)
+	assert.Contains(t, system, `workflow "Nightly load"`)
 	assert.Contains(t, system, "unattended")
 	assert.Contains(t, system, "create_load on ontology:<this workspace>/ont1")
-	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, "<automation_context>")
+	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, "<workflow_context>")
 	offered := map[string]bool{}
 	for _, tool := range h.model.requests[0].Tools {
 		offered[tool.Name] = true
@@ -94,6 +96,7 @@ func TestAnAutomationLeavesWhatItsOwnerDidntApproveAsACard(t *testing.T) {
 	_, err := h.runner.Run(context.Background(), turn)
 	require.NoError(t, err)
 	assert.Zero(t, h.backend.loads, "another ontology's load was approved, not this one's")
+	assert.Empty(t, h.db.causes, "nothing ran, so nothing is marked")
 	require.Len(t, h.db.actions, 1)
 	assert.Equal(t, model.FoundryAgentActionPrepared, h.db.actions[0].Status)
 	afterPrepare := h.model.requests[1].Messages
@@ -147,6 +150,7 @@ func TestAnApprovedActionRunsOnceAcrossReplays(t *testing.T) {
 	_, err := h.runner.Run(context.Background(), turn)
 	require.NoError(t, err)
 	assert.Equal(t, 1, h.backend.loads, "prepared again, it is found, not run again")
+	assert.Len(t, h.db.causes["run1"], 1, "marked once")
 	again := h.model.requests[2].Messages
 	assert.Contains(t, again[len(again)-1].Content[0].(llm.ToolResult).Content, `"succeeded"`)
 
@@ -173,7 +177,7 @@ func TestAnApprovedActionRunsOnceAcrossReplays(t *testing.T) {
 // Every action an automation's owner may approve for a step is one the
 // Assistant prepares.
 func TestAnAutomationAllowsWhatItsOwnerMayApprove(t *testing.T) {
-	sink := &actionSink{}
+	sink := &actionSink{reach: ReachWorkspace}
 	for operation := range automation.Operations {
 		assert.True(t, sink.Allows(operation), operation)
 	}

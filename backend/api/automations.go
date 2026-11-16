@@ -55,22 +55,30 @@ func (c automationCaller) actor() foundrymodel.FoundryAutomationActor {
 	return foundrymodel.FoundryAutomationActor{UserID: c.userID, Manager: c.manager}
 }
 
-// automationCallerOf is the person calling for workspaceID, while
-// automations are on: FAILED_PRECONDITION, reason
+// automationCallerOf is the person calling for workspaceID (personCallerOf),
+// while automations are on: FAILED_PRECONDITION, reason
 // FOUNDRY_AUTOMATIONS_DISABLED, when off.
 func (s *Service) automationCallerOf(ctx context.Context, workspaceID string) (automationCaller, error) {
-	switch {
-	case workspaceID == "":
+	if workspaceID != "" && !s.deps.Cfg.Foundry.Automations.Enabled {
+		return automationCaller{}, foundryPrecondition(workspaceID, "FOUNDRY_AUTOMATIONS_DISABLED", "workflows aren't available here")
+	}
+	return s.personCallerOf(ctx, workspaceID)
+}
+
+// personCallerOf is the person calling for workspaceID, signed in to the
+// site or through the MCP as themselves: INVALID_ARGUMENT without a
+// workspace, PERMISSION_DENIED for a grantee of source grants, a service
+// key or anyone else.
+func (s *Service) personCallerOf(ctx context.Context, workspaceID string) (automationCaller, error) {
+	if workspaceID == "" {
 		return automationCaller{}, status.Error(codes.InvalidArgument, "workspace_id is required")
-	case !s.deps.Cfg.Foundry.Automations.Enabled:
-		return automationCaller{}, foundryPrecondition(workspaceID, "FOUNDRY_AUTOMATIONS_DISABLED", "automations aren't available here")
 	}
 	if _, ok := access.GranteeFrom(ctx); ok {
-		return automationCaller{}, status.Error(codes.PermissionDenied, "automations are people's: sign in to Foundry")
+		return automationCaller{}, status.Error(codes.PermissionDenied, "workflows are people's: sign in to Foundry")
 	}
 	a := actor(ctx)
 	if (a.Source != ports.SourceUser && a.Source != ports.SourceMCP) || a.UserID == "" || a.ServiceCredentialID != "" {
-		return automationCaller{}, status.Error(codes.PermissionDenied, "automations are people's: sign in to Foundry")
+		return automationCaller{}, status.Error(codes.PermissionDenied, "workflows are people's: sign in to Foundry")
 	}
 	c := automationCaller{userID: a.UserID, site: a.Source == ports.SourceUser}
 	if s.deps.People != nil {
@@ -113,7 +121,7 @@ func automationWrite(workspaceID, what string, err error) error {
 		return refused
 	}
 	if errors.Is(err, foundrystore.ErrNotFound) {
-		return status.Error(codes.NotFound, "automation not found")
+		return status.Error(codes.NotFound, "workflow not found")
 	}
 	return status.Errorf(codes.Internal, "%s: %v", what, err)
 }
@@ -193,7 +201,7 @@ func (s *Service) ListFoundryAutomations(ctx context.Context, req *foundryv1.Lis
 	}
 	list, err := s.deps.DB.ListFoundryAutomations(ctx, req.GetWorkspaceId())
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list automations: %v", err)
+		return nil, status.Errorf(codes.Internal, "list workflows: %v", err)
 	}
 	out := &foundryv1.ListFoundryAutomationsResponse{CanCreate: true, Email: !s.deps.Cfg.Host.Local,
 		Automations: make([]*foundryv1.FoundryAutomation, 0, len(list))}
@@ -203,7 +211,7 @@ func (s *Service) ListFoundryAutomations(ctx context.Context, req *foundryv1.Lis
 	}
 	ontologies, err := s.deps.DB.ListFoundryAutomationOntologies(ctx, req.GetWorkspaceId(), ids)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list the automations' ontologies: %v", err)
+		return nil, status.Errorf(codes.Internal, "list the workflows' ontologies: %v", err)
 	}
 	for _, a := range list {
 		p := automationToProto(a, c, false)
@@ -216,7 +224,7 @@ func (s *Service) ListFoundryAutomations(ctx context.Context, req *foundryv1.Lis
 	from := statsFrom(time.Now(), zone, int(days))
 	stats, err := s.deps.DB.FoundryAutomationRunStats(ctx, req.GetWorkspaceId(), from)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "count the automations' runs: %v", err)
+		return nil, status.Errorf(codes.Internal, "count the workflows' runs: %v", err)
 	}
 	// The actions a run's Assistant steps left waiting are its owner's, in
 	// their own thread: only they, and owners and admins, count them, as
@@ -288,9 +296,9 @@ func (s *Service) automationOf(ctx context.Context, workspaceID, id string) (*fo
 	a, err := s.deps.DB.GetFoundryAutomation(ctx, workspaceID, id)
 	switch {
 	case errors.Is(err, foundrystore.ErrNotFound):
-		return nil, status.Error(codes.NotFound, "automation not found")
+		return nil, status.Error(codes.NotFound, "workflow not found")
 	case err != nil:
-		return nil, status.Errorf(codes.Internal, "read the automation: %v", err)
+		return nil, status.Errorf(codes.Internal, "read the workflow: %v", err)
 	}
 	return a, nil
 }
@@ -316,7 +324,7 @@ func (s *Service) GetFoundryAutomation(ctx context.Context, req *foundryv1.GetFo
 func (s *Service) automationOntologies(ctx context.Context, a *foundrymodel.FoundryAutomation) ([]*foundryv1.FoundryAutomationOntology, error) {
 	all, err := s.deps.DB.ListFoundryAutomationOntologies(ctx, a.WorkspaceID, []string{a.ID})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list the automation's ontologies: %v", err)
+		return nil, status.Errorf(codes.Internal, "list the workflow's ontologies: %v", err)
 	}
 	var workflowIDs []string
 	for _, o := range all[a.ID] {
@@ -326,7 +334,7 @@ func (s *Service) automationOntologies(ctx context.Context, a *foundrymodel.Foun
 	}
 	latest, err := s.deps.DB.LatestFoundryWorkflowAssessments(ctx, workflowIDs)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "read the automation's assessments: %v", err)
+		return nil, status.Errorf(codes.Internal, "read the workflow's assessments: %v", err)
 	}
 	return automationOntologiesToProto(all[a.ID], latest), nil
 }
@@ -380,7 +388,7 @@ func (s *Service) CreateFoundryAutomation(ctx context.Context, req *foundryv1.Cr
 	case err == nil:
 		return &foundryv1.FoundryAutomationResponse{Automation: automationToProto(existing, c, true)}, nil
 	case !errors.Is(err, foundrystore.ErrNotFound):
-		return nil, status.Errorf(codes.Internal, "look up the automation: %v", err)
+		return nil, status.Errorf(codes.Internal, "look up the workflow: %v", err)
 	}
 	_, spec, err := s.automationSpec(ctx, ws, req.GetSpecJson())
 	if err != nil {
@@ -393,12 +401,12 @@ func (s *Service) CreateFoundryAutomation(ctx context.Context, req *foundryv1.Cr
 		// The same click again won the race.
 		raced, lookupErr := s.deps.DB.GetFoundryAutomationByClientToken(ctx, ws, c.userID, token)
 		if lookupErr != nil {
-			return nil, status.Errorf(codes.Internal, "look up the automation: %v", lookupErr)
+			return nil, status.Errorf(codes.Internal, "look up the workflow: %v", lookupErr)
 		}
 		return &foundryv1.FoundryAutomationResponse{Automation: automationToProto(raced, c, true)}, nil
 	}
 	if err != nil {
-		return nil, automationWrite(ws, "create the automation", err)
+		return nil, automationWrite(ws, "create the workflow", err)
 	}
 	stored, err := s.automationOf(ctx, ws, a.ID)
 	if err != nil {
@@ -459,7 +467,7 @@ func (s *Service) UpdateFoundryAutomation(ctx context.Context, req *foundryv1.Up
 	}
 	a, err := s.deps.DB.UpdateFoundryAutomation(ctx, ws, req.GetId(), c.userID, req.GetExpectedRevision(), u)
 	if err != nil {
-		return nil, automationWrite(ws, "update the automation", err)
+		return nil, automationWrite(ws, "update the workflow", err)
 	}
 	return &foundryv1.FoundryAutomationResponse{Automation: automationToProto(a, c, true)}, nil
 }
@@ -470,7 +478,7 @@ func (s *Service) DeleteFoundryAutomation(ctx context.Context, req *foundryv1.De
 		return nil, err
 	}
 	if err := s.deps.DB.DeleteFoundryAutomation(ctx, req.GetWorkspaceId(), req.GetId(), c.actor()); err != nil {
-		return nil, automationWrite(req.GetWorkspaceId(), "delete the automation", err)
+		return nil, automationWrite(req.GetWorkspaceId(), "delete the workflow", err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -482,7 +490,7 @@ func (s *Service) ApproveFoundryAutomation(ctx context.Context, req *foundryv1.A
 		return nil, err
 	}
 	if !c.site {
-		return nil, status.Error(codes.PermissionDenied, "an automation's owner approves it in Foundry, never through an agent")
+		return nil, status.Error(codes.PermissionDenied, "a workflow's owner approves it in Foundry, never through an agent")
 	}
 	if req.GetExpectedRevision() < 1 {
 		return nil, status.Error(codes.InvalidArgument, "expected_revision is required")
@@ -515,7 +523,7 @@ func (s *Service) approveAutomation(ctx context.Context, workspaceID, userID, id
 	}
 	a, err := s.deps.DB.ApproveFoundryAutomation(ctx, workspaceID, id, userID, revision, firstFire(spec, time.Now()))
 	if err != nil {
-		return nil, automationWrite(workspaceID, "approve the automation", err)
+		return nil, automationWrite(workspaceID, "approve the workflow", err)
 	}
 	s.trackAutomation(ctx, a, spec)
 	return a, nil
@@ -554,7 +562,7 @@ func (s *Service) PauseFoundryAutomation(ctx context.Context, req *foundryv1.Pau
 	}
 	a, err := s.deps.DB.PauseFoundryAutomation(ctx, req.GetWorkspaceId(), req.GetId(), c.actor())
 	if err != nil {
-		return nil, automationWrite(req.GetWorkspaceId(), "pause the automation", err)
+		return nil, automationWrite(req.GetWorkspaceId(), "pause the workflow", err)
 	}
 	return &foundryv1.FoundryAutomationResponse{Automation: automationToProto(a, c, true)}, nil
 }
@@ -571,11 +579,11 @@ func (s *Service) ResumeFoundryAutomation(ctx context.Context, req *foundryv1.Re
 	}
 	spec, err := automation.ParseSpec(current.Spec)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "read the automation's spec: %v", err)
+		return nil, status.Errorf(codes.Internal, "read the workflow's spec: %v", err)
 	}
 	a, err := s.deps.DB.ResumeFoundryAutomation(ctx, ws, req.GetId(), c.userID, firstFire(spec, time.Now()))
 	if err != nil {
-		return nil, automationWrite(ws, "resume the automation", err)
+		return nil, automationWrite(ws, "resume the workflow", err)
 	}
 	return &foundryv1.FoundryAutomationResponse{Automation: automationToProto(a, c, true)}, nil
 }
@@ -596,7 +604,7 @@ func (s *Service) RunFoundryAutomation(ctx context.Context, req *foundryv1.RunFo
 	}
 	spec, err := automation.ParseSpec(a.Spec)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "read the automation's spec: %v", err)
+		return nil, status.Errorf(codes.Internal, "read the workflow's spec: %v", err)
 	}
 	now := time.Now().UTC()
 	event, _ := json.Marshal(foundrymodel.FoundryAutomationEvent{Kind: "manual", At: now, ByUserID: c.userID}) // plain fields: it can't fail
@@ -606,7 +614,7 @@ func (s *Service) RunFoundryAutomation(ctx context.Context, req *foundryv1.RunFo
 		TriggerEvent: event,
 	}, spec.TriggerID(), output, foundrymodel.FoundryAutomationLimits{RunsPerDay: s.deps.Cfg.Foundry.Automations.RunsPerDay})
 	if err != nil {
-		return nil, automationWrite(ws, "run the automation", err)
+		return nil, automationWrite(ws, "run the workflow", err)
 	}
 	return &foundryv1.FoundryAutomationRunResponse{Run: automationRunToProto(run, a, c, nil)}, nil
 }

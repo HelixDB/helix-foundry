@@ -169,6 +169,26 @@ func (s *agentStore) GetFoundryAgentThread(_ context.Context, ws, id string) (*f
 	return nil, foundrystore.ErrNotFound
 }
 
+// RecordFoundryAgentThreadGrants records a turn's reach as the store does:
+// nil for good, else adding to a restricted member's thread.
+func (s *agentStore) RecordFoundryAgentThreadGrants(_ context.Context, ws, id string, granted *foundrymodel.FoundryAgentThreadGrants) error {
+	t, ok := s.threads[id]
+	switch {
+	case !ok || t.WorkspaceID != ws:
+		return foundrystore.ErrNotFound
+	case t.Granted == nil:
+	case granted == nil:
+		t.Granted = nil
+	default:
+		for _, target := range granted.Targets {
+			if !slices.Contains(t.Granted.Targets, target) {
+				t.Granted.Targets = append(t.Granted.Targets, target)
+			}
+		}
+	}
+	return nil
+}
+
 func (s *agentStore) ListFoundryAgentTurns(_ context.Context, threadID string, _ int) ([]*foundrymodel.FoundryAgentTurn, error) {
 	var out []*foundrymodel.FoundryAgentTurn
 	for _, t := range s.turns {
@@ -551,6 +571,27 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 		assert.True(t, resp.GetTurn().GetPageContext().GetNewAutomation())
 		assert.JSONEq(t, `{"new_automation":true}`, string(f.store.turns[resp.GetTurn().GetId()].PageContext))
 	})
+	t.Run("the browser's time zone", func(t *testing.T) {
+		f := newAgentFixture(t)
+		resp, err := send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) {
+			r.PageContext = &foundryv1.FoundryAgentPageContext{NewAutomation: true, TimeZone: "America/New_York"}
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "America/New_York", resp.GetTurn().GetPageContext().GetTimeZone())
+		assert.JSONEq(t, `{"new_automation":true,"time_zone":"America/New_York"}`, string(f.store.turns[resp.GetTurn().GetId()].PageContext))
+	})
+	t.Run("a time zone that isn't one is dropped, not refused", func(t *testing.T) {
+		for i, zone := range []string{"Mars/Olympus", "Local", "New York", "../../etc/passwd", strings.Repeat("A", 65), "Etc/Unknown"} {
+			f := newAgentFixture(t)
+			resp, err := send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) {
+				r.ClientToken = "tz-" + strconv.Itoa(i)
+				r.PageContext = &foundryv1.FoundryAgentPageContext{TimeZone: zone}
+			})
+			require.NoError(t, err, zone)
+			assert.Empty(t, resp.GetTurn().GetPageContext().GetTimeZone(), zone)
+			assert.Nil(t, f.store.turns[resp.GetTurn().GetId()].PageContext, "nothing else, so no page context: %s", zone)
+		}
+	})
 	t.Run("another user's thread isn't found", func(t *testing.T) {
 		f := newAgentFixture(t)
 		f.store.threads["th-eve"] = &foundrymodel.FoundryAgentThread{ID: "th-eve", WorkspaceID: "ws-1", UserID: "user-eve"}
@@ -758,7 +799,7 @@ func TestSendFoundryAgentAnswers(t *testing.T) {
 		f.store.refusal = foundrymodel.FoundryAgentRefusal{Reason: foundrymodel.FoundryAgentPerHour, Detail: "slow down"}
 		_, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
 		assert.Equal(t, codes.ResourceExhausted, status.Code(err))
-		assert.Contains(t, status.Convert(err).Message(), "your answers reached the draft, which carries on from them, but the Assistant can't reply: slow down")
+		assert.Contains(t, status.Convert(err).Message(), "your answers reached the draft, which carries on from them, but Founder can't reply: slow down")
 		assert.Len(t, f.loads.answered, 1)
 	})
 

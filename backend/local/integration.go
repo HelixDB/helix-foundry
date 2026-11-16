@@ -89,7 +89,7 @@ func IntegrationHandler(auth *Authenticator, dir *directory.Store, conn *grpc.Cl
 		turnToken, isTurn := bearerToken(r, directory.TurnTokenPrefix)
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/agent-host/") && helpers == nil, isTurn && helpers == nil:
-			refuse(w, "the Assistant is off on this install")
+			refuse(w, "Founder is off on this install")
 			return
 		case strings.HasPrefix(r.URL.Path, "/agent-host/"):
 			helpers.ServeHTTP(w, r)

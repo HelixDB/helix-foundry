@@ -686,6 +686,27 @@ service FoundryService {
       body: "*"
     };
   }
+  // Suggestions for Founder, written for one ontology's current version:
+  // prompts of four kinds (2 questions, 2 dashboards, 2 changes to the
+  // ontology and 4 workflows, in that order) that fill a composer for the
+  // person to edit and send, never run: Founder's new chat shows each
+  // kind's first 2 as cards, the new workflow page the workflows. Founder
+  // writes them once per version in one call, on the workspace's cheapest
+  // task model (the AI setting's extraction model), charged to its monthly
+  // budget. Each kind is filled to its count, in order, from: questions,
+  // the version's competency questions, then the model's; dashboards and
+  // workflows, the model's, then the competency questions'; changes to the
+  // ontology, its open audit findings and the connections and document sets
+  // it doesn't read, then the model's; then fixed examples. So until
+  // Founder has written them (generating), and where it can't (no AI
+  // provider, Founder off, its budget or the workspace's 20 writes an hour
+  // spent, a failure), every kind still has its count. Without a current
+  // version, every kind is fixed examples. Workflows are left out where the
+  // deployment has none. Any signed-in member may read them (a grantee may
+  // not); an ontology the workspace hasn't is NOT_FOUND.
+  rpc ListFoundryAutomationSuggestions(ListFoundryAutomationSuggestionsRequest) returns (ListFoundryAutomationSuggestionsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/automation-suggestions"};
+  }
 
   // Helix Foundry usage: the workspace's AI spend this month, by task
   //
@@ -2478,6 +2499,21 @@ message CancelFoundryAutomationRunRequest {
   string workspace_id = 1;
   string automation_id = 2;
   string id = 3;
+}
+message ListFoundryAutomationSuggestionsRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+}
+message ListFoundryAutomationSuggestionsResponse {
+  // Each kind's, kinds in their enum's order: at most 10.
+  repeated FoundryAutomationSuggestion suggestions = 1;
+  // Where the first workflow came from (each suggestion says its own).
+  FoundryAutomationSuggestionSource source = 2;
+  // Founder is writing them: these are the fallback; read again in a
+  // few seconds.
+  bool generating = 3;
+  // The version they were written for; empty without a current version.
+  string version_id = 4;
 }
 message FoundryAutomationRunResponse {
   FoundryAutomationRun run = 1;
