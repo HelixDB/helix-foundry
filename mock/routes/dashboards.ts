@@ -80,8 +80,9 @@ const MAX_DASHBOARDS = 200,
 const TILE_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/,
   ID = /^[A-Za-z0-9_-]{1,128}$/,
   CONTROL = /\p{Cc}/u,
-  EMPTY_SPEC = '{"v":1,"tiles":[],"layout":{"rows":[]}}',
-  VISUALS = ["table", "bar", "line", "figure"];
+  EMPTY_SPEC = '{"v":1,"tiles":[],"layout":{"rows":[]}}';
+/** The kinds a tile draws, as an Analyst visual names them (./agent.ts too). */
+export const VISUALS = ["table", "bar", "line", "figure"];
 
 type Tile = {
   id: string;

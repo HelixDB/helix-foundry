@@ -268,7 +268,7 @@ function readNode(wire: {
           allow: z.array(z.unknown()).nullish(),
         })
         .safeParse(raw);
-      if (!read.success) return at("an Assistant step is {instruction, allow}");
+      if (!read.success) return at("a Founder step is {instruction, allow}");
       const instruction = read.data.instruction.trim();
       if (!textFits(instruction, 1, LIMITS.instruction))
         return at(
@@ -277,7 +277,7 @@ function readNode(wire: {
       const allow = read.data.allow || [];
       if (allow.length > LIMITS.allow)
         return at(
-          `an Assistant step runs at most ${LIMITS.allow} actions unasked, not ${allow.length}`,
+          `a Founder step runs at most ${LIMITS.allow} actions unasked, not ${allow.length}`,
         );
       const actions: AutomationAction[] = [];
       for (const a of allow) {
@@ -502,8 +502,8 @@ function checkGraph(
       return {
         error: `${name(n.id)} can't check ${name(from.id)}: ${
           n.config.check === "answer"
-            ? "an answer is an Assistant step's"
-            : "a count is an Assistant step's, or a document_arrived or sync_finished trigger's"
+            ? "an answer is a Founder step's"
+            : "a count is a Founder step's, or a document_arrived or sync_finished trigger's"
         }`,
         nodeId: n.id,
       };
@@ -884,7 +884,7 @@ export function conditionText(
 /** Each kind's name, as the builder offers a new step of it. */
 export const KIND_LABELS: Record<Kind, string> = {
   trigger: "Start",
-  assistant: "Ask the Assistant",
+  assistant: "Ask Founder",
   action: "Sync, load or refresh",
   condition: "Check an answer or a count",
   notify: "Email me",
@@ -892,7 +892,7 @@ export const KIND_LABELS: Record<Kind, string> = {
 /** Each kind's name, as a step's head says it. */
 export const KIND_HEADS: Record<Kind, string> = {
   trigger: "When",
-  assistant: "Assistant",
+  assistant: "Founder",
   action: "Action",
   condition: "If",
   notify: "Email",
@@ -911,8 +911,8 @@ export function nodeText(n: AutomationNode, names: Names, email: boolean) {
         : `when ${triggerText(n.config, names)}`;
     case "assistant":
       return n.config.instruction.trim()
-        ? `ask the Assistant: “${n.config.instruction}”`
-        : "ask the Assistant";
+        ? `ask Founder: “${n.config.instruction}”`
+        : "ask Founder";
     case "action":
       return actionText(n.config, names);
     case "condition":
@@ -933,7 +933,7 @@ export function nodeText(n: AutomationNode, names: Names, email: boolean) {
  *
  * @example
  * sentence(spec, names, true);
- * // "Every Monday at 09:00 UTC, sync “Stripe”, then ask the Assistant: “…”, then email you what it found."
+ * // "Every Monday at 09:00 UTC, sync “Stripe”, then ask Founder: “…”, then email you what it found."
  */
 export function sentence(spec: AutomationSpec, names: Names, email: boolean) {
   const read = parseSpec(spec);
@@ -988,7 +988,7 @@ export function incomplete(n: AutomationNode): string | undefined {
         ? n.config.allow?.some((a) => !actionTarget(a))
           ? "Choose what each allowed action acts on"
           : undefined
-        : "Write what the Assistant should do";
+        : "Write what Founder should do";
     case "action":
       return actionTarget(n.config)
         ? undefined
@@ -1005,7 +1005,7 @@ export function incomplete(n: AutomationNode): string | undefined {
 // -------------------------------------------------------------- suggestions
 
 /**
- * The new-automation page's suggestions: prompts for the Assistant, each an
+ * The new-automation page's suggestions: prompts for Founder, each an
  * outcome, under its title and the hue of its icon (`--hf-<tone>-soft` and
  * `-text`). A click puts the prompt in the composer; nothing is sent.
  */
@@ -1075,7 +1075,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "weekly-summary",
     title: "Weekly summary by email",
     description:
-      "Every Monday morning, the Assistant reads an ontology and emails you what changed.",
+      "Every Monday morning, Founder reads an ontology and emails you what changed.",
     needs: ["ontology"],
     build: (c) => ({
       name: "Weekly summary",
@@ -1121,7 +1121,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "sync-and-summarise",
     title: "Sync, then summarise",
     description:
-      "Every morning, sync a connection, then have the Assistant email you a summary.",
+      "Every morning, sync a connection, then have Founder email you a summary.",
     needs: ["connector"],
     build: (c) => ({
       name: `Morning ${c.connector?.name || "sync"}`,
@@ -1213,7 +1213,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "check-documents",
     title: "Check new documents",
     description:
-      "When documents arrive in a set, the Assistant reads them and emails you only if one needs attention.",
+      "When documents arrive in a set, Founder reads them and emails you only if one needs attention.",
     needs: ["set"],
     build: (c) => ({
       name: `Check ${c.set?.name || "new documents"}`,
@@ -1261,7 +1261,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "load-ready-report",
     title: "Report on each new load",
     description:
-      "When a load of an ontology is ready, the Assistant checks it and emails you what it found.",
+      "When a load of an ontology is ready, Founder checks it and emails you what it found.",
     needs: ["ontology"],
     build: (c) => ({
       name: `${c.ontology?.name || "Ontology"} load report`,

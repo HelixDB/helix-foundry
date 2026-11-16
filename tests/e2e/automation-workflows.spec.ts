@@ -27,7 +27,7 @@ const manual = {
   position: at(0),
 };
 
-/** Makes Ada's automation of one Assistant step, approved: its id. */
+/** Makes Ada's automation of one Founder step, approved: its id. */
 async function make(page: Page, name: string, instruction: string) {
   const made = (
     await postToWfe(page, A, {

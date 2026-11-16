@@ -303,7 +303,8 @@ test("has no Ontology tab where audits don't run", async ({ page }) => {
   // An old link to Suggestions opens Review on Facts, its only tab.
   await page.goto(`${O}/suggestions`);
   await expect(page).toHaveURL(new RegExp(`${O}/review\\?tab=ontology$`));
-  await expect(page.getByRole("tab")).toHaveText(["Facts"]);
+  // Its count follows its name.
+  await expect(page.getByRole("tab")).toHaveText([/^Facts/]);
   await expect(page.getByRole("tab", { name: "Facts" })).toHaveAttribute(
     "aria-selected",
     "true",

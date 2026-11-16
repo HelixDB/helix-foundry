@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import {
   APP_ORIGIN,
+  askAnalyst,
   choose,
   csrfToken,
   expect,
@@ -13,8 +14,9 @@ import {
 } from "./support/mock";
 
 // Dashboards: tiles of queries over ontologies' loads, drawn as the
-// Analyst draws an answer's visuals. The Assistant builds one from a card
-// its person runs; an Analyst answer's chart is pinned to one; owners and
+// Analyst draws an answer's visuals. Founder makes one at once when its
+// person asks for a dashboard, with Undo; an Analyst answer's chart is
+// pinned to one; owners and
 // admins edit, pin and publish them at a public link a fresh browser opens
 // with no session, until they unpublish it; a member reads them all and
 // changes only their own. What can't be read, saved or shown says so.
@@ -60,36 +62,41 @@ async function makeDashboard(
 }
 
 const dockOf = (page: Page) =>
-  page.getByRole("complementary", { name: "Assistant" });
+  page.getByRole("complementary", { name: "Founder" });
 
-test("builds a dashboard from the Assistant's card, which its person runs", async ({
+test("makes the dashboard its person asks Founder for at once, with Undo", async ({
   page,
 }) => {
   await mock.configure({ agentStepMs: 100 });
   await signIn(page);
   await loadContracts(page);
-  await page.getByRole("button", { name: "Assistant", exact: true }).click();
+  await page.getByRole("button", { name: "Founder", exact: true }).click();
   const dock = dockOf(page);
   await dock
     .getByRole("textbox", { name: "Message" })
     .fill("Build a dashboard of invoices by status for Customer contracts");
   await dock.getByRole("button", { name: "Send", exact: true }).click();
-  // It tried the tile before it proposed it.
+  // It tried the tile before it made it.
   await expect(dock.getByText("Tried a dashboard tile")).toBeVisible();
+  // Asked for a dashboard, it makes it without a card to click.
   const card = dock.getByRole("region", {
-    name: "Action: Make the dashboard “Invoices by status”",
+    name: "Action: Made the dashboard “Invoices by status”",
   });
   await expect(card).toBeVisible();
-  // The person named it: no warning.
-  await expect(card.getByText(/Not named by you/)).toHaveCount(0);
-  await expect(card).toContainText("“Invoices by status”");
+  await expect(card.getByText("Made", { exact: true })).toBeVisible();
+  await expect(card).toContainText(
+    "Founder made it because you asked for a dashboard.",
+  );
+  await expect(
+    dock.getByRole("button", { name: "Create", exact: true }),
+  ).toHaveCount(0);
+  await expect(dock.getByText(/You ran this action/)).toHaveCount(0);
   await card.getByText("Full request", { exact: true }).click();
   await expect(card.getByText(/"group_count"/)).toBeVisible();
-  await card.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(card.getByText("Ran", { exact: true })).toBeVisible();
   await expect(
-    dock.getByText("You ran this action: it succeeded."),
+    dock.getByText(/I made the dashboard “Invoices by status”/),
   ).toBeVisible();
+  await expect(card.getByRole("button", { name: "Undo" })).toBeEnabled();
   await card.getByRole("link", { name: "Open the dashboard" }).click();
   await expect(page).toHaveURL(/\/dashboards\/dash_/);
   await expect(
@@ -115,15 +122,9 @@ test("adds an Analyst answer's charts to a dashboard, then edits it", async ({
   await mock.configure({ loadStepMs: 200, askStepMs: 100 });
   await signIn(page);
   await uploadAndLoadContract(page);
-  await page.getByRole("link", { name: "Analyst", exact: true }).click();
-  const form = page.getByRole("form", { name: "Ask a question" });
-  await form
-    .getByRole("textbox", { name: /^Question/ })
-    .fill("How are the invoices doing?");
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
-  const answer = page
-    .getByRole("article", { name: "Question: How are the invoices doing?" })
-    .getByRole("region", { name: "Answer" });
+  // An Analyst thread, read only on Founder's page, keeps Add to dashboard.
+  const question = await askAnalyst(page, "How are the invoices doing?");
+  const answer = question.getByRole("region", { name: "Answer" });
   const byStatus = answer.getByRole("figure", { name: "Invoices by status" });
   await expect(byStatus).toBeVisible({ timeout: 15_000 });
 
@@ -403,7 +404,7 @@ async function changeOnWfe(
   expect(res.status(), await res.text()).toBe(200);
 }
 
-test("on a dashboard's page, the Assistant's renames, pins and deletes show at once", async ({
+test("on a dashboard's page, Founder's renames, pins and deletes show at once", async ({
   page,
 }) => {
   await mock.configure({ agentStepMs: 50 });
@@ -413,7 +414,7 @@ test("on a dashboard's page, the Assistant's renames, pins and deletes show at o
   await expect(
     page.getByRole("heading", { level: 1, name: "Revenue" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Assistant", exact: true }).click();
+  await page.getByRole("button", { name: "Founder", exact: true }).click();
   const dock = dockOf(page);
   const run = async (text: string, card: string, button: string) => {
     await dock.getByRole("textbox", { name: "Message" }).fill(text);

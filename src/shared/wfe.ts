@@ -3295,6 +3295,15 @@ export type AgentEvent =
       truncated?: boolean;
       // Why the call never ran, which the page words (no `error`).
       not_run?: AgentNotRunReason;
+      // The Analyst question a helix_foundry_ask or helix_foundry_get_question
+      // call returned, kept whatever the output's size (`truncated` too).
+      question?: {
+        ontology_id: string;
+        id: string;
+        load_id?: string;
+        thread_id?: string;
+        status?: string;
+      };
     }
   | {
       type: "action_card";
@@ -3307,6 +3316,9 @@ export type AgentEvent =
       display: unknown;
       target_named_by_user: boolean;
       expires_at: string;
+      // It ran at once, without a click: a new dashboard the person's own
+      // message asked for, which the dock offers to undo.
+      auto?: boolean;
     }
   | {
       // The first event of an action_result turn: how the person's click ended.
@@ -3316,6 +3328,9 @@ export type AgentEvent =
       status: AgentActionStatus;
       result?: unknown;
       error?: string;
+      // How an action that ran at once ended (its card's `auto`), in the
+      // turn that prepared it.
+      auto?: boolean;
     }
   | {
       // The questions the turn asks its person (helix_foundry_ask_person),

@@ -4,7 +4,7 @@ import { zoneLabel } from "../../shared/time-zone";
 
 // Questions an agent asks the person, asked one at a time: the ontology
 // agent's about a draft (a generation that needs input) and the
-// Assistant's (helix_foundry_ask_person), one shape (the WFE's
+// Founder's (helix_foundry_ask_person), one shape (the WFE's
 // AgentQuestion). This is the flow's pure half: reading the questions
 // without trust, what the person has chosen so far, how each key and click
 // moves it, what it sends, and what a tab keeps of it. Every string an

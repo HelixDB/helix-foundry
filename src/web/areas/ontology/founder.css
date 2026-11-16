@@ -1,0 +1,56 @@
+/* Founder's page (founder-page.tsx, prefix fd-): the Analyst page's chat
+   layout (ask.css .ak-chat, its slim bar, the centred start) holding the
+   dock's conversation (../agent/agent.css): its log, the only part that
+   scrolls, and its composer pinned under it, each in the page's 760px
+   column. */
+.fd-chat {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.fd-chat .ag-log-body {
+  width: 100%;
+  max-width: calc(var(--ak-col) + 2 * var(--ak-gutter));
+  margin: 0 auto;
+  padding: var(--hf-space-3) var(--ak-gutter) var(--hf-space-4);
+}
+.fd-chat > .ag-runtime {
+  width: 100%;
+  max-width: calc(var(--ak-col) + 2 * var(--ak-gutter));
+  margin: 0 auto;
+  padding-right: var(--ak-gutter);
+  padding-left: var(--ak-gutter);
+}
+.fd-composer {
+  flex: none;
+  border-top: 1px solid var(--hf-border);
+  background: var(--hf-bg);
+}
+.fd-composer .ag-composer {
+  max-width: calc(var(--ak-col) + 2 * var(--ak-gutter));
+  margin: 0 auto;
+  padding-right: var(--ak-gutter);
+  padding-left: var(--ak-gutter);
+  border-top: 0;
+}
+
+/* A new chat: the question to answer, the composer centred under it. */
+.fd-start .ag-composer {
+  padding: 0;
+  border-top: 0;
+}
+.fd-start .ag-input-row {
+  box-shadow: var(--hf-shadow-2);
+}
+.fd-start .ag-runtime {
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+}
+.fd-note {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+  text-align: center;
+}

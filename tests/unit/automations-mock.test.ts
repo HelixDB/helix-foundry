@@ -380,7 +380,7 @@ describe("runs", () => {
     });
   });
 
-  it("runs an Assistant step's approved load at once, and leaves another as a card", async () => {
+  it("runs a Founder step's approved load at once, and leaves another as a card", async () => {
     const load = {
       operation: "create_load",
       ontology_id: "ont_acme_contracts",
@@ -701,7 +701,7 @@ describe("the list's counts", () => {
     expect(month.body.summary.byDay).toHaveLength(30);
   });
 
-  it("counts the actions its Assistant steps left waiting", async () => {
+  it("counts the actions its Founder steps left waiting", async () => {
     const asked = await active(
       chain(
         manual,

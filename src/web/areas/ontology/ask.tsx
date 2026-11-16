@@ -27,6 +27,7 @@ import {
   LoaderCircle,
   SearchX,
   Sparkles,
+  SquarePen,
   CircleStop,
   X,
 } from "lucide-react";
@@ -154,6 +155,10 @@ import { recordQuestionAsked } from "../../shell/star-prompt";
 // once with them.
 // Nothing the model writes renders as a link, an image or HTML. The entity
 // page's "Ask about this" opens the same flow in a drawer (AskDrawer).
+// Where the build has Founder, a member who isn't a grantee gets Founder's
+// page here instead (founder-page.tsx, which reuses ChatBar and ThreadView);
+// this page stays the grantees' and the fallback while the WFE has Founder
+// off.
 
 const askable = (status?: string) => status === "ready" || status === "partial";
 // How a shortcut is written: "⌘" on Apple devices, "Ctrl+" elsewhere.
@@ -311,16 +316,19 @@ export function AskPage() {
 
 /**
  * The conversation's slim bar: on a narrow screen, where the threads are a
- * page of their own, the way back; the thread's title; and the Ontology and
- * Load pickers. Getting into production's card hangs under it (a local
- * install has no Helix MCP, so no card).
+ * page of their own, the way back; the thread's title, and a tag after it
+ * (Founder's page marks an Analyst thread so); and the Ontology and Load
+ * pickers. Getting into production's card hangs under it (a local install
+ * has no Helix MCP, so no card). Founder's page has it too.
  */
-function ChatBar({
+export function ChatBar({
   title,
+  tag,
   onBack,
   children,
 }: {
   title?: string;
+  tag?: string;
   onBack?: () => void;
   children: ReactNode;
 }) {
@@ -347,6 +355,7 @@ function ChatBar({
         ) : (
           <span className="ak-bar-title" />
         )}
+        {tag && <Tag>{tag}</Tag>}
         {children}
       </header>
       {!LOCAL && reads === "database" && <ProductionCard />}
@@ -354,15 +363,17 @@ function ChatBar({
   );
 }
 
-type Load =
+export type Load =
   | { id: string; status?: string; version?: string; current?: boolean }
   | undefined;
 
 /**
  * A thread's questions, oldest first, following the newest answer unless
- * scrolled up, and the follow-up composer pinned under them.
+ * scrolled up, and the follow-up composer pinned under them. `readOnly`
+ * (Founder's page, for an Analyst thread from before it): no composer, but
+ * a note that Founder goes on from here, with New chat.
  */
-function ThreadView({
+export function ThreadView({
   thread,
   title,
   load,
@@ -370,6 +381,7 @@ function ThreadView({
   picker,
   notice,
   onBack,
+  readOnly = false,
 }: {
   thread: string;
   // Its title as the page's list has it, while the thread is read.
@@ -379,9 +391,12 @@ function ThreadView({
   picker: ReactNode;
   notice: ReactNode;
   onBack: () => void;
+  readOnly?: boolean;
 }) {
   const { id: ws } = useWorkspace(),
-    { id: o } = useOntology();
+    { id: o } = useOntology(),
+    [params] = useSearchParams();
+  const tag = readOnly ? "Analyst" : undefined;
   const list = useQuery(questionQueries.list(ws, o, thread));
   const questions = threadsOf(list.data?.questions || [])[0]?.questions || [];
   const first = questions[0],
@@ -420,7 +435,11 @@ function ThreadView({
   if (!first || !last)
     return (
       <div className="ak-chat" aria-busy={list.isPending || undefined}>
-        <ChatBar title={list.isPending ? title : undefined} onBack={onBack}>
+        <ChatBar
+          title={list.isPending ? title : undefined}
+          tag={tag}
+          onBack={onBack}
+        >
           {picker}
         </ChatBar>
         {list.isPending ? (
@@ -437,7 +456,11 @@ function ThreadView({
                 list.isError ? "Couldn’t read this thread" : "No such thread"
               }
               text={list.error?.message}
-              action={<Button onClick={onBack}>New thread</Button>}
+              action={
+                <Button onClick={onBack}>
+                  {readOnly ? "Back to Founder" : "New thread"}
+                </Button>
+              }
             />
           </div>
         )}
@@ -445,7 +468,7 @@ function ThreadView({
     );
   return (
     <div className="ak-chat">
-      <ChatBar title={first.question || "Thread"} onBack={onBack}>
+      <ChatBar title={first.question || "Thread"} tag={tag} onBack={onBack}>
         {picker}
       </ChatBar>
       <div
@@ -494,16 +517,29 @@ function ThreadView({
             Jump to latest
           </button>
         )}
-        <Composer
-          docked
-          load={load}
-          thread={thread}
-          focus={questionFocus(last)}
-          busy={isLiveQuestion(last)}
-          onAsked={() => {
-            stick.current = true;
-          }}
-        />
+        {readOnly ? (
+          <div className="ak-readonly">
+            <p>This Analyst thread is read only. Ask Founder to go on.</p>
+            <ButtonLink
+              size="sm"
+              icon={SquarePen}
+              to={withLoad(paths.ask(o, { new: true }), params.get("load"))}
+            >
+              New chat
+            </ButtonLink>
+          </div>
+        ) : (
+          <Composer
+            docked
+            load={load}
+            thread={thread}
+            focus={questionFocus(last)}
+            busy={isLiveQuestion(last)}
+            onAsked={() => {
+              stick.current = true;
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -690,13 +726,20 @@ function useSeen(ref: RefObject<Element | null>) {
  * reply: its steps, then how it ended. An ended question from a list has
  * no outputs: once it is near the view and its answer has visuals, or a
  * step's Result is opened, it is read once with them (questionQueries.answer).
+ * Shown elsewhere (Founder's dock), it may leave out what was asked
+ * (`asked`), which the conversation shows already, and the avatar
+ * (`avatar`).
  */
 export function QuestionCard({
   question: listed,
   budget,
+  asked = true,
+  avatar = true,
 }: {
   question: FoundryQuestion;
   budget?: QuestionBudget | null;
+  asked?: boolean;
+  avatar?: boolean;
 }) {
   const { id: ws, notify } = useWorkspace(),
     { id: o } = useOntology(),
@@ -753,15 +796,17 @@ export function QuestionCard({
   const [cancelling, setCancelling] = useState(false);
   const stepId = (evidence: string) => `${q.id}-${evidence}`;
   // A citation with no page opens the step that returned it, and reads the
-  // outputs its Output shows.
+  // outputs its Output shows. The step is this card's own: the same
+  // question may show twice at once (on its page and in Founder's dock).
   const showStep = (evidence: string) => {
     setLit("");
     setOpened(true);
     setTraceOpen(true);
     requestAnimationFrame(() => {
       setLit(evidence);
-      document
-        .getElementById(stepId(evidence))
+      const id = stepId(evidence);
+      [...(card.current?.querySelectorAll<HTMLElement>("[id]") ?? [])]
+        .find((el) => el.id === id)
         ?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
   };
@@ -808,16 +853,20 @@ export function QuestionCard({
       aria-label={`Question: ${q.question}`}
       ref={card}
     >
-      <div className="ak-question">
-        <span className="hf-sr-only">You asked: </span>
-        <p>{q.question}</p>
-      </div>
-      <p className="ak-question-meta">
-        {focus && `About ${focus.type} ${focus.id} · `}
-        {formatRelative(q.createdAt || "")}
-      </p>
-      <div className="ak-reply">
-        <Avatar />
+      {asked && (
+        <>
+          <div className="ak-question">
+            <span className="hf-sr-only">You asked: </span>
+            <p>{q.question}</p>
+          </div>
+          <p className="ak-question-meta">
+            {focus && `About ${focus.type} ${focus.id} · `}
+            {formatRelative(q.createdAt || "")}
+          </p>
+        </>
+      )}
+      <div className={avatar ? "ak-reply" : undefined}>
+        {avatar && <Avatar />}
         <div className="ak-reply-body">
           <section className={cx("ak-trace", `is-${trace.phase}`)}>
             <div className="ak-trace-head">

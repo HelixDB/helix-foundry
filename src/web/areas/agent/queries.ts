@@ -21,6 +21,7 @@ import {
   type AgentOperationName,
   type AgentSection,
 } from "../../analytics";
+import { deleteDashboard } from "../dashboards/queries";
 import {
   isAgentOperation,
   isLiveTurn,
@@ -29,7 +30,7 @@ import {
   type TurnStream,
 } from "./model";
 
-// The Assistant's WFE calls (src/shared/wfe.ts "Agent"), and the analytics
+// Founder's WFE calls (src/shared/wfe.ts "Agent"), and the analytics
 // each reports: never the text, a name or a payload.
 
 const enc = encodeURIComponent;
@@ -83,7 +84,8 @@ export const agentQueries = {
 
 /**
  * A turn's events after `prev`, folded in. A card that shows while the turn
- * runs reports its preparing; a turn read once it ended reports nothing.
+ * runs reports its preparing, and an action that ran at once (`auto`) how
+ * it ended; a turn read once it ended reports nothing.
  */
 export async function turnEvents(
   ws: string,
@@ -97,10 +99,21 @@ export async function turnEvents(
     for (const e of page.events || []) {
       const ev =
         e.seq > prev.lastSeq ? parseAgentEvent(e.eventJson) : undefined;
-      if (ev?.type === "action_card")
+      if (ev?.type === "action_card" && !ev.auto)
         trackEvent("agent_action_prepared", {
           operation: isAgentOperation(ev.operation) ? ev.operation : "other",
           target_named_by_user: ev.target_named_by_user,
+        });
+      if (
+        ev?.type === "action_result" &&
+        ev.auto &&
+        (ev.status === "succeeded" ||
+          ev.status === "failed" ||
+          ev.status === "unknown")
+      )
+        trackEvent("agent_action_auto_ran", {
+          operation: isAgentOperation(ev.operation) ? ev.operation : "other",
+          outcome: ev.status,
         });
     }
   return reduceTurnEvents(prev, page);
@@ -201,6 +214,15 @@ export async function revokeAgentHelper(ws: string, id: string) {
   );
   trackEvent("agent_helper_revoked");
   return r;
+}
+
+/**
+ * Undoes a dashboard Founder made at once (its card's Undo): deletes it, as
+ * its page's Delete does.
+ */
+export async function undoAgentDashboard(ws: string, id: string) {
+  await deleteDashboard(ws, id);
+  trackEvent("agent_action_undone", { operation: "create_dashboard" });
 }
 
 /** Prepares an expired action again, as the person is now, with no model call. */

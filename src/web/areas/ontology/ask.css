@@ -901,6 +901,26 @@ button.ak-call-head:hover {
 .ak-open {
   justify-self: start;
 }
+/* An Analyst thread from before Founder, on Founder's page: read only, a
+   note where the composer was. */
+.ak-readonly {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--hf-space-1) var(--hf-space-15);
+  width: 100%;
+  max-width: calc(var(--ak-col) + 2 * var(--ak-gutter));
+  margin: 0 auto;
+  padding: var(--hf-space-15) var(--ak-gutter) 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+  text-align: center;
+}
+.ak-readonly p {
+  margin: 0;
+}
 
 @media (max-width: 800px) {
   .ak-chat {
@@ -943,4 +963,25 @@ button.ak-call-head:hover {
 /* The step a running question is on, in the trace's closed line. */
 .ak-trace-status > .ak-call-tool {
   order: 0;
+}
+/* One question shown inline (ask-inline.tsx), in Founder's dock about
+   400px wide: no question bubble or avatar column, and tighter spacing. */
+.ak-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hf-space-15);
+  min-width: 0;
+}
+.ak-inline .ak-reply-body {
+  gap: var(--hf-space-1);
+  padding-top: 0;
+}
+.ak-inline-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--hf-space-1);
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
 }

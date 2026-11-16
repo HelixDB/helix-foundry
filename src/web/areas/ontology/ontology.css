@@ -671,7 +671,7 @@
   align-items: center;
   gap: 8px;
 }
-/* Narrow (a phone, or beside the Assistant), Cancel generation goes under
+/* Narrow (a phone, or beside Founder), Cancel generation goes under
    the title rather than squeezing it into a column. */
 .on-asked {
   container-type: inline-size;
