@@ -323,8 +323,8 @@ func TestAWorkflowCardNamesTheWorkflow(t *testing.T) {
 	assert.JSONEq(t, `{"automation":{"id":"auto1","name":"Nightly load","status":"active"}}`, string(a.Display))
 	assert.True(t, a.TargetNamedByUser)
 
-	a, result = prepared(t, h, "Pause it", "pause_workflow", "workflow:ws1/nowhere", `{}`)
-	assert.Nil(t, a)
+	_, result = prepared(t, h, "Pause it", "pause_workflow", "workflow:ws1/nowhere", `{}`)
+	assert.Len(t, h.db.actions, 1, "the refused one isn't stored")
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "this workspace holds no workflow nowhere: read its workflows again")
 }
