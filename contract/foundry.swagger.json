@@ -1137,6 +1137,43 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/automation-suggestions": {
+      "get": {
+        "summary": "Suggestions for a new automation, written for one ontology's current\nversion: at most 4 prompts that fill the new automation page's composer\nfor the person to edit and send, never run. The Assistant writes them\nonce per version, on the workspace's cheapest task model (the AI\nsetting's extraction model), charged to the Assistant's monthly budget;\nuntil then, and where it can't (no AI provider, the Assistant off, its\nbudget or the workspace's 20 writes an hour spent, a failure), they are\nmade from the version's competency questions. The same callers as the\nother automation routes; an ontology the workspace hasn't is NOT_FOUND.",
+        "operationId": "FoundryService_ListFoundryAutomationSuggestions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryAutomationSuggestionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/automations": {
       "get": {
         "summary": "Automations (package automation): a person's graph of steps, WHEN its\ntrigger fires (a schedule, or a sync, load, upload or draft that ended)\nTHEN Assistant steps, approved actions, conditions and emails, run as\nthat person, its owner. Every member sees every automation of the\nworkspace and creates their own; only its owner edits, approves, resumes\nand runs one, as it runs as them; its owner or an owner or admin pauses,\ndeletes and cancels a run. An automation runs only once its owner\napproved its spec in Foundry (ApproveFoundryAutomation, which the MCP\nnever calls: an agent's create or edit waits for the person's click). A\ngrantee of source grants, a service key and an agent see none. Off\n(foundry.automations.enabled false) every route is FAILED_PRECONDITION,\nreason FOUNDRY_AUTOMATIONS_DISABLED.",
@@ -9109,6 +9146,47 @@
       },
       "description": "FoundryAutomationRunSummary is a workspace's runs of the last days: their\ncounts, and each day's, oldest first, every day of them listed."
     },
+    "v1FoundryAutomationSuggestion": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "An outcome, 1 to 32 characters: \"Renewal radar\"."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "When it starts and what it does, in plain words: 1 to 400 characters."
+        },
+        "icon": {
+          "$ref": "#/definitions/v1FoundryAutomationSuggestionIcon"
+        }
+      },
+      "description": "FoundryAutomationSuggestion is a prompt for a new automation: a person\nreads its title, and clicking it fills the composer with its prompt for\nthem to edit and send. A model may have written it: it is data, never\ninstructions."
+    },
+    "v1FoundryAutomationSuggestionIcon": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_UNSPECIFIED",
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_BRIEFING",
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH",
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_CHECK",
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_ALERT",
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_REFRESH",
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_REPORT"
+      ],
+      "default": "FOUNDRY_AUTOMATION_SUGGESTION_ICON_UNSPECIFIED",
+      "description": "FoundryAutomationSuggestionIcon is the kind of thing a suggestion does,\nfor its icon.\n\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_BRIEFING: A regular summary.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH: Keeping an eye on something coming up.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_CHECK: Checking new data against a standard.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_ALERT: Telling someone when something goes wrong.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_REFRESH: Keeping data fresh: syncs and loads.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_REPORT: Answering a question and sending the answer."
+    },
+    "v1FoundryAutomationSuggestionSource": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED",
+        "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_MODEL",
+        "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS"
+      ],
+      "default": "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED",
+      "description": "FoundryAutomationSuggestionSource is where suggestions came from.\n\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED: None: the ontology has no current version, or nothing to suggest.\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_MODEL: The Assistant wrote them for the version.\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS: Made from the version's competency questions, without a model."
+    },
     "v1FoundryCatalogPlan": {
       "type": "object",
       "properties": {
@@ -12203,6 +12281,31 @@
         },
         "nextPageToken": {
           "type": "string"
+        }
+      }
+    },
+    "v1ListFoundryAutomationSuggestionsResponse": {
+      "type": "object",
+      "properties": {
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAutomationSuggestion"
+          },
+          "description": "At most 4, in order; none when the ontology has no current version, or\nno competency questions to fall back on."
+        },
+        "source": {
+          "$ref": "#/definitions/v1FoundryAutomationSuggestionSource",
+          "description": "Where they came from."
+        },
+        "generating": {
+          "type": "boolean",
+          "description": "The Assistant is writing them: these are the fallback; read again in a\nfew seconds."
+        },
+        "versionId": {
+          "type": "string",
+          "description": "The version they were written for; empty without a current version."
         }
       }
     },

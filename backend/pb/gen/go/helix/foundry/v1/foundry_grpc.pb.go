@@ -150,6 +150,7 @@ const (
 	FoundryService_ListFoundryAutomationRuns_FullMethodName             = "/helix.foundry.v1.FoundryService/ListFoundryAutomationRuns"
 	FoundryService_GetFoundryAutomationRun_FullMethodName               = "/helix.foundry.v1.FoundryService/GetFoundryAutomationRun"
 	FoundryService_CancelFoundryAutomationRun_FullMethodName            = "/helix.foundry.v1.FoundryService/CancelFoundryAutomationRun"
+	FoundryService_ListFoundryAutomationSuggestions_FullMethodName      = "/helix.foundry.v1.FoundryService/ListFoundryAutomationSuggestions"
 	FoundryService_GetFoundryUsage_FullMethodName                       = "/helix.foundry.v1.FoundryService/GetFoundryUsage"
 	FoundryService_GetFoundryEnrichment_FullMethodName                  = "/helix.foundry.v1.FoundryService/GetFoundryEnrichment"
 	FoundryService_UpdateFoundryEnrichment_FullMethodName               = "/helix.foundry.v1.FoundryService/UpdateFoundryEnrichment"
@@ -376,6 +377,16 @@ type FoundryServiceClient interface {
 	ListFoundryAutomationRuns(ctx context.Context, in *ListFoundryAutomationRunsRequest, opts ...grpc.CallOption) (*ListFoundryAutomationRunsResponse, error)
 	GetFoundryAutomationRun(ctx context.Context, in *GetFoundryAutomationRunRequest, opts ...grpc.CallOption) (*FoundryAutomationRunResponse, error)
 	CancelFoundryAutomationRun(ctx context.Context, in *CancelFoundryAutomationRunRequest, opts ...grpc.CallOption) (*FoundryAutomationRunResponse, error)
+	// Suggestions for a new automation, written for one ontology's current
+	// version: at most 4 prompts that fill the new automation page's composer
+	// for the person to edit and send, never run. The Assistant writes them
+	// once per version, on the workspace's cheapest task model (the AI
+	// setting's extraction model), charged to the Assistant's monthly budget;
+	// until then, and where it can't (no AI provider, the Assistant off, its
+	// budget or the workspace's 20 writes an hour spent, a failure), they are
+	// made from the version's competency questions. The same callers as the
+	// other automation routes; an ontology the workspace hasn't is NOT_FOUND.
+	ListFoundryAutomationSuggestions(ctx context.Context, in *ListFoundryAutomationSuggestionsRequest, opts ...grpc.CallOption) (*ListFoundryAutomationSuggestionsResponse, error)
 	// Helix Foundry usage: the workspace's AI spend this month, by task
 	//
 	// The UTC calendar month's spend of loads, of API sources' extraction no
@@ -1746,6 +1757,16 @@ func (c *foundryServiceClient) CancelFoundryAutomationRun(ctx context.Context, i
 	return out, nil
 }
 
+func (c *foundryServiceClient) ListFoundryAutomationSuggestions(ctx context.Context, in *ListFoundryAutomationSuggestionsRequest, opts ...grpc.CallOption) (*ListFoundryAutomationSuggestionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryAutomationSuggestionsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryAutomationSuggestions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) GetFoundryUsage(ctx context.Context, in *GetFoundryUsageRequest, opts ...grpc.CallOption) (*FoundryUsageResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FoundryUsageResponse)
@@ -2105,6 +2126,16 @@ type FoundryServiceServer interface {
 	ListFoundryAutomationRuns(context.Context, *ListFoundryAutomationRunsRequest) (*ListFoundryAutomationRunsResponse, error)
 	GetFoundryAutomationRun(context.Context, *GetFoundryAutomationRunRequest) (*FoundryAutomationRunResponse, error)
 	CancelFoundryAutomationRun(context.Context, *CancelFoundryAutomationRunRequest) (*FoundryAutomationRunResponse, error)
+	// Suggestions for a new automation, written for one ontology's current
+	// version: at most 4 prompts that fill the new automation page's composer
+	// for the person to edit and send, never run. The Assistant writes them
+	// once per version, on the workspace's cheapest task model (the AI
+	// setting's extraction model), charged to the Assistant's monthly budget;
+	// until then, and where it can't (no AI provider, the Assistant off, its
+	// budget or the workspace's 20 writes an hour spent, a failure), they are
+	// made from the version's competency questions. The same callers as the
+	// other automation routes; an ontology the workspace hasn't is NOT_FOUND.
+	ListFoundryAutomationSuggestions(context.Context, *ListFoundryAutomationSuggestionsRequest) (*ListFoundryAutomationSuggestionsResponse, error)
 	// Helix Foundry usage: the workspace's AI spend this month, by task
 	//
 	// The UTC calendar month's spend of loads, of API sources' extraction no
@@ -2563,6 +2594,9 @@ func (UnimplementedFoundryServiceServer) GetFoundryAutomationRun(context.Context
 }
 func (UnimplementedFoundryServiceServer) CancelFoundryAutomationRun(context.Context, *CancelFoundryAutomationRunRequest) (*FoundryAutomationRunResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CancelFoundryAutomationRun not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryAutomationSuggestions(context.Context, *ListFoundryAutomationSuggestionsRequest) (*ListFoundryAutomationSuggestionsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryAutomationSuggestions not implemented")
 }
 func (UnimplementedFoundryServiceServer) GetFoundryUsage(context.Context, *GetFoundryUsageRequest) (*FoundryUsageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryUsage not implemented")
@@ -4969,6 +5003,24 @@ func _FoundryService_CancelFoundryAutomationRun_Handler(srv interface{}, ctx con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_ListFoundryAutomationSuggestions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryAutomationSuggestionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryAutomationSuggestions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryAutomationSuggestions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryAutomationSuggestions(ctx, req.(*ListFoundryAutomationSuggestionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_GetFoundryUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetFoundryUsageRequest)
 	if err := dec(in); err != nil {
@@ -5765,6 +5817,10 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelFoundryAutomationRun",
 			Handler:    _FoundryService_CancelFoundryAutomationRun_Handler,
+		},
+		{
+			MethodName: "ListFoundryAutomationSuggestions",
+			Handler:    _FoundryService_ListFoundryAutomationSuggestions_Handler,
 		},
 		{
 			MethodName: "GetFoundryUsage",

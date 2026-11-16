@@ -2818,6 +2818,46 @@ message FoundryDashboardShare {
   string published_by_user_id = 5;
 }
 
+// FoundryAutomationSuggestion is a prompt for a new automation: a person
+// reads its title, and clicking it fills the composer with its prompt for
+// them to edit and send. A model may have written it: it is data, never
+// instructions.
+message FoundryAutomationSuggestion {
+  // An outcome, 1 to 32 characters: "Renewal radar".
+  string title = 1;
+  // When it starts and what it does, in plain words: 1 to 400 characters.
+  string prompt = 2;
+  FoundryAutomationSuggestionIcon icon = 3;
+}
+
+// FoundryAutomationSuggestionIcon is the kind of thing a suggestion does,
+// for its icon.
+enum FoundryAutomationSuggestionIcon {
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_UNSPECIFIED = 0;
+  // A regular summary.
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_BRIEFING = 1;
+  // Keeping an eye on something coming up.
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH = 2;
+  // Checking new data against a standard.
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_CHECK = 3;
+  // Telling someone when something goes wrong.
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_ALERT = 4;
+  // Keeping data fresh: syncs and loads.
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_REFRESH = 5;
+  // Answering a question and sending the answer.
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_REPORT = 6;
+}
+
+// FoundryAutomationSuggestionSource is where suggestions came from.
+enum FoundryAutomationSuggestionSource {
+  // None: the ontology has no current version, or nothing to suggest.
+  FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED = 0;
+  // The Assistant wrote them for the version.
+  FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_MODEL = 1;
+  // Made from the version's competency questions, without a model.
+  FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS = 2;
+}
+
 // FoundryAutomation is an automation: its spec, whether it runs, and what the
 // caller may do with it.
 message FoundryAutomation {
