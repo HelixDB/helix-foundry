@@ -265,6 +265,7 @@ func TestFoundryDashboards(t *testing.T) {
 
 	t.Run("ends a link at its expiry, and makes a new one once it has", func(t *testing.T) {
 		db := newTestStore(t)
+		createWorkspace(t, workspaceID)
 		d := newDashboard(workspaceID, 1, dashAda)
 		require.NoError(t, db.CreateFoundryDashboard(ctx, d, 10))
 		_, err := db.PublishFoundryDashboard(ctx, dashboardShare(d, 1, "a"), model.FoundryDashboardLinkExpiry{Keep: true, At: &time.Time{}})
