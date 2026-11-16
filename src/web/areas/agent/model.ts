@@ -2064,10 +2064,7 @@ export function resultLink(
     case "delete_workflow":
       return undefined;
     case "create_workflow":
-      return on(
-        made && automationPaths.automation(made),
-        "Open the workflow",
-      );
+      return on(made && automationPaths.automation(made), "Open the workflow");
     case "update_workflow":
     case "pause_workflow":
     case "resume_workflow":

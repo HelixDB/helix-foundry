@@ -3685,8 +3685,7 @@ function approveOnClick(
   body: { automation?: FoundryAutomation },
 ): { body: unknown; error: string } {
   if (
-    (a.operation !== "create_workflow" &&
-      a.operation !== "update_workflow") ||
+    (a.operation !== "create_workflow" && a.operation !== "update_workflow") ||
     a.payload.spec === undefined
   )
     return { body, error: "" };
@@ -3894,9 +3893,7 @@ function continuationScript(a: StoredAction, ask: Ask): Step[] {
     case "create_workflow":
     case "update_workflow": {
       const name = String(
-          out.name ||
-            ("name" in a.display && a.display.name) ||
-            "the workflow",
+          out.name || ("name" in a.display && a.display.name) || "the workflow",
         ),
         link = `/workflows/${String(out.id)}`,
         on = out.status === "active";

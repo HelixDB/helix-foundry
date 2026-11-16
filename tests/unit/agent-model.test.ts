@@ -138,7 +138,10 @@ describe("inAppPath", () => {
     ["/workflows/aut_1/runs/run_2?x=1", "/workflows/aut_1/runs/run_2"],
     ["/ontology/ont_1/usage", "/ontology/ont_1/usage"],
     ["/ontology/ont_1/usage/wf_1?tab=runs", "/ontology/ont_1/usage/wf_1"],
-    ["/ontology/ont_1/usage/wf_1/runs/r_1", "/ontology/ont_1/usage/wf_1/runs/r_1"],
+    [
+      "/ontology/ont_1/usage/wf_1/runs/r_1",
+      "/ontology/ont_1/usage/wf_1/runs/r_1",
+    ],
   ])("opens %s as %s", (path, to) => expect(at(path)).toBe(to));
 
   it.each([

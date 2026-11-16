@@ -238,9 +238,9 @@ test("every main page in both themes", async ({ page }, info) => {
   // Automations: the overview and its templates, a new one's conversation,
   // a template's draft on the canvas, one with a run, its settings.
   await mock.configure({ automationStepMs: 100, agentStepMs: 60 });
-  await visit("automations-empty", "/automations");
-  await visit("automation-new-chat", "/automations/new");
-  await visit("automation-new", "/automations/new?template=check-documents");
+  await visit("automations-empty", "/workflows");
+  await visit("automation-new-chat", "/workflows/new");
+  await visit("automation-new", "/workflows/new?template=check-documents");
   const A = "/v1/workspaces/ws_acme/foundry/automations";
   const made = (
     await postToWfe(page, A, {
@@ -275,22 +275,22 @@ test("every main page in both themes", async ({ page }, info) => {
       }),
     })
   ).automation;
-  await visit("automation-unapproved", `/automations/${made.id}`);
+  await visit("automation-unapproved", `/workflows/${made.id}`);
   await postToWfe(page, `${A}/${made.id}:approve`, {
     expectedRevision: made.revision,
   });
   const ran = (
     await postToWfe(page, `${A}/${made.id}:run`, { clientToken: "theme" })
   ).run;
-  await page.goto(`/automations/${made.id}/runs/${ran.id}`);
+  await page.goto(`/workflows/${made.id}/runs/${ran.id}`);
   await expect(
     page.getByRole("main").getByText("Succeeded", { exact: true }).first(),
   ).toBeVisible({ timeout: 20_000 });
   await settle(page);
   await shoot("automation-run");
-  await visit("automation", `/automations/${made.id}`);
-  await visit("automation-settings", `/automations/${made.id}?tab=settings`);
-  await visit("automations", "/automations");
+  await visit("automation", `/workflows/${made.id}`);
+  await visit("automation-settings", `/workflows/${made.id}?tab=settings`);
+  await visit("automations", "/workflows");
 
   await visit("settings", "/settings");
   await visit("members", "/settings/members");

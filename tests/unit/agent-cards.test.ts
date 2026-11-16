@@ -1017,18 +1017,8 @@ describe("cardView", () => {
         "Save",
         "Weekly",
       ],
-      [
-        "a workflow renamed",
-        "Change the workflow “Weekly”",
-        "Save",
-        "Weekly",
-      ],
-      [
-        "a workflow paused",
-        "Pause the workflow “Weekly”",
-        "Pause",
-        "Weekly",
-      ],
+      ["a workflow renamed", "Change the workflow “Weekly”", "Save", "Weekly"],
+      ["a workflow paused", "Pause the workflow “Weekly”", "Pause", "Weekly"],
       [
         "a workflow turned back on",
         "Turn the workflow “Weekly” back on",

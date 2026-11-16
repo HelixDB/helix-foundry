@@ -261,7 +261,7 @@ export const mock = {
     });
     return { status: res.status, body: await res.json() };
   },
-  /** Records ended runs of an automation, each `ago` ms before now: its history. */
+  /** Records ended runs of a workflow, each `ago` ms before now: its history. */
   pastRuns: async (
     automationId: string,
     runs: {
@@ -276,7 +276,7 @@ export const mock = {
     );
     if (!res.ok) throw new Error(`past runs: ${res.status}`);
   },
-  /** Drops an ended run of an automation, as the backend's retention does. */
+  /** Drops an ended run of a workflow, as the backend's retention does. */
   pruneRun: async (automationId: string, runId: string) => {
     const res = await fetch(
       `${MOCK}/__mock/automations/${encodeURIComponent(automationId)}/runs/${encodeURIComponent(runId)}/prune`,

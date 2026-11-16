@@ -59,7 +59,7 @@ async function runOnce(page: Page, id: string, n: number) {
   const run = (
     await postToWfe(page, `${A}/${id}:run`, { clientToken: `run-${id}-${n}` })
   ).run;
-  await page.goto(`/automations/${id}/runs/${run.id}`);
+  await page.goto(`/workflows/${id}/runs/${run.id}`);
   await expect(
     page
       .getByRole("complementary", { name: "Inspector" })
@@ -81,7 +81,7 @@ async function workflows(page: Page) {
   }[];
 }
 
-test("an automation that reads an ontology records each run in one workflow, which says how much it helped", async ({
+test("a workflow that reads an ontology records each run in one use case, which says how much it helped", async ({
   page,
 }) => {
   await signIn(page);
@@ -133,7 +133,7 @@ test("an automation that reads an ontology records each run in one workflow, whi
   ).toHaveCount(1);
   await expect(
     page.getByText(
-      'Run by hand. The automation "Invoice check" ran these steps, in order:',
+      'Run by hand. The workflow "Invoice check" ran these steps, in order:',
       { exact: false },
     ),
   ).toBeVisible();
@@ -156,7 +156,7 @@ test("an automation that reads an ontology records each run in one workflow, whi
   );
   expect(forged.status()).toBe(404);
   await origin.getByRole("link", { name: "one of its runs" }).click();
-  await expect(page).toHaveURL(new RegExp(`/automations/${id}/runs/${first}$`));
+  await expect(page).toHaveURL(new RegExp(`/workflows/${id}/runs/${first}$`));
 
   // A second run reuses the workflow, with a run of its own.
   await runOnce(page, id, 2);
@@ -170,7 +170,7 @@ test("an automation that reads an ontology records each run in one workflow, whi
   expect(again[0]!.runs).toBe("2");
 
   // The automation's page says how much each ontology helped, overall.
-  await page.goto(`/automations/${id}`);
+  await page.goto(`/workflows/${id}`);
   const impact = page.getByRole("region", {
     name: "How much its ontologies helped",
   });
@@ -202,7 +202,7 @@ test("an automation that reads an ontology records each run in one workflow, whi
   });
   expect(refused.status()).toBe(400);
   expect((await refused.json()).message).toContain(
-    "only once the automation is deleted",
+    "only once the workflow is deleted",
   );
   const started = await mock.agent("POST", `${W}/${made[0]!.id}/runs`, {
     input: "Mine",
@@ -213,9 +213,7 @@ test("an automation that reads an ontology records each run in one workflow, whi
   await page.goto("/ontology/ont_acme_contracts/usage");
   const insights = page.getByRole("region", { name: "Insights" });
   await insights.getByRole("combobox", { name: "Started by" }).click();
-  await page
-    .getByRole("option", { name: /^Workflow: Invoice check/ })
-    .click();
+  await page.getByRole("option", { name: /^Workflow: Invoice check/ }).click();
   await expect(
     insights.getByRole("combobox", { name: "Started by" }),
   ).toContainText("Workflow: Invoice check");
@@ -262,7 +260,7 @@ test("a run that uses no ontology records none", async ({ page }) => {
     page.getByRole("region", { name: "How much each ontology helped" }),
   ).toHaveCount(0);
   expect((await workflows(page)).some((w) => w.automation)).toBe(false);
-  await page.goto(`/automations/${id}`);
+  await page.goto(`/workflows/${id}`);
   await expect(
     page.getByRole("region", { name: "How much its ontologies helped" }),
   ).toContainText("None yet");

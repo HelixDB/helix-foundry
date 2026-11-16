@@ -1748,13 +1748,13 @@ test("makes dashboards, with no public link", async ({ page }) => {
   expect(shared.status()).toBe(404);
 });
 
-test("runs an automation, which notes what it found where it can't email", async ({
+test("runs a workflow, which notes what it found where it can't email", async ({
   page,
 }) => {
   await configure({ agentStepMs: 60, automationStepMs: 100 });
-  await page.goto("/automations");
+  await page.goto("/workflows");
   // A new one starts with Founder here too, or from scratch.
-  await page.getByRole("link", { name: "New automation" }).first().click();
+  await page.getByRole("link", { name: "New workflow" }).first().click();
   await expect(
     page.getByRole("heading", { name: "What should happen?" }),
   ).toBeVisible();
@@ -1789,12 +1789,12 @@ test("runs an automation, which notes what it found where it can't email", async
   );
 });
 
-test("records how much an ontology helped an automation, as a hosted Foundry does", async ({
+test("records how much an ontology helped a workflow, as a hosted Foundry does", async ({
   page,
 }) => {
   await configure({ agentStepMs: 40, automationStepMs: 100, loadStepMs: 100 });
   await uploadAndLoadContract(page);
-  await page.goto("/automations/new?template=blank");
+  await page.goto("/workflows/new?template=blank");
   await page.getByRole("textbox", { name: "Name" }).fill("Invoice check");
   await page.getByRole("button", { name: "Add step" }).click();
   await page.getByRole("menuitem", { name: "Ask Founder" }).click();

@@ -128,9 +128,7 @@ export function AutomationPage() {
               }
               text={query.error?.message}
               action={
-                <ButtonLink to={paths.automations()}>
-                  All workflows
-                </ButtonLink>
+                <ButtonLink to={paths.automations()}>All workflows</ButtonLink>
               }
             />
           )}

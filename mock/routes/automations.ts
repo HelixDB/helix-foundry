@@ -1565,10 +1565,7 @@ export const automationRoutes: MockRoute[] = [
       const a = found(req);
       if (!isAutomation(a)) return a;
       if (a.ownerUserId !== c.userId)
-        return fail(
-          "PERMISSION_DENIED",
-          "only its owner resumes a workflow",
-        );
+        return fail("PERMISSION_DENIED", "only its owner resumes a workflow");
       if (a.status === "needs_approval")
         return refused(
           ws,
