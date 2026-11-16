@@ -161,7 +161,8 @@ export function AgentDock({
   const title =
     (threadId && thread.data?.thread.title) ||
     (threadId ? "Thread" : "New thread");
-  const disabled = agentRefusal(threads.error) === "FOUNDRY_AGENT_DISABLED";
+  const disabled = threads.data === "off",
+    list = threads.data === "off" ? undefined : threads.data?.threads;
   const where = useThreadRuntime(threadId, thread.data);
   return (
     <div className="ag-dock" data-replay-block>
@@ -182,11 +183,11 @@ export function AgentDock({
           <MenuItem icon={MessageSquarePlus} onSelect={() => open("")}>
             New thread
           </MenuItem>
-          {!!threads.data?.threads?.length && (
+          {!!list?.length && (
             <>
               <MenuSeparator />
               <MenuLabel>Threads</MenuLabel>
-              {threads.data.threads.map((t) => (
+              {list.map((t) => (
                 <MenuItem
                   key={t.id}
                   checked={t.id === threadId}

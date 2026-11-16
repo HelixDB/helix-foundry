@@ -22,7 +22,7 @@ import {
   Transcript,
   useThreadRuntime,
 } from "../agent/dock";
-import { agentRefusal, resultLink } from "../agent/model";
+import { resultLink } from "../agent/model";
 import { agentQueries } from "../agent/queries";
 import { ontologyQueries } from "../ontology/queries";
 import { lastOntology, ontologyName } from "../ontology/scope";
@@ -85,7 +85,7 @@ function NewChat() {
     retry: false,
   });
   const where = useThreadRuntime(threadId, thread.data);
-  const disabled = agentRefusal(threads.error) === "FOUNDRY_AGENT_DISABLED";
+  const disabled = threads.data === "off";
   // A thread deleted elsewhere starts afresh.
   const gone = thread.error instanceof ApiError && thread.error.status === 404;
   useEffect(() => {

@@ -255,7 +255,13 @@ test("walks a new install through the sample company, from its database to Ask",
     }),
   ).toBeVisible({ timeout: 60_000 });
   await page.getByRole("link", { name: "Ask your own question" }).click();
-  await expect(page.getByRole("tabpanel", { name: "Questions" })).toBeVisible();
+  // Founder's page offers the draft's questions as cards.
+  await expect(
+    page
+      .getByRole("tabpanel", { name: "Questions" })
+      .locator(".fd-card-prompt")
+      .first(),
+  ).toBeVisible();
 
   // Acme Corp's database is a connection in Data, like any other, and every
   // page says this is the sample, with the way on to its last step once the
