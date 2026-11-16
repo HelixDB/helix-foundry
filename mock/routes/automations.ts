@@ -212,7 +212,7 @@ const sentence = (text: string) => {
 type Caller = { m: Membership; userId: string; manager: boolean };
 
 /** The caller as automations answer them: a member, while automations are on. */
-function caller(req: MockRequest): Caller | MockReply {
+export function caller(req: MockRequest): Caller | MockReply {
   const ws = req.params.workspaceId!;
   if (knobs.automationsDisabled)
     return refused(
@@ -225,7 +225,7 @@ function caller(req: MockRequest): Caller | MockReply {
   work(ws);
   return { m, userId: m.userId, manager: manages(m) };
 }
-const isCaller = (x: Caller | MockReply): x is Caller => "m" in x;
+export const isCaller = (x: Caller | MockReply): x is Caller => "m" in x;
 
 /**
  * A spec of the workspace as the API checks it: its shape (the backend's
