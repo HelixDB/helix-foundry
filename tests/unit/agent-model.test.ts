@@ -1696,8 +1696,8 @@ describe("stepLabel", () => {
     expect(stepLabel({ id: "t", name: "helix_foundry_ask", input: {} })).toBe(
       "Asked the Analyst",
     );
-    expect(stepLabel({ id: "t", name: "helix_foundry_unknown", input: {} })).toBe(
-      "helix_foundry_unknown",
-    );
+    expect(
+      stepLabel({ id: "t", name: "helix_foundry_unknown", input: {} }),
+    ).toBe("helix_foundry_unknown");
   });
 });
