@@ -501,7 +501,7 @@ func (s *Service) foundryWorkflowRunResponse(ctx context.Context, ontologyID, wo
 }
 
 // AssessFoundryWorkflowRun queues a finished run's assessment again, where
-// assessments are on.
+// assessments are on: of a run that made a call to the ontology alone.
 func (s *Service) AssessFoundryWorkflowRun(ctx context.Context, req *foundryv1.AssessFoundryWorkflowRunRequest) (*foundryv1.FoundryWorkflowRunResponse, error) {
 	if !s.deps.Cfg.Foundry.Workflows.Assess.Enabled {
 		return nil, status.Error(codes.FailedPrecondition, "run assessments are off here")
@@ -513,6 +513,10 @@ func (s *Service) AssessFoundryWorkflowRun(ctx context.Context, req *foundryv1.A
 	r, err := s.foundryWorkflowRun(ctx, o.ID, req.GetWorkflowId(), req.GetId())
 	if err != nil {
 		return nil, err
+	}
+	if r.Finished != nil && r.Counts.Accesses == 0 {
+		// A finished run records no more calls.
+		return nil, status.Error(codes.FailedPrecondition, foundrymodel.FoundryWorkflowNeverCalled)
 	}
 	switch err := s.deps.DB.QueueFoundryWorkflowRunAssessment(ctx, r.ID); {
 	case errors.Is(err, foundrystore.ErrNotFound):

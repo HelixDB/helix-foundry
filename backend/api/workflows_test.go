@@ -203,7 +203,7 @@ func (s *workflowStore) TallyFoundryWorkflowRuns(_ context.Context, workflowIDs 
 			if r.Finished != nil {
 				t.FinishedRuns++
 			}
-			if a := s.assessments[r.ID]; a != nil && a.Status == foundrymodel.FoundryWorkflowAssessmentDone {
+			if a := s.assessments[r.ID]; a != nil && a.Status == foundrymodel.FoundryWorkflowAssessmentDone && r.Counts.Accesses > 0 {
 				t.Verdicts[a.Verdict]++
 			}
 		}
@@ -226,7 +226,7 @@ func (s *workflowStore) FinishFoundryWorkflowRun(_ context.Context, id string, i
 		return foundrystore.ErrNotFound
 	}
 	r.Finished = &foundrymodel.FoundryWorkflowRunEnd{At: time.Now(), Output: output}
-	if assess {
+	if assess && r.Counts.Accesses > 0 {
 		s.assessments[id] = &foundrymodel.FoundryWorkflowAssessment{RunID: id, Status: foundrymodel.FoundryWorkflowAssessmentQueued, QueuedAt: time.Now()}
 	}
 	return nil
@@ -253,7 +253,7 @@ func (s *workflowStore) CountFoundryWorkflowVerdicts(_ context.Context, workflow
 	out := map[string]map[string]int64{}
 	for _, r := range s.runs {
 		a := s.assessments[r.ID]
-		if a == nil || a.Status != foundrymodel.FoundryWorkflowAssessmentDone || !slices.Contains(workflowIDs, r.WorkflowID) {
+		if a == nil || a.Status != foundrymodel.FoundryWorkflowAssessmentDone || r.Counts.Accesses == 0 || !slices.Contains(workflowIDs, r.WorkflowID) {
 			continue
 		}
 		if out[r.WorkflowID] == nil {
@@ -268,6 +268,9 @@ func (s *workflowStore) QueueFoundryWorkflowRunAssessment(_ context.Context, run
 	if err := s.queueErr; err != nil {
 		s.queueErr = nil
 		return err
+	}
+	if i := slices.IndexFunc(s.runs, func(r *foundrymodel.FoundryWorkflowRun) bool { return r.ID == runID }); i < 0 || s.runs[i].Finished == nil {
+		return foundrystore.ErrNotFound
 	}
 	s.assessments[runID] = &foundrymodel.FoundryWorkflowAssessment{RunID: runID, Status: foundrymodel.FoundryWorkflowAssessmentQueued}
 	return nil
@@ -809,7 +812,9 @@ func TestFoundryWorkflowAssessments(t *testing.T) {
 
 	t.Run("finishing a run queues its assessment, where they are on", func(t *testing.T) {
 		s, store := workflowService(t)
-		run := finish(s, startRun(t, s, "q"))
+		run := startRun(t, s, "q")
+		must(store.RecordFoundryWorkflowAccess(context.Background(), run.GetId(), &foundrymodel.FoundryWorkflowRead{LoadID: "load-1"}))
+		run = finish(s, run)
 		if run.GetAssessment().GetStatus() != "queued" {
 			t.Fatalf("assessment = %+v", run.GetAssessment())
 		}
@@ -852,6 +857,33 @@ func TestFoundryWorkflowAssessments(t *testing.T) {
 		}
 		_, err = assess(s, &foundryv1.FoundryWorkflowRun{Id: run.GetId(), WorkflowId: "other"})
 		wantCode(t, err, codes.NotFound)
+	})
+
+	t.Run("a run that made no call isn't assessed, and one assessed before counts nowhere", func(t *testing.T) {
+		s, store := workflowService(t)
+		run := finish(s, startRun(t, s, "q"))
+		if run.GetAssessment() != nil || len(store.assessments) != 0 {
+			t.Fatalf("assessment = %+v", run.GetAssessment())
+		}
+		_, err := assess(s, run)
+		wantCode(t, err, codes.FailedPrecondition)
+		if !strings.Contains(err.Error(), foundrymodel.FoundryWorkflowNeverCalled) || len(store.assessments) != 0 {
+			t.Fatalf("again = %v, %d queued", err, len(store.assessments))
+		}
+		// Assessed unused before such runs went unassessed: the workflow
+		// counts no verdict of it.
+		store.assessments[run.GetId()] = &foundrymodel.FoundryWorkflowAssessment{RunID: run.GetId(), Status: foundrymodel.FoundryWorkflowAssessmentDone,
+			Verdict: "unused", Assessment: []byte(`{"verdict":"unused"}`)}
+		w := must(s.GetFoundryWorkflow(asPerson(), &foundryv1.GetFoundryWorkflowRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: run.GetWorkflowId()}))
+		if len(w.GetWorkflow().GetVerdicts()) != 0 {
+			t.Fatalf("verdicts = %+v", w.GetWorkflow().GetVerdicts())
+		}
+		// An open run that made none yet may still: it says so.
+		open := startRun(t, s, "open")
+		_, err = assess(s, open)
+		if err == nil || strings.Contains(err.Error(), foundrymodel.FoundryWorkflowNeverCalled) {
+			t.Fatalf("an open run = %v", err)
+		}
 	})
 
 	t.Run("where they are off, none is queued or asked for", func(t *testing.T) {
@@ -953,6 +985,7 @@ func TestGranteeWorkflows(t *testing.T) {
 		t.Fatalf("started by %v and %v", agents, members)
 	}
 	for id, verdict := range map[string]string{owners.GetId(): "helpful", members.GetId(): "unused"} {
+		must(store.RecordFoundryWorkflowAccess(context.Background(), id, &foundrymodel.FoundryWorkflowRead{LoadID: "load-1"}))
 		store.assessments[id] = &foundrymodel.FoundryWorkflowAssessment{RunID: id, WorkflowID: wf, Status: foundrymodel.FoundryWorkflowAssessmentDone, Verdict: verdict}
 	}
 	ids := func(who ports.Actor) []string {

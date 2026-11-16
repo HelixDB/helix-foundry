@@ -75,6 +75,11 @@ func FoundryAutomationWorkflowName(name string) string {
 const FoundryAutomationWorkflowDescription = "Foundry records here each run of its workflow that uses this ontology: " +
 	"what the run read of it and what the run found, so each run's assessment says how much the ontology helped."
 
+// FoundryWorkflowNeverCalled is why a finished run that made no call to the
+// ontology isn't assessed: an assessment of it would say nothing of the
+// ontology.
+const FoundryWorkflowNeverCalled = "This run made no call to the ontology, so there is nothing to assess."
+
 // FoundryWorkflowRunStatus is where a run stands.
 type FoundryWorkflowRunStatus string
 

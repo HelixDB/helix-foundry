@@ -187,8 +187,8 @@ ON DUPLICATE KEY UPDATE reason=VALUES(reason), at=NOW(6)`, ontologyID, string(mo
 
 // finishFoundryAutomationWorkflowRuns finishes the open workflow runs the
 // automation runs runs selects (with arg) started, with answer, queueing
-// their assessments with assess: inside the transaction that ends those
-// runs, which holds them.
+// with assess the assessments of those that made a call to the ontology:
+// inside the transaction that ends those runs, which holds them.
 func (s *mysqlDB) finishFoundryAutomationWorkflowRuns(ctx context.Context, runs string, arg any, answer string, assess bool) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM foundry_workflow_runs WHERE automation_run_id IN (`+runs+`) AND status='open' FOR UPDATE`, arg)
 	if err != nil {
@@ -207,7 +207,7 @@ WHERE id IN (`+in+`)`, append([]any{answer, answer}, toAnySlice(open)...)...); e
 		return nil
 	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO foundry_workflow_run_assessments (run_id, workspace_id, ontology_id, workflow_id, status)
-SELECT id, workspace_id, ontology_id, workflow_id, 'queued' FROM foundry_workflow_runs WHERE id IN (`+in+`)`, toAnySlice(open)...)
+SELECT id, workspace_id, ontology_id, workflow_id, 'queued' FROM foundry_workflow_runs WHERE id IN (`+in+`) AND accesses > 0`, toAnySlice(open)...)
 	return err
 }
 
@@ -315,12 +315,14 @@ WHERE r.automation_run_id=? ORDER BY o.name, o.id`, automationRunID)
 }
 
 // LatestFoundryWorkflowAssessments returns the newest done assessment of each
-// workflow named that has one, by workflow id.
+// workflow named that has one, by workflow id: of a run that made a call to
+// the ontology, as CountFoundryWorkflowVerdicts counts them.
 func (s *mysqlDB) LatestFoundryWorkflowAssessments(ctx context.Context, workflowIDs []string) (map[string]*model.FoundryWorkflowAssessment, error) {
 	out := map[string]*model.FoundryWorkflowAssessment{}
 	for _, workflowID := range workflowIDs {
-		a, err := scanFoundryWorkflowAssessment(s.db.QueryRowContext(ctx, `SELECT `+foundryWorkflowAssessmentColumns+`
-FROM foundry_workflow_run_assessments WHERE workflow_id=? AND status='done' ORDER BY finished_at DESC, run_id DESC LIMIT 1`, workflowID))
+		a, err := scanFoundryWorkflowAssessment(s.db.QueryRowContext(ctx, `SELECT `+prefixed("a", foundryWorkflowAssessmentColumns)+`
+FROM foundry_workflow_run_assessments a JOIN foundry_workflow_runs r ON r.id = a.run_id
+WHERE a.workflow_id=? AND a.status='done' AND r.accesses > 0 ORDER BY a.finished_at DESC, a.run_id DESC LIMIT 1`, workflowID))
 		switch {
 		case errors.Is(err, ErrNotFound):
 		case err != nil:

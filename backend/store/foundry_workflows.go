@@ -407,8 +407,9 @@ func (s *mysqlDB) ListFoundryWorkflowRuns(ctx context.Context, workflowID string
 
 // FinishFoundryWorkflowRun finishes an open run with output, and input when
 // the run has none: one it was started with stays. With assess, its
-// assessment is queued in the same transaction. ErrNotFound when no open
-// run has id: it finished, or is gone.
+// assessment is queued in the same transaction, when it made a call to the
+// ontology: one that made none has nothing to assess. ErrNotFound when no
+// open run has id: it finished, or is gone.
 func (s *mysqlDB) FinishFoundryWorkflowRun(ctx context.Context, id string, input *string, output string, assess bool) error {
 	var in any
 	if input != nil {
@@ -421,7 +422,7 @@ WHERE id=? AND status='open'`, output, in, id); err != nil || !assess {
 			return err
 		}
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_workflow_run_assessments (run_id, workspace_id, ontology_id, workflow_id, status)
-SELECT id, workspace_id, ontology_id, workflow_id, 'queued' FROM foundry_workflow_runs WHERE id=?`, id)
+SELECT id, workspace_id, ontology_id, workflow_id, 'queued' FROM foundry_workflow_runs WHERE id=? AND accesses > 0`, id)
 		return err
 	})
 }
@@ -731,14 +732,17 @@ FROM foundry_workflow_run_assessments WHERE run_id IN (`+idPlaceholders(len(runI
 }
 
 // CountFoundryWorkflowVerdicts counts the done assessments of each workflow
-// named, by verdict.
+// named, by verdict: of runs that made a call to the ontology, as one
+// assessed before runs that made none went unassessed says nothing of it.
 func (s *mysqlDB) CountFoundryWorkflowVerdicts(ctx context.Context, workflowIDs []string) (map[string]map[string]int64, error) {
 	out := map[string]map[string]int64{}
 	if len(workflowIDs) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT workflow_id, verdict, COUNT(*) FROM foundry_workflow_run_assessments
-WHERE status='done' AND workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) GROUP BY workflow_id, verdict`, toAnySlice(workflowIDs)...)
+	rows, err := s.db.QueryContext(ctx, `SELECT a.workflow_id, a.verdict, COUNT(*) FROM foundry_workflow_run_assessments a
+JOIN foundry_workflow_runs r ON r.id = a.run_id
+WHERE a.status='done' AND r.accesses > 0 AND a.workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) GROUP BY a.workflow_id, a.verdict`,
+		toAnySlice(workflowIDs)...)
 	if err != nil {
 		return nil, err
 	}
@@ -872,7 +876,8 @@ WHERE workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND `+column+`=? GRO
 	}
 	verdicts, err := s.db.QueryContext(ctx, `SELECT a.workflow_id, a.verdict, COUNT(*) FROM foundry_workflow_run_assessments a
 JOIN foundry_workflow_runs r ON r.id = a.run_id
-WHERE a.status='done' AND a.workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND r.`+column+`=? GROUP BY a.workflow_id, a.verdict`, args...)
+WHERE a.status='done' AND r.accesses > 0 AND a.workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND r.`+column+`=?
+GROUP BY a.workflow_id, a.verdict`, args...)
 	if err != nil {
 		return nil, err
 	}
