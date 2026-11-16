@@ -433,8 +433,8 @@ export function SettleReview({
       )}
       {rejected && (
         <p role="status">
-          Rejected: nothing is written, and it stays out of Needs review and the
-          review queue until the decision is removed.
+          Rejected: nothing is written, and it stays out of Needs review and
+          Review until the decision is removed.
         </p>
       )}
       {moved && (

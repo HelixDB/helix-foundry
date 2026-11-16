@@ -42,6 +42,7 @@ import {
   versionRows,
   versionTables,
 } from "@/web/areas/ontology/model";
+import { ontologyPaths } from "@/web/areas/ontology/paths";
 import { versionFormat } from "@/web/areas/ontology/format";
 
 describe("versionFormat", () => {
@@ -1950,5 +1951,15 @@ describe("isProbeRoute", () => {
         draftFromTables([], "", [{ id: "s", name: "S" }]),
       ).leftOut.map((l) => l.because?.kind),
     ).toEqual(["not_assessed", "documents_state"]);
+  });
+});
+
+describe("the Review page's path", () => {
+  it("opens Facts with no tab, and Ontology by its tab", () => {
+    expect(ontologyPaths.review("o")).toBe("/ontology/o/review");
+    expect(ontologyPaths.review("o", "ontology")).toBe(
+      "/ontology/o/review?tab=ontology",
+    );
+    expect(ontologyPaths.review("a/b")).toBe("/ontology/a%2Fb/review");
   });
 });

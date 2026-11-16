@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import Ajv2020 from "ajv/dist/2020";
 
 // The ontology agent's Read and Ask JSON Schemas, its Probe result, its
-// Audit result, whose findings the Suggestions page reads, its Assess
+// Audit result, whose findings the Review page's Ontology tab reads, its Assess
 // result, a workflow run's assessment, and its Turn result, a draft and the
 // questions the agent asks
 // (contract/ontology_agent, vendored by `pnpm contract:sync` beside the WFE's

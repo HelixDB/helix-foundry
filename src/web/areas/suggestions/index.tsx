@@ -1,10 +1,10 @@
 // Suggestions area: what audits of an ontology's current load found its
-// ontology and mappings lack (self-healing), lazy-loaded by the Ontology
-// area's route table under /ontology/:ontologyId/suggestions. Each
+// ontology and mappings lack (self-healing), the Review page's Ontology tab
+// (../reviews/page.tsx, /ontology/:ontologyId/review?tab=ontology). Each
 // suggestion shows its kind, its support, examples and what it proposes; a
 // manager may dismiss one, or open Generate to add a link for a relationship
 // no link covers. Nothing here changes the ontology. Where
-// foundry.heal.enabled is off, it says suggestions aren't turned on.
+// foundry.heal.enabled is off, the page has no Ontology tab.
 import "./suggestions.css";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -15,18 +15,15 @@ import {
   Button,
   ButtonLink,
   EmptyState,
-  Page,
-  PageHeader,
   Panel,
   SkeletonText,
   Tag,
   plural,
-  useTitle,
 } from "../../kit";
 import { paths } from "../../paths";
 import { RefreshFailed, canManage, useWorkspace } from "../../ui";
 import { documentSetQueries } from "../documents/documents-api";
-import { ontologyName, useOntology } from "../ontology/scope";
+import { useOntology } from "../ontology/scope";
 import { dismissSuggestion, suggestionQueries } from "./api";
 import {
   auditPending,
@@ -49,10 +46,9 @@ const POLL_MS = 15_000;
 // sends it.
 type Held = { fingerprint: string; timer: number };
 
-export function SuggestionsPage() {
+export function OntologySuggestions() {
   const { id: ws } = useWorkspace(),
     { id: o, ontology } = useOntology();
-  useTitle("Suggestions");
   const qc = useQueryClient();
   const listKey = suggestionQueries.list(ws, o).queryKey;
   const current = ontology.currentLoad?.id;
@@ -83,17 +79,6 @@ export function SuggestionsPage() {
       else next.delete(fingerprint);
       return next;
     });
-  const header = (
-    <PageHeader
-      breadcrumbs={[
-        { label: "Ontologies", to: paths.ontologies() },
-        { label: ontologyName(ontology), to: paths.ontology(o) },
-        { label: "Suggestions" },
-      ]}
-      title="Suggestions"
-      subtitle="What audits of the current load found the ontology lacks, most backed first. Changes to a source’s fields aren’t checked yet."
-    />
-  );
   const shown = (list.data?.findings || [])
     .filter((f) => !hidden.has(f.fingerprint))
     .map((f) => suggestion(f, sets.data));
@@ -141,35 +126,15 @@ export function SuggestionsPage() {
     (card || listRef.current)?.focus();
     setFocusNext(null);
   }, [focusNext, list.data, hidden]);
-  if (list.isPending)
-    return (
-      <Page>
-        {header}
-        <SkeletonText lines={6} />
-      </Page>
-    );
+  if (list.isPending) return <SkeletonText lines={6} />;
   if (!list.data)
     return (
-      <Page>
-        {header}
-        <EmptyState
-          icon={Lightbulb}
-          title="Couldn’t load the suggestions"
-          text={list.error?.message}
-          action={<Button onClick={() => void list.refetch()}>Retry</Button>}
-        />
-      </Page>
-    );
-  if (!list.data.enabled)
-    return (
-      <Page>
-        {header}
-        <EmptyState
-          icon={Lightbulb}
-          title="Suggestions aren’t turned on"
-          text="This Foundry doesn’t audit loads, so it has nothing to suggest."
-        />
-      </Page>
+      <EmptyState
+        icon={Lightbulb}
+        title="Couldn’t load the suggestions"
+        text={list.error?.message}
+        action={<Button onClick={() => void list.refetch()}>Retry</Button>}
+      />
     );
   const run = lastRunText(list.data.lastRun, {
     current,
@@ -202,9 +167,11 @@ export function SuggestionsPage() {
     setFocusNext(held.fingerprint);
   };
   return (
-    <Page>
-      {header}
+    <>
       <div className="on-stack" ref={listRef} tabIndex={-1}>
+        <p className="on-muted sg-run">
+          Most backed first. Changes to a source’s fields aren’t checked yet.
+        </p>
         <RefreshFailed query={list} />
         {failed && (
           <p role="alert" className="on-error-text">
@@ -240,7 +207,7 @@ export function SuggestionsPage() {
           </button>
         </div>
       )}
-    </Page>
+    </>
   );
 }
 

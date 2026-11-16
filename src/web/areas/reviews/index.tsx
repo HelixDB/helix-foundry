@@ -1,5 +1,5 @@
-// The review queue, lazy-loaded by the Ontology area's route table under
-// /ontology/:ontologyId/review: every open review of the ontology's current
+// The review queue, the Review page's Facts tab (./page.tsx, at
+// /ontology/:ontologyId/review): every open review of the ontology's current
 // load on one page, the decisions that write the most facts first
 // (./queue.ts buildQueue), with about one card in ten drawn at random from a
 // score band to measure how often claims at each score are right. Each card
@@ -12,7 +12,7 @@
 // decisions and labels of other people come back as optional re-checks.
 // There is no Approve all here: a person reads every card.
 import "./reviews.css";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   useQueries,
@@ -30,14 +30,11 @@ import type {
 import {
   Button,
   EmptyState,
-  Page,
-  PageHeader,
   Panel,
   SkeletonText,
   Tag,
   formatNumber,
   plural,
-  useTitle,
 } from "../../kit";
 import { paths } from "../../paths";
 import { canManage, useWorkspace } from "../../ui";
@@ -55,7 +52,7 @@ import { readQueries } from "../explore/reads";
 import { useTenantReads } from "../explore/tenant-reads";
 import { useNaming } from "../explore/use-naming";
 import { ontologyQueries } from "../ontology/queries";
-import { ontologyName, useOntology } from "../ontology/scope";
+import { useOntology } from "../ontology/scope";
 import { labelQueries, reviewQueries, settleLabel } from "./api";
 import { approvalOf, rejectionOf, type Statement } from "./model";
 import {
@@ -129,10 +126,15 @@ const combinePages = (results: UseQueryResult<QueueReview[]>[]) => {
   };
 };
 
-export function ReviewQueuePage() {
-  const { id: ws, role, user } = useWorkspace(),
+/**
+ * The Facts tab's reads of the current load and its queue. The Review page
+ * holds them, so the tab's count shows on either tab and what was decided
+ * here keeps its place across a switch. `open` is the cards not decided or
+ * labelled here yet; unset until the queue is read.
+ */
+export function useReviewQueue() {
+  const { id: ws, user } = useWorkspace(),
     { id: o, ontology } = useOntology();
-  useTitle("Review queue");
   const qc = useQueryClient();
   const access = useReadAccess();
   const loads = useQuery(ontologyQueries.loads(ws, o));
@@ -207,7 +209,6 @@ export function ReviewQueuePage() {
   const [labelledHere, setLabelledHere] = useState<ReadonlySet<string>>(
     new Set(),
   );
-  const [shown, setShown] = useState(SHOWN);
   // The quote counts are waited for unless they failed: then the random
   // slice draws from held claims alone, and the page says so.
   const quotesSettled = !!quotes.data || !!quotes.error;
@@ -248,62 +249,6 @@ export function ReviewQueuePage() {
     setLabelledHere((now) => new Set(now).add(key));
     refreshLabels();
   };
-  const header = (
-    <PageHeader
-      breadcrumbs={[
-        { label: "Ontologies", to: paths.ontologies() },
-        { label: ontologyName(ontology), to: paths.ontology(o) },
-        { label: "Review queue" },
-      ]}
-      title="Review queue"
-      subtitle="Every open review of the current load, the decisions that write the most facts first. About one card in ten is drawn at random from a score band, to measure how often claims at each score are right."
-    />
-  );
-  const shell = (body: ReactNode) => (
-    <Page>
-      {header}
-      {body}
-    </Page>
-  );
-  if (access !== "database")
-    return shell(
-      <EmptyState
-        icon={ListChecks}
-        title="Its reviews aren’t shared with you"
-        text="The review queue reads the ontology’s database, which you don’t query."
-      />,
-    );
-  if (loads.isPending) return shell(<SkeletonText lines={6} />);
-  if (!loads.data)
-    return shell(
-      <EmptyState
-        icon={ListChecks}
-        title="Couldn’t read the loads"
-        text={loads.error?.message}
-        action={<Button onClick={() => void loads.refetch()}>Retry</Button>}
-      />,
-    );
-  if (!ontology.tenantId)
-    return shell(
-      <EmptyState
-        icon={ListChecks}
-        title="Its database isn’t ready"
-        text="The review queue reads the ontology’s database, which this page can’t reach yet."
-      />,
-    );
-  if (!load)
-    return shell(
-      <EmptyState
-        icon={ListChecks}
-        title="Nothing to review yet"
-        text="Load the ontology: its reviews are read from the current load."
-        action={
-          <Link to={paths.ontology(o)} className="hf-link">
-            Overview
-          </Link>
-        }
-      />,
-    );
   const failed =
     count.error || reviewPages.error || decisions.error || labels.error;
   const retry = () => {
@@ -313,30 +258,121 @@ export function ReviewQueuePage() {
     void decisions.refetch();
     void labels.refetch();
   };
+  const open = queue?.cards.filter(
+    (c) => !keep.has(c.key) && !labelledHere.has(c.key),
+  ).length;
+  return {
+    access,
+    loads,
+    load,
+    naming,
+    count,
+    quotes,
+    total,
+    pages,
+    reviewPages,
+    reviews,
+    decisions,
+    labels,
+    labelled,
+    unlabelled,
+    queue,
+    settled,
+    labelledOn,
+    failed,
+    retry,
+    open,
+  };
+}
+
+export type ReviewQueue = ReturnType<typeof useReviewQueue>;
+
+/** The Review page's Facts tab: the queue `useReviewQueue` read. */
+export function FactsReview({ queue: q }: { queue: ReviewQueue }) {
+  const { role, user } = useWorkspace(),
+    { id: o, ontology } = useOntology();
+  const {
+    access,
+    loads,
+    load,
+    naming,
+    count,
+    quotes,
+    total,
+    pages,
+    reviewPages,
+    reviews,
+    decisions,
+    labels,
+    labelled,
+    unlabelled,
+    queue,
+    settled,
+    labelledOn,
+    failed,
+    retry,
+  } = q;
+  const [shown, setShown] = useState(SHOWN);
+  if (access !== "database")
+    return (
+      <EmptyState
+        icon={ListChecks}
+        title="Its reviews aren’t shared with you"
+        text="Its reviews are read from the ontology’s database, which you don’t query."
+      />
+    );
+  if (loads.isPending) return <SkeletonText lines={6} />;
+  if (!loads.data)
+    return (
+      <EmptyState
+        icon={ListChecks}
+        title="Couldn’t read the loads"
+        text={loads.error?.message}
+        action={<Button onClick={() => void loads.refetch()}>Retry</Button>}
+      />
+    );
+  if (!ontology.tenantId)
+    return (
+      <EmptyState
+        icon={ListChecks}
+        title="Its database isn’t ready"
+        text="Its reviews are read from the ontology’s database, which this page can’t reach yet."
+      />
+    );
+  if (!load)
+    return (
+      <EmptyState
+        icon={ListChecks}
+        title="Nothing to review yet"
+        text="Load the ontology: its reviews are read from the current load."
+        action={
+          <Link to={paths.ontology(o)} className="hf-link">
+            Overview
+          </Link>
+        }
+      />
+    );
   if (!queue)
-    return shell(
-      failed && !count.isFetching ? (
-        <EmptyState
-          icon={ListChecks}
-          title="Couldn’t read the reviews"
-          text={failed.message}
-          action={<Button onClick={retry}>Retry</Button>}
-        />
-      ) : (
-        <>
-          {pages > 1 && (
-            <p role="status" className="on-muted">
-              Reading the load’s reviews: {reviewPages.read} of {pages} pages.
-            </p>
-          )}
-          <SkeletonText lines={6} />
-        </>
-      ),
+    return failed && !count.isFetching ? (
+      <EmptyState
+        icon={ListChecks}
+        title="Couldn’t read the reviews"
+        text={failed.message}
+        action={<Button onClick={retry}>Retry</Button>}
+      />
+    ) : (
+      <>
+        {pages > 1 && (
+          <p role="status" className="on-muted">
+            Reading the load’s reviews: {reviewPages.read} of {pages} pages.
+          </p>
+        )}
+        <SkeletonText lines={6} />
+      </>
     );
   const manage = canManage(role);
   return (
-    <Page>
-      {header}
+    <>
       {failed && (
         <p role="status" className="hf-refresh-failed">
           Couldn’t read the latest reviews ({failed.message}): this is the last
@@ -404,7 +440,7 @@ export function ReviewQueuePage() {
         manage={manage}
       />
       <PrecisionTable labels={labels.data ?? []} />
-    </Page>
+    </>
   );
 }
 
