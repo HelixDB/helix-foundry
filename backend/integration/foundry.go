@@ -975,7 +975,9 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 	}
 	if browse && user {
 		s.addFoundryDashboardTools(server, identity, reads)
-		s.addFoundryAutomationTools(server, identity)
+		if !s.AutomationsOff {
+			s.addFoundryAutomationTools(server, identity)
+		}
 	}
 	if user && s.FoundryURL != "" && identity.HasPermission(PermissionWorkspaceConnectorsManage) {
 		s.addFoundryConnectTool(server, identity, signIns)

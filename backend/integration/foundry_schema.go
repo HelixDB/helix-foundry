@@ -20,8 +20,11 @@ type foundryOperationDoc struct {
 	hostsOnly bool
 	// publicOnly is an operation only a host with dashboards' public links offers
 	// (Service.PublicDashboards).
-	publicOnly  bool
-	doc, events string
+	publicOnly bool
+	// automationsOnly is a workflow operation, which a host with workflows off doesn't offer
+	// (Service.AutomationsOff).
+	automationsOnly bool
+	doc, events     string
 }
 
 // memberOperations are the operations of a user who manages nothing of the workspace (no
@@ -111,16 +114,16 @@ var foundryOperationDocs = []foundryOperationDoc{
 		doc: "{expected_revision}: reads every tile as you and keeps their outputs as a snapshot at a public link, which anyone who has it sees with no sign-in, " +
 			"until it is unpublished; publishing again refreshes the snapshot at the same link. Owners and admins only: say plainly that anyone with the link sees the data."},
 	{name: "unpublish_dashboard", doc: "{}: deletes the public snapshot, so its link shows nothing, whether or not public links are on. Owners and admins only."},
-	{name: "create_workflow",
+	{name: "create_workflow", automationsOnly: true,
 		doc: "{name, description, spec}: a workflow of yours, run as you, which waits for you to approve it in Foundry (its url) before it ever runs: " +
 			"say so, and that its page shows each step and what it may do unasked. A name of 1 to 120 characters, a description of at most 1000. " + automationSpecDoc},
-	{name: "update_workflow",
+	{name: "update_workflow", automationsOnly: true,
 		doc: "{expected_revision, name, description, spec}: the revision " + toolFoundryGetWorkflow + " gave and at least one change, spec the whole new spec. " +
 			"Only its owner changes one; a changed spec stops it until they approve it again in Foundry."},
-	{name: "pause_workflow", doc: "{}: stops its runs until it is resumed; a run going on finishes. Its owner, or an owner or admin."},
-	{name: "resume_workflow", doc: "{}: runs it again when its trigger fires, from now. Its owner only, once approved."},
-	{name: "delete_workflow", doc: "{}: deletes it and its runs, cancelling a live one. Its owner, or an owner or admin."},
-	{name: "run_workflow", doc: "{}: runs its approved spec now, as its owner: its owner only, while no run of it is live."},
+	{name: "pause_workflow", automationsOnly: true, doc: "{}: stops its runs until it is resumed; a run going on finishes. Its owner, or an owner or admin."},
+	{name: "resume_workflow", automationsOnly: true, doc: "{}: runs it again when its trigger fires, from now. Its owner only, once approved."},
+	{name: "delete_workflow", automationsOnly: true, doc: "{}: deletes it and its runs, cancelling a live one. Its owner, or an owner or admin."},
+	{name: "run_workflow", automationsOnly: true, doc: "{}: runs its approved spec now, as its owner: its owner only, while no run of it is live."},
 }
 
 // generateReads is what a generation reads, on every host.
@@ -132,11 +135,13 @@ const generateReads = "No connector_ids reads every connector unless no_connecto
 
 // foundryOperations is each operation the host offers and allows lets the caller prepare, in
 // order, and what its payload is: those of API sources only with events, of the Assistant's
-// helpers only with them, of dashboards' public links only with public links.
+// helpers only with them, of dashboards' public links only with public links, of workflows only
+// where they are on.
 func foundryOperations(s *Service, allows func(string) bool) (names []any, payloads string) {
 	lines := []string{"Each operation's payload:"}
 	for _, op := range foundryOperationDocs {
-		if op.eventsOnly && !s.Events || op.hostsOnly && !s.AgentHosts || op.publicOnly && !s.PublicDashboards || !allows(op.name) {
+		if op.eventsOnly && !s.Events || op.hostsOnly && !s.AgentHosts || op.publicOnly && !s.PublicDashboards || op.automationsOnly && s.AutomationsOff ||
+			!allows(op.name) {
 			continue
 		}
 		doc := op.doc
@@ -157,6 +162,9 @@ func foundryOperationSchema(s *Service, allows func(string) bool) *jsonschema.Sc
 	names, payloads := foundryOperations(s, allows)
 	target := "create_dashboard and create_workflow: workspace:<workspace_id>; the other dashboard operations: dashboard:<workspace_id>/<dashboard_id>; " +
 		"the other workflow operations: workflow:<workspace_id>/<workflow_id>."
+	if s.AutomationsOff {
+		target = "create_dashboard: workspace:<workspace_id>; the other dashboard operations: dashboard:<workspace_id>/<dashboard_id>."
+	}
 	if allows("create_ontology") {
 		target = "create_ontology: tenant:<database id> for an existing database, or workspace:<workspace_id> for a new one."
 		if s.Events && allows("create_event_source") {

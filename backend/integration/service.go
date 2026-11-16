@@ -127,6 +127,10 @@ type Service struct {
 	// (config.PublicDashboards: hosted, with foundry.dashboards.public_enabled).
 	// Only then are publish_dashboard and unpublish_dashboard offered.
 	PublicDashboards bool
+	// AutomationsOff is whether the host has workflows turned off (foundry.automations.enabled
+	// false), where the backend refuses every workflow route: its workflow tools are then not
+	// registered and their operations not offered. The zero value offers them.
+	AutomationsOff bool
 }
 
 func (s *Service) AddTools(server *mcp.Server, identity *Identity) {

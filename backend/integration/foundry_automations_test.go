@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -269,4 +270,41 @@ func TestAutomationOperations(t *testing.T) {
 		assert.Equal(t, "automation", TargetKind(target), "the audit keeps the kind automation")
 		assert.Empty(t, TargetKind("automation:"+autoWorkspace+"/"+autoID), "the old target kind is no kind")
 	})
+}
+
+// A host with workflows off refuses every workflow route, so it neither registers the workflow
+// tools nor offers their operations; on, it does both.
+func TestWorkflowsOffOffersNoWorkflowTools(t *testing.T) {
+	workflowTools := []string{toolFoundryListWorkflows, toolFoundryGetWorkflow, toolFoundryListWorkflowRuns, toolFoundryGetWorkflowRun}
+	workflowOps := []any{"create_workflow", "update_workflow", "pause_workflow", "resume_workflow", "delete_workflow", "run_workflow"}
+	for _, off := range []bool{false, true} {
+		s := &Service{FoundryURL: "https://foundry.example", AutomationsOff: off}
+		listed, err := connect(t, s, everyTool()).ListTools(context.Background(), nil)
+		require.NoError(t, err)
+		var names []string
+		for _, tool := range listed.Tools {
+			names = append(names, tool.Name)
+		}
+		assert.Contains(t, names, toolFoundryListDashboards, "dashboards stay")
+		ops, payloads := foundryOperations(s, func(string) bool { return true })
+		schema, err := json.Marshal(foundryOperationSchema(s, func(string) bool { return true }))
+		require.NoError(t, err)
+		for _, name := range workflowTools {
+			if off {
+				assert.NotContains(t, names, name)
+			} else {
+				assert.Contains(t, names, name)
+			}
+		}
+		for _, op := range workflowOps {
+			if off {
+				assert.NotContains(t, ops, op)
+				assert.NotContains(t, payloads, "- "+op.(string))
+			} else {
+				assert.Contains(t, ops, op)
+			}
+		}
+		assert.Contains(t, ops, any("create_dashboard"))
+		assert.Equal(t, !off, strings.Contains(string(schema), "workflow:<workspace_id>/<workflow_id>"), "off: %v", off)
+	}
 }
