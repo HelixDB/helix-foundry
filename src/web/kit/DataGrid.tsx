@@ -172,14 +172,29 @@ export function DataGrid<Row extends Record<string, any>>({
     [viewport, setViewport] = useState(maxHeight),
     // Whether columns lie past the left or right edge: a fade there says
     // the table scrolls sideways.
-    [edges, setEdges] = useState({ left: false, right: false });
+    // The scroller's own scrollbars, which the fades leave uncovered.
+    [edges, setEdges] = useState({
+      left: false,
+      right: false,
+      barV: 0,
+      barH: 0,
+    });
   const readEdges = () => {
     const el = scroller.current;
     if (!el) return;
-    const left = el.scrollLeft > 1,
-      right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    const next = {
+      left: el.scrollLeft > 1,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+      barV: el.offsetWidth - el.clientWidth,
+      barH: el.offsetHeight - el.clientHeight,
+    };
     setEdges((e) =>
-      e.left === left && e.right === right ? e : { left, right },
+      e.left === next.left &&
+      e.right === next.right &&
+      e.barV === next.barV &&
+      e.barH === next.barH
+        ? e
+        : next,
     );
   };
   useEffect(() => {
@@ -230,7 +245,15 @@ export function DataGrid<Row extends Record<string, any>>({
         className,
       )}
     >
-      <div className="hf-grid-view">
+      <div
+        className="hf-grid-view"
+        style={
+          {
+            "--hf-grid-bar-v": edges.barV + "px",
+            "--hf-grid-bar-h": edges.barH + "px",
+          } as CSSProperties
+        }
+      >
         <div
           ref={scroller}
           className="hf-grid"

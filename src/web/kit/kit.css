@@ -550,7 +550,7 @@
   content: "";
   position: absolute;
   top: 0;
-  bottom: 0;
+  bottom: var(--hf-grid-bar-h, 0px);
   z-index: 2;
   width: 28px;
   opacity: 0;
@@ -562,7 +562,7 @@
   background: linear-gradient(to right, var(--hf-raised), transparent);
 }
 .hf-grid-view::after {
-  right: 0;
+  right: var(--hf-grid-bar-v, 0px);
   background: linear-gradient(to left, var(--hf-raised), transparent);
 }
 .hf-grid-wrap.is-scrolled-left > .hf-grid-view::before,

@@ -414,7 +414,10 @@ test("the library: a card per dashboard with its miniature, searched and filtere
     expectedRevision: "1",
   });
   await page.goto("/dashboards");
-  const cards = page.getByRole("list", { name: "Dashboards" });
+  // The library's list, not the sidebar's group of the same name.
+  const cards = page
+    .getByRole("main")
+    .getByRole("list", { name: "Dashboards", exact: true });
   await expect(cards.getByRole("article")).toHaveCount(2);
   // Pinned first, each a miniature drawn from its spec, without a tile read.
   const first = cards.getByRole("article").first();

@@ -230,6 +230,11 @@ export function Shell({
   // What a compose asked the dock's new thread to start with, until the
   // dock is next opened or closed another way.
   const [dockSeed, setDockSeed] = useState<DockSeed | null>(null);
+  // Used once: a dock that mounts again (back from Founder's page, or
+  // between column and drawer) keeps its thread and starts empty.
+  useEffect(() => {
+    if (!dockOpen) setDockSeed(null);
+  }, [dockOpen]);
   const opening = useCallback(
     (from: AssistantFrom) => {
       if (dockOpen) return;

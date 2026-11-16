@@ -19,7 +19,8 @@ import { dashboardQueries } from "./queries";
 // whether it is pinned or published. The list leaves specs out, so a card
 // reads its dashboard (GET, no tile read) once it is near the view; the
 // miniature is drawn from the spec alone, never from a tile's data, since
-// tile reads share each ontology's limiter of one read a second.
+// tile reads share each ontology's limiter of one read a second. The name's
+// link covers the card, so its title holds the description and edit date.
 
 /** Whether `ref` has come near the view (once true, it stays). */
 function useNear(ref: RefObject<HTMLElement | null>) {
@@ -87,7 +88,12 @@ function Glyph({ glyph }: { glyph: TileGlyph }) {
 }
 
 /** A dashboard's first rows, schematic: a header line, then each row's tiles. */
-function Miniature({ rows }: { rows: PreviewTile[][] | undefined }) {
+function Miniature({
+  rows,
+}: {
+  // Undefined while the spec is read; null when it couldn't be.
+  rows: PreviewTile[][] | null | undefined;
+}) {
   return (
     <div className="db-mini" aria-hidden>
       <span className="db-mini-head" />
@@ -95,6 +101,10 @@ function Miniature({ rows }: { rows: PreviewTile[][] | undefined }) {
         <div className="db-mini-row">
           <span className="db-mini-tile is-waiting" />
           <span className="db-mini-tile is-waiting" />
+        </div>
+      ) : rows === null ? (
+        <div className="db-mini-row">
+          <span className="db-mini-tile is-empty">Preview unavailable</span>
         </div>
       ) : !rows.length ? (
         <div className="db-mini-row">
@@ -141,7 +151,7 @@ export function DashboardCard({
   });
   const spec = read.data?.dashboard.specJson;
   const rows = useMemo(() => {
-    if (spec === undefined) return read.isError ? [] : undefined;
+    if (spec === undefined) return read.isError ? null : undefined;
     const parsed = parseSpec(spec);
     return parsed ? previewRows(parsed) : [];
   }, [spec, read.isError]);
@@ -154,19 +164,26 @@ export function DashboardCard({
           <Link
             to={paths.dashboard(d.id)}
             className="db-card-link"
-            title={name}
+            title={[
+              name,
+              d.description,
+              d.updatedAt && `Edited ${formatDate(d.updatedAt)}`,
+            ]
+              .filter(Boolean)
+              .join("
+")}
           >
             {name}
           </Link>
         </h2>
         {d.description && (
-          <p className="db-card-desc" title={d.description}>
+          <p className="db-card-desc">
             {d.description}
           </p>
         )}
         <div className="db-card-meta">
           {d.updatedAt && (
-            <span className="db-card-time" title={formatDate(d.updatedAt)}>
+            <span className="db-card-time">
               <Clock size={13} aria-hidden />
               {formatRelative(d.updatedAt, now)}
             </span>
