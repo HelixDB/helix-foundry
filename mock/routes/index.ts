@@ -5,6 +5,7 @@ import { agentHostRoutes } from "./agent-hosts";
 import { aiRoutes } from "./ai";
 import { authRoutes } from "./auth";
 import { automationRoutes } from "./automations";
+import { automationSuggestionRoutes } from "./automation-suggestions";
 import { billingRoutes } from "./billing";
 import { dataRoutes } from "./data";
 import { dashboardRoutes } from "./dashboards";
@@ -52,6 +53,7 @@ export const routes: MockRoute[] = [
   ...whileOn([...agentRoutes, ...agentHostRoutes]),
   ...dashboardRoutes,
   ...automationRoutes,
+  ...automationSuggestionRoutes,
   ...databaseRoutes,
   ...accessRoutes,
   ...directoryRoutes,

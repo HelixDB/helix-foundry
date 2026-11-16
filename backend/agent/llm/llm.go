@@ -37,6 +37,7 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/connector"
+	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 )
 
 // Model streams one call's answer.
@@ -190,18 +191,41 @@ type Binding struct {
 }
 
 // New is r's ask model, the one the Assistant runs on, bound to r's
-// provider: an exhaustive switch over the kinds, so a kind added to ai
-// fails to build here until it is called.
-func New(r ai.Resolved, catalog *ai.Catalog) (Binding, error) {
-	m := r.Settings.Models.Ask
+// provider.
+func New(r ai.Resolved, catalog *ai.Catalog) (Binding, error) { return NewFor(r, catalog, ai.RoleAsk) }
+
+// NewFor is r's model for role, bound to r's provider: an exhaustive switch
+// over the kinds, so a kind added to ai fails to build here until it is
+// called. The ask model is sent its reasoning knob unless the setting's
+// probe found the model refuses it; any other role's runs with reasoning
+// off, as titles do: short structured work. Ollama loads the model in the
+// role's window.
+func NewFor(r ai.Resolved, catalog *ai.Catalog, role ai.Role) (Binding, error) {
+	var spec ontologyagent.ModelSpec
+	switch role {
+	case ai.RoleAsk:
+		spec = r.Ask().Ask
+	case ai.RoleDraft:
+		spec = r.Turn().Draft
+	case ai.RoleExtract:
+		spec = r.Extract().Extract
+	case ai.RoleVerify:
+		spec = r.Extract().Verify
+	default:
+		return Binding{}, fmt.Errorf("llm: unknown role %q", role)
+	}
+	var m ai.Model
+	for _, rm := range r.Settings.Models.Each() {
+		if rm.Role == role {
+			m = rm.Model
+		}
+	}
 	pricer, err := NewPricer(catalog, r.Settings.Provider.Kind(), m)
 	if err != nil {
 		return Binding{}, err
 	}
 	key, client := r.Key.Reveal(), guarded(r.Rules)
-	// Whether the model is sent its reasoning knob: on unless the setting's
-	// probe found the model refuses it.
-	reasoning := r.Report.Reasoning(ai.RoleAsk)
+	reasoning := role == ai.RoleAsk && r.Report.Reasoning(ai.RoleAsk)
 	out := Binding{Pricer: pricer}
 	switch p := r.Settings.Provider.(type) {
 	case ai.Anthropic:
@@ -227,7 +251,7 @@ func New(r ai.Resolved, catalog *ai.Catalog) (Binding, error) {
 	case ai.Ollama:
 		// The window the engine loads the model with: the owner's, at most
 		// what the probe read of the model.
-		out.Window = int(r.Ask().Ask.ContextTokens)
+		out.Window = int(spec.ContextTokens)
 		out.Model = newOllama(p.BaseURL, m.Name, out.Window, r.CallTimeout, client, gateOf(r.ConfigID, p.BaseURL, 1))
 	case ai.Bedrock:
 		out.Model = newConverse(converseURL(p.Region, p.FIPS), key, m.Name, r.CallTimeout, client)
