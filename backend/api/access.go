@@ -74,8 +74,8 @@ func (s *Service) authorize(ctx context.Context, req any, info *grpc.UnaryServer
 
 // granteeOf is the Grantee a call is for, if it is one: a SourceGrantee
 // call, of its user or service credential, or a member restricted in the
-// request's workspace while their role is member. A user's grantee holds
-// their teams' grants too.
+// request's workspace while their role is member, with when that began. A
+// user's grantee holds their teams' grants too.
 func (s *Service) granteeOf(ctx context.Context, a ports.Actor, req any) (access.Grantee, bool, error) {
 	var g access.Grantee
 	switch {
@@ -91,14 +91,14 @@ func (s *Service) granteeOf(ctx context.Context, a ports.Actor, req any) (access
 		if workspaceID == "" {
 			return access.Grantee{}, false, nil
 		}
-		restricted, err := s.deps.DB.IsFoundryMemberRestricted(ctx, workspaceID, a.UserID)
+		since, restricted, err := s.deps.DB.FoundryMemberRestrictedAt(ctx, workspaceID, a.UserID)
 		if err != nil {
 			return access.Grantee{}, false, status.Errorf(codes.Internal, "read restrictions: %v", err)
 		}
 		if !restricted || s.promoted(ctx, workspaceID, a.UserID) {
 			return access.Grantee{}, false, nil
 		}
-		g = access.Grantee{WorkspaceID: workspaceID, Principal: access.Principal{Kind: access.PrincipalUser, ID: a.UserID}}
+		g = access.Grantee{WorkspaceID: workspaceID, Principal: access.Principal{Kind: access.PrincipalUser, ID: a.UserID}, RestrictedAt: since}
 	default:
 		return access.Grantee{}, false, nil
 	}

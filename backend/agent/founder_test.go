@@ -182,7 +182,7 @@ func TestAutoRunIsANarrowList(t *testing.T) {
 		"a publish, though dashboard is said": {message("Publish my dashboard"), "publish_dashboard", "dashboard:ws1/dash1", false},
 		"a delete, though dashboard is said":  {message("Delete my dashboard"), "delete_dashboard", "dashboard:ws1/dash1", false},
 	} {
-		sink := &actionSink{turn: tc.turn}
+		sink := &actionSink{turn: tc.turn, reach: ReachWorkspace}
 		assert.Equal(t, tc.runs, sink.autoRuns(integration.PreparedAction{Operation: tc.operation, Target: tc.target}), name)
 	}
 }
@@ -199,7 +199,7 @@ func TestAnAnalystQuestionIsNamedOnItsResult(t *testing.T) {
 				call("toolu_2", toolGetQuestion, `{"workspace_id":"ws1","ontology_id":"ont1","question_id":"q1"}`),
 				call("toolu_3", toolAsk, `{"workspace_id":"ws1","ontology_id":"ont1","question":" "}`),
 				call("toolu_4", "helix_foundry_list_ontologies", `{"workspace_id":"ws1"}`),
-				say("That's the Analyst's answer."))
+				say("That's the answer."))
 			h.backend.question = &foundryv1.FoundryQuestion{Id: "q1", LoadId: "load1", ThreadId: "q1", Status: "answered", Question: question}
 			_, err := h.runner.Run(context.Background(), message("Who are our customers?"))
 			require.NoError(t, err)
@@ -272,12 +272,13 @@ func TestAHelpersTurnRunsAsTheWorkersDo(t *testing.T) {
 }
 
 func TestFounderIsToldWhatItRunsAtOnce(t *testing.T) {
-	assert.Equal(t, "assistant-12", PromptVersion)
+	assert.Equal(t, "assistant-14", PromptVersion)
 	assert.True(t, strings.HasPrefix(systemPrompt, "You are Founder in Helix Foundry"))
 	assert.NotContains(t, systemPrompt, "Assistant", "it names itself Founder")
 	assert.Contains(t, systemPrompt, "You change nothing yourself, with one exception: a new dashboard the person asked for")
 	assert.Contains(t, systemPrompt, "A new dashboard the person asked for runs at once, without a card")
 	assert.Contains(t, systemPrompt, "Updating, pinning, publishing or deleting a dashboard stays a card")
 	assert.Contains(t, systemPrompt, "don't repeat or paraphrase it")
-	assert.Contains(t, systemPrompt, "it is the Analyst's limit, not yours")
+	assert.Contains(t, systemPrompt, "it is the limit on questions about the data, not your own budget")
+	assert.Contains(t, systemPrompt, "never call it the Analyst's", "people never read the name Analyst")
 }

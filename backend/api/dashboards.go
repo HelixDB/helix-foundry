@@ -442,7 +442,7 @@ func (s *Service) AddFoundryDashboardQuestionVisual(ctx context.Context, req *fo
 		return nil, status.Errorf(codes.Internal, "read the dashboard's spec: %v", err)
 	}
 	tiles, rows := spec.Tiles(), spec.Rows()
-	tile := dashboard.Tile{ID: freeTileID(tiles), Title: cmp.Or(visual.Title, dashboard.TileTitle(q.Question), "Analyst answer"), OntologyID: o.ID,
+	tile := dashboard.Tile{ID: freeTileID(tiles), Title: cmp.Or(visual.Title, dashboard.TileTitle(q.Question), "Answer"), OntologyID: o.ID,
 		Load: dashboard.CurrentLoad{}, Query: visual.Query, Visual: visual.Visual}
 	if req.GetPinLoad() {
 		tile.Load = dashboard.PinnedLoad{ID: q.LoadID}

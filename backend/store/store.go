@@ -196,6 +196,7 @@ type ReadStore interface {
 	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs) error
 	FoundryVersionInputs(ctx context.Context, workspaceID, ontologyID, versionID string) (access.Inputs, error)
 	IsFoundryMemberRestricted(ctx context.Context, workspaceID, userID string) (bool, error)
+	FoundryMemberRestrictedAt(ctx context.Context, workspaceID, userID string) (time.Time, bool, error)
 	ListFoundryRestrictedMembers(ctx context.Context, workspaceID string) ([]string, error)
 	ListFoundryTeams(ctx context.Context, workspaceID string) ([]model.FoundryTeam, error)
 	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
@@ -239,7 +240,7 @@ type ReadStore interface {
 
 	// The Assistant (foundry_agent.go)
 	GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error)
-	ListFoundryAgentThreads(ctx context.Context, workspaceID, userID, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error)
+	ListFoundryAgentThreads(ctx context.Context, workspaceID, userID string, createdSince time.Time, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error)
 	GetFoundryAgentTurn(ctx context.Context, workspaceID, id string) (*model.FoundryAgentTurn, error)
 	GetFoundryAgentTurnByClientToken(ctx context.Context, workspaceID, userID, clientToken string) (*model.FoundryAgentTurn, error)
 	ListFoundryAgentTurns(ctx context.Context, threadID string, limit int) ([]*model.FoundryAgentTurn, error)

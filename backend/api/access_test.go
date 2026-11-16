@@ -45,9 +45,11 @@ type accessStore struct {
 	versionInputs map[string]access.Inputs
 	// holding are the ontologies whose current loads hold each document.
 	holding map[string][]string
-	// restricted are each workspace's restricted members.
-	restricted map[string][]string
-	teams      []foundrymodel.FoundryTeam
+	// restricted are each workspace's restricted members, and restrictedAt
+	// when each user's restriction began (zero unless a test says).
+	restricted   map[string][]string
+	restrictedAt map[string]time.Time
+	teams        []foundrymodel.FoundryTeam
 	// workflowsOff are the principals whose Workflows permission is off.
 	workflowsOff []access.Principal
 }
@@ -173,6 +175,13 @@ func (s *accessStore) ListFoundryOntologiesHoldingDocument(_ context.Context, _,
 
 func (s *accessStore) IsFoundryMemberRestricted(_ context.Context, workspaceID, userID string) (bool, error) {
 	return slices.Contains(s.restricted[workspaceID], userID), nil
+}
+
+func (s *accessStore) FoundryMemberRestrictedAt(_ context.Context, workspaceID, userID string) (time.Time, bool, error) {
+	if !slices.Contains(s.restricted[workspaceID], userID) {
+		return time.Time{}, false, nil
+	}
+	return s.restrictedAt[userID], true, nil
 }
 
 func (s *accessStore) ListFoundryRestrictedMembers(_ context.Context, workspaceID string) ([]string, error) {

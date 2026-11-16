@@ -500,6 +500,17 @@ type backend struct {
 	// created are the dashboards made; deleted the ids of those deleted.
 	created []*foundryv1.CreateFoundryDashboardRequest
 	deleted []string
+	// grantee reads the person as a restricted member; accessErr refuses
+	// reading their access.
+	grantee   bool
+	accessErr error
+}
+
+func (b *backend) GetMyFoundryAccess(context.Context, *foundryv1.GetMyFoundryAccessRequest, ...grpc.CallOption) (*foundryv1.GetMyFoundryAccessResponse, error) {
+	if b.accessErr != nil {
+		return nil, b.accessErr
+	}
+	return &foundryv1.GetMyFoundryAccessResponse{Grantee: b.grantee, Workflows: true}, nil
 }
 
 func (b *backend) AnswerOntologyGeneration(_ context.Context, r *foundryv1.AnswerOntologyGenerationRequest, _ ...grpc.CallOption) (
@@ -1004,7 +1015,7 @@ func TestPromptKeepsWhatAModelNeeds(t *testing.T) {
 func TestPromptOffersEveryRuntimeAnOwnerMayChoose(t *testing.T) {
 	// An owner who confirmed Codex asks for it: the Assistant must know it is a runtime.
 	assert.Contains(t, systemPrompt, "{runtime}: api, claude_code or codex (codex only once the owner confirmed it in Settings › AI models")
-	assert.Equal(t, "assistant-12", PromptVersion)
+	assert.Equal(t, "assistant-14", PromptVersion)
 }
 
 func TestTitle(t *testing.T) {

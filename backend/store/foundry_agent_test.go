@@ -145,11 +145,11 @@ func TestFoundryAgentSendAndClaim(t *testing.T) {
 	require.Len(t, turns, 2)
 	assert.Equal(t, f.turnID(1), turns[0].ID, "oldest first")
 
-	threads, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, "", 10)
+	threads, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, time.Time{}, "", 10)
 	require.NoError(t, err)
 	assert.Empty(t, next)
 	require.Len(t, threads, 1)
-	none, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, "user-eve", "", 10)
+	none, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, "user-eve", time.Time{}, "", 10)
 	require.NoError(t, err)
 	assert.Empty(t, none, "a thread is private to its user")
 }
@@ -832,4 +832,27 @@ func TestFoundryAgentAnswersShape(t *testing.T) {
 	_, err := testDB.Exec(`INSERT INTO foundry_agent_turns (id, workspace_id, thread_id, user_id, runtime, kind, input, status, max_usd_micros, answers)
 VALUES (?, ?, ?, ?, 'api', 'message', 'hi', 'done', 1, '[]')`, f.turnID(2), f.workspaceID, f.threadID(2), agentUser)
 	assert.Error(t, err, "the check refuses a message's answers")
+}
+
+// A restricted member's list starts at their restriction: createdSince keeps
+// out the threads made before it, in SQL, so a page is still a page.
+func TestFoundryAgentThreadsCreatedSince(t *testing.T) {
+	ctx := context.Background()
+	f := newAgentFixture(t, "since")
+	require.NoError(t, f.send(1, 0))
+	all, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, time.Time{}, "", 10)
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	before := all[0].CreatedAt
+	time.Sleep(2 * time.Millisecond)
+	require.NoError(t, f.send(2, 0))
+
+	both, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, before, "", 10)
+	require.NoError(t, err)
+	assert.Len(t, both, 2, "a thread made at the instant counts")
+	after, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, before.Add(time.Microsecond), "", 1)
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	assert.Equal(t, f.threadID(2), after[0].ID)
+	assert.Empty(t, next, "the older thread isn't a page of its own")
 }

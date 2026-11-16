@@ -173,7 +173,7 @@ func TestAnApprovedActionRunsOnceAcrossReplays(t *testing.T) {
 // Every action an automation's owner may approve for a step is one the
 // Assistant prepares.
 func TestAnAutomationAllowsWhatItsOwnerMayApprove(t *testing.T) {
-	sink := &actionSink{}
+	sink := &actionSink{reach: ReachWorkspace}
 	for operation := range automation.Operations {
 		assert.True(t, sink.Allows(operation), operation)
 	}

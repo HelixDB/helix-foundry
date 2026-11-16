@@ -1070,6 +1070,11 @@ func (u Unimplemented) IsFoundryMemberRestricted(context.Context, string, string
 	return false, nil
 }
 
+func (u Unimplemented) FoundryMemberRestrictedAt(context.Context, string, string) (time.Time, bool, error) {
+	u.unimplemented("FoundryMemberRestrictedAt")
+	return time.Time{}, false, nil
+}
+
 func (u Unimplemented) ListFoundryRestrictedMembers(context.Context, string) ([]string, error) {
 	u.unimplemented("ListFoundryRestrictedMembers")
 	return nil, nil
@@ -1270,7 +1275,7 @@ func (u Unimplemented) GetFoundryAgentThread(context.Context, string, string) (*
 	return nil, nil
 }
 
-func (u Unimplemented) ListFoundryAgentThreads(context.Context, string, string, string, int) ([]*model.FoundryAgentThread, string, error) {
+func (u Unimplemented) ListFoundryAgentThreads(context.Context, string, string, time.Time, string, int) ([]*model.FoundryAgentThread, string, error) {
 	u.unimplemented("ListFoundryAgentThreads")
 	return nil, "", nil
 }

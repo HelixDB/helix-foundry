@@ -26,6 +26,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/integration"
+	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
 	"github.com/helixdb/helix-foundry/backend/ports"
@@ -133,10 +134,49 @@ type Attempt struct {
 	Stop StopReason
 }
 
+// Reach is how much of its workspace a person's turn acts on, read each
+// attempt (reachOf). The zero Reach is the narrower one: a sink that never
+// learned it changes nothing.
+type Reach uint8
+
+const (
+	// ReachGrants is a restricted member's: Founder reads and asks only,
+	// with GranteeTools, and the API narrows every call to their grants.
+	ReachGrants Reach = iota
+	// ReachWorkspace is everyone else's: Tools, and cards for what the
+	// person may do.
+	ReachWorkspace
+)
+
+// tools are the tools a turn of r may offer its model.
+func (r Reach) tools() map[string]bool {
+	if r == ReachWorkspace {
+		return Tools
+	}
+	return GranteeTools
+}
+
+// reachOf is the session's person's Reach in workspaceID now: ReachGrants
+// exactly when Foundry's API reads them as a grantee there (restricted, and
+// not since made an owner or admin), so the worker and the API decide alike.
+// A read that fails fails the attempt, to retry, before any tool is offered.
+func reachOf(session integration.Session, workspaceID string) (Reach, error) {
+	mine, err := session.Service.Foundry.GetMyFoundryAccess(session.Ctx, &foundryv1.GetMyFoundryAccessRequest{WorkspaceId: workspaceID})
+	switch {
+	case err != nil:
+		return ReachGrants, &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
+	case mine.GetGrantee():
+		return ReachGrants, nil
+	}
+	return ReachWorkspace, nil
+}
+
 // turnRun is one attempt's state.
 type turnRun struct {
 	r    *Runner
 	turn *model.FoundryAgentTurn
+	// reach is the turn's person's, read this attempt.
+	reach Reach
 	// automation is an automation's turn's step, and uses its run's uses of
 	// ontologies; both nil for a person's turn.
 	automation *automationStep
@@ -163,8 +203,10 @@ type turnRun struct {
 // Run runs an attempt of turn:
 //  1. resolve the workspace's provider and its ask model, which the turn runs
 //     on, unless the setting's tool check found the Assistant can't;
-//  2. open the person's session, confirming as the person, and serve its tools
-//     to the model through an in-memory MCP client, Tools alone;
+//  2. open the person's session, confirming as the person, read their Reach,
+//     and serve its tools to the model through an in-memory MCP client,
+//     Tools alone (GranteeTools for a restricted member, whose turn only
+//     reads and asks; an automation's fails for good);
 //  3. read the thread's transcript, adding the turn's own message once;
 //  4. call the model and run the tools it calls, committing each message and
 //     its events before the next call, until it stops, or the turn reaches
@@ -206,15 +248,26 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	default:
 		return out, &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
 	}
+	reach, err := reachOf(session, turn.WorkspaceID)
+	if err != nil {
+		return out, err
+	}
+	if step != nil && reach == ReachGrants {
+		// Its owner is now a restricted member, who runs no automation.
+		return out, &Failure{Message: "The automation's owner now reads only through source grants; an owner or admin can take it over", Permanent: true}
+	}
+	// Before the tools register: the prepare tool reads what the sink allows.
+	sink.reach = reach
 	// A card is drawn as its person reads the workspace.
 	sink.cards = SessionCards(r.DB, r.Databases, session, turn.WorkspaceID)
-	t := &turnRun{r: r, turn: turn, automation: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out, asked: turn.Asked != nil}
+	t := &turnRun{r: r, turn: turn, reach: reach, automation: step, model: bound.Model, pricer: bound.Pricer, started: r.Now(), out: out,
+		asked: turn.Asked != nil}
 	if step != nil {
 		t.uses = NewAutomationUses(r.DB, step.run, step.name, step.spec)
 	}
-	client, offered, err := serve(session, func(server *mcp.Server) {
+	client, offered, err := serve(session, reach.tools(), func(server *mcp.Server) {
 		t.reportTool(server)
-		asker{db: r.DB, session: session, turn: turn, workerID: r.WorkerID}.register(server)
+		asker{db: r.DB, session: session, turn: turn, workerID: r.WorkerID, reach: reach}.register(server)
 	})
 	if err != nil {
 		return out, &Failure{Message: "Founder's tools couldn't start; Helix will retry", Err: err}
@@ -267,10 +320,10 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 }
 
 // serve puts the session's tools, and own's, on a server of their own,
-// Tools alone (toolServer), and connects a client to it in memory. offered
+// allowed alone (toolServer), and connects a client to it in memory. offered
 // is what the client lists.
-func serve(session integration.Session, own func(*mcp.Server)) (*mcp.ClientSession, map[string]*mcp.Tool, error) {
-	server, offered, err := toolServer(session, own)
+func serve(session integration.Session, allowed map[string]bool, own func(*mcp.Server)) (*mcp.ClientSession, map[string]*mcp.Tool, error) {
+	server, offered, err := toolServer(session, own, allowed)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -286,9 +339,9 @@ func serve(session integration.Session, own func(*mcp.Server)) (*mcp.ClientSessi
 }
 
 // toolServer is a server of the session's tools, and own's (nil for none),
-// Tools alone, and those tools by name: every other tool the session
-// registers is removed before anyone lists them.
-func toolServer(session integration.Session, own func(*mcp.Server)) (*mcp.Server, map[string]*mcp.Tool, error) {
+// allowed alone (Tools, or GranteeTools), and those tools by name: every
+// other tool the session registers is removed before anyone lists them.
+func toolServer(session integration.Session, own func(*mcp.Server), allowed map[string]bool) (*mcp.Server, map[string]*mcp.Tool, error) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "helix-foundry-assistant", Version: PromptVersion}, nil)
 	session.Service.AddTools(server, session.Identity)
 	if session.HostTools != nil {
@@ -317,7 +370,7 @@ func toolServer(session integration.Session, own func(*mcp.Server)) (*mcp.Server
 	var outside []string
 	offered := map[string]*mcp.Tool{}
 	for _, tool := range listed.Tools {
-		if Tools[tool.Name] {
+		if allowed[tool.Name] {
 			offered[tool.Name] = tool
 		} else {
 			outside = append(outside, tool.Name)

@@ -289,10 +289,15 @@ FROM foundry_agent_threads WHERE id=? AND workspace_id=? AND deleted_at IS NULL`
 
 // ListFoundryAgentThreads returns the user's live chats of the workspace,
 // most recently active first, a page of limit at a time: never the threads
-// their automations' runs run in.
-func (s *mysqlDB) ListFoundryAgentThreads(ctx context.Context, workspaceID, userID, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error) {
+// their automations' runs run in, nor, unless createdSince is zero, those
+// created before it.
+func (s *mysqlDB) ListFoundryAgentThreads(ctx context.Context, workspaceID, userID string, createdSince time.Time, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error) {
 	conds := []string{"workspace_id=?", "user_id=?", "kind='chat'", "deleted_at IS NULL"}
 	args := []any{workspaceID, userID}
+	if !createdSince.IsZero() {
+		conds = append(conds, "created_at >= ?")
+		args = append(args, createdSince)
+	}
 	if pageToken != "" {
 		cursor, err := decodeTimeIDCursor(pageToken)
 		if err != nil {
