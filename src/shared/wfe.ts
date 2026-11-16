@@ -499,6 +499,7 @@ export type ConnectorKindName =
   | "slack"
   | "notion"
   | "google"
+  | "databuddy"
   | "postgres"
   | "mysql"
   | "s3"
@@ -597,6 +598,15 @@ export type GoogleWorkspaceConnectorConfig = {
   // Days of past calendar events to keep, 1 to 365; 0 means 90.
   eventDays?: number;
 };
+/** v1DatabuddyConnectorConfig: a Databuddy API key (dbdy_…) with the read:data scope. */
+export type DatabuddyConnectorConfig = {
+  // Write-only.
+  apiKey?: string;
+  // Website ids; empty reads every website the key reads.
+  websiteIds?: string[];
+  // Days of history to keep, 1 to 365; 0 means 90.
+  historyDays?: number;
+};
 /** v1DatabaseConnectorConfig: PostgreSQL and MySQL. */
 export type DatabaseConnectorConfig = {
   host?: string;
@@ -691,6 +701,7 @@ export type ConnectorConfig =
   | { slack: SlackConnectorConfig }
   | { notion: NotionConnectorConfig }
   | { google: GoogleWorkspaceConnectorConfig }
+  | { databuddy: DatabuddyConnectorConfig }
   | { postgres: DatabaseConnectorConfig }
   | { mysql: DatabaseConnectorConfig }
   | { s3: S3ConnectorConfig }
