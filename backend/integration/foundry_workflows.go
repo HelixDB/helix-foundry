@@ -10,18 +10,19 @@ import (
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 )
 
-// Workflows: an agent's task over one ontology. A run of one ties the agent's request, every
-// read, question, send and upload it makes with the run's id (workflow_run_id), and its answer
-// together, so the run shows what the ontology gave the agent.
+// Use cases (the backend's workflows, shown on an ontology's Usage page): an agent's task over
+// one ontology. A run of one ties the agent's request, every read, question, send and upload it
+// makes with the run's id (use_case_run_id), and its answer together, so the run shows what the
+// ontology gave the agent.
 const (
-	toolFoundryCreateWorkflow    = "helix_foundry_create_workflow"
-	toolFoundryListWorkflows     = "helix_foundry_list_workflows"
-	toolFoundryStartWorkflowRun  = "helix_foundry_start_workflow_run"
-	toolFoundryFinishWorkflowRun = "helix_foundry_finish_workflow_run"
-	toolFoundryGetWorkflowRun    = "helix_foundry_get_workflow_run"
+	toolFoundryCreateUseCase    = "helix_foundry_create_use_case"
+	toolFoundryListUseCases     = "helix_foundry_list_use_cases"
+	toolFoundryStartUseCaseRun  = "helix_foundry_start_use_case_run"
+	toolFoundryFinishUseCaseRun = "helix_foundry_finish_use_case_run"
+	toolFoundryGetUseCaseRun    = "helix_foundry_get_use_case_run"
 )
 
-// FoundryWorkflowBackendAPI is the backend's workflow RPCs.
+// FoundryWorkflowBackendAPI is the backend's use case (workflow) RPCs.
 type FoundryWorkflowBackendAPI interface {
 	CreateFoundryWorkflow(context.Context, *foundryv1.CreateFoundryWorkflowRequest, ...grpc.CallOption) (*foundryv1.FoundryWorkflowResponse, error)
 	ListFoundryWorkflows(context.Context, *foundryv1.ListFoundryWorkflowsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryWorkflowsResponse, error)
@@ -35,7 +36,7 @@ type CreateFoundryWorkflowInput struct {
 	OntologyInput
 	Name        string `json:"name" jsonschema:"1 to 100 characters naming what the agent does, such as Support triage."`
 	Description string `json:"description,omitempty" jsonschema:"What the agent does, at most 2,000 characters."`
-	ClientToken string `json:"client_token,omitempty" jsonschema:"At most 64 characters; the same token returns the workflow it made instead of making another."`
+	ClientToken string `json:"client_token,omitempty" jsonschema:"At most 64 characters; the same token returns the use case it made instead of making another."`
 }
 
 type ListFoundryWorkflowsInput struct {
@@ -45,22 +46,22 @@ type ListFoundryWorkflowsInput struct {
 
 type StartFoundryWorkflowRunInput struct {
 	OntologyInput
-	WorkflowID  string `json:"workflow_id" jsonschema:"The workflow, as helix_foundry_create_workflow or helix_foundry_list_workflows returned it."`
-	Input       string `json:"input,omitempty" jsonschema:"The run's initial request, as the agent was given it, at most 64 KiB. Optional here: send it with helix_foundry_finish_workflow_run instead."`
+	WorkflowID  string `json:"use_case_id" jsonschema:"The use case, as helix_foundry_create_use_case or helix_foundry_list_use_cases returned it."`
+	Input       string `json:"input,omitempty" jsonschema:"The run's initial request, as the agent was given it, at most 64 KiB. Optional here: send it with helix_foundry_finish_use_case_run instead."`
 	ClientToken string `json:"client_token,omitempty" jsonschema:"At most 64 characters; the same token returns the run it started instead of starting another."`
 }
 
 type FinishFoundryWorkflowRunInput struct {
 	OntologyInput
-	WorkflowID string `json:"workflow_id" jsonschema:"The run's workflow."`
-	RunID      string `json:"run_id" jsonschema:"The run, as helix_foundry_start_workflow_run returned it."`
+	WorkflowID string `json:"use_case_id" jsonschema:"The run's use case."`
+	RunID      string `json:"run_id" jsonschema:"The run, as helix_foundry_start_use_case_run returned it."`
 	Input      string `json:"input,omitempty" jsonschema:"The run's initial request, at most 64 KiB: required unless the run was started with it."`
 	Output     string `json:"output" jsonschema:"The agent's final answer, at most 256 KiB."`
 }
 
 type GetFoundryWorkflowRunInput struct {
 	OntologyInput
-	WorkflowID string `json:"workflow_id" jsonschema:"The run's workflow."`
+	WorkflowID string `json:"use_case_id" jsonschema:"The run's use case."`
 	RunID      string `json:"run_id" jsonschema:"The run."`
 	AfterSeq   int32  `json:"after_seq,omitempty" jsonschema:"Return the calls it recorded after this seq; 0 from the first."`
 }
@@ -75,30 +76,31 @@ type FoundryWorkflowOutput struct {
 	FinishedRuns int64  `json:"finished_runs"`
 	CreatedAt    string `json:"created_at"`
 	LastRunAt    string `json:"last_run_at,omitempty"`
-	// Origin is who made it: a person, or Foundry for an automation.
-	Origin     string                           `json:"origin" jsonschema:"person (an owner or admin made it), or automation: Foundry made it to record the runs of the automation that use this ontology, and only Foundry starts and finishes its runs."`
-	Automation *FoundryWorkflowAutomationOutput `json:"automation,omitempty" jsonschema:"The automation whose runs it records, for an automation's workflow."`
+	// Origin is who made it: a person, or Foundry for a workflow (the
+	// backend's origin automation, said as agents read it).
+	Origin     string                           `json:"origin" jsonschema:"person (an owner or admin made it), or workflow: Foundry made it to record the runs of a workflow (its workflow field) that use this ontology, and only Foundry starts and finishes its runs."`
+	Automation *FoundryWorkflowAutomationOutput `json:"workflow,omitempty" jsonschema:"The workflow whose runs it records, for a use case of origin workflow."`
 }
 
-// FoundryWorkflowAutomationOutput is the automation a workflow Foundry made
-// records the runs of.
+// FoundryWorkflowAutomationOutput is the workflow (the backend's automation) a
+// use case Foundry made records the runs of.
 type FoundryWorkflowAutomationOutput struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	// Deleted says the automation was deleted: the workflow keeps its runs as history.
+	// Deleted says the workflow was deleted: the use case keeps its runs as history.
 	Deleted bool `json:"deleted"`
 }
 
 type ListFoundryWorkflowsOutput struct {
 	ContentTrust  string                  `json:"content_trust"`
-	Workflows     []FoundryWorkflowOutput `json:"workflows"`
+	Workflows     []FoundryWorkflowOutput `json:"use_cases"`
 	NextPageToken string                  `json:"next_page_token,omitempty"`
 }
 
 type FoundryWorkflowRunOutput struct {
 	ContentTrust string `json:"content_trust"`
 	ID           string `json:"id"`
-	WorkflowID   string `json:"workflow_id"`
+	WorkflowID   string `json:"use_case_id"`
 	// Status is open (it records calls made with its id) or finished.
 	Status     string                              `json:"status"`
 	Input      string                              `json:"input,omitempty"`
@@ -107,8 +109,8 @@ type FoundryWorkflowRunOutput struct {
 	FinishedAt string                              `json:"finished_at,omitempty"`
 	Counts     *foundryv1.FoundryWorkflowRunCounts `json:"counts"`
 	Assessment *FoundryWorkflowAssessmentOutput    `json:"assessment,omitempty" jsonschema:"Its assessment, once it finished: how much what it read made its answer."`
-	// AutomationRunID is the automation's run it records, for a run Foundry started.
-	AutomationRunID string `json:"automation_run_id,omitempty" jsonschema:"The automation run it records, for a run Foundry started (its workflow's automation names the automation)."`
+	// AutomationRunID is the workflow's run it records, for a run Foundry started.
+	AutomationRunID string `json:"workflow_run_id,omitempty" jsonschema:"The workflow run it records, for a run Foundry started (its use case's workflow names the workflow)."`
 	Next            string `json:"next,omitempty"`
 }
 
@@ -148,41 +150,41 @@ type GetFoundryWorkflowRunOutput struct {
 	NextAfterSeq int32 `json:"next_after_seq,omitempty"`
 }
 
-// addFoundryWorkflowTools registers the workflow tools: creating one for a user who manages
+// addFoundryWorkflowTools registers the use case tools: creating one for a user who manages
 // ontologies, and the rest for whoever reads ontologies, through their databases or source
 // grants, an agent's key included.
 func (s *Service) addFoundryWorkflowTools(server *mcp.Server, identity *Identity, reads bool) {
 	no := false
 	if !identity.ServiceKey && identity.HasPermission(PermissionWorkspaceOntologyManage) {
-		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryCreateWorkflow,
-			Description: "Create a workflow of a Foundry ontology: an agent's task (such as answering support tickets) whose runs record what the agent read and wrote between its request and its answer. " +
-				"Start a run with " + toolFoundryStartWorkflowRun + " each time the agent works on a request.",
+		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryCreateUseCase,
+			Description: "Create a use case of a Foundry ontology: an agent's task (such as answering support tickets) whose runs record what the agent read and wrote between its request and its answer. " +
+				"Start a run with " + toolFoundryStartUseCaseRun + " each time the agent works on a request.",
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 		}, s.CreateFoundryWorkflow)
 	}
 	if !reads {
 		return
 	}
-	addFoundryTool(s, server, identity, tool(toolFoundryListWorkflows,
-		"List a Foundry ontology's workflows, newest first, with how many runs each kept. A workflow of origin automation is Foundry's record of an "+
-			"automation's runs that use the ontology: only Foundry starts and finishes its runs."), s.ListFoundryWorkflows)
+	addFoundryTool(s, server, identity, tool(toolFoundryListUseCases,
+		"List a Foundry ontology's use cases, newest first, with how many runs each kept. A use case of origin workflow is Foundry's record of a "+
+			"workflow's runs that use the ontology: only Foundry starts and finishes its runs."), s.ListFoundryWorkflows)
 	// A host without API sources names no send tool.
 	tracked := toolFoundryReadGraph + ", " + toolFoundryAsk + " and " + toolFoundryCompleteUpload
 	if s.Events {
 		tracked = toolFoundryReadGraph + ", " + toolFoundryAsk + ", " + toolFoundrySendPieces + " and " + toolFoundryCompleteUpload
 	}
-	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryStartWorkflowRun,
-		Description: "Start a run of a Foundry workflow when the agent takes on a request. Pass the run's id as workflow_run_id to " + tracked +
+	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryStartUseCaseRun,
+		Description: "Start a run of a Foundry use case when the agent takes on a request. Pass the run's id as use_case_run_id to " + tracked +
 			" while working on it: each records what it read or wrote under the run. " +
-			"Finish it with " + toolFoundryFinishWorkflowRun + " and the agent's answer. A workflow of origin automation takes none: Foundry runs those.",
+			"Finish it with " + toolFoundryFinishUseCaseRun + " and the agent's answer. A use case of origin workflow takes none: Foundry runs those.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.StartFoundryWorkflowRun)
-	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryFinishWorkflowRun,
-		Description: "Finish a run of a Foundry workflow with the agent's final answer, and its initial request if the run was started without it. A finished run records nothing more. Finishing again with the same answer is no error.",
+	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryFinishUseCaseRun,
+		Description: "Finish a run of a Foundry use case with the agent's final answer, and its initial request if the run was started without it. A finished run records nothing more. Finishing again with the same answer is no error.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.FinishFoundryWorkflowRun)
-	addFoundryTool(s, server, identity, tool(toolFoundryGetWorkflowRun,
-		"Get a run of a Foundry workflow with the calls it recorded, 100 at a time: each read with its result, question, send with its pieces' ids, and upload."), s.GetFoundryWorkflowRun)
+	addFoundryTool(s, server, identity, tool(toolFoundryGetUseCaseRun,
+		"Get a run of a Foundry use case with the calls it recorded, 100 at a time: each read with its result, question, send with its pieces' ids, and upload."), s.GetFoundryWorkflowRun)
 }
 
 func (s *Service) CreateFoundryWorkflow(
@@ -247,8 +249,8 @@ func (s *Service) StartFoundryWorkflowRun(
 		return FoundryWorkflowRunOutput{}, 0, FoundryError(err)
 	}
 	out := FoundryWorkflowRun(response.GetRun())
-	out.Next = "Pass workflow_run_id " + out.ID + " to every Foundry call made for this request, then call " +
-		toolFoundryFinishWorkflowRun + " with the answer."
+	out.Next = "Pass use_case_run_id " + out.ID + " to every Foundry call made for this request, then call " +
+		toolFoundryFinishUseCaseRun + " with the answer."
 	return out, 1, nil
 }
 
@@ -305,7 +307,7 @@ func (s *Service) GetFoundryWorkflowRun(
 	return out, len(out.Accesses), nil
 }
 
-// FoundryWorkflow is a workflow as the tools return it, without its content trust, which a list
+// FoundryWorkflow is a use case as the tools return it, without its content trust, which a list
 // says once.
 func FoundryWorkflow(w *foundryv1.FoundryWorkflow) FoundryWorkflowOutput {
 	out := FoundryWorkflowOutput{
@@ -314,7 +316,7 @@ func FoundryWorkflow(w *foundryv1.FoundryWorkflow) FoundryWorkflowOutput {
 		Origin: "person",
 	}
 	if a := w.GetAutomation(); a != nil {
-		out.Origin, out.Automation = "automation", &FoundryWorkflowAutomationOutput{ID: a.GetAutomationId(), Name: a.GetName(), Deleted: a.GetDeleted()}
+		out.Origin, out.Automation = "workflow", &FoundryWorkflowAutomationOutput{ID: a.GetAutomationId(), Name: a.GetName(), Deleted: a.GetDeleted()}
 	}
 	return out
 }

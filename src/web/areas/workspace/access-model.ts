@@ -103,7 +103,7 @@ export function grantsOf(
 }
 
 /**
- * A principal's own Workflows permission as saved: on unless turned off.
+ * A principal's own Usage permission (`workflows` on the wire) as saved: on unless turned off.
  *
  *     workflowsOn({ workflowsOff: [{ kind: "KIND_TEAM", id: "t" }] }, { kind: "KIND_TEAM", id: "t" }) // false
  */
@@ -116,7 +116,7 @@ export const workflowsOn = (
   );
 
 /**
- * The teams of a member that have Workflows off, which turns it off for the
+ * The teams of a member that have Usage off, which turns it off for the
  * member too, whatever their own says; none for anyone else.
  */
 export function workflowsOffBy(
@@ -601,15 +601,18 @@ export function restrictedHoldingNothing(
  * Where a grantee (a member restricted to what grants give) goes instead
  * of `pathname`, or undefined where it may stay: Ask, its ontologies'
  * overviews, the read-only pages of their shared loads (Records, an
- * entity's page and a document's view) and, with its Workflows permission
- * (`workflows`), their workflows. Connectors, Settings, automations
- * (people's alone) and making an ontology open Ask; the Explorer's graph opens Records, and an ontology's
+ * entity's page and a document's view) and, with its Usage permission
+ * (`workflows`), their Usage pages (old `/workflows` links too, which
+ * redirect there). Connectors, Settings, workflows (people's alone, under
+ * `/workflows` and the old `/automations`) and making an ontology open Ask; the Explorer's graph opens Records, and an ontology's
  * other pages its overview.
  *
  *     granteeRedirect("/data/connections/c") // "/ask"
  *     granteeRedirect("/explore/o") // "/explore/o/records"
  *     granteeRedirect("/ontology/o/loads/l") // "/ontology/o"
- *     granteeRedirect("/ontology/o/workflows/w", true) // undefined
+ *     granteeRedirect("/ontology/o/usage/w", true) // undefined
+ *     granteeRedirect("/ontology/o/usage/w") // "/ontology/o"
+ *     granteeRedirect("/workflows/a") // "/ask"
  */
 export function granteeRedirect(
   pathname: string,
@@ -626,7 +629,7 @@ export function granteeRedirect(
       if (second === "new" || second === "sample") return "/ask";
       return third === undefined ||
         (third === "documents" && fourth) ||
-        (third === "workflows" && workflows)
+        ((third === "usage" || third === "workflows") && workflows)
         ? undefined
         : `/ontology/${second}`;
     case "explore":
@@ -637,6 +640,7 @@ export function granteeRedirect(
         : `/explore/${second}/records`;
     case "data":
     case "settings":
+    case "workflows":
     case "automations":
       return "/ask";
     default:

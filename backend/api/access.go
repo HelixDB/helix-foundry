@@ -136,14 +136,14 @@ func granteeLoad(ctx context.Context) (foundrymodel.FoundryLoadInputs, bool) {
 
 // errWorkflowsOff refuses a grantee whose Workflows permission is off.
 var errWorkflowsOff = status.Error(codes.PermissionDenied,
-	"workflows are off for this member or key: an owner or admin turns them on with its sources in Settings › Access")
+	"use cases are off for this member or key: an owner or admin turns them on with its sources in Settings › Access")
 
 // workflowsOn reports whether g's Workflows permission is on: neither it nor
 // any of its teams has it off.
 func (s *Service) workflowsOn(ctx context.Context, g access.Grantee) (bool, error) {
 	off, err := s.deps.DB.ListFoundryAccessWorkflowsOff(ctx, g.WorkspaceID, g.Principals())
 	if err != nil {
-		return false, status.Errorf(codes.Internal, "read the Workflows permission: %v", err)
+		return false, status.Errorf(codes.Internal, "read the Usage permission: %v", err)
 	}
 	return len(off) == 0, nil
 }
@@ -311,7 +311,7 @@ func (s *Service) ListFoundryAccess(ctx context.Context, req *foundryv1.ListFoun
 	}
 	off, err := s.deps.DB.ListFoundryAccessWorkflowsOff(ctx, req.GetWorkspaceId(), nil)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "read the Workflows permission: %v", err)
+		return nil, status.Errorf(codes.Internal, "read the Usage permission: %v", err)
 	}
 	resp := &foundryv1.ListFoundryAccessResponse{RestrictedUserIds: restricted}
 	for _, p := range off {
@@ -431,7 +431,7 @@ func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.Set
 	}
 	off, err := s.deps.DB.ListFoundryAccessWorkflowsOff(ctx, req.GetWorkspaceId(), []access.Principal{principal})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "read the Workflows permission: %v", err)
+		return nil, status.Errorf(codes.Internal, "read the Usage permission: %v", err)
 	}
 	resp := &foundryv1.SetFoundryAccessGrantsResponse{Workflows: len(off) == 0}
 	for _, gr := range grants {

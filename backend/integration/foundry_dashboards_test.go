@@ -343,8 +343,8 @@ func TestDashboardOperations(t *testing.T) {
 			} `json:"properties"`
 		}
 		require.NoError(t, json.Unmarshal(raw, &schema))
-		assert.Equal(t, []string{"create_dashboard", "update_dashboard", "delete_dashboard", "create_automation", "update_automation", "pause_automation",
-			"resume_automation", "delete_automation", "run_automation"}, schema.Properties.Operation.Enum)
+		assert.Equal(t, []string{"create_dashboard", "update_dashboard", "delete_dashboard", "create_workflow", "update_workflow", "pause_workflow",
+			"resume_workflow", "delete_workflow", "run_workflow"}, schema.Properties.Operation.Enum)
 
 		_, err = s.ValidateFoundryOperation(context.Background(), member, FoundryOperationInput{Operation: "create_dashboard",
 			Target: "workspace:" + dashWorkspace, Payload: map[string]any{"name": "Mine"}})

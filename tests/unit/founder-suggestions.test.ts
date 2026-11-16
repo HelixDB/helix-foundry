@@ -701,7 +701,7 @@ describe("the mock Founder's routing of every suggestion", () => {
     question: ["ask"],
     dashboard: ["create_dashboard", "ask_dashboard"],
     ontology: ["generate_ontology", "revise_version"],
-    workflow: ["create_automation"],
+    workflow: ["create_workflow"],
   };
   const routed = (o: string, x: Pick<FounderSuggestion, "kind" | "prompt">) => {
     const intent = messageIntent("ws_acme", x.prompt, o);

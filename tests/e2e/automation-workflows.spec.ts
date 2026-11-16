@@ -59,7 +59,7 @@ async function runOnce(page: Page, id: string, n: number) {
   const run = (
     await postToWfe(page, `${A}/${id}:run`, { clientToken: `run-${id}-${n}` })
   ).run;
-  await page.goto(`/automations/${id}/runs/${run.id}`);
+  await page.goto(`/workflows/${id}/runs/${run.id}`);
   await expect(
     page
       .getByRole("complementary", { name: "Inspector" })
@@ -81,7 +81,7 @@ async function workflows(page: Page) {
   }[];
 }
 
-test("an automation that reads an ontology records each run in one workflow, which says how much it helped", async ({
+test("a workflow that reads an ontology records each run in one use case, which says how much it helped", async ({
   page,
 }) => {
   await signIn(page);
@@ -122,18 +122,18 @@ test("an automation that reads an ontology records each run in one workflow, whi
     .getByRole("link", { name: "Customer contracts: its run" })
     .click();
   await expect(page).toHaveURL(
-    new RegExp(`/ontology/ont_acme_contracts/workflows/${made[0]!.id}/runs/`),
+    new RegExp(`/ontology/ont_acme_contracts/usage/${made[0]!.id}/runs/`),
   );
   const origin = page
     .getByRole("note")
-    .filter({ hasText: "Made by the automation" });
+    .filter({ hasText: "Made by the workflow" });
   await expect(origin).toContainText("Invoice check");
   await expect(
     page.getByRole("list", { name: "Recorded calls" }).getByRole("article"),
   ).toHaveCount(1);
   await expect(
     page.getByText(
-      'Run by hand. The automation "Invoice check" ran these steps, in order:',
+      'Run by hand. The workflow "Invoice check" ran these steps, in order:',
       { exact: false },
     ),
   ).toBeVisible();
@@ -156,7 +156,7 @@ test("an automation that reads an ontology records each run in one workflow, whi
   );
   expect(forged.status()).toBe(404);
   await origin.getByRole("link", { name: "one of its runs" }).click();
-  await expect(page).toHaveURL(new RegExp(`/automations/${id}/runs/${first}$`));
+  await expect(page).toHaveURL(new RegExp(`/workflows/${id}/runs/${first}$`));
 
   // A second run reuses the workflow, with a run of its own.
   await runOnce(page, id, 2);
@@ -170,7 +170,7 @@ test("an automation that reads an ontology records each run in one workflow, whi
   expect(again[0]!.runs).toBe("2");
 
   // The automation's page says how much each ontology helped, overall.
-  await page.goto(`/automations/${id}`);
+  await page.goto(`/workflows/${id}`);
   const impact = page.getByRole("region", {
     name: "How much its ontologies helped",
   });
@@ -179,21 +179,21 @@ test("an automation that reads an ontology records each run in one workflow, whi
   });
   await expect(impact.getByRole("img", { name: "2 helpful" })).toBeVisible();
   await impact
-    .getByRole("link", { name: "Customer contracts: its workflow" })
+    .getByRole("link", { name: "Customer contracts: its use case" })
     .click();
   await expect(page).toHaveURL(
-    new RegExp(`/ontology/ont_acme_contracts/workflows/${made[0]!.id}$`),
+    new RegExp(`/ontology/ont_acme_contracts/usage/${made[0]!.id}$`),
   );
   await expect(
-    page.getByRole("note").filter({ hasText: "Made by the automation" }),
-  ).toContainText("It goes only once the automation is deleted.");
+    page.getByRole("note").filter({ hasText: "Made by the workflow" }),
+  ).toContainText("It goes only once the workflow is deleted.");
   // Only Foundry starts its runs, and it isn't deleted while its automation is.
   await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Connect agent" })).toHaveCount(
     0,
   );
   const runs = page.getByRole("list", { name: "Runs", exact: true });
-  await expect(runs.getByText(/Automation: Invoice check/)).toHaveCount(2);
+  await expect(runs.getByText(/Workflow: Invoice check/)).toHaveCount(2);
   const refused = await page.request.delete(`/papi${W}/${made[0]!.id}`, {
     headers: {
       origin: new URL(page.url()).origin,
@@ -202,7 +202,7 @@ test("an automation that reads an ontology records each run in one workflow, whi
   });
   expect(refused.status()).toBe(400);
   expect((await refused.json()).message).toContain(
-    "only once the automation is deleted",
+    "only once the workflow is deleted",
   );
   const started = await mock.agent("POST", `${W}/${made[0]!.id}/runs`, {
     input: "Mine",
@@ -210,15 +210,13 @@ test("an automation that reads an ontology records each run in one workflow, whi
   expect(started.status).toBe(400);
 
   // Insights count the automation's runs as its own.
-  await page.goto("/ontology/ont_acme_contracts/workflows");
+  await page.goto("/ontology/ont_acme_contracts/usage");
   const insights = page.getByRole("region", { name: "Insights" });
   await insights.getByRole("combobox", { name: "Started by" }).click();
-  await page
-    .getByRole("option", { name: /^Automation: Invoice check/ })
-    .click();
+  await page.getByRole("option", { name: /^Workflow: Invoice check/ }).click();
   await expect(
     insights.getByRole("combobox", { name: "Started by" }),
-  ).toContainText("Automation: Invoice check");
+  ).toContainText("Workflow: Invoice check");
   await expect(
     insights.getByRole("group", { name: "Metrics" }).getByRole("button", {
       name: /^Runs/,
@@ -229,9 +227,9 @@ test("an automation that reads an ontology records each run in one workflow, whi
   await mock.pruneRun(id, first);
   await page.goto(workflowRun);
   await expect(
-    page.getByRole("note").filter({ hasText: "Made by the automation" }),
+    page.getByRole("note").filter({ hasText: "Made by the workflow" }),
   ).toContainText(
-    "this run records one of its runs, which the automation no longer keeps.",
+    "this run records one of its runs, which the workflow no longer keeps.",
   );
   await expect(page.getByRole("link", { name: "one of its runs" })).toHaveCount(
     0,
@@ -245,9 +243,9 @@ test("an automation that reads an ontology records each run in one workflow, whi
     },
   });
   expect(res.status()).toBe(200);
-  await page.goto(`/ontology/ont_acme_contracts/workflows/${made[0]!.id}`);
+  await page.goto(`/ontology/ont_acme_contracts/usage/${made[0]!.id}`);
   await expect(
-    page.getByRole("note").filter({ hasText: "Made by a deleted automation" }),
+    page.getByRole("note").filter({ hasText: "Made by a deleted workflow" }),
   ).toContainText("it keeps the runs it recorded as history.");
   await expect(runs.getByRole("listitem")).toHaveCount(2);
   await expect(page.getByRole("button", { name: "Delete" })).toBeVisible();
@@ -262,7 +260,7 @@ test("a run that uses no ontology records none", async ({ page }) => {
     page.getByRole("region", { name: "How much each ontology helped" }),
   ).toHaveCount(0);
   expect((await workflows(page)).some((w) => w.automation)).toBe(false);
-  await page.goto(`/automations/${id}`);
+  await page.goto(`/workflows/${id}`);
   await expect(
     page.getByRole("region", { name: "How much its ontologies helped" }),
   ).toContainText("None yet");

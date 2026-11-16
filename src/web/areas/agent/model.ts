@@ -107,14 +107,14 @@ export const isLiveTurn = (t?: { status?: FoundryAgentTurnStatus } | null) =>
 /**
  * What the person is looking at, from the URL: an ontology's pages, its
  * Explorer or Analyst, and the load they read (a load's page, or `?load=`),
- * a dashboard, or the page that starts a new automation. Ids only, never
+ * a dashboard, or the page that starts a new workflow. Ids only, never
  * names; null anywhere else.
  *
  * @example
  * pageContext("/ontology/ont_1/loads/load_2", ""); // { ontologyId: "ont_1", loadId: "load_2" }
  * pageContext("/explore/ont_1/records", "?load=load_3"); // { ontologyId: "ont_1", loadId: "load_3" }
  * pageContext("/dashboards/dash_1", ""); // { dashboardId: "dash_1" }
- * pageContext("/automations/new", "?thread=thr_1"); // { newAutomation: true }
+ * pageContext("/workflows/new", "?thread=thr_1"); // { newAutomation: true }
  * pageContext("/ontology/new", ""); // null
  * pageContext("/data", ""); // null
  */
@@ -123,7 +123,7 @@ export function pageContext(
   search: string,
 ): AgentPageContext | null {
   const [, section, ontologyId = "", sub, loadId = ""] = pathname.split("/");
-  if (section === "automations")
+  if (section === "workflows")
     return ontologyId === "new" && sub === undefined
       ? { newAutomation: true }
       : null;
@@ -161,11 +161,11 @@ const SEG = "(?!(?:new|sample)(?:/|$))[A-Za-z0-9_-]{1,128}";
 const LINKABLE = new RegExp(
   "^(?:" +
     [
-      `/ontology(?:/${SEG}(?:/connections|/documents(?:/${SEG})?|/(?:loads|versions|generations)/${SEG})?)?`,
+      `/ontology(?:/${SEG}(?:/connections|/documents(?:/${SEG})?|/(?:loads|versions|generations)/${SEG}|/usage(?:/${SEG}(?:/runs/${SEG})?)?)?)?`,
       `/explore(?:/${SEG}(?:/records|/entities/${SEG})?)?`,
       `/ask(?:/${SEG})?`,
       `/dashboards(?:/${SEG})?`,
-      `/automations(?:/${SEG}(?:/runs/${SEG})?)?`,
+      `/workflows(?:/${SEG}(?:/runs/${SEG})?)?`,
       `/data(?:/documents/${SEG}|/connections/${SEG})?`,
       "/settings(?:/(?:ai|members|access|billing|enrichment))?",
     ].join("|") +
@@ -174,7 +174,7 @@ const LINKABLE = new RegExp(
 // A connector kind, in the link helix_foundry_connect gives (/data?add=<kind>).
 const KIND = /^[a-z][a-z0-9_]{0,31}$/;
 const CANDIDATE =
-  /https?:\/\/[^\s<>"'`]+|(?<![\w/])\/(?:ontology|explore|ask|dashboards|automations|data|settings)(?:[/?#][^\s<>"'`]*)?/g;
+  /https?:\/\/[^\s<>"'`]+|(?<![\w/])\/(?:ontology|explore|ask|dashboards|workflows|data|settings)(?:[/?#][^\s<>"'`]*)?/g;
 const TRAILING = /[.,;:!?)\]'"]+$/;
 
 /**
@@ -681,7 +681,7 @@ export function reduceTurnEvents(
 
 /**
  * The operations whose run starts work that goes on after it (a draft, a
- * load, a sync, an automation's run): a ran one says it started, any other
+ * load, a sync, a workflow's run): a ran one says it started, any other
  * that it succeeded.
  */
 export const STARTS_WORK: ReadonlySet<string> = new Set([
@@ -690,7 +690,7 @@ export const STARTS_WORK: ReadonlySet<string> = new Set([
   "create_load",
   "sync_connector",
   "add_sample_data",
-  "run_automation",
+  "run_workflow",
 ]);
 
 /** The tool Founder asks its person with: shown as its questions, not a step. */
@@ -723,17 +723,22 @@ export const TOOL_LABELS: Record<string, string> = {
   helix_foundry_list_dashboards: "Listed the dashboards",
   helix_foundry_get_dashboard: "Read a dashboard",
   helix_foundry_preview_dashboard_tile: "Tried a dashboard tile",
-  helix_foundry_list_automations: "Listed the automations",
-  helix_foundry_get_automation: "Read an automation",
-  helix_foundry_list_automation_runs: "Listed an automation’s runs",
-  helix_foundry_get_automation_run: "Read an automation’s run",
-  helix_foundry_automation_report: "Reported to its automation",
+  helix_foundry_list_workflows: "Listed the workflows",
+  helix_foundry_get_workflow: "Read a workflow",
+  helix_foundry_list_workflow_runs: "Listed a workflow’s runs",
+  helix_foundry_get_workflow_run: "Read a workflow’s run",
+  helix_foundry_workflow_report: "Reported to its workflow",
+  helix_foundry_list_use_cases: "Listed the use cases",
+  helix_foundry_create_use_case: "Made a use case",
+  helix_foundry_start_use_case_run: "Started a use case run",
+  helix_foundry_finish_use_case_run: "Finished a use case run",
+  helix_foundry_get_use_case_run: "Read a use case run",
   [ASK_PERSON]: "Asked you",
 };
 
 /**
  * What a step's line says: its tool's label, except a prepare that ran at
- * once (an automation's approved action, or a dashboard the person asked
+ * once (a workflow's approved action, or a dashboard the person asked
  * for), which reads "Ran an action".
  *
  * @example
@@ -1245,30 +1250,30 @@ const DISPLAYS: {
     const dashboard = dashboardRef(d.dashboard);
     return dashboard ? { dashboard } : undefined;
   },
-  create_automation: (d) => {
+  create_workflow: (d) => {
     const name = str(d.name);
     return name ? { name } : undefined;
   },
-  update_automation: (d) => {
+  update_workflow: (d) => {
     const automation = automationRef(d.automation),
       name = d.name === undefined ? null : str(d.name) || undefined;
     if (!automation || name === undefined || typeof d.steps !== "boolean")
       return undefined;
     return { automation, ...opt("name", name ?? undefined), steps: d.steps };
   },
-  pause_automation: (d) => {
+  pause_workflow: (d) => {
     const automation = automationRef(d.automation);
     return automation ? { automation } : undefined;
   },
-  resume_automation: (d) => {
+  resume_workflow: (d) => {
     const automation = automationRef(d.automation);
     return automation ? { automation } : undefined;
   },
-  delete_automation: (d) => {
+  delete_workflow: (d) => {
     const automation = automationRef(d.automation);
     return automation ? { automation } : undefined;
   },
-  run_automation: (d) => {
+  run_workflow: (d) => {
     const automation = automationRef(d.automation);
     return automation ? { automation } : undefined;
   },
@@ -1816,59 +1821,59 @@ const VIEWS: {
     run: "Unpublish",
     target: nameOf(d.dashboard),
   }),
-  create_automation: (d) => ({
-    title: `Set up the automation “${d.name}”`,
+  create_workflow: (d) => ({
+    title: `Set up the workflow “${d.name}”`,
     facts: [{ label: "Name", value: `“${d.name}” (as Founder wrote it)` }],
-    does: "Saves this automation and turns it on. You can pause or change it on its page.",
-    cost: "Its Founder steps spend the workspace’s automations budget.",
+    does: "Saves this workflow and turns it on. You can pause or change it on its page.",
+    cost: "Its Founder steps spend the workspace’s workflows budget.",
     run: "Create and turn on",
     target: d.name,
   }),
-  update_automation: (d) => ({
-    title: `Change the automation ${quoted(d.automation)}`,
+  update_workflow: (d) => ({
+    title: `Change the workflow ${quoted(d.automation)}`,
     facts: [
-      { label: "Automation", value: automationText(d.automation) },
+      { label: "Workflow", value: automationText(d.automation) },
       ...(d.name !== undefined
         ? [{ label: "New name", value: `“${d.name}”` }]
         : []),
     ],
     does: d.steps
-      ? "Saves these changes to the automation, and your click approves its steps."
-      : "Saves these changes to the automation. Its steps don’t change, so this approves nothing.",
+      ? "Saves these changes to the workflow, and your click approves its steps."
+      : "Saves these changes to the workflow. Its steps don’t change, so this approves nothing.",
     run: "Save",
     target: nameOf(d.automation),
   }),
-  pause_automation: (d) => ({
-    title: `Pause the automation ${quoted(d.automation)}`,
-    facts: [{ label: "Automation", value: automationText(d.automation) }],
+  pause_workflow: (d) => ({
+    title: `Pause the workflow ${quoted(d.automation)}`,
+    facts: [{ label: "Workflow", value: automationText(d.automation) }],
     does: "It stops running when it would start. A run already going finishes.",
     run: "Pause",
     target: nameOf(d.automation),
   }),
-  resume_automation: (d) => ({
-    title: `Turn the automation ${quoted(d.automation)} back on`,
-    facts: [{ label: "Automation", value: automationText(d.automation) }],
+  resume_workflow: (d) => ({
+    title: `Turn the workflow ${quoted(d.automation)} back on`,
+    facts: [{ label: "Workflow", value: automationText(d.automation) }],
     does: "It runs again each time it starts, from now on.",
     run: "Turn on",
     target: nameOf(d.automation),
   }),
-  delete_automation: (d) => ({
-    title: `Delete the automation ${quoted(d.automation)}`,
-    facts: [{ label: "Automation", value: automationText(d.automation) }],
-    does: "Deletes the automation and its runs. Nothing it already did is undone.",
+  delete_workflow: (d) => ({
+    title: `Delete the workflow ${quoted(d.automation)}`,
+    facts: [{ label: "Workflow", value: automationText(d.automation) }],
+    does: "Deletes the workflow and its runs. Nothing it already did is undone.",
     run: "Delete",
     target: nameOf(d.automation),
   }),
-  run_automation: (d) => ({
-    title: `Run the automation ${quoted(d.automation)} now`,
-    facts: [{ label: "Automation", value: automationText(d.automation) }],
+  run_workflow: (d) => ({
+    title: `Run the workflow ${quoted(d.automation)} now`,
+    facts: [{ label: "Workflow", value: automationText(d.automation) }],
     does: "Runs its approved steps once, now, as you.",
     run: "Run now",
     target: nameOf(d.automation),
   }),
 };
 
-/** An automation as a card names it, with whether it runs. */
+/** A workflow as a card names it, with whether it runs. */
 const automationText = (a: AgentAutomationRef) =>
   [
     nameOf(a),
@@ -2089,21 +2094,18 @@ export function resultLink(
         "Open the dashboard",
       );
     case "delete_dashboard":
-    case "delete_automation":
+    case "delete_workflow":
       return undefined;
-    case "create_automation":
-      return on(
-        made && automationPaths.automation(made),
-        "Open the automation",
-      );
-    case "update_automation":
-    case "pause_automation":
-    case "resume_automation":
+    case "create_workflow":
+      return on(made && automationPaths.automation(made), "Open the workflow");
+    case "update_workflow":
+    case "pause_workflow":
+    case "resume_workflow":
       return on(
         automationPaths.automation(card.display.automation.id),
-        "Open the automation",
+        "Open the workflow",
       );
-    case "run_automation":
+    case "run_workflow":
       return on(
         made && automationPaths.automationRun(card.display.automation.id, made),
         "Open the run",

@@ -81,7 +81,7 @@ func (s *Service) ListFoundryAutomationSuggestions(ctx context.Context, req *fou
 	versionID := *o.CurrentVersionID
 	row, err := s.deps.DB.GetFoundryAutomationSuggestions(ctx, o.ID, versionID)
 	if err != nil && !errors.Is(err, foundrystore.ErrNotFound) {
-		return nil, status.Errorf(codes.Internal, "read automation suggestions: %v", err)
+		return nil, status.Errorf(codes.Internal, "read workflow suggestions: %v", err)
 	}
 	setup, err := s.automationSuggestionSetup(ctx, ws, o.ID, versionID)
 	if err != nil {
@@ -170,7 +170,7 @@ func (s *Service) queueAutomationSuggestions(ctx context.Context, ws, ontologyID
 	case errors.Is(err, foundrystore.ErrLimitExceeded):
 		return nil, nil
 	case err != nil:
-		return nil, status.Errorf(codes.Unavailable, "queue automation suggestions: %v", err)
+		return nil, status.Errorf(codes.Unavailable, "queue workflow suggestions: %v", err)
 	}
 	return row, nil
 }

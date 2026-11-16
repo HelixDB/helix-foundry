@@ -100,7 +100,7 @@ type Runner func(context.Context, string, Invocation) (*mcp.CallToolResult, any,
 type Service struct {
 	Foundry FoundryBackendAPI
 	Actions FoundryActionAPI
-	// Workflows is the backend's workflow RPCs; nil leaves the workflow tools out.
+	// Workflows is the backend's workflow RPCs, behind the use case tools; nil leaves them out.
 	Workflows               FoundryWorkflowBackendAPI
 	Directory               Directory
 	Confirmations           Confirmations

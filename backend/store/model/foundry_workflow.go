@@ -72,7 +72,7 @@ func FoundryAutomationWorkflowName(name string) string {
 
 // FoundryAutomationWorkflowDescription is the description of every workflow
 // Foundry makes for an automation.
-const FoundryAutomationWorkflowDescription = "Foundry records here each run of its automation that uses this ontology: " +
+const FoundryAutomationWorkflowDescription = "Foundry records here each run of its workflow that uses this ontology: " +
 	"what the run read of it and what the run found, so each run's assessment says how much the ontology helped."
 
 // FoundryWorkflowRunStatus is where a run stands.

@@ -172,7 +172,7 @@ func TestFoundryAutomationFireSkipsLoops(t *testing.T) {
 	require.Equal(t, model.FoundryAutomationFiredQueued, fired)
 
 	own := model.FoundryAutomationCursor{At: first.At.Add(time.Second), ID: id26("LOAD2")}
-	why := "Skipped: the load was started by this automation itself; running on it would loop."
+	why := "Skipped: the load was started by this workflow itself; running on it would loop."
 	fired, err = fire(2, own, why)
 	require.NoError(t, err)
 	require.Equal(t, model.FoundryAutomationFiredSkipped, fired, "a live run doesn't hold it")

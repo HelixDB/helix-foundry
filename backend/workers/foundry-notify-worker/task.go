@@ -469,11 +469,11 @@ func (t *Task) automationNotice(ctx context.Context, n *model.FoundryNotificatio
 	notice, err := t.box.GetFoundryAutomationNotice(ctx, n)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return message{}, "the automation is gone", nil
+		return message{}, "the workflow is gone", nil
 	case err != nil:
-		return message{}, "", fmt.Errorf("read the automation: %w", err)
+		return message{}, "", fmt.Errorf("read the workflow: %w", err)
 	case notice.Automation.OwnerUserID != n.UserID:
-		return message{}, "the automation's owner changed", nil
+		return message{}, "the workflow's owner changed", nil
 	}
 	a := notice.Automation
 	name := automationNoticeName(a.Name)

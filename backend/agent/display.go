@@ -261,20 +261,20 @@ type PinDashboardDisplay struct {
 	Pinned    bool         `json:"pinned"`
 }
 
-// AutomationRef is an automation as it is when the action is prepared: its
+// AutomationRef is a workflow as it is when the action is prepared: its
 // name, and its status (needs_approval, active or paused).
 type AutomationRef struct {
 	Ref
 	Status string `json:"status,omitempty"`
 }
 
-// CreateAutomationDisplay is create_automation's: its name as the Assistant
+// CreateAutomationDisplay is create_workflow's: its name as the Assistant
 // wrote it. Its steps are its payload's spec, which the card shows.
 type CreateAutomationDisplay struct {
 	Name string `json:"name"`
 }
 
-// UpdateAutomationDisplay is update_automation's: the automation as it is,
+// UpdateAutomationDisplay is update_workflow's: the workflow as it is,
 // its new name if it changes, and whether the edit carries steps (its
 // payload's spec), which the person's click then approves.
 type UpdateAutomationDisplay struct {
@@ -283,8 +283,8 @@ type UpdateAutomationDisplay struct {
 	Steps      bool          `json:"steps"`
 }
 
-// AutomationDisplay is pause_automation's, resume_automation's,
-// delete_automation's and run_automation's: the automation acted on.
+// AutomationDisplay is pause_workflow's, resume_workflow's,
+// delete_workflow's and run_workflow's: the workflow acted on.
 type AutomationDisplay struct {
 	Automation AutomationRef `json:"automation"`
 }
@@ -441,7 +441,7 @@ func (c Cards) describe(ctx context.Context, a integration.PreparedAction, t tar
 	if d := t.dashboard; d != nil {
 		board = DashboardRef{Ref: Ref{ID: d.ID, Name: d.Name}, Pinned: d.PinnedAt != nil, Published: d.Share != nil}
 	}
-	// An automation target is one the workspace holds (target).
+	// A workflow target is one the workspace holds (target).
 	var automation AutomationRef
 	if au := t.automation; au != nil {
 		automation = AutomationRef{Ref: Ref{ID: au.ID, Name: au.Name}, Status: string(au.Status)}
@@ -611,19 +611,19 @@ func (c Cards) describe(ctx context.Context, a integration.PreparedAction, t tar
 		return PinDashboardDisplay{Dashboard: board, Pinned: p.Pinned}, nil
 	case "delete_dashboard", "publish_dashboard", "unpublish_dashboard":
 		return DashboardDisplay{Dashboard: board}, nil
-	case "create_automation":
+	case "create_workflow":
 		var p integration.CreateAutomationPayload
 		if err := decode(&p); err != nil {
 			return nil, err
 		}
 		return CreateAutomationDisplay{Name: p.Name}, nil
-	case "update_automation":
+	case "update_workflow":
 		var p integration.UpdateAutomationPayload
 		if err := decode(&p); err != nil {
 			return nil, err
 		}
 		return UpdateAutomationDisplay{Automation: automation, Name: p.Name, Steps: len(p.Spec) > 0}, nil
-	case "pause_automation", "resume_automation", "delete_automation", "run_automation":
+	case "pause_workflow", "resume_workflow", "delete_workflow", "run_workflow":
 		return AutomationDisplay{Automation: automation}, nil
 	case "set_assistant_runtime":
 		return AssistantRuntimeDisplay{Runtime: t.id, Current: t.runtime.Runtime, Online: t.id == "api" || slices.Contains(t.runtime.Online, t.id)}, nil

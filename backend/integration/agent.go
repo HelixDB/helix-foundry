@@ -50,7 +50,7 @@ type AwaitingPerson struct {
 	ExpiresAt time.Time
 }
 
-// RanApproved is an action that ran at once, as its person: an automation's
+// RanApproved is an action that ran at once, as its person: a workflow's
 // owner approved it for the step whose turn prepared it, or (Auto) the
 // person's own message asked for it and Founder's auto-run rule lets it run
 // without a card (a new dashboard, which they can undo). Status is how it
@@ -84,7 +84,7 @@ type ActionSink interface {
 // it beforehand.
 type PreparedForPersonOutput struct {
 	ActionID string `json:"action_id"`
-	Status   string `json:"status" jsonschema:"awaiting_person: a card shows the person the action, which runs only if they click Run; or ran: it ran at once, because its person approved it beforehand (an automation's step) or asked for it (a new dashboard they asked for), and next says which."`
+	Status   string `json:"status" jsonschema:"awaiting_person: a card shows the person the action, which runs only if they click Run; or ran: it ran at once, because its person approved it beforehand (a workflow's step) or asked for it (a new dashboard they asked for), and next says which."`
 	// ExpiresAt is an awaiting action's.
 	ExpiresAt string `json:"expires_at,omitempty"`
 	// Outcome, Result and Error are a ran action's.
@@ -148,7 +148,7 @@ type Session struct {
 //
 // A host implements it as its MCP builds a user's tools, with three
 // differences: the Service is ForAgent's copy (audience AgentAudience, no
-// sign-in tools, no workflow tools); the Identity's Confirm is confirm; and
+// sign-in tools, no use case tools); the Identity's Confirm is confirm; and
 // the Identity is a User, never an Agent, whose callbacks (HasPermission,
 // Authorize, Allows, WithScope, OnlyWorkspace) decide as they would for that
 // user calling the MCP. Hosted Helix resolves actor.UserID to the user's
@@ -179,7 +179,7 @@ type SessionHost interface {
 
 // ForAgent is s as the Assistant's tools use it: its confirmations' audience
 // is AgentAudience, and it offers neither connecting by signing in nor
-// workflows, which record an outside agent's runs.
+// use cases, which record an outside agent's runs.
 func (s *Service) ForAgent() *Service {
 	c := *s
 	c.ResourceURI, c.SignIn, c.Workflows = AgentAudience, false, nil
@@ -272,16 +272,16 @@ func (s *Service) ExecuteForPerson(ctx context.Context, identity *Identity, inpu
 	}
 }
 
-// toolRunApproved is how the audit names an action an automation's action
-// step runs.
-const toolRunApproved = "helix_foundry_automation_action"
+// toolRunApproved is how the audit names an action a workflow's action step
+// runs.
+const toolRunApproved = "helix_foundry_workflow_action"
 
 // toolRunAnswers is how the audit names the answers a person sent a
 // generation from the Assistant's dock.
 const toolRunAnswers = "helix_foundry_ask_person"
 
-// RunApproved runs an action its person approved beforehand, an
-// automation's action step, as identity (that person, now, confirming as the
+// RunApproved runs an action its person approved beforehand, a
+// workflow's action step, as identity (that person, now, confirming as the
 // caller): validated and authorized again, a confirmation prepared and
 // consumed at once, and the backend called once, under Run's audit. It ends
 // as ExecuteForPerson does; unknown is never run again.

@@ -120,13 +120,14 @@ export const ontologyPaths = {
   // load found its ontology and mappings lack.
   review: (ontologyId: string, tab?: "ontology") =>
     at(ontologyId) + "/review" + (tab ? "?tab=" + tab : ""),
-  // Its workflows (an agent's task), one, and one of its runs: what the
-  // agent read and wrote between its request and its answer.
-  workflows: (ontologyId: string) => at(ontologyId) + "/workflows",
+  // Its Usage page (its use cases: an agent's task), one use case, and one
+  // of its runs: what the agent read and wrote between its request and its
+  // answer.
+  workflows: (ontologyId: string) => at(ontologyId) + "/usage",
   workflow: (ontologyId: string, workflowId: string) =>
-    at(ontologyId) + "/workflows/" + enc(workflowId),
+    at(ontologyId) + "/usage/" + enc(workflowId),
   workflowRun: (ontologyId: string, workflowId: string, runId: string) =>
-    at(ontologyId) + "/workflows/" + enc(workflowId) + "/runs/" + enc(runId),
+    at(ontologyId) + "/usage/" + enc(workflowId) + "/runs/" + enc(runId),
   // The database's graph explorer, selecting a node by its database id.
   explore: (ontologyId: string, node?: number) =>
     explorer(ontologyId) + (node === undefined ? "" : "?node=" + node),

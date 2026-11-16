@@ -64,7 +64,7 @@ func TestAnAutomationNeverFiresOnItsOwnWork(t *testing.T) {
 	f.task.watch(ctx)
 	fire = f.lastFire(t)
 	require.NotNil(t, fire.Run, "recorded, so its owner sees why it didn't run")
-	assert.Equal(t, "Skipped: the load was started by this automation itself; running on it would loop.", fire.Skip)
+	assert.Equal(t, "Skipped: the load was started by this workflow itself; running on it would loop.", fire.Skip)
 	assert.Equal(t, "load_ready:own-load", fire.Run.TriggerKey)
 	assert.Equal(t, "own-load", fire.Advance.(model.FoundryCursorAdvance).To.ID, "the cursor passes it")
 
@@ -95,7 +95,7 @@ func TestASyncThatSyncsItsOwnConnectorIsSkipped(t *testing.T) {
 	f.db.causes["sync9"] = &model.FoundryAutomationCause{RunID: "run0", AutomationID: "auto1", Depth: 1}
 	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("sync9", "failed", cursor.At.Add(time.Minute))}
 	f.task.watch(context.Background())
-	assert.Equal(t, "Skipped: the sync was started by this automation itself; running on it would loop.", f.lastFire(t).Skip)
+	assert.Equal(t, "Skipped: the sync was started by this workflow itself; running on it would loop.", f.lastFire(t).Skip)
 }
 
 // A's sync fires B, whose load would fire A again: the work B's run started
@@ -149,7 +149,7 @@ func TestAChainBackToItsStartIsSkipped(t *testing.T) {
 	at = at.Add(time.Minute)
 	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("load1", "ready", at)}
 	f.task.watch(ctx)
-	assert.Equal(t, "Skipped: the load was started by an automation this one set off; running on it would loop.", f.lastFire(t).Skip)
+	assert.Equal(t, "Skipped: the load was started by a workflow this one set off; running on it would loop.", f.lastFire(t).Skip)
 	assert.Equal(t, 1, f.actions.syncs, "A ran once")
 	assert.Equal(t, 1, f.actions.loads, "B ran once")
 }
@@ -167,7 +167,7 @@ func TestAChainStopsAtItsDepth(t *testing.T) {
 	f.db.causes["deep"] = &model.FoundryAutomationCause{RunID: "runD", AutomationID: "autoD", Chain: []string{"autoA", "autoB", "autoC"}, Depth: 4}
 	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("deep", "partial", cursor.At.Add(time.Minute))}
 	f.task.watch(context.Background())
-	assert.Equal(t, "Skipped: the load came from a chain of 4 automations setting each other off; a chain stops after 3.", f.lastFire(t).Skip)
+	assert.Equal(t, "Skipped: the load came from a chain of 4 workflows setting each other off; a chain stops after 3.", f.lastFire(t).Skip)
 
 	f.db.causes["within"] = &model.FoundryAutomationCause{RunID: "runC", AutomationID: "autoC", Chain: []string{"autoB", "autoA"}, Depth: 3}
 	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("within", "ready", cursor.At.Add(time.Minute))}

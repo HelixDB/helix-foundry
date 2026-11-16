@@ -54,7 +54,7 @@ export const keysQuery = (ws: string) => ({
 
 /**
  * Replaces a principal's grants (none takes them all away), and sets its
- * Workflows permission when `workflows` is given.
+ * Usage permission (`workflows` on the wire) when `workflows` is given.
  */
 export const setGrants = (
   ws: string,

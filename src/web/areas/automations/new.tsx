@@ -46,7 +46,7 @@ import { automationQueries, useNames } from "./queries";
 // draft). Sending opens a new thread, which the page then holds whole
 // (?thread=), and which the dock lists too; the page context says the
 // person is making an automation. Nothing runs until they click a card:
-// once their click on Founder's create_automation card made it, the
+// once their click on Founder's create_workflow card made it, the
 // page opens it on its canvas. The suggestions are written for one of the
 // workspace's ontologies with a current version (model.ts
 // suggestionOntology), which a picker under them changes when there are
@@ -92,12 +92,12 @@ function NewChat() {
     if (gone) setParams({}, { replace: true });
   }, [gone]);
   // The automation its card made, once the person's click made it: each
-  // create_automation action's status as this page first saw it, so one
+  // create_workflow action's status as this page first saw it, so one
   // made before the page opened isn't followed.
   const seen = useRef(new Map<string, string>());
   useEffect(() => {
     for (const x of thread.data?.actions || []) {
-      if (x.operation !== "create_automation") continue;
+      if (x.operation !== "create_workflow") continue;
       const before = seen.current.get(x.id);
       seen.current.set(x.id, x.status || "");
       const to = resultLink(x)?.to;
@@ -134,7 +134,7 @@ function NewChat() {
 
   if (disabled)
     return (
-      <Frame bar={<Crumbs name="New automation" />}>
+      <Frame bar={<Crumbs name="New workflow" />}>
         <div className="au-frame">
           <Section
             title="Start from a template"
@@ -149,7 +149,7 @@ function NewChat() {
 
   if (!threadId)
     return (
-      <Frame bar={<Crumbs name="New automation" />}>
+      <Frame bar={<Crumbs name="New workflow" />}>
         <div className="au-new-page ag-dots" data-replay-block>
           <div className="au-new-inner">
             <span className="au-new-icon" aria-hidden>
@@ -191,7 +191,7 @@ function NewChat() {
     <Frame
       bar={
         <>
-          <Crumbs name={thread.data?.thread.title || "New automation"} />
+          <Crumbs name={thread.data?.thread.title || "New workflow"} />
           <div className="au-top-tools">{scratch}</div>
         </>
       }

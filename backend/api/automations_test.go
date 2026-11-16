@@ -303,6 +303,7 @@ func TestAutomationsAreOffAndPeoples(t *testing.T) {
 	_, err := s.ListFoundryAutomations(site("user-ada"), &foundryv1.ListFoundryAutomationsRequest{WorkspaceId: "ws-1"})
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	require.Equal(t, "FOUNDRY_AUTOMATIONS_DISABLED", reasonOf(err))
+	require.Equal(t, "workflows aren't available here", status.Convert(err).Message(), "people read them as workflows")
 	s.deps.Cfg.Foundry.Automations.Enabled = true
 
 	for name, ctx := range map[string]context.Context{
@@ -315,6 +316,7 @@ func TestAutomationsAreOffAndPeoples(t *testing.T) {
 	} {
 		_, err := s.ListFoundryAutomations(ctx, &foundryv1.ListFoundryAutomationsRequest{WorkspaceId: "ws-1"})
 		require.Equal(t, codes.PermissionDenied, status.Code(err), name)
+		require.Equal(t, "workflows are people's: sign in to Foundry", status.Convert(err).Message(), name)
 	}
 	_, err = s.ListFoundryAutomations(site("user-ada"), &foundryv1.ListFoundryAutomationsRequest{})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -440,7 +442,7 @@ func TestUpdatePauseResumeDeleteAutomation(t *testing.T) {
 		SpecJson: &moved})
 	require.NoError(t, err)
 	require.False(t, store.lastUpdate.Spec.LayoutOnly, "compared with a revision it no longer has, it is a new spec")
-	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotOwner, Detail: "only its owner changes an automation"}
+	store.refuse = foundrymodel.FoundryAutomationRefusal{Reason: foundrymodel.FoundryAutomationNotOwner, Detail: "only its owner changes a workflow"}
 	_, err = s.UpdateFoundryAutomation(site("user-alan"), &foundryv1.UpdateFoundryAutomationRequest{WorkspaceId: "ws-1", Id: a.GetId(), ExpectedRevision: 5,
 		Name: &name})
 	require.Equal(t, codes.PermissionDenied, status.Code(err))

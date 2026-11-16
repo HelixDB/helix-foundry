@@ -141,7 +141,7 @@ type FoundryActionAPI interface {
 	PinFoundryDashboard(context.Context, *foundryv1.PinFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
 	PublishFoundryDashboard(context.Context, *foundryv1.PublishFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
 	UnpublishFoundryDashboard(context.Context, *foundryv1.UnpublishFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
-	// Automations (foundry_automations.go). None approves one: its owner does, in Foundry.
+	// Workflows (foundry_automations.go). None approves one: its owner does, in Foundry.
 	CreateFoundryAutomation(context.Context, *foundryv1.CreateFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
 	UpdateFoundryAutomation(context.Context, *foundryv1.UpdateFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
 	DeleteFoundryAutomation(context.Context, *foundryv1.DeleteFoundryAutomationRequest, ...grpc.CallOption) (*emptypb.Empty, error)
@@ -177,7 +177,7 @@ type FoundryOperationOutput struct {
 type CompleteFoundryUploadInput struct {
 	OntologyInput
 	DocumentID    string `json:"document_id" jsonschema:"The document upload_document created."`
-	WorkflowRunID string `json:"workflow_run_id,omitempty" jsonschema:"An open run of a workflow (helix_foundry_start_workflow_run) to record this upload under; empty for none."`
+	WorkflowRunID string `json:"use_case_run_id,omitempty" jsonschema:"An open run of a use case (helix_foundry_start_use_case_run) to record this upload under; empty for none."`
 }
 
 type CompleteFoundryUploadOutput struct {
@@ -233,7 +233,7 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
 			Description: "Check a Foundry action and put it before the person you work for as a card, which they run, or not, with a click. " +
 				"Preparing changes nothing, and you can't run it: you are told its result if they do. " +
-				"An action they approved beforehand (an automation's step) runs at once, and you get its outcome.",
+				"An action they approved beforehand (a workflow's step) runs at once, and you get its outcome.",
 			InputSchema: foundryOperationSchema(s, func(op string) bool { return offered(op) && person.Sink.Allows(op) }),
 			Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
 		}, func(ctx context.Context, identity *Identity, call *Call, input FoundryOperationInput) (PreparedForPersonOutput, int, error) {
@@ -463,7 +463,7 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 		return CreateEventSourceOperation{payload: payload, req: req}, nil
 	case "create_dashboard", "update_dashboard", "delete_dashboard", "pin_dashboard", "publish_dashboard", "unpublish_dashboard":
 		return s.validateDashboardOperation(ctx, identity, input, raw)
-	case "create_automation", "update_automation", "pause_automation", "resume_automation", "delete_automation", "run_automation":
+	case "create_workflow", "update_workflow", "pause_workflow", "resume_workflow", "delete_workflow", "run_workflow":
 		return s.validateAutomationOperation(ctx, identity, input, raw)
 	case "sync_connector":
 		workspaceID, connectorID, ok := CutFoundryTarget(input.Target, "connector")
@@ -805,13 +805,20 @@ func CutFoundryTarget(target, kind string) (string, string, bool) {
 	return workspaceID, id, ok && ValidIDs([]string{workspaceID, id})
 }
 
-// TargetKind is the audit resource kind of a target, or empty for one that doesn't parse.
+// TargetKind is the audit resource kind of a target, or empty for one that doesn't parse. A
+// workflow: target is audited as kind automation, the name the audit kept from before the rename.
 func TargetKind(target string) string {
 	kind, _, ok := strings.Cut(target, ":")
-	if !ok || (kind != "tenant" && kind != "workspace" && kind != "connector" && kind != "ontology" && kind != "dashboard" && kind != "automation") {
+	switch {
+	case !ok:
+		return ""
+	case kind == "workflow":
+		return "automation"
+	case kind == "tenant" || kind == "workspace" || kind == "connector" || kind == "ontology" || kind == "dashboard":
+		return kind
+	default:
 		return ""
 	}
-	return kind
 }
 
 type CreateOntologyPayload struct {

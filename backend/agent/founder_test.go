@@ -142,7 +142,7 @@ func TestFounderLeavesEverythingElseACard(t *testing.T) {
 func TestAnAutomationMakesNoDashboardUnasked(t *testing.T) {
 	h := newHarness(t, call("toolu_1", toolPrepare, makeDashboard), say("It waits for you."))
 	turn := automationTurn(h, loadOnt1)
-	turn.Input = "Make a dashboard of the overdue invoices\n\n<automation_context>{}</automation_context>"
+	turn.Input = "Make a dashboard of the overdue invoices\n\n<workflow_context>{}</workflow_context>"
 	_, err := h.runner.Run(context.Background(), turn)
 	require.NoError(t, err)
 	assert.Empty(t, h.backend.created)
@@ -272,7 +272,7 @@ func TestAHelpersTurnRunsAsTheWorkersDo(t *testing.T) {
 }
 
 func TestFounderIsToldWhatItRunsAtOnce(t *testing.T) {
-	assert.Equal(t, "assistant-14", PromptVersion)
+	assert.Equal(t, "assistant-15", PromptVersion)
 	assert.True(t, strings.HasPrefix(systemPrompt, "You are Founder in Helix Foundry"))
 	assert.NotContains(t, systemPrompt, "Assistant", "it names itself Founder")
 	assert.Contains(t, systemPrompt, "You change nothing yourself, with one exception: a new dashboard the person asked for")

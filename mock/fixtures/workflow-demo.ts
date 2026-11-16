@@ -1,7 +1,7 @@
-// A demo of Customer contracts' workflows (MOCK_WORKFLOW_DEMO, or
-// POST /__mock/config {"workflowDemo": true}): three workflows with 45 days
+// A demo of Customer contracts' use cases (MOCK_WORKFLOW_DEMO, or
+// POST /__mock/config {"workflowDemo": true}): three use cases with 45 days
 // of runs by two people and the Support agent's key, finished and assessed
-// with the engine's assess_result.json shapes, so the Workflows pages' trends
+// with the engine's assess_result.json shapes, so the Usage pages' trends
 // have something to show. Deterministic: the same `now` makes the same runs.
 
 type Gap = { kind: string; what: string };
@@ -153,7 +153,7 @@ export type DemoRun = {
   queued?: boolean;
 };
 
-/** The demo's workflows and their runs, oldest first, as of `now`. */
+/** The demo's use cases and their runs, oldest first, as of `now`. */
 export function workflowDemo(now: Date) {
   const r = random(17);
   const pick = <T>(xs: readonly T[]) => xs[Math.floor(r() * xs.length)]!;

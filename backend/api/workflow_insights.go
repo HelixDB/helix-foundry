@@ -82,12 +82,12 @@ func (s *Service) GetFoundryWorkflowInsights(ctx context.Context, req *foundryv1
 	runs, err := s.deps.DB.ListFoundryWorkflowInsightRuns(ctx, o.ID, req.GetWorkflowId(), startedBy, withAutomations, from, from.AddDate(0, 0, days),
 		insightRuns+1)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list workflow runs: %v", err)
+		return nil, status.Errorf(codes.Internal, "list use case runs: %v", err)
 	}
 	previous, err := s.deps.DB.ListFoundryWorkflowInsightRuns(ctx, o.ID, req.GetWorkflowId(), startedBy, withAutomations, from.AddDate(0, 0, -days), from,
 		insightRuns)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list workflow runs: %v", err)
+		return nil, status.Errorf(codes.Internal, "list use case runs: %v", err)
 	}
 	return workflowInsights(runs, previous, from, days, req.GetWorkflowId() == ""), nil
 }

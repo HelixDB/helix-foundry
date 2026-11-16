@@ -74,7 +74,7 @@ export function OntologyImpact({
                         from: "automation",
                       })
                     }
-                    aria-label={`${o.ontologyName || "Ontology"}: its workflow`}
+                    aria-label={`${o.ontologyName || "Ontology"}: its use case`}
                   >
                     {o.ontologyName || "An ontology"}
                   </Link>
@@ -112,7 +112,7 @@ export function OntologyImpact({
       ) : (
         <p className="au-hint">
           None yet: once a run reads an ontology or acts on one, Foundry records
-          how much it helped, here and in the ontology’s workflows.
+          how much it helped, here and on the ontology’s Usage page.
         </p>
       )}
     </section>

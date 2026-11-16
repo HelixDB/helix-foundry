@@ -602,7 +602,7 @@ func TestARunWalksItsStepsAsItsOwner(t *testing.T) {
 	assert.Equal(t, model.FoundryAgentTurnAutomation, turn.Kind)
 	assert.Equal(t, owner, turn.UserID)
 	assert.Equal(t, f.task.cfg.MaxMicros(), turn.MaxUSDMicros)
-	assert.True(t, strings.HasPrefix(turn.Input, "Are any invoices overdue?\n\n<automation_context>"), turn.Input)
+	assert.True(t, strings.HasPrefix(turn.Input, "Are any invoices overdue?\n\n<workflow_context>"), turn.Input)
 
 	// Still running, the run waits again.
 	delete(f.db.yielded, run.ID)
@@ -660,10 +660,10 @@ func TestAFailedTurnFailsItsStep(t *testing.T) {
 	run := f.queue(weekly)
 	f.synced(t, run)
 	turn := f.db.endTurn(t, model.FoundryAgentTurnFailed)
-	why := "the workspace has spent this month's $20.00 of automations"
+	why := "the workspace has spent this month's $20.00 of workflows"
 	turn.Error = &why
 	f.task.advance(context.Background(), run)
-	assert.Equal(t, "The workspace has spent this month's $20.00 of automations.", *f.db.nodes[run.ID]["ask"].Error)
+	assert.Equal(t, "The workspace has spent this month's $20.00 of workflows.", *f.db.nodes[run.ID]["ask"].Error)
 	assert.Equal(t, model.FoundryAutomationRunFailed, f.db.finished[run.ID].Status)
 }
 
@@ -981,7 +981,7 @@ func TestARunRecordsItsUsesOfOntologies(t *testing.T) {
 	assert.Equal(t, "ont1", f.db.uses.starts[0].OntologyID)
 	assert.Equal(t, "ont2", f.db.uses.starts[1].OntologyID)
 	input := f.db.uses.starts[0].Input
-	assert.Contains(t, input, `Run by hand. The automation "Weekly invoices" ran these steps, in order:`)
+	assert.Contains(t, input, `Run by hand. The workflow "Weekly invoices" ran these steps, in order:`)
 	assert.Contains(t, input, `1. Action step "load": load the current version of the ontology "Sales".`)
 	assert.Contains(t, input, `2. Action step "pub": publish the dashboard "Pipeline" again at its link.`)
 

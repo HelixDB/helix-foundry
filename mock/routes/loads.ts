@@ -439,8 +439,8 @@ export const ontologyLoad = (ontologyId: string, loadId: string) => {
 };
 
 /**
- * An ontology's loads that ended, oldest first, with their status: what an
- * automation's load_ready trigger looks for (./automations.ts).
+ * An ontology's loads that ended, oldest first, with their status: what a
+ * workflow's load_ready trigger looks for (./automations.ts).
  */
 export function loadsEnded(ontologyId: string) {
   advanceLoads(ontologyId);

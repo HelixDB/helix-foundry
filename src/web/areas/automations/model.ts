@@ -399,12 +399,12 @@ export function parseSpec(raw: string | unknown, name = byId): SpecResult {
   if (wn.length < 2 || wn.length > LIMITS.nodes)
     return {
       ok: false,
-      error: `an automation has a trigger and at least one step, at most ${LIMITS.nodes} nodes in all, not ${wn.length}`,
+      error: `a workflow has a trigger and at least one step, at most ${LIMITS.nodes} nodes in all, not ${wn.length}`,
     };
   if (we.length > LIMITS.edges)
     return {
       ok: false,
-      error: `an automation has at most ${LIMITS.edges} edges, not ${we.length}`,
+      error: `a workflow has at most ${LIMITS.edges} edges, not ${we.length}`,
     };
   const nodes: AutomationNode[] = [];
   for (const w of wn) {
@@ -448,7 +448,7 @@ function checkGraph(
   const triggers = spec.nodes.filter((n) => n.kind === "trigger");
   if (triggers.length !== 1)
     return {
-      error: `an automation has exactly one trigger, not ${triggers.length}`,
+      error: `a workflow has exactly one trigger, not ${triggers.length}`,
     };
   const seen = new Set<string>();
   for (const e of spec.edges) {
@@ -462,7 +462,7 @@ function checkGraph(
       return { error: `${name(e.from)} has an edge to itself`, nodeId: e.from };
     if (to.kind === "trigger")
       return {
-        error: `the trigger ${e.to} starts the automation: no edge goes into it`,
+        error: `the trigger ${e.to} starts the workflow: no edge goes into it`,
       };
     if (seen.has(e.from + "\0" + e.to))
       return {
@@ -560,7 +560,7 @@ function checkGraph(
   const missing = spec.nodes.find((n) => !order.includes(n.id))!;
   return reaches(spec, trigger, missing.id)
     ? {
-        error: `${name(missing.id)} is in a cycle: an automation's edges go one way`,
+        error: `${name(missing.id)} is in a cycle: a workflow's edges go one way`,
         nodeId: missing.id,
       }
     : {
@@ -1460,7 +1460,7 @@ export const TEMPLATES: readonly Template[] = [
     description: "Only what starts it: choose a trigger, then add steps.",
     needs: [],
     build: () => ({
-      name: "New automation",
+      name: "New workflow",
       description: "",
       spec: {
         v: 1,
@@ -2043,7 +2043,7 @@ const HELPED = new Set(["essential", "helpful"]);
  */
 export function impactText(o: FoundryAutomationOntology): string {
   if (o.untracked === "workflows_full")
-    return "Its runs aren’t recorded: the ontology holds 100 workflows, the most it may. Delete one of its workflows and the next run is recorded.";
+    return "Its runs aren’t recorded: the ontology holds 100 use cases, the most it may. Delete one of its use cases and the next run is recorded.";
   const runs = Number(o.runs || 0),
     assessed = (o.verdicts || []).reduce((n, v) => n + Number(v.runs || 0), 0),
     helped = (o.verdicts || [])

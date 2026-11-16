@@ -89,8 +89,8 @@ import { initials, roleLabel } from "./people";
 // a member or a team any restricts them, taking them away leaves them restricted
 // (it never gives anyone more), and only lifting it, with none left, undoes it.
 // Everyone else sees what they saw before. Ontologies says who each is shared
-// with. Each principal's Workflows permission, on unless turned off here, lets
-// it see the workflows of what it reads and record runs: every run of an
+// with. Each principal's Usage permission, on unless turned off here, lets
+// it see the use cases of what it reads and record their runs: every run of an
 // ontology it reads all of, else only its own.
 
 type Tab = "agents" | "people" | "teams" | "ontologies";
@@ -502,11 +502,11 @@ function GrantsDialog({
                     onChange={() => setWorkflows((w) => !w)}
                   />
                   <span>
-                    Workflows
+                    Usage
                     <small>
                       {" "}
-                      · their runs: every run of an ontology it can read all of,
-                      else only the runs it started
+                      · use cases and their runs: every run of an ontology it
+                      can read all of, else only the runs it started
                     </small>
                   </span>
                 </label>
