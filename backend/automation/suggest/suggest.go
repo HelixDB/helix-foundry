@@ -1,14 +1,19 @@
-// Package suggest is what a suggestion for a new automation is, and how one
-// is written for an ontology's current version: the four prompts the new
-// automation page offers, each filling its composer for a person to edit and
-// send, never run.
+// Package suggest is what a suggestion for Founder is, and how one is
+// written for an ontology's current version: prompts of four kinds (Kinds:
+// questions for the data, dashboards, changes to the ontology and
+// workflows), each filling a composer for a person to edit and send, never
+// run. Founder's new chat shows each kind's first 2 as cards, the new
+// workflow page the workflows.
 //
 // Founder's worker writes them once per version on the workspace's
-// cheapest task model (Prompt, then Parse of the model's one tool call);
-// until it has, and wherever it can't, the API offers Fallback, made from the
-// version's competency questions without a model. A model wrote what Parse
-// keeps, from data people and other models wrote: it is checked as untrusted
-// text, and only ever fills a composer.
+// cheapest task model (Prompt, then Parse of the model's one tool call).
+// The API answers with Fill: each kind filled to its count from what the
+// version holds (its competency questions), what the ontology doesn't read
+// or hold yet (Setup), what the model wrote, and fixed examples, so every
+// kind has its count until the model has written, and wherever it can't;
+// Starter answers an ontology without a current version. A model wrote what
+// Parse keeps, from data people and other models wrote: every suggestion,
+// written or not, passes Suggestion.Clean, and only ever fills a composer.
 //
 // Nothing here talks to a store, a model or the network.
 package suggest
@@ -26,16 +31,20 @@ import (
 const (
 	// PerHour is how many writes a workspace may queue in an hour.
 	PerHour = 20
-	// MaxSuggestions is the most suggestions a version has.
-	MaxSuggestions = 4
-	// MaxTitle and MaxPrompt bound a suggestion's title and prompt, in
-	// characters (runes).
+	// MaxSuggestions is the most suggestions an answer has: every kind's
+	// Count.
+	MaxSuggestions = 10
+	// MaxTitle, MaxPrompt and MaxTopic bound a suggestion's title, prompt
+	// and topic, in characters (runes).
 	MaxTitle  = 32
 	MaxPrompt = 400
+	MaxTopic  = 24
 	// Timeout bounds a write's model calls, its retries included.
 	Timeout = 60 * time.Second
-	// MaxOutputTokens is the most one call may write.
-	MaxOutputTokens = 1500
+	// MaxOutputTokens is the most one call may write: MaxSuggestions
+	// suggestions of at most MaxTitle, MaxPrompt and MaxTopic characters,
+	// in JSON, with room to spare.
+	MaxOutputTokens = 4000
 	// RetryAfter is how long a failed write stands before a read queues it
 	// again.
 	RetryAfter = time.Hour
@@ -45,7 +54,65 @@ const (
 	StaleAfter = 2 * time.Minute
 )
 
-// Icon is the kind of thing a suggestion does, for its icon: a closed set.
+// Kind is what a suggestion asks Founder for: a closed set.
+type Kind string
+
+const (
+	// Question is a question about the data, which Founder asks the
+	// Analyst, who answers with citations.
+	Question Kind = "question"
+	// Dashboard is a dashboard, which Founder makes at once: its prompt says
+	// "dashboard".
+	Dashboard Kind = "dashboard"
+	// Ontology is a change to the ontology, which Founder drafts as a new
+	// version: its prompt says "draft" or "revise".
+	Ontology Kind = "ontology"
+	// Workflow is a workflow, which Founder prepares for the person to
+	// approve: its prompt says when it starts and what it does.
+	Workflow Kind = "workflow"
+)
+
+// Kinds is every Kind, in the API enum's order, the order an answer lists
+// them in.
+var Kinds = []Kind{Question, Dashboard, Ontology, Workflow}
+
+// Valid reports whether k is one of Kinds.
+func (k Kind) Valid() bool { return k.Count() > 0 }
+
+// Count is how many suggestions of k an answer has: 4 workflows (the new
+// workflow page shows 4), 2 of each other kind; 0 for no kind.
+func (k Kind) Count() int {
+	switch k {
+	case Question, Dashboard, Ontology:
+		return 2
+	case Workflow:
+		return 4
+	}
+	return 0
+}
+
+// topic is the kind's own name, the topic of a suggestion made without a
+// model.
+func (k Kind) topic() string {
+	return map[Kind]string{Question: "Question", Dashboard: "Dashboard", Ontology: "Ontology", Workflow: "Workflow"}[k]
+}
+
+// Source is where a suggestion came from.
+type Source string
+
+const (
+	// SourceModel is Founder's, written for the version.
+	SourceModel Source = "model"
+	// SourceQuestions is made from the version's competency questions.
+	SourceQuestions Source = "questions"
+	// SourceSetup is made from what the ontology doesn't read or hold yet
+	// (Setup).
+	SourceSetup Source = "setup"
+	// SourceFixed is a fixed example, named for the ontology.
+	SourceFixed Source = "fixed"
+)
+
+// Icon is the kind of thing a workflow does, for its icon: a closed set.
 type Icon string
 
 const (
@@ -75,18 +142,82 @@ func (i Icon) Valid() bool {
 	return false
 }
 
-// Suggestion is one prompt for a new automation, as the store keeps it.
+// Suggestion is one prompt for Founder. The store keeps the model's as a
+// JSON list of {kind, title, prompt, topic, icon?}; Source isn't stored,
+// since every stored one is the model's.
 type Suggestion struct {
+	Kind Kind `json:"kind"`
 	// Title is an outcome, 1 to MaxTitle characters: "Renewal radar".
 	Title string `json:"title"`
-	// Prompt says when it starts and what it does, in plain words: 1 to
-	// MaxPrompt characters.
+	// Prompt is what to ask Founder, in plain words: 1 to MaxPrompt
+	// characters.
 	Prompt string `json:"prompt"`
-	Icon   Icon   `json:"icon"`
+	// Topic is what it is about, 1 to MaxTopic characters, for a card's
+	// label: "Revenue", "Data quality", or the kind's own name.
+	Topic string `json:"topic"`
+	// Icon is a workflow's; empty for the other kinds.
+	Icon   Icon   `json:"icon,omitempty"`
+	Source Source `json:"-"`
 }
 
 // ErrInvalid is a model's answer Parse keeps nothing of.
 var ErrInvalid = errors.New("suggest: no valid suggestion")
+
+var (
+	// dashboardWord is "dashboard" or "dashboards" as a word, as Founder
+	// tells a message asking for a new dashboard (agent's dashboardWord).
+	dashboardWord = regexp.MustCompile(`(?i)(?:^|[^\pL\pN_])dashboards?(?:$|[^\pL\pN_])`)
+	// draftWord is "draft" or "revise" as a word: a request Founder
+	// prepares a new version for.
+	draftWord = regexp.MustCompile(`(?i)(?:^|[^\pL\pN_])(?:draft|revise)(?:$|[^\pL\pN_])`)
+)
+
+// Clean is s as an answer carries it, or why it can't be one. Its title,
+// prompt and topic are cleaned: whitespace collapsed, and each refused when
+// empty or past MaxTitle, MaxPrompt or MaxTopic characters, or holding a
+// control character (a newline among them) or an invisible format
+// character, a link, markup (<, >, a backtick, **, a leading #, a Markdown
+// link) or an id (a ULID, src_…). Then its kind's rule:
+//   - its kind is one of Kinds;
+//   - a dashboard's prompt says "dashboard" as a word, which Founder makes
+//     a dashboard of at once;
+//   - a change to the ontology's says "draft" or "revise" as a word, which
+//     Founder prepares a new version for;
+//   - a workflow has one of Icons; the other kinds' icon is dropped.
+//
+// Source is kept as it is.
+func (s Suggestion) Clean() (Suggestion, error) {
+	if !s.Kind.Valid() {
+		return Suggestion{}, fmt.Errorf("kind %q", s.Kind)
+	}
+	out := Suggestion{Kind: s.Kind, Source: s.Source}
+	var err error
+	if out.Title, err = clean(s.Title, MaxTitle); err != nil {
+		return Suggestion{}, fmt.Errorf("title: %w", err)
+	}
+	if out.Prompt, err = clean(s.Prompt, MaxPrompt); err != nil {
+		return Suggestion{}, fmt.Errorf("prompt: %w", err)
+	}
+	if out.Topic, err = clean(s.Topic, MaxTopic); err != nil {
+		return Suggestion{}, fmt.Errorf("topic: %w", err)
+	}
+	switch s.Kind {
+	case Dashboard:
+		if !dashboardWord.MatchString(out.Prompt) {
+			return Suggestion{}, errors.New("a dashboard's prompt doesn't say dashboard")
+		}
+	case Ontology:
+		if !draftWord.MatchString(out.Prompt) {
+			return Suggestion{}, errors.New("a change's prompt says neither draft nor revise")
+		}
+	case Workflow:
+		if !s.Icon.Valid() {
+			return Suggestion{}, fmt.Errorf("icon %q", s.Icon)
+		}
+		out.Icon = s.Icon
+	}
+	return out, nil
+}
 
 // interrogatives are the leading words a fallback title drops, when the rest
 // still reads: longest first, so "How many" is tried before any one word.
@@ -117,22 +248,35 @@ var trailing = map[string]bool{
 	"with": true, "on": true, "by": true, "at": true,
 }
 
-// maxFallbackName bounds the ontology's name in a fallback prompt.
+// maxFallbackName bounds the ontology's name in a prompt made without a
+// model.
 const maxFallbackName = 100
 
-// Fallback is the suggestions made from a version's competency questions,
-// without a model: for each of the first MaxSuggestions questions, a report
-// that answers it every Monday by email. A title another question's already
-// took is skipped; no questions, no suggestions.
+// named is the ontology's name as a prompt made without a model says it:
+// whitespace collapsed, at most maxFallbackName characters, or "this
+// ontology" for a name no prompt could hold (a link, markup, an id).
+func named(ontologyName string) string {
+	name := cut(collapse(ontologyName), maxFallbackName)
+	if _, err := clean(name, maxFallbackName); err != nil {
+		return "this ontology"
+	}
+	return name
+}
+
+// Fallback is the workflows made from a version's competency questions,
+// without a model (source SourceQuestions, topic "Workflow"): for each of
+// the first Workflow.Count() questions, a report that answers it every
+// Monday by email. A title another question's already took is skipped; no
+// questions, no workflows.
 //
 // A title is the question in a few words (Title); the prompt quotes the
 // question whole, cut with "…" only where the prompt would pass MaxPrompt.
 func Fallback(ontologyName string, questions []string) []Suggestion {
-	name := cut(collapse(ontologyName), maxFallbackName)
+	name := named(ontologyName)
 	out := []Suggestion{}
 	seen := map[string]bool{}
 	for _, q := range questions {
-		if len(out) == MaxSuggestions {
+		if len(out) == Workflow.Count() {
 			break
 		}
 		q = collapse(q)
@@ -143,7 +287,8 @@ func Fallback(ontologyName string, questions []string) []Suggestion {
 		seen[strings.ToLower(title)] = true
 		before, after := `Every Monday, answer: "`, `" from `+name+`, and email me the answer.`
 		room := MaxPrompt - utf8.RuneCountInString(before) - utf8.RuneCountInString(after)
-		out = append(out, Suggestion{Title: title, Prompt: before + cut(q, room) + after, Icon: Report})
+		out = append(out, Suggestion{Kind: Workflow, Title: title, Prompt: before + cut(q, room) + after, Topic: Workflow.topic(), Icon: Report,
+			Source: SourceQuestions})
 	}
 	return out
 }

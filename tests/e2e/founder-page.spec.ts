@@ -16,7 +16,8 @@ import {
 
 // Founder's page (/ask, and /, which opens it): Founder full page, in the
 // Analyst page's chrome. A new chat asks what the user wants to know, with
-// the load's competency questions as chips that fill the composer; a
+// Founder's suggestions under the composer (founder-suggestions.spec.ts),
+// the load's competency questions its Questions, which fill it; a
 // message is a thread of Founder's, whose answers are the Analyst's, inline.
 // Its threads are the dock's, in the sidebar by recency (the page opens the
 // dock's thread, and the dock the page's), with the Analyst's threads from
@@ -81,8 +82,8 @@ test("opens / on Founder's page, where a suggestion fills the composer and the t
   await expect(
     composer.getByText("Looking at: Customer contracts", { exact: true }),
   ).toBeVisible();
-  const suggestions = page.getByRole("group", { name: "Suggested questions" });
-  await expect(suggestions.getByRole("button")).toHaveText([
+  const suggestions = page.getByRole("tabpanel", { name: "Questions" });
+  await expect(suggestions.locator(".fd-card-prompt")).toHaveText([
     "Which customers are under contract, and which contracts are they signed with?",
     "What is each customer under contract billed?",
   ]);
@@ -93,7 +94,7 @@ test("opens / on Founder's page, where a suggestion fills the composer and the t
 
   // A click fills the composer and sends nothing; Send starts a thread.
   const question = "What is each customer under contract billed?";
-  await suggestions.getByRole("button", { name: question }).click();
+  await suggestions.getByRole("button").filter({ hasText: question }).click();
   await expect(box).toHaveValue(question);
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts$/);
   await composer.getByRole("button", { name: "Send", exact: true }).click();

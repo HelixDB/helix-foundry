@@ -148,6 +148,7 @@ type ReadStore interface {
 
 	// Foundry loads and graph jobs, per ontology
 	GetOntologyVersionScope(ctx context.Context, ontologyID, versionID string) ([]string, error)
+	GetOntologyVersionSources(ctx context.Context, ontologyID, versionID string) (*model.OntologyVersionSources, error)
 	GetOntologyVersionMappings(ctx context.Context, ontologyID, versionID string) (string, error)
 	ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, heldSets *[]string, filter model.FoundryDocumentFilter,
 		pageToken string, limit int) ([]*model.FoundryDocument, string, error)

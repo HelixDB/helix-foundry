@@ -3,7 +3,6 @@ import "./founder.css";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CornerDownRight } from "lucide-react";
 import { ApiError } from "../../api";
 import { readStorage, useMedia, useTitle, writeStorage } from "../../kit";
 import { paths } from "../../paths";
@@ -21,6 +20,7 @@ import { PartNote } from "../explore/part-note";
 import { AskPage, ChatBar, ThreadView } from "./ask";
 import { askSuggestions, threadsOf } from "./ask-model";
 import { founderView } from "./founder-model";
+import { FounderSuggestions } from "./founder-suggestions";
 import { FounderThreads } from "./founder-threads";
 import {
   LoadNotice,
@@ -42,8 +42,11 @@ import { OntologyPicker, ontologyName, useOntology } from "./scope";
 // wherever it is asked; without it, the page opens the dock's thread, else a
 // new chat. `?thread=` is an Analyst thread from before Founder, read only,
 // so every Analyst link still reads. A new chat asks what the user wants to
-// know, its composer centred, with the load's competency questions as chips
-// that fill it; `?about=` (an entity page's Ask about this) starts its
+// know, its composer centred, then Founder's suggestions for the ontology
+// (founder-suggestions.tsx): a tab per kind (Questions, Dashboards,
+// Ontologies, Workflows) over its 2 cards, which preview their prompt as
+// the composer's placeholder and fill it on a click (a grantee's: the
+// load's competency questions, as cards); `?about=` (an entity page's Ask about this) starts its
 // message. The shell shows no dock here. Where the WFE has Founder off, the
 // Analyst's page. A grantee's Founder only reads and asks, about the load its
 // grants cover (no Load picker, no cards); where its grants don't cover the
@@ -96,15 +99,18 @@ export function FounderPage() {
     ...questionQueries.list(ws, o),
     enabled: view.kind === "analyst" && access !== "none",
   });
-  // The version the load holds names the suggestions. A version can be
-  // large: it is read for them only while Founder has no thread yet, else
-  // only if a page already read it.
+  // A grantee's suggestions are the competency questions of the version
+  // the load holds. A version can be large: it is read for them only while
+  // Founder has no thread yet, else only if a page already read it.
   const version = useQuery({
     ...ontologyQueries.version(ws, o, load?.versionId || ""),
-    enabled: !!load?.versionId && list?.length === 0,
+    enabled: grantee && !!load?.versionId && list?.length === 0,
   }).data?.version;
   const suggestions = useMemo(() => askSuggestions(version), [version]);
-  // What the new chat's composer starts with: a chip's question, or the
+  // A card's prompt under the pointer or the focus, as the empty
+  // composer's placeholder.
+  const [preview, setPreview] = useState("");
+  // What the new chat's composer starts with: a card's prompt, or the
   // entity an Ask about this link names; a new key makes a new composer.
   const [seed, setSeed] = useState(() => {
     const about = params.get("about")?.trim();
@@ -268,31 +274,24 @@ export function FounderPage() {
             placeholder={
               grantee
                 ? "Ask about the data shared with you…"
-                : `Ask about ${name}, or ask Founder to do something…`
+                : preview ||
+                  `Ask about ${name}, or ask Founder to do something…`
             }
             initialText={seed.text}
             minRows={3}
             onSent={sent}
           />
-          {!nothing && suggestions.length > 0 && (
-            <div
-              className="ak-suggestions"
-              role="group"
-              aria-label="Suggested questions"
-            >
-              {suggestions.map((q) => (
-                <button
-                  key={q}
-                  type="button"
-                  className="ak-suggestion"
-                  onClick={() => setSeed((s) => ({ text: q, n: s.n + 1 }))}
-                >
-                  <CornerDownRight size={14} aria-hidden />
-                  <span>{q}</span>
-                </button>
-              ))}
-            </div>
-          )}
+          <FounderSuggestions
+            ontologyId={o}
+            name={name}
+            versioned={!!ontology?.currentVersionId}
+            questions={suggestions}
+            onPreview={setPreview}
+            onPick={(prompt) => {
+              setPreview("");
+              setSeed((s) => ({ text: prompt, n: s.n + 1 }));
+            }}
+          />
         </div>
       </div>
     </div>

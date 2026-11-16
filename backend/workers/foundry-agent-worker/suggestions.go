@@ -62,9 +62,11 @@ type resolver interface {
 	Resolve(ctx context.Context, workspaceID string) (ai.Resolved, error)
 }
 
-// suggester writes suggestions for a new automation, a few versions at a
-// time, on each workspace's extraction model, its cheapest task model,
-// charged to Founder's monthly budget (package suggest).
+// suggester writes Founder's suggestions of every kind (questions,
+// dashboards, changes to the ontology and workflows) in one call per
+// version, a few versions at a time, on each workspace's extraction model,
+// its cheapest task model, charged to Founder's monthly budget (package
+// suggest).
 type suggester struct {
 	db       suggestionStore
 	ai       resolver
@@ -105,7 +107,7 @@ func (s *suggester) drain(ctx context.Context) {
 var errNotCurrent = errors.New("the version is no longer current")
 
 // write writes a claimed row's suggestions and ends it: ready with what
-// Parse kept, or failed saying why. What its calls spent is charged
+// Parse kept of each kind, or failed saying why. What its calls spent is charged
 // whatever comes of the row. A store read that fails, or a worker's stop
 // before the model answered, leaves it to its lease, to be claimed again.
 func (s *suggester) write(ctx context.Context, row *model.FoundryAutomationSuggestions) {

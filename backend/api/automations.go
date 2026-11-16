@@ -55,15 +55,23 @@ func (c automationCaller) actor() foundrymodel.FoundryAutomationActor {
 	return foundrymodel.FoundryAutomationActor{UserID: c.userID, Manager: c.manager}
 }
 
-// automationCallerOf is the person calling for workspaceID, while
-// automations are on: FAILED_PRECONDITION, reason
+// automationCallerOf is the person calling for workspaceID (personCallerOf),
+// while automations are on: FAILED_PRECONDITION, reason
 // FOUNDRY_AUTOMATIONS_DISABLED, when off.
 func (s *Service) automationCallerOf(ctx context.Context, workspaceID string) (automationCaller, error) {
-	switch {
-	case workspaceID == "":
-		return automationCaller{}, status.Error(codes.InvalidArgument, "workspace_id is required")
-	case !s.deps.Cfg.Foundry.Automations.Enabled:
+	if workspaceID != "" && !s.deps.Cfg.Foundry.Automations.Enabled {
 		return automationCaller{}, foundryPrecondition(workspaceID, "FOUNDRY_AUTOMATIONS_DISABLED", "workflows aren't available here")
+	}
+	return s.personCallerOf(ctx, workspaceID)
+}
+
+// personCallerOf is the person calling for workspaceID, signed in to the
+// site or through the MCP as themselves: INVALID_ARGUMENT without a
+// workspace, PERMISSION_DENIED for a grantee of source grants, a service
+// key or anyone else.
+func (s *Service) personCallerOf(ctx context.Context, workspaceID string) (automationCaller, error) {
+	if workspaceID == "" {
+		return automationCaller{}, status.Error(codes.InvalidArgument, "workspace_id is required")
 	}
 	if _, ok := access.GranteeFrom(ctx); ok {
 		return automationCaller{}, status.Error(codes.PermissionDenied, "workflows are people's: sign in to Foundry")

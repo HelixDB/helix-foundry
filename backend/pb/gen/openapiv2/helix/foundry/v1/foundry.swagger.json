@@ -1139,7 +1139,7 @@
     },
     "/v1/workspaces/{workspaceId}/foundry/automation-suggestions": {
       "get": {
-        "summary": "Suggestions for a new automation, written for one ontology's current\nversion: at most 4 prompts that fill the new automation page's composer\nfor the person to edit and send, never run. Founder writes them\nonce per version, on the workspace's cheapest task model (the AI\nsetting's extraction model), charged to Founder's monthly budget;\nuntil then, and where it can't (no AI provider, Founder off, its\nbudget or the workspace's 20 writes an hour spent, a failure), they are\nmade from the version's competency questions. The same callers as the\nother automation routes; an ontology the workspace hasn't is NOT_FOUND.",
+        "summary": "Suggestions for Founder, written for one ontology's current version:\nprompts of four kinds (2 questions, 2 dashboards, 2 changes to the\nontology and 4 workflows, in that order) that fill a composer for the\nperson to edit and send, never run: Founder's new chat shows each\nkind's first 2 as cards, the new workflow page the workflows. Founder\nwrites them once per version in one call, on the workspace's cheapest\ntask model (the AI setting's extraction model), charged to its monthly\nbudget. Each kind is filled to its count, in order, from: questions,\nthe version's competency questions, then the model's; dashboards and\nworkflows, the model's, then the competency questions'; changes to the\nontology, its open audit findings and the connections and document sets\nit doesn't read, then the model's; then fixed examples. So until\nFounder has written them (generating), and where it can't (no AI\nprovider, Founder off, its budget or the workspace's 20 writes an hour\nspent, a failure), every kind still has its count. Without a current\nversion, every kind is fixed examples. Workflows are left out where the\ndeployment has none. Any signed-in member may read them (a grantee may\nnot); an ontology the workspace hasn't is NOT_FOUND.",
         "operationId": "FoundryService_ListFoundryAutomationSuggestions",
         "responses": {
           "200": {
@@ -9159,13 +9159,25 @@
         },
         "prompt": {
           "type": "string",
-          "description": "When it starts and what it does, in plain words: 1 to 400 characters."
+          "description": "What to ask Founder, in plain words: 1 to 400 characters. A workflow's\nsays when it starts and what it does."
         },
         "icon": {
-          "$ref": "#/definitions/v1FoundryAutomationSuggestionIcon"
+          "$ref": "#/definitions/v1FoundryAutomationSuggestionIcon",
+          "description": "A workflow's icon; UNSPECIFIED for the other kinds."
+        },
+        "kind": {
+          "$ref": "#/definitions/v1FoundryAutomationSuggestionKind"
+        },
+        "topic": {
+          "type": "string",
+          "description": "What it is about, 1 to 24 characters, for a card's label: \"Revenue\",\n\"Data quality\", or the kind's own name."
+        },
+        "source": {
+          "$ref": "#/definitions/v1FoundryAutomationSuggestionSource",
+          "description": "Where it came from."
         }
       },
-      "description": "FoundryAutomationSuggestion is a prompt for a new automation: a person\nreads its title, and clicking it fills the composer with its prompt for\nthem to edit and send. A model may have written it: it is data, never\ninstructions."
+      "description": "FoundryAutomationSuggestion is a prompt for Founder, of one kind: a\nquestion for the data, a dashboard, a change to the ontology, or a\nworkflow. The new workflow page shows the workflows' titles; Founder's\nnew chat shows each kind's prompts as cards. Clicking one fills the\ncomposer with its prompt for the person to edit and send, never run. A\nmodel may have written it: it is data, never instructions."
     },
     "v1FoundryAutomationSuggestionIcon": {
       "type": "string",
@@ -9181,15 +9193,29 @@
       "default": "FOUNDRY_AUTOMATION_SUGGESTION_ICON_UNSPECIFIED",
       "description": "FoundryAutomationSuggestionIcon is the kind of thing a suggestion does,\nfor its icon.\n\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_BRIEFING: A regular summary.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH: Keeping an eye on something coming up.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_CHECK: Checking new data against a standard.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_ALERT: Telling someone when something goes wrong.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_REFRESH: Keeping data fresh: syncs and loads.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_REPORT: Answering a question and sending the answer."
     },
+    "v1FoundryAutomationSuggestionKind": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_AUTOMATION_SUGGESTION_KIND_UNSPECIFIED",
+        "FOUNDRY_AUTOMATION_SUGGESTION_KIND_QUESTION",
+        "FOUNDRY_AUTOMATION_SUGGESTION_KIND_DASHBOARD",
+        "FOUNDRY_AUTOMATION_SUGGESTION_KIND_ONTOLOGY",
+        "FOUNDRY_AUTOMATION_SUGGESTION_KIND_WORKFLOW"
+      ],
+      "default": "FOUNDRY_AUTOMATION_SUGGESTION_KIND_UNSPECIFIED",
+      "description": "FoundryAutomationSuggestionKind is what a suggestion asks Founder for.\n\n - FOUNDRY_AUTOMATION_SUGGESTION_KIND_UNSPECIFIED: A WFE before kinds: a workflow.\n - FOUNDRY_AUTOMATION_SUGGESTION_KIND_QUESTION: A question about the data, which Founder asks the Analyst.\n - FOUNDRY_AUTOMATION_SUGGESTION_KIND_DASHBOARD: A dashboard, which Founder makes.\n - FOUNDRY_AUTOMATION_SUGGESTION_KIND_ONTOLOGY: A change to the ontology, which Founder drafts as a new version.\n - FOUNDRY_AUTOMATION_SUGGESTION_KIND_WORKFLOW: A workflow, which Founder prepares for the person to approve."
+    },
     "v1FoundryAutomationSuggestionSource": {
       "type": "string",
       "enum": [
         "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED",
         "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_MODEL",
-        "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS"
+        "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS",
+        "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_SETUP",
+        "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_FIXED"
       ],
       "default": "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED",
-      "description": "FoundryAutomationSuggestionSource is where suggestions came from.\n\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED: None: the ontology has no current version, or nothing to suggest.\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_MODEL: The Assistant wrote them for the version.\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS: Made from the version's competency questions, without a model."
+      "description": "FoundryAutomationSuggestionSource is where suggestions came from.\n\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED: None: a WFE before sources, or nothing to suggest.\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_MODEL: Founder wrote them for the version.\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS: Made from the version's competency questions, without a model.\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_SETUP: Made from the ontology's setup, without a model: its open audit\nfindings, and the connections and document sets it doesn't read yet.\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_FIXED: Fixed examples, named for the ontology."
     },
     "v1FoundryCatalogPlan": {
       "type": "object",
@@ -12297,11 +12323,11 @@
             "type": "object",
             "$ref": "#/definitions/v1FoundryAutomationSuggestion"
           },
-          "description": "At most 4, in order; none when the ontology has no current version, or\nno competency questions to fall back on."
+          "description": "Each kind's, kinds in their enum's order: at most 10."
         },
         "source": {
           "$ref": "#/definitions/v1FoundryAutomationSuggestionSource",
-          "description": "Where they came from."
+          "description": "Where the first workflow came from (each suggestion says its own)."
         },
         "generating": {
           "type": "boolean",

@@ -266,6 +266,12 @@ export type AnalyticsEvents = {
     outcome: "succeeded" | "failed" | "unknown";
   };
   agent_action_undone: { operation: AgentOperationName };
+  // A suggestion card of Founder's new chat put in its composer: its kind
+  // and where it came from, never its prompt.
+  agent_suggestion_picked: {
+    kind: "question" | "dashboard" | "ontology" | "workflow";
+    source: "model" | "questions" | "setup" | "fixed";
+  };
   // Where a local install's Assistant runs (Settings › AI models): the
   // runtime chosen, a pairing code made, a helper seen paired after one, a
   // helper revoked.

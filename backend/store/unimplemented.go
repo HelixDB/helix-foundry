@@ -570,6 +570,10 @@ func (u Unimplemented) GetOntologyVersionScope(context.Context, string, string) 
 	u.unimplemented("GetOntologyVersionScope")
 	return nil, nil
 }
+func (u Unimplemented) GetOntologyVersionSources(context.Context, string, string) (*model.OntologyVersionSources, error) {
+	u.unimplemented("GetOntologyVersionSources")
+	return nil, nil
+}
 func (u Unimplemented) GetOntologyVersionMappings(context.Context, string, string) (string, error) {
 	u.unimplemented("GetOntologyVersionMappings")
 	return "", nil

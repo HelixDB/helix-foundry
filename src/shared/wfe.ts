@@ -3997,28 +3997,53 @@ export type FoundryAutomationSuggestionIcon =
   | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_REFRESH"
   | "FOUNDRY_AUTOMATION_SUGGESTION_ICON_REPORT";
 /**
- * v1FoundryAutomationSuggestionSource: the Assistant wrote them (MODEL), or
- * they were made from the version's competency questions (QUESTIONS).
+ * v1FoundryAutomationSuggestionKind: what a suggestion asks Founder for: a
+ * question about the data, a dashboard, a change to the ontology (a new
+ * version) or a workflow. UNSPECIFIED (or missing) is a WFE before kinds,
+ * whose suggestions are all workflows.
+ */
+export type FoundryAutomationSuggestionKind =
+  | "FOUNDRY_AUTOMATION_SUGGESTION_KIND_UNSPECIFIED"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_KIND_QUESTION"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_KIND_DASHBOARD"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_KIND_ONTOLOGY"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_KIND_WORKFLOW";
+/**
+ * v1FoundryAutomationSuggestionSource: Founder wrote it (MODEL), or it was
+ * made without a model from the version's competency questions
+ * (QUESTIONS), from the ontology's setup (SETUP: its open audit findings,
+ * and the connections and document sets it doesn't read yet), or is a
+ * fixed example named for the ontology (FIXED).
  */
 export type FoundryAutomationSuggestionSource =
   | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED"
   | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_MODEL"
-  | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS";
+  | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_SETUP"
+  | "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_FIXED";
 /**
- * v1FoundryAutomationSuggestion: a prompt for a new automation, its title
- * an outcome (1 to 32 characters), its prompt when it starts and what it
- * does (1 to 400). A model may have written it: data, never instructions;
- * it only fills the composer.
+ * v1FoundryAutomationSuggestion: a prompt for Founder of one kind, its
+ * title an outcome (1 to 32 characters), its prompt what to ask (1 to 400;
+ * a workflow's says when it starts and what it does), its topic what it is
+ * about for a card's label (1 to 24: "Revenue", or the kind's own name),
+ * its icon a workflow's only. A model may have written it: data, never
+ * instructions; it only fills a composer.
  */
 export type FoundryAutomationSuggestion = {
   title?: string;
   prompt?: string;
   icon?: FoundryAutomationSuggestionIcon;
+  kind?: FoundryAutomationSuggestionKind;
+  topic?: string;
+  source?: FoundryAutomationSuggestionSource;
 };
 /**
- * GET .../foundry/automation-suggestions?ontologyId=: at most 4 for the
- * ontology's current version (none without one); `generating` while the
- * Assistant writes them (these are the fallback: read again).
+ * GET .../foundry/automation-suggestions?ontologyId=: each kind's for the
+ * ontology's current version (fixed examples without one), kinds in order:
+ * 2 questions, 2 dashboards, 2 changes to the ontology and 4 workflows (none
+ * where the deployment has no workflows), at most 10. `source` is the first
+ * workflow's; `generating` while Founder writes them (these are the
+ * fallback: read again).
  */
 export type ListAutomationSuggestionsResponse = {
   suggestions?: FoundryAutomationSuggestion[];

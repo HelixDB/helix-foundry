@@ -2822,16 +2822,40 @@ message FoundryDashboardShare {
   string published_by_user_id = 5;
 }
 
-// FoundryAutomationSuggestion is a prompt for a new automation: a person
-// reads its title, and clicking it fills the composer with its prompt for
-// them to edit and send. A model may have written it: it is data, never
-// instructions.
+// FoundryAutomationSuggestion is a prompt for Founder, of one kind: a
+// question for the data, a dashboard, a change to the ontology, or a
+// workflow. The new workflow page shows the workflows' titles; Founder's
+// new chat shows each kind's prompts as cards. Clicking one fills the
+// composer with its prompt for the person to edit and send, never run. A
+// model may have written it: it is data, never instructions.
 message FoundryAutomationSuggestion {
   // An outcome, 1 to 32 characters: "Renewal radar".
   string title = 1;
-  // When it starts and what it does, in plain words: 1 to 400 characters.
+  // What to ask Founder, in plain words: 1 to 400 characters. A workflow's
+  // says when it starts and what it does.
   string prompt = 2;
+  // A workflow's icon; UNSPECIFIED for the other kinds.
   FoundryAutomationSuggestionIcon icon = 3;
+  FoundryAutomationSuggestionKind kind = 4;
+  // What it is about, 1 to 24 characters, for a card's label: "Revenue",
+  // "Data quality", or the kind's own name.
+  string topic = 5;
+  // Where it came from.
+  FoundryAutomationSuggestionSource source = 6;
+}
+
+// FoundryAutomationSuggestionKind is what a suggestion asks Founder for.
+enum FoundryAutomationSuggestionKind {
+  // A WFE before kinds: a workflow.
+  FOUNDRY_AUTOMATION_SUGGESTION_KIND_UNSPECIFIED = 0;
+  // A question about the data, which Founder asks the Analyst.
+  FOUNDRY_AUTOMATION_SUGGESTION_KIND_QUESTION = 1;
+  // A dashboard, which Founder makes.
+  FOUNDRY_AUTOMATION_SUGGESTION_KIND_DASHBOARD = 2;
+  // A change to the ontology, which Founder drafts as a new version.
+  FOUNDRY_AUTOMATION_SUGGESTION_KIND_ONTOLOGY = 3;
+  // A workflow, which Founder prepares for the person to approve.
+  FOUNDRY_AUTOMATION_SUGGESTION_KIND_WORKFLOW = 4;
 }
 
 // FoundryAutomationSuggestionIcon is the kind of thing a suggestion does,
@@ -2854,12 +2878,17 @@ enum FoundryAutomationSuggestionIcon {
 
 // FoundryAutomationSuggestionSource is where suggestions came from.
 enum FoundryAutomationSuggestionSource {
-  // None: the ontology has no current version, or nothing to suggest.
+  // None: a WFE before sources, or nothing to suggest.
   FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED = 0;
-  // The Assistant wrote them for the version.
+  // Founder wrote them for the version.
   FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_MODEL = 1;
   // Made from the version's competency questions, without a model.
   FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS = 2;
+  // Made from the ontology's setup, without a model: its open audit
+  // findings, and the connections and document sets it doesn't read yet.
+  FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_SETUP = 3;
+  // Fixed examples, named for the ontology.
+  FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_FIXED = 4;
 }
 
 // FoundryAutomation is an automation: its spec, whether it runs, and what the

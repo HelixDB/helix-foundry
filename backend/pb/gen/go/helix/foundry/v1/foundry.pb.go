@@ -13714,10 +13714,9 @@ type ListFoundryAutomationSuggestionsResponse struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// At most 4, in order; none when the ontology has no current version, or
-	// no competency questions to fall back on.
+	// Each kind's, kinds in their enum's order: at most 10.
 	Suggestions []*FoundryAutomationSuggestion `protobuf:"bytes,1,rep,name=suggestions,proto3" json:"suggestions,omitempty"`
-	// Where they came from.
+	// Where the first workflow came from (each suggestion says its own).
 	Source FoundryAutomationSuggestionSource `protobuf:"varint,2,opt,name=source,proto3,enum=helix.foundry.v1.FoundryAutomationSuggestionSource" json:"source,omitempty"`
 	// Founder is writing them: these are the fallback; read again in a
 	// few seconds.
