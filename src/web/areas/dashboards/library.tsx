@@ -5,7 +5,12 @@ import { Clock } from "lucide-react";
 import type { FoundryDashboard } from "../../../shared/wfe";
 import { Tag, cx, formatDate, formatRelative } from "../../kit";
 import { useWorkspace } from "../../ui";
-import { parseSpec, previewRows, type PreviewTile, type TileGlyph } from "./model";
+import {
+  parseSpec,
+  previewRows,
+  type PreviewTile,
+  type TileGlyph,
+} from "./model";
 import { dashboardPaths as paths } from "./paths";
 import { dashboardQueries } from "./queries";
 
@@ -43,15 +48,30 @@ function Glyph({ glyph }: { glyph: TileGlyph }) {
       return <span className="db-mini-figure" />;
     case "bar":
       return (
-        <svg className="db-mini-chart" viewBox="0 0 60 28" preserveAspectRatio="none">
+        <svg
+          className="db-mini-chart"
+          viewBox="0 0 60 28"
+          preserveAspectRatio="none"
+        >
           {[14, 22, 10, 26, 18, 8].map((h, i) => (
-            <rect key={i} x={2 + i * 10} y={28 - h} width={6} height={h} rx={1} />
+            <rect
+              key={i}
+              x={2 + i * 10}
+              y={28 - h}
+              width={6}
+              height={h}
+              rx={1}
+            />
           ))}
         </svg>
       );
     case "line":
       return (
-        <svg className="db-mini-chart" viewBox="0 0 60 28" preserveAspectRatio="none">
+        <svg
+          className="db-mini-chart"
+          viewBox="0 0 60 28"
+          preserveAspectRatio="none"
+        >
           <polyline points="0,22 10,18 20,20 30,11 40,14 50,6 60,9" />
         </svg>
       );
@@ -131,7 +151,11 @@ export function DashboardCard({
       <Miniature rows={rows} />
       <div className="db-card-body">
         <h2 className="db-card-name">
-          <Link to={paths.dashboard(d.id)} className="db-card-link" title={name}>
+          <Link
+            to={paths.dashboard(d.id)}
+            className="db-card-link"
+            title={name}
+          >
             {name}
           </Link>
         </h2>

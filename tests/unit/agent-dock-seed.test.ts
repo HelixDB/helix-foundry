@@ -48,7 +48,9 @@ describe("Founder's dock from a compose", () => {
   it("opens a new thread whose composer holds the text", () => {
     const html = render({ text: NEW_DASHBOARD_PROMPT, n: 1 });
     expect(html).toContain("New thread");
-    expect(html).toMatch(/<textarea[^>]*>Build me a dashboard for: <\/textarea>/);
+    expect(html).toMatch(
+      /<textarea[^>]*>Build me a dashboard for: <\/textarea>/,
+    );
   });
 
   it("starts empty without one", () => {

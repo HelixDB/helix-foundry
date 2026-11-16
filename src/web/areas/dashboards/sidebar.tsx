@@ -4,13 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Globe, Pin, Plus } from "lucide-react";
 import { FOUNDER } from "../../../shared/deployment";
 import type { FoundryDashboard } from "../../../shared/wfe";
-import {
-  Button,
-  SkeletonText,
-  cx,
-  formatRelative,
-  useNow,
-} from "../../kit";
+import { Button, SkeletonText, cx, formatRelative, useNow } from "../../kit";
 import { useShell } from "../../shell/context";
 import { useWorkspace } from "../../ui";
 import { NEW_DASHBOARD_PROMPT } from "./model";

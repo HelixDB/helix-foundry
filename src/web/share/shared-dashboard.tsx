@@ -168,8 +168,8 @@ export function SharedDashboardPage({
         {shown && (
           <footer className="db-public-foot">
             <p>
-              A snapshot: whoever shared it chose what it shows, and it
-              doesn’t change until they publish it again.
+              A snapshot: whoever shared it chose what it shows, and it doesn’t
+              change until they publish it again.
             </p>
             <a href="/" className="db-public-made" rel="noopener noreferrer">
               Made with Helix Foundry

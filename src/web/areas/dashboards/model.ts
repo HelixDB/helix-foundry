@@ -474,10 +474,7 @@ export const NEW_DASHBOARD_PROMPT = "Build me a dashboard for: ";
 export type LibraryFilter = "all" | "pinned" | "yours";
 
 const folded = (text: string) =>
-  text
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .toLowerCase();
+  text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
 /**
  * The dashboards the library shows, in the list's order (pinned first, as

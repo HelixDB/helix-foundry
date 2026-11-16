@@ -664,7 +664,10 @@ describe("tileGlyph", () => {
 
   it("draws a query it can't read as a table", () => {
     expect(
-      tileGlyph({ query: null as unknown as DashboardTile["query"], visual: {} }),
+      tileGlyph({
+        query: null as unknown as DashboardTile["query"],
+        visual: {},
+      }),
     ).toBe("table");
     expect(glyph({})).toBe("table");
   });

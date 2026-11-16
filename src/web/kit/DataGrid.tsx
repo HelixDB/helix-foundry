@@ -231,147 +231,149 @@ export function DataGrid<Row extends Record<string, any>>({
       )}
     >
       <div className="hf-grid-view">
-      <div
-        ref={scroller}
-        className="hf-grid"
-        role="grid"
-        aria-label={label}
-        aria-rowcount={sorted.length + 1}
-        aria-colcount={cols.length}
-        aria-busy={loading || undefined}
-        style={
-          {
-            maxHeight,
-            "--hf-grid-template": template,
-            "--hf-grid-row": rowHeight + "px",
-          } as CSSProperties
-        }
-        onScroll={onScroll}
-      >
-        <div ref={inner} className="hf-grid-inner" style={{ minWidth }}>
-          <div
-            className="hf-grid-row hf-grid-head"
-            role="row"
-            aria-rowindex={1}
-          >
-            {cols.map((c, ci) => {
-              const Icon = icons[c.kind];
-              const active = sort?.key === c.key;
-              const sortable = c.sortable !== false;
-              return (
-                <div
-                  key={c.key}
-                  role="columnheader"
-                  aria-colindex={ci + 1}
-                  aria-sort={
-                    active
-                      ? sort!.dir === "asc"
-                        ? "ascending"
-                        : "descending"
-                      : undefined
-                  }
-                  className={cx("hf-grid-th", `is-${c.align}`, c.className)}
-                >
-                  <button
-                    type="button"
-                    disabled={!sortable}
-                    onClick={() => toggle(c.key)}
-                    // A header too long for its column shows whole on hover.
-                    title={
-                      typeof c.label === "string" ? c.label : c.type || c.kind
-                    }
-                  >
-                    <Icon size={12} className="hf-grid-type" aria-hidden />
-                    <span>{c.label ?? c.key}</span>
-                    {active &&
-                      (sort!.dir === "asc" ? (
-                        <ArrowUp size={12} aria-hidden />
-                      ) : (
-                        <ArrowDown size={12} aria-hidden />
-                      ))}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-          {loading ? (
-            Array.from({ length: 6 }, (_, i) => (
-              <div key={i} className="hf-grid-row" role="row">
-                {cols.map((c) => (
-                  <div key={c.key} className="hf-grid-td" role="gridcell">
-                    <span className="hf-skeleton" style={{ width: "70%" }} />
-                  </div>
-                ))}
-              </div>
-            ))
-          ) : !sorted.length ? (
-            <div className="hf-grid-empty" role="row">
-              <div role="gridcell">{emptyText}</div>
-            </div>
-          ) : (
-            <>
-              <div style={{ height: start * rowHeight }} aria-hidden />
-              {sorted.slice(start, end).map((r, offset) => {
-                const i = start + offset,
-                  key = keyOf(r, i);
+        <div
+          ref={scroller}
+          className="hf-grid"
+          role="grid"
+          aria-label={label}
+          aria-rowcount={sorted.length + 1}
+          aria-colcount={cols.length}
+          aria-busy={loading || undefined}
+          style={
+            {
+              maxHeight,
+              "--hf-grid-template": template,
+              "--hf-grid-row": rowHeight + "px",
+            } as CSSProperties
+          }
+          onScroll={onScroll}
+        >
+          <div ref={inner} className="hf-grid-inner" style={{ minWidth }}>
+            <div
+              className="hf-grid-row hf-grid-head"
+              role="row"
+              aria-rowindex={1}
+            >
+              {cols.map((c, ci) => {
+                const Icon = icons[c.kind];
+                const active = sort?.key === c.key;
+                const sortable = c.sortable !== false;
                 return (
                   <div
-                    key={key}
-                    role="row"
-                    aria-rowindex={i + 2}
-                    aria-selected={
-                      selectedKey !== undefined
-                        ? selectedKey === key
+                    key={c.key}
+                    role="columnheader"
+                    aria-colindex={ci + 1}
+                    aria-sort={
+                      active
+                        ? sort!.dir === "asc"
+                          ? "ascending"
+                          : "descending"
                         : undefined
                     }
-                    tabIndex={onRowClick ? 0 : undefined}
-                    className={cx(
-                      "hf-grid-row",
-                      onRowClick && "is-clickable",
-                      selectedKey === key && "is-selected",
-                    )}
-                    onClick={onRowClick ? () => onRowClick(r, i) : undefined}
-                    onKeyDown={
-                      onRowClick ? (e) => activate(e, r, i) : undefined
-                    }
+                    className={cx("hf-grid-th", `is-${c.align}`, c.className)}
                   >
-                    {cols.map((c, ci) => {
-                      const value = r[c.key];
-                      const text = c.render ? null : formatValue(value, c.kind);
-                      return (
-                        <div
-                          key={c.key}
-                          role="gridcell"
-                          aria-colindex={ci + 1}
-                          className={cx(
-                            "hf-grid-td",
-                            `is-${c.align}`,
-                            `is-${c.kind}`,
-                            c.className,
-                          )}
-                          title={text ?? undefined}
-                        >
-                          {c.render ? (
-                            c.render(r, value)
-                          ) : text === null ? (
-                            <span className="hf-null">null</span>
-                          ) : (
-                            text
-                          )}
-                        </div>
-                      );
-                    })}
+                    <button
+                      type="button"
+                      disabled={!sortable}
+                      onClick={() => toggle(c.key)}
+                      // A header too long for its column shows whole on hover.
+                      title={
+                        typeof c.label === "string" ? c.label : c.type || c.kind
+                      }
+                    >
+                      <Icon size={12} className="hf-grid-type" aria-hidden />
+                      <span>{c.label ?? c.key}</span>
+                      {active &&
+                        (sort!.dir === "asc" ? (
+                          <ArrowUp size={12} aria-hidden />
+                        ) : (
+                          <ArrowDown size={12} aria-hidden />
+                        ))}
+                    </button>
                   </div>
                 );
               })}
-              <div
-                style={{ height: (sorted.length - end) * rowHeight }}
-                aria-hidden
-              />
-            </>
-          )}
+            </div>
+            {loading ? (
+              Array.from({ length: 6 }, (_, i) => (
+                <div key={i} className="hf-grid-row" role="row">
+                  {cols.map((c) => (
+                    <div key={c.key} className="hf-grid-td" role="gridcell">
+                      <span className="hf-skeleton" style={{ width: "70%" }} />
+                    </div>
+                  ))}
+                </div>
+              ))
+            ) : !sorted.length ? (
+              <div className="hf-grid-empty" role="row">
+                <div role="gridcell">{emptyText}</div>
+              </div>
+            ) : (
+              <>
+                <div style={{ height: start * rowHeight }} aria-hidden />
+                {sorted.slice(start, end).map((r, offset) => {
+                  const i = start + offset,
+                    key = keyOf(r, i);
+                  return (
+                    <div
+                      key={key}
+                      role="row"
+                      aria-rowindex={i + 2}
+                      aria-selected={
+                        selectedKey !== undefined
+                          ? selectedKey === key
+                          : undefined
+                      }
+                      tabIndex={onRowClick ? 0 : undefined}
+                      className={cx(
+                        "hf-grid-row",
+                        onRowClick && "is-clickable",
+                        selectedKey === key && "is-selected",
+                      )}
+                      onClick={onRowClick ? () => onRowClick(r, i) : undefined}
+                      onKeyDown={
+                        onRowClick ? (e) => activate(e, r, i) : undefined
+                      }
+                    >
+                      {cols.map((c, ci) => {
+                        const value = r[c.key];
+                        const text = c.render
+                          ? null
+                          : formatValue(value, c.kind);
+                        return (
+                          <div
+                            key={c.key}
+                            role="gridcell"
+                            aria-colindex={ci + 1}
+                            className={cx(
+                              "hf-grid-td",
+                              `is-${c.align}`,
+                              `is-${c.kind}`,
+                              c.className,
+                            )}
+                            title={text ?? undefined}
+                          >
+                            {c.render ? (
+                              c.render(r, value)
+                            ) : text === null ? (
+                              <span className="hf-null">null</span>
+                            ) : (
+                              text
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+                <div
+                  style={{ height: (sorted.length - end) * rowHeight }}
+                  aria-hidden
+                />
+              </>
+            )}
+          </div>
         </div>
-      </div>
       </div>
       {footer && <div className="hf-grid-foot">{footer}</div>}
     </div>

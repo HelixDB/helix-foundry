@@ -403,7 +403,10 @@ test("the library: a card per dashboard with its miniature, searched and filtere
   await loadContracts(page);
   await makeDashboard(page, "Revenue");
   const health = await makeDashboard(page, "Invoice health", [
-    tile("n", "Invoices", { start: { type: "Invoice" }, return: { count: {} } }),
+    tile("n", "Invoices", {
+      start: { type: "Invoice" },
+      return: { count: {} },
+    }),
     tile("s", "By status", BY_STATUS, "line"),
   ]);
   await postToWfe(page, `${D}/${health}:pin`, {
@@ -437,7 +440,9 @@ test("the library: a card per dashboard with its miniature, searched and filtere
   await expect(page.getByText("1 of 2 dashboards")).toBeVisible();
   await search.fill("nothing like it");
   await expect(
-    page.getByRole("heading", { name: "No dashboards match “nothing like it”" }),
+    page.getByRole("heading", {
+      name: "No dashboards match “nothing like it”",
+    }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Show all dashboards" }).click();
   await expect(cards.getByRole("article")).toHaveCount(2);
@@ -457,9 +462,9 @@ test("the library: a card per dashboard with its miniature, searched and filtere
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/dashboards");
   await expect(cards.getByRole("article")).toHaveCount(2);
-  const [a, b] = await cards.getByRole("article").evaluateAll((els) =>
-    els.map((e) => e.getBoundingClientRect().left),
-  );
+  const [a, b] = await cards
+    .getByRole("article")
+    .evaluateAll((els) => els.map((e) => e.getBoundingClientRect().left));
   expect(a).toBe(b);
   expect(
     await page.evaluate(
@@ -558,11 +563,13 @@ test("a public dashboard's wide table scrolls inside its tile, never the page", 
     .getByRole("figure", { name: "Unpaid or overdue invoices by account" })
     .getByRole("grid");
   await expect(table.getByRole("columnheader")).toHaveCount(7);
-  await expect(pub.getByRole("link", { name: "Helix Foundry", exact: true })).toBeVisible();
+  await expect(
+    pub.getByRole("link", { name: "Helix Foundry", exact: true }),
+  ).toBeVisible();
   // The table is wider than its tile and scrolls; the page doesn't.
-  expect(
-    await table.evaluate((el) => el.scrollWidth > el.clientWidth),
-  ).toBe(true);
+  expect(await table.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+    true,
+  );
   expect(
     await pub.evaluate(
       () => document.scrollingElement!.scrollWidth <= window.innerWidth,
