@@ -452,8 +452,7 @@ FROM foundry_agent_turns WHERE workspace_id=? AND id<>? AND (status='running' OR
 			if !automation {
 				// People's pool also pays for automation suggestions.
 				var suggestions int64
-				if err := tx.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(usd_micros), 0) FROM foundry_automation_suggestions
-WHERE workspace_id=? AND charged_at >= ?`, t.WorkspaceID, l.Since.UTC()).Scan(&suggestions); err != nil {
+				if err := tx.db.QueryRowContext(ctx, `SELECT `+foundryAutomationSuggestionsSpent, t.WorkspaceID, l.Since.UTC()).Scan(&suggestions); err != nil {
 					return err
 				}
 				settled += suggestions

@@ -65,7 +65,7 @@ func (s *suggestionStore) GetFoundryAutomationSuggestions(_ context.Context, ont
 	return &row, nil
 }
 
-func (s *suggestionStore) QueueFoundryAutomationSuggestions(_ context.Context, ws, ontologyID, versionID string, perHour int,
+func (s *suggestionStore) QueueFoundryAutomationSuggestions(_ context.Context, ws, ontologyID, versionID string, questions []string, perHour int,
 	retryAfter time.Duration) (*foundrymodel.FoundryAutomationSuggestions, error) {
 	s.queued++
 	if s.queueErr != nil {
@@ -74,7 +74,7 @@ func (s *suggestionStore) QueueFoundryAutomationSuggestions(_ context.Context, w
 	if ws != "ws-1" || perHour != suggest.PerHour || retryAfter != suggest.RetryAfter {
 		return nil, errors.New("queued for the wrong workspace or limits")
 	}
-	s.row = &foundrymodel.FoundryAutomationSuggestions{OntologyID: ontologyID, VersionID: versionID, WorkspaceID: ws,
+	s.row = &foundrymodel.FoundryAutomationSuggestions{OntologyID: ontologyID, VersionID: versionID, WorkspaceID: ws, Questions: questions,
 		Status: foundrymodel.FoundryAutomationSuggestionsQueued, RequestedAt: time.Now(), UpdatedAt: time.Now()}
 	return s.row, nil
 }
@@ -145,13 +145,18 @@ func TestAutomationSuggestionsFirstReadQueuesAWrite(t *testing.T) {
 		out.GetSuggestions()[0].GetPrompt())
 	assert.Equal(t, foundryv1.FoundryAutomationSuggestionIcon_FOUNDRY_AUTOMATION_SUGGESTION_ICON_REPORT, out.GetSuggestions()[0].GetIcon())
 	assert.Equal(t, 1, store.queued)
+	assert.Equal(t, 1, store.versionReads)
 
-	// Polls while it is queued, then running, wait without queueing again.
+	// Polls while it is queued, then running, wait without queueing again,
+	// and answer from the questions the row holds, never reading the
+	// version again.
 	out = listSuggestions(t, s)
 	assert.True(t, out.GetGenerating())
+	assert.Equal(t, fallbackTitles, suggestionTitles(out))
 	store.row.Status = foundrymodel.FoundryAutomationSuggestionsRunning
 	assert.True(t, listSuggestions(t, s).GetGenerating())
 	assert.Equal(t, 1, store.queued)
+	assert.Equal(t, 1, store.versionReads, "the version is read once, when queued")
 
 	// Queued past suggest.StaleAfter, the worker is taken to be down.
 	store.row.RequestedAt = time.Now().Add(-suggest.StaleAfter - time.Second)
@@ -164,6 +169,7 @@ func TestAutomationSuggestionsFirstReadQueuesAWrite(t *testing.T) {
 func TestAutomationSuggestionsReady(t *testing.T) {
 	s, store := suggestionService(t)
 	store.row = &foundrymodel.FoundryAutomationSuggestions{OntologyID: "ont-1", VersionID: "ver-1", Status: foundrymodel.FoundryAutomationSuggestionsReady,
+		Questions: []string{"Which customers are under contract?"},
 		Suggestions: json.RawMessage(`[{"title":"Renewal radar","prompt":"Every Monday at 9am, list renewals due in 30 days and email me.","icon":"watch"},
 		  {"title":"Invoice watch","prompt":"Every day, email me new overdue invoices.","icon":"alert"}]`)}
 	out := listSuggestions(t, s)
@@ -186,11 +192,14 @@ func TestAutomationSuggestionsReady(t *testing.T) {
 	out = listSuggestions(t, s)
 	assert.Equal(t, questionsSource, out.GetSource())
 	assert.False(t, out.GetGenerating())
+	assert.Equal(t, []string{"Customers are under contract"}, suggestionTitles(out), "from the questions the row holds")
+	assert.Zero(t, store.versionReads)
 }
 
 func TestAutomationSuggestionsAfterAFailure(t *testing.T) {
 	s, store := suggestionService(t)
 	failed := &foundrymodel.FoundryAutomationSuggestions{OntologyID: "ont-1", VersionID: "ver-1", Status: foundrymodel.FoundryAutomationSuggestionsFailed,
+		Questions:   []string{"Which customers are under contract?", "How many invoices are overdue?", "When does each term end?"},
 		RequestedAt: time.Now().Add(-time.Minute), UpdatedAt: time.Now().Add(-time.Minute)}
 	store.row = failed
 	out := listSuggestions(t, s)
@@ -202,6 +211,26 @@ func TestAutomationSuggestionsAfterAFailure(t *testing.T) {
 	out = listSuggestions(t, s)
 	assert.True(t, out.GetGenerating(), "an hour on, a read queues it again")
 	assert.Equal(t, 1, store.queued)
+	assert.Zero(t, store.versionReads, "with the questions the row holds")
+	assert.Equal(t, failed.Questions, store.row.Questions)
+}
+
+// The fallback reads past the first four questions for four titles: two
+// questions that make one title leave room for a fifth.
+func TestAutomationSuggestionsFallbackReadsPastRepeatedTitles(t *testing.T) {
+	s, store := suggestionService(t)
+	items := map[string]any{}
+	for id, q := range map[string]string{"CQ1": "Which customers are under contract?", "CQ2": "What customers are under contract?",
+		"CQ3": "How many invoices are overdue?", "CQ4": "When does each term end?", "CQ5": "Which contracts renew this quarter?"} {
+		items["cq."+id] = map[string]any{"toml": "[cq." + id + "]\nquestion = \"" + q + "\"\n"}
+	}
+	raw, err := json.Marshal(map[string]any{"format": "agent_bundle", "draft": map[string]any{"draft": map[string]any{"items": items}}})
+	require.NoError(t, err)
+	store.version.Definition = raw
+	out := listSuggestions(t, s)
+	assert.Equal(t, []string{"Customers are under contract", "Invoices are overdue", "When does each term end", "Contracts renew this quarter"},
+		suggestionTitles(out))
+	assert.Len(t, store.row.Questions, 5, "the row keeps every question the fallback may need")
 }
 
 // Where no write can run, the fallback answers and nothing is queued.

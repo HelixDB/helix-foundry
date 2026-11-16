@@ -64,21 +64,29 @@ func (s *Service) ListFoundryAutomationSuggestions(ctx context.Context, req *fou
 	if out, ok := modelSuggestions(ctx, row, versionID); ok {
 		return out, nil
 	}
-	v, err := s.deps.DB.GetOntologyVersion(ctx, o.ID, versionID)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "read the current version: %v", err)
+	// A row holds the version's questions, so a poll while it is written
+	// never reads the version, which may be large.
+	var questions []string
+	if row != nil {
+		questions = row.Questions
+	} else {
+		v, err := s.deps.DB.GetOntologyVersion(ctx, o.ID, versionID)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "read the current version: %v", err)
+		}
+		var definition map[string]any
+		_ = json.Unmarshal(v.Definition, &definition) // a definition that doesn't read has no questions
+		questions = suggest.Questions(definition, suggest.MaxQuestions)
 	}
-	var definition map[string]any
-	_ = json.Unmarshal(v.Definition, &definition) // a definition that doesn't read has no questions
-	fallback := suggest.Fallback(o.Name, suggest.Questions(definition, suggest.MaxSuggestions))
 	if row == nil || row.Status == foundrymodel.FoundryAutomationSuggestionsFailed && time.Since(row.UpdatedAt) > suggest.RetryAfter {
-		if row, err = s.queueAutomationSuggestions(ctx, ws, o.ID, versionID); err != nil {
+		if row, err = s.queueAutomationSuggestions(ctx, ws, o.ID, versionID, questions); err != nil {
 			return nil, err
 		}
 		if out, ok := modelSuggestions(ctx, row, versionID); ok {
 			return out, nil // written meanwhile
 		}
 	}
+	fallback := suggest.Fallback(o.Name, questions)
 	out := &foundryv1.ListFoundryAutomationSuggestionsResponse{VersionId: versionID, Suggestions: suggestionsToProto(fallback)}
 	if len(fallback) > 0 {
 		out.Source = foundryv1.FoundryAutomationSuggestionSource_FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS
@@ -88,12 +96,13 @@ func (s *Service) ListFoundryAutomationSuggestions(ctx context.Context, req *fou
 	return out, nil
 }
 
-// queueAutomationSuggestions queues a write of the version's suggestions
-// where one can run, and returns its row; nil, with no error, where none
-// can: the Assistant is off, the workspace's AI setting can't be used (no
-// provider, its own provider off Pro, or unreadable), or it queued
-// suggest.PerHour this hour.
-func (s *Service) queueAutomationSuggestions(ctx context.Context, ws, ontologyID, versionID string) (*foundrymodel.FoundryAutomationSuggestions, error) {
+// queueAutomationSuggestions queues a write of the version's suggestions,
+// with its questions, where one can run, and returns its row; nil, with no
+// error, where none can: the Assistant is off, the workspace's AI setting
+// can't be used (no provider, its own provider off Pro, or unreadable), or
+// it queued suggest.PerHour this hour.
+func (s *Service) queueAutomationSuggestions(ctx context.Context, ws, ontologyID, versionID string, questions []string) (
+	*foundrymodel.FoundryAutomationSuggestions, error) {
 	if !s.deps.Cfg.Foundry.Agent.Enabled {
 		return nil, nil
 	}
@@ -101,7 +110,7 @@ func (s *Service) queueAutomationSuggestions(ctx context.Context, ws, ontologyID
 		log.From(ctx).Debug("automation suggestions: no model to write them", "workspace", ws, "err", err)
 		return nil, nil
 	}
-	row, err := s.deps.DB.QueueFoundryAutomationSuggestions(ctx, ws, ontologyID, versionID, suggest.PerHour, suggest.RetryAfter)
+	row, err := s.deps.DB.QueueFoundryAutomationSuggestions(ctx, ws, ontologyID, versionID, questions, suggest.PerHour, suggest.RetryAfter)
 	switch {
 	case errors.Is(err, foundrystore.ErrLimitExceeded):
 		return nil, nil

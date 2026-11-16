@@ -542,10 +542,12 @@ type Store interface {
 
 	// Suggestions for a new automation: queued by reads, written by the
 	// Assistant's worker under a lease.
-	QueueFoundryAutomationSuggestions(ctx context.Context, workspaceID, ontologyID, versionID string, perHour int,
+	QueueFoundryAutomationSuggestions(ctx context.Context, workspaceID, ontologyID, versionID string, questions []string, perHour int,
 		retryAfter time.Duration) (*model.FoundryAutomationSuggestions, error)
 	ClaimFoundryAutomationSuggestions(ctx context.Context, workerID string, lease time.Duration) (*model.FoundryAutomationSuggestions, error)
+	RenewFoundryAutomationSuggestionsLease(ctx context.Context, ontologyID, versionID, workerID string, lease time.Duration) error
 	FinishFoundryAutomationSuggestions(ctx context.Context, ontologyID, versionID, workerID string, end model.FoundryAutomationSuggestionsEnd) error
+	ChargeFoundryAutomationSuggestions(ctx context.Context, workspaceID string, usdMicros int64) error
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

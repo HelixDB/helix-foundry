@@ -109,7 +109,7 @@ func New(d Deps) (*Task, error) {
 	}
 	t.queue = d.DB
 	t.suggestions = &suggester{db: d.DB, ai: resolver, models: llm.NewFor, catalog: catalog, monthly: cfg.MonthlyMicros(),
-		workerID: t.workerID, now: time.Now}
+		workerID: t.workerID, now: time.Now, writers: suggestionWriters, retryWait: suggestionRetryWait}
 	t.runner = &agent.Runner{
 		DB: d.DB, Sessions: d.Sessions, AI: resolver, Models: llm.New, Catalog: catalog, Keys: resolver.Keyring, Databases: d.Databases,
 		Cfg: cfg, WorkerID: t.workerID, Now: time.Now,
@@ -120,8 +120,8 @@ func New(d Deps) (*Task, error) {
 func (t *Task) Name() string { return Name }
 
 // Start claims turns every PollInterval while it has a free slot, and, on
-// a tick of its own, writes due automation suggestions one at a time; off,
-// it only serves its health listener.
+// a tick of its own, writes due automation suggestions, a few at a time;
+// off, it only serves its health listener.
 func (t *Task) Start(ctx context.Context) error {
 	return t.worker.Run(ctx, Name, t.cfg.HTTP.Listen, t.deps.Health, t.deps.Logger, func(ctx context.Context) error {
 		if !t.cfg.Enabled {

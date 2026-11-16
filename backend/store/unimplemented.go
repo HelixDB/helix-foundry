@@ -1645,7 +1645,7 @@ func (u Unimplemented) SumFoundryAssistantSpend(context.Context, string, time.Ti
 	return 0, nil
 }
 
-func (u Unimplemented) QueueFoundryAutomationSuggestions(context.Context, string, string, string, int, time.Duration) (
+func (u Unimplemented) QueueFoundryAutomationSuggestions(context.Context, string, string, string, []string, int, time.Duration) (
 	*model.FoundryAutomationSuggestions, error) {
 	u.unimplemented("QueueFoundryAutomationSuggestions")
 	return nil, nil
@@ -1656,7 +1656,17 @@ func (u Unimplemented) ClaimFoundryAutomationSuggestions(context.Context, string
 	return nil, nil
 }
 
+func (u Unimplemented) RenewFoundryAutomationSuggestionsLease(context.Context, string, string, string, time.Duration) error {
+	u.unimplemented("RenewFoundryAutomationSuggestionsLease")
+	return nil
+}
+
 func (u Unimplemented) FinishFoundryAutomationSuggestions(context.Context, string, string, string, model.FoundryAutomationSuggestionsEnd) error {
 	u.unimplemented("FinishFoundryAutomationSuggestions")
+	return nil
+}
+
+func (u Unimplemented) ChargeFoundryAutomationSuggestions(context.Context, string, int64) error {
+	u.unimplemented("ChargeFoundryAutomationSuggestions")
 	return nil
 }
