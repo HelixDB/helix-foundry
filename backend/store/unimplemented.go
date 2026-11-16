@@ -1449,9 +1449,20 @@ func (u Unimplemented) DeleteFoundryDashboard(context.Context, string, string, m
 	return nil
 }
 
-func (u Unimplemented) PublishFoundryDashboard(context.Context, *model.FoundryDashboardShare) (*model.FoundryDashboardShare, error) {
+func (u Unimplemented) PublishFoundryDashboard(context.Context, *model.FoundryDashboardShare, model.FoundryDashboardLinkExpiry) (
+	*model.FoundryDashboardShare, error) {
 	u.unimplemented("PublishFoundryDashboard")
 	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryDashboardSettings(context.Context, string) (model.FoundryDashboardSettings, error) {
+	u.unimplemented("GetFoundryDashboardSettings")
+	return model.FoundryDashboardSettings{}, nil
+}
+
+func (u Unimplemented) SetFoundryDashboardSettings(context.Context, string, string, bool) error {
+	u.unimplemented("SetFoundryDashboardSettings")
+	return nil
 }
 
 func (u Unimplemented) UnpublishFoundryDashboard(context.Context, string, string) error {

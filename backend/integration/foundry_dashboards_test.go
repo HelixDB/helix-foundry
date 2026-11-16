@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -39,12 +40,15 @@ type dashBackend struct {
 	previews   []*foundryv1.PreviewFoundryDashboardTileRequest
 	// scopes are the caller's scopes that reached the reads of tiles: preview and publish.
 	scopes []testScope
+	// block is why the caller may not publish the dashboard; none by default.
+	block foundryv1.FoundryDashboardPublishBlock
 }
 
 func dashboardProto() *foundryv1.FoundryDashboard {
 	return &foundryv1.FoundryDashboard{Id: dashID, Name: "Revenue", Revision: 3, Pinned: true, CanEdit: true, CanPin: true, CanPublish: true,
 		SpecJson: `{"v":1,"tiles":[` + dashTile + `],"layout":{"rows":[["t1"]]}}`,
-		Share:    &foundryv1.FoundryDashboardShare{Token: "hxd_token", SpecRevision: 2, PublishedAt: timestamppb.Now()}}
+		Share: &foundryv1.FoundryDashboardShare{Token: "hxd_token", SpecRevision: 2, PublishedAt: timestamppb.Now(),
+			ExpiresAt: timestamppb.New(time.Date(2026, 12, 16, 9, 0, 0, 0, time.UTC)), Status: foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED}}
 }
 
 func (b *dashBackend) ListFoundryDashboards(context.Context, *foundryv1.ListFoundryDashboardsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDashboardsResponse, error) {
@@ -54,7 +58,9 @@ func (b *dashBackend) ListFoundryDashboards(context.Context, *foundryv1.ListFoun
 }
 
 func (b *dashBackend) GetFoundryDashboard(context.Context, *foundryv1.GetFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error) {
-	return &foundryv1.FoundryDashboardResponse{Dashboard: dashboardProto()}, nil
+	d := dashboardProto()
+	d.PublishBlock, d.CanPublish = b.block, b.block == foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED
+	return &foundryv1.FoundryDashboardResponse{Dashboard: d}, nil
 }
 
 func (b *dashBackend) GetFoundryOntology(_ context.Context, r *foundryv1.GetFoundryOntologyRequest, _ ...grpc.CallOption) (*foundryv1.FoundryOntologyResponse, error) {
@@ -135,6 +141,9 @@ func TestDashboardReadTools(t *testing.T) {
 	share := got["share"].(map[string]any)
 	assert.Equal(t, true, share["published"])
 	assert.EqualValues(t, 2, share["spec_revision"])
+	assert.Equal(t, "expired", share["status"])
+	assert.Equal(t, "2026-12-16T09:00:00Z", share["expires_at"])
+	assert.NotContains(t, got, "publish_block", "nothing blocks a publish")
 	raw, err := json.Marshal(got)
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "hxd_token", "no tool hands an agent the public link")
@@ -276,11 +285,55 @@ func TestDashboardOperations(t *testing.T) {
 					return tile
 				}()}, "layout": map[string]any{"rows": []any{[]any{"t1", "t2"}}}}}, "tile t2 reads an ontology"},
 			"publish no revision":    {"publish_dashboard", dashboardTarget, map[string]any{}, "publish_dashboard takes"},
+			"publish for 5 days":     {"publish_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("3"), "expires_in_days": json.Number("5")}, "7, 30 or 90"},
+			"publish for -1 days":    {"publish_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("3"), "expires_in_days": json.Number("-1")}, "7, 30 or 90"},
 			"unpublish with payload": {"unpublish_dashboard", dashboardTarget, map[string]any{"x": 1}, "empty payload"},
 		} {
 			_, err := prepare(s, c.operation, c.target, c.payload)
 			require.Error(t, err, name)
 			assert.Contains(t, ToolError(err).Error()+err.Error(), c.want, name)
+		}
+	})
+
+	t.Run("publishes with the expiry asked for", func(t *testing.T) {
+		s, b := dashService(true)
+		for days, want := range map[string]foundryv1.FoundryDashboardLinkExpiry{
+			"":   foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED,
+			"0":  foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER,
+			"7":  foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7,
+			"30": foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_30,
+			"90": foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90,
+		} {
+			payload := map[string]any{"expected_revision": json.Number("3")}
+			if days != "" {
+				payload["expires_in_days"] = json.Number(days)
+			}
+			op, err := prepare(s, "publish_dashboard", dashboardTarget, payload)
+			require.NoError(t, err, days)
+			if days == "" {
+				assert.NotContains(t, string(op.CanonicalPayload()), "expires_in_days", "left out, the link keeps its own")
+			} else {
+				assert.Contains(t, string(op.CanonicalPayload()), `"expires_in_days":`+days)
+			}
+			_, err = op.Execute(context.Background(), s, reader(), "conf-"+days)
+			require.NoError(t, err)
+			assert.Equal(t, want, b.publishes[len(b.publishes)-1].GetExpiry(), days)
+		}
+	})
+
+	t.Run("refuses a publish its caller may not make before a card", func(t *testing.T) {
+		for block, reason := range map[foundryv1.FoundryDashboardPublishBlock]string{
+			foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY:    "FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY",
+			foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF: "FOUNDRY_DASHBOARD_PUBLIC_OFF",
+			foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE:   "FOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE",
+		} {
+			s, b := dashService(true)
+			b.block = block
+			_, err := prepare(s, "publish_dashboard", dashboardTarget, map[string]any{"expected_revision": json.Number("3")})
+			require.Error(t, err, reason)
+			assert.Contains(t, err.Error(), reason)
+			assert.Contains(t, err.Error(), "its url", "it says how to share inside the workspace")
+			assert.Empty(t, b.publishes)
 		}
 	})
 

@@ -3,8 +3,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   AddDashboardQuestionVisualRequest,
   CreateDashboardRequest,
+  DashboardLinkExpiry,
+  DashboardPublishBlock,
   DashboardResponse,
+  DashboardShareStatus,
   DashboardSnapshot,
+  FoundryDashboardSettingsResponse,
   FoundryDashboard,
   ListDashboardsResponse,
   PinDashboardRequest,
@@ -13,6 +17,7 @@ import type {
   PublishDashboardRequest,
   ReadFoundryGraphResponse,
   UpdateDashboardRequest,
+  UpdateDashboardSettingsRequest,
 } from "../../src/shared/wfe";
 import { isRecord } from "../../src/shared/json";
 import { contractErrors } from "../agent-contract";
@@ -54,15 +59,38 @@ import { manages, queryReads } from "./workspaces";
 // is refused while a tile's ontology is being purged of People enrichment's
 // profiles, and turning enrichment off ends the links of the ontologies
 // whose loads hold them (endEnrichedShares).
+// A dashboard's page is how it is shared inside the workspace; a public link
+// is for people outside it: owners and admins only (anyone else is refused
+// FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY), optionally ending 7, 30 or 90 days
+// after the publish (an expired link shows nothing, and publishing again
+// makes a new one), and only while the workspace's owners keep public links
+// on (GET/PATCH .../foundry/dashboard-settings; off, publishing is refused
+// FOUNDRY_DASHBOARD_PUBLIC_OFF and the workspace's links show nothing until
+// they are turned on again).
 // - `POST /__mock/config {"dashboardsPublic": false}`: no public links, as a
 //   local build (the default under MOCK_LOCAL_TOKEN) or a stamp with
 //   foundry.dashboards.public_enabled off: publishing is refused
-//   FOUNDRY_DASHBOARDS_PUBLIC_OFF and every link shows nothing.
+//   FOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE and every link shows nothing.
+// - `POST /__mock/config {"dashboardClockDays": n}`: links' expiry is read n
+//   days from now, so a link made to end in 7 days has with n = 8.
 
-type Knobs = { dashboardsPublic?: boolean };
+type Knobs = { dashboardsPublic?: boolean; dashboardClockDays?: number };
 const knobs = config as typeof config & Knobs;
 /** Whether public links are offered now (the Assistant prepares publishing only then). */
 export const publicLinks = () => knobs.dashboardsPublic ?? !LOCAL_TOKEN;
+
+/** The time links' expiry is read at: now, moved on by dashboardClockDays. */
+const shareClock = () => Date.now() + (knobs.dashboardClockDays ?? 0) * DAY;
+const DAY = 86_400_000;
+
+/** A workspace's dashboard settings, once an owner changed them; none: public links on. */
+const settings = new Map<
+  string,
+  { publicLinks: boolean; updatedBy: string; updatedAt: string }
+>();
+/** Whether the workspace keeps public links on. */
+export const workspacePublicLinks = (workspaceId: string) =>
+  settings.get(workspaceId)?.publicLinks ?? true;
 
 const MAX_DASHBOARDS = 200,
   MAX_PINNED = 20,
@@ -117,14 +145,50 @@ type Stored = {
     firstPublishedAt: string;
     // The ontologies its tiles read: deleting one ends the link.
     ontologyIds: string[];
+    // When the link stops showing the snapshot; null: never.
+    expiresAt: string | null;
   } | null;
 };
 
 const dashboards = new Map<string, Stored>();
 onReset(() => {
   dashboards.clear();
+  settings.clear();
   delete knobs.dashboardsPublic;
+  delete knobs.dashboardClockDays;
 });
+
+type Share = NonNullable<Stored["share"]>;
+const expired = (share: Share) =>
+  share.expiresAt !== null && Date.parse(share.expiresAt) <= shareClock();
+
+/** Whether a link shows its snapshot now, as the backend's shareStatus says. */
+function shareStatus(d: Stored, share: Share): DashboardShareStatus {
+  if (!publicLinks()) return "FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE";
+  if (!workspacePublicLinks(d.workspaceId))
+    return "FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF";
+  if (expired(share)) return "FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED";
+  return "FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE";
+}
+
+/** Why c may not publish a dashboard of the workspace, as the backend's publishBlock says. */
+function publishBlock(c: Caller): DashboardPublishBlock {
+  if (!publicLinks()) return "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE";
+  if (c.grantee || !c.manager)
+    return "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY";
+  if (!workspacePublicLinks(c.m.workspaceId))
+    return "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF";
+  return "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED";
+}
+
+/** The days each expiry ends a link after; null never, undefined keeps a live link's own. */
+const EXPIRY_DAYS: Record<DashboardLinkExpiry, number | null | undefined> = {
+  FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED: undefined,
+  FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER: null,
+  FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7: 7,
+  FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_30: 30,
+  FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90: 90,
+};
 
 /** JSON with every object's keys sorted, as the backend writes a query. */
 function sorted(v: unknown): unknown {
@@ -298,6 +362,7 @@ function toDashboard(
   c: Caller,
   withSpec: boolean,
 ): FoundryDashboard {
+  const block = publishBlock(c);
   return {
     id: d.id,
     name: d.name,
@@ -312,17 +377,20 @@ function toDashboard(
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
     share: d.share && {
-      token: !c.grantee && c.manager ? d.share.token : "",
+      token: !c.grantee && c.manager && !expired(d.share) ? d.share.token : "",
       specRevision: String(d.share.specRevision),
       publishedAt: d.share.publishedAt,
       firstPublishedAt: d.share.firstPublishedAt,
       publishedByUserId: d.share.publishedBy,
+      expiresAt: d.share.expiresAt,
+      status: shareStatus(d, d.share),
     },
     canEdit: mayEdit(c, d),
     canPin: !c.grantee && c.manager,
-    canPublish: !c.grantee && c.manager && publicLinks(),
+    canPublish: block === "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED",
     canDelete: mayEdit(c, d) && (!d.share || c.manager),
     canUnpublish: !c.grantee && c.manager && !!d.share,
+    publishBlock: block,
   };
 }
 
@@ -815,22 +883,16 @@ export const dashboardRoutes: MockRoute[] = [
       const c = caller(req);
       if (!isCaller(c)) return c;
       const ws = c.m.workspaceId,
-        expected = Number(
-          (req.body as Partial<PublishDashboardRequest>)?.expectedRevision ?? 0,
-        );
-      if (!c.manager)
-        return fail(
-          "PERMISSION_DENIED",
-          "only an owner or admin publishes a dashboard",
-        );
-      if (!publicLinks())
-        return refused(
-          ws,
-          "FOUNDRY_DASHBOARDS_PUBLIC_OFF",
-          "public dashboard links aren't available here",
-        );
+        body = req.body as Partial<PublishDashboardRequest> | undefined,
+        expected = Number(body?.expectedRevision ?? 0);
+      const blocked = publishRefusal(ws, publishBlock(c));
+      if (blocked) return blocked;
       if (expected < 1)
         return fail("INVALID_ARGUMENT", "expected_revision is required");
+      const expiry =
+        body?.expiry ?? "FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED";
+      if (!(expiry in EXPIRY_DAYS))
+        return fail("INVALID_ARGUMENT", "expiry is never, 7, 30 or 90 days");
       const d = visible(req, c);
       if (!isStored(d)) return d;
       if (d.revision !== expected)
@@ -933,14 +995,29 @@ export const dashboardRoutes: MockRoute[] = [
           "FOUNDRY_DASHBOARD_TOO_LARGE",
           `the snapshot is past ${MAX_SNAPSHOT_BYTES >> 10} KiB: show fewer rows`,
         );
+      // An expired link is never revived: the publish makes a new one.
+      const kept = d.share && !expired(d.share) ? d.share : null;
+      const days = EXPIRY_DAYS[expiry];
+      if (d.share && !kept && days === undefined)
+        return refused(
+          ws,
+          "FOUNDRY_DASHBOARD_LINK_EXPIRED",
+          "the dashboard's public link expired: publishing again makes a new link, so choose when it ends",
+        );
       d.share = {
-        token: d.share?.token || "hxd_" + randomBytes(32).toString("base64url"),
+        token: kept?.token || "hxd_" + randomBytes(32).toString("base64url"),
         snapshot,
         specRevision: d.revision,
         publishedBy: c.m.userId,
         publishedAt: at,
-        firstPublishedAt: d.share?.firstPublishedAt || at,
+        firstPublishedAt: kept?.firstPublishedAt || at,
         ontologyIds: [...new Set(d.spec.tiles.map((t) => t.ontology_id))],
+        expiresAt:
+          days === undefined
+            ? (kept?.expiresAt ?? null)
+            : days === null
+              ? null
+              : new Date(shareClock() + days * DAY).toISOString(),
       };
       return reply(d, c);
     },
@@ -952,9 +1029,10 @@ export const dashboardRoutes: MockRoute[] = [
       const c = caller(req);
       if (!isCaller(c)) return c;
       if (!c.manager)
-        return fail(
-          "PERMISSION_DENIED",
-          "only an owner or admin unpublishes a dashboard",
+        return refused(
+          c.m.workspaceId,
+          "FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY",
+          "only an owner or admin ends a dashboard's public link",
         );
       const d = visible(req, c);
       if (!isStored(d)) return d;
@@ -962,7 +1040,77 @@ export const dashboardRoutes: MockRoute[] = [
       return reply(d, c);
     },
   },
+  {
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboard-settings",
+    handle: (req) => {
+      const c = caller(req);
+      if (!isCaller(c)) return c;
+      if (c.grantee) return fail("PERMISSION_DENIED", "permission denied");
+      return settingsReply(c);
+    },
+  },
+  {
+    method: "PATCH",
+    path: "/v1/workspaces/{workspaceId}/foundry/dashboard-settings",
+    handle: (req) => {
+      const c = caller(req);
+      if (!isCaller(c)) return c;
+      if (c.grantee || c.m.role !== "WORKSPACE_ROLE_OWNER")
+        return fail(
+          "PERMISSION_DENIED",
+          "only an owner turns public dashboard links on or off",
+        );
+      const on = (req.body as Partial<UpdateDashboardSettingsRequest>)
+        ?.publicLinks;
+      settings.set(c.m.workspaceId, {
+        publicLinks: !!on,
+        updatedBy: c.m.userId,
+        updatedAt: now(),
+      });
+      return settingsReply(c);
+    },
+  },
 ];
+
+/** The refusal of a publish blocked for block, with the backend's reason; none when nothing blocks it. */
+function publishRefusal(ws: string, block: DashboardPublishBlock) {
+  switch (block) {
+    case "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE":
+      return refused(
+        ws,
+        "FOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE",
+        "public dashboard links aren't available here",
+      );
+    case "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY":
+      return refused(
+        ws,
+        "FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY",
+        "only an owner or admin makes a public link: share the dashboard's page in Foundry with the workspace instead",
+      );
+    case "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF":
+      return refused(
+        ws,
+        "FOUNDRY_DASHBOARD_PUBLIC_OFF",
+        "an owner turned public dashboard links off for this workspace",
+      );
+    default:
+      return undefined;
+  }
+}
+
+function settingsReply(c: Caller) {
+  const s = settings.get(c.m.workspaceId);
+  return ok({
+    settings: {
+      publicLinks: s?.publicLinks ?? true,
+      available: publicLinks(),
+      canChange: !c.grantee && c.m.role === "WORKSPACE_ROLE_OWNER",
+      updatedByUserId: s?.updatedBy ?? "",
+      updatedAt: s?.updatedAt ?? null,
+    },
+  } satisfies FoundryDashboardSettingsResponse);
+}
 
 /**
  * A dashboard of the workspace as the Assistant reads it before preparing
@@ -978,6 +1126,10 @@ export function storedDashboard(workspaceId: string, id: string) {
         revision: d.revision,
         pinned: d.pinnedAt !== null,
         published: !!d.share,
+        // Whether its link shows its snapshot now.
+        live:
+          !!d.share &&
+          shareStatus(d, d.share) === "FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE",
         // The revision at its public link, while published.
         publishedRevision: d.share?.specRevision,
         // The ontologies its tiles read, each once.
@@ -1005,8 +1157,9 @@ export function dashboardRoute(method: MockRoute["method"], suffix: string) {
  * (services/foundry-events/shared.go), not the WFE's: a dashboard's public
  * snapshot, for the site's page at its link, with no session, readable by
  * any page and never cached. A link of no snapshot, of one whose ontology
- * was since deleted, or with public links off, shows nothing (404 with the
- * door's error body). Returns whether it answered the request.
+ * was since deleted, one that expired, or with public links off (the
+ * stamp's or the workspace's), shows nothing (404 with the door's error
+ * body). Returns whether it answered the request.
  */
 export function handleSharedDashboard(
   req: IncomingMessage,
@@ -1019,7 +1172,7 @@ export function handleSharedDashboard(
   const d = [...dashboards.values()].find((x) => x.share?.token === token);
   const live =
     d?.share &&
-    publicLinks() &&
+    shareStatus(d, d.share) === "FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE" &&
     d.share.ontologyIds.every((o) => ontologyById(o));
   res.writeHead(live ? 200 : 404, {
     "Content-Type": "application/json",

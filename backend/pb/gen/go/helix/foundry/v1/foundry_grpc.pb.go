@@ -138,6 +138,8 @@ const (
 	FoundryService_PreviewFoundryDashboardTile_FullMethodName           = "/helix.foundry.v1.FoundryService/PreviewFoundryDashboardTile"
 	FoundryService_PublishFoundryDashboard_FullMethodName               = "/helix.foundry.v1.FoundryService/PublishFoundryDashboard"
 	FoundryService_UnpublishFoundryDashboard_FullMethodName             = "/helix.foundry.v1.FoundryService/UnpublishFoundryDashboard"
+	FoundryService_GetFoundryDashboardSettings_FullMethodName           = "/helix.foundry.v1.FoundryService/GetFoundryDashboardSettings"
+	FoundryService_UpdateFoundryDashboardSettings_FullMethodName        = "/helix.foundry.v1.FoundryService/UpdateFoundryDashboardSettings"
 	FoundryService_ListFoundryAutomations_FullMethodName                = "/helix.foundry.v1.FoundryService/ListFoundryAutomations"
 	FoundryService_GetFoundryAutomation_FullMethodName                  = "/helix.foundry.v1.FoundryService/GetFoundryAutomation"
 	FoundryService_CreateFoundryAutomation_FullMethodName               = "/helix.foundry.v1.FoundryService/CreateFoundryAutomation"
@@ -338,11 +340,13 @@ type FoundryServiceClient interface {
 	RevokeFoundryAgentHost(ctx context.Context, in *RevokeFoundryAgentHostRequest, opts ...grpc.CallOption) (*FoundryAgentHostResponse, error)
 	// Dashboards: tiles of typed queries over ontologies' loads (package
 	// dashboard), which every member of the workspace sees and reads as
-	// themselves through ReadFoundryGraph. A member creates dashboards and edits
+	// themselves through ReadFoundryGraph: a dashboard's page in Foundry is how
+	// it is shared inside the workspace. A member creates dashboards and edits
 	// and deletes their own while unpinned; owners and admins edit and delete
 	// any, pin them in every member's sidebar, and publish one's snapshot at a
-	// public link (hosted only, with foundry.dashboards.public_enabled). A
-	// grantee of source grants sees the pinned ones and changes none.
+	// public link for people outside the workspace (hosted only, with
+	// foundry.dashboards.public_enabled, while the workspace has public links
+	// on). A grantee of source grants sees the pinned ones and changes none.
 	ListFoundryDashboards(ctx context.Context, in *ListFoundryDashboardsRequest, opts ...grpc.CallOption) (*ListFoundryDashboardsResponse, error)
 	GetFoundryDashboard(ctx context.Context, in *GetFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
 	CreateFoundryDashboard(ctx context.Context, in *CreateFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
@@ -353,6 +357,11 @@ type FoundryServiceClient interface {
 	PreviewFoundryDashboardTile(ctx context.Context, in *PreviewFoundryDashboardTileRequest, opts ...grpc.CallOption) (*PreviewFoundryDashboardTileResponse, error)
 	PublishFoundryDashboard(ctx context.Context, in *PublishFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
 	UnpublishFoundryDashboard(ctx context.Context, in *UnpublishFoundryDashboardRequest, opts ...grpc.CallOption) (*FoundryDashboardResponse, error)
+	// The workspace's dashboard settings: whether its dashboards may be
+	// published at public links. Any member reads them (a grantee doesn't);
+	// only an owner changes them.
+	GetFoundryDashboardSettings(ctx context.Context, in *GetFoundryDashboardSettingsRequest, opts ...grpc.CallOption) (*FoundryDashboardSettingsResponse, error)
+	UpdateFoundryDashboardSettings(ctx context.Context, in *UpdateFoundryDashboardSettingsRequest, opts ...grpc.CallOption) (*FoundryDashboardSettingsResponse, error)
 	// Automations (package automation): a person's graph of steps, WHEN its
 	// trigger fires (a schedule, or a sync, load, upload or draft that ended)
 	// THEN Assistant steps, approved actions, conditions and emails, run as
@@ -1646,6 +1655,26 @@ func (c *foundryServiceClient) UnpublishFoundryDashboard(ctx context.Context, in
 	return out, nil
 }
 
+func (c *foundryServiceClient) GetFoundryDashboardSettings(ctx context.Context, in *GetFoundryDashboardSettingsRequest, opts ...grpc.CallOption) (*FoundryDashboardSettingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryDashboardSettingsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_GetFoundryDashboardSettings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) UpdateFoundryDashboardSettings(ctx context.Context, in *UpdateFoundryDashboardSettingsRequest, opts ...grpc.CallOption) (*FoundryDashboardSettingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryDashboardSettingsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_UpdateFoundryDashboardSettings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) ListFoundryAutomations(ctx context.Context, in *ListFoundryAutomationsRequest, opts ...grpc.CallOption) (*ListFoundryAutomationsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFoundryAutomationsResponse)
@@ -2096,11 +2125,13 @@ type FoundryServiceServer interface {
 	RevokeFoundryAgentHost(context.Context, *RevokeFoundryAgentHostRequest) (*FoundryAgentHostResponse, error)
 	// Dashboards: tiles of typed queries over ontologies' loads (package
 	// dashboard), which every member of the workspace sees and reads as
-	// themselves through ReadFoundryGraph. A member creates dashboards and edits
+	// themselves through ReadFoundryGraph: a dashboard's page in Foundry is how
+	// it is shared inside the workspace. A member creates dashboards and edits
 	// and deletes their own while unpinned; owners and admins edit and delete
 	// any, pin them in every member's sidebar, and publish one's snapshot at a
-	// public link (hosted only, with foundry.dashboards.public_enabled). A
-	// grantee of source grants sees the pinned ones and changes none.
+	// public link for people outside the workspace (hosted only, with
+	// foundry.dashboards.public_enabled, while the workspace has public links
+	// on). A grantee of source grants sees the pinned ones and changes none.
 	ListFoundryDashboards(context.Context, *ListFoundryDashboardsRequest) (*ListFoundryDashboardsResponse, error)
 	GetFoundryDashboard(context.Context, *GetFoundryDashboardRequest) (*FoundryDashboardResponse, error)
 	CreateFoundryDashboard(context.Context, *CreateFoundryDashboardRequest) (*FoundryDashboardResponse, error)
@@ -2111,6 +2142,11 @@ type FoundryServiceServer interface {
 	PreviewFoundryDashboardTile(context.Context, *PreviewFoundryDashboardTileRequest) (*PreviewFoundryDashboardTileResponse, error)
 	PublishFoundryDashboard(context.Context, *PublishFoundryDashboardRequest) (*FoundryDashboardResponse, error)
 	UnpublishFoundryDashboard(context.Context, *UnpublishFoundryDashboardRequest) (*FoundryDashboardResponse, error)
+	// The workspace's dashboard settings: whether its dashboards may be
+	// published at public links. Any member reads them (a grantee doesn't);
+	// only an owner changes them.
+	GetFoundryDashboardSettings(context.Context, *GetFoundryDashboardSettingsRequest) (*FoundryDashboardSettingsResponse, error)
+	UpdateFoundryDashboardSettings(context.Context, *UpdateFoundryDashboardSettingsRequest) (*FoundryDashboardSettingsResponse, error)
 	// Automations (package automation): a person's graph of steps, WHEN its
 	// trigger fires (a schedule, or a sync, load, upload or draft that ended)
 	// THEN Assistant steps, approved actions, conditions and emails, run as
@@ -2576,6 +2612,12 @@ func (UnimplementedFoundryServiceServer) PublishFoundryDashboard(context.Context
 }
 func (UnimplementedFoundryServiceServer) UnpublishFoundryDashboard(context.Context, *UnpublishFoundryDashboardRequest) (*FoundryDashboardResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UnpublishFoundryDashboard not implemented")
+}
+func (UnimplementedFoundryServiceServer) GetFoundryDashboardSettings(context.Context, *GetFoundryDashboardSettingsRequest) (*FoundryDashboardSettingsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryDashboardSettings not implemented")
+}
+func (UnimplementedFoundryServiceServer) UpdateFoundryDashboardSettings(context.Context, *UpdateFoundryDashboardSettingsRequest) (*FoundryDashboardSettingsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateFoundryDashboardSettings not implemented")
 }
 func (UnimplementedFoundryServiceServer) ListFoundryAutomations(context.Context, *ListFoundryAutomationsRequest) (*ListFoundryAutomationsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryAutomations not implemented")
@@ -4805,6 +4847,42 @@ func _FoundryService_UnpublishFoundryDashboard_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_GetFoundryDashboardSettings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetFoundryDashboardSettingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).GetFoundryDashboardSettings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_GetFoundryDashboardSettings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).GetFoundryDashboardSettings(ctx, req.(*GetFoundryDashboardSettingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_UpdateFoundryDashboardSettings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateFoundryDashboardSettingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).UpdateFoundryDashboardSettings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_UpdateFoundryDashboardSettings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).UpdateFoundryDashboardSettings(ctx, req.(*UpdateFoundryDashboardSettingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_ListFoundryAutomations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFoundryAutomationsRequest)
 	if err := dec(in); err != nil {
@@ -5787,6 +5865,14 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UnpublishFoundryDashboard",
 			Handler:    _FoundryService_UnpublishFoundryDashboard_Handler,
+		},
+		{
+			MethodName: "GetFoundryDashboardSettings",
+			Handler:    _FoundryService_GetFoundryDashboardSettings_Handler,
+		},
+		{
+			MethodName: "UpdateFoundryDashboardSettings",
+			Handler:    _FoundryService_UpdateFoundryDashboardSettings_Handler,
 		},
 		{
 			MethodName: "ListFoundryAutomations",

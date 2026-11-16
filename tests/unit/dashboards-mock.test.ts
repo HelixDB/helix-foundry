@@ -321,7 +321,7 @@ describe("mock dashboards", () => {
       { expectedRevision: "1" },
       "usr_alan",
     );
-    expect(member.status).toBe(403);
+    expect(reason(member)).toBe("FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY");
     const published = (
       await call("POST", `${D}/${d.id}:publish`, { expectedRevision: "1" })
     ).body.dashboard;
@@ -545,11 +545,139 @@ describe("mock dashboards", () => {
       reason(
         await call("POST", `${D}/${d.id}:publish`, { expectedRevision: "1" }),
       ),
-    ).toBe("FOUNDRY_DASHBOARDS_PUBLIC_OFF");
-    expect((await call("GET", `${D}/${d.id}`)).body.dashboard.canPublish).toBe(
-      false,
-    );
+    ).toBe("FOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE");
+    expect((await call("GET", `${D}/${d.id}`)).body.dashboard).toMatchObject({
+      canPublish: false,
+      publishBlock: "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE",
+    });
     expect(shared("hxd_" + "a".repeat(43)).status).toBe(404);
+  });
+
+  it("leaves public links to owners and admins, and refuses a member why", async () => {
+    await loaded();
+    const d = await create(spec([tile("t1", customers)], [["t1"]]), "usr_alan");
+    const seen = (await call("GET", `${D}/${d.id}`, undefined, "usr_alan")).body
+      .dashboard;
+    expect(seen).toMatchObject({
+      canPublish: false,
+      publishBlock: "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY",
+    });
+    const unpublish = await call(
+      "POST",
+      `${D}/${d.id}:unpublish`,
+      {},
+      "usr_alan",
+    );
+    expect(reason(unpublish)).toBe("FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY");
+    // An admin publishes as an owner does.
+    Object.assign(config, { alanRole: "WORKSPACE_ROLE_ADMIN" });
+    const admin = await call(
+      "POST",
+      `${D}/${d.id}:publish`,
+      { expectedRevision: "1" },
+      "usr_alan",
+    );
+    expect(admin.status, JSON.stringify(admin.body)).toBe(200);
+    expect(admin.body.dashboard).toMatchObject({
+      canPublish: true,
+      publishBlock: "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED",
+      share: { status: "FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE", expiresAt: null },
+    });
+  });
+
+  it("ends a link when it expires, and makes a new one after", async () => {
+    await loaded();
+    const d = await create(spec([tile("t1", customers)], [["t1"]]));
+    const inDays = (n: number) =>
+      new Date(Date.now() + n * 86_400_000).toISOString();
+    const publish = (expiry?: wfe.DashboardLinkExpiry) =>
+      call("POST", `${D}/${d.id}:publish`, {
+        expectedRevision: "1",
+        ...(expiry ? { expiry } : {}),
+      });
+    expect((await publish("NEVER" as wfe.DashboardLinkExpiry)).status).toBe(
+      400,
+    );
+    const first = (await publish("FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7")).body
+      .dashboard;
+    const token = first.share.token as string;
+    expect(first.share.expiresAt).toBe(inDays(7));
+    // Unset keeps its end; another choice moves it, keeping the link.
+    expect((await publish()).body.dashboard.share.expiresAt).toBe(inDays(7));
+    const moved = (await publish("FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_30")).body
+      .dashboard;
+    expect(moved.share).toMatchObject({
+      token,
+      expiresAt: inDays(30),
+    });
+    expect(shared(token).status).toBe(200);
+
+    // Thirty-one days on, it shows nothing and is said to have expired.
+    Object.assign(config, { dashboardClockDays: 31 });
+    expect(shared(token).status).toBe(404);
+    const read = (await call("GET", `${D}/${d.id}`)).body.dashboard;
+    expect(read.share).toMatchObject({
+      status: "FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED",
+      token: "",
+    });
+    expect(reason(await publish())).toBe("FOUNDRY_DASHBOARD_LINK_EXPIRED");
+    const fresh = (await publish("FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER")).body
+      .dashboard;
+    expect(fresh.share.token).not.toBe(token);
+    expect(fresh.share).toMatchObject({
+      status: "FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE",
+      expiresAt: null,
+    });
+    expect(shared(token).status).toBe(404);
+    expect(shared(fresh.share.token).status).toBe(200);
+    const never = (await publish("FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER")).body
+      .dashboard;
+    expect(never.share.expiresAt).toBeNull();
+  });
+
+  it("turns a workspace's public links off and on for its owners", async () => {
+    await loaded();
+    const S = "/v1/workspaces/ws_acme/foundry/dashboard-settings";
+    const d = await create(spec([tile("t1", customers)], [["t1"]]));
+    const token = (
+      await call("POST", `${D}/${d.id}:publish`, { expectedRevision: "1" })
+    ).body.dashboard.share.token as string;
+    expect((await call("GET", S, undefined, "usr_alan")).body.settings).toEqual(
+      {
+        publicLinks: true,
+        available: true,
+        canChange: false,
+        updatedByUserId: "",
+        updatedAt: null,
+      },
+    );
+    expect(
+      (await call("PATCH", S, { publicLinks: false }, "usr_alan")).status,
+    ).toBe(403);
+    Object.assign(config, { alanRole: "WORKSPACE_ROLE_ADMIN" });
+    expect(
+      (await call("PATCH", S, { publicLinks: false }, "usr_alan")).status,
+    ).toBe(403);
+    const off = (await call("PATCH", S, { publicLinks: false })).body.settings;
+    expect(off).toMatchObject({
+      publicLinks: false,
+      canChange: true,
+      updatedByUserId: "usr_ada",
+    });
+    expect(shared(token).status).toBe(404);
+    expect(
+      reason(
+        await call("POST", `${D}/${d.id}:publish`, { expectedRevision: "1" }),
+      ),
+    ).toBe("FOUNDRY_DASHBOARD_PUBLIC_OFF");
+    expect((await call("GET", `${D}/${d.id}`)).body.dashboard).toMatchObject({
+      canPublish: false,
+      canUnpublish: true,
+      publishBlock: "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF",
+      share: { status: "FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF" },
+    });
+    await call("PATCH", S, { publicLinks: true });
+    expect(shared(token).status).toBe(200);
   });
 
   it("adds an Analyst answer's visual as a tile", async () => {

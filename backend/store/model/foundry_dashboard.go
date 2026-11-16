@@ -65,6 +65,34 @@ type FoundryDashboardShare struct {
 	PublishedByUserID string
 	PublishedAt       time.Time
 	FirstPublishedAt  time.Time
+	// ExpiresAt is when the link stops showing the snapshot; nil: never.
+	ExpiresAt *time.Time
+}
+
+// Expired reports whether the link has stopped showing its snapshot by now.
+func (s *FoundryDashboardShare) Expired(now time.Time) bool {
+	return s.ExpiresAt != nil && !now.Before(*s.ExpiresAt)
+}
+
+// FoundryDashboardLinkExpiry is what a publish does to its link's expiry:
+// Keep leaves a live link's own (a first link never ends; a link that
+// expired is refused, FoundryDashboardExpired); otherwise the link ends at
+// At, or never with At nil. At is set only without Keep.
+type FoundryDashboardLinkExpiry struct {
+	Keep bool
+	At   *time.Time
+}
+
+// FoundryDashboardSettings is a workspace's dashboard settings, as its owners
+// last set them.
+type FoundryDashboardSettings struct {
+	WorkspaceID string
+	// PublicLinks is whether its dashboards may be published at public links,
+	// and their links served.
+	PublicLinks bool
+	// UpdatedByUserID and UpdatedAt are unset until an owner changed it.
+	UpdatedByUserID string
+	UpdatedAt       *time.Time
 }
 
 // FoundryDashboardRefusalReason is why the store refused a dashboard's write.
@@ -84,6 +112,10 @@ const (
 	// an ontology it read was deleted meanwhile, or is being purged of
 	// People enrichment's profiles.
 	FoundryDashboardUnreadable FoundryDashboardRefusalReason = "unreadable"
+	// FoundryDashboardExpired: a publish that keeps its link's expiry, of a
+	// link that has expired: a new link's expiry is a person's choice, so an
+	// unattended refresh never makes one that never ends.
+	FoundryDashboardExpired FoundryDashboardRefusalReason = "expired"
 )
 
 // FoundryDashboardRefusal is a dashboard's write the store refused, by reason.

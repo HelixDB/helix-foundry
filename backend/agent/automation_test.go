@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,6 +116,7 @@ func TestAnApprovedPublishRefreshesOnlyWhatWasPublished(t *testing.T) {
 		"the revision at its link": {&model.FoundryDashboardShare{SpecRevision: 4}, 4, true},
 		"an edit made since":       {&model.FoundryDashboardShare{SpecRevision: 3}, 4, false},
 		"never published":          {nil, 4, false},
+		"its link expired":         {&model.FoundryDashboardShare{SpecRevision: 4, ExpiresAt: func() *time.Time { at := time.Now().Add(-time.Hour); return &at }()}, 4, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t,

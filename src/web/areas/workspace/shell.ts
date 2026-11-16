@@ -1,11 +1,12 @@
 import { LOCAL } from "../../../shared/deployment";
 import type { AreaShell } from "../../shell/types";
+import { publicLinks } from "../dashboards/public-links";
 import { workspacePaths } from "./paths";
 
 // Workspace owns the Settings section. Settings' pages are not
 // listed in the sidebar (Settings sits in its footer); the command palette
-// finds them by name. A local build has no Members, Access, Plan & billing
-// or People enrichment.
+// finds them by name. A local build has no Members, Access, Plan & billing,
+// People enrichment or Sharing (public dashboard links).
 export const workspaceShell: AreaShell = {
   subnav: {
     settings: [
@@ -25,6 +26,9 @@ export const workspaceShell: AreaShell = {
               label: "People enrichment",
             },
           ]),
+      ...(publicLinks
+        ? [{ to: workspacePaths.settings("sharing"), label: "Sharing" }]
+        : []),
     ],
   },
 };

@@ -8,7 +8,8 @@ export type SettingsTab =
   | "members"
   | "access"
   | "billing"
-  | "enrichment";
+  | "enrichment"
+  | "sharing";
 
 export const workspacePaths = {
   settings: (tab?: SettingsTab) => "/settings" + (tab ? "/" + tab : ""),

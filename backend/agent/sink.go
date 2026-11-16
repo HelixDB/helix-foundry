@@ -118,8 +118,10 @@ func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (
 		}
 		_, dashboardID, _ := strings.Cut(a.Target, "/")
 		d, err := s.db.GetFoundryDashboard(ctx, s.turn.WorkspaceID, dashboardID)
-		approved = err == nil && json.Unmarshal(a.Payload, &payload) == nil && d.Share != nil && d.Share.SpecRevision == payload.ExpectedRevision &&
-			d.Revision == payload.ExpectedRevision
+		// A link that expired is never refreshed unasked: the new link's
+		// expiry is a person's choice.
+		approved = err == nil && json.Unmarshal(a.Payload, &payload) == nil && d.Share != nil && !d.Share.Expired(time.Now()) &&
+			d.Share.SpecRevision == payload.ExpectedRevision && d.Revision == payload.ExpectedRevision
 	}
 	auto := !approved && s.autoRuns(a)
 	approved = approved || auto
