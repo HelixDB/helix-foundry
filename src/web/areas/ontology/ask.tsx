@@ -9,7 +9,6 @@ import {
   useState,
   type ReactNode,
   type RefObject,
-  type TextareaHTMLAttributes,
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,6 +20,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Circle,
+  CornerDownRight,
   CircleAlert,
   FileQuestion,
   Gauge,
@@ -118,6 +118,7 @@ import {
   questionEvents,
   questionQueries,
 } from "./queries";
+import { PromptInput } from "../agent/dock";
 import { AskThreads } from "./ask-threads";
 import { AskVisual } from "./ask-visual";
 import { drawable, placeVisuals, visualPlan } from "./ask-visuals";
@@ -232,7 +233,7 @@ export function AskPage() {
   );
   if (access === "none")
     return (
-      <div className="ak-chat">
+      <div className="ak-chat ag-dots">
         <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll ak-chat--empty">
           <NotShared />
@@ -243,7 +244,7 @@ export function AskPage() {
   // to name (a grantee isn't sent it).
   if (!ontology.tenantId && access === "database")
     return (
-      <div className="ak-chat">
+      <div className="ak-chat ag-dots">
         <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll ak-chat--empty">
           <EmptyState
@@ -256,7 +257,7 @@ export function AskPage() {
     );
   if (view.kind === "threads")
     return (
-      <div className="ak-chat">
+      <div className="ak-chat ag-dots">
         <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll">
           <AskThreads />
@@ -283,7 +284,7 @@ export function AskPage() {
     );
   if (selection.choice.kind === "none" && !selection.pending)
     return (
-      <div className="ak-chat">
+      <div className="ak-chat ag-dots">
         <ChatBar
           title={PAGE}
           onBack={threads.length > 0 ? () => setThread("") : undefined}
@@ -296,7 +297,7 @@ export function AskPage() {
       </div>
     );
   return (
-    <div className="ak-chat">
+    <div className="ak-chat ag-dots">
       <ChatBar onBack={threads.length > 0 ? () => setThread("") : undefined}>
         {picker}
       </ChatBar>
@@ -439,7 +440,7 @@ export function ThreadView({
   }, [shown]);
   if (!first || !last)
     return (
-      <div className="ak-chat" aria-busy={list.isPending || undefined}>
+      <div className="ak-chat ag-dots" aria-busy={list.isPending || undefined}>
         <ChatBar
           title={list.isPending ? title : undefined}
           tag={tag}
@@ -472,7 +473,7 @@ export function ThreadView({
       </div>
     );
   return (
-    <div className="ak-chat">
+    <div className="ak-chat ag-dots">
       <ChatBar title={first.question || "Thread"} tag={tag} onBack={onBack}>
         {picker}
       </ChatBar>
@@ -1432,52 +1433,6 @@ function Answer({
 }
 
 /**
- * A textarea that grows with its text from `minRows` to `maxRows` lines,
- * then scrolls down (never sideways): helix-foundry's Analyst PromptInput,
- * without its suggestions.
- */
-function PromptInput({
-  value,
-  minRows,
-  maxRows,
-  inputRef,
-  ...rest
-}: {
-  value: string;
-  minRows: number;
-  maxRows: number;
-  inputRef: RefObject<HTMLTextAreaElement | null>;
-} & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "rows">) {
-  useLayoutEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    const fit = () => {
-      const style = getComputedStyle(el),
-        line = parseFloat(style.lineHeight) || 20,
-        pad = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-      const min = line * minRows + pad,
-        max = line * maxRows + pad;
-      el.style.height = "auto";
-      const full = el.scrollHeight;
-      el.style.height = Math.max(min, Math.min(full, max)) + "px";
-      el.style.overflowY = full > max + 1 ? "auto" : "hidden";
-    };
-    fit();
-    if (typeof ResizeObserver === "undefined") return;
-    // A new width rewraps the text.
-    let width = el.clientWidth;
-    const observer = new ResizeObserver(() => {
-      if (width === el.clientWidth) return;
-      width = el.clientWidth;
-      fit();
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [value, minRows, maxRows]);
-  return <textarea {...rest} ref={inputRef} rows={minRows} value={value} />;
-}
-
-/**
  * Asks a question: a new thread (optionally about one entity) or, docked
  * under a thread, a follow-up in `thread`. Only a ready or partial load can
  * be asked about.
@@ -1558,7 +1513,7 @@ function Composer({
           : `Answers from ${named}${thread ? ", using this thread’s earlier answers" : ""} · ${MOD}Enter to ask`;
   return (
     <form
-      className="ak-ask"
+      className="ag-composer"
       aria-label={thread ? "Ask a follow-up" : "Ask a question"}
       aria-busy={pending || undefined}
       onSubmit={(e) => {
@@ -1566,33 +1521,33 @@ function Composer({
         void submit();
       }}
     >
-      {about && (
-        <span className="ak-focus">
-          <Tag>
-            About {about.type} {about.id}
-          </Tag>
-          {!thread && (
-            <button
-              type="button"
-              className="ak-focus-clear"
-              aria-label="Ask about anything"
-              title="Ask about anything"
-              onClick={() => setAbout(undefined)}
-            >
-              <X size={13} aria-hidden />
-            </button>
-          )}
-        </span>
-      )}
       <div
-        className="ak-composer"
+        className="ag-box"
         onClick={(e) => {
           if (e.target === e.currentTarget) input.current?.focus();
         }}
       >
+        {about && (
+          <span className="ag-chip">
+            <Tag>
+              About {about.type} {about.id}
+            </Tag>
+            {!thread && (
+              <button
+                type="button"
+                className="ag-chip-drop"
+                aria-label="Ask about anything"
+                title="Ask about anything"
+                onClick={() => setAbout(undefined)}
+              >
+                <X size={13} aria-hidden />
+              </button>
+            )}
+          </span>
+        )}
         <PromptInput
           inputRef={input}
-          className="ak-input"
+          className="ag-input"
           aria-label="Question"
           aria-describedby={hint}
           aria-keyshortcuts="Meta+Enter Control+Enter"
@@ -1615,7 +1570,7 @@ function Composer({
         />
         <button
           type="submit"
-          className="ak-send"
+          className="ag-send"
           aria-label="Ask"
           title="Ask"
           disabled={
@@ -1634,12 +1589,12 @@ function Composer({
           )}
         </button>
       </div>
-      <p id={hint} className={cx("ak-hint", tooLong && "is-error")}>
+      <p id={hint} className={cx("ag-status", tooLong && "is-error")}>
         {caption}
       </p>
       <AiRefusal action="Asking questions" error={error} ready={aiReady}>
         {!!error && (
-          <p className="ak-hint is-error" role="alert">
+          <p className="ag-status is-error" role="alert">
             <SettingsLinked text={sentence((error as Error).message)} />
           </p>
         )}
@@ -1658,7 +1613,8 @@ function Composer({
               disabled={pending || !ready || busy || aiReady === false}
               onClick={() => void submit(q)}
             >
-              {q}
+              <CornerDownRight size={14} aria-hidden />
+              <span>{q}</span>
             </button>
           ))}
         </div>

@@ -287,6 +287,50 @@ test("on a phone a tap on a suggestion fills the composer, one under another", a
   await context.close();
 });
 
+test("its composer wraps and never scrolls sideways, before and after sending", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 400, automationSuggestionsMs: 0 });
+  await signIn(page);
+  await page.goto("/automations/new");
+  const message = page.getByRole("textbox", { name: "Message" });
+  // Wider than it is: text wraps, the field grows down, never sideways.
+  const fits = () =>
+    message.evaluate(
+      (el: HTMLTextAreaElement) =>
+        el.scrollWidth <= el.clientWidth &&
+        getComputedStyle(el).overflowX === "hidden",
+    );
+  await expect(message).toBeVisible();
+  expect(await fits()).toBe(true);
+  const tall = await message.evaluate((el) => el.clientHeight);
+  // A suggestion's prompt previewed as the placeholder moves nothing.
+  await page
+    .getByRole("list", { name: "Suggestions" })
+    .getByRole("button", { name: "Contract check" })
+    .hover();
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    /^When new documents arrive/,
+  );
+  expect(await fits()).toBe(true);
+  expect(await message.evaluate((el) => el.clientHeight)).toBe(tall);
+  // An unbroken word wraps too.
+  await message.fill(`Every day ${"x".repeat(400)}`);
+  expect(await fits()).toBe(true);
+  await message.fill("Every Monday, email me what changed last week.");
+  await message.press("Enter");
+  await expect(page).toHaveURL(/\/automations\/new\?thread=/);
+  // While Founder works, Stop holds Send's place.
+  await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
+  expect(await fits()).toBe(true);
+  await expect(
+    page.getByRole("button", { name: "Send", exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+  expect(await fits()).toBe(true);
+  await expect(page.getByText(/Enter to send/)).toHaveCount(0);
+});
+
 test("suggestions are written for the ontology last opened, and the picker changes them", async ({
   page,
 }) => {

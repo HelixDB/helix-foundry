@@ -3,6 +3,7 @@ import "./founder.css";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CornerDownRight } from "lucide-react";
 import { ApiError } from "../../api";
 import { readStorage, useMedia, useTitle, writeStorage } from "../../kit";
 import { paths } from "../../paths";
@@ -160,7 +161,7 @@ export function FounderPage() {
   // ask about, so no composer, whichever view the link names.
   if (access === "none")
     return (
-      <div className="ak-chat">
+      <div className="ak-chat ag-dots">
         <ChatBar
           title={view.kind === "analyst" ? "Earlier question" : "Founder"}
         >
@@ -196,7 +197,7 @@ export function FounderPage() {
 
   if (view.kind === "threads")
     return (
-      <div className="ak-chat">
+      <div className="ak-chat ag-dots">
         <ChatBar title="Founder">{picker}</ChatBar>
         <div className="ak-scroll">
           <FounderThreads />
@@ -206,7 +207,7 @@ export function FounderPage() {
 
   if (view.kind === "chat")
     return (
-      <div className="ak-chat">
+      <div className="ak-chat ag-dots">
         <ChatBar title={thread.data?.thread.title || "Thread"} onBack={back}>
           {picker}
         </ChatBar>
@@ -231,6 +232,7 @@ export function FounderPage() {
               runtime={where?.runtime ?? "api"}
               hostState={where?.state ?? "ready"}
               placeholder="Reply to Founder…"
+              minRows={1}
               onSent={sent}
             />
           </div>
@@ -243,7 +245,7 @@ export function FounderPage() {
   const nothing = selection.choice.kind === "none" && !selection.pending;
   const name = ontologyName(ontology);
   return (
-    <div className="ak-chat">
+    <div className="ak-chat ag-dots">
       <ChatBar onBack={back}>{picker}</ChatBar>
       <div className="ak-scroll">
         <div className="ak-start fd-start" data-replay-block>
@@ -269,6 +271,7 @@ export function FounderPage() {
                 : `Ask about ${name}, or ask Founder to do something…`
             }
             initialText={seed.text}
+            minRows={3}
             onSent={sent}
           />
           {!nothing && suggestions.length > 0 && (
@@ -284,7 +287,8 @@ export function FounderPage() {
                   className="ak-suggestion"
                   onClick={() => setSeed((s) => ({ text: q, n: s.n + 1 }))}
                 >
-                  {q}
+                  <CornerDownRight size={14} aria-hidden />
+                  <span>{q}</span>
                 </button>
               ))}
             </div>

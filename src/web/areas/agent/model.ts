@@ -56,6 +56,39 @@ export const threadKey = (workspaceId: string) =>
 /** A message's cap (SendFoundryAgentMessage). */
 export const MAX_MESSAGE = 4000;
 
+/**
+ * How tall a composer's field is: its text's height, kept between
+ * `minRows` and `maxRows` lines (plus its padding), and whether it then
+ * scrolls (down only: the field wraps, so it never scrolls sideways).
+ * `content` is the field's scrollHeight at height auto, padding included.
+ *
+ * @example
+ * promptHeight({ line: 22, padding: 14, content: 36, minRows: 2, maxRows: 8 });
+ * // { height: 58, scrolls: false }
+ */
+export function promptHeight({
+  line,
+  padding,
+  content,
+  minRows,
+  maxRows,
+}: {
+  line: number;
+  padding: number;
+  content: number;
+  minRows: number;
+  maxRows: number;
+}): { height: number; scrolls: boolean } {
+  console.assert(minRows >= 1 && maxRows >= minRows, "rows out of order");
+  const min = line * minRows + padding,
+    max = line * maxRows + padding;
+  // A pixel's rounding is no reason to show a scrollbar.
+  return {
+    height: Math.max(min, Math.min(content, max)),
+    scrolls: content > max + 1,
+  };
+}
+
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const str = (x: unknown) => (typeof x === "string" ? x : undefined);
 const parse = (text: string): unknown => {
