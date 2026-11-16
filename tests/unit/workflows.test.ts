@@ -333,13 +333,18 @@ describe("the mock's workflows", () => {
     expect(
       (await call("GET", `${W}/${made.body.workflow.id}`)).body.workflow.name,
     ).toBe("Triage");
-    expect((await call("GET", `${W}/nope`)).status).toBe(404);
+    // Refused in the backend's words, which call it a use case.
+    expect((await call("GET", `${W}/nope`)).body.message).toBe(
+      "use case not found",
+    );
   });
 
   it("holds an ontology to its cap", async () => {
     for (let i = 0; i < WORKFLOW_CAPS.workflows; i++)
       expect((await create({ name: `w${i}` })).status).toBe(200);
-    expect((await create({ name: "over" })).status).toBe(400);
+    expect((await create({ name: "over" })).body.message).toBe(
+      `an ontology holds up to ${WORKFLOW_CAPS.workflows} use cases; delete one first`,
+    );
   });
 
   it("starts, records and finishes runs as the backend does", async () => {
@@ -408,7 +413,9 @@ describe("the mock's workflows", () => {
     expect((await call("GET", `${W}/${wf}/runs/${run.id}`)).body.run.id).toBe(
       run.id,
     );
-    expect((await call("GET", `${W}/other/runs/${run.id}`)).status).toBe(404);
+    expect((await call("GET", `${W}/other/runs/${run.id}`)).body).toMatchObject(
+      { code: 5, message: "use case run not found" },
+    );
 
     // Deleting the workflow takes its runs; only a manager deletes.
     expect(

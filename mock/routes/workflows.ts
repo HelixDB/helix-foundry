@@ -604,7 +604,7 @@ export async function tracked(
   return reply;
 }
 
-// ---------------------------------------------------------------- automations' workflows
+// ---------------------------------------------------------------- workflows' use cases (automations' workflows)
 
 // Foundry's own workflows, as the backend keeps them (store/
 // foundry_automation_workflows.go): one of each ontology an automation uses,
