@@ -156,13 +156,52 @@ test("a new automation starts as a conversation with the Assistant, whose card o
   await expect(
     page.getByRole("heading", { name: "What should happen?" }),
   ).toBeVisible();
-  // A template's words fill the composer; the page tells the Assistant the
-  // person is making an automation, so it sets one up from words that say
-  // nothing of automating.
-  await page.getByRole("button", { name: "Load after every sync" }).click();
-  await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue(
-    /^When a connection finishes syncing/,
+  // Four suggestions, each a prompt for the Assistant: hovered, it is the
+  // empty composer's placeholder; clicked, its text, which nothing sends.
+  const suggestions = page.getByRole("list", { name: "Suggestions" });
+  await expect(suggestions.getByRole("button")).toHaveText([
+    "Monday briefing",
+    "Renewal radar",
+    "Contract check",
+    "Churn alert",
+  ]);
+  const prompt =
+    "When new contracts are uploaded, compare each against our standard terms (length, price, auto-renewal, liability) and email me the ones that differ, quoting the clause.";
+  const check = suggestions.getByRole("button", { name: "Contract check" }),
+    message = page.getByRole("textbox", { name: "Message" });
+  await expect(check).toHaveAccessibleDescription(prompt);
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    "Describe what should happen…",
   );
+  await check.hover();
+  await expect(message).toHaveAttribute("placeholder", prompt);
+  await page.getByRole("heading", { name: "What should happen?" }).hover();
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    "Describe what should happen…",
+  );
+  // Focused from the keyboard too.
+  await check.focus();
+  await expect(message).toHaveAttribute("placeholder", prompt);
+  await check.blur();
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    "Describe what should happen…",
+  );
+  await check.click();
+  await expect(message).toHaveValue(prompt);
+  await expect(message).toBeFocused();
+  expect(
+    await message.evaluate(
+      (el: HTMLTextAreaElement) =>
+        el.selectionStart === el.value.length &&
+        el.selectionEnd === el.value.length,
+    ),
+  ).toBe(true);
+  await expect(page).toHaveURL(/\/automations\/new$/);
+  // The person's words are theirs to change before they send them; the
+  // page tells the Assistant they're making an automation.
   await expect(page.getByText("Making a new automation")).toBeVisible();
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page).toHaveURL(/\/automations\/new\?thread=/);
@@ -170,6 +209,7 @@ test("a new automation starts as a conversation with the Assistant, whose card o
     name: /^Action: Set up the automation/,
   });
   await expect(card).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/documents arrive in “General”/)).toBeVisible();
   // Nothing is made until the person's click, which opens it.
   await expect(
     page.getByRole("navigation", { name: "Automations" }),
@@ -177,7 +217,8 @@ test("a new automation starts as a conversation with the Assistant, whose card o
   await card.getByRole("button", { name: "Create and turn on" }).click();
   await expect(page).toHaveURL(/\/automations\/aut_[^/?]+$/);
   await expect(live(page)).toBeChecked();
-  await expect(canvas(page).locator(".react-flow__node")).toHaveCount(2);
+  // When a document arrives in General, the Assistant's step, an email.
+  await expect(canvas(page).locator(".react-flow__node")).toHaveCount(3);
 
   // The conversation is the Assistant's: the dock lists it.
   await page.keyboard.press("ControlOrMeta+j");
@@ -185,7 +226,7 @@ test("a new automation starts as a conversation with the Assistant, whose card o
   await dock.getByRole("button", { name: /^Threads:/ }).click();
   await expect(
     page.getByRole("menuitemradio", {
-      name: /^When a connection finishes syncing/,
+      name: /^When new contracts are uploaded/,
     }),
   ).toBeVisible();
 });

@@ -1353,6 +1353,7 @@
 
 /* A new automation: the Assistant's composer over the canvas's dots. */
 .au-new-page {
+  container: au-new / inline-size;
   flex: 1;
   min-height: 0;
   padding: var(--hf-space-4) var(--hf-space-2);
@@ -1411,28 +1412,80 @@
 .au-new-composer .ag-input {
   min-height: 72px;
 }
-.au-chips {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+/* Four suggestions in a row under the composer; two by two, then one. */
+.au-suggestions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  justify-self: stretch;
   gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.au-chip {
-  padding: 7px 12px;
+.au-suggestions > li {
+  display: flex;
+}
+.au-suggestion {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
   border: 1px solid var(--hf-border);
   border-radius: var(--hf-radius-lg);
   background: var(--hf-surface);
   color: var(--hf-text);
   font: inherit;
   font-size: var(--hf-text-sm);
+  font-weight: 500;
+  text-align: left;
   cursor: pointer;
-  transition: border-color var(--hf-duration) var(--hf-ease);
+  transition:
+    border-color var(--hf-duration) var(--hf-ease),
+    background-color var(--hf-duration) var(--hf-ease);
 }
-.au-chip:hover {
-  border-color: var(--hf-accent-border);
+.au-suggestion:hover {
+  border-color: var(--hf-border-strong);
+  background: var(--hf-hover);
+}
+.au-suggestion:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 1px;
+}
+.au-suggestion-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--hf-radius);
+}
+.au-suggestion-icon.is-info {
+  background: var(--hf-info-soft);
+  color: var(--hf-info-text);
+}
+.au-suggestion-icon.is-accent {
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.au-suggestion-icon.is-warning {
+  background: var(--hf-warning-soft);
+  color: var(--hf-warning-text);
+}
+.au-suggestion-icon.is-danger {
+  background: var(--hf-danger-soft);
+  color: var(--hf-danger-text);
+}
+@container au-new (max-width: 640px) {
+  .au-suggestions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container au-new (max-width: 440px) {
+  .au-suggestions {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .au-or {
   margin: 0;

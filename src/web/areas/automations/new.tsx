@@ -1,7 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Sparkles } from "lucide-react";
+import {
+  CalendarClock,
+  FileSearch,
+  type LucideIcon,
+  Newspaper,
+  Plus,
+  Sparkles,
+  TrendingDown,
+} from "lucide-react";
 import { ApiError } from "../../api";
 import { ButtonLink, Section } from "../../kit";
 import { useWorkspace } from "../../ui";
@@ -14,20 +22,31 @@ import {
 import { agentRefusal, resultLink } from "../agent/model";
 import { agentQueries } from "../agent/queries";
 import { Crumbs, DraftPage, Frame } from "./editor";
-import { TEMPLATES } from "./model";
+import { AUTOMATION_SUGGESTIONS } from "./model";
 import { Templates } from "./parts";
 import { automationPaths as paths } from "./paths";
 import { useNames } from "./queries";
 
 // /automations/new: a new automation starts as a conversation with the
 // Assistant (the general one, the dock's: its thread, turns and cards), its
-// composer centred over the canvas's dots, a template's words a chip away,
+// composer centred over the canvas's dots, a suggestion's prompt a chip away
+// (hovered or focused, it is the composer's placeholder; clicked, its text),
 // or from scratch on the canvas (?template=blank, as every template's
 // draft). Sending opens a new thread, which the page then holds whole
 // (?thread=), and which the dock lists too; the page context says the
 // person is making an automation. Nothing runs until they click a card:
 // once their click on the Assistant's create_automation card made it, the
 // page opens it on its canvas.
+
+const ICONS: Record<
+  (typeof AUTOMATION_SUGGESTIONS)[number]["tone"],
+  LucideIcon
+> = {
+  info: Newspaper,
+  accent: CalendarClock,
+  warning: FileSearch,
+  danger: TrendingDown,
+};
 
 export function NewAutomationPage() {
   const [params] = useSearchParams();
@@ -76,7 +95,9 @@ function NewChat() {
       }
     }
   }, [thread.data]);
-  const [seed, setSeed] = useState({ text: "", n: 0 });
+  const [seed, setSeed] = useState({ text: "", n: 0 }),
+    [preview, setPreview] = useState(""),
+    described = useId();
   const sent = (id: string) => {
     void qc.invalidateQueries({ queryKey: [ws, "agent", "threads"] });
     void qc.invalidateQueries({ queryKey: [ws, "agent", "thread", id] });
@@ -130,26 +151,43 @@ function NewChat() {
                 threadId=""
                 runtime={where?.runtime ?? "api"}
                 hostState={where?.state ?? "ready"}
-                placeholder="Describe what should happen…"
+                placeholder={preview || "Describe what should happen…"}
                 initialText={seed.text}
                 onSent={sent}
               />
             </div>
-            <ul className="au-chips" aria-label="Start from a template">
-              {TEMPLATES.filter((t) => t.id !== "blank").map((t) => (
-                <li key={t.id}>
-                  <button
-                    type="button"
-                    className="au-chip"
-                    title={t.description}
-                    onClick={() =>
-                      setSeed((s) => ({ text: t.description, n: s.n + 1 }))
-                    }
-                  >
-                    {t.title}
-                  </button>
-                </li>
-              ))}
+            <ul className="au-suggestions" aria-label="Suggestions">
+              {AUTOMATION_SUGGESTIONS.map((x, i) => {
+                const Icon = ICONS[x.tone];
+                return (
+                  <li key={x.title}>
+                    <button
+                      type="button"
+                      className="au-suggestion"
+                      aria-describedby={`${described}-${i}`}
+                      // A phone has no hover: a tap fills the composer.
+                      onPointerEnter={(e) =>
+                        e.pointerType === "mouse" && setPreview(x.prompt)
+                      }
+                      onPointerLeave={() => setPreview("")}
+                      onFocus={() => setPreview(x.prompt)}
+                      onBlur={() => setPreview("")}
+                      onClick={() => {
+                        setPreview("");
+                        setSeed((s) => ({ text: x.prompt, n: s.n + 1 }));
+                      }}
+                    >
+                      <span className={`au-suggestion-icon is-${x.tone}`}>
+                        <Icon size={14} aria-hidden />
+                      </span>
+                      {x.title}
+                    </button>
+                    <span id={`${described}-${i}`} className="hf-sr-only">
+                      {x.prompt}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
             <p className="au-or">or</p>
             {scratch}
