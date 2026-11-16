@@ -514,7 +514,7 @@ describe("mock questions", () => {
     expect(
       contractErrors("ask_request#/$defs/EntityLookup", JSON.parse(q.focusJson)),
     ).toEqual([]);
-    // By its key's plain value or a name, the type optional (contract 4.26.0).
+    // By its key's plain value or a name, the type optional (contract 4.27.0).
     for (const [focusJson, stored] of [
       ['{"key": "cus_GLOBEX01", "type": "Customer"}', '{"type":"Customer","key":"cus_GLOBEX01"}'],
       ['{"name": "Globex"}', '{"name":"Globex"}'],

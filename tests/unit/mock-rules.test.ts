@@ -754,7 +754,7 @@ key = ["deal_id"]
         return: { rows: { columns: [{ at: 0 }] } },
       }).result,
     ).toMatchObject({ total: 1, rows: [{ cells: [london] }] });
-    // A keyed type without names is found by its key (contract 4.26.0).
+    // A keyed type without names is found by its key (contract 4.27.0).
     expect(
       ok({ start: { type: "Org", text: "acme" }, return: { count: {} } }).result,
     ).toEqual({ kind: "count", count: 1 });
