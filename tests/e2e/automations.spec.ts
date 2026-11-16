@@ -1,5 +1,12 @@
 import type { Page } from "@playwright/test";
-import { expect, mock, postToWfe, signIn, test } from "./support/mock";
+import {
+  csrfToken,
+  expect,
+  mock,
+  postToWfe,
+  signIn,
+  test,
+} from "./support/mock";
 
 // Workflows (the automations area, at /workflows): a person's steps Foundry
 // runs as them, on a schedule or when a sync, a load or documents arrive.
@@ -55,6 +62,13 @@ async function make(
     expectedRevision: made.revision,
   });
   return made.id as string;
+}
+
+/** An automation of the workspace, as the WFE has it now. */
+async function readAutomation(page: Page, id: string) {
+  const res = await page.request.get(`/papi${A}/${id}`);
+  expect(res.status(), await res.text()).toBe(200);
+  return (await res.json()).automation;
 }
 
 const inspector = (page: Page) =>
@@ -1455,4 +1469,143 @@ test.describe("in the browser's time zone", () => {
       inspector(page).getByRole("combobox", { name: "Time zone" }),
     ).toContainText(/New York · GMT−[45]/);
   });
+});
+
+test("a long Founder instruction reads in a line in its summary, whole only where it is opened", async ({
+  page,
+}) => {
+  const instruction = `Every Monday, review what changed in the ontology over the last week. ${"Then list each new customer, each changed invoice and anything unusual, with why it matters. ".repeat(6)}`;
+  await signIn(page);
+  const id = await make(page, "Weekly changes email", [
+    manual,
+    step("ask", "assistant", { instruction }, 150),
+    step("tell", "notify", { message: "Weekly changes" }, 300),
+  ]);
+  await page.goto(`/workflows/${id}`);
+  const summary = inspector(page).locator(".au-summary-text");
+  // Its first sentence, never the whole instruction.
+  await expect(summary).toHaveText(
+    "When you run it, ask Founder: “Every Monday, review what changed in the ontology over the last week.”, then email you “Weekly changes”.",
+  );
+  const unattended = inspector(page).getByRole("list", { name: "Steps" });
+  await expect(unattended.getByRole("listitem")).toHaveCount(3);
+  await expect(
+    unattended.getByRole("button", {
+      name: "Ask Founder: “Every Monday, review what changed in the ontology over the last week.”",
+    }),
+  ).toBeVisible();
+  // The whole of it opens in place, and is nowhere else on the panel.
+  const whole = unattended.getByText("Its whole instruction");
+  await expect(whole).toBeVisible();
+  await expect(
+    inspector(page).getByText(/Then list each new customer/),
+  ).toBeHidden();
+  await whole.click();
+  await expect(
+    inspector(page).getByText(/Then list each new customer/),
+  ).toBeVisible();
+  // A step's line opens it, its instruction whole in its box.
+  await unattended
+    .getByRole("button", { name: /^Ask Founder: “Every Monday/ })
+    .click();
+  await expect(inspector(page).getByLabel("What should it do?")).toHaveValue(
+    instruction.trim(),
+  );
+
+  // With a description, the summary is that alone.
+  const described = await make(page, "Described", [
+    manual,
+    step("ask", "assistant", { instruction }, 150),
+  ]);
+  const read = await readAutomation(page, described);
+  const patched = await page.request.patch(`/papi${A}/${described}`, {
+    data: {
+      expectedRevision: read.revision,
+      description: "What the team reads every Monday.",
+    },
+    headers: {
+      origin: new URL(page.url()).origin,
+      "x-helix-csrf": await csrfToken(page),
+    },
+  });
+  expect(patched.status(), await patched.text()).toBe(200);
+  await page.goto(`/workflows/${described}`);
+  await expect(inspector(page).locator(".au-summary-text")).toHaveText(
+    "What the team reads every Monday.",
+  );
+
+  // Approving shows every step whole, each in a block of its own.
+  await page.goto(`/workflows/${id}`);
+  await page.getByRole("button", { name: "Outline" }).click();
+  await page
+    .getByRole("button", { name: /^Change the step: Email you/ })
+    .click();
+  await page.getByRole("menuitem", { name: "Email me" }).click();
+  await page.getByRole("button", { name: "Review and save" }).click();
+  const review = page.getByRole("dialog", {
+    name: "Review what runs unattended",
+  });
+  await expect(review.locator(".au-sentence")).not.toContainText(
+    "Then list each new customer",
+  );
+  await expect(
+    review
+      .getByRole("list", { name: "Steps that run unattended" })
+      .getByText(/Then list each new customer/),
+  ).toBeVisible();
+});
+
+test("steps moved on the canvas save on their own, keep its approval, and stay where they were put", async ({
+  page,
+}) => {
+  await signIn(page);
+  const id = await make(page, "Moved steps", [
+    manual,
+    step("tell", "notify", { message: "Done" }, 150),
+  ]);
+  await page.goto(`/workflows/${id}`);
+  await expect(live(page)).toBeChecked();
+  const tell = canvas(page)
+    .locator(".react-flow__node")
+    .filter({ hasText: "Email you" });
+  await expect(tell).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 150)");
+  // Dragged up beside what starts it: a row, joined straight across.
+  const box = (await tell.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + 12);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 320, box.y + 12 - 150, {
+    steps: 10,
+  });
+  await page.mouse.up();
+  await expect(
+    page.getByRole("status").getByText("Layout saved"),
+  ).toBeVisible();
+  // No draft: nothing to review, and still live.
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+  await expect(live(page)).toBeChecked();
+  const moved = await tell.evaluate((n) => getComputedStyle(n).transform);
+  expect(moved).not.toBe("matrix(1, 0, 0, 1, 0, 150)");
+
+  // Away and back: where it was put.
+  await page.goto("/workflows");
+  await page.goto(`/workflows/${id}`);
+  await expect(tell).toHaveCSS("transform", moved);
+  await expect(live(page)).toBeChecked();
+  const saved = await readAutomation(page, id);
+  expect(saved.status).toBe("active");
+  expect(saved.approvedSpecRevision).toBe(saved.specRevision);
+
+  // A step change stays a draft while a move still saves on its own.
+  await tell.click();
+  await page.getByLabel("Subject (optional)").fill("Changed");
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await page.getByRole("button", { name: "Tidy the layout" }).click();
+  await expect(
+    page.getByRole("status").getByText("Layout saved"),
+  ).toBeVisible();
+  await page.goto("/workflows");
+  await page.goto(`/workflows/${id}`);
+  await expect(tell).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 150)");
+  await expect(tell).toContainText("Email you “Done”");
+  await expect(live(page)).toBeChecked();
 });

@@ -22,8 +22,13 @@ import { ontologyQueries } from "../ontology/queries";
 import {
   ASSESSED_WITHIN_MS,
   assessing,
+  automationRefusal,
+  canonicalJson,
   isLiveRun,
+  parseSpec,
+  placeNodes,
   type Names,
+  type Places,
   type TemplateId,
 } from "./model";
 
@@ -163,6 +168,55 @@ export async function updateAutomation(
   );
   trackEvent("automation_edited", { steps: body.specJson !== undefined });
   return automation;
+}
+
+/**
+ * Steps moved on the canvas, saved on their own: `places` put onto the
+ * automation as saved (the newest its page has read), so only where its
+ * steps are drawn changes and the WFE keeps its approval (it compares the
+ * steps without their places). Never a draft's other changes: those wait
+ * for Review and save. Changed elsewhere meanwhile, it reads it again and
+ * puts the places onto that, once. Resolves to the automation saved and the
+ * revision the places went onto, or undefined when they are its places
+ * already (or its steps can't be read). Reports no analytics: a drag is no
+ * edit.
+ */
+export async function saveLayout(
+  qc: QueryClient,
+  ws: string,
+  id: string,
+  places: Places,
+): Promise<{ automation: FoundryAutomation; onto: string } | undefined> {
+  const key = automationQueries.automation(ws, id).queryKey;
+  const place = async (a: FoundryAutomation) => {
+    const read = parseSpec(a.specJson || "");
+    if (!read.ok) return undefined;
+    const specJson = canonicalJson(placeNodes(read.spec, places));
+    if (specJson === canonicalJson(read.spec)) return undefined;
+    const { automation } = await api<AutomationResponse>(
+      `${at(ws)}/${enc(id)}`,
+      {
+        expectedRevision: a.revision || "",
+        specJson,
+      } satisfies UpdateAutomationRequest,
+      "PATCH",
+    );
+    // Its lists hold no places: only its page reads it again.
+    qc.setQueryData(key, { automation } satisfies AutomationResponse);
+    return { automation, onto: a.revision || "" };
+  };
+  const reread = async () => {
+    const fresh = await api<AutomationResponse>(`${at(ws)}/${enc(id)}`);
+    qc.setQueryData(key, fresh);
+    return fresh.automation;
+  };
+  const known = qc.getQueryData<AutomationResponse>(key)?.automation;
+  try {
+    return await place(known ?? (await reread()));
+  } catch (e) {
+    if (automationRefusal(e) !== "FOUNDRY_AUTOMATION_CHANGED") throw e;
+    return place(await reread());
+  }
 }
 
 /** Its owner's approval of the spec they read, at `expectedRevision`: it becomes active. */

@@ -601,7 +601,7 @@ function ConditionFields({
   const leads = (branch: "true" | "false") => {
     const to = edgesOutOf(spec, id).find((e) => e.branch === branch);
     const n = to && spec.nodes.find((x) => x.id === to.to);
-    return n ? stepTitle(n, lists.names, email) : "Stop";
+    return n ? stepTitle(n, lists.names, email, "brief") : "Stop";
   };
   return (
     <>
