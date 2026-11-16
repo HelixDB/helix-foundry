@@ -2126,33 +2126,49 @@ describe("questions and threads", () => {
       error: "The model declined to answer.",
       result: failure,
     });
-    // Helix's Claude's model failures read as they did before contract
-    // 4.0.0 split them out of model_failed: the WFE's lowercase words for
-    // each say it is unavailable.
-    const house = "the model could not be reached; ask again";
-    for (const reason of [
-      "model_failed",
-      "model_auth",
-      "model_permission",
-      "model_not_found",
-      "model_rate_limited",
-      "model_quota",
-      "model_unsupported",
-      "model_truncated",
-      "model_malformed",
-      "model_timeout",
+    // Helix's Claude's model failures say what failed, in the WFE's
+    // lowercase words made a sentence: a provider still busy, a request it
+    // rejected (Helix's bug), Helix's model account.
+    for (const [reason, house, shown] of [
+      [
+        "model_failed",
+        "the model provider is busy; try again in a minute",
+        "The model provider is busy; try again in a minute.",
+      ],
+      [
+        "model_rate_limited",
+        "the model provider is busy; try again in a minute",
+        "The model provider is busy; try again in a minute.",
+      ],
+      [
+        "model_unsupported",
+        "Helix sent the model a request it rejected. That's a bug in Helix, not your question; on-call has been told",
+        "Helix sent the model a request it rejected. That's a bug in Helix, not your question; on-call has been told.",
+      ],
+      [
+        "model_quota",
+        "Helix's model account can't take questions right now; on-call has been told, so try again later",
+        "Helix's model account can't take questions right now; on-call has been told, so try again later.",
+      ],
     ] as const) {
       const r = { ...failure, reason };
       expect(
         questionView(
           q({ status: "failed", error: house, resultJson: JSON.stringify(r) }),
         ),
-      ).toEqual({
-        kind: "failed",
-        error: "The model couldn’t be reached, after retries.",
-        result: r,
-      });
+      ).toEqual({ kind: "failed", error: shown, result: r });
     }
+    // With no words of the WFE's, the reason's own text.
+    const quiet = { ...failure, reason: "model_timeout" } as const;
+    expect(
+      questionView(
+        q({ status: "failed", error: "", resultJson: JSON.stringify(quiet) }),
+      ),
+    ).toEqual({
+      kind: "failed",
+      error: "The model couldn’t be reached, after retries.",
+      result: quiet,
+    });
     // A workspace's own provider's are the WFE's full sentences, shown as
     // written: they name the provider, and may start with a model's name.
     const auth = { ...failure, reason: "model_auth" } as const;

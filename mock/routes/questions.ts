@@ -813,7 +813,7 @@ function answer(
         queries: [],
         usage: usage({ input: 4_100, output: 0, usd: 0.0042 }),
       },
-      error: "the model could not be reached; ask again",
+      error: "the model provider is busy; try again in a minute",
       usdMicros: 4_200,
     };
   if (!found) {
@@ -1337,7 +1337,7 @@ function partAnswer(
         queries: [],
         usage: usage({ input: 4_100, output: 0, usd: 0.0042 }),
       },
-      error: "the model could not be reached; ask again",
+      error: "the model provider is busy; try again in a minute",
       usdMicros: 4_200,
     };
   // The first type it can see anything of: what it can say.
