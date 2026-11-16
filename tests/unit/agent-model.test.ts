@@ -22,6 +22,7 @@ import {
   payloadText,
   pretty,
   questionOf,
+  stepLabel,
   reduceTurnEvents,
   resultLink,
   inAppPath,
@@ -1675,5 +1676,28 @@ describe("where Founder runs", () => {
       run: `npx -y ${HELPER_PACKAGE} run`,
       install: `npx -y ${HELPER_PACKAGE} install`,
     });
+  });
+});
+
+describe("stepLabel", () => {
+  const prepare = (output: unknown) => ({
+    id: "t",
+    name: "helix_foundry_prepare_operation",
+    input: {},
+    result: { kind: "returned" as const, output, truncated: false },
+  });
+  it("says a prepare that ran at once ran", () => {
+    expect(stepLabel(prepare({ status: "ran" }))).toBe("Ran an action");
+  });
+  it("keeps the tool's label for a prepare left as a card, and any other step", () => {
+    expect(stepLabel(prepare({ status: "awaiting_person" }))).toBe(
+      "Prepared an action",
+    );
+    expect(stepLabel({ id: "t", name: "helix_foundry_ask", input: {} })).toBe(
+      "Asked the Analyst",
+    );
+    expect(stepLabel({ id: "t", name: "helix_foundry_unknown", input: {} })).toBe(
+      "helix_foundry_unknown",
+    );
   });
 });

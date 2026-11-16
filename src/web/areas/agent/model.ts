@@ -698,6 +698,28 @@ export const TOOL_LABELS: Record<string, string> = {
   [ASK_PERSON]: "Asked you",
 };
 
+/**
+ * What a step's line says: its tool's label, except a prepare that ran at
+ * once (an automation's approved action, or a dashboard the person asked
+ * for), which reads "Ran an action".
+ *
+ * @example
+ * stepLabel({ id: "t", name: "helix_foundry_prepare_operation", input: {}, result: { kind: "returned", output: { status: "ran" }, truncated: false } });
+ * // "Ran an action"
+ * stepLabel({ id: "t", name: "helix_foundry_ask", input: {} });
+ * // "Asked the Analyst"
+ */
+export function stepLabel(step: AgentStep): string {
+  const out = step.result?.kind === "returned" ? step.result.output : undefined;
+  if (
+    step.name === "helix_foundry_prepare_operation" &&
+    isRecord(out) &&
+    out.status === "ran"
+  )
+    return "Ran an action";
+  return TOOL_LABELS[step.name] || step.name;
+}
+
 /** The tools that return an Analyst question: its answer shows under them. */
 const QUESTION_TOOLS: ReadonlySet<string> = new Set([
   "helix_foundry_ask",

@@ -77,7 +77,7 @@ import {
   NOT_RUN_TEXT,
   STARTS_WORK,
   STOP_TEXT,
-  TOOL_LABELS,
+  stepLabel,
   agentRefusal,
   answerBlocks,
   connectLink,
@@ -723,7 +723,7 @@ function Block({
           <details className="ag-step">
             <summary>
               <Wrench size={13} aria-hidden />
-              <span>{TOOL_LABELS[s.name] || s.name}</span>
+              <span>{stepLabel(s)}</span>
               {!s.result && (
                 <LoaderCircle
                   size={13}

@@ -162,7 +162,7 @@ test("answers a data question with the Analyst's answer, which opens in the Anal
   await expect(bars.first()).toBeVisible();
 
   // Open in Analyst opens its thread there.
-  await question.getByRole("link", { name: "Open in Analyst" }).click();
+  await dock.getByRole("link", { name: "Open in Analyst" }).click();
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts\?thread=[\w-]+/);
   const there = page
     .getByRole("main")
@@ -187,7 +187,9 @@ test("in the dock, the Analyst's steps and queries open as on its page", async (
   // Founder's own step opens on what it asked.
   const step = dock.getByRole("group").filter({ hasText: "Asked the Analyst" });
   await step.getByText("Asked the Analyst", { exact: true }).click();
-  await expect(step.getByText(/"question": "Which customers/)).toBeVisible();
+  await expect(
+    step.getByText(/"question": "Which customers/).first(),
+  ).toBeVisible();
 
   // The Analyst's steps open and close.
   const question = dock.getByRole("article", { name: `Question: ${text}` });
