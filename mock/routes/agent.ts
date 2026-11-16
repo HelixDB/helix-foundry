@@ -2560,9 +2560,10 @@ const aref = (x: ReturnType<typeof workspaceAutomations>[number]) => ({
 /**
  * Sets up what the person asked for as an automation's spec: a schedule
  * (UTC: the mock doesn't know the person's zone), or, when documents are
- * uploaded, their arrival in the workspace's first set of its own, a sync of the connection
- * named (else the first, when asked to sync), the Assistant's summary of
- * what they asked about, and an email, then prepares create_automation.
+ * uploaded, their arrival in the workspace's first set of its own; a sync
+ * of the connection named (else the first, when asked to sync), the
+ * Assistant's summary of what they asked about, and an email; then
+ * prepares create_automation.
  */
 function automationCreate(a: Ask): Step[] {
   const text = a.text,
@@ -2587,21 +2588,21 @@ function automationCreate(a: Ask): Step[] {
   const trigger = uploaded
     ? ({ kind: "document_arrived", set_id: uploaded.id } as const)
     : /\bevery\s+hour\b/i.test(text)
-    ? ({
-        kind: "schedule",
-        every: "hour",
-        minute: 0,
-        time_zone: "UTC",
-      } as const)
-    : weekday || /\bevery\s+week\b/i.test(text)
       ? ({
           kind: "schedule",
-          every: "week",
-          weekday: (weekday ?? "monday") as Weekday,
-          at,
+          every: "hour",
+          minute: 0,
           time_zone: "UTC",
         } as const)
-      : ({ kind: "schedule", every: "day", at, time_zone: "UTC" } as const);
+      : weekday || /\bevery\s+week\b/i.test(text)
+        ? ({
+            kind: "schedule",
+            every: "week",
+            weekday: (weekday ?? "monday") as Weekday,
+            at,
+            time_zone: "UTC",
+          } as const)
+        : ({ kind: "schedule", every: "day", at, time_zone: "UTC" } as const);
   const about = /\b(?:summary|report)\s+of\s+(.+?)(?:[.!?]|$)/i.exec(text)?.[1];
   const nodes: AutomationSpec["nodes"] = [
     { id: "start", kind: "trigger", config: trigger, position: { x: 0, y: 0 } },
