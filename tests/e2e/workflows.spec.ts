@@ -237,9 +237,7 @@ test("a restricted member uses use cases while their Usage permission is on", as
   await page.goto("/settings/access?tab=people");
   await page.getByRole("button", { name: "Sources for Eve Adler" }).click();
   let sources = page.getByRole("dialog", { name: "Sources for Eve Adler" });
-  await expect(
-    sources.getByRole("checkbox", { name: /^Usage/ }),
-  ).toBeChecked();
+  await expect(sources.getByRole("checkbox", { name: /^Usage/ })).toBeChecked();
   await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
   await sources.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
