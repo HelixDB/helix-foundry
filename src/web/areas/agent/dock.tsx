@@ -1107,11 +1107,20 @@ export function Composer({
   const hint = useId(),
     input = useRef<HTMLTextAreaElement>(null),
     sending = useRef(false);
-  // The dock opens ready to write, after any text it starts with.
-  useEffect(() => {
-    const el = input.current;
-    el?.focus();
-    el?.setSelectionRange(el.value.length, el.value.length);
+  // The dock opens ready to write, the caret after any text it starts with
+  // and that end in view: before paint, and again once the field has sized
+  // itself to its text (field-sizing), which a browser may do after.
+  useLayoutEffect(() => {
+    const end = () => {
+      const el = input.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+      el.scrollTop = el.scrollHeight;
+    };
+    end();
+    const frame = requestAnimationFrame(end);
+    return () => cancelAnimationFrame(frame);
   }, []);
   const live = thread?.turns?.find(isLiveTurn);
   const busy = threadBusy(thread) || (!!threadId && !thread);
