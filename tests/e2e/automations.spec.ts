@@ -458,7 +458,7 @@ test("starts from a template, runs only once approved, runs now, and colours the
   ).toHaveCount(1);
   await expect(steps(page).getByRole("listitem")).toHaveCount(4);
   await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
-    "Started a sync of its connector.",
+    /Synced its connector: it wrote \d+ rows\./,
   );
   await expect(steps(page).getByRole("listitem").nth(2)).toContainText(
     "What the Assistant reported",
@@ -473,7 +473,7 @@ test("starts from a template, runs only once approved, runs now, and colours the
     .click();
   await expect(inspector(page)).toContainText("What happened");
   await expect(inspector(page)).toContainText(
-    "Started a sync of its connector.",
+    /Synced its connector: it wrote \d+ rows\./,
   );
   await expect(steps(page)).toHaveCount(0);
 
@@ -841,6 +841,69 @@ test("starts after a sync of its connection", async ({ page }) => {
   await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
     "It was met: it went the “When met” way.",
   );
+});
+
+test("waits for the load its step started, and skips the sync another automation it set off started, saying why", async ({
+  page,
+}) => {
+  await mock.configure({ automationStepMs: 100, loadStepMs: 100 });
+  await signIn(page);
+  // One loads Renewals after Stripe syncs; the other syncs Stripe after
+  // Renewals loads: each would set the other off for ever.
+  const loader = await make(page, "Load after Stripe", [
+    {
+      id: "start",
+      kind: "trigger",
+      config: {
+        kind: "sync_finished",
+        connector_id: "conn_acme_stripe",
+        outcome: "succeeded",
+      },
+      position: at(0),
+    },
+    step(
+      "load",
+      "action",
+      { operation: "create_load", ontology_id: "ont_acme_renewals" },
+      150,
+    ),
+  ]);
+  await make(page, "Sync after Renewals", [
+    {
+      id: "start",
+      kind: "trigger",
+      config: { kind: "load_ready", ontology_id: "ont_acme_renewals" },
+      position: at(0),
+    },
+    step(
+      "sync",
+      "action",
+      { operation: "sync_connector", connector_id: "conn_acme_stripe" },
+      150,
+    ),
+  ]);
+  await page.goto("/data/connections/conn_acme_stripe");
+  await page.getByRole("button", { name: "Sync now" }).click();
+
+  // The person's sync runs the loader, whose step waits for its load.
+  await page.goto(`/automations/${loader}?tab=runs`);
+  const runs = page.getByRole("list", { name: "Runs" });
+  await expect(runs.getByRole("link")).toHaveCount(1, { timeout: 20_000 });
+  await runs.getByRole("link").first().click();
+  await ended(page, "Succeeded");
+  await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
+    "Loaded its ontology's current version: the load is ready.",
+  );
+
+  // The load ran the other, whose sync would run the loader again: skipped.
+  await page.goto(`/automations/${loader}?tab=runs`);
+  await expect(runs.getByRole("link")).toHaveCount(2, { timeout: 30_000 });
+  await runs.getByRole("link").first().click();
+  await expect(
+    inspector(page).getByText(
+      "Skipped: the sync was started by an automation this one set off; running on it would loop.",
+    ),
+  ).toBeVisible();
 });
 
 test("pauses after three failed runs in a row, and says why", async ({
