@@ -279,7 +279,7 @@ describe("hosted", () => {
       assistantCheck: "FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL",
     });
     expect(ai.aiAssistantFailure("ws_acme")).toBe(
-      "The workspace's model, qwen-notoolcall, doesn't call tools, which the Assistant needs. An owner can choose another in Settings › AI models.",
+      "The workspace's model, qwen-notoolcall, doesn't call tools, which Founder needs. An owner can choose another in Settings › AI models.",
     );
     await call("PUT", AI_PATH, compat("qwen-toolrefused"));
     tested();
@@ -287,7 +287,7 @@ describe("hosted", () => {
       "FOUNDRY_AI_ASSISTANT_CHECK_REFUSED",
     );
     expect(ai.aiAssistantFailure("ws_acme")).toBe(
-      "llm.example.com refused the Assistant's calls to qwen-toolrefused. An owner can choose another model in Settings › AI models.",
+      "llm.example.com refused Founder's calls to qwen-toolrefused. An owner can choose another model in Settings › AI models.",
     );
     await call("PUT", AI_PATH, {
       ...CLAUDE,
@@ -298,7 +298,7 @@ describe("hosted", () => {
       "FOUNDRY_AI_ASSISTANT_CHECK_AUTH",
     );
     expect(ai.aiAssistantFailure("ws_acme")).toBe(
-      "Claude refused the workspace's key for the Assistant. An owner can check it in Settings › AI models.",
+      "Claude refused the workspace's key for Founder. An owner can check it in Settings › AI models.",
     );
     await call("PUT", AI_PATH, CLAUDE);
     tested();

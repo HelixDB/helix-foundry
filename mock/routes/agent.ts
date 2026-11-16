@@ -45,6 +45,7 @@ import type {
   FoundryDocument,
   FoundryDocumentSet,
   FoundryLoad,
+  FoundryQuestion,
   ListAgentThreadsResponse,
   ListAgentTurnEventsResponse,
   OntologyGeneration,
@@ -89,7 +90,12 @@ import {
   type Weekday,
 } from "../../src/web/areas/automations/model";
 import { automationRoutes, workspaceAutomations } from "./automations";
-import { dashboardRoutes, publicLinks, storedDashboard } from "./dashboards";
+import {
+  VISUALS,
+  dashboardRoutes,
+  publicLinks,
+  storedDashboard,
+} from "./dashboards";
 import { connectionName, dataRoutes, workspaceConnectors } from "./data";
 import { databaseRoutes, tenantGraph } from "./databases";
 import { documentRoutes } from "./documents";
@@ -106,13 +112,20 @@ import {
   ontologyVersion,
   ontologyVersions,
 } from "./ontology";
+import {
+  askQuestion,
+  listed,
+  questionRoutes,
+  storedQuestion,
+} from "./questions";
 import { reviewRoutes } from "./reviews";
 import type { WorkflowCall } from "./workflows";
 import { manages } from "./workspaces";
 import { decisionTypes } from "../review-decisions";
 
-// The Assistant, as the backend's API and foundry-agent-worker run it
-// (backend/api/agent.go, backend/agent): a person's private threads, each
+// Founder (the Assistant in code), as the backend's API and
+// foundry-agent-worker run it (backend/api/agent.go, backend/agent): a
+// person's private threads, each
 // message a turn that is queued, claimed and streams events the dock polls
 // by afterSeq, in the backend's shapes (src/shared/wfe.ts "Agent"). The
 // mock's agent is scripted, with the read tools' outputs in their shapes.
@@ -123,7 +136,22 @@ import { decisionTypes } from "../review-decisions";
 //   (create_dashboard: tries a tile of the ontology named, else the page's,
 //   else the first with a current load, counting its invoices by status
 //   with helix_foundry_preview_dashboard_tile, the mock's real preview; a
-//   tile that can't be read, nothing loaded or no invoices, says why);
+//   tile that can't be read, nothing loaded or no invoices, says why). A
+//   new dashboard a message asks for (the word "dashboard", whole) runs at
+//   once, as the backend's auto-run rule allows (its card and result carry
+//   `auto`): unpinned and unpublished, which the dock's
+//   Undo deletes; anything else stays a card;
+// - "make a dashboard that shows which invoices are unpaid or overdue"
+//   (a dashboard and a question word: which, show, unpaid, overdue, billed,
+//   how many) asks the Analyst first (helix_foundry_ask as the person, then
+//   helix_foundry_get_question until it ends, both naming the question for
+//   the dock), then makes a dashboard of its answer's tables and charts at
+//   once, a tile each with the query it recorded; an answer with none makes
+//   nothing. A limit the Analyst keeps (30 questions an hour, the month's
+//   budget) is said to be the Analyst's;
+// - a question of the data about invoices, customers or accounts ("which
+//   customers …", "how many invoices …") goes to the Analyst the same way,
+//   with a sentence around its answer, never the answer again;
 // - on a dashboard's page, "pin" or "unpin" it, "publish" or "unpublish"
 //   it (publish only while public links are on; unpublish whenever it is
 //   published), "delete" it or "rename it to X" (pin_dashboard,
@@ -377,7 +405,7 @@ export const whileOn = (routes: MockRoute[]): MockRoute[] =>
         ? refused(
             req.params.workspaceId!,
             "FOUNDRY_AGENT_DISABLED",
-            "the Assistant is off for this Foundry",
+            "Founder is off for this Foundry",
           )
         : r.handle(req),
   }));
@@ -573,7 +601,7 @@ function actionOf(workspaceId: string, userId: string, actionId: string) {
 function busy(t: StoredThread) {
   advanceThread(t.id);
   if (state.turns.some((x) => x.threadId === t.id && live(x)))
-    return "the Assistant is still answering in this thread";
+    return "Founder is still answering in this thread";
   if (
     state.actions.some((a) => a.threadId === t.id && shown(a) === "executing")
   )
@@ -606,6 +634,8 @@ function wfe(
     ...agentHostRoutes,
     ...dashboardRoutes,
     ...automationRoutes,
+    // Reads only: asking is askQuestion's (its POST answers later).
+    ...questionRoutes,
   ].map((r) => ({ ...r, c: compileTemplate(r.path) }));
   const url = new URL(path, "http://mock");
   for (const r of compiled) {
@@ -620,7 +650,7 @@ function wfe(
       principal: { user: db.users.get(userId)!, sessionId: "agent" },
     });
     if (reply instanceof Promise)
-      throw new Error(`the Assistant's ${method} ${path} answers later`);
+      throw new Error(`Founder's ${method} ${path} answers later`);
     return reply as MockReply & { body: any };
   }
   throw new Error(`no mock route for ${method} ${path}`);
@@ -994,7 +1024,9 @@ const LIST = "helix_foundry_list_ontologies",
   GET_DASHBOARD = "helix_foundry_get_dashboard",
   GET_AUTOMATION = "helix_foundry_get_automation",
   PREPARE = "helix_foundry_prepare_operation",
-  READ = "helix_foundry_read_graph";
+  READ = "helix_foundry_read_graph",
+  ASK = "helix_foundry_ask",
+  GET_QUESTION = "helix_foundry_get_question";
 
 /** What a member, who manages nothing, prepares: their own dashboards and automations (integration.memberOperations). */
 const MEMBER_OPERATIONS: readonly (
@@ -1027,7 +1059,7 @@ const VERBS: Record<AgentOperation, string> = {
   update_document_set: "change a document set",
   move_document: "move a document",
   settle_review: "settle a review",
-  set_assistant_runtime: "choose where the Assistant runs",
+  set_assistant_runtime: "choose where Founder runs",
   revoke_assistant_helper: "revoke a helper",
   create_dashboard: "make a dashboard",
   update_dashboard: "change a dashboard",
@@ -1406,6 +1438,16 @@ function messageScript(a: Ask, manager: boolean): Step[] {
   if (manager && /\bset ?up\b.*\bontolog|\bhelp me\b.*\bontolog/i.test(t))
     return [started, ...list, ...setupQuestions(a)];
   const automated = automationAsk(a.ws, t, !!a.page?.newAutomation);
+  // A dashboard of what the data says (which invoices, how many, what they
+  // show): the Analyst asked first, its answer's charts made a dashboard.
+  // Asking is a read, and a member makes their own dashboards.
+  if (
+    !automated &&
+    !asked &&
+    /\bdashboards?\b/i.test(t) &&
+    /\b(which|shows?|unpaid|overdue|billed|how many)\b/i.test(t)
+  )
+    return [started, ...list, ...askDashboard(a)];
   const intent: AgentOperation | "connect" | "relay_questions" | undefined =
     automated
       ? automated.kind
@@ -1503,8 +1545,16 @@ function messageScript(a: Ask, manager: boolean): Step[] {
     case "publish_dashboard":
     case "unpublish_dashboard":
       return [started, ...onDashboard(a, board!, asked!)];
-    case undefined:
-      return [started, ...list, ...describe(a)];
+    case undefined: {
+      // A question of the data, about invoices, customers or accounts, of an
+      // ontology with a current load, goes to the Analyst.
+      const o = asksData(t) ? dashboardOntology(a) : undefined;
+      return [
+        started,
+        ...list,
+        ...(o && currentLoadId(o.id) ? askData(a, o) : describe(a)),
+      ];
+    }
   }
   const found = ontologyFor(
     a.ws,
@@ -1540,7 +1590,7 @@ function runtimeOperation(
     return [
       said(
         () =>
-          "Where the Assistant runs is chosen on a local install of Foundry only: here it runs on the workspace’s AI model.",
+          "Where Founder runs is chosen on a local install of Foundry only: here it runs on the workspace’s AI model.",
       ),
     ];
   const read = () => {
@@ -2058,18 +2108,28 @@ const dref = (d: NonNullable<ReturnType<typeof storedDashboard>>) => ({
 });
 
 /**
- * A dashboard of an ontology's invoices by status: its tile tried as the
- * person (the mock's real preview), then create_dashboard of it, or why it
- * can't be read.
+ * The ontology a dashboard reads: the one named, else the page's, else the
+ * first with a current load, else the first.
  */
-function buildDashboard(a: Ask): Step[] {
+function dashboardOntology(a: Ask) {
   const all = workspaceOntologies(a.ws),
     page = a.page?.ontologyId ? ontologyById(a.page.ontologyId) : undefined;
-  const o =
+  return (
     named(a.ws, a.text) ??
     (page?.workspaceId === a.ws ? page : undefined) ??
     all.find((x) => currentLoadId(x.id)) ??
-    all[0];
+    all[0]
+  );
+}
+
+/**
+ * A dashboard of an ontology's invoices by status: its tile tried as the
+ * person (the mock's real preview), then create_dashboard of it, made at
+ * once since the person asked for a dashboard (autoCreateDashboard), or why
+ * it can't be read.
+ */
+function buildDashboard(a: Ask): Step[] {
+  const o = dashboardOntology(a);
   if (!o)
     return [
       said(
@@ -2134,8 +2194,8 @@ function buildDashboard(a: Ask): Step[] {
             },
           };
     },
-    // Only a tile that reads goes on a card.
-    ...prepare(() => {
+    // Only a tile that reads goes on a dashboard.
+    ...dashboardSteps(a, () => {
       const read = outcome();
       if (!read?.ok)
         return `I couldn't read invoices by status from ${o.name}: ${read ? read.error?.message || "it has no answer" : why(preview())}.`;
@@ -2152,7 +2212,442 @@ function buildDashboard(a: Ask): Step[] {
         },
         named: namedByPerson(a.threadId, [payload.name]),
         ontologyId: "",
-        said: `I've prepared a dashboard of ${o.name}'s invoices by status, as one bar chart. Create it from the card when you're ready.`,
+        said: `with one bar chart of the invoices in ${o.name} by status`,
+      };
+    }),
+  ];
+}
+
+type DashboardPlan = Extract<Plan, { operation: "create_dashboard" }>;
+/**
+ * Whether Founder makes a new dashboard without a card, as the backend's
+ * autoRun allows it: in a person's message that asks for a dashboard (the
+ * word, whole), on the workspace the turn is in (every plan here targets
+ * it). Everything else, pinning, publishing and deleting included, stays a
+ * card.
+ */
+const askedForDashboard = (text: string) => /\bdashboards?\b/i.test(text);
+
+/**
+ * A create_dashboard plan's steps: made at once when the person asked for a
+ * dashboard (autoCreateDashboard), else prepared as a card. `said` of a plan
+ * made at once is what the dashboard shows, after its name.
+ */
+function dashboardSteps(
+  a: Ask,
+  decide: (c: Context) => DashboardPlan | string,
+): Step[] {
+  return askedForDashboard(a.text)
+    ? autoCreateDashboard(a, decide)
+    : prepare((c) => {
+        const p = decide(c);
+        return typeof p === "string"
+          ? p
+          : {
+              ...p,
+              said: `I've prepared a dashboard${p.said ? ` ${p.said}` : ""}. Create it from the card when you're ready.`,
+            };
+      });
+}
+
+// What the tool tells the model of a dashboard made at once (the backend's
+// ranAutoNext).
+const RAN_AUTO_NEXT =
+  "Foundry made this new dashboard at once, because the person asked for one; it isn't pinned or published, and they can undo it from the conversation. Give them its link (/dashboards/<id>) in a sentence.";
+
+/**
+ * create_dashboard run at once, as the backend's sink runs an action its
+ * auto-run rule allows: the prepare, its card (auto), stored executing and
+ * decided by the person; then its run as the person and its result (auto);
+ * then the prepare's result and the agent's words, with the link. A new
+ * dashboard is unpinned and unpublished: only its maker sees it in their
+ * list until it's pinned, and the dock's Undo deletes it. A string is the
+ * agent's answer when there is nothing to make.
+ */
+function autoCreateDashboard(
+  a: Ask,
+  decide: (c: Context) => DashboardPlan | string,
+): Step[] {
+  let plan: DashboardPlan | string | undefined;
+  let ran: StoredAction | undefined;
+  const planned = (c: Context) => (plan ??= decide(c));
+  return [
+    (c) => {
+      const p = planned(c);
+      return typeof p === "string"
+        ? { type: "text", text: p }
+        : {
+            type: "tool_call",
+            tool_use_id: "tu_prepare",
+            name: PREPARE,
+            title: PREPARE,
+            input: {
+              operation: p.operation,
+              target: p.target,
+              payload: p.payload,
+            },
+          };
+    },
+    (c) => {
+      const p = planned(c);
+      if (typeof p === "string") return null;
+      const x: StoredAction = {
+        ...p,
+        id: id("act"),
+        turnId: c.turn.id,
+        threadId: a.threadId,
+        workspaceId: a.ws,
+        userId: c.userId,
+        payloadHash: hash(p),
+        status: "executing",
+        result: null,
+        error: "",
+        expiresAt: Date.now() + (knobs.agentActionTtlMs ?? ACTION_TTL_MS),
+        decidedByUserId: c.userId,
+        decidedAt: now(),
+        createdAt: now(),
+      };
+      state.actions.push(x);
+      ran = x;
+      return {
+        type: "action_card",
+        action_id: x.id,
+        operation: x.operation,
+        target: x.target,
+        payload: x.payload,
+        payload_hash: x.payloadHash,
+        display: x.display,
+        target_named_by_user: x.named,
+        expires_at: iso(x.expiresAt),
+        auto: true,
+      };
+    },
+    (c) => {
+      const x = ran;
+      if (!x) return null;
+      const reply = run(x, c.userId);
+      if (reply.status === 200)
+        Object.assign(x, {
+          status: "succeeded",
+          result: {
+            content_trust: "untrusted",
+            operation: x.operation,
+            target: x.target,
+            result: output(x, reply.body),
+          },
+        });
+      else Object.assign(x, { status: "failed", error: why(reply) });
+      return {
+        type: "action_result",
+        action_id: x.id,
+        operation: x.operation,
+        status: x.status,
+        ...(x.result && { result: x.result }),
+        ...(x.error && { error: x.error }),
+        auto: true,
+      };
+    },
+    () => {
+      const x = ran;
+      return x
+        ? {
+            type: "tool_result",
+            tool_use_id: "tu_prepare",
+            name: PREPARE,
+            is_error: false,
+            output: {
+              action_id: x.id,
+              status: "ran",
+              outcome: x.status,
+              ...(x.result && { result: x.result.result }),
+              ...(x.error && { error: x.error }),
+              next: RAN_AUTO_NEXT,
+            },
+          }
+        : null;
+    },
+    () => {
+      const x = ran,
+        p = plan;
+      if (!x || !p || typeof p === "string") return null;
+      const made = x.result?.result as
+        | { id?: string; name?: string }
+        | undefined;
+      const name = made?.name || p.display.name;
+      return {
+        type: "text",
+        text:
+          x.status === "succeeded" && made?.id
+            ? `I made the dashboard “${name}”${p.said ? `, ${p.said}` : ""}: /dashboards/${made.id}. It isn't pinned or published; Undo deletes it.`
+            : `The dashboard “${name}” wasn't made: ${x.error || "it failed"}.`,
+      };
+    },
+  ];
+}
+
+// ---------------------------------------------------------------- the Analyst
+
+/** What asking the Analyst came to, as the steps after it read it. */
+type Asked = {
+  // The question once asked, or the reply that refused it.
+  question?: FoundryQuestion;
+  refused?: MockReply;
+  // How it ended (empty while it runs), with its result JSON, outputs kept.
+  status: string;
+  resultJson: string;
+  error: string;
+};
+
+const QUESTION_LIVE = ["queued", "running"];
+
+/**
+ * A question as helix_foundry_ask and helix_foundry_get_question give it
+ * (integration.FoundryQuestionOutput): its result's queries without their
+ * outputs, as lists give it.
+ */
+function questionOutput(q: FoundryQuestion) {
+  const status = q.status || "queued";
+  return {
+    content_trust: "untrusted",
+    id: q.id,
+    thread_id: q.threadId || q.id,
+    load_id: q.loadId || "",
+    question: q.question || "",
+    status,
+    done: !QUESTION_LIVE.includes(status),
+    ...(q.resultJson && {
+      result: JSON.parse(listed(q.resultJson)) as unknown,
+    }),
+    ...(q.error && { error: q.error }),
+    attempts: q.attempts ?? 0,
+    usd_micros: Number(q.usdMicros || 0),
+    created_at: q.createdAt || "",
+    ...(q.finishedAt && { finished_at: q.finishedAt }),
+  };
+}
+
+/** The question a tool_result names, whatever its output's size. */
+const questionRef = (ontologyId: string, q: FoundryQuestion) => ({
+  ontology_id: ontologyId,
+  id: q.id,
+  ...(q.loadId && { load_id: q.loadId }),
+  thread_id: q.threadId || q.id,
+  ...(q.status && { status: q.status }),
+});
+
+/**
+ * What Founder says when the Analyst refused its question: a limit the
+ * Analyst keeps (30 questions an hour, the month's question budget) is the
+ * Analyst's, said in those words, not Founder's own.
+ */
+function askRefusal(r: MockReply, o: StoredOntology) {
+  const message = why(r).replace(/\.$/, "");
+  if (r.status === 429)
+    return "The Analyst takes 30 questions an hour, and this workspace has asked them all. That's the Analyst's limit, not mine: ask again later.";
+  if (/\bmonth\b/.test(message))
+    return "This workspace has used the month's question budget for the Analyst. That's the Analyst's limit, not mine: it starts again next month.";
+  if (/\bno load to ask\b/.test(message))
+    return `${o.name} has nothing loaded to ask yet. Load it, and I can ask the Analyst.`;
+  return `I couldn't ask the Analyst: ${message}.`;
+}
+
+/**
+ * Asks the Analyst the person's message about `o`'s current load, as the
+ * person (helix_foundry_ask: the question is theirs, in the Analyst's
+ * threads), then reads it with helix_foundry_get_question until it ends,
+ * holding the turn while it runs (WAIT_MS at most). Both results name the
+ * question (`question`), which the dock shows as the Analyst answers it.
+ * What it came to is `asked`, for the steps after.
+ */
+function askSteps(a: Ask, o: StoredOntology): { steps: Step[]; asked: Asked } {
+  const asked: Asked = { status: "", resultJson: "", error: "" };
+  const input = { workspace_id: a.ws, ontology_id: o.id };
+  const steps: Step[] = [
+    call("tu_ask", ASK, { ...input, question: a.text }),
+    (c) => {
+      const reply = askQuestion({
+        method: "POST",
+        path: `${ONT(a.ws, o.id)}/questions`,
+        params: { workspaceId: a.ws, ontologyId: o.id },
+        query: new URLSearchParams(),
+        body: { question: a.text, clientToken: `agent-${c.turn.id}` },
+        principal: { user: db.users.get(c.userId)!, sessionId: "agent" },
+      });
+      if (reply.status !== 200) {
+        asked.refused = reply;
+        return {
+          type: "tool_result",
+          tool_use_id: "tu_ask",
+          name: ASK,
+          is_error: true,
+          error: why(reply),
+        };
+      }
+      const q = (reply.body as { question: FoundryQuestion }).question;
+      asked.question = q;
+      return {
+        type: "tool_result",
+        tool_use_id: "tu_ask",
+        name: ASK,
+        is_error: false,
+        output: questionOutput(q),
+        question: questionRef(o.id, q),
+      };
+    },
+    (c) =>
+      asked.question
+        ? call("tu_question", GET_QUESTION, {
+            ...input,
+            question_id: asked.question.id,
+          })(c)
+        : null,
+    (c) => {
+      const q = asked.question;
+      if (!q) return null;
+      const stored = storedQuestion(a.ws, o.id, q.id);
+      if (
+        stored &&
+        QUESTION_LIVE.includes(stored.status) &&
+        Date.now() - (c.turn.heldSince ?? Date.now()) <= WAIT_MS
+      )
+        return undefined;
+      const read = wfe(c.userId, "GET", `${ONT(a.ws, o.id)}/questions/${q.id}`);
+      if (read.status !== 200)
+        return {
+          type: "tool_result",
+          tool_use_id: "tu_question",
+          name: GET_QUESTION,
+          is_error: true,
+          error: why(read),
+        };
+      const got = read.body.question as FoundryQuestion;
+      Object.assign(asked, {
+        status: QUESTION_LIVE.includes(got.status || "")
+          ? ""
+          : got.status || "",
+        resultJson: got.resultJson || "",
+        error: got.error || "",
+      });
+      return {
+        type: "tool_result",
+        tool_use_id: "tu_question",
+        name: GET_QUESTION,
+        is_error: false,
+        output: questionOutput(got),
+        question: questionRef(o.id, got),
+      };
+    },
+  ];
+  return { steps, asked };
+}
+
+/** Founder's words around the Analyst's answer: never the answer again. */
+function aroundAnswer(asked: Asked, o: StoredOntology) {
+  if (asked.refused) return askRefusal(asked.refused, o);
+  switch (asked.status) {
+    case "answered":
+      return `That's the Analyst's answer, from the current load of ${o.name}.`;
+    case "cannot_answer":
+      return `The Analyst couldn't answer that from the current load of ${o.name}: its reply says what's missing.`;
+    case "failed":
+      return `The Analyst's question failed: ${asked.error || "it ended without an answer"}.`;
+    case "cancelled":
+      return "The question was cancelled before the Analyst answered.";
+    default:
+      return "The Analyst is still working on it: its answer shows here once it's done.";
+  }
+}
+
+/** Whether a message asks the data about invoices, customers or accounts. */
+const asksData = (text: string) =>
+  /\b(which|how many|what|who|show)\b/i.test(text) &&
+  /\b(invoices?|customers?|accounts?)\b/i.test(text);
+
+/** A question of the data: the Analyst's answer, and a sentence around it. */
+function askData(a: Ask, o: StoredOntology): Step[] {
+  const { steps, asked } = askSteps(a, o);
+  return [...steps, said(() => aroundAnswer(asked, o))];
+}
+
+/**
+ * A dashboard of what the data says: asked of the Analyst first (the
+ * ontology a dashboard reads), then each table or chart of its answer made a
+ * tile, as :add-question-visual makes one (the query it recorded, its kind
+ * and title, the current load), one a row, in a dashboard made at once
+ * (autoCreateDashboard). An answer that isn't one, or shows no table or
+ * chart, makes nothing, and Founder says why.
+ */
+function askDashboard(a: Ask): Step[] {
+  const o = dashboardOntology(a);
+  if (!o)
+    return [
+      said(
+        () =>
+          "This workspace has no ontology yet, so there is no data for a dashboard. Create one first.",
+      ),
+    ];
+  const { steps, asked } = askSteps(a, o);
+  return [
+    ...steps,
+    ...dashboardSteps(a, () => {
+      if (asked.refused) return askRefusal(asked.refused, o);
+      if (asked.status !== "answered")
+        return `${aroundAnswer(asked, o).replace(/\.$/, "")}, so I made no dashboard.`;
+      const r = JSON.parse(asked.resultJson || "{}") as {
+        answer?: {
+          visuals?: {
+            evidence_id: string;
+            kind?: string | null;
+            title?: string | null;
+          }[];
+        };
+        queries?: { evidence_id: string; query: unknown }[];
+      };
+      const tiles = (r.answer?.visuals || [])
+        .flatMap((v) => {
+          const recorded = r.queries?.find(
+            (x) => x.evidence_id === v.evidence_id,
+          );
+          return recorded ? [{ v, query: recorded.query }] : [];
+        })
+        .map(({ v, query }, i) => {
+          const visual: { kind?: string } =
+            v.kind && VISUALS.includes(v.kind) ? { kind: v.kind } : {};
+          return {
+            id: `t${i + 1}`,
+            title: v.title?.trim() || "Analyst answer",
+            ontology_id: o.id,
+            load: { kind: "current" },
+            query,
+            visual,
+          };
+        });
+      if (!tiles.length)
+        return "The Analyst's answer shows no table or chart to put on a dashboard, so I made none.";
+      const name = tiles[0]!.title,
+        description = `${o.name}: the Analyst's answer, as tables and charts.`;
+      return {
+        operation: "create_dashboard",
+        target: `workspace:${a.ws}`,
+        payload: {
+          name,
+          description,
+          spec: { v: 1, tiles, layout: { rows: tiles.map((t) => [t.id]) } },
+        },
+        display: {
+          name,
+          description,
+          spec: {
+            tiles: tiles.map((t) => ({
+              title: t.title,
+              ontology: ref(o),
+              ...(t.visual.kind && { visual: t.visual.kind }),
+            })),
+          },
+        },
+        named: namedByPerson(a.threadId, [name]),
+        ontologyId: "",
+        said: "",
       };
     }),
   ];
@@ -4018,7 +4513,7 @@ export const agentRoutes: MockRoute[] = [
       }
       const draftHas = (why: string) =>
         relayed
-          ? `your answers reached the draft, which carries on from them, but the Assistant can't reply: ${why}`
+          ? `your answers reached the draft, which carries on from them, but Founder can't reply: ${why}`
           : why;
       const hourAgo = Date.now() - 3_600_000,
         sent = state.turns.filter(
