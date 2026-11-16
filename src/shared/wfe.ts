@@ -4604,7 +4604,8 @@ export type FoundryWorkflowVerdictCount = {
  * (areas/workflows/model.ts).
  */
 export type FoundryWorkflowAssessment = {
-  // queued, running, done, failed or skipped (the month's budget spent).
+  // queued, running, done, failed or skipped (the month's budget spent, or
+  // a run queued before ones without a call went unassessed).
   status: string;
   // Once done: essential, helpful, marginal, unused or misleading.
   verdict?: string;
@@ -4694,18 +4695,24 @@ export type FoundryWorkflowInsightTotals = {
   uploads?: number;
   assessmentUsdMicros?: string;
   gapKinds?: { kind?: string; runs?: number }[];
+  // Finished runs that made no call to the ontology: counted here alone,
+  // not in assessed, helped, verdicts, claims or gapKinds.
+  neverCalled?: number;
 };
 /** v1FoundryWorkflowInsightDay: one UTC day, YYYY-MM-DD. */
 export type FoundryWorkflowInsightDay = {
   date?: string;
   totals?: FoundryWorkflowInsightTotals;
 };
-/** v1FoundryWorkflowInsightFunnel: each step the runs of the one before that went on. */
+/**
+ * v1FoundryWorkflowInsightFunnel: each step the runs of the one before that
+ * went on: started, finished, used (called the ontology), assessed, helped.
+ */
 export type FoundryWorkflowInsightFunnel = {
   started?: number;
   finished?: number;
-  assessed?: number;
   used?: number;
+  assessed?: number;
   helped?: number;
 };
 /** v1FoundryWorkflowInsightIssue: a recurring gap (with its kind) or suggestion. */

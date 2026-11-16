@@ -96,6 +96,8 @@ import {
   countsText,
   isRunFilter,
   metricText,
+  neverCalled,
+  notAssessed,
   preview,
   readText,
   runDuration,
@@ -186,10 +188,12 @@ function MadeBy({
 }
 
 // What a run's assessment found, as its row shows it: its verdict once
-// done, else where the run or its assessment stands.
+// done, else where the run or its assessment stands. A run that never
+// called the ontology isn't assessed, whatever an old assessment said.
 function RunVerdict({ run: r }: { run: FoundryWorkflowRun }) {
   if (r.status === "open")
     return <StatusBadge status="running" label="Open" size="sm" />;
+  if (neverCalled(r)) return <Tag>No calls</Tag>;
   const a = r.assessment;
   if (a?.status === "done" && a.verdict && a.verdict in VERDICT_LABELS) {
     const v = VERDICT_LABELS[a.verdict as Verdict];
@@ -823,7 +827,8 @@ function WorkflowRuns({
         helped: t.helped || 0,
         not_helped: verdictRuns(t, "marginal") + verdictRuns(t, "unused"),
         misleading: verdictRuns(t, "misleading"),
-        pending: (t.runs || 0) - (t.assessed || 0),
+        not_called: t.neverCalled || 0,
+        pending: notAssessed(t),
       }
     : {};
   const choose = (f: string) =>
@@ -873,6 +878,9 @@ function WorkflowRuns({
           </span>
         )}
       </div>
+      {filter === "not_called" && (
+        <p className="wf-runs-hint">{noCallsText(!!automation)}</p>
+      )}
       <RefreshFailed query={runs} />
       {runs.isPending ? (
         <div className="on-pad">
@@ -909,7 +917,10 @@ function WorkflowRuns({
               </div>
               <ul className="wf-runs" aria-label="Runs">
                 {shown.slice(0, limit).map((r) => {
-                  const a = assessmentOf(r.assessment?.assessmentJson);
+                  const silent = neverCalled(r);
+                  const a = silent
+                    ? null
+                    : assessmentOf(r.assessment?.assessmentJson);
                   const backed = (a?.claims || []).filter(
                     (c) => c.support === "supported",
                   ).length;
@@ -928,7 +939,9 @@ function WorkflowRuns({
                           {a?.summary ||
                             (r.status === "open"
                               ? "The agent is still recording its calls."
-                              : r.assessment?.error || "")}
+                              : silent
+                                ? "No call to the ontology was recorded, so it isn’t assessed."
+                                : r.assessment?.error || "")}
                         </span>
                         <span className="wf-run-meta">
                           {countsText(r.counts)} ·{" "}
@@ -1171,11 +1184,30 @@ export function WorkflowRunPage() {
             </p>
           )}
         </Panel>
-        {r.assessment && <AssessmentPanel run={r} workflowId={workflowId} />}
+        {neverCalled(r) ? (
+          <Panel
+            title="How much the ontology helped"
+            subtitle={<Tag>No calls</Tag>}
+          >
+            <p className="on-muted">
+              {noCallsText(!!workflow.data?.workflow.automation)}
+            </p>
+          </Panel>
+        ) : (
+          r.assessment && <AssessmentPanel run={r} workflowId={workflowId} />
+        )}
       </div>
     </Page>
   );
 }
+
+// Why a run that never called the ontology isn't assessed, and what to
+// check: an agent of a person's use case may not pass the run's id; an
+// automation's runs pass it themselves.
+const noCallsText = (automation: boolean) =>
+  automation
+    ? "The workflow’s run made no call to this ontology, so it isn’t assessed and doesn’t count toward how much the ontology helped."
+    : "The agent made no call to the ontology with this run’s ID, so it isn’t assessed and doesn’t count toward how much the ontology helped. If it did call the ontology, check that it passes the run’s ID as use_case_run_id on each call.";
 
 function AccessItem({ view: v }: { view: AccessView }) {
   const { id: o } = useOntology();

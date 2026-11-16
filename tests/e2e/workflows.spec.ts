@@ -152,6 +152,41 @@ test("an agent's run shows its request, what it read and asked, and its answer",
     new RegExp(`/ask/ont_acme_contracts.*${asked.body.question.id}`),
   );
 
+  // A run that never calls the ontology isn't assessed: it counts apart,
+  // and its page says what to check.
+  const silent = (
+    await mock.agent("POST", `${API}/workflows/${workflow}/runs`, {
+      input: "What is the weather like?",
+    })
+  ).body.run.id as string;
+  expect(
+    (
+      await mock.agent(
+        "POST",
+        `${API}/workflows/${workflow}/runs/${silent}:finish`,
+        { output: "Sunny." },
+      )
+    ).status,
+  ).toBe(200);
+  await page.goto(`${O}/usage/${workflow}/runs/${silent}`);
+  await expect(
+    page.getByText(/passes the run’s ID as use_case_run_id on each call/),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Assess again" })).toHaveCount(
+    0,
+  );
+  await page.goto(`${O}/usage/${workflow}?verdict=not_called`);
+  await expect(
+    page
+      .getByRole("radiogroup", { name: "Show runs" })
+      .getByRole("radio", { name: /^Didn’t use the ontology/ }),
+  ).toHaveAttribute("aria-checked", "true");
+  await expect(runs.getByText("What is the weather like?")).toBeVisible();
+  await expect(runs.getByText("No calls", { exact: true })).toBeVisible();
+  await expect(
+    runs.getByText("Which customers are up for renewal?"),
+  ).toHaveCount(0);
+
   // Deleting the use case takes its runs.
   await page.goto(`${O}/usage/${workflow}`);
   await page.getByRole("button", { name: "Delete" }).click();
@@ -356,6 +391,15 @@ test("a use case's page: its numbers, its runs and what to change for it", async
   await expect(runs.getByRole("listitem")).toHaveCount(10);
   await page.getByRole("button", { name: "Show more runs" }).click();
   await expect(runs.getByRole("listitem")).toHaveCount(30);
+
+  // Runs that never called the ontology, some assessed before such runs
+  // went unassessed, count apart: never as a verdict.
+  await filter.getByRole("radio", { name: /^Didn’t use the ontology/ }).click();
+  await expect(page).toHaveURL(/verdict=not_called/);
+  await expect(page.getByText(/use_case_run_id/)).toBeVisible();
+  await expect(runs.getByText("No calls", { exact: true }).first()).toBeVisible();
+  await expect(runs.getByText("Not used", { exact: true })).toHaveCount(0);
+  await filter.getByRole("radio", { name: /^All/ }).click();
 
   // A gap narrows them to the runs that named it.
   await page

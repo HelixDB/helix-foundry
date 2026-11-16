@@ -20,6 +20,8 @@ import {
   isRunFilter,
   issueKey,
   metricText,
+  neverCalled,
+  notAssessed,
   principalKey,
   rollingDays,
   runBucket,
@@ -124,12 +126,15 @@ describe("workflow insights", () => {
       assessed: 1,
       helped: 1,
     });
+    // It never called the ontology: its old verdict counts nowhere.
     expect(got.previous).toMatchObject({
       runs: 1,
-      assessed: 1,
+      assessed: 0,
       helped: 0,
       used: 0,
+      neverCalled: 1,
     });
+    expect(got.previous?.verdicts).toEqual([]);
     expect(got.series?.[0]?.totals?.runs).toBe(1);
     expect(got.series?.[6]?.totals?.open).toBe(1);
   });
@@ -148,16 +153,27 @@ describe("workflow insights", () => {
     expect(got.funnel).toEqual({
       started: 6,
       finished: 5,
-      assessed: 4,
-      used: 3,
+      used: 4,
+      assessed: 3,
       helped: 2,
     });
     const steps = funnelSteps(got.funnel);
-    expect(steps.map((s) => s.runs)).toEqual([6, 5, 4, 3, 2]);
+    expect(steps.map((s) => [s.key, s.runs])).toEqual([
+      ["started", 6],
+      ["finished", 5],
+      ["used", 4],
+      ["assessed", 3],
+      ["helped", 2],
+    ]);
+    expect(steps[2]?.left).toEqual({
+      runs: 1,
+      share: 0.2,
+      why: "didn’t call it",
+    });
     expect(steps[3]?.left).toEqual({
       runs: 1,
       share: 0.25,
-      why: "never called it",
+      why: "not assessed yet",
     });
     expect(got.agents?.map((a) => a.principal)).toEqual([
       { kind: "KIND_USER", id: "u1" },
@@ -199,6 +215,54 @@ describe("workflow insights", () => {
     expect(t.verdicts).toEqual([
       { verdict: "helpful", runs: "1" },
       { verdict: "marginal", runs: "1" },
+    ]);
+  });
+
+  it("counts a finished run that never called the ontology apart, whatever an old assessment said", () => {
+    const at = "2026-11-12T10:00:00Z";
+    const runs = [
+      run(at, {
+        verdict: "unused",
+        calls: 0,
+        claims: ["contradicted"],
+        gaps: [{ kind: "missing_type", what: "Never read a thing" }],
+        suggestions: ["Call the ontology"],
+      }),
+      run(at, { verdict: "unused", claims: ["unsupported"] }),
+      run(at, { verdict: "helpful", claims: ["supported"] }),
+      // Open, it may still call.
+      run(at, { open: true, calls: 0 }),
+    ];
+    const got = insights(runs, { days: 1, now: NOW });
+    expect(got.totals).toMatchObject({
+      runs: 4,
+      open: 1,
+      finished: 3,
+      used: 2,
+      neverCalled: 1,
+      assessed: 2,
+      helped: 1,
+      claimsSupported: 1,
+      claimsUnsupported: 1,
+      claimsContradicted: 0,
+      // What the old assessment cost still counts.
+      assessmentUsdMicros: "3000",
+    });
+    expect(got.totals?.verdicts).toEqual([
+      { verdict: "helpful", runs: "1" },
+      { verdict: "unused", runs: "1" },
+    ]);
+    expect(got.totals?.gapKinds).toEqual([]);
+    expect(got.gaps).toEqual([]);
+    expect(got.suggestions).toEqual([]);
+    expect(helpedShare(got.totals)).toBe(0.5);
+    expect(notAssessed(got.totals)).toBe(1);
+    expect(runs.map(neverCalled)).toEqual([true, false, false, false]);
+    expect(runs.map(runBucket)).toEqual([
+      "not_called",
+      "not_helped",
+      "helped",
+      "pending",
     ]);
   });
 
@@ -274,6 +338,7 @@ describe("the Workflows pages' metrics", () => {
   const t = {
     runs: 10,
     assessed: 8,
+    neverCalled: 1,
     helped: 6,
     claimsSupported: 9,
     claimsUnsupported: 2,
@@ -388,15 +453,15 @@ describe("the Workflows pages' metrics", () => {
 
   it("says in a sentence where runs went when none left on the way", () => {
     expect(
-      funnelText({ started: 1, finished: 1, assessed: 1, used: 1, helped: 1 }),
+      funnelText({ started: 1, finished: 1, used: 1, assessed: 1, helped: 1 }),
     ).toBe(
-      "The run finished, was assessed and used the ontology, and the ontology helped.",
+      "The run finished, called the ontology and was assessed, and the ontology helped.",
     );
     expect(
-      funnelText({ started: 3, finished: 3, assessed: 3, used: 3, helped: 3 }),
+      funnelText({ started: 3, finished: 3, used: 3, assessed: 3, helped: 3 }),
     ).toMatch(/^Every run finished/);
     expect(
-      funnelText({ started: 3, finished: 3, assessed: 3, used: 2, helped: 2 }),
+      funnelText({ started: 3, finished: 3, used: 2, assessed: 2, helped: 2 }),
     ).toBeUndefined();
     expect(funnelText({})).toBeUndefined();
   });
@@ -408,8 +473,31 @@ describe("the Workflows pages' metrics", () => {
       helpful: 2,
       marginal: 0,
       unused: 2,
-      pending: 2,
+      not_called: 1,
+      pending: 1,
     });
+    // The docs' example.
+    expect(
+      verdictDay({
+        date: "d",
+        totals: {
+          runs: 4,
+          assessed: 1,
+          neverCalled: 2,
+          verdicts: [{ verdict: "helpful", runs: "1" }],
+        },
+      }),
+    ).toEqual({
+      date: "d",
+      essential: 0,
+      helpful: 1,
+      marginal: 0,
+      unused: 0,
+      misleading: 0,
+      not_called: 2,
+      pending: 1,
+    });
+    expect(notAssessed({ runs: 1, assessed: 1, neverCalled: 1 })).toBe(0);
     expect(
       insightSeries("helped", [
         { date: "d1", totals: t },
@@ -456,6 +544,17 @@ describe("a workflow's runs list", () => {
     expect(runBucket(run(at, { verdict: "marginal" }))).toBe("not_helped");
     expect(runBucket(run(at, { verdict: "unused" }))).toBe("not_helped");
     expect(runBucket(run(at, { verdict: "misleading" }))).toBe("misleading");
+    // A finished run that never called the ontology, whatever its old
+    // assessment said, or none; open, it may still call it.
+    expect(runBucket(run(at, { verdict: "unused", calls: 0 }))).toBe(
+      "not_called",
+    );
+    expect(runBucket(run(at, { verdict: "helpful", calls: 0 }))).toBe(
+      "not_called",
+    );
+    expect(runBucket(run(at, { calls: 0 }))).toBe("not_called");
+    expect(runBucket(run(at, { open: true, calls: 0 }))).toBe("pending");
+    expect(isRunFilter("not_called")).toBe(true);
     expect(isRunFilter("misleading")).toBe(true);
     expect(isRunFilter("toString")).toBe(false);
     expect(isRunFilter(null)).toBe(false);
