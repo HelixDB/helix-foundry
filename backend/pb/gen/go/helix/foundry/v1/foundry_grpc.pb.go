@@ -379,10 +379,10 @@ type FoundryServiceClient interface {
 	CancelFoundryAutomationRun(ctx context.Context, in *CancelFoundryAutomationRunRequest, opts ...grpc.CallOption) (*FoundryAutomationRunResponse, error)
 	// Suggestions for a new automation, written for one ontology's current
 	// version: at most 4 prompts that fill the new automation page's composer
-	// for the person to edit and send, never run. The Assistant writes them
+	// for the person to edit and send, never run. Founder writes them
 	// once per version, on the workspace's cheapest task model (the AI
-	// setting's extraction model), charged to the Assistant's monthly budget;
-	// until then, and where it can't (no AI provider, the Assistant off, its
+	// setting's extraction model), charged to Founder's monthly budget;
+	// until then, and where it can't (no AI provider, Founder off, its
 	// budget or the workspace's 20 writes an hour spent, a failure), they are
 	// made from the version's competency questions. The same callers as the
 	// other automation routes; an ontology the workspace hasn't is NOT_FOUND.
@@ -2128,10 +2128,10 @@ type FoundryServiceServer interface {
 	CancelFoundryAutomationRun(context.Context, *CancelFoundryAutomationRunRequest) (*FoundryAutomationRunResponse, error)
 	// Suggestions for a new automation, written for one ontology's current
 	// version: at most 4 prompts that fill the new automation page's composer
-	// for the person to edit and send, never run. The Assistant writes them
+	// for the person to edit and send, never run. Founder writes them
 	// once per version, on the workspace's cheapest task model (the AI
-	// setting's extraction model), charged to the Assistant's monthly budget;
-	// until then, and where it can't (no AI provider, the Assistant off, its
+	// setting's extraction model), charged to Founder's monthly budget;
+	// until then, and where it can't (no AI provider, Founder off, its
 	// budget or the workspace's 20 writes an hour spent, a failure), they are
 	// made from the version's competency questions. The same callers as the
 	// other automation routes; an ontology the workspace hasn't is NOT_FOUND.

@@ -13719,7 +13719,7 @@ type ListFoundryAutomationSuggestionsResponse struct {
 	Suggestions []*FoundryAutomationSuggestion `protobuf:"bytes,1,rep,name=suggestions,proto3" json:"suggestions,omitempty"`
 	// Where they came from.
 	Source FoundryAutomationSuggestionSource `protobuf:"varint,2,opt,name=source,proto3,enum=helix.foundry.v1.FoundryAutomationSuggestionSource" json:"source,omitempty"`
-	// The Assistant is writing them: these are the fallback; read again in a
+	// Founder is writing them: these are the fallback; read again in a
 	// few seconds.
 	Generating bool `protobuf:"varint,3,opt,name=generating,proto3" json:"generating,omitempty"`
 	// The version they were written for; empty without a current version.

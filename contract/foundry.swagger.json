@@ -1139,7 +1139,7 @@
     },
     "/v1/workspaces/{workspaceId}/foundry/automation-suggestions": {
       "get": {
-        "summary": "Suggestions for a new automation, written for one ontology's current\nversion: at most 4 prompts that fill the new automation page's composer\nfor the person to edit and send, never run. The Assistant writes them\nonce per version, on the workspace's cheapest task model (the AI\nsetting's extraction model), charged to the Assistant's monthly budget;\nuntil then, and where it can't (no AI provider, the Assistant off, its\nbudget or the workspace's 20 writes an hour spent, a failure), they are\nmade from the version's competency questions. The same callers as the\nother automation routes; an ontology the workspace hasn't is NOT_FOUND.",
+        "summary": "Suggestions for a new automation, written for one ontology's current\nversion: at most 4 prompts that fill the new automation page's composer\nfor the person to edit and send, never run. Founder writes them\nonce per version, on the workspace's cheapest task model (the AI\nsetting's extraction model), charged to Founder's monthly budget;\nuntil then, and where it can't (no AI provider, Founder off, its\nbudget or the workspace's 20 writes an hour spent, a failure), they are\nmade from the version's competency questions. The same callers as the\nother automation routes; an ontology the workspace hasn't is NOT_FOUND.",
         "operationId": "FoundryService_ListFoundryAutomationSuggestions",
         "responses": {
           "200": {
@@ -12301,7 +12301,7 @@
         },
         "generating": {
           "type": "boolean",
-          "description": "The Assistant is writing them: these are the fallback; read again in a\nfew seconds."
+          "description": "Founder is writing them: these are the fallback; read again in a\nfew seconds."
         },
         "versionId": {
           "type": "string",

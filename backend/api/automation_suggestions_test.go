@@ -240,8 +240,8 @@ func TestAutomationSuggestionsWithoutAModel(t *testing.T) {
 		"own key off Pro": func(_ *Service, store *suggestionStore) {
 			store.active = &foundrymodel.FoundryAIConfig{ID: "cfg-1", WorkspaceID: "ws-1", Kind: "anthropic"}
 		},
-		"Founder off": func(s *Service, _ *suggestionStore) { s.deps.Cfg.Foundry.Agent.Enabled = false },
-		"20 this hour":      func(_ *Service, store *suggestionStore) { store.queueErr = foundrystore.ErrLimitExceeded },
+		"Founder off":  func(s *Service, _ *suggestionStore) { s.deps.Cfg.Foundry.Agent.Enabled = false },
+		"20 this hour": func(_ *Service, store *suggestionStore) { store.queueErr = foundrystore.ErrLimitExceeded },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, store := suggestionService(t)
