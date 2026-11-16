@@ -463,7 +463,7 @@ func (s *Service) workflowVerdicts(ctx context.Context, workflows []*foundrymode
 	verdicts := map[string]map[string]int64{}
 	for _, w := range workflows {
 		t := tallies[w.ID]
-		w.Runs, w.FinishedRuns, w.LastRunAt = t.Runs, t.FinishedRuns, t.LastRunAt
+		w.Runs, w.FinishedRuns, w.NeverCalledRuns, w.LastRunAt = t.Runs, t.FinishedRuns, t.NeverCalledRuns, t.LastRunAt
 		verdicts[w.ID] = t.Verdicts
 	}
 	return verdicts, nil

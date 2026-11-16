@@ -853,7 +853,7 @@ func (s *mysqlDB) TallyFoundryWorkflowRuns(ctx context.Context, workflowIDs []st
 		return out, nil
 	}
 	args := append(toAnySlice(workflowIDs), by.ID)
-	rows, err := s.db.QueryContext(ctx, `SELECT workflow_id, COUNT(*), SUM(status = 'finished'), MAX(started_at) FROM foundry_workflow_runs
+	rows, err := s.db.QueryContext(ctx, `SELECT workflow_id, COUNT(*), SUM(status = 'finished'), SUM(status = 'finished' AND accesses = 0), MAX(started_at) FROM foundry_workflow_runs
 WHERE workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND `+column+`=? GROUP BY workflow_id`, args...)
 	if err != nil {
 		return nil, err
@@ -863,7 +863,7 @@ WHERE workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND `+column+`=? GRO
 		var workflow string
 		var last sql.NullTime
 		t := model.FoundryWorkflowRunTally{}
-		if err := rows.Scan(&workflow, &t.Runs, &t.FinishedRuns, &last); err != nil {
+		if err := rows.Scan(&workflow, &t.Runs, &t.FinishedRuns, &t.NeverCalledRuns, &last); err != nil {
 			return nil, err
 		}
 		if last.Valid {

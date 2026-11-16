@@ -202,6 +202,9 @@ func (s *workflowStore) TallyFoundryWorkflowRuns(_ context.Context, workflowIDs 
 			t.Runs++
 			if r.Finished != nil {
 				t.FinishedRuns++
+				if r.Counts.Accesses == 0 {
+					t.NeverCalledRuns++
+				}
 			}
 			if a := s.assessments[r.ID]; a != nil && a.Status == foundrymodel.FoundryWorkflowAssessmentDone && r.Counts.Accesses > 0 {
 				t.Verdicts[a.Verdict]++

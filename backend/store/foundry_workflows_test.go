@@ -271,6 +271,7 @@ VALUES (?, ?, ?, ?, 'done', 'helpful', '{}', NOW(6)), (?, ?, ?, ?, 'queued', NUL
 		mine := tallies[w.ID]
 		assert.EqualValues(t, 3, mine.Runs)
 		assert.EqualValues(t, 2, mine.FinishedRuns)
+		assert.EqualValues(t, 1, mine.NeverCalledRuns, "LATER made no call")
 		require.NotNil(t, mine.LastRunAt)
 		assert.Equal(t, map[string]int64{"helpful": 1}, mine.Verdicts)
 		assert.Equal(t, model.FoundryWorkflowRunTally{Verdicts: map[string]int64{}}, tallies[other])
