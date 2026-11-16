@@ -170,17 +170,12 @@ export function DashboardCard({
               d.updatedAt && `Edited ${formatDate(d.updatedAt)}`,
             ]
               .filter(Boolean)
-              .join("
-")}
+              .join("\n")}
           >
             {name}
           </Link>
         </h2>
-        {d.description && (
-          <p className="db-card-desc">
-            {d.description}
-          </p>
-        )}
+        {d.description && <p className="db-card-desc">{d.description}</p>}
         <div className="db-card-meta">
           {d.updatedAt && (
             <span className="db-card-time">
