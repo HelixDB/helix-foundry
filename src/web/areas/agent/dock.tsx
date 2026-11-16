@@ -1215,9 +1215,8 @@ export function Composer({
     `${length - MAX_MESSAGE} characters too long.`
   ) : busy ? (
     "You can send once Founder has finished."
-  ) : (
-    "Enter to send · Shift+Enter for a new line"
-  );
+  ) : // Nothing to say while idle; the line keeps its height so nothing jumps.
+  null;
   return (
     <form
       className="ag-composer"

@@ -724,13 +724,11 @@ test("answers on another provider once it is the setting", async ({ page }) => {
   // Its tool check passed: nothing to say.
   await expect(page.getByText(/Founder can’t run/)).toHaveCount(0);
   await shortcut(page);
-  // Nothing to say under the composer but how to send.
+  // Nothing to say under the composer while idle.
   await expect(
     dockOf(page).getByRole("textbox", { name: "Message" }),
   ).toBeVisible();
-  await expect(dockOf(page).locator(".ag-status")).toHaveText(
-    "Enter to send · Shift+Enter for a new line",
-  );
+  await expect(dockOf(page).locator(".ag-status")).toHaveText("");
   await say(page, "What ontologies do I have?");
   await expect(
     dockOf(page).getByText(/^This workspace has \d+ ontologies: /),

@@ -470,6 +470,8 @@
 }
 .ag-status {
   margin: 0;
+  /* Empty while idle; one line's height kept, so a message never jumps the layout. */
+  min-height: 1.4em;
   color: var(--hf-muted);
   font-size: var(--hf-text-xs);
   line-height: 1.4;

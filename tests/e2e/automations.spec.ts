@@ -328,9 +328,7 @@ test("its composer wraps and never scrolls sideways, before and after sending", 
     page.getByRole("button", { name: "Send", exact: true }),
   ).toBeVisible({ timeout: 20_000 });
   expect(await fits()).toBe(true);
-  await expect(
-    page.getByText("Enter to send · Shift+Enter for a new line"),
-  ).toBeVisible();
+  await expect(page.getByText(/Enter to send/)).toHaveCount(0);
 });
 
 test("suggestions are written for the ontology last opened, and the picker changes them", async ({
