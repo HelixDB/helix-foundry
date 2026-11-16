@@ -394,14 +394,16 @@ export function assessmentOf(json: string | undefined): Assessment | null {
  * A use case's verdicts in words, the most first by the verdicts' order.
  *
  *   verdictsText([{ verdict: "helpful", runs: "3" }, { verdict: "unused", runs: "1" }])
- *   // "3 helpful · 1 unused"
+ *   // "3 helpful · 1 not used"
  */
 export function verdictsText(
   counts: { verdict: string; runs?: string }[] | undefined,
 ): string {
   return VERDICTS.flatMap((v) => {
     const n = Number(counts?.find((c) => c.verdict === v)?.runs || 0);
-    return n > 0 ? [`${formatCount(n)} ${v}`] : [];
+    return n > 0
+      ? [`${formatCount(n)} ${VERDICT_LABELS[v].label.toLowerCase()}`]
+      : [];
   }).join(" · ");
 }
 

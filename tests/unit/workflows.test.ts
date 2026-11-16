@@ -744,7 +744,7 @@ describe("a run's assessment, read without trust", () => {
         { verdict: "later", runs: "9" },
         { verdict: "helpful", runs: "0" },
       ]),
-    ).toBe("1,200 essential · 1 unused");
+    ).toBe("1,200 essential · 1 not used");
     expect(verdictsText(undefined)).toBe("");
     expect(VERDICTS).toHaveLength(5);
   });
