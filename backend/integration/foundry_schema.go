@@ -160,11 +160,13 @@ func foundryOperations(s *Service, allows func(string) bool) (names []any, paylo
 func foundryOperationSchema(s *Service, allows func(string) bool) *jsonschema.Schema {
 	schema := schemaFor[FoundryOperationInput]()
 	names, payloads := foundryOperations(s, allows)
-	target := "create_dashboard and create_workflow: workspace:<workspace_id>; the other dashboard operations: dashboard:<workspace_id>/<dashboard_id>; " +
+	// What dashboards' and workflows' operations target; a host with workflows off offers none of theirs.
+	shared := "create_dashboard and create_workflow: workspace:<workspace_id>; the other dashboard operations: dashboard:<workspace_id>/<dashboard_id>; " +
 		"the other workflow operations: workflow:<workspace_id>/<workflow_id>."
 	if s.AutomationsOff {
-		target = "create_dashboard: workspace:<workspace_id>; the other dashboard operations: dashboard:<workspace_id>/<dashboard_id>."
+		shared = "create_dashboard: workspace:<workspace_id>; the other dashboard operations: dashboard:<workspace_id>/<dashboard_id>."
 	}
+	target := shared
 	if allows("create_ontology") {
 		target = "create_ontology: tenant:<database id> for an existing database, or workspace:<workspace_id> for a new one."
 		if s.Events && allows("create_event_source") {
@@ -181,9 +183,7 @@ func foundryOperationSchema(s *Service, allows func(string) bool) *jsonschema.Sc
 				target += " " + strings.Join(ops, ", ") + ": workspace:<workspace_id>."
 			}
 		}
-		target += " sync_connector: connector:<workspace_id>/<connector_id>. create_dashboard and create_workflow: workspace:<workspace_id>; " +
-			"the other dashboard operations: dashboard:<workspace_id>/<dashboard_id>; the other workflow operations: workflow:<workspace_id>/<workflow_id>. " +
-			"Every other operation: ontology:<workspace_id>/<ontology_id>."
+		target += " sync_connector: connector:<workspace_id>/<connector_id>. " + shared + " Every other operation: ontology:<workspace_id>/<ontology_id>."
 	}
 	schema.Properties["operation"].Description = "The action to prepare; payload says what each takes."
 	schema.Properties["operation"].Enum = names

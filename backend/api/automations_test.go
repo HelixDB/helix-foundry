@@ -211,6 +211,9 @@ func (s *automationStore) PauseFoundryAutomation(_ context.Context, ws, id strin
 }
 
 func (s *automationStore) ResumeFoundryAutomation(_ context.Context, ws, id, owner string, next *time.Time) (*foundrymodel.FoundryAutomation, error) {
+	if s.refuse != nil {
+		return nil, s.refuse
+	}
 	a := s.automations[id]
 	a.Status, a.PausedReason, s.approvedNext = foundrymodel.FoundryAutomationActive, nil, next
 	return s.GetFoundryAutomation(context.Background(), ws, id)

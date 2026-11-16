@@ -305,6 +305,6 @@ func TestWorkflowsOffOffersNoWorkflowTools(t *testing.T) {
 			}
 		}
 		assert.Contains(t, ops, any("create_dashboard"))
-		assert.Equal(t, !off, strings.Contains(string(schema), "workflow:<workspace_id>/<workflow_id>"), "off: %v", off)
+		assert.Equal(t, !off, strings.Contains(string(schema), "the other workflow operations"), "off: %v", off)
 	}
 }
