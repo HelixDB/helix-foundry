@@ -46,7 +46,8 @@ export function zoneOffset(id: string, at: Date = new Date()): string {
   })
     .formatToParts(at)
     .find((p) => p.type === "timeZoneName")?.value;
-  return (name ?? "GMT").replace("-", "−");
+  // Browsers write a zero offset "GMT+0", Node "GMT".
+  return (!name || name === "GMT+0" ? "GMT" : name).replace("-", "−");
 }
 
 /**
