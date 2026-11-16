@@ -106,11 +106,7 @@ describe("pageContext", () => {
   // A suggestion's ontology: Founder is told which ontology it was written
   // for where the page names none.
   it.each([
-    [
-      "/workflows/new",
-      "",
-      { newAutomation: true, ontologyId: "ont_2" },
-    ],
+    ["/workflows/new", "", { newAutomation: true, ontologyId: "ont_2" }],
     ["/data", "", { ontologyId: "ont_2" }],
     // The page's own ontology, and its load, stay.
     ["/ask/ont_1", "?load=load_4", { ontologyId: "ont_1", loadId: "load_4" }],

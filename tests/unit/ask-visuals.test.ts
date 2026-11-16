@@ -434,6 +434,9 @@ describe("visual plans", () => {
     // A bar or a line doesn't suit one number: a table.
     for (const kind of ["table", "bar", "line"] as const)
       expect(visualPlan(count, COUNT, { kind }).kind, kind).toBe("table");
+    expect(visualPlan(count, COUNT, { kind: "table" })).toMatchObject({
+      table: { columns: [{ label: "Count of distinct Invoice" }] },
+    });
     expect(visualPlan(avg, AVERAGE, { kind: "table" })).toMatchObject({
       table: {
         columns: [
@@ -1209,11 +1212,7 @@ describe("column headings", () => {
       "Invoice",
       "Invoice amount due",
     ]);
-    expect(plan.table.rows[0]!.map(cellText)).toEqual([
-      "Globex",
-      "INV-1",
-      "3",
-    ]);
+    expect(plan.table.rows[0]!.map(cellText)).toEqual(["Globex", "INV-1", "3"]);
     // Beside its entity's column, a names prop keeps its prop.
     const withEntity: OntologyQuery = {
       ...query,
@@ -1232,7 +1231,11 @@ describe("column headings", () => {
         kind: "rows",
         rows: [
           {
-            cells: [{ type: "Customer", id: "c1", name: "Globex" }, "Globex", "INV-1"],
+            cells: [
+              { type: "Customer", id: "c1", name: "Globex" },
+              "Globex",
+              "INV-1",
+            ],
             edges: [],
           },
         ],

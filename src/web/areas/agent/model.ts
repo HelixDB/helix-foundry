@@ -129,10 +129,7 @@ export function pageContext(
   about?: string,
 ): AgentPageContext | null {
   const page = urlContext(pathname, search);
-  return about &&
-    ID.test(about) &&
-    !page?.ontologyId &&
-    !page?.dashboardId
+  return about && ID.test(about) && !page?.ontologyId && !page?.dashboardId
     ? { ...page, ontologyId: about }
     : page;
 }

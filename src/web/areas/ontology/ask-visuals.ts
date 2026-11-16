@@ -8,12 +8,7 @@ import type {
   VisualKind,
 } from "../../../shared/wfe";
 import { formatNumber, plural } from "../../kit/util";
-import {
-  AGGREGATE_FN,
-  exprText,
-  queryNames,
-  queryText,
-} from "./ask-model";
+import { AGGREGATE_FN, exprText, queryNames, queryText } from "./ask-model";
 import { isRecord } from "../../../shared/json";
 import { NO_NAMING, type Naming } from "../explore/naming";
 
@@ -344,7 +339,16 @@ export function visualPlan(
         note: cut ?? "",
         table: {
           columns: [
-            { label: text.returns, numeric: true },
+            {
+              // What it measures, its columns headed as a table's.
+              label:
+                "aggregate" in r
+                  ? `${AGGREGATE_FN[r.aggregate.fn]} of ${col(r.aggregate)}`
+                  : "count" in r
+                    ? `Count of distinct ${col({ at: r.count.distinct_at ?? query.steps?.length ?? 0 })}`
+                    : text.returns,
+              numeric: true,
+            },
             ...(output.kind === "aggregate"
               ? [{ label: "Values", numeric: true }]
               : []),

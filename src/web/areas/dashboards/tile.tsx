@@ -45,7 +45,9 @@ const HEIGHT = 248;
  * the load's version read, to link its entities and head its columns.
  */
 const hasColumns = (o: QueryOutput) =>
-  o.kind === "rows" || o.kind === "group_count" || o.kind === "grouped_aggregate";
+  o.kind === "rows" ||
+  o.kind === "group_count" ||
+  o.kind === "grouped_aggregate";
 
 /**
  * How a tile names what its load holds: where an entity opens (its page,
@@ -76,7 +78,9 @@ function useLoadNaming(
       const t = naming.types.get(r.type);
       if (!t) return undefined;
       const id = entityId(
-        t.key.length ? { type: r.type, key: r.id } : { type: r.type, name: r.id },
+        t.key.length
+          ? { type: r.type, key: r.id }
+          : { type: r.type, name: r.id },
       );
       return withLoad(ontologyPaths.entity(ontologyId, id), loadId);
     },
