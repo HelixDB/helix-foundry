@@ -50,22 +50,45 @@ func DraftFailure(r Resolved, f ontologyagent.ModelFailure) Copy {
 	return Copy{Message: p + " is unavailable; Helix will retry"}
 }
 
-// AskFailure words a question whose model call failed with f, on r. Helix's
-// Claude says what questions always said, as DraftFailure does for drafts. A
-// failed question is never retried, so Permanent says only whose it is.
+// AskFailure words a question whose model call failed with f, on r. On
+// Helix's Claude each failure says what it is (askCopy): the agent has
+// already retried a busy provider, so one still busy says to try again; a
+// request the model rejected (unsupported) is Helix's bug, said so rather
+// than "ask again", which would send the same request; and the key's and
+// account's failures are Helix's to fix. A failed question is never retried,
+// so Permanent says only whose it is.
 func AskFailure(r Resolved, f ontologyagent.ModelFailure) Copy {
 	const unavailable = "the model could not be reached; ask again"
 	switch {
 	case f == ontologyagent.ModelRefused:
 		return Copy{Message: "the model declined to answer; ask another way", Permanent: true}
 	case r.houseCopy():
-		return house(unavailable, f)
+		return house(askCopy(f), f)
 	}
 	if c, ok := own(r, r.Settings.Models.Ask.Name, f); ok {
 		return c
 	}
 	return Copy{Message: unavailable}
 }
+
+// askCopy is Helix's Claude's copy for a question that failed with f.
+func askCopy(f ontologyagent.ModelFailure) string {
+	switch f {
+	case ontologyagent.ModelUnavailable, ontologyagent.ModelRateLimited, ontologyagent.ModelTimeout:
+		return "the model provider is busy; try again in a minute"
+	case ontologyagent.ModelMalformed:
+		return "the model's answer couldn't be read; ask again"
+	case ontologyagent.ModelTruncated, ontologyagent.ModelContextTooLong:
+		return "the question needed more room than the model has; ask something narrower"
+	case ontologyagent.ModelAuth, ontologyagent.ModelPermission, ontologyagent.ModelNotFound, ontologyagent.ModelQuota:
+		return "Helix's model account can't take questions right now; on-call has been told, so try again later"
+	}
+	return houseBug + ", not your question; on-call has been told"
+}
+
+// houseBug is what Helix's Claude says of a request its model rejected: a
+// request Helix built, which the same question would send again.
+const houseBug = "Helix sent the model a request it rejected. That's a bug in Helix"
 
 // AssessFailure words a workflow run's assessment whose model call failed
 // with f, on r, as AskFailure does a question's. An assessment is retried
@@ -76,12 +99,26 @@ func AssessFailure(r Resolved, f ontologyagent.ModelFailure) Copy {
 	case f == ontologyagent.ModelRefused:
 		return Copy{Message: "the model declined to assess this run", Permanent: true}
 	case r.houseCopy():
-		return house(unavailable, f)
+		return house(assessCopy(f), f)
 	}
 	if c, ok := own(r, r.Settings.Models.Ask.Name, f); ok {
 		return c
 	}
 	return Copy{Message: unavailable}
+}
+
+// assessCopy is Helix's Claude's copy for an assessment that failed with f,
+// which Helix retries.
+func assessCopy(f ontologyagent.ModelFailure) string {
+	switch f {
+	case ontologyagent.ModelUnavailable, ontologyagent.ModelRateLimited, ontologyagent.ModelTimeout:
+		return "the model provider is busy; Helix will retry"
+	case ontologyagent.ModelMalformed:
+		return "the model's answer couldn't be read; Helix will retry"
+	case ontologyagent.ModelAuth, ontologyagent.ModelPermission, ontologyagent.ModelNotFound, ontologyagent.ModelQuota:
+		return "Helix's model account can't take this right now; on-call has been told, and Helix will retry"
+	}
+	return houseBug + "; on-call has been told, and Helix will retry"
 }
 
 // DocumentFailure words a document whose extraction failed with f, on r.
