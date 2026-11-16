@@ -179,6 +179,7 @@ export function ReviewDialog({
           names={lists.names}
           email={email}
           label="Steps that run unattended"
+          showAll
         />
         <p className="au-review-note">
           {approved
@@ -258,6 +259,7 @@ export function ApproveDialog({
           names={lists.names}
           email={email}
           label="Steps to approve"
+          showAll
         />
         <p className="au-review-note">
           It runs as you, with what you may do when it runs. Approving turns it

@@ -77,6 +77,8 @@ func Label(p Provider) string {
 		return "Azure OpenAI"
 	case Bedrock:
 		return "Amazon Bedrock"
+	case Cohere:
+		return "Cohere"
 	case Ollama:
 		return "Ollama"
 	case Compatible:
@@ -227,7 +229,9 @@ func (r *Resolver) ResolveServed(ctx context.Context, workspaceID string, provid
 	if err != nil {
 		return Resolved{}, err
 	}
-	if kind := resolved.Settings.Provider.Kind(); !slices.Contains(providers, string(kind)) {
+	// The kind the agent calls, which is the setting's own but for Cohere's,
+	// called as an OpenAI-compatible server.
+	if kind := resolved.endpoint().Provider.Kind(); !slices.Contains(providers, string(kind)) {
 		return Resolved{}, fmt.Errorf("%w: %s", ErrNotServed, kind)
 	}
 	return resolved, nil

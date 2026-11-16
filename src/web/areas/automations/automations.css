@@ -212,9 +212,57 @@
   min-width: 0;
 }
 .au-preview-title {
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--hf-text);
   font-size: var(--hf-text-base);
   line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+/* A step's line that opens it. */
+.au-preview-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.au-preview-open:hover {
+  color: var(--hf-accent-text);
+}
+.au-preview-open:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+  border-radius: var(--hf-radius-sm);
+}
+/* The whole of a long instruction or subject, opened in place. */
+.au-preview-full summary {
+  width: fit-content;
+  color: var(--hf-accent-text);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+  cursor: pointer;
+}
+.au-preview-full summary:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+  border-radius: var(--hf-radius-sm);
+}
+.au-preview-full p {
+  max-height: 240px;
+  margin: 4px 0 2px;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .au-preview-note {
@@ -282,6 +330,18 @@
   width: 12px;
   height: 12px;
   border-color: var(--hf-accent);
+  transition: opacity 120ms;
+}
+/* A card's lower handle always shows where a join starts; its other three
+   while it is hovered or selected, or a join is being drawn to or from them. */
+.au-flow.is-editable .react-flow__handle:not(.react-flow__handle-bottom) {
+  opacity: 0;
+}
+.au-flow.is-editable .react-flow__node:hover .react-flow__handle,
+.au-flow.is-editable .react-flow__node.selected .react-flow__handle,
+.au-flow.is-editable .react-flow__handle.connectingfrom,
+.au-flow.is-editable .react-flow__handle.connectingto {
+  opacity: 1;
 }
 .au-flow:not(.is-editable) .react-flow__handle {
   opacity: 0;
@@ -948,6 +1008,18 @@
   background: var(--hf-selected);
   color: var(--hf-text);
 }
+/* Steps moved on the canvas saving on their own, said quietly. */
+.au-layout-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  white-space: nowrap;
+}
+.au-layout-saved:empty {
+  display: none;
+}
 .au-unsaved {
   display: flex;
   flex-wrap: wrap;
@@ -1117,13 +1189,6 @@
   color: var(--hf-text);
   font-size: var(--hf-text-base);
   line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-.au-summary-note {
-  margin: 0;
-  color: var(--hf-text-2);
-  font-size: var(--hf-text-sm);
-  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .au-side-section {

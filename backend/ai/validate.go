@@ -69,7 +69,7 @@ var (
 // Catalog.Unpriced's to check.
 func (s Settings) Validate(r Rules) error {
 	switch p := s.Provider.(type) {
-	case Anthropic, OpenAI:
+	case Anthropic, OpenAI, Cohere:
 	case AzureOpenAI:
 		if _, err := AzureEndpoint(p.Endpoint); err != nil {
 			return err
@@ -115,6 +115,11 @@ func (s Settings) Validate(r Rules) error {
 		}
 		switch p := rm.Model.Price.(type) {
 		case PriceTable:
+			// Helix's price table has no Cohere rows (Cohere quotes its
+			// prices per account): its models cost what their owner says.
+			if kind == KindCohere {
+				return invalid(field+".price", "must be your own rates for a Cohere model")
+			}
 		case PriceTableAs:
 			if kind != KindAzureOpenAI && kind != KindBedrock {
 				return invalid(field+".price", "can be another model's only for an Azure deployment or a Bedrock inference profile")
@@ -126,9 +131,14 @@ func (s Settings) Validate(r Rules) error {
 			if p.Output == 0 {
 				return invalid(field+".price.rates.output", "must be more than 0")
 			}
+			// Cohere reports every prompt token as cached and bills cached
+			// input as input: a lower rate for it would undercount spend.
+			if kind == KindCohere && p.CacheRead != nil {
+				return invalid(field+".price.rates.cache_read", "must be left out for a Cohere model, whose cached input costs what input does")
+			}
 		case PriceFree:
 			if !kind.Free() {
-				return invalid(field+".price", "can be free only for Ollama and OpenAI-compatible servers")
+				return invalid(field+".price", "can be free only for Ollama and custom OpenAI-compatible servers")
 			}
 		default:
 			return invalid(field+".price", "is required")

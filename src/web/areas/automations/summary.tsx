@@ -94,7 +94,8 @@ export function Problems({
 }
 
 /**
- * The automation in plain words, with nothing selected: what it does, why
+ * The automation in plain words, with nothing selected: what it does (its
+ * description, else a short sentence of its steps), why
  * it isn't running (and its owner's approval, which turns it on), what runs
  * unattended, when it starts and runs next, whose it is, and its last runs.
  * A draft's says what its save waits for. What runs unattended, and when it
@@ -143,12 +144,11 @@ export function Summary({
         <h2>{draft.name || "Untitled workflow"}</h2>
       </div>
       {status && <StatusBadge status={status.dot} label={status.label} />}
+      {/* Its description, else the steps in a short sentence: each step's
+          whole text is its own, below and in its settings. */}
       <p className="au-summary-text">
-        {sentence(draft.spec, lists.names, email)}
+        {draft.description.trim() || sentence(draft.spec, lists.names, email)}
       </p>
-      {draft.description && (
-        <p className="au-summary-note">{draft.description}</p>
-      )}
       <Problems problems={problems} onSelect={onSelect} />
       {a && stopped && (
         <div
@@ -187,7 +187,12 @@ export function Summary({
         )}
       <section className="au-side-section" aria-label="What runs unattended">
         <h3>What runs unattended</h3>
-        <StepsPreview spec={runsNow} names={lists.names} email={email} />
+        <StepsPreview
+          spec={runsNow}
+          names={lists.names}
+          email={email}
+          onSelect={onSelect}
+        />
         {a && dirty && (
           <p className="au-hint">
             As saved: your changes run once you save them.

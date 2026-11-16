@@ -1503,3 +1503,107 @@ func TestUpdateFoundryAIBedrock(t *testing.T) {
 		}
 	})
 }
+
+// Cohere saves as an owner's key for its account, with each model at the
+// owner's own rates: Helix's price table has no Cohere rows, so nothing is
+// suggested and a model priced by the table is refused.
+func TestUpdateFoundryAICohere(t *testing.T) {
+	ctx := ports.WithActor(context.Background(), owner)
+	const cohereKey = "sentinelCohereKey0123456789abcdefWXYZ"
+	cfg := aiConfig(modeCloud, false, "anthropic", "cohere")
+	cohere := &foundryv1.UpdateFoundryAIRequest_Provider{Provider: &foundryv1.FoundryAIProvider{
+		Kind: &foundryv1.FoundryAIProvider_Cohere{Cohere: &foundryv1.FoundryAICohere{}},
+	}}
+	rated := func(name string) *foundryv1.FoundryAIModel {
+		return &foundryv1.FoundryAIModel{Name: name, Price: &foundryv1.FoundryAIModel_Rates{Rates: &foundryv1.FoundryAIRates{
+			InputUsdPerMtok: "2.5", OutputUsdPerMtok: "10"}}}
+	}
+	models := func() *foundryv1.FoundryAIModels {
+		return &foundryv1.FoundryAIModels{Draft: rated("command-a-plus-05-2026"), Ask: rated("command-a-plus-05-2026"),
+			Extract: rated("command-a-03-2025"), Verify: rated("command-a-03-2025")}
+	}
+
+	t.Run("offers Cohere with a key and no suggestions", func(t *testing.T) {
+		s, _ := aiService(t, cfg, "pro")
+		out, err := s.GetFoundryAI(ctx, &foundryv1.GetFoundryAIRequest{WorkspaceId: "ws-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		offered := out.GetAi().GetOffered()
+		if len(offered) != 2 || offered[1].GetKind() != foundryv1.FoundryAIKind_FOUNDRY_AI_KIND_COHERE ||
+			offered[1].GetKey() != foundryv1.FoundryAIKey_FOUNDRY_AI_KEY_REQUIRED || offered[1].GetSuggested() != nil {
+			t.Fatalf("offered = %v", offered)
+		}
+	})
+
+	t.Run("saves a Cohere key with the owner's rates", func(t *testing.T) {
+		s, store := aiService(t, cfg, "pro")
+		out, err := s.UpdateFoundryAI(ctx, &foundryv1.UpdateFoundryAIRequest{WorkspaceId: "ws-1", Choice: cohere, ApiKey: cohereKey, Models: models()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := store.saved[0]
+		settings, err := ai.DecodeSettings(c.Settings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := ai.OpenKey(s.deps.ConnectorKeys, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		draft, _ := settings.Models.Draft.Price.(ai.PriceRates)
+		if c.Kind != "cohere" || key.Reveal() != cohereKey || settings.Provider != (ai.Cohere{}) ||
+			settings.Models.Draft.Name != "command-a-plus-05-2026" || draft.Input != 2500 || draft.Output != 10000 {
+			t.Fatalf("saved %+v: %+v", c, settings)
+		}
+		pending := out.GetAi().GetPending()
+		if pending.GetLabel() != "Cohere" || pending.GetKind() != foundryv1.FoundryAIKind_FOUNDRY_AI_KIND_COHERE ||
+			pending.GetProvider().GetCohere() == nil || pending.GetModels().GetExtract().GetRates().GetOutputUsdPerMtok() != "10" {
+			t.Fatalf("pending = %v", pending)
+		}
+		raw, _ := protojson.Marshal(out)
+		if strings.Contains(string(raw), "sentinel") || strings.Contains(string(c.Settings), "sentinel") {
+			t.Fatalf("the key leaked: %s", raw)
+		}
+	})
+
+	t.Run("refuses a model priced by the table, and models left out", func(t *testing.T) {
+		s, store := aiService(t, cfg, "pro")
+		table := models()
+		table.Ask = &foundryv1.FoundryAIModel{Name: "command-a-03-2025", Price: &foundryv1.FoundryAIModel_Table{Table: &emptypb.Empty{}}}
+		_, err := s.UpdateFoundryAI(ctx, &foundryv1.UpdateFoundryAIRequest{WorkspaceId: "ws-1", Choice: cohere, ApiKey: cohereKey, Models: table})
+		if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "models.ask.price") {
+			t.Fatalf("a table price: %v", err)
+		}
+		_, err = s.UpdateFoundryAI(ctx, &foundryv1.UpdateFoundryAIRequest{WorkspaceId: "ws-1", Choice: cohere, ApiKey: cohereKey})
+		if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "models.draft") {
+			t.Fatalf("no models: %v", err)
+		}
+		if len(store.saved) != 0 {
+			t.Fatalf("saved %d", len(store.saved))
+		}
+	})
+
+	// A Cohere key belongs to the account: a blank key keeps it among Cohere
+	// saves whatever the models, and never for another kind.
+	t.Run("keeps a key across models", func(t *testing.T) {
+		s, store := aiService(t, cfg, "pro")
+		if _, err := s.UpdateFoundryAI(ctx, &foundryv1.UpdateFoundryAIRequest{WorkspaceId: "ws-1", Choice: cohere, ApiKey: cohereKey, Models: models()}); err != nil {
+			t.Fatal(err)
+		}
+		store.view.Active = store.saved[0]
+		other := models()
+		other.Draft = rated("command-a-reasoning-08-2025")
+		if _, err := s.UpdateFoundryAI(ctx, &foundryv1.UpdateFoundryAIRequest{WorkspaceId: "ws-1", Choice: cohere, Models: other}); err != nil {
+			t.Fatal(err)
+		}
+		if key, err := ai.OpenKey(s.deps.ConnectorKeys, store.saved[1]); err != nil || key.Reveal() != cohereKey {
+			t.Fatalf("kept %v, %v", key, err)
+		}
+		store.view.Active = store.saved[1]
+		_, err := s.UpdateFoundryAI(ctx, &foundryv1.UpdateFoundryAIRequest{WorkspaceId: "ws-1", Choice: claudeChoice()})
+		if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "Enter the API key for this endpoint.") {
+			t.Fatalf("Claude on Cohere's key: %v", err)
+		}
+	})
+}

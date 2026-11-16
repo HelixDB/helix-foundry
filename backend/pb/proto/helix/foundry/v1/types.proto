@@ -1935,6 +1935,7 @@ enum FoundryAIKind {
   FOUNDRY_AI_KIND_BEDROCK = 4;
   FOUNDRY_AI_KIND_OLLAMA = 5;
   FOUNDRY_AI_KIND_OPENAI_COMPATIBLE = 6;
+  FOUNDRY_AI_KIND_COHERE = 7;
 }
 
 // FoundryAIProvider is where a workspace's model calls go: one message per
@@ -1947,6 +1948,7 @@ message FoundryAIProvider {
     FoundryAIBedrock bedrock = 4;
     FoundryAIOllama ollama = 5;
     FoundryAICompatible openai_compatible = 6;
+    FoundryAICohere cohere = 7;
   }
 }
 
@@ -1968,6 +1970,10 @@ message FoundryAIBedrock {
   string region = 1;
   bool fips = 2;
 }
+
+// Cohere's API, called through its OpenAI-compatible Chat Completions; its
+// models are priced at the owner's own rates.
+message FoundryAICohere {}
 
 // An Ollama server's native API, which takes no key.
 message FoundryAIOllama {

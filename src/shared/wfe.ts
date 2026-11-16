@@ -4879,7 +4879,8 @@ export type FoundryAiKind =
   | "FOUNDRY_AI_KIND_AZURE_OPENAI"
   | "FOUNDRY_AI_KIND_BEDROCK"
   | "FOUNDRY_AI_KIND_OLLAMA"
-  | "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE";
+  | "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE"
+  | "FOUNDRY_AI_KIND_COHERE";
 /** The kinds a provider can be: every FoundryAiKind but UNSPECIFIED. */
 export type FoundryAiProviderKind = Exclude<
   FoundryAiKind,
@@ -4903,6 +4904,8 @@ export type FoundryAiProvider = {
   azureOpenai?: { endpoint?: string };
   // An AWS region, like us-east-1.
   bedrock?: { region?: string; fips?: boolean };
+  // Cohere's API, through its OpenAI-compatible Chat Completions.
+  cohere?: Record<string, never>;
   // The context window models load with; "0" or unset is 65536.
   ollama?: { baseUrl?: string; contextTokens?: string };
   // baseUrl includes its /v1. maxCallsInFlight is a uint32, so a JSON number
