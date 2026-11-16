@@ -138,8 +138,14 @@ async function send(url: string, init: RequestInit, unsafe: boolean) {
   return attempt(await csrfToken());
 }
 
+// Set once signing out starts: the page then leaves for sign-in itself, and
+// a call refused meanwhile (the session already ended) must not race it there
+// with a way back to this page.
+let signingOut = false;
+
 /** Sends the browser to sign-in, coming back to the current page. */
 export function goToSignIn() {
+  if (signingOut) return;
   clearCsrfToken();
   const { pathname, search, hash } = window.location;
   window.location.assign(signInPath(pathname + search + hash));
@@ -220,6 +226,7 @@ export const sentence = (message: string) =>
 
 /** Ends the session here and at WorkOS, then lands on the sign-in page. */
 export async function signOut() {
+  signingOut = true;
   let target = "/login";
   try {
     const res = await send(

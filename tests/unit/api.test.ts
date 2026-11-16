@@ -308,6 +308,25 @@ describe("signOut()", () => {
     await signOut();
     expect(assigned).toEqual(["signed out", "/login"]);
   });
+
+  it("isn't raced to sign-in by a call refused while it signs out", async () => {
+    const { api, signOut } = await load();
+    // The session ends; a poll the page sent meanwhile is refused.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("/csrf")
+          ? json(200, { token: "t", expiresInSeconds: 3600 })
+          : url === "/auth/logout"
+            ? json(200, {})
+            : json(401, { code: "UNAUTHENTICATED" }),
+      ),
+    );
+    const out = signOut();
+    await expect(api("/v1/workspaces")).rejects.toMatchObject({ status: 401 });
+    await out;
+    expect(assigned).toEqual(["signed out", "/login"]);
+  });
 });
 
 describe("refusalOf()", () => {
