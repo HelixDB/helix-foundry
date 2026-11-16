@@ -2343,6 +2343,21 @@ message FoundryWorkflow {
   // Its runs' assessments that are done, by verdict, in the verdicts'
   // order; a verdict no run has is absent.
   repeated FoundryWorkflowVerdictCount verdicts = 10;
+  // The automation whose runs it records, for a workflow Foundry made: one
+  // of each ontology an automation uses, which only Foundry starts and
+  // finishes runs of, and no one deletes while its automation exists.
+  // Absent for a workflow a person made.
+  FoundryWorkflowAutomation automation = 11;
+}
+
+// FoundryWorkflowAutomation is the automation a workflow Foundry made
+// records the runs of.
+message FoundryWorkflowAutomation {
+  string automation_id = 1;
+  // Its name, as the workflow keeps it: the automation's, kept in step.
+  string name = 2;
+  // The automation was deleted: the workflow keeps its runs as history.
+  bool deleted = 3;
 }
 
 // FoundryWorkflowRun is one run of a workflow: open while it records the
@@ -2366,6 +2381,10 @@ message FoundryWorkflowRun {
   // Its assessment, once it finished: absent where assessments are off, or
   // for a run finished before.
   FoundryWorkflowAssessment assessment = 11;
+  // The automation's run it records, for a run Foundry started (its
+  // workflow's automation names the automation; started_by_user_id is its
+  // owner); empty for an agent's run.
+  string automation_run_id = 12;
 }
 
 // FoundryWorkflowAssessment is a finished run's assessment by the ontology
@@ -2500,6 +2519,10 @@ message FoundryWorkflowInsightSegment {
   repeated int32 daily_runs = 4;
   google.protobuf.Timestamp last_run_at = 5;
   string top_gap = 6;
+  // Of who started runs: the automation Foundry started them for, which
+  // they are counted by apart from what its owner (principal) started
+  // themselves; workflow_id is then its workflow, which filters them.
+  FoundryWorkflowAutomation automation = 7;
 }
 
 // FoundryWorkflowRunCounts counts what a run recorded, at most 1,000 calls.
@@ -2853,6 +2876,37 @@ message FoundryAutomation {
   google.protobuf.Timestamp last_failed_at = 28;
   // Its runs of the days a list asked for (stats_days); unset otherwise.
   FoundryAutomationRunCounts stats = 29;
+  // The ontologies its runs use, by name, and how much each helped them:
+  // Foundry records those runs in a workflow of each, made at the first run
+  // that uses it, or once its owner approves steps that name it. Gaps only
+  // when got alone.
+  repeated FoundryAutomationOntology ontologies = 30;
+}
+
+// FoundryAutomationOntology is an ontology an automation's runs use: its
+// workflow of the automation's, with its runs and their verdicts, or why
+// Foundry records none of them.
+message FoundryAutomationOntology {
+  string ontology_id = 1;
+  string ontology_name = 2;
+  // The workflow its runs are recorded in; empty when untracked.
+  string workflow_id = 3;
+  // That workflow's runs kept, how many finished, and when the newest
+  // started (absent before any).
+  int64 runs = 4;
+  int64 finished_runs = 5;
+  google.protobuf.Timestamp last_run_at = 6;
+  // Their done assessments by verdict, in the verdicts' order.
+  repeated FoundryWorkflowVerdictCount verdicts = 7;
+  // What the ontology lacked, as the newest assessed run named it, at most
+  // 5: when the automation is got alone.
+  repeated string gaps = 8;
+  // Why its runs go unrecorded: workflows_full (the ontology holds 100
+  // workflows, so Foundry couldn't make the automation's). Empty when
+  // tracked.
+  string untracked = 9;
+  // When the latest run went on untracked.
+  google.protobuf.Timestamp untracked_at = 10;
 }
 
 // FoundryAutomationRunCounts counts runs started within some days: every
@@ -2919,6 +2973,26 @@ message FoundryAutomationRun {
   // Whether the caller may cancel it: live, and theirs or the caller an
   // owner or admin.
   bool can_cancel = 15;
+  // The ontologies it used, by name, each with the workflow run that
+  // records it and that run's verdict; only when got alone.
+  repeated FoundryAutomationRunOntology ontologies = 16;
+}
+
+// FoundryAutomationRunOntology is an ontology one run of an automation used,
+// and how much it helped: the run of the automation's workflow of it.
+message FoundryAutomationRunOntology {
+  string ontology_id = 1;
+  string ontology_name = 2;
+  string workflow_id = 3;
+  string workflow_run_id = 4;
+  // The workflow run: open while the automation's run is live, then
+  // finished.
+  string status = 5;
+  // Its assessment: queued, running, done, failed or skipped; empty before
+  // it is queued, and for a run finished unassessed (cancelled).
+  string assessment_status = 6;
+  // Once done: essential, helpful, marginal, unused or misleading.
+  string verdict = 7;
 }
 
 // FoundryAutomationRunNode is one step of a run, the spec's node node_id.

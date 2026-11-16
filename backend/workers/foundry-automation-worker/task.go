@@ -108,8 +108,8 @@ type Store interface {
 	GetFoundryAgentTurn(ctx context.Context, workspaceID, id string) (*model.FoundryAgentTurn, error)
 	ListFoundryAgentEvents(ctx context.Context, turnID string, afterSeq, limit int) ([]model.FoundryAgentEvent, error)
 	ListFoundryAgentActions(ctx context.Context, threadID string) ([]*model.FoundryAgentAction, error)
-	GetFoundryOntology(ctx context.Context, workspaceID, id string) (*model.FoundryOntology, error)
-	GetFoundryDashboard(ctx context.Context, workspaceID, id string) (*model.FoundryDashboard, error)
+	// The uses of ontologies its runs record (agent.AutomationUses).
+	agent.WorkflowStore
 }
 
 // Task fires automations and walks their runs.
@@ -122,7 +122,10 @@ type Task struct {
 	assistant bool
 	// email is whether a notify step emails: the host sends mail (hosted),
 	// not a standalone install.
-	email    bool
+	email bool
+	// assess is whether a run's end queues its workflow runs' assessments
+	// (foundry.workflows.assess.enabled).
+	assess   bool
 	workerID string
 	now      func() time.Time
 	worker   tasks.Worker
@@ -132,8 +135,8 @@ type Task struct {
 
 func New(d Deps) (*Task, error) {
 	cfg := d.Cfg.Foundry.Automations
-	t := &Task{deps: d, cfg: cfg, sessions: d.Sessions, assistant: d.Cfg.Foundry.Agent.Enabled, email: !d.Cfg.Host.Local, workerID: id.NewWorkerID(),
-		now: time.Now}
+	t := &Task{deps: d, cfg: cfg, sessions: d.Sessions, assistant: d.Cfg.Foundry.Agent.Enabled, email: !d.Cfg.Host.Local,
+		assess: d.Cfg.Foundry.Workflows.Assess.Enabled, workerID: id.NewWorkerID(), now: time.Now}
 	if !cfg.Enabled {
 		return t, nil
 	}
@@ -356,8 +359,8 @@ func maxTime(a, b time.Time) time.Time {
 	return b
 }
 
-// runState is an attempt of a run: its spec, its steps' states, and the
-// owner's session.
+// runState is an attempt of a run: its spec, its steps' states, the
+// owner's session, and the run's uses of ontologies.
 type runState struct {
 	run     *model.FoundryAutomationRun
 	spec    automation.Spec
@@ -365,6 +368,7 @@ type runState struct {
 	turns   map[string]string
 	session integration.Session
 	name    string
+	uses    *agent.AutomationUses
 }
 
 // advance walks the claimed run until it ends or waits, then hands it on:
@@ -412,6 +416,7 @@ func (t *Task) advance(ctx context.Context, run *model.FoundryAutomationRun) {
 			if step.Failed {
 				end = model.FoundryAutomationRunEnd{Status: model.FoundryAutomationRunFailed, Error: st.failure()}
 			}
+			end.Answer = st.answer(end)
 			t.finish(ctx, run, end)
 			return
 		case automation.SkipNode:
@@ -480,7 +485,8 @@ func (t *Task) open(ctx context.Context, run *model.FoundryAutomationRun) (*runS
 	if err != nil {
 		return nil, err
 	}
-	st := &runState{run: run, spec: spec, states: map[string]automation.NodeState{}, turns: map[string]string{}, session: session, name: a.Name}
+	st := &runState{run: run, spec: spec, states: map[string]automation.NodeState{}, turns: map[string]string{}, session: session, name: a.Name,
+		uses: agent.NewAutomationUses(t.db, run, a.Name, spec)}
 	for _, n := range nodes {
 		state := automation.NodeState{Status: automation.NodeStatus(n.Status)}
 		if n.Status == model.FoundryAutomationNodeExecuting {
@@ -504,6 +510,36 @@ func (t *Task) open(ctx context.Context, run *model.FoundryAutomationRun) (*runS
 		st.states[n.NodeID] = state
 	}
 	return st, nil
+}
+
+// answer is what the run found, in words, as its workflow runs' answer: how
+// it ended, then each step that ended, in order, with what it found.
+func (st *runState) answer(end model.FoundryAutomationRunEnd) string {
+	var b strings.Builder
+	if end.Status == model.FoundryAutomationRunSucceeded {
+		b.WriteString("The run succeeded.")
+	} else {
+		b.WriteString("The run failed: " + end.Error)
+	}
+	b.WriteString("\nWhat its steps found:")
+	for _, id := range st.spec.Order()[1:] {
+		state, ok := st.states[id]
+		if !ok {
+			continue
+		}
+		node, _ := st.spec.Node(id)
+		fmt.Fprintf(&b, "\n- The %s step %q %s", node.Kind(), id, state.Status)
+		if out := state.Output; out.Summary != "" {
+			b.WriteString(": " + out.Summary)
+		}
+		if out := state.Output; out.Answer != nil {
+			fmt.Fprintf(&b, " (It answered %s.)", map[bool]string{true: "yes", false: "no"}[*out.Answer])
+		}
+		if out := state.Output; out.Count != nil && node.Kind() == automation.KindAssistant {
+			fmt.Fprintf(&b, " (It counted %d.)", *out.Count)
+		}
+	}
+	return agent.CutText(b.String(), model.FoundryWorkflowOutputMaxBytes)
 }
 
 // failure is why the run failed: its first failed step's error.
@@ -754,6 +790,18 @@ func (t *Task) runAction(ctx context.Context, st *runState, nodeID string, a aut
 		}
 		payload["expected_revision"] = d.Revision
 	}
+	// The ontologies it acts on are used: the workflow runs that record the
+	// run's uses of them start, if they haven't.
+	var used []string
+	switch a := a.(type) {
+	case automation.CreateLoad:
+		used = []string{a.OntologyID}
+	case automation.PublishDashboard:
+		used = st.uses.DashboardOntologies(ctx, a.DashboardID)
+	}
+	if err := st.uses.UseAll(ctx, used); err != nil {
+		log.From(ctx).Warn("automation workflows: a use of an ontology went unrecorded", "step", nodeID, "err", err)
+	}
 	if err := t.db.StartFoundryAutomationNode(ctx, st.run.ID, t.workerID, nodeID, model.FoundryAutomationNodeExecuting); err != nil {
 		if errors.Is(err, foundrystore.ErrConflict) {
 			return errors.New("the step had started already")
@@ -840,9 +888,13 @@ func (t *Task) retry(ctx context.Context, run *model.FoundryAutomationRun, err e
 
 // finish ends the run, counting it toward its automation's failures in a
 // row: past pause_after_failures it pauses, and its owner is emailed where
-// the host sends mail.
+// the host sends mail. The workflow runs it started finish with its answer.
 func (t *Task) finish(ctx context.Context, run *model.FoundryAutomationRun, end model.FoundryAutomationRunEnd) {
-	end.PauseAfter, end.Backoff = t.cfg.PauseAfterFailures, t.cfg.FailureBackoff
+	end.PauseAfter, end.Backoff, end.Assess = t.cfg.PauseAfterFailures, t.cfg.FailureBackoff, t.assess
+	if end.Answer == "" {
+		// It ended before its steps: why is all it found.
+		end.Answer = "The run failed: " + end.Error
+	}
 	if end.Status == model.FoundryAutomationRunFailed && !end.LostAccess && t.email {
 		end.Notice = &model.FoundryNotification{ID: id.New(), Kind: model.FoundryNotifyAutomationPaused, SubjectID: id.New(), WorkspaceID: run.WorkspaceID,
 			UserID: run.OwnerUserID, Status: model.FoundryNotificationPending}

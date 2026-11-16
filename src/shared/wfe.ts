@@ -3754,6 +3754,52 @@ export type FoundryAutomationRun = {
   // Its steps that started, on a run got alone.
   nodes?: FoundryAutomationRunNode[];
   canCancel?: boolean;
+  // The ontologies it used, by name, each with the workflow run that
+  // records it and its verdict: on a run got alone.
+  ontologies?: FoundryAutomationRunOntology[];
+};
+
+/**
+ * v1FoundryAutomationRunOntology: an ontology one run of an automation used,
+ * and how much it helped: the run of the automation's workflow of it.
+ */
+export type FoundryAutomationRunOntology = {
+  ontologyId: string;
+  ontologyName?: string;
+  workflowId: string;
+  workflowRunId: string;
+  // open while the automation's run is live, then finished.
+  status?: string;
+  // queued, running, done, failed or skipped; missing before it is queued,
+  // and for a run finished unassessed (cancelled).
+  assessmentStatus?: string;
+  // Once done: essential, helpful, marginal, unused or misleading.
+  verdict?: string;
+};
+
+/**
+ * v1FoundryAutomationOntology: an ontology an automation's runs use, the
+ * workflow Foundry records them in (made at the first run that uses it, or
+ * when its owner approves steps that name it), with its runs and verdicts,
+ * or why Foundry records none (`untracked`).
+ */
+export type FoundryAutomationOntology = {
+  ontologyId: string;
+  ontologyName?: string;
+  // Missing when untracked.
+  workflowId?: string;
+  // int64 as strings.
+  runs?: string;
+  finishedRuns?: string;
+  lastRunAt?: string | null;
+  verdicts?: FoundryWorkflowVerdictCount[];
+  // What the ontology lacked, as the newest assessed run named it, at most
+  // 5: on an automation got alone. Untrusted text.
+  gaps?: string[];
+  // workflows_full: the ontology holds 100 workflows, so Foundry couldn't
+  // make the automation's.
+  untracked?: "workflows_full";
+  untrackedAt?: string | null;
 };
 
 /** v1FoundryAutomation */
@@ -3794,6 +3840,8 @@ export type FoundryAutomation = {
   lastFailedAt?: string | null;
   // Its runs of the days a list asked for (statsDays).
   stats?: AutomationRunCounts | null;
+  // The ontologies its runs use, and how much each helped them.
+  ontologies?: FoundryAutomationOntology[];
 };
 
 /**
@@ -4286,6 +4334,19 @@ export type FoundryWorkflow = {
   // Its runs' assessments that are done, by verdict; a verdict no run has
   // is absent.
   verdicts?: FoundryWorkflowVerdictCount[];
+  // The automation whose runs it records, for a workflow Foundry made (one
+  // of each ontology an automation uses): only Foundry starts and finishes
+  // its runs, and it is deleted only once the automation is. Missing for a
+  // person's workflow.
+  automation?: FoundryWorkflowAutomation | null;
+};
+/** v1FoundryWorkflowAutomation: the automation a workflow Foundry made records the runs of. */
+export type FoundryWorkflowAutomation = {
+  automationId: string;
+  // Its name, as the workflow keeps it.
+  name?: string;
+  // Deleted since: the workflow keeps its runs as history.
+  deleted?: boolean;
 };
 /** v1FoundryWorkflowVerdictCount. */
 export type FoundryWorkflowVerdictCount = {
@@ -4343,6 +4404,9 @@ export type FoundryWorkflowRun = {
   counts?: FoundryWorkflowRunCounts;
   // Once it finished, where assessments are on.
   assessment?: FoundryWorkflowAssessment;
+  // The automation's run it records, for a run Foundry started (its
+  // workflow's `automation` names the automation; started by its owner).
+  automationRunId?: string;
 };
 /** v1FoundryWorkflowRead: a read of a load and what it returned. */
 export type FoundryWorkflowRead = {
@@ -4419,6 +4483,10 @@ export type FoundryWorkflowInsightSegment = {
   dailyRuns?: number[];
   lastRunAt?: string;
   topGap?: string;
+  // Of who started runs: the automation Foundry started them for (its owner
+  // is `principal`), counted apart from what its owner started themselves;
+  // `workflowId` is its workflow, which filters to them.
+  automation?: FoundryWorkflowAutomation | null;
 };
 /**
  * v1FoundryWorkflowInsights: GET .../ontologies/{ontologyId}/workflows:insights

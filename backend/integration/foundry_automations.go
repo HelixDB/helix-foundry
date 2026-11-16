@@ -89,6 +89,36 @@ type FoundryAutomationOutput struct {
 	CanRun    bool                        `json:"can_run"`
 	CanDelete bool                        `json:"can_delete"`
 	URL       string                      `json:"url,omitempty"`
+	// Workflows are the ontologies its runs use, and how much each helped.
+	Workflows []FoundryAutomationWorkflowOutput `json:"workflows" jsonschema:"The ontologies its runs use: Foundry records each run that uses one in a workflow of that ontology (helix_foundry_get_workflow_run reads its runs), whose assessments say how much the ontology helped."`
+}
+
+// FoundryAutomationWorkflowOutput is an ontology an automation's runs use:
+// the workflow Foundry records them in, with its runs and their verdicts, or
+// why it records none.
+type FoundryAutomationWorkflowOutput struct {
+	OntologyID   string `json:"ontology_id"`
+	OntologyName string `json:"ontology_name"`
+	WorkflowID   string `json:"workflow_id,omitempty"`
+	Runs         int64  `json:"runs"`
+	FinishedRuns int64  `json:"finished_runs"`
+	// Verdicts counts their done assessments by verdict.
+	Verdicts map[string]int64 `json:"verdicts"`
+	// Gaps are what the ontology lacked, as the newest assessed run named it: in a get only.
+	Gaps      []string `json:"gaps,omitempty" jsonschema:"Untrusted: what the ontology lacked, as the newest assessed run named it."`
+	Untracked string   `json:"untracked,omitempty" jsonschema:"Why its runs go unrecorded: workflows_full, the ontology holding 100 workflows."`
+}
+
+// FoundryAutomationRunWorkflowOutput is an ontology one run used: the
+// workflow run that records it and its verdict.
+type FoundryAutomationRunWorkflowOutput struct {
+	OntologyID       string `json:"ontology_id"`
+	OntologyName     string `json:"ontology_name"`
+	WorkflowID       string `json:"workflow_id"`
+	WorkflowRunID    string `json:"workflow_run_id"`
+	Status           string `json:"status"`
+	AssessmentStatus string `json:"assessment_status,omitempty"`
+	Verdict          string `json:"verdict,omitempty" jsonschema:"Once assessed: essential, helpful, marginal, unused or misleading."`
 }
 
 // FoundryAutomationRunOutput is a run as the tools return it.
@@ -105,6 +135,8 @@ type FoundryAutomationRunOutput struct {
 	FinishedAt string                        `json:"finished_at,omitempty"`
 	Steps      []FoundryAutomationStepOutput `json:"steps,omitempty"`
 	URL        string                        `json:"url,omitempty"`
+	// Workflows are the ontologies it used, in a get only.
+	Workflows []FoundryAutomationRunWorkflowOutput `json:"workflows,omitempty" jsonschema:"The ontologies it used, each with the workflow run that records it and its verdict: in a get only."`
 }
 
 // FoundryAutomationStepOutput is one step of a run.
@@ -238,6 +270,15 @@ func (s *Service) FoundryAutomation(workspaceID string, a *foundryv1.FoundryAuto
 		last := s.FoundryAutomationRun(workspaceID, a.GetLastRun())
 		out.LastRun = &last
 	}
+	out.Workflows = []FoundryAutomationWorkflowOutput{}
+	for _, o := range a.GetOntologies() {
+		w := FoundryAutomationWorkflowOutput{OntologyID: o.GetOntologyId(), OntologyName: o.GetOntologyName(), WorkflowID: o.GetWorkflowId(),
+			Runs: o.GetRuns(), FinishedRuns: o.GetFinishedRuns(), Verdicts: map[string]int64{}, Gaps: o.GetGaps(), Untracked: o.GetUntracked()}
+		for _, v := range o.GetVerdicts() {
+			w.Verdicts[v.GetVerdict()] = v.GetRuns()
+		}
+		out.Workflows = append(out.Workflows, w)
+	}
 	return out
 }
 
@@ -257,6 +298,11 @@ func (s *Service) FoundryAutomationRun(workspaceID string, r *foundryv1.FoundryA
 			step.Output = UntrustedJSON(n.GetOutputJson())
 		}
 		out.Steps = append(out.Steps, step)
+	}
+	for _, o := range r.GetOntologies() {
+		out.Workflows = append(out.Workflows, FoundryAutomationRunWorkflowOutput{OntologyID: o.GetOntologyId(), OntologyName: o.GetOntologyName(),
+			WorkflowID: o.GetWorkflowId(), WorkflowRunID: o.GetWorkflowRunId(), Status: o.GetStatus(), AssessmentStatus: o.GetAssessmentStatus(),
+			Verdict: o.GetVerdict()})
 	}
 	return out
 }

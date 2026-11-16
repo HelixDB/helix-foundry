@@ -28,9 +28,15 @@ import {
   Trash2,
   Workflow,
   X,
+  Zap,
 } from "lucide-react";
-import type { FoundryWorkflow, FoundryWorkflowRun } from "../../../shared/wfe";
+import type {
+  FoundryWorkflow,
+  FoundryWorkflowAutomation,
+  FoundryWorkflowRun,
+} from "../../../shared/wfe";
 import { trackEvent } from "../../analytics";
+import { ApiError } from "../../api";
 import {
   Button,
   ConfirmDialog,
@@ -56,6 +62,7 @@ import {
 } from "../../kit";
 import { paths } from "../../paths";
 import { RefreshFailed, canManage, useWorkspace } from "../../ui";
+import { automationQueries } from "../automations/queries";
 import { MCP_URL } from "../ontology/agent-setup";
 import { MAX_GOAL } from "../ontology/model";
 import { ontologyName, useOntology } from "../ontology/scope";
@@ -93,8 +100,8 @@ import {
   readText,
   runDuration,
   runShown,
-  starterLabel,
-  starterOf,
+  runStarter,
+  starterText,
   suggestionGoal,
   verdictRuns,
   windowStart,
@@ -120,6 +127,62 @@ function useCopy() {
       .writeText(text)
       .then(() => notify(`Copied the ${what}.`))
       .catch(() => notify(`Couldn’t copy the ${what}.`, true));
+}
+
+/**
+ * Where a workflow Foundry made for an automation comes from, linking back:
+ * the automation (a run's page, its run, while the automation keeps it), or
+ * a deleted one's history.
+ */
+function MadeBy({
+  automation: a,
+  runId,
+}: {
+  automation: FoundryWorkflowAutomation;
+  runId?: string;
+}) {
+  const { id: ws } = useWorkspace();
+  // An automation keeps its runs for a while; its workflow keeps their
+  // records longer.
+  const run = useQuery({
+    ...automationQueries.run(ws, a.automationId, runId || ""),
+    enabled: !!runId && !a.deleted,
+    refetchInterval: false,
+  });
+  const pruned = run.error instanceof ApiError && run.error.status === 404;
+  return (
+    <p className="wf-origin" role="note">
+      <Zap size={14} aria-hidden />
+      {a.deleted ? (
+        <span>
+          Made by a deleted automation, {a.name ? <q>{a.name}</q> : "unnamed"}:{" "}
+          {runId
+            ? "this run records one of its runs."
+            : "it keeps the runs it recorded as history."}
+        </span>
+      ) : (
+        <span>
+          Made by the automation{" "}
+          <Link to={paths.automation(a.automationId)}>
+            {a.name || "unnamed"}
+          </Link>
+          {runId && pruned ? (
+            ": this run records one of its runs, which the automation no longer keeps."
+          ) : runId ? (
+            <>
+              : this run records{" "}
+              <Link to={paths.automationRun(a.automationId, runId)}>
+                one of its runs
+              </Link>
+              .
+            </>
+          ) : (
+            ": Foundry records here each of its runs that uses this ontology, and how much it helped. It goes only once the automation is deleted."
+          )}
+        </span>
+      )}
+    </p>
+  );
 }
 
 // What a run's assessment found, as its row shows it: its verdict once
@@ -217,6 +280,15 @@ export function WorkflowsPage() {
   const segments = new Map(
     (data?.workflows || []).map((w) => [w.workflowId, w]),
   );
+  // Narrowed to an automation, the window's runs are its workflow's alone
+  // (the read names that workflow, so it lists none).
+  const who = insights.who;
+  if (data && who && "automation" in who)
+    segments.set(who.workflowId, {
+      workflowId: who.workflowId,
+      totals: data.totals,
+      dailyRuns: (data.series || []).map((d) => d.totals?.runs || 0),
+    });
   return (
     <Page>
       {header}
@@ -279,13 +351,21 @@ export function WorkflowsPage() {
                         >
                           {w.name}
                         </Link>
-                        {w.description && (
-                          <span
-                            className="on-cell-text on-muted"
-                            title={w.description}
-                          >
-                            {w.description}
+                        {w.automation ? (
+                          <span className="on-cell-text on-muted">
+                            {w.automation.deleted
+                              ? "From a deleted automation"
+                              : "An automation’s runs"}
                           </span>
+                        ) : (
+                          w.description && (
+                            <span
+                              className="on-cell-text on-muted"
+                              title={w.description}
+                            >
+                              {w.description}
+                            </span>
+                          )
                         )}
                       </span>
                     ),
@@ -509,12 +589,13 @@ export function WorkflowPage() {
       actions={
         w && (
           <>
-            {Number(w.runs || 0) > 0 && (
+            {Number(w.runs || 0) > 0 && !w.automation && (
               <Button icon={Copy} onClick={() => setConnecting(true)}>
                 Connect agent
               </Button>
             )}
-            {canManage(role) && (
+            {/* An automation's goes only once the automation is deleted. */}
+            {canManage(role) && (!w.automation || w.automation.deleted) && (
               <Button icon={Trash2} onClick={() => setDeleting(true)}>
                 Delete
               </Button>
@@ -600,6 +681,7 @@ export function WorkflowPage() {
       {header}
       <div className="on-stack">
         <RefreshFailed query={workflow} />
+        {w.automation && <MadeBy automation={w.automation} />}
         {ran ? (
           <section className="wf-insights" aria-label="Insights">
             <InsightsToolbar state={insights} own={own} />
@@ -610,7 +692,7 @@ export function WorkflowPage() {
               <InsightsPending state={insights} />
             )}
           </section>
-        ) : (
+        ) : w.automation ? null : (
           <Panel
             title="Connect your agent"
             subtitle={`Give the agent this prompt, with the Helix MCP added. In ${workspaceName}, each request it takes on becomes a run here.`}
@@ -621,6 +703,7 @@ export function WorkflowPage() {
         )}
         <WorkflowRuns
           workflowId={w.id}
+          automation={w.automation}
           own={own}
           insights={insights}
           issue={issue}
@@ -699,12 +782,15 @@ export function WorkflowPage() {
  */
 function WorkflowRuns({
   workflowId,
+  automation,
   own,
   insights,
   issue,
   onIssue,
 }: {
   workflowId: string;
+  // The automation whose runs it records, for an automation's workflow.
+  automation?: FoundryWorkflowAutomation | null;
   own: boolean;
   insights: InsightsState;
   issue?: { key: string; text: string };
@@ -799,7 +885,9 @@ function WorkflowRuns({
           title={runs.error ? "Couldn’t load the runs" : "No runs yet"}
           text={
             runs.error?.message ||
-            "Once the agent starts a run with this workflow’s ID, it shows here."
+            (automation
+              ? "Once a run of the automation uses this ontology, it shows here."
+              : "Once the agent starts a run with this workflow’s ID, it shows here.")
           }
         />
       ) : (
@@ -844,7 +932,11 @@ function WorkflowRuns({
                         </span>
                         <span className="wf-run-meta">
                           {countsText(r.counts)} ·{" "}
-                          {starterLabel(starterOf(r), names, user.id)}
+                          {starterText(
+                            runStarter(r, automation),
+                            names,
+                            user.id,
+                          )}
                         </span>
                       </span>
                       <span className="wf-run-verdict">
@@ -1019,6 +1111,12 @@ export function WorkflowRunPage() {
       {header}
       <div className="on-stack">
         <RefreshFailed query={run} />
+        {r.automationRunId && workflow.data?.workflow.automation && (
+          <MadeBy
+            automation={workflow.data.workflow.automation}
+            runId={r.automationRunId}
+          />
+        )}
         <Panel title="Request">
           {r.input ? (
             <p className="wf-text">{r.input}</p>

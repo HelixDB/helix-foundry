@@ -286,6 +286,9 @@ export type AnalyticsEvents = {
   automation_deleted: undefined;
   automation_run_cancelled: undefined;
   automation_refused: { action: AutomationCall; reason: Refusal };
+  // How much an ontology helped it: its workflow opened from the
+  // automation's page, or a run's workflow run from the run's.
+  automation_ontology_opened: { from: "automation" | "run" };
 
   // An ontology's versions, loads and reviews.
   version_made_current: undefined;

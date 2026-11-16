@@ -93,7 +93,7 @@ import { dashboardRoutes, publicLinks, storedDashboard } from "./dashboards";
 import { connectionName, dataRoutes, workspaceConnectors } from "./data";
 import { databaseRoutes, tenantGraph } from "./databases";
 import { documentRoutes } from "./documents";
-import { currentLoadId, loadRoutes, ontologyLoad } from "./loads";
+import { currentLoadId, loadRoutes, ontologyLoad, readLoad } from "./loads";
 import {
   ontologiesRoutes,
   ontologyById,
@@ -107,7 +107,9 @@ import {
   ontologyVersions,
 } from "./ontology";
 import { reviewRoutes } from "./reviews";
+import type { WorkflowCall } from "./workflows";
 import { manages } from "./workspaces";
+import { decisionTypes } from "../review-decisions";
 
 // The Assistant, as the backend's API and foundry-agent-worker run it
 // (backend/api/agent.go, backend/agent): a person's private threads, each
@@ -990,7 +992,8 @@ const LIST = "helix_foundry_list_ontologies",
   PREVIEW = "helix_foundry_preview_dashboard_tile",
   GET_DASHBOARD = "helix_foundry_get_dashboard",
   GET_AUTOMATION = "helix_foundry_get_automation",
-  PREPARE = "helix_foundry_prepare_operation";
+  PREPARE = "helix_foundry_prepare_operation",
+  READ = "helix_foundry_read_graph";
 
 /** What a member, who manages nothing, prepares: their own dashboards and automations (integration.memberOperations). */
 const MEMBER_OPERATIONS: readonly (
@@ -2711,6 +2714,7 @@ function automationScript(
   threadId: string,
   instruction: string,
   allow: AutomationAction[],
+  use: AutomationUse,
 ): Step[] {
   const ontologies = workspaceOntologies(ws);
   const list = [
@@ -2725,6 +2729,95 @@ function automationScript(
   const v = o && loadable(o.id);
   const steps: Step[] = [started, ...list];
   const did = new Map<string, string>();
+  // An ontology its instruction names, loaded, it reads: a count of the
+  // entities of a type of it, recorded under its run's use of it.
+  const reads = named(ws, instruction);
+  const readLoadId = reads && currentLoadId(reads.id);
+  // The type its instruction names (invoices: Invoice), else the first.
+  const types = readLoadId
+    ? Object.keys(
+        decisionTypes(
+          ontologyVersion(
+            reads.id,
+            ontologyLoad(reads.id, readLoadId)?.versionId || "",
+          )?.definition as Record<string, unknown> | undefined,
+        ),
+      )
+    : [];
+  // (The ontology's own name aside: "Customer contracts" names no Contract.)
+  const asked = reads
+    ? instruction.replace(
+        new RegExp(reads.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
+        " ",
+      )
+    : "";
+  const readType = types.find((t) => says(asked, t)) ?? types[0];
+  if (reads && readLoadId && readType) {
+    const readsJson = JSON.stringify([
+      { query: { start: { type: readType }, return: { count: {} } } },
+    ]);
+    let counted: number | undefined;
+    steps.push(
+      call("tu_read", READ, {
+        ontology_id: reads.id,
+        reads: JSON.parse(readsJson),
+      }),
+      (c) => {
+        const record = use(reads.id);
+        const reply = readLoad(
+          {
+            method: "POST",
+            path: "",
+            params: {
+              workspaceId: ws,
+              ontologyId: reads.id,
+              loadId: readLoadId,
+            },
+            query: new URLSearchParams(),
+            body: { readsJson },
+            principal: { user: db.users.get(c.userId)!, sessionId: "agent" },
+          },
+          readsJson,
+        );
+        const resultJson =
+          reply.status === 200
+            ? String((reply.body as { resultJson?: string }).resultJson || "")
+            : "";
+        if (resultJson) {
+          record?.({ read: { loadId: readLoadId, readsJson, resultJson } });
+          const first = (
+            JSON.parse(resultJson) as { results?: { ok?: unknown }[] }
+          ).results?.[0]?.ok;
+          const n = JSON.stringify(first ?? "").match(/\d+/)?.[0];
+          if (n !== undefined) counted = Number(n);
+        }
+        return {
+          type: "tool_result",
+          tool_use_id: "tu_read",
+          name: READ,
+          is_error: !resultJson,
+          ...(resultJson
+            ? {
+                output: {
+                  content_trust: "untrusted",
+                  ontology_id: reads.id,
+                  load_id: readLoadId,
+                  result: JSON.parse(resultJson),
+                },
+              }
+            : { error: why(reply) }),
+        };
+      },
+      (c) => {
+        if (counted !== undefined)
+          did.set(
+            `read:${c.turn.id}`,
+            `${reads.name} holds ${counted} ${readType}${counted === 1 ? "" : "s"}.`,
+          );
+        return null;
+      },
+    );
+  }
   if (o && v) {
     const plan = onOntology(
       ws,
@@ -2735,6 +2828,11 @@ function automationScript(
       { ontology: ref(o), version: vref(o.id, v.id) },
       "",
     );
+    // Preparing a load of it uses it, whether it runs or waits.
+    steps.push(() => {
+      use(o.id);
+      return null;
+    });
     if (
       allow.some((x) => x.operation === "create_load" && x.ontology_id === o.id)
     ) {
@@ -2831,6 +2929,7 @@ function automationScript(
       ontologies.length
         ? `The workspace has ${ontologies.length} ontolog${ontologies.length === 1 ? "y" : "ies"}: ${ontologies.map((x) => x.name).join(", ")}.`
         : "The workspace has no ontology yet.",
+      did.get(`read:${c.turn.id}`) ?? "",
       did.get(c.turn.id) ?? "",
       answer === undefined
         ? ""
@@ -2851,6 +2950,15 @@ function automationScript(
 }
 
 /**
+ * A use of an ontology by an automation's run (./automations.ts): what
+ * records a call under the workflow run of it, or undefined where the use
+ * goes untracked. Foundry gives it; the script never names a run.
+ */
+export type AutomationUse = (
+  ontologyId: string,
+) => ((call: WorkflowCall) => void) | undefined;
+
+/**
  * Queues an automation's Assistant step as a turn of kind automation in its
  * run's thread (a new one, out of the person's list, for its first step),
  * as its owner, on Foundry's worker: the backend's
@@ -2864,6 +2972,7 @@ export function queueAutomationTurn(p: {
   title: string;
   instruction: string;
   allow: AutomationAction[];
+  use: AutomationUse;
 }): { threadId: string; turnId: string } {
   let thread = state.threads.find((t) => t.id === p.threadId);
   if (!thread) {
@@ -2899,7 +3008,13 @@ export function queueAutomationTurn(p: {
         }),
       ]
     : ending(
-        automationScript(p.workspaceId, thread.id, p.instruction, p.allow),
+        automationScript(
+          p.workspaceId,
+          thread.id,
+          p.instruction,
+          p.allow,
+          p.use,
+        ),
       );
   return { threadId: thread.id, turnId: turn.id };
 }

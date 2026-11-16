@@ -356,3 +356,13 @@ func TestTileTitle(t *testing.T) {
 	require.True(t, strings.HasSuffix(long, "…"))
 	require.Empty(t, dashboard.TileTitle(" \n "))
 }
+
+func TestSpecOntologies(t *testing.T) {
+	other := `{"id":"t3","title":"Other","ontology_id":"01OTHER","load":{"kind":"current"},"query":` + countQuery + `}`
+	spec, err := dashboard.ParseSpec([]byte(specJSON([]string{tileJSON("t1", countQuery), other, tileJSON("t2", groupQuery)}, `[["t1","t3","t2"]]`)))
+	require.NoError(t, err)
+	require.Equal(t, []string{"01ONTOLOGY", "01OTHER"}, spec.Ontologies(), "each once, in the order they first appear")
+	empty, err := dashboard.ParseSpec([]byte(specJSON(nil, `[]`)))
+	require.NoError(t, err)
+	require.Empty(t, empty.Ontologies())
+}

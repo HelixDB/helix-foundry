@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -13,8 +14,10 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/automation"
+	"github.com/helixdb/helix-foundry/backend/dashboard"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
@@ -194,8 +197,18 @@ func (s *Service) ListFoundryAutomations(ctx context.Context, req *foundryv1.Lis
 	}
 	out := &foundryv1.ListFoundryAutomationsResponse{CanCreate: true, Email: !s.deps.Cfg.Host.Local,
 		Automations: make([]*foundryv1.FoundryAutomation, 0, len(list))}
+	ids := make([]string, len(list))
+	for i, a := range list {
+		ids[i] = a.ID
+	}
+	ontologies, err := s.deps.DB.ListFoundryAutomationOntologies(ctx, req.GetWorkspaceId(), ids)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list the automations' ontologies: %v", err)
+	}
 	for _, a := range list {
-		out.Automations = append(out.Automations, automationToProto(a, c, false))
+		p := automationToProto(a, c, false)
+		p.Ontologies = automationOntologiesToProto(ontologies[a.ID], nil)
+		out.Automations = append(out.Automations, p)
 	}
 	if days == 0 {
 		return out, nil
@@ -291,7 +304,61 @@ func (s *Service) GetFoundryAutomation(ctx context.Context, req *foundryv1.GetFo
 	if err != nil {
 		return nil, err
 	}
-	return &foundryv1.FoundryAutomationResponse{Automation: automationToProto(a, c, true)}, nil
+	p := automationToProto(a, c, true)
+	if p.Ontologies, err = s.automationOntologies(ctx, a); err != nil {
+		return nil, err
+	}
+	return &foundryv1.FoundryAutomationResponse{Automation: p}, nil
+}
+
+// automationOntologies are the ontologies a's runs use, with the gaps each
+// one's newest assessed run named.
+func (s *Service) automationOntologies(ctx context.Context, a *foundrymodel.FoundryAutomation) ([]*foundryv1.FoundryAutomationOntology, error) {
+	all, err := s.deps.DB.ListFoundryAutomationOntologies(ctx, a.WorkspaceID, []string{a.ID})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list the automation's ontologies: %v", err)
+	}
+	var workflowIDs []string
+	for _, o := range all[a.ID] {
+		if tracked, ok := o.Tracking.(foundrymodel.FoundryAutomationTracked); ok {
+			workflowIDs = append(workflowIDs, tracked.Workflow.ID)
+		}
+	}
+	latest, err := s.deps.DB.LatestFoundryWorkflowAssessments(ctx, workflowIDs)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read the automation's assessments: %v", err)
+	}
+	return automationOntologiesToProto(all[a.ID], latest), nil
+}
+
+// automationGapsShown is the most gaps an automation's ontology shows.
+const automationGapsShown = 5
+
+// automationOntologiesToProto is an automation's ontologies, each tracked
+// one with the gaps its latest assessment (by workflow id) named.
+func automationOntologiesToProto(ontologies []foundrymodel.FoundryAutomationOntology, latest map[string]*foundrymodel.FoundryWorkflowAssessment) []*foundryv1.FoundryAutomationOntology {
+	out := make([]*foundryv1.FoundryAutomationOntology, 0, len(ontologies))
+	for _, o := range ontologies {
+		p := &foundryv1.FoundryAutomationOntology{OntologyId: o.OntologyID, OntologyName: o.OntologyName}
+		switch t := o.Tracking.(type) {
+		case foundrymodel.FoundryAutomationTracked:
+			w := t.Workflow
+			p.WorkflowId, p.Runs, p.FinishedRuns, p.Verdicts = w.ID, w.Runs, w.FinishedRuns, verdictCountsToProto(t.Verdicts)
+			if w.LastRunAt != nil {
+				p.LastRunAt = timestamppb.New(*w.LastRunAt)
+			}
+			if a := latest[w.ID]; a != nil {
+				gaps := assessmentGaps(a.Assessment)
+				for _, g := range gaps[:min(len(gaps), automationGapsShown)] {
+					p.Gaps = append(p.Gaps, g.text)
+				}
+			}
+		case foundrymodel.FoundryAutomationUntracked:
+			p.Untracked, p.UntrackedAt = string(t.Reason), timestamppb.New(t.At)
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (s *Service) CreateFoundryAutomation(ctx context.Context, req *foundryv1.CreateFoundryAutomationRequest) (*foundryv1.FoundryAutomationResponse, error) {
@@ -450,7 +517,34 @@ func (s *Service) approveAutomation(ctx context.Context, workspaceID, userID, id
 	if err != nil {
 		return nil, automationWrite(workspaceID, "approve the automation", err)
 	}
+	s.trackAutomation(ctx, a, spec)
 	return a, nil
+}
+
+// trackAutomation makes a's workflow of each ontology its steps name (an
+// action's or an allowed action's load, a published dashboard's tiles), so
+// its page shows them before its first run uses them. A run makes any it
+// lacks: a failure here is logged, never the approval's.
+func (s *Service) trackAutomation(ctx context.Context, a *foundrymodel.FoundryAutomation, spec automation.Spec) {
+	steps := spec.StepTargets()
+	ontologies := steps.Ontologies
+	for _, dashboardID := range steps.Dashboards {
+		d, err := s.deps.DB.GetFoundryDashboard(ctx, a.WorkspaceID, dashboardID)
+		if err != nil {
+			log.From(ctx).Warn("automation workflows: a dashboard's ontologies couldn't be read", "automation", a.ID, "dashboard", dashboardID, "err", err)
+			continue
+		}
+		if tiles, err := dashboard.ParseSpec(d.Spec); err == nil {
+			ontologies = append(ontologies, tiles.Ontologies()...)
+		}
+	}
+	slices.Sort(ontologies)
+	for _, ontologyID := range slices.Compact(ontologies) {
+		_, err := s.deps.DB.EnsureFoundryAutomationWorkflow(ctx, a.WorkspaceID, a.ID, ontologyID)
+		if err != nil && !errors.Is(err, foundrystore.ErrLimitExceeded) && !errors.Is(err, foundrystore.ErrNotFound) {
+			log.From(ctx).Warn("automation workflows: a workflow couldn't be made", "automation", a.ID, "ontology", ontologyID, "err", err)
+		}
+	}
 }
 
 func (s *Service) PauseFoundryAutomation(ctx context.Context, req *foundryv1.PauseFoundryAutomationRequest) (*foundryv1.FoundryAutomationResponse, error) {
@@ -569,7 +663,20 @@ func (s *Service) GetFoundryAutomationRun(ctx context.Context, req *foundryv1.Ge
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list the run's steps: %v", err)
 	}
-	return &foundryv1.FoundryAutomationRunResponse{Run: automationRunToProto(r, a, c, nodes)}, nil
+	ontologies, err := s.deps.DB.ListFoundryAutomationRunOntologies(ctx, r.ID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list the run's ontologies: %v", err)
+	}
+	out := automationRunToProto(r, a, c, nodes)
+	for _, o := range ontologies {
+		p := &foundryv1.FoundryAutomationRunOntology{OntologyId: o.OntologyID, OntologyName: o.OntologyName, WorkflowId: o.Run.WorkflowID,
+			WorkflowRunId: o.Run.ID, Status: string(o.Run.Status())}
+		if o.Assessment != nil {
+			p.AssessmentStatus, p.Verdict = string(o.Assessment.Status), o.Assessment.Verdict
+		}
+		out.Ontologies = append(out.Ontologies, p)
+	}
+	return &foundryv1.FoundryAutomationRunResponse{Run: out}, nil
 }
 
 func (s *Service) CancelFoundryAutomationRun(ctx context.Context, req *foundryv1.CancelFoundryAutomationRunRequest) (*foundryv1.FoundryAutomationRunResponse, error) {

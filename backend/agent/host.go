@@ -812,6 +812,9 @@ func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, worker
 func (h *Hosts) call(ctx context.Context, turn *model.FoundryAgentTurn, workerID string, spend HostSpend, call *mcp.CallToolRequest,
 	offered map[string]*mcp.Tool, next mcp.MethodHandler, method string) (mcp.Result, error) {
 	name := call.Params.Name
+	// A person's turn records under no workflow run, whatever its model
+	// wrote, as the worker's own turns don't.
+	call.Params.Arguments = withoutWorkflowRunArg(call.Params.Arguments)
 	input := call.Params.Arguments
 	if !json.Valid(input) {
 		input = json.RawMessage(`{}`)

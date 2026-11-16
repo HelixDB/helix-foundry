@@ -1526,3 +1526,100 @@
     bottom: var(--hf-space-1);
   }
 }
+
+/* How much each ontology an automation uses helped its runs (impact.tsx):
+   a verdict bar in the verdicts' tokens, a sentence, and the gaps its last
+   assessed run named. */
+.au-impact {
+  display: grid;
+  gap: var(--hf-space-15);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.au-impact-item {
+  display: grid;
+  gap: 6px;
+}
+.au-impact-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.au-impact-head a,
+.au-impact-head > span {
+  overflow: hidden;
+  color: var(--hf-text);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-impact-head a,
+.au-impact-run a span {
+  color: var(--hf-accent-text);
+  text-decoration: none;
+}
+.au-impact-head a:hover,
+.au-impact-run a:hover span {
+  text-decoration: underline;
+}
+.au-impact-head small {
+  font-size: var(--hf-text-xs);
+}
+.au-vbar {
+  display: flex;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--hf-sunken);
+}
+.au-vbar > span {
+  min-width: 3px;
+}
+.au-impact-note {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.au-impact-note.is-warning {
+  color: var(--hf-warning-text);
+}
+.au-impact-gaps {
+  display: grid;
+  gap: 2px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.au-impact-gaps ul {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.au-impact-run {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--hf-text-sm);
+}
+.au-impact-run a {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--hf-text);
+}
+.au-impact-run a span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.au-impact-state {
+  flex: none;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}

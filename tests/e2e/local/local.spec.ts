@@ -1775,3 +1775,38 @@ test("runs an automation, which notes what it found where it can't email", async
     "Not emailed: this install sends no email.",
   );
 });
+
+test("records how much an ontology helped an automation, as a hosted Foundry does", async ({
+  page,
+}) => {
+  await configure({ agentStepMs: 40, automationStepMs: 100, loadStepMs: 100 });
+  await uploadAndLoadContract(page);
+  await page.goto("/automations/new?template=blank");
+  await page.getByRole("textbox", { name: "Name" }).fill("Invoice check");
+  await page.getByRole("button", { name: "Add step" }).click();
+  await page.getByRole("menuitem", { name: "Ask the Assistant" }).click();
+  await page
+    .getByLabel("What should it do?")
+    .fill("How many invoices does Customer contracts hold?");
+  await page.getByRole("button", { name: "Review and save" }).click();
+  await page.getByRole("button", { name: "Save and turn on" }).click();
+  await page.getByRole("button", { name: "Run now" }).click();
+  const inspector = page.getByRole("complementary", { name: "Inspector" });
+  await expect(
+    inspector
+      .locator(".au-summary-head")
+      .getByText("Succeeded", { exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+  const helped = inspector.getByRole("region", {
+    name: "How much each ontology helped",
+  });
+  await expect(helped.getByText("Helpful", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+  await helped
+    .getByRole("link", { name: "Customer contracts: its run" })
+    .click();
+  await expect(
+    page.getByRole("note").filter({ hasText: "Made by the automation" }),
+  ).toContainText("Invoice check");
+});

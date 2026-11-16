@@ -90,13 +90,13 @@ func (s *workflowStore) GetFoundryWorkflowByClientToken(_ context.Context, ontol
 	})
 }
 
-func (s *workflowStore) ListFoundryWorkflows(_ context.Context, ontologyID, pageToken string, _ int) ([]*foundrymodel.FoundryWorkflow, string, error) {
+func (s *workflowStore) ListFoundryWorkflows(_ context.Context, ontologyID string, withAutomations bool, pageToken string, _ int) ([]*foundrymodel.FoundryWorkflow, string, error) {
 	if pageToken == "bad" {
 		return nil, "", foundrystore.ErrInvalidPageToken
 	}
 	var out []*foundrymodel.FoundryWorkflow
 	for _, w := range s.workflows {
-		if w.OntologyID == ontologyID {
+		if w.OntologyID == ontologyID && (withAutomations || w.Automation == nil) {
 			out = append(out, s.counted(w))
 		}
 	}
@@ -104,6 +104,9 @@ func (s *workflowStore) ListFoundryWorkflows(_ context.Context, ontologyID, page
 }
 
 func (s *workflowStore) DeleteFoundryWorkflow(_ context.Context, ontologyID, id string) error {
+	if w, err := s.GetFoundryWorkflow(context.Background(), ontologyID, id); err == nil && w.Automation != nil && !w.Automation.Deleted {
+		return foundrystore.ErrAutomationWorkflow
+	}
 	n := len(s.workflows)
 	s.workflows = slices.DeleteFunc(s.workflows, func(w *foundrymodel.FoundryWorkflow) bool { return w.ID == id && w.OntologyID == ontologyID })
 	if len(s.workflows) == n {
@@ -166,15 +169,18 @@ func (s *workflowStore) ListFoundryWorkflowRuns(_ context.Context, workflowID st
 }
 
 func (s *workflowStore) ListFoundryWorkflowInsightRuns(_ context.Context, ontologyID, workflowID string, startedBy *access.Principal,
-	from, to time.Time, limit int) ([]foundrymodel.FoundryWorkflowInsightRun, error) {
+	withAutomations bool, from, to time.Time, limit int) ([]foundrymodel.FoundryWorkflowInsightRun, error) {
 	var out []foundrymodel.FoundryWorkflowInsightRun
 	for _, r := range s.runs {
 		if r.OntologyID != ontologyID || workflowID != "" && r.WorkflowID != workflowID || startedBy != nil && r.StartedBy != *startedBy ||
-			r.StartedAt.Before(from) || !r.StartedAt.Before(to) {
+			!withAutomations && r.AutomationRunID != nil || r.StartedAt.Before(from) || !r.StartedAt.Before(to) {
 			continue
 		}
 		run := foundrymodel.FoundryWorkflowInsightRun{ID: r.ID, WorkflowID: r.WorkflowID, StartedBy: r.StartedBy, StartedAt: r.StartedAt,
 			Status: r.Status(), Counts: r.Counts}
+		if w, err := s.GetFoundryWorkflow(context.Background(), r.OntologyID, r.WorkflowID); err == nil {
+			run.Automation = w.Automation
+		}
 		if a := s.assessments[r.ID]; a != nil {
 			run.Assessment = &foundrymodel.FoundryWorkflowInsightAssessment{Status: a.Status, Verdict: a.Verdict, Assessment: a.Assessment,
 				USDMicros: a.USDMicros}

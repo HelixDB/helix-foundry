@@ -8,6 +8,7 @@ import {
 } from "../../mock/routes/workflow-insights";
 import {
   MIN_SAMPLE,
+  automationLabel,
   backedShare,
   callsPerRun,
   claimsOf,
@@ -23,8 +24,12 @@ import {
   rollingDays,
   runBucket,
   runShown,
+  runStarter,
+  segmentStarter,
+  starterKey,
   starterLabel,
   starterOf,
+  starterText,
   verdictDay,
   verdictParts,
   verdictRuns,
@@ -493,8 +498,27 @@ describe("a workflow's runs list", () => {
     expect(runShown(named, q({ filter: "misleading" }))).toBe(true);
     expect(runShown(plain, q({ filter: "misleading" }))).toBe(false);
     const k1 = { kind: "KIND_SERVICE_CREDENTIAL" as const, id: "k1" };
-    expect(runShown(named, q({ who: k1 }))).toBe(true);
-    expect(runShown(plain, q({ who: k1 }))).toBe(false);
+    expect(runShown(named, q({ who: { principal: k1 } }))).toBe(true);
+    expect(runShown(plain, q({ who: { principal: k1 } }))).toBe(false);
+    // An automation's runs are its own, never its owner's.
+    const auto = {
+      ...plain,
+      workflowId: "wf-auto",
+      automationRunId: "arun-1",
+    };
+    const digest = { automationId: "a1", name: "Weekly digest" };
+    const u1 = { kind: "KIND_USER" as const, id: "u1" };
+    expect(runShown(auto, q({ who: { principal: u1 } }))).toBe(false);
+    expect(runShown(plain, q({ who: { principal: u1 } }))).toBe(true);
+    expect(
+      runShown(auto, q({ who: { automation: digest, workflowId: "wf-auto" } })),
+    ).toBe(true);
+    expect(
+      runShown(
+        plain,
+        q({ who: { automation: digest, workflowId: "wf-auto" } }),
+      ),
+    ).toBe(false);
     expect(runShown(named, q({ issue: "no health score" }))).toBe(true);
     expect(runShown(named, q({ issue: "add a health_score" }))).toBe(true);
     expect(runShown(plain, q({ issue: "no health score" }))).toBe(false);
@@ -502,5 +526,78 @@ describe("a workflow's runs list", () => {
     expect(starterOf(plain)).toEqual({ kind: "KIND_USER", id: "u1" });
     expect(principalKey(k1)).toBe("KIND_SERVICE_CREDENTIAL:k1");
     expect(principalKey(undefined)).toBe("");
+  });
+});
+
+// Foundry's runs for an automation count by the automation, apart from what
+// its owner started themselves, and the pages name them so.
+describe("an automation's runs among who started them", () => {
+  const digest = { automationId: "a1", name: "Weekly digest" };
+  it("counts an automation's runs apart from its owner's own", () => {
+    const mine = run("2026-11-12T10:00:00Z", { verdict: "helpful" });
+    const auto = (at: string) => ({
+      ...run(at, { verdict: "essential", workflowId: "wf-auto" }),
+      startedByUserId: mine.startedByUserId,
+      automationRunId: `arun-${at}`,
+      automation: digest,
+    });
+    const got = insights(
+      [mine, auto("2026-11-12T11:00:00Z"), auto("2026-11-12T12:00:00Z")],
+      {
+        days: 7,
+        now: NOW,
+      },
+    );
+    expect(got.agents).toHaveLength(2);
+    expect(got.agents?.[0]?.automation).toEqual(digest);
+    expect(got.agents?.[0]?.workflowId).toBe("wf-auto");
+    expect(got.agents?.[0]?.totals?.runs).toBe(2);
+    expect(got.agents?.[0]?.principal).toEqual(starterOf(mine));
+    expect(got.agents?.[1]?.automation).toBeUndefined();
+    expect(got.agents?.[1]?.totals?.runs).toBe(1);
+  });
+
+  it("names and keys an automation as a starter", () => {
+    const seg = {
+      automation: digest,
+      workflowId: "wf-auto",
+      principal: { kind: "KIND_USER" as const, id: "u1" },
+    };
+    const s = segmentStarter(seg);
+    expect(s).toEqual({ automation: digest, workflowId: "wf-auto" });
+    expect(starterKey(s)).toBe("automation:a1");
+    expect(starterText(s, new Map(), "u1")).toBe("Automation: Weekly digest");
+    expect(automationLabel({ ...digest, deleted: true })).toBe(
+      "Automation: Weekly digest (deleted)",
+    );
+    expect(automationLabel({ automationId: "a2" })).toBe("Automation: unnamed");
+    const person = segmentStarter({
+      principal: { kind: "KIND_USER", id: "u1" },
+    });
+    expect(person).toEqual({ principal: { kind: "KIND_USER", id: "u1" } });
+    expect(starterKey(person)).toBe("KIND_USER:u1");
+    expect(starterText(person, new Map(), "u1")).toBe("You");
+    expect(segmentStarter({})).toBeUndefined();
+    expect(starterKey(undefined)).toBe("");
+    expect(starterText(undefined, new Map(), "u1")).toBe("Someone");
+  });
+
+  it("says who started a run: its automation, for an automation's workflow", () => {
+    const r = {
+      id: "r",
+      workflowId: "wf-auto",
+      status: "finished",
+      startedByUserId: "u1",
+    };
+    expect(runStarter({ ...r, automationRunId: "arun" }, digest)).toEqual({
+      automation: digest,
+      workflowId: "wf-auto",
+    });
+    expect(runStarter(r, digest)).toEqual({
+      principal: { kind: "KIND_USER", id: "u1" },
+    });
+    expect(runStarter({ ...r, automationRunId: "arun" }, null)).toEqual({
+      principal: { kind: "KIND_USER", id: "u1" },
+    });
   });
 });

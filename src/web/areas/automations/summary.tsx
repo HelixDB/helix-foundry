@@ -37,6 +37,7 @@ import {
   validZone,
   type Names,
 } from "./model";
+import { OntologyImpact } from "./impact";
 import { RUN_STATUS, StepsPreview, automationStatus } from "./parts";
 import { automationPaths as paths } from "./paths";
 import { automationQueries, deleteAutomation, type useNames } from "./queries";
@@ -217,6 +218,7 @@ export function Summary({
           ]}
         />
       )}
+      {a && <OntologyImpact automation={a} />}
       {a && (
         <section className="au-side-section" aria-label="Last runs">
           <h3>Last runs</h3>

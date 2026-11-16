@@ -575,8 +575,8 @@ func TestFoundryAutomationRunSteps(t *testing.T) {
 	require.Equal(t, 2, run.Attempts, "a retry counts its attempt")
 	require.Equal(t, int64(1200), run.USDMicros)
 
-	require.NoError(t, f.db.FinishFoundryAutomationRun(ctx, run.ID, "w1", model.FoundryAutomationRunEnd{Status: model.FoundryAutomationRunSucceeded, PauseAfter: 3}))
-	require.ErrorIs(t, f.db.FinishFoundryAutomationRun(ctx, run.ID, "w1", model.FoundryAutomationRunEnd{Status: model.FoundryAutomationRunSucceeded, PauseAfter: 3}),
+	require.NoError(t, f.db.FinishFoundryAutomationRun(ctx, run.ID, "w1", model.FoundryAutomationRunEnd{Status: model.FoundryAutomationRunSucceeded, PauseAfter: 3, Answer: "It ran."}))
+	require.ErrorIs(t, f.db.FinishFoundryAutomationRun(ctx, run.ID, "w1", model.FoundryAutomationRunEnd{Status: model.FoundryAutomationRunSucceeded, PauseAfter: 3, Answer: "It ran."}),
 		store.ErrNotFound, "a run ends once")
 	nodes, err := f.db.ListFoundryAutomationRunNodes(ctx, run.ID)
 	require.NoError(t, err)
@@ -596,7 +596,7 @@ func TestFoundryAutomationFailuresPause(t *testing.T) {
 		notice := &model.FoundryNotification{ID: id26(fmt.Sprintf("PN%d", n)), Kind: model.FoundryNotifyAutomationPaused, SubjectID: id26(fmt.Sprintf("PS%d", n)),
 			WorkspaceID: f.workspaceID, UserID: automationOwner, Status: model.FoundryNotificationPending}
 		require.NoError(t, f.db.FinishFoundryAutomationRun(ctx, run.ID, "w1", model.FoundryAutomationRunEnd{
-			Status: model.FoundryAutomationRunFailed, Error: "Step sync failed.", PauseAfter: 2, Backoff: time.Minute, Notice: notice, LostAccess: lost}))
+			Status: model.FoundryAutomationRunFailed, Error: "Step sync failed.", Answer: "The run failed.", PauseAfter: 2, Backoff: time.Minute, Notice: notice, LostAccess: lost}))
 	}
 	failOnce(1, false)
 	a, err := f.db.GetFoundryAutomation(ctx, f.workspaceID, a.ID)
@@ -672,7 +672,7 @@ func TestFoundryAutomationCancelAndDeleteEndTurns(t *testing.T) {
 	require.NoError(t, err)
 	run, err = f.db.ClaimFoundryAutomationRun(ctx, "w1", time.Minute)
 	require.NoError(t, err)
-	require.NoError(t, f.db.FinishFoundryAutomationRun(ctx, run.ID, "w1", model.FoundryAutomationRunEnd{Status: model.FoundryAutomationRunSucceeded, PauseAfter: 3}))
+	require.NoError(t, f.db.FinishFoundryAutomationRun(ctx, run.ID, "w1", model.FoundryAutomationRunEnd{Status: model.FoundryAutomationRunSucceeded, PauseAfter: 3, Answer: "It ran."}))
 	_, err = f.db.CancelFoundryAutomationRun(ctx, f.workspaceID, run.ID, model.FoundryAutomationActor{UserID: automationOwner})
 	automationRefused(t, err, model.FoundryAutomationRunEnded)
 

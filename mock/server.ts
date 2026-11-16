@@ -7,7 +7,7 @@ import { mockFeedback } from "./routes/feedback";
 import { routes } from "./routes";
 import { handleDirectoryPage } from "./routes/access";
 import { pairHelper, startHelper } from "./routes/agent-hosts";
-import { pastRuns } from "./routes/automations";
+import { pastRuns, pruneRun } from "./routes/automations";
 import { handleBillingPage } from "./routes/billing";
 import { handleDocumentUpload } from "./routes/documents";
 import { sendPieces } from "./routes/event-sources";
@@ -70,6 +70,9 @@ import { handleWorkos } from "./workos";
 // POST /__mock/automations/{id}/past-runs { runs: [{ status, ago,
 // usdMicros? }] } records ended runs of an automation that long ago (ms),
 // for the history the automations' overview counts (./routes/automations.ts).
+//
+// POST /__mock/automations/{id}/runs/{runId}/prune drops an ended run, as the
+// backend's retention does; the workflow runs it started stay.
 //
 // POST /__mock/agent-host/pair { code, name?, runtimes?, account?,
 // codexVersion? } spends a pairing code as the Assistant's helper's pair
@@ -176,6 +179,19 @@ const server = createServer(async (req, res) => {
       const past = /^\/__mock\/automations\/([^/]+)\/past-runs$/.exec(
         url.pathname,
       );
+      const prune =
+        /^\/__mock\/automations\/([^/]+)\/runs\/([^/]+)\/prune$/.exec(
+          url.pathname,
+        );
+      if (prune && req.method === "POST") {
+        const reply = pruneRun(
+          decodeURIComponent(prune[1]!),
+          decodeURIComponent(prune[2]!),
+        );
+        res.writeHead(reply.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(reply.body));
+        return;
+      }
       if (past && req.method === "POST") {
         const reply = pastRuns(
           decodeURIComponent(past[1]!),

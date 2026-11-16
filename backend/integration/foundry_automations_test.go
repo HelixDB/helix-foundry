@@ -43,13 +43,20 @@ type autoBackend struct {
 func automationProto() *foundryv1.FoundryAutomation {
 	return &foundryv1.FoundryAutomation{Id: autoID, Name: "Weekly sync", Revision: 2, Status: "needs_approval", TriggerKind: "schedule", SpecJson: autoSpec,
 		OwnerUserId: "user-ada", CanEdit: true, CanRun: false, CanDelete: true,
-		LastRun: &foundryv1.FoundryAutomationRun{Id: autoRunID, AutomationId: autoID, Status: "failed", Error: "Step sync failed.", CreatedAt: timestamppb.Now()}}
+		LastRun: &foundryv1.FoundryAutomationRun{Id: autoRunID, AutomationId: autoID, Status: "failed", Error: "Step sync failed.", CreatedAt: timestamppb.Now()},
+		Ontologies: []*foundryv1.FoundryAutomationOntology{
+			{OntologyId: "ont-1", OntologyName: "Sales", WorkflowId: "wf-1", Runs: 3, FinishedRuns: 2, Gaps: []string{"no renewal dates"},
+				Verdicts: []*foundryv1.FoundryWorkflowVerdictCount{{Verdict: "helpful", Runs: 2}}},
+			{OntologyId: "ont-2", OntologyName: "Support", Untracked: "workflows_full"},
+		}}
 }
 
 func runProto() *foundryv1.FoundryAutomationRun {
 	return &foundryv1.FoundryAutomationRun{Id: autoRunID, AutomationId: autoID, Status: "succeeded", TriggerEventJson: `{"kind":"manual"}`, UsdMicros: 1200,
 		Nodes: []*foundryv1.FoundryAutomationRunNode{{NodeId: "start", Status: "succeeded", OutputJson: `{"summary":"Run by hand."}`},
-			{NodeId: "sync", Status: "failed", Error: "the connector is gone"}}}
+			{NodeId: "sync", Status: "failed", Error: "the connector is gone"}},
+		Ontologies: []*foundryv1.FoundryAutomationRunOntology{{OntologyId: "ont-1", OntologyName: "Sales", WorkflowId: "wf-1", WorkflowRunId: "wfr-1",
+			Status: "finished", AssessmentStatus: "done", Verdict: "helpful"}}}
 }
 
 func (b *autoBackend) ListFoundryAutomations(context.Context, *foundryv1.ListFoundryAutomationsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryAutomationsResponse, error) {
@@ -136,6 +143,18 @@ func TestAutomationReadTools(t *testing.T) {
 	require.Len(t, steps, 2)
 	assert.Equal(t, "the connector is gone", steps[1].(map[string]any)["error"])
 	assert.Equal(t, "https://foundry.example/automations/"+autoID+"/runs/"+autoRunID+"?workspace="+autoWorkspace, run["url"])
+
+	// The ontologies its runs use, and how much each helped.
+	workflows := automation["workflows"].([]any)
+	require.Len(t, workflows, 2)
+	assert.Equal(t, map[string]any{"ontology_id": "ont-1", "ontology_name": "Sales", "workflow_id": "wf-1", "runs": float64(3), "finished_runs": float64(2),
+		"verdicts": map[string]any{"helpful": float64(2)}, "gaps": []any{"no renewal dates"}}, workflows[0])
+	assert.Equal(t, "workflows_full", workflows[1].(map[string]any)["untracked"])
+	assert.NotEmpty(t, listed["workflows"], "a list says them too")
+	used := run["workflows"].([]any)
+	require.Len(t, used, 1)
+	assert.Equal(t, map[string]any{"ontology_id": "ont-1", "ontology_name": "Sales", "workflow_id": "wf-1", "workflow_run_id": "wfr-1",
+		"status": "finished", "assessment_status": "done", "verdict": "helpful"}, used[0])
 }
 
 func TestAutomationToolsAreOffered(t *testing.T) {

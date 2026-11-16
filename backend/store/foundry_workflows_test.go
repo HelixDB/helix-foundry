@@ -101,7 +101,7 @@ func TestFoundryWorkflows(t *testing.T) {
 		seen := map[string]bool{}
 		token := ""
 		for {
-			page, next, err := f.db.ListFoundryWorkflows(ctx, f.ontology.ID, token, 30)
+			page, next, err := f.db.ListFoundryWorkflows(ctx, f.ontology.ID, true, token, 30)
 			require.NoError(t, err)
 			for _, w := range page {
 				assert.False(t, seen[w.ID], "listed twice: %s", w.ID)
@@ -113,7 +113,7 @@ func TestFoundryWorkflows(t *testing.T) {
 			token = next
 		}
 		assert.Len(t, seen, model.FoundryWorkflowsMax)
-		_, _, err := f.db.ListFoundryWorkflows(ctx, f.ontology.ID, "not-a-token", 30)
+		_, _, err := f.db.ListFoundryWorkflows(ctx, f.ontology.ID, true, "not-a-token", 30)
 		assert.ErrorIs(t, err, store.ErrInvalidPageToken)
 	})
 }
@@ -809,7 +809,7 @@ VALUES (?, ?, ?, ?, 'done', 'helpful', '{"verdict":"helpful"}', 123, NOW(6)), (?
 	}
 	window := func(workflowID string, by *access.Principal, limit int) []model.FoundryWorkflowInsightRun {
 		t.Helper()
-		runs, err := f.db.ListFoundryWorkflowInsightRuns(ctx, f.ontology.ID, workflowID, by, day, day.AddDate(0, 0, 3), limit)
+		runs, err := f.db.ListFoundryWorkflowInsightRuns(ctx, f.ontology.ID, workflowID, by, true, day, day.AddDate(0, 0, 3), limit)
 		require.NoError(t, err)
 		return runs
 	}
@@ -838,7 +838,7 @@ VALUES (?, ?, ?, ?, 'done', 'helpful', '{"verdict":"helpful"}', 123, NOW(6)), (?
 	ada := access.Principal{Kind: access.PrincipalUser, ID: id26("U-ADA")}
 	assert.Equal(t, []string{other.ID, first.ID}, ids(window("", &ada, 10)))
 	assert.Equal(t, []string{other.ID}, ids(window("", nil, 1)), "the newest, up to limit")
-	none, err := f.db.ListFoundryWorkflowInsightRuns(ctx, id26("ONT-NONE"), "", nil, day, day.AddDate(0, 0, 3), 10)
+	none, err := f.db.ListFoundryWorkflowInsightRuns(ctx, id26("ONT-NONE"), "", nil, true, day, day.AddDate(0, 0, 3), 10)
 	require.NoError(t, err)
 	assert.Empty(t, none, "another ontology's")
 }

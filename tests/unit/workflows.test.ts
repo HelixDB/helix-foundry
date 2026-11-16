@@ -21,7 +21,12 @@ import {
   type AccessView,
 } from "@/web/areas/workflows/model";
 import { contractErrors } from "../../mock/agent-contract";
-import { ok, type MockReply, type MockRequest } from "../../mock/http";
+import {
+  ok,
+  type MockGrantee,
+  type MockReply,
+  type MockRequest,
+} from "../../mock/http";
 import { routes } from "../../mock/routes";
 import { sendPieces } from "../../mock/routes/event-sources";
 import {
@@ -30,6 +35,7 @@ import {
   WORKFLOW_CAPS,
   mockAssessment,
   tracked,
+  useOntology,
 } from "../../mock/routes/workflows";
 import { config, db, resetState } from "../../mock/state";
 
@@ -43,6 +49,7 @@ async function call(
   path: string,
   body?: unknown,
   userId = "usr_ada",
+  grantee?: MockGrantee,
 ): Promise<MockReply & { body: any }> {
   const url = new URL(path, "http://mock");
   for (const r of compiled) {
@@ -55,6 +62,7 @@ async function call(
       query: url.searchParams,
       body,
       principal: { user: db.users.get(userId)!, sessionId: "s" },
+      ...(grantee && { grantee }),
     })) as MockReply & { body: any };
   }
   throw new Error(`no mock route for ${method} ${path}`);
@@ -569,6 +577,62 @@ describe("the mock's workflows", () => {
         )
       ).status,
     ).toBe(400);
+  });
+
+  it("keeps an automation's workflow runs to its own calls, and from grantees", async () => {
+    const made = useOntology(
+      {
+        workspaceId: "ws_acme",
+        automationId: "auto_digest",
+        name: "Digest",
+        ownerUserId: "usr_ada",
+      },
+      "arun_1",
+      "ont_acme_contracts",
+      () => "Run by hand.",
+    )!;
+    const mine = (await create()).body.workflow.id;
+    // Its id alone records nothing, even for its owner.
+    const asked = await call("POST", `${O}/questions`, {
+      question: "Who?",
+      clientToken: "q1",
+      workflowRunId: made.id,
+    });
+    expect(asked.status).toBe(404);
+    expect(made.accesses).toHaveLength(0);
+
+    // A grantee holding all of the ontology sees no automation's.
+    const load = { loadId: "l1", versionId: "v1", partial: false };
+    const eve = {
+      principal: "KIND_USER:usr_eve",
+      covered: new Map([["ont_acme_contracts", load]]),
+      load,
+    } as unknown as MockGrantee;
+    const as = (path: string, grantee?: MockGrantee) =>
+      call("GET", path, undefined, "usr_ada", grantee);
+    expect(
+      (await as(W, eve)).body.workflows.map((w: { id: string }) => w.id),
+    ).toEqual([mine]);
+    expect((await as(W)).body.workflows).toHaveLength(2);
+    for (const path of [
+      `${W}/${made.workflowId}`,
+      `${W}/${made.workflowId}/runs`,
+      `${W}/${made.workflowId}/runs/${made.id}`,
+      `${W}/${made.workflowId}/runs/${made.id}/accesses`,
+      `${W}:insights?workflowId=${made.workflowId}`,
+    ]) {
+      expect((await as(path, eve)).status, path).toBe(404);
+      expect((await as(path)).status, path).toBe(200);
+    }
+    const insights = (await as(`${W}:insights`, eve)).body;
+    expect(
+      insights.agents.some((a: { automation?: unknown }) => a.automation),
+    ).toBe(false);
+    expect(
+      (await as(`${W}:insights`)).body.agents.some(
+        (a: { automation?: unknown }) => a.automation,
+      ),
+    ).toBe(true);
   });
 
   it("pages a long run's calls and stops at the cap", async () => {

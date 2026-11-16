@@ -33,6 +33,9 @@ const maxReportChars = 2000
 type automationStep struct {
 	name  string
 	allow []automation.Action
+	// run and spec are the run the step is of, and its spec.
+	run  *model.FoundryAutomationRun
+	spec automation.Spec
 }
 
 // automationStep reads the step turn runs: its run's spec, as the run keeps
@@ -68,7 +71,7 @@ func (r *Runner) automationStep(ctx context.Context, turn *model.FoundryAgentTur
 	if !ok || !assistant {
 		return nil, gone("The automation's step is no Assistant step", nil)
 	}
-	return &automationStep{name: a.Name, allow: step.Allow}, nil
+	return &automationStep{name: a.Name, allow: step.Allow, run: run, spec: spec}, nil
 }
 
 // system is the turn's system prompt: the Assistant's, and an automation's

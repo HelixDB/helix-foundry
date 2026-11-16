@@ -88,6 +88,8 @@ var rules = map[string]Rule{
 	// Workflows: a grantee with the Workflows permission lists an ontology's
 	// workflows and records its own runs; it reads every run of an ontology
 	// whose current load it holds all of, else only the runs it started.
+	// The workflows Foundry makes for automations, which run with their
+	// owners' access, it never sees, as it sees no automation.
 	// Making, deleting and assessing them again stay with owners and admins.
 	foundryv1.FoundryService_CreateFoundryWorkflow_FullMethodName:          Deny,
 	foundryv1.FoundryService_ListFoundryWorkflows_FullMethodName:           Workflows,

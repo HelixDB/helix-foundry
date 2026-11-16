@@ -61,6 +61,64 @@ type memStore struct {
 	// prunes find a batch.
 	pruned []time.Time
 	full   int
+	// uses are the workflow runs that record the runs' uses of ontologies.
+	uses workflowUses
+}
+
+func (s *memStore) GetConnector(context.Context, string, string) (*model.Connector, error) {
+	return nil, foundrystore.ErrNotFound
+}
+
+func (s *memStore) GetFoundryDocumentSet(context.Context, string, string) (*model.FoundryDocumentSet, error) {
+	return nil, foundrystore.ErrNotFound
+}
+
+func (s *memStore) GetFoundryAutomationWorkflowRun(ctx context.Context, automationRunID, ontologyID string) (*model.FoundryWorkflowRun, error) {
+	return s.uses.GetFoundryAutomationWorkflowRun(ctx, automationRunID, ontologyID)
+}
+
+func (s *memStore) StartFoundryAutomationWorkflowRun(ctx context.Context, start model.FoundryAutomationWorkflowStart) (*model.FoundryWorkflowRun, error) {
+	if s.ontologies[start.OntologyID] == nil {
+		return nil, foundrystore.ErrNotFound
+	}
+	return s.uses.StartFoundryAutomationWorkflowRun(ctx, start)
+}
+
+// workflowUses keeps the workflow runs that record automation runs' uses of
+// ontologies, as the store starts them: one per run and ontology, none on a
+// full ontology's (full) or one the workspace hasn't (gone).
+type workflowUses struct {
+	runs   []*model.FoundryWorkflowRun
+	starts []model.FoundryAutomationWorkflowStart
+	full   map[string]bool
+	gone   map[string]bool
+}
+
+func (w *workflowUses) GetFoundryAutomationWorkflowRun(_ context.Context, automationRunID, ontologyID string) (*model.FoundryWorkflowRun, error) {
+	for _, r := range w.runs {
+		if *r.AutomationRunID == automationRunID && r.OntologyID == ontologyID {
+			return r, nil
+		}
+	}
+	return nil, foundrystore.ErrNotFound
+}
+
+func (w *workflowUses) StartFoundryAutomationWorkflowRun(ctx context.Context, start model.FoundryAutomationWorkflowStart) (*model.FoundryWorkflowRun, error) {
+	switch {
+	case w.full[start.OntologyID]:
+		return nil, foundrystore.ErrLimitExceeded
+	case w.gone[start.OntologyID]:
+		return nil, foundrystore.ErrNotFound
+	}
+	if r, err := w.GetFoundryAutomationWorkflowRun(ctx, start.AutomationRunID, start.OntologyID); err == nil {
+		return r, nil
+	}
+	w.starts = append(w.starts, start)
+	runID, input := start.AutomationRunID, start.Input
+	r := &model.FoundryWorkflowRun{ID: "wfrun-" + start.OntologyID, WorkflowID: "wf-" + start.OntologyID, WorkspaceID: start.WorkspaceID,
+		OntologyID: start.OntologyID, ClientToken: runID, Input: &input, AutomationRunID: &runID}
+	w.runs = append(w.runs, r)
+	return r, nil
 }
 
 func newStore() *memStore {
@@ -769,4 +827,79 @@ func TestSentence(t *testing.T) {
 	assert.Equal(t, "Gone.", sentence("gone"))
 	assert.Equal(t, "Done?", sentence("done?"))
 	assert.Equal(t, strings.Repeat("a", maxThreadTitle), title(strings.Repeat("a", maxThreadTitle+5)))
+}
+
+// A run's action steps use the ontologies they act on, recorded at their
+// first use, and its end says what it found: the answer of the workflow
+// runs it started, assessed where assessments are on.
+func TestARunRecordsItsUsesOfOntologies(t *testing.T) {
+	load := spec(`[{"from":"start","to":"load"},{"from":"load","to":"pub"}]`, node("start", "trigger", `{"kind":"manual"}`),
+		node("load", "action", `{"operation":"create_load","ontology_id":"ont1"}`),
+		node("pub", "action", `{"operation":"publish_dashboard","dashboard_id":"dash1"}`))
+	f := newFixture(t)
+	f.task.assess = true
+	f.host.service = (&integration.Service{Actions: f.actions, Confirmations: &confirmations{}, PublicDashboards: true}).ForAgent()
+	current := "ver7"
+	f.db.ontologies["ont1"] = &model.FoundryOntology{ID: "ont1", WorkspaceID: ws, Name: "Sales", CurrentVersionID: &current}
+	f.db.ontologies["ont2"] = &model.FoundryOntology{ID: "ont2", WorkspaceID: ws, Name: "Support"}
+	tiles := `{"v":1,"tiles":[` +
+		`{"id":"t1","title":"Deals","ontology_id":"ont1","load":{"kind":"current"},"query":{"start":{"type":"Deal"},"return":{"count":{}}}},` +
+		`{"id":"t2","title":"Tickets","ontology_id":"ont2","load":{"kind":"current"},"query":{"start":{"type":"Ticket"},"return":{"count":{}}}}],` +
+		`"layout":{"rows":[["t1","t2"]]}}`
+	f.db.dashboards["dash1"] = &model.FoundryDashboard{ID: "dash1", WorkspaceID: ws, Name: "Pipeline", Revision: 4, Spec: json.RawMessage(tiles),
+		Share: &model.FoundryDashboardShare{SpecRevision: 4}}
+	run := f.queue(load)
+	f.db.nodes[run.ID]["start"].Output = json.RawMessage(`{"summary":"Run by hand."}`)
+	f.task.advance(context.Background(), run)
+
+	require.Len(t, f.db.uses.starts, 2, "the load's ontology, and the published dashboard's other one")
+	assert.Equal(t, "ont1", f.db.uses.starts[0].OntologyID)
+	assert.Equal(t, "ont2", f.db.uses.starts[1].OntologyID)
+	input := f.db.uses.starts[0].Input
+	assert.Contains(t, input, `Run by hand. The automation "Weekly invoices" ran these steps, in order:`)
+	assert.Contains(t, input, `1. Action step "load": load the current version of the ontology "Sales".`)
+	assert.Contains(t, input, `2. Action step "pub": publish the dashboard "Pipeline" again at its link.`)
+
+	end := f.db.finished[run.ID]
+	assert.Equal(t, model.FoundryAutomationRunSucceeded, end.Status)
+	assert.True(t, end.Assess)
+	assert.Equal(t, "The run succeeded.\nWhat its steps found:"+
+		"\n- The action step \"load\" succeeded: Started a load of its ontology's current version."+
+		"\n- The action step \"pub\" succeeded: Published its dashboard's snapshot again.", end.Answer)
+
+	// A run that never touched an ontology starts none.
+	f = newFixture(t)
+	run = f.queue(spec(`[{"from":"start","to":"mail"}]`, node("start", "trigger", `{"kind":"manual"}`), node("mail", "notify", `{"message":"Hi"}`)))
+	f.task.advance(context.Background(), run)
+	assert.Empty(t, f.db.uses.starts)
+	assert.False(t, f.db.finished[run.ID].Assess, "where assessments are off")
+}
+
+func TestARunsAnswerSaysWhatItsStepsFound(t *testing.T) {
+	f := newFixture(t)
+	run := f.queue(weekly)
+	f.task.advance(context.Background(), run)
+	yes, three := true, int64(3)
+	f.db.endTurn(t, model.FoundryAgentTurnDone, agent.Reported{Summary: "Three are overdue.", Answer: &yes, Count: &three})
+	f.task.advance(context.Background(), run)
+	answer := f.db.finished[run.ID].Answer
+	assert.Contains(t, answer, `- The assistant step "ask" succeeded: Three are overdue. (It answered yes.) (It counted 3.)`)
+	assert.Contains(t, answer, `- The condition step "late" succeeded: It took its true branch.`)
+	assert.Contains(t, answer, `- The notify step "mail" succeeded: Emailed its owner.`)
+
+	// A failed run leads with why.
+	f = newFixture(t)
+	run = f.queue(weekly)
+	f.task.advance(context.Background(), run)
+	f.db.endTurn(t, model.FoundryAgentTurnDone, agent.Said{Text: "I looked."})
+	f.task.advance(context.Background(), run)
+	answer = f.db.finished[run.ID].Answer
+	assert.True(t, strings.HasPrefix(answer, `The run failed: The condition step "late" failed: The Assistant gave no yes-or-no answer.`), answer)
+	assert.Contains(t, answer, `- The notify step "mail" blocked`)
+
+	// One that ended before its steps says only why.
+	f = newFixture(t)
+	run = f.queue(json.RawMessage(`{}`))
+	f.task.advance(context.Background(), run)
+	assert.True(t, strings.HasPrefix(f.db.finished[run.ID].Answer, "The run failed: "), f.db.finished[run.ID].Answer)
 }

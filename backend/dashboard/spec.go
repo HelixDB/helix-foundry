@@ -70,6 +70,18 @@ type Spec struct {
 // Tiles are the spec's tiles, in the order they were given.
 func (s Spec) Tiles() []Tile { return slices.Clone(s.tiles) }
 
+// Ontologies are the ontologies its tiles read, each once, in the order
+// they first appear.
+func (s Spec) Ontologies() []string {
+	var out []string
+	for _, t := range s.tiles {
+		if !slices.Contains(out, t.OntologyID) {
+			out = append(out, t.OntologyID)
+		}
+	}
+	return out
+}
+
 // Rows are the layout: each row the ids of its 1 to MaxTilesPerRow tiles,
 // every tile in exactly one row.
 func (s Spec) Rows() [][]string {

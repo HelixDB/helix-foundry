@@ -18,7 +18,13 @@ import { documentSetQueries } from "../documents/documents-api";
 import { setLabel } from "../documents/model";
 import { dashboardQueries } from "../dashboards/queries";
 import { ontologyQueries } from "../ontology/queries";
-import { isLiveRun, type Names, type TemplateId } from "./model";
+import {
+  ASSESSED_WITHIN_MS,
+  assessing,
+  isLiveRun,
+  type Names,
+  type TemplateId,
+} from "./model";
 
 // The automations' WFE calls (src/shared/wfe.ts "Automations"), and the
 // analytics each reports once the WFE accepts it, or why it refused: never
@@ -61,13 +67,15 @@ export const automationQueries = {
         : false,
   }),
   // One automation with its spec and revision; read again while a run of
-  // it is live, and while it is active (a trigger may fire).
+  // it is live, for a minute after one ended (its ontologies' assessments
+  // come in), and while it is active (a trigger may fire).
   automation: (ws: string, id: string) => ({
     queryKey: [ws, "automations", id],
     queryFn: () => api<AutomationResponse>(`${at(ws)}/${enc(id)}`),
     refetchInterval: (q: { state: { data?: AutomationResponse } }) => {
-      const a = q.state.data?.automation;
-      return isLiveRun(a?.lastRun)
+      const a = q.state.data?.automation,
+        ended = Date.parse(a?.lastRun?.finishedAt || "");
+      return isLiveRun(a?.lastRun) || Date.now() - ended < ASSESSED_WITHIN_MS
         ? RUN_POLL_MS
         : a?.status === "active"
           ? ACTIVE_POLL_MS
@@ -84,8 +92,12 @@ export const automationQueries = {
     queryKey: [ws, "automations", id, "runs", runId],
     queryFn: () =>
       api<AutomationRunResponse>(`${at(ws)}/${enc(id)}/runs/${enc(runId)}`),
+    // Read again while it is live, and until the ontologies it used are
+    // assessed.
     refetchInterval: (q: { state: { data?: AutomationRunResponse } }) =>
-      isLiveRun(q.state.data?.run) ? RUN_POLL_MS : false,
+      isLiveRun(q.state.data?.run) || assessing(q.state.data?.run)
+        ? RUN_POLL_MS
+        : false,
   }),
 };
 

@@ -291,7 +291,7 @@ FROM foundry_automations WHERE id=? AND workspace_id=? FOR UPDATE`, id, workspac
 // that changes (as JSON values, not bytes) waits for its owner's approval
 // again, stopping it, unless it only lays the same steps out anew
 // (LayoutOnly, which the caller decided against the spec at expected); a name
-// or description alone changes nothing else.
+// or description alone changes nothing else, but for its workflows' names.
 // Refusals are a FoundryAutomationRefusal: another's automation
 // (FoundryAutomationNotOwner), another revision (FoundryAutomationChanged).
 func (s *mysqlDB) UpdateFoundryAutomation(ctx context.Context, workspaceID, id, ownerUserID string, expected int64,
@@ -333,7 +333,14 @@ func (s *mysqlDB) UpdateFoundryAutomation(ctx context.Context, workspaceID, id, 
 				args = append(args, string(u.Spec.JSON), u.Spec.TriggerKind, u.Spec.TriggerTarget)
 			}
 		}
-		_, err = tx.db.ExecContext(ctx, "UPDATE foundry_automations SET "+strings.Join(sets, ", ")+" WHERE id=?", append(args, id)...)
+		if _, err = tx.db.ExecContext(ctx, "UPDATE foundry_automations SET "+strings.Join(sets, ", ")+" WHERE id=?", append(args, id)...); err != nil {
+			return err
+		}
+		if u.Name == nil {
+			return nil
+		}
+		// Its workflows are named after it.
+		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_workflows SET name=? WHERE automation_id=?`, model.FoundryAutomationWorkflowName(*u.Name), id)
 		return err
 	})
 	if err != nil {
@@ -453,9 +460,11 @@ func (s *mysqlDB) ResumeFoundryAutomation(ctx context.Context, workspaceID, id, 
 
 // DeleteFoundryAutomation deletes the automation, as by (its owner, or an
 // owner or admin), ending its live run and the Assistant turn that run waits
-// on in the same write; then its runs and their steps, a batch at a time, so
-// no one transaction holds a long history. Runs a crash leaves behind ended,
-// and PruneFoundryAutomationRuns deletes them in time.
+// on in the same write, finishing the workflow runs that run started,
+// unassessed; then its runs and their steps, a batch at a time, so no one
+// transaction holds a long history. Runs a crash leaves behind ended, and
+// PruneFoundryAutomationRuns deletes them in time. Its workflows stay, with
+// their runs, as history.
 func (s *mysqlDB) DeleteFoundryAutomation(ctx context.Context, workspaceID, id string, by model.FoundryAutomationActor) error {
 	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -469,8 +478,16 @@ func (s *mysqlDB) DeleteFoundryAutomation(ctx context.Context, workspaceID, id s
 		if err := tx.cancelFoundryAutomationTurns(ctx, `SELECT id FROM foundry_automation_runs WHERE live_automation=?`, id, "the automation was deleted"); err != nil {
 			return err
 		}
+		// Its workflow runs first, while live_automation still names its live run.
+		if err := tx.finishFoundryAutomationWorkflowRuns(ctx, `SELECT id FROM foundry_automation_runs WHERE live_automation=?`, id,
+			"The automation was deleted before its run finished.", false); err != nil {
+			return err
+		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_automation_runs
 SET status='cancelled', error='The automation was deleted.', lease_owner=NULL, lease_until=NULL, finished_at=NOW(6) WHERE live_automation=?`, id); err != nil {
+			return err
+		}
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_automation_untracked WHERE automation_id=?`, id); err != nil {
 			return err
 		}
 		_, err = tx.db.ExecContext(ctx, `DELETE FROM foundry_automations WHERE id=?`, id)
@@ -692,8 +709,9 @@ FROM foundry_automation_run_nodes WHERE run_id=? ORDER BY started_at, node_id`, 
 
 // CancelFoundryAutomationRun ends the live run cancelled, as by (its
 // automation's owner, or an owner or admin), with the steps it was running
-// and the Assistant turn it waited on. Cancelling it again returns it; one
-// that ended otherwise is FoundryAutomationRunEnded.
+// and the Assistant turn it waited on, and finishes the workflow runs it
+// started, unassessed. Cancelling it again returns it; one that ended
+// otherwise is FoundryAutomationRunEnded.
 func (s *mysqlDB) CancelFoundryAutomationRun(ctx context.Context, workspaceID, id string, by model.FoundryAutomationActor) (*model.FoundryAutomationRun, error) {
 	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -730,9 +748,11 @@ func (s *mysqlDB) CancelFoundryAutomationRun(ctx context.Context, workspaceID, i
 SET status='failed', error='The run was cancelled.', finished_at=NOW(6) WHERE run_id=? AND status IN ('running', 'executing')`, id); err != nil {
 			return err
 		}
-		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_automation_runs
-SET status='cancelled', error='Cancelled by a person.', lease_owner=NULL, lease_until=NULL, finished_at=NOW(6) WHERE id=?`, id)
-		return err
+		if _, err = tx.db.ExecContext(ctx, `UPDATE foundry_automation_runs
+SET status='cancelled', error='Cancelled by a person.', lease_owner=NULL, lease_until=NULL, finished_at=NOW(6) WHERE id=?`, id); err != nil {
+			return err
+		}
+		return tx.finishFoundryAutomationWorkflowRuns(ctx, `?`, id, "A person cancelled the automation's run before it finished.", false)
 	})
 	if err != nil {
 		return nil, err
@@ -1113,7 +1133,8 @@ SET status='queued', error=?, lease_owner=NULL, lease_until=NULL, next_attempt_a
 // them; a failure holds the automation's next run back by end.Backoff,
 // doubling with each one in a row up to a day, and pauses it once they reach
 // end.PauseAfter, queueing end.Notice for its owner. end.LostAccess pauses it
-// at once, unnoticed: its owner can't act in the workspace.
+// at once, unnoticed: its owner can't act in the workspace. The workflow runs
+// it started finish with end.Answer, assessed with end.Assess.
 func (s *mysqlDB) FinishFoundryAutomationRun(ctx context.Context, id, workerID string, end model.FoundryAutomationRunEnd) error {
 	if err := end.Validate(); err != nil {
 		return fmt.Errorf("finish foundry automation run %s: %w", id, err)
@@ -1138,6 +1159,9 @@ func (s *mysqlDB) FinishFoundryAutomationRun(ctx context.Context, id, workerID s
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_automation_runs
 SET status=?, error=NULLIF(?, ''), lease_owner=NULL, lease_until=NULL, finished_at=NOW(6) WHERE id=?`, string(end.Status), end.Error, id); err != nil {
+			return err
+		}
+		if err := tx.finishFoundryAutomationWorkflowRuns(ctx, `?`, id, end.Answer, end.Assess); err != nil {
 			return err
 		}
 		switch {
