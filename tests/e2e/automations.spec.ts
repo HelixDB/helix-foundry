@@ -207,6 +207,9 @@ test("a new automation starts as a conversation with the Assistant, whose card o
         el.selectionEnd === el.value.length,
     ),
   ).toBe(true);
+  // What they type follows the prompt.
+  await page.keyboard.type(" Only the ones over $10k.");
+  await expect(message).toHaveValue(`${prompt} Only the ones over $10k.`);
   await expect(page).toHaveURL(/\/automations\/new$/);
   // The person's words are theirs to change before they send them; the
   // page tells the Assistant they're making an automation.
@@ -260,9 +263,22 @@ test("on a phone a tap on a suggestion fills the composer, one under another", a
   ]);
   expect(second!.y).toBeGreaterThan(first!.y + first!.height - 1);
   await chips.filter({ hasText: "Churn alert" }).tap();
-  await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue(
-    /^Every day, look for accounts at risk of churning/,
+  const message = page.getByRole("textbox", { name: "Message" });
+  await expect(message).toHaveValue(
+    /^Every day, look for accounts at risk of churning.*who and why\.$/,
   );
+  // Focused, the caret at its end and that end in view.
+  await expect(message).toBeFocused();
+  expect(
+    await message.evaluate(
+      (el: HTMLTextAreaElement) =>
+        el.selectionStart === el.value.length &&
+        el.selectionEnd === el.value.length &&
+        el.scrollTop + el.clientHeight >= el.scrollHeight - 1,
+    ),
+  ).toBe(true);
+  await page.keyboard.type(" Weekdays only.");
+  await expect(message).toHaveValue(/who and why\. Weekdays only\.$/);
   await expect(page).toHaveURL(/\/automations\/new$/);
   await context.close();
 });
