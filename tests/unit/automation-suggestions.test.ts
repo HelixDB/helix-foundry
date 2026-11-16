@@ -152,7 +152,14 @@ describe("the fallback, as the backend writes it", () => {
     ["Which customers are under contract?", "Customers are under contract"],
     ["which  customers\tchurned last month?!", "Customers churned last month"],
     ["How many invoices are overdue?", "Invoices are overdue"],
-    ["What is the total revenue?", "What is the total revenue"],
+    ["What is the total revenue?", "The total revenue"],
+    [
+      "What is each customer under contract billed?",
+      "Each customer under contract",
+    ],
+    ["What are our largest invoices?", "Our largest invoices"],
+    ["What is overdue?", "What is overdue"],
+    ["What does each term cost?", "What does each term cost"],
     ["What plans do customers hold?", "Plans do customers hold"],
     ["When does each term end?", "When does each term end"],
     ["Who signed the contract?", "Who signed the contract"],
@@ -203,7 +210,7 @@ describe("the fallback, as the backend writes it", () => {
       "Customers are under contract",
       "Invoices are overdue",
       "When does each term end",
-      "What is the total revenue",
+      "The total revenue",
     ]);
     expect(fallbackSuggestions("Sales", [])).toEqual([]);
   });
@@ -265,7 +272,7 @@ describe("the mock's route", () => {
     });
     expect(titles(first)).toEqual([
       "Customers are under contract",
-      "What is each customer under",
+      "Each customer under contract",
     ]);
     later(1500);
     const ready = await get("ont_acme_renewals");

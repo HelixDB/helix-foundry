@@ -79,6 +79,12 @@ const AUXILIARIES = new Set(
     " ",
   ),
 );
+// An interrogative, a copula and a determiner keep only the determiner's
+// phrase ("What is the total revenue" is "The total revenue").
+const COPULAS = new Set(["is", "are", "was", "were"]);
+const DETERMINERS = new Set(
+  "the each every a an our my your their its this these those all".split(" "),
+);
 const TRAILING = new Set(
   "a an the of and or to in for with on by at".split(" "),
 );
@@ -105,7 +111,9 @@ const trimEnd = (s: string, chars: string) => {
  * A competency question as a suggestion's title, as the backend's suggest
  * package's Title writes it: its whitespace collapsed and closing
  * punctuation dropped; a leading "How many", "Which" or "What" dropped
- * unless an auxiliary follows or nothing does; cut after the last whole
+ * unless an auxiliary follows or nothing does, and with the copula after it
+ * when a determiner follows that ("What is the total revenue" is "The total
+ * revenue"); cut after the last whole
  * word within 32 characters (a longer first word cut at it), then words
  * such as "the" and "of" and punctuation dropped from its end; its first
  * letter capitalised.
@@ -119,8 +127,10 @@ export function questionTitle(question: string): string {
   for (const word of INTERROGATIVES) {
     if (!q.toLowerCase().startsWith(word + " ")) continue;
     const rest = q.slice(word.length + 1),
-      next = rest.split(" ")[0]!.toLowerCase();
-    if (rest && !AUXILIARIES.has(next)) q = rest;
+      [next = "", then = ""] = rest.toLowerCase().split(" ");
+    if (COPULAS.has(next) && DETERMINERS.has(then))
+      q = rest.slice(next.length + 1);
+    else if (rest && !AUXILIARIES.has(next)) q = rest;
     break;
   }
   const words = q.split(" ").filter(Boolean);
@@ -208,7 +218,7 @@ function written(name: string, types: readonly string[]) {
       [
         "Contract check",
         "check",
-        `When new documents arrive in a set ${name} reads, check each new contract's term and signing date against the customer it names, and email me any that don't match.`,
+        `When new documents arrive in a document set that ${name} reads, check each new contract's term and signing date against the customer it names, and email me any that don't match.`,
       ],
       [
         "Invoice watch",
@@ -236,7 +246,7 @@ function written(name: string, types: readonly string[]) {
       [
         "Account map refresh",
         "refresh",
-        `Every night at 2am, sync the connections ${name} reads, load it again once they finish, and email me if either fails.`,
+        `Every night at 2am, sync the connections that ${name} reads, load it again once they finish, and email me if either fails.`,
       ],
       [
         "Weekly people report",

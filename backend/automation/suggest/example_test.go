@@ -24,10 +24,12 @@ func ExampleFallback() {
 // A title drops a leading interrogative only where the rest still reads.
 func ExampleTitle() {
 	fmt.Println(suggest.Title("How many invoices are overdue?"))
+	fmt.Println(suggest.Title("What does each term cost?"))
 	fmt.Println(suggest.Title("What is the total revenue?"))
 	// Output:
 	// Invoices are overdue
-	// What is the total revenue
+	// What does each term cost
+	// The total revenue
 }
 
 // Parse keeps what passes of a model's answer and drops the rest.

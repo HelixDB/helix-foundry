@@ -20,7 +20,11 @@ func TestTitle(t *testing.T) {
 		"Which customers are under contract?":                       "Customers are under contract",
 		"which  customers\tchurned last month?!":                    "Customers churned last month",
 		"How many invoices are overdue?":                            "Invoices are overdue",
-		"What is the total revenue?":                                "What is the total revenue",
+		"What is the total revenue?":                                "The total revenue",
+		"What is each customer under contract billed?":              "Each customer under contract",
+		"What are our largest invoices?":                            "Our largest invoices",
+		"What is overdue?":                                          "What is overdue",
+		"What does each term cost?":                                 "What does each term cost",
 		"What plans do customers hold?":                             "Plans do customers hold",
 		"When does each term end?":                                  "When does each term end",
 		"Who signed the contract?":                                  "Who signed the contract",
@@ -56,7 +60,7 @@ func TestFallback(t *testing.T) {
 		Title: "Customers are under contract", Icon: suggest.Report,
 		Prompt: `Every Monday, answer: "Which customers are under contract?" from Customer contracts, and email me the answer.`,
 	}, got[0])
-	assert.Equal(t, []string{"Customers are under contract", "Invoices are overdue", "When does each term end", "What is the total revenue"},
+	assert.Equal(t, []string{"Customers are under contract", "Invoices are overdue", "When does each term end", "The total revenue"},
 		titles(got))
 
 	assert.Empty(t, suggest.Fallback("Sales", nil))

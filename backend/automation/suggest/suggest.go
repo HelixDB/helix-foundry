@@ -93,12 +93,23 @@ var ErrInvalid = errors.New("suggest: no valid suggestion")
 var interrogatives = []string{"How many", "Which", "What"}
 
 // auxiliaries are the words after an interrogative that mean the rest
-// doesn't read without it ("What is the total revenue").
+// doesn't read without it ("What does each term cost").
 var auxiliaries = map[string]bool{
 	"is": true, "are": true, "was": true, "were": true, "do": true, "does": true, "did": true, "has": true, "have": true,
 	"had": true, "can": true, "could": true, "will": true, "would": true, "should": true, "shall": true, "may": true,
 	"might": true, "must": true,
 }
+
+// copulas and determiners: an interrogative followed by a copula and a
+// determiner drops all but the determiner's phrase ("What is the total
+// revenue" is "The total revenue").
+var (
+	copulas     = map[string]bool{"is": true, "are": true, "was": true, "were": true}
+	determiners = map[string]bool{
+		"the": true, "each": true, "every": true, "a": true, "an": true, "our": true, "my": true, "your": true,
+		"their": true, "its": true, "this": true, "these": true, "those": true, "all": true,
+	}
+)
 
 // trailing are the words a fallback title never ends on.
 var trailing = map[string]bool{
@@ -141,8 +152,10 @@ func Fallback(ontologyName string, questions []string) []Suggestion {
 // names its suggestion:
 //  1. its whitespace collapsed, and trailing punctuation (?.!,;:) dropped;
 //  2. a leading "How many", "Which" or "What" dropped, unless the next word
-//     is an auxiliary ("What is the total revenue" keeps it) or nothing
-//     follows;
+//     is an auxiliary ("What plans do customers hold" drops it; "What does
+//     each term cost" keeps it) or nothing follows; followed by "is", "are",
+//     "was" or "were" and then a determiner such as "the" or "each", both
+//     words go ("What is the total revenue" is "The total revenue");
 //  3. cut after the last whole word that fits, then trailing words such as
 //     "the" and "of" and punctuation dropped (a first word longer than the
 //     limit is cut at it);
@@ -154,8 +167,12 @@ func Title(question string) string {
 		if !ok {
 			continue
 		}
-		next, _, _ := strings.Cut(rest, " ")
-		if rest != "" && !auxiliaries[strings.ToLower(next)] {
+		next, after, _ := strings.Cut(rest, " ")
+		then, _, _ := strings.Cut(after, " ")
+		switch {
+		case copulas[strings.ToLower(next)] && determiners[strings.ToLower(then)]:
+			q = after
+		case rest != "" && !auxiliaries[strings.ToLower(next)]:
 			q = rest
 		}
 		break

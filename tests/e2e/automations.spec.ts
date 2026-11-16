@@ -167,7 +167,7 @@ test("a new automation starts as a conversation with Founder, whose card opens i
     "Monday contracts brief",
   ]);
   const prompt =
-    "When new documents arrive in a set Customer contracts reads, check each new contract's term and signing date against the customer it names, and email me any that don't match.";
+    "When new documents arrive in a document set that Customer contracts reads, check each new contract's term and signing date against the customer it names, and email me any that don't match.";
   const check = suggestions.getByRole("button", { name: "Contract check" }),
     message = page.getByRole("textbox", { name: "Message" });
   await expect(check).toHaveAccessibleDescription(prompt);
@@ -364,7 +364,7 @@ test("while Founder writes suggestions, the competency questions' or placeholder
   await page.getByRole("option", { name: "Renewals" }).click();
   await expect(suggestions.getByRole("button")).toHaveText([
     "Customers are under contract",
-    "What is each customer under",
+    "Each customer under contract",
   ]);
   await suggestions
     .getByRole("button", { name: "Customers are under contract" })
@@ -376,7 +376,7 @@ test("while Founder writes suggestions, the competency questions' or placeholder
   // screen reader hears the chips changed.
   const message = page.getByRole("textbox", { name: "Message" });
   await suggestions
-    .getByRole("button", { name: "What is each customer under" })
+    .getByRole("button", { name: "Each customer under contract" })
     .hover();
   await expect(message).toHaveAttribute(
     "placeholder",
@@ -418,7 +418,7 @@ test("without an AI provider, suggestions come from the competency questions, el
   await page.getByRole("option", { name: "Renewals" }).click();
   await expect(suggestions.getByRole("button")).toHaveText([
     "Customers are under contract",
-    "What is each customer under",
+    "Each customer under contract",
   ]);
   await expect(
     page.getByRole("status").filter({ hasText: "Writing" }),
