@@ -381,7 +381,7 @@ test("connects Databuddy with the websites chosen and its days of history", asyn
   await expect(
     page.getByRole("heading", { level: 1, name: "Databuddy" }),
   ).toBeVisible();
-  await expect(header(page)).toContainText("dbdy…WXYZ");
+  await expect(header(page)).toContainText("Databuddy · web_acme");
   await expect(page.locator(".hf-kv")).toContainText("Websitesweb_acme");
   await expect(page.locator(".hf-kv")).toContainText("History30 days");
   await expect(header(page).getByText("Synced", { exact: true })).toBeVisible(
