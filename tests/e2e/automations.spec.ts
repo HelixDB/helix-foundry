@@ -181,10 +181,18 @@ test("a new automation starts as a conversation with the Assistant, whose card o
     "placeholder",
     "Describe what should happen…",
   );
-  // Focused from the keyboard too.
-  await check.focus();
-  await expect(message).toHaveAttribute("placeholder", prompt);
-  await check.blur();
+  // Focused from the keyboard too: the first suggestion follows the
+  // composer.
+  await message.focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    suggestions.getByRole("button", { name: "Monday briefing" }),
+  ).toBeFocused();
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    /^Every Monday at 9am, read my data and email me what changed last week/,
+  );
+  await page.keyboard.press("Shift+Tab");
   await expect(message).toHaveAttribute(
     "placeholder",
     "Describe what should happen…",

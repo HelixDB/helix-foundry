@@ -1410,7 +1410,12 @@
   box-shadow: var(--hf-shadow-2);
 }
 .au-new-composer .ag-input {
-  min-height: 72px;
+  min-height: 96px;
+}
+/* A suggestion's prompt previewed as the placeholder never moves the page
+   (the chip under the pointer with it). */
+.au-new-composer .ag-input:placeholder-shown {
+  field-sizing: fixed;
 }
 /* Four suggestions in a row under the composer; two by two, then one. */
 .au-suggestions {

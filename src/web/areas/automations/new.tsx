@@ -165,12 +165,16 @@ function NewChat() {
                       type="button"
                       className="au-suggestion"
                       aria-describedby={`${described}-${i}`}
-                      // A phone has no hover: a tap fills the composer.
+                      // A mouse's hover or the keyboard's focus previews
+                      // it; a tap, or a click's focus, only fills it.
                       onPointerEnter={(e) =>
                         e.pointerType === "mouse" && setPreview(x.prompt)
                       }
                       onPointerLeave={() => setPreview("")}
-                      onFocus={() => setPreview(x.prompt)}
+                      onFocus={(e) =>
+                        e.currentTarget.matches(":focus-visible") &&
+                        setPreview(x.prompt)
+                      }
                       onBlur={() => setPreview("")}
                       onClick={() => {
                         setPreview("");
