@@ -1112,3 +1112,32 @@ func TestEveryWorkspaceInputDefaultsItsWorkspaceID(t *testing.T) {
 		assert.Contains(t, mustJSON(t, in), `"workspace_id":"workspace-1"`, "%T", in)
 	}
 }
+
+// What the MCP's ask takes as a focus is what the backend's ParseFocus takes:
+// an entity by its id, its key's plain values or a name (contract 4.27.0).
+func TestFoundryEntityInputIsAFocus(t *testing.T) {
+	var fromJSON FoundryEntityInput
+	require.NoError(t, json.Unmarshal([]byte(`{"type":"Ticket","key":42}`), &fromJSON))
+	for _, in := range []FoundryEntityInput{
+		{Type: "Customer", ID: "scus_1"},
+		{Type: "Site", Key: "app.example.com"},
+		{Key: map[string]any{"flight": "AA 100", "day": "2026-03-14"}},
+		{Name: "Acme Corp"},
+		fromJSON,
+	} {
+		raw, err := json.Marshal(in)
+		require.NoError(t, err)
+		_, err = ontologyagent.ParseFocus(string(raw))
+		assert.NoError(t, err, "%s", raw)
+	}
+	for _, in := range []FoundryEntityInput{
+		{Type: "Customer"},
+		{Type: "Customer", ID: "scus_1", Name: "Acme"},
+		{ID: "scus_1"},
+		{Key: 1.5},
+	} {
+		raw, _ := json.Marshal(in)
+		_, err := ontologyagent.ParseFocus(string(raw))
+		assert.Error(t, err, "%s", raw)
+	}
+}

@@ -670,7 +670,7 @@ func TestAnswer(t *testing.T) {
 		case req.Goal != "Track who signs our contracts" || fmt.Sprint(req.Catalog) != fmt.Sprint(catalog):
 			t.Fatalf("goal %q, catalog %+v", req.Goal, req.Catalog)
 		case req.Question != "Which customers signed this year?" || req.Focus == nil ||
-			*req.Focus != (ontologyagent.EntityRef{Type: "Customer", ID: "scus_1"}) || req.AsOf != "2026-10-19T11:59:00Z":
+			req.Focus.Type != "Customer" || req.Focus.ID != "scus_1" || req.Focus.Key != nil || req.AsOf != "2026-10-19T11:59:00Z":
 			t.Fatalf("question = %+v", req)
 		case len(req.History) != 1 || req.History[0] != (ontologyagent.AskTurn{Question: "Who are our customers?", Answer: "Acme signed [c1].\n\n- Globex [c2]"}):
 			t.Fatalf("history = %+v", req.History)
@@ -1182,7 +1182,7 @@ func TestFailures(t *testing.T) {
 	t.Run("fails a focus that isn't an entity without asking", func(t *testing.T) {
 		h := newHarness(t)
 		q := question(1)
-		q.Focus = json.RawMessage(`{"type":"Customer","key":"c1"}`)
+		q.Focus = json.RawMessage(`{"type":"Customer","id":"scus_1","key":"c1"}`)
 		settled := h.run(t, q)
 		if len(settled) != 1 || settled[0].Status != model.FoundryQuestionFailed || !strings.Contains(settled[0].Error, "focus is not an entity") ||
 			len(h.agent.calls()) != 0 {

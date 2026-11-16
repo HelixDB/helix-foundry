@@ -24,10 +24,10 @@
       "type": "string"
     },
     "focus": {
-      "description": "The entity the user asked it about, if any. It is read before the first step: an\nentity the load holds is the question's first handle, `n1`; one it doesn't hold, or\nthat isn't an entity of the ontology, is said so in the question, which still runs.",
+      "description": "The entity the user asked it about, if any, as a read names one: by its id, its key's\nplain values or a name. It is read before the first step: an entity the load holds is\nthe question's first handle, `n1`; one it doesn't hold, one a key or a name leaves\nambiguous, or one that isn't an entity of the ontology, is said so in the question,\nwhich still runs.",
       "anyOf": [
         {
-          "$ref": "#/$defs/EntityRef"
+          "$ref": "#/$defs/EntityLookup"
         },
         {
           "type": "null"
@@ -318,23 +318,44 @@
         "call_timeout_secs"
       ]
     },
-    "EntityRef": {
-      "description": "One entity of the load.",
+    "EntityLookup": {
+      "description": "An entity: its type and exactly one of its stored `id` (as reads return it), its `key`'s plain values, or a `name`. With `key` or `name` the type may be left out: the entity is then the one any type holds, and a value several entities share is refused, naming them.",
       "type": "object",
       "properties": {
         "id": {
-          "description": "Its identity in the load: the key's encoding for a keyed type, the normalized name for\na named one.",
+          "description": "Its stored id, as reads return it: a named type's normalized name, a keyed type's key encoding (each value tagged by its type, such as `sapp.example.com` for the string `app.example.com`). For a key's plain value use `key`.",
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/$defs/KeyValues"
+        },
+        "name": {
+          "description": "A name in any spelling: a named type's name, or one of a keyed type's names.",
           "type": "string"
         },
         "type": {
-          "description": "Its type.",
+          "description": "The type.",
           "type": "string"
         }
       },
       "additionalProperties": false,
-      "required": [
-        "type",
-        "id"
+      "oneOf": [
+        {
+          "required": [
+            "type",
+            "id"
+          ]
+        },
+        {
+          "required": [
+            "key"
+          ]
+        },
+        {
+          "required": [
+            "name"
+          ]
+        }
       ]
     },
     "HelixTarget": {
@@ -387,6 +408,27 @@
       "required": [
         "question",
         "answer"
+      ]
+    },
+    "KeyValues": {
+      "description": "A key's plain values: the value, or an object of each key property's value.",
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          },
+          "minProperties": 1
+        }
       ]
     },
     "LoadId": {

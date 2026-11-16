@@ -33,7 +33,7 @@ func TestAskRequest(t *testing.T) {
 	t.Run("builds requests the agent accepts", func(t *testing.T) {
 		schema := contracttest.Schema(t, "ask_request.json")
 		focused := askRequest()
-		focused.Focus = &EntityRef{Type: "Customer", ID: "scus_1"}
+		focused.Focus = &EntityLookup{Type: "Customer", ID: "scus_1"}
 		threaded := askRequest()
 		threaded.Catalog = append(threaded.Catalog, CatalogEntry{ID: "set_1", Kind: CatalogDocumentSet, Name: "Contracts"})
 		for range MaxAskHistory {
@@ -81,12 +81,22 @@ func TestAskRequest(t *testing.T) {
 		}
 	})
 
-	// The check has teeth: a focus is an entity by type and id, nothing else.
-	t.Run("the schema refuses a focus that isn't an entity", func(t *testing.T) {
+	// The check has teeth: a focus is an entity by an id, a key or a name, never two.
+	t.Run("the schema takes a focus by key or name and refuses one by two", func(t *testing.T) {
 		body, _ := json.Marshal(askRequest())
-		loose := strings.Replace(string(body), `"question":`, `"focus":{"type":"Customer","key":"c1"},"question":`, 1)
-		if err := contracttest.Validate(t, contracttest.Schema(t, "ask_request.json"), []byte(loose)); err == nil {
-			t.Fatalf("ask_request.json accepted %s", loose)
+		schema := contracttest.Schema(t, "ask_request.json")
+		for focus, ok := range map[string]bool{
+			`{"type":"Customer","key":"c1"}`:           true,
+			`{"key":{"id":"c1","day":"2026-03-14"}}`:   true,
+			`{"name":"Acme Corp"}`:                     true,
+			`{"type":"Customer","id":"c1","key":"c1"}`: false,
+			`{"id":"c1"}`:                   false,
+			`{"type":"Customer","key":1.5}`: false,
+		} {
+			loose := strings.Replace(string(body), `"question":`, `"focus":`+focus+`,"question":`, 1)
+			if err := contracttest.Validate(t, schema, []byte(loose)); (err == nil) != ok {
+				t.Errorf("ask_request.json with focus %s: %v", focus, err)
+			}
 		}
 	})
 }
@@ -96,20 +106,52 @@ func TestParseFocus(t *testing.T) {
 	// else, so the backend refuses it when the question is asked.
 	t.Run("reads an entity by type and id", func(t *testing.T) {
 		got, err := ParseFocus(` {"type":"Customer","id":"scus_1"} `)
-		if err != nil || got != (EntityRef{Type: "Customer", ID: "scus_1"}) {
+		if err != nil || got.Type != "Customer" || got.ID != "scus_1" || got.Key != nil || got.Name != "" {
 			t.Fatalf("focus = %+v, %v", got, err)
+		}
+		// It is sent on as it was read: an id's JSON is as before 4.27.0.
+		if sent, _ := json.Marshal(got); string(sent) != `{"type":"Customer","id":"scus_1"}` {
+			t.Fatalf("sent %s", sent)
+		}
+	})
+
+	t.Run("reads an entity by its key's plain values or a name", func(t *testing.T) {
+		for raw, want := range map[string]string{
+			`{"type":"Site","key":"app.example.com"}`: `{"type":"Site","key":"app.example.com"}`,
+			`{"key":42}`: `{"key":42}`,
+			`{"key":{"flight":"AA 100","day":"2026-03-14"}}`: `{"key":{"flight":"AA 100","day":"2026-03-14"}}`,
+			`{"type":"Company","name":"Acme  Corp"}`:         `{"type":"Company","name":"Acme  Corp"}`,
+			`{"name":"Acme"}`:                                `{"name":"Acme"}`,
+		} {
+			got, err := ParseFocus(raw)
+			if err != nil {
+				t.Errorf("%s: %v", raw, err)
+				continue
+			}
+			if sent, _ := json.Marshal(got); string(sent) != want {
+				t.Errorf("%s sent as %s", raw, sent)
+			}
 		}
 	})
 
 	t.Run("refuses anything else", func(t *testing.T) {
 		for name, raw := range map[string]string{
-			"not JSON":       `{`,
-			"an array":       `["Customer","c1"]`,
-			"no id":          `{"type":"Customer"}`,
-			"an empty type":  `{"type":"","id":"c1"}`,
-			"an extra field": `{"type":"Customer","id":"c1","key":"c1"}`,
-			"two values":     `{"type":"Customer","id":"c1"}{}`,
-			"null":           `null`,
+			"not JSON":           `{`,
+			"an array":           `["Customer","c1"]`,
+			"no id":              `{"type":"Customer"}`,
+			"an empty type":      `{"type":"","id":"c1"}`,
+			"an id and a key":    `{"type":"Customer","id":"c1","key":"c1"}`,
+			"a key and a name":   `{"key":"c1","name":"Acme"}`,
+			"an id with no type": `{"id":"scus_1"}`,
+			"a float key":        `{"key":1.5}`,
+			"a null key":         `{"key":null}`,
+			"a list key":         `{"key":["a","b"]}`,
+			"an empty key":       `{"key":{}}`,
+			"a nested key":       `{"key":{"a":{"b":1}}}`,
+			"a blank name":       `{"name":"  "}`,
+			"an extra field":     `{"type":"Customer","id":"c1","entity":"n1"}`,
+			"two values":         `{"type":"Customer","id":"c1"}{}`,
+			"null":               `null`,
 		} {
 			if _, err := ParseFocus(raw); err == nil {
 				t.Errorf("%s: parsed %s", name, raw)
@@ -878,11 +920,14 @@ func ExampleWithoutOutputs() {
 func ExampleParseFocus() {
 	focus, err := ParseFocus(`{"type":"Customer","id":"scus_1"}`)
 	fmt.Println(focus.Type, focus.ID, err)
-	_, err = ParseFocus(`{"type":"Customer","key":"scus_1"}`)
+	focus, err = ParseFocus(`{"type":"Site","key":"app.example.com"}`)
+	fmt.Println(focus.Type, string(focus.Key), err)
+	_, err = ParseFocus(`{"type":"Customer","id":"scus_1","name":"Acme"}`)
 	fmt.Println(err)
 	// Output:
 	// Customer scus_1 <nil>
-	// a focus is {"type": ..., "id": ...}, both set
+	// Site "app.example.com" <nil>
+	// a focus is {"type", "id"}, {"type"?, "key"} or {"type"?, "name"}: exactly one of id, key and name, an id with its type, a key a string, an integer or an object of them
 }
 
 func ExampleAnswerText() {

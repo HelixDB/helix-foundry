@@ -228,8 +228,10 @@ func TestAskFoundryQuestion(t *testing.T) {
 			"no token":         func(r *foundryv1.AskFoundryQuestionRequest) { r.ClientToken = "" },
 			"focus not object": func(r *foundryv1.AskFoundryQuestionRequest) { r.FocusJson = `["Customer"]` },
 			"focus not json":   func(r *foundryv1.AskFoundryQuestionRequest) { r.FocusJson = `{` },
-			"focus by key":     func(r *foundryv1.AskFoundryQuestionRequest) { r.FocusJson = `{"type":"Customer","key":"c1"}` },
-			"focus of no id":   func(r *foundryv1.AskFoundryQuestionRequest) { r.FocusJson = `{"type":"Customer"}` },
+			"focus by two": func(r *foundryv1.AskFoundryQuestionRequest) {
+				r.FocusJson = `{"type":"Customer","id":"scus_1","key":"c1"}`
+			},
+			"focus of no id": func(r *foundryv1.AskFoundryQuestionRequest) { r.FocusJson = `{"type":"Customer"}` },
 			"focus too large": func(r *foundryv1.AskFoundryQuestionRequest) {
 				r.FocusJson = `{"type":"Customer","id":"` + strings.Repeat("x", maxQuestionFocusBytes) + `"}`
 			},

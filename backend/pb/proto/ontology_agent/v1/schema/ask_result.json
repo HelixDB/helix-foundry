@@ -982,6 +982,27 @@
         "count"
       ]
     },
+    "KeyValues": {
+      "description": "A key's plain values: the value, or an object of each key property's value.",
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          },
+          "minProperties": 1
+        }
+      ]
+    },
     "Op": {
       "description": "How a condition tests.",
       "oneOf": [
@@ -1332,7 +1353,7 @@
           "minimum": 0
         },
         "order_by": {
-          "description": "The order: a property of a position the columns name, then the entities; by the\nentities alone if `null`.",
+          "description": "The order: a property of a position the columns name, then a text start's rank, then\nthe entities.",
           "anyOf": [
             {
               "$ref": "#/$defs/OrderBy"
@@ -1356,7 +1377,7 @@
       "type": "object",
       "properties": {
         "ids": {
-          "description": "Only these entities, by their stored identity (a named type's normalized name, a\nkeyed type's key encoding), at most 1,000; every entity of the type if `null`.",
+          "description": "Only these entities, by their ids as reads return them, at most 1,000; every entity of\nthe type if `null`.",
           "type": [
             "array",
             "null"
@@ -1366,8 +1387,19 @@
             "type": "string"
           }
         },
+        "keys": {
+          "description": "Only these, by their keys' plain values, at most 1,000.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/KeyValues"
+          },
+          "maxItems": 1000
+        },
         "text": {
-          "description": "A text search of the type's names, over what rows and documents created alike: the\nquery starts from its best 100 matches by score, so it finds names that share words\nwith the text rather than testing them (use `where` with `contains` for that). At most\n256 bytes, with a word to search for; not with `ids`, and only for a type with names.",
+          "description": "A search of the type's names, key and identifiers, over rows and documents alike: the\nquery starts from its best 100 matches, exact ones first, then names it begins, then\nshared words; rows keep that order unless `order_by`. It finds rather than tests (use\n`where` with `contains` for that). At most 256 bytes; not with `ids` or `keys`.",
           "type": [
             "string",
             "null"

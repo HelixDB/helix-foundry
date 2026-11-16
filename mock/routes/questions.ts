@@ -18,7 +18,7 @@ import type {
   QueryWhere,
   VersionOf,
 } from "../../src/shared/wfe";
-import { entityRef, type EntityRef } from "../../src/shared/foundry-read";
+import { type EntityRef } from "../../src/shared/foundry-read";
 import {
   FOUNDRY_EDGES as E,
   FOUNDRY_LOAD,
@@ -1635,7 +1635,8 @@ export function storedQuestion(
 
 /**
  * The focus a question carries as canonical JSON, or undefined unless it is
- * exactly the engine's EntityRef with both set, as the WFE checks it.
+ * the engine's EntityLookup (an id with its type, a key's plain values or a
+ * name, the type optional for those two), as the WFE checks it.
  */
 function focusOf(raw: string): string | undefined {
   let x: unknown;
@@ -1644,10 +1645,17 @@ function focusOf(raw: string): string | undefined {
   } catch {
     return undefined;
   }
-  const ref = entityRef(x);
-  return ref && !contractErrors("ask_request#/$defs/EntityRef", x).length
-    ? JSON.stringify({ type: ref.type, id: ref.id })
-    : undefined;
+  if (contractErrors("ask_request#/$defs/EntityLookup", x).length)
+    return undefined;
+  const { type, id, key, name } = x as Record<string, unknown>;
+  // As the WFE: an id and a type are never empty, nor a name blank.
+  if (id === "" || type === "" || (typeof name === "string" && !name.trim()))
+    return undefined;
+  return JSON.stringify(
+    Object.fromEntries(
+      Object.entries({ type, id, key, name }).filter(([, v]) => v !== undefined),
+    ),
+  );
 }
 
 /**
@@ -1679,7 +1687,7 @@ export function askQuestion(req: MockRequest): MockReply {
   if (focusJson === undefined)
     return fail(
       "INVALID_ARGUMENT",
-      'focus_json: a focus is {"type": ..., "id": ...}, both set',
+      'focus_json: a focus is {"type", "id"}, {"type"?, "key"} or {"type"?, "name"}: exactly one of id, key and name, an id with its type, a key a string, an integer or an object of them',
     );
   advanceAll(s.m.workspaceId);
   const again = state.questions.find(
