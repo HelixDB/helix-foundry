@@ -27,7 +27,7 @@ const dashboardSpecDoc = `A spec is {"v": 1, "tiles": [...], "layout": {"rows": 
 	`"load": {"kind": "current"} (whichever load is current when it is viewed) or {"kind": "pinned", "load_id"}, ` +
 	`"query": a typed query, the query read of ` + toolFoundryReadGraph + ` (` + toolFoundryReadGuide + ` gives its schema): at most 200 rows or 100 groups, ` +
 	`"visual": {"kind": "table" | "bar" | "line" | "figure"} or {} to show it as its output suits}. ` +
-	`An Analyst answer's visual is a tile already: its question's queries[].query with the visual's kind and title.`
+	`An answer's visual (helix_foundry_ask's) is a tile already: its question's queries[].query with the visual's kind and title.`
 
 type FoundryDashboardInput struct {
 	WorkspaceID string `json:"workspace_id,omitempty" jsonschema:"Helix workspace identifier. May be empty when the caller has only one workspace."`

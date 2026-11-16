@@ -47,8 +47,15 @@ func (s *hostMem) EndUnclaimedFoundryAgentTurns(_ context.Context, runtime model
 	return 1, nil
 }
 
-func (s *hostMem) GetFoundryAgentThread(_ context.Context, _, id string) (*model.FoundryAgentThread, error) {
-	return &model.FoundryAgentThread{ID: id, WorkspaceID: ws, UserID: user, Runtime: model.FoundryAgentRuntimeClaudeCode, RuntimeSessionID: s.session}, nil
+// GetFoundryAgentThread is a helper's thread, holding what the store's says
+// of its grants (memStore.thread).
+func (s *hostMem) GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error) {
+	t, err := s.memStore.GetFoundryAgentThread(ctx, workspaceID, id)
+	if err != nil {
+		return nil, err
+	}
+	t.Runtime, t.RuntimeSessionID = model.FoundryAgentRuntimeClaudeCode, s.session
+	return t, nil
 }
 
 func (s *hostMem) ListFoundryAgentEvents(context.Context, string, int, int) ([]model.FoundryAgentEvent, error) {

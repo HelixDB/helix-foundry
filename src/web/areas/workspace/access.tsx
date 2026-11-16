@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Bot, Copy, KeyRound, Plus, Shapes, Users } from "lucide-react";
+import { FOUNDER } from "../../../shared/deployment";
 import type {
   CreateServiceCredentialResponse,
   FoundryPrincipal,
@@ -83,8 +84,8 @@ import { initials, roleLabel } from "./people";
 // document set, or People enrichment; whoever it is for reads the part of an
 // ontology's current load those sources hold, and asks it questions, all of it
 // once the load reads nothing else. Agents' keys reach Foundry only that way;
-// a member restricted here sees only those ontologies, in Analyst, Ontologies
-// and Records; a team's members hold its grants. Sources are the limit: giving
+// a member restricted here sees only those ontologies, in Founder (the
+// Analyst without it), Ontologies and Records; a team's members hold its grants. Sources are the limit: giving
 // a member or a team any restricts them, taking them away leaves them restricted
 // (it never gives anyone more), and only lifting it, with none left, undoes it.
 // Everyone else sees what they saw before. Ontologies says who each is shared
@@ -946,7 +947,7 @@ function PeoplePanel({ data }: { data: AccessData }) {
       </Toolbar>
       <Panel
         title="People"
-        subtitle="Giving a member sources restricts them to what those hold, in Analyst, Ontologies and Records, and hides everything else. Members who aren’t restricted see everything."
+        subtitle={`Giving a member sources restricts them to what those hold, in ${FOUNDER ? "Founder" : "Analyst"}, Ontologies and Records, and hides everything else. Members who aren’t restricted see everything.`}
         padded={false}
       >
         {data.members.isPending ? (

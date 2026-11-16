@@ -281,7 +281,6 @@ func PairCommand(code, foundry string) string {
 // store.Store is it.
 type HostStore interface {
 	Store
-	GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error)
 	ListFoundryAgentEvents(ctx context.Context, turnID string, afterSeq, limit int) ([]model.FoundryAgentEvent, error)
 	ClaimFoundryAgentTurn(ctx context.Context, workerID string, claim model.FoundryAgentClaim) (*model.FoundryAgentTurn, error)
 	RenewFoundryAgentTurnLease(ctx context.Context, id, workerID string, lease time.Duration) error
@@ -777,7 +776,8 @@ var (
 // Server is the MCP server a claim's CLI calls Foundry's tools on: the
 // person's session in the turn's workspace, confirming as the person (what
 // it prepares becomes a card, its token sealed and never returned, but for
-// what autoRun runs at once as the person, through Sessions), Tools alone, toolAskPerson among them; once the turn asked its person, only that
+// what autoRun runs at once as the person, through Sessions), Tools alone
+// (GranteeTools for a restricted member: reachOf), toolAskPerson among them; once the turn asked its person, only that
 // tool runs. Each call is counted by spend first, the ask tool's client token is
 // forced (the same question in a turn is asked once), and the call and its
 // result are shown to the person as the worker shows its own. A call after
@@ -789,8 +789,17 @@ func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, worker
 	if err != nil {
 		return nil, err
 	}
+	// As the worker's own turns: a restricted member's reads and asks only.
+	reach, err := reachOf(session, turn.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := threadReach(ctx, h.DB, turn, reach); err != nil {
+		return nil, err
+	}
+	sink.reach = reach
 	sink.cards = SessionCards(h.DB, h.Databases, session, turn.WorkspaceID)
-	server, offered, err := toolServer(session, asker{db: h.DB, session: session, turn: turn, workerID: workerID}.register)
+	server, offered, err := toolServer(session, asker{db: h.DB, session: session, turn: turn, workerID: workerID, reach: reach}.register, reach.tools())
 	if err != nil {
 		return nil, err
 	}

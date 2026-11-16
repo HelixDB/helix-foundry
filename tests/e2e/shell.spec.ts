@@ -237,7 +237,7 @@ test("opens the Explorer and Ask on the ontology last opened", async ({
     page.getByRole("heading", { level: 1, name: HELLO }),
   ).toBeVisible();
   await expect(page.getByRole("main")).toContainText(
-    "Nothing is loaded yet, so the Analyst can’t answer questions about the data; Founder can still help you load it.",
+    "Nothing is loaded yet, so Founder can’t answer questions about the data until it is; it can help you load it.",
   );
   await expect(
     page.getByRole("main").getByRole("form", { name: "Message Founder" }),

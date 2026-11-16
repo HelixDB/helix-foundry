@@ -26,18 +26,17 @@ import { ontologyQueries, questionQueries } from "./queries";
 
 // Ask's threads in the shell's sidebar, under the sections (and, on a narrow
 // screen, Founder's page itself until a chat is chosen). Where the build has
-// Founder and the user isn't a grantee: New chat, Founder's threads by
-// recency (the dock's list: one list wherever Founder is asked), then the
-// open ontology's Analyst threads from before Founder, each marked Analyst
-// and opened read only. Else, and where the WFE has Founder off, the
-// Analyst's threads (ask-threads.tsx). Rendered outside the ontology's
-// scope: it reads the ontology from the path, and its links keep the page's
-// `?load=`.
+// Founder: New chat, Founder's threads by recency (the dock's list: one list
+// wherever Founder is asked; a grantee's only those it made whose grants it
+// still holds), then the open ontology's Analyst threads from before Founder (a
+// grantee’s own questions), each marked Earlier question and opened read only.
+// Else, and where the WFE has Founder off, the Analyst's threads
+// (ask-threads.tsx). Rendered outside the ontology's scope: it reads the
+// ontology from the path, and its links keep the page's `?load=`.
 
 /** The ask section's sidebar content: Founder's threads, or the Analyst's. */
 export function AskSidebar({ onNavigate }: { onNavigate?: () => void }) {
-  const { grantee } = useWorkspace();
-  return FOUNDER && !grantee ? (
+  return FOUNDER ? (
     <FounderThreads onNavigate={onNavigate} />
   ) : (
     <AskThreads onNavigate={onNavigate} />
@@ -161,7 +160,7 @@ function AnalystThreads({
   if (list.isError)
     return (
       <p className="ak-threads-note" role="alert">
-        Couldn’t read the Analyst threads: {list.error.message}{" "}
+        Couldn’t read the earlier questions: {list.error.message}{" "}
         <button
           type="button"
           className="ak-retry"
@@ -174,8 +173,8 @@ function AnalystThreads({
   if (!threads.length) return null;
   return (
     <section className="ak-group">
-      <h2>Analyst threads</h2>
-      <ul aria-label="Analyst threads">
+      <h2>Earlier questions</h2>
+      <ul aria-label="Earlier questions">
         {threads.map((t) => {
           const first = t.questions[0]!;
           return (
@@ -192,7 +191,7 @@ function AnalystThreads({
               >
                 <span className="ak-thread-title">{first.question}</span>
                 <small>
-                  <Tag>Analyst</Tag>
+                  <Tag>Earlier question</Tag>
                   {t.live ? "Answering…" : formatRelative(t.last, now)}
                 </small>
               </Link>

@@ -86,14 +86,13 @@ const shownAs: Partial<Record<SectionId, SectionId>> = { explore: "ontology" };
 export const navSection = (id: SectionId | undefined) =>
   (id && shownAs[id]) || id;
 // A grantee's sections (a member restricted to what source grants give):
-// Analyst, the pinned dashboards and the ontologies its grants cover (with
-// their Explorer, whose Records read their shared loads; there is no graph
-// for it). Workflows are people's: a grantee has none, nor Founder (the
-// WFE denies it every route), so its Ask is the Analyst's.
-export const granteeNav: NavItem[] = [
-  ask("Analyst"),
-  ...primaryNav.filter((n) => n.id === "dashboards" || n.id === "ontology"),
-];
+// Ask (Founder, read-only, with Founder in the build; else the Analyst), the
+// pinned dashboards and the ontologies its grants cover (with their
+// Explorer, whose Records read their shared loads; there is no graph for
+// it). Workflows are people's: a grantee has none.
+export const granteeNav: NavItem[] = primaryNav.filter(
+  (n) => n.id === "ask" || n.id === "dashboards" || n.id === "ontology",
+);
 // While the workspace is onboarding, its one section: the wizard, so Settings
 // (where an AI provider is chosen) has a way back.
 export const onboardingNav: NavItem[] = [

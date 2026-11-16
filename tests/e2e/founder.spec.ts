@@ -46,9 +46,7 @@ test("asked for a dashboard, asks the Analyst, makes it at once and undoes it", 
   await say(page, ASKED);
   // It asked the Analyst, whose answer shows in the dock: its words with
   // their citations, and its two visuals.
-  await expect(
-    dock.getByText("Asked the Analyst", { exact: true }),
-  ).toBeVisible();
+  await expect(dock.getByText("Asked the data", { exact: true })).toBeVisible();
   const question = dock.getByRole("article", { name: `Question: ${ASKED}` });
   const answer = question.getByRole("region", { name: "Answer" });
   await expect(answer).toContainText("unpaid or overdue", { timeout: 20_000 });
@@ -129,7 +127,7 @@ test("answers a data question with the Analyst's answer, which opens in full on 
   await say(page, text);
   await expect(
     dock.getByText(
-      "That's the Analyst's answer, from the current load of Customer contracts.",
+      "That's the answer, from the current load of Customer contracts.",
     ),
   ).toBeVisible({ timeout: 20_000 });
   // Nothing to make: no card.
@@ -172,7 +170,7 @@ test("answers a data question with the Analyst's answer, which opens in full on 
     "unpaid or overdue",
   );
   await expect(main).toContainText(
-    "This Analyst thread is read only. Ask Founder to go on.",
+    "This earlier question is read only. Ask Founder to go on.",
   );
   await expect(dockOf(page)).toHaveCount(0);
 });
@@ -185,13 +183,13 @@ test("in the dock, the Analyst's steps and queries open as on its page", async (
   await say(page, text);
   await expect(
     dock.getByText(
-      "That's the Analyst's answer, from the current load of Customer contracts.",
+      "That's the answer, from the current load of Customer contracts.",
     ),
   ).toBeVisible({ timeout: 20_000 });
 
   // Founder's own step opens on what it asked.
-  const step = dock.getByRole("group").filter({ hasText: "Asked the Analyst" });
-  await step.getByText("Asked the Analyst", { exact: true }).click();
+  const step = dock.getByRole("group").filter({ hasText: "Asked the data" });
+  await step.getByText("Asked the data", { exact: true }).click();
   await expect(
     step.getByText(/"question": "Which customers/).first(),
   ).toBeVisible();

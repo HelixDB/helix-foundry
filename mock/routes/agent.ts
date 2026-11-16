@@ -30,6 +30,7 @@ import type {
   AutomationSpec,
   Connector,
   ConnectorKind,
+  FoundryAccessTarget,
   FoundryAgentTurnStatus,
   FoundryAgentAction,
   FoundryAgentAnswers,
@@ -45,6 +46,7 @@ import type {
   FoundryDocument,
   FoundryDocumentSet,
   FoundryLoad,
+  FoundryOntology,
   FoundryQuestion,
   ListAgentThreadsResponse,
   ListAgentTurnEventsResponse,
@@ -57,6 +59,7 @@ import {
   id,
   now,
   ok,
+  type MockGrantee,
   type MockReply,
   type MockRequest,
   type MockRoute,
@@ -70,6 +73,7 @@ import {
   onReset,
 } from "../state";
 import { answerWords, checkAnswers } from "../agent-questions";
+import { guarded, restrictedMember } from "./access";
 import {
   aiAssistantFailure,
   aiModel,
@@ -214,7 +218,14 @@ import { decisionTypes } from "../review-decisions";
 // was not named). A member gets the read tools, and prepares only their own
 // dashboards and automations (MEMBER_OPERATIONS: the backend decides at the
 // click whose automation it is), as the backend gives them: anything else,
-// connect included, the agent says an owner or admin does. An automation's
+// connect included, the agent says an owner or admin does. A grantee (a
+// restricted member: ./access.ts admits them to their own threads) gets
+// Founder read only, as the worker's ReachGrants runs it (granteeScript):
+// it lists the ontologies their grants hold, asks the Analyst about the one
+// named, the page's or the first, and prepares, makes and relays nothing;
+// their page context keeps only what their grants hold, and their threads
+// made with the workspace's whole view (before their restriction, or while
+// they were an owner or admin), or whose grants they lost, look absent. An automation's
 // Assistant step (queueAutomationTurn, for ./automations.ts) is a turn of
 // kind automation in its run's thread, out of the person's list: it reads
 // the ontologies and, asked to load one, prepares its load, which runs at
@@ -305,6 +316,11 @@ type StoredThread = {
   kind: "chat" | "automation";
   title: string;
   runtime: AgentRuntime;
+  // The grant targets a restricted member's turns of it ran under, which
+  // they must all still hold to read it; null for a thread made or run with
+  // the workspace's whole view, which no restricted member reads
+  // (model.FoundryAgentThread.Granted).
+  granted: FoundryAccessTarget[] | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -569,29 +585,64 @@ const toAction = (a: StoredAction): FoundryAgentAction => ({
 });
 
 /**
- * The caller as the Assistant answers them: a member of the workspace (a
- * grantee never gets here: ./access.ts denies every agent route).
+ * The caller as Founder answers them: a member of the workspace, and, for a
+ * grantee (a restricted member, admitted by ./access.ts to these routes
+ * only), what its grants hold: its threads made with the whole view, or
+ * whose grants it no longer holds, look absent, as the backend's agentThread
+ * has it.
  */
 function person(req: MockRequest) {
   const m = membership(req.params.workspaceId!, req.principal.user.id);
-  return isReply(m) ? m : { m, userId: req.principal.user.id };
+  return isReply(m)
+    ? m
+    : { m, userId: req.principal.user.id, grantee: req.grantee };
 }
 const isPerson = (
   x: ReturnType<typeof person>,
 ): x is Exclude<ReturnType<typeof person>, MockReply> => "userId" in x;
 
-function threadOf(workspaceId: string, userId: string, threadId: string) {
+/** Whether a grantee may read thread `t`: one it made, all of whose grants it holds. */
+const granteeReads = (t: StoredThread, grantee?: MockGrantee) =>
+  !grantee || (!!t.granted && grantee.holdsAll(t.granted));
+
+/** The person's thread, unless deleted or not the grantee's to read. */
+function threadOf(
+  workspaceId: string,
+  userId: string,
+  threadId: string,
+  grantee?: MockGrantee,
+) {
   return state.threads.find(
     (t) =>
       t.id === threadId &&
       t.workspaceId === workspaceId &&
       t.userId === userId &&
-      !t.deletedAt,
+      !t.deletedAt &&
+      granteeReads(t, grantee),
   );
 }
-function turnOf(workspaceId: string, userId: string, turnId: string) {
+function turnOf(
+  workspaceId: string,
+  userId: string,
+  turnId: string,
+  grantee?: MockGrantee,
+) {
   const t = state.turns.find((x) => x.id === turnId);
-  return t && threadOf(workspaceId, userId, t.threadId) ? t : undefined;
+  return t && threadOf(workspaceId, userId, t.threadId, grantee)
+    ? t
+    : undefined;
+}
+/**
+ * NOT_FOUND for a turn turnOf doesn't find: "thread not found" when it is
+ * the person's in a thread the grantee may not read, as the backend's
+ * agentTurn says it.
+ */
+function turnMissing(workspaceId: string, userId: string, turnId: string) {
+  const mine = state.turns.some(
+    (x) =>
+      x.id === turnId && x.workspaceId === workspaceId && x.userId === userId,
+  );
+  return fail("NOT_FOUND", mine ? "thread not found" : "turn not found");
 }
 function actionOf(workspaceId: string, userId: string, actionId: string) {
   const a = state.actions.find((x) => x.id === actionId);
@@ -616,7 +667,9 @@ let compiled: (MockRoute & { c: ReturnType<typeof compileTemplate> })[];
 /**
  * A WFE call as `userId` makes it, through the mock's own routes: how a
  * tool reads and an action runs, as the backend's do through Foundry's API.
- * Every route it calls answers at once.
+ * Each route runs the access check first (./access.ts guarded), so a
+ * grantee's calls are narrowed as the WFE narrows a tool's. Every route it
+ * calls answers at once.
  */
 function wfe(
   userId: string,
@@ -637,7 +690,9 @@ function wfe(
     ...automationRoutes,
     // Reads only: asking is askQuestion's (its POST answers later).
     ...questionRoutes,
-  ].map((r) => ({ ...r, c: compileTemplate(r.path) }));
+  ]
+    .map(guarded)
+    .map((r) => ({ ...r, c: compileTemplate(r.path) }));
   const url = new URL(path, "http://mock");
   for (const r of compiled) {
     const params = r.method === method && matchTemplate(r.c, url.pathname);
@@ -1422,8 +1477,65 @@ const loadPlan = (
   );
 };
 
+/** Who sends a message: what Founder may prepare for them. */
+type Who = "manager" | "member" | "grantee";
+// No words ask for update_workflow: a workflow's edits are its page's.
+type Intent =
+  | Exclude<AgentOperation, "update_workflow">
+  | "connect"
+  | "relay_questions";
+
+/** What each change a message may ask for reads as, tried in order. */
+const INTENTS: readonly (readonly [RegExp, Intent])[] = [
+  [
+    /\banswers?\b.*\bquestions?\b|\buse (?:the|its) (?:defaults|suggestions)\b/i,
+    "relay_questions",
+  ],
+  [/\brevoke\b.*\bhelper\b/i, "revoke_assistant_helper"],
+  [
+    /\b(run|switch|move)\b.*\b(subscription|claude code|codex|foundry['’]s model)\b/i,
+    "set_assistant_runtime",
+  ],
+  [/\bconnect\b/i, "connect"],
+  [/\bcreate\b.*\bontology\b/i, "create_ontology"],
+  [/\b(settle|resolve)\b.*\breview\b|\breview about\b/i, "settle_review"],
+  [/\bsync\b/i, "sync_connector"],
+  [/\bsample\b/i, "add_sample_data"],
+  [/\bmove\b/i, "move_document"],
+  [/\b(rename|describe)\b.*\bset\b/i, "update_document_set"],
+  [/\b(create|make|add)\b.*\bset\b/i, "create_document_set"],
+  [/\b(revise|preview)\b/i, "revise_version"],
+  [/\b(generate|draft)\b/i, "generate_ontology"],
+  [/\bload\b.*\bcurrent\b/i, "set_current_load"],
+  [/\bcurrent\b/i, "set_current_version"],
+];
+
+/**
+ * The change a message asks for, by its words, if any: an automation's,
+ * a new dashboard, what it asks of the dashboard on the page, else the
+ * first of INTENTS, else a load that isn't a question.
+ */
+function intentOf(
+  t: string,
+  automated: AutomationAsk | undefined,
+  asked: DashboardAsk | undefined,
+): Intent | undefined {
+  if (automated) return automated.kind;
+  if (/\bdashboard\b/i.test(t) && /\b(build|make|create)\b/i.test(t))
+    return "create_dashboard";
+  if (asked) return asked.operation;
+  const listed = INTENTS.find(([words]) => words.test(t));
+  if (listed) return listed[1];
+  return /\b(re)?load\b/i.test(t) &&
+    !/\b(how many|which|what|when|why)\b/i.test(t)
+    ? "create_load"
+    : undefined;
+}
+
 /** What the agent does with a person's message. */
-function messageScript(a: Ask, manager: boolean): Step[] {
+function messageScript(a: Ask, who: Who): Step[] {
+  if (who === "grantee") return granteeScript(a);
+  const manager = who === "manager";
   const list = [
     call("tu_list", LIST, {}),
     result("tu_list", LIST, () => ({
@@ -1448,56 +1560,8 @@ function messageScript(a: Ask, manager: boolean): Step[] {
     /\bdashboards?\b/i.test(t) &&
     /\b(which|shows?|unpaid|overdue|billed|how many)\b/i.test(t)
   )
-    return [started, ...list, ...askDashboard(a)];
-  const intent: AgentOperation | "connect" | "relay_questions" | undefined =
-    automated
-      ? automated.kind
-      : /\bdashboard\b/i.test(t) && /\b(build|make|create)\b/i.test(t)
-        ? "create_dashboard"
-        : asked
-          ? asked.operation
-          : /\banswers?\b.*\bquestions?\b|\buse (?:the|its) (?:defaults|suggestions)\b/i.test(
-                t,
-              )
-            ? "relay_questions"
-            : /\brevoke\b.*\bhelper\b/i.test(t)
-              ? "revoke_assistant_helper"
-              : /\b(run|switch|move)\b.*\b(subscription|claude code|codex|foundry['’]s model)\b/i.test(
-                    t,
-                  )
-                ? "set_assistant_runtime"
-                : /\bconnect\b/i.test(t)
-                  ? "connect"
-                  : /\bcreate\b.*\bontology\b/i.test(t)
-                    ? "create_ontology"
-                    : /\b(settle|resolve)\b.*\breview\b|\breview about\b/i.test(
-                          t,
-                        )
-                      ? "settle_review"
-                      : /\bsync\b/i.test(t)
-                        ? "sync_connector"
-                        : /\bsample\b/i.test(t)
-                          ? "add_sample_data"
-                          : /\bmove\b/i.test(t)
-                            ? "move_document"
-                            : /\b(rename|describe)\b.*\bset\b/i.test(t)
-                              ? "update_document_set"
-                              : /\b(create|make|add)\b.*\bset\b/i.test(t)
-                                ? "create_document_set"
-                                : /\b(revise|preview)\b/i.test(t)
-                                  ? "revise_version"
-                                  : /\b(generate|draft)\b/i.test(t)
-                                    ? "generate_ontology"
-                                    : /\bload\b.*\bcurrent\b/i.test(t)
-                                      ? "set_current_load"
-                                      : /\bcurrent\b/i.test(t)
-                                        ? "set_current_version"
-                                        : /\b(re)?load\b/i.test(t) &&
-                                            !/\b(how many|which|what|when|why)\b/i.test(
-                                              t,
-                                            )
-                                          ? "create_load"
-                                          : undefined;
+    return [started, ...list, ...askDashboard(a, who)];
+  const intent = intentOf(t, automated, asked || undefined);
   if (intent && !manager && !MEMBER_OPERATIONS.includes(intent))
     return [
       started,
@@ -1553,7 +1617,7 @@ function messageScript(a: Ask, manager: boolean): Step[] {
       return [
         started,
         ...list,
-        ...(o && currentLoadId(o.id) ? askData(a, o) : describe(a)),
+        ...(o && currentLoadId(o.id) ? askData(a, o, who) : describe(a)),
       ];
     }
   }
@@ -2438,18 +2502,22 @@ const questionRef = (ontologyId: string, q: FoundryQuestion) => ({
 
 /**
  * What Founder says when the Analyst refused its question: a limit the
- * Analyst keeps (30 questions an hour, the month's question budget) is the
- * Analyst's, said in those words, not Founder's own.
+ * Analyst keeps (30 questions an hour, the month's question budget; a
+ * grantee's own 10 an hour and month's $10) is the limit on questions,
+ * said in those words, not Founder's own. People never read the name
+ * Analyst: Founder's answers from the data are its own.
  */
-function askRefusal(r: MockReply, o: StoredOntology) {
+function askRefusal(r: MockReply, o: StoredOntology, who: Who) {
   const message = why(r).replace(/\.$/, "");
+  if (who === "grantee" && (r.status === 429 || /\bmonth\b/.test(message)))
+    return `Your question was refused: ${message}. That's the limit on your questions, not on me.`;
   if (r.status === 429)
-    return "The Analyst takes 30 questions an hour, and this workspace has asked them all. That's the Analyst's limit, not mine: ask again later.";
+    return "This workspace has asked its 30 questions of the data this hour: that limit is on questions, not on me. Ask again later.";
   if (/\bmonth\b/.test(message))
-    return "This workspace has used the month's question budget for the Analyst. That's the Analyst's limit, not mine: it starts again next month.";
+    return "This workspace has used the month's budget for questions of the data: that limit is on questions, not on me. It starts again next month.";
   if (/\bno load to ask\b/.test(message))
-    return `${o.name} has nothing loaded to ask yet. Load it, and I can ask the Analyst.`;
-  return `I couldn't ask the Analyst: ${message}.`;
+    return `${o.name} has nothing loaded to ask yet. Load it, and I can answer questions about it.`;
+  return `I couldn't ask that of the data: ${message}.`;
 }
 
 /**
@@ -2463,17 +2531,24 @@ function askRefusal(r: MockReply, o: StoredOntology) {
 function askSteps(a: Ask, o: StoredOntology): { steps: Step[]; asked: Asked } {
   const asked: Asked = { status: "", resultJson: "", error: "" };
   const input = { workspace_id: a.ws, ontology_id: o.id };
+  // Asked as the WFE's POST is, access check first: a grantee asks its
+  // grants' load, under its own limits, and the question is its own.
+  const ask = guarded({
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/questions",
+    handle: askQuestion,
+  });
   const steps: Step[] = [
     call("tu_ask", ASK, { ...input, question: a.text }),
     (c) => {
-      const reply = askQuestion({
+      const reply = ask.handle({
         method: "POST",
         path: `${ONT(a.ws, o.id)}/questions`,
         params: { workspaceId: a.ws, ontologyId: o.id },
         query: new URLSearchParams(),
         body: { question: a.text, clientToken: `agent-${c.turn.id}` },
         principal: { user: db.users.get(c.userId)!, sessionId: "agent" },
-      });
+      }) as MockReply;
       if (reply.status !== 200) {
         asked.refused = reply;
         return {
@@ -2543,19 +2618,23 @@ function askSteps(a: Ask, o: StoredOntology): { steps: Step[]; asked: Asked } {
 }
 
 /** Founder's words around the Analyst's answer: never the answer again. */
-function aroundAnswer(asked: Asked, o: StoredOntology) {
-  if (asked.refused) return askRefusal(asked.refused, o);
+function aroundAnswer(asked: Asked, o: StoredOntology, who: Who) {
+  if (asked.refused) return askRefusal(asked.refused, o, who);
+  const from =
+    who === "grantee"
+      ? `what's shared with you of ${o.name}`
+      : `the current load of ${o.name}`;
   switch (asked.status) {
     case "answered":
-      return `That's the Analyst's answer, from the current load of ${o.name}.`;
+      return `That's the answer, from ${from}.`;
     case "cannot_answer":
-      return `The Analyst couldn't answer that from the current load of ${o.name}: its reply says what's missing.`;
+      return `I couldn't answer that from ${from}: the reply says what's missing.`;
     case "failed":
-      return `The Analyst's question failed: ${asked.error || "it ended without an answer"}.`;
+      return `The question failed: ${asked.error || "it ended without an answer"}.`;
     case "cancelled":
-      return "The question was cancelled before the Analyst answered.";
+      return "The question was cancelled before it was answered.";
     default:
-      return "The Analyst is still working on it: its answer shows here once it's done.";
+      return "Still working on it: the answer shows here once it's done.";
   }
 }
 
@@ -2565,9 +2644,73 @@ const asksData = (text: string) =>
   /\b(invoices?|customers?|accounts?)\b/i.test(text);
 
 /** A question of the data: the Analyst's answer, and a sentence around it. */
-function askData(a: Ask, o: StoredOntology): Step[] {
+function askData(a: Ask, o: StoredOntology, who: Who): Step[] {
   const { steps, asked } = askSteps(a, o);
-  return [...steps, said(() => aroundAnswer(asked, o))];
+  return [...steps, said(() => aroundAnswer(asked, o, who))];
+}
+
+/** What Founder says of a change a grantee asked for (granteePrompt's rule). */
+const READ_ONLY =
+  "Your access lets me read and ask about the data shared with you, not change anything in this workspace, so I can't do that. Someone who manages it can.";
+/** What follows the Analyst's answer when a grantee asked for a dashboard. */
+const MADE_NONE =
+  " Your access doesn't let me make dashboards, so I made none.";
+
+/**
+ * A grantee's message, as the worker's ReachGrants runs it: the ontologies
+ * its grants hold (helix_foundry_list_ontologies through the access check,
+ * as they read them: no database), then the Analyst asked about the one
+ * named, the page's (its page context keeps only what it holds) or the
+ * first, whatever the message. A change it asks for, a draft's questions
+ * included, Founder says it can't make; a dashboard asked for, it asks and
+ * makes none. Nothing is prepared, made or asked of the person.
+ */
+function granteeScript(a: Ask): Step[] {
+  const t = a.text;
+  const read = wfe(a.userId, "GET", `${WS(a.ws)}/ontologies`);
+  const shared: FoundryOntology[] = read.body?.ontologies || [];
+  const list = [
+    call("tu_list", LIST, {}),
+    result("tu_list", LIST, () => ({ ontologies: snake(shared) })),
+  ];
+  const dashboard = askedForDashboard(t),
+    // What it asks of a dashboard, on its page or naming one.
+    change = a.page?.dashboardId || dashboard ? dashboardAsk(t) : undefined,
+    intent = intentOf(t, automationAsk(a.ws, t, false), change);
+  if (intent === "relay_questions")
+    return [
+      started,
+      ...list,
+      said(
+        () =>
+          "You can't answer a draft's questions: an owner or admin answers them on the generation's page in Foundry.",
+      ),
+    ];
+  if (intent && (change || intent !== "create_dashboard"))
+    return [started, ...list, said(() => READ_ONLY)];
+  const pick =
+    shared.find((o) => says(t, o.name || "") || t.includes(o.id)) ??
+    shared.find((o) => o.id === a.page?.ontologyId) ??
+    shared[0];
+  const o = pick && ontologyById(pick.id);
+  if (!o)
+    return [
+      started,
+      ...list,
+      said(
+        () =>
+          "Nothing is shared with you yet, so there's nothing I can ask about.",
+      ),
+    ];
+  const { steps, asked } = askSteps(a, o);
+  return [
+    started,
+    ...list,
+    ...steps,
+    said(
+      () => `${aroundAnswer(asked, o, "grantee")}${dashboard ? MADE_NONE : ""}`,
+    ),
+  ];
 }
 
 /**
@@ -2578,7 +2721,7 @@ function askData(a: Ask, o: StoredOntology): Step[] {
  * (autoCreateDashboard). An answer that isn't one, or shows no table or
  * chart, makes nothing, and Founder says why.
  */
-function askDashboard(a: Ask): Step[] {
+function askDashboard(a: Ask, who: Who): Step[] {
   const o = dashboardOntology(a);
   if (!o)
     return [
@@ -2591,9 +2734,9 @@ function askDashboard(a: Ask): Step[] {
   return [
     ...steps,
     ...dashboardSteps(a, () => {
-      if (asked.refused) return askRefusal(asked.refused, o);
+      if (asked.refused) return askRefusal(asked.refused, o, who);
       if (asked.status !== "answered")
-        return `${aroundAnswer(asked, o).replace(/\.$/, "")}, so I made no dashboard.`;
+        return `${aroundAnswer(asked, o, who).replace(/\.$/, "")}, so I made no dashboard.`;
       const r = JSON.parse(asked.resultJson || "{}") as {
         answer?: {
           visuals?: {
@@ -2616,7 +2759,7 @@ function askDashboard(a: Ask): Step[] {
             v.kind && VISUALS.includes(v.kind) ? { kind: v.kind } : {};
           return {
             id: `t${i + 1}`,
-            title: v.title?.trim() || "Analyst answer",
+            title: v.title?.trim() || "Answer",
             ontology_id: o.id,
             load: { kind: "current" },
             query,
@@ -2624,9 +2767,9 @@ function askDashboard(a: Ask): Step[] {
           };
         });
       if (!tiles.length)
-        return "The Analyst's answer shows no table or chart to put on a dashboard, so I made none.";
+        return "The answer shows no table or chart to put on a dashboard, so I made none.";
       const name = tiles[0]!.title,
-        description = `${o.name}: the Analyst's answer, as tables and charts.`;
+        description = `${o.name}: the answer, as tables and charts.`;
       return {
         operation: "create_dashboard",
         target: `workspace:${a.ws}`,
@@ -3529,8 +3672,9 @@ export type AutomationUse = (
  * Queues an automation's Assistant step as a turn of kind automation in its
  * run's thread (a new one, out of the person's list, for its first step),
  * as its owner, on Foundry's worker: the backend's
- * StartFoundryAutomationAssistant. A setting whose tool check failed fails
- * it at once, as it fails any turn.
+ * StartFoundryAutomationAssistant. An owner restricted to source grants
+ * since fails it for good, as the worker's ReachGrants does, and so does a
+ * setting whose tool check failed, as it fails any turn.
  */
 export function queueAutomationTurn(p: {
   workspaceId: string;
@@ -3550,6 +3694,7 @@ export function queueAutomationTurn(p: {
       kind: "automation",
       title: [...p.title].slice(0, TITLE_CHARS).join(""),
       runtime: "api",
+      granted: null,
       createdAt: now(),
       updatedAt: now(),
       deletedAt: null,
@@ -3564,7 +3709,9 @@ export function queueAutomationTurn(p: {
     clientToken: "",
     script: [],
   });
-  const unusable = aiAssistantFailure(p.workspaceId);
+  const unusable = restrictedMember(p.workspaceId, p.userId)
+    ? "The workflow's owner now reads only through source grants; an owner or admin can take it over"
+    : aiAssistantFailure(p.workspaceId);
   turn.script = unusable
     ? [
         () => ({
@@ -4463,14 +4610,29 @@ export const agentRoutes: MockRoute[] = [
             "INVALID_ARGUMENT",
             "thread_id is required with answers: the thread of the turn they answer",
           );
-        const asking = turnOf(ws, p.userId, String(body.answers?.turnId || ""));
-        if (!asking || asking.threadId !== body.threadId)
+        const asking = turnOf(
+          ws,
+          p.userId,
+          String(body.answers?.turnId || ""),
+          p.grantee,
+        );
+        if (!asking)
+          return turnMissing(ws, p.userId, String(body.answers?.turnId || ""));
+        if (asking.threadId !== body.threadId)
           return fail("NOT_FOUND", "turn not found");
         if (!asking.asked)
           return refused(
             ws,
             "FOUNDRY_AGENT_QUESTIONS_CLOSED",
             "that turn asked you nothing",
+          );
+        // A grantee answers no draft's questions (Founder relays none to
+        // it; one asked while it managed the workspace stays closed).
+        if (p.grantee && asking.asked.generation)
+          return refused(
+            ws,
+            "FOUNDRY_AGENT_QUESTIONS_CLOSED",
+            "a draft's questions are answered by an owner or admin, on the generation's page in Foundry",
           );
         const checked = checkAnswers(
           asking.asked.questions || [],
@@ -4498,6 +4660,8 @@ export const agentRoutes: MockRoute[] = [
           t.clientToken === token,
       );
       if (again) {
+        const was = threadOf(ws, p.userId, again.threadId, p.grantee);
+        if (!was) return fail("NOT_FOUND", "thread not found");
         if (
           again.kind !== (reply ? "answers" : "message") ||
           again.text !== (reply ? "" : text) ||
@@ -4515,11 +4679,11 @@ export const agentRoutes: MockRoute[] = [
         advance(again);
         return ok({
           turn: toTurn(again),
-          thread: toThread(threadOf(ws, p.userId, again.threadId)!),
+          thread: toThread(was),
         } satisfies AgentTurnResponse);
       }
       let thread = body.threadId
-        ? threadOf(ws, p.userId, body.threadId)
+        ? threadOf(ws, p.userId, body.threadId, p.grantee)
         : undefined;
       if (body.threadId && !thread)
         return fail("NOT_FOUND", "thread not found");
@@ -4624,27 +4788,53 @@ export const agentRoutes: MockRoute[] = [
                   .join("")
                   .trim() + "…",
           runtime,
+          // A restricted member's holds what their grants give now.
+          granted: p.grantee ? [...p.grantee.targets] : null,
           createdAt: now(),
           updatedAt: now(),
           deletedAt: null,
         };
         state.threads.push(thread);
       }
+
+      // A grantee's page names only what its grants hold: an ontology they
+      // hold, its load theirs cover, a pinned dashboard; it starts no
+      // automation (the backend's filter, so Founder never reads the rest).
+      const covered = p.grantee?.covered.get(page?.ontologyId || ""),
+        pinned = storedDashboard(ws, page?.dashboardId || "")?.pinned;
+      const seen: AgentPageContext | undefined = p.grantee
+        ? {
+            ontologyId: covered ? page?.ontologyId : undefined,
+            loadId: covered?.loadId === page?.loadId ? page?.loadId : undefined,
+            dashboardId: pinned ? page?.dashboardId : undefined,
+            timeZone: page?.timeZone,
+          }
+        : page;
       // A zone that isn't one is dropped, never refused, as the WFE does.
       const zone =
-        typeof page?.timeZone === "string" && validZone(page.timeZone)
-          ? page.timeZone
+        typeof seen?.timeZone === "string" && validZone(seen.timeZone)
+          ? seen.timeZone
           : "";
       const pageContext =
-        page?.ontologyId || page?.dashboardId || page?.newAutomation || zone
+        seen?.ontologyId || seen?.dashboardId || seen?.newAutomation || zone
           ? {
-              ...(page?.ontologyId && { ontologyId: page.ontologyId }),
-              ...(page?.loadId && { loadId: page.loadId }),
-              ...(page?.dashboardId && { dashboardId: page.dashboardId }),
-              ...(page?.newAutomation && { newAutomation: true }),
+              ...(seen?.ontologyId && { ontologyId: seen.ontologyId }),
+              ...(seen?.loadId && { loadId: seen.loadId }),
+              ...(seen?.dashboardId && { dashboardId: seen.dashboardId }),
+              ...(seen?.newAutomation && { newAutomation: true }),
               ...(zone && { timeZone: zone }),
             }
           : null;
+      // Its turn runs as the person is now (the worker's threadReach): the
+      // whole view's makes the thread no grantee's, for good; a grantee's
+      // adds what it holds.
+      if (!p.grantee) thread.granted = null;
+      else if (thread.granted) {
+        const had = new Set(thread.granted.map((t) => JSON.stringify(t)));
+        thread.granted.push(
+          ...p.grantee.targets.filter((t) => !had.has(JSON.stringify(t))),
+        );
+      }
       const turn = queueTurn(
         thread,
         {
@@ -4707,7 +4897,7 @@ export const agentRoutes: MockRoute[] = [
                   text,
                   page: pageContext,
                 },
-                manages(p.m),
+                p.grantee ? "grantee" : manages(p.m) ? "manager" : "member",
               ),
             );
       return ok({
@@ -4728,7 +4918,8 @@ export const agentRoutes: MockRoute[] = [
             t.workspaceId === req.params.workspaceId &&
             t.userId === p.userId &&
             t.kind === "chat" &&
-            !t.deletedAt,
+            !t.deletedAt &&
+            granteeReads(t, p.grantee),
         )
         .sort(
           (a, b) =>
@@ -4757,7 +4948,12 @@ export const agentRoutes: MockRoute[] = [
     handle: (req) => {
       const p = person(req);
       if (!isPerson(p)) return p;
-      const t = threadOf(req.params.workspaceId!, p.userId, req.params.id!);
+      const t = threadOf(
+        req.params.workspaceId!,
+        p.userId,
+        req.params.id!,
+        p.grantee,
+      );
       if (!t) return fail("NOT_FOUND", "thread not found");
       advanceThread(t.id);
       return ok({
@@ -4776,7 +4972,12 @@ export const agentRoutes: MockRoute[] = [
     handle: (req) => {
       const p = person(req);
       if (!isPerson(p)) return p;
-      const t = threadOf(req.params.workspaceId!, p.userId, req.params.id!);
+      const t = threadOf(
+        req.params.workspaceId!,
+        p.userId,
+        req.params.id!,
+        p.grantee,
+      );
       if (!t) return fail("NOT_FOUND", "thread not found");
       advanceThread(t.id);
       for (const x of state.turns)
@@ -4792,8 +4993,14 @@ export const agentRoutes: MockRoute[] = [
     handle: (req) => {
       const p = person(req);
       if (!isPerson(p)) return p;
-      const t = turnOf(req.params.workspaceId!, p.userId, req.params.id!);
-      if (!t) return fail("NOT_FOUND", "turn not found");
+      const t = turnOf(
+        req.params.workspaceId!,
+        p.userId,
+        req.params.id!,
+        p.grantee,
+      );
+      if (!t)
+        return turnMissing(req.params.workspaceId!, p.userId, req.params.id!);
       advance(t);
       const after = Number(req.query.get("afterSeq") || 0) || 0;
       return ok({
@@ -4810,8 +5017,8 @@ export const agentRoutes: MockRoute[] = [
       const p = person(req);
       if (!isPerson(p)) return p;
       const ws = req.params.workspaceId!;
-      const t = turnOf(ws, p.userId, req.params.id!);
-      if (!t) return fail("NOT_FOUND", "turn not found");
+      const t = turnOf(ws, p.userId, req.params.id!, p.grantee);
+      if (!t) return turnMissing(ws, p.userId, req.params.id!);
       advance(t);
       if (t.status !== "cancelled") {
         if (!live(t))
@@ -4820,7 +5027,7 @@ export const agentRoutes: MockRoute[] = [
       }
       return ok({
         turn: toTurn(t),
-        thread: toThread(threadOf(ws, p.userId, t.threadId)!),
+        thread: toThread(threadOf(ws, p.userId, t.threadId, p.grantee)!),
       } satisfies AgentTurnResponse);
     },
   },

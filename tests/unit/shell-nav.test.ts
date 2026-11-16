@@ -40,10 +40,10 @@ describe("the sections", () => {
   });
 
   it("gives a grantee Analyst, Dashboards and Ontologies", () => {
-    expect(granteeNav.map((n) => n.id)).toEqual([
-      "ask",
-      "dashboards",
-      "ontology",
+    expect(granteeNav.map((n) => [n.id, n.label])).toEqual([
+      ["ask", "Analyst"],
+      ["dashboards", "Dashboards"],
+      ["ontology", "Ontologies"],
     ]);
   });
 
@@ -62,7 +62,7 @@ describe("on a build with Founder", () => {
     vi.resetModules();
   });
 
-  it("names Ask Founder, its sidebar's threads Threads, and keeps a grantee's Analyst", async () => {
+  it("names Ask Founder, a grantee's too, and its sidebar's threads Threads", async () => {
     vi.resetModules();
     vi.stubEnv("NEXT_PUBLIC_FOUNDRY_ASSISTANT", "1");
     const nav = await import("@/web/shell/nav");
@@ -73,7 +73,7 @@ describe("on a build with Founder", () => {
       match: ["/ask"],
     });
     expect(nav.granteeNav.map((n) => [n.id, n.label, n.to])).toEqual([
-      ["ask", "Analyst", "/ask"],
+      ["ask", "Founder", "/ask"],
       ["dashboards", "Dashboards", "/dashboards"],
       ["ontology", "Ontologies", "/ontology"],
     ]);

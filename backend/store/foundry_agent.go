@@ -11,16 +11,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
+
+// foundryAgentThreadScans bounds the reads of one page of a restricted
+// member's threads (ListFoundryAgentThreads with keep).
+const foundryAgentThreadScans = 10
 
 // The Assistant's threads, turns, transcript and actions
 // (migrations/20261130110000_foundry_agent.sql). A turn is claimed, leased,
 // renewed and settled as a question is (foundry_questions.go); its events and
 // transcript are written only while its worker holds its lease.
 
-const foundryAgentThreadColumns = `id, workspace_id, user_id, kind, title, runtime, runtime_session_id, created_at, updated_at`
+const foundryAgentThreadColumns = `id, workspace_id, user_id, kind, title, runtime, runtime_session_id, granted_targets, created_at, updated_at`
 
 const foundryAgentTurnColumns = `id, workspace_id, thread_id, user_id, runtime, kind, input, automation_run_id, automation_node_id, page_context,
        asked, answers, status, error, client_token,
@@ -83,8 +88,12 @@ func (s *mysqlDB) CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAg
 		}
 		runtime := model.FoundryAgentRuntimeAPI
 		if thread != nil {
-			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_threads (id, workspace_id, user_id, title, runtime)
-VALUES (?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread.Title, string(thread.Runtime)); err != nil {
+			granted, err := grantedTargetsJSON(thread.Granted)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_threads (id, workspace_id, user_id, title, runtime, granted_targets)
+VALUES (?, ?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread.Title, string(thread.Runtime), granted); err != nil {
 				return err
 			}
 			runtime = thread.Runtime
@@ -291,29 +300,132 @@ FROM foundry_agent_threads WHERE id=? AND workspace_id=? AND deleted_at IS NULL`
 
 // ListFoundryAgentThreads returns the user's live chats of the workspace,
 // most recently active first, a page of limit at a time: never the threads
-// their automations' runs run in.
-func (s *mysqlDB) ListFoundryAgentThreads(ctx context.Context, workspaceID, userID, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error) {
-	conds := []string{"workspace_id=?", "user_id=?", "kind='chat'", "deleted_at IS NULL"}
-	args := []any{workspaceID, userID}
-	if pageToken != "" {
-		cursor, err := decodeTimeIDCursor(pageToken)
+// their automations' runs run in. With keep, only the threads a restricted
+// member made (granted_targets set, in SQL) that keep keeps: rows are read
+// limit+1 at a time until a page is full, at most foundryAgentThreadScans
+// reads, after which the page ends early with a token past the rows read.
+func (s *mysqlDB) ListFoundryAgentThreads(ctx context.Context, workspaceID, userID string, keep func(*model.FoundryAgentThread) bool,
+	pageToken string, limit int) ([]*model.FoundryAgentThread, string, error) {
+	var out []*model.FoundryAgentThread
+	var last *model.FoundryAgentThread
+	for range foundryAgentThreadScans {
+		conds := []string{"workspace_id=?", "user_id=?", "kind='chat'", "deleted_at IS NULL"}
+		args := []any{workspaceID, userID}
+		if keep != nil {
+			conds = append(conds, "granted_targets IS NOT NULL")
+		}
+		if pageToken != "" {
+			cursor, err := decodeTimeIDCursor(pageToken)
+			if err != nil {
+				return nil, "", err
+			}
+			conds = append(conds, "(updated_at < ? OR (updated_at = ? AND id < ?))")
+			args = append(args, cursor.CreatedAt, cursor.CreatedAt, cursor.ID)
+		}
+		rows, err := s.db.QueryContext(ctx, "SELECT "+foundryAgentThreadColumns+" FROM foundry_agent_threads"+whereClause(conds)+
+			fmt.Sprintf(" ORDER BY updated_at DESC, id DESC LIMIT %d", limit+1), args...)
 		if err != nil {
 			return nil, "", err
 		}
-		conds = append(conds, "(updated_at < ? OR (updated_at = ? AND id < ?))")
-		args = append(args, cursor.CreatedAt, cursor.CreatedAt, cursor.ID)
+		read, err := scanAll(rows, scanFoundryAgentThread)
+		if err != nil {
+			return nil, "", err
+		}
+		for _, t := range read {
+			if keep == nil || keep(t) {
+				out = append(out, t)
+			}
+			if len(out) > limit {
+				next, err := encodeTimeIDCursor(out[limit-1].UpdatedAt, out[limit-1].ID)
+				return out[:limit], next, err
+			}
+			last = t
+		}
+		if len(read) <= limit {
+			return out, "", nil
+		}
+		if pageToken, err = encodeTimeIDCursor(last.UpdatedAt, last.ID); err != nil {
+			return nil, "", err
+		}
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT "+foundryAgentThreadColumns+" FROM foundry_agent_threads"+whereClause(conds)+
-		fmt.Sprintf(" ORDER BY updated_at DESC, id DESC LIMIT %d", limit+1), args...)
-	if err != nil {
-		return nil, "", err
+	return out, pageToken, nil
+}
+
+// RecordFoundryAgentThreadGrants records what a turn of the thread runs
+// under: nil, the workspace's whole view, makes it a thread no restricted
+// member reads, for good; granted adds its targets to those a restricted
+// member's thread holds, and leaves a whole view's thread as it is. A thread
+// the workspace hasn't is ErrNotFound.
+func (s *mysqlDB) RecordFoundryAgentThreadGrants(ctx context.Context, workspaceID, id string, granted *model.FoundryAgentThreadGrants) error {
+	return s.WithTx(ctx, func(txDB Store) error {
+		tx := txDB.(*mysqlDB)
+		thread, err := scanFoundryAgentThread(tx.db.QueryRowContext(ctx, "SELECT "+foundryAgentThreadColumns+`
+FROM foundry_agent_threads WHERE id=? AND workspace_id=? FOR UPDATE`, id, workspaceID))
+		switch {
+		case err != nil:
+			return err
+		case thread.Granted == nil:
+			return nil
+		case granted == nil:
+			_, err = tx.db.ExecContext(ctx, `UPDATE foundry_agent_threads SET granted_targets=NULL WHERE id=?`, id)
+			return err
+		}
+		merged := slices.Clone(thread.Granted.Targets)
+		for _, t := range granted.Targets {
+			if !slices.Contains(merged, t) {
+				merged = append(merged, t)
+			}
+		}
+		if len(merged) == len(thread.Granted.Targets) {
+			return nil
+		}
+		value, err := grantedTargetsJSON(&model.FoundryAgentThreadGrants{Targets: merged})
+		if err != nil {
+			return err
+		}
+		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_agent_threads SET granted_targets=? WHERE id=?`, value, id)
+		return err
+	})
+}
+
+// grantedTarget is a grant target as a thread's granted_targets keeps it:
+// the store's kind and the ids it names (access.ParseTarget).
+type grantedTarget struct {
+	Kind        string `json:"kind"`
+	ConnectorID string `json:"connector_id,omitempty"`
+	Table       string `json:"table,omitempty"`
+	SetID       string `json:"set_id,omitempty"`
+}
+
+// grantedTargetsJSON is granted as its column keeps it: NULL for nil, and
+// an array, empty included, else.
+func grantedTargetsJSON(granted *model.FoundryAgentThreadGrants) (any, error) {
+	if granted == nil {
+		return nil, nil
 	}
-	out, err := scanAll(rows, scanFoundryAgentThread)
-	if err != nil || len(out) <= limit {
-		return out, "", err
+	out := make([]grantedTarget, len(granted.Targets))
+	for i, t := range granted.Targets {
+		out[i] = grantedTarget{Kind: t.Kind().String(), ConnectorID: t.ConnectorID(), Table: t.Table(), SetID: t.DocumentSetID()}
 	}
-	next, err := encodeTimeIDCursor(out[limit-1].UpdatedAt, out[limit-1].ID)
-	return out[:limit], next, err
+	b, err := json.Marshal(out)
+	return string(b), err
+}
+
+// parseGrantedTargets reads a granted_targets value that isn't NULL.
+func parseGrantedTargets(raw string) (*model.FoundryAgentThreadGrants, error) {
+	var in []grantedTarget
+	if err := json.Unmarshal([]byte(raw), &in); err != nil {
+		return nil, fmt.Errorf("foundry agent thread granted_targets: %w", err)
+	}
+	out := &model.FoundryAgentThreadGrants{Targets: make([]access.Target, len(in))}
+	for i, t := range in {
+		target, err := access.ParseTarget(t.Kind, t.ConnectorID, t.Table, t.SetID)
+		if err != nil {
+			return nil, err
+		}
+		out.Targets[i] = target
+	}
+	return out, nil
 }
 
 // DeleteFoundryAgentThread deletes the user's thread and cancels its live
@@ -987,14 +1099,21 @@ func scanFoundryAgentThread(scanner rowScanner) (*model.FoundryAgentThread, erro
 	var t model.FoundryAgentThread
 	var runtime string
 	var kind string
-	var session sql.NullString
-	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.UserID, &kind, &t.Title, &runtime, &session, &t.CreatedAt, &t.UpdatedAt); err != nil {
+	var session, granted sql.NullString
+	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.UserID, &kind, &t.Title, &runtime, &session, &granted, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	t.Runtime, t.RuntimeSessionID, t.Kind = model.FoundryAgentRuntime(runtime), session.String, model.FoundryAgentThreadKind(kind)
+	if granted.Valid {
+		g, err := parseGrantedTargets(granted.String)
+		if err != nil {
+			return nil, err
+		}
+		t.Granted = g
+	}
 	return &t, nil
 }
 

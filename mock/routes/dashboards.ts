@@ -738,8 +738,7 @@ export const dashboardRoutes: MockRoute[] = [
       const tile = tileOf(
         {
           id: `t${n}`,
-          title:
-            title(visual?.title || "") || title(q.question) || "Analyst answer",
+          title: title(visual?.title || "") || title(q.question) || "Answer",
           ontology_id: o.id,
           load: body.pinLoad
             ? { kind: "pinned", load_id: q.loadId }

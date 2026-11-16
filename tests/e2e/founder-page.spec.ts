@@ -37,7 +37,7 @@ const threadsOf = (page: Page) =>
     .getByRole("navigation", { name: "Threads" });
 const HELLO = "What do you want to know about Customer contracts?";
 const ANSWERED =
-  "That's the Analyst's answer, from the current load of Customer contracts.";
+  "That's the answer, from the current load of Customer contracts.";
 
 /** Fast steps for Founder, the Analyst and loads. */
 const fast = () =>
@@ -230,11 +230,11 @@ test("opens an Analyst thread from before Founder read only, from the sidebar", 
     { question, clientToken: "e2e-analyst-thread" },
   );
   await page.goto("/ask/ont_acme_contracts");
-  // Under Founder's threads, marked Analyst.
+  // Under Founder's threads, marked Earlier question.
   const link = threadsOf(page)
-    .getByRole("list", { name: "Analyst threads" })
+    .getByRole("list", { name: "Earlier questions" })
     .getByRole("link", { name: /^How are the invoices doing\?/ });
-  await expect(link.locator(".hf-tag")).toHaveText("Analyst");
+  await expect(link.locator(".hf-tag")).toHaveText("Earlier question");
   await link.click();
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts\?thread=q_\w+$/);
   await expect(link).toHaveAttribute("aria-current", "page");
@@ -245,7 +245,7 @@ test("opens an Analyst thread from before Founder read only, from the sidebar", 
   await expect(
     main.getByRole("heading", { level: 1, name: question }),
   ).toBeVisible();
-  await expect(main.locator(".ak-bar .hf-tag")).toHaveText("Analyst");
+  await expect(main.locator(".ak-bar .hf-tag")).toHaveText("Earlier question");
   const answer = main
     .getByRole("article", { name: `Question: ${question}` })
     .getByRole("region", { name: "Answer" });
@@ -263,7 +263,7 @@ test("opens an Analyst thread from before Founder read only, from the sidebar", 
     0,
   );
   await expect(main).toContainText(
-    "This Analyst thread is read only. Ask Founder to go on.",
+    "This earlier question is read only. Ask Founder to go on.",
   );
   await main.getByRole("link", { name: "New chat" }).click();
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts\?new=1$/);
@@ -351,7 +351,7 @@ test("says why the Analyst refused a question, in Founder's words", async ({
   await send(page, "Which customers signed it?");
   await expect(
     logOf(page).getByText(
-      "This workspace has used the month's question budget for the Analyst. That's the Analyst's limit, not mine: it starts again next month.",
+      "This workspace has used the month's budget for questions of the data: that limit is on questions, not on me. It starts again next month.",
     ),
   ).toBeVisible({ timeout: 20_000 });
 });
@@ -432,7 +432,7 @@ test("groups Founder's threads by when they last changed, the Analyst's under th
     "Today",
     "Previous 7 days",
     "Older",
-    "Analyst threads",
+    "Earlier questions",
   ]);
   await expect(
     threads.getByRole("list", { name: "Today" }).getByRole("link"),
@@ -444,8 +444,8 @@ test("groups Founder's threads by when they last changed, the Analyst's under th
     threads.getByRole("list", { name: "Older" }).getByRole("link"),
   ).toHaveText([/^What did Globex sign last year\?/, /^Untitled/]);
   await expect(
-    threads.getByRole("list", { name: "Analyst threads" }).getByRole("link"),
-  ).toHaveText([/^Who renewed last quarter\?Analyst/]);
+    threads.getByRole("list", { name: "Earlier questions" }).getByRole("link"),
+  ).toHaveText([/^Who renewed last quarter\?Earlier question/]);
   // Each opens on Founder's page: a chat, or the Analyst's thread.
   await expect(
     threads.getByRole("link", { name: /^Who signed the services/ }),

@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -76,8 +77,73 @@ type memStore struct {
 	// record the runs' uses of ontologies.
 	nodes map[string][]*model.FoundryAutomationRunNode
 	uses  workflowUses
+	// threads are the turns' threads by id: one a restricted member made,
+	// holding nothing, unless a test says (thread).
+	threads map[string]*model.FoundryAgentThread
+	// grants are the workspace's source grants; teams each user's teams.
+	grants []model.FoundryAccessGrant
+	teams  map[string][]string
 	// causes are the syncs and loads marked as an automation run's, by run.
 	causes map[string][]model.FoundryAutomationJob
+}
+
+// thread is the thread id, as a restricted member made it unless a test
+// stored another.
+func (s *memStore) thread(id string) *model.FoundryAgentThread {
+	if s.threads == nil {
+		s.threads = map[string]*model.FoundryAgentThread{}
+	}
+	t, ok := s.threads[id]
+	if !ok {
+		t = &model.FoundryAgentThread{ID: id, WorkspaceID: ws, UserID: user, Kind: model.FoundryAgentThreadChat, Runtime: model.FoundryAgentRuntimeAPI,
+			Granted: &model.FoundryAgentThreadGrants{}}
+		s.threads[id] = t
+	}
+	return t
+}
+
+func (s *memStore) GetFoundryAgentThread(_ context.Context, _, id string) (*model.FoundryAgentThread, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := *s.thread(id)
+	return &t, nil
+}
+
+// RecordFoundryAgentThreadGrants records a run's reach as the store does:
+// nil for good, else adding to a restricted member's thread.
+func (s *memStore) RecordFoundryAgentThreadGrants(_ context.Context, _, id string, granted *model.FoundryAgentThreadGrants) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.thread(id)
+	switch {
+	case t.Granted == nil:
+	case granted == nil:
+		t.Granted = nil
+	default:
+		merged := slices.Clone(t.Granted.Targets)
+		for _, target := range granted.Targets {
+			if !slices.Contains(merged, target) {
+				merged = append(merged, target)
+			}
+		}
+		t.Granted = &model.FoundryAgentThreadGrants{Targets: merged}
+	}
+	return nil
+}
+
+func (s *memStore) FoundryTeamsOf(_ context.Context, _, userID string) ([]string, error) {
+	return s.teams[userID], nil
+}
+
+// ListFoundryAccessGrants returns the grants of principals.
+func (s *memStore) ListFoundryAccessGrants(_ context.Context, _ string, principals []access.Principal) ([]model.FoundryAccessGrant, error) {
+	var out []model.FoundryAccessGrant
+	for _, g := range s.grants {
+		if slices.Contains(principals, g.Principal) {
+			out = append(out, g)
+		}
+	}
+	return out, nil
 }
 
 func (s *memStore) MarkFoundryAutomationCause(_ context.Context, runID string, job model.FoundryAutomationJob) error {
@@ -512,6 +578,17 @@ type backend struct {
 	// created are the dashboards made; deleted the ids of those deleted.
 	created []*foundryv1.CreateFoundryDashboardRequest
 	deleted []string
+	// grantee reads the person as a restricted member; accessErr refuses
+	// reading their access.
+	grantee   bool
+	accessErr error
+}
+
+func (b *backend) GetMyFoundryAccess(context.Context, *foundryv1.GetMyFoundryAccessRequest, ...grpc.CallOption) (*foundryv1.GetMyFoundryAccessResponse, error) {
+	if b.accessErr != nil {
+		return nil, b.accessErr
+	}
+	return &foundryv1.GetMyFoundryAccessResponse{Grantee: b.grantee, Workflows: true}, nil
 }
 
 func (b *backend) AnswerOntologyGeneration(_ context.Context, r *foundryv1.AnswerOntologyGenerationRequest, _ ...grpc.CallOption) (
@@ -1049,7 +1126,7 @@ func TestPromptKeepsWhatAModelNeeds(t *testing.T) {
 func TestPromptOffersEveryRuntimeAnOwnerMayChoose(t *testing.T) {
 	// An owner who confirmed Codex asks for it: the Assistant must know it is a runtime.
 	assert.Contains(t, systemPrompt, "{runtime}: api, claude_code or codex (codex only once the owner confirmed it in Settings › AI models")
-	assert.Equal(t, "assistant-14", PromptVersion)
+	assert.Equal(t, "assistant-15", PromptVersion)
 }
 
 func TestTitle(t *testing.T) {

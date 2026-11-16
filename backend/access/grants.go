@@ -143,6 +143,29 @@ func (g Grants) Empty() bool {
 	return len(g.connectors)+len(g.tables)+len(g.sets) == 0 && !g.enrichment
 }
 
+// Holds reports whether the grants give at least what every one of targets
+// gives: a table held by its own grant or its connector's, a connector, a set
+// and People enrichment only by their own. What a restricted member's
+// Founder thread read under targets stays theirs only while they hold them.
+//
+//	g := access.NewGrants([]access.Target{access.ConnectorTarget("stripe")})
+//	g.Holds([]access.Target{access.TableTarget("stripe", "customers")}) // true
+func (g Grants) Holds(targets []Target) bool {
+	return !slices.ContainsFunc(targets, func(t Target) bool {
+		switch t.kind {
+		case TargetConnector:
+			return !g.connectors[t.connectorID]
+		case TargetTable:
+			return !g.CoversTable(TableRef{t.connectorID, t.table})
+		case TargetDocumentSet:
+			return !g.sets[t.setID]
+		case TargetEnrichment:
+			return !g.enrichment
+		}
+		return true
+	})
+}
+
 // CoversTable reports whether the grants cover a table.
 func (g Grants) CoversTable(t TableRef) bool { return g.connectors[t.ConnectorID] || g.tables[t] }
 

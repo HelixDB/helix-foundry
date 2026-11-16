@@ -9,14 +9,16 @@ import {
 
 // Settings › Access and restricted mode: an owner makes an agent's key and
 // gives it sources, then sees what it can read; restricts a member, who
-// then sees only Analyst, the ontologies their sources cover and their
-// Records, entities and documents, read through typed reads, and calls
-// nothing the WFE refuses and never the database; a member who can't query
-// databases reads the same way, and only what their sources cover; someone
-// whose sources hold part of an ontology reads that part, told so; taking
-// every source away takes the ontology away; and a change that would cut
-// someone off asks first. Eve is a member of Acme restricted to the General
-// set; Alan, a member who queries databases, can't be restricted.
+// then sees only Founder (read only: it asks the Analyst about what's shared
+// and changes nothing), the pinned dashboards, the ontologies their sources
+// cover and their Records, entities and documents, read through typed
+// reads, and calls nothing the WFE refuses and never the database; a member
+// who can't query databases reads the same way, and only what their sources
+// cover; someone whose sources hold part of an ontology reads that part,
+// told so; taking every source away takes the ontology away, and Founder's
+// composer with it; and a change that would cut someone off asks first. Eve
+// is a member of Acme restricted to the General set; Alan, a member who
+// queries databases, can't be restricted.
 
 const O = "/ontology/ont_acme_contracts";
 /** A customer's id in an entity page's address. */
@@ -43,6 +45,21 @@ async function shareWithEve(page: Page) {
     "Customer contracts",
   );
   await sources.getByRole("button", { name: "Close" }).first().click();
+}
+
+/** Founder's composer on its page. */
+const composerOf = (page: Page) =>
+  page.getByRole("main").getByRole("form", { name: "Message Founder" });
+/** Founder's conversation on its page. */
+const logOf = (page: Page) =>
+  page.getByRole("main").getByRole("log", { name: "Conversation" });
+
+/** Sends `text` to Founder from its page, as a grantee asks. */
+async function tellFounder(page: Page, text: string) {
+  const composer = composerOf(page);
+  await composer.getByRole("textbox", { name: "Message" }).fill(text);
+  await composer.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(logOf(page).getByText(text, { exact: true })).toBeVisible();
 }
 
 /** Eve, signed in in a browser of her own. */
@@ -119,7 +136,12 @@ test("a restricted member sees only what their sources cover", async ({
   page,
   browser,
 }) => {
-  await mock.configure({ loadStepMs: 200, askStepMs: 100 });
+  await mock.configure({
+    loadStepMs: 200,
+    askStepMs: 100,
+    agentStepMs: 100,
+    agentDeltaMs: 10,
+  });
   await signIn(page);
   await uploadAndLoadContract(page);
   // Eve is restricted; Alan queries databases, so he can't be.
@@ -150,11 +172,11 @@ test("a restricted member sees only what their sources cover", async ({
 
   const before = (await mock.stats()).requests.length;
   const as = await asEve(browser);
-  // Analyst opens on the one ontology shared with her.
+  // Founder opens on the one ontology shared with her.
   await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
   const nav = as.getByRole("list", { name: "Workspace" });
   await expect(nav.getByRole("link")).toHaveText([
-    "Analyst",
+    "Founder",
     "Dashboards",
     "Ontologies",
   ]);
@@ -165,15 +187,11 @@ test("a restricted member sees only what their sources cover", async ({
     as.getByRole("combobox", { name: "Load", exact: true }),
   ).toHaveCount(0);
 
-  // She asks; the answer's sources open the pages her sources read, named
-  // as those pages name them. A rule break has no page there: its source
-  // opens its step.
-  const form = as.getByRole("form", { name: "Ask a question" });
-  await form
-    .getByRole("textbox", { name: /^Question/ })
-    .fill("Who signed the services agreement?");
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
-  const answer = as.getByRole("region", { name: "Answer" });
+  // She asks Founder, which asks the Analyst; the answer's sources open the
+  // pages her sources read, named as those pages name them. A rule break
+  // has no page there: its source opens its step.
+  await tellFounder(as, "Who signed the services agreement?");
+  const answer = logOf(as).getByRole("region", { name: "Answer" });
   await expect(answer).toBeVisible({ timeout: 20_000 });
   await expect(as.getByRole("group", { name: "Questions budget" })).toHaveCount(
     0,
@@ -271,7 +289,7 @@ test("a restricted member sees only what their sources cover", async ({
     0,
   );
 
-  // Everything else opens Analyst.
+  // Everything else opens Founder.
   for (const path of [
     "/data",
     "/settings",
@@ -299,6 +317,112 @@ test("a restricted member sees only what their sources cover", async ({
   expect(requests.some((r) => /\/loads\/load_\w+:read 200$/.test(r))).toBe(
     true,
   );
+});
+
+test("a grantee asks Founder about what's shared, and gets no cards", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({
+    loadStepMs: 200,
+    askStepMs: 100,
+    agentStepMs: 100,
+    agentDeltaMs: 10,
+  });
+  await signIn(page);
+  await uploadAndLoadContract(page);
+  await shareWithEve(page);
+  // Every dashboard of the workspace, as Ada reads them (Eve reads only the
+  // pinned ones).
+  const owner = page.context().request;
+  const dashboards = async () => {
+    const read = await owner.get(
+      "/papi/v1/workspaces/ws_acme/foundry/dashboards",
+    );
+    const body = (await read.json()) as { dashboards?: unknown[] };
+    return body.dashboards?.length ?? 0;
+  };
+  const had = await dashboards();
+  await page.close();
+
+  const before = (await mock.stats()).requests.length;
+  const as = await asEve(browser);
+  // Founder's page, on the one ontology shared with her: the load her
+  // sources cover, so no Load picker, and its version's questions.
+  await expect(as).toHaveURL(/\/ask\/ont_acme_contracts$/);
+  await expect(
+    as.getByRole("list", { name: "Workspace" }).getByRole("link"),
+  ).toHaveText(["Founder", "Dashboards", "Ontologies"]);
+  await expect(
+    as.getByRole("heading", {
+      level: 1,
+      name: "What do you want to know about Customer contracts?",
+    }),
+  ).toBeVisible();
+  await expect(
+    as.getByRole("combobox", { name: "Load", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    as.getByRole("group", { name: "Suggested questions" }),
+  ).toBeVisible();
+  await expect(
+    composerOf(as).getByRole("textbox", { name: "Message" }),
+  ).toHaveAttribute("placeholder", "Ask about the data shared with you…");
+
+  // Asked for a dashboard, Founder asks the Analyst, whose answer shows
+  // inline with its figures, and makes none: no card, and nothing to add to
+  // a dashboard.
+  const asked = "Make a dashboard of how the invoices are doing";
+  await tellFounder(as, asked);
+  await expect(as).toHaveURL(/\/ask\/ont_acme_contracts\?chat=thr_\w+$/);
+  const log = logOf(as);
+  const answer = log
+    .getByRole("article", { name: `Question: ${asked}` })
+    .getByRole("region", { name: "Answer" });
+  await expect(answer).toBeVisible({ timeout: 20_000 });
+  await expect(
+    answer.getByRole("figure", { name: "Invoices by status" }),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(
+    log.getByText(
+      "That's the answer, from what's shared with you of Customer contracts. Your access doesn't let me make dashboards, so I made none.",
+    ),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(
+    log.getByRole("button", { name: "Add to dashboard" }),
+  ).toHaveCount(0);
+  await expect(log.getByRole("region", { name: /^Action: / })).toHaveCount(0);
+  expect(await dashboards()).toBe(had);
+
+  // A change she asks for, Founder says it can't make.
+  await tellFounder(as, "Load Customer contracts");
+  await expect(
+    log.getByText(
+      "Your access lets me read and ask about the data shared with you, not change anything in this workspace, so I can't do that. Someone who manages it can.",
+    ),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(log.getByRole("region", { name: /^Action: / })).toHaveCount(0);
+
+  // Elsewhere, the dock holds the same thread.
+  await as.goto("/dashboards");
+  await as.getByRole("button", { name: "Founder", exact: true }).click();
+  const dock = as.getByRole("complementary", { name: "Founder" });
+  await expect(dock.getByRole("button", { name: /^Threads:/ })).toContainText(
+    asked,
+  );
+  await expect(
+    dock
+      .getByRole("log", { name: "Conversation" })
+      .getByText(/Someone who manages it can\./),
+  ).toBeVisible();
+
+  // Nothing she did was refused, ran or read a card, read the AI setting or
+  // the runtime, or read the database.
+  const requests = (await mock.stats()).requests.slice(before);
+  expect(requests.filter((r) => / 40[34]$/.test(r))).toEqual([]);
+  const refused =
+    /\/agent\/actions\/|\/foundry\/ai\b|\/agent\/runtime|databases:query-read/;
+  expect(requests.filter((r) => refused.test(r))).toEqual([]);
 });
 
 test("a member who can't query reads only what their sources cover", async ({
@@ -329,11 +453,11 @@ test("a member who can't query reads only what their sources cover", async ({
   });
   const as = await context.newPage();
   await signIn(as, "alan@example.com");
-  // Given sources, he is restricted: no Connectors. Analyst opens the one
+  // Given sources, he is restricted: no Connectors. Founder opens the one
   // ontology he reads, and offers no other.
   await expect(
     as.getByRole("list", { name: "Workspace" }).getByRole("link"),
-  ).toHaveText(["Analyst", "Dashboards", "Ontologies"]);
+  ).toHaveText(["Founder", "Dashboards", "Ontologies"]);
   await as.goto("/ask");
   await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
   await as.getByRole("combobox", { name: "Ontology" }).click();
@@ -455,6 +579,8 @@ test("someone whose sources hold part of an ontology reads that part", async ({
   await mock.configure({
     loadStepMs: 200,
     askStepMs: 100,
+    agentStepMs: 100,
+    agentDeltaMs: 10,
     invoiceOnlyCustomers: 90,
   });
   await signIn(page);
@@ -484,19 +610,17 @@ test("someone whose sources hold part of an ontology reads that part", async ({
   const as = await asEve(browser);
   const note = as.getByText("You can read part of this ontology");
 
-  // Ask says so, and answers from what she holds.
+  // Founder's page says so, and the Analyst answers from what she holds.
   await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
   await expect(note).toBeVisible();
-  const form = as.getByRole("form", { name: "Ask a question" });
-  await form.getByRole("textbox", { name: /^Question/ }).fill("Who are they?");
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
-  const answer = as.getByRole("region", { name: "Answer" });
+  await tellFounder(as, "Who are they?");
+  const answer = logOf(as).getByRole("region", { name: "Answer" });
   await expect(answer).toContainText(
     "Of what the sources shared with you hold",
     { timeout: 20_000 },
   );
   // A thread says so too.
-  await expect(as).toHaveURL(/thread=/);
+  await expect(as).toHaveURL(/chat=/);
   await expect(note).toBeVisible();
 
   // Records: only Customer, uncounted: the first rows she can read, no pages.
@@ -583,6 +707,8 @@ test("someone who reads part of an ontology is told plainly that its past isn't 
   await mock.configure({
     loadStepMs: 200,
     askStepMs: 100,
+    agentStepMs: 100,
+    agentDeltaMs: 10,
     invoiceOnlyCustomers: 90,
     askOutcome: "cannot_answer",
   });
@@ -601,15 +727,12 @@ test("someone who reads part of an ontology is told plainly that its past isn't 
   await expect(
     as.getByText("You can read part of this ontology"),
   ).toBeVisible();
-  const form = as.getByRole("form", { name: "Ask a question" });
-  await form
-    .getByRole("textbox", { name: /^Question/ })
-    .fill("Which customers did we have last March?");
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
-  await expect(as.getByText("This ontology can’t answer that")).toBeVisible({
+  await tellFounder(as, "Which customers did we have last March?");
+  const log = logOf(as);
+  await expect(log.getByText("This ontology can’t answer that")).toBeVisible({
     timeout: 20_000,
   });
-  await expect(as.locator(".on-card .hf-tag")).toHaveText(
+  await expect(log.locator(".on-card .hf-tag")).toHaveText(
     "Only current values are shared with you",
   );
   await expect(as.getByText("No recorded state covers that time")).toHaveCount(
@@ -629,6 +752,8 @@ test("someone who holds all of an ontology reads an uncovered time as the load's
   await mock.configure({
     loadStepMs: 200,
     askStepMs: 100,
+    agentStepMs: 100,
+    agentDeltaMs: 10,
     askOutcome: "cannot_answer",
   });
   await signIn(page);
@@ -658,15 +783,12 @@ test("someone who holds all of an ontology reads an uncovered time as the load's
   await expect(as.getByText("You can read part of this ontology")).toHaveCount(
     0,
   );
-  const form = as.getByRole("form", { name: "Ask a question" });
-  await form
-    .getByRole("textbox", { name: /^Question/ })
-    .fill("Who signed it last March?");
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
-  await expect(as.getByText("This ontology can’t answer that")).toBeVisible({
+  await tellFounder(as, "Who signed it last March?");
+  const log = logOf(as);
+  await expect(log.getByText("This ontology can’t answer that")).toBeVisible({
     timeout: 20_000,
   });
-  await expect(as.locator(".on-card .hf-tag")).toHaveText(
+  await expect(log.locator(".on-card .hf-tag")).toHaveText(
     "No recorded state covers that time",
   );
 });
@@ -774,7 +896,7 @@ test("access changed elsewhere shows on coming back to the tab", async ({
   await shareWithEve(page);
   const as = await asEve(browser);
   await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
-  await expect(as.getByRole("form", { name: "Ask a question" })).toBeVisible();
+  await expect(composerOf(as)).toBeVisible();
 
   const sources = await openSources(page, "people", "Eve Adler");
   await sources.getByRole("checkbox", { name: /^Stripe/ }).uncheck();
@@ -786,7 +908,7 @@ test("access changed elsewhere shows on coming back to the tab", async ({
   ).toContainText("Stripe › customers");
 
   await as.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
-  await expect(as.getByRole("form", { name: "Ask a question" })).toHaveCount(0);
+  await expect(composerOf(as)).toHaveCount(0);
 });
 
 test("offers a grantee nothing of the sample or of getting into production", async ({
@@ -813,7 +935,7 @@ test("offers a grantee nothing of the sample or of getting into production", asy
   });
   await signIn(as, "eve@example.com");
   await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
-  await expect(as.getByRole("form", { name: "Ask a question" })).toBeVisible();
+  await expect(composerOf(as)).toBeVisible();
   await expect(
     as.getByRole("region", { name: "Getting into production" }),
   ).toHaveCount(0);
@@ -856,14 +978,14 @@ test("a member reading through grants isn't sent to query the database", async (
   const as = await context.newPage();
   await signIn(as, "alan@example.com");
   await as.goto("/ask/ont_acme_contracts");
-  await expect(as.getByRole("form", { name: "Ask a question" })).toBeVisible();
+  await expect(composerOf(as)).toBeVisible();
   await expect(
     as.getByRole("region", { name: "Getting into production" }),
   ).toHaveCount(0);
   // Given it back he stays restricted, so he still reads through grants.
   await mock.configure({ memberQueryRead: true });
   await as.reload();
-  await expect(as.getByRole("form", { name: "Ask a question" })).toBeVisible();
+  await expect(composerOf(as)).toBeVisible();
   await expect(
     as.getByRole("region", { name: "Getting into production" }),
   ).toHaveCount(0);
@@ -889,7 +1011,7 @@ test("the Analyst's threads say why they can't be read, with a retry", async ({
   await page.goto("/ask/ont_acme_contracts");
   const threads = page.getByRole("navigation", { name: "Threads" });
   await expect(threads.getByRole("alert")).toContainText(
-    "Couldn’t read the Analyst threads: the questions couldn't be read",
+    "Couldn’t read the earlier questions: the questions couldn't be read",
     { timeout: 15_000 },
   );
   refuse = false;
@@ -975,7 +1097,7 @@ test("giving a member sources restricts them, and taking them away widens nothin
   await signIn(as, "alan@example.com");
   await expect(
     as.getByRole("list", { name: "Workspace" }).getByRole("link"),
-  ).toHaveText(["Analyst", "Dashboards", "Ontologies"]);
+  ).toHaveText(["Founder", "Dashboards", "Ontologies"]);
 
   // His last source taken away, he reads nothing, not everything.
   const again = await openSources(page, "people", "Alan Turing");

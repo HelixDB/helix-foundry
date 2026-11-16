@@ -1706,7 +1706,7 @@ describe("stepLabel", () => {
       "Prepared an action",
     );
     expect(stepLabel({ id: "t", name: "helix_foundry_ask", input: {} })).toBe(
-      "Asked the Analyst",
+      "Asked the data",
     );
     expect(
       stepLabel({ id: "t", name: "helix_foundry_unknown", input: {} }),

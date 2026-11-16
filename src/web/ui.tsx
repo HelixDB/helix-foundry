@@ -29,8 +29,9 @@ export type WorkspaceValue = ShellWorkspace & {
   // onboarding (main.tsx's OnboardingRoutes).
   onboarding: boolean;
   // The user reads only through source grants (a member an owner or admin
-  // restricted, GET .../foundry/access/me): the shell offers Analyst and
-  // the ontologies those grants cover, read only, and nothing else.
+  // restricted, GET .../foundry/access/me): the shell offers Ask (Founder,
+  // read-only, where the build has it), the pinned dashboards and the
+  // ontologies those grants cover, read only, and nothing else.
   grantee: boolean;
   // The ontologies whose current loads the user's source grants hold any of:
   // what a grantee, or a member who can't query an ontology's database,

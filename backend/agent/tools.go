@@ -60,6 +60,28 @@ var Tools = map[string]bool{
 	toolAskPerson: true,
 }
 
+// GranteeTools are the tools a restricted member's turn offers (ReachGrants),
+// within Tools: reads and asks whose every call the API narrows to their
+// grants, and toolAskPerson. Left out: documents (a grantee reads one only by
+// id), generations, syncs, connectors, the AI setting, the runtime, reviews,
+// a tile's preview, automations, connect, prepare, the report, and the host's
+// projects and databases.
+var GranteeTools = map[string]bool{
+	"helix_foundry_list_ontologies": true,
+	"helix_foundry_get_ontology":    true,
+	"helix_foundry_get_context":     true,
+	"helix_foundry_get_version":     true,
+	"helix_foundry_get_load":        true,
+	"helix_foundry_read_guide":      true,
+	"helix_foundry_read_graph":      true,
+	"helix_foundry_ask":             true,
+	"helix_foundry_get_question":    true,
+	"helix_foundry_list_questions":  true,
+	"helix_foundry_list_dashboards": true,
+	"helix_foundry_get_dashboard":   true,
+	toolAskPerson:                   true,
+}
+
 const (
 	toolPrepare     = "helix_foundry_prepare_operation"
 	toolAsk         = "helix_foundry_ask"

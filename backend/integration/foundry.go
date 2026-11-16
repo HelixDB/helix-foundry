@@ -917,7 +917,7 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 				"but not the agent's working draft: to act on an answer, or to read what it left out, generate again with that in the goal. A definition past 256 KiB is refused, with its load_refusal."), s.GetFoundryVersion)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetContext,
 			"Learn what a business's Foundry ontology holds before you ask or read it: its schema (each type's properties, key, names and identifiers, and its links, rules and constraints) "+
-				"and example questions it answers, the ones Foundry's Analyst suggests. "+
+				"and example questions it answers, the ones Foundry suggests. "+
 				"It describes the version of the current load, which "+toolFoundryAsk+" and "+toolFoundryReadGraph+" use by default, or the current version while nothing is loaded. "+
 				"An agent bundle's schema is its ontology.toml; a Definition v1 version's is its definition. With source grants that cover part of the load, it describes that part."), s.GetFoundryContext)
 		addFoundryTool(s, server, identity, tool(toolFoundryReadGuide,

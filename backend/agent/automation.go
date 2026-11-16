@@ -75,13 +75,17 @@ func (r *Runner) automationStep(ctx context.Context, turn *model.FoundryAgentTur
 	return &automationStep{name: a.Name, allow: step.Allow, run: run, spec: spec}, nil
 }
 
-// system is the turn's system prompt: the Assistant's, and an automation's
-// turn's own after it.
+// system is the turn's system prompt: the Assistant's, then a restricted
+// member's (granteePrompt) or an automation's turn's own.
 func (t *turnRun) system() string {
-	if t.automation == nil {
-		return system(t.turn.WorkspaceID)
+	out := system(t.turn.WorkspaceID)
+	if t.reach == ReachGrants {
+		out += "\n\n" + granteePrompt
 	}
-	return system(t.turn.WorkspaceID) + "\n\n" + automationPrompt(t.automation)
+	if t.automation != nil {
+		out += "\n\n" + automationPrompt(t.automation)
+	}
+	return out
 }
 
 // automationPrompt tells an automation's turn how it runs.

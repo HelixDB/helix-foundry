@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
 )
 
@@ -62,8 +63,20 @@ type FoundryAgentThread struct {
 	// RuntimeSessionID is a helper's CLI session that the thread's next turn
 	// resumes; empty for 'api', and until its first turn ends.
 	RuntimeSessionID string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// Granted is nil for a thread made, or run, with the workspace's whole
+	// view, which a restricted member never reads; else the grant targets a
+	// restricted member held when its turns ran, which they must all still
+	// hold to read it, so narrowing their grants takes away what Founder read
+	// under them, as it takes away an Analyst's answer.
+	Granted   *FoundryAgentThreadGrants
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// FoundryAgentThreadGrants are the grant targets a restricted member's turns
+// of a thread ran under, through themselves and their teams.
+type FoundryAgentThreadGrants struct {
+	Targets []access.Target
 }
 
 // FoundryAgentTurnKind is what started a turn.

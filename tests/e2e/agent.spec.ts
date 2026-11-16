@@ -756,7 +756,7 @@ test("won't send on a model that doesn't call tools, and says why, with a link t
   ).toBeVisible();
   // The setting runs everything else; its owner is told Founder can't.
   const why =
-    "Founder can’t run on qwen-notoolcall: it answered Founder’s test without calling a tool. Drafts, loads and the Analyst still run on it. Choose a model for questions that calls tools to use Founder.";
+    "Founder can’t run on qwen-notoolcall: it answered Founder’s test without calling a tool. Drafts, loads and questions still run on it. Choose a model for questions that calls tools to use Founder.";
   await expect(
     page.getByRole("note").filter({ hasText: "Founder can’t run" }),
   ).toHaveText(why);

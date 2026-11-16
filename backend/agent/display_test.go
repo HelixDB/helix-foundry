@@ -177,7 +177,7 @@ func TestUploadsAndAPISourcesAreRefused(t *testing.T) {
 		assert.NotContains(t, schema, "create_event_source: workspace")
 	}
 	// The sink refuses what slips past a schema.
-	sink := &actionSink{}
+	sink := &actionSink{reach: ReachWorkspace}
 	for _, refused := range []string{"upload_document", "create_event_source", "delete_ontology"} {
 		assert.False(t, sink.Allows(refused))
 	}

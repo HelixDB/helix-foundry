@@ -2596,8 +2596,7 @@ describe("the Analyst", () => {
     });
     expect(display(t.action)).toEqual({
       name: "Invoices by account",
-      description:
-        "Customer contracts: the Analyst's answer, as tables and charts.",
+      description: "Customer contracts: the answer, as tables and charts.",
       spec: {
         tiles: [
           {
@@ -2680,7 +2679,7 @@ describe("the Analyst", () => {
     expect(t.action).toBeUndefined();
     expect(t.events.some((e) => e.type === "action_card")).toBe(false);
     expect(t.said).toBe(
-      "The Analyst's answer shows no table or chart to put on a dashboard, so I made none.",
+      "The answer shows no table or chart to put on a dashboard, so I made none.",
     );
     expect((await call("GET", D)).body.dashboards).toEqual([]);
   });
@@ -2699,7 +2698,7 @@ describe("the Analyst", () => {
     });
     // Never the answer again, and nothing prepared.
     expect(t.said).toBe(
-      "That's the Analyst's answer, from the current load of Customer contracts.",
+      "That's the answer, from the current load of Customer contracts.",
     );
     expect(t.action).toBeUndefined();
   });
@@ -2710,6 +2709,30 @@ describe("the Analyst", () => {
       false,
     );
     expect(c.said).toContain("This workspace has");
+  });
+
+  it("asks as the WFE admits the person: a member without query access is refused", async () => {
+    // Founder's tools run the access check (wfe() is guarded): Alan without
+    // query access asks as a grantee would, and holds no grants.
+    await loaded("noquery");
+    Object.assign(config, { memberQueryRead: false });
+    const t = await card(
+      "Which customers have unpaid invoices?",
+      {},
+      "usr_alan",
+    );
+    expect(resultOf(t.events, ASK)).toMatchObject({
+      is_error: true,
+      error: "permission denied",
+    });
+    expect(
+      t.events.some((e) => e.type === "tool_call" && e.name === GET_QUESTION),
+    ).toBe(false);
+    expect(t.said).toBe("I couldn't ask that of the data: permission denied.");
+    // His Founder routes aren't gated on it: the WFE admits every member.
+    expect(
+      (await call("GET", `${A}/threads`, undefined, "usr_alan")).status,
+    ).toBe(200);
   });
 
   it("says a limit of the Analyst's is the Analyst's, in its words", async () => {
@@ -2735,7 +2758,7 @@ describe("the Analyst", () => {
       ),
     ).toBe(false);
     expect(hour.said).toBe(
-      "The Analyst takes 30 questions an hour, and this workspace has asked them all. That's the Analyst's limit, not mine: ask again later.",
+      "This workspace has asked its 30 questions of the data this hour: that limit is on questions, not on me. Ask again later.",
     );
     // The month's question budget, a dashboard asked for: nothing is made.
     later(3_600_000);
@@ -2743,7 +2766,7 @@ describe("the Analyst", () => {
     const month = await card(ASKED);
     expect(resultOf(month.events, ASK)).toMatchObject({ is_error: true });
     expect(month.said).toBe(
-      "This workspace has used the month's question budget for the Analyst. That's the Analyst's limit, not mine: it starts again next month.",
+      "This workspace has used the month's budget for questions of the data: that limit is on questions, not on me. It starts again next month.",
     );
     expect(month.action).toBeUndefined();
     expect((await call("GET", D)).body.dashboards).toEqual([]);

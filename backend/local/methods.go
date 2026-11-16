@@ -155,6 +155,9 @@ var methods = map[string]check{
 	foundry("UpdateFoundryAgentRuntime"):     checkWorkspace,
 	foundry("CreateFoundryAgentHostPairing"): checkWorkspace,
 	foundry("RevokeFoundryAgentHost"):        checkWorkspace,
+	// The caller's source grants, which every Founder attempt reads for its
+	// Reach (agent.reachOf): the owner is never a grantee, so it answers so.
+	foundry("GetMyFoundryAccess"): checkWorkspace,
 
 	// Dashboards: each handler reads the workspace's own. An install
 	// publishes no public link (no door serves one).
