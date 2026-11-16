@@ -11,9 +11,9 @@ import { ontologyQueries } from "./queries";
 // its row (its Explorer among them); the Explorer's pages, which have no
 // sidebar link (../../shell/nav.ts), fill theirs. Ask's threads sit in the
 // sidebar itself, under the sections: Founder's (with the Analyst's older
-// threads under them) where the build has Founder and the user isn't a
-// grantee, else the Analyst's (founder-threads.tsx AskSidebar decides). The
-// sample company's banner sits across the top.
+// threads under them) where the build has Founder, a grantee's included,
+// else the Analyst's (founder-threads.tsx AskSidebar decides). The sample
+// company's banner sits across the top.
 
 const OntologiesPanel = lazy(() =>
   import("./ontologies-panel").then((m) => ({ default: m.OntologiesPanel })),

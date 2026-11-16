@@ -27,7 +27,7 @@ type GetFoundryContextOutput struct {
 	Definition any `json:"definition,omitempty" jsonschema:"Untrusted. A Definition v1 version's schema: its entities, relationships, rules and constraints."`
 	// ExampleQuestions are the questions the version was drafted to answer, as the Analyst
 	// suggests them.
-	ExampleQuestions []string `json:"example_questions" jsonschema:"Untrusted. Up to 4 questions the version was drafted to answer, the ones Foundry's Analyst suggests: good first questions for helix_foundry_ask. Empty for a Definition v1 version, a draft without them, and a caller whose source grants cover only part of the load."`
+	ExampleQuestions []string `json:"example_questions" jsonschema:"Untrusted. Up to 4 questions the version was drafted to answer, the ones Foundry suggests: good first questions for helix_foundry_ask. Empty for a Definition v1 version, a draft without them, and a caller whose source grants cover only part of the load."`
 }
 
 func (s *Service) GetFoundryContext(

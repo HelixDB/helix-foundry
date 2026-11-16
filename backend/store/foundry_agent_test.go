@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -145,11 +146,11 @@ func TestFoundryAgentSendAndClaim(t *testing.T) {
 	require.Len(t, turns, 2)
 	assert.Equal(t, f.turnID(1), turns[0].ID, "oldest first")
 
-	threads, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, "", 10)
+	threads, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, nil, "", 10)
 	require.NoError(t, err)
 	assert.Empty(t, next)
 	require.Len(t, threads, 1)
-	none, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, "user-eve", "", 10)
+	none, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, "user-eve", nil, "", 10)
 	require.NoError(t, err)
 	assert.Empty(t, none, "a thread is private to its user")
 }
@@ -832,4 +833,122 @@ func TestFoundryAgentAnswersShape(t *testing.T) {
 	_, err := testDB.Exec(`INSERT INTO foundry_agent_turns (id, workspace_id, thread_id, user_id, runtime, kind, input, status, max_usd_micros, answers)
 VALUES (?, ?, ?, ?, 'api', 'message', 'hi', 'done', 1, '[]')`, f.turnID(2), f.workspaceID, f.threadID(2), agentUser)
 	assert.Error(t, err, "the check refuses a message's answers")
+}
+
+// A thread a restricted member made keeps the grant targets its turns ran
+// under: a list with keep leaves out every other, in SQL; a whole view's run makes it theirs no more, for good; a
+// grantee's run adds what it held; and a thread made with the workspace's
+// whole view stays one.
+func TestFoundryAgentThreadGrants(t *testing.T) {
+	ctx := context.Background()
+	keepAll := func(*model.FoundryAgentThread) bool { return true }
+	f := newAgentFixture(t, "granted")
+	stripe, general := access.ConnectorTarget("conn-stripe"), access.DocumentSetTarget("set-general")
+	invoices := access.TableTarget("conn-crm", "invoices")
+	require.NoError(t, f.send(1, 0))
+	token := "send-2"
+	granted := &model.FoundryAgentTurn{ID: f.turnID(2), WorkspaceID: f.workspaceID, ThreadID: f.threadID(2), UserID: agentUser,
+		Kind: model.FoundryAgentTurnMessage, Input: "message 2", ClientToken: &token, MaxUSDMicros: 500_000}
+	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, granted, &model.FoundryAgentThread{ID: granted.ThreadID, WorkspaceID: f.workspaceID,
+		UserID: agentUser, Title: "Invoices", Runtime: model.FoundryAgentRuntimeAPI,
+		Granted: &model.FoundryAgentThreadGrants{Targets: []access.Target{stripe, invoices}}}, f.limits(), nil))
+	token3 := "send-3"
+	empty := &model.FoundryAgentTurn{ID: f.turnID(3), WorkspaceID: f.workspaceID, ThreadID: f.threadID(3), UserID: agentUser,
+		Kind: model.FoundryAgentTurnMessage, Input: "message 3", ClientToken: &token3, MaxUSDMicros: 500_000}
+	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, empty, &model.FoundryAgentThread{ID: empty.ThreadID, WorkspaceID: f.workspaceID,
+		UserID: agentUser, Title: "Nothing", Runtime: model.FoundryAgentRuntimeAPI, Granted: &model.FoundryAgentThreadGrants{}}, f.limits(), nil))
+
+	whole, err := f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(1))
+	require.NoError(t, err)
+	assert.Nil(t, whole.Granted, "a thread made with the whole view")
+	got, err := f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(2))
+	require.NoError(t, err)
+	require.NotNil(t, got.Granted)
+	assert.Equal(t, []access.Target{stripe, invoices}, got.Granted.Targets)
+	none, err := f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(3))
+	require.NoError(t, err)
+	require.NotNil(t, none.Granted, "holding nothing is still a grantee's")
+	assert.Empty(t, none.Granted.Targets)
+
+	all, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, nil, "", 10)
+	require.NoError(t, err)
+	assert.Len(t, all, 3)
+	page, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, keepAll, "", 1)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	assert.Equal(t, f.threadID(3), page[0].ID, "newest first")
+	require.NotEmpty(t, next)
+	rest, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, keepAll, next, 1)
+	require.NoError(t, err)
+	require.Len(t, rest, 1)
+	assert.Equal(t, f.threadID(2), rest[0].ID)
+	assert.Empty(t, next, "the whole view's thread isn't a page of its own")
+
+	// A grantee's run adds what it holds, once.
+	require.NoError(t, f.db.RecordFoundryAgentThreadGrants(ctx, f.workspaceID, f.threadID(2),
+		&model.FoundryAgentThreadGrants{Targets: []access.Target{invoices, general}}))
+	got, err = f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(2))
+	require.NoError(t, err)
+	assert.Equal(t, []access.Target{stripe, invoices, general}, got.Granted.Targets)
+	// A whole view's run takes it away, and a grantee's run never gives it back.
+	require.NoError(t, f.db.RecordFoundryAgentThreadGrants(ctx, f.workspaceID, f.threadID(2), nil))
+	require.NoError(t, f.db.RecordFoundryAgentThreadGrants(ctx, f.workspaceID, f.threadID(2),
+		&model.FoundryAgentThreadGrants{Targets: []access.Target{stripe}}))
+	got, err = f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(2))
+	require.NoError(t, err)
+	assert.Nil(t, got.Granted)
+	require.NoError(t, f.db.RecordFoundryAgentThreadGrants(ctx, f.workspaceID, f.threadID(1),
+		&model.FoundryAgentThreadGrants{Targets: []access.Target{stripe}}))
+	whole, err = f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(1))
+	require.NoError(t, err)
+	assert.Nil(t, whole.Granted, "a whole view's thread stays one")
+	only, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, keepAll, "", 10)
+	require.NoError(t, err)
+	require.Len(t, only, 1)
+	assert.Equal(t, f.threadID(3), only[0].ID)
+
+	assert.ErrorIs(t, f.db.RecordFoundryAgentThreadGrants(ctx, id26("AWS-OTHER"), f.threadID(3), nil), store.ErrNotFound,
+		"another workspace's thread")
+}
+
+// A list with keep fills its page past the threads keep leaves out, and,
+// past foundryAgentThreadScans reads that keep nothing, ends the page early
+// with a token that goes on from the rows read.
+func TestFoundryAgentThreadsKeepFillsAPage(t *testing.T) {
+	ctx := context.Background()
+	f := newAgentFixture(t, "keep")
+	for n := 1; n <= 23; n++ {
+		token := fmt.Sprintf("keep-%d", n)
+		turn := &model.FoundryAgentTurn{ID: f.turnID(n), WorkspaceID: f.workspaceID, ThreadID: f.threadID(n), UserID: agentUser,
+			Kind: model.FoundryAgentTurnMessage, Input: "hi", ClientToken: &token, MaxUSDMicros: 500_000}
+		require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, turn, &model.FoundryAgentThread{ID: turn.ThreadID, WorkspaceID: f.workspaceID,
+			UserID: agentUser, Title: "hi", Runtime: model.FoundryAgentRuntimeAPI, Granted: &model.FoundryAgentThreadGrants{}}, f.limits(), nil))
+		time.Sleep(2 * time.Millisecond)
+	}
+	// Keep threads 1, 2 and 3: the twenty newest are read and left out first.
+	old := func(t *model.FoundryAgentThread) bool {
+		return t.ID == f.threadID(1) || t.ID == f.threadID(2) || t.ID == f.threadID(3)
+	}
+	page, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, old, "", 2)
+	require.NoError(t, err)
+	require.Len(t, page, 2)
+	assert.Equal(t, []string{f.threadID(3), f.threadID(2)}, []string{page[0].ID, page[1].ID})
+	require.NotEmpty(t, next)
+	rest, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, old, next, 2)
+	require.NoError(t, err)
+	require.Len(t, rest, 1)
+	assert.Equal(t, f.threadID(1), rest[0].ID)
+	assert.Empty(t, next)
+
+	// Keeping none, a page of 1 reads two rows at a time: ten reads (20 rows)
+	// end it with nothing and a token, which reads the last 3 and ends.
+	nothing := func(*model.FoundryAgentThread) bool { return false }
+	none, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, nothing, "", 1)
+	require.NoError(t, err)
+	assert.Empty(t, none)
+	require.NotEmpty(t, next, "past ten reads")
+	none, next, err = f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, nothing, next, 1)
+	require.NoError(t, err)
+	assert.Empty(t, none)
+	assert.Empty(t, next, "every row read")
 }

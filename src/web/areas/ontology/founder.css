@@ -15,12 +15,18 @@
   margin: 0 auto;
   padding: var(--hf-space-3) var(--ak-gutter) var(--hf-space-4);
 }
-.fd-chat > .ag-runtime {
+/* Above the log: the runtime's line, and a part reader's note. */
+.fd-chat > .ag-runtime,
+.fd-notice {
   width: 100%;
   max-width: calc(var(--ak-col) + 2 * var(--ak-gutter));
   margin: 0 auto;
   padding-right: var(--ak-gutter);
   padding-left: var(--ak-gutter);
+}
+.fd-notice {
+  flex: none;
+  padding-top: var(--hf-space-3);
 }
 .fd-composer {
   flex: none;

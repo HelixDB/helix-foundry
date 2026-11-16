@@ -203,7 +203,7 @@ test("every main page in both themes", async ({ page }, info) => {
   });
   await expect(
     page.getByText(
-      "That's the Analyst's answer, from the current load of Customer contracts.",
+      "That's the answer, from the current load of Customer contracts.",
     ),
   ).toBeVisible({ timeout: 20_000 });
   await settle(page);

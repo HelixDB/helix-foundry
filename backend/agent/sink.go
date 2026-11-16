@@ -42,6 +42,9 @@ type actionSink struct {
 	// and what autoRun runs.
 	approved []automation.Action
 	sessions integration.SessionHost
+	// reach is the turn's person's, set once their session opens: under
+	// ReachGrants it allows, records and runs nothing.
+	reach Reach
 }
 
 var _ integration.ActionSink = (*actionSink)(nil)
@@ -65,15 +68,19 @@ func askedForDashboard(turn *model.FoundryAgentTurn) bool {
 }
 
 // autoRuns reports whether a runs at once under autoRun: an operation it
-// lists, acting in the turn's own workspace, in a turn its rule lets.
+// lists, acting in the turn's own workspace, in a turn its rule lets, of a
+// person with the workspace's reach.
 func (s *actionSink) autoRuns(a integration.PreparedAction) bool {
 	asked, ok := autoRun[a.Operation]
-	return ok && a.Target == "workspace:"+s.turn.WorkspaceID && asked(s.turn)
+	return s.reach == ReachWorkspace && ok && a.Target == "workspace:"+s.turn.WorkspaceID && asked(s.turn)
 }
 
 // Allows is Founder's operations, which hold every one an automation's
-// owner may approve for a step (automation.Operations).
-func (s *actionSink) Allows(operation string) bool { return Operations[operation] }
+// owner may approve for a step (automation.Operations); none for a
+// restricted member's turn.
+func (s *actionSink) Allows(operation string) bool {
+	return s.reach == ReachWorkspace && Operations[operation]
+}
 
 // Record checks the action acts in the turn's workspace, names what it acts
 // on, and stores it with its card in one write. A payload the turn already
@@ -94,6 +101,9 @@ func (s *actionSink) Allows(operation string) bool { return Operations[operation
 func (s *actionSink) Record(ctx context.Context, a integration.PreparedAction) (integration.Recorded, error) {
 	if s.keys == nil {
 		return nil, status.Error(codes.Unavailable, "Founder can't keep actions on this host")
+	}
+	if s.reach != ReachWorkspace {
+		return nil, status.Error(codes.PermissionDenied, "Founder only reads and asks for this person: an owner or admin makes changes in Foundry")
 	}
 	approved := slices.ContainsFunc(s.approved, func(x automation.Action) bool {
 		return automation.Fits(x, s.turn.WorkspaceID, a.Operation, a.Target, a.Payload)

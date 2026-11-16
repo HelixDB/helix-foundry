@@ -188,15 +188,24 @@ func (s *Service) admit(ctx context.Context, g access.Grantee, rule access.Rule,
 
 // grantsOf are the targets the principals hold together.
 func (s *Service) grantsOf(ctx context.Context, workspaceID string, principals []access.Principal) (access.Grants, error) {
+	targets, err := s.targetsOf(ctx, workspaceID, principals)
+	if err != nil {
+		return access.Grants{}, err
+	}
+	return access.NewGrants(targets), nil
+}
+
+// targetsOf are the targets principals' grants give in workspaceID.
+func (s *Service) targetsOf(ctx context.Context, workspaceID string, principals []access.Principal) ([]access.Target, error) {
 	grants, err := s.deps.DB.ListFoundryAccessGrants(ctx, workspaceID, principals)
 	if err != nil {
-		return access.Grants{}, status.Errorf(codes.Internal, "read grants: %v", err)
+		return nil, status.Errorf(codes.Internal, "read grants: %v", err)
 	}
 	targets := make([]access.Target, len(grants))
 	for i, gr := range grants {
 		targets[i] = gr.Target
 	}
-	return access.NewGrants(targets), nil
+	return targets, nil
 }
 
 // granteeLoads are the current loads g's grants hold anything of, by ontology:

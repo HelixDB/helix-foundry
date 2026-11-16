@@ -655,18 +655,18 @@ export function testFailureText(c: FoundryAiConfig): string {
 /**
  * Why Founder can't run on a setting whose tool check failed, for its
  * owner: the check runs the Questions model once the test passed, and
- * never fails the setting, which drafts, loads and the Analyst still use.
+ * never fails the setting, which drafts, loads and questions still use.
  * Undefined while it can (passed, or not checked).
  *
  * @example
  * assistantCheckText({ id: "c", label: "OpenAI", models: { ask: { name: "gpt-x" } }, assistantCheck: "FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL" });
- * // "Founder can’t run on gpt-x: it answered Founder’s test without calling a tool. Drafts, loads and the Analyst still run on it. Choose a model for questions that calls tools to use Founder."
+ * // "Founder can’t run on gpt-x: it answered Founder’s test without calling a tool. Drafts, loads and questions still run on it. Choose a model for questions that calls tools to use Founder."
  * assistantCheckText({ id: "c", assistantCheck: "FOUNDRY_AI_ASSISTANT_CHECK_PASSED" }); // undefined
  */
 export function assistantCheckText(c: FoundryAiConfig): string | undefined {
   const model = c.models?.ask?.name || "the Questions model",
     label = c.label || "the provider";
-  const still = "Drafts, loads and the Analyst still run on it.";
+  const still = "Drafts, loads and questions still run on it.";
   switch (c.assistantCheck) {
     case "FOUNDRY_AI_ASSISTANT_CHECK_AUTH":
       return `Founder can’t run on this setting: ${label} refused the key on Founder’s calls. ${still} Check the key to use Founder.`;

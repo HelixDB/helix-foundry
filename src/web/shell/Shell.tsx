@@ -160,9 +160,9 @@ function PanelAside({
 // (⌘J, the sidebar's button or the palette): a column right of the page on
 // a wide screen, kept open per browser, else a drawer (below 1100px, or
 // 1400px beside a section's panel, so the page keeps its room). Closing the
-// column gives the focus back to what opened it. A grantee has no
-// Founder (the WFE denies it every route). Founder's own page (/ask, and /,
-// which opens it) has no dock, nor a way to open one: the page is Founder.
+// column gives the focus back to what opened it. A grantee's Founder only
+// reads and asks about what its grants cover. Founder's own page (/ask, and
+// /, which opens it) has no dock, nor a way to open one: the page is Founder.
 // While the workspace is onboarding, the sidebar holds only the workspace
 // and the account, and there is no palette; a grantee has no palette either
 // (what it lists, a grantee can't read).
@@ -192,7 +192,7 @@ export function Shell({
   const [panelHidden, setPanelHidden] = useState(false),
     panelOpen = !panelHidden;
   useEffect(() => setPanelHidden(false), [section]);
-  const assistant = FOUNDER && !grantee && section !== "ask",
+  const assistant = FOUNDER && section !== "ask",
     dockDrawer = useMedia(
       panel && panelOpen ? "(max-width: 1400px)" : "(max-width: 1100px)",
     ),

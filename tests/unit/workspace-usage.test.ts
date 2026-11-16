@@ -62,7 +62,7 @@ describe("usageView", () => {
         {
           task: "FOUNDRY_USAGE_TASK_QUESTIONS",
           label: "Questions",
-          hint: "Answering questions in the Analyst",
+          hint: "Answering questions about the data",
           within: false,
           spent: "$4.80",
           cap: { of: "of $15.00", fill: 0.32, level: "room" },

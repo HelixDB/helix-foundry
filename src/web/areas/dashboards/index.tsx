@@ -14,6 +14,7 @@ import {
 } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LayoutDashboard, Plus } from "lucide-react";
+import { FOUNDER } from "../../../shared/deployment";
 import type { FoundryDashboard } from "../../../shared/wfe";
 import {
   Button,
@@ -118,7 +119,9 @@ function DashboardsPage() {
           title="No dashboards yet"
           text={
             canCreate
-              ? "Make one here, pin a chart or table from an Analyst answer, or ask Founder to build one for some data."
+              ? FOUNDER
+                ? "Make one here, pin a chart or table from an answer, or ask Founder to build one for some data."
+                : "Make one here, or pin a chart or table from an Analyst answer."
               : "An owner or admin pins dashboards for the workspace here."
           }
         />

@@ -160,6 +160,19 @@ type Session struct {
 // and its Identity is bound to that workspace: Authorize refuses (not found)
 // every request naming another, and Allows allows none, though the user may
 // belong to it, so a turn reads and acts in its own workspace only.
+//
+// A restricted member (source grants) talks to Founder too, read-only, which
+// holds only while the host:
+//  1. forwards a member calling Founder's thread routes as a user, never as
+//     ports.SourceGrantee: Foundry's access check narrows a restricted member
+//     itself, and Founder refuses a caller sent on as a grantee;
+//  2. opens the Session for any member of the workspace, its Service's
+//     Foundry calling as that user, so the access check narrows every tool
+//     call and GetMyFoundryAccess answers Grantee for a restricted member,
+//     which the worker reads as the turn's Reach (agent.Reach);
+//  3. builds the Identity as the member's MCP identity: IsGrantee and
+//     AsGrantee set, and FoundryGrants while their grants give them
+//     something, so the read tools register for a member without query read.
 type SessionHost interface {
 	Session(ctx context.Context, actor ports.Actor, confirm ConfirmMode) (Session, error)
 }

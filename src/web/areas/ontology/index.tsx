@@ -11,7 +11,6 @@ import {
 import { FOUNDER } from "../../../shared/deployment";
 import { paths } from "../../paths";
 import { NotFound } from "../../shell/ErrorBoundary";
-import { useWorkspace } from "../../ui";
 import { AskPage } from "./ask";
 import { GeneratePage } from "./generate";
 import { GenerationPage } from "./generations";
@@ -171,18 +170,16 @@ export function ExploreRoutes() {
 
 // /ask/*: Ask's route table, a section of its own: questions about an
 // ontology's load, inside its scope. /ask opens an ontology's, keeping the
-// link's query (a Founder thread's `?chat=`). Where the build has Founder
-// and the user isn't a grantee, it is Founder's page; else the Analyst's.
+// link's query (a Founder thread's `?chat=`). Where the build has Founder,
+// it is Founder's page (a grantee's read-only); else the Analyst's.
 export function AskRoutes() {
-  const { grantee } = useWorkspace(),
-    founder = FOUNDER && !grantee;
   return (
     <Routes>
       <Route
         index
         element={
           <OpenOntology
-            title={founder ? "Founder" : "Analyst"}
+            title={FOUNDER ? "Founder" : "Analyst"}
             to={paths.ask}
             reads
             keepQuery
@@ -190,7 +187,7 @@ export function AskRoutes() {
         }
       />
       <Route path=":ontologyId" element={<OntologyScope explores />}>
-        <Route index element={founder ? <FounderPage /> : <AskPage />} />
+        <Route index element={FOUNDER ? <FounderPage /> : <AskPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="*" element={<NotFound />} />

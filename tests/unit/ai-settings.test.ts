@@ -1205,17 +1205,17 @@ describe("Founder's tool check", () => {
     expect(
       AI.assistantCheckText(config("FOUNDRY_AI_ASSISTANT_CHECK_AUTH")),
     ).toBe(
-      "Founder can’t run on this setting: OpenAI refused the key on Founder’s calls. Drafts, loads and the Analyst still run on it. Check the key to use Founder.",
+      "Founder can’t run on this setting: OpenAI refused the key on Founder’s calls. Drafts, loads and questions still run on it. Check the key to use Founder.",
     );
     expect(
       AI.assistantCheckText(config("FOUNDRY_AI_ASSISTANT_CHECK_REFUSED")),
     ).toBe(
-      "Founder can’t run on gpt-x: OpenAI refused Founder’s calls to it. Drafts, loads and the Analyst still run on it. Choose another model for questions to use Founder.",
+      "Founder can’t run on gpt-x: OpenAI refused Founder’s calls to it. Drafts, loads and questions still run on it. Choose another model for questions to use Founder.",
     );
     expect(
       AI.assistantCheckText(config("FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL")),
     ).toBe(
-      "Founder can’t run on gpt-x: it answered Founder’s test without calling a tool. Drafts, loads and the Analyst still run on it. Choose a model for questions that calls tools to use Founder.",
+      "Founder can’t run on gpt-x: it answered Founder’s test without calling a tool. Drafts, loads and questions still run on it. Choose a model for questions that calls tools to use Founder.",
     );
     expect(
       AI.assistantCheckText({
@@ -1223,7 +1223,7 @@ describe("Founder's tool check", () => {
         assistantCheck: "FOUNDRY_AI_ASSISTANT_CHECK_REFUSED",
       }),
     ).toBe(
-      "Founder can’t run on the Questions model: the provider refused Founder’s calls to it. Drafts, loads and the Analyst still run on it. Choose another model for questions to use Founder.",
+      "Founder can’t run on the Questions model: the provider refused Founder’s calls to it. Drafts, loads and questions still run on it. Choose another model for questions to use Founder.",
     );
   });
 

@@ -303,7 +303,7 @@ function Entity({
   identity: EntityIdentity;
   crumbs: { label: string; to: string }[];
 }) {
-  const { id, grantee } = useWorkspace(),
+  const { id } = useWorkspace(),
     { id: o, ontology } = useOntology();
   const { access, reader } = useGraphReader(),
     shared = access === "grants";
@@ -561,21 +561,20 @@ function Entity({
     );
   };
   const name = e.name || ("key" in identity ? identity.key : identity.name);
-  // Where Founder is asked, a new chat about it on its page; else the
-  // Analyst's, in a drawer.
-  const askAbout =
-    FOUNDER && !grantee ? (
-      <ButtonLink
-        icon={MessageSquarePlus}
-        to={link(paths.ask(o, { new: true, about: name }))}
-      >
-        Ask about this
-      </ButtonLink>
-    ) : (
-      <Button icon={MessageSquarePlus} onClick={() => setAsking(true)}>
-        Ask about this
-      </Button>
-    );
+  // Where Founder is asked (a grantee's too, read-only), a new chat about it
+  // on its page; else the Analyst's, in a drawer.
+  const askAbout = FOUNDER ? (
+    <ButtonLink
+      icon={MessageSquarePlus}
+      to={link(paths.ask(o, { new: true, about: name }))}
+    >
+      Ask about this
+    </ButtonLink>
+  ) : (
+    <Button icon={MessageSquarePlus} onClick={() => setAsking(true)}>
+      Ask about this
+    </Button>
+  );
   // Entities of the rules' answers, named as this page names them.
   const known = new Map(
     [
