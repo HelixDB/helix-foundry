@@ -41,7 +41,7 @@ import { AskDrawer } from "../ontology/ask";
 import { ENRICHMENT_SOURCE } from "../ontology/enrichment-fields";
 import { profilesDate } from "../ontology/model";
 import { ontologyQueries } from "../ontology/queries";
-import { OntologyPicker, useOntology } from "../ontology/scope";
+import { useOntology } from "../ontology/scope";
 import { useSources } from "../ontology/sources";
 import { DerivedFacts, Why, type RefView } from "./derived";
 import { refKey } from "./rule-breaks";
@@ -283,11 +283,7 @@ export function EntityPage({ entityId }: { entityId: string }) {
   if (!identity)
     return (
       <Page>
-        <PageHeader
-          breadcrumbs={crumbs}
-          title="Entity unavailable"
-          actions={<OntologyPicker ontologyId={o} to={paths.explore} />}
-        />
+        <PageHeader breadcrumbs={crumbs} title="Entity unavailable" />
         <EmptyState
           icon={Waypoints}
           title="That isn’t an entity’s address"
@@ -379,32 +375,18 @@ function Entity({
       ? "overview"
       : asked;
   const [asking, setAsking] = useState(false);
-  // An entity is the ontology's own: another ontology opens its Explorer.
-  const pickers = (
-    <>
-      <OntologyPicker ontologyId={o} to={paths.explore} />
-      <LoadPicker selection={selection} />
-    </>
-  );
+  const pickers = <LoadPicker selection={selection} />;
   if (access === "none")
     return (
       <Page>
-        <PageHeader
-          breadcrumbs={crumbs}
-          title="Entity"
-          actions={<OntologyPicker ontologyId={o} to={paths.explore} />}
-        />
+        <PageHeader breadcrumbs={crumbs} title="Entity" />
         <NotShared />
       </Page>
     );
   if (!tenant)
     return (
       <Page>
-        <PageHeader
-          breadcrumbs={crumbs}
-          title="Entity"
-          actions={<OntologyPicker ontologyId={o} to={paths.explore} />}
-        />
+        <PageHeader breadcrumbs={crumbs} title="Entity" />
         <EmptyState
           icon={Waypoints}
           title="You can’t read the ontology’s database"

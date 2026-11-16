@@ -103,6 +103,10 @@ describe("inAppPath", () => {
     ["/ontology/ont_1/loads/l_2", "/ontology/ont_1/loads/l_2"],
     ["/ontology/ont_1/versions/v_1", "/ontology/ont_1/versions/v_1"],
     ["/ontology/ont_1/generations/g_1", "/ontology/ont_1/generations/g_1"],
+    [
+      "/ontology/ont_1/connections?status=review",
+      "/ontology/ont_1/connections",
+    ],
     ["/ontology/ont_1/documents", "/ontology/ont_1/documents"],
     [
       "/ontology/ont_1/documents/d_1?tab=facts",

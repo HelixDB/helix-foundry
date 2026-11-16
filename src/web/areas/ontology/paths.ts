@@ -95,12 +95,14 @@ export const ontologyPaths = {
     "/rule-breaks" +
     (constraint ? "?constraint=" + enc(constraint) : "") +
     (constraint && key ? "&key=" + enc(key) : ""),
-  // What the ontology reads of the workspace's documents, those its current
-  // load holds as `status` says, and one; `tab` is one of its page's tabs,
+  // What the ontology reads: the connections its current version maps, the
+  // document sets it reads and their documents, filtered to those its
+  // current load holds as `status` says; then one document (its page sits
+  // under Connections, at /documents/{id}): `tab` is one of its page's tabs,
   // and `span` a span of one of its sections (UTF-8 byte offsets into the
   // section's text) the page marks and opens on.
-  documents: (ontologyId: string, status?: OntologyDocumentStatus) =>
-    at(ontologyId) + "/documents" + (status ? "?status=" + enc(status) : ""),
+  ontologyConnections: (ontologyId: string, status?: OntologyDocumentStatus) =>
+    at(ontologyId) + "/connections" + (status ? "?status=" + enc(status) : ""),
   document: (
     ontologyId: string,
     id: string,

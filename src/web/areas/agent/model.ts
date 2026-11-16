@@ -128,7 +128,7 @@ const SEG = "(?!(?:new|sample)(?:/|$))[A-Za-z0-9_-]{1,128}";
 const LINKABLE = new RegExp(
   "^(?:" +
     [
-      `/ontology(?:/${SEG}(?:/documents(?:/${SEG})?|/(?:loads|versions|generations)/${SEG})?)?`,
+      `/ontology(?:/${SEG}(?:/connections|/documents(?:/${SEG})?|/(?:loads|versions|generations)/${SEG})?)?`,
       `/explore(?:/${SEG}(?:/records|/entities/${SEG})?)?`,
       `/ask(?:/${SEG})?`,
       `/dashboards(?:/${SEG})?`,

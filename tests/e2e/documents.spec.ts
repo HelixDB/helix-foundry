@@ -107,8 +107,8 @@ test("uploads documents in Data, and lists what an ontology reads read only", as
   ]);
 
   // Documents is no section of the sidebar; the ontology's overview (and its
-  // pages in the Ontologies panel) links to what it reads, read only:
-  // version 3 reads General.
+  // Connections in the Ontologies panel) links to what it reads, read only:
+  // version 3 reads the Stripe connection's customers and General.
   await makeContractsCurrent(page);
   await page.goto(O);
   await expect(
@@ -117,10 +117,24 @@ test("uploads documents in Data, and lists what an ontology reads read only", as
       .getByRole("link", { name: "Documents" }),
   ).toHaveCount(0);
   await page.getByRole("link", { name: "2 documents" }).click();
-  await expect(page).toHaveURL(`${O}/documents`);
+  await expect(page).toHaveURL(`${O}/connections`);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Documents" }),
+    page.getByRole("heading", { level: 1, name: "Connections" }),
   ).toBeVisible();
+  const connections = page.getByRole("grid", { name: "Connections" });
+  await expect(connections.getByRole("row")).toHaveCount(2);
+  const stripe = connections.getByRole("row").nth(1);
+  await expect(stripe).toContainText("Stripe");
+  await expect(stripe).toContainText("Synced");
+  await expect(stripe).toContainText("customers");
+  await expect(stripe.getByRole("link", { name: /Stripe/ })).toHaveAttribute(
+    "href",
+    "/data/connections/conn_acme_stripe",
+  );
+  const read = page.getByRole("list", { name: "Document sets" });
+  await expect(read.getByRole("listitem")).toHaveText([
+    /^General2 documents · Its routes read what they hold\.Reads$/,
+  ]);
   await expect(
     page.getByText("Documents are read when you load the ontology"),
   ).toBeVisible();
@@ -143,9 +157,11 @@ test("uploads documents in Data, and lists what an ontology reads read only", as
   ).toHaveCount(2);
   await page.getByRole("searchbox", { name: "Search documents" }).fill("");
   await choose(page.getByLabel("Status"), "Couldn’t be read");
-  await expect(page).toHaveURL(/\/documents\?status=failed$/);
+  await expect(page).toHaveURL(/\/connections\?status=failed$/);
   await expect(page.getByText("No documents match.")).toBeVisible();
+  // The list's old address opens Connections with its filter.
   await page.goto(`${O}/documents?status=waiting`);
+  await expect(page).toHaveURL(`${O}/connections?status=waiting`);
   await expect(page.getByLabel("Status")).toHaveText("Waiting");
   await expect(
     page.getByRole("grid", { name: "Documents" }).getByRole("row"),
@@ -250,10 +266,10 @@ test("loads the current draft and reads the contract back from the database", as
   // what needs review.
   await expect(page.getByRole("link", { name: "1 of 1" })).toHaveAttribute(
     "href",
-    `${O}/documents`,
+    `${O}/connections`,
   );
   await done.getByRole("link", { name: "Review documents" }).click();
-  await expect(page).toHaveURL(/\/documents\?status=review$/);
+  await expect(page).toHaveURL(/\/connections\?status=review$/);
   await expect(page.getByLabel("Status")).toHaveText("Needs review");
   await expect(row(page, "contract.md")).toContainText("Needs review · 1");
   // The grid counts the values each document wrote beside its facts.
@@ -380,7 +396,7 @@ test("shows an MDX document as written, with what a load read marked inside its 
   await expect(
     page.getByRole("status").filter({ hasText: "Loaded" }).first(),
   ).toContainText("1 document written into contracts", { timeout: 20_000 });
-  await page.goto(`${O}/documents`);
+  await page.goto(`${O}/connections`);
   await row(page, "renewal.mdx")
     .getByRole("link", { name: "renewal.mdx" })
     .click();
@@ -410,7 +426,7 @@ test("says nothing was read from a document a load couldn't read", async ({
   await makeContractsCurrent(page);
   await startContractsLoad(page);
   await expect(page).toHaveURL(/\/loads\/load_/);
-  await page.goto(`${O}/documents`);
+  await page.goto(`${O}/connections`);
   await row(page, "notes.md").getByRole("link", { name: "notes.md" }).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "It couldn’t be read" }),
@@ -568,7 +584,13 @@ test("shows a live load on the overview and stops at the spending cap", async ({
 
 test("shows a plain member the documents without uploads", async ({ page }) => {
   await signIn(page, "alan@example.com");
-  await page.goto(`${O}/documents`);
+  await page.goto(`${O}/connections`);
+  // Version 1, current, reads the Stripe connection; nothing to change here.
+  await expect(
+    page.getByRole("grid", { name: "Connections" }).getByRole("row").nth(1),
+  ).toContainText("Stripe");
+  await expect(page.getByRole("link", { name: "Generate" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Add data" })).toHaveCount(0);
   // The page's own word, not the Ontologies panel's.
   await expect(
     page.getByText("No documents yet", { exact: true }),

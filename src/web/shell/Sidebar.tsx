@@ -19,6 +19,7 @@ import {
   activeSection,
   childActive,
   granteeNav,
+  navSection,
   onboardingNav,
   primaryNav,
   sectionSidebars,
@@ -104,7 +105,7 @@ function NavLinks({
   onNavigate?: () => void;
 }) {
   const { pathname } = useLocation(),
-    section = activeSection(pathname);
+    section = navSection(activeSection(pathname));
   return (
     <ul className="hf-nav-list" aria-label={label}>
       {items.map((n) => {

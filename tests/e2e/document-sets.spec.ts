@@ -764,7 +764,7 @@ test("opens a property's quote on its span; reads only its version's sets", asyn
   ).toBeVisible({ timeout: 20_000 });
 
   // The ontology's documents are its sets': not Other's.
-  await page.goto(`${O}/documents`);
+  await page.goto(`${O}/connections`);
   await expect(row(page, "contract.md")).toContainText("Needs review · 1");
   await expect(row(page, "notes.md")).toHaveCount(0);
 
@@ -884,7 +884,7 @@ test("stores a document of a set its version reads but no route names", async ({
   await expect(details.getByText("0 of 1", { exact: true })).toBeVisible();
   await expect(details).toContainText("Not read by this version");
   await unread.getByRole("link", { name: "See what wasn’t read" }).click();
-  await expect(page).toHaveURL(/\/documents\?.*status=out_of_scope/);
+  await expect(page).toHaveURL(/\/connections\?.*status=out_of_scope/);
   await expect(row(page, "notes.md")).toContainText("Not read by its version");
   await row(page, "notes.md").getByRole("link", { name: "notes.md" }).click();
   await expect(

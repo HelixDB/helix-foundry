@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, FolderOpen, LoaderCircle } from "lucide-react";
+import { FileText, LoaderCircle } from "lucide-react";
 import type {
   FoundryDocument,
   OntologyDocumentStatus,
@@ -15,8 +15,7 @@ import {
   EmptyState,
   FilterBar,
   FilterSelect,
-  Page,
-  PageHeader,
+  Section,
   SourceLogo,
   StatusBadge,
   formatDate,
@@ -25,16 +24,17 @@ import {
 } from "../../kit";
 import { Callout } from "../ontology/parts";
 import { POLL_MS, ontologyQueries } from "../ontology/queries";
-import { ontologyName, useOntology } from "../ontology/scope";
+import { useOntology } from "../ontology/scope";
 import { documentQueries, documentSetQueries } from "./documents-api";
 import { documentBadge, formatBytes, liveRead } from "./model";
 
-// /ontology/:ontologyId/documents (?status= filters it): what the ontology
-// reads of the workspace's documents, read only: its current load's
-// documents and the uploaded ones in the sets its reading version reads,
-// each with what the current load made of it. Documents are uploaded,
-// moved and deleted in Data. A load reads them into the ontology's database
-// by their set's routes; until the first one they wait.
+// The Documents section of an ontology's Connections page
+// (/ontology/:ontologyId/connections, ?status= filters it): what the
+// ontology reads of the workspace's documents, read only: its current
+// load's documents and the uploaded ones in the sets its reading version
+// reads, each with what the current load made of it. Documents are
+// uploaded, moved and deleted in Data. A load reads them into the
+// ontology's database by their set's routes; until the first one they wait.
 
 const filters: { value: "" | OntologyDocumentStatus; label: string }[] = [
   { value: "", label: "All" },
@@ -46,7 +46,7 @@ const filters: { value: "" | OntologyDocumentStatus; label: string }[] = [
   { value: "out_of_scope", label: "Not read by its version" },
 ];
 
-export function DocumentsPage() {
+export function OntologyDocuments() {
   const { id } = useWorkspace(),
     { id: o, ontology } = useOntology(),
     navigate = useNavigate(),
@@ -102,22 +102,8 @@ export function DocumentsPage() {
       (d.name || "").toLowerCase().includes(search.trim().toLowerCase()),
     )
     .filter((d) => !inSet || d.setId === inSet);
-  const openInData = (
-    <ButtonLink icon={FolderOpen} to={paths.data()}>
-      Open in Connectors
-    </ButtonLink>
-  );
   return (
-    <Page>
-      <PageHeader
-        breadcrumbs={[
-          { label: "Ontologies", to: paths.ontologies() },
-          { label: ontologyName(ontology), to: paths.ontology(o) },
-        ]}
-        title="Documents"
-        subtitle="Documents from the sets this ontology’s version reads and its current load. Upload and organise documents in Connectors."
-        actions={openInData}
-      />
+    <Section title="Documents" id="on-documents">
       <div className="on-stack">
         {reading ? (
           <Callout
@@ -303,6 +289,6 @@ export function DocumentsPage() {
           </>
         )}
       </div>
-    </Page>
+    </Section>
   );
 }

@@ -12,10 +12,10 @@ import {
 } from "./support/mock";
 
 // The workspace picker, the switcher and the shell's navigation: Ask, the
-// main page, and the Explorer as sections of their own, on the ontology
-// last opened, and their Ontology pickers; and the labelled sidebar on
-// every page, Ask's threads under its sections and a section's panel beside
-// it.
+// main page, and the Explorer (an ontology's page with its own panel) on
+// the ontology last opened, and Ask's Ontology picker; and the labelled
+// sidebar on every page, Ask's threads under its sections and a section's
+// panel beside it.
 
 const CONTRACTS = "ont_acme_contracts";
 
@@ -171,7 +171,7 @@ test("navigates the shell", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("opens the Explorer and Ask as sections of their own, on the ontology last opened", async ({
+test("opens the Explorer and Ask on the ontology last opened", async ({
   page,
 }) => {
   await signIn(page);
@@ -199,34 +199,26 @@ test("opens the Explorer and Ask as sections of their own, on the ontology last 
       "Dashboards",
       "Automations",
       "Ontologies",
-      "Explorer",
       "Connectors",
     ]);
   // None opened yet: the list's first, now Orders.
   await expect(page).toHaveURL(new RegExp(`/ask/${orders}$`));
 
-  // The Explorer opens the ontology Ask opened.
-  await nav.getByRole("link", { name: "Explorer" }).click();
+  // /explore opens the ontology Ask opened, with no picker of another: an
+  // ontology's Explorer link opens its own. Its pages are Ontologies' in the
+  // sidebar, beside the Explorer's own panel.
+  await page.goto("/explore");
   await expect(page).toHaveURL(new RegExp(`/explore/${orders}$`));
   await expect(
     page.getByRole("heading", { level: 1, name: "Explorer" }),
   ).toBeVisible();
-  await expect(picker).toHaveText("Orders");
-  await picker.click();
-  await expect(page.getByRole("listbox").getByRole("option")).toHaveText([
-    "Orders",
-    "Customer contracts",
-    "Sales graph",
-    "Renewals",
-  ]);
-  await page.keyboard.press("Escape");
-  // Explorer is the section shown: Ontologies isn't, nor its pages.
-  await expect(nav.getByRole("link", { name: "Explorer" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  await expect(ontologies).not.toHaveClass(/is-active/);
+  await expect(picker).toHaveCount(0);
+  await expect(ontologies).toHaveAttribute("aria-current", "page");
   await expect(nav.locator(".hf-subnav-link")).toHaveCount(0);
+  await expect(
+    page.getByRole("complementary", { name: "Ontologies" }),
+  ).toHaveCount(0);
+  await expect(page.locator(".hf-section-panel")).toHaveCount(1);
 
   // An ontology opened is the one they open next, Ontologies too.
   await ontologies.click();
@@ -267,34 +259,26 @@ test("opens the Explorer and Ask as sections of their own, on the ontology last 
   await expect(page).toHaveURL(new RegExp(`/ask/${orders}$`));
 });
 
-test("switches the ontology from the Explorer's and Ask's headers", async ({
+test("switches the ontology from Ask's header, and offers none in the Explorer's", async ({
   page,
 }) => {
   await signIn(page);
   const orders = await addOrders(page);
   const picker = page.getByRole("combobox", { name: "Ontology" });
-  // The graph opens the other's graph, without this one's load or node.
-  await page.goto(`/explore/${CONTRACTS}?load=load_gone&node=3`);
-  await choose(picker, "Orders");
-  await expect(page).toHaveURL(new RegExp(`/explore/${orders}$`));
-  // Orders has nothing loaded and no current version: it says to finish
-  // setting it up.
-  await expect(
-    page.getByRole("main").getByRole("link", { name: "Finish setting up" }),
-  ).toBeVisible();
-  // Records open the other's records, without this one's view.
-  await page.goto(`/explore/${CONTRACTS}/records?load=load_gone&type=Customer`);
-  await choose(picker, "Orders");
-  await expect(page).toHaveURL(new RegExp(`/explore/${orders}/records$`));
-  await expect(
-    page.getByRole("main").getByRole("link", { name: "Finish setting up" }),
-  ).toBeVisible();
-  // An entity is its ontology's own: the other's graph opens.
-  await page.goto(
+  // The graph, Records and an entity's page are the ontology's own: no
+  // picker. Nothing is loaded yet, so each offers to load data.
+  const loadData = page.getByRole("main").getByRole("link", {
+    name: "Load data",
+  });
+  for (const path of [
+    `/explore/${CONTRACTS}`,
+    `/explore/${CONTRACTS}/records`,
     `/explore/${CONTRACTS}/entities/${Buffer.from("Customer\0k:cus_GLOBEX01").toString("base64url")}?tab=facts`,
-  );
-  await choose(picker, "Orders");
-  await expect(page).toHaveURL(new RegExp(`/explore/${orders}$`));
+  ]) {
+    await page.goto(path);
+    await expect(loadData).toBeVisible();
+    await expect(picker).toHaveCount(0);
+  }
   // Ask opens the other's new thread.
   await page.goto(`/ask/${CONTRACTS}?new=1`);
   await expect(picker).toHaveText("Customer contracts");
@@ -344,7 +328,7 @@ test("offers a new workspace only its switcher and account until it has an ontol
 
   // Its first ontology brings the sections, search and Settings.
   await createFirstOntology(page);
-  await expect(nav.getByRole("link", { name: "Explorer" })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "Connectors" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
   await search.click();
   await expect(palette).toBeVisible();
@@ -365,7 +349,6 @@ test("shows the labelled sidebar on every page, Ask's threads under its sections
     "Dashboards",
     "Automations",
     "Ontologies",
-    "Explorer",
     "Connectors",
   ];
   await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}$`));

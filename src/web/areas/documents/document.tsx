@@ -706,7 +706,7 @@ export function DocumentPage({ documentId }: { documentId: string }) {
   const crumbs = [
     { label: "Ontologies", to: paths.ontologies() },
     { label: ontologyName(ontology), to: paths.ontology(o) },
-    { label: "Documents", to: paths.documents(o) },
+    { label: "Connections", to: paths.ontologyConnections(o) },
   ];
   if (doc.isPending)
     return (
@@ -728,7 +728,9 @@ export function DocumentPage({ documentId }: { documentId: string }) {
           }
           text={doc.error?.message}
           action={
-            <ButtonLink to={paths.documents(o)}>All documents</ButtonLink>
+            <ButtonLink to={paths.ontologyConnections(o)}>
+              Connections
+            </ButtonLink>
           }
         />
       </Page>

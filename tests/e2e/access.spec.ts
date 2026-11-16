@@ -157,7 +157,6 @@ test("a restricted member sees only what their sources cover", async ({
     "Analyst",
     "Dashboards",
     "Ontologies",
-    "Explorer",
   ]);
   await expect(as.getByRole("link", { name: "Settings" })).toHaveCount(0);
   await expect(as.getByRole("button", { name: "Search" })).toHaveCount(0);
@@ -213,9 +212,12 @@ test("a restricted member sees only what their sources cover", async ({
     "Globex Corporation",
   );
 
-  // Records is her Explorer: the graph opens it, with no Graph view, and it
-  // pages, searches and opens a record.
-  await nav.getByRole("link", { name: "Explorer" }).click();
+  // Records is her Explorer: the ontology's Explorer link opens it, with no
+  // Graph view, and it pages, searches and opens a record.
+  await as
+    .getByRole("complementary", { name: "Ontologies" })
+    .getByRole("link", { name: "Explorer" })
+    .click();
   await expect(as).toHaveURL(/\/explore\/ont_acme_contracts\/records$/);
   await expect(as.getByRole("radio", { name: "Graph" })).toHaveCount(0);
   const types = as.getByRole("list", { name: "Types" });
@@ -253,7 +255,11 @@ test("a restricted member sees only what their sources cover", async ({
   await expect(listed).toContainText("Customer contracts");
   await expect(listed).not.toContainText("Sales graph");
   await expect(listed).not.toContainText("Renewals");
-  await expect(panel.getByRole("link", { name: "Documents" })).toHaveCount(0);
+  await expect(panel.getByRole("link", { name: "Connections" })).toHaveCount(0);
+  await expect(panel.getByRole("link", { name: "Explorer" })).toHaveAttribute(
+    "href",
+    `/explore/ont_acme_contracts/records`,
+  );
   await expect(
     as.getByRole("heading", { level: 1, name: "Customer contracts" }),
   ).toBeVisible();
@@ -326,7 +332,7 @@ test("a member who can't query reads only what their sources cover", async ({
   // ontology he reads, and offers no other.
   await expect(
     as.getByRole("list", { name: "Workspace" }).getByRole("link"),
-  ).toHaveText(["Analyst", "Dashboards", "Ontologies", "Explorer"]);
+  ).toHaveText(["Analyst", "Dashboards", "Ontologies"]);
   await as.goto("/ask");
   await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
   await as.getByRole("combobox", { name: "Ontology" }).click();
@@ -966,7 +972,7 @@ test("giving a member sources restricts them, and taking them away widens nothin
   await signIn(as, "alan@example.com");
   await expect(
     as.getByRole("list", { name: "Workspace" }).getByRole("link"),
-  ).toHaveText(["Analyst", "Dashboards", "Ontologies", "Explorer"]);
+  ).toHaveText(["Analyst", "Dashboards", "Ontologies"]);
 
   // His last source taken away, he reads nothing, not everything.
   const again = await openSources(page, "people", "Alan Turing");
@@ -994,7 +1000,6 @@ test("giving a member sources restricts them, and taking them away widens nothin
     "Dashboards",
     "Automations",
     "Ontologies",
-    "Explorer",
     "Connectors",
   ]);
 });

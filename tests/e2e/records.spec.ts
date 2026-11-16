@@ -42,7 +42,6 @@ async function headerBoxes(page: Page) {
     .evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
   return {
     title: await box(page.getByRole("heading", { level: 1, name: "Explorer" })),
-    ontology: await box(pickerOf("Ontology")),
     picker: await box(picker),
     select: await box(picker.getByRole("combobox")),
     switch: await box(page.getByRole("radiogroup", { name: "View" })),
@@ -72,9 +71,10 @@ test("pages, searches, sorts and filters records, and opens one in the graph", a
   ).toContainText("Nothing loaded yet");
   await uploadAndLoadContract(page);
 
-  // From the Explorer's graph, the switch opens Records.
+  // From the Explorer's graph (the ontology's Explorer link), the switch
+  // opens Records.
   await page
-    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("complementary", { name: "Ontologies" })
     .getByRole("link", { name: "Explorer" })
     .click();
   const graph = await headerBoxes(page);
@@ -352,7 +352,7 @@ test("says to finish setting up with no current version", async ({ page }) => {
   await finishOntology(page);
   await createdOntology(page);
   await page
-    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("complementary", { name: "Ontologies" })
     .getByRole("link", { name: "Explorer" })
     .click();
   await page.getByRole("radio", { name: "Records" }).click();

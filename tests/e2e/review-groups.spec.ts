@@ -22,7 +22,7 @@ async function reviewed(page: Page, text: string) {
   await makeContractsCurrent(page);
   await uploadInData(page, [file("variant.md", text)]);
   await loadVersion3(page);
-  await page.goto(`${O}/documents`);
+  await page.goto(`${O}/connections`);
   await page
     .getByRole("grid", { name: "Documents" })
     .getByRole("link", { name: "variant.md", exact: true })

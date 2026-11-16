@@ -1290,7 +1290,10 @@ export function LoadPage({ loadId }: { loadId: string }) {
             text={`${extract ? "" : `${plural(p.chunksDone || 0, "chunk")} of table rows and `}${plural(p.documentsDone || 0, "document")} written into ${ontology.databaseName || "the database"}${reviews ? `; ${plural(reviews, "item")} from your documents ${reviews === 1 ? "needs" : "need"} review` : ""}.`}
             action={
               reviews > 0 && (
-                <ButtonLink size="sm" to={paths.documents(o, "review")}>
+                <ButtonLink
+                  size="sm"
+                  to={paths.ontologyConnections(o, "review")}
+                >
                   Review documents
                 </ButtonLink>
               )
@@ -1310,7 +1313,10 @@ export function LoadPage({ loadId }: { loadId: string }) {
             action={
               totals.notRead > 0 &&
               l.current && (
-                <ButtonLink size="sm" to={paths.documents(o, "out_of_scope")}>
+                <ButtonLink
+                  size="sm"
+                  to={paths.ontologyConnections(o, "out_of_scope")}
+                >
                   See what wasn’t read
                 </ButtonLink>
               )
@@ -1355,7 +1361,7 @@ export function LoadPage({ loadId }: { loadId: string }) {
                 // What the ontology reads, and how its current load holds each.
                 value: (
                   <Link
-                    to={paths.documents(o)}
+                    to={paths.ontologyConnections(o)}
                     title="The ontology’s documents"
                   >
                     {`${p.documentsDone || 0}${p.documentsTotal ? ` of ${p.documentsTotal}` : ""}`}
