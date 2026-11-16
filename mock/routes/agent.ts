@@ -30,6 +30,7 @@ import type {
   AutomationSpec,
   Connector,
   ConnectorKind,
+  FoundryAccessTarget,
   FoundryAgentTurnStatus,
   FoundryAgentAction,
   FoundryAgentAnswers,
@@ -58,6 +59,7 @@ import {
   id,
   now,
   ok,
+  type MockGrantee,
   type MockReply,
   type MockRequest,
   type MockRoute,
@@ -222,7 +224,8 @@ import { decisionTypes } from "../review-decisions";
 // it lists the ontologies their grants hold, asks the Analyst about the one
 // named, the page's or the first, and prepares, makes and relays nothing;
 // their page context keeps only what their grants hold, and their threads
-// from before their restriction look absent. An automation's
+// made with the workspace's whole view (before their restriction, or while
+// they were an owner or admin), or whose grants they lost, look absent. An automation's
 // Assistant step (queueAutomationTurn, for ./automations.ts) is a turn of
 // kind automation in its run's thread, out of the person's list: it reads
 // the ontologies and, asked to load one, prepares its load, which runs at
@@ -313,6 +316,11 @@ type StoredThread = {
   kind: "chat" | "automation";
   title: string;
   runtime: AgentRuntime;
+  // The grant targets a restricted member's turns of it ran under, which
+  // they must all still hold to read it; null for a thread made or run with
+  // the workspace's whole view, which no restricted member reads
+  // (model.FoundryAgentThread.Granted).
+  granted: FoundryAccessTarget[] | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -579,33 +587,30 @@ const toAction = (a: StoredAction): FoundryAgentAction => ({
 /**
  * The caller as Founder answers them: a member of the workspace, and, for a
  * grantee (a restricted member, admitted by ./access.ts to these routes
- * only), what its grants hold and when it was restricted (`since`): its
- * threads from before then look absent, as the backend's agentThread has it.
+ * only), what its grants hold: its threads made with the whole view, or
+ * whose grants it no longer holds, look absent, as the backend's agentThread
+ * has it.
  */
 function person(req: MockRequest) {
   const m = membership(req.params.workspaceId!, req.principal.user.id);
   return isReply(m)
     ? m
-    : {
-        m,
-        userId: req.principal.user.id,
-        grantee: req.grantee,
-        since: req.grantee?.restrictedAt ?? "",
-      };
+    : { m, userId: req.principal.user.id, grantee: req.grantee };
 }
 const isPerson = (
   x: ReturnType<typeof person>,
 ): x is Exclude<ReturnType<typeof person>, MockReply> => "userId" in x;
 
-/**
- * The person's thread, unless deleted or made before `since` (a grantee's
- * restriction).
- */
+/** Whether a grantee may read thread `t`: one it made, all of whose grants it holds. */
+const granteeReads = (t: StoredThread, grantee?: MockGrantee) =>
+  !grantee || (!!t.granted && grantee.holdsAll(t.granted));
+
+/** The person's thread, unless deleted or not the grantee's to read. */
 function threadOf(
   workspaceId: string,
   userId: string,
   threadId: string,
-  since = "",
+  grantee?: MockGrantee,
 ) {
   return state.threads.find(
     (t) =>
@@ -613,17 +618,19 @@ function threadOf(
       t.workspaceId === workspaceId &&
       t.userId === userId &&
       !t.deletedAt &&
-      t.createdAt >= since,
+      granteeReads(t, grantee),
   );
 }
 function turnOf(
   workspaceId: string,
   userId: string,
   turnId: string,
-  since = "",
+  grantee?: MockGrantee,
 ) {
   const t = state.turns.find((x) => x.id === turnId);
-  return t && threadOf(workspaceId, userId, t.threadId, since) ? t : undefined;
+  return t && threadOf(workspaceId, userId, t.threadId, grantee)
+    ? t
+    : undefined;
 }
 function actionOf(workspaceId: string, userId: string, actionId: string) {
   const a = state.actions.find((x) => x.id === actionId);
@@ -1460,7 +1467,11 @@ const loadPlan = (
 
 /** Who sends a message: what Founder may prepare for them. */
 type Who = "manager" | "member" | "grantee";
-type Intent = AgentOperation | "connect" | "relay_questions";
+// No words ask for update_automation: an automation's edits are its page's.
+type Intent =
+  | Exclude<AgentOperation, "update_automation">
+  | "connect"
+  | "relay_questions";
 
 /** What each change a message may ask for reads as, tried in order. */
 const INTENTS: readonly (readonly [RegExp, Intent])[] = [
@@ -3672,6 +3683,7 @@ export function queueAutomationTurn(p: {
       kind: "automation",
       title: [...p.title].slice(0, TITLE_CHARS).join(""),
       runtime: "api",
+      granted: null,
       createdAt: now(),
       updatedAt: now(),
       deletedAt: null,
@@ -4594,7 +4606,7 @@ export const agentRoutes: MockRoute[] = [
           ws,
           p.userId,
           String(body.answers?.turnId || ""),
-          p.since,
+          p.grantee,
         );
         if (!asking || asking.threadId !== body.threadId)
           return fail("NOT_FOUND", "turn not found");
@@ -4638,7 +4650,7 @@ export const agentRoutes: MockRoute[] = [
           t.clientToken === token,
       );
       if (again) {
-        const was = threadOf(ws, p.userId, again.threadId, p.since);
+        const was = threadOf(ws, p.userId, again.threadId, p.grantee);
         if (!was) return fail("NOT_FOUND", "thread not found");
         if (
           again.kind !== (reply ? "answers" : "message") ||
@@ -4661,7 +4673,7 @@ export const agentRoutes: MockRoute[] = [
         } satisfies AgentTurnResponse);
       }
       let thread = body.threadId
-        ? threadOf(ws, p.userId, body.threadId, p.since)
+        ? threadOf(ws, p.userId, body.threadId, p.grantee)
         : undefined;
       if (body.threadId && !thread)
         return fail("NOT_FOUND", "thread not found");
@@ -4766,12 +4778,15 @@ export const agentRoutes: MockRoute[] = [
                   .join("")
                   .trim() + "…",
           runtime,
+          // A restricted member's holds what their grants give now.
+          granted: p.grantee ? [...p.grantee.targets] : null,
           createdAt: now(),
           updatedAt: now(),
           deletedAt: null,
         };
         state.threads.push(thread);
       }
+
       // A grantee's page names only what its grants hold: an ontology they
       // hold, its load theirs cover, a pinned dashboard; it starts no
       // automation (the backend's filter, so Founder never reads the rest).
@@ -4800,6 +4815,16 @@ export const agentRoutes: MockRoute[] = [
               ...(zone && { timeZone: zone }),
             }
           : null;
+      // Its turn runs as the person is now (the worker's threadReach): the
+      // whole view's makes the thread no grantee's, for good; a grantee's
+      // adds what it holds.
+      if (!p.grantee) thread.granted = null;
+      else if (thread.granted) {
+        const had = new Set(thread.granted.map((t) => JSON.stringify(t)));
+        thread.granted.push(
+          ...p.grantee.targets.filter((t) => !had.has(JSON.stringify(t))),
+        );
+      }
       const turn = queueTurn(
         thread,
         {
@@ -4884,7 +4909,7 @@ export const agentRoutes: MockRoute[] = [
             t.userId === p.userId &&
             t.kind === "chat" &&
             !t.deletedAt &&
-            t.createdAt >= p.since,
+            granteeReads(t, p.grantee),
         )
         .sort(
           (a, b) =>
@@ -4917,7 +4942,7 @@ export const agentRoutes: MockRoute[] = [
         req.params.workspaceId!,
         p.userId,
         req.params.id!,
-        p.since,
+        p.grantee,
       );
       if (!t) return fail("NOT_FOUND", "thread not found");
       advanceThread(t.id);
@@ -4941,7 +4966,7 @@ export const agentRoutes: MockRoute[] = [
         req.params.workspaceId!,
         p.userId,
         req.params.id!,
-        p.since,
+        p.grantee,
       );
       if (!t) return fail("NOT_FOUND", "thread not found");
       advanceThread(t.id);
@@ -4962,7 +4987,7 @@ export const agentRoutes: MockRoute[] = [
         req.params.workspaceId!,
         p.userId,
         req.params.id!,
-        p.since,
+        p.grantee,
       );
       if (!t) return fail("NOT_FOUND", "turn not found");
       advance(t);
@@ -4981,7 +5006,7 @@ export const agentRoutes: MockRoute[] = [
       const p = person(req);
       if (!isPerson(p)) return p;
       const ws = req.params.workspaceId!;
-      const t = turnOf(ws, p.userId, req.params.id!, p.since);
+      const t = turnOf(ws, p.userId, req.params.id!, p.grantee);
       if (!t) return fail("NOT_FOUND", "turn not found");
       advance(t);
       if (t.status !== "cancelled") {
@@ -4991,7 +5016,7 @@ export const agentRoutes: MockRoute[] = [
       }
       return ok({
         turn: toTurn(t),
-        thread: toThread(threadOf(ws, p.userId, t.threadId, p.since)!),
+        thread: toThread(threadOf(ws, p.userId, t.threadId, p.grantee)!),
       } satisfies AgentTurnResponse);
     },
   },

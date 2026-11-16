@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -48,21 +47,6 @@ func (s *mysqlDB) IsFoundryMemberRestricted(ctx context.Context, workspaceID, us
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_restricted_members WHERE workspace_id=? AND user_id=?)`,
 		workspaceID, userID).Scan(&restricted)
 	return restricted, err
-}
-
-// FoundryMemberRestrictedAt is when the member's restriction began, and
-// whether they are restricted: false, with the zero time, when they aren't.
-func (s *mysqlDB) FoundryMemberRestrictedAt(ctx context.Context, workspaceID, userID string) (time.Time, bool, error) {
-	var at time.Time
-	err := s.db.QueryRowContext(ctx, `SELECT created_at FROM foundry_restricted_members WHERE workspace_id=? AND user_id=?`,
-		workspaceID, userID).Scan(&at)
-	if errors.Is(err, sql.ErrNoRows) {
-		return time.Time{}, false, nil
-	}
-	if err != nil {
-		return time.Time{}, false, err
-	}
-	return at, true, nil
 }
 
 // ListFoundryRestrictedMembers returns the workspace's restricted members.

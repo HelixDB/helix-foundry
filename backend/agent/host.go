@@ -281,7 +281,6 @@ func PairCommand(code, foundry string) string {
 // store.Store is it.
 type HostStore interface {
 	Store
-	GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error)
 	ListFoundryAgentEvents(ctx context.Context, turnID string, afterSeq, limit int) ([]model.FoundryAgentEvent, error)
 	ClaimFoundryAgentTurn(ctx context.Context, workerID string, claim model.FoundryAgentClaim) (*model.FoundryAgentTurn, error)
 	RenewFoundryAgentTurnLease(ctx context.Context, id, workerID string, lease time.Duration) error
@@ -793,6 +792,9 @@ func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, worker
 	// As the worker's own turns: a restricted member's reads and asks only.
 	reach, err := reachOf(session, turn.WorkspaceID)
 	if err != nil {
+		return nil, err
+	}
+	if err := threadReach(ctx, h.DB, turn, reach); err != nil {
 		return nil, err
 	}
 	sink.reach = reach

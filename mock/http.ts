@@ -1,4 +1,5 @@
 import type { HttpMethod, RouteTemplate } from "../src/shared/route-template";
+import type { FoundryAccessTarget } from "../src/shared/wfe";
 import type { Visibility } from "./graph/view";
 import type { MockUser } from "./state";
 
@@ -41,10 +42,11 @@ export type MockGranteeLoad = {
  */
 export type MockGrantee = {
   principal: string;
-  // When a restricted member was restricted (access.Grantee.RestrictedAt):
-  // Founder hides their threads from before it. Unset for a member the WFE
-  // sends on as a grantee without restricting them.
-  restrictedAt?: string;
+  // The targets its grants give now, and whether they give at least every
+  // one of `targets` (Grants.Holds): a restricted member's Founder thread
+  // reads only while they hold every target it ran under.
+  targets: readonly FoundryAccessTarget[];
+  holdsAll: (targets: readonly FoundryAccessTarget[]) => boolean;
   covered: Map<string, MockGranteeLoad>;
   load?: MockGranteeLoad;
   coversSet: (setId: string) => boolean;

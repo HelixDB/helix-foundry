@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"time"
 )
 
 // PrincipalKind is the kind of principal a grant names.
@@ -78,10 +77,6 @@ type Grantee struct {
 	// Teams are the workspace teams the user is a member of now; none for a
 	// service credential.
 	Teams []string
-	// RestrictedAt is when a restricted member's restriction began; zero for
-	// a SourceGrantee caller. What they made before it (Founder's threads)
-	// isn't theirs to see while restricted.
-	RestrictedAt time.Time
 }
 
 func (Host) caller()    {}

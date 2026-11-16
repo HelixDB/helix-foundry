@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -173,4 +174,65 @@ func TestAHelpersCLIOffersAGranteeGranteeToolsAlone(t *testing.T) {
 	h.backend.accessErr = status.Error(codes.Unavailable, "the API is down")
 	_, err = hosts.Server(context.Background(), turn, "host:1", func(context.Context, bool) error { return nil })
 	assert.Error(t, err)
+}
+
+// A turn records its reach on its thread before anything runs: the whole
+// view's makes it no restricted member's, for good; a restricted member's
+// adds what they hold now, through themselves and their teams.
+func TestATurnRecordsItsReachOnItsThread(t *testing.T) {
+	stripe, general := access.ConnectorTarget("conn-stripe"), access.DocumentSetTarget("set-general")
+	t.Run("the whole view's", func(t *testing.T) {
+		h := newHarness(t, say("Hello."))
+		_, err := h.runner.Run(context.Background(), message("Hi"))
+		require.NoError(t, err)
+		assert.Nil(t, h.db.thread("thread1").Granted)
+	})
+	t.Run("a restricted member's", func(t *testing.T) {
+		h := newHarness(t, say("Hello."))
+		h.backend.grantee = true
+		h.db.teams = map[string][]string{user: {"finance"}}
+		h.db.grants = []model.FoundryAccessGrant{
+			{Principal: access.Principal{Kind: access.PrincipalUser, ID: user}, Target: stripe},
+			{Principal: access.Principal{Kind: access.PrincipalTeam, ID: "finance"}, Target: general},
+			{Principal: access.Principal{Kind: access.PrincipalUser, ID: "user-eve"}, Target: access.EnrichmentTarget()},
+		}
+		_, err := h.runner.Run(context.Background(), message("Hi"))
+		require.NoError(t, err)
+		require.NotNil(t, h.db.thread("thread1").Granted)
+		assert.Equal(t, []access.Target{stripe, general}, h.db.thread("thread1").Granted.Targets)
+	})
+}
+
+// A restricted member's turn runs only in a thread whose every grant they
+// still hold: one begun with the whole view (before their restriction, or
+// while they were an owner or admin), or one whose grants they lost, fails
+// for good before the model reads its transcript.
+func TestAGranteesTurnNeedsItsThreadsGrants(t *testing.T) {
+	stripe := access.ConnectorTarget("conn-stripe")
+	for name, granted := range map[string]*model.FoundryAgentThreadGrants{
+		"begun with the whole view": nil,
+		"its grants lost":           {Targets: []access.Target{stripe}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, say("Never said."))
+			h.backend.grantee = true
+			h.db.thread("thread1").Granted = granted
+			_, err := h.runner.Run(context.Background(), message("What did you read before?"))
+			var f *Failure
+			require.ErrorAs(t, err, &f)
+			assert.True(t, f.Permanent)
+			assert.Contains(t, f.Message, "start a new one")
+			assert.Empty(t, h.model.requests, "no model call")
+			assert.Equal(t, granted, h.db.thread("thread1").Granted, "nothing recorded")
+		})
+	}
+	t.Run("its grants still held", func(t *testing.T) {
+		h := newHarness(t, say("Hello."))
+		h.backend.grantee = true
+		h.db.thread("thread1").Granted = &model.FoundryAgentThreadGrants{Targets: []access.Target{access.TableTarget("conn-stripe", "invoices")}}
+		h.db.grants = []model.FoundryAccessGrant{{Principal: access.Principal{Kind: access.PrincipalUser, ID: user}, Target: stripe}}
+		_, err := h.runner.Run(context.Background(), message("Hi"))
+		require.NoError(t, err)
+		assert.Equal(t, []access.Target{access.TableTarget("conn-stripe", "invoices"), stripe}, h.db.thread("thread1").Granted.Targets)
+	})
 }

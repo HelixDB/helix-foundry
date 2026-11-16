@@ -74,8 +74,8 @@ func (s *Service) authorize(ctx context.Context, req any, info *grpc.UnaryServer
 
 // granteeOf is the Grantee a call is for, if it is one: a SourceGrantee
 // call, of its user or service credential, or a member restricted in the
-// request's workspace while their role is member, with when that began. A
-// user's grantee holds their teams' grants too.
+// request's workspace while their role is member. A user's grantee holds
+// their teams' grants too.
 func (s *Service) granteeOf(ctx context.Context, a ports.Actor, req any) (access.Grantee, bool, error) {
 	var g access.Grantee
 	switch {
@@ -91,14 +91,14 @@ func (s *Service) granteeOf(ctx context.Context, a ports.Actor, req any) (access
 		if workspaceID == "" {
 			return access.Grantee{}, false, nil
 		}
-		since, restricted, err := s.deps.DB.FoundryMemberRestrictedAt(ctx, workspaceID, a.UserID)
+		restricted, err := s.deps.DB.IsFoundryMemberRestricted(ctx, workspaceID, a.UserID)
 		if err != nil {
 			return access.Grantee{}, false, status.Errorf(codes.Internal, "read restrictions: %v", err)
 		}
 		if !restricted || s.promoted(ctx, workspaceID, a.UserID) {
 			return access.Grantee{}, false, nil
 		}
-		g = access.Grantee{WorkspaceID: workspaceID, Principal: access.Principal{Kind: access.PrincipalUser, ID: a.UserID}, RestrictedAt: since}
+		g = access.Grantee{WorkspaceID: workspaceID, Principal: access.Principal{Kind: access.PrincipalUser, ID: a.UserID}}
 	default:
 		return access.Grantee{}, false, nil
 	}
@@ -188,15 +188,24 @@ func (s *Service) admit(ctx context.Context, g access.Grantee, rule access.Rule,
 
 // grantsOf are the targets the principals hold together.
 func (s *Service) grantsOf(ctx context.Context, workspaceID string, principals []access.Principal) (access.Grants, error) {
+	targets, err := s.targetsOf(ctx, workspaceID, principals)
+	if err != nil {
+		return access.Grants{}, err
+	}
+	return access.NewGrants(targets), nil
+}
+
+// targetsOf are the targets principals' grants give in workspaceID.
+func (s *Service) targetsOf(ctx context.Context, workspaceID string, principals []access.Principal) ([]access.Target, error) {
 	grants, err := s.deps.DB.ListFoundryAccessGrants(ctx, workspaceID, principals)
 	if err != nil {
-		return access.Grants{}, status.Errorf(codes.Internal, "read grants: %v", err)
+		return nil, status.Errorf(codes.Internal, "read grants: %v", err)
 	}
 	targets := make([]access.Target, len(grants))
 	for i, gr := range grants {
 		targets[i] = gr.Target
 	}
-	return access.NewGrants(targets), nil
+	return targets, nil
 }
 
 // granteeLoads are the current loads g's grants hold anything of, by ontology:

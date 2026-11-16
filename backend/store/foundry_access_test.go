@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -763,40 +762,4 @@ func TestSyncFoundryDirectoryTeams(t *testing.T) {
 	assert.Contains(t, teams, "hand:Ops")
 	assert.Contains(t, teams, "hand:Money")
 	assert.Equal(t, []access.Target{access.ConnectorTarget(connector)}, targetsOf(t, f.db, ws, finance))
-}
-
-// When a restriction began is the row's: unrestricted is false with the zero
-// time, restricting again keeps the first time, and lifting it forgets it.
-func TestFoundryMemberRestrictedAt(t *testing.T) {
-	ctx := context.Background()
-	f := newFoundryFixture(t, "ARA")
-	ws := f.ontology.WorkspaceID
-	ada, by := id26("U-ARA-ADA"), id26("U-ARA-OWNER")
-
-	at, restricted, err := f.db.FoundryMemberRestrictedAt(ctx, ws, ada)
-	require.NoError(t, err)
-	assert.False(t, restricted)
-	assert.True(t, at.IsZero())
-
-	require.NoError(t, f.db.SetFoundryMemberRestricted(ctx, ws, ada, true, &by))
-	first, restricted, err := f.db.FoundryMemberRestrictedAt(ctx, ws, ada)
-	require.NoError(t, err)
-	assert.True(t, restricted)
-	assert.WithinDuration(t, time.Now(), first, 5*time.Second)
-
-	time.Sleep(2 * time.Millisecond)
-	require.NoError(t, f.db.SetFoundryMemberRestricted(ctx, ws, ada, true, &by))
-	again, _, err := f.db.FoundryMemberRestrictedAt(ctx, ws, ada)
-	require.NoError(t, err)
-	assert.True(t, again.Equal(first), "restricting again keeps when it began")
-
-	_, elsewhere, err := f.db.FoundryMemberRestrictedAt(ctx, id26("ARA-OTHER"), ada)
-	require.NoError(t, err)
-	assert.False(t, elsewhere, "restricted in its workspace only")
-
-	require.NoError(t, f.db.SetFoundryMemberRestricted(ctx, ws, ada, false, &by))
-	at, restricted, err = f.db.FoundryMemberRestrictedAt(ctx, ws, ada)
-	require.NoError(t, err)
-	assert.False(t, restricted)
-	assert.True(t, at.IsZero())
 }

@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/automation"
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -78,6 +79,10 @@ type Store interface {
 	ListFoundryAutomationRunNodes(ctx context.Context, runID string) ([]*model.FoundryAutomationRunNode, error)
 	GetFoundryAutomationWorkflowRun(ctx context.Context, automationRunID, ontologyID string) (*model.FoundryWorkflowRun, error)
 	StartFoundryAutomationWorkflowRun(ctx context.Context, start model.FoundryAutomationWorkflowStart) (*model.FoundryWorkflowRun, error)
+	GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error)
+	RecordFoundryAgentThreadGrants(ctx context.Context, workspaceID, id string, granted *model.FoundryAgentThreadGrants) error
+	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
+	ListFoundryAccessGrants(ctx context.Context, workspaceID string, principals []access.Principal) ([]model.FoundryAccessGrant, error)
 }
 
 // Resolver is where a workspace's model calls go; *ai.Resolver resolves it.
@@ -172,6 +177,55 @@ func reachOf(session integration.Session, workspaceID string) (Reach, error) {
 	return ReachWorkspace, nil
 }
 
+// threadReach records the turn's Reach on its thread before anything of
+// the turn runs, as the API reads it (model.FoundryAgentThread.Granted): a
+// whole view's run makes the thread no restricted member's, for good; a
+// restricted member's runs only while they hold every grant the thread ran
+// under (else its transcript holds what they may no longer read, and the
+// turn fails for good), and adds what they hold now. A read or write that
+// fails fails the attempt, to retry.
+func threadReach(ctx context.Context, db Store, turn *model.FoundryAgentTurn, reach Reach) error {
+	retry := func(err error) error {
+		return &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
+	}
+	if reach == ReachWorkspace {
+		if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID, nil); err != nil {
+			return retry(err)
+		}
+		return nil
+	}
+	thread, err := db.GetFoundryAgentThread(ctx, turn.WorkspaceID, turn.ThreadID)
+	if err != nil {
+		return retry(err)
+	}
+	teams, err := db.FoundryTeamsOf(ctx, turn.WorkspaceID, turn.UserID)
+	if err != nil {
+		return retry(err)
+	}
+	principals := []access.Principal{{Kind: access.PrincipalUser, ID: turn.UserID}}
+	for _, team := range teams {
+		principals = append(principals, access.Principal{Kind: access.PrincipalTeam, ID: team})
+	}
+	grants, err := db.ListFoundryAccessGrants(ctx, turn.WorkspaceID, principals)
+	if err != nil {
+		return retry(err)
+	}
+	targets := make([]access.Target, len(grants))
+	for i, g := range grants {
+		targets[i] = g.Target
+	}
+	switch {
+	case thread.Granted == nil:
+		return &Failure{Message: "This conversation began with the workspace's whole view, which your access no longer gives: start a new one", Permanent: true}
+	case !access.NewGrants(targets).Holds(thread.Granted.Targets):
+		return &Failure{Message: "This conversation holds what your access no longer lets you read: start a new one", Permanent: true}
+	}
+	if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID, &model.FoundryAgentThreadGrants{Targets: targets}); err != nil {
+		return retry(err)
+	}
+	return nil
+}
+
 // turnRun is one attempt's state.
 type turnRun struct {
 	r    *Runner
@@ -205,7 +259,8 @@ type turnRun struct {
 //  1. resolve the workspace's provider and its ask model, which the turn runs
 //     on, unless the setting's tool check found the Assistant can't;
 //  2. open the person's session, confirming as the person, read their Reach,
-//     and serve its tools to the model through an in-memory MCP client,
+//     record it on the thread (threadReach), and serve its tools to the
+//     model through an in-memory MCP client,
 //     Tools alone (GranteeTools for a restricted member, whose turn only
 //     reads and asks; an automation's fails for good);
 //  3. read the thread's transcript, adding the turn's own message once;
@@ -256,6 +311,9 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	if step != nil && reach == ReachGrants {
 		// Its owner is now a restricted member, who runs no automation.
 		return out, &Failure{Message: "The automation's owner now reads only through source grants; an owner or admin can take it over", Permanent: true}
+	}
+	if err := threadReach(ctx, r.DB, turn, reach); err != nil {
+		return out, err
 	}
 	// Before the tools register: the prepare tool reads what the sink allows.
 	sink.reach = reach

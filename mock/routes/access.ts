@@ -78,8 +78,8 @@ import { manages, queryReads, rawAccess } from "./workspaces";
 //
 // Who is a grantee (`guarded`, the backend's authorize, run on every
 // Foundry route): a member restricted in the request's workspace, on every
-// Foundry call while their role is member (`restrictedAt` says since when:
-// Founder hides their threads from before it); and a member without
+// Foundry call while their role is member (Founder shows them only the
+// threads whose grants they still hold: `targets`, `holdsAll`); and a member without
 // database query access (./workspaces.ts queryReads) on the routes the WFE
 // gates on it (reading a load's graph, questions, review decisions), which
 // the WFE sends on as a grantee. Founder's routes aren't gated on it: the
@@ -150,9 +150,8 @@ type Inputs = {
 const state = {
   grants: [] as StoredGrant[],
   teams: [] as StoredTeam[],
-  // Restricted members, as `${workspaceId}\u001f${userId}`, with when they
-  // were restricted (the row's created_at: restricting again keeps it).
-  restricted: new Map<string, string>(),
+  // Restricted members, as `${workspaceId}\u001f${userId}`.
+  restricted: new Set<string>(),
   credentials: [] as StoredCredential[],
   // Principals whose Workflows permission is off, as
   // `${workspaceId}\u001f${principalKey}`; on for everyone else.
@@ -160,10 +159,7 @@ const state = {
 };
 const restrictedKey = (ws: string, userId: string) => `${ws}\u001f${userId}`;
 const restrict = (ws: string, userIds: string[]) =>
-  userIds
-    .map((u) => restrictedKey(ws, u))
-    .filter((k) => !state.restricted.has(k))
-    .forEach((k) => state.restricted.set(k, now()));
+  userIds.forEach((u) => state.restricted.add(restrictedKey(ws, u)));
 const RAW_ACCESS =
   "this member can write a project or query its databases outside Foundry; take that access away in the Helix dashboard first";
 const TEAM_RAW_ACCESS =
@@ -501,7 +497,7 @@ onReset(() => {
   portalReturns.clear();
   state.teams = [];
   state.workflowsOff = new Set();
-  state.restricted = new Map([[restrictedKey("ws_acme", "usr_eve"), at]]);
+  state.restricted = new Set([restrictedKey("ws_acme", "usr_eve")]);
   state.grants = [
     {
       id: "grant_acme_eve_general",
@@ -554,6 +550,24 @@ function coversSet(
           !!set.connectorId &&
           t.connectorId === set.connectorId),
     )
+  );
+}
+
+/**
+ * Whether targets give at least every one of `wanted` (Grants.Holds): a
+ * table by its own grant or its connector's, everything else by its own.
+ */
+function holdsAll(
+  targets: readonly FoundryAccessTarget[],
+  wanted: readonly FoundryAccessTarget[],
+) {
+  return wanted.every((w) =>
+    w.kind === "KIND_TABLE"
+      ? coversTable(targets, {
+          connectorId: w.connectorId || "",
+          table: w.table || "",
+        })
+      : targets.some((t) => targetKey(t) === targetKey(w)),
   );
 }
 
@@ -935,9 +949,8 @@ export function guarded(route: MockRoute): MockRoute {
       const targets = userTargets(m.workspaceId, m.userId);
       const grantee: MockGrantee = {
         principal: principalKey({ kind: "KIND_USER", id: m.userId }),
-        restrictedAt: state.restricted.get(
-          restrictedKey(m.workspaceId, m.userId),
-        ),
+        targets,
+        holdsAll: (wanted) => holdsAll(targets, wanted),
         covered: heldLoads(m.workspaceId, targets),
         coversSet: (setId) =>
           coversSet(targets, { setId, connectorId: setConnector(setId) }),
@@ -1149,7 +1162,7 @@ export const accessRoutes: MockRoute[] = [
           .filter((t) => t.workspaceId === m.workspaceId)
           .sort((a, b) => a.name.localeCompare(b.name))
           .map(teamOut),
-        restrictedUserIds: [...state.restricted.keys()]
+        restrictedUserIds: [...state.restricted]
           .map((k) => k.split("\u001f"))
           .filter(([ws]) => ws === m.workspaceId)
           .map(([, userId]) => userId!),

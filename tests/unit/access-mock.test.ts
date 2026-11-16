@@ -1657,20 +1657,54 @@ describe("a grantee's Founder", () => {
       await eve("GET", `${AG}/threads/${draft.sent.body.thread.id}`)
     ).body.turns.at(-1);
     expect(asking.asked.generation).toBeDefined();
-    // A member again, restricted since before the thread: she sees it, and
-    // can't answer for the draft.
+    // A member again, restricted since before the thread: what she made
+    // with the whole view, cards and all, is gone, and so is answering for
+    // the draft.
     eveMember.role = "WORKSPACE_ROLE_MEMBER";
+    const thread = draft.sent.body.thread.id;
+    expect(refusal(await eve("GET", `${AG}/threads/${thread}`))).toEqual([
+      404,
+      "thread not found",
+    ]);
+    expect(
+      (await eve("GET", `${AG}/threads`)).body.threads.map(
+        (t: wfe.FoundryAgentThread) => t.id,
+      ),
+    ).not.toContain(thread);
+    expect((await eve("GET", `${AG}/turns/${asking.id}/events`)).status).toBe(
+      404,
+    );
     const answered = await eve("POST", `${AG}/turns`, {
-      threadId: draft.sent.body.thread.id,
+      threadId: thread,
       answers: { turnId: asking.id, answers: [] },
       clientToken: "relay",
     });
-    expect(answered.status).toBe(400);
-    expect(answered.body.details?.[0]?.reason).toBe(
-      "FOUNDRY_AGENT_QUESTIONS_CLOSED",
-    );
-    expect(answered.body.message).toBe(
-      "a draft's questions are answered by an owner or admin, on the generation's page in Foundry",
-    );
+    expect(refusal(answered)).toEqual([404, "turn not found"]);
+  });
+
+  it("hides Eve's thread once she loses a grant it ran under, until she holds it again", async () => {
+    const first = await turn("Who signed?");
+    const thread = first.sent.body.thread.id;
+    expect(
+      (await eve("GET", `${AG}/threads/${thread}`)).status,
+    ).toBe(200);
+    // Narrowed: General taken away, the thread and its turn are gone.
+    await grant(user("usr_eve"), []);
+    expect(refusal(await eve("GET", `${AG}/threads/${thread}`))).toEqual([
+      404,
+      "thread not found",
+    ]);
+    expect((await eve("GET", `${AG}/threads`)).body.threads).toEqual([]);
+    expect(
+      (await eve("GET", `${AG}/turns/${first.sent.body.turn.id}/events`))
+        .status,
+    ).toBe(404);
+    expect(refusal(await say("And now?", { threadId: thread }))).toEqual([
+      404,
+      "thread not found",
+    ]);
+    // Given it again, it is hers again.
+    await grant(user("usr_eve"), [general]);
+    expect((await eve("GET", `${AG}/threads/${thread}`)).status).toBe(200);
   });
 });

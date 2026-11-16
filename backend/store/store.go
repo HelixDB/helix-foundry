@@ -196,7 +196,6 @@ type ReadStore interface {
 	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs) error
 	FoundryVersionInputs(ctx context.Context, workspaceID, ontologyID, versionID string) (access.Inputs, error)
 	IsFoundryMemberRestricted(ctx context.Context, workspaceID, userID string) (bool, error)
-	FoundryMemberRestrictedAt(ctx context.Context, workspaceID, userID string) (time.Time, bool, error)
 	ListFoundryRestrictedMembers(ctx context.Context, workspaceID string) ([]string, error)
 	ListFoundryTeams(ctx context.Context, workspaceID string) ([]model.FoundryTeam, error)
 	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
@@ -240,7 +239,7 @@ type ReadStore interface {
 
 	// The Assistant (foundry_agent.go)
 	GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error)
-	ListFoundryAgentThreads(ctx context.Context, workspaceID, userID string, createdSince time.Time, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error)
+	ListFoundryAgentThreads(ctx context.Context, workspaceID, userID string, grantedOnly bool, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error)
 	GetFoundryAgentTurn(ctx context.Context, workspaceID, id string) (*model.FoundryAgentTurn, error)
 	GetFoundryAgentTurnByClientToken(ctx context.Context, workspaceID, userID, clientToken string) (*model.FoundryAgentTurn, error)
 	ListFoundryAgentTurns(ctx context.Context, threadID string, limit int) ([]*model.FoundryAgentTurn, error)
@@ -478,6 +477,7 @@ type Store interface {
 	CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAgentTurn, thread *model.FoundryAgentThread, limits model.FoundryAgentLimits, first json.RawMessage) error
 	AskFoundryAgentQuestions(ctx context.Context, turnID, workerID string, asked *model.FoundryAgentAsked, event json.RawMessage) error
 	DeleteFoundryAgentThread(ctx context.Context, workspaceID, userID, id string) error
+	RecordFoundryAgentThreadGrants(ctx context.Context, workspaceID, id string, granted *model.FoundryAgentThreadGrants) error
 	CancelFoundryAgentTurn(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentTurn, error)
 	ClaimFoundryAgentTurn(ctx context.Context, workerID string, claim model.FoundryAgentClaim) (*model.FoundryAgentTurn, error)
 	RenewFoundryAgentTurnLease(ctx context.Context, id, workerID string, lease time.Duration) error
