@@ -122,7 +122,7 @@
           "rationale": "The goal's support tickets.",
           "serves": [],
           "status": "proposed",
-          "toml": "[cq.CQ4]\nquestion = \"Which support tickets are still open, for which accounts, and who raised them?\"\npath = [\"Account\", \"<ticket_for\", \"Ticket\", \"requested_by>\", \"Contact\"]\n"
+          "toml": "[cq.CQ4]\nquestion = \"Which support tickets aren't solved yet, for which accounts, and who raised them?\"\npath = [\"Account\", \"<ticket_for\", \"Ticket\", \"requested_by>\", \"Contact\"]\n"
         },
         "cq.CQ5": {
           "basis": null,

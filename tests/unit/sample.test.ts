@@ -131,7 +131,7 @@ describe("the sample company", () => {
       "Which roles do our contacts play, and how many hold each?",
       "How much do active subscriptions on each plan bring in each month?",
       "Which invoices are overdue, which accounts owe them, and how much?",
-      "Which support tickets are still open, for which accounts, and who raised them?",
+      "Which support tickets aren't solved yet, for which accounts, and who raised them?",
     ]);
   });
 
