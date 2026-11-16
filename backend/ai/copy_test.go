@@ -157,6 +157,7 @@ func TestAssessFailure(t *testing.T) {
 		ontologyagent.ModelMalformed:   {Message: "the model's answer couldn't be read; Helix will retry"},
 		ontologyagent.ModelUnsupported: {Message: "Helix sent the model a request it rejected. That's a bug in Helix; on-call has been told, and Helix will retry", Ops: true},
 		ontologyagent.ModelQuota:       {Message: "Helix's model account can't take this right now; on-call has been told, and Helix will retry", Ops: true},
+		ontologyagent.ModelTruncated:   {Message: "the run was too large for the model to assess; on-call has been told, and Helix will retry", Ops: true},
 	} {
 		if got := AssessFailure(house, f); got != want {
 			t.Errorf("AssessFailure(house, %s) = %+v, want %+v", f, got, want)

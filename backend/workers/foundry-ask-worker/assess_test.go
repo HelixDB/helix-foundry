@@ -220,6 +220,7 @@ func TestAssessorRetriesWhatARetryMayFix(t *testing.T) {
 	}{
 		"an unavailable model":            {result: failedWith("unavailable"), attempts: 1, want: model.FoundryWorkflowAssessmentQueued, failure: "unavailable"},
 		"an unavailable model, at last":   {result: failedWith("unavailable"), attempts: 3, want: model.FoundryWorkflowAssessmentFailed},
+		"a rejected request, at last":     {result: failedWith("unsupported"), attempts: 3, want: model.FoundryWorkflowAssessmentFailed},
 		"a refusal":                       {result: failedWith("refused"), attempts: 1, want: model.FoundryWorkflowAssessmentFailed, failure: "refused"},
 		"an unavailable agent":            {err: status.Error(codes.Unavailable, "down"), attempts: 1, want: model.FoundryWorkflowAssessmentQueued},
 		"a busy agent":                    {err: status.Error(codes.ResourceExhausted, "busy"), attempts: 1, want: model.FoundryWorkflowAssessmentQueued},
@@ -235,6 +236,8 @@ func TestAssessorRetriesWhatARetryMayFix(t *testing.T) {
 			o := store.outcomes[0]
 			assert.Equal(t, tc.want, o.Status)
 			assert.NotEmpty(t, o.Error)
+			// Only an assessment queued again says Helix will retry it.
+			assert.Equal(t, tc.want == model.FoundryWorkflowAssessmentQueued, strings.Contains(o.Error, "will retry"), o.Error)
 			if tc.failure != "" {
 				assert.Equal(t, tc.failure, o.Failure)
 			}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -208,9 +209,14 @@ func (a *assessor) waitForAgent(why string) model.FoundryWorkflowAssessmentOutco
 }
 
 // retry queues the assessment again after retry_backoff, or fails it once
-// it has had max_attempts, saying why.
+// it has had max_attempts, saying why: then without the promise of a retry
+// why ends in, saying Helix stopped.
 func (a *assessor) retry(claimed *model.FoundryWorkflowAssessment, spent int64, why string) model.FoundryWorkflowAssessmentOutcome {
 	if claimed.Attempts >= a.cfg.MaxAttempts {
+		for _, promise := range []string{", and Helix will retry", "; Helix will retry"} {
+			why = strings.TrimSuffix(why, promise)
+		}
+		why = fmt.Sprintf("%s; Helix stopped after %d attempts", why, a.cfg.MaxAttempts)
 		return model.FoundryWorkflowAssessmentOutcome{Status: model.FoundryWorkflowAssessmentFailed, Error: why, USDMicros: spent}
 	}
 	return model.FoundryWorkflowAssessmentOutcome{Status: model.FoundryWorkflowAssessmentQueued, Error: why, USDMicros: spent,

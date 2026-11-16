@@ -117,6 +117,8 @@ func assessCopy(f ontologyagent.ModelFailure) string {
 		return "the model's answer couldn't be read; Helix will retry"
 	case ontologyagent.ModelAuth, ontologyagent.ModelPermission, ontologyagent.ModelNotFound, ontologyagent.ModelQuota:
 		return "Helix's model account can't take this right now; on-call has been told, and Helix will retry"
+	case ontologyagent.ModelTruncated, ontologyagent.ModelContextTooLong:
+		return "the run was too large for the model to assess; on-call has been told, and Helix will retry"
 	}
 	return houseBug + "; on-call has been told, and Helix will retry"
 }

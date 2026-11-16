@@ -693,10 +693,8 @@ export const PART_UNCOVERED_LABEL = "Only current values are shared with you";
 const UNREACHED = "The model couldn’t be reached, after retries.";
 
 /**
- * Why a question failed, for a person. A model failure past unavailable and
- * refused reads as unavailable, as on Helix's Claude, wherever the WFE has
- * no words of a workspace's own provider for it (questionView prefers
- * those).
+ * Why a question failed, for a person, where the WFE gave no words of its
+ * own for it (questionView prefers those, which say what failed).
  */
 export const FAILURE_TEXT: Record<AskFailure, string> = {
   model_failed: UNREACHED,
@@ -1740,9 +1738,10 @@ export function budgetFull(b?: QuestionBudget | null): boolean {
  * for another attempt after one failed), running, or how it ended. The
  * engine's result decides an ended one's kind, so a budget stop the backend
  * records as failed shows as one, and a failure says the engine's reason:
- * a model failure past unavailable and refused in the WFE's words when they
- * are a workspace provider's full sentence, which names it and what an
- * owner can do (Helix's Claude's lowercase words say it is unavailable).
+ * a model failure but a refusal in the WFE's words, which say what failed
+ * (a provider still busy after retries, a request Helix's Claude rejected,
+ * Helix's model account) or, for a workspace's own provider, name it and
+ * what an owner can do.
  */
 export function questionView(
   q: FoundryQuestion,
@@ -1773,8 +1772,10 @@ export function questionView(
     return {
       kind: "failed",
       error:
-        MODEL_FAILURES.has(result.reason) && /[.!?]$/.test(q.error || "")
-          ? q.error!
+        (MODEL_FAILURES.has(result.reason) ||
+          result.reason === "model_failed") &&
+        q.error
+          ? sentence(q.error)
           : FAILURE_TEXT[result.reason],
       result,
     };
