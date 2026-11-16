@@ -83,6 +83,8 @@ type memStore struct {
 	// grants are the workspace's source grants; teams each user's teams.
 	grants []model.FoundryAccessGrant
 	teams  map[string][]string
+	// causes are the syncs and loads marked as an automation run's, by run.
+	causes map[string][]model.FoundryAutomationJob
 }
 
 // thread is the thread id, as a restricted member made it unless a test
@@ -142,6 +144,16 @@ func (s *memStore) ListFoundryAccessGrants(_ context.Context, _ string, principa
 		}
 	}
 	return out, nil
+}
+
+func (s *memStore) MarkFoundryAutomationCause(_ context.Context, runID string, job model.FoundryAutomationJob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.causes == nil {
+		s.causes = map[string][]model.FoundryAutomationJob{}
+	}
+	s.causes[runID] = append(s.causes[runID], job)
+	return nil
 }
 
 func (s *memStore) ListFoundryAutomationRunNodes(_ context.Context, runID string) ([]*model.FoundryAutomationRunNode, error) {

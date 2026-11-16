@@ -73,7 +73,7 @@ type planReader interface {
 
 // Refresher marks the ontologies whose current load reads a changed table.
 type Refresher interface {
-	OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID string, tables []string, refreshEvery time.Duration) error
+	OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID, syncID string, tables []string, refreshEvery time.Duration) error
 }
 
 // Syncer copies a connector's tables into snapshots.
@@ -396,7 +396,7 @@ func (s *Syncer) read(ctx context.Context, sync *model.ConnectorSync, c *model.C
 	}
 	res = r.result(res)
 	if len(res.Changed) > 0 && s.Refresh != nil {
-		if err := s.Refresh.OweFoundryRefreshes(ctx, c.WorkspaceID, c.ID, res.Changed, plan.Sync.RefreshEvery); err != nil {
+		if err := s.Refresh.OweFoundryRefreshes(ctx, c.WorkspaceID, c.ID, sync.ID, res.Changed, plan.Sync.RefreshEvery); err != nil {
 			return res, retryable(fmt.Errorf("mark graph refreshes: %w", err))
 		}
 	}

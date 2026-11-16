@@ -122,6 +122,8 @@ func (s *mysqlDB) isFoundryRefreshJob(ctx context.Context, job *model.FoundryGra
 // for budget: a refresh with none left loads the tables and replays what its
 // documents' saved extractions hold, at $0. An ontology with refresh off or
 // no current load owes nothing any more, and its owed refresh is forgotten.
+// A refresh load is started by the automation run whose sync owed the
+// refresh, when one did (OweFoundryRefreshes), at that sync's depth.
 func (s *mysqlDB) QueueFoundryRefresh(ctx context.Context, workspaceID, ontologyID string, job *model.FoundryGraphJob) (bool, error) {
 	queued := false
 	err := s.WithTx(ctx, func(txDB Store) error {
@@ -153,10 +155,18 @@ func (s *mysqlDB) QueueFoundryRefresh(ctx context.Context, workspaceID, ontology
 			if err := tx.insertFoundryGraphJob(ctx, job); err != nil {
 				return err
 			}
-		} else if err := tx.queueFullFoundryRefresh(ctx, o, versionID, job); err != nil {
-			return err
+		} else {
+			if err := tx.queueFullFoundryRefresh(ctx, o, versionID, job); err != nil {
+				return err
+			}
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_loads l JOIN foundry_ontologies o ON o.id = l.ontology_id
+SET l.started_by_automation_run_id=o.refresh_cause_run_id, l.automation_chain_depth=o.refresh_cause_depth
+WHERE l.id=? AND o.refresh_cause_run_id IS NOT NULL`, job.LoadID); err != nil {
+				return err
+			}
 		}
-		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontologies SET refresh_due_at=NULL WHERE id=?`, o.ID); err != nil {
+		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontologies SET refresh_due_at=NULL, refresh_cause_run_id=NULL, refresh_cause_depth=NULL WHERE id=?`,
+			o.ID); err != nil {
 			return err
 		}
 		queued = true

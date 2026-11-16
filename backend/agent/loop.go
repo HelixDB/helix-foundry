@@ -75,6 +75,9 @@ type Store interface {
 	GetFoundryAgentAction(ctx context.Context, workspaceID, id string) (*model.FoundryAgentAction, error)
 	GetFoundryAgentActionByPayload(ctx context.Context, turnID, payloadHash string) (*model.FoundryAgentAction, error)
 	FinishFoundryAgentAction(ctx context.Context, id string, end model.FoundryAgentActionEnd, continuation *model.FoundryAgentTurn, firstEvent json.RawMessage) error
+	// MarkFoundryAutomationCause marks a sync or a load an automation's
+	// Assistant step started as its run's.
+	MarkFoundryAutomationCause(ctx context.Context, runID string, job model.FoundryAutomationJob) error
 	GetFoundryAutomationRun(ctx context.Context, workspaceID, id string) (*model.FoundryAutomationRun, error)
 	ListFoundryAutomationRunNodes(ctx context.Context, runID string) ([]*model.FoundryAutomationRunNode, error)
 	GetFoundryAutomationWorkflowRun(ctx context.Context, automationRunID, ontologyID string) (*model.FoundryWorkflowRun, error)

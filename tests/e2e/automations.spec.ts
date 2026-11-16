@@ -147,7 +147,7 @@ test("the overview counts the runs of the last days and lists the automations, w
 test("a new automation starts as a conversation with Founder, whose card opens it on its canvas", async ({
   page,
 }) => {
-  await mock.configure({ agentStepMs: 60 });
+  await mock.configure({ agentStepMs: 60, automationSuggestionsMs: 0 });
   await signIn(page);
   await page.goto("/automations");
   await expect(page.getByText("No automations yet")).toBeVisible();
@@ -156,17 +156,18 @@ test("a new automation starts as a conversation with Founder, whose card opens i
   await expect(
     page.getByRole("heading", { name: "What should happen?" }),
   ).toBeVisible();
-  // Four suggestions, each a prompt for Founder: hovered, it is the
-  // empty composer's placeholder; clicked, its text, which nothing sends.
+  // Four suggestions written for the workspace's newest ontology, each a
+  // prompt for Founder: hovered, it is the empty composer's
+  // placeholder; clicked, its text, which nothing sends.
   const suggestions = page.getByRole("list", { name: "Suggestions" });
   await expect(suggestions.getByRole("button")).toHaveText([
-    "Monday briefing",
     "Renewal radar",
     "Contract check",
-    "Churn alert",
+    "Invoice watch",
+    "Monday contracts brief",
   ]);
   const prompt =
-    "When new contracts are uploaded, compare each against our standard terms (length, price, auto-renewal, liability) and email me the ones that differ, quoting the clause.";
+    "When new documents arrive in a document set that Customer contracts reads, check each new contract's term and signing date against the customer it names, and email me any that don't match.";
   const check = suggestions.getByRole("button", { name: "Contract check" }),
     message = page.getByRole("textbox", { name: "Message" });
   await expect(check).toHaveAccessibleDescription(prompt);
@@ -186,11 +187,11 @@ test("a new automation starts as a conversation with Founder, whose card opens i
   await message.focus();
   await page.keyboard.press("Tab");
   await expect(
-    suggestions.getByRole("button", { name: "Monday briefing" }),
+    suggestions.getByRole("button", { name: "Renewal radar" }),
   ).toBeFocused();
   await expect(message).toHaveAttribute(
     "placeholder",
-    /^Every Monday at 9am, read my data and email me what changed last week/,
+    /^Every morning at 8am, find contracts in Customer contracts/,
   );
   await page.keyboard.press("Shift+Tab");
   await expect(message).toHaveAttribute(
@@ -239,7 +240,7 @@ test("a new automation starts as a conversation with Founder, whose card opens i
   await dock.getByRole("button", { name: /^Threads:/ }).click();
   await expect(
     page.getByRole("menuitemradio", {
-      name: /^When new contracts are uploaded/,
+      name: /^When new documents arrive/,
     }),
   ).toBeVisible();
 });
@@ -253,6 +254,7 @@ test("on a phone a tap on a suggestion fills the composer, one under another", a
     hasTouch: true,
   });
   const page = await context.newPage();
+  await mock.configure({ automationSuggestionsMs: 0 });
   await signIn(page);
   await page.goto("/automations/new");
   const chips = page
@@ -264,10 +266,10 @@ test("on a phone a tap on a suggestion fills the composer, one under another", a
     chips.nth(1).boundingBox(),
   ]);
   expect(second!.y).toBeGreaterThan(first!.y + first!.height - 1);
-  await chips.filter({ hasText: "Churn alert" }).tap();
+  await chips.filter({ hasText: "Invoice watch" }).tap();
   const message = page.getByRole("textbox", { name: "Message" });
   await expect(message).toHaveValue(
-    /^Every day, look for accounts at risk of churning.*who and why\.$/,
+    /^Every day, look in Customer contracts for invoices.*belong to\.$/,
   );
   // Focused, the caret at its end and that end in view.
   await expect(message).toBeFocused();
@@ -280,9 +282,166 @@ test("on a phone a tap on a suggestion fills the composer, one under another", a
     ),
   ).toBe(true);
   await page.keyboard.type(" Weekdays only.");
-  await expect(message).toHaveValue(/who and why\. Weekdays only\.$/);
+  await expect(message).toHaveValue(/belong to\. Weekdays only\.$/);
   await expect(page).toHaveURL(/\/automations\/new$/);
   await context.close();
+});
+
+test("suggestions are written for the ontology last opened, and the picker changes them", async ({
+  page,
+}) => {
+  await mock.configure({ automationSuggestionsMs: 0 });
+  await signIn(page);
+  await page.goto("/ask/ont_acme_sales");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem("foundry.ontology.last.v1:ws_acme"),
+      ),
+    )
+    .toBe("ont_acme_sales");
+  await page.goto("/automations/new");
+  const suggestions = page.getByRole("list", { name: "Suggestions" }),
+    message = page.getByRole("textbox", { name: "Message" }),
+    picker = page.getByRole("combobox", { name: "Suggestions for" });
+  await expect(suggestions.getByRole("button")).toHaveText([
+    "New contacts brief",
+    "Job change alert",
+    "Account map refresh",
+    "Weekly people report",
+  ]);
+  await expect(picker).toHaveText("Sales graph");
+  // Hovered, a written one is the placeholder; clicked, the composer's text.
+  const alert = suggestions.getByRole("button", { name: "Job change alert" });
+  await alert.hover();
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    /^Every day, look in Sales graph for people whose title or company changed/,
+  );
+  await alert.click();
+  await expect(message).toHaveValue(/^Every day, look in Sales graph/);
+  await expect(message).toBeFocused();
+  // Another ontology's, without leaving the page; remembered here.
+  await picker.click();
+  await page.getByRole("option", { name: "Customer contracts" }).click();
+  await expect(suggestions.getByRole("button")).toHaveText([
+    "Renewal radar",
+    "Contract check",
+    "Invoice watch",
+    "Monday contracts brief",
+  ]);
+  await expect(page).toHaveURL(/\/automations\/new$/);
+  await page.reload();
+  await expect(picker).toHaveText("Customer contracts");
+  await expect(suggestions.getByRole("button").first()).toHaveText(
+    "Renewal radar",
+  );
+  // The picker follows the chips: Tab goes from the composer to them.
+  await message.focus();
+  await page.keyboard.press("Tab");
+  await expect(suggestions.getByRole("button").first()).toBeFocused();
+});
+
+test("while Founder writes suggestions, the competency questions' or placeholders show, then its own", async ({
+  page,
+}) => {
+  await mock.configure({ automationSuggestionsMs: 4000 });
+  await signIn(page);
+  await page.goto("/automations/new");
+  // Customer contracts' current version has no competency questions:
+  // placeholders while it writes.
+  const suggestions = page.getByRole("list", { name: "Suggestions" });
+  await expect(
+    page.getByRole("status").filter({ hasText: "Writing suggestions…" }),
+  ).toBeAttached();
+  await expect(suggestions).toHaveCount(0);
+  await expect(suggestions.getByRole("button").first()).toHaveText(
+    "Renewal radar",
+    { timeout: 15_000 },
+  );
+  // Renewals' are made from its questions meanwhile, then replaced.
+  await page.getByRole("combobox", { name: "Suggestions for" }).click();
+  await page.getByRole("option", { name: "Renewals" }).click();
+  await expect(suggestions.getByRole("button")).toHaveText([
+    "Customers are under contract",
+    "Each customer under contract",
+  ]);
+  await suggestions
+    .getByRole("button", { name: "Customers are under contract" })
+    .click();
+  await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue(
+    'Every Monday, answer: "Which customers are under contract, and which contracts are they signed with?" from Renewals, and email me the answer.',
+  );
+  // A chip replaced under the pointer leaves no stale preview, and a
+  // screen reader hears the chips changed.
+  const message = page.getByRole("textbox", { name: "Message" });
+  await suggestions
+    .getByRole("button", { name: "Each customer under contract" })
+    .hover();
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    /^Every Monday, answer: "What /,
+  );
+  await expect(suggestions.getByRole("button")).toHaveText(
+    [
+      "Renewal radar",
+      "Contract check",
+      "Invoice watch",
+      "Monday contracts brief",
+    ],
+    { timeout: 15_000 },
+  );
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    "Describe what should happen…",
+  );
+  await expect(
+    page.getByRole("status").filter({ hasText: "Suggestions updated" }),
+  ).toBeAttached();
+});
+
+test("without an AI provider, suggestions come from the competency questions, else the fixed four", async ({
+  page,
+}) => {
+  await mock.configure({ automationSuggestionsAi: false });
+  await signIn(page);
+  await page.goto("/automations/new");
+  const suggestions = page.getByRole("list", { name: "Suggestions" });
+  // Customer contracts has no questions to make them from.
+  await expect(suggestions.getByRole("button")).toHaveText([
+    "Monday briefing",
+    "Renewal radar",
+    "Contract check",
+    "Churn alert",
+  ]);
+  await page.getByRole("combobox", { name: "Suggestions for" }).click();
+  await page.getByRole("option", { name: "Renewals" }).click();
+  await expect(suggestions.getByRole("button")).toHaveText([
+    "Customers are under contract",
+    "Each customer under contract",
+  ]);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Writing" }),
+  ).toHaveCount(0);
+});
+
+test("someone who reads no ontology gets the fixed suggestions, with no picker", async ({
+  page,
+}) => {
+  await mock.configure({ memberQueryRead: false });
+  await signIn(page, "alan@example.com");
+  await page.goto("/automations/new");
+  await expect(
+    page.getByRole("list", { name: "Suggestions" }).getByRole("button"),
+  ).toHaveText([
+    "Monday briefing",
+    "Renewal radar",
+    "Contract check",
+    "Churn alert",
+  ]);
+  await expect(
+    page.getByRole("combobox", { name: "Suggestions for" }),
+  ).toHaveCount(0);
 });
 
 test("starts from scratch on the full canvas: adds, joins, tidies and inspects its steps", async ({
@@ -460,7 +619,7 @@ test("starts from a template, runs only once approved, runs now, and colours the
   ).toHaveCount(1);
   await expect(steps(page).getByRole("listitem")).toHaveCount(4);
   await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
-    "Started a sync of its connector.",
+    /Synced its connector: it wrote \d+ rows\./,
   );
   await expect(steps(page).getByRole("listitem").nth(2)).toContainText(
     "What Founder reported",
@@ -475,7 +634,7 @@ test("starts from a template, runs only once approved, runs now, and colours the
     .click();
   await expect(inspector(page)).toContainText("What happened");
   await expect(inspector(page)).toContainText(
-    "Started a sync of its connector.",
+    /Synced its connector: it wrote \d+ rows\./,
   );
   await expect(steps(page)).toHaveCount(0);
 
@@ -843,6 +1002,69 @@ test("starts after a sync of its connection", async ({ page }) => {
   await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
     "It was met: it went the “When met” way.",
   );
+});
+
+test("waits for the load its step started, and skips the sync another automation it set off started, saying why", async ({
+  page,
+}) => {
+  await mock.configure({ automationStepMs: 100, loadStepMs: 100 });
+  await signIn(page);
+  // One loads Renewals after Stripe syncs; the other syncs Stripe after
+  // Renewals loads: each would set the other off for ever.
+  const loader = await make(page, "Load after Stripe", [
+    {
+      id: "start",
+      kind: "trigger",
+      config: {
+        kind: "sync_finished",
+        connector_id: "conn_acme_stripe",
+        outcome: "succeeded",
+      },
+      position: at(0),
+    },
+    step(
+      "load",
+      "action",
+      { operation: "create_load", ontology_id: "ont_acme_renewals" },
+      150,
+    ),
+  ]);
+  await make(page, "Sync after Renewals", [
+    {
+      id: "start",
+      kind: "trigger",
+      config: { kind: "load_ready", ontology_id: "ont_acme_renewals" },
+      position: at(0),
+    },
+    step(
+      "sync",
+      "action",
+      { operation: "sync_connector", connector_id: "conn_acme_stripe" },
+      150,
+    ),
+  ]);
+  await page.goto("/data/connections/conn_acme_stripe");
+  await page.getByRole("button", { name: "Sync now" }).click();
+
+  // The person's sync runs the loader, whose step waits for its load.
+  await page.goto(`/automations/${loader}?tab=runs`);
+  const runs = page.getByRole("list", { name: "Runs" });
+  await expect(runs.getByRole("link")).toHaveCount(1, { timeout: 20_000 });
+  await runs.getByRole("link").first().click();
+  await ended(page, "Succeeded");
+  await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
+    "Loaded its ontology's current version: the load is ready.",
+  );
+
+  // The load ran the other, whose sync would run the loader again: skipped.
+  await page.goto(`/automations/${loader}?tab=runs`);
+  await expect(runs.getByRole("link")).toHaveCount(2, { timeout: 30_000 });
+  await runs.getByRole("link").first().click();
+  await expect(
+    inspector(page).getByText(
+      "Skipped: the sync was started by an automation this one set off; running on it would loop.",
+    ),
+  ).toBeVisible();
 });
 
 test("pauses after three failed runs in a row, and says why", async ({
