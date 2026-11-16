@@ -2229,9 +2229,76 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/dashboard-settings": {
+      "get": {
+        "summary": "The workspace's dashboard settings: whether its dashboards may be\npublished at public links. Any member reads them (a grantee doesn't);\nonly an owner changes them.",
+        "operationId": "FoundryService_GetFoundryDashboardSettings",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardSettingsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "patch": {
+        "operationId": "FoundryService_UpdateFoundryDashboardSettings",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardSettingsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUpdateFoundryDashboardSettingsBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/dashboards": {
       "get": {
-        "summary": "Dashboards: tiles of typed queries over ontologies' loads (package\ndashboard), which every member of the workspace sees and reads as\nthemselves through ReadFoundryGraph. A member creates dashboards and edits\nand deletes their own while unpinned; owners and admins edit and delete\nany, pin them in every member's sidebar, and publish one's snapshot at a\npublic link (hosted only, with foundry.dashboards.public_enabled). A\ngrantee of source grants sees the pinned ones and changes none.",
+        "summary": "Dashboards: tiles of typed queries over ontologies' loads (package\ndashboard), which every member of the workspace sees and reads as\nthemselves through ReadFoundryGraph: a dashboard's page in Foundry is how\nit is shared inside the workspace. A member creates dashboards and edits\nand deletes their own while unpinned; owners and admins edit and delete\nany, pin them in every member's sidebar, and publish one's snapshot at a\npublic link for people outside the workspace (hosted only, with\nfoundry.dashboards.public_enabled, while the workspace has public links\non). A grantee of source grants sees the pinned ones and changes none.",
         "operationId": "FoundryService_ListFoundryDashboards",
         "responses": {
           "200": {
@@ -6567,9 +6634,13 @@
         "expectedRevision": {
           "type": "string",
           "format": "int64"
+        },
+        "expiry": {
+          "$ref": "#/definitions/v1FoundryDashboardLinkExpiry",
+          "description": "When the link ends, from now; unset keeps a live link's own."
         }
       },
-      "description": "PublishFoundryDashboardRequest reads every tile as the caller, an owner or\nadmin, and keeps their outputs as the dashboard's public snapshot, at its\nlink: a new one the first time, the same one when published already. The\ndashboard must still be at expected_revision (FOUNDRY_DASHBOARD_CHANGED) and\nhave a tile. Where public links are off it is FAILED_PRECONDITION, reason\nFOUNDRY_DASHBOARDS_PUBLIC_OFF; a tile that can't be read, or an ontology it\nread that was deleted meanwhile or is being purged of People enrichment's\nprofiles, FOUNDRY_DASHBOARD_TILE_FAILED, saying which and why; a snapshot\npast its size, FOUNDRY_DASHBOARD_TOO_LARGE."
+      "description": "PublishFoundryDashboardRequest reads every tile as the caller, an owner or\nadmin, and keeps their outputs as the dashboard's public snapshot, at its\nlink: a new one the first time or once the last one expired, the same one\nwhen published already. The snapshot is what the publisher reads; anyone\nwith the link sees it without signing in, and it changes only when\npublished again. The dashboard must still be at expected_revision\n(FOUNDRY_DASHBOARD_CHANGED) and have a tile. Refusals are\nFAILED_PRECONDITION with a reason: a caller who isn't an owner or admin,\nFOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY; a host without public links,\nFOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE; a workspace whose owner turned them\noff, FOUNDRY_DASHBOARD_PUBLIC_OFF; a tile that can't be read, or an\nontology it read that was deleted meanwhile or is being purged of People\nenrichment's profiles, FOUNDRY_DASHBOARD_TILE_FAILED, saying which and why;\na snapshot past its size, FOUNDRY_DASHBOARD_TOO_LARGE."
     },
     "FoundryServicePutFoundryDataLayoutBody": {
       "type": "object",
@@ -6807,7 +6878,7 @@
     },
     "FoundryServiceUnpublishFoundryDashboardBody": {
       "type": "object",
-      "description": "UnpublishFoundryDashboardRequest deletes the dashboard's snapshot, so its\nlink shows nothing: owners and admins only, whether or not public links are\non."
+      "description": "UnpublishFoundryDashboardRequest deletes the dashboard's snapshot, so its\nlink shows nothing: owners and admins only (else\nFOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY), whether or not public links are on."
     },
     "FoundryServiceUpdateConnectorBody": {
       "type": "object",
@@ -6897,6 +6968,15 @@
         }
       },
       "description": "UpdateFoundryDashboardRequest edits the dashboard at expected_revision: each\nfield set is changed, at least one. Another revision is FAILED_PRECONDITION,\nreason FOUNDRY_DASHBOARD_CHANGED; a dashboard the caller may not edit\n(another member's, or pinned, for a member) PERMISSION_DENIED."
+    },
+    "FoundryServiceUpdateFoundryDashboardSettingsBody": {
+      "type": "object",
+      "properties": {
+        "publicLinks": {
+          "type": "boolean"
+        }
+      },
+      "description": "UpdateFoundryDashboardSettingsRequest turns the workspace's public\ndashboard links on or off: owners only. Off, every link of the workspace\nshows nothing at once; on again, the links not unpublished meanwhile, and\nnot expired, show again."
     },
     "FoundryServiceUpdateFoundryDocumentBody": {
       "type": "object",
@@ -9327,7 +9407,7 @@
         },
         "canEdit": {
           "type": "boolean",
-          "description": "What the caller may do: change its name, description and tiles; pin or\nunpin it; publish and republish it (false wherever public links are off);\ndelete it (an owner or admin only while it is published); and unpublish\nit (an owner or admin while it is published, public links on or off, so\na link turned off is never revived)."
+          "description": "What the caller may do: change its name, description and tiles; pin or\nunpin it; publish and republish it (publish_block says why not); delete\nit (an owner or admin only while it is published); and unpublish it (an\nowner or admin while it is published, public links on or off, so a link\nturned off is never revived)."
         },
         "canPin": {
           "type": "boolean"
@@ -9340,9 +9420,36 @@
         },
         "canUnpublish": {
           "type": "boolean"
+        },
+        "publishBlock": {
+          "$ref": "#/definitions/v1FoundryDashboardPublishBlock",
+          "description": "Why the caller may not publish it; UNSPECIFIED when they may\n(can_publish)."
         }
       },
       "description": "FoundryDashboard is a dashboard of a workspace."
+    },
+    "v1FoundryDashboardLinkExpiry": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED",
+        "FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER",
+        "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7",
+        "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_30",
+        "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90"
+      ],
+      "default": "FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED",
+      "description": "FoundryDashboardLinkExpiry is when a publish has its public link end.\n\n - FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED: Keep the link's own: a live link keeps its expires_at, a new one never\nends.\n - FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7: 7, 30 or 90 days from the publish."
+    },
+    "v1FoundryDashboardPublishBlock": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED",
+        "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY",
+        "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF",
+        "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE"
+      ],
+      "default": "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED",
+      "description": "FoundryDashboardPublishBlock is why a caller may not publish a dashboard at\na public link. Sharing it inside the workspace needs none of this: its page\nin Foundry opens for every member, each reading it as themselves.\n\n - FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED: Nothing: the caller may publish it.\n - FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY: Only an owner or admin makes, refreshes or ends a public link.\n - FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF: An owner turned public links off for the workspace\n(FoundryDashboardSettings.public_links).\n - FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE: The host offers no public links (foundry.dashboards.public_enabled off,\nor a standalone install)."
     },
     "v1FoundryDashboardResponse": {
       "type": "object",
@@ -9352,12 +9459,46 @@
         }
       }
     },
+    "v1FoundryDashboardSettings": {
+      "type": "object",
+      "properties": {
+        "publicLinks": {
+          "type": "boolean",
+          "description": "Whether the workspace's dashboards may be published at public links: on\nuntil an owner turns them off. Off, publishing is refused\n(FOUNDRY_DASHBOARD_PUBLIC_OFF) and every link of the workspace shows\nnothing until they are turned on again."
+        },
+        "available": {
+          "type": "boolean",
+          "description": "Whether the host offers public links at all (foundry.dashboards.public_enabled,\nnever a standalone install): without them public_links changes nothing."
+        },
+        "canChange": {
+          "type": "boolean",
+          "description": "Whether the caller may change public_links: owners only."
+        },
+        "updatedByUserId": {
+          "type": "string",
+          "description": "The owner who last changed it, and when; unset until one did."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryDashboardSettings is a workspace's dashboard settings."
+    },
+    "v1FoundryDashboardSettingsResponse": {
+      "type": "object",
+      "properties": {
+        "settings": {
+          "$ref": "#/definitions/v1FoundryDashboardSettings"
+        }
+      }
+    },
     "v1FoundryDashboardShare": {
       "type": "object",
       "properties": {
         "token": {
           "type": "string",
-          "description": "The link's token, for owners and admins only: the site's page for it is\n/share/\u003ctoken\u003e. Empty for anyone else."
+          "description": "The link's token, for owners and admins only: the site's page for it is\n/share/\u003ctoken\u003e. Empty for anyone else, and once the link has expired."
         },
         "specRevision": {
           "type": "string",
@@ -9374,9 +9515,30 @@
         },
         "publishedByUserId": {
           "type": "string"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the link stops showing its snapshot; unset: never."
+        },
+        "status": {
+          "$ref": "#/definitions/v1FoundryDashboardShareStatus",
+          "description": "Whether the link shows its snapshot now."
         }
       },
       "description": "FoundryDashboardShare is a dashboard's public snapshot."
+    },
+    "v1FoundryDashboardShareStatus": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_DASHBOARD_SHARE_STATUS_UNSPECIFIED",
+        "FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE",
+        "FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED",
+        "FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF",
+        "FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE"
+      ],
+      "default": "FOUNDRY_DASHBOARD_SHARE_STATUS_UNSPECIFIED",
+      "description": "FoundryDashboardShareStatus is whether a public link shows its snapshot\nnow. Only LIVE does: every other link answers 404, as an unpublished one.\n\n - FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED: Its expires_at has passed: publishing again makes a new link.\n - FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF: An owner turned public links off for the workspace: it shows again if\nthey are turned back on, unless it is unpublished meanwhile.\n - FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE: The host has public links off."
     },
     "v1FoundryDataLayoutResponse": {
       "type": "object",
