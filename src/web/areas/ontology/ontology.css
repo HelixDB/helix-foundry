@@ -1066,6 +1066,18 @@
 .on-db-cell small {
   color: var(--hf-muted);
 }
+/* The overview's header on a narrow page (Founder's dock open, a laptop):
+   the title keeps a readable width and wraps by word, and the actions move
+   under it once they don't fit beside it. */
+.on-overview-head .hf-page-header-row {
+  flex-wrap: wrap;
+}
+.on-overview-head .hf-page-header-title {
+  flex: 1 1 360px;
+}
+.on-overview-head h1 {
+  overflow-wrap: break-word;
+}
 .on-new-db {
   display: grid;
   gap: 4px;
