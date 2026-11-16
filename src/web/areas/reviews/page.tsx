@@ -27,9 +27,9 @@ import { FactsReview, useReviewQueue } from "./index";
 
 const SUBTITLES = {
   facts:
-    "What the current load couldn’t decide: which record a name means, and values documents disagree on. Decisions apply from the next load.",
+    "Names and values the current load couldn’t settle on its own. Decisions apply from the next load.",
   ontology:
-    "What audits of the current load found the ontology lacks. Acting on one drafts a new version of the ontology.",
+    "What audits of the current load found the ontology lacks. Acting on one drafts a new version.",
 };
 
 export function ReviewPage() {
@@ -81,10 +81,10 @@ export function ReviewPage() {
           />
         }
       />
-      <TabPanel id="facts" value={tab} idPrefix="review">
+      <TabPanel id="facts" value={tab} idPrefix="review" className="rv-tab">
         <FactsReview queue={queue} />
       </TabPanel>
-      <TabPanel id="ontology" value={tab} idPrefix="review">
+      <TabPanel id="ontology" value={tab} idPrefix="review" className="rv-tab">
         <OntologySuggestions />
       </TabPanel>
     </Page>

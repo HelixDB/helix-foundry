@@ -50,7 +50,7 @@ test("switches between Facts and Ontology, each with its open count, the tab in 
   await expect(page.getByRole("tab")).toHaveText([/^Facts/, /^Ontology/]);
   await expect(tab(page, "Facts")).toHaveAttribute("aria-selected", "true");
   await expect(
-    page.getByText(/^What the current load couldn’t decide/),
+    page.getByText(/^Names and values the current load couldn’t settle/),
   ).toBeVisible();
 
   // Facts counts the queue's cards, and one fewer once one is decided.
