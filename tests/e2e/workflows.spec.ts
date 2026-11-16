@@ -397,7 +397,9 @@ test("a use case's page: its numbers, its runs and what to change for it", async
   await filter.getByRole("radio", { name: /^Didn’t use the ontology/ }).click();
   await expect(page).toHaveURL(/verdict=not_called/);
   await expect(page.getByText(/use_case_run_id/)).toBeVisible();
-  await expect(runs.getByText("No calls", { exact: true }).first()).toBeVisible();
+  await expect(
+    runs.getByText("No calls", { exact: true }).first(),
+  ).toBeVisible();
   await expect(runs.getByText("Not used", { exact: true })).toHaveCount(0);
   await filter.getByRole("radio", { name: /^All/ }).click();
 
