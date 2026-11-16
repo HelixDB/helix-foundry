@@ -463,7 +463,7 @@ func (s *Service) workflowVerdicts(ctx context.Context, workflows []*foundrymode
 	verdicts := map[string]map[string]int64{}
 	for _, w := range workflows {
 		t := tallies[w.ID]
-		w.Runs, w.FinishedRuns, w.LastRunAt = t.Runs, t.FinishedRuns, t.LastRunAt
+		w.Runs, w.FinishedRuns, w.NeverCalledRuns, w.LastRunAt = t.Runs, t.FinishedRuns, t.NeverCalledRuns, t.LastRunAt
 		verdicts[w.ID] = t.Verdicts
 	}
 	return verdicts, nil
@@ -501,7 +501,7 @@ func (s *Service) foundryWorkflowRunResponse(ctx context.Context, ontologyID, wo
 }
 
 // AssessFoundryWorkflowRun queues a finished run's assessment again, where
-// assessments are on.
+// assessments are on: of a run that made a call to the ontology alone.
 func (s *Service) AssessFoundryWorkflowRun(ctx context.Context, req *foundryv1.AssessFoundryWorkflowRunRequest) (*foundryv1.FoundryWorkflowRunResponse, error) {
 	if !s.deps.Cfg.Foundry.Workflows.Assess.Enabled {
 		return nil, status.Error(codes.FailedPrecondition, "run assessments are off here")
@@ -513,6 +513,10 @@ func (s *Service) AssessFoundryWorkflowRun(ctx context.Context, req *foundryv1.A
 	r, err := s.foundryWorkflowRun(ctx, o.ID, req.GetWorkflowId(), req.GetId())
 	if err != nil {
 		return nil, err
+	}
+	if r.Finished != nil && r.Counts.Accesses == 0 {
+		// A finished run records no more calls.
+		return nil, status.Error(codes.FailedPrecondition, foundrymodel.FoundryWorkflowNeverCalled)
 	}
 	switch err := s.deps.DB.QueueFoundryWorkflowRunAssessment(ctx, r.ID); {
 	case errors.Is(err, foundrystore.ErrNotFound):
@@ -603,7 +607,10 @@ func foundryWorkflowRunToProto(r *foundrymodel.FoundryWorkflowRun, a *foundrymod
 	case access.PrincipalServiceCredential:
 		out.StartedByServiceCredentialId = r.StartedBy.ID
 	}
-	if a != nil {
+	// A run that finished without a call to the ontology isn't assessed: an
+	// assessment of it from before such runs went unassessed says nothing
+	// of the ontology, and one skipped as it was is no news.
+	if a != nil && (r.Finished == nil || c.Accesses > 0) {
 		out.Assessment = &foundryv1.FoundryWorkflowAssessment{
 			Status: string(a.Status), Verdict: a.Verdict, AssessmentJson: string(a.Assessment), LeftOut: a.LeftOut,
 			Error: a.Error, UsdMicros: a.USDMicros, QueuedAt: timestamppb.New(a.QueuedAt),

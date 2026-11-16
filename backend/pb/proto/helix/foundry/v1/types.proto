@@ -2467,8 +2467,11 @@ message FoundryWorkflowInsights {
 }
 
 // FoundryWorkflowInsightTotals counts runs and what their assessments said.
-// helped is the runs whose verdict is essential or helpful; claims are those
-// of done assessments.
+// A finished run that made no call to the ontology counts in never_called
+// alone of assessed, helped, verdicts, claims and gap_kinds: it says
+// nothing of the ontology, so it isn't assessed (one assessed before is
+// left out). helped is the runs whose verdict is essential or helpful;
+// claims are those of done assessments.
 message FoundryWorkflowInsightTotals {
   int32 runs = 1;
   int32 open = 2;
@@ -2489,6 +2492,9 @@ message FoundryWorkflowInsightTotals {
   int64 assessment_usd_micros = 15;
   // How many runs named a gap of each kind.
   repeated FoundryWorkflowGapCount gap_kinds = 16;
+  // Finished runs that made no call to the ontology: the agent didn't use
+  // it for the request, or didn't pass the run's id on its calls.
+  int32 never_called = 17;
 }
 
 // FoundryWorkflowGapCount is how many runs' assessments named a gap of kind.
@@ -2504,9 +2510,9 @@ message FoundryWorkflowInsightDay {
 }
 
 // FoundryWorkflowInsightFunnel follows a window's runs: each step counts
-// those of the step before that went on. Started; finished; assessed (a done
-// assessment); used the ontology (at least one call); helped (essential or
-// helpful).
+// those of the step before that went on. Started; finished; used the
+// ontology (at least one call); assessed (a done assessment); helped
+// (essential or helpful).
 message FoundryWorkflowInsightFunnel {
   int32 started = 1;
   int32 finished = 2;
@@ -3066,6 +3072,10 @@ message FoundryAutomationOntology {
   string untracked = 9;
   // When the latest run went on untracked.
   google.protobuf.Timestamp untracked_at = 10;
+  // Of finished_runs, those that recorded no read or question of it (a run
+  // may use it otherwise, by loading it or publishing its dashboard): they
+  // aren't assessed.
+  int64 never_called_runs = 11;
 }
 
 // FoundryAutomationRunCounts counts runs started within some days: every
@@ -3152,6 +3162,9 @@ message FoundryAutomationRunOntology {
   string assessment_status = 6;
   // Once done: essential, helpful, marginal, unused or misleading.
   string verdict = 7;
+  // The workflow run finished without a read or question of the ontology:
+  // it isn't assessed, and has no assessment status or verdict.
+  bool never_called = 8;
 }
 
 // FoundryAutomationRunNode is one step of a run, the spec's node node_id.

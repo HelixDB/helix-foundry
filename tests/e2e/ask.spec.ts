@@ -288,7 +288,7 @@ test("shows query results after the paragraphs that introduce them, as charts an
   await byStatus.getByRole("radio", { name: "Table" }).click();
   const statuses = byStatus.getByRole("grid", { name: "Invoices by status" });
   await expect(statuses.getByRole("columnheader")).toHaveText([
-    "Invoice.status",
+    "Invoice status",
     "Count",
   ]);
   await expect(statuses.getByRole("row")).toHaveCount(6);
@@ -329,7 +329,7 @@ test("shows query results after the paragraphs that introduce them, as charts an
   const rows = largest.getByRole("grid", { name: "Largest invoices" });
   await expect(rows.getByRole("columnheader")).toHaveText([
     "Invoice",
-    "Invoice.amount_due",
+    "Invoice amount due",
     "Customer",
   ]);
   await expect(rows.getByRole("link", { name, exact: true })).toBeVisible();
@@ -353,8 +353,8 @@ test("shows query results after the paragraphs that introduce them, as charts an
   await expect(result.getByRole("columnheader")).toHaveText([
     "Contract",
     "Customer",
-    "Customer.name",
-    "Contract.signed_on",
+    "Customer name",
+    "Contract signed on",
   ]);
   await expect(result.locator(".ak-untrusted").first()).toHaveText(
     "2026-10-01",

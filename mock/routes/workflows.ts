@@ -42,10 +42,11 @@ import { insights, starterOf } from "./workflow-insights";
 // the backend's caps and its once-per-question and once-per-send retries. A
 // grantee (a restricted member) reaches them with its Usage permission
 // (./access.ts), and, holding only part of the ontology, sees and records
-// under only the runs it started (own). Finishing a run queues its assessment, which ends `assessMs` later
-// with the mock agent's assessment (mockAssessment), held to the engine's
-// assess_result.json in the unit tests; an owner or admin asks for one again
-// (:assess). Deleting the ontology leaves its use cases here, unread, as no
+// under only the runs it started (own). Finishing a run that made a call queues its assessment, which
+// ends `assessMs` later with the mock agent's assessment (mockAssessment),
+// held to the engine's assess_result.json in the unit tests; an owner or
+// admin asks for one again (:assess). A run that made no call isn't
+// assessed, and an old assessment of one counts nowhere (neverCalled). Deleting the ontology leaves its use cases here, unread, as no
 // route reaches them.
 
 const BASE =
@@ -242,6 +243,13 @@ function settle(r: StoredRun) {
   });
 }
 
+/**
+ * Whether r finished without a call to the ontology: the backend queues no
+ * assessment of it, and counts none it has (an old one) in verdicts.
+ */
+export const neverCalled = (r: StoredRun) =>
+  r.status === "finished" && !r.accesses.length;
+
 /** Queues r's assessment, as finishing it or asking again does. */
 function queueAssessment(r: StoredRun) {
   const ms = knobs.assessMs ?? 1500;
@@ -370,7 +378,9 @@ function toWorkflow(w: StoredWorkflow, by?: string): FoundryWorkflow {
       runs: String(
         runs.filter(
           (r) =>
-            r.assessment?.status === "done" && r.assessment.verdict === verdict,
+            !neverCalled(r) &&
+            r.assessment?.status === "done" &&
+            r.assessment.verdict === verdict,
         ).length,
       ),
     }))
@@ -405,8 +415,11 @@ function toRun(r: StoredRun): FoundryWorkflowRun {
   settle(r);
   const count = (k: keyof FoundryWorkflowAccess) =>
     r.accesses.filter((a) => a[k]).length;
+  // A run that never called the ontology shows no assessment (an old one).
   const assessment =
-    r.assessment && (({ startsAt: _, endsAt: __, ...a }) => a)(r.assessment);
+    r.assessment &&
+    !neverCalled(r) &&
+    (({ startsAt: _, endsAt: __, ...a }) => a)(r.assessment);
   return {
     id: r.id,
     workflowId: r.workflowId,
@@ -718,7 +731,8 @@ export function finishAutomationRuns(
   for (const r of state.runs)
     if (r.automationRunId === automationRunId && r.status === "open") {
       Object.assign(r, { status: "finished", output, finishedAt: now() });
-      if (assess && knobs.assessEnabled !== false) queueAssessment(r);
+      if (assess && knobs.assessEnabled !== false && r.accesses.length)
+        queueAssessment(r);
     }
 }
 
@@ -762,7 +776,12 @@ export function automationOntologies(
     if (!o) continue;
     const shown = toWorkflow(w);
     const newest = state.runs
-      .filter((r) => r.workflowId === w.id && r.assessment?.status === "done")
+      .filter(
+        (r) =>
+          r.workflowId === w.id &&
+          !neverCalled(r) &&
+          r.assessment?.status === "done",
+      )
       .sort((x, y) =>
         (y.assessment?.finishedAt || "").localeCompare(
           x.assessment?.finishedAt || "",
@@ -786,6 +805,10 @@ export function automationOntologies(
       workflowId: w.id,
       runs: shown.runs,
       finishedRuns: shown.finishedRuns,
+      neverCalledRuns: String(
+        state.runs.filter((r) => r.workflowId === w.id && neverCalled(r))
+          .length,
+      ),
       ...(shown.lastRunAt && { lastRunAt: shown.lastRunAt }),
       ...(shown.verdicts && {
         verdicts: [...shown.verdicts].sort(
@@ -828,8 +851,12 @@ export function automationRunOntologies(
           workflowId: r.workflowId,
           workflowRunId: r.id,
           status: r.status,
-          ...(r.assessment && { assessmentStatus: r.assessment.status }),
-          ...(r.assessment?.verdict && { verdict: r.assessment.verdict }),
+          ...(neverCalled(r)
+            ? { neverCalled: true }
+            : {
+                ...(r.assessment && { assessmentStatus: r.assessment.status }),
+                ...(r.assessment?.verdict && { verdict: r.assessment.verdict }),
+              }),
         },
       ];
     })
@@ -1121,7 +1148,8 @@ export const workflowRoutes: MockRoute[] = [
         output,
         finishedAt: now(),
       });
-      if (knobs.assessEnabled !== false) queueAssessment(r);
+      if (knobs.assessEnabled !== false && r.accesses.length)
+        queueAssessment(r);
       return ok({ run: toRun(r) } satisfies FoundryWorkflowRunResponse);
     },
   },
@@ -1140,6 +1168,11 @@ export const workflowRoutes: MockRoute[] = [
         return fail(
           "FAILED_PRECONDITION",
           "the run is still open: it is assessed once it finishes",
+        );
+      if (neverCalled(r))
+        return fail(
+          "FAILED_PRECONDITION",
+          "This run made no call to the ontology, so there is nothing to assess.",
         );
       if (
         r.assessment?.status === "queued" ||

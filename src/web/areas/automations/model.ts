@@ -1210,6 +1210,9 @@ export type ShownSuggestions =
       chips: readonly AutomationSuggestion[];
       // Founder is writing better ones: these are replaced.
       generating: boolean;
+      // Read for the chosen ontology (written by Founder or the backend's
+      // fallback from its questions), or the fixed ones, for none.
+      source: "ontology" | "fixed";
     };
 
 /**
@@ -1221,7 +1224,8 @@ export type ShownSuggestions =
  * keeps what was read before (`data`), so the chips don't flicker.
  *
  * @example
- * shownSuggestions({ ontology: false, pending: false, failed: false }).kind; // "chips"
+ * shownSuggestions({ ontology: false, pending: false, failed: false }); // { kind: "chips", chips: AUTOMATION_SUGGESTIONS, generating: false, source: "fixed" }
+ * shownSuggestions({ ontology: true, pending: false, failed: false, data: { suggestions: [{ title: "A", prompt: "p" }] } }); // { kind: "chips", chips: [{ title: "A", prompt: "p", icon: "report" }], generating: false, source: "ontology" }
  * shownSuggestions({ ontology: true, pending: true, failed: false }); // { kind: "loading", generating: false }
  */
 export function shownSuggestions(q: {
@@ -1234,12 +1238,14 @@ export function shownSuggestions(q: {
     kind: "chips",
     chips: AUTOMATION_SUGGESTIONS,
     generating: false,
+    source: "fixed",
   } as const;
   if (!q.ontology || (q.failed && !q.data)) return fixed;
   if (q.pending) return { kind: "loading", generating: false };
   const chips = readSuggestions(q.data),
     generating = q.data?.generating === true;
-  if (chips.length) return { kind: "chips", chips, generating };
+  if (chips.length)
+    return { kind: "chips", chips, generating, source: "ontology" };
   return generating ? { kind: "loading", generating } : fixed;
 }
 
@@ -2159,6 +2165,11 @@ const HELPED = new Set(["essential", "helpful"]);
  *   impactText({ ontologyId: "o", runs: "4", finishedRuns: "4",
  *     verdicts: [{ verdict: "essential", runs: "2" }, { verdict: "unused", runs: "1" }] })
  *   // "Helped 2 of the 3 runs assessed."
+ *
+ * Runs that read or asked nothing of it aren't assessed: they are said apart.
+ *
+ *   impactText({ ontologyId: "o", runs: "2", finishedRuns: "2", neverCalledRuns: "2" })
+ *   // "2 runs used it without reading or asking it anything, so none is assessed."
  */
 export function impactText(o: FoundryAutomationOntology): string {
   if (o.untracked === "workflows_full")
@@ -2168,12 +2179,18 @@ export function impactText(o: FoundryAutomationOntology): string {
     helped = (o.verdicts || [])
       .filter((v) => HELPED.has(v.verdict))
       .reduce((n, v) => n + Number(v.runs || 0), 0);
+  const silent = Number(o.neverCalledRuns || 0);
+  const apart = silent
+    ? ` ${silent === 1 ? "One run" : `${silent.toLocaleString("en-US")} runs`} read or asked it nothing, so ${silent === 1 ? "isn’t" : "aren’t"} assessed.`
+    : "";
   if (!runs) return "No run has used it yet: its first is recorded here.";
+  if (!assessed && silent === runs)
+    return `${runs === 1 ? "One run" : `${runs.toLocaleString("en-US")} runs`} used it without reading or asking it anything, so none is assessed.`;
   if (!assessed)
     return runs === 1
       ? "One run used it; it isn’t assessed yet."
-      : `${runs.toLocaleString("en-US")} runs used it; none is assessed yet.`;
-  return `Helped ${helped.toLocaleString("en-US")} of the ${assessed === 1 ? "run" : `${assessed.toLocaleString("en-US")} runs`} assessed.`;
+      : `${runs.toLocaleString("en-US")} runs used it; none is assessed yet.${apart}`;
+  return `Helped ${helped.toLocaleString("en-US")} of the ${assessed === 1 ? "run" : `${assessed.toLocaleString("en-US")} runs`} assessed.${apart}`;
 }
 
 /** Where a run's assessment of an ontology stands, for its tag: a verdict once done. */
@@ -2193,6 +2210,11 @@ export type RunImpact =
 export function runImpact(o: FoundryAutomationRunOntology): RunImpact {
   if (o.status !== "finished")
     return { kind: "open", text: "Recording while the run goes" };
+  if (o.neverCalled)
+    return {
+      kind: "unassessed",
+      text: "Not assessed: it read or asked nothing of the ontology",
+    };
   switch (o.assessmentStatus) {
     case "done":
       return o.verdict

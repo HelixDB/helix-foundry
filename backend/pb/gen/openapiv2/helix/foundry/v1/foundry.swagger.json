@@ -9033,6 +9033,11 @@
           "type": "string",
           "format": "date-time",
           "description": "When the latest run went on untracked."
+        },
+        "neverCalledRuns": {
+          "type": "string",
+          "format": "int64",
+          "description": "Of finished_runs, those that recorded no read or question of it (a run\nmay use it otherwise, by loading it or publishing its dashboard): they\naren't assessed."
         }
       },
       "description": "FoundryAutomationOntology is an ontology an automation's runs use: its\nworkflow of the automation's, with its runs and their verdicts, or why\nFoundry records none of them."
@@ -9231,6 +9236,10 @@
         "verdict": {
           "type": "string",
           "description": "Once done: essential, helpful, marginal, unused or misleading."
+        },
+        "neverCalled": {
+          "type": "boolean",
+          "description": "The workflow run finished without a read or question of the ontology:\nit isn't assessed, and has no assessment status or verdict."
         }
       },
       "description": "FoundryAutomationRunOntology is an ontology one run of an automation used,\nand how much it helped: the run of the automation's workflow of it."
@@ -11861,7 +11870,7 @@
           "format": "int32"
         }
       },
-      "description": "FoundryWorkflowInsightFunnel follows a window's runs: each step counts\nthose of the step before that went on. Started; finished; assessed (a done\nassessment); used the ontology (at least one call); helped (essential or\nhelpful)."
+      "description": "FoundryWorkflowInsightFunnel follows a window's runs: each step counts\nthose of the step before that went on. Started; finished; used the\nontology (at least one call); assessed (a done assessment); helped\n(essential or helpful)."
     },
     "v1FoundryWorkflowInsightIssue": {
       "type": "object",
@@ -12003,9 +12012,14 @@
             "$ref": "#/definitions/v1FoundryWorkflowGapCount"
           },
           "description": "How many runs named a gap of each kind."
+        },
+        "neverCalled": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Finished runs that made no call to the ontology: the agent didn't use\nit for the request, or didn't pass the run's id on its calls."
         }
       },
-      "description": "FoundryWorkflowInsightTotals counts runs and what their assessments said.\nhelped is the runs whose verdict is essential or helpful; claims are those\nof done assessments."
+      "description": "FoundryWorkflowInsightTotals counts runs and what their assessments said.\nA finished run that made no call to the ontology counts in never_called\nalone of assessed, helped, verdicts, claims and gap_kinds: it says\nnothing of the ontology, so it isn't assessed (one assessed before is\nleft out). helped is the runs whose verdict is essential or helpful;\nclaims are those of done assessments."
     },
     "v1FoundryWorkflowInsights": {
       "type": "object",

@@ -77,7 +77,9 @@ func TestWorkflowInsightsWindow(t *testing.T) {
 }
 
 // Totals count runs as they stand, and claims, verdicts and gap kinds of
-// done assessments only; the funnel's steps narrow.
+// done assessments only; a finished run that never called the ontology
+// counts as never called alone, whatever an assessment of it said before
+// such runs went unassessed. The funnel's steps narrow.
 func TestWorkflowInsightsTotalsAndFunnel(t *testing.T) {
 	at := insightFrom.Add(time.Hour)
 	a := assessedAs(insightRun("a", at), "essential", map[string]any{
@@ -92,7 +94,6 @@ func TestWorkflowInsightsTotalsAndFunnel(t *testing.T) {
 		// A gap without its kind is other's; one without text isn't one.
 		"gaps": []map[string]any{{"what": "Calls not read"}, {"kind": "missing_link", "what": "  "}},
 	})
-	b.Counts = foundrymodel.FoundryWorkflowRunCounts{}
 	b.Assessment.USDMicros = 50
 	c := insightRun("c", at)
 	c.Counts = foundrymodel.FoundryWorkflowRunCounts{Accesses: 1, Sends: 1}
@@ -107,17 +108,31 @@ func TestWorkflowInsightsTotalsAndFunnel(t *testing.T) {
 	f := insightRun("f", at)
 	f.Counts = foundrymodel.FoundryWorkflowRunCounts{Accesses: 1}
 	f.Assessment = &foundrymodel.FoundryWorkflowInsightAssessment{Status: foundrymodel.FoundryWorkflowAssessmentFailed, USDMicros: 10}
+	// Finished without a call, assessed before such runs went unassessed:
+	// its verdict, claims, gaps and suggestions count nowhere, its spend
+	// does.
+	z := assessedAs(insightRun("z", at), "unused", map[string]any{
+		"claims":      []map[string]string{{"support": "contradicted"}},
+		"gaps":        []map[string]string{{"kind": "missing_type", "what": "Never read anything"}},
+		"suggestions": []string{"Call the ontology"},
+	})
+	z.Counts = foundrymodel.FoundryWorkflowRunCounts{}
+	z.Assessment.USDMicros = 40
+	// Open without a call yet: it may still call.
+	o := insightRun("o", at)
+	o.Status, o.Counts = foundrymodel.FoundryWorkflowRunOpen, foundrymodel.FoundryWorkflowRunCounts{}
 
-	got := workflowInsights([]foundrymodel.FoundryWorkflowInsightRun{a, b, c, d, e, f}, nil, insightFrom, 7, true)
+	got := workflowInsights([]foundrymodel.FoundryWorkflowInsightRun{a, b, c, d, e, f, z, o}, nil, insightFrom, 7, true)
 	tot := got.GetTotals()
-	if tot.GetRuns() != 6 || tot.GetOpen() != 1 || tot.GetFinished() != 5 || tot.GetAssessed() != 3 || tot.GetHelped() != 2 || tot.GetUsed() != 5 {
-		t.Fatalf("runs %d, open %d, finished %d, assessed %d, helped %d, used %d", tot.GetRuns(), tot.GetOpen(), tot.GetFinished(),
-			tot.GetAssessed(), tot.GetHelped(), tot.GetUsed())
+	if tot.GetRuns() != 8 || tot.GetOpen() != 2 || tot.GetFinished() != 6 || tot.GetAssessed() != 3 || tot.GetHelped() != 2 || tot.GetUsed() != 6 ||
+		tot.GetNeverCalled() != 1 {
+		t.Fatalf("runs %d, open %d, finished %d, assessed %d, helped %d, used %d, never called %d", tot.GetRuns(), tot.GetOpen(), tot.GetFinished(),
+			tot.GetAssessed(), tot.GetHelped(), tot.GetUsed(), tot.GetNeverCalled())
 	}
 	if tot.GetClaimsSupported() != 2 || tot.GetClaimsUnsupported() != 1 || tot.GetClaimsContradicted() != 1 {
 		t.Fatalf("claims %d/%d/%d", tot.GetClaimsSupported(), tot.GetClaimsUnsupported(), tot.GetClaimsContradicted())
 	}
-	if tot.GetReads() != 1 || tot.GetQuestions() != 1 || tot.GetSends() != 1 || tot.GetUploads() != 3 || tot.GetAssessmentUsdMicros() != 185 {
+	if tot.GetReads() != 2 || tot.GetQuestions() != 1 || tot.GetSends() != 1 || tot.GetUploads() != 3 || tot.GetAssessmentUsdMicros() != 225 {
 		t.Fatalf("calls %d/%d/%d/%d, spend %d", tot.GetReads(), tot.GetQuestions(), tot.GetSends(), tot.GetUploads(), tot.GetAssessmentUsdMicros())
 	}
 	var verdicts, kinds []string
@@ -131,9 +146,20 @@ func TestWorkflowInsightsTotalsAndFunnel(t *testing.T) {
 		t.Fatalf("verdicts %v, gap kinds %v", verdicts, kinds)
 	}
 	fu := got.GetFunnel()
-	steps := []int32{fu.GetStarted(), fu.GetFinished(), fu.GetAssessed(), fu.GetUsed(), fu.GetHelped()}
-	if !slices.Equal(steps, []int32{6, 5, 3, 2, 2}) {
-		t.Fatalf("funnel = %v", steps)
+	steps := []int32{fu.GetStarted(), fu.GetFinished(), fu.GetUsed(), fu.GetAssessed(), fu.GetHelped()}
+	if !slices.Equal(steps, []int32{8, 6, 5, 3, 2}) {
+		t.Fatalf("funnel started, finished, used, assessed, helped = %v", steps)
+	}
+	var said []string
+	for _, issue := range append(got.GetGaps(), got.GetSuggestions()...) {
+		said = append(said, issue.GetText())
+	}
+	if !slices.Equal(said, []string{"Calls not read", "No health score.", "Add a health score"}) {
+		t.Fatalf("gaps and suggestions = %v", said)
+	}
+	// A day counts the same way.
+	if day := got.GetSeries()[0].GetTotals(); day.GetNeverCalled() != 1 || day.GetAssessed() != 3 {
+		t.Fatalf("the day's totals = %v", day)
 	}
 }
 

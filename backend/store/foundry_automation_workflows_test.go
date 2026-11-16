@@ -96,7 +96,8 @@ func TestFoundryAutomationWorkflowRuns(t *testing.T) {
 	_, err = f.db.RecordFoundryWorkflowAccess(ctx, r.ID, &model.FoundryWorkflowQuestion{LoadID: id26("L1"), QuestionID: id26("Q1")})
 	require.NoError(t, err)
 
-	// The run's end finishes both, assessed, with what it found.
+	// The run's end finishes both with what it found, assessing the one
+	// that made a call: the other has nothing to assess.
 	require.NoError(t, f.db.FinishFoundryAutomationRun(ctx, first.ID, "w1", model.FoundryAutomationRunEnd{Status: model.FoundryAutomationRunSucceeded,
 		PauseAfter: 3, Answer: "The run succeeded.\nWhat its steps found: 3 overdue invoices.", Assess: true}))
 	for _, o := range []*model.FoundryOntology{f.sales, f.contracts} {
@@ -105,6 +106,10 @@ func TestFoundryAutomationWorkflowRuns(t *testing.T) {
 		require.NotNil(t, ended.Finished)
 		assert.Contains(t, ended.Finished.Output, "3 overdue invoices")
 		a, err := f.db.GetFoundryWorkflowRunAssessment(ctx, ended.ID)
+		if o == f.contracts {
+			assert.ErrorIs(t, err, store.ErrNotFound, "no call, no assessment")
+			continue
+		}
 		require.NoError(t, err)
 		assert.Equal(t, model.FoundryWorkflowAssessmentQueued, a.Status)
 	}
@@ -149,7 +154,10 @@ func TestFoundryAutomationWorkflowRuns(t *testing.T) {
 	})
 
 	t.Run("cancelling a run finishes its workflow runs unassessed", func(t *testing.T) {
-		_, err := f.db.CancelFoundryAutomationRun(ctx, f.workspaceID, second.ID, model.FoundryAutomationActor{UserID: automationOwner})
+		// It made a call: only the cancel keeps it unassessed.
+		_, err := f.db.RecordFoundryWorkflowAccess(ctx, next.ID, &model.FoundryWorkflowQuestion{LoadID: id26("L1"), QuestionID: id26("Q2")})
+		require.NoError(t, err)
+		_, err = f.db.CancelFoundryAutomationRun(ctx, f.workspaceID, second.ID, model.FoundryAutomationActor{UserID: automationOwner})
 		require.NoError(t, err)
 		ended, err := f.db.GetFoundryAutomationWorkflowRun(ctx, second.ID, f.sales.ID)
 		require.NoError(t, err)
@@ -252,6 +260,8 @@ func TestFoundryAutomationWorkflowVerdictsAndInsights(t *testing.T) {
 		run := f.claim(t, n+1)
 		r, err := f.use(run, f.sales)
 		require.NoError(t, err)
+		_, err = f.db.RecordFoundryWorkflowAccess(ctx, r.ID, &model.FoundryWorkflowQuestion{LoadID: id26("L1"), QuestionID: id26("Q1")})
+		require.NoError(t, err)
 		require.NoError(t, f.db.FinishFoundryAutomationRun(ctx, run.ID, "w1", model.FoundryAutomationRunEnd{Status: model.FoundryAutomationRunSucceeded,
 			PauseAfter: 3, Answer: "Done.", Assess: true}))
 		claimed, err := f.db.ClaimFoundryWorkflowRunAssessment(ctx, "a1", time.Minute)
@@ -262,10 +272,25 @@ func TestFoundryAutomationWorkflowVerdictsAndInsights(t *testing.T) {
 			Assessment: json.RawMessage(fmt.Sprintf(`{"verdict":%q,"gaps":[{"kind":"missing_data","what":"gap %d"}]}`, verdict, n))}))
 		runs = append(runs, r)
 	}
+	// A third that made no call: finishing queues none, and one assessed
+	// before such runs went unqueued, newest though it is, counts nowhere.
+	silentRun := f.claim(t, 3)
+	silent, err := f.use(silentRun, f.sales)
+	require.NoError(t, err)
+	require.NoError(t, f.db.FinishFoundryAutomationRun(ctx, silentRun.ID, "w1", model.FoundryAutomationRunEnd{Status: model.FoundryAutomationRunSucceeded,
+		PauseAfter: 3, Answer: "Done.", Assess: true}))
+	_, err = f.db.GetFoundryWorkflowRunAssessment(ctx, silent.ID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	_, err = testDB.Exec(`INSERT INTO foundry_workflow_run_assessments (run_id, workspace_id, ontology_id, workflow_id, status, verdict, assessment, finished_at)
+VALUES (?, ?, ?, ?, 'done', 'unused', '{"verdict":"unused","gaps":[{"kind":"other","what":"never called"}]}', NOW(6) + INTERVAL 1 SECOND)`,
+		silent.ID, f.workspaceID, f.sales.ID, silent.WorkflowID)
+	require.NoError(t, err)
 	all, err := f.db.ListFoundryAutomationOntologies(ctx, f.workspaceID, []string{f.automation.ID})
 	require.NoError(t, err)
 	require.Len(t, all[f.automation.ID], 1)
 	tracked := all[f.automation.ID][0].Tracking.(model.FoundryAutomationTracked)
+	assert.EqualValues(t, 3, tracked.Workflow.FinishedRuns)
+	assert.EqualValues(t, 1, tracked.Workflow.NeverCalledRuns, "the run that made no call")
 	assert.Equal(t, map[string]int64{"helpful": 1, "unused": 1}, tracked.Verdicts)
 	latest, err := f.db.LatestFoundryWorkflowAssessments(ctx, []string{tracked.Workflow.ID, id26("FW-NONE")})
 	require.NoError(t, err)
@@ -282,7 +307,7 @@ func TestFoundryAutomationWorkflowVerdictsAndInsights(t *testing.T) {
 	day := time.Now().UTC().AddDate(0, 0, -1)
 	every, err := f.db.ListFoundryWorkflowInsightRuns(ctx, f.sales.ID, "", ada, true, day, day.AddDate(0, 0, 3), 10)
 	require.NoError(t, err)
-	assert.Len(t, every, 3, "a grantee's own reads all it started")
+	assert.Len(t, every, 4, "a grantee's own reads all it started")
 	byHand, err := f.db.ListFoundryWorkflowInsightRuns(ctx, f.sales.ID, "", ada, false, day, day.AddDate(0, 0, 3), 10)
 	require.NoError(t, err)
 	require.Len(t, byHand, 1, "a principal asked for counts what it started itself")
@@ -293,7 +318,7 @@ func TestFoundryAutomationWorkflowVerdictsAndInsights(t *testing.T) {
 	assert.Nil(t, persons[0].Automation)
 	all3, err := f.db.ListFoundryWorkflowInsightRuns(ctx, f.sales.ID, "", nil, true, day, day.AddDate(0, 0, 3), 10)
 	require.NoError(t, err)
-	require.Len(t, all3, 3)
+	require.Len(t, all3, 4)
 	automated := 0
 	for _, r := range all3 {
 		if r.Automation != nil {
@@ -301,7 +326,7 @@ func TestFoundryAutomationWorkflowVerdictsAndInsights(t *testing.T) {
 			assert.Equal(t, &model.FoundryWorkflowAutomation{ID: f.automation.ID, Name: "Automation 1"}, r.Automation)
 		}
 	}
-	assert.Equal(t, 2, automated)
+	assert.Equal(t, 3, automated)
 	assert.Len(t, runs, 2)
 
 	listed, _, err := f.db.ListFoundryWorkflows(ctx, f.sales.ID, true, "", 10)
@@ -320,6 +345,9 @@ func TestFoundryAutomationWorkflowRunsEndWithTheWorkspace(t *testing.T) {
 	f := newAutomationWorkflowFixture(t, "AWD")
 	run := f.claim(t, 1)
 	r, err := f.use(run, f.sales)
+	require.NoError(t, err)
+	// It made a call: only the workspace's end keeps it unassessed.
+	_, err = f.db.RecordFoundryWorkflowAccess(ctx, r.ID, &model.FoundryWorkflowQuestion{LoadID: id26("L1"), QuestionID: id26("Q1")})
 	require.NoError(t, err)
 	require.NoError(t, f.db.WithTx(ctx, func(tx store.Store) error { return tx.CancelWorkspaceFoundryWork(ctx, f.workspaceID) }))
 	ended, err := f.db.GetFoundryWorkflowRun(ctx, f.sales.ID, r.ID)

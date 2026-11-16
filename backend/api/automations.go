@@ -381,7 +381,7 @@ func automationOntologiesToProto(ontologies []foundrymodel.FoundryAutomationOnto
 		switch t := o.Tracking.(type) {
 		case foundrymodel.FoundryAutomationTracked:
 			w := t.Workflow
-			p.WorkflowId, p.Runs, p.FinishedRuns, p.Verdicts = w.ID, w.Runs, w.FinishedRuns, verdictCountsToProto(t.Verdicts)
+			p.WorkflowId, p.Runs, p.FinishedRuns, p.NeverCalledRuns, p.Verdicts = w.ID, w.Runs, w.FinishedRuns, w.NeverCalledRuns, verdictCountsToProto(t.Verdicts)
 			if w.LastRunAt != nil {
 				p.LastRunAt = timestamppb.New(*w.LastRunAt)
 			}
@@ -709,7 +709,10 @@ func (s *Service) GetFoundryAutomationRun(ctx context.Context, req *foundryv1.Ge
 	for _, o := range ontologies {
 		p := &foundryv1.FoundryAutomationRunOntology{OntologyId: o.OntologyID, OntologyName: o.OntologyName, WorkflowId: o.Run.WorkflowID,
 			WorkflowRunId: o.Run.ID, Status: string(o.Run.Status())}
-		if o.Assessment != nil {
+		// One that never called it shows no assessment, as any workflow
+		// run (foundryWorkflowRunToProto).
+		p.NeverCalled = o.Run.Finished != nil && o.Run.Counts.Accesses == 0
+		if o.Assessment != nil && !p.NeverCalled {
 			p.AssessmentStatus, p.Verdict = string(o.Assessment.Status), o.Assessment.Verdict
 		}
 		out.Ontologies = append(out.Ontologies, p)

@@ -46,7 +46,7 @@ func automationProto() *foundryv1.FoundryAutomation {
 		OwnerUserId: "user-ada", CanEdit: true, CanRun: false, CanDelete: true,
 		LastRun: &foundryv1.FoundryAutomationRun{Id: autoRunID, AutomationId: autoID, Status: "failed", Error: "Step sync failed.", CreatedAt: timestamppb.Now()},
 		Ontologies: []*foundryv1.FoundryAutomationOntology{
-			{OntologyId: "ont-1", OntologyName: "Sales", WorkflowId: "wf-1", Runs: 3, FinishedRuns: 2, Gaps: []string{"no renewal dates"},
+			{OntologyId: "ont-1", OntologyName: "Sales", WorkflowId: "wf-1", Runs: 4, FinishedRuns: 3, NeverCalledRuns: 1, Gaps: []string{"no renewal dates"},
 				Verdicts: []*foundryv1.FoundryWorkflowVerdictCount{{Verdict: "helpful", Runs: 2}}},
 			{OntologyId: "ont-2", OntologyName: "Support", Untracked: "workflows_full"},
 		}}
@@ -57,7 +57,8 @@ func runProto() *foundryv1.FoundryAutomationRun {
 		Nodes: []*foundryv1.FoundryAutomationRunNode{{NodeId: "start", Status: "succeeded", OutputJson: `{"summary":"Run by hand."}`},
 			{NodeId: "sync", Status: "failed", Error: "the connector is gone"}},
 		Ontologies: []*foundryv1.FoundryAutomationRunOntology{{OntologyId: "ont-1", OntologyName: "Sales", WorkflowId: "wf-1", WorkflowRunId: "wfr-1",
-			Status: "finished", AssessmentStatus: "done", Verdict: "helpful"}}}
+			Status: "finished", AssessmentStatus: "done", Verdict: "helpful"},
+			{OntologyId: "ont-3", OntologyName: "Tickets", WorkflowId: "wf-3", WorkflowRunId: "wfr-3", Status: "finished", NeverCalled: true}}}
 }
 
 func (b *autoBackend) ListFoundryAutomations(context.Context, *foundryv1.ListFoundryAutomationsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryAutomationsResponse, error) {
@@ -149,14 +150,16 @@ func TestAutomationReadTools(t *testing.T) {
 	// The ontologies its runs use, and how much each helped.
 	useCases := workflow["use_cases"].([]any)
 	require.Len(t, useCases, 2)
-	assert.Equal(t, map[string]any{"ontology_id": "ont-1", "ontology_name": "Sales", "use_case_id": "wf-1", "runs": float64(3), "finished_runs": float64(2),
-		"verdicts": map[string]any{"helpful": float64(2)}, "gaps": []any{"no renewal dates"}}, useCases[0])
+	assert.Equal(t, map[string]any{"ontology_id": "ont-1", "ontology_name": "Sales", "use_case_id": "wf-1", "runs": float64(4), "finished_runs": float64(3),
+		"never_called_runs": float64(1), "verdicts": map[string]any{"helpful": float64(2)}, "gaps": []any{"no renewal dates"}}, useCases[0])
 	assert.Equal(t, "workflows_full", useCases[1].(map[string]any)["untracked"])
 	assert.NotEmpty(t, listed["use_cases"], "a list says them too")
 	used := run["use_cases"].([]any)
-	require.Len(t, used, 1)
+	require.Len(t, used, 2)
 	assert.Equal(t, map[string]any{"ontology_id": "ont-1", "ontology_name": "Sales", "use_case_id": "wf-1", "use_case_run_id": "wfr-1",
 		"status": "finished", "assessment_status": "done", "verdict": "helpful"}, used[0])
+	assert.Equal(t, map[string]any{"ontology_id": "ont-3", "ontology_name": "Tickets", "use_case_id": "wf-3", "use_case_run_id": "wfr-3",
+		"status": "finished", "never_called": true}, used[1])
 }
 
 func TestAutomationToolsAreOffered(t *testing.T) {

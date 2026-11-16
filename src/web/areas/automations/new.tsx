@@ -112,7 +112,10 @@ function NewChat() {
       }
     }
   }, [thread.data]);
-  const [seed, setSeed] = useState({ text: "", n: 0 }),
+  // A suggestion picked: its prompt, and the ontology it was written for.
+  const [seed, setSeed] = useState<{ text: string; n: number; about?: string }>(
+      { text: "", n: 0 },
+    ),
     [preview, setPreview] = useState("");
   const sent = (id: string) => {
     void qc.invalidateQueries({ queryKey: [ws, "agent", "threads"] });
@@ -169,15 +172,16 @@ function NewChat() {
                 hostState={where?.state ?? "ready"}
                 placeholder={preview || "Describe what should happen…"}
                 initialText={seed.text}
+                about={seed.about}
                 minRows={3}
                 onSent={sent}
               />
             </div>
             <Suggestions
               onPreview={setPreview}
-              onPick={(prompt) => {
+              onPick={(prompt, about) => {
                 setPreview("");
-                setSeed((s) => ({ text: prompt, n: s.n + 1 }));
+                setSeed((s) => ({ text: prompt, n: s.n + 1, about }));
               }}
             />
             <p className="au-or">or</p>
@@ -223,15 +227,17 @@ function NewChat() {
 /**
  * The suggestion chips under the composer, written for the chosen ontology:
  * a mouse's hover or the keyboard's focus previews one (`onPreview`), a
- * click or tap puts it in the composer (`onPick`). With several ontologies
- * the picker follows the chips, so Tab goes from the composer to them.
+ * click or tap puts it in the composer (`onPick`), with the ontology it was
+ * written for (none for the fixed ones), which Founder is told. With several
+ * ontologies the picker follows the chips, so Tab goes from the composer to
+ * them.
  */
 function Suggestions({
   onPreview,
   onPick,
 }: {
   onPreview: (prompt: string) => void;
-  onPick: (prompt: string) => void;
+  onPick: (prompt: string, ontologyId?: string) => void;
 }) {
   const me = useWorkspace(),
     ws = me.id,
@@ -307,7 +313,12 @@ function Suggestions({
                     onPreview(x.prompt)
                   }
                   onBlur={() => onPreview("")}
-                  onClick={() => onPick(x.prompt)}
+                  onClick={() =>
+                    onPick(
+                      x.prompt,
+                      shown.source === "ontology" ? ontologyId : undefined,
+                    )
+                  }
                 >
                   <span
                     className={`au-suggestion-icon is-${SUGGESTION_TONE[x.icon]}`}

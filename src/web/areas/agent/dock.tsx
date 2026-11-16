@@ -1106,7 +1106,9 @@ function PlainText({
  * it runs, and while the setting's tool check failed (its turns would fail
  * at once, each a message of the hour's), saying why; Stop ends the live
  * turn. A page that holds a conversation gives its own `placeholder` and
- * may start it with `initialText` (a suggestion's prompt); a new
+ * may start it with `initialText` (a suggestion's prompt) and `about`, the
+ * ontology that suggestion was written for, which joins the page context
+ * where the page names none (a new workflow's page), on the chip too; a new
  * conversation's box starts taller (`minRows`) than a reply's. A grantee's
  * Founder only reads and asks about what its grants cover, so its default
  * says so, and the workspace's AI setting (which it can't read) isn't read.
@@ -1120,6 +1122,7 @@ export function Composer({
   onNavigate,
   placeholder,
   initialText = "",
+  about,
   minRows = 2,
 }: {
   // The open thread; empty for a new one. `thread` once it is read.
@@ -1134,12 +1137,14 @@ export function Composer({
   onNavigate?: () => void;
   placeholder?: string;
   initialText?: string;
+  // An ontology id.
+  about?: string;
   minRows?: number;
 }) {
   const { id: ws, role, grantee } = useWorkspace(),
     location = useLocation(),
     qc = useQueryClient();
-  const page = pageContext(location.pathname, location.search),
+  const page = pageContext(location.pathname, location.search, about),
     pageKey = page
       ? `${page.ontologyId || ""}/${page.loadId || ""}/${page.dashboardId || ""}/${page.newAutomation ? "new" : ""}`
       : "";
@@ -1392,7 +1397,11 @@ export function PromptInput({
   return <textarea {...rest} ref={inputRef} rows={minRows} value={value} />;
 }
 
-/** "Looking at: <ontology> / <load>" or "<dashboard>", named from what the app has read. */
+/**
+ * "Looking at: <ontology> / <load>" or "<dashboard>", or "Making a new
+ * workflow" (for an ontology, a suggestion's), named from what the app has
+ * read.
+ */
 function PageChip({
   context,
   onDrop,
@@ -1401,7 +1410,7 @@ function PageChip({
   onDrop: () => void;
 }): ReactNode {
   const { id: ws } = useWorkspace();
-  if (context.newAutomation)
+  if (context.newAutomation && !context.ontologyId)
     return (
       <span className="ag-chip">
         <Tag>Making a new workflow</Tag>
@@ -1455,10 +1464,13 @@ function NamedChip({
   return (
     <span className="ag-chip">
       <Tag>
-        Looking at: {name}
-        {context.loadId
-          ? ` / ${load ? `${loadVersion(load)} load` : "a load"}`
-          : ""}
+        {context.newAutomation
+          ? `Making a new workflow for ${name}`
+          : `Looking at: ${name}${
+              context.loadId
+                ? ` / ${load ? `${loadVersion(load)} load` : "a load"}`
+                : ""
+            }`}
       </Tag>
       <DropChip onDrop={onDrop} />
     </span>

@@ -102,6 +102,31 @@ describe("pageContext", () => {
   ])("%s names nothing", (path) => {
     expect(pageContext(path, "?load=load_1")).toBeNull();
   });
+
+  // A suggestion's ontology: Founder is told which ontology it was written
+  // for where the page names none.
+  it.each([
+    ["/workflows/new", "", { newAutomation: true, ontologyId: "ont_2" }],
+    ["/data", "", { ontologyId: "ont_2" }],
+    // The page's own ontology, and its load, stay.
+    ["/ask/ont_1", "?load=load_4", { ontologyId: "ont_1", loadId: "load_4" }],
+    ["/ontology/ont_1", "", { ontologyId: "ont_1" }],
+    // A dashboard's page names the dashboard alone.
+    ["/dashboards/dash_1", "", { dashboardId: "dash_1" }],
+  ])("%s%s with a suggestion's ontology names %j", (path, search, context) => {
+    expect(pageContext(path, search, "ont_2")).toEqual(context);
+  });
+
+  it("leaves out a suggestion's malformed or empty ontology", () => {
+    expect(pageContext("/workflows/new", "", "has space")).toEqual({
+      newAutomation: true,
+    });
+    expect(pageContext("/workflows/new", "", "")).toEqual({
+      newAutomation: true,
+    });
+    expect(pageContext("/data", "", "x".repeat(129))).toBeNull();
+    expect(pageContext("/data", "", undefined)).toBeNull();
+  });
 });
 
 describe("inAppPath", () => {

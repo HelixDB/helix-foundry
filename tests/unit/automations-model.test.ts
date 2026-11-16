@@ -1658,6 +1658,40 @@ describe("an automation's ontologies' impact", () => {
         verdicts: [{ verdict: "unused", runs: "1" }],
       }),
     ).toBe("Helped 0 of the run assessed.");
+    // Runs that read or asked nothing of it aren't assessed, and are said
+    // apart.
+    expect(
+      impactText({
+        ...o,
+        workflowId: "w",
+        runs: "2",
+        finishedRuns: "2",
+        neverCalledRuns: "2",
+      }),
+    ).toBe(
+      "2 runs used it without reading or asking it anything, so none is assessed.",
+    );
+    expect(
+      impactText({ ...o, workflowId: "w", runs: "1", neverCalledRuns: "1" }),
+    ).toBe(
+      "One run used it without reading or asking it anything, so none is assessed.",
+    );
+    expect(
+      impactText({ ...o, workflowId: "w", runs: "3", neverCalledRuns: "1" }),
+    ).toBe(
+      "3 runs used it; none is assessed yet. One run read or asked it nothing, so isn’t assessed.",
+    );
+    expect(
+      impactText({
+        ...o,
+        workflowId: "w",
+        runs: "5",
+        neverCalledRuns: "2",
+        verdicts: [{ verdict: "helpful", runs: "3" }],
+      }),
+    ).toBe(
+      "Helped 3 of the 3 runs assessed. 2 runs read or asked it nothing, so aren’t assessed.",
+    );
     expect(impactText({ ...o, untracked: "workflows_full" })).toMatch(
       /^Its runs aren’t recorded: the ontology holds 100 use cases/,
     );
@@ -1695,6 +1729,18 @@ describe("an automation's ontologies' impact", () => {
     expect(
       runImpact({ ...r, status: "finished", assessmentStatus: "skipped" }).kind,
     ).toBe("skipped");
+    // Finished without a read or question: not assessed, whatever its row.
+    expect(
+      runImpact({
+        ...r,
+        status: "finished",
+        neverCalled: true,
+        assessmentStatus: "skipped",
+      }),
+    ).toEqual({
+      kind: "unassessed",
+      text: "Not assessed: it read or asked nothing of the ontology",
+    });
     expect(runImpact({ ...r, status: "finished" })).toEqual({
       kind: "unassessed",
       text: "Not assessed",

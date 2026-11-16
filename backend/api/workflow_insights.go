@@ -21,9 +21,10 @@ import (
 // What runs of an ontology's workflows came to over a window of whole UTC
 // days (GetFoundryWorkflowInsights): the site's Workflows pages lead with it.
 // Runs count by the day they started; a done assessment's claims, gaps and
-// suggestions count; a gap or suggestion recurs when runs name the same text,
-// case, spacing and end punctuation aside. The mock serves the same
-// (mock/routes/workflow-insights.ts).
+// suggestions count, but for a run that finished without a call to the
+// ontology, which counts as never called alone; a gap or suggestion recurs
+// when runs name the same text, case, spacing and end punctuation aside. The
+// mock serves the same (mock/routes/workflow-insights.ts).
 const (
 	// insightRuns is the most runs of a window insights read: the newest.
 	insightRuns = 5000
@@ -104,10 +105,10 @@ type insightAssessed struct {
 type insightIssue struct{ kind, text string }
 
 // assessedOf reads r's assessment once it is done; nothing for any other,
-// or one that isn't the engine's JSON.
+// one that isn't the engine's JSON, or a run that never called the ontology.
 func assessedOf(r *foundrymodel.FoundryWorkflowInsightRun) insightAssessed {
 	a := r.Assessment
-	if a == nil || a.Status != foundrymodel.FoundryWorkflowAssessmentDone || len(a.Assessment) == 0 {
+	if a == nil || a.Status != foundrymodel.FoundryWorkflowAssessmentDone || len(a.Assessment) == 0 || insightNeverCalled(r) {
 		return insightAssessed{}
 	}
 	return readAssessment(a.Assessment)
@@ -178,7 +179,15 @@ func insightDone(r *foundrymodel.FoundryWorkflowInsightRun) *foundrymodel.Foundr
 	return nil
 }
 
-// insightTotals is what runs come to.
+// insightNeverCalled is whether r finished without a call to the ontology:
+// its assessment, if one was made before such runs went unassessed, says
+// nothing of the ontology.
+func insightNeverCalled(r *foundrymodel.FoundryWorkflowInsightRun) bool {
+	return r.Status == foundrymodel.FoundryWorkflowRunFinished && r.Counts.Accesses == 0
+}
+
+// insightTotals is what runs come to. A run that never called the ontology
+// counts in NeverCalled, and its spend, alone.
 func insightTotals(runs []*foundrymodel.FoundryWorkflowInsightRun) *foundryv1.FoundryWorkflowInsightTotals {
 	t := &foundryv1.FoundryWorkflowInsightTotals{Runs: int32(len(runs))}
 	verdicts, kinds := map[string]int64{}, map[string]int32{}
@@ -198,6 +207,10 @@ func insightTotals(runs []*foundrymodel.FoundryWorkflowInsightRun) *foundryv1.Fo
 		t.Uploads += c.Uploads
 		if r.Assessment != nil {
 			t.AssessmentUsdMicros += r.Assessment.USDMicros
+		}
+		if insightNeverCalled(r) {
+			t.NeverCalled++
+			continue
 		}
 		a := insightDone(r)
 		if a == nil || a.Verdict == "" {
@@ -363,15 +376,15 @@ func workflowInsights(runs, previous []foundrymodel.FoundryWorkflowInsightRun, f
 			continue
 		}
 		f.Finished++
-		a := insightDone(r)
-		if a == nil {
-			continue
-		}
-		f.Assessed++
-		if r.Counts.Accesses == 0 {
+		if insightNeverCalled(r) {
 			continue
 		}
 		f.Used++
+		a := insightDone(r)
+		if a == nil || a.Verdict == "" {
+			continue
+		}
+		f.Assessed++
 		if insightHelped(a.Verdict) {
 			f.Helped++
 		}
