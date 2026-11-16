@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   check:
-    runs-on: crucible-4vcpu-arm
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -45,7 +45,7 @@ jobs:
   # each shard starts its own mock and app servers.
   e2e-shard:
     name: e2e (shard ${{ matrix.shard }}/4)
-    runs-on: crucible-4vcpu-arm
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -94,6 +94,6 @@ jobs:
   e2e:
     needs: e2e-shard
     if: always()
-    runs-on: crucible-2vcpu-arm
+    runs-on: ubuntu-latest
     steps:
       - run: test "${{ needs.e2e-shard.result }}" = success
