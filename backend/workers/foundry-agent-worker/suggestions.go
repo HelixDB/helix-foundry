@@ -124,7 +124,14 @@ func (s *suggester) write(ctx context.Context, row *model.FoundryAutomationSugge
 		s.finish(ctx, row, model.FoundryAutomationSuggestionsEnd{Failure: "the Assistant's monthly budget is spent"})
 		return
 	}
-	s.finish(ctx, row, s.call(ctx, binding, req))
+	end := s.call(ctx, binding, req)
+	if ctx.Err() != nil {
+		// The worker is stopping: the row is left to its lease, and the
+		// next worker writes it.
+		logger.Info("automation suggestions: stopped before the write ended; it is claimed again")
+		return
+	}
+	s.finish(ctx, row, end)
 }
 
 // call makes the write's calls within suggest.Timeout: one, and up to two

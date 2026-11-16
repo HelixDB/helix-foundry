@@ -309,3 +309,17 @@ func TestSuggestionsLeaseLost(t *testing.T) {
 	assert.Empty(t, db.ended)
 	assert.Len(t, m.requests, 2, "it goes on to the next row")
 }
+
+// A worker that stops mid-write leaves the row to its lease.
+func TestSuggestionsLeftToTheirLeaseWhenStopping(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	db := newSuggestionDB("ver-1")
+	m := &scriptedModel{answers: []answer{{err: context.Canceled}}}
+	s, _ := newSuggester(db, m)
+	s.models = func(ai.Resolved, *ai.Catalog, ai.Role) (llm.Binding, error) {
+		cancel()
+		return llm.Binding{Model: m}, nil
+	}
+	s.drain(ctx)
+	assert.Empty(t, db.ended)
+}
