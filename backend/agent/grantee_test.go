@@ -171,6 +171,14 @@ func TestAHelpersCLIOffersAGranteeGranteeToolsAlone(t *testing.T) {
 	}
 	assert.ElementsMatch(t, slices.Collect(maps.Keys(GranteeTools)), names)
 
+	// Nor in a thread begun with the whole view.
+	db.thread(turn.ThreadID).Granted = nil
+	_, err = hosts.Server(context.Background(), turn, "host:1", func(context.Context, bool) error { return nil })
+	var f *Failure
+	require.ErrorAs(t, err, &f)
+	assert.True(t, f.Permanent)
+	db.thread(turn.ThreadID).Granted = &model.FoundryAgentThreadGrants{}
+
 	h.backend.accessErr = status.Error(codes.Unavailable, "the API is down")
 	_, err = hosts.Server(context.Background(), turn, "host:1", func(context.Context, bool) error { return nil })
 	assert.Error(t, err)
