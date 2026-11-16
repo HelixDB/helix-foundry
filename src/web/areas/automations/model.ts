@@ -14,6 +14,8 @@ import type {
   FoundryAutomationOntology,
   FoundryAutomationRun,
   FoundryAutomationRunOntology,
+  FoundryAutomationSuggestionIcon,
+  ListAutomationSuggestionsResponse,
 } from "../../../shared/wfe";
 import { AUTOMATION_REFUSALS } from "../../../shared/wfe";
 import { isRecord } from "../../../shared/json";
@@ -1006,37 +1008,176 @@ export function incomplete(n: AutomationNode): string | undefined {
 
 // -------------------------------------------------------------- suggestions
 
+/** What a suggestion does, for its icon (FoundryAutomationSuggestionIcon). */
+export type SuggestionIcon =
+  | "briefing"
+  | "watch"
+  | "check"
+  | "alert"
+  | "refresh"
+  | "report";
+/** The hue of a suggestion's icon: `--hf-<tone>-soft` and `-text`. */
+export type SuggestionTone =
+  | "info"
+  | "accent"
+  | "warning"
+  | "danger"
+  | "success"
+  | "neutral";
+export const SUGGESTION_TONE: Record<SuggestionIcon, SuggestionTone> = {
+  briefing: "info",
+  watch: "accent",
+  check: "warning",
+  alert: "danger",
+  refresh: "success",
+  report: "neutral",
+};
+/** A suggestion as the page shows it: a prompt for the Assistant under its title. */
+export type AutomationSuggestion = {
+  title: string;
+  prompt: string;
+  icon: SuggestionIcon;
+};
+/** A suggestion's limits, in characters, as the WFE writes them. */
+export const SUGGESTION_TITLE_MAX = 32,
+  SUGGESTION_PROMPT_MAX = 400,
+  SUGGESTIONS_MAX = 4;
+
 /**
- * The new-automation page's suggestions: prompts for the Assistant, each an
- * outcome, under its title and the hue of its icon (`--hf-<tone>-soft` and
- * `-text`). A click puts the prompt in the composer; nothing is sent.
+ * The new-automation page's suggestions where the workspace's ontologies
+ * give none (no ontology, no current version, nothing to suggest, or the
+ * WFE couldn't be read): prompts for the Assistant, each an outcome. A
+ * click puts the prompt in the composer; nothing is sent.
  */
-export const AUTOMATION_SUGGESTIONS = [
+export const AUTOMATION_SUGGESTIONS: readonly AutomationSuggestion[] = [
   {
     title: "Monday briefing",
-    tone: "info",
+    icon: "briefing",
     prompt:
       "Every Monday at 9am, read my data and email me what changed last week: customers won and lost, deals that moved, and anything that needs my attention.",
   },
   {
     title: "Renewal radar",
-    tone: "accent",
+    icon: "watch",
     prompt:
       "Every morning, find customers whose contract renews in the next 30 days and email me each one with its plan, recent activity and open issues.",
   },
   {
     title: "Contract check",
-    tone: "warning",
+    icon: "check",
     prompt:
       "When new contracts are uploaded, compare each against our standard terms (length, price, auto-renewal, liability) and email me the ones that differ, quoting the clause.",
   },
   {
     title: "Churn alert",
-    tone: "danger",
+    icon: "alert",
     prompt:
       "Every day, look for accounts at risk of churning (falling usage, open escalations, missed payments) and, if there are any, email me who and why.",
   },
-] as const;
+];
+
+const ICONS: Record<FoundryAutomationSuggestionIcon, SuggestionIcon> = {
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_UNSPECIFIED: "report",
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_BRIEFING: "briefing",
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH: "watch",
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_CHECK: "check",
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_ALERT: "alert",
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_REFRESH: "refresh",
+  FOUNDRY_AUTOMATION_SUGGESTION_ICON_REPORT: "report",
+};
+
+/**
+ * A response's suggestions, read without trust (a model may have written
+ * them): each with a title and a prompt within the WFE's limits once
+ * trimmed, at most 4, its icon "report" when unknown.
+ *
+ * @example
+ * readSuggestions({ suggestions: [{ title: " Renewal radar ", prompt: "Every day…", icon: "FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH" }, { title: "", prompt: "x" }] });
+ * // [{ title: "Renewal radar", prompt: "Every day…", icon: "watch" }]
+ */
+export function readSuggestions(
+  r?: ListAutomationSuggestionsResponse,
+): AutomationSuggestion[] {
+  const given: unknown = r?.suggestions,
+    list: unknown[] = Array.isArray(given) ? given : [];
+  const length = (s: string) => [...s].length;
+  return list
+    .flatMap((x) => {
+      if (!isRecord(x)) return [];
+      const title = typeof x.title === "string" ? x.title.trim() : "",
+        prompt = typeof x.prompt === "string" ? x.prompt.trim() : "";
+      if (
+        !title ||
+        !prompt ||
+        length(title) > SUGGESTION_TITLE_MAX ||
+        length(prompt) > SUGGESTION_PROMPT_MAX
+      )
+        return [];
+      const icon =
+        typeof x.icon === "string" && Object.hasOwn(ICONS, x.icon)
+          ? ICONS[x.icon as FoundryAutomationSuggestionIcon]
+          : "report";
+      return [{ title, prompt, icon }];
+    })
+    .slice(0, SUGGESTIONS_MAX);
+}
+
+/** What the page shows for suggestions: placeholders while they come, or chips. */
+export type ShownSuggestions =
+  | { kind: "loading"; generating: boolean }
+  | {
+      kind: "chips";
+      chips: readonly AutomationSuggestion[];
+      // The Assistant is writing better ones: these are replaced.
+      generating: boolean;
+    };
+
+/**
+ * The page's suggestions from its read of the chosen ontology's: none
+ * chosen (the workspace has no ontology it reads), a failed read, or none
+ * to show are the fixed AUTOMATION_SUGGESTIONS; placeholders while it is
+ * read, or while the Assistant writes them with nothing to show meanwhile.
+ *
+ * @example
+ * shownSuggestions({ ontology: false, pending: false, failed: false }).kind; // "chips"
+ * shownSuggestions({ ontology: true, pending: true, failed: false }); // { kind: "loading", generating: false }
+ */
+export function shownSuggestions(q: {
+  ontology: boolean;
+  pending: boolean;
+  failed: boolean;
+  data?: ListAutomationSuggestionsResponse;
+}): ShownSuggestions {
+  const fixed = {
+    kind: "chips",
+    chips: AUTOMATION_SUGGESTIONS,
+    generating: false,
+  } as const;
+  if (!q.ontology || q.failed) return fixed;
+  if (q.pending) return { kind: "loading", generating: false };
+  const chips = readSuggestions(q.data),
+    generating = q.data?.generating === true;
+  if (chips.length) return { kind: "chips", chips, generating };
+  return generating ? { kind: "loading", generating } : fixed;
+}
+
+/**
+ * The ontology whose suggestions the page shows, of those the user reads
+ * (`ids`, the list's order, newest first): the one chosen here before,
+ * else the one last opened, else the first; undefined with none.
+ *
+ * @example
+ * suggestionOntology(["a", "b"], "", "b"); // "b"
+ * suggestionOntology(["a", "b"], "gone", ""); // "a"
+ * suggestionOntology([], "", "b"); // undefined
+ */
+export function suggestionOntology(
+  ids: readonly string[],
+  chosen: string,
+  last: string,
+): string | undefined {
+  return [chosen, last].find((id) => id && ids.includes(id)) ?? ids[0];
+}
 
 // ---------------------------------------------------------------- templates
 
