@@ -424,7 +424,11 @@ describe("Cohere", () => {
     const models = ROLE_MODELS(AI.COHERE_MODEL);
     const saved = (provider: wfe.FoundryAiProvider) =>
       ({ id: "c", hasKey: true, provider }) as wfe.FoundryAiConfig;
-    const cohere: AI.Choice = { kind: COHERE, provider: { cohere: {} }, models };
+    const cohere: AI.Choice = {
+      kind: COHERE,
+      provider: { cohere: {} },
+      models,
+    };
     expect(AI.canReuseKey(saved({ cohere: {} }), cohere)).toBe(true);
     expect(
       AI.canReuseKey(saved({ cohere: {} }), {

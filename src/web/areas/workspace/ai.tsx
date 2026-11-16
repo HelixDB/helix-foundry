@@ -311,15 +311,15 @@ function OwnerForm({
             : kind === COHERE
               ? { name: AI.COHERE_MODEL, rates: {} }
               : kind === OLLAMA
-              ? {
-                  name:
-                    offers.find((o) => o.kind === OLLAMA)?.suggested?.draft
-                      ?.name || AI.OLLAMA_MODEL,
-                  free: {},
-                }
-              : AI.pricedModels(kind)[0]
-                ? { name: "", tableAs: AI.pricedModels(kind)[0]!.model }
-                : { name: "", rates: {} },
+                ? {
+                    name:
+                      offers.find((o) => o.kind === OLLAMA)?.suggested?.draft
+                        ?.name || AI.OLLAMA_MODEL,
+                    free: {},
+                  }
+                : AI.pricedModels(kind)[0]
+                  ? { name: "", tableAs: AI.pricedModels(kind)[0]!.model }
+                  : { name: "", rates: {} },
         ));
   // The setting's card, else the default's, else the first kind offered.
   const first: Card =

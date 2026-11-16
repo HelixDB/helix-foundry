@@ -1420,9 +1420,7 @@ export type Readers = {
  */
 export const idEndpoint = (p?: FoundryAiProvider) =>
   azureEndpoint(p?.azureOpenai?.endpoint || "") ??
-  baseUrl(
-    p?.openaiCompatible?.baseUrl || (p?.cohere ? COHERE_BASE_URL : ""),
-  );
+  baseUrl(p?.openaiCompatible?.baseUrl || (p?.cohere ? COHERE_BASE_URL : ""));
 
 /**
  * Whether documents are read again after a switch: the agent keeps what

@@ -775,7 +775,10 @@ function save(
       const rates = parseRates(given.rates);
       if (typeof rates === "string")
         return fail("INVALID_ARGUMENT", `models.${role}.price.rates.${rates}`);
-      if (kind === "FOUNDRY_AI_KIND_COHERE" && given.rates.cachedInputUsdPerMtok)
+      if (
+        kind === "FOUNDRY_AI_KIND_COHERE" &&
+        given.rates.cachedInputUsdPerMtok
+      )
         return fail(
           "INVALID_ARGUMENT",
           `models.${role}.price.rates.cache_read must be left out for a Cohere model, whose cached input costs what input does`,

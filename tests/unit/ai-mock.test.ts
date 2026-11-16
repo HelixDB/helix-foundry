@@ -1259,8 +1259,14 @@ describe("Cohere", () => {
   it("prices its models only at the owner's rates, and names each one", async () => {
     const { call } = await load();
     for (const [price, message] of [
-      [{ table: {} }, "models.draft.price must be your own rates for a Cohere model"],
-      [{ free: {} }, "models.draft.price can be free only for Ollama and OpenAI-compatible servers"],
+      [
+        { table: {} },
+        "models.draft.price must be your own rates for a Cohere model",
+      ],
+      [
+        { free: {} },
+        "models.draft.price can be free only for Ollama and OpenAI-compatible servers",
+      ],
       [
         { tableAs: "command-a-03-2025" },
         "models.draft.price can be another model's only for an Azure deployment or a Bedrock inference profile",
@@ -1335,8 +1341,8 @@ describe("a local API", () => {
     expect(ai.privateHostsAllowed).toBe(true);
     expect(ai.proRequired).toBe(false);
     expect((await call("PUT", AI_PATH, CLAUDE)).status).toBe(200);
-    // OpenAI, Azure OpenAI, custom servers and Amazon Bedrock too, with no
-    // plan, and Ollama.
+    // OpenAI, Azure OpenAI, custom servers, Amazon Bedrock and Cohere too,
+    // with no plan, and Ollama.
     expect(ai.offered?.map((o) => o.kind)).toEqual([
       "FOUNDRY_AI_KIND_ANTHROPIC",
       "FOUNDRY_AI_KIND_OPENAI",
@@ -1344,6 +1350,7 @@ describe("a local API", () => {
       "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE",
       "FOUNDRY_AI_KIND_OLLAMA",
       "FOUNDRY_AI_KIND_BEDROCK",
+      "FOUNDRY_AI_KIND_COHERE",
     ]);
     expect((await call("PUT", AI_PATH, bedrock("ap-southeast-2"))).status).toBe(
       200,

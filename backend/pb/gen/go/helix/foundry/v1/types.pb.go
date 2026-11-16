@@ -1055,6 +1055,7 @@ const (
 	FoundryAIKind_FOUNDRY_AI_KIND_BEDROCK           FoundryAIKind = 4
 	FoundryAIKind_FOUNDRY_AI_KIND_OLLAMA            FoundryAIKind = 5
 	FoundryAIKind_FOUNDRY_AI_KIND_OPENAI_COMPATIBLE FoundryAIKind = 6
+	FoundryAIKind_FOUNDRY_AI_KIND_COHERE            FoundryAIKind = 7
 )
 
 // Enum value maps for FoundryAIKind.
@@ -1067,6 +1068,7 @@ var (
 		4: "FOUNDRY_AI_KIND_BEDROCK",
 		5: "FOUNDRY_AI_KIND_OLLAMA",
 		6: "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE",
+		7: "FOUNDRY_AI_KIND_COHERE",
 	}
 	FoundryAIKind_value = map[string]int32{
 		"FOUNDRY_AI_KIND_UNSPECIFIED":       0,
@@ -1076,6 +1078,7 @@ var (
 		"FOUNDRY_AI_KIND_BEDROCK":           4,
 		"FOUNDRY_AI_KIND_OLLAMA":            5,
 		"FOUNDRY_AI_KIND_OPENAI_COMPATIBLE": 6,
+		"FOUNDRY_AI_KIND_COHERE":            7,
 	}
 )
 
@@ -1578,7 +1581,7 @@ func (x FoundryPrincipal_Kind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use FoundryPrincipal_Kind.Descriptor instead.
 func (FoundryPrincipal_Kind) EnumDescriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{113, 0}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{114, 0}
 }
 
 type FoundryAccessTarget_Kind int32
@@ -1638,7 +1641,7 @@ func (x FoundryAccessTarget_Kind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use FoundryAccessTarget_Kind.Descriptor instead.
 func (FoundryAccessTarget_Kind) EnumDescriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{114, 0}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{115, 0}
 }
 
 // FoundryPlan is a workspace's Foundry plan as the billing system reports it now.
@@ -10947,6 +10950,7 @@ type FoundryAIProvider struct {
 	//	*FoundryAIProvider_Bedrock
 	//	*FoundryAIProvider_Ollama
 	//	*FoundryAIProvider_OpenaiCompatible
+	//	*FoundryAIProvider_Cohere
 	Kind isFoundryAIProvider_Kind `protobuf_oneof:"kind"`
 }
 
@@ -11029,6 +11033,13 @@ func (x *FoundryAIProvider) GetOpenaiCompatible() *FoundryAICompatible {
 	return nil
 }
 
+func (x *FoundryAIProvider) GetCohere() *FoundryAICohere {
+	if x, ok := x.GetKind().(*FoundryAIProvider_Cohere); ok {
+		return x.Cohere
+	}
+	return nil
+}
+
 type isFoundryAIProvider_Kind interface {
 	isFoundryAIProvider_Kind()
 }
@@ -11057,6 +11068,10 @@ type FoundryAIProvider_OpenaiCompatible struct {
 	OpenaiCompatible *FoundryAICompatible `protobuf:"bytes,6,opt,name=openai_compatible,json=openaiCompatible,proto3,oneof"`
 }
 
+type FoundryAIProvider_Cohere struct {
+	Cohere *FoundryAICohere `protobuf:"bytes,7,opt,name=cohere,proto3,oneof"`
+}
+
 func (*FoundryAIProvider_Anthropic) isFoundryAIProvider_Kind() {}
 
 func (*FoundryAIProvider_Openai) isFoundryAIProvider_Kind() {}
@@ -11068,6 +11083,8 @@ func (*FoundryAIProvider_Bedrock) isFoundryAIProvider_Kind() {}
 func (*FoundryAIProvider_Ollama) isFoundryAIProvider_Kind() {}
 
 func (*FoundryAIProvider_OpenaiCompatible) isFoundryAIProvider_Kind() {}
+
+func (*FoundryAIProvider_Cohere) isFoundryAIProvider_Kind() {}
 
 // Claude at api.anthropic.com.
 type FoundryAIAnthropic struct {
@@ -11245,6 +11262,44 @@ func (x *FoundryAIBedrock) GetFips() bool {
 	return false
 }
 
+// Cohere's API, called through its OpenAI-compatible Chat Completions; its
+// models are priced at the owner's own rates.
+type FoundryAICohere struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *FoundryAICohere) Reset() {
+	*x = FoundryAICohere{}
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[101]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FoundryAICohere) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FoundryAICohere) ProtoMessage() {}
+
+func (x *FoundryAICohere) ProtoReflect() protoreflect.Message {
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[101]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FoundryAICohere.ProtoReflect.Descriptor instead.
+func (*FoundryAICohere) Descriptor() ([]byte, []int) {
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{101}
+}
+
 // An Ollama server's native API, which takes no key.
 type FoundryAIOllama struct {
 	state         protoimpl.MessageState
@@ -11258,7 +11313,7 @@ type FoundryAIOllama struct {
 
 func (x *FoundryAIOllama) Reset() {
 	*x = FoundryAIOllama{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[101]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11270,7 +11325,7 @@ func (x *FoundryAIOllama) String() string {
 func (*FoundryAIOllama) ProtoMessage() {}
 
 func (x *FoundryAIOllama) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[101]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11283,7 +11338,7 @@ func (x *FoundryAIOllama) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAIOllama.ProtoReflect.Descriptor instead.
 func (*FoundryAIOllama) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{101}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{102}
 }
 
 func (x *FoundryAIOllama) GetBaseUrl() string {
@@ -11315,7 +11370,7 @@ type FoundryAICompatible struct {
 
 func (x *FoundryAICompatible) Reset() {
 	*x = FoundryAICompatible{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[102]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11327,7 +11382,7 @@ func (x *FoundryAICompatible) String() string {
 func (*FoundryAICompatible) ProtoMessage() {}
 
 func (x *FoundryAICompatible) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[102]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11340,7 +11395,7 @@ func (x *FoundryAICompatible) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAICompatible.ProtoReflect.Descriptor instead.
 func (*FoundryAICompatible) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{102}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *FoundryAICompatible) GetBaseUrl() string {
@@ -11382,7 +11437,7 @@ type FoundryAIModel struct {
 
 func (x *FoundryAIModel) Reset() {
 	*x = FoundryAIModel{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[103]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11394,7 +11449,7 @@ func (x *FoundryAIModel) String() string {
 func (*FoundryAIModel) ProtoMessage() {}
 
 func (x *FoundryAIModel) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[103]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11407,7 +11462,7 @@ func (x *FoundryAIModel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAIModel.ProtoReflect.Descriptor instead.
 func (*FoundryAIModel) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{103}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{104}
 }
 
 func (x *FoundryAIModel) GetName() string {
@@ -11501,7 +11556,7 @@ type FoundryAIRates struct {
 
 func (x *FoundryAIRates) Reset() {
 	*x = FoundryAIRates{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[104]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11513,7 +11568,7 @@ func (x *FoundryAIRates) String() string {
 func (*FoundryAIRates) ProtoMessage() {}
 
 func (x *FoundryAIRates) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[104]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11526,7 +11581,7 @@ func (x *FoundryAIRates) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAIRates.ProtoReflect.Descriptor instead.
 func (*FoundryAIRates) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{104}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{105}
 }
 
 func (x *FoundryAIRates) GetInputUsdPerMtok() string {
@@ -11565,7 +11620,7 @@ type FoundryAIModels struct {
 
 func (x *FoundryAIModels) Reset() {
 	*x = FoundryAIModels{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[105]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11577,7 +11632,7 @@ func (x *FoundryAIModels) String() string {
 func (*FoundryAIModels) ProtoMessage() {}
 
 func (x *FoundryAIModels) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[105]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11590,7 +11645,7 @@ func (x *FoundryAIModels) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAIModels.ProtoReflect.Descriptor instead.
 func (*FoundryAIModels) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{105}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{106}
 }
 
 func (x *FoundryAIModels) GetDraft() *FoundryAIModel {
@@ -11653,7 +11708,7 @@ type FoundryAIConfig struct {
 
 func (x *FoundryAIConfig) Reset() {
 	*x = FoundryAIConfig{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[106]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11665,7 +11720,7 @@ func (x *FoundryAIConfig) String() string {
 func (*FoundryAIConfig) ProtoMessage() {}
 
 func (x *FoundryAIConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[106]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11678,7 +11733,7 @@ func (x *FoundryAIConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAIConfig.ProtoReflect.Descriptor instead.
 func (*FoundryAIConfig) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{106}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{107}
 }
 
 func (x *FoundryAIConfig) GetId() string {
@@ -11785,7 +11840,7 @@ type FoundryAIDefault struct {
 
 func (x *FoundryAIDefault) Reset() {
 	*x = FoundryAIDefault{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[107]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[108]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11797,7 +11852,7 @@ func (x *FoundryAIDefault) String() string {
 func (*FoundryAIDefault) ProtoMessage() {}
 
 func (x *FoundryAIDefault) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[107]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[108]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11810,7 +11865,7 @@ func (x *FoundryAIDefault) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAIDefault.ProtoReflect.Descriptor instead.
 func (*FoundryAIDefault) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{107}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{108}
 }
 
 func (x *FoundryAIDefault) GetKind() FoundryAIKind {
@@ -11849,7 +11904,7 @@ type FoundryAIOffer struct {
 
 func (x *FoundryAIOffer) Reset() {
 	*x = FoundryAIOffer{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[108]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[109]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11861,7 +11916,7 @@ func (x *FoundryAIOffer) String() string {
 func (*FoundryAIOffer) ProtoMessage() {}
 
 func (x *FoundryAIOffer) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[108]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[109]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11874,7 +11929,7 @@ func (x *FoundryAIOffer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAIOffer.ProtoReflect.Descriptor instead.
 func (*FoundryAIOffer) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{108}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{109}
 }
 
 func (x *FoundryAIOffer) GetKind() FoundryAIKind {
@@ -11929,7 +11984,7 @@ type FoundryAI struct {
 
 func (x *FoundryAI) Reset() {
 	*x = FoundryAI{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[109]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[110]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11941,7 +11996,7 @@ func (x *FoundryAI) String() string {
 func (*FoundryAI) ProtoMessage() {}
 
 func (x *FoundryAI) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[109]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[110]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11954,7 +12009,7 @@ func (x *FoundryAI) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAI.ProtoReflect.Descriptor instead.
 func (*FoundryAI) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{109}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{110}
 }
 
 func (x *FoundryAI) GetActive() *FoundryAIConfig {
@@ -12032,7 +12087,7 @@ type FoundryAIDetected struct {
 
 func (x *FoundryAIDetected) Reset() {
 	*x = FoundryAIDetected{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[110]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[111]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12044,7 +12099,7 @@ func (x *FoundryAIDetected) String() string {
 func (*FoundryAIDetected) ProtoMessage() {}
 
 func (x *FoundryAIDetected) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[110]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[111]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12057,7 +12112,7 @@ func (x *FoundryAIDetected) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAIDetected.ProtoReflect.Descriptor instead.
 func (*FoundryAIDetected) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{110}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{111}
 }
 
 func (x *FoundryAIDetected) GetSummary() string {
@@ -12092,7 +12147,7 @@ type FoundryOllamaServer struct {
 
 func (x *FoundryOllamaServer) Reset() {
 	*x = FoundryOllamaServer{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[111]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[112]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12104,7 +12159,7 @@ func (x *FoundryOllamaServer) String() string {
 func (*FoundryOllamaServer) ProtoMessage() {}
 
 func (x *FoundryOllamaServer) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[111]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[112]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12117,7 +12172,7 @@ func (x *FoundryOllamaServer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryOllamaServer.ProtoReflect.Descriptor instead.
 func (*FoundryOllamaServer) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{111}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{112}
 }
 
 func (x *FoundryOllamaServer) GetVersion() string {
@@ -12160,7 +12215,7 @@ type FoundryOllamaModel struct {
 
 func (x *FoundryOllamaModel) Reset() {
 	*x = FoundryOllamaModel{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[112]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[113]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12172,7 +12227,7 @@ func (x *FoundryOllamaModel) String() string {
 func (*FoundryOllamaModel) ProtoMessage() {}
 
 func (x *FoundryOllamaModel) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[112]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[113]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12185,7 +12240,7 @@ func (x *FoundryOllamaModel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryOllamaModel.ProtoReflect.Descriptor instead.
 func (*FoundryOllamaModel) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{112}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{113}
 }
 
 func (x *FoundryOllamaModel) GetName() string {
@@ -12228,7 +12283,7 @@ type FoundryPrincipal struct {
 
 func (x *FoundryPrincipal) Reset() {
 	*x = FoundryPrincipal{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[113]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[114]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12240,7 +12295,7 @@ func (x *FoundryPrincipal) String() string {
 func (*FoundryPrincipal) ProtoMessage() {}
 
 func (x *FoundryPrincipal) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[113]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[114]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12253,7 +12308,7 @@ func (x *FoundryPrincipal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryPrincipal.ProtoReflect.Descriptor instead.
 func (*FoundryPrincipal) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{113}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{114}
 }
 
 func (x *FoundryPrincipal) GetKind() FoundryPrincipal_Kind {
@@ -12285,7 +12340,7 @@ type FoundryAccessTarget struct {
 
 func (x *FoundryAccessTarget) Reset() {
 	*x = FoundryAccessTarget{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[114]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[115]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12297,7 +12352,7 @@ func (x *FoundryAccessTarget) String() string {
 func (*FoundryAccessTarget) ProtoMessage() {}
 
 func (x *FoundryAccessTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[114]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[115]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12310,7 +12365,7 @@ func (x *FoundryAccessTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAccessTarget.ProtoReflect.Descriptor instead.
 func (*FoundryAccessTarget) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{114}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{115}
 }
 
 func (x *FoundryAccessTarget) GetKind() FoundryAccessTarget_Kind {
@@ -12356,7 +12411,7 @@ type FoundryAccessGrant struct {
 
 func (x *FoundryAccessGrant) Reset() {
 	*x = FoundryAccessGrant{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[115]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[116]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12368,7 +12423,7 @@ func (x *FoundryAccessGrant) String() string {
 func (*FoundryAccessGrant) ProtoMessage() {}
 
 func (x *FoundryAccessGrant) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[115]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[116]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12381,7 +12436,7 @@ func (x *FoundryAccessGrant) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAccessGrant.ProtoReflect.Descriptor instead.
 func (*FoundryAccessGrant) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{115}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{116}
 }
 
 func (x *FoundryAccessGrant) GetId() string {
@@ -12438,7 +12493,7 @@ type FoundryLoadAccessInputs struct {
 
 func (x *FoundryLoadAccessInputs) Reset() {
 	*x = FoundryLoadAccessInputs{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[116]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[117]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12450,7 +12505,7 @@ func (x *FoundryLoadAccessInputs) String() string {
 func (*FoundryLoadAccessInputs) ProtoMessage() {}
 
 func (x *FoundryLoadAccessInputs) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[116]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[117]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12463,7 +12518,7 @@ func (x *FoundryLoadAccessInputs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryLoadAccessInputs.ProtoReflect.Descriptor instead.
 func (*FoundryLoadAccessInputs) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{116}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{117}
 }
 
 func (x *FoundryLoadAccessInputs) GetTables() []*FoundryLoadAccessInputs_Table {
@@ -12511,7 +12566,7 @@ type FoundryOntologyAccess struct {
 
 func (x *FoundryOntologyAccess) Reset() {
 	*x = FoundryOntologyAccess{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[117]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[118]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12523,7 +12578,7 @@ func (x *FoundryOntologyAccess) String() string {
 func (*FoundryOntologyAccess) ProtoMessage() {}
 
 func (x *FoundryOntologyAccess) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[117]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[118]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12536,7 +12591,7 @@ func (x *FoundryOntologyAccess) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryOntologyAccess.ProtoReflect.Descriptor instead.
 func (*FoundryOntologyAccess) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{117}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{118}
 }
 
 func (x *FoundryOntologyAccess) GetOntologyId() string {
@@ -12589,7 +12644,7 @@ type FoundryAccessLoss struct {
 
 func (x *FoundryAccessLoss) Reset() {
 	*x = FoundryAccessLoss{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[118]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[119]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12601,7 +12656,7 @@ func (x *FoundryAccessLoss) String() string {
 func (*FoundryAccessLoss) ProtoMessage() {}
 
 func (x *FoundryAccessLoss) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[118]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[119]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12614,7 +12669,7 @@ func (x *FoundryAccessLoss) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAccessLoss.ProtoReflect.Descriptor instead.
 func (*FoundryAccessLoss) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{118}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{119}
 }
 
 func (x *FoundryAccessLoss) GetPrincipal() *FoundryPrincipal {
@@ -12658,7 +12713,7 @@ type FoundryTeam struct {
 
 func (x *FoundryTeam) Reset() {
 	*x = FoundryTeam{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[119]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[120]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12670,7 +12725,7 @@ func (x *FoundryTeam) String() string {
 func (*FoundryTeam) ProtoMessage() {}
 
 func (x *FoundryTeam) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[119]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[120]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12683,7 +12738,7 @@ func (x *FoundryTeam) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryTeam.ProtoReflect.Descriptor instead.
 func (*FoundryTeam) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{119}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{120}
 }
 
 func (x *FoundryTeam) GetId() string {
@@ -12746,7 +12801,7 @@ type FoundryTeamDirectory struct {
 
 func (x *FoundryTeamDirectory) Reset() {
 	*x = FoundryTeamDirectory{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[120]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[121]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12758,7 +12813,7 @@ func (x *FoundryTeamDirectory) String() string {
 func (*FoundryTeamDirectory) ProtoMessage() {}
 
 func (x *FoundryTeamDirectory) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[120]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[121]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12771,7 +12826,7 @@ func (x *FoundryTeamDirectory) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryTeamDirectory.ProtoReflect.Descriptor instead.
 func (*FoundryTeamDirectory) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{120}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{121}
 }
 
 func (x *FoundryTeamDirectory) GetDirectoryId() string {
@@ -12836,7 +12891,7 @@ type FoundryHealFinding struct {
 
 func (x *FoundryHealFinding) Reset() {
 	*x = FoundryHealFinding{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[121]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[122]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12848,7 +12903,7 @@ func (x *FoundryHealFinding) String() string {
 func (*FoundryHealFinding) ProtoMessage() {}
 
 func (x *FoundryHealFinding) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[121]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[122]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12861,7 +12916,7 @@ func (x *FoundryHealFinding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryHealFinding.ProtoReflect.Descriptor instead.
 func (*FoundryHealFinding) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{121}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{122}
 }
 
 func (x *FoundryHealFinding) GetFingerprint() string {
@@ -12961,7 +13016,7 @@ type FoundryHealRun struct {
 
 func (x *FoundryHealRun) Reset() {
 	*x = FoundryHealRun{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[122]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[123]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12973,7 +13028,7 @@ func (x *FoundryHealRun) String() string {
 func (*FoundryHealRun) ProtoMessage() {}
 
 func (x *FoundryHealRun) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[122]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[123]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12986,7 +13041,7 @@ func (x *FoundryHealRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryHealRun.ProtoReflect.Descriptor instead.
 func (*FoundryHealRun) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{122}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{123}
 }
 
 func (x *FoundryHealRun) GetId() string {
@@ -13077,7 +13132,7 @@ type FoundryWorkflow struct {
 
 func (x *FoundryWorkflow) Reset() {
 	*x = FoundryWorkflow{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[123]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[124]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13089,7 +13144,7 @@ func (x *FoundryWorkflow) String() string {
 func (*FoundryWorkflow) ProtoMessage() {}
 
 func (x *FoundryWorkflow) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[123]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[124]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13102,7 +13157,7 @@ func (x *FoundryWorkflow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflow.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflow) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{123}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{124}
 }
 
 func (x *FoundryWorkflow) GetId() string {
@@ -13198,7 +13253,7 @@ type FoundryWorkflowAutomation struct {
 
 func (x *FoundryWorkflowAutomation) Reset() {
 	*x = FoundryWorkflowAutomation{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[124]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[125]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13210,7 +13265,7 @@ func (x *FoundryWorkflowAutomation) String() string {
 func (*FoundryWorkflowAutomation) ProtoMessage() {}
 
 func (x *FoundryWorkflowAutomation) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[124]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[125]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13223,7 +13278,7 @@ func (x *FoundryWorkflowAutomation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowAutomation.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowAutomation) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{124}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{125}
 }
 
 func (x *FoundryWorkflowAutomation) GetAutomationId() string {
@@ -13280,7 +13335,7 @@ type FoundryWorkflowRun struct {
 
 func (x *FoundryWorkflowRun) Reset() {
 	*x = FoundryWorkflowRun{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[125]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[126]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13292,7 +13347,7 @@ func (x *FoundryWorkflowRun) String() string {
 func (*FoundryWorkflowRun) ProtoMessage() {}
 
 func (x *FoundryWorkflowRun) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[125]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[126]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13305,7 +13360,7 @@ func (x *FoundryWorkflowRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowRun.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowRun) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{125}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{126}
 }
 
 func (x *FoundryWorkflowRun) GetId() string {
@@ -13422,7 +13477,7 @@ type FoundryWorkflowAssessment struct {
 
 func (x *FoundryWorkflowAssessment) Reset() {
 	*x = FoundryWorkflowAssessment{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[126]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13434,7 +13489,7 @@ func (x *FoundryWorkflowAssessment) String() string {
 func (*FoundryWorkflowAssessment) ProtoMessage() {}
 
 func (x *FoundryWorkflowAssessment) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[126]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13447,7 +13502,7 @@ func (x *FoundryWorkflowAssessment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowAssessment.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowAssessment) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{126}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{127}
 }
 
 func (x *FoundryWorkflowAssessment) GetStatus() string {
@@ -13519,7 +13574,7 @@ type FoundryWorkflowVerdictCount struct {
 
 func (x *FoundryWorkflowVerdictCount) Reset() {
 	*x = FoundryWorkflowVerdictCount{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[127]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13531,7 +13586,7 @@ func (x *FoundryWorkflowVerdictCount) String() string {
 func (*FoundryWorkflowVerdictCount) ProtoMessage() {}
 
 func (x *FoundryWorkflowVerdictCount) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[127]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13544,7 +13599,7 @@ func (x *FoundryWorkflowVerdictCount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowVerdictCount.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowVerdictCount) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{127}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{128}
 }
 
 func (x *FoundryWorkflowVerdictCount) GetVerdict() string {
@@ -13596,7 +13651,7 @@ type FoundryWorkflowInsights struct {
 
 func (x *FoundryWorkflowInsights) Reset() {
 	*x = FoundryWorkflowInsights{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[128]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13608,7 +13663,7 @@ func (x *FoundryWorkflowInsights) String() string {
 func (*FoundryWorkflowInsights) ProtoMessage() {}
 
 func (x *FoundryWorkflowInsights) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[128]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13621,7 +13676,7 @@ func (x *FoundryWorkflowInsights) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowInsights.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowInsights) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{128}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{129}
 }
 
 func (x *FoundryWorkflowInsights) GetFrom() string {
@@ -13732,7 +13787,7 @@ type FoundryWorkflowInsightTotals struct {
 
 func (x *FoundryWorkflowInsightTotals) Reset() {
 	*x = FoundryWorkflowInsightTotals{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[129]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13744,7 +13799,7 @@ func (x *FoundryWorkflowInsightTotals) String() string {
 func (*FoundryWorkflowInsightTotals) ProtoMessage() {}
 
 func (x *FoundryWorkflowInsightTotals) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[129]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13757,7 +13812,7 @@ func (x *FoundryWorkflowInsightTotals) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowInsightTotals.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowInsightTotals) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{129}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{130}
 }
 
 func (x *FoundryWorkflowInsightTotals) GetRuns() int32 {
@@ -13884,7 +13939,7 @@ type FoundryWorkflowGapCount struct {
 
 func (x *FoundryWorkflowGapCount) Reset() {
 	*x = FoundryWorkflowGapCount{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[130]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13896,7 +13951,7 @@ func (x *FoundryWorkflowGapCount) String() string {
 func (*FoundryWorkflowGapCount) ProtoMessage() {}
 
 func (x *FoundryWorkflowGapCount) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[130]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13909,7 +13964,7 @@ func (x *FoundryWorkflowGapCount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowGapCount.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowGapCount) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{130}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{131}
 }
 
 func (x *FoundryWorkflowGapCount) GetKind() string {
@@ -13938,7 +13993,7 @@ type FoundryWorkflowInsightDay struct {
 
 func (x *FoundryWorkflowInsightDay) Reset() {
 	*x = FoundryWorkflowInsightDay{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[131]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13950,7 +14005,7 @@ func (x *FoundryWorkflowInsightDay) String() string {
 func (*FoundryWorkflowInsightDay) ProtoMessage() {}
 
 func (x *FoundryWorkflowInsightDay) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[131]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13963,7 +14018,7 @@ func (x *FoundryWorkflowInsightDay) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowInsightDay.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowInsightDay) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{131}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{132}
 }
 
 func (x *FoundryWorkflowInsightDay) GetDate() string {
@@ -13998,7 +14053,7 @@ type FoundryWorkflowInsightFunnel struct {
 
 func (x *FoundryWorkflowInsightFunnel) Reset() {
 	*x = FoundryWorkflowInsightFunnel{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[132]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14010,7 +14065,7 @@ func (x *FoundryWorkflowInsightFunnel) String() string {
 func (*FoundryWorkflowInsightFunnel) ProtoMessage() {}
 
 func (x *FoundryWorkflowInsightFunnel) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[132]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14023,7 +14078,7 @@ func (x *FoundryWorkflowInsightFunnel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowInsightFunnel.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowInsightFunnel) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{132}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{133}
 }
 
 func (x *FoundryWorkflowInsightFunnel) GetStarted() int32 {
@@ -14080,7 +14135,7 @@ type FoundryWorkflowInsightIssue struct {
 
 func (x *FoundryWorkflowInsightIssue) Reset() {
 	*x = FoundryWorkflowInsightIssue{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[133]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14092,7 +14147,7 @@ func (x *FoundryWorkflowInsightIssue) String() string {
 func (*FoundryWorkflowInsightIssue) ProtoMessage() {}
 
 func (x *FoundryWorkflowInsightIssue) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[133]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14105,7 +14160,7 @@ func (x *FoundryWorkflowInsightIssue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowInsightIssue.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowInsightIssue) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{133}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{134}
 }
 
 func (x *FoundryWorkflowInsightIssue) GetKind() string {
@@ -14179,7 +14234,7 @@ type FoundryWorkflowInsightSegment struct {
 
 func (x *FoundryWorkflowInsightSegment) Reset() {
 	*x = FoundryWorkflowInsightSegment{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[134]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[135]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14191,7 +14246,7 @@ func (x *FoundryWorkflowInsightSegment) String() string {
 func (*FoundryWorkflowInsightSegment) ProtoMessage() {}
 
 func (x *FoundryWorkflowInsightSegment) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[134]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[135]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14204,7 +14259,7 @@ func (x *FoundryWorkflowInsightSegment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowInsightSegment.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowInsightSegment) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{134}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{135}
 }
 
 func (x *FoundryWorkflowInsightSegment) GetPrincipal() *FoundryPrincipal {
@@ -14275,7 +14330,7 @@ type FoundryWorkflowRunCounts struct {
 
 func (x *FoundryWorkflowRunCounts) Reset() {
 	*x = FoundryWorkflowRunCounts{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[135]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[136]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14287,7 +14342,7 @@ func (x *FoundryWorkflowRunCounts) String() string {
 func (*FoundryWorkflowRunCounts) ProtoMessage() {}
 
 func (x *FoundryWorkflowRunCounts) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[135]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[136]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14300,7 +14355,7 @@ func (x *FoundryWorkflowRunCounts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowRunCounts.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowRunCounts) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{135}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{136}
 }
 
 func (x *FoundryWorkflowRunCounts) GetAccesses() int32 {
@@ -14373,7 +14428,7 @@ type FoundryWorkflowAccess struct {
 
 func (x *FoundryWorkflowAccess) Reset() {
 	*x = FoundryWorkflowAccess{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[136]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[137]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14385,7 +14440,7 @@ func (x *FoundryWorkflowAccess) String() string {
 func (*FoundryWorkflowAccess) ProtoMessage() {}
 
 func (x *FoundryWorkflowAccess) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[136]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[137]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14398,7 +14453,7 @@ func (x *FoundryWorkflowAccess) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowAccess.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowAccess) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{136}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{137}
 }
 
 func (x *FoundryWorkflowAccess) GetSeq() int32 {
@@ -14497,7 +14552,7 @@ type FoundryWorkflowRead struct {
 
 func (x *FoundryWorkflowRead) Reset() {
 	*x = FoundryWorkflowRead{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[137]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[138]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14509,7 +14564,7 @@ func (x *FoundryWorkflowRead) String() string {
 func (*FoundryWorkflowRead) ProtoMessage() {}
 
 func (x *FoundryWorkflowRead) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[137]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[138]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14522,7 +14577,7 @@ func (x *FoundryWorkflowRead) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowRead.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowRead) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{137}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{138}
 }
 
 func (x *FoundryWorkflowRead) GetLoadId() string {
@@ -14566,7 +14621,7 @@ type FoundryWorkflowQuestion struct {
 
 func (x *FoundryWorkflowQuestion) Reset() {
 	*x = FoundryWorkflowQuestion{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[138]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[139]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14578,7 +14633,7 @@ func (x *FoundryWorkflowQuestion) String() string {
 func (*FoundryWorkflowQuestion) ProtoMessage() {}
 
 func (x *FoundryWorkflowQuestion) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[138]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[139]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14591,7 +14646,7 @@ func (x *FoundryWorkflowQuestion) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowQuestion.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowQuestion) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{138}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{139}
 }
 
 func (x *FoundryWorkflowQuestion) GetLoadId() string {
@@ -14622,7 +14677,7 @@ type FoundryWorkflowSend struct {
 
 func (x *FoundryWorkflowSend) Reset() {
 	*x = FoundryWorkflowSend{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[139]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[140]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14634,7 +14689,7 @@ func (x *FoundryWorkflowSend) String() string {
 func (*FoundryWorkflowSend) ProtoMessage() {}
 
 func (x *FoundryWorkflowSend) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[139]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[140]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14647,7 +14702,7 @@ func (x *FoundryWorkflowSend) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowSend.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowSend) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{139}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{140}
 }
 
 func (x *FoundryWorkflowSend) GetConnectorId() string {
@@ -14684,7 +14739,7 @@ type FoundryWorkflowUpload struct {
 
 func (x *FoundryWorkflowUpload) Reset() {
 	*x = FoundryWorkflowUpload{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[140]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[141]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14696,7 +14751,7 @@ func (x *FoundryWorkflowUpload) String() string {
 func (*FoundryWorkflowUpload) ProtoMessage() {}
 
 func (x *FoundryWorkflowUpload) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[140]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[141]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14709,7 +14764,7 @@ func (x *FoundryWorkflowUpload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryWorkflowUpload.ProtoReflect.Descriptor instead.
 func (*FoundryWorkflowUpload) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{140}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{141}
 }
 
 func (x *FoundryWorkflowUpload) GetDocumentId() string {
@@ -14748,7 +14803,7 @@ type FoundryAgentPageContext struct {
 
 func (x *FoundryAgentPageContext) Reset() {
 	*x = FoundryAgentPageContext{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[141]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[142]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14760,7 +14815,7 @@ func (x *FoundryAgentPageContext) String() string {
 func (*FoundryAgentPageContext) ProtoMessage() {}
 
 func (x *FoundryAgentPageContext) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[141]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[142]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14773,7 +14828,7 @@ func (x *FoundryAgentPageContext) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentPageContext.ProtoReflect.Descriptor instead.
 func (*FoundryAgentPageContext) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{141}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{142}
 }
 
 func (x *FoundryAgentPageContext) GetOntologyId() string {
@@ -14828,7 +14883,7 @@ type FoundryAgentThread struct {
 
 func (x *FoundryAgentThread) Reset() {
 	*x = FoundryAgentThread{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[142]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[143]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14840,7 +14895,7 @@ func (x *FoundryAgentThread) String() string {
 func (*FoundryAgentThread) ProtoMessage() {}
 
 func (x *FoundryAgentThread) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[142]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[143]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14853,7 +14908,7 @@ func (x *FoundryAgentThread) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentThread.ProtoReflect.Descriptor instead.
 func (*FoundryAgentThread) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{142}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{143}
 }
 
 func (x *FoundryAgentThread) GetId() string {
@@ -14917,7 +14972,7 @@ type FoundryAgentRuntime struct {
 
 func (x *FoundryAgentRuntime) Reset() {
 	*x = FoundryAgentRuntime{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[143]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[144]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14929,7 +14984,7 @@ func (x *FoundryAgentRuntime) String() string {
 func (*FoundryAgentRuntime) ProtoMessage() {}
 
 func (x *FoundryAgentRuntime) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[143]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[144]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14942,7 +14997,7 @@ func (x *FoundryAgentRuntime) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentRuntime.ProtoReflect.Descriptor instead.
 func (*FoundryAgentRuntime) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{143}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{144}
 }
 
 func (x *FoundryAgentRuntime) GetRuntime() string {
@@ -15013,7 +15068,7 @@ type FoundryAgentHost struct {
 
 func (x *FoundryAgentHost) Reset() {
 	*x = FoundryAgentHost{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[144]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[145]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15025,7 +15080,7 @@ func (x *FoundryAgentHost) String() string {
 func (*FoundryAgentHost) ProtoMessage() {}
 
 func (x *FoundryAgentHost) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[144]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[145]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15038,7 +15093,7 @@ func (x *FoundryAgentHost) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentHost.ProtoReflect.Descriptor instead.
 func (*FoundryAgentHost) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{144}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{145}
 }
 
 func (x *FoundryAgentHost) GetId() string {
@@ -15137,7 +15192,7 @@ type FoundryAgentHostAccount struct {
 
 func (x *FoundryAgentHostAccount) Reset() {
 	*x = FoundryAgentHostAccount{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[145]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[146]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15149,7 +15204,7 @@ func (x *FoundryAgentHostAccount) String() string {
 func (*FoundryAgentHostAccount) ProtoMessage() {}
 
 func (x *FoundryAgentHostAccount) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[145]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[146]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15162,7 +15217,7 @@ func (x *FoundryAgentHostAccount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentHostAccount.ProtoReflect.Descriptor instead.
 func (*FoundryAgentHostAccount) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{145}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{146}
 }
 
 func (x *FoundryAgentHostAccount) GetRuntime() string {
@@ -15238,7 +15293,7 @@ type FoundryAgentTurn struct {
 
 func (x *FoundryAgentTurn) Reset() {
 	*x = FoundryAgentTurn{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[146]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[147]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15250,7 +15305,7 @@ func (x *FoundryAgentTurn) String() string {
 func (*FoundryAgentTurn) ProtoMessage() {}
 
 func (x *FoundryAgentTurn) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[146]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[147]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15263,7 +15318,7 @@ func (x *FoundryAgentTurn) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentTurn.ProtoReflect.Descriptor instead.
 func (*FoundryAgentTurn) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{146}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{147}
 }
 
 func (x *FoundryAgentTurn) GetId() string {
@@ -15400,7 +15455,7 @@ type FoundryAgentAsked struct {
 
 func (x *FoundryAgentAsked) Reset() {
 	*x = FoundryAgentAsked{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[147]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[148]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15412,7 +15467,7 @@ func (x *FoundryAgentAsked) String() string {
 func (*FoundryAgentAsked) ProtoMessage() {}
 
 func (x *FoundryAgentAsked) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[147]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[148]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15425,7 +15480,7 @@ func (x *FoundryAgentAsked) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentAsked.ProtoReflect.Descriptor instead.
 func (*FoundryAgentAsked) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{147}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{148}
 }
 
 func (x *FoundryAgentAsked) GetQuestions() []*AgentQuestion {
@@ -15457,7 +15512,7 @@ type FoundryAgentAskedGeneration struct {
 
 func (x *FoundryAgentAskedGeneration) Reset() {
 	*x = FoundryAgentAskedGeneration{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[148]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[149]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15469,7 +15524,7 @@ func (x *FoundryAgentAskedGeneration) String() string {
 func (*FoundryAgentAskedGeneration) ProtoMessage() {}
 
 func (x *FoundryAgentAskedGeneration) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[148]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[149]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15482,7 +15537,7 @@ func (x *FoundryAgentAskedGeneration) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentAskedGeneration.ProtoReflect.Descriptor instead.
 func (*FoundryAgentAskedGeneration) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{148}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{149}
 }
 
 func (x *FoundryAgentAskedGeneration) GetOntologyId() string {
@@ -15520,7 +15575,7 @@ type FoundryAgentAnswers struct {
 
 func (x *FoundryAgentAnswers) Reset() {
 	*x = FoundryAgentAnswers{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[149]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[150]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15532,7 +15587,7 @@ func (x *FoundryAgentAnswers) String() string {
 func (*FoundryAgentAnswers) ProtoMessage() {}
 
 func (x *FoundryAgentAnswers) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[149]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[150]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15545,7 +15600,7 @@ func (x *FoundryAgentAnswers) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentAnswers.ProtoReflect.Descriptor instead.
 func (*FoundryAgentAnswers) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{149}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{150}
 }
 
 func (x *FoundryAgentAnswers) GetTurnId() string {
@@ -15577,7 +15632,7 @@ type FoundryAgentEvent struct {
 
 func (x *FoundryAgentEvent) Reset() {
 	*x = FoundryAgentEvent{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[150]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[151]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15589,7 +15644,7 @@ func (x *FoundryAgentEvent) String() string {
 func (*FoundryAgentEvent) ProtoMessage() {}
 
 func (x *FoundryAgentEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[150]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[151]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15602,7 +15657,7 @@ func (x *FoundryAgentEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentEvent.ProtoReflect.Descriptor instead.
 func (*FoundryAgentEvent) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{150}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{151}
 }
 
 func (x *FoundryAgentEvent) GetSeq() int32 {
@@ -15661,7 +15716,7 @@ type FoundryAgentAction struct {
 
 func (x *FoundryAgentAction) Reset() {
 	*x = FoundryAgentAction{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[151]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[152]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15673,7 +15728,7 @@ func (x *FoundryAgentAction) String() string {
 func (*FoundryAgentAction) ProtoMessage() {}
 
 func (x *FoundryAgentAction) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[151]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[152]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15686,7 +15741,7 @@ func (x *FoundryAgentAction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAgentAction.ProtoReflect.Descriptor instead.
 func (*FoundryAgentAction) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{151}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{152}
 }
 
 func (x *FoundryAgentAction) GetId() string {
@@ -15839,7 +15894,7 @@ type FoundryDashboard struct {
 
 func (x *FoundryDashboard) Reset() {
 	*x = FoundryDashboard{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[152]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[153]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15851,7 +15906,7 @@ func (x *FoundryDashboard) String() string {
 func (*FoundryDashboard) ProtoMessage() {}
 
 func (x *FoundryDashboard) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[152]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[153]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15864,7 +15919,7 @@ func (x *FoundryDashboard) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryDashboard.ProtoReflect.Descriptor instead.
 func (*FoundryDashboard) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{152}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{153}
 }
 
 func (x *FoundryDashboard) GetId() string {
@@ -16012,7 +16067,7 @@ type FoundryDashboardShare struct {
 
 func (x *FoundryDashboardShare) Reset() {
 	*x = FoundryDashboardShare{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[153]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[154]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16024,7 +16079,7 @@ func (x *FoundryDashboardShare) String() string {
 func (*FoundryDashboardShare) ProtoMessage() {}
 
 func (x *FoundryDashboardShare) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[153]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[154]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16037,7 +16092,7 @@ func (x *FoundryDashboardShare) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryDashboardShare.ProtoReflect.Descriptor instead.
 func (*FoundryDashboardShare) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{153}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{154}
 }
 
 func (x *FoundryDashboardShare) GetToken() string {
@@ -16103,7 +16158,7 @@ type FoundryAutomationSuggestion struct {
 
 func (x *FoundryAutomationSuggestion) Reset() {
 	*x = FoundryAutomationSuggestion{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[154]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[155]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16115,7 +16170,7 @@ func (x *FoundryAutomationSuggestion) String() string {
 func (*FoundryAutomationSuggestion) ProtoMessage() {}
 
 func (x *FoundryAutomationSuggestion) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[154]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[155]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16128,7 +16183,7 @@ func (x *FoundryAutomationSuggestion) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAutomationSuggestion.ProtoReflect.Descriptor instead.
 func (*FoundryAutomationSuggestion) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{154}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{155}
 }
 
 func (x *FoundryAutomationSuggestion) GetTitle() string {
@@ -16244,7 +16299,7 @@ type FoundryAutomation struct {
 
 func (x *FoundryAutomation) Reset() {
 	*x = FoundryAutomation{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[155]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[156]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16256,7 +16311,7 @@ func (x *FoundryAutomation) String() string {
 func (*FoundryAutomation) ProtoMessage() {}
 
 func (x *FoundryAutomation) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[155]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[156]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16269,7 +16324,7 @@ func (x *FoundryAutomation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAutomation.ProtoReflect.Descriptor instead.
 func (*FoundryAutomation) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{155}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{156}
 }
 
 func (x *FoundryAutomation) GetId() string {
@@ -16514,7 +16569,7 @@ type FoundryAutomationOntology struct {
 
 func (x *FoundryAutomationOntology) Reset() {
 	*x = FoundryAutomationOntology{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[156]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[157]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16526,7 +16581,7 @@ func (x *FoundryAutomationOntology) String() string {
 func (*FoundryAutomationOntology) ProtoMessage() {}
 
 func (x *FoundryAutomationOntology) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[156]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[157]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16539,7 +16594,7 @@ func (x *FoundryAutomationOntology) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAutomationOntology.ProtoReflect.Descriptor instead.
 func (*FoundryAutomationOntology) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{156}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{157}
 }
 
 func (x *FoundryAutomationOntology) GetOntologyId() string {
@@ -16631,7 +16686,7 @@ type FoundryAutomationRunCounts struct {
 
 func (x *FoundryAutomationRunCounts) Reset() {
 	*x = FoundryAutomationRunCounts{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[157]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[158]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16643,7 +16698,7 @@ func (x *FoundryAutomationRunCounts) String() string {
 func (*FoundryAutomationRunCounts) ProtoMessage() {}
 
 func (x *FoundryAutomationRunCounts) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[157]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[158]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16656,7 +16711,7 @@ func (x *FoundryAutomationRunCounts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAutomationRunCounts.ProtoReflect.Descriptor instead.
 func (*FoundryAutomationRunCounts) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{157}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{158}
 }
 
 func (x *FoundryAutomationRunCounts) GetRuns() int32 {
@@ -16709,7 +16764,7 @@ type FoundryAutomationRunDay struct {
 
 func (x *FoundryAutomationRunDay) Reset() {
 	*x = FoundryAutomationRunDay{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[158]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[159]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16721,7 +16776,7 @@ func (x *FoundryAutomationRunDay) String() string {
 func (*FoundryAutomationRunDay) ProtoMessage() {}
 
 func (x *FoundryAutomationRunDay) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[158]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[159]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16734,7 +16789,7 @@ func (x *FoundryAutomationRunDay) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAutomationRunDay.ProtoReflect.Descriptor instead.
 func (*FoundryAutomationRunDay) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{158}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{159}
 }
 
 func (x *FoundryAutomationRunDay) GetDate() string {
@@ -16779,7 +16834,7 @@ type FoundryAutomationRunSummary struct {
 
 func (x *FoundryAutomationRunSummary) Reset() {
 	*x = FoundryAutomationRunSummary{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[159]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[160]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16791,7 +16846,7 @@ func (x *FoundryAutomationRunSummary) String() string {
 func (*FoundryAutomationRunSummary) ProtoMessage() {}
 
 func (x *FoundryAutomationRunSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[159]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[160]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16804,7 +16859,7 @@ func (x *FoundryAutomationRunSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAutomationRunSummary.ProtoReflect.Descriptor instead.
 func (*FoundryAutomationRunSummary) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{159}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{160}
 }
 
 func (x *FoundryAutomationRunSummary) GetDays() int32 {
@@ -16873,7 +16928,7 @@ type FoundryAutomationRun struct {
 
 func (x *FoundryAutomationRun) Reset() {
 	*x = FoundryAutomationRun{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[160]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[161]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16885,7 +16940,7 @@ func (x *FoundryAutomationRun) String() string {
 func (*FoundryAutomationRun) ProtoMessage() {}
 
 func (x *FoundryAutomationRun) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[160]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[161]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16898,7 +16953,7 @@ func (x *FoundryAutomationRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAutomationRun.ProtoReflect.Descriptor instead.
 func (*FoundryAutomationRun) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{160}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{161}
 }
 
 func (x *FoundryAutomationRun) GetId() string {
@@ -17036,7 +17091,7 @@ type FoundryAutomationRunOntology struct {
 
 func (x *FoundryAutomationRunOntology) Reset() {
 	*x = FoundryAutomationRunOntology{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[161]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[162]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17048,7 +17103,7 @@ func (x *FoundryAutomationRunOntology) String() string {
 func (*FoundryAutomationRunOntology) ProtoMessage() {}
 
 func (x *FoundryAutomationRunOntology) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[161]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[162]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17061,7 +17116,7 @@ func (x *FoundryAutomationRunOntology) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAutomationRunOntology.ProtoReflect.Descriptor instead.
 func (*FoundryAutomationRunOntology) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{161}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{162}
 }
 
 func (x *FoundryAutomationRunOntology) GetOntologyId() string {
@@ -17139,7 +17194,7 @@ type FoundryAutomationRunNode struct {
 
 func (x *FoundryAutomationRunNode) Reset() {
 	*x = FoundryAutomationRunNode{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[162]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[163]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17151,7 +17206,7 @@ func (x *FoundryAutomationRunNode) String() string {
 func (*FoundryAutomationRunNode) ProtoMessage() {}
 
 func (x *FoundryAutomationRunNode) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[162]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[163]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17164,7 +17219,7 @@ func (x *FoundryAutomationRunNode) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryAutomationRunNode.ProtoReflect.Descriptor instead.
 func (*FoundryAutomationRunNode) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{162}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{163}
 }
 
 func (x *FoundryAutomationRunNode) GetNodeId() string {
@@ -17234,7 +17289,7 @@ type FoundryLoadAccessInputs_Table struct {
 
 func (x *FoundryLoadAccessInputs_Table) Reset() {
 	*x = FoundryLoadAccessInputs_Table{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[165]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[166]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17246,7 +17301,7 @@ func (x *FoundryLoadAccessInputs_Table) String() string {
 func (*FoundryLoadAccessInputs_Table) ProtoMessage() {}
 
 func (x *FoundryLoadAccessInputs_Table) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[165]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[166]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17259,7 +17314,7 @@ func (x *FoundryLoadAccessInputs_Table) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FoundryLoadAccessInputs_Table.ProtoReflect.Descriptor instead.
 func (*FoundryLoadAccessInputs_Table) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{116, 0}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{117, 0}
 }
 
 func (x *FoundryLoadAccessInputs_Table) GetConnectorId() string {
@@ -17290,7 +17345,7 @@ type FoundryLoadAccessInputs_DocumentSet struct {
 
 func (x *FoundryLoadAccessInputs_DocumentSet) Reset() {
 	*x = FoundryLoadAccessInputs_DocumentSet{}
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[166]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[167]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17302,7 +17357,7 @@ func (x *FoundryLoadAccessInputs_DocumentSet) String() string {
 func (*FoundryLoadAccessInputs_DocumentSet) ProtoMessage() {}
 
 func (x *FoundryLoadAccessInputs_DocumentSet) ProtoReflect() protoreflect.Message {
-	mi := &file_helix_foundry_v1_types_proto_msgTypes[166]
+	mi := &file_helix_foundry_v1_types_proto_msgTypes[167]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17315,7 +17370,7 @@ func (x *FoundryLoadAccessInputs_DocumentSet) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use FoundryLoadAccessInputs_DocumentSet.ProtoReflect.Descriptor instead.
 func (*FoundryLoadAccessInputs_DocumentSet) Descriptor() ([]byte, []int) {
-	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{116, 1}
+	return file_helix_foundry_v1_types_proto_rawDescGZIP(), []int{117, 1}
 }
 
 func (x *FoundryLoadAccessInputs_DocumentSet) GetDocumentSetId() string {
@@ -18913,7 +18968,7 @@ var file_helix_foundry_v1_types_proto_rawDesc = []byte{
 	0x61, 0x63, 0x74, 0x5f, 0x6b, 0x65, 0x79, 0x42, 0x07, 0x0a, 0x05, 0x5f, 0x6c, 0x69, 0x6e, 0x6b,
 	0x42, 0x0d, 0x0a, 0x0b, 0x5f, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x64, 0x65, 0x6e, 0x63, 0x65, 0x42,
 	0x0e, 0x0a, 0x0c, 0x5f, 0x64, 0x65, 0x63, 0x69, 0x73, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x64, 0x42,
-	0x0a, 0x0a, 0x08, 0x5f, 0x61, 0x67, 0x61, 0x69, 0x6e, 0x73, 0x74, 0x22, 0xbe, 0x03, 0x0a, 0x11,
+	0x0a, 0x0a, 0x08, 0x5f, 0x61, 0x67, 0x61, 0x69, 0x6e, 0x73, 0x74, 0x22, 0xfb, 0x03, 0x0a, 0x11,
 	0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x50, 0x72, 0x6f, 0x76, 0x69, 0x64, 0x65,
 	0x72, 0x12, 0x44, 0x0a, 0x09, 0x61, 0x6e, 0x74, 0x68, 0x72, 0x6f, 0x70, 0x69, 0x63, 0x18, 0x01,
 	0x20, 0x01, 0x28, 0x0b, 0x32, 0x24, 0x2e, 0x68, 0x65, 0x6c, 0x69, 0x78, 0x2e, 0x66, 0x6f, 0x75,
@@ -18941,17 +18996,22 @@ var file_helix_foundry_v1_types_proto_rawDesc = []byte{
 	0x78, 0x2e, 0x66, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x46, 0x6f, 0x75,
 	0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x43, 0x6f, 0x6d, 0x70, 0x61, 0x74, 0x69, 0x62, 0x6c, 0x65,
 	0x48, 0x00, 0x52, 0x10, 0x6f, 0x70, 0x65, 0x6e, 0x61, 0x69, 0x43, 0x6f, 0x6d, 0x70, 0x61, 0x74,
-	0x69, 0x62, 0x6c, 0x65, 0x42, 0x06, 0x0a, 0x04, 0x6b, 0x69, 0x6e, 0x64, 0x22, 0x14, 0x0a, 0x12,
-	0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x41, 0x6e, 0x74, 0x68, 0x72, 0x6f, 0x70,
-	0x69, 0x63, 0x22, 0x11, 0x0a, 0x0f, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x4f,
-	0x70, 0x65, 0x6e, 0x41, 0x49, 0x22, 0x32, 0x0a, 0x14, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79,
-	0x41, 0x49, 0x41, 0x7a, 0x75, 0x72, 0x65, 0x4f, 0x70, 0x65, 0x6e, 0x41, 0x49, 0x12, 0x1a, 0x0a,
-	0x08, 0x65, 0x6e, 0x64, 0x70, 0x6f, 0x69, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
-	0x08, 0x65, 0x6e, 0x64, 0x70, 0x6f, 0x69, 0x6e, 0x74, 0x22, 0x3e, 0x0a, 0x10, 0x46, 0x6f, 0x75,
-	0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x42, 0x65, 0x64, 0x72, 0x6f, 0x63, 0x6b, 0x12, 0x16, 0x0a,
-	0x06, 0x72, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x72,
-	0x65, 0x67, 0x69, 0x6f, 0x6e, 0x12, 0x12, 0x0a, 0x04, 0x66, 0x69, 0x70, 0x73, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x08, 0x52, 0x04, 0x66, 0x69, 0x70, 0x73, 0x22, 0x53, 0x0a, 0x0f, 0x46, 0x6f, 0x75,
+	0x69, 0x62, 0x6c, 0x65, 0x12, 0x3b, 0x0a, 0x06, 0x63, 0x6f, 0x68, 0x65, 0x72, 0x65, 0x18, 0x07,
+	0x20, 0x01, 0x28, 0x0b, 0x32, 0x21, 0x2e, 0x68, 0x65, 0x6c, 0x69, 0x78, 0x2e, 0x66, 0x6f, 0x75,
+	0x6e, 0x64, 0x72, 0x79, 0x2e, 0x76, 0x31, 0x2e, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x41,
+	0x49, 0x43, 0x6f, 0x68, 0x65, 0x72, 0x65, 0x48, 0x00, 0x52, 0x06, 0x63, 0x6f, 0x68, 0x65, 0x72,
+	0x65, 0x42, 0x06, 0x0a, 0x04, 0x6b, 0x69, 0x6e, 0x64, 0x22, 0x14, 0x0a, 0x12, 0x46, 0x6f, 0x75,
+	0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x41, 0x6e, 0x74, 0x68, 0x72, 0x6f, 0x70, 0x69, 0x63, 0x22,
+	0x11, 0x0a, 0x0f, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x4f, 0x70, 0x65, 0x6e,
+	0x41, 0x49, 0x22, 0x32, 0x0a, 0x14, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x41,
+	0x7a, 0x75, 0x72, 0x65, 0x4f, 0x70, 0x65, 0x6e, 0x41, 0x49, 0x12, 0x1a, 0x0a, 0x08, 0x65, 0x6e,
+	0x64, 0x70, 0x6f, 0x69, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x65, 0x6e,
+	0x64, 0x70, 0x6f, 0x69, 0x6e, 0x74, 0x22, 0x3e, 0x0a, 0x10, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72,
+	0x79, 0x41, 0x49, 0x42, 0x65, 0x64, 0x72, 0x6f, 0x63, 0x6b, 0x12, 0x16, 0x0a, 0x06, 0x72, 0x65,
+	0x67, 0x69, 0x6f, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x72, 0x65, 0x67, 0x69,
+	0x6f, 0x6e, 0x12, 0x12, 0x0a, 0x04, 0x66, 0x69, 0x70, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x08,
+	0x52, 0x04, 0x66, 0x69, 0x70, 0x73, 0x22, 0x11, 0x0a, 0x0f, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72,
+	0x79, 0x41, 0x49, 0x43, 0x6f, 0x68, 0x65, 0x72, 0x65, 0x22, 0x53, 0x0a, 0x0f, 0x46, 0x6f, 0x75,
 	0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x4f, 0x6c, 0x6c, 0x61, 0x6d, 0x61, 0x12, 0x19, 0x0a, 0x08,
 	0x62, 0x61, 0x73, 0x65, 0x5f, 0x75, 0x72, 0x6c, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07,
 	0x62, 0x61, 0x73, 0x65, 0x55, 0x72, 0x6c, 0x12, 0x25, 0x0a, 0x0e, 0x63, 0x6f, 0x6e, 0x74, 0x65,
@@ -20302,7 +20362,7 @@ var file_helix_foundry_v1_types_proto_rawDesc = []byte{
 	0x59, 0x5f, 0x52, 0x45, 0x56, 0x49, 0x45, 0x57, 0x5f, 0x53, 0x45, 0x54, 0x54, 0x4c, 0x45, 0x5f,
 	0x52, 0x45, 0x4c, 0x45, 0x41, 0x53, 0x45, 0x10, 0x03, 0x12, 0x1f, 0x0a, 0x1b, 0x46, 0x4f, 0x55,
 	0x4e, 0x44, 0x52, 0x59, 0x5f, 0x52, 0x45, 0x56, 0x49, 0x45, 0x57, 0x5f, 0x53, 0x45, 0x54, 0x54,
-	0x4c, 0x45, 0x5f, 0x53, 0x54, 0x41, 0x4c, 0x45, 0x10, 0x04, 0x2a, 0xed, 0x01, 0x0a, 0x0d, 0x46,
+	0x4c, 0x45, 0x5f, 0x53, 0x54, 0x41, 0x4c, 0x45, 0x10, 0x04, 0x2a, 0x89, 0x02, 0x0a, 0x0d, 0x46,
 	0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x4b, 0x69, 0x6e, 0x64, 0x12, 0x1f, 0x0a, 0x1b,
 	0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f,
 	0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x1d, 0x0a,
@@ -20317,127 +20377,129 @@ var file_helix_foundry_v1_types_proto_rawDesc = []byte{
 	0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x4f, 0x4c, 0x4c, 0x41, 0x4d,
 	0x41, 0x10, 0x05, 0x12, 0x25, 0x0a, 0x21, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41,
 	0x49, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x4f, 0x50, 0x45, 0x4e, 0x41, 0x49, 0x5f, 0x43, 0x4f,
-	0x4d, 0x50, 0x41, 0x54, 0x49, 0x42, 0x4c, 0x45, 0x10, 0x06, 0x2a, 0x8c, 0x01, 0x0a, 0x12, 0x46,
-	0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x43, 0x6f, 0x6d, 0x70, 0x61, 0x74, 0x41, 0x50,
-	0x49, 0x12, 0x25, 0x0a, 0x21, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f,
-	0x43, 0x4f, 0x4d, 0x50, 0x41, 0x54, 0x5f, 0x41, 0x50, 0x49, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45,
-	0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x2a, 0x0a, 0x26, 0x46, 0x4f, 0x55, 0x4e,
-	0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x43, 0x4f, 0x4d, 0x50, 0x41, 0x54, 0x5f, 0x41, 0x50,
-	0x49, 0x5f, 0x43, 0x48, 0x41, 0x54, 0x5f, 0x43, 0x4f, 0x4d, 0x50, 0x4c, 0x45, 0x54, 0x49, 0x4f,
-	0x4e, 0x53, 0x10, 0x01, 0x12, 0x23, 0x0a, 0x1f, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f,
-	0x41, 0x49, 0x5f, 0x43, 0x4f, 0x4d, 0x50, 0x41, 0x54, 0x5f, 0x41, 0x50, 0x49, 0x5f, 0x52, 0x45,
-	0x53, 0x50, 0x4f, 0x4e, 0x53, 0x45, 0x53, 0x10, 0x02, 0x2a, 0xf1, 0x01, 0x0a, 0x13, 0x46, 0x6f,
-	0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x50, 0x72, 0x6f, 0x62, 0x65, 0x53, 0x74, 0x61, 0x74,
-	0x65, 0x12, 0x26, 0x0a, 0x22, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f,
-	0x50, 0x52, 0x4f, 0x42, 0x45, 0x5f, 0x53, 0x54, 0x41, 0x54, 0x45, 0x5f, 0x55, 0x4e, 0x53, 0x50,
-	0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x21, 0x0a, 0x1d, 0x46, 0x4f, 0x55,
-	0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x50, 0x52, 0x4f, 0x42, 0x45, 0x5f, 0x53, 0x54,
-	0x41, 0x54, 0x45, 0x5f, 0x51, 0x55, 0x45, 0x55, 0x45, 0x44, 0x10, 0x01, 0x12, 0x22, 0x0a, 0x1e,
+	0x4d, 0x50, 0x41, 0x54, 0x49, 0x42, 0x4c, 0x45, 0x10, 0x06, 0x12, 0x1a, 0x0a, 0x16, 0x46, 0x4f,
+	0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x43, 0x4f,
+	0x48, 0x45, 0x52, 0x45, 0x10, 0x07, 0x2a, 0x8c, 0x01, 0x0a, 0x12, 0x46, 0x6f, 0x75, 0x6e, 0x64,
+	0x72, 0x79, 0x41, 0x49, 0x43, 0x6f, 0x6d, 0x70, 0x61, 0x74, 0x41, 0x50, 0x49, 0x12, 0x25, 0x0a,
+	0x21, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x43, 0x4f, 0x4d, 0x50,
+	0x41, 0x54, 0x5f, 0x41, 0x50, 0x49, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49,
+	0x45, 0x44, 0x10, 0x00, 0x12, 0x2a, 0x0a, 0x26, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f,
+	0x41, 0x49, 0x5f, 0x43, 0x4f, 0x4d, 0x50, 0x41, 0x54, 0x5f, 0x41, 0x50, 0x49, 0x5f, 0x43, 0x48,
+	0x41, 0x54, 0x5f, 0x43, 0x4f, 0x4d, 0x50, 0x4c, 0x45, 0x54, 0x49, 0x4f, 0x4e, 0x53, 0x10, 0x01,
+	0x12, 0x23, 0x0a, 0x1f, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x43,
+	0x4f, 0x4d, 0x50, 0x41, 0x54, 0x5f, 0x41, 0x50, 0x49, 0x5f, 0x52, 0x45, 0x53, 0x50, 0x4f, 0x4e,
+	0x53, 0x45, 0x53, 0x10, 0x02, 0x2a, 0xf1, 0x01, 0x0a, 0x13, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72,
+	0x79, 0x41, 0x49, 0x50, 0x72, 0x6f, 0x62, 0x65, 0x53, 0x74, 0x61, 0x74, 0x65, 0x12, 0x26, 0x0a,
+	0x22, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x50, 0x52, 0x4f, 0x42,
+	0x45, 0x5f, 0x53, 0x54, 0x41, 0x54, 0x45, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46,
+	0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x21, 0x0a, 0x1d, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59,
+	0x5f, 0x41, 0x49, 0x5f, 0x50, 0x52, 0x4f, 0x42, 0x45, 0x5f, 0x53, 0x54, 0x41, 0x54, 0x45, 0x5f,
+	0x51, 0x55, 0x45, 0x55, 0x45, 0x44, 0x10, 0x01, 0x12, 0x22, 0x0a, 0x1e, 0x46, 0x4f, 0x55, 0x4e,
+	0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x50, 0x52, 0x4f, 0x42, 0x45, 0x5f, 0x53, 0x54, 0x41,
+	0x54, 0x45, 0x5f, 0x52, 0x55, 0x4e, 0x4e, 0x49, 0x4e, 0x47, 0x10, 0x02, 0x12, 0x21, 0x0a, 0x1d,
 	0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x50, 0x52, 0x4f, 0x42, 0x45,
-	0x5f, 0x53, 0x54, 0x41, 0x54, 0x45, 0x5f, 0x52, 0x55, 0x4e, 0x4e, 0x49, 0x4e, 0x47, 0x10, 0x02,
-	0x12, 0x21, 0x0a, 0x1d, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x50,
-	0x52, 0x4f, 0x42, 0x45, 0x5f, 0x53, 0x54, 0x41, 0x54, 0x45, 0x5f, 0x50, 0x41, 0x53, 0x53, 0x45,
-	0x44, 0x10, 0x03, 0x12, 0x21, 0x0a, 0x1d, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41,
-	0x49, 0x5f, 0x50, 0x52, 0x4f, 0x42, 0x45, 0x5f, 0x53, 0x54, 0x41, 0x54, 0x45, 0x5f, 0x46, 0x41,
-	0x49, 0x4c, 0x45, 0x44, 0x10, 0x04, 0x12, 0x25, 0x0a, 0x21, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52,
-	0x59, 0x5f, 0x41, 0x49, 0x5f, 0x50, 0x52, 0x4f, 0x42, 0x45, 0x5f, 0x53, 0x54, 0x41, 0x54, 0x45,
-	0x5f, 0x53, 0x55, 0x50, 0x45, 0x52, 0x53, 0x45, 0x44, 0x45, 0x44, 0x10, 0x05, 0x2a, 0xe6, 0x01,
-	0x0a, 0x17, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x41, 0x73, 0x73, 0x69, 0x73,
-	0x74, 0x61, 0x6e, 0x74, 0x43, 0x68, 0x65, 0x63, 0x6b, 0x12, 0x2a, 0x0a, 0x26, 0x46, 0x4f, 0x55,
-	0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x41, 0x53, 0x53, 0x49, 0x53, 0x54, 0x41, 0x4e,
-	0x54, 0x5f, 0x43, 0x48, 0x45, 0x43, 0x4b, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46,
-	0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x25, 0x0a, 0x21, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59,
+	0x5f, 0x53, 0x54, 0x41, 0x54, 0x45, 0x5f, 0x50, 0x41, 0x53, 0x53, 0x45, 0x44, 0x10, 0x03, 0x12,
+	0x21, 0x0a, 0x1d, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x50, 0x52,
+	0x4f, 0x42, 0x45, 0x5f, 0x53, 0x54, 0x41, 0x54, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x45, 0x44,
+	0x10, 0x04, 0x12, 0x25, 0x0a, 0x21, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49,
+	0x5f, 0x50, 0x52, 0x4f, 0x42, 0x45, 0x5f, 0x53, 0x54, 0x41, 0x54, 0x45, 0x5f, 0x53, 0x55, 0x50,
+	0x45, 0x52, 0x53, 0x45, 0x44, 0x45, 0x44, 0x10, 0x05, 0x2a, 0xe6, 0x01, 0x0a, 0x17, 0x46, 0x6f,
+	0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x49, 0x41, 0x73, 0x73, 0x69, 0x73, 0x74, 0x61, 0x6e, 0x74,
+	0x43, 0x68, 0x65, 0x63, 0x6b, 0x12, 0x2a, 0x0a, 0x26, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59,
 	0x5f, 0x41, 0x49, 0x5f, 0x41, 0x53, 0x53, 0x49, 0x53, 0x54, 0x41, 0x4e, 0x54, 0x5f, 0x43, 0x48,
-	0x45, 0x43, 0x4b, 0x5f, 0x50, 0x41, 0x53, 0x53, 0x45, 0x44, 0x10, 0x01, 0x12, 0x23, 0x0a, 0x1f,
-	0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x41, 0x53, 0x53, 0x49, 0x53,
-	0x54, 0x41, 0x4e, 0x54, 0x5f, 0x43, 0x48, 0x45, 0x43, 0x4b, 0x5f, 0x41, 0x55, 0x54, 0x48, 0x10,
-	0x02, 0x12, 0x26, 0x0a, 0x22, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f,
+	0x45, 0x43, 0x4b, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10,
+	0x00, 0x12, 0x25, 0x0a, 0x21, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f,
 	0x41, 0x53, 0x53, 0x49, 0x53, 0x54, 0x41, 0x4e, 0x54, 0x5f, 0x43, 0x48, 0x45, 0x43, 0x4b, 0x5f,
-	0x52, 0x45, 0x46, 0x55, 0x53, 0x45, 0x44, 0x10, 0x03, 0x12, 0x2b, 0x0a, 0x27, 0x46, 0x4f, 0x55,
-	0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x41, 0x53, 0x53, 0x49, 0x53, 0x54, 0x41, 0x4e,
-	0x54, 0x5f, 0x43, 0x48, 0x45, 0x43, 0x4b, 0x5f, 0x4e, 0x4f, 0x5f, 0x54, 0x4f, 0x4f, 0x4c, 0x5f,
-	0x43, 0x41, 0x4c, 0x4c, 0x10, 0x04, 0x2a, 0x81, 0x01, 0x0a, 0x0c, 0x46, 0x6f, 0x75, 0x6e, 0x64,
-	0x72, 0x79, 0x41, 0x49, 0x4b, 0x65, 0x79, 0x12, 0x1e, 0x0a, 0x1a, 0x46, 0x4f, 0x55, 0x4e, 0x44,
-	0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x4b, 0x45, 0x59, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43,
-	0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x1b, 0x0a, 0x17, 0x46, 0x4f, 0x55, 0x4e, 0x44,
-	0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x4b, 0x45, 0x59, 0x5f, 0x52, 0x45, 0x51, 0x55, 0x49, 0x52,
-	0x45, 0x44, 0x10, 0x01, 0x12, 0x1b, 0x0a, 0x17, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f,
-	0x41, 0x49, 0x5f, 0x4b, 0x45, 0x59, 0x5f, 0x4f, 0x50, 0x54, 0x49, 0x4f, 0x4e, 0x41, 0x4c, 0x10,
-	0x02, 0x12, 0x17, 0x0a, 0x13, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f,
-	0x4b, 0x45, 0x59, 0x5f, 0x4e, 0x4f, 0x4e, 0x45, 0x10, 0x03, 0x2a, 0x9a, 0x02, 0x0a, 0x1f, 0x46,
-	0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x75, 0x74, 0x6f, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e,
-	0x53, 0x75, 0x67, 0x67, 0x65, 0x73, 0x74, 0x69, 0x6f, 0x6e, 0x4b, 0x69, 0x6e, 0x64, 0x12, 0x32,
-	0x0a, 0x2e, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41,
+	0x50, 0x41, 0x53, 0x53, 0x45, 0x44, 0x10, 0x01, 0x12, 0x23, 0x0a, 0x1f, 0x46, 0x4f, 0x55, 0x4e,
+	0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x41, 0x53, 0x53, 0x49, 0x53, 0x54, 0x41, 0x4e, 0x54,
+	0x5f, 0x43, 0x48, 0x45, 0x43, 0x4b, 0x5f, 0x41, 0x55, 0x54, 0x48, 0x10, 0x02, 0x12, 0x26, 0x0a,
+	0x22, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x41, 0x53, 0x53, 0x49,
+	0x53, 0x54, 0x41, 0x4e, 0x54, 0x5f, 0x43, 0x48, 0x45, 0x43, 0x4b, 0x5f, 0x52, 0x45, 0x46, 0x55,
+	0x53, 0x45, 0x44, 0x10, 0x03, 0x12, 0x2b, 0x0a, 0x27, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59,
+	0x5f, 0x41, 0x49, 0x5f, 0x41, 0x53, 0x53, 0x49, 0x53, 0x54, 0x41, 0x4e, 0x54, 0x5f, 0x43, 0x48,
+	0x45, 0x43, 0x4b, 0x5f, 0x4e, 0x4f, 0x5f, 0x54, 0x4f, 0x4f, 0x4c, 0x5f, 0x43, 0x41, 0x4c, 0x4c,
+	0x10, 0x04, 0x2a, 0x81, 0x01, 0x0a, 0x0c, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x49,
+	0x4b, 0x65, 0x79, 0x12, 0x1e, 0x0a, 0x1a, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41,
+	0x49, 0x5f, 0x4b, 0x45, 0x59, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45,
+	0x44, 0x10, 0x00, 0x12, 0x1b, 0x0a, 0x17, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41,
+	0x49, 0x5f, 0x4b, 0x45, 0x59, 0x5f, 0x52, 0x45, 0x51, 0x55, 0x49, 0x52, 0x45, 0x44, 0x10, 0x01,
+	0x12, 0x1b, 0x0a, 0x17, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x4b,
+	0x45, 0x59, 0x5f, 0x4f, 0x50, 0x54, 0x49, 0x4f, 0x4e, 0x41, 0x4c, 0x10, 0x02, 0x12, 0x17, 0x0a,
+	0x13, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x49, 0x5f, 0x4b, 0x45, 0x59, 0x5f,
+	0x4e, 0x4f, 0x4e, 0x45, 0x10, 0x03, 0x2a, 0x9a, 0x02, 0x0a, 0x1f, 0x46, 0x6f, 0x75, 0x6e, 0x64,
+	0x72, 0x79, 0x41, 0x75, 0x74, 0x6f, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x75, 0x67, 0x67,
+	0x65, 0x73, 0x74, 0x69, 0x6f, 0x6e, 0x4b, 0x69, 0x6e, 0x64, 0x12, 0x32, 0x0a, 0x2e, 0x46, 0x4f,
+	0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e,
+	0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x4b, 0x49, 0x4e, 0x44,
+	0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x2f,
+	0x0a, 0x2b, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41,
 	0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f,
-	0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44,
-	0x10, 0x00, 0x12, 0x2f, 0x0a, 0x2b, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55,
+	0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x51, 0x55, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x10, 0x01, 0x12,
+	0x30, 0x0a, 0x2c, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d,
+	0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e,
+	0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x44, 0x41, 0x53, 0x48, 0x42, 0x4f, 0x41, 0x52, 0x44, 0x10,
+	0x02, 0x12, 0x2f, 0x0a, 0x2b, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54,
+	0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49,
+	0x4f, 0x4e, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x4f, 0x4e, 0x54, 0x4f, 0x4c, 0x4f, 0x47, 0x59,
+	0x10, 0x03, 0x12, 0x2f, 0x0a, 0x2b, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55,
 	0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54,
-	0x49, 0x4f, 0x4e, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x51, 0x55, 0x45, 0x53, 0x54, 0x49, 0x4f,
-	0x4e, 0x10, 0x01, 0x12, 0x30, 0x0a, 0x2c, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41,
-	0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53,
-	0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x44, 0x41, 0x53, 0x48, 0x42, 0x4f,
-	0x41, 0x52, 0x44, 0x10, 0x02, 0x12, 0x2f, 0x0a, 0x2b, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59,
-	0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47,
-	0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x4f, 0x4e, 0x54, 0x4f,
-	0x4c, 0x4f, 0x47, 0x59, 0x10, 0x03, 0x12, 0x2f, 0x0a, 0x2b, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52,
-	0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47,
-	0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x57, 0x4f, 0x52,
-	0x4b, 0x46, 0x4c, 0x4f, 0x57, 0x10, 0x04, 0x2a, 0xef, 0x02, 0x0a, 0x1f, 0x46, 0x6f, 0x75, 0x6e,
-	0x64, 0x72, 0x79, 0x41, 0x75, 0x74, 0x6f, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x75, 0x67,
-	0x67, 0x65, 0x73, 0x74, 0x69, 0x6f, 0x6e, 0x49, 0x63, 0x6f, 0x6e, 0x12, 0x32, 0x0a, 0x2e, 0x46,
+	0x49, 0x4f, 0x4e, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x57, 0x4f, 0x52, 0x4b, 0x46, 0x4c, 0x4f,
+	0x57, 0x10, 0x04, 0x2a, 0xef, 0x02, 0x0a, 0x1f, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x41,
+	0x75, 0x74, 0x6f, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x75, 0x67, 0x67, 0x65, 0x73, 0x74,
+	0x69, 0x6f, 0x6e, 0x49, 0x63, 0x6f, 0x6e, 0x12, 0x32, 0x0a, 0x2e, 0x46, 0x4f, 0x55, 0x4e, 0x44,
+	0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55,
+	0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x49, 0x43, 0x4f, 0x4e, 0x5f, 0x55, 0x4e,
+	0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x2f, 0x0a, 0x2b, 0x46,
 	0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f,
 	0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x49, 0x43, 0x4f,
-	0x4e, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12,
-	0x2f, 0x0a, 0x2b, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d,
-	0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e,
-	0x5f, 0x49, 0x43, 0x4f, 0x4e, 0x5f, 0x42, 0x52, 0x49, 0x45, 0x46, 0x49, 0x4e, 0x47, 0x10, 0x01,
-	0x12, 0x2c, 0x0a, 0x28, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f,
-	0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f,
-	0x4e, 0x5f, 0x49, 0x43, 0x4f, 0x4e, 0x5f, 0x57, 0x41, 0x54, 0x43, 0x48, 0x10, 0x02, 0x12, 0x2c,
-	0x0a, 0x28, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41,
-	0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f,
-	0x49, 0x43, 0x4f, 0x4e, 0x5f, 0x43, 0x48, 0x45, 0x43, 0x4b, 0x10, 0x03, 0x12, 0x2c, 0x0a, 0x28,
+	0x4e, 0x5f, 0x42, 0x52, 0x49, 0x45, 0x46, 0x49, 0x4e, 0x47, 0x10, 0x01, 0x12, 0x2c, 0x0a, 0x28,
 	0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49,
 	0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x49, 0x43,
-	0x4f, 0x4e, 0x5f, 0x41, 0x4c, 0x45, 0x52, 0x54, 0x10, 0x04, 0x12, 0x2e, 0x0a, 0x2a, 0x46, 0x4f,
+	0x4f, 0x4e, 0x5f, 0x57, 0x41, 0x54, 0x43, 0x48, 0x10, 0x02, 0x12, 0x2c, 0x0a, 0x28, 0x46, 0x4f,
 	0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e,
 	0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x49, 0x43, 0x4f, 0x4e,
-	0x5f, 0x52, 0x45, 0x46, 0x52, 0x45, 0x53, 0x48, 0x10, 0x05, 0x12, 0x2d, 0x0a, 0x29, 0x46, 0x4f,
-	0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e,
-	0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x49, 0x43, 0x4f, 0x4e,
-	0x5f, 0x52, 0x45, 0x50, 0x4f, 0x52, 0x54, 0x10, 0x06, 0x2a, 0x9d, 0x02, 0x0a, 0x21, 0x46, 0x6f,
-	0x75, 0x6e, 0x64, 0x72, 0x79, 0x41, 0x75, 0x74, 0x6f, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53,
-	0x75, 0x67, 0x67, 0x65, 0x73, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x12,
-	0x34, 0x0a, 0x30, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d,
-	0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e,
-	0x5f, 0x53, 0x4f, 0x55, 0x52, 0x43, 0x45, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46,
-	0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x2e, 0x0a, 0x2a, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59,
+	0x5f, 0x43, 0x48, 0x45, 0x43, 0x4b, 0x10, 0x03, 0x12, 0x2c, 0x0a, 0x28, 0x46, 0x4f, 0x55, 0x4e,
+	0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53,
+	0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x49, 0x43, 0x4f, 0x4e, 0x5f, 0x41,
+	0x4c, 0x45, 0x52, 0x54, 0x10, 0x04, 0x12, 0x2e, 0x0a, 0x2a, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52,
+	0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47,
+	0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x49, 0x43, 0x4f, 0x4e, 0x5f, 0x52, 0x45, 0x46,
+	0x52, 0x45, 0x53, 0x48, 0x10, 0x05, 0x12, 0x2d, 0x0a, 0x29, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52,
+	0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47,
+	0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x49, 0x43, 0x4f, 0x4e, 0x5f, 0x52, 0x45, 0x50,
+	0x4f, 0x52, 0x54, 0x10, 0x06, 0x2a, 0x9d, 0x02, 0x0a, 0x21, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72,
+	0x79, 0x41, 0x75, 0x74, 0x6f, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x75, 0x67, 0x67, 0x65,
+	0x73, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x12, 0x34, 0x0a, 0x30, 0x46,
+	0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f,
+	0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x4f, 0x55,
+	0x52, 0x43, 0x45, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10,
+	0x00, 0x12, 0x2e, 0x0a, 0x2a, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54,
+	0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49,
+	0x4f, 0x4e, 0x5f, 0x53, 0x4f, 0x55, 0x52, 0x43, 0x45, 0x5f, 0x4d, 0x4f, 0x44, 0x45, 0x4c, 0x10,
+	0x01, 0x12, 0x32, 0x0a, 0x2e, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54,
+	0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49,
+	0x4f, 0x4e, 0x5f, 0x53, 0x4f, 0x55, 0x52, 0x43, 0x45, 0x5f, 0x51, 0x55, 0x45, 0x53, 0x54, 0x49,
+	0x4f, 0x4e, 0x53, 0x10, 0x02, 0x12, 0x2e, 0x0a, 0x2a, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59,
 	0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47,
-	0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x4f, 0x55, 0x52, 0x43, 0x45, 0x5f, 0x4d, 0x4f,
-	0x44, 0x45, 0x4c, 0x10, 0x01, 0x12, 0x32, 0x0a, 0x2e, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59,
+	0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x4f, 0x55, 0x52, 0x43, 0x45, 0x5f, 0x53, 0x45,
+	0x54, 0x55, 0x50, 0x10, 0x03, 0x12, 0x2e, 0x0a, 0x2a, 0x46, 0x4f, 0x55, 0x4e, 0x44, 0x52, 0x59,
 	0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x55, 0x47, 0x47,
-	0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x4f, 0x55, 0x52, 0x43, 0x45, 0x5f, 0x51, 0x55,
-	0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x53, 0x10, 0x02, 0x12, 0x2e, 0x0a, 0x2a, 0x46, 0x4f, 0x55,
-	0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f,
-	0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x4f, 0x55, 0x52, 0x43,
-	0x45, 0x5f, 0x53, 0x45, 0x54, 0x55, 0x50, 0x10, 0x03, 0x12, 0x2e, 0x0a, 0x2a, 0x46, 0x4f, 0x55,
-	0x4e, 0x44, 0x52, 0x59, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f,
-	0x53, 0x55, 0x47, 0x47, 0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x4f, 0x55, 0x52, 0x43,
-	0x45, 0x5f, 0x46, 0x49, 0x58, 0x45, 0x44, 0x10, 0x04, 0x42, 0xd3, 0x01, 0x0a, 0x14, 0x63, 0x6f,
-	0x6d, 0x2e, 0x68, 0x65, 0x6c, 0x69, 0x78, 0x2e, 0x66, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x2e,
-	0x76, 0x31, 0x42, 0x0a, 0x54, 0x79, 0x70, 0x65, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01,
-	0x5a, 0x4d, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x68, 0x65, 0x6c,
-	0x69, 0x78, 0x64, 0x62, 0x2f, 0x68, 0x65, 0x6c, 0x69, 0x78, 0x2d, 0x66, 0x6f, 0x75, 0x6e, 0x64,
-	0x72, 0x79, 0x2f, 0x62, 0x61, 0x63, 0x6b, 0x65, 0x6e, 0x64, 0x2f, 0x70, 0x62, 0x2f, 0x67, 0x65,
-	0x6e, 0x2f, 0x67, 0x6f, 0x2f, 0x68, 0x65, 0x6c, 0x69, 0x78, 0x2f, 0x66, 0x6f, 0x75, 0x6e, 0x64,
-	0x72, 0x79, 0x2f, 0x76, 0x31, 0x3b, 0x66, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x76, 0x31, 0xa2,
-	0x02, 0x03, 0x48, 0x46, 0x58, 0xaa, 0x02, 0x10, 0x48, 0x65, 0x6c, 0x69, 0x78, 0x2e, 0x46, 0x6f,
-	0x75, 0x6e, 0x64, 0x72, 0x79, 0x2e, 0x56, 0x31, 0xca, 0x02, 0x10, 0x48, 0x65, 0x6c, 0x69, 0x78,
-	0x5c, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x5c, 0x56, 0x31, 0xe2, 0x02, 0x1c, 0x48, 0x65,
-	0x6c, 0x69, 0x78, 0x5c, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x5c, 0x56, 0x31, 0x5c, 0x47,
-	0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x12, 0x48, 0x65, 0x6c,
-	0x69, 0x78, 0x3a, 0x3a, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x3a, 0x3a, 0x56, 0x31, 0x62,
-	0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x45, 0x53, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x53, 0x4f, 0x55, 0x52, 0x43, 0x45, 0x5f, 0x46, 0x49,
+	0x58, 0x45, 0x44, 0x10, 0x04, 0x42, 0xd3, 0x01, 0x0a, 0x14, 0x63, 0x6f, 0x6d, 0x2e, 0x68, 0x65,
+	0x6c, 0x69, 0x78, 0x2e, 0x66, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x2e, 0x76, 0x31, 0x42, 0x0a,
+	0x54, 0x79, 0x70, 0x65, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x4d, 0x67, 0x69,
+	0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x68, 0x65, 0x6c, 0x69, 0x78, 0x64, 0x62,
+	0x2f, 0x68, 0x65, 0x6c, 0x69, 0x78, 0x2d, 0x66, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x2f, 0x62,
+	0x61, 0x63, 0x6b, 0x65, 0x6e, 0x64, 0x2f, 0x70, 0x62, 0x2f, 0x67, 0x65, 0x6e, 0x2f, 0x67, 0x6f,
+	0x2f, 0x68, 0x65, 0x6c, 0x69, 0x78, 0x2f, 0x66, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x2f, 0x76,
+	0x31, 0x3b, 0x66, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x76, 0x31, 0xa2, 0x02, 0x03, 0x48, 0x46,
+	0x58, 0xaa, 0x02, 0x10, 0x48, 0x65, 0x6c, 0x69, 0x78, 0x2e, 0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72,
+	0x79, 0x2e, 0x56, 0x31, 0xca, 0x02, 0x10, 0x48, 0x65, 0x6c, 0x69, 0x78, 0x5c, 0x46, 0x6f, 0x75,
+	0x6e, 0x64, 0x72, 0x79, 0x5c, 0x56, 0x31, 0xe2, 0x02, 0x1c, 0x48, 0x65, 0x6c, 0x69, 0x78, 0x5c,
+	0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x5c, 0x56, 0x31, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65,
+	0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x12, 0x48, 0x65, 0x6c, 0x69, 0x78, 0x3a, 0x3a,
+	0x46, 0x6f, 0x75, 0x6e, 0x64, 0x72, 0x79, 0x3a, 0x3a, 0x56, 0x31, 0x62, 0x06, 0x70, 0x72, 0x6f,
+	0x74, 0x6f, 0x33,
 }
 
 var (
@@ -20453,7 +20515,7 @@ func file_helix_foundry_v1_types_proto_rawDescGZIP() []byte {
 }
 
 var file_helix_foundry_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 27)
-var file_helix_foundry_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 167)
+var file_helix_foundry_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 168)
 var file_helix_foundry_v1_types_proto_goTypes = []any{
 	(FoundryTier)(0),                            // 0: helix.foundry.v1.FoundryTier
 	(ConnectorAccountState)(0),                  // 1: helix.foundry.v1.ConnectorAccountState
@@ -20583,80 +20645,81 @@ var file_helix_foundry_v1_types_proto_goTypes = []any{
 	(*FoundryAIOpenAI)(nil),                     // 125: helix.foundry.v1.FoundryAIOpenAI
 	(*FoundryAIAzureOpenAI)(nil),                // 126: helix.foundry.v1.FoundryAIAzureOpenAI
 	(*FoundryAIBedrock)(nil),                    // 127: helix.foundry.v1.FoundryAIBedrock
-	(*FoundryAIOllama)(nil),                     // 128: helix.foundry.v1.FoundryAIOllama
-	(*FoundryAICompatible)(nil),                 // 129: helix.foundry.v1.FoundryAICompatible
-	(*FoundryAIModel)(nil),                      // 130: helix.foundry.v1.FoundryAIModel
-	(*FoundryAIRates)(nil),                      // 131: helix.foundry.v1.FoundryAIRates
-	(*FoundryAIModels)(nil),                     // 132: helix.foundry.v1.FoundryAIModels
-	(*FoundryAIConfig)(nil),                     // 133: helix.foundry.v1.FoundryAIConfig
-	(*FoundryAIDefault)(nil),                    // 134: helix.foundry.v1.FoundryAIDefault
-	(*FoundryAIOffer)(nil),                      // 135: helix.foundry.v1.FoundryAIOffer
-	(*FoundryAI)(nil),                           // 136: helix.foundry.v1.FoundryAI
-	(*FoundryAIDetected)(nil),                   // 137: helix.foundry.v1.FoundryAIDetected
-	(*FoundryOllamaServer)(nil),                 // 138: helix.foundry.v1.FoundryOllamaServer
-	(*FoundryOllamaModel)(nil),                  // 139: helix.foundry.v1.FoundryOllamaModel
-	(*FoundryPrincipal)(nil),                    // 140: helix.foundry.v1.FoundryPrincipal
-	(*FoundryAccessTarget)(nil),                 // 141: helix.foundry.v1.FoundryAccessTarget
-	(*FoundryAccessGrant)(nil),                  // 142: helix.foundry.v1.FoundryAccessGrant
-	(*FoundryLoadAccessInputs)(nil),             // 143: helix.foundry.v1.FoundryLoadAccessInputs
-	(*FoundryOntologyAccess)(nil),               // 144: helix.foundry.v1.FoundryOntologyAccess
-	(*FoundryAccessLoss)(nil),                   // 145: helix.foundry.v1.FoundryAccessLoss
-	(*FoundryTeam)(nil),                         // 146: helix.foundry.v1.FoundryTeam
-	(*FoundryTeamDirectory)(nil),                // 147: helix.foundry.v1.FoundryTeamDirectory
-	(*FoundryHealFinding)(nil),                  // 148: helix.foundry.v1.FoundryHealFinding
-	(*FoundryHealRun)(nil),                      // 149: helix.foundry.v1.FoundryHealRun
-	(*FoundryWorkflow)(nil),                     // 150: helix.foundry.v1.FoundryWorkflow
-	(*FoundryWorkflowAutomation)(nil),           // 151: helix.foundry.v1.FoundryWorkflowAutomation
-	(*FoundryWorkflowRun)(nil),                  // 152: helix.foundry.v1.FoundryWorkflowRun
-	(*FoundryWorkflowAssessment)(nil),           // 153: helix.foundry.v1.FoundryWorkflowAssessment
-	(*FoundryWorkflowVerdictCount)(nil),         // 154: helix.foundry.v1.FoundryWorkflowVerdictCount
-	(*FoundryWorkflowInsights)(nil),             // 155: helix.foundry.v1.FoundryWorkflowInsights
-	(*FoundryWorkflowInsightTotals)(nil),        // 156: helix.foundry.v1.FoundryWorkflowInsightTotals
-	(*FoundryWorkflowGapCount)(nil),             // 157: helix.foundry.v1.FoundryWorkflowGapCount
-	(*FoundryWorkflowInsightDay)(nil),           // 158: helix.foundry.v1.FoundryWorkflowInsightDay
-	(*FoundryWorkflowInsightFunnel)(nil),        // 159: helix.foundry.v1.FoundryWorkflowInsightFunnel
-	(*FoundryWorkflowInsightIssue)(nil),         // 160: helix.foundry.v1.FoundryWorkflowInsightIssue
-	(*FoundryWorkflowInsightSegment)(nil),       // 161: helix.foundry.v1.FoundryWorkflowInsightSegment
-	(*FoundryWorkflowRunCounts)(nil),            // 162: helix.foundry.v1.FoundryWorkflowRunCounts
-	(*FoundryWorkflowAccess)(nil),               // 163: helix.foundry.v1.FoundryWorkflowAccess
-	(*FoundryWorkflowRead)(nil),                 // 164: helix.foundry.v1.FoundryWorkflowRead
-	(*FoundryWorkflowQuestion)(nil),             // 165: helix.foundry.v1.FoundryWorkflowQuestion
-	(*FoundryWorkflowSend)(nil),                 // 166: helix.foundry.v1.FoundryWorkflowSend
-	(*FoundryWorkflowUpload)(nil),               // 167: helix.foundry.v1.FoundryWorkflowUpload
-	(*FoundryAgentPageContext)(nil),             // 168: helix.foundry.v1.FoundryAgentPageContext
-	(*FoundryAgentThread)(nil),                  // 169: helix.foundry.v1.FoundryAgentThread
-	(*FoundryAgentRuntime)(nil),                 // 170: helix.foundry.v1.FoundryAgentRuntime
-	(*FoundryAgentHost)(nil),                    // 171: helix.foundry.v1.FoundryAgentHost
-	(*FoundryAgentHostAccount)(nil),             // 172: helix.foundry.v1.FoundryAgentHostAccount
-	(*FoundryAgentTurn)(nil),                    // 173: helix.foundry.v1.FoundryAgentTurn
-	(*FoundryAgentAsked)(nil),                   // 174: helix.foundry.v1.FoundryAgentAsked
-	(*FoundryAgentAskedGeneration)(nil),         // 175: helix.foundry.v1.FoundryAgentAskedGeneration
-	(*FoundryAgentAnswers)(nil),                 // 176: helix.foundry.v1.FoundryAgentAnswers
-	(*FoundryAgentEvent)(nil),                   // 177: helix.foundry.v1.FoundryAgentEvent
-	(*FoundryAgentAction)(nil),                  // 178: helix.foundry.v1.FoundryAgentAction
-	(*FoundryDashboard)(nil),                    // 179: helix.foundry.v1.FoundryDashboard
-	(*FoundryDashboardShare)(nil),               // 180: helix.foundry.v1.FoundryDashboardShare
-	(*FoundryAutomationSuggestion)(nil),         // 181: helix.foundry.v1.FoundryAutomationSuggestion
-	(*FoundryAutomation)(nil),                   // 182: helix.foundry.v1.FoundryAutomation
-	(*FoundryAutomationOntology)(nil),           // 183: helix.foundry.v1.FoundryAutomationOntology
-	(*FoundryAutomationRunCounts)(nil),          // 184: helix.foundry.v1.FoundryAutomationRunCounts
-	(*FoundryAutomationRunDay)(nil),             // 185: helix.foundry.v1.FoundryAutomationRunDay
-	(*FoundryAutomationRunSummary)(nil),         // 186: helix.foundry.v1.FoundryAutomationRunSummary
-	(*FoundryAutomationRun)(nil),                // 187: helix.foundry.v1.FoundryAutomationRun
-	(*FoundryAutomationRunOntology)(nil),        // 188: helix.foundry.v1.FoundryAutomationRunOntology
-	(*FoundryAutomationRunNode)(nil),            // 189: helix.foundry.v1.FoundryAutomationRunNode
-	nil,                                         // 190: helix.foundry.v1.DatabaseConnectorConfig.CursorColumnsEntry
-	nil,                                         // 191: helix.foundry.v1.FoundryDocumentUpload.HeadersEntry
-	(*FoundryLoadAccessInputs_Table)(nil),       // 192: helix.foundry.v1.FoundryLoadAccessInputs.Table
-	(*FoundryLoadAccessInputs_DocumentSet)(nil), // 193: helix.foundry.v1.FoundryLoadAccessInputs.DocumentSet
-	(*timestamppb.Timestamp)(nil),               // 194: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),                     // 195: google.protobuf.Struct
-	(structpb.NullValue)(0),                     // 196: google.protobuf.NullValue
-	(*emptypb.Empty)(nil),                       // 197: google.protobuf.Empty
+	(*FoundryAICohere)(nil),                     // 128: helix.foundry.v1.FoundryAICohere
+	(*FoundryAIOllama)(nil),                     // 129: helix.foundry.v1.FoundryAIOllama
+	(*FoundryAICompatible)(nil),                 // 130: helix.foundry.v1.FoundryAICompatible
+	(*FoundryAIModel)(nil),                      // 131: helix.foundry.v1.FoundryAIModel
+	(*FoundryAIRates)(nil),                      // 132: helix.foundry.v1.FoundryAIRates
+	(*FoundryAIModels)(nil),                     // 133: helix.foundry.v1.FoundryAIModels
+	(*FoundryAIConfig)(nil),                     // 134: helix.foundry.v1.FoundryAIConfig
+	(*FoundryAIDefault)(nil),                    // 135: helix.foundry.v1.FoundryAIDefault
+	(*FoundryAIOffer)(nil),                      // 136: helix.foundry.v1.FoundryAIOffer
+	(*FoundryAI)(nil),                           // 137: helix.foundry.v1.FoundryAI
+	(*FoundryAIDetected)(nil),                   // 138: helix.foundry.v1.FoundryAIDetected
+	(*FoundryOllamaServer)(nil),                 // 139: helix.foundry.v1.FoundryOllamaServer
+	(*FoundryOllamaModel)(nil),                  // 140: helix.foundry.v1.FoundryOllamaModel
+	(*FoundryPrincipal)(nil),                    // 141: helix.foundry.v1.FoundryPrincipal
+	(*FoundryAccessTarget)(nil),                 // 142: helix.foundry.v1.FoundryAccessTarget
+	(*FoundryAccessGrant)(nil),                  // 143: helix.foundry.v1.FoundryAccessGrant
+	(*FoundryLoadAccessInputs)(nil),             // 144: helix.foundry.v1.FoundryLoadAccessInputs
+	(*FoundryOntologyAccess)(nil),               // 145: helix.foundry.v1.FoundryOntologyAccess
+	(*FoundryAccessLoss)(nil),                   // 146: helix.foundry.v1.FoundryAccessLoss
+	(*FoundryTeam)(nil),                         // 147: helix.foundry.v1.FoundryTeam
+	(*FoundryTeamDirectory)(nil),                // 148: helix.foundry.v1.FoundryTeamDirectory
+	(*FoundryHealFinding)(nil),                  // 149: helix.foundry.v1.FoundryHealFinding
+	(*FoundryHealRun)(nil),                      // 150: helix.foundry.v1.FoundryHealRun
+	(*FoundryWorkflow)(nil),                     // 151: helix.foundry.v1.FoundryWorkflow
+	(*FoundryWorkflowAutomation)(nil),           // 152: helix.foundry.v1.FoundryWorkflowAutomation
+	(*FoundryWorkflowRun)(nil),                  // 153: helix.foundry.v1.FoundryWorkflowRun
+	(*FoundryWorkflowAssessment)(nil),           // 154: helix.foundry.v1.FoundryWorkflowAssessment
+	(*FoundryWorkflowVerdictCount)(nil),         // 155: helix.foundry.v1.FoundryWorkflowVerdictCount
+	(*FoundryWorkflowInsights)(nil),             // 156: helix.foundry.v1.FoundryWorkflowInsights
+	(*FoundryWorkflowInsightTotals)(nil),        // 157: helix.foundry.v1.FoundryWorkflowInsightTotals
+	(*FoundryWorkflowGapCount)(nil),             // 158: helix.foundry.v1.FoundryWorkflowGapCount
+	(*FoundryWorkflowInsightDay)(nil),           // 159: helix.foundry.v1.FoundryWorkflowInsightDay
+	(*FoundryWorkflowInsightFunnel)(nil),        // 160: helix.foundry.v1.FoundryWorkflowInsightFunnel
+	(*FoundryWorkflowInsightIssue)(nil),         // 161: helix.foundry.v1.FoundryWorkflowInsightIssue
+	(*FoundryWorkflowInsightSegment)(nil),       // 162: helix.foundry.v1.FoundryWorkflowInsightSegment
+	(*FoundryWorkflowRunCounts)(nil),            // 163: helix.foundry.v1.FoundryWorkflowRunCounts
+	(*FoundryWorkflowAccess)(nil),               // 164: helix.foundry.v1.FoundryWorkflowAccess
+	(*FoundryWorkflowRead)(nil),                 // 165: helix.foundry.v1.FoundryWorkflowRead
+	(*FoundryWorkflowQuestion)(nil),             // 166: helix.foundry.v1.FoundryWorkflowQuestion
+	(*FoundryWorkflowSend)(nil),                 // 167: helix.foundry.v1.FoundryWorkflowSend
+	(*FoundryWorkflowUpload)(nil),               // 168: helix.foundry.v1.FoundryWorkflowUpload
+	(*FoundryAgentPageContext)(nil),             // 169: helix.foundry.v1.FoundryAgentPageContext
+	(*FoundryAgentThread)(nil),                  // 170: helix.foundry.v1.FoundryAgentThread
+	(*FoundryAgentRuntime)(nil),                 // 171: helix.foundry.v1.FoundryAgentRuntime
+	(*FoundryAgentHost)(nil),                    // 172: helix.foundry.v1.FoundryAgentHost
+	(*FoundryAgentHostAccount)(nil),             // 173: helix.foundry.v1.FoundryAgentHostAccount
+	(*FoundryAgentTurn)(nil),                    // 174: helix.foundry.v1.FoundryAgentTurn
+	(*FoundryAgentAsked)(nil),                   // 175: helix.foundry.v1.FoundryAgentAsked
+	(*FoundryAgentAskedGeneration)(nil),         // 176: helix.foundry.v1.FoundryAgentAskedGeneration
+	(*FoundryAgentAnswers)(nil),                 // 177: helix.foundry.v1.FoundryAgentAnswers
+	(*FoundryAgentEvent)(nil),                   // 178: helix.foundry.v1.FoundryAgentEvent
+	(*FoundryAgentAction)(nil),                  // 179: helix.foundry.v1.FoundryAgentAction
+	(*FoundryDashboard)(nil),                    // 180: helix.foundry.v1.FoundryDashboard
+	(*FoundryDashboardShare)(nil),               // 181: helix.foundry.v1.FoundryDashboardShare
+	(*FoundryAutomationSuggestion)(nil),         // 182: helix.foundry.v1.FoundryAutomationSuggestion
+	(*FoundryAutomation)(nil),                   // 183: helix.foundry.v1.FoundryAutomation
+	(*FoundryAutomationOntology)(nil),           // 184: helix.foundry.v1.FoundryAutomationOntology
+	(*FoundryAutomationRunCounts)(nil),          // 185: helix.foundry.v1.FoundryAutomationRunCounts
+	(*FoundryAutomationRunDay)(nil),             // 186: helix.foundry.v1.FoundryAutomationRunDay
+	(*FoundryAutomationRunSummary)(nil),         // 187: helix.foundry.v1.FoundryAutomationRunSummary
+	(*FoundryAutomationRun)(nil),                // 188: helix.foundry.v1.FoundryAutomationRun
+	(*FoundryAutomationRunOntology)(nil),        // 189: helix.foundry.v1.FoundryAutomationRunOntology
+	(*FoundryAutomationRunNode)(nil),            // 190: helix.foundry.v1.FoundryAutomationRunNode
+	nil,                                         // 191: helix.foundry.v1.DatabaseConnectorConfig.CursorColumnsEntry
+	nil,                                         // 192: helix.foundry.v1.FoundryDocumentUpload.HeadersEntry
+	(*FoundryLoadAccessInputs_Table)(nil),       // 193: helix.foundry.v1.FoundryLoadAccessInputs.Table
+	(*FoundryLoadAccessInputs_DocumentSet)(nil), // 194: helix.foundry.v1.FoundryLoadAccessInputs.DocumentSet
+	(*timestamppb.Timestamp)(nil),               // 195: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                     // 196: google.protobuf.Struct
+	(structpb.NullValue)(0),                     // 197: google.protobuf.NullValue
+	(*emptypb.Empty)(nil),                       // 198: google.protobuf.Empty
 }
 var file_helix_foundry_v1_types_proto_depIdxs = []int32{
 	0,   // 0: helix.foundry.v1.FoundryPlan.tier:type_name -> helix.foundry.v1.FoundryTier
-	194, // 1: helix.foundry.v1.FoundryPlan.current_period_end:type_name -> google.protobuf.Timestamp
+	195, // 1: helix.foundry.v1.FoundryPlan.current_period_end:type_name -> google.protobuf.Timestamp
 	28,  // 2: helix.foundry.v1.FoundryPlan.sync:type_name -> helix.foundry.v1.FoundrySyncRules
 	28,  // 3: helix.foundry.v1.FoundryCatalogPlan.sync:type_name -> helix.foundry.v1.FoundrySyncRules
 	31,  // 4: helix.foundry.v1.ConnectorKind.s3:type_name -> helix.foundry.v1.S3ConnectorSetup
@@ -20664,7 +20727,7 @@ var file_helix_foundry_v1_types_proto_depIdxs = []int32{
 	34,  // 6: helix.foundry.v1.S3ConnectorConfig.role:type_name -> helix.foundry.v1.S3RoleAuth
 	35,  // 7: helix.foundry.v1.S3ConnectorConfig.keys:type_name -> helix.foundry.v1.S3KeyAuth
 	33,  // 8: helix.foundry.v1.PostHogConnectorConfig.export_bucket:type_name -> helix.foundry.v1.S3ConnectorConfig
-	190, // 9: helix.foundry.v1.DatabaseConnectorConfig.cursor_columns:type_name -> helix.foundry.v1.DatabaseConnectorConfig.CursorColumnsEntry
+	191, // 9: helix.foundry.v1.DatabaseConnectorConfig.cursor_columns:type_name -> helix.foundry.v1.DatabaseConnectorConfig.CursorColumnsEntry
 	40,  // 10: helix.foundry.v1.DatabaseConnectorConfig.cdc:type_name -> helix.foundry.v1.DatabaseCDCConfig
 	50,  // 11: helix.foundry.v1.EventsConnectorConfig.fields:type_name -> helix.foundry.v1.EventSourceField
 	36,  // 12: helix.foundry.v1.ConnectorConfig.stripe:type_name -> helix.foundry.v1.StripeConnectorConfig
@@ -20683,8 +20746,8 @@ var file_helix_foundry_v1_types_proto_depIdxs = []int32{
 	47,  // 25: helix.foundry.v1.ConnectorConfig.google:type_name -> helix.foundry.v1.GoogleWorkspaceConnectorConfig
 	48,  // 26: helix.foundry.v1.ConnectorConfig.databuddy:type_name -> helix.foundry.v1.DatabuddyConnectorConfig
 	51,  // 27: helix.foundry.v1.Connector.config:type_name -> helix.foundry.v1.ConnectorConfig
-	194, // 28: helix.foundry.v1.Connector.created_at:type_name -> google.protobuf.Timestamp
-	194, // 29: helix.foundry.v1.Connector.updated_at:type_name -> google.protobuf.Timestamp
+	195, // 28: helix.foundry.v1.Connector.created_at:type_name -> google.protobuf.Timestamp
+	195, // 29: helix.foundry.v1.Connector.updated_at:type_name -> google.protobuf.Timestamp
 	59,  // 30: helix.foundry.v1.Connector.tables:type_name -> helix.foundry.v1.SyncedTable
 	57,  // 31: helix.foundry.v1.Connector.last_sync:type_name -> helix.foundry.v1.ConnectorSync
 	55,  // 32: helix.foundry.v1.Connector.schedule:type_name -> helix.foundry.v1.ConnectorSchedule
@@ -20692,39 +20755,39 @@ var file_helix_foundry_v1_types_proto_depIdxs = []int32{
 	53,  // 34: helix.foundry.v1.Connector.account:type_name -> helix.foundry.v1.ConnectorAccount
 	1,   // 35: helix.foundry.v1.ConnectorAccount.state:type_name -> helix.foundry.v1.ConnectorAccountState
 	2,   // 36: helix.foundry.v1.ConnectorAccount.broken:type_name -> helix.foundry.v1.ConnectorAccountBroken
-	194, // 37: helix.foundry.v1.ConnectorAccount.broken_at:type_name -> google.protobuf.Timestamp
-	194, // 38: helix.foundry.v1.ConnectorAccount.connected_at:type_name -> google.protobuf.Timestamp
+	195, // 37: helix.foundry.v1.ConnectorAccount.broken_at:type_name -> google.protobuf.Timestamp
+	195, // 38: helix.foundry.v1.ConnectorAccount.connected_at:type_name -> google.protobuf.Timestamp
 	3,   // 39: helix.foundry.v1.ConnectorSignIn.status:type_name -> helix.foundry.v1.ConnectorSignInStatus
 	4,   // 40: helix.foundry.v1.ConnectorSignIn.failure:type_name -> helix.foundry.v1.ConnectorSignInFailure
-	194, // 41: helix.foundry.v1.ConnectorSignIn.created_at:type_name -> google.protobuf.Timestamp
-	194, // 42: helix.foundry.v1.ConnectorSignIn.expires_at:type_name -> google.protobuf.Timestamp
+	195, // 41: helix.foundry.v1.ConnectorSignIn.created_at:type_name -> google.protobuf.Timestamp
+	195, // 42: helix.foundry.v1.ConnectorSignIn.expires_at:type_name -> google.protobuf.Timestamp
 	51,  // 43: helix.foundry.v1.ConnectorSignIn.config:type_name -> helix.foundry.v1.ConnectorConfig
-	194, // 44: helix.foundry.v1.ConnectorSchedule.next_sync_at:type_name -> google.protobuf.Timestamp
-	194, // 45: helix.foundry.v1.ConnectorCDCStatus.last_reset_at:type_name -> google.protobuf.Timestamp
+	195, // 44: helix.foundry.v1.ConnectorSchedule.next_sync_at:type_name -> google.protobuf.Timestamp
+	195, // 45: helix.foundry.v1.ConnectorCDCStatus.last_reset_at:type_name -> google.protobuf.Timestamp
 	5,   // 46: helix.foundry.v1.ConnectorSync.status:type_name -> helix.foundry.v1.ConnectorSyncStatus
-	194, // 47: helix.foundry.v1.ConnectorSync.created_at:type_name -> google.protobuf.Timestamp
-	194, // 48: helix.foundry.v1.ConnectorSync.started_at:type_name -> google.protobuf.Timestamp
-	194, // 49: helix.foundry.v1.ConnectorSync.finished_at:type_name -> google.protobuf.Timestamp
-	194, // 50: helix.foundry.v1.ConnectorSync.next_attempt_at:type_name -> google.protobuf.Timestamp
+	195, // 47: helix.foundry.v1.ConnectorSync.created_at:type_name -> google.protobuf.Timestamp
+	195, // 48: helix.foundry.v1.ConnectorSync.started_at:type_name -> google.protobuf.Timestamp
+	195, // 49: helix.foundry.v1.ConnectorSync.finished_at:type_name -> google.protobuf.Timestamp
+	195, // 50: helix.foundry.v1.ConnectorSync.next_attempt_at:type_name -> google.protobuf.Timestamp
 	58,  // 51: helix.foundry.v1.ConnectorSync.tables:type_name -> helix.foundry.v1.ConnectorTableChange
-	194, // 52: helix.foundry.v1.SyncedTable.synced_at:type_name -> google.protobuf.Timestamp
+	195, // 52: helix.foundry.v1.SyncedTable.synced_at:type_name -> google.protobuf.Timestamp
 	60,  // 53: helix.foundry.v1.SyncedTable.columns:type_name -> helix.foundry.v1.ConnectorColumn
 	61,  // 54: helix.foundry.v1.SyncedTable.foreign_keys:type_name -> helix.foundry.v1.ConnectorForeignKey
-	194, // 55: helix.foundry.v1.SyncedTable.reconciled_at:type_name -> google.protobuf.Timestamp
+	195, // 55: helix.foundry.v1.SyncedTable.reconciled_at:type_name -> google.protobuf.Timestamp
 	60,  // 56: helix.foundry.v1.ConnectorTable.columns:type_name -> helix.foundry.v1.ConnectorColumn
 	61,  // 57: helix.foundry.v1.ConnectorTable.foreign_keys:type_name -> helix.foundry.v1.ConnectorForeignKey
 	62,  // 58: helix.foundry.v1.ConnectorDiscovery.tables:type_name -> helix.foundry.v1.ConnectorTable
-	194, // 59: helix.foundry.v1.FoundryEventPiece.occurred_at:type_name -> google.protobuf.Timestamp
-	194, // 60: helix.foundry.v1.FoundryEventBatch.first_at:type_name -> google.protobuf.Timestamp
-	194, // 61: helix.foundry.v1.FoundryEventBatch.last_at:type_name -> google.protobuf.Timestamp
-	194, // 62: helix.foundry.v1.FoundryEventBatch.created_at:type_name -> google.protobuf.Timestamp
-	194, // 63: helix.foundry.v1.FoundryEventSourceToken.created_at:type_name -> google.protobuf.Timestamp
-	194, // 64: helix.foundry.v1.FoundryEventSourceToken.revoked_at:type_name -> google.protobuf.Timestamp
-	194, // 65: helix.foundry.v1.FoundryEventSourceToken.last_used_at:type_name -> google.protobuf.Timestamp
+	195, // 59: helix.foundry.v1.FoundryEventPiece.occurred_at:type_name -> google.protobuf.Timestamp
+	195, // 60: helix.foundry.v1.FoundryEventBatch.first_at:type_name -> google.protobuf.Timestamp
+	195, // 61: helix.foundry.v1.FoundryEventBatch.last_at:type_name -> google.protobuf.Timestamp
+	195, // 62: helix.foundry.v1.FoundryEventBatch.created_at:type_name -> google.protobuf.Timestamp
+	195, // 63: helix.foundry.v1.FoundryEventSourceToken.created_at:type_name -> google.protobuf.Timestamp
+	195, // 64: helix.foundry.v1.FoundryEventSourceToken.revoked_at:type_name -> google.protobuf.Timestamp
+	195, // 65: helix.foundry.v1.FoundryEventSourceToken.last_used_at:type_name -> google.protobuf.Timestamp
 	6,   // 66: helix.foundry.v1.FoundryEventSourcePick.mode:type_name -> helix.foundry.v1.FoundryEventSourceMode
-	195, // 67: helix.foundry.v1.OntologyVersion.definition:type_name -> google.protobuf.Struct
+	196, // 67: helix.foundry.v1.OntologyVersion.definition:type_name -> google.protobuf.Struct
 	7,   // 68: helix.foundry.v1.OntologyVersion.source:type_name -> helix.foundry.v1.OntologySource
-	194, // 69: helix.foundry.v1.OntologyVersion.created_at:type_name -> google.protobuf.Timestamp
+	195, // 69: helix.foundry.v1.OntologyVersion.created_at:type_name -> google.protobuf.Timestamp
 	8,   // 70: helix.foundry.v1.OntologyVersion.format:type_name -> helix.foundry.v1.OntologyFormat
 	71,  // 71: helix.foundry.v1.AgentQuestion.options:type_name -> helix.foundry.v1.AgentQuestionOption
 	71,  // 72: helix.foundry.v1.OntologyGenerationQuestion.options:type_name -> helix.foundry.v1.AgentQuestionOption
@@ -20733,68 +20796,68 @@ var file_helix_foundry_v1_types_proto_depIdxs = []int32{
 	76,  // 75: helix.foundry.v1.OntologyEdit.remove:type_name -> helix.foundry.v1.OntologyRemove
 	9,   // 76: helix.foundry.v1.OntologyGeneration.status:type_name -> helix.foundry.v1.OntologyGenerationStatus
 	79,  // 77: helix.foundry.v1.OntologyGeneration.tables:type_name -> helix.foundry.v1.OntologyGenerationTable
-	194, // 78: helix.foundry.v1.OntologyGeneration.created_at:type_name -> google.protobuf.Timestamp
-	194, // 79: helix.foundry.v1.OntologyGeneration.started_at:type_name -> google.protobuf.Timestamp
-	194, // 80: helix.foundry.v1.OntologyGeneration.finished_at:type_name -> google.protobuf.Timestamp
-	194, // 81: helix.foundry.v1.OntologyGeneration.next_attempt_at:type_name -> google.protobuf.Timestamp
+	195, // 78: helix.foundry.v1.OntologyGeneration.created_at:type_name -> google.protobuf.Timestamp
+	195, // 79: helix.foundry.v1.OntologyGeneration.started_at:type_name -> google.protobuf.Timestamp
+	195, // 80: helix.foundry.v1.OntologyGeneration.finished_at:type_name -> google.protobuf.Timestamp
+	195, // 81: helix.foundry.v1.OntologyGeneration.next_attempt_at:type_name -> google.protobuf.Timestamp
 	77,  // 82: helix.foundry.v1.OntologyGeneration.revision:type_name -> helix.foundry.v1.OntologyRevision
 	80,  // 83: helix.foundry.v1.OntologyGeneration.documents:type_name -> helix.foundry.v1.OntologyGenerationDocument
 	73,  // 84: helix.foundry.v1.OntologyGeneration.questions:type_name -> helix.foundry.v1.OntologyGenerationQuestion
-	194, // 85: helix.foundry.v1.OntologyGeneration.asked_at:type_name -> google.protobuf.Timestamp
-	194, // 86: helix.foundry.v1.OntologyGeneration.answers_due_at:type_name -> google.protobuf.Timestamp
-	194, // 87: helix.foundry.v1.FoundryOntology.created_at:type_name -> google.protobuf.Timestamp
+	195, // 85: helix.foundry.v1.OntologyGeneration.asked_at:type_name -> google.protobuf.Timestamp
+	195, // 86: helix.foundry.v1.OntologyGeneration.answers_due_at:type_name -> google.protobuf.Timestamp
+	195, // 87: helix.foundry.v1.FoundryOntology.created_at:type_name -> google.protobuf.Timestamp
 	82,  // 88: helix.foundry.v1.FoundryOntology.last_load:type_name -> helix.foundry.v1.FoundryOntologyLastLoad
 	85,  // 89: helix.foundry.v1.FoundryOntology.counts:type_name -> helix.foundry.v1.FoundryOntologyCounts
 	83,  // 90: helix.foundry.v1.FoundryOntology.current_load:type_name -> helix.foundry.v1.FoundryOntologyCurrentLoad
 	84,  // 91: helix.foundry.v1.FoundryOntology.active_job:type_name -> helix.foundry.v1.FoundryOntologyActiveJob
-	194, // 92: helix.foundry.v1.FoundryOntology.refresh_due_at:type_name -> google.protobuf.Timestamp
-	194, // 93: helix.foundry.v1.FoundryOntologyLastLoad.finished_at:type_name -> google.protobuf.Timestamp
-	194, // 94: helix.foundry.v1.FoundryOntologyCurrentLoad.finished_at:type_name -> google.protobuf.Timestamp
+	195, // 92: helix.foundry.v1.FoundryOntology.refresh_due_at:type_name -> google.protobuf.Timestamp
+	195, // 93: helix.foundry.v1.FoundryOntologyLastLoad.finished_at:type_name -> google.protobuf.Timestamp
+	195, // 94: helix.foundry.v1.FoundryOntologyCurrentLoad.finished_at:type_name -> google.protobuf.Timestamp
 	110, // 95: helix.foundry.v1.FoundryOntologyActiveJob.progress:type_name -> helix.foundry.v1.FoundryGraphJobProgress
-	194, // 96: helix.foundry.v1.FoundryDocument.created_at:type_name -> google.protobuf.Timestamp
+	195, // 96: helix.foundry.v1.FoundryDocument.created_at:type_name -> google.protobuf.Timestamp
 	95,  // 97: helix.foundry.v1.FoundryDocument.extraction:type_name -> helix.foundry.v1.FoundryDocumentExtraction
 	90,  // 98: helix.foundry.v1.FoundryDocument.ontologies:type_name -> helix.foundry.v1.FoundryDocumentOntology
 	88,  // 99: helix.foundry.v1.FoundryDocument.read:type_name -> helix.foundry.v1.FoundryFileRead
 	87,  // 100: helix.foundry.v1.FoundryDocument.source:type_name -> helix.foundry.v1.FoundryDocumentSource
-	194, // 101: helix.foundry.v1.FoundryDocumentSource.at:type_name -> google.protobuf.Timestamp
+	195, // 101: helix.foundry.v1.FoundryDocumentSource.at:type_name -> google.protobuf.Timestamp
 	10,  // 102: helix.foundry.v1.FoundryFileRead.kind:type_name -> helix.foundry.v1.FoundryReadKind
 	11,  // 103: helix.foundry.v1.FoundryFileRead.state:type_name -> helix.foundry.v1.FoundryFileReadState
 	12,  // 104: helix.foundry.v1.FoundryFileRead.mode:type_name -> helix.foundry.v1.FoundryFileReadMode
 	89,  // 105: helix.foundry.v1.FoundryFileRead.error:type_name -> helix.foundry.v1.FoundryFileReadError
 	95,  // 106: helix.foundry.v1.FoundryDocumentOntology.extraction:type_name -> helix.foundry.v1.FoundryDocumentExtraction
-	194, // 107: helix.foundry.v1.FoundryDocumentSet.created_at:type_name -> google.protobuf.Timestamp
+	195, // 107: helix.foundry.v1.FoundryDocumentSet.created_at:type_name -> google.protobuf.Timestamp
 	93,  // 108: helix.foundry.v1.FoundryDocumentSet.read_by:type_name -> helix.foundry.v1.FoundryDocumentSetReader
 	92,  // 109: helix.foundry.v1.FoundryDocumentSet.connector:type_name -> helix.foundry.v1.FoundryDocumentSetConnector
 	13,  // 110: helix.foundry.v1.FoundryDocumentRead.outcome:type_name -> helix.foundry.v1.FoundryDocumentReadOutcome
 	97,  // 111: helix.foundry.v1.FoundryDocumentExtraction.error:type_name -> helix.foundry.v1.FoundryExtractionError
-	194, // 112: helix.foundry.v1.FoundryDocumentExtraction.finished_at:type_name -> google.protobuf.Timestamp
+	195, // 112: helix.foundry.v1.FoundryDocumentExtraction.finished_at:type_name -> google.protobuf.Timestamp
 	96,  // 113: helix.foundry.v1.FoundryDocumentExtraction.names:type_name -> helix.foundry.v1.FoundryDocumentName
-	191, // 114: helix.foundry.v1.FoundryDocumentUpload.headers:type_name -> helix.foundry.v1.FoundryDocumentUpload.HeadersEntry
-	194, // 115: helix.foundry.v1.FoundryDocumentUpload.expires_at:type_name -> google.protobuf.Timestamp
+	192, // 114: helix.foundry.v1.FoundryDocumentUpload.headers:type_name -> helix.foundry.v1.FoundryDocumentUpload.HeadersEntry
+	195, // 115: helix.foundry.v1.FoundryDocumentUpload.expires_at:type_name -> google.protobuf.Timestamp
 	110, // 116: helix.foundry.v1.FoundryGraphJob.progress:type_name -> helix.foundry.v1.FoundryGraphJobProgress
-	194, // 117: helix.foundry.v1.FoundryGraphJob.created_at:type_name -> google.protobuf.Timestamp
-	194, // 118: helix.foundry.v1.FoundryGraphJob.started_at:type_name -> google.protobuf.Timestamp
-	194, // 119: helix.foundry.v1.FoundryGraphJob.finished_at:type_name -> google.protobuf.Timestamp
-	194, // 120: helix.foundry.v1.FoundryLoad.created_at:type_name -> google.protobuf.Timestamp
-	194, // 121: helix.foundry.v1.FoundryLoad.finished_at:type_name -> google.protobuf.Timestamp
+	195, // 117: helix.foundry.v1.FoundryGraphJob.created_at:type_name -> google.protobuf.Timestamp
+	195, // 118: helix.foundry.v1.FoundryGraphJob.started_at:type_name -> google.protobuf.Timestamp
+	195, // 119: helix.foundry.v1.FoundryGraphJob.finished_at:type_name -> google.protobuf.Timestamp
+	195, // 120: helix.foundry.v1.FoundryLoad.created_at:type_name -> google.protobuf.Timestamp
+	195, // 121: helix.foundry.v1.FoundryLoad.finished_at:type_name -> google.protobuf.Timestamp
 	99,  // 122: helix.foundry.v1.FoundryLoad.jobs:type_name -> helix.foundry.v1.FoundryGraphJob
 	103, // 123: helix.foundry.v1.FoundryLoad.enrichment:type_name -> helix.foundry.v1.FoundryLoadEnrichment
-	194, // 124: helix.foundry.v1.FoundryLoad.applied_at:type_name -> google.protobuf.Timestamp
+	195, // 124: helix.foundry.v1.FoundryLoad.applied_at:type_name -> google.protobuf.Timestamp
 	102, // 125: helix.foundry.v1.FoundryLoad.sources:type_name -> helix.foundry.v1.FoundryLoadSource
 	101, // 126: helix.foundry.v1.FoundryLoad.document_sets:type_name -> helix.foundry.v1.FoundryLoadDocumentSet
-	194, // 127: helix.foundry.v1.FoundryLoadSource.synced_at:type_name -> google.protobuf.Timestamp
-	194, // 128: helix.foundry.v1.FoundryLoadEnrichment.published_at:type_name -> google.protobuf.Timestamp
+	195, // 127: helix.foundry.v1.FoundryLoadSource.synced_at:type_name -> google.protobuf.Timestamp
+	195, // 128: helix.foundry.v1.FoundryLoadEnrichment.published_at:type_name -> google.protobuf.Timestamp
 	14,  // 129: helix.foundry.v1.FoundryEnrichment.availability:type_name -> helix.foundry.v1.FoundryEnrichmentAvailability
-	194, // 130: helix.foundry.v1.FoundryEnrichment.cap_resets_at:type_name -> google.protobuf.Timestamp
-	194, // 131: helix.foundry.v1.FoundryEnrichment.enabled_at:type_name -> google.protobuf.Timestamp
-	194, // 132: helix.foundry.v1.FoundryQuestion.created_at:type_name -> google.protobuf.Timestamp
-	194, // 133: helix.foundry.v1.FoundryQuestion.started_at:type_name -> google.protobuf.Timestamp
-	194, // 134: helix.foundry.v1.FoundryQuestion.finished_at:type_name -> google.protobuf.Timestamp
+	195, // 130: helix.foundry.v1.FoundryEnrichment.cap_resets_at:type_name -> google.protobuf.Timestamp
+	195, // 131: helix.foundry.v1.FoundryEnrichment.enabled_at:type_name -> google.protobuf.Timestamp
+	195, // 132: helix.foundry.v1.FoundryQuestion.created_at:type_name -> google.protobuf.Timestamp
+	195, // 133: helix.foundry.v1.FoundryQuestion.started_at:type_name -> google.protobuf.Timestamp
+	195, // 134: helix.foundry.v1.FoundryQuestion.finished_at:type_name -> google.protobuf.Timestamp
 	15,  // 135: helix.foundry.v1.FoundryUsageEntry.task:type_name -> helix.foundry.v1.FoundryUsageTask
-	194, // 136: helix.foundry.v1.FoundryUsage.month_start:type_name -> google.protobuf.Timestamp
-	194, // 137: helix.foundry.v1.FoundryUsage.resets_at:type_name -> google.protobuf.Timestamp
+	195, // 136: helix.foundry.v1.FoundryUsage.month_start:type_name -> google.protobuf.Timestamp
+	195, // 137: helix.foundry.v1.FoundryUsage.resets_at:type_name -> google.protobuf.Timestamp
 	107, // 138: helix.foundry.v1.FoundryUsage.tasks:type_name -> helix.foundry.v1.FoundryUsageEntry
-	194, // 139: helix.foundry.v1.FoundryQuestionEvent.created_at:type_name -> google.protobuf.Timestamp
+	195, // 139: helix.foundry.v1.FoundryQuestionEvent.created_at:type_name -> google.protobuf.Timestamp
 	16,  // 140: helix.foundry.v1.FoundryReview.settle:type_name -> helix.foundry.v1.FoundryReviewSettle
 	113, // 141: helix.foundry.v1.FoundryReview.span:type_name -> helix.foundry.v1.FoundryReviewSpan
 	114, // 142: helix.foundry.v1.FoundryReview.values:type_name -> helix.foundry.v1.FoundryReviewValue
@@ -20803,148 +20866,149 @@ var file_helix_foundry_v1_types_proto_depIdxs = []int32{
 	118, // 145: helix.foundry.v1.FoundryReviewChoice.prop:type_name -> helix.foundry.v1.FoundryPropValue
 	116, // 146: helix.foundry.v1.FoundryReviewChoice.release:type_name -> helix.foundry.v1.FoundryReleaseChoice
 	117, // 147: helix.foundry.v1.FoundryReviewChoice.reject:type_name -> helix.foundry.v1.FoundryRejectChoice
-	196, // 148: helix.foundry.v1.FoundryPropValue.null:type_name -> google.protobuf.NullValue
-	194, // 149: helix.foundry.v1.FoundryDecisionApplied.at:type_name -> google.protobuf.Timestamp
+	197, // 148: helix.foundry.v1.FoundryPropValue.null:type_name -> google.protobuf.NullValue
+	195, // 149: helix.foundry.v1.FoundryDecisionApplied.at:type_name -> google.protobuf.Timestamp
 	118, // 150: helix.foundry.v1.FoundryReviewDecision.value:type_name -> helix.foundry.v1.FoundryPropValue
-	194, // 151: helix.foundry.v1.FoundryReviewDecision.decided_at:type_name -> google.protobuf.Timestamp
+	195, // 151: helix.foundry.v1.FoundryReviewDecision.decided_at:type_name -> google.protobuf.Timestamp
 	120, // 152: helix.foundry.v1.FoundryReviewDecision.applied:type_name -> helix.foundry.v1.FoundryDecisionApplied
-	194, // 153: helix.foundry.v1.FoundryReviewLabel.decided_at:type_name -> google.protobuf.Timestamp
+	195, // 153: helix.foundry.v1.FoundryReviewLabel.decided_at:type_name -> google.protobuf.Timestamp
 	124, // 154: helix.foundry.v1.FoundryAIProvider.anthropic:type_name -> helix.foundry.v1.FoundryAIAnthropic
 	125, // 155: helix.foundry.v1.FoundryAIProvider.openai:type_name -> helix.foundry.v1.FoundryAIOpenAI
 	126, // 156: helix.foundry.v1.FoundryAIProvider.azure_openai:type_name -> helix.foundry.v1.FoundryAIAzureOpenAI
 	127, // 157: helix.foundry.v1.FoundryAIProvider.bedrock:type_name -> helix.foundry.v1.FoundryAIBedrock
-	128, // 158: helix.foundry.v1.FoundryAIProvider.ollama:type_name -> helix.foundry.v1.FoundryAIOllama
-	129, // 159: helix.foundry.v1.FoundryAIProvider.openai_compatible:type_name -> helix.foundry.v1.FoundryAICompatible
-	18,  // 160: helix.foundry.v1.FoundryAICompatible.api:type_name -> helix.foundry.v1.FoundryAICompatAPI
-	197, // 161: helix.foundry.v1.FoundryAIModel.table:type_name -> google.protobuf.Empty
-	131, // 162: helix.foundry.v1.FoundryAIModel.rates:type_name -> helix.foundry.v1.FoundryAIRates
-	197, // 163: helix.foundry.v1.FoundryAIModel.free:type_name -> google.protobuf.Empty
-	130, // 164: helix.foundry.v1.FoundryAIModels.draft:type_name -> helix.foundry.v1.FoundryAIModel
-	130, // 165: helix.foundry.v1.FoundryAIModels.ask:type_name -> helix.foundry.v1.FoundryAIModel
-	130, // 166: helix.foundry.v1.FoundryAIModels.extract:type_name -> helix.foundry.v1.FoundryAIModel
-	130, // 167: helix.foundry.v1.FoundryAIModels.verify:type_name -> helix.foundry.v1.FoundryAIModel
-	17,  // 168: helix.foundry.v1.FoundryAIConfig.kind:type_name -> helix.foundry.v1.FoundryAIKind
-	123, // 169: helix.foundry.v1.FoundryAIConfig.provider:type_name -> helix.foundry.v1.FoundryAIProvider
-	132, // 170: helix.foundry.v1.FoundryAIConfig.models:type_name -> helix.foundry.v1.FoundryAIModels
-	19,  // 171: helix.foundry.v1.FoundryAIConfig.probe_state:type_name -> helix.foundry.v1.FoundryAIProbeState
-	194, // 172: helix.foundry.v1.FoundryAIConfig.created_at:type_name -> google.protobuf.Timestamp
-	20,  // 173: helix.foundry.v1.FoundryAIConfig.assistant_check:type_name -> helix.foundry.v1.FoundryAIAssistantCheck
-	17,  // 174: helix.foundry.v1.FoundryAIDefault.kind:type_name -> helix.foundry.v1.FoundryAIKind
-	132, // 175: helix.foundry.v1.FoundryAIDefault.models:type_name -> helix.foundry.v1.FoundryAIModels
-	17,  // 176: helix.foundry.v1.FoundryAIOffer.kind:type_name -> helix.foundry.v1.FoundryAIKind
-	132, // 177: helix.foundry.v1.FoundryAIOffer.suggested:type_name -> helix.foundry.v1.FoundryAIModels
-	21,  // 178: helix.foundry.v1.FoundryAIOffer.key:type_name -> helix.foundry.v1.FoundryAIKey
-	133, // 179: helix.foundry.v1.FoundryAI.active:type_name -> helix.foundry.v1.FoundryAIConfig
-	134, // 180: helix.foundry.v1.FoundryAI.default:type_name -> helix.foundry.v1.FoundryAIDefault
-	133, // 181: helix.foundry.v1.FoundryAI.pending:type_name -> helix.foundry.v1.FoundryAIConfig
-	133, // 182: helix.foundry.v1.FoundryAI.last_failed:type_name -> helix.foundry.v1.FoundryAIConfig
-	135, // 183: helix.foundry.v1.FoundryAI.offered:type_name -> helix.foundry.v1.FoundryAIOffer
-	137, // 184: helix.foundry.v1.FoundryAI.detected:type_name -> helix.foundry.v1.FoundryAIDetected
-	194, // 185: helix.foundry.v1.FoundryAIDetected.detected_at:type_name -> google.protobuf.Timestamp
-	139, // 186: helix.foundry.v1.FoundryOllamaServer.models:type_name -> helix.foundry.v1.FoundryOllamaModel
-	25,  // 187: helix.foundry.v1.FoundryPrincipal.kind:type_name -> helix.foundry.v1.FoundryPrincipal.Kind
-	26,  // 188: helix.foundry.v1.FoundryAccessTarget.kind:type_name -> helix.foundry.v1.FoundryAccessTarget.Kind
-	140, // 189: helix.foundry.v1.FoundryAccessGrant.principal:type_name -> helix.foundry.v1.FoundryPrincipal
-	141, // 190: helix.foundry.v1.FoundryAccessGrant.target:type_name -> helix.foundry.v1.FoundryAccessTarget
-	194, // 191: helix.foundry.v1.FoundryAccessGrant.created_at:type_name -> google.protobuf.Timestamp
-	192, // 192: helix.foundry.v1.FoundryLoadAccessInputs.tables:type_name -> helix.foundry.v1.FoundryLoadAccessInputs.Table
-	193, // 193: helix.foundry.v1.FoundryLoadAccessInputs.document_sets:type_name -> helix.foundry.v1.FoundryLoadAccessInputs.DocumentSet
-	143, // 194: helix.foundry.v1.FoundryOntologyAccess.inputs:type_name -> helix.foundry.v1.FoundryLoadAccessInputs
-	140, // 195: helix.foundry.v1.FoundryOntologyAccess.readers:type_name -> helix.foundry.v1.FoundryPrincipal
-	140, // 196: helix.foundry.v1.FoundryOntologyAccess.partial_readers:type_name -> helix.foundry.v1.FoundryPrincipal
-	140, // 197: helix.foundry.v1.FoundryAccessLoss.principal:type_name -> helix.foundry.v1.FoundryPrincipal
-	194, // 198: helix.foundry.v1.FoundryTeam.created_at:type_name -> google.protobuf.Timestamp
-	147, // 199: helix.foundry.v1.FoundryTeam.directory:type_name -> helix.foundry.v1.FoundryTeamDirectory
-	194, // 200: helix.foundry.v1.FoundryHealRun.started_at:type_name -> google.protobuf.Timestamp
-	194, // 201: helix.foundry.v1.FoundryHealRun.finished_at:type_name -> google.protobuf.Timestamp
-	194, // 202: helix.foundry.v1.FoundryWorkflow.created_at:type_name -> google.protobuf.Timestamp
-	194, // 203: helix.foundry.v1.FoundryWorkflow.last_run_at:type_name -> google.protobuf.Timestamp
-	154, // 204: helix.foundry.v1.FoundryWorkflow.verdicts:type_name -> helix.foundry.v1.FoundryWorkflowVerdictCount
-	151, // 205: helix.foundry.v1.FoundryWorkflow.automation:type_name -> helix.foundry.v1.FoundryWorkflowAutomation
-	194, // 206: helix.foundry.v1.FoundryWorkflowRun.started_at:type_name -> google.protobuf.Timestamp
-	194, // 207: helix.foundry.v1.FoundryWorkflowRun.finished_at:type_name -> google.protobuf.Timestamp
-	162, // 208: helix.foundry.v1.FoundryWorkflowRun.counts:type_name -> helix.foundry.v1.FoundryWorkflowRunCounts
-	153, // 209: helix.foundry.v1.FoundryWorkflowRun.assessment:type_name -> helix.foundry.v1.FoundryWorkflowAssessment
-	194, // 210: helix.foundry.v1.FoundryWorkflowAssessment.queued_at:type_name -> google.protobuf.Timestamp
-	194, // 211: helix.foundry.v1.FoundryWorkflowAssessment.finished_at:type_name -> google.protobuf.Timestamp
-	156, // 212: helix.foundry.v1.FoundryWorkflowInsights.totals:type_name -> helix.foundry.v1.FoundryWorkflowInsightTotals
-	156, // 213: helix.foundry.v1.FoundryWorkflowInsights.previous:type_name -> helix.foundry.v1.FoundryWorkflowInsightTotals
-	158, // 214: helix.foundry.v1.FoundryWorkflowInsights.series:type_name -> helix.foundry.v1.FoundryWorkflowInsightDay
-	159, // 215: helix.foundry.v1.FoundryWorkflowInsights.funnel:type_name -> helix.foundry.v1.FoundryWorkflowInsightFunnel
-	160, // 216: helix.foundry.v1.FoundryWorkflowInsights.gaps:type_name -> helix.foundry.v1.FoundryWorkflowInsightIssue
-	160, // 217: helix.foundry.v1.FoundryWorkflowInsights.suggestions:type_name -> helix.foundry.v1.FoundryWorkflowInsightIssue
-	161, // 218: helix.foundry.v1.FoundryWorkflowInsights.agents:type_name -> helix.foundry.v1.FoundryWorkflowInsightSegment
-	161, // 219: helix.foundry.v1.FoundryWorkflowInsights.workflows:type_name -> helix.foundry.v1.FoundryWorkflowInsightSegment
-	154, // 220: helix.foundry.v1.FoundryWorkflowInsightTotals.verdicts:type_name -> helix.foundry.v1.FoundryWorkflowVerdictCount
-	157, // 221: helix.foundry.v1.FoundryWorkflowInsightTotals.gap_kinds:type_name -> helix.foundry.v1.FoundryWorkflowGapCount
-	156, // 222: helix.foundry.v1.FoundryWorkflowInsightDay.totals:type_name -> helix.foundry.v1.FoundryWorkflowInsightTotals
-	194, // 223: helix.foundry.v1.FoundryWorkflowInsightIssue.last_at:type_name -> google.protobuf.Timestamp
-	140, // 224: helix.foundry.v1.FoundryWorkflowInsightSegment.principal:type_name -> helix.foundry.v1.FoundryPrincipal
-	156, // 225: helix.foundry.v1.FoundryWorkflowInsightSegment.totals:type_name -> helix.foundry.v1.FoundryWorkflowInsightTotals
-	194, // 226: helix.foundry.v1.FoundryWorkflowInsightSegment.last_run_at:type_name -> google.protobuf.Timestamp
-	151, // 227: helix.foundry.v1.FoundryWorkflowInsightSegment.automation:type_name -> helix.foundry.v1.FoundryWorkflowAutomation
-	194, // 228: helix.foundry.v1.FoundryWorkflowAccess.at:type_name -> google.protobuf.Timestamp
-	164, // 229: helix.foundry.v1.FoundryWorkflowAccess.read:type_name -> helix.foundry.v1.FoundryWorkflowRead
-	165, // 230: helix.foundry.v1.FoundryWorkflowAccess.question:type_name -> helix.foundry.v1.FoundryWorkflowQuestion
-	166, // 231: helix.foundry.v1.FoundryWorkflowAccess.send:type_name -> helix.foundry.v1.FoundryWorkflowSend
-	167, // 232: helix.foundry.v1.FoundryWorkflowAccess.upload:type_name -> helix.foundry.v1.FoundryWorkflowUpload
-	194, // 233: helix.foundry.v1.FoundryAgentThread.created_at:type_name -> google.protobuf.Timestamp
-	194, // 234: helix.foundry.v1.FoundryAgentThread.updated_at:type_name -> google.protobuf.Timestamp
-	171, // 235: helix.foundry.v1.FoundryAgentRuntime.hosts:type_name -> helix.foundry.v1.FoundryAgentHost
-	194, // 236: helix.foundry.v1.FoundryAgentRuntime.codex_confirmed_at:type_name -> google.protobuf.Timestamp
-	194, // 237: helix.foundry.v1.FoundryAgentHost.created_at:type_name -> google.protobuf.Timestamp
-	194, // 238: helix.foundry.v1.FoundryAgentHost.last_seen_at:type_name -> google.protobuf.Timestamp
-	194, // 239: helix.foundry.v1.FoundryAgentHost.revoked_at:type_name -> google.protobuf.Timestamp
-	172, // 240: helix.foundry.v1.FoundryAgentHost.accounts:type_name -> helix.foundry.v1.FoundryAgentHostAccount
-	168, // 241: helix.foundry.v1.FoundryAgentTurn.page_context:type_name -> helix.foundry.v1.FoundryAgentPageContext
-	194, // 242: helix.foundry.v1.FoundryAgentTurn.created_at:type_name -> google.protobuf.Timestamp
-	194, // 243: helix.foundry.v1.FoundryAgentTurn.started_at:type_name -> google.protobuf.Timestamp
-	194, // 244: helix.foundry.v1.FoundryAgentTurn.finished_at:type_name -> google.protobuf.Timestamp
-	174, // 245: helix.foundry.v1.FoundryAgentTurn.asked:type_name -> helix.foundry.v1.FoundryAgentAsked
-	176, // 246: helix.foundry.v1.FoundryAgentTurn.answers:type_name -> helix.foundry.v1.FoundryAgentAnswers
-	70,  // 247: helix.foundry.v1.FoundryAgentAsked.questions:type_name -> helix.foundry.v1.AgentQuestion
-	175, // 248: helix.foundry.v1.FoundryAgentAsked.generation:type_name -> helix.foundry.v1.FoundryAgentAskedGeneration
-	72,  // 249: helix.foundry.v1.FoundryAgentAnswers.answers:type_name -> helix.foundry.v1.AgentQuestionAnswer
-	194, // 250: helix.foundry.v1.FoundryAgentEvent.created_at:type_name -> google.protobuf.Timestamp
-	194, // 251: helix.foundry.v1.FoundryAgentAction.expires_at:type_name -> google.protobuf.Timestamp
-	194, // 252: helix.foundry.v1.FoundryAgentAction.decided_at:type_name -> google.protobuf.Timestamp
-	194, // 253: helix.foundry.v1.FoundryAgentAction.created_at:type_name -> google.protobuf.Timestamp
-	194, // 254: helix.foundry.v1.FoundryDashboard.pinned_at:type_name -> google.protobuf.Timestamp
-	194, // 255: helix.foundry.v1.FoundryDashboard.created_at:type_name -> google.protobuf.Timestamp
-	194, // 256: helix.foundry.v1.FoundryDashboard.updated_at:type_name -> google.protobuf.Timestamp
-	180, // 257: helix.foundry.v1.FoundryDashboard.share:type_name -> helix.foundry.v1.FoundryDashboardShare
-	194, // 258: helix.foundry.v1.FoundryDashboardShare.published_at:type_name -> google.protobuf.Timestamp
-	194, // 259: helix.foundry.v1.FoundryDashboardShare.first_published_at:type_name -> google.protobuf.Timestamp
-	23,  // 260: helix.foundry.v1.FoundryAutomationSuggestion.icon:type_name -> helix.foundry.v1.FoundryAutomationSuggestionIcon
-	22,  // 261: helix.foundry.v1.FoundryAutomationSuggestion.kind:type_name -> helix.foundry.v1.FoundryAutomationSuggestionKind
-	24,  // 262: helix.foundry.v1.FoundryAutomationSuggestion.source:type_name -> helix.foundry.v1.FoundryAutomationSuggestionSource
-	194, // 263: helix.foundry.v1.FoundryAutomation.paused_at:type_name -> google.protobuf.Timestamp
-	194, // 264: helix.foundry.v1.FoundryAutomation.approved_at:type_name -> google.protobuf.Timestamp
-	194, // 265: helix.foundry.v1.FoundryAutomation.next_run_at:type_name -> google.protobuf.Timestamp
-	194, // 266: helix.foundry.v1.FoundryAutomation.backoff_until:type_name -> google.protobuf.Timestamp
-	187, // 267: helix.foundry.v1.FoundryAutomation.last_run:type_name -> helix.foundry.v1.FoundryAutomationRun
-	194, // 268: helix.foundry.v1.FoundryAutomation.created_at:type_name -> google.protobuf.Timestamp
-	194, // 269: helix.foundry.v1.FoundryAutomation.updated_at:type_name -> google.protobuf.Timestamp
-	194, // 270: helix.foundry.v1.FoundryAutomation.last_failed_at:type_name -> google.protobuf.Timestamp
-	184, // 271: helix.foundry.v1.FoundryAutomation.stats:type_name -> helix.foundry.v1.FoundryAutomationRunCounts
-	183, // 272: helix.foundry.v1.FoundryAutomation.ontologies:type_name -> helix.foundry.v1.FoundryAutomationOntology
-	194, // 273: helix.foundry.v1.FoundryAutomationOntology.last_run_at:type_name -> google.protobuf.Timestamp
-	154, // 274: helix.foundry.v1.FoundryAutomationOntology.verdicts:type_name -> helix.foundry.v1.FoundryWorkflowVerdictCount
-	194, // 275: helix.foundry.v1.FoundryAutomationOntology.untracked_at:type_name -> google.protobuf.Timestamp
-	184, // 276: helix.foundry.v1.FoundryAutomationRunSummary.totals:type_name -> helix.foundry.v1.FoundryAutomationRunCounts
-	185, // 277: helix.foundry.v1.FoundryAutomationRunSummary.by_day:type_name -> helix.foundry.v1.FoundryAutomationRunDay
-	194, // 278: helix.foundry.v1.FoundryAutomationRun.created_at:type_name -> google.protobuf.Timestamp
-	194, // 279: helix.foundry.v1.FoundryAutomationRun.started_at:type_name -> google.protobuf.Timestamp
-	194, // 280: helix.foundry.v1.FoundryAutomationRun.finished_at:type_name -> google.protobuf.Timestamp
-	189, // 281: helix.foundry.v1.FoundryAutomationRun.nodes:type_name -> helix.foundry.v1.FoundryAutomationRunNode
-	188, // 282: helix.foundry.v1.FoundryAutomationRun.ontologies:type_name -> helix.foundry.v1.FoundryAutomationRunOntology
-	194, // 283: helix.foundry.v1.FoundryAutomationRunNode.started_at:type_name -> google.protobuf.Timestamp
-	194, // 284: helix.foundry.v1.FoundryAutomationRunNode.finished_at:type_name -> google.protobuf.Timestamp
-	285, // [285:285] is the sub-list for method output_type
-	285, // [285:285] is the sub-list for method input_type
-	285, // [285:285] is the sub-list for extension type_name
-	285, // [285:285] is the sub-list for extension extendee
-	0,   // [0:285] is the sub-list for field type_name
+	129, // 158: helix.foundry.v1.FoundryAIProvider.ollama:type_name -> helix.foundry.v1.FoundryAIOllama
+	130, // 159: helix.foundry.v1.FoundryAIProvider.openai_compatible:type_name -> helix.foundry.v1.FoundryAICompatible
+	128, // 160: helix.foundry.v1.FoundryAIProvider.cohere:type_name -> helix.foundry.v1.FoundryAICohere
+	18,  // 161: helix.foundry.v1.FoundryAICompatible.api:type_name -> helix.foundry.v1.FoundryAICompatAPI
+	198, // 162: helix.foundry.v1.FoundryAIModel.table:type_name -> google.protobuf.Empty
+	132, // 163: helix.foundry.v1.FoundryAIModel.rates:type_name -> helix.foundry.v1.FoundryAIRates
+	198, // 164: helix.foundry.v1.FoundryAIModel.free:type_name -> google.protobuf.Empty
+	131, // 165: helix.foundry.v1.FoundryAIModels.draft:type_name -> helix.foundry.v1.FoundryAIModel
+	131, // 166: helix.foundry.v1.FoundryAIModels.ask:type_name -> helix.foundry.v1.FoundryAIModel
+	131, // 167: helix.foundry.v1.FoundryAIModels.extract:type_name -> helix.foundry.v1.FoundryAIModel
+	131, // 168: helix.foundry.v1.FoundryAIModels.verify:type_name -> helix.foundry.v1.FoundryAIModel
+	17,  // 169: helix.foundry.v1.FoundryAIConfig.kind:type_name -> helix.foundry.v1.FoundryAIKind
+	123, // 170: helix.foundry.v1.FoundryAIConfig.provider:type_name -> helix.foundry.v1.FoundryAIProvider
+	133, // 171: helix.foundry.v1.FoundryAIConfig.models:type_name -> helix.foundry.v1.FoundryAIModels
+	19,  // 172: helix.foundry.v1.FoundryAIConfig.probe_state:type_name -> helix.foundry.v1.FoundryAIProbeState
+	195, // 173: helix.foundry.v1.FoundryAIConfig.created_at:type_name -> google.protobuf.Timestamp
+	20,  // 174: helix.foundry.v1.FoundryAIConfig.assistant_check:type_name -> helix.foundry.v1.FoundryAIAssistantCheck
+	17,  // 175: helix.foundry.v1.FoundryAIDefault.kind:type_name -> helix.foundry.v1.FoundryAIKind
+	133, // 176: helix.foundry.v1.FoundryAIDefault.models:type_name -> helix.foundry.v1.FoundryAIModels
+	17,  // 177: helix.foundry.v1.FoundryAIOffer.kind:type_name -> helix.foundry.v1.FoundryAIKind
+	133, // 178: helix.foundry.v1.FoundryAIOffer.suggested:type_name -> helix.foundry.v1.FoundryAIModels
+	21,  // 179: helix.foundry.v1.FoundryAIOffer.key:type_name -> helix.foundry.v1.FoundryAIKey
+	134, // 180: helix.foundry.v1.FoundryAI.active:type_name -> helix.foundry.v1.FoundryAIConfig
+	135, // 181: helix.foundry.v1.FoundryAI.default:type_name -> helix.foundry.v1.FoundryAIDefault
+	134, // 182: helix.foundry.v1.FoundryAI.pending:type_name -> helix.foundry.v1.FoundryAIConfig
+	134, // 183: helix.foundry.v1.FoundryAI.last_failed:type_name -> helix.foundry.v1.FoundryAIConfig
+	136, // 184: helix.foundry.v1.FoundryAI.offered:type_name -> helix.foundry.v1.FoundryAIOffer
+	138, // 185: helix.foundry.v1.FoundryAI.detected:type_name -> helix.foundry.v1.FoundryAIDetected
+	195, // 186: helix.foundry.v1.FoundryAIDetected.detected_at:type_name -> google.protobuf.Timestamp
+	140, // 187: helix.foundry.v1.FoundryOllamaServer.models:type_name -> helix.foundry.v1.FoundryOllamaModel
+	25,  // 188: helix.foundry.v1.FoundryPrincipal.kind:type_name -> helix.foundry.v1.FoundryPrincipal.Kind
+	26,  // 189: helix.foundry.v1.FoundryAccessTarget.kind:type_name -> helix.foundry.v1.FoundryAccessTarget.Kind
+	141, // 190: helix.foundry.v1.FoundryAccessGrant.principal:type_name -> helix.foundry.v1.FoundryPrincipal
+	142, // 191: helix.foundry.v1.FoundryAccessGrant.target:type_name -> helix.foundry.v1.FoundryAccessTarget
+	195, // 192: helix.foundry.v1.FoundryAccessGrant.created_at:type_name -> google.protobuf.Timestamp
+	193, // 193: helix.foundry.v1.FoundryLoadAccessInputs.tables:type_name -> helix.foundry.v1.FoundryLoadAccessInputs.Table
+	194, // 194: helix.foundry.v1.FoundryLoadAccessInputs.document_sets:type_name -> helix.foundry.v1.FoundryLoadAccessInputs.DocumentSet
+	144, // 195: helix.foundry.v1.FoundryOntologyAccess.inputs:type_name -> helix.foundry.v1.FoundryLoadAccessInputs
+	141, // 196: helix.foundry.v1.FoundryOntologyAccess.readers:type_name -> helix.foundry.v1.FoundryPrincipal
+	141, // 197: helix.foundry.v1.FoundryOntologyAccess.partial_readers:type_name -> helix.foundry.v1.FoundryPrincipal
+	141, // 198: helix.foundry.v1.FoundryAccessLoss.principal:type_name -> helix.foundry.v1.FoundryPrincipal
+	195, // 199: helix.foundry.v1.FoundryTeam.created_at:type_name -> google.protobuf.Timestamp
+	148, // 200: helix.foundry.v1.FoundryTeam.directory:type_name -> helix.foundry.v1.FoundryTeamDirectory
+	195, // 201: helix.foundry.v1.FoundryHealRun.started_at:type_name -> google.protobuf.Timestamp
+	195, // 202: helix.foundry.v1.FoundryHealRun.finished_at:type_name -> google.protobuf.Timestamp
+	195, // 203: helix.foundry.v1.FoundryWorkflow.created_at:type_name -> google.protobuf.Timestamp
+	195, // 204: helix.foundry.v1.FoundryWorkflow.last_run_at:type_name -> google.protobuf.Timestamp
+	155, // 205: helix.foundry.v1.FoundryWorkflow.verdicts:type_name -> helix.foundry.v1.FoundryWorkflowVerdictCount
+	152, // 206: helix.foundry.v1.FoundryWorkflow.automation:type_name -> helix.foundry.v1.FoundryWorkflowAutomation
+	195, // 207: helix.foundry.v1.FoundryWorkflowRun.started_at:type_name -> google.protobuf.Timestamp
+	195, // 208: helix.foundry.v1.FoundryWorkflowRun.finished_at:type_name -> google.protobuf.Timestamp
+	163, // 209: helix.foundry.v1.FoundryWorkflowRun.counts:type_name -> helix.foundry.v1.FoundryWorkflowRunCounts
+	154, // 210: helix.foundry.v1.FoundryWorkflowRun.assessment:type_name -> helix.foundry.v1.FoundryWorkflowAssessment
+	195, // 211: helix.foundry.v1.FoundryWorkflowAssessment.queued_at:type_name -> google.protobuf.Timestamp
+	195, // 212: helix.foundry.v1.FoundryWorkflowAssessment.finished_at:type_name -> google.protobuf.Timestamp
+	157, // 213: helix.foundry.v1.FoundryWorkflowInsights.totals:type_name -> helix.foundry.v1.FoundryWorkflowInsightTotals
+	157, // 214: helix.foundry.v1.FoundryWorkflowInsights.previous:type_name -> helix.foundry.v1.FoundryWorkflowInsightTotals
+	159, // 215: helix.foundry.v1.FoundryWorkflowInsights.series:type_name -> helix.foundry.v1.FoundryWorkflowInsightDay
+	160, // 216: helix.foundry.v1.FoundryWorkflowInsights.funnel:type_name -> helix.foundry.v1.FoundryWorkflowInsightFunnel
+	161, // 217: helix.foundry.v1.FoundryWorkflowInsights.gaps:type_name -> helix.foundry.v1.FoundryWorkflowInsightIssue
+	161, // 218: helix.foundry.v1.FoundryWorkflowInsights.suggestions:type_name -> helix.foundry.v1.FoundryWorkflowInsightIssue
+	162, // 219: helix.foundry.v1.FoundryWorkflowInsights.agents:type_name -> helix.foundry.v1.FoundryWorkflowInsightSegment
+	162, // 220: helix.foundry.v1.FoundryWorkflowInsights.workflows:type_name -> helix.foundry.v1.FoundryWorkflowInsightSegment
+	155, // 221: helix.foundry.v1.FoundryWorkflowInsightTotals.verdicts:type_name -> helix.foundry.v1.FoundryWorkflowVerdictCount
+	158, // 222: helix.foundry.v1.FoundryWorkflowInsightTotals.gap_kinds:type_name -> helix.foundry.v1.FoundryWorkflowGapCount
+	157, // 223: helix.foundry.v1.FoundryWorkflowInsightDay.totals:type_name -> helix.foundry.v1.FoundryWorkflowInsightTotals
+	195, // 224: helix.foundry.v1.FoundryWorkflowInsightIssue.last_at:type_name -> google.protobuf.Timestamp
+	141, // 225: helix.foundry.v1.FoundryWorkflowInsightSegment.principal:type_name -> helix.foundry.v1.FoundryPrincipal
+	157, // 226: helix.foundry.v1.FoundryWorkflowInsightSegment.totals:type_name -> helix.foundry.v1.FoundryWorkflowInsightTotals
+	195, // 227: helix.foundry.v1.FoundryWorkflowInsightSegment.last_run_at:type_name -> google.protobuf.Timestamp
+	152, // 228: helix.foundry.v1.FoundryWorkflowInsightSegment.automation:type_name -> helix.foundry.v1.FoundryWorkflowAutomation
+	195, // 229: helix.foundry.v1.FoundryWorkflowAccess.at:type_name -> google.protobuf.Timestamp
+	165, // 230: helix.foundry.v1.FoundryWorkflowAccess.read:type_name -> helix.foundry.v1.FoundryWorkflowRead
+	166, // 231: helix.foundry.v1.FoundryWorkflowAccess.question:type_name -> helix.foundry.v1.FoundryWorkflowQuestion
+	167, // 232: helix.foundry.v1.FoundryWorkflowAccess.send:type_name -> helix.foundry.v1.FoundryWorkflowSend
+	168, // 233: helix.foundry.v1.FoundryWorkflowAccess.upload:type_name -> helix.foundry.v1.FoundryWorkflowUpload
+	195, // 234: helix.foundry.v1.FoundryAgentThread.created_at:type_name -> google.protobuf.Timestamp
+	195, // 235: helix.foundry.v1.FoundryAgentThread.updated_at:type_name -> google.protobuf.Timestamp
+	172, // 236: helix.foundry.v1.FoundryAgentRuntime.hosts:type_name -> helix.foundry.v1.FoundryAgentHost
+	195, // 237: helix.foundry.v1.FoundryAgentRuntime.codex_confirmed_at:type_name -> google.protobuf.Timestamp
+	195, // 238: helix.foundry.v1.FoundryAgentHost.created_at:type_name -> google.protobuf.Timestamp
+	195, // 239: helix.foundry.v1.FoundryAgentHost.last_seen_at:type_name -> google.protobuf.Timestamp
+	195, // 240: helix.foundry.v1.FoundryAgentHost.revoked_at:type_name -> google.protobuf.Timestamp
+	173, // 241: helix.foundry.v1.FoundryAgentHost.accounts:type_name -> helix.foundry.v1.FoundryAgentHostAccount
+	169, // 242: helix.foundry.v1.FoundryAgentTurn.page_context:type_name -> helix.foundry.v1.FoundryAgentPageContext
+	195, // 243: helix.foundry.v1.FoundryAgentTurn.created_at:type_name -> google.protobuf.Timestamp
+	195, // 244: helix.foundry.v1.FoundryAgentTurn.started_at:type_name -> google.protobuf.Timestamp
+	195, // 245: helix.foundry.v1.FoundryAgentTurn.finished_at:type_name -> google.protobuf.Timestamp
+	175, // 246: helix.foundry.v1.FoundryAgentTurn.asked:type_name -> helix.foundry.v1.FoundryAgentAsked
+	177, // 247: helix.foundry.v1.FoundryAgentTurn.answers:type_name -> helix.foundry.v1.FoundryAgentAnswers
+	70,  // 248: helix.foundry.v1.FoundryAgentAsked.questions:type_name -> helix.foundry.v1.AgentQuestion
+	176, // 249: helix.foundry.v1.FoundryAgentAsked.generation:type_name -> helix.foundry.v1.FoundryAgentAskedGeneration
+	72,  // 250: helix.foundry.v1.FoundryAgentAnswers.answers:type_name -> helix.foundry.v1.AgentQuestionAnswer
+	195, // 251: helix.foundry.v1.FoundryAgentEvent.created_at:type_name -> google.protobuf.Timestamp
+	195, // 252: helix.foundry.v1.FoundryAgentAction.expires_at:type_name -> google.protobuf.Timestamp
+	195, // 253: helix.foundry.v1.FoundryAgentAction.decided_at:type_name -> google.protobuf.Timestamp
+	195, // 254: helix.foundry.v1.FoundryAgentAction.created_at:type_name -> google.protobuf.Timestamp
+	195, // 255: helix.foundry.v1.FoundryDashboard.pinned_at:type_name -> google.protobuf.Timestamp
+	195, // 256: helix.foundry.v1.FoundryDashboard.created_at:type_name -> google.protobuf.Timestamp
+	195, // 257: helix.foundry.v1.FoundryDashboard.updated_at:type_name -> google.protobuf.Timestamp
+	181, // 258: helix.foundry.v1.FoundryDashboard.share:type_name -> helix.foundry.v1.FoundryDashboardShare
+	195, // 259: helix.foundry.v1.FoundryDashboardShare.published_at:type_name -> google.protobuf.Timestamp
+	195, // 260: helix.foundry.v1.FoundryDashboardShare.first_published_at:type_name -> google.protobuf.Timestamp
+	23,  // 261: helix.foundry.v1.FoundryAutomationSuggestion.icon:type_name -> helix.foundry.v1.FoundryAutomationSuggestionIcon
+	22,  // 262: helix.foundry.v1.FoundryAutomationSuggestion.kind:type_name -> helix.foundry.v1.FoundryAutomationSuggestionKind
+	24,  // 263: helix.foundry.v1.FoundryAutomationSuggestion.source:type_name -> helix.foundry.v1.FoundryAutomationSuggestionSource
+	195, // 264: helix.foundry.v1.FoundryAutomation.paused_at:type_name -> google.protobuf.Timestamp
+	195, // 265: helix.foundry.v1.FoundryAutomation.approved_at:type_name -> google.protobuf.Timestamp
+	195, // 266: helix.foundry.v1.FoundryAutomation.next_run_at:type_name -> google.protobuf.Timestamp
+	195, // 267: helix.foundry.v1.FoundryAutomation.backoff_until:type_name -> google.protobuf.Timestamp
+	188, // 268: helix.foundry.v1.FoundryAutomation.last_run:type_name -> helix.foundry.v1.FoundryAutomationRun
+	195, // 269: helix.foundry.v1.FoundryAutomation.created_at:type_name -> google.protobuf.Timestamp
+	195, // 270: helix.foundry.v1.FoundryAutomation.updated_at:type_name -> google.protobuf.Timestamp
+	195, // 271: helix.foundry.v1.FoundryAutomation.last_failed_at:type_name -> google.protobuf.Timestamp
+	185, // 272: helix.foundry.v1.FoundryAutomation.stats:type_name -> helix.foundry.v1.FoundryAutomationRunCounts
+	184, // 273: helix.foundry.v1.FoundryAutomation.ontologies:type_name -> helix.foundry.v1.FoundryAutomationOntology
+	195, // 274: helix.foundry.v1.FoundryAutomationOntology.last_run_at:type_name -> google.protobuf.Timestamp
+	155, // 275: helix.foundry.v1.FoundryAutomationOntology.verdicts:type_name -> helix.foundry.v1.FoundryWorkflowVerdictCount
+	195, // 276: helix.foundry.v1.FoundryAutomationOntology.untracked_at:type_name -> google.protobuf.Timestamp
+	185, // 277: helix.foundry.v1.FoundryAutomationRunSummary.totals:type_name -> helix.foundry.v1.FoundryAutomationRunCounts
+	186, // 278: helix.foundry.v1.FoundryAutomationRunSummary.by_day:type_name -> helix.foundry.v1.FoundryAutomationRunDay
+	195, // 279: helix.foundry.v1.FoundryAutomationRun.created_at:type_name -> google.protobuf.Timestamp
+	195, // 280: helix.foundry.v1.FoundryAutomationRun.started_at:type_name -> google.protobuf.Timestamp
+	195, // 281: helix.foundry.v1.FoundryAutomationRun.finished_at:type_name -> google.protobuf.Timestamp
+	190, // 282: helix.foundry.v1.FoundryAutomationRun.nodes:type_name -> helix.foundry.v1.FoundryAutomationRunNode
+	189, // 283: helix.foundry.v1.FoundryAutomationRun.ontologies:type_name -> helix.foundry.v1.FoundryAutomationRunOntology
+	195, // 284: helix.foundry.v1.FoundryAutomationRunNode.started_at:type_name -> google.protobuf.Timestamp
+	195, // 285: helix.foundry.v1.FoundryAutomationRunNode.finished_at:type_name -> google.protobuf.Timestamp
+	286, // [286:286] is the sub-list for method output_type
+	286, // [286:286] is the sub-list for method input_type
+	286, // [286:286] is the sub-list for extension type_name
+	286, // [286:286] is the sub-list for extension extendee
+	0,   // [0:286] is the sub-list for field type_name
 }
 
 func init() { file_helix_foundry_v1_types_proto_init() }
@@ -21022,15 +21086,16 @@ func file_helix_foundry_v1_types_proto_init() {
 		(*FoundryAIProvider_Bedrock)(nil),
 		(*FoundryAIProvider_Ollama)(nil),
 		(*FoundryAIProvider_OpenaiCompatible)(nil),
+		(*FoundryAIProvider_Cohere)(nil),
 	}
-	file_helix_foundry_v1_types_proto_msgTypes[103].OneofWrappers = []any{
+	file_helix_foundry_v1_types_proto_msgTypes[104].OneofWrappers = []any{
 		(*FoundryAIModel_Table)(nil),
 		(*FoundryAIModel_TableAs)(nil),
 		(*FoundryAIModel_Rates)(nil),
 		(*FoundryAIModel_Free)(nil),
 	}
-	file_helix_foundry_v1_types_proto_msgTypes[121].OneofWrappers = []any{}
-	file_helix_foundry_v1_types_proto_msgTypes[136].OneofWrappers = []any{
+	file_helix_foundry_v1_types_proto_msgTypes[122].OneofWrappers = []any{}
+	file_helix_foundry_v1_types_proto_msgTypes[137].OneofWrappers = []any{
 		(*FoundryWorkflowAccess_Read)(nil),
 		(*FoundryWorkflowAccess_Question)(nil),
 		(*FoundryWorkflowAccess_Send)(nil),
@@ -21042,7 +21107,7 @@ func file_helix_foundry_v1_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_helix_foundry_v1_types_proto_rawDesc,
 			NumEnums:      27,
-			NumMessages:   167,
+			NumMessages:   168,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
