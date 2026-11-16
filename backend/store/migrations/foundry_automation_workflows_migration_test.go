@@ -28,7 +28,7 @@ func TestFoundryAutomationWorkflowsMigration(t *testing.T) {
   DROP CHECK foundry_workflow_runs_automation_key_chk,
   ADD CONSTRAINT foundry_workflow_runs_automation_chk_5z0d1kqv0b8r2m3n4p5q6r7s8
     CHECK (automation_run_id IS NULL OR started_by_user_id IS NOT NULL),
-  ADD CONSTRAINT foundry_workflow_runs_automation_key_ch_9a8b7c6d5e4f3g2h1j0k9l8m7
+  ADD CONSTRAINT foundry_workflow_runs_automation_key_c_9a8b7c6d5e4f3g2h1j0k9l8m7
     CHECK ((automation_run_id IS NULL) = (automation_key IS NULL))`); err != nil {
 					t.Fatal(err)
 				}
