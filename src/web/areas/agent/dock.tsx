@@ -1059,7 +1059,7 @@ function PlainText({
  * it runs, and while the setting's tool check failed (its turns would fail
  * at once, each a message of the hour's), saying why; Stop ends the live
  * turn. A page that holds a conversation gives its own `placeholder` and
- * may start it with `initialText` (a template's words).
+ * may start it with `initialText` (a suggestion's prompt).
  */
 export function Composer({
   threadId,
@@ -1107,8 +1107,12 @@ export function Composer({
   const hint = useId(),
     input = useRef<HTMLTextAreaElement>(null),
     sending = useRef(false);
-  // The dock opens ready to write.
-  useEffect(() => input.current?.focus(), []);
+  // The dock opens ready to write, after any text it starts with.
+  useEffect(() => {
+    const el = input.current;
+    el?.focus();
+    el?.setSelectionRange(el.value.length, el.value.length);
+  }, []);
   const live = thread?.turns?.find(isLiveTurn);
   const busy = threadBusy(thread) || (!!threadId && !thread);
   const length = [...text.trim()].length,
@@ -1169,9 +1173,7 @@ export function Composer({
     `${length - MAX_MESSAGE} characters too long.`
   ) : busy ? (
     "You can send once the Assistant has finished."
-  ) : (
-    "Enter to send, Shift+Enter for a new line. Nothing runs until you click a card’s button."
-  );
+  ) : null;
   return (
     <form
       className="ag-composer"
@@ -1189,7 +1191,7 @@ export function Composer({
           ref={input}
           className="ag-input"
           aria-label="Message"
-          aria-describedby={hint}
+          aria-describedby={caption ? hint : undefined}
           rows={2}
           value={text}
           placeholder={placeholder}
@@ -1231,12 +1233,14 @@ export function Composer({
           />
         )}
       </div>
-      <p
-        id={hint}
-        className={cx("ag-hint", (tooLong || !!checkFailed) && "is-error")}
-      >
-        {caption}
-      </p>
+      {caption && (
+        <p
+          id={hint}
+          className={cx("ag-hint", (tooLong || !!checkFailed) && "is-error")}
+        >
+          {caption}
+        </p>
+      )}
       <AiRefusal action="The Assistant" error={error} ready={modelReady}>
         {!!error && (
           <p className="ag-card-error" role="alert">

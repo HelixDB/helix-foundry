@@ -1004,6 +1004,40 @@ export function incomplete(n: AutomationNode): string | undefined {
   }
 }
 
+// -------------------------------------------------------------- suggestions
+
+/**
+ * The new-automation page's suggestions: prompts for the Assistant, each an
+ * outcome, under its title and the hue of its icon (`--hf-<tone>-soft` and
+ * `-text`). A click puts the prompt in the composer; nothing is sent.
+ */
+export const AUTOMATION_SUGGESTIONS = [
+  {
+    title: "Monday briefing",
+    tone: "info",
+    prompt:
+      "Every Monday at 9am, read my data and email me what changed last week: customers won and lost, deals that moved, and anything that needs my attention.",
+  },
+  {
+    title: "Renewal radar",
+    tone: "accent",
+    prompt:
+      "Every morning, find customers whose contract renews in the next 30 days and email me each one with its plan, recent activity and open issues.",
+  },
+  {
+    title: "Contract check",
+    tone: "warning",
+    prompt:
+      "When new contracts are uploaded, compare each against our standard terms (length, price, auto-renewal, liability) and email me the ones that differ, quoting the clause.",
+  },
+  {
+    title: "Churn alert",
+    tone: "danger",
+    prompt:
+      "Every day, look for accounts at risk of churning (falling usage, open escalations, missed payments) and, if there are any, email me who and why.",
+  },
+] as const;
+
 // ---------------------------------------------------------------- templates
 
 /** What a template fills its steps with: the workspace's first of each, when it has one. */

@@ -132,7 +132,8 @@ import { decisionTypes } from "../review-decisions";
 // - "every Monday at 9, sync Stripe and email me a summary of …" (or any
 //   "automate …", "every day …", or anything written on the page that
 //   starts a new automation, its page context's newAutomation):
-//   create_automation of a schedule (UTC)
+//   create_automation of a schedule (UTC), or of documents arriving in
+//   the first set of the workspace's own ("when … uploaded"),
 //   that syncs the connection named (else the first, when asked to sync),
 //   asks the Assistant for the summary asked for and emails it, after
 //   helix_foundry_list_connectors; "run", "pause", "resume" or "delete" an
@@ -2558,9 +2559,11 @@ const aref = (x: ReturnType<typeof workspaceAutomations>[number]) => ({
 
 /**
  * Sets up what the person asked for as an automation's spec: a schedule
- * (UTC: the mock doesn't know the person's zone), a sync of the connection
- * named (else the first, when asked to sync), the Assistant's summary of
- * what they asked about, and an email, then prepares create_automation.
+ * (UTC: the mock doesn't know the person's zone), or, when documents are
+ * uploaded, their arrival in the workspace's first set of its own; a sync
+ * of the connection named (else the first, when asked to sync), the
+ * Assistant's summary of what they asked about, and an email; then
+ * prepares create_automation.
  */
 function automationCreate(a: Ask): Step[] {
   const text = a.text,
@@ -2578,22 +2581,28 @@ function automationCreate(a: Ask): Step[] {
     24;
   const at = `${String(hour).padStart(2, "0")}:${clock?.[2] ?? "00"}`,
     weekday = WEEKDAYS.find((d) => new RegExp(`\\b${d}\\b`, "i").test(text));
-  const trigger = /\bevery\s+hour\b/i.test(text)
-    ? ({
-        kind: "schedule",
-        every: "hour",
-        minute: 0,
-        time_zone: "UTC",
-      } as const)
-    : weekday || /\bevery\s+week\b/i.test(text)
+  // "When new contracts are uploaded": the workspace's first set of its own.
+  const uploaded = /\bwhen\b[^.]*\b(uploaded|arrives?)\b/i.test(text)
+    ? sets(a.ws, a.userId).find((s) => !s.connector)
+    : undefined;
+  const trigger = uploaded
+    ? ({ kind: "document_arrived", set_id: uploaded.id } as const)
+    : /\bevery\s+hour\b/i.test(text)
       ? ({
           kind: "schedule",
-          every: "week",
-          weekday: (weekday ?? "monday") as Weekday,
-          at,
+          every: "hour",
+          minute: 0,
           time_zone: "UTC",
         } as const)
-      : ({ kind: "schedule", every: "day", at, time_zone: "UTC" } as const);
+      : weekday || /\bevery\s+week\b/i.test(text)
+        ? ({
+            kind: "schedule",
+            every: "week",
+            weekday: (weekday ?? "monday") as Weekday,
+            at,
+            time_zone: "UTC",
+          } as const)
+        : ({ kind: "schedule", every: "day", at, time_zone: "UTC" } as const);
   const about = /\b(?:summary|report)\s+of\s+(.+?)(?:[.!?]|$)/i.exec(text)?.[1];
   const nodes: AutomationSpec["nodes"] = [
     { id: "start", kind: "trigger", config: trigger, position: { x: 0, y: 0 } },
@@ -2627,14 +2636,14 @@ function automationCreate(a: Ask): Step[] {
   };
   const name =
     /\bcalled\s+["“]?([^"”]+?)["”]?(?:[.,]|$)/i.exec(text)?.[1] ||
-    `${trigger.every === "week" ? "Weekly" : trigger.every === "day" ? "Daily" : "Hourly"} ${about ? "summary" : "check"}`;
+    `${trigger.kind === "document_arrived" ? "Document" : trigger.every === "week" ? "Weekly" : trigger.every === "day" ? "Daily" : "Hourly"} ${about ? "summary" : "check"}`;
   const payload = { name, description: "", spec };
   const words = automationSentence(
     spec,
     {
       connector: (id) => connectionName(id),
       ontology: () => undefined,
-      set: () => undefined,
+      set: (id) => (id === uploaded?.id ? uploaded.name : undefined),
       dashboard: () => undefined,
     },
     !LOCAL_TOKEN,

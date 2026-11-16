@@ -704,11 +704,11 @@ test("answers on another provider once it is the setting", async ({ page }) => {
   // Its tool check passed: nothing to say.
   await expect(page.getByText(/The Assistant can’t run/)).toHaveCount(0);
   await shortcut(page);
+  // Nothing to say under the composer.
   await expect(
-    dockOf(page).getByText(
-      "Enter to send, Shift+Enter for a new line. Nothing runs until you click a card’s button.",
-    ),
+    dockOf(page).getByRole("textbox", { name: "Message" }),
   ).toBeVisible();
+  await expect(dockOf(page).locator(".ag-hint")).toHaveCount(0);
   await say(page, "What ontologies do I have?");
   await expect(
     dockOf(page).getByText(/^This workspace has \d+ ontologies: /),
