@@ -7,9 +7,10 @@ import { ontologyQueries } from "./queries";
 // The Ontologies and Explorer panels, Ask's threads and command palette
 // groups for the Ontology area. Each panel sits beside the sidebar, loaded
 // with its section: the workspace's ontologies, the open one's pages under
-// its row (on its documents pages, its documents explorer instead); the
-// Explorer's pages fill theirs. Ask's threads sit in the sidebar itself,
-// under the sections. The sample company's banner sits across the top.
+// its row (its Explorer among them); the Explorer's pages, which have no
+// sidebar link (../../shell/nav.ts), fill theirs. Ask's threads sit in the
+// sidebar itself, under the sections. The sample company's banner sits
+// across the top.
 
 const OntologiesPanel = lazy(() =>
   import("./ontologies-panel").then((m) => ({ default: m.OntologiesPanel })),

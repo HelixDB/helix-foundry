@@ -5,7 +5,13 @@ import { useWorkspace, type ShellUser, type ShellWorkspace } from "../ui";
 import { AccountMenu } from "../areas/workspace/account-menu";
 import { WorkspaceSwitcher } from "../areas/workspace/switcher";
 import { useShell } from "./context";
-import { activeSection, granteeNav, onboardingNav, primaryNav } from "./nav";
+import {
+  activeSection,
+  granteeNav,
+  navSection,
+  onboardingNav,
+  primaryNav,
+} from "./nav";
 import { ariaShortcut, shortcut } from "./shortcut";
 import { FeedbackButton } from "./feedback";
 import { SettingsLink } from "./Sidebar";
@@ -47,7 +53,7 @@ export function Rail({
 }) {
   const shell = useShell(),
     { onboarding, grantee } = useWorkspace(),
-    section = activeSection(useLocation().pathname);
+    section = navSection(activeSection(useLocation().pathname));
   return (
     <div className="hf-rail">
       <Link

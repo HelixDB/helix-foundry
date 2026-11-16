@@ -245,9 +245,9 @@ export function OntologyScope({ explores = false }: { explores?: boolean }) {
 }
 
 /**
- * The ontology picker of the Explorer's and Ask's headers: the
- * workspace's ontologies the user reads (readAccess) by name, `ontologyId`
- * chosen. Choosing one opens `to` of it, which leaves this one's `?load=`
+ * The ontology picker of Ask's header (the Explorer has none: an
+ * ontology's Explorer link opens its own): the workspace's ontologies the
+ * user reads (readAccess) by name, `ontologyId` chosen. Choosing one opens `to` of it, which leaves this one's `?load=`
  * and the rest of the page's view behind.
  */
 export function OntologyPicker({

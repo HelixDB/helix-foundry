@@ -65,19 +65,24 @@ export const primaryNav: NavItem[] = [
   // Steps Foundry runs for a person when a schedule or an event fires.
   item("automations", "/automations", "Automations", Zap, ["/automations"]),
   item("ontology", "/ontology", "Ontologies", Shapes, ["/ontology"]),
-  item("explore", "/explore", "Explorer", Waypoints, ["/explore"]),
   item("data", "/data", "Connectors", Cable, ["/data"]),
 ];
+// The Explorer has no link of its own: an ontology's row in the Ontologies
+// panel opens it. Its pages keep their own section (their own panel, the
+// graph's labels or Records' types) and show in the sidebar as Ontologies'.
+const explorer = item("explore", "/explore", "Explorer", Waypoints, [
+  "/explore",
+]);
+const shownAs: Partial<Record<SectionId, SectionId>> = { explore: "ontology" };
+/** The sidebar's link for a section: its own, or the one it sits under. */
+export const navSection = (id: SectionId | undefined) =>
+  (id && shownAs[id]) || id;
 // A grantee's sections (a member restricted to what source grants give):
-// Analyst, the pinned dashboards, the ontologies its grants cover, and the
-// Explorer, whose Records read their shared loads (there is no graph for it).
-// Automations are people's: a grantee has none.
+// Analyst, the pinned dashboards and the ontologies its grants cover (with
+// their Explorer, whose Records read their shared loads; there is no graph
+// for it). Automations are people's: a grantee has none.
 export const granteeNav: NavItem[] = primaryNav.filter(
-  (n) =>
-    n.id === "ask" ||
-    n.id === "dashboards" ||
-    n.id === "ontology" ||
-    n.id === "explore",
+  (n) => n.id === "ask" || n.id === "dashboards" || n.id === "ontology",
 );
 // While the workspace is onboarding, its one section: the wizard, so Settings
 // (where an AI provider is chosen) has a way back.
@@ -86,6 +91,12 @@ export const onboardingNav: NavItem[] = [
 ];
 export const secondaryNav: NavItem[] = [
   item("settings", "/settings", "Settings", Settings, ["/settings"]),
+];
+// Every section, linked or not.
+export const allSections: NavItem[] = [
+  ...primaryNav,
+  explorer,
+  ...secondaryNav,
 ];
 export const paletteSources: PaletteSource[] = areas.flatMap(
   (a) => a.palette || [],
@@ -114,9 +125,7 @@ const under = (pathname: string, prefix: string) =>
 export function activeSection(pathname: string): SectionId | undefined {
   // / opens Ask (main.tsx): its threads show while it does.
   if (pathname === "/") return "ask";
-  return [...primaryNav, ...secondaryNav].find((n) =>
-    n.match.some((m) => under(pathname, m)),
-  )?.id;
+  return allSections.find((n) => n.match.some((m) => under(pathname, m)))?.id;
 }
 export function childActive(pathname: string, child: NavChild) {
   const path = child.to.split("?")[0]!;

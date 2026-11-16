@@ -1,8 +1,9 @@
 import type { Page } from "@playwright/test";
 import { expect, loadContracts, mock, signIn, test } from "./support/mock";
 
-// The Explorer's layout: a slim bar over the view; the graph's labels and
-// Records' types in the section's panel beside the sidebar (the ontology and
+// The Explorer's layout, opened from an ontology's Explorer link: a slim bar
+// over the view; the graph's labels and Records' types in its own panel
+// beside the sidebar (the ontology and
 // load meanwhile, and on an entity's page); the graph's overview and
 // inspector as a right-hand sidebar the bar hides and shows; and, on a
 // phone, the labels in the navigation drawer and the inspector a sheet.
@@ -24,14 +25,16 @@ test("puts the labels beside the sidebar and the overview down the right", async
   const view = (await page.locator(".ex-view.is-graph").boundingBox())!;
   expect(view.y + view.height).toBeLessThanOrEqual(900);
 
-  // The slim bar: the view, the pickers and the explorer's tools.
+  // The slim bar: the view, the load (no ontology: its Explorer link chose
+  // it) and the explorer's tools.
   await expect(
     page.getByRole("heading", { level: 1, name: "Explorer" }),
   ).toBeAttached();
   await expect(page.getByRole("radiogroup", { name: "View" })).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "Ontology" })).toHaveText(
-    "Customer contracts",
-  );
+  await expect(
+    page.getByRole("combobox", { name: "Load", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Ontology" })).toHaveCount(0);
   await expect(
     page.getByRole("combobox", { name: "Jump to a node" }),
   ).toBeVisible();
@@ -42,9 +45,14 @@ test("puts the labels beside the sidebar and the overview down the right", async
     page.getByRole("button", { name: "Keyboard shortcuts" }),
   ).toBeVisible();
 
-  // The labels are the section's panel, beside the labelled sidebar.
+  // The labels are the Explorer's panel, beside the labelled sidebar, where
+  // Ontologies is current.
   const nav = page.getByRole("navigation", { name: "Main navigation" });
-  await expect(nav.locator(".hf-nav-link")).toHaveCount(6);
+  await expect(nav.locator(".hf-nav-link")).toHaveCount(5);
+  await expect(nav.getByRole("link", { name: "Ontologies" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
   const labels = page.getByRole("complementary", { name: "Labels" });
   await expect(labels).toContainText("Customer");
   await expect(labels).toContainText("billed_to");
@@ -139,6 +147,38 @@ test("puts Records' types beside the sidebar, and the load meanwhile", async ({
   await expect(
     page.getByRole("complementary", { name: "Types" }),
   ).toBeVisible();
+});
+
+test("opens from the ontology's Explorer link, its labels beside the sidebar", async ({
+  page,
+}) => {
+  await signIn(page);
+  await loadContracts(page);
+  await page.goto("/ontology/ont_acme_contracts");
+  await page
+    .getByRole("complementary", { name: "Ontologies" })
+    .getByRole("list", { name: "Pages" })
+    .getByRole("link", { name: "Explorer" })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`${X}$`));
+  await expect(graph(page)).toBeVisible({ timeout: 15_000 });
+  // The Explorer's own panel takes the Ontologies panel's place; the
+  // sidebar keeps Ontologies current, and no section named Explorer.
+  await expect(
+    page.getByRole("complementary", { name: "Labels" }),
+  ).toContainText("Customer");
+  await expect(
+    page.getByRole("complementary", { name: "Ontologies" }),
+  ).toHaveCount(0);
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  await expect(nav.getByRole("link", { name: "Ontologies" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(nav.getByRole("link", { name: "Explorer" })).toHaveCount(0);
+  // The sidebar's Ontologies goes back to the ontology.
+  await nav.getByRole("link", { name: "Ontologies" }).click();
+  await expect(page).toHaveURL(/\/ontology\/ont_acme_contracts$/);
 });
 
 test("on a phone, keeps the labels in the drawer and the inspector in a sheet", async ({

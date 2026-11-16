@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   activeSection,
+  allSections,
+  granteeNav,
+  navSection,
   primaryNav,
   secondaryNav,
   sectionPanels,
@@ -12,16 +15,30 @@ import {
 // other sections' panels beside it.
 
 describe("the sections", () => {
-  it("lists Ask first, then Dashboards, Automations, Ontologies, the Explorer and Connectors", () => {
+  it("lists Ask first, then Dashboards, Automations, Ontologies and Connectors", () => {
     expect(primaryNav.map((n) => [n.label, n.to])).toEqual([
       ["Analyst", "/ask"],
       ["Dashboards", "/dashboards"],
       ["Automations", "/automations"],
       ["Ontologies", "/ontology"],
-      ["Explorer", "/explore"],
       ["Connectors", "/data"],
     ]);
     expect(secondaryNav.map((n) => n.label)).toEqual(["Settings"]);
+  });
+
+  it("gives a grantee Analyst, Dashboards and Ontologies", () => {
+    expect(granteeNav.map((n) => n.id)).toEqual([
+      "ask",
+      "dashboards",
+      "ontology",
+    ]);
+  });
+
+  it("keeps the Explorer a section without a link, shown as Ontologies", () => {
+    expect(allSections.map((n) => n.id)).toContain("explore");
+    expect(navSection("explore")).toBe("ontology");
+    expect(navSection("data")).toBe("data");
+    expect(navSection(undefined)).toBeUndefined();
   });
 });
 

@@ -1,5 +1,5 @@
 import { readStorage, writeStorage } from "../kit/util";
-import { activeSection, primaryNav, secondaryNav } from "./nav";
+import { activeSection, allSections } from "./nav";
 
 // Recently opened resources, per viewer and workspace (this browser only).
 export type Recent = { path: string; title: string; section: string };
@@ -9,7 +9,7 @@ const key = (workspaceId: string) => "foundry.recent.v1:" + workspaceId;
 const resourceRoutes: RegExp[] = [];
 // Section pages are not resources, whatever their title.
 const generic = new Set(
-  [...primaryNav, ...secondaryNav].flatMap((n) => [
+  allSections.flatMap((n) => [
     n.label,
     ...n.children(n.to).map((c) => c.label),
   ]),
@@ -53,4 +53,4 @@ export function recordRecent(workspaceId: string, path: string, title: string) {
   );
 }
 export const sectionIcon = (section: string) =>
-  [...primaryNav, ...secondaryNav].find((n) => n.id === section)?.icon;
+  allSections.find((n) => n.id === section)?.icon;
