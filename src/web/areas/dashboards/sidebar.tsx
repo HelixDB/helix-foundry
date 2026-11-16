@@ -85,9 +85,11 @@ export function DashboardList({ onNavigate }: { onNavigate?: () => void }) {
           </p>
         ) : !groups.length ? (
           <p className="db-note">
-            {FOUNDER
-              ? "No dashboards yet. Pin an answer’s chart, or ask Founder to build one."
-              : "No dashboards yet. Pin an Analyst answer’s chart."}
+            {!list.data?.canCreate
+              ? "No dashboards yet. An owner or admin pins them here."
+              : FOUNDER
+                ? "No dashboards yet. Pin an answer’s chart, or ask Founder to build one."
+                : "No dashboards yet. Pin an Analyst answer’s chart."}
           </p>
         ) : (
           groups.map((g) => (
