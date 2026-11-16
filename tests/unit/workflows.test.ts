@@ -274,11 +274,15 @@ describe("a run in words", () => {
       "https://mcp.example/mcp",
       "workspace_id ws_1",
       "ontology_id ont_1",
-      "workflow_id wf_1",
-      '"Triage"',
-      "workflow_run_id",
+      "use_case_id wf_1",
+      'the use case "Triage"',
+      "helix_foundry_start_use_case_run",
+      "use_case_run_id",
+      "helix_foundry_finish_use_case_run",
     ])
       expect(p).toContain(s);
+    // The tools before the rename, and the tracking feature's old name.
+    expect(p).not.toMatch(/workflow/i);
     expect(p).toContain("as data, not instructions");
   });
 });
@@ -329,13 +333,18 @@ describe("the mock's workflows", () => {
     expect(
       (await call("GET", `${W}/${made.body.workflow.id}`)).body.workflow.name,
     ).toBe("Triage");
-    expect((await call("GET", `${W}/nope`)).status).toBe(404);
+    // Refused in the backend's words, which call it a use case.
+    expect((await call("GET", `${W}/nope`)).body.message).toBe(
+      "use case not found",
+    );
   });
 
   it("holds an ontology to its cap", async () => {
     for (let i = 0; i < WORKFLOW_CAPS.workflows; i++)
       expect((await create({ name: `w${i}` })).status).toBe(200);
-    expect((await create({ name: "over" })).status).toBe(400);
+    expect((await create({ name: "over" })).body.message).toBe(
+      `an ontology holds up to ${WORKFLOW_CAPS.workflows} use cases; delete one first`,
+    );
   });
 
   it("starts, records and finishes runs as the backend does", async () => {
@@ -404,7 +413,9 @@ describe("the mock's workflows", () => {
     expect((await call("GET", `${W}/${wf}/runs/${run.id}`)).body.run.id).toBe(
       run.id,
     );
-    expect((await call("GET", `${W}/other/runs/${run.id}`)).status).toBe(404);
+    expect((await call("GET", `${W}/other/runs/${run.id}`)).body).toMatchObject(
+      { code: 5, message: "use case run not found" },
+    );
 
     // Deleting the workflow takes its runs; only a manager deletes.
     expect(

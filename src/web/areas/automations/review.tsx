@@ -56,7 +56,7 @@ export const saveRefusal = (e: unknown) =>
   automationRefusal(e) === "FOUNDRY_AUTOMATION_CHANGED"
     ? "It was changed elsewhere since you opened it. Discard your changes to see it as it is now, then make them again."
     : automationRefusal(e) === "FOUNDRY_AUTOMATION_LIMIT"
-      ? "This workspace has as many automations as it may keep (50). Delete one first."
+      ? "This workspace has as many workflows as it may keep (50). Delete one first."
       : asSentence((e as Error).message);
 
 /**
@@ -183,7 +183,7 @@ export function ReviewDialog({
         <p className="au-review-note">
           {approved
             ? "Its steps are the ones you approved: saving keeps it as it is."
-            : "It runs as you, with what you may do when it runs. Turning it on approves exactly these steps; any change to them waits for your approval again. Its Founder steps spend the workspace’s automations budget."}
+            : "It runs as you, with what you may do when it runs. Turning it on approves exactly these steps; any change to them waits for your approval again. Its Founder steps spend the workspace’s workflows budget."}
         </p>
         {error && (
           <p role="alert" className="hf-form-error">

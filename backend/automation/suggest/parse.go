@@ -8,10 +8,10 @@ import (
 
 // ToolName is the one tool a write's call is asked to call: its input is the
 // answer.
-const ToolName = "suggest_automations"
+const ToolName = "suggest_workflows"
 
 // ToolDescription says what ToolName records.
-const ToolDescription = "Records exactly 4 suggested automations for this ontology. Call it once."
+const ToolDescription = "Records exactly 4 suggested workflows for this ontology. Call it once."
 
 // ToolSchema is ToolName's input: exactly MaxSuggestions suggestions, each a
 // title, a prompt and an icon.

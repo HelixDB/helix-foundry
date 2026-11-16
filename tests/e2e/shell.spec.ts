@@ -199,7 +199,7 @@ test("opens the Explorer and Ask on the ontology last opened", async ({
     picker = page.getByRole("combobox", { name: "Ontology" });
   await expect
     .poll(() => sectionNames(nav))
-    .toEqual(["Founder", "Dashboards", "Automations", "Ontologies"]);
+    .toEqual(["Founder", "Dashboards", "Workflows", "Ontologies"]);
   // None opened yet: the list's first, now Orders.
   await expect(page).toHaveURL(new RegExp(`/ask/${orders}$`));
 
@@ -351,7 +351,7 @@ test("shows the labelled sidebar on every page, Ask's threads under its sections
   // The main page is Ask, the sidebar's first section: each section a link
   // with its name, the open one current, and Ask's threads under them, in
   // the sidebar itself. Nothing collapses or hides it.
-  const sections = ["Founder", "Dashboards", "Automations", "Ontologies"];
+  const sections = ["Founder", "Dashboards", "Workflows", "Ontologies"];
   await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}$`));
   await expect.poll(() => sectionNames(nav)).toEqual(sections);
   await expect(nav.locator('[aria-current="page"]')).toHaveText("Founder");

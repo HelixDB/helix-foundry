@@ -566,11 +566,11 @@ describe("an automation's runs among who started them", () => {
     const s = segmentStarter(seg);
     expect(s).toEqual({ automation: digest, workflowId: "wf-auto" });
     expect(starterKey(s)).toBe("automation:a1");
-    expect(starterText(s, new Map(), "u1")).toBe("Automation: Weekly digest");
+    expect(starterText(s, new Map(), "u1")).toBe("Workflow: Weekly digest");
     expect(automationLabel({ ...digest, deleted: true })).toBe(
-      "Automation: Weekly digest (deleted)",
+      "Workflow: Weekly digest (deleted)",
     );
-    expect(automationLabel({ automationId: "a2" })).toBe("Automation: unnamed");
+    expect(automationLabel({ automationId: "a2" })).toBe("Workflow: unnamed");
     const person = segmentStarter({
       principal: { kind: "KIND_USER", id: "u1" },
     });

@@ -66,20 +66,20 @@ export function AutomationList({ onNavigate }: { onNavigate?: () => void }) {
             className="au-new"
             onClick={onNavigate}
           >
-            New automation
+            New workflow
           </ButtonLink>
         </div>
       )}
-      <nav className="au-list" aria-label="Automations">
+      <nav className="au-list" aria-label="Workflows">
         {list.isPending ? (
           <div className="au-note" aria-busy="true">
             <SkeletonText lines={3} />
           </div>
         ) : list.isError && automationsUnavailable(list.error) ? (
-          <p className="au-note">Automations aren’t available here.</p>
+          <p className="au-note">Workflows aren’t available here.</p>
         ) : list.isError ? (
           <p className="au-note" role="alert">
-            Couldn’t read the automations: {list.error.message}{" "}
+            Couldn’t read the workflows: {list.error.message}{" "}
             <button
               type="button"
               className="au-retry"
@@ -90,11 +90,11 @@ export function AutomationList({ onNavigate }: { onNavigate?: () => void }) {
           </p>
         ) : !all.length ? (
           <p className="au-note">
-            No automations yet. Start one from a template, or ask Founder to set
+            No workflows yet. Start one from a template, or ask Founder to set
             one up.
           </p>
         ) : (
-          <ul aria-label="Automations">{all.map(row)}</ul>
+          <ul aria-label="Workflows">{all.map(row)}</ul>
         )}
       </nav>
     </div>

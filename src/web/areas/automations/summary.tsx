@@ -140,7 +140,7 @@ export function Summary({
         <span className="au-summary-icon" aria-hidden>
           <Zap size={15} />
         </span>
-        <h2>{draft.name || "Untitled automation"}</h2>
+        <h2>{draft.name || "Untitled workflow"}</h2>
       </div>
       {status && <StatusBadge status={status.dot} label={status.label} />}
       <p className="au-summary-text">
@@ -442,7 +442,7 @@ export function SettingsPanel({
             variant="danger"
             onClick={() => setDeleting(true)}
           >
-            Delete automation
+            Delete workflow
           </Button>
         </section>
       )}

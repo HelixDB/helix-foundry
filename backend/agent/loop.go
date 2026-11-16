@@ -352,7 +352,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	}
 	if step != nil && reach == ReachGrants {
 		// Its owner is now a restricted member, who runs no automation.
-		return out, &Failure{Message: "The automation's owner now reads only through source grants; an owner or admin can take it over", Permanent: true}
+		return out, &Failure{Message: "The workflow's owner now reads only through source grants; an owner or admin can take it over", Permanent: true}
 	}
 	if _, err := threadReach(ctx, r.DB, turn, reach); err != nil {
 		return out, err

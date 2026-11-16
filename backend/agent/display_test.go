@@ -313,6 +313,22 @@ func TestAnOntologyTheWorkspaceDoesntHoldIsRefused(t *testing.T) {
 	}
 }
 
+// A workflow's card names it, as the workspace holds it, by its workflow:
+// target; one the workspace doesn't hold is refused in words.
+func TestAWorkflowCardNamesTheWorkflow(t *testing.T) {
+	h := workspaceHarness(t)
+	h.db.automations = []*model.FoundryAutomation{{ID: "auto1", WorkspaceID: ws, OwnerUserID: user, Name: "Nightly load", Status: model.FoundryAutomationActive}}
+	a, result := prepared(t, h, "Pause Nightly load", "pause_workflow", "workflow:ws1/auto1", `{}`)
+	require.NotNil(t, a, result.Content)
+	assert.JSONEq(t, `{"automation":{"id":"auto1","name":"Nightly load","status":"active"}}`, string(a.Display))
+	assert.True(t, a.TargetNamedByUser)
+
+	_, result = prepared(t, h, "Pause it", "pause_workflow", "workflow:ws1/nowhere", `{}`)
+	assert.Len(t, h.db.actions, 1, "the refused one isn't stored")
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "this workspace holds no workflow nowhere: read its workflows again")
+}
+
 // A generation names the API sources it reads and how, as the payload says
 // them (structured or extraction).
 func TestAGenerationNamesItsAPISources(t *testing.T) {

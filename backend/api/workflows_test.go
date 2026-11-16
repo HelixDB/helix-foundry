@@ -434,6 +434,9 @@ func TestFoundryWorkflowReads(t *testing.T) {
 	}
 	_, err = s.GetFoundryWorkflow(ctx, &foundryv1.GetFoundryWorkflowRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "nope"})
 	wantCode(t, err, codes.NotFound)
+	if msg := status.Convert(err).Message(); msg != "use case not found" {
+		t.Fatalf("not found = %q, want it named a use case", msg)
+	}
 
 	runs, err := s.ListFoundryWorkflowRuns(ctx, &foundryv1.ListFoundryWorkflowRunsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: w.ID})
 	if err != nil || len(runs.GetRuns()) != 1 || runs.GetRuns()[0].GetId() != run.GetId() || runs.GetRuns()[0].GetStatus() != "open" {
@@ -1042,7 +1045,7 @@ func TestGranteeWorkflows(t *testing.T) {
 	}
 	_, err = client.ListFoundryWorkflows(as(agent), &foundryv1.ListFoundryWorkflowsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})
 	wantCode(t, err, codes.PermissionDenied)
-	if !strings.Contains(status.Convert(err).Message(), "Settings › Access") {
+	if !strings.Contains(status.Convert(err).Message(), "Settings › Access") || !strings.HasPrefix(status.Convert(err).Message(), "use cases are off") {
 		t.Fatalf("refusal %q doesn't say where to turn it on", status.Convert(err).Message())
 	}
 	_, err = s.trackedRun(wholly, "ws-1", "ont-1", owners.GetId())

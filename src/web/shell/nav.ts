@@ -66,7 +66,7 @@ export const primaryNav: NavItem[] = [
     "/dashboards",
   ]),
   // Steps Foundry runs for a person when a schedule or an event fires.
-  item("automations", "/automations", "Automations", Zap, ["/automations"]),
+  item("automations", "/workflows", "Workflows", Zap, ["/workflows"]),
   item("ontology", "/ontology", "Ontologies", Shapes, ["/ontology"]),
 ];
 // The sections at the sidebar's foot, above Feedback: where the data comes
@@ -89,7 +89,7 @@ export const navSection = (id: SectionId | undefined) =>
 // Ask (Founder, read-only, with Founder in the build; else the Analyst), the
 // pinned dashboards and the ontologies its grants cover (with their
 // Explorer, whose Records read their shared loads; there is no graph for
-// it). Automations are people's: a grantee has none.
+// it). Workflows are people's: a grantee has none.
 export const granteeNav: NavItem[] = primaryNav.filter(
   (n) => n.id === "ask" || n.id === "dashboards" || n.id === "ontology",
 );

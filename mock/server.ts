@@ -72,11 +72,12 @@ import { handleWorkos } from "./workos";
 // neither has the app.
 //
 // POST /__mock/automations/{id}/past-runs { runs: [{ status, ago,
-// usdMicros? }] } records ended runs of an automation that long ago (ms),
-// for the history the automations' overview counts (./routes/automations.ts).
+// usdMicros? }] } records ended runs of a workflow (an automation) that long
+// ago (ms), for the history the workflows' overview counts
+// (./routes/automations.ts).
 //
 // POST /__mock/automations/{id}/runs/{runId}/prune drops an ended run, as the
-// backend's retention does; the workflow runs it started stay.
+// backend's retention does; the use case runs it started stay.
 //
 // POST /__mock/agent-host/pair { code, name?, runtimes?, account?,
 // codexVersion? } spends a pairing code as the Assistant's helper's pair
@@ -85,7 +86,7 @@ import { handleWorkos } from "./workos";
 // POST /__mock/agent-host/hello { host_id } starts it.
 //
 // /__mock/agent/v1/... calls the WFE route /v1/... as Ada's agent does
-// through the Helix MCP, with no token: starting and finishing a workflow's
+// through the Helix MCP, with no token: starting and finishing a use case's
 // runs, and reading and asking under one, which the app never does.
 //
 // /__uploads/ stands in for the bucket a document's presigned PUT goes to:

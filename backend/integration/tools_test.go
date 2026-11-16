@@ -79,7 +79,7 @@ func TestToolsNameAPISourcesOnlyOnAHostWithThem(t *testing.T) {
 // wherever it is offered.
 func TestEveryToolHasATitle(t *testing.T) {
 	var names []string
-	// The workflow tools need the backend's workflow RPCs, which listing them never calls.
+	// The use case tools need the backend's workflow RPCs, which listing them never calls.
 	workflows := struct{ FoundryWorkflowBackendAPI }{}
 	for _, s := range []*Service{
 		{FoundryURL: "http://localhost:3000", Workflows: workflows},

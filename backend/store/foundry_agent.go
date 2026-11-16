@@ -549,7 +549,7 @@ FROM foundry_agent_turns WHERE id=? AND `+dueFoundryAgentTurn+` FOR UPDATE`, can
 			l, pool := claim.Limits, "Founder"
 			automation := t.AutomationRunID != nil
 			if automation {
-				l, pool = claim.Automations, "automations"
+				l, pool = claim.Automations, "workflows"
 			}
 			var running int
 			var settled, reserved int64

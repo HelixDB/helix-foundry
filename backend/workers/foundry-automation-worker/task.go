@@ -326,11 +326,11 @@ func loops(automationID string, trigger automation.Trigger, e model.FoundryAutom
 	}
 	switch {
 	case c.AutomationID == automationID:
-		return "Skipped: the " + what + " was started by this automation itself; running on it would loop."
+		return "Skipped: the " + what + " was started by this workflow itself; running on it would loop."
 	case slices.Contains(c.Chain, automationID):
-		return "Skipped: the " + what + " was started by an automation this one set off; running on it would loop."
+		return "Skipped: the " + what + " was started by a workflow this one set off; running on it would loop."
 	case c.Depth > maxChainDepth:
-		return fmt.Sprintf("Skipped: the %s came from a chain of %d automations setting each other off; a chain stops after %d.", what, c.Depth, maxChainDepth)
+		return fmt.Sprintf("Skipped: the %s came from a chain of %d workflows setting each other off; a chain stops after %d.", what, c.Depth, maxChainDepth)
 	}
 	return ""
 }
@@ -750,7 +750,7 @@ func (t *Task) startAssistant(ctx context.Context, st *runState, nodeID string, 
 // what fired the run, as data.
 func instruction(text string, run *model.FoundryAutomationRun) string {
 	about, _ := json.Marshal(map[string]json.RawMessage{"trigger": run.TriggerEvent}) // JSON already: it can't fail
-	return text + "\n\n<automation_context>" + string(about) + "</automation_context>"
+	return text + "\n\n<workflow_context>" + string(about) + "</workflow_context>"
 }
 
 // title is a run's thread's title: its automation's name.
@@ -953,7 +953,7 @@ func (t *Task) runAction(ctx context.Context, st *runState, nodeID string, a aut
 		case err != nil:
 			return 0, err
 		case d.Share == nil:
-			return 0, t.fail(ctx, st, nodeID, "Its dashboard isn't published: publish it on its page, and the automation refreshes its snapshot from then on.")
+			return 0, t.fail(ctx, st, nodeID, "Its dashboard isn't published: publish it on its page, and the workflow refreshes its snapshot from then on.")
 		case d.Share.SpecRevision != d.Revision:
 			return 0, t.fail(ctx, st, nodeID, "Its dashboard was changed since it was published: publish it again on its page to put the change at its link.")
 		}

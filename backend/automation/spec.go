@@ -1,4 +1,5 @@
-// Package automation is what a Foundry automation is: a graph a person draws
+// Package automation is what a Foundry workflow is (an automation, as the
+// code calls it; people read "workflow"): a graph a person draws
 // on a canvas, read from its one trigger along its edges, of steps run as the
 // automation's owner (its spec); when its schedule fires next (Schedule);
 // which step of a run comes next, given what each step did (Spec.Next); how a
@@ -9,7 +10,7 @@
 // instruction as an Assistant turn as the owner, an action step runs one
 // allowlisted operation with a payload the owner approved, a condition picks
 // one of its two branches from the step before it, and a notify step emails
-// the owner. "Workflows" is another thing: an outside agent's recorded runs.
+// the owner. "Use cases" are another thing: an outside agent's recorded runs.
 //
 // Nothing here talks to a store, a model or the network: the API, the MCP's
 // operations, the Assistant and the foundry-automation-worker all read and
@@ -327,9 +328,9 @@ func ParseSpec(raw []byte) (Spec, error) {
 	case w.V != SpecVersion:
 		return Spec{}, fmt.Errorf("the spec's v is %d; this Foundry reads v %d", w.V, SpecVersion)
 	case len(w.Nodes) < 2 || len(w.Nodes) > MaxNodes:
-		return Spec{}, fmt.Errorf("an automation has a trigger and at least one step, at most %d nodes in all, not %d", MaxNodes, len(w.Nodes))
+		return Spec{}, fmt.Errorf("a workflow has a trigger and at least one step, at most %d nodes in all, not %d", MaxNodes, len(w.Nodes))
 	case len(w.Edges) > MaxEdges:
-		return Spec{}, fmt.Errorf("an automation has at most %d edges, not %d", MaxEdges, len(w.Edges))
+		return Spec{}, fmt.Errorf("a workflow has at most %d edges, not %d", MaxEdges, len(w.Edges))
 	}
 	s := Spec{}
 	for _, wn := range w.Nodes {
@@ -355,7 +356,7 @@ func ParseSpec(raw []byte) (Spec, error) {
 func (s *Spec) check() error {
 	triggers := slices.DeleteFunc(s.Nodes(), func(n Node) bool { return n.Kind() != KindTrigger })
 	if len(triggers) != 1 {
-		return fmt.Errorf("an automation has exactly one trigger, not %d", len(triggers))
+		return fmt.Errorf("a workflow has exactly one trigger, not %d", len(triggers))
 	}
 	seen := map[[2]string]bool{}
 	for _, e := range s.edges {
@@ -370,7 +371,7 @@ func (s *Spec) check() error {
 		case e.From == e.To:
 			return fmt.Errorf("node %s has an edge to itself", e.From)
 		case to.Kind() == KindTrigger:
-			return fmt.Errorf("the trigger %s starts the automation: no edge goes into it", e.To)
+			return fmt.Errorf("the trigger %s starts the workflow: no edge goes into it", e.To)
 		case seen[[2]string{e.From, e.To}]:
 			return fmt.Errorf("two edges go from %s to %s", e.From, e.To)
 		case from.Kind() == KindCondition && e.Branch != BranchTrue && e.Branch != BranchFalse:
@@ -465,7 +466,7 @@ func (s Spec) topological(trigger string) ([]string, error) {
 			continue
 		}
 		if s.reaches(trigger, n.ID) {
-			return nil, fmt.Errorf("node %s is in a cycle: an automation's edges go one way", n.ID)
+			return nil, fmt.Errorf("node %s is in a cycle: a workflow's edges go one way", n.ID)
 		}
 		return nil, fmt.Errorf("node %s isn't reached from the trigger: connect it", n.ID)
 	}

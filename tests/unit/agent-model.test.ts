@@ -73,9 +73,9 @@ describe("pageContext", () => {
     ["/ask/ont_1", "?load=a%20b", { ontologyId: "ont_1" }],
     // A dashboard, which takes no load.
     ["/dashboards/dash_1", "?load=load_1", { dashboardId: "dash_1" }],
-    // The page that starts a new automation, its conversation or a draft.
-    ["/automations/new", "", { newAutomation: true }],
-    ["/automations/new", "?template=blank", { newAutomation: true }],
+    // The page that starts a new workflow, its conversation or a draft.
+    ["/workflows/new", "", { newAutomation: true }],
+    ["/workflows/new", "?template=blank", { newAutomation: true }],
   ])("%s%s names %j", (path, search, context) => {
     expect(pageContext(path, search)).toEqual(context);
   });
@@ -94,9 +94,11 @@ describe("pageContext", () => {
     ["/dashboards"],
     ["/dashboards/dash_1/edit"],
     ["/dashboards/has space"],
-    ["/automations"],
-    ["/automations/aut_1"],
-    ["/automations/new/x"],
+    ["/workflows"],
+    ["/workflows/aut_1"],
+    ["/workflows/new/x"],
+    // Before automations became workflows.
+    ["/automations/new"],
   ])("%s names nothing", (path) => {
     expect(pageContext(path, "?load=load_1")).toBeNull();
   });
@@ -132,9 +134,15 @@ describe("inAppPath", () => {
     ["/settings/ai", "/settings/ai"],
     ["/dashboards", "/dashboards"],
     ["/dashboards/dash_1?load=l_1", "/dashboards/dash_1"],
-    ["/automations", "/automations"],
-    ["/automations/aut_1", "/automations/aut_1"],
-    ["/automations/aut_1/runs/run_2?x=1", "/automations/aut_1/runs/run_2"],
+    ["/workflows", "/workflows"],
+    ["/workflows/aut_1", "/workflows/aut_1"],
+    ["/workflows/aut_1/runs/run_2?x=1", "/workflows/aut_1/runs/run_2"],
+    ["/ontology/ont_1/usage", "/ontology/ont_1/usage"],
+    ["/ontology/ont_1/usage/wf_1?tab=runs", "/ontology/ont_1/usage/wf_1"],
+    [
+      "/ontology/ont_1/usage/wf_1/runs/r_1",
+      "/ontology/ont_1/usage/wf_1/runs/r_1",
+    ],
   ])("opens %s as %s", (path, to) => expect(at(path)).toBe(to));
 
   it.each([
@@ -146,8 +154,11 @@ describe("inAppPath", () => {
     "/papi/v1/whoami",
     "/settings/secrets",
     "/dashboards/dash_1/x",
-    "/automations/new",
-    "/automations/aut_1/edit",
+    "/workflows/new",
+    "/workflows/aut_1/edit",
+    "/automations/aut_1",
+    "/ontology/ont_1/workflows",
+    "/ontology/ont_1/usage/wf_1/x",
     "/share/hxd_token",
   ])("opens nothing for %s", (path) => expect(at(path)).toBeUndefined());
 });

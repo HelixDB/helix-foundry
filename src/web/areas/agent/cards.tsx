@@ -143,7 +143,7 @@ function PreparedCard({
       card && "automation" in card.display ? card.display.automation.id : "";
     if (
       ran.status === "succeeded" &&
-      action.operation === "delete_automation" &&
+      action.operation === "delete_workflow" &&
       id &&
       pathname.startsWith(automationPaths.automation(id))
     )
@@ -158,7 +158,7 @@ function PreparedCard({
         const ran = await executeAgentAction(ws, action);
         if (action.operation?.endsWith("_dashboard"))
           ranOnDashboards(ran.action);
-        if (action.operation?.endsWith("_automation"))
+        if (action.operation?.endsWith("_workflow"))
           ranOnAutomations(ran.action);
         // Where Founder runs, as the dock and the settings show it.
         if (
@@ -228,8 +228,8 @@ function PreparedCard({
           <span>{view.caution}</span>
         </p>
       )}
-      {(action.operation === "create_automation" ||
-        action.operation === "update_automation") && (
+      {(action.operation === "create_workflow" ||
+        action.operation === "update_workflow") && (
         <AutomationProposal payloadJson={action.payloadJson || ""} />
       )}
       <FullRequest action={action} />

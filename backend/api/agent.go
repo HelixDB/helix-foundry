@@ -569,7 +569,7 @@ func (s *Service) ExecuteFoundryAgentAction(ctx context.Context, req *foundryv1.
 	runCtx, cancel := context.WithTimeout(ctx, foundrymodel.FoundryAgentExecutingFor-agentRunMargin)
 	end := foundryagent.RunAction(runCtx, sessions, s.deps.ConnectorKeys, a)
 	cancel()
-	if end.Status == foundrymodel.FoundryAgentActionSucceeded && (a.Operation == "create_automation" || a.Operation == "update_automation") {
+	if end.Status == foundrymodel.FoundryAgentActionSucceeded && (a.Operation == "create_workflow" || a.Operation == "update_workflow") {
 		end = s.approveOnClick(ctx, ws, userID, a.Payload, end)
 	}
 	continuation := &foundrymodel.FoundryAgentTurn{

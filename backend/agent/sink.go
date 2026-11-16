@@ -265,7 +265,7 @@ type target struct {
 	id, name string
 	others   []string
 	// ontology is an ontology target's; connectorKind a connector's kind;
-	// dashboard a dashboard's; automation an automation's.
+	// dashboard a dashboard's; automation a workflow's.
 	ontology      *model.FoundryOntology
 	connectorKind string
 	dashboard     *model.FoundryDashboard
@@ -313,8 +313,8 @@ func (c Cards) target(ctx context.Context, a integration.PreparedAction) (target
 			}
 			others, err := c.dashboardNames(ctx, "")
 			return target{name: p.Name, others: others}, err
-		case "create_automation":
-			// A new automation: what a person names is its name.
+		case "create_workflow":
+			// A new workflow: what a person names is its name.
 			var p integration.CreateAutomationPayload
 			if err := json.Unmarshal(a.Payload, &p); err != nil {
 				return target{}, err
@@ -384,14 +384,14 @@ func (c Cards) target(ctx context.Context, a integration.PreparedAction) (target
 		}
 		others, err := c.dashboardNames(ctx, thingID)
 		return target{id: thingID, name: d.Name, dashboard: d, others: others}, err
-	case "automation":
+	case "workflow":
 		if inWorkspace != ws {
 			return target{}, elsewhere
 		}
 		au, err := c.DB.GetFoundryAutomation(ctx, ws, thingID)
 		switch {
 		case errors.Is(err, foundrystore.ErrNotFound):
-			return target{}, status.Error(codes.FailedPrecondition, "this workspace holds no automation "+thingID+": read its automations again")
+			return target{}, status.Error(codes.FailedPrecondition, "this workspace holds no workflow "+thingID+": read its workflows again")
 		case err != nil:
 			return target{}, err
 		}
@@ -413,7 +413,7 @@ func (c Cards) dashboardNames(ctx context.Context, except string) ([]string, err
 	return names, err
 }
 
-// automationNames are the names of the workspace's automations but except.
+// automationNames are the names of the workspace's workflows but except.
 func (c Cards) automationNames(ctx context.Context, except string) ([]string, error) {
 	all, err := c.DB.ListFoundryAutomations(ctx, c.WorkspaceID)
 	var names []string

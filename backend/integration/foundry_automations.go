@@ -12,17 +12,17 @@ import (
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 )
 
-// Automations (package automation): the read tools, and the operations
-// helix_foundry_prepare_operation prepares. An automation runs as its owner,
-// the person who made it, and only once they approved its spec with a click
-// in Foundry: no tool approves one, so what an agent creates or changes waits
-// for that click. "Workflows" (foundry_workflows.go) is another thing: an
-// outside agent's recorded runs.
+// Workflows (package automation, the backend's automations): the read tools,
+// and the operations helix_foundry_prepare_operation prepares. A workflow runs
+// as its owner, the person who made it, and only once they approved its spec
+// with a click in Foundry: no tool approves one, so what an agent creates or
+// changes waits for that click. Use cases (foundry_workflows.go, the backend's
+// workflows) are another thing: an outside agent's recorded runs.
 const (
-	toolFoundryListAutomations    = "helix_foundry_list_automations"
-	toolFoundryGetAutomation      = "helix_foundry_get_automation"
-	toolFoundryListAutomationRuns = "helix_foundry_list_automation_runs"
-	toolFoundryGetAutomationRun   = "helix_foundry_get_automation_run"
+	toolFoundryListWorkflows    = "helix_foundry_list_workflows"
+	toolFoundryGetWorkflow      = "helix_foundry_get_workflow"
+	toolFoundryListWorkflowRuns = "helix_foundry_list_workflow_runs"
+	toolFoundryGetWorkflowRun   = "helix_foundry_get_workflow_run"
 )
 
 // automationSpecDoc says what a spec is, for the tools' and the operations' descriptions.
@@ -43,7 +43,7 @@ const automationSpecDoc = `A spec is a graph: {"v": 1, "nodes": [...], "edges": 
 
 type FoundryAutomationInput struct {
 	WorkspaceID  string `json:"workspace_id,omitempty" jsonschema:"Helix workspace identifier. May be empty when the caller has only one workspace."`
-	AutomationID string `json:"automation_id" jsonschema:"Foundry automation identifier."`
+	AutomationID string `json:"workflow_id" jsonschema:"Foundry workflow identifier."`
 }
 
 func (in *FoundryAutomationInput) Workspace() *string { return &in.WorkspaceID }
@@ -55,23 +55,23 @@ type ListFoundryAutomationRunsInput struct {
 
 type GetFoundryAutomationRunInput struct {
 	FoundryAutomationInput
-	RunID string `json:"run_id" jsonschema:"Foundry automation run identifier."`
+	RunID string `json:"run_id" jsonschema:"Foundry workflow run identifier."`
 }
 
 type ListFoundryAutomationsOutput struct {
 	ContentTrust string                    `json:"content_trust"`
-	Automations  []FoundryAutomationOutput `json:"automations"`
+	Automations  []FoundryAutomationOutput `json:"workflows"`
 	// Email says whether a notify step emails here.
 	Email bool `json:"email"`
 }
 
-// FoundryAutomationOutput is an automation as the tools return it.
+// FoundryAutomationOutput is a workflow as the tools return it.
 type FoundryAutomationOutput struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspace_id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	// Revision is what update_automation names as expected_revision.
+	// Revision is what update_workflow names as expected_revision.
 	Revision    int64  `json:"revision"`
 	OwnerUserID string `json:"owner_user_id"`
 	Status      string `json:"status" jsonschema:"needs_approval (its owner approves its spec in Foundry, at url, before it runs: new, or changed), active (it runs when its trigger fires) or paused (it runs only by hand)."`
@@ -81,7 +81,7 @@ type FoundryAutomationOutput struct {
 	NextRunAt    string `json:"next_run_at,omitempty"`
 	Failures     int32  `json:"failures"`
 	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
-	Spec      any                         `json:"spec,omitempty" jsonschema:"Untrusted automation spec, its graph. Left out of a list."`
+	Spec      any                         `json:"spec,omitempty" jsonschema:"Untrusted workflow spec, its graph. Left out of a list."`
 	LastRun   *FoundryAutomationRunOutput `json:"last_run,omitempty"`
 	CanEdit   bool                        `json:"can_edit"`
 	CanPause  bool                        `json:"can_pause"`
@@ -90,32 +90,32 @@ type FoundryAutomationOutput struct {
 	CanDelete bool                        `json:"can_delete"`
 	URL       string                      `json:"url,omitempty"`
 	// Workflows are the ontologies its runs use, and how much each helped.
-	Workflows []FoundryAutomationWorkflowOutput `json:"workflows" jsonschema:"The ontologies its runs use: Foundry records each run that uses one in a workflow of that ontology (helix_foundry_get_workflow_run reads its runs), whose assessments say how much the ontology helped."`
+	Workflows []FoundryAutomationWorkflowOutput `json:"use_cases" jsonschema:"The ontologies its runs use: Foundry records each run that uses one in a use case of that ontology (helix_foundry_get_use_case_run reads its runs), whose assessments say how much the ontology helped."`
 }
 
-// FoundryAutomationWorkflowOutput is an ontology an automation's runs use:
-// the workflow Foundry records them in, with its runs and their verdicts, or
-// why it records none.
+// FoundryAutomationWorkflowOutput is an ontology a workflow's runs use: the
+// use case Foundry records them in, with its runs and their verdicts, or why it
+// records none.
 type FoundryAutomationWorkflowOutput struct {
 	OntologyID   string `json:"ontology_id"`
 	OntologyName string `json:"ontology_name"`
-	WorkflowID   string `json:"workflow_id,omitempty"`
+	WorkflowID   string `json:"use_case_id,omitempty"`
 	Runs         int64  `json:"runs"`
 	FinishedRuns int64  `json:"finished_runs"`
 	// Verdicts counts their done assessments by verdict.
 	Verdicts map[string]int64 `json:"verdicts"`
 	// Gaps are what the ontology lacked, as the newest assessed run named it: in a get only.
 	Gaps      []string `json:"gaps,omitempty" jsonschema:"Untrusted: what the ontology lacked, as the newest assessed run named it."`
-	Untracked string   `json:"untracked,omitempty" jsonschema:"Why its runs go unrecorded: workflows_full, the ontology holding 100 workflows."`
+	Untracked string   `json:"untracked,omitempty" jsonschema:"Why its runs go unrecorded: workflows_full, the ontology holding 100 use cases."`
 }
 
-// FoundryAutomationRunWorkflowOutput is an ontology one run used: the
-// workflow run that records it and its verdict.
+// FoundryAutomationRunWorkflowOutput is an ontology one run used: the use
+// case run that records it and its verdict.
 type FoundryAutomationRunWorkflowOutput struct {
 	OntologyID       string `json:"ontology_id"`
 	OntologyName     string `json:"ontology_name"`
-	WorkflowID       string `json:"workflow_id"`
-	WorkflowRunID    string `json:"workflow_run_id"`
+	WorkflowID       string `json:"use_case_id"`
+	WorkflowRunID    string `json:"use_case_run_id"`
 	Status           string `json:"status"`
 	AssessmentStatus string `json:"assessment_status,omitempty"`
 	Verdict          string `json:"verdict,omitempty" jsonschema:"Once assessed: essential, helpful, marginal, unused or misleading."`
@@ -124,7 +124,7 @@ type FoundryAutomationRunWorkflowOutput struct {
 // FoundryAutomationRunOutput is a run as the tools return it.
 type FoundryAutomationRunOutput struct {
 	ID           string `json:"id"`
-	AutomationID string `json:"automation_id"`
+	AutomationID string `json:"workflow_id"`
 	Status       string `json:"status" jsonschema:"queued, running, succeeded, failed, cancelled or skipped (never started: error says why)."`
 	Error        string `json:"error,omitempty"`
 	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
@@ -136,7 +136,7 @@ type FoundryAutomationRunOutput struct {
 	Steps      []FoundryAutomationStepOutput `json:"steps,omitempty"`
 	URL        string                        `json:"url,omitempty"`
 	// Workflows are the ontologies it used, in a get only.
-	Workflows []FoundryAutomationRunWorkflowOutput `json:"workflows,omitempty" jsonschema:"The ontologies it used, each with the workflow run that records it and its verdict: in a get only."`
+	Workflows []FoundryAutomationRunWorkflowOutput `json:"use_cases,omitempty" jsonschema:"The ontologies it used, each with the use case run that records it and its verdict: in a get only."`
 }
 
 // FoundryAutomationStepOutput is one step of a run.
@@ -161,21 +161,21 @@ type FoundryAutomationRunDetailOutput struct {
 
 type FoundryAutomationDetailOutput struct {
 	ContentTrust string                  `json:"content_trust"`
-	Automation   FoundryAutomationOutput `json:"automation"`
+	Automation   FoundryAutomationOutput `json:"workflow"`
 }
 
-// addFoundryAutomationTools registers the automation read tools of a user who may browse the
+// addFoundryAutomationTools registers the workflow read tools of a user who may browse the
 // workspace.
 func (s *Service) addFoundryAutomationTools(server *mcp.Server, identity *Identity) {
-	addFoundryTool(s, server, identity, tool(toolFoundryListAutomations,
-		"List a workspace's Foundry automations: graphs of steps Foundry runs as their owner when a schedule fires or a sync, load, upload or draft ends, "+
-			"each with its newest run. Specs are left out: "+toolFoundryGetAutomation+" reads one."), s.ListFoundryAutomations)
-	addFoundryTool(s, server, identity, tool(toolFoundryGetAutomation,
-		"Get one Foundry automation with its spec and revision. "+automationSpecDoc), s.GetFoundryAutomation)
-	addFoundryTool(s, server, identity, tool(toolFoundryListAutomationRuns,
-		"List one Foundry automation's runs, newest first: their status, what fired them, their spend and error."), s.ListFoundryAutomationRuns)
-	addFoundryTool(s, server, identity, tool(toolFoundryGetAutomationRun,
-		"Get one run of a Foundry automation with each step it ran: its status, output and error."), s.GetFoundryAutomationRun)
+	addFoundryTool(s, server, identity, tool(toolFoundryListWorkflows,
+		"List a workspace's Foundry workflows: graphs of steps Foundry runs as their owner when a schedule fires or a sync, load, upload or draft ends, "+
+			"each with its newest run. Specs are left out: "+toolFoundryGetWorkflow+" reads one."), s.ListFoundryAutomations)
+	addFoundryTool(s, server, identity, tool(toolFoundryGetWorkflow,
+		"Get one Foundry workflow with its spec and revision. "+automationSpecDoc), s.GetFoundryAutomation)
+	addFoundryTool(s, server, identity, tool(toolFoundryListWorkflowRuns,
+		"List one Foundry workflow's runs, newest first: their status, what fired them, their spend and error."), s.ListFoundryAutomationRuns)
+	addFoundryTool(s, server, identity, tool(toolFoundryGetWorkflowRun,
+		"Get one run of a Foundry workflow with each step it ran: its status, output and error."), s.GetFoundryAutomationRun)
 }
 
 func (s *Service) ListFoundryAutomations(ctx context.Context, identity *Identity, call *Call, input FoundryWorkspaceInput) (
@@ -254,14 +254,14 @@ func (s *Service) GetFoundryAutomationRun(ctx context.Context, identity *Identit
 	return FoundryAutomationRunDetailOutput{ContentTrust: contentTrustUntrusted, Run: s.FoundryAutomationRun(input.WorkspaceID, resp.GetRun())}, 1, nil
 }
 
-// FoundryAutomation is a as the tools return it, with its page in Foundry, where its owner
-// approves it.
+// FoundryAutomation is a, a workflow, as the tools return it, with its page in Foundry, where
+// its owner approves it.
 func (s *Service) FoundryAutomation(workspaceID string, a *foundryv1.FoundryAutomation) FoundryAutomationOutput {
 	out := FoundryAutomationOutput{
 		ID: a.GetId(), WorkspaceID: workspaceID, Name: a.GetName(), Description: a.GetDescription(), Revision: a.GetRevision(),
 		OwnerUserID: a.GetOwnerUserId(), Status: a.GetStatus(), PausedReason: a.GetPausedReason(), TriggerKind: a.GetTriggerKind(),
 		NextRunAt: protoTimestamp(a.GetNextRunAt()), Failures: a.GetFailures(), CanEdit: a.GetCanEdit(), CanPause: a.GetCanPause(),
-		CanResume: a.GetCanResume(), CanRun: a.GetCanRun(), CanDelete: a.GetCanDelete(), URL: s.FoundryLink(workspaceID, "automations", a.GetId()),
+		CanResume: a.GetCanResume(), CanRun: a.GetCanRun(), CanDelete: a.GetCanDelete(), URL: s.FoundryLink(workspaceID, "workflows", a.GetId()),
 	}
 	if a.GetSpecJson() != "" {
 		out.Spec = UntrustedJSON(a.GetSpecJson())
@@ -287,7 +287,7 @@ func (s *Service) FoundryAutomationRun(workspaceID string, r *foundryv1.FoundryA
 	out := FoundryAutomationRunOutput{
 		ID: r.GetId(), AutomationID: r.GetAutomationId(), Status: r.GetStatus(), Error: r.GetError(), USDMicros: r.GetUsdMicros(), ThreadID: r.GetThreadId(),
 		CreatedAt: protoTimestamp(r.GetCreatedAt()), FinishedAt: protoTimestamp(r.GetFinishedAt()),
-		URL: s.FoundryLink(workspaceID, "automations", r.GetAutomationId(), "runs", r.GetId()),
+		URL: s.FoundryLink(workspaceID, "workflows", r.GetAutomationId(), "runs", r.GetId()),
 	}
 	if r.GetTriggerEventJson() != "" {
 		out.Trigger = UntrustedJSON(r.GetTriggerEventJson())
@@ -307,14 +307,14 @@ func (s *Service) FoundryAutomationRun(workspaceID string, r *foundryv1.FoundryA
 	return out
 }
 
-// CreateAutomationPayload is create_automation's.
+// CreateAutomationPayload is create_workflow's.
 type CreateAutomationPayload struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Spec        json.RawMessage `json:"spec"`
 }
 
-// UpdateAutomationPayload is update_automation's: at least one of name, description and spec.
+// UpdateAutomationPayload is update_workflow's: at least one of name, description and spec.
 type UpdateAutomationPayload struct {
 	ExpectedRevision int64           `json:"expected_revision"`
 	Name             *string         `json:"name,omitempty"`
@@ -331,28 +331,28 @@ func automationSpecPayload(raw json.RawMessage) (json.RawMessage, error) {
 	return mustCanonical(spec), nil
 }
 
-// validAutomationName is an automation's name as the backend takes it: 1 to 120 characters
+// validAutomationName is a workflow's name as the backend takes it: 1 to 120 characters
 // once trimmed, with no control character.
 func validAutomationName(name string) bool {
 	return ValidFoundryName(name) && !strings.ContainsFunc(name, unicode.IsControl)
 }
 
-// validateAutomationOperation checks an automation operation's target and payload and
-// authorizes the caller for it, as ValidateFoundryOperation does every operation. Automations
-// are people's: every one is user-only. Whose automation it is, and whether it runs, the backend
-// decides as it runs; none of them approves one.
+// validateAutomationOperation checks a workflow operation's target and payload and authorizes
+// the caller for it, as ValidateFoundryOperation does every operation. Workflows are people's:
+// every one is user-only. Whose workflow it is, and whether it runs, the backend decides as it
+// runs; none of them approves one.
 func (s *Service) validateAutomationOperation(ctx context.Context, identity *Identity, input FoundryOperationInput, raw []byte) (FoundryOperation, error) {
 	invalid := func(message string) error { return detailedToolError{code: errCodeInvalidArguments, message: message} }
-	if input.Operation == "create_automation" {
+	if input.Operation == "create_workflow" {
 		workspaceID, ok := cutTarget(input.Target, "workspace")
 		var payload CreateAutomationPayload
 		if !ok || decodeStrict(raw, &payload) != nil || !validAutomationName(payload.Name) || !ValidSetDescription(payload.Description) {
-			return nil, invalid("create_automation takes target workspace:<workspace_id> and payload {name, description, spec}: a name of 1 to 120 characters, " +
+			return nil, invalid("create_workflow takes target workspace:<workspace_id> and payload {name, description, spec}: a name of 1 to 120 characters, " +
 				"a description of at most 1000, and a spec")
 		}
 		spec, err := automationSpecPayload(payload.Spec)
 		if err != nil {
-			return nil, invalid("create_automation's spec: " + err.Error())
+			return nil, invalid("create_workflow's spec: " + err.Error())
 		}
 		payload.Name, payload.Description, payload.Spec = strings.TrimSpace(payload.Name), strings.TrimSpace(payload.Description), spec
 		req := &foundryv1.CreateFoundryAutomationRequest{WorkspaceId: workspaceID, Name: payload.Name, Description: payload.Description, SpecJson: string(spec)}
@@ -366,19 +366,19 @@ func (s *Service) validateAutomationOperation(ctx context.Context, identity *Ide
 				return resp.GetAutomation(), err
 			}}, nil
 	}
-	workspaceID, automationID, ok := CutFoundryTarget(input.Target, "automation")
+	workspaceID, automationID, ok := CutFoundryTarget(input.Target, "workflow")
 	if !ok {
-		return nil, invalid(input.Operation + " takes target automation:<workspace_id>/<automation_id>")
+		return nil, invalid(input.Operation + " takes target workflow:<workspace_id>/<workflow_id>")
 	}
-	if input.Operation != "update_automation" && len(input.Payload) != 0 {
+	if input.Operation != "update_workflow" && len(input.Payload) != 0 {
 		return nil, invalid(input.Operation + " takes an empty payload")
 	}
 	switch input.Operation {
-	case "update_automation":
+	case "update_workflow":
 		var payload UpdateAutomationPayload
 		if decodeStrict(raw, &payload) != nil || payload.ExpectedRevision < 1 || payload.Name == nil && payload.Description == nil && len(payload.Spec) == 0 ||
 			payload.Name != nil && !validAutomationName(*payload.Name) || payload.Description != nil && !ValidSetDescription(*payload.Description) {
-			return nil, invalid("update_automation takes payload {expected_revision, name, description, spec}: the revision you read " +
+			return nil, invalid("update_workflow takes payload {expected_revision, name, description, spec}: the revision you read " +
 				"and at least one change, a name of 1 to 120 characters, a description of at most 1000, a whole spec")
 		}
 		req := &foundryv1.UpdateFoundryAutomationRequest{WorkspaceId: workspaceID, Id: automationID, ExpectedRevision: payload.ExpectedRevision}
@@ -393,7 +393,7 @@ func (s *Service) validateAutomationOperation(ctx context.Context, identity *Ide
 		if len(payload.Spec) > 0 {
 			spec, err := automationSpecPayload(payload.Spec)
 			if err != nil {
-				return nil, invalid("update_automation's spec: " + err.Error())
+				return nil, invalid("update_workflow's spec: " + err.Error())
 			}
 			specJSON := string(spec)
 			payload.Spec, req.SpecJson = spec, &specJSON
@@ -406,7 +406,7 @@ func (s *Service) validateAutomationOperation(ctx context.Context, identity *Ide
 				resp, err := s.Actions.UpdateFoundryAutomation(ctx, req)
 				return resp.GetAutomation(), err
 			}}, nil
-	case "pause_automation":
+	case "pause_workflow":
 		req := &foundryv1.PauseFoundryAutomationRequest{WorkspaceId: workspaceID, Id: automationID}
 		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "PauseFoundryAutomation"); err != nil {
 			return nil, err
@@ -416,7 +416,7 @@ func (s *Service) validateAutomationOperation(ctx context.Context, identity *Ide
 				resp, err := s.Actions.PauseFoundryAutomation(ctx, req)
 				return resp.GetAutomation(), err
 			}}, nil
-	case "resume_automation":
+	case "resume_workflow":
 		req := &foundryv1.ResumeFoundryAutomationRequest{WorkspaceId: workspaceID, Id: automationID}
 		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "ResumeFoundryAutomation"); err != nil {
 			return nil, err
@@ -426,13 +426,13 @@ func (s *Service) validateAutomationOperation(ctx context.Context, identity *Ide
 				resp, err := s.Actions.ResumeFoundryAutomation(ctx, req)
 				return resp.GetAutomation(), err
 			}}, nil
-	case "delete_automation":
+	case "delete_workflow":
 		req := &foundryv1.DeleteFoundryAutomationRequest{WorkspaceId: workspaceID, Id: automationID}
 		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "DeleteFoundryAutomation"); err != nil {
 			return nil, err
 		}
 		return DeleteAutomationOperation{req: req}, nil
-	case "run_automation":
+	case "run_workflow":
 		req := &foundryv1.RunFoundryAutomationRequest{WorkspaceId: workspaceID, Id: automationID}
 		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "RunFoundryAutomation"); err != nil {
 			return nil, err
@@ -442,7 +442,7 @@ func (s *Service) validateAutomationOperation(ctx context.Context, identity *Ide
 	return nil, invalid("unsupported Foundry operation")
 }
 
-// automationOperation is an automation operation whose call answers the automation it made or
+// automationOperation is a workflow operation whose call answers the workflow it made or
 // changed.
 type automationOperation[R any] struct {
 	payload     any
@@ -460,7 +460,7 @@ func (o automationOperation[R]) Execute(ctx context.Context, s *Service, _ *Iden
 	return s.FoundryAutomation(o.workspaceID, a), nil
 }
 
-// DeleteAutomationOperation deletes an automation and its runs.
+// DeleteAutomationOperation deletes a workflow and its runs.
 type DeleteAutomationOperation struct {
 	req *foundryv1.DeleteFoundryAutomationRequest
 }
@@ -470,10 +470,10 @@ func (o DeleteAutomationOperation) Execute(ctx context.Context, s *Service, _ *I
 	if _, err := s.Actions.DeleteFoundryAutomation(ctx, o.req); err != nil {
 		return nil, err
 	}
-	return map[string]any{"deleted": true, "automation_id": o.req.GetId()}, nil
+	return map[string]any{"deleted": true, "workflow_id": o.req.GetId()}, nil
 }
 
-// RunAutomationOperation runs an automation now, its confirmation the run's client token, so a
+// RunAutomationOperation runs a workflow now, its confirmation the run's client token, so a
 // replay finds the run it queued.
 type RunAutomationOperation struct {
 	req         *foundryv1.RunFoundryAutomationRequest
