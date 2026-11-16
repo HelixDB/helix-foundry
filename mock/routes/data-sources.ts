@@ -733,8 +733,7 @@ const calcomTeams = new Set(["teams", "team_memberships"]);
 
 // Databuddy's query API (api.databuddy.cc), as databuddy.go reads it: the
 // key's websites, and per website its query types over history_days. Every
-// row but a website's carries its website_id; a day's metrics, a page, a
-// referrer and a custom event are keyed within their website.
+// row but a website's carries its website_id and is keyed within its website.
 const databuddyObjects = [
   object(
     "websites",
@@ -784,7 +783,7 @@ const databuddyObjects = [
   ),
   object(
     "sessions",
-    "session_id",
+    ["website_id", "session_id"],
     [
       "session_id",
       "website_id",
@@ -802,7 +801,7 @@ const databuddyObjects = [
   ),
   object(
     "profiles",
-    "visitor_id",
+    ["website_id", "visitor_id"],
     [
       "visitor_id",
       "website_id",
@@ -816,14 +815,12 @@ const databuddyObjects = [
     2875,
   ),
 ];
-const databuddyForeignKeys: Record<string, ConnectorForeignKey[]> = {
-  ...Object.fromEntries(
+const databuddyForeignKeys: Record<string, ConnectorForeignKey[]> =
+  Object.fromEntries(
     databuddyObjects
       .slice(1)
       .map((o) => [o.name, [fk("website_id", "websites")]]),
-  ),
-  sessions: [fk("website_id", "websites"), fk("visitor_id", "profiles")],
-};
+  );
 // The websites every mock Databuddy key reads, and what a key without
 // website permission can't query.
 const databuddySites = ["web_acme", "web_docs"];

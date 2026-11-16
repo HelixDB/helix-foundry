@@ -44,7 +44,7 @@ func databuddyServer(t *testing.T, sites string, answer func(q databuddyQuery) (
 			}
 			q.site = r.URL.Query().Get("website_id")
 			if r.Method != http.MethodPost || r.Header.Get("X-Api-Key") != databuddyTestKey ||
-				r.Header.Get("Content-Type") != "application/json" || r.URL.Query().Get("timezone") != "UTC" || q.body.TimeZone != "UTC" {
+				r.Header.Get("Content-Type") != "application/json" || r.URL.Query().Get("timezone") != "UTC" || q.body.TimeZone != "UTC" || q.body.Granularity != "daily" {
 				t.Errorf("query: %s %s key %q type %q body %+v", r.Method, r.URL, r.Header.Get("X-Api-Key"), r.Header.Get("Content-Type"), q.body)
 			}
 			queries = append(queries, q)
@@ -107,7 +107,7 @@ func TestDatabuddyPrepare(t *testing.T) {
 
 func TestDatabuddyDiscover(t *testing.T) {
 	ctx := context.Background()
-	t.Run("lists every table, keyed and windowed, from one probe of the first site", func(t *testing.T) {
+	t.Run("lists every table, keyed by site and windowed, from one probe of each site", func(t *testing.T) {
 		k, queries := databuddyServer(t, databuddySites, func(q databuddyQuery) (int, string) {
 			return http.StatusOK, databuddyAnswer(q, func(string) []map[string]any { return nil })
 		})
@@ -120,7 +120,7 @@ func TestDatabuddyDiscover(t *testing.T) {
 			t.Fatalf("tables = %v, unavailable = %v", tableNames(d), d.Unavailable)
 		}
 		keys := map[string][]string{"websites": {"website_id"}, "daily_metrics": {"website_id", "date"}, "pages": {"website_id", "path"},
-			"referrers": {"website_id", "referrer"}, "custom_events": {"website_id", "event_name"}, "sessions": {"session_id"}, "profiles": {"visitor_id"}}
+			"referrers": {"website_id", "referrer"}, "custom_events": {"website_id", "event_name"}, "sessions": {"website_id", "session_id"}, "profiles": {"website_id", "visitor_id"}}
 		for name, key := range keys {
 			table := findTable(t, d, name)
 			if !slices.Equal(table.PrimaryKey, key) {
@@ -129,55 +129,73 @@ func TestDatabuddyDiscover(t *testing.T) {
 			if windowed := name == "daily_metrics" || name == "sessions" || name == "profiles"; table.Windowed != windowed {
 				t.Errorf("%s windowed = %v", name, table.Windowed)
 			}
-			if name != "websites" && !slices.Contains(table.ForeignKeys, foreignKey("website_id", "websites", "website_id")) {
+			if want := []ForeignKey{foreignKey("website_id", "websites", "website_id")}; name != "websites" && !slices.Equal(table.ForeignKeys, want) {
 				t.Errorf("%s foreign keys = %v", name, table.ForeignKeys)
 			}
 		}
-		if fks := findTable(t, d, "sessions").ForeignKeys; !slices.Contains(fks, foreignKey("visitor_id", "profiles", "visitor_id")) {
-			t.Errorf("sessions foreign keys = %v", fks)
-		}
 		today := time.Now().UTC().Format(time.DateOnly)
-		if len(*queries) != 1 {
-			t.Fatalf("queries = %+v, want one probe", *queries)
+		if len(*queries) != 2 {
+			t.Fatalf("queries = %+v, want a probe a site", *queries)
 		}
-		q := (*queries)[0]
-		if q.site != "web_a" || len(q.body.Parameters) != 6 || q.body.Limit != 1 || q.body.StartDate != today || q.body.EndDate != today {
-			t.Fatalf("probe = %+v", q)
+		for i, site := range []string{"web_a", "web_b"} {
+			q := (*queries)[i]
+			if q.site != site || len(q.body.Parameters) != 6 || q.body.Limit != 1 || q.body.StartDate != today || q.body.EndDate != today {
+				t.Fatalf("probe = %+v", q)
+			}
 		}
 	})
 
-	t.Run("a query the key may not run is unavailable with Databuddy's reason", func(t *testing.T) {
-		k, _ := databuddyServer(t, databuddySites, func(q databuddyQuery) (int, string) {
+	// failing answers each probe with every type but the failed ones, by site.
+	failing := func(failed map[string]map[string]string) func(q databuddyQuery) (int, string) {
+		return func(q databuddyQuery) (int, string) {
 			results := []map[string]any{}
 			for _, p := range q.body.Parameters {
-				switch p {
-				case "custom_events":
-					results = append(results, map[string]any{"parameter": p, "success": false, "error": " Website permission required "})
-				case "profile_list":
-					// No answer at all for it.
-				default:
+				why, ok := failed[q.site][p]
+				switch {
+				case !ok:
 					results = append(results, map[string]any{"parameter": p, "success": true, "data": []any{}})
+				case why != "":
+					results = append(results, map[string]any{"parameter": p, "success": false, "error": why})
 				}
 			}
 			b, _ := json.Marshal(map[string]any{"success": true, "data": results})
 			return http.StatusOK, string(b)
-		})
+		}
+	}
+
+	t.Run("a query the key or plan may not run on a site is unavailable with Databuddy's reason", func(t *testing.T) {
+		k, _ := databuddyServer(t, databuddySites, failing(map[string]map[string]string{
+			"web_a": {"custom_events": " Website permission required "},
+			"web_b": {"custom_events": "Website permission required", "profile_list": "Feature unavailable on your plan"},
+		}))
 		d, err := k.Discover(ctx, databuddySource(`{}`))
 		if err != nil {
 			t.Fatal(err)
 		}
 		got := fmt.Sprint(d.Unavailable)
-		if got != "[{custom_events Website permission required} {profiles Databuddy did not answer its query}]" {
+		if got != "[{custom_events Website permission required} {profiles Feature unavailable on your plan}]" {
 			t.Fatalf("unavailable = %s", got)
 		}
 		if slices.Contains(tableNames(d), "custom_events") || slices.Contains(tableNames(d), "profiles") {
 			t.Fatalf("tables = %v", tableNames(d))
 		}
-		// The sessions table still references profiles only when profiles can be read.
-		if fks := findTable(t, d, "sessions").ForeignKeys; slices.ContainsFunc(fks, func(fk ForeignKey) bool { return fk.ReferencedTable == "profiles" }) {
-			t.Fatalf("sessions foreign keys = %v", fks)
-		}
 	})
+
+	// A table that was synced and is unavailable pauses its connector, so a
+	// failure that may pass is refused, and the sync retried.
+	for name, failed := range map[string]map[string]map[string]string{
+		"could not run the session_list query (Query timeout); try again": {"web_b": {"session_list": "Query timeout"}},
+		"did not answer the profile_list query; try again":                {"web_a": {"profile_list": ""}},
+	} {
+		t.Run("a query that fails for another reason is refused: "+name, func(t *testing.T) {
+			k, _ := databuddyServer(t, databuddySites, failing(failed))
+			_, err := k.Discover(ctx, databuddySource(`{}`))
+			var refusedErr *RefusedError
+			if !errors.As(err, &refusedErr) || !strings.Contains(err.Error(), name) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
 
 	t.Run("a key with no website reads only websites", func(t *testing.T) {
 		k, queries := databuddyServer(t, `{"success":true,"websites":[],"total":0}`, func(databuddyQuery) (int, string) {
@@ -392,6 +410,17 @@ func TestDatabuddySync(t *testing.T) {
 		}
 	})
 
+	t.Run("a query refused by HTTP status is refused with Databuddy's words", func(t *testing.T) {
+		k, _ := databuddyServer(t, databuddySites, func(databuddyQuery) (int, string) {
+			return http.StatusForbidden, `{"success":false,"error":"Website access denied","code":"ACCESS_DENIED"}`
+		})
+		_, err := k.Sync(ctx, databuddySource(`{}`), Table{Name: "pages"}, &rowSink{})
+		var refusedErr *RefusedError
+		if !errors.As(err, &refusedErr) || !strings.Contains(err.Error(), "may not read /v1/query; give it the read:data scope (Website access denied)") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
 	t.Run("fails past the page cap rather than publishing part of a table", func(t *testing.T) {
 		k, queries := databuddyServer(t, databuddySites, func(q databuddyQuery) (int, string) {
 			return http.StatusOK, databuddyAnswer(q, func(string) []map[string]any {
@@ -400,7 +429,9 @@ func TestDatabuddySync(t *testing.T) {
 		})
 		// A writer with no limit that keeps no rows.
 		_, err := k.Sync(ctx, databuddySource(`{"website_ids":["web_a"]}`), Table{Name: "daily_metrics"}, &calcomFullWriter{room: -1})
-		if err == nil || !strings.Contains(err.Error(), "more than 1000 pages") || len(*queries) != 1000 {
+		var invalidErr *InvalidError
+		if !errors.As(err, &invalidErr) || !strings.Contains(err.Error(), "more daily metrics than Databuddy pages through (1000 pages of 1000); keep fewer days") ||
+			len(*queries) != 1000 {
 			t.Fatalf("err = %v after %d queries", err, len(*queries))
 		}
 	})
@@ -431,6 +462,20 @@ func TestDatabuddySync(t *testing.T) {
 		}
 	})
 
+	t.Run("reads Databuddy's times", func(t *testing.T) {
+		for v, want := range map[any]string{"2026-11-15 23:50:00": "2026-11-15T23:50:00Z", "2026-11-15 23:50:00.250": "2026-11-15T23:50:00.25Z",
+			"2026-11-15T23:50:00.5Z": "2026-11-15T23:50:00.5Z", "2026-11-15T23:50:00+01:00": "2026-11-15T23:50:00+01:00"} {
+			if got, ok := databuddyTime(v); !ok || got.Format(time.RFC3339Nano) != want {
+				t.Errorf("databuddyTime(%v) = %v, %v", v, got, ok)
+			}
+		}
+		for _, v := range []any{"yesterday", 12.0, nil} {
+			if _, ok := databuddyTime(v); ok {
+				t.Errorf("databuddyTime(%v) read a time", v)
+			}
+		}
+	})
+
 	t.Run("a number id is written as text", func(t *testing.T) {
 		for v, want := range map[any]string{"a": "a", 12.0: "12", 1.5: "1.5", nil: "", true: "true"} {
 			if got := databuddyText(v); got != want {
@@ -443,13 +488,17 @@ func TestDatabuddySync(t *testing.T) {
 func TestDatabuddyChanges(t *testing.T) {
 	ctx := context.Background()
 	tables := []Table{{Name: "websites"}, {Name: "daily_metrics"}, {Name: "sessions"}, {Name: "pages"}}
-	cursorAt := func(at time.Time, names ...string) json.RawMessage {
+	// cursorOf is a cursor of days of history and sites; cursorAt one of the defaults and both test sites.
+	cursorOf := func(at time.Time, days int, sites []string, names ...string) json.RawMessage {
 		times := map[string]time.Time{}
 		for _, n := range names {
 			times[n] = at
 		}
-		b, _ := json.Marshal(databuddyCursor{Tables: times})
+		b, _ := json.Marshal(databuddyCursor{Tables: times, HistoryDays: days, Sites: sites})
 		return b
+	}
+	cursorAt := func(at time.Time, names ...string) json.RawMessage {
+		return cursorOf(at, 90, []string{"web_a", "web_b"}, names...)
 	}
 
 	t.Run("follows daily metrics and sessions; reads the rest in full", func(t *testing.T) {
@@ -473,26 +522,52 @@ func TestDatabuddyChanges(t *testing.T) {
 		}
 	})
 
-	t.Run("starts every table at now less the overlap", func(t *testing.T) {
-		k := kindOf(t, catalogFor(""), "databuddy").(ChangeReader)
+	t.Run("starts every table at now less the overlap, with its days of history and sites", func(t *testing.T) {
+		k, _ := databuddyServer(t, databuddySites, nil)
+		reader := k.(ChangeReader)
 		before := time.Now()
-		start, err := k.Start(ctx, Source{}, tables)
+		start, err := reader.Start(ctx, databuddySource(`{"website_ids":["web_b","web_a"],"history_days":30}`), tables)
 		after := time.Now()
 		if err != nil || start.Source != nil || start.Close != nil {
 			t.Fatalf("start = %+v, %v", start, err)
 		}
 		var c databuddyCursor
-		if err := json.Unmarshal(start.Cursor, &c); err != nil || len(c.Tables) != len(tables) {
+		if err := json.Unmarshal(start.Cursor, &c); err != nil || len(c.Tables) != len(tables) || c.HistoryDays != 30 ||
+			!slices.Equal(c.Sites, []string{"web_a", "web_b"}) {
 			t.Fatalf("cursor = %s, %v", start.Cursor, err)
 		}
 		assertTimeCursor(t, c.Tables["sessions"], before, after)
+		if _, err := reader.Start(ctx, databuddySource(`[`), tables); err == nil {
+			t.Error("bad settings: no error")
+		}
+		if _, err := reader.Start(ctx, databuddySource(`{"website_ids":["web_gone"]}`), tables); err == nil {
+			t.Error("lost site: no error")
+		}
+	})
+
+	t.Run("a cursor of other days of history or other sites asks for a full read", func(t *testing.T) {
+		k, queries := databuddyServer(t, databuddySites, nil)
+		for settings, cursor := range map[string]json.RawMessage{
+			`{"history_days":30}`:       cursorAt(time.Now(), "sessions"),
+			`{"website_ids":["web_a"]}`: cursorAt(time.Now(), "sessions"),
+			`{}`:                        cursorOf(time.Now(), 90, []string{"web_a"}, "sessions"),
+		} {
+			if _, err := k.(ChangeReader).Changes(ctx, databuddySource(settings), tables, cursor, &cursorChanges{}); !errors.Is(err, ErrCursorExpired) {
+				t.Errorf("%s: err = %v", settings, err)
+			}
+		}
+		if len(*queries) != 0 {
+			t.Fatalf("queries = %v", *queries)
+		}
 	})
 
 	t.Run("upserts each followed table's rows from the day before its cursor and resets the others", func(t *testing.T) {
 		k, queries := databuddyServer(t, databuddySites, func(q databuddyQuery) (int, string) {
 			return http.StatusOK, databuddyAnswer(q, func(p string) []map[string]any {
 				if p == "session_list" {
-					return []map[string]any{{"session_id": "s-" + q.site, "page_views": 2}}
+					// One began before the read's first day, so came back cut short; one's start is unreadable, so is kept.
+					return []map[string]any{{"session_id": "s-" + q.site, "page_views": 2, "first_visit": time.Now().UTC().Format(time.DateTime)},
+						{"session_id": "early", "first_visit": "2000-01-01T00:00:00Z"}, {"session_id": "odd-" + q.site, "first_visit": "yesterday"}}
 				}
 				return []map[string]any{{"date": "2026-11-15", "pageviews": 9}}
 			})
@@ -510,15 +585,23 @@ func TestDatabuddyChanges(t *testing.T) {
 		if !slices.Equal(w.resets, []string{"websites", "pages"}) {
 			t.Fatalf("resets = %v", w.resets)
 		}
-		if got := fmt.Sprint(w.upserts["sessions"]); got != "[map[page_views:2 session_id:s-web_a website_id:web_a] map[page_views:2 session_id:s-web_b website_id:web_b]]" {
-			t.Fatalf("sessions = %s", got)
+		var sessions []string
+		for _, row := range w.upserts["sessions"] {
+			sessions = append(sessions, fmt.Sprint(row["website_id"], "/", row["session_id"]))
+		}
+		if !slices.Equal(sessions, []string{"web_a/s-web_a", "web_a/odd-web_a", "web_b/s-web_b", "web_b/odd-web_b"}) {
+			t.Fatalf("sessions = %v", sessions)
 		}
 		if len(w.upserts["daily_metrics"]) != 2 {
 			t.Fatalf("daily metrics = %v", w.upserts["daily_metrics"])
 		}
-		from := at.Truncate(24*time.Hour).AddDate(0, 0, -1).Format(time.DateOnly)
+		since := at.Truncate(24*time.Hour).AddDate(0, 0, -1)
 		for _, q := range *queries {
-			if q.body.StartDate != from || q.body.EndDate != now.Format(time.DateOnly) {
+			from := since
+			if q.body.Parameters[0] == "session_list" {
+				from = since.AddDate(0, 0, -1)
+			}
+			if q.body.StartDate != from.Format(time.DateOnly) || q.body.EndDate != now.Format(time.DateOnly) {
 				t.Errorf("query = %+v, want from %s", q.body, from)
 			}
 		}
@@ -536,8 +619,8 @@ func TestDatabuddyChanges(t *testing.T) {
 		k, queries := databuddyServer(t, databuddySites, func(q databuddyQuery) (int, string) {
 			return http.StatusOK, databuddyAnswer(q, func(string) []map[string]any { return nil })
 		})
-		cursor := cursorAt(time.Now().AddDate(0, 0, -40), "sessions")
-		if _, err := k.(ChangeReader).Changes(ctx, databuddySource(`{"website_ids":["web_a"],"history_days":7}`), []Table{{Name: "sessions"}}, cursor, &cursorChanges{}); err != nil {
+		cursor := cursorOf(time.Now().AddDate(0, 0, -40), 7, []string{"web_a"}, "daily_metrics")
+		if _, err := k.(ChangeReader).Changes(ctx, databuddySource(`{"website_ids":["web_a"],"history_days":7}`), []Table{{Name: "daily_metrics"}}, cursor, &cursorChanges{}); err != nil {
 			t.Fatal(err)
 		}
 		if want := time.Now().UTC().AddDate(0, 0, -7).Format(time.DateOnly); len(*queries) != 1 || (*queries)[0].body.StartDate != want {

@@ -47,17 +47,24 @@ var databuddyTables = []databuddyTable{
 	{saasTable{"profiles", "visitor_id"}, "profile_list", 1000, ""},
 }
 
-// databuddySiteKeyed are the tables keyed by (website_id, key): their key is
-// only unique within a site. Sessions and visitors carry random ids.
-var databuddySiteKeyed = map[string]bool{"daily_metrics": true, "pages": true, "referrers": true, "custom_events": true}
-
+// databuddyForeignKeys tie every table but websites to its site. Each of
+// those is keyed by (website_id, its key): a day, page or name repeats across
+// sites, and so does a visitor id where two sites share an origin, so a
+// session's visitor is no single-column key of profiles and has no foreign key.
 var databuddyForeignKeys = func() map[string][]ForeignKey {
-	out := map[string][]ForeignKey{"sessions": {foreignKey("visitor_id", "profiles", "visitor_id")}}
+	out := map[string][]ForeignKey{}
 	for _, t := range databuddyTables[1:] {
-		out[t.name] = append(out[t.name], foreignKey("website_id", "websites", "website_id"))
+		out[t.name] = []ForeignKey{foreignKey("website_id", "websites", "website_id")}
 	}
 	return out
 }()
+
+// databuddyDeniedRE tells a query type the key or plan may not run (website
+// permission, a scope, a feature the plan lacks) from a failure that passes,
+// such as a timeout: only the first makes its table unavailable, which pauses
+// a connector that synced it, so anything else is retried. Databuddy words
+// each result's error but gives it no code.
+var databuddyDeniedRE = regexp.MustCompile(`(?i)permission|access|scope|forbidden|unauthori|feature|plan|upgrade`)
 
 func databuddyTableOf(name string) (databuddyTable, bool) {
 	i := slices.IndexFunc(databuddyTables, func(t databuddyTable) bool { return t.name == name })
@@ -115,11 +122,12 @@ func (k *databuddyKind) Prepare(src Source) (json.RawMessage, error) {
 func (k *databuddyKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 1) }
 
 // Discover proves the key by listing its websites, checks the chosen ones
-// are among them, then asks every query type for one row of today on the
-// first site, in one request: a type the key may not read (a website-scoped
-// key without custom events' permission, a plan without the feature) is
-// unavailable, with Databuddy's reason. A key with no site reads only
-// websites.
+// are among them, then asks every query type for one row of today on each
+// site, in one request a site: a type the key may not run on one of them (a
+// website-scoped key without custom events' permission, a plan without the
+// feature) is unavailable, with Databuddy's reason. Any other failure of a
+// type is refused, so the sync is retried rather than paused. A key with no
+// site reads only websites.
 func (k *databuddyKind) Discover(ctx context.Context, src Source) (Discovery, error) {
 	s, err := databuddySettingsOf(src.Settings)
 	if err != nil {
@@ -135,24 +143,29 @@ func (k *databuddyKind) Discover(ctx context.Context, src Source) (Discovery, er
 		for _, t := range databuddyTables[1:] {
 			reasons[t.name] = "the key reads no website yet"
 		}
-	} else {
-		today := time.Now().UTC().Format(time.DateOnly)
-		var queries []string
-		for _, t := range databuddyTables[1:] {
-			queries = append(queries, t.query)
-		}
-		results, err := k.query(ctx, src.Secret, databuddyText(sites[0]["id"]), databuddyRequest{
-			Parameters: queries, StartDate: today, EndDate: today, Limit: 1, Page: 1, TimeZone: "UTC"})
+	}
+	today := time.Now().UTC().Format(time.DateOnly)
+	var queries []string
+	for _, t := range databuddyTables[1:] {
+		queries = append(queries, t.query)
+	}
+	for _, site := range sites {
+		results, err := k.query(ctx, src.Secret, databuddyText(site["id"]), databuddyRequest{
+			Parameters: queries, StartDate: today, EndDate: today, Limit: 1, Page: 1, TimeZone: "UTC", Granularity: "daily"})
 		if err != nil {
 			return Discovery{}, err
 		}
 		for _, t := range databuddyTables[1:] {
 			r, ok := results[t.query]
+			why := strings.TrimSpace(r.Error)
 			switch {
 			case !ok:
-				reasons[t.name] = "Databuddy did not answer its query"
-			case !r.Success:
-				reasons[t.name] = strings.TrimSpace(r.Error)
+				return Discovery{}, refused(nil, "Databuddy did not answer the %s query; try again", t.query)
+			case r.Success || reasons[t.name] != "":
+			case databuddyDeniedRE.MatchString(why):
+				reasons[t.name] = why
+			default:
+				return Discovery{}, refused(nil, "Databuddy could not run the %s query (%s); try again", t.query, why)
 			}
 		}
 	}
@@ -165,7 +178,7 @@ func (k *databuddyKind) Discover(ctx context.Context, src Source) (Discovery, er
 		d.Unavailable[i].Reason = reasons[d.Unavailable[i].Name]
 	}
 	for i, t := range d.Tables {
-		if databuddySiteKeyed[t.Name] {
+		if t.Name != "websites" {
 			d.Tables[i].PrimaryKey = []string{"website_id", t.PrimaryKey[0]}
 		}
 		d.Tables[i].Windowed = WindowedTable("databuddy", t.Name)
@@ -206,16 +219,21 @@ func (k *databuddyKind) Sync(ctx context.Context, src Source, table Table, w Row
 
 // rows writes every row of t's query for one site from from's day to to's,
 // page by page until a short page. A page past the cap fails the read rather
-// than publishing part of the table.
+// than publishing part of the table, saying to keep fewer days. The pages
+// are offsets into a list that may change while it is read; Databuddy
+// documents no stable order to page by, so a row that moves between pages
+// may be missed until the next full read.
 func (k *databuddyKind) rows(ctx context.Context, key string, t databuddyTable, site string, from, to time.Time, write func(map[string]any) error) error {
 	// profile_list once answered a row per visitor and session; each visitor is written once.
 	seen := map[any]bool{}
 	for page := 1; ; page++ {
 		if page > maxDatabuddyPages {
-			return fmt.Errorf("databuddy %s: more than %d pages of %d rows", t.query, maxDatabuddyPages, t.pageRows)
+			return invalid("a website holds more %s than Databuddy pages through (%d pages of %d); keep fewer days of history",
+				strings.ReplaceAll(t.name, "_", " "), maxDatabuddyPages, t.pageRows)
 		}
 		results, err := k.query(ctx, key, site, databuddyRequest{Parameters: []string{t.query},
-			StartDate: from.Format(time.DateOnly), EndDate: to.Format(time.DateOnly), Limit: t.pageRows, Page: page, TimeZone: "UTC"})
+			StartDate: from.Format(time.DateOnly), EndDate: to.Format(time.DateOnly), Limit: t.pageRows, Page: page, TimeZone: "UTC",
+			Granularity: "daily"})
 		if err != nil {
 			return err
 		}
@@ -323,16 +341,17 @@ func (k *databuddyKind) sites(ctx context.Context, key string, s DatabuddySettin
 	return out, nil
 }
 
-// databuddyRequest is one query: the types it runs over one date range.
-// Both timezone fields: the docs name the body's timeZone and the URL's
-// timezone.
+// databuddyRequest is one query: the types it runs over one date range,
+// by UTC day (events_by_date also breaks a range down by hour). Both
+// timezone fields: the docs name the body's timeZone and the URL's timezone.
 type databuddyRequest struct {
-	Parameters []string `json:"parameters"`
-	StartDate  string   `json:"startDate"`
-	EndDate    string   `json:"endDate"`
-	Limit      int      `json:"limit"`
-	Page       int      `json:"page"`
-	TimeZone   string   `json:"timeZone"`
+	Parameters  []string `json:"parameters"`
+	StartDate   string   `json:"startDate"`
+	EndDate     string   `json:"endDate"`
+	Limit       int      `json:"limit"`
+	Page        int      `json:"page"`
+	TimeZone    string   `json:"timeZone"`
+	Granularity string   `json:"granularity"`
 }
 
 // databuddyResult is one query type's answer within a query.

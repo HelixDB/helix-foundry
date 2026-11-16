@@ -504,13 +504,10 @@ describe("testing and creating", () => {
       pages: "website_id+path",
       referrers: "website_id+referrer",
       custom_events: "website_id+event_name",
-      sessions: "session_id",
-      profiles: "visitor_id",
+      sessions: "website_id+session_id",
+      profiles: "website_id+visitor_id",
     });
-    expect(links(all, "sessions")).toEqual([
-      "website_id>websites.website_id",
-      "visitor_id>profiles.visitor_id",
-    ]);
+    expect(links(all, "sessions")).toEqual(["website_id>websites.website_id"]);
     expect(links(all, "pages")).toEqual(["website_id>websites.website_id"]);
     const limited = tested({ databuddy: { apiKey: "dbdy_nocustom1" } });
     expect(limited.discovery.unavailable).toEqual([
