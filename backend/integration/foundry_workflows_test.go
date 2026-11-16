@@ -144,7 +144,7 @@ func TestWorkflowRunTools(t *testing.T) {
 	require.Len(t, useCases, 2)
 	assert.Equal(t, "person", useCases[0].(map[string]any)["origin"])
 	assert.NotContains(t, useCases[0], "workflow")
-	assert.Equal(t, "automation", useCases[1].(map[string]any)["origin"], "Foundry's, for a workflow")
+	assert.Equal(t, "workflow", useCases[1].(map[string]any)["origin"], "Foundry's, for a workflow")
 	assert.Equal(t, map[string]any{"id": "auto-1", "name": "Weekly digest", "deleted": true}, useCases[1].(map[string]any)["workflow"])
 
 	started := callTool(t, session, toolFoundryStartUseCaseRun, `{`+workflowIDs+`,"use_case_id":"wf-1","input":"Who renews?","client_token":"r-1"}`)

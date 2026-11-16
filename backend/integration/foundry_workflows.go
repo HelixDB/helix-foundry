@@ -76,10 +76,10 @@ type FoundryWorkflowOutput struct {
 	FinishedRuns int64  `json:"finished_runs"`
 	CreatedAt    string `json:"created_at"`
 	LastRunAt    string `json:"last_run_at,omitempty"`
-	// Origin is who made it: a person, or Foundry for a workflow (origin automation, the
-	// backend's name).
-	Origin     string                           `json:"origin" jsonschema:"person (an owner or admin made it), or automation: Foundry made it to record the runs of a workflow (its workflow field) that use this ontology, and only Foundry starts and finishes its runs."`
-	Automation *FoundryWorkflowAutomationOutput `json:"workflow,omitempty" jsonschema:"The workflow whose runs it records, for a use case of origin automation."`
+	// Origin is who made it: a person, or Foundry for a workflow (the
+	// backend's origin automation, said as agents read it).
+	Origin     string                           `json:"origin" jsonschema:"person (an owner or admin made it), or workflow: Foundry made it to record the runs of a workflow (its workflow field) that use this ontology, and only Foundry starts and finishes its runs."`
+	Automation *FoundryWorkflowAutomationOutput `json:"workflow,omitempty" jsonschema:"The workflow whose runs it records, for a use case of origin workflow."`
 }
 
 // FoundryWorkflowAutomationOutput is the workflow (the backend's automation) a
@@ -166,7 +166,7 @@ func (s *Service) addFoundryWorkflowTools(server *mcp.Server, identity *Identity
 		return
 	}
 	addFoundryTool(s, server, identity, tool(toolFoundryListUseCases,
-		"List a Foundry ontology's use cases, newest first, with how many runs each kept. A use case of origin automation is Foundry's record of a "+
+		"List a Foundry ontology's use cases, newest first, with how many runs each kept. A use case of origin workflow is Foundry's record of a "+
 			"workflow's runs that use the ontology: only Foundry starts and finishes its runs."), s.ListFoundryWorkflows)
 	// A host without API sources names no send tool.
 	tracked := toolFoundryReadGraph + ", " + toolFoundryAsk + " and " + toolFoundryCompleteUpload
@@ -176,7 +176,7 @@ func (s *Service) addFoundryWorkflowTools(server *mcp.Server, identity *Identity
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryStartUseCaseRun,
 		Description: "Start a run of a Foundry use case when the agent takes on a request. Pass the run's id as use_case_run_id to " + tracked +
 			" while working on it: each records what it read or wrote under the run. " +
-			"Finish it with " + toolFoundryFinishUseCaseRun + " and the agent's answer. A use case of origin automation takes none: Foundry runs those.",
+			"Finish it with " + toolFoundryFinishUseCaseRun + " and the agent's answer. A use case of origin workflow takes none: Foundry runs those.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.StartFoundryWorkflowRun)
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryFinishUseCaseRun,
@@ -316,7 +316,7 @@ func FoundryWorkflow(w *foundryv1.FoundryWorkflow) FoundryWorkflowOutput {
 		Origin: "person",
 	}
 	if a := w.GetAutomation(); a != nil {
-		out.Origin, out.Automation = "automation", &FoundryWorkflowAutomationOutput{ID: a.GetAutomationId(), Name: a.GetName(), Deleted: a.GetDeleted()}
+		out.Origin, out.Automation = "workflow", &FoundryWorkflowAutomationOutput{ID: a.GetAutomationId(), Name: a.GetName(), Deleted: a.GetDeleted()}
 	}
 	return out
 }
