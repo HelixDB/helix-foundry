@@ -18,8 +18,8 @@ import {
 } from "./login-transaction";
 import { remindersConfig, stopReminders } from "./reminders";
 
-// The steps of a sign-in that /auth/login, /login/callback and
-// /auth/verify-email share: starting one at the WFE (a provider's, or the
+// The steps of a sign-in that /auth/login, /login/callback,
+// /auth/verify-email and /auth/password/* share: starting one at the WFE (a provider's, or the
 // email's single sign-on when its company requires it), and turning the
 // tokens the WFE hands back into the sealed AuthKit session.
 
@@ -82,15 +82,15 @@ export async function startLogin(
 
 /**
  * Sends the browser through the single sign-on of `email`'s company: a new
- * login that replaces `cookie`'s. A login that already went through it, or
+ * login that replaces `cookie`'s (none for a password sign-in). A login that already went through it, or
  * one the WFE can't start (no SSO set up for the domain), is "sso".
  */
 export async function throughSso(
   request: NextRequest,
   config: AuthConfig,
-  transaction: LoginTransaction,
+  transaction: Pick<LoginTransaction, "returnPath" | "sso">,
   email: string | undefined,
-  cookie: string,
+  cookie: string | null,
 ): Promise<{ to: URL; set: (response: NextResponse) => void } | null> {
   if (transaction.sso || !email) return null;
   const started = await startLogin(config, {
@@ -120,7 +120,7 @@ export function setLoginCookie(
   response: NextResponse,
   request: NextRequest,
   config: AuthConfig,
-  started: StartedLogin,
+  started: Pick<StartedLogin, "cookieName" | "cookieValue">,
   replaces?: string | null,
 ) {
   response.cookies.set({
