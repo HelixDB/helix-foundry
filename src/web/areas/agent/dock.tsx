@@ -52,6 +52,7 @@ import {
   readStorage,
   writeStorage,
 } from "../../kit";
+import type { DockSeed } from "../../shell/context";
 import { activeSection } from "../../shell/nav";
 import { recordQuestionAsked } from "../../shell/star-prompt";
 import { useWorkspace } from "../../ui";
@@ -123,18 +124,28 @@ const InlineQuestion = lazy(() => import("../ontology/ask-inline"));
 export function AgentDock({
   onClose,
   onNavigate,
+  seed,
 }: {
   onClose: () => void;
   onNavigate?: () => void;
+  // A compose (useShell().assistant.compose): a new thread whose composer
+  // starts with its text; each one remounts the composer.
+  seed?: DockSeed | null;
 }) {
   const { id: ws } = useWorkspace(),
     qc = useQueryClient();
-  const [threadId, setThreadId] = useState(() => readStorage(threadKey(ws)));
-  useEffect(() => setThreadId(readStorage(threadKey(ws))), [ws]);
+  const [threadId, setThreadId] = useState(() =>
+    seed ? "" : readStorage(threadKey(ws)),
+  );
   const open = (id: string) => {
     writeStorage(threadKey(ws), id || null);
     setThreadId(id);
   };
+  useEffect(() => setThreadId(readStorage(threadKey(ws))), [ws]);
+  const seeded = seed?.n;
+  useEffect(() => {
+    if (seeded) open("");
+  }, [seeded]);
   const threads = useQuery(agentQueries.threads(ws));
   const thread = useQuery({
     ...agentQueries.thread(ws, threadId),
@@ -232,6 +243,8 @@ export function AgentDock({
           />
           <div className="ag-dock-composer">
             <Composer
+              key={seed?.n ?? 0}
+              initialText={seed?.text}
               threadId={threadId}
               thread={threadId ? thread.data : undefined}
               runtime={where?.runtime ?? "api"}

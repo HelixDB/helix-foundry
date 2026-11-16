@@ -3,15 +3,19 @@ import type { DashboardSpec, DashboardTile } from "@/shared/wfe";
 import {
   EMPTY_SPEC,
   MAX_TILES,
+  NEW_DASHBOARD_PROMPT,
   SHARE_TOKEN,
   applyEdit,
   dashboardName,
   dashboardRefusal,
+  libraryDashboards,
   loadReads,
   movesOf,
   parseSnapshot,
   parseSpec,
+  previewRows,
   tileDraw,
+  tileGlyph,
   tileRows,
   tileTitle,
   type TileEdit,
@@ -571,5 +575,139 @@ describe("parseSnapshot", () => {
         layout: { rows: ["t1"] },
       }),
     ).toMatchObject({ description: "", rows: [] });
+  });
+});
+
+describe("libraryDashboards", () => {
+  const list = [
+    { id: "a", name: "Révenue this quarter", pinned: true },
+    {
+      id: "b",
+      name: "Churn",
+      description: "What the sales team checks every Monday",
+      createdByUserId: "u1",
+    },
+    { id: "c", name: "Invoices", pinned: true, createdByUserId: "u1" },
+    { id: "d", name: "" },
+  ];
+  const ids = (q: string, filter: "all" | "pinned" | "yours", userId = "u1") =>
+    libraryDashboards(list, { query: q, filter, userId }).map((d) => d.id);
+
+  it("keeps every dashboard in the list's order with no search", () => {
+    expect(ids("", "all")).toEqual(["a", "b", "c", "d"]);
+    expect(ids("   ", "all")).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("matches every word in the name or description, case and accents aside", () => {
+    expect(ids("REVENUE", "all")).toEqual(["a"]);
+    expect(ids("quarter rév", "all")).toEqual(["a"]);
+    expect(ids("monday sales", "all")).toEqual(["b"]);
+    // Words don't match across the name and description as one string.
+    expect(ids("churn monday", "all")).toEqual(["b"]);
+    expect(ids("churnwhat", "all")).toEqual([]);
+    expect(ids("nothing", "all")).toEqual([]);
+  });
+
+  it("filters to the pinned, or to the viewer's own", () => {
+    expect(ids("", "pinned")).toEqual(["a", "c"]);
+    expect(ids("", "yours")).toEqual(["b", "c"]);
+    expect(ids("inv", "yours")).toEqual(["c"]);
+    expect(ids("", "yours", "u2")).toEqual([]);
+    // A viewer whose id isn't known yet owns none, even those without one.
+    expect(ids("", "yours", "")).toEqual([]);
+  });
+});
+
+describe("tileGlyph", () => {
+  const q = (ret: object) => ({ start: { type: "Invoice" }, return: ret });
+  const glyph = (ret: object, kind?: "table" | "bar" | "line" | "figure") =>
+    tileGlyph({
+      query: q(ret) as DashboardTile["query"],
+      visual: kind ? { kind } : {},
+    });
+  const ROWS = { rows: { columns: [{ at: 0 }] } },
+    GROUPS = { group_count: { at: 0, prop: "status" } },
+    SUM = { aggregate: { fn: "sum", at: 0, prop: "total" } },
+    SUM_BY = {
+      aggregate: {
+        fn: "sum",
+        at: 0,
+        prop: "total",
+        group_by: { at: 0, prop: "status" },
+      },
+    };
+
+  it("draws one number as a figure, or a table when asked", () => {
+    expect(glyph({ count: {} })).toBe("figure");
+    expect(glyph(SUM)).toBe("figure");
+    expect(glyph({ count: {} }, "figure")).toBe("figure");
+    expect(glyph({ count: {} }, "table")).toBe("table");
+    // A chart of one number isn't one: the page shows it as a figure here.
+    expect(glyph({ count: {} }, "bar")).toBe("figure");
+    expect(glyph(SUM, "line")).toBe("figure");
+  });
+
+  it("draws groups as bars unless asked for a line or a table", () => {
+    expect(glyph(GROUPS)).toBe("bar");
+    expect(glyph(SUM_BY)).toBe("bar");
+    expect(glyph(GROUPS, "line")).toBe("line");
+    expect(glyph(SUM_BY, "table")).toBe("table");
+    expect(glyph(GROUPS, "figure")).toBe("bar");
+  });
+
+  it("draws rows as a table unless asked for a chart", () => {
+    expect(glyph(ROWS)).toBe("table");
+    expect(glyph(ROWS, "figure")).toBe("table");
+    expect(glyph(ROWS, "bar")).toBe("bar");
+    expect(glyph(ROWS, "line")).toBe("line");
+  });
+
+  it("draws a query it can't read as a table", () => {
+    expect(
+      tileGlyph({
+        query: null as unknown as DashboardTile["query"],
+        visual: {},
+      }),
+    ).toBe("table");
+    expect(glyph({})).toBe("table");
+  });
+});
+
+describe("previewRows", () => {
+  it("is the first rows of tiles, each with its title and glyph", () => {
+    const s: DashboardSpec = {
+      v: 1,
+      tiles: [
+        tile("a"),
+        tile("b", {
+          title: "By status",
+          query: {
+            start: { type: "Invoice" },
+            return: { group_count: { at: 0, prop: "status" } },
+          },
+        }),
+        tile("c", { visual: { kind: "table" } }),
+        tile("d"),
+        tile("e"),
+      ],
+      layout: { rows: [["a", "b"], ["c"], ["d"], ["e"]] },
+    };
+    expect(previewRows(s)).toEqual([
+      [
+        { id: "a", title: "Tile a", glyph: "figure" },
+        { id: "b", title: "By status", glyph: "bar" },
+      ],
+      [{ id: "c", title: "Tile c", glyph: "table" }],
+      [{ id: "d", title: "Tile d", glyph: "figure" }],
+    ]);
+    expect(previewRows(s, 1)).toHaveLength(1);
+    expect(previewRows(s, 9)).toHaveLength(4);
+    expect(previewRows(EMPTY_SPEC)).toEqual([]);
+  });
+});
+
+describe("NEW_DASHBOARD_PROMPT", () => {
+  it("leaves the caret after a colon and a space, for what to build", () => {
+    expect(NEW_DASHBOARD_PROMPT).toBe("Build me a dashboard for: ");
   });
 });

@@ -112,6 +112,9 @@ function ResultTable({
           key: `c${i}`,
           label: c.label,
           type: c.numeric ? "number" : "string",
+          // Narrower than the grid's defaults, so a tile's table shows more
+          // columns before it scrolls sideways.
+          width: c.numeric ? 110 : 150,
           sortValue: (r) => sortValue(r[`c${i}`]),
           render: (r) => <Cell cell={r[`c${i}`]!} href={href} />,
         }),

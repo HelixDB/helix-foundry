@@ -272,12 +272,6 @@ describe("dashboards' events", () => {
   };
   const calls: [string, () => Promise<unknown>, unknown[], string][] = [
     [
-      "one made from its page",
-      () => createDashboard("ws", { name: "n", clientToken: "t" }, "page"),
-      ["dashboard_created", { from: "page" }],
-      "create",
-    ],
-    [
       "one made from an Analyst answer",
       () => createDashboard("ws", { name: "n", clientToken: "t" }, "analyst"),
       ["dashboard_created", { from: "analyst" }],

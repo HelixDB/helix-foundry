@@ -234,7 +234,9 @@ export type AnalyticsEvents = {
   // ended and its tool calls), or why it was refused; an action the agent
   // prepared, then run (how it ended), dismissed or refused, with whether
   // the person named its target. Never the text, a name or a payload.
-  agent_dock_opened: { from: "shortcut" | "button" | "palette" };
+  agent_dock_opened: {
+    from: "shortcut" | "button" | "palette" | "new_dashboard";
+  };
   agent_turn_started: { section: AgentSection };
   agent_turn_ended: {
     runtime: AgentRuntime;
@@ -278,7 +280,7 @@ export type AnalyticsEvents = {
   // visual (reading the current load or the question's), published (the
   // first time, or again for a new snapshot), unpublished, its public link
   // copied, or why a call was refused. Never a name, a title or a query.
-  dashboard_created: { from: "page" | "analyst" };
+  dashboard_created: { from: "analyst" };
   dashboard_edited: { tiles: boolean };
   dashboard_deleted: undefined;
   dashboard_pinned: undefined;

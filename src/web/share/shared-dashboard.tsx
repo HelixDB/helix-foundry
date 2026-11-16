@@ -1,7 +1,7 @@
 import "../areas/dashboards/dashboards.css";
 import { useEffect, useState } from "react";
 import { MemoryRouter } from "react-router-dom";
-import { CircleAlert, LayoutDashboard } from "lucide-react";
+import { CircleAlert, Clock, LayoutDashboard } from "lucide-react";
 import { EmptyState, SkeletonText, cx, formatDate } from "../kit";
 import {
   SHARE_TOKEN,
@@ -12,7 +12,8 @@ import {
 import { AskVisual } from "../areas/ontology/ask-visual";
 
 // A published dashboard's public page (/share/<token>): what its snapshot
-// holds, drawn as the app draws a dashboard's tiles, with no app around it,
+// holds, drawn as the app draws a dashboard's tiles, under a slim header
+// with Foundry's wordmark (to its landing page), with no app around it,
 // no session and nothing to open (its entities name no id). The browser
 // asks the foundry-events door for the snapshot (GET
 // /v1/shared-dashboards/{token}), sending no credentials and no referrer,
@@ -91,6 +92,21 @@ export function SharedDashboardPage({
   }, [shown]);
   return (
     <div className="db-public">
+      <header className="db-public-bar">
+        <div className="db-public-bar-inner">
+          {/* The landing page, on this origin; no referrer, since this
+              page's address carries the link's token. */}
+          <a
+            href="/"
+            className="db-public-brand"
+            rel="noopener noreferrer"
+            aria-label="Helix Foundry"
+          >
+            helix<span>foundry</span>
+          </a>
+          <span className="db-public-bar-tag">Shared dashboard</span>
+        </div>
+      </header>
       <main className="db-public-main">
         {view.kind === "reading" ? (
           <div aria-busy="true">
@@ -119,13 +135,16 @@ export function SharedDashboardPage({
           </div>
         ) : (
           <>
-            <header className="db-public-head">
+            <div className="db-public-head">
               <h1>{shown.name}</h1>
               {shown.description && <p>{shown.description}</p>}
               <div className="db-public-meta">
-                <span>Snapshot from {formatDate(shown.publishedAt)}</span>
+                <span>
+                  <Clock size={13} aria-hidden />
+                  As of {formatDate(shown.publishedAt)}
+                </span>
               </div>
-            </header>
+            </div>
             {/* The tiles draw as the app's do, whose links a router keeps;
                 none here names anything to open. */}
             <MemoryRouter>
@@ -148,12 +167,13 @@ export function SharedDashboardPage({
         )}
         {shown && (
           <footer className="db-public-foot">
-            A snapshot shared from{" "}
-            <a href="/" rel="noreferrer">
-              Helix Foundry
+            <p>
+              A snapshot: whoever shared it chose what it shows, and it doesn’t
+              change until they publish it again.
+            </p>
+            <a href="/" className="db-public-made" rel="noopener noreferrer">
+              Made with Helix Foundry
             </a>
-            . Whoever shared it chose what it shows; it doesn’t change until
-            they publish it again.
           </footer>
         )}
       </main>
