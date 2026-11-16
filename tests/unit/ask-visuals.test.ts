@@ -582,7 +582,7 @@ describe("visual plans", () => {
     });
   });
 
-  it("show a computed column as numbers, never an entity, and bar it when asked", () => {
+  it("show a computed column as its numbers, and bar it when asked", () => {
     const query = parseQuery({
       start: { type: "Deal" },
       return: {

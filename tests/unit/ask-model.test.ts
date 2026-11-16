@@ -1347,12 +1347,9 @@ describe("the query renderer", () => {
       const q = { start: { type: "A" }, return: bad };
       expect(parseQuery(q), JSON.stringify(bad)).toBe(undefined);
       expect(
-        contractErrors("read_request#/$defs/Query", q).length > 0 ||
-          // The schema can't say a column's prop and expr exclude each other:
-          // the engine refuses both when it reads one.
-          JSON.stringify(bad).includes('"prop":"a","expr"'),
+        contractErrors("read_request#/$defs/Query", q).length,
         JSON.stringify(bad),
-      ).toBe(true);
+      ).toBeGreaterThan(0);
     }
     // An order of a malformed expression is no order.
     expect(
