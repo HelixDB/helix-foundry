@@ -796,7 +796,7 @@ func (u Unimplemented) QueueFoundryRefresh(context.Context, string, string, *mod
 	u.unimplemented("QueueFoundryRefresh")
 	return false, nil
 }
-func (u Unimplemented) OweFoundryRefreshes(context.Context, string, string, []string, time.Duration) error {
+func (u Unimplemented) OweFoundryRefreshes(context.Context, string, string, string, []string, time.Duration) error {
 	u.unimplemented("OweFoundryRefreshes")
 	return nil
 }

@@ -117,7 +117,7 @@ func (s *mysqlDB) DeleteConnector(ctx context.Context, workspaceID, id string) e
 			return err
 		}
 		if len(tables) > 0 {
-			if err := tx.OweFoundryRefreshes(ctx, workspaceID, id, tables, 0); err != nil {
+			if err := tx.OweFoundryRefreshes(ctx, workspaceID, id, "", tables, 0); err != nil {
 				return err
 			}
 		}

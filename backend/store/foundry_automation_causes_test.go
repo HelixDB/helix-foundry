@@ -208,3 +208,84 @@ func TestFoundryAutomationFireSkipsLoops(t *testing.T) {
 		Advance: model.FoundryCursorAdvance{From: start, To: first}, Skip: why}, automationLimits)
 	require.Error(t, err, "a skip records a run")
 }
+
+// A refresh a run's sync owed is that run's: the refresh load queued for it
+// names the run, at the sync's depth, so the automation whose sync changed
+// the tables isn't fired by the load that change queued. Syncs of different
+// causes owing one refresh leave it a person's.
+func TestFoundryRefreshCarriesItsSyncsCause(t *testing.T) {
+	ctx := context.Background()
+	refreshCause := func(t *testing.T, f foundryFixture) (runID *string, depth *int) {
+		t.Helper()
+		require.NoError(t, testDB.QueryRow(`SELECT refresh_cause_run_id, refresh_cause_depth FROM foundry_ontologies WHERE id=?`, f.ontology.ID).
+			Scan(&runID, &depth))
+		return runID, depth
+	}
+	// sync stores a sync of the connector that run (nil for a person's) started, depth deep.
+	sync := func(t *testing.T, f foundryFixture, connectorID, id string, run *string, depth int) string {
+		t.Helper()
+		var d any
+		if run != nil {
+			d = depth
+		}
+		_, err := testDB.Exec(`INSERT INTO connector_syncs (id, connector_id, workspace_id, status, started_by_automation_run_id, automation_chain_depth)
+VALUES (?, ?, ?, 'succeeded', ?, ?)`, id26(id), connectorID, f.ontology.WorkspaceID, run, d)
+		require.NoError(t, err)
+		return id26(id)
+	}
+	runA, runB := id26("RCRUNA"), id26("RCRUNB")
+
+	t.Run("a run's sync makes its refresh load the run's", func(t *testing.T) {
+		f, connectorID, _ := refreshFixture(t, "RCA")
+		byA := sync(t, f, connectorID, "RCA-S1", &runA, 2)
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, byA, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, byA, []string{"customers"}, time.Millisecond))
+		runID, depth := refreshCause(t, f)
+		require.Equal(t, &runA, runID)
+		require.Equal(t, ptr(2), depth)
+		queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob("RCA"))
+		require.NoError(t, err)
+		require.True(t, queued)
+		live := f.liveJob(t)
+		require.NotNil(t, live)
+		require.Equal(t, model.FoundryGraphJobLoad, live.Kind, "a full refresh writes a load")
+		runID, depth = causeOf(t, "foundry_loads", live.LoadID)
+		require.Equal(t, &runA, runID)
+		require.Equal(t, ptr(2), depth, "the sync's own depth: no other automation ran between")
+		runID, depth = refreshCause(t, f)
+		require.Nil(t, runID, "queued, the refresh is owed no more")
+		require.Nil(t, depth)
+	})
+
+	for name, c := range map[string]struct {
+		tag           string
+		first, second *string
+		deleted       bool
+	}{
+		"two runs' syncs":                  {tag: "RCB", first: &runA, second: &runB},
+		"a person's sync, then a run's":    {tag: "RCC", first: nil, second: &runA},
+		"a run's sync, then a person's":    {tag: "RCD", first: &runA, second: nil},
+		"a run's sync, then a deletion's":  {tag: "RCE", first: &runA, deleted: true},
+		"a person's sync, then a person's": {tag: "RCF"},
+	} {
+		t.Run(name+" leave it a person's", func(t *testing.T) {
+			tag := c.tag
+			f, connectorID, _ := refreshFixture(t, tag)
+			first := sync(t, f, connectorID, tag+"-S1", c.first, 1)
+			require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, first, []string{"customers"}, time.Millisecond))
+			second := ""
+			if !c.deleted {
+				second = sync(t, f, connectorID, tag+"-S2", c.second, 1)
+			}
+			require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, second, []string{"customers"}, time.Millisecond))
+			runID, _ := refreshCause(t, f)
+			require.Nil(t, runID)
+			queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob(tag))
+			require.NoError(t, err)
+			require.True(t, queued)
+			runID, depth := causeOf(t, "foundry_loads", f.liveJob(t).LoadID)
+			require.Nil(t, runID)
+			require.Nil(t, depth)
+		})
+	}
+}

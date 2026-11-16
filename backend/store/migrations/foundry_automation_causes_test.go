@@ -15,6 +15,7 @@ var causeColumns = map[string][]string{
 	"connector_syncs":              {"started_by_automation_run_id", "automation_chain_depth"},
 	"foundry_loads":                {"started_by_automation_run_id", "automation_chain_depth"},
 	"foundry_automation_run_nodes": {"job_id"},
+	"foundry_ontologies":           {"refresh_cause_run_id", "refresh_cause_depth"},
 }
 
 // The automation causes migration adds nullable columns only, which rows an
@@ -91,8 +92,8 @@ func TestFoundryAutomationCausesMigration(t *testing.T) {
 	}
 	var left int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE()
-AND column_name IN ('started_by_automation_run_id', 'automation_chain_depth', 'job_id')
-AND table_name IN ('connector_syncs', 'foundry_loads', 'foundry_automation_run_nodes')`).Scan(&left); err != nil {
+AND column_name IN ('started_by_automation_run_id', 'automation_chain_depth', 'job_id', 'refresh_cause_run_id', 'refresh_cause_depth')
+AND table_name IN ('connector_syncs', 'foundry_loads', 'foundry_automation_run_nodes', 'foundry_ontologies')`).Scan(&left); err != nil {
 		t.Fatal(err)
 	}
 	if left != 0 {

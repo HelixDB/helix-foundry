@@ -38,54 +38,44 @@ func (f fixture) lastFire(t *testing.T) model.FoundryAutomationFire {
 	return f.db.fires[len(f.db.fires)-1]
 }
 
-// reloads loads the Sales graph whenever one of its loads is ready.
-var reloads = spec(`[{"from":"start","to":"load"}]`, node("start", "trigger", `{"kind":"load_ready","ontology_id":"ont1"}`),
-	node("load", "action", `{"operation":"create_load","ontology_id":"ont1"}`))
+// tellsOnLoad emails its owner whenever a load of the Sales graph is ready.
+var tellsOnLoad = spec(`[{"from":"start","to":"mail"}]`, node("start", "trigger", `{"kind":"load_ready","ontology_id":"ont1"}`),
+	node("mail", "notify", `{"message":""}`))
 
-// An automation that loads the ontology whose loads fire it: a person's load
-// fires it once, and the load its own run started is skipped, saying why,
-// instead of firing it again after every run.
+// A load its own run started never fires an automation (a spec that loads
+// what its trigger waits on is refused, but its run may have loaded before
+// an edit): skipped, saying why, while a person's load fires it.
 func TestAnAutomationNeverFiresOnItsOwnWork(t *testing.T) {
 	f := newFixture(t)
-	current := "ver7"
-	f.db.ontologies["ont1"] = &model.FoundryOntology{ID: "ont1", WorkspaceID: ws, CurrentVersionID: &current}
 	cursor := model.FoundryAutomationCursor{At: f.task.now().Add(-time.Hour)}
-	a := f.watching("auto1", reloads, cursor)
+	a := f.watching("auto1", tellsOnLoad, cursor)
 	f.db.watched = []*model.FoundryAutomation{a}
 	ctx := context.Background()
 
-	// A person's load fires it.
 	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("person-load", "ready", cursor.At.Add(time.Minute))}
 	f.task.watch(ctx)
 	fire := f.lastFire(t)
 	require.NotNil(t, fire.Run)
 	assert.Empty(t, fire.Skip, "a person's load fires it")
 	assert.Equal(t, "load_ready:person-load", fire.Run.TriggerKey)
-	run := f.started(fire)
-	f.task.advance(ctx, run)
-	f.endLoad("load1", model.FoundryLoadReady)
-	f.task.advance(ctx, run)
-	require.Equal(t, model.FoundryAutomationRunSucceeded, f.db.finished[run.ID].Status)
-	require.Equal(t, 1, f.actions.loads)
 
-	// The load its run started ends: skipped, never run.
-	cursor = fire.Advance.(model.FoundryCursorAdvance).To
-	a.Cursor = &cursor
-	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("load1", "ready", cursor.At.Add(time.Minute))}
+	f.db.causes["own-load"] = &model.FoundryAutomationCause{RunID: "run0", AutomationID: "auto1", Depth: 1}
+	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("own-load", "ready", cursor.At.Add(2*time.Minute))}
 	f.task.watch(ctx)
 	fire = f.lastFire(t)
 	require.NotNil(t, fire.Run, "recorded, so its owner sees why it didn't run")
 	assert.Equal(t, "Skipped: the load was started by this automation itself; running on it would loop.", fire.Skip)
-	assert.Equal(t, "load_ready:load1", fire.Run.TriggerKey)
-	assert.Equal(t, "load1", fire.Advance.(model.FoundryCursorAdvance).To.ID, "the cursor passes it")
+	assert.Equal(t, "load_ready:own-load", fire.Run.TriggerKey)
+	assert.Equal(t, "own-load", fire.Advance.(model.FoundryCursorAdvance).To.ID, "the cursor passes it")
 
 	// A person's load beside its own fires it, named by the person's.
-	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("load1", "ready", cursor.At.Add(time.Minute)),
-		f.db.endedWork("person-load-2", "ready", cursor.At.Add(2*time.Minute))}
+	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("own-load", "ready", cursor.At.Add(2*time.Minute)),
+		f.db.endedWork("person-load-2", "ready", cursor.At.Add(3*time.Minute))}
 	f.task.watch(ctx)
 	fire = f.lastFire(t)
 	assert.Empty(t, fire.Skip)
 	assert.Equal(t, "load_ready:person-load-2", fire.Run.TriggerKey)
+	assert.Equal(t, "person-load-2", fire.Advance.(model.FoundryCursorAdvance).To.ID)
 	var event model.FoundryAutomationEvent
 	require.NoError(t, json.Unmarshal(fire.Run.TriggerEvent, &event))
 	assert.Equal(t, int64(1), event.Count, "its own load isn't counted")
@@ -93,14 +83,14 @@ func TestAnAutomationNeverFiresOnItsOwnWork(t *testing.T) {
 	assert.Zero(t, event.ChainDepth)
 }
 
-// A sync_finished automation that syncs its own connector skips the sync its
-// run started, as a load_ready one does.
+// A sync_finished trigger skips a sync its own run started, as a load_ready
+// one does.
 func TestASyncThatSyncsItsOwnConnectorIsSkipped(t *testing.T) {
 	f := newFixture(t)
 	cursor := model.FoundryAutomationCursor{At: f.task.now().Add(-time.Hour)}
-	a := f.watching("auto1", spec(`[{"from":"start","to":"sync"}]`,
+	a := f.watching("auto1", spec(`[{"from":"start","to":"mail"}]`,
 		node("start", "trigger", `{"kind":"sync_finished","connector_id":"stripe","outcome":"any"}`),
-		node("sync", "action", `{"operation":"sync_connector","connector_id":"stripe"}`)), cursor)
+		node("mail", "notify", `{"message":""}`)), cursor)
 	f.db.watched = []*model.FoundryAutomation{a}
 	f.db.causes["sync9"] = &model.FoundryAutomationCause{RunID: "run0", AutomationID: "auto1", Depth: 1}
 	f.db.ended = []model.FoundryAutomationEnded{f.db.endedWork("sync9", "failed", cursor.At.Add(time.Minute))}
@@ -195,9 +185,10 @@ func TestAChainStopsAtItsDepth(t *testing.T) {
 	f.task.watch(context.Background())
 	fire = f.lastFire(t)
 	assert.Empty(t, fire.Skip)
-	require.NoError(t, json.Unmarshal(fire.Run.TriggerEvent, &event))
-	assert.Empty(t, event.CausedBy)
-	assert.Equal(t, 2, event.ChainDepth)
+	var orphan model.FoundryAutomationEvent
+	require.NoError(t, json.Unmarshal(fire.Run.TriggerEvent, &orphan))
+	assert.Empty(t, orphan.CausedBy)
+	assert.Equal(t, 2, orphan.ChainDepth)
 }
 
 // Documents and drafts have no cause: a guard never holds them back.
