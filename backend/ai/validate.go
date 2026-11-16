@@ -131,6 +131,11 @@ func (s Settings) Validate(r Rules) error {
 			if p.Output == 0 {
 				return invalid(field+".price.rates.output", "must be more than 0")
 			}
+			// Cohere reports every prompt token as cached and bills cached
+			// input as input: a lower rate for it would undercount spend.
+			if kind == KindCohere && p.CacheRead != nil {
+				return invalid(field+".price.rates.cache_read", "must be left out for a Cohere model, whose cached input costs what input does")
+			}
 		case PriceFree:
 			if !kind.Free() {
 				return invalid(field+".price", "can be free only for Ollama and OpenAI-compatible servers")

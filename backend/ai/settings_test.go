@@ -147,6 +147,7 @@ func TestValidateSettings(t *testing.T) {
 		"Cohere priced as another model":        {valid(Cohere{}, PriceTableAs{Model: "command-a-03-2025"}), hosted, "models.draft.price"},
 		"Cohere priced free":                    {valid(Cohere{}, PriceFree{}), local, "models.draft.price"},
 		"Cohere with no output rate":            {valid(Cohere{}, PriceRates{Input: 1}), hosted, "models.draft.price.rates.output"},
+		"Cohere with a cached-input rate":       {valid(Cohere{}, PriceRates{Input: 2500, Output: 10000, CacheRead: ptr(uint64(250))}), hosted, "models.draft.price.rates.cache_read"},
 		"Ollama on this machine":                {valid(Ollama{BaseURL: "http://127.0.0.1:11434", ContextTokens: 65536}, PriceFree{}), local, ""},
 		"Ollama over http hosted":               {valid(Ollama{BaseURL: "http://ollama.example.com", ContextTokens: 65536}, PriceFree{}), hosted, "provider.base_url"},
 		"Ollama at a private literal":           {valid(Ollama{BaseURL: "https://10.0.0.5", ContextTokens: 65536}, PriceFree{}), hosted, "private"},

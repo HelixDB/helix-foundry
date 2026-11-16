@@ -1730,9 +1730,11 @@ function CohereModel({
           {named ?? "A Command model that calls tools and answers in JSON."}
         </small>
       </label>
+      {/* Cohere reports all input as cached, and bills it as input. */}
       <Rates
         pick={p}
         problem={AI.ratesProblem(p.rates)}
+        cached={false}
         disabled={disabled}
         onPick={onPick}
       />
@@ -1740,23 +1742,30 @@ function CohereModel({
   );
 }
 
-/** A model's own prices, in dollars per million tokens. */
+/**
+ * A model's own prices, in dollars per million tokens: input, output and,
+ * where the provider bills it apart, cached input.
+ */
 function Rates({
   pick,
   problem,
+  cached = true,
   disabled,
   onPick,
 }: {
   pick: AI.ModelPick & { rates: FoundryAiRates };
   problem?: string;
+  cached?: boolean;
   disabled: boolean;
   onPick: (p: AI.ModelPick) => void;
 }) {
-  const fields: [keyof FoundryAiRates, string][] = [
-    ["inputUsdPerMtok", "Input"],
-    ["outputUsdPerMtok", "Output"],
-    ["cachedInputUsdPerMtok", "Cached input"],
-  ];
+  const fields = (
+    [
+      ["inputUsdPerMtok", "Input"],
+      ["outputUsdPerMtok", "Output"],
+      ["cachedInputUsdPerMtok", "Cached input"],
+    ] as const
+  ).filter(([f]) => cached || f !== "cachedInputUsdPerMtok");
   const typed = fields.some(([f]) => (pick.rates[f] || "").trim());
   return (
     <div className="wk-ai-rates">

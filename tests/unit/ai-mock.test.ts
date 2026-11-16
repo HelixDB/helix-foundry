@@ -1279,6 +1279,21 @@ describe("Cohere", () => {
       apiKey: COHERE_KEY,
     });
     expect(none.body.message).toBe("models.draft is required");
+    // Cohere reports all input as cached, so input has one price.
+    const cached = await call(
+      "PUT",
+      AI_PATH,
+      cohere(
+        each({
+          name: "command-a-03-2025",
+          rates: { ...RATES, cachedInputUsdPerMtok: "0.25" },
+        }),
+        COHERE_KEY,
+      ),
+    );
+    expect(cached.body.message).toBe(
+      "models.draft.price.rates.cache_read must be left out for a Cohere model, whose cached input costs what input does",
+    );
   });
 
   it("keeps a key across models, but for Cohere alone", async () => {

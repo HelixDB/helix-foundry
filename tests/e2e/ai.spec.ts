@@ -1182,6 +1182,8 @@ test("runs on Cohere at the owner's prices", async ({ page }) => {
   await expect(save).toBeDisabled();
   await model.getByLabel("Input", { exact: true }).fill("2.5");
   await model.getByLabel("Output", { exact: true }).fill("10");
+  // Cohere bills cached input as input: no price of its own.
+  await expect(model.getByLabel("Cached input")).toHaveCount(0);
 
   const put = page.waitForRequest(
     (r) => r.method() === "PUT" && r.url().endsWith("/foundry/ai"),

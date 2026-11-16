@@ -65,7 +65,8 @@ import { isFoundryPro, proRequired } from "./billing";
 // and a price the kind takes (rates in dollars with at most three decimals,
 // output above 0; another model's row only for an Azure deployment or a
 // Bedrock model; no cost only for Ollama and custom servers; for Cohere,
-// whose models Helix's table doesn't price, rates only), the endpoint
+// whose models Helix's table doesn't price, rates only, with no cached-input
+// rate, as Cohere reports all input as cached), the endpoint
 // passes the deployment's URL rules (an Azure OpenAI resource's https
 // endpoint, normalized to .../openai/v1; an AWS region for Bedrock, FIPS
 // kept only when on), a key is given or kept (canReuseKey) or not needed,
@@ -774,6 +775,11 @@ function save(
       const rates = parseRates(given.rates);
       if (typeof rates === "string")
         return fail("INVALID_ARGUMENT", `models.${role}.price.rates.${rates}`);
+      if (kind === "FOUNDRY_AI_KIND_COHERE" && given.rates.cachedInputUsdPerMtok)
+        return fail(
+          "INVALID_ARGUMENT",
+          `models.${role}.price.rates.cache_read must be left out for a Cohere model, whose cached input costs what input does`,
+        );
       models[role] = { name, rates };
     } else if (given?.free) {
       if (
